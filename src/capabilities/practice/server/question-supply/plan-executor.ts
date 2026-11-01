@@ -5,7 +5,7 @@
 //
 //   - jyeoo_fetch → runJyeooFetchCandidates（预算租约 + 批量吸收）+ 逐候选 commit；
 //   - sourcing_web → 注入的 runWebFetchCandidates（web 候选生产线，LLM 相位在工具层）
-//     + 逐候选 commit；imageCandidates 经注入的 proposal writer 落 image_candidate；
+//     → demand-owned web-supply（持久候选/submit receipt/核验/serving 对账）；
 //   - quiz_gen → enqueueQuizGen（quiz_gen 队列原生 job；异步经自身 verify 链闭环，
 //     诚实语义：dispatched ≠ acquired，生成内容保留自身 provenance 族）。
 //
@@ -22,7 +22,7 @@
 // 沿用只靠 store seam 去重的旧语义。
 //
 // 纯模块纪律（ownership/boundary，镜像 web-candidates.ts）：不 import '@/server/'。
-// 外部效果（web LLM 相位、pg-boss enqueue、image proposal 写）全部依赖注入；
+// 外部效果（web LLM 相位、pg-boss enqueue、web 获取）全部依赖注入；
 // '../tools/store-sourced-question' 是 capability 内兄弟 seam（tools 层持 server 依赖）。
 
 import { createId } from '@paralleldrive/cuid2';
@@ -47,11 +47,8 @@ import {
 } from './jyeoo-candidates';
 import { findSubjectRootKnowledgeId, matchJyeooKnowledgeHints } from './jyeoo-hint-match';
 import type { DifficultyBand } from './target-discovery';
-import type {
-  RunWebFetchCandidatesParams,
-  RunWebFetchCandidatesResult,
-  WebCandidate,
-} from './web-candidates';
+import type { RunWebFetchCandidatesParams, RunWebFetchCandidatesResult } from './web-candidates';
+import { runWebSupply } from './web-supply';
 
 /** executor 可执行的获取路由（SupplyPlanV1.route_preference 的可执行子集）。 */
 export type SupplyRouteName = 'jyeoo_fetch' | 'sourcing_web' | 'quiz_gen';
@@ -149,33 +146,6 @@ export type RunJyeooFetchCandidatesFn = (
   params: Parameters<typeof runJyeooFetchCandidates>[0],
 ) => Promise<JyeooFetchCandidatesResult>;
 
-/**
- * image_candidate proposal 写入注入面 —— 参数镜像旧 sourcing job 的
- * writeAiProposal 调用（jobs/sourcing.ts:631-668）：pending inbox 语义
- * （outcome 'partial'）、ADR-0002（accept 才下载/抽图）、cooldown_key 防重复
- * proposal。db 参数不进 args（db 由 executor 闭包持有者自取）。
- */
-export interface ImageCandidateProposalArgs {
-  actor_ref: string;
-  outcome: 'partial';
-  payload: {
-    kind: 'image_candidate';
-    target: { subject_kind: 'source_asset'; subject_id: null };
-    reason_md: string;
-    evidence_refs: [];
-    proposed_change: {
-      source_url: string;
-      source_title: string;
-      summary_md: string;
-      knowledge_ids: string[];
-      requested_kind?: string;
-    };
-    cooldown_key: string;
-  };
-  task_run_id: string | null;
-  created_at: Date;
-}
-
 /** quiz_gen 派发的可选 enqueue 选项（崩溃窗口幂等键透传到 pg-boss）。 */
 export interface EnqueueQuizGenDispatchOptions {
   /** pg-boss 单例键——同 (plan_event_id, demand_id) 重投不重复入队（由 runQuizGenRoute 派生）。 */
@@ -192,8 +162,7 @@ export interface ExecuteSupplyPlanDeps {
     payload: QuizGenDispatchPayload,
     opts?: EnqueueQuizGenDispatchOptions,
   ) => Promise<string | undefined>;
-  /** image_candidate proposal 写入；提供时 web imageCandidates 落 proposal（旧 sourcing 行为）。 */
-  writeImageCandidateProposal?: (args: ImageCandidateProposalArgs) => Promise<unknown>;
+
   /** store seam 的 verify enqueue 注入口（生产缺省 = seam 自身默认 pg-boss；db 测试注入 fake）。 */
   enqueueSourceVerify?: StoreSourcedQuestionDeps['enqueueSourceVerify'];
   now?: () => Date;
@@ -378,20 +347,6 @@ function jyeooCandidateToStoreInput(candidate: JyeooCandidate): StoreCandidateIn
     figures: candidate.figures,
     image_refs: candidate.imageRefs,
     structured: candidate.structured,
-    staged_asset_ids: candidate.stagedAssetIds,
-  };
-}
-
-function webCandidateToStoreInput(candidate: WebCandidate): StoreCandidateInput {
-  return {
-    candidate_id: candidate.candidateId,
-    question: candidate.question,
-    extraction_hash: candidate.extractionHash,
-    knowledge_hints: candidate.knowledgeHints,
-    source_id: candidate.sourceId,
-    figures: null,
-    image_refs: null,
-    structured: null,
     staged_asset_ids: candidate.stagedAssetIds,
   };
 }
@@ -609,147 +564,40 @@ async function runJyeooRoute(
   return tally;
 }
 
-/**
- * sourcing_web：注入的 web 生产线一次取 remaining 个候选 → 逐个 commit（锚点强制
- * 首位——SourcingTask 以锚点发起，归属诚实）。count cap：只 commit 还需要的数量，
- * 多余候选丢弃（web 无批量吸收语义，超额是 LLM 超发）。imageCandidates 经
- * writeImageCandidateProposal 落 pending proposal（best-effort，不翻转路由结果）。
- */
+/** Web supply owns receipt replay, submission and actual serving reconciliation. */
 async function runWebRoute(
   run: RouteRunContext,
   deps: ExecuteSupplyPlanDeps,
 ): Promise<RouteExecutionTally> {
-  const tally: RouteExecutionTally = {
-    route: 'sourcing_web',
-    status: 'skipped',
-    acquired: 0,
-    committed: 0,
-    opportunistic: 0,
-    rejections: {},
-    errors: 0,
-  };
-
-  let result: RunWebFetchCandidatesResult;
-  try {
-    result = await deps.runWebFetchCandidates({
-      db: run.db,
-      input: {
-        anchorKnowledgeId: run.item.knowledgeId,
-        count: run.remaining,
-        ...(run.item.kind !== 'any' ? { kind: run.item.kind } : {}),
-        ...(run.item.objectiveOnly ? { objectiveOnly: true } : {}),
-        ...(run.item.kindRequired ? { kindRequired: true } : {}),
-        subjectProfile: run.subjectProfile,
-      },
-      ctx: {
-        taskRunId: run.taskRunId,
-        ...(run.causedByEventId ? { causedByEventId: run.causedByEventId } : {}),
-      },
-      now: run.now,
-    });
-  } catch (err) {
-    // 注入的 web 生产线（含 LLM 相位）未预期异常确定性降级为 skipped:'llm'，
-    // 路由回落（如 quiz_gen），不把整个 job 送 retry/DLQ；生产线自身的 failed
-    // 返回仍走 failureClass 路径（下方），两类都 deterministic。
-    tally.skipped = 'llm';
-    tally.detail = errorMessage(err);
-    return tally;
-  }
-
-  if (result.status === 'failed') {
-    tally.skipped = result.failureClass;
-    return tally;
-  }
-
-  tally.status = 'ok';
-  // trace 路由级克隆（producer_route 覆写）；复验失败丢弃并留痕 detail。
   const routeTrace = cloneSupplyTraceForRoute(run.supplyTrace, 'sourcing_web');
-  if (routeTrace === null) {
-    tally.detail =
-      'supply_trace dropped: failed SupplyTraceV1 revalidation after producer_route override';
-  }
-
-  // imageCandidates → proposal（旧 sourcing 同款：pending inbox + ADR-0002；URL 同时
-  // 出现在文本题里的候选跳过——文本题已入库，accept 再抽会堆重复）。
-  if (deps.writeImageCandidateProposal && result.imageCandidates.length > 0) {
-    const questionSourceUrls = new Set(result.candidates.map((c) => c.question.source_url));
-    const seenCooldownKeys = new Set<string>();
-    for (const imageCandidate of result.imageCandidates) {
-      const cooldownKey = `image_candidate:${imageCandidate.source_url}`;
-      if (questionSourceUrls.has(imageCandidate.source_url) || seenCooldownKeys.has(cooldownKey)) {
-        continue;
-      }
-      seenCooldownKeys.add(cooldownKey);
-      try {
-        await deps.writeImageCandidateProposal({
-          actor_ref: 'supply_executor',
-          outcome: 'partial',
-          payload: {
-            kind: 'image_candidate',
-            target: { subject_kind: 'source_asset', subject_id: null },
-            reason_md: imageCandidate.summary_md,
-            evidence_refs: [],
-            proposed_change: {
-              source_url: imageCandidate.source_url,
-              source_title: imageCandidate.source_title,
-              summary_md: imageCandidate.summary_md,
-              knowledge_ids: [run.item.knowledgeId],
-              ...(run.item.kind !== 'any' ? { requested_kind: run.item.kind } : {}),
-            },
-            cooldown_key: cooldownKey,
-          },
-          task_run_id: run.taskRunId,
-          created_at: run.now,
-        });
-      } catch (proposalErr) {
-        console.error(
-          '[supply_executor] image_candidate proposal write failed (best-effort, route stands):',
-          proposalErr,
-        );
-      }
+  if (routeTrace === null) throw new Error('web supply requires a valid supply_trace');
+  const state = await runWebSupply({
+    db: run.db,
+    item: { ...run.item, count: run.remaining },
+    trace: routeTrace,
+    causeId: run.planEventId ?? run.causedByEventId,
+    subjectProfile: run.subjectProfile,
+    fetch: deps.runWebFetchCandidates,
+  });
+  const committed = state.submissions.filter((s) => s.receipt?.question_id).length;
+  const rejections: Record<string, number> = {};
+  for (const s of state.submissions) {
+    if (s.receipt?.status === 'conflict') {
+      const reason = s.receipt.reason ?? 'submit_conflict';
+      rejections[reason] = (rejections[reason] ?? 0) + 1;
     }
   }
-
-  for (const candidate of result.candidates) {
-    if (run.remaining <= 0) break; // count cap：只要还需要的
-    const candidateIds = candidate.question.knowledge_ids;
-    const knowledgeIds = [
-      run.item.knowledgeId,
-      ...candidateIds.filter((id) => id !== run.item.knowledgeId),
-    ];
-    const commit = await commitCandidate(
-      run.db,
-      {
-        // YUK-1557 — the store event / created_by must name the SourcingTask run
-        // that produced this candidate, not the deterministic executor scope id.
-        taskRunId: result.taskRunId ?? run.taskRunId,
-        logTaskRunId: result.taskRunId ?? run.taskRunId,
-        causedByEventId: run.causedByEventId,
-      },
-      {
-        source_route: 'sourcing_web',
-        candidate: webCandidateToStoreInput(candidate),
-        knowledge_ids: knowledgeIds,
-        attribution_state: 'matched', // 上游 live 校验 + 锚点发起，归属诚实
-        subject_id: run.subjectProfile.id,
-        ...(run.item.demandId ? { demand_id: run.item.demandId } : {}),
-        ...(routeTrace ? { supply_trace: routeTrace } : {}),
-      },
-      deps.enqueueSourceVerify ? { enqueueSourceVerify: deps.enqueueSourceVerify } : {},
-    );
-    if (commit.status === 'rejected') {
-      recordRejection(tally, commit.reason);
-      continue; // 拒绝不入 committed，继续下一候选
-    }
-    if (commit.status === 'threw') {
-      tally.errors += 1;
-      continue;
-    }
-    tally.committed += 1;
-    tally.acquired += 1;
-    run.remaining -= 1;
-  }
-  return tally;
+  return {
+    route: 'sourcing_web',
+    status: state.phase === 'blocked' ? 'skipped' : 'dispatched',
+    acquired: state.serving.length,
+    committed,
+    opportunistic: 0,
+    rejections,
+    errors: 0,
+    ...(state.phase === 'blocked' ? { skipped: state.reason ?? 'blocked' } : {}),
+    detail: `web_supply:${state.demandId}:${state.phase}:${state.reason ?? ''}`,
+  };
 }
 
 /**
@@ -936,6 +784,9 @@ export async function executeSupplyPlan(
       result.acquired += tally.acquired;
       result.committed += tally.committed;
       result.opportunistic += tally.opportunistic;
+      // Web owns this demand through terminal reconciliation. A failed source
+      // must not be concealed by falling into a new quiz_gen paid operation.
+      if (route === 'sourcing_web') break;
       if (tally.status === 'dispatched') {
         dispatchedItems += 1;
         break; // 已异步派发：生成经自身 job + verify 链闭环，不再走后续路由

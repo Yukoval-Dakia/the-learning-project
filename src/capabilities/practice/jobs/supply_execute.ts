@@ -14,13 +14,11 @@
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 import type { Db } from '@/db/client';
-import { writeAiProposal } from '@/kernel/proposals/writer';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import type { SupplyTraceV1T } from '../server/question-supply/evidence-demand';
 import type { JyeooFetchConfig } from '../server/question-supply/plan-executor';
 import {
   type ExecuteSupplyPlanDeps,
-  type ImageCandidateProposalArgs,
   type SupplyDemandItem,
   executeSupplyPlan,
 } from '../server/question-supply/plan-executor';
@@ -70,10 +68,10 @@ export type SupplyExecuteJobDataT = z.infer<typeof SupplyExecuteJobData>;
 /**
  * 生产 deps 装配（supply_planner phase-2 / 手动 caller 共用）。web 生产线的
  * runSourcingAgent/parseLoose 经 defaultWebSourcingDeps() 唯一组装点；
- * quiz_gen enqueue 失败上抛（pg-boss 语义保留）；image proposal 走
- * writeAiProposal 真身。
+ * quiz_gen enqueue 失败上抛（pg-boss 语义保留）；web 由同 demand owner
+ * 持久恢复，不将来源获取变成用户 proposal。
  */
-export function buildSupplyExecutorDeps(db: Db): ExecuteSupplyPlanDeps {
+export function buildSupplyExecutorDeps(_db: Db): ExecuteSupplyPlanDeps {
   return {
     runWebFetchCandidates: (params) =>
       runWebFetchCandidates({
@@ -86,7 +84,6 @@ export function buildSupplyExecutorDeps(db: Db): ExecuteSupplyPlanDeps {
         payload as unknown as Record<string, unknown>,
         ...(opts?.singletonKey ? [{ singletonKey: opts.singletonKey }] : []),
       )) ?? undefined,
-    writeImageCandidateProposal: (args: ImageCandidateProposalArgs) => writeAiProposal(db, args),
   };
 }
 

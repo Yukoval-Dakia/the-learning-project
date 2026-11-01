@@ -7101,6 +7101,26 @@
       "direction": "decrease",
       "reason": "Learning-intent proposal accept note birth and post-accept generation dispatch moved to kernel handoff protocol; agency proposal-accept-applier no longer imports notes/public.",
       "issue": "YUK-1571"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/questions/submit-question.ts",
+      "siteKind": "site",
+      "symbol": "findSubmitReceipt",
+      "targetModule": "src/server/questions/shared-submit.ts",
+      "targetSymbol": "findSubmitReceipt",
+      "owner": "questions submission owner",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/tools/submit-question.ts",
+          "line": 49
+        }
+      ],
+      "evidence": "Existing shared-submit findSubmitReceipt owns the durable receipt envelope read. Practice imports it in the statement beginning at line 49 (binding at line 54) and invokes it from readCandidateSubmitReceipt after the original parsedInputSchema, then compares the original candidateSubmitFingerprint and parses the original outputSchema; web-supply resumes with its frozen original request.",
+      "rationale": "Coordinator explicitly permitted this single-symbol read exit through the existing submission facade for the live web recovery consumer. No copied receipt codec, alternate writer, new barrel layer or registry; request locking remains with the original submit owner.",
+      "issue": "YUK-1468",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1468",
+      "date": "2026-10-30"
     }
   ],
   "edgeRecords": [
@@ -11199,6 +11219,26 @@
       "issue": "YUK-1571",
       "owns": "Generation success enqueues verification intent through the kernel handoff writer inside the same transaction boundary as today.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-supply/web-supply.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1468",
+      "owns": "Demand-owned web acquisition and submission phase facts use the existing insert-only event spine; no alternate bus or event writer.",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-supply/web-supply.ts",
+      "module": "src/kernel/read-models/question-serving.ts",
+      "kind": "value",
+      "symbols": ["readQuestionServing"],
+      "issue": "YUK-1468",
+      "owns": "Reconcile submitted web candidates against the canonical serving read model in one repeatable-read snapshot; source verification or insertion alone never fulfills the demand.",
+      "date": "2026-10-30"
     }
   ],
   "sourceSizeRecords": [
@@ -11768,6 +11808,15 @@
       "to": 1388,
       "issue": "YUK-1413",
       "responsibilityReason": "The collecting loop records the help-attempt clock and, on a proven quota, 502, or parse fault, notes the executable exit before the existing failure settlement. Unknown cost is unchanged. This is the same runner, not a new loop or lane."
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/submit-question.ts",
+      "date": "2026-10-30",
+      "baseBlob": "ccfd6d08ab323db094cd15d4325e714aec053a80",
+      "from": 1314,
+      "to": 1382,
+      "issue": "YUK-1468",
+      "responsibilityReason": "Owner-approved flat submit crash closure: request-first claim recheck in the actual write transaction, atomic original pending receipt with publication and verify intent, and matching-fingerprint recovery through the original parser/receipt codec. No verifier, admission or paid algorithm change; preflight exact/source merges remain outside the transaction. Measured by the native audit, not an exemption."
     }
   ],
   "compatShims": [

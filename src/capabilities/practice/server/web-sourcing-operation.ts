@@ -20,6 +20,7 @@
 // 候选 parse/kind 门/活 knowledge 校验与全部后续正确性路径。本模块不写 DB、
 // 不写事件——除 runAgentTask 自身的运行留痕（ai_task_runs/cost ledger 不变）。
 
+import { createId } from '@paralleldrive/cuid2';
 import {
   EXA_MCP_ALLOWED_TOOLS,
   EXA_MCP_SERVER_NAME,
@@ -61,13 +62,15 @@ export const runWebSourcingOperation: RunWebSourcingAgentFn = async (params) => 
   const exaCfg = buildExaMcpServer();
   if (exaCfg === null) return null;
 
+  const producerTaskRunId = ctx.producerTaskRunId ?? createId();
+
   // MCP mount 镜像旧 sourcing job：in-process domain read tools（ctx 归因到
   // 调用方透传的 run 上下文，callerActor='sourcing'）+ Exa remote。
   const piToolMounts: PiToolMount[] = [
     piDomainMount({
       ctx: {
         db,
-        taskRunId: ctx.taskRunId,
+        taskRunId: producerTaskRunId,
         callerActor: { kind: 'agent', ref: 'sourcing' },
         causedByEventId: ctx.causedByEventId,
       },
@@ -84,6 +87,8 @@ export const runWebSourcingOperation: RunWebSourcingAgentFn = async (params) => 
 
   const result = await runAgentTask('SourcingTask', input, {
     db,
+    taskRunId: producerTaskRunId,
+    ...(ctx.deadlineAt !== undefined ? { providerSessionDeadlineAt: ctx.deadlineAt } : {}),
     piToolMounts,
     allowedTools,
     subjectProfile,
