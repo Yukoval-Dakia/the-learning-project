@@ -1062,6 +1062,16 @@ function quotedCheckpointWrites(source: string): WriteStatement[] {
               /\bpublic\.event_subscription_checkpoint\b/gi,
               'event_subscription_checkpoint',
             );
+          // The producer scanner erases tuple LHS columns. Its remaining scalar
+          // columns cannot prove that this statement preserves the retained field.
+          if (/(?:\bset|,)\s*\([^()]*\)\s*=/i.test(normalized)) {
+            writes.push({
+              kind: 'update',
+              table: 'event_subscription_checkpoint',
+              payload: '{}',
+              explicitPayload: false,
+            });
+          }
           writes.push(
             ...extractExecutedSqlWrites(`db.execute(sql\`${normalized}\`);`).filter(
               (write) => write.table === 'event_subscription_checkpoint',
