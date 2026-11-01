@@ -1,74 +1,19 @@
-// YUK-476 · /today 起始画像卡片。把已上线但成孤儿的 placement profile（ScreenProfile @
-// /profile ← GET /api/placement/profile）在冷启 /today 露出一张 band-only 摘要，并给 /profile
-// 一个持久入口。设计 docs/design/2026-07-11-yuk476-diagnostic-surface.md（owner 判词 §10）。
-//
-// 判词落地：
-//  ① band-only —— 卡片不露裸点 %/SE（裸数字留深读面 hover，见 ScreenProfile）。
-//  ② 标记恒落 p_l（0..1 点估计），绝不 theta_hat（logit，可负/>1，混尺度会把标记推出轨道）。
-//     见 §9-1 build-note；profile-band.unit 有回归断言锁死。
-//  ③ 软/硬来源派生（后端无 per-KC source 字段）：low_confidence || evidence<3 → 软轨（淡/斜纹）。
-//  ④ 覆盖表述用「N/M 个知识点有证据」，不把聚合 evidenceCount 说成「N 题」。
-//
-// active goal id 由 /api/workbench/summary 的 active_goal 提供（TodayPage 传入）；卡片只在
-// active_goal 非 null 时挂载，故这里 goal 必非空。数据源 getPlacementProfile 是 live 端点，
-// 与 placement probe 是否启用无关（PLACEMENT_PROBE_ENABLED dark-ship 不影响本读路径）。
-
 import { useQuery } from '@tanstack/react-query';
 import {
   type PlacementProfile,
-  type ProfileKc,
   usePlacementProfileClient,
 } from '@/capabilities/onboarding/ui-public';
-import { Btn } from '@/ui/primitives/Btn';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { SectionLabel } from '@/ui/primitives/SectionLabel';
+import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
+import { Button } from '@/ui-next/public';
 
 const PREVIEW_KC_LIMIT = 3;
 
-// Clamp a 0..1 band coordinate so a stray projection value can't push a band edge or the mark
-// off the track（同 ScreenProfile clamp01 口径）。
-const clamp01 = (v: number | undefined, fb: number) => Math.max(0, Math.min(1, v ?? fb));
-const pct = (v: number) => Math.round(v * 100);
-
-// 软轨先验 vs 硬轨校准，派生自后端字段（判词3 v1 规则）：低置信或证据不足 → 软轨（未经真实
-// 作答校准的先验回吐）。后端无 per-KC source/calibrated 字段时的诚实近似。
-function isSoft(kc: ProfileKc): boolean {
-  return Boolean(kc.low_confidence) || (kc.evidence_count ?? 0) < 3;
-}
-
-// 链式三元会被 OCR flag（项目规则）——用 if/else 算状态。后台 refetch 失败但缓存仍有旧数据
-// 时，保留上一份好渲染（不让 error 覆盖可用数据）；仅在无数据可显时才 loading/error。
 function queryStatus(isLoading: boolean, isError: boolean, hasData: boolean): StatefulStatus {
   if (isError && !hasData) return 'error';
   if (isLoading && !hasData) return 'loading';
   return 'ok';
-}
-
-// 单条 mini band（band-only：coral 可能区间 + p_l 标记，无裸数字/轴文字）。
-// 标记恒落 p_l——§9-1 build-note，不用 theta_hat。inverted CI 也不产生负宽（min/max 兜底）。
-function MiniBand({ kc }: { kc: ProfileKc }) {
-  const rawLo = clamp01(kc.mastery_lo, 0);
-  const rawHi = clamp01(kc.mastery_hi, 0);
-  const lo = Math.min(rawLo, rawHi);
-  const hi = Math.max(rawLo, rawHi);
-  const point = clamp01(kc.p_l, lo);
-  return (
-    <div
-      className={`pf-band-row${isSoft(kc) ? ' is-soft' : ''}`}
-      aria-label={`${kc.name}，可能掌握区间约 ${pct(lo)} 到 ${pct(hi)}（满分 100）${
-        isSoft(kc) ? '，先验初估' : ''
-      }`}
-    >
-      <span className="pf-band-name">{kc.name}</span>
-      <span className="pf-band-track" aria-hidden="true">
-        <span className="pf-band-fill" style={{ left: `${pct(lo)}%`, width: `${pct(hi - lo)}%` }} />
-        <span className="pf-band-mark" style={{ left: `${pct(point)}%` }} />
-      </span>
-    </div>
-  );
 }
 
 function ProfileBandBody({
@@ -80,60 +25,82 @@ function ProfileBandBody({
   goalId: string;
   navigate: (to: string) => void;
 }) {
-  const { totalKcs } = data;
-  // YUK-614 — 预览与覆盖是服务端全量集派生的单一真相（server + client 同批部署，卡片只信端点）：
-  //  · weakest = 全集按 p_l 最弱 N（越过 PROFILE_KC_LIMIT 截断，真·最弱不漏）
-  //  · evidencedCount = 全集有证据 KC 数（footer 真实覆盖，不受截断欠数、不含软层零证据）
-  // 端点契约保证二者恒返回；空默认仅护一帧 stale 缓存（下次 refetch 自愈），不在客户端重算最弱。
+  // The endpoint owns the full-scope selection and coverage; the preview is not a new ranking.
   const preview = (data.weakest ?? []).slice(0, PREVIEW_KC_LIMIT);
-  const evidencedCount = data.evidencedCount ?? 0;
-
-  // State D — 空知识树（无可评估 KC）：先录入材料。永不落 ColdStart（本就在 goal>0 分支内，
-  // 守 YUK-520 红线：workbench 子块的空态只 quiet-empty）。
-  if (totalKcs === 0) {
+  if (data.totalKcs === 0) {
     return (
-      <div className="pf-empty">
-        <p className="pf-lead">这个目标还没有可评估的知识点 —— 先录入材料，画像会随之长出来。</p>
-        <Btn size="sm" variant="primary" icon="record" onClick={() => navigate('/record')}>
-          录入材料
-        </Btn>
+      <div>
+        <p>这个目标还没有可评估的知识点，先录入材料。</p>
+        <Button onClick={() => navigate('/record')}>录入材料</Button>
       </div>
     );
   }
-
-  // State B — 有 scope 但无可展示证据（零 tested，或 tested 但都 evidence_count:0 软层）：
-  // 练几道点亮画像（placement probe dark-ship，练习是 live 证据源）。preview 空 ⟺ 无有证据 KC。
   if (preview.length === 0) {
     return (
-      <div className="pf-empty">
-        <p className="pf-lead">{`这个目标的 ${totalKcs} 个知识点还没有作答证据 —— 练几道，画像会随练习长出来。`}</p>
-        <Btn size="sm" variant="primary" iconEnd="arrow" onClick={() => navigate('/practice')}>
-          去练习
-        </Btn>
+      <div>
+        <p>这个目标有 {data.totalKcs} 个知识点，当前没有可展示的作答证据。</p>
+        <Button onClick={() => navigate('/practice')}>去练习</Button>
       </div>
     );
   }
-
-  // State C/E — 有证据：band-only 预览（服务端全集最弱 N，见上）+ 覆盖表述 + 深读入口。
-  const softLead = preview.filter(isSoft).length > preview.length / 2;
   return (
     <>
-      {softLead && <p className="pf-lead">这还只是先验起点 —— 练几轮，区间会收窄。</p>}
-      <div className="pf-band-list">
-        {preview.map((k) => (
-          <MiniBand key={k.id} kc={k} />
+      <p>这是初步画像。证据条数不等于独立做对的题数，也不表示已经掌握。</p>
+      <ul className="un-today-evidence-list">
+        {preview.map((kc) => (
+          <li key={kc.id}>
+            <details>
+              <summary>
+                <span>{kc.name}</span>
+                <span className="un-today-meta">
+                  {kc.evidence_count == null ? '证据数量未提供' : `${kc.evidence_count} 条证据记录`}{' '}
+                  · 初步
+                </span>
+              </summary>
+              <div className="un-today-evidence-detail">
+                <p>
+                  依据当前目标的学习画像记录。这里尚未提供独立作答、受帮助作答的拆分及最近证据时间，因此不展示精确掌握百分比。
+                </p>
+                {kc.low_confidence && <p>当前记录标记为低置信，不能据此断定“不会”。</p>}
+                <div className="un-today-actions">
+                  <Button
+                    variant="ghost"
+                    onClick={() => navigate(`/knowledge/${encodeURIComponent(kc.id)}`)}
+                  >
+                    查看知识点与依据
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() =>
+                      openCopilot(
+                        `我想核对并提出异议：知识点「${kc.name}」（${kc.id}），目标 ${goalId}。今日画像显示${kc.evidence_count == null ? '证据数量未提供' : `${kc.evidence_count} 条证据记录`}，标为初步。请先查看原始依据，再讨论是否需要纠正。我的补充是：`,
+                        { send: false },
+                      )
+                    }
+                  >
+                    提出异议
+                  </Button>
+                </div>
+                <p className="un-today-meta">
+                  异议先填入学习伙伴输入框，由你补充并发送；不会直接更改画像。
+                </p>
+              </div>
+            </details>
+          </li>
         ))}
-      </div>
-      <div className="pf-band-foot">
-        <span className="meta">{`${evidencedCount} / ${totalKcs} 个知识点有证据`}</span>
-        <Btn
-          size="sm"
-          variant="secondary"
-          iconEnd="arrow"
+      </ul>
+      <div className="un-today-actions">
+        <p className="un-today-meta">
+          {data.evidencedCount == null
+            ? `共 ${data.totalKcs} 个知识点；证据覆盖数未提供`
+            : `${data.evidencedCount} / ${data.totalKcs} 个知识点有证据`}
+        </p>
+        <Button
+          variant="ghost"
           onClick={() => navigate(`/profile?goal=${encodeURIComponent(goalId)}`)}
         >
           查看完整画像
-        </Btn>
+        </Button>
       </div>
     </>
   );
@@ -152,24 +119,20 @@ export function ProfileBand({
     queryFn: () => getPlacementProfile(goal.id),
   });
   return (
-    <>
-      <SectionLabel>起始画像</SectionLabel>
-      <LoomCard pad>
-        <div className="card-head">
-          <span className="card-icon accent">
-            <LoomIcon name="target" size={18} />
-          </span>
-          <div className="card-title">你的起始画像</div>
-        </div>
-        <Stateful
-          status={queryStatus(q.isLoading, q.isError, q.data !== undefined)}
-          onRetry={() => void q.refetch()}
-          errorText="起始画像暂不可用。"
-          skeleton={<SkLines rows={3} />}
-        >
-          {q.data && <ProfileBandBody data={q.data} goalId={goal.id} navigate={navigate} />}
-        </Stateful>
-      </LoomCard>
-    </>
+    <section className="un-today-panel">
+      <h2>学习画像与依据</h2>
+      <p className="un-today-meta">{goal.title}</p>
+      {q.isError && q.data !== undefined && (
+        <p role="status">画像更新失败，下面保留上次读取的记录。</p>
+      )}
+      <Stateful
+        status={queryStatus(q.isLoading, q.isError, q.data !== undefined)}
+        onRetry={() => void q.refetch()}
+        errorText="学习画像暂不可用，不能据此判断你的掌握情况。"
+        skeleton={<SkLines rows={3} />}
+      >
+        {q.data && <ProfileBandBody data={q.data} goalId={goal.id} navigate={navigate} />}
+      </Stateful>
+    </section>
   );
 }
