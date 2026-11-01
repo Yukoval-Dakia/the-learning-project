@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { DerivationPolicy } from '@/core/schema/derivation-policy';
 import { NudgeKind, SuggestionKind } from '@/kernel/capability-contract-schemas';
 import { ApiErrorResponseSchema, ApiIdParamsSchema } from '@/kernel/http-contracts';
+import { ConfirmationOccurrence } from '../confirmation-contract';
 import { CopilotPrimaryViewSchema } from '../primary-view-contract';
 import { CopilotChatRequest } from '../server/chat-contracts';
 
@@ -147,6 +148,10 @@ export const CopilotTurnSchema = z.object({
       skill: z.string(),
       ref: z.object({ kind: z.string(), id: z.string() }),
     })
+    .optional(),
+  confirmation: z
+    .object({ occurrence: ConfirmationOccurrence, assessment: z.unknown().nullable() })
+    .strict()
     .optional(),
   primary_view: CopilotPrimaryViewSchema.optional(),
   tool_calls: z.array(CopilotTurnToolCallSchema).optional(),
