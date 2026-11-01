@@ -46,6 +46,8 @@ const liveSubscriberIdentities = [
   ['agency.intervention-diagnostic-review-settlement', 4],
   ['agency.probe-evidence-intervention-prepare', 1],
   ['agency.probe-publication-serve', 1],
+  ['agency.question-pool-gap', 1],
+  ['notes.dreaming-note-refresh', 1],
   ['notes.mastery-progress-note-refine', 1],
   ['practice.failure-learning-attempt', 3],
   ['practice.learner-return-wake', 1],
@@ -194,7 +196,7 @@ async function seedProgress() {
         );
     }
   }
-  const notes = registry.subscriptions.find((s) => s.id.startsWith('notes.'));
+  const notes = registry.subscriptions.find((s) => s.id === 'notes.mastery-progress-note-refine');
   if (!notes) throw new Error('notes subscriber missing');
   const attempt = await source('effect-attempt', 'attempt');
   // YUK-1614: legacy enqueued rows have no completion contract and must not
@@ -242,9 +244,9 @@ describe('YUK-766 subscription progress backup', () => {
     await testDb().execute(sql`DROP TABLE IF EXISTS test_subscription_snapshot_memory`);
   });
 
-  // @invariant data: archive keeps seven subscribers, seven states, and one shared publish event
+  // @invariant data: archive keeps nine subscribers, seven states, and one shared publish event
   // @fails-if omit admission enqueue or the return wake, or split the publish source
-  it('archives all seven live subscriber identities, seven delivery states and effect provenance', async () => {
+  it('archives all nine live subscriber identities, seven delivery states and effect provenance', async () => {
     const { registry } = await seedProgress();
     const data = decode(await archive());
     expect(data.event_subscription_checkpoint).toHaveLength(subscriberCount);

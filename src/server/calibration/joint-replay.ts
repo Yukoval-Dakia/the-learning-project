@@ -14,7 +14,7 @@
 // 二元 outcome 子集上算（ece() 的标签类型契约）。
 //
 // READ-ONLY / REPORT-ONLY：绝不翻 flag、绝不写库。DB 读取在
-// scripts/replay-joint-calibration.ts（thin seam，镜像 audit-calibration 的 loader 纪律）。
+// scripts/replay-joint-calibration.ts（thin seam，镜像 ops-calibration 的 loader 纪律）。
 
 import {
   type DifficultyEvidencePoint,

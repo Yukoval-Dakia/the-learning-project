@@ -261,7 +261,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/practice/jobs/quiz_gen.ts',
+    file: 'src/capabilities/practice/jobs/quiz_gen_persist.ts',
     marker: '.insert(artifact)',
     role: 'event-native-by-caller',
     note: 'Quiz artifact INSERT and artifact_create share the generation transaction and timestamp.',
@@ -282,7 +282,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/notes/server/learning-intent-note.ts',
+    file: 'src/kernel/records/learning-intent-note-birth.ts',
     marker: '.insert(artifact)',
     role: 'event-native-by-caller',
     note: 'Tx-only learning-intent materialization emits artifact_create from the returned row with the supplied creation timestamp.',

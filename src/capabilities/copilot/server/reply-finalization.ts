@@ -27,7 +27,7 @@ import type { CopilotPrimaryView } from './turns';
 // JSON-serializable.
 export const COPILOT_REPLY_TRACE_MAX_CALLS = Number.MAX_SAFE_INTEGER;
 
-const MAX_REPLY_CHARS = 64_000;
+export const COPILOT_REPLY_CHAR_LIMIT = 64_000;
 const FINALIZATION_FAILURE_REPLY = '这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。';
 const PROVIDER_REJECTION_REPLY = '模型服务拒绝了请求(400)，具体参数原因尚未定位，本次未完成回答';
 
@@ -367,7 +367,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     const startVersion = traceVersion;
     const startTraceSha = digestTrace(trace);
     try {
-      if (terminalText.length > MAX_REPLY_CHARS || terminalText.trim().length === 0) {
+      if (terminalText.length > COPILOT_REPLY_CHAR_LIMIT || terminalText.trim().length === 0) {
         throw new Error('terminal Markdown must be non-empty and within the reply limit');
       }
       if (trace.some((entry) => entry.status === 'in_flight' || entry.output_sha256 === null)) {

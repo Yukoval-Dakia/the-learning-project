@@ -1,15 +1,12 @@
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { TaskTextResult } from '@/ai/task-result';
-import {
-  type InterventionAuthoringContextT,
-  guardInterventionPreparationStage,
-} from '@/capabilities/agency/public';
 import { getLearnerLocale } from '@/capabilities/task-registry';
 import { parseJsonObjectLoose } from '@/core/json-extract';
 import {
   CurrentInterventionPackageReviewAudit,
   INTERVENTION_CONTRACT_VERSION,
   INTERVENTION_REVIEW_AUDIT_PROTOCOL_VERSION,
+  type InterventionAuthoringContextT,
   InterventionIndependentSolutionAudit,
   type InterventionIndependentSolutionAuditT,
   InterventionPackage,
@@ -24,7 +21,6 @@ import {
   type InterventionPackageReviewStructuredOutputT,
   type InterventionPackageReviewTaskInputT,
   type InterventionPackageT,
-  InterventionPreparationAttempt,
   type InterventionPreparationAttemptT,
   InterventionQuestionContentValidationAudit,
   type InterventionQuestionContentValidationAuditT,
@@ -34,11 +30,10 @@ import {
   buildInterventionQuestionContentValidationTaskInput,
   extractInterventionReferenceReverseCausationClaims,
   interventionRequiredOperationDigest,
-  validateInterventionPackageDeterministically,
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/kernel/read-models/subject-profile';
+import { authorInterventionPackage as runInterventionAuthorSequence } from '@/kernel/records/intervention-package-author';
 import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import {
@@ -1051,99 +1046,44 @@ export async function reviewInterventionPackageCandidate(
   });
 }
 
+export const interventionAuthorStages = {
+  authorPackage: runPackageAuthor,
+  reviewPackage: (input: {
+    db: Db;
+    runTaskFn: TaskTextRunFn;
+    context: InterventionAuthoringContextT;
+    packageValue: InterventionPackageT;
+    subjectProfile: SubjectProfile;
+    beforeEachPaidCall: () => Promise<string | null>;
+  }) =>
+    reviewInterventionPackageCandidateWithPolicy({
+      ...input,
+      // Rebinding happens on the intervention record before activation.
+      reviewRunBindingPolicy: 'defer_to_preparation_record',
+    }),
+};
+
 /**
  * Intervention-scoped QuestionAuthor public entry.
  *
  * The only domain identifier supplied by the caller is `interventionId`.
- * Snapshot and recommendation are hydrated from Agency's public reader; raw
- * claim/evidence/method/package inputs cannot bypass authoritative lineage.
+ * The attempt sequence (guards, subject profile, deterministic check) lives in
+ * the kernel. This module supplies the paid author and review stages.
  */
 export async function authorInterventionPackage(
   db: Db,
   interventionId: string,
   deps: InterventionAuthorDeps,
 ): Promise<InterventionPreparationAttemptT> {
-  const attempt = deps.attempt ?? 1;
-  const authorGuard = await guardInterventionPreparationStage(
-    db,
-    interventionId,
-    deps.preparationJobId,
-  );
-  if (authorGuard.status !== 'ready') {
-    return InterventionPreparationAttempt.parse({
-      kind: 'author_failed',
-      attempt,
-      failure_code: authorGuard.status,
-    });
-  }
-  const context = authorGuard.context;
-  const subjectProfile = await resolveSubjectProfileForKnowledgeIdsStrict(db, [
-    context.snapshot.conjecture.knowledge_id,
-  ]);
   const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
-
-  const authored = await runPackageAuthor(runTaskFn, context, subjectProfile);
-  if (authored.status === 'invalid') {
-    return InterventionPreparationAttempt.parse({
-      kind: 'author_failed',
-      attempt,
-      ...(authored.taskRunId ? { author_task_run_id: authored.taskRunId } : {}),
-      failure_code: authored.failureCode,
-    });
-  }
-
-  const reviewGuard = await guardInterventionPreparationStage(
+  return runInterventionAuthorSequence(
     db,
     interventionId,
-    deps.preparationJobId,
-  );
-  if (reviewGuard.status !== 'ready') {
-    return InterventionPreparationAttempt.parse({
-      kind: 'author_failed',
-      attempt,
-      author_task_run_id: authored.package.author_task_run_id,
-      failure_code: reviewGuard.status,
-    });
-  }
-
-  let nextGuard: Awaited<ReturnType<typeof guardInterventionPreparationStage>> | null = reviewGuard;
-  // Comparator is a separate invocation, but it no longer self-certifies its
-  // blind solve. The shared FULL validator performs three strict solves first.
-  const reviewed = await reviewInterventionPackageCandidateWithPolicy({
-    db,
-    runTaskFn,
-    context: reviewGuard.context,
-    packageValue: authored.package,
-    subjectProfile,
-    // This authoring result is immediately rebound to the authoritative
-    // intervention record by prepareInterventionWave before activation.
-    reviewRunBindingPolicy: 'defer_to_preparation_record',
-    beforeEachPaidCall: async () => {
-      const guard =
-        nextGuard ??
-        (await guardInterventionPreparationStage(db, interventionId, deps.preparationJobId));
-      nextGuard = null;
-      return guard.status === 'ready' ? null : guard.status;
+    {
+      attempt: deps.attempt ?? 1,
+      preparationJobId: deps.preparationJobId,
+      runTaskFn,
     },
-  });
-  if (reviewed.status === 'invalid') {
-    return InterventionPreparationAttempt.parse({
-      kind: 'author_failed',
-      attempt,
-      author_task_run_id: authored.package.author_task_run_id,
-      ...(reviewed.taskRunIds.length > 0 ? { validator_task_run_ids: reviewed.taskRunIds } : {}),
-      failure_code: reviewed.failureCode,
-    });
-  }
-  const deterministicFailures = validateInterventionPackageDeterministically(
-    context,
-    authored.package,
+    interventionAuthorStages,
   );
-  return InterventionPreparationAttempt.parse({
-    kind: 'reviewed_package',
-    attempt,
-    package: authored.package,
-    review: reviewed.review,
-    deterministic_failure_codes: deterministicFailures,
-  });
 }

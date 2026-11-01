@@ -1,3 +1,4 @@
+import { QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION } from '@/core/schema/event';
 import {
   API_ERROR_RESPONSES,
   ApiErrorResponseSchema,
@@ -171,6 +172,12 @@ export const practiceCapability = defineCapability({
       // YUK-1514 — serving-hold command ledger (reverify / recheck_source /
       // release_verify_hold); the per-key idempotency + pending_action anchor.
       'experimental:question_serving_action',
+      // Quiz draft verification ledger. Agency subscribes and turns a committed
+      // non-promotion into a coach pool-gap hint; the verify job does not call Agency.
+      'experimental:quiz_verify',
+      // Inference only: repeated independent wrongs against independent corrects
+      // on other admitted questions of the same KC. Not a serving hold.
+      QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION,
     ],
   },
   subscriptions: {

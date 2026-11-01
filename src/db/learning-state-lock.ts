@@ -1,9 +1,13 @@
 // Shared PostgreSQL transaction locks for learning writes: global G and sorted caller keys.
-// This module owns the lock; it has no server or capability runtime dependency.
+// G's hashtext argument comes from the lock registry; this module still issues the same SQL.
+// No server or capability runtime dependency.
 import { sql } from 'drizzle-orm';
+import { advisoryLockRegistry, deriveHashtextLockKey } from '@/kernel/locks/registry';
 import type { Db, Tx } from './client';
 
-export const LEARNING_STATE_WRITE_LOCK = 'learning-state:write';
+export const LEARNING_STATE_WRITE_LOCK = deriveHashtextLockKey(
+  advisoryLockRegistry.learningStateWrite,
+);
 
 /** Serialize every material_fsrs_state / mastery_state mutation before any row access. */
 export async function acquireLearningStateWriteLock(tx: Tx): Promise<void> {

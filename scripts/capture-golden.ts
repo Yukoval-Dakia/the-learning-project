@@ -159,7 +159,7 @@ async function main(): Promise<void> {
 }
 
 // CLI-gate: only run as the CLI entry point so the DB test can import captureGolden. Path-resolved
-// form (review O5 — matches audit-projection.ts): robust to a transpiled .js filename too.
+// form (review O5 — matches ops-projection.ts): robust to a transpiled .js filename too.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main()
     .then(() => process.exit(0))

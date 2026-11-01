@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ConjectureProbeSignatureMatch } from '../conjecture-probe-response';
 import { EvidenceCitation } from './judgment';
+import { GraderKcMasteryEvidence } from './kc-mastery-evidence';
 
 // Models report a published rule decision or a published level. They never
 // return aggregation weights, new criteria, a normalized coarse score or FSRS ratings.
@@ -16,10 +17,18 @@ export const AssessmentRuleDecision = z.discriminatedUnion('kind', [
       rule_id: z.string().min(1),
       points_awarded: z.number().min(0),
       probe_signature_match: ConjectureProbeSignatureMatch.optional(),
+      kc_mastery_evidence: GraderKcMasteryEvidence.optional(),
       ...support,
     })
     .strict(),
-  z.object({ kind: z.literal('level'), level_id: z.string().min(1), ...support }).strict(),
+  z
+    .object({
+      kind: z.literal('level'),
+      level_id: z.string().min(1),
+      kc_mastery_evidence: GraderKcMasteryEvidence.optional(),
+      ...support,
+    })
+    .strict(),
   z
     .object({
       kind: z.literal('pending'),
@@ -73,6 +82,7 @@ export const AssessmentRubricDecision = z.discriminatedUnion('kind', [
         .min(1),
       confidence: z.number().min(0).max(1).optional(),
       feedback_md: z.string().optional(),
+      kc_mastery_evidence: GraderKcMasteryEvidence.optional(),
     })
     .strict(),
   z

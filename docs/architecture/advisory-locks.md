@@ -1,5 +1,9 @@
 # Advisory locks — 静态登记（排序待核）
 
+> **注册表骨架**
+>
+> `src/kernel/locks/registry.ts` 提供命名空间和键派生。已接入五处：学习状态写锁 `acquireLearningStateWriteLock`（`src/db/learning-state-lock.ts`）经 `deriveHashtextLockKey` 取 `learning-state:write`，SQL 仍是 `pg_advisory_xact_lock(hashtext('learning-state:write'))`；provider attempt 三族经 `deriveHashtextExtendedLockKey` 拼前缀与有序后缀，SQL 仍是 `pg_advisory_xact_lock(hashtextextended(key, 0))`，语句在 `src/server/ai/provider-attempt-lock.ts`，调用点是 `createProviderAttemptLifecycle`；探针三族经 `deriveIntLiteralLockKey` / `deriveHashtextExtendedIdentityLock`，SQL 仍是 `pg_advisory_xact_lock(4064403)` 与 `pg_advisory_xact_lock(hashtextextended(id, 0|1))`，语句在 `src/capabilities/agency/server/conjecture/probe-lock.ts`，调用点是 `probe-lifecycle.ts`；intervention 三族（instance 前缀加 `interventionId`/`version`，source 前缀加 `eventId`，corrections-all 为固定文本 `intervention:corrections:all`）经同一 salt 0 语句，语句在 `src/capabilities/agency/server/intervention/intervention-lock.ts`。调用点是 `store.ts` 的激活、诊断复盘与准备失败，`recoverEligibleInterventionDiagnostics`（学习状态写锁之后取 instance），以及 `recoverPreparingInterventions` 与 `handleProbeResultInterventionDelivery`（都是 corrections:all 之后取 source）。`writeEvents` 用同一 corrections:all / source 键，语句在 `src/kernel/events/correction-lock.ts`：先 corrections:all，再按已排序的 target 取 source。review-answer-consumer 仍是同键裸 SQL；note handoff completion 经 `deriveHashtextExtendedLockKey` 拼 `notes:handoff-complete:<completionId>`，SQL 在 `src/kernel/locks/note-handoff-complete-lock.ts`，调用点是 `src/kernel/records/note-handoff-protocol.ts` 的 dispatch completion 事务。其余站点未迁。`pnpm audit:advisory-locks` 对生产 `.ts` 里、批准的注册表/helper 之外的裸 `pg_advisory*` / `pg_try_advisory*` 按基线计数失败；已有站点记在 `scripts/audit-advisory-locks-baseline.json`。这不是获取顺序证明，也不核销 §3 的 81 族。
+
 > **修正状态（2026-10-20，四项已修）**
 >
 > 上一版登记的四项事实错误已按源码 revision
@@ -38,7 +42,7 @@
 
 > 锁登记文档（YUK-1577）。本文件是**静态盘点**：全仓生产代码 `pg_advisory*` /
 > `pg_try_advisory*` / `pg_advisory_unlock` 文本站点的归并清单，以及待核对的
-> 排序登记。它不注册、不校验、不改任何锁行为——生产代码 diff 为 0。
+> 排序登记。文首的注册表覆盖学习状态写锁、provider attempt 三族、探针三族，intervention 的 instance / corrections:all / source（store、恢复与 probe-result 订阅走 intervention-lock；`writeEvents` 的 corrections:all / source 走 correction-lock，键相同），以及 note handoff completion；本盘点仍不证明获取顺序，也不改其余站点的锁行为。§3 的 sites 列仍是这些语句迁入 helper 之前的直接语句计数。
 >
 > 原始证据（仓库外，随 head 固化，含已修错误）：
 > `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/fc619732/`
@@ -54,7 +58,7 @@ pg_advisory_unlock|pg_advisory_lock`（`-g '*.ts'`，排除 `*.test.ts`/`*.spec.
 | 类别 | 站点数 |
 |---|---|
 | `pg_advisory_xact_lock` 直接语句 | 120 |
-| `pg_try_advisory_xact_lock` | 1（provider-session-admission.ts:458） |
+| `pg_try_advisory_xact_lock` | 1（provider-session-admission.ts:126） |
 | `pg_try_advisory_lock`（session 级） | 5（helper×2、model_slice、migration-apply、rehearsal fence） |
 | `pg_advisory_unlock` | 4（helper×2、model_slice、migration-apply） |
 | 注释/文档引用（非语句） | 18 |
@@ -88,7 +92,11 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 
 | Helper | 位置 | 语义 |
 |---|---|---|
-| `acquireLearningStateWriteLock` / `withLearningStateLock` | `src/db/learning-state-lock.ts` | G=`hashtext('learning-state:write')` xact；Db 开真 tx、Tx 内联；tx 内可重入 |
+| `acquireLearningStateWriteLock` / `withLearningStateLock` | `src/db/learning-state-lock.ts` | G=`hashtext('learning-state:write')` xact，键文本来自 `advisoryLockRegistry.learningStateWrite`；Db 开真 tx、Tx 内联；tx 内可重入 |
+| `lockProviderAttempt` / `lockProviderAttemptLane` / `lockProviderAttemptOperationKind` | `src/server/ai/provider-attempt-lock.ts` | 三族 `hashtextextended(key, 0)` xact；键为注册表前缀加有序后缀。取锁顺序仍在 `createProviderAttemptLifecycle` |
+| `lockProbeServe` / `lockProbeQuestion` / `lockConjectureFold` | `src/capabilities/agency/server/conjecture/probe-lock.ts` | serve cap 为 `4064403`；probe question 为 `hashtextextended(id, 0)`；conjecture fold 为 `hashtextextended(id, 1)`。参数来自注册表。取锁时机仍在 `probe-lifecycle.ts` |
+| `lockInterventionInstance` / `lockInterventionCorrectionsAll` / `lockInterventionSource` | `src/capabilities/agency/server/intervention/intervention-lock.ts` | 三族 `hashtextextended(key, 0)` xact。instance 为 `intervention:<id>:<version>`，corrections-all 为固定 `intervention:corrections:all`，source 为 `intervention:source:<eventId>`。`store.ts` 保持原顺序；恢复与 `handleProbeResultInterventionDelivery` 都是 corrections:all 之后取 source；`recoverEligibleInterventionDiagnostics` 在学习状态写锁之后取 instance |
+| `lockEventCorrectionsAll` / `lockEventCorrectionSource` | `src/kernel/events/correction-lock.ts` | 与上表 corrections:all、source 共用注册表键，语句仍是 `hashtextextended(key, 0)` xact。`writeEvents` 在有修正目标时先取 corrections:all，再按已排序 target 取 source |
 | `acquireSortedAdvisoryLocks` | `src/db/learning-state-lock.ts` | `hashtext(<ns>:<id>)` sorted，consistent-ordering 原语 |
 | `withinSessionAdvisoryLock` | `src/db/session-advisory-lock.ts` | reserved conn `pg_try_advisory_lock`+retry 至 deadline；`begin`/`savepoint` 补丁到持锁连接，inner tx 全部跑在同一 backend；finally unlock+release |
 | `acquireProposalDecisionLock` | `src/kernel/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0 |
@@ -227,7 +235,7 @@ edge-evidence 版 SHA-256
   （store.ts:555→557，同 tx 调 `recordInterventionDiagnosticReview` → 内联
   `withLearningStateLock` 对已持 G 重入 :595 → instance :597）。另：
   settlement-subscription 经顶层 Db 独立 tx `G → instance`；reconcile:212 /
-  probe-result-subscription:115 / writeEvents:342 三处 `corrections:all → source`
+  probe-result-subscription:110 / writeEvents:284 三处 `corrections:all → source`
   不持 G；failInterventionPreparation:757 独取 instance（无 G）；
   review-answer-consumer:45→47 `copilot-execution-settlement → source`。
   **guard**：所有“同 tx 同取 instance 与 corrections”的已见路径全程持 G

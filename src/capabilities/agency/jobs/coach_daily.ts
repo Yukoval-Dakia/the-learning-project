@@ -15,12 +15,11 @@ import {
 // Coach consumes the out-of-band agent-note HINT channel (for_agent='coach'), where
 // quiz_verify leaves question_pool_gap notes. Hints, not facts; additive only.
 import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
-import {
-  type DailyReviewPlanInputs,
-  resolveDailyReviewPlanInputs,
-} from '@/capabilities/practice/public';
 import { type ReviewPlanNumbers, computeReviewPlanNumbers } from '@/core/daily-review-plan';
 import { CoachPlanDraft, type CoachPlanDraftT, composeTodayPlan } from '@/core/schema/coach';
+// Derived sub-skill weak points (YUK-1582): read-only landing points with first-hand
+// evidence; attention pressure for knowledge_focus, never scheduling state.
+import type { ActionableWeakPointDerivationT } from '@/core/schema/weak-point';
 import type { Db } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
 // Per-(kind, relation) accept-learned reason digest for the Coach input, scoped to the
@@ -35,6 +34,11 @@ import {
   type ActiveGoal,
   listActiveGoalsWithResolvedScope,
 } from '@/kernel/read-models/active-goal-scope';
+import {
+  type DailyReviewPlanInputs,
+  resolveDailyReviewPlanInputs,
+} from '@/kernel/read-models/daily-review-plan';
+import { deriveActionableWeakPoints } from '@/kernel/read-models/weak-points';
 // Active/pinned learning items' knowledge_ids feed the Coach input as ATTENTION PRESSURE
 // only; never scheduling/bookkeeping, never the FSRS-due review backbone.
 import { type ActiveLearningItem, listActiveLearningItems } from '@/kernel/records/learning-items';
@@ -63,8 +67,16 @@ const COACH_AGENT_NOTES_GUIDANCE =
 // bookkeeping/scheduling) and must never suppress the FSRS-due review backbone.
 const COACH_BRIEF_GUIDANCE =
   " The review_session_proposal is a strategic BRIEF. Its count, estimated_minutes, time_box_minutes and subject_mix are computed by the system from the due queue and the daily budget and are supplied in `review_plan`; treat them as read-only facts and do not output or estimate your own numbers. You own knowledge_focus (ranked knowledge_ids to prioritise, drawn from due/weak signals AND the active_items attention pressure) and intent_tags. active_items carry the knowledge_ids of the user's in-progress / pinned learning items: treat them as attention pressure that biases knowledge_focus, NEVER as bookkeeping or scheduling state, and never let them suppress the FSRS-due review backbone (ND-5 / D11). When active_items is empty, derive knowledge_focus from due/weak signals alone.";
-export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
-export const COACH_WEEKLY_OBJECTIVE = `Produce a weekly TodayPlan draft with a \`weekly_reflection\` summary plus any plan adjustments / maintenance proposals via propose_* tools. Only write proposals; never mutate user data directly.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
+// Weak-point guidance: derived diagnostic landing points (sub-skill granularity, each with
+// first-hand evidence refs and its own training destination). Attention pressure only —
+// additive, inert when the list is empty.
+const COACH_WEAK_POINTS_GUIDANCE =
+  ' When weak_points is present, each entry is a system-derived actionable weak point at sub-skill granularity with its evidence refs and a training_destination (concept_review / retrieval_practice → concept material or no-hint retrieval drills; procedural_practice / discrimination_probe → targeted step practice or a discriminating probe). Use them to bias knowledge_focus ranking and intent_tags toward the strongest cells, and phrase daily_focus around the named targets. Treat them as derived reads, not ground truth: never invent additional weak points, never attach percentages to them, and never let them suppress or replace the FSRS-due review backbone. When weak_points is empty, behave exactly as before.';
+export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
+export const COACH_WEEKLY_OBJECTIVE = `Produce a weekly TodayPlan draft with a \`weekly_reflection\` summary plus any plan adjustments / maintenance proposals via propose_* tools. Only write proposals; never mutate user data directly.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
+
+/** How many derived weak points ride the Coach input (bounded for prompt budget). */
+const COACH_MAX_WEAK_POINTS = 8;
 
 // Kinds Coach can act on; the digest is scoped to these so prompt budget isn't spent on
 // kinds Coach cannot act on.
@@ -94,6 +106,7 @@ type ListActiveItemsFn = (db: Db) => Promise<ActiveLearningItem[]>;
 type LoadProposalFeedbackFn = (db: Db) => Promise<ProposalFeedbackCell[]>;
 type ReadAgentNotesFn = (db: Db, now: Date) => Promise<AgentNote[]>;
 type ResolvePlanInputsFn = (db: Db) => Promise<DailyReviewPlanInputs>;
+type DeriveWeakPointsFn = (db: Db, input: { now: Date }) => Promise<ActionableWeakPointDerivationT>;
 
 export type CoachRunKind = 'daily' | 'weekly';
 
@@ -107,6 +120,7 @@ export interface CoachRunDeps {
   readAgentNotesFn?: ReadAgentNotesFn;
   // Injects the due + budget + pace facts.
   resolvePlanInputsFn?: ResolvePlanInputsFn;
+  deriveWeakPointsFn?: DeriveWeakPointsFn;
   now?: () => Date;
 }
 
@@ -119,6 +133,7 @@ function buildCoachInput(
   feedbackDigest: ProposalFeedbackCell[],
   agentNotes: AgentNote[],
   activeItems: ActiveLearningItem[],
+  weakPoints: ActionableWeakPointDerivationT,
   reviewPlan: ReviewPlanNumbers & {
     due_count: number;
     budget_minutes: number;
@@ -168,6 +183,20 @@ function buildCoachInput(
       source_task_kind: n.source_task_kind,
       ...(n.confidence !== undefined ? { confidence: n.confidence } : {}),
     })),
+    // System-derived sub-skill weak points (YUK-1582); derived reads with first-hand
+    // evidence, attention pressure only. Empty list = no derivation, no guidance effect.
+    weak_points: weakPoints.weak_points.slice(0, COACH_MAX_WEAK_POINTS).map((wp) => ({
+      knowledge_id: wp.knowledge_id,
+      knowledge_name: wp.knowledge_name,
+      kind: wp.kind,
+      target_md: wp.target_md,
+      training_destination: wp.training_destination,
+      evidence_strength: wp.evidence_strength,
+      failure_count: wp.failure_count,
+      evidence_event_ids: wp.evidence_refs.map((ref) => ref.event_id),
+      last_seen_at: wp.last_seen_at.toISOString(),
+    })),
+    weak_point_unknowns: weakPoints.unknowns,
     // Read-only plan facts; the model never owns these numbers.
     review_plan: reviewPlan,
     budget: {
@@ -204,6 +233,9 @@ export async function runCoach(
   const readNotes =
     deps.readAgentNotesFn ??
     ((db: Db, now: Date) => readAgentNotes(db, { for_agent: 'coach', now }));
+  const deriveWeakPoints =
+    deps.deriveWeakPointsFn ??
+    ((db: Db, input: { now: Date }) => deriveActionableWeakPoints(db, input));
   const triggerActorRef = runKind === 'daily' ? 'nightly_coach' : 'weekly_coach';
   const objective = runKind === 'daily' ? COACH_DAILY_OBJECTIVE : COACH_WEEKLY_OBJECTIVE;
 
@@ -259,6 +291,7 @@ export async function runCoach(
       const feedbackDigest = await loadFeedback(db);
       const agentNotes = await readNotes(db, now);
       const activeItems = await listItems(db);
+      const weakPoints = await deriveWeakPoints(db, { now });
       // Read before the trigger write and outside the scan failure boundary, closing over
       // the same anchored `now` the trigger event uses. The computed facts ride the input
       // and the success payload.
@@ -287,6 +320,7 @@ export async function runCoach(
           feedbackDigest,
           agentNotes,
           activeItems,
+          weakPoints,
           reviewPlan,
         );
     },

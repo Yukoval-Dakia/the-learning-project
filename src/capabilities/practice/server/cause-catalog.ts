@@ -17,13 +17,13 @@ import { pendingProposalWithCooldown } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-context';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import {
   type CauseCategoryProposeInput,
   parseCauseCategoryProposeOutput,
 } from '../tasks/cause-category-propose';
 import { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './cause-overlay';
-import { loadFailureLearningKnowledgeContext } from './knowledge-runtime';
 import type { PracticeTaskRunFn } from './task-runtime';
 
 /** other 复发触发提议的阈值（ticket「复发 ≥k」的 k——粗粒度，owner 仍会 vet）。 */

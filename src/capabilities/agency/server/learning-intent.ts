@@ -13,13 +13,13 @@
 // triggers remain out of scope.
 
 import { and, eq, isNull } from 'drizzle-orm';
-import type { CreateLearningIntentKnowledgeNodeFn } from '@/capabilities/knowledge/public';
-import type { CreateLearningIntentNoteFn } from '@/capabilities/notes/public';
 import { newId } from '@/core/ids';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeLearningItemProposal } from '@/kernel/proposals/producers';
+import { createKnowledgeNodeFromEvents } from '@/kernel/records/knowledge-node-birth';
+import type { CreateLearningIntentNoteFn } from '@/kernel/records/learning-intent-note-birth';
 import { createPendingLearningItem } from '@/kernel/records/learning-items';
 import {
   getDefaultSubjectRegistry,
@@ -349,6 +349,45 @@ export async function planLearningIntent(
 }
 
 // ---------- acceptLearningIntent ----------
+
+export interface CreateLearningIntentKnowledgeNodeInput {
+  id: string;
+  name: string;
+  domain: string | null;
+  parentId: string | null;
+  createdAt: Date;
+  causedByEventId: string;
+  /**
+   * The topic root is a learning goal, not a testable KC: it must not carry
+   * θ/PFA/FSRS readings or enter supply candidates. Absent means the default 'kc'.
+   */
+  role?: 'goal' | 'container';
+}
+
+export type CreateLearningIntentKnowledgeNodeFn = (
+  tx: Tx,
+  input: CreateLearningIntentKnowledgeNodeInput,
+) => Promise<void>;
+
+/** Approved node birth for one learning-intent accept. Provenance stays with the caller. */
+export const createLearningIntentKnowledgeNode: CreateLearningIntentKnowledgeNodeFn = async (
+  tx,
+  input,
+) => {
+  await createKnowledgeNodeFromEvents(
+    tx,
+    {
+      id: input.id,
+      name: input.name,
+      domain: input.domain,
+      parent_id: input.parentId,
+      proposed_by_ai: true,
+      role: input.role,
+      created_at: input.createdAt,
+    },
+    { actorRef: 'learning-intent-accept', causedByEventId: input.causedByEventId },
+  );
+};
 
 export interface AcceptLearningIntentParams {
   db: Db;

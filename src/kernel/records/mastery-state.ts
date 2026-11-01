@@ -5,6 +5,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
+import type { KcEvidenceApply } from '@/core/schema/assessment/kc-mastery-evidence';
 import type { ThetaRowSnapshotT } from '@/core/schema/event/state-snapshot';
 import {
   ELO_K_GLOBAL,
@@ -178,8 +179,13 @@ export interface UpdateThetaForAttemptInput {
   knowledgeIds: string[];
   /** read item_calibration.b for the anchor. */
   questionId: string;
-  /** success=1, failure=0. */
+  /** success=1, failure=0. Ignored per KC when kcEvidence is set. */
   outcome: 0 | 1;
+  /**
+   * Per-KC mastery evidence. When set, each listed KC uses its own outcome and
+   * weight instead of one shared conjunctive bit. Weights are not answer scores.
+   */
+  kcEvidence?: readonly KcEvidenceApply[];
   /** fallback anchor source (1-5) when no item_calibration.b. */
   difficulty: number;
   /**
@@ -210,8 +216,9 @@ export interface UpdateThetaForAttemptInput {
 /**
  * 热路径唯一入口：一次 attempt 更新该题挂的全部 KC 的 θ̂，同 tx 内调用。
  *
- * 多 KC：更新全部 KC；答对每 KC 等量小幅上调；答错按 (1 − p(L_k)) 归一化分摊，
- * 越可能没掌握的 KC 担更多责任。b 锚只读：item_calibration.b（bWeight=1）→
+ * 多 KC：默认答对每 KC 等量小幅上调，答错按 (1 − p(L_k)) 归一化分摊。
+ * kcEvidence 存在时改为各 KC 自己的方向和权重，不再共用一位。
+ * b 锚只读：item_calibration.b（bWeight=1）→
  * difficultyToLogitB（弱锚降权），G4 在线路径绝不写 b。
  *
  * Returns the per-KC before/after snapshot, including A2 'ability_global' rows. `before`
@@ -325,6 +332,10 @@ export async function updateThetaForAttempt(
     return domain !== null ? (globalThetaOfDomain.get(domain) ?? 0) : 0;
   };
   const effectiveThetas = states.map((s) => s.theta + globalOf(s.id));
+  const evidenceById = new Map((input.kcEvidence ?? []).map((row) => [row.kc_id, row] as const));
+  const perKc = evidenceById.size > 0;
+  const outcomeOf = (id: string): 0 | 1 => evidenceById.get(id)?.outcome ?? input.outcome;
+  const weightOf = (id: string): number => evidenceById.get(id)?.weight ?? 1;
 
   // 3. 多 KC 合取 credit（owner 拍板 MLE，review SF-1）：conjunctiveCredits 返回每 KC 的
   //    log 似然梯度；单 KC 退化为标准 Elo。
@@ -335,9 +346,13 @@ export async function updateThetaForAttempt(
   //
   // The credit formula is unchanged under A2; only the θ input becomes effectiveTheta.
   const rtMs = input.responseTimeMs;
-  const useSrt = SRT_ENABLED && typeof rtMs === 'number' && Number.isFinite(rtMs);
+  const useSrt = !perKc && SRT_ENABLED && typeof rtMs === 'number' && Number.isFinite(rtMs);
   let credits: number[];
-  if (useSrt) {
+  if (perKc) {
+    credits = states.map(
+      (s, i) => weightOf(s.id) * (outcomeOf(s.id) - expectedScore(effectiveThetas[i] ?? 0, b)),
+    );
+  } else if (useSrt) {
     const d = resolveSrtTimeLimit(input.difficulty); // seconds (module const)
     const tSeconds = (rtMs as number) / 1000; // ms → s
     // A1 (YUK-450) — Fisher-conditioned TIME WEIGHT. Flag ON → w = 4·pItem·(1−pItem): peak 1
@@ -361,22 +376,29 @@ export async function updateThetaForAttempt(
   for (let i = 0; i < states.length; i++) {
     const s = states[i];
     const k = eloK(s.evidence);
+    const kcOutcome = outcomeOf(s.id);
     const newTheta = s.theta + k * bWeight * credits[i];
     // Accumulate θ precision with the same b anchor and bWeight as the θ̂ update; evaluate
     // Fisher information at the pre-update θ. A2 keeps this on the KC layer, not effective θ.
-    const newPrecision = updateThetaPrecision(s.precision, s.theta, b, bWeight);
+    // A fractional evidence weight scales information by weight² inside updateThetaPrecision.
+    const newPrecision = updateThetaPrecision(
+      s.precision,
+      s.theta,
+      b,
+      perKc ? bWeight * weightOf(s.id) : bWeight,
+    );
     const delta = newTheta - s.theta;
     // Retain correct-RT samples without feeding them into θ̂; other attempts leave the buffer alone.
     const rtBuffer =
-      useSrt && input.outcome === 1
+      useSrt && kcOutcome === 1
         ? { samples: pushRtCorrectSample(s.rtBuffer, rtMs as number) }
         : undefined;
     await upsertMasteryState(tx, {
       subject_id: s.id,
       theta_hat: newTheta,
       evidence_count: s.evidence + 1,
-      success_count: s.success + (input.outcome === 1 ? 1 : 0),
-      fail_count: s.fail + (input.outcome === 0 ? 1 : 0),
+      success_count: s.success + (kcOutcome === 1 ? 1 : 0),
+      fail_count: s.fail + (kcOutcome === 0 ? 1 : 0),
       last_outcome_at: input.now,
       theta_precision: newPrecision,
       rt_correct_ms: rtBuffer,
@@ -421,6 +443,14 @@ export async function updateThetaForAttempt(
       const domainCredits = creditsByDomain.get(domain) as number[];
       // Mean of the domain's KC credits → one update per attempt per domain.
       const aggregateCredit = domainCredits.reduce((acc, c) => acc + c, 0) / domainCredits.length;
+      const domainKcIds = states.flatMap((s) =>
+        (domainOfKc.get(s.id) ?? null) === domain ? [s.id] : [],
+      );
+      const domainOutcome: 0 | 1 = perKc
+        ? domainKcIds.every((id) => outcomeOf(id) === 1)
+          ? 1
+          : 0
+        : input.outcome;
       // Serialize the θ_global row in a per-domain namespace disjoint from the per-KC keys.
       // Acquired after the sorted per-KC locks, so no new deadlock cycle.
       await tx.execute(
@@ -450,8 +480,8 @@ export async function updateThetaForAttempt(
         subject_id: domain,
         theta_hat: lockedNewGlobal,
         evidence_count: globalEvidence,
-        success_count: (lockedRow?.success_count ?? 0) + (input.outcome === 1 ? 1 : 0),
-        fail_count: (lockedRow?.fail_count ?? 0) + (input.outcome === 0 ? 1 : 0),
+        success_count: (lockedRow?.success_count ?? 0) + (domainOutcome === 1 ? 1 : 0),
+        fail_count: (lockedRow?.fail_count ?? 0) + (domainOutcome === 0 ? 1 : 0),
         last_outcome_at: input.now,
         last_theta_delta: lockedNewGlobal - lockedGlobal,
       });
@@ -494,7 +524,7 @@ export async function updateThetaForAttempt(
     const s = states[0];
     const bPrime = b - globalOf(s.id);
     const prior = s.gridPrior ?? uniformPrior();
-    const posterior = gridUpdate(prior, bPrime, input.outcome);
+    const posterior = gridUpdate(prior, bPrime, outcomeOf(s.id));
     // Patch only the shadow column written by the per-KC loop, leaving θ̂/counts untouched
     // so the source-of-truth path cannot be perturbed.
     await tx

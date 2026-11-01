@@ -80,6 +80,7 @@ import {
 } from '../server/copilot-execution';
 import { findPersistedDurableReply } from '../server/copilot-run-outcome';
 import { resolveCopilotModeCompletion } from '../server/mode-completion';
+import { fileSealedCorrection } from '../server/no-progress-loop';
 import type { CopilotReplyFinalizationReceipt } from '../server/reply-finalization';
 import type { SpawnBudgetObservation } from '../server/subagents';
 import { projectCopilotActivity } from '../server/tool-activity';
@@ -717,6 +718,17 @@ async function executeAcceptedCopilotRun(
             );
           } else if (!answerOnly) {
             await discardWorkerCursor(tx);
+          }
+          if (result.correctionFiling) {
+            // After the reply insert, on its transaction: a rolled-back seal drops the proposal.
+            try {
+              await fileSealedCorrection(tx, result.correctionFiling);
+            } catch (error) {
+              console.error('[copilot_run] correction proposal not filed with sealed reply', {
+                runId,
+                error,
+              });
+            }
           }
           return {
             outcome: 'success' as const,

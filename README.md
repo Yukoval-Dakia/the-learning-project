@@ -188,7 +188,7 @@ key 环境变量名与协议（openai-completions / anthropic-messages）即可�
 结尾，`DATABASE_*`、`POSTGRES_*`、`INTERNAL_TOKEN`、云凭据等共享 env 名会被拒绝
 （值会被当作 Bearer 发到该 provider）。baseURL 的 host 还必须在 models.dev 目录
 声明的模型端点内（另含代码声明的 anthropic/openai 直连根、Xiaomi Token Plan
-三区与 DashScope embedding 双端点）；保存与执行解析时校验，registry 与目录 bucket
+三区、DashScope embedding 双端点与北京 workspace MaaS host `ws-tcvd1h9009b55vr0.cn-beijing.maas.aliyuncs.com`）；保存与执行解析时校验，registry 与目录 bucket
 未同步时任务解析 fail closed，不向旧端点发 key；非默认端口必须由目录端点自身声明，
 否则拒绝。`api_key_env` 还与 provider 绑定：内置 provider 的凭据 env
 （如 `ZHIPU_API_KEY`、`OPENROUTER_API_KEY`）只能配给自家端点，内置端点也只收
@@ -219,7 +219,7 @@ API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，�
 ```bash
 pnpm typecheck        # tsrs --noEmit（root + server/start/tsconfig.json）
 pnpm lint             # biome check .
-pnpm lint:ratchet     # warning/info 总数 ratchet（基线 scripts/lint-baseline.json，只降不升；修完 warning 后 pnpm lint:ratchet:update 重生基线）
+pnpm lint:ratchet     # warning/info 总数必须等于 scripts/lint-baseline.json；高于或低于都失败，低于时同一次改动里 pnpm lint:ratchet:update 收紧基线（拒绝上调）
 pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI Gate 不调用它，而是跑 .github/workflows/ci-gate.yml 的矩阵（见 docs/agents/development-workflow.md）；本机按 AGENTS.md 只跑 scoped tests
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
