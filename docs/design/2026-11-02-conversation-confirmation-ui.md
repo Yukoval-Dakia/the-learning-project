@@ -29,7 +29,7 @@ fetch 后 main 固定 `02778f6d11bcd82f372c9b1b5452d80cc18bd537`；新分支 `fe
 ## 实际消息/展示/命令/恢复链
 
 1. 原 `/api/copilot/turns` → 原 CopilotClient/listTurns → run-tracker/refetchTurns → replayToMessages/projectCopilotReply。新增 metadata 使用原 ConfirmationOccurrence 严格version1 decoder；assessment保持opaque交Practice解码。非法确认metadata显示不兼容，不降成按钮或普通确认。
-2. 同一 occurrence 在消息流只取最早可见行作稳定展示位置，后续重复metadata不再建第二张邀请；同LI较早sequence不再开放动作。服务端仍是occurrence真相源，这不是客户端去重/发行owner。旧行实际snapshot每次由原turns更新，最终提交后才解除旧动作等待，供明确request_again。
+2. 同一 occurrence 在消息流只取最早可见行作稳定展示位置，后续重复metadata不再建第二张邀请；仅在同一occurrence_id内比较sequence并禁用较早revision；不同occurrence之间不比较sequence。request_again的新occurrence从sequence=0开始，不受同LI旧occurrence的revision影响。服务端仍是occurrence真相源，这不是客户端去重/发行owner。旧行实际snapshot每次由原turns更新，最终提交后才解除旧动作等待，供明确request_again。
 3. RootShell静态导入Practice原名ConfirmationAssessment，用依赖窄client的稳定memo renderer传CompanionMount→CompanionPanel→MessageStream→MessageRow→ConfirmationBlock。Copilot UI没有Practice value import。StartWorkbenchShell注入原startIssuanceStateClient/startResponseDraftClient；SPA走Practice已有HTTP client。不存在React server/practice-port、新registry或第二runtime。
 4. Practice内完整展示owner校验occurrence/session、冻结DTO issuance/revision、原submission/group身份，使用原PracticeIssuanceDto/ResponseSet/GroupEvidence。优先原PresentationBlocks（select/blank/open等），旧格式用原ResponseSlotField/nativeResponseEntry；材料用原MathMarkdown/StimulusFigure。无usePracticeSubmit导航状态机，无伪review session。
 5. 草稿初始只读turns内原draft与epoch；明确“保存草稿”走原saveResponseDraft/evaluation_group_ref/expected_save_epoch。失败/冲突停止提交，明确“载入原草稿”只get原issuance并替换本地未保存内容，沿原epoch；收到已有提交或不可用原因锁住并刷新turns。上传/未取得完整附件回执时禁止提交。未点保存的本地输入不承诺跨重挂载持久化，恢复按钮明确替换含义。

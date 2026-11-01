@@ -46,8 +46,8 @@ export function MessageStream({
     if (o) {
       if (!firstOccurrence.has(o.occurrence_id)) firstOccurrence.set(o.occurrence_id, m.id);
       latestSequence.set(
-        o.learning_item_id,
-        Math.max(latestSequence.get(o.learning_item_id) ?? -1, o.sequence),
+        o.occurrence_id,
+        Math.max(latestSequence.get(o.occurrence_id) ?? -1, o.sequence),
       );
     }
   }
@@ -73,7 +73,7 @@ export function MessageStream({
                 disabled ||
                 (!!message.confirmation &&
                   message.confirmation.occurrence.sequence !==
-                    latestSequence.get(message.confirmation.occurrence.learning_item_id))
+                    latestSequence.get(message.confirmation.occurrence.occurrence_id))
               }
               onConfirmation={(action) =>
                 message.confirmation
