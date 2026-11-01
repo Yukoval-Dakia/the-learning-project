@@ -6,9 +6,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Btn } from '@/ui/primitives/Btn';
 import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { PracticeListHeader } from '@/ui-next/practice-studio/PracticeQueue';
 import { prefersReducedMotion, useSharedMorph } from '@/ui-next/public';
 import './practice-face.css';
 
@@ -108,6 +108,7 @@ export default function PracticeFacePage({
   writeItemParam,
   historyBack,
 }: PracticeFacePageProps) {
+  const soloTitle = useRef<HTMLHeadingElement>(null);
   const { advanceStreamItem, getStream, getQuestionDetail } = usePracticeClient();
   const qc = useQueryClient();
   const [scopeKnowledgeId, setScopeKnowledgeId] = useState<string | null>(() => {
@@ -216,7 +217,7 @@ export default function PracticeFacePage({
         focusTitleOnLand.current = false;
         const active = document.activeElement;
         if (!active || active === document.body) {
-          node.querySelector<HTMLElement>('.un-ps-title')?.focus({ preventScroll: true });
+          soloTitle.current?.focus({ preventScroll: true });
         }
       }
       const landed = morph.land(node);
@@ -670,12 +671,12 @@ export default function PracticeFacePage({
   if (mode.kind === 'solo') {
     const pos = items.findIndex((it) => it.id === mode.item.id) + 1;
     body = (
-      // YUK-1473 — the single-question page (layout 纸面) is the only solo view (owner
-      // 2026-10-16: 「纸面 默认新不用开关」); no flag, no layout picker.
+      // YUK-1473 — cleanroom presentation, with the same question-level engine identity.
       <PracticeSolo
         // key=item.id：换题（含原地换下一题）时强制重挂：作答引擎每题一份，旧题照常卸载（草稿
         // unmount flush），判分/作答/草稿冲突/计时/吉祥物 state 不跨题残留。
         key={mode.item.id}
+        titleRef={soloTitle}
         item={mode.item}
         sessionId={visibleStream?.scope?.session_id ?? null}
         pos={pos || mode.item.position}
@@ -737,48 +738,14 @@ export default function PracticeFacePage({
       />
     );
   } else {
-    let eyebrowText = '今日练习 · 按当前学习状态编排';
-    if (scopeKnowledgeId) {
-      eyebrowText = `知识点专项 · ${visibleStream?.scope?.label ?? '正在读取范围'}`;
-    } else if (view === 'shelf') {
-      eyebrowText = '练习卷 · 待做 / 在做 / 已完成';
-    }
     body = (
       <>
-        <div className="page-head">
-          <span className="eyebrow">{eyebrowText}</span>
-          <div className="pface-head-row">
-            <h1 className="page-title">{scopeKnowledgeId ? '针对性练习' : '练习'}</h1>
-            {scopeKnowledgeId ? (
-              <Btn size="sm" variant="ghost" icon="arrowL" onClick={clearScope}>
-                返回今日流
-              </Btn>
-            ) : (
-              <div className="seg" role="tablist" aria-label="练习视图">
-                <button
-                  type="button"
-                  className={view === 'stream' ? 'on' : ''}
-                  role="tab"
-                  aria-selected={view === 'stream'}
-                  onClick={() => switchView('stream')}
-                >
-                  <LoomIcon name="review" size={14} />
-                  今日流
-                </button>
-                <button
-                  type="button"
-                  className={view === 'shelf' ? 'on' : ''}
-                  role="tab"
-                  aria-selected={view === 'shelf'}
-                  onClick={() => switchView('shelf')}
-                >
-                  <LoomIcon name="archive" size={14} />
-                  卷架
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
+        <PracticeListHeader
+          scopeLabel={scopeKnowledgeId ? (visibleStream?.scope?.label ?? '正在读取范围') : null}
+          view={view}
+          onView={switchView}
+          onClearScope={clearScope}
+        />
         {view === 'shelf' ? (
           <PfShelf
             openPaper={(artifactId) => setMode({ kind: 'paper', artifactId })}
@@ -804,7 +771,18 @@ export default function PracticeFacePage({
   return (
     // The single-question page (纸面) lays out its own width and padding, as in the loft; the list,
     // paper and retro views keep the shared page padding.
-    <main className={mode.kind === 'solo' ? 'pface-loom pface-next' : 'page wide pface-loom'}>
+    <main
+      id="main-content"
+      data-ui-next={mode.kind === 'list' ? '' : undefined}
+      data-un-m3e={mode.kind === 'list' ? 'practice-foundation' : undefined}
+      className={
+        mode.kind === 'solo'
+          ? 'pface-loom pface-next'
+          : mode.kind === 'list'
+            ? 'un-root un-pq-page pface-loom'
+            : 'page wide pface-loom'
+      }
+    >
       <div className="pface-root" ref={attachHost}>
         <div aria-live="assertive">
           {actionFailure && (
@@ -828,13 +806,15 @@ export default function PracticeFacePage({
         </p>
       </div>
       {createPortal(
-        <div className="pf-toasts" aria-live="polite">
-          {toasts.map((t) => (
-            <div key={t.id} className={`pf-toast${t.tone === 'info' ? ' t-info' : ''}`}>
-              <LoomIcon name={(t.icon as never) ?? 'sparkle'} size={15} className="ico" />
-              <span>{t.text}</span>
-            </div>
-          ))}
+        <div data-ui-next="" data-un-m3e="practice-studio" className="un-st un-st-portal">
+          <div className="pf-toasts" aria-live="polite">
+            {toasts.map((t) => (
+              <div key={t.id} className={`pf-toast${t.tone === 'info' ? ' t-info' : ''}`}>
+                <LoomIcon name={(t.icon as never) ?? 'sparkle'} size={15} className="ico" />
+                <span>{t.text}</span>
+              </div>
+            ))}
+          </div>
         </div>,
         document.body,
       )}

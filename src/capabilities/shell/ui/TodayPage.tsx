@@ -1,14 +1,3 @@
-// M4-T6 (YUK-319)：工作台页 host（today 重生）。
-// 设计基准 docs/design/loom-refresh/project/screen-today.jsx（ScreenToday
-// L203-241 布局序列）：hero → kpi-row → 今日之线 → 进行中·待裁决 dash-grid
-// 双列 → AgentNotesBoard → 本周编织。数据源 /api/workbench/summary 聚合 +
-// agency 包 agent-notes（limit=20 紧凑档）+ notes 包 AI 改动近 24h。
-// 偏差（today 重生设计自由）：①「今日之线」真数据无 threads 源，从 summary
-// 派生（due>0 复习缕 / proposals>0 裁决缕），全零不渲染该 section；②成本面
-// （设计稿 CostRibbon）已于 M5-T4b (YUK-321) 接通 /api/cost/today
-// （observability 包端点）；设计稿的预算线（budget + bar 占比）无数据源，
-// 见 CostRibbon 组件注释。
-
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
@@ -26,9 +15,9 @@ import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
+import { TodayHeader } from '@/ui-next/today/TodayHeader';
 import { AiChangesStrip } from './blocks/AiChangesStrip';
 import { KpiRow } from './blocks/KpiRow';
-import { LoomHero } from './blocks/LoomHero';
 import { ProfileBand } from './blocks/ProfileBand';
 import { ProposalStrip } from './blocks/ProposalStrip';
 import { SessionsStrip } from './blocks/SessionsStrip';
@@ -65,8 +54,14 @@ export function deriveThreads(s: WorkbenchSummary): Thread[] {
     threads.push({
       id: 'review',
       label: '复习',
-      title: `${s.kpi.due_count} 个学习项到期`,
-      sub: '根据复习间隔，它们已进入今天的队列。',
+      title:
+        'due_count_scope' in s.kpi && s.kpi.due_count_scope === 'actionable_queue_sample'
+          ? `本批可复习 ${s.kpi.due_count} 项`
+          : `${s.kpi.due_count} 个学习项到期`,
+      sub:
+        'due_count_scope' in s.kpi && s.kpi.due_count_scope === 'actionable_queue_sample'
+          ? '当前这批可以开始复习'
+          : '根据复习间隔，它们已进入今天的队列。',
       cta: '开始复习',
       badge: `${s.kpi.due_count} 项`,
       icon: 'review',
@@ -453,21 +448,17 @@ export function OvernightDigestBand({ navigate }: { navigate: (to: string) => vo
 
 function ThreadCard({ th, navigate }: { th: Thread; navigate: (to: string) => void }) {
   return (
-    <LoomCard hover pad className="thread-card" onClick={() => navigate(th.route)}>
-      <div className="thread-top">
-        <span className={`card-icon accent thread-ic tone-${th.tone}`}>
-          <LoomIcon name={th.icon} size={18} />
-        </span>
-        <LoomBadge tone={th.tone}>{th.badge}</LoomBadge>
-        <LoomIcon name="arrow" size={16} className="thread-arrow" />
-      </div>
-      <div className="thread-label meta">{th.label}</div>
-      <div className="thread-title serif">{th.title}</div>
-      <div className="thread-sub">{th.sub}</div>
-      <div className="thread-cta">
-        {th.cta} <LoomIcon name="arrow" size={14} />
-      </div>
-    </LoomCard>
+    <button type="button" className="un-today-task" onClick={() => navigate(th.route)}>
+      <span className="un-today-meta">
+        {th.label} · {th.badge}
+      </span>
+      <strong>{th.title}</strong>
+      <span>{th.sub}</span>
+      <span className="un-today-task-action">
+        {th.cta}
+        <LoomIcon name="arrow" size={18} />
+      </span>
+    </button>
   );
 }
 
@@ -501,8 +492,12 @@ export default function TodayPage({ navigate }: TodayPageProps) {
   }
 
   return (
-    <main className="page wide today-page today-loom">
-      <LoomHero navigate={navigate} onCopilot={() => openCopilot()} />
+    <main
+      data-ui-next=""
+      data-un-m3e="practice-foundation"
+      className="un-root un-today-page today-page today-loom"
+    >
+      <TodayHeader navigate={navigate} onCompanion={() => openCopilot()} />
 
       <Stateful
         status={summaryStatus}
@@ -545,8 +540,8 @@ export default function TodayPage({ navigate }: TodayPageProps) {
 
             {threads.length > 0 && (
               <>
-                <SectionLabel count={`${threads.length} 缕`}>今日之线</SectionLabel>
-                <div className="threads-grid stagger">
+                <h2 className="un-today-section-title">接下来做什么</h2>
+                <div className="un-today-tasks">
                   {threads.map((th) => (
                     <ThreadCard key={th.id} th={th} navigate={navigate} />
                   ))}
@@ -554,13 +549,13 @@ export default function TodayPage({ navigate }: TodayPageProps) {
               </>
             )}
 
-            <SectionLabel>进行中 · 待裁决</SectionLabel>
-            <div className="dash-grid">
-              <div className="dash-col">
+            <h2 className="un-today-section-title">继续学习与检查改动</h2>
+            <div className="un-today-columns">
+              <div className="un-today-column">
                 <SessionsStrip sessions={s.active_sessions} now={now} navigate={navigate} />
                 <AiChangesStrip now={now} />
               </div>
-              <div className="dash-col">
+              <div className="un-today-column">
                 <ProposalStrip proposals={s.proposals} navigate={navigate} />
                 <CostRibbon />
               </div>
@@ -579,7 +574,7 @@ export default function TodayPage({ navigate }: TodayPageProps) {
 
       {s && (
         <>
-          <SectionLabel>本周编织</SectionLabel>
+          <h2 className="un-today-section-title">过去 7 天</h2>
           <LoomCard pad>
             <div className="card-head">
               <span className="card-icon accent">

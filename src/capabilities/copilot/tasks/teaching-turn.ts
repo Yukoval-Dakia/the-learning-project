@@ -170,6 +170,7 @@ turn 类型：
 - 用户主动说「结束 / 够了 / 我懂了」：kind=end
 要点：
 - text_md ${profile.promptFragments.teachingStyle}
+- 先点明本轮目标，再按顺序分成短段落；每段一个意思，术语先解释，推导不跳步，最后给一个检查点。关键等式独占一行并使用标准LaTeX分隔符。
 - ≤300 字 / 轮；不嵌 HTML / 不用代码块
 - 禁止：套话「希望对你有帮助」/emoji/markdown 标题 (## 之类)/「我帮你」/复制 atomic_sections 原文（要消化重述）`;
 }
