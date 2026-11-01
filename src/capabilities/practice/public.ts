@@ -10,6 +10,7 @@ export {
   ReviewAnswerAttachmentSchema,
 } from '@/kernel/tools/review-answer';
 export { IssueAssessmentBodySchema } from './api/assessment-contracts';
+export { embedQuestionTextForIngest } from './jobs/embed_backfill';
 export type { QuizGenJobData } from './jobs/quiz_gen';
 export { runQuestionAdmissionChecks } from './server/admission/checks';
 // Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
@@ -17,7 +18,6 @@ export { runQuestionAdmissionChecks } from './server/admission/checks';
 export { issueAssessment } from './server/assessment/issue';
 export { projectIssuanceResult } from './server/assessment/issue-response';
 export { getIssuanceState, saveResponseDraft, saveSubmission } from './server/assessment/submit';
-
 export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
 export {
   type CalibrationSampleDispatch,
@@ -26,7 +26,6 @@ export {
 // practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
-
 export { scheduleReview } from './server/fsrs';
 export {
   DEFAULT_MAX_PER_RUN,
@@ -57,8 +56,11 @@ export { isLiveQuestionReference } from './server/live-question-reference';
 // The seed-root anchor regex is owned by placement-scope but consumed from server/*;
 // re-export it here so consumers stay on the public seam.
 export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
-
-export { claimHttpSourceDuplicate } from './server/question-supply/ingest-dedup';
+export {
+  claimHttpSourceDuplicate,
+  findVectorNearDuplicate,
+  vectorNearHoldMetadata,
+} from './server/question-supply/ingest-dedup';
 export {
   DEDUP_OVERLAP_THRESHOLD,
   maxNgramOverlap,

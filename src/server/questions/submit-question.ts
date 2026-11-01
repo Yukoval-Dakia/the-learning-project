@@ -1,6 +1,7 @@
 import type { Db, Tx } from '@/db/client';
 import type { question } from '@/db/schema';
 import type { PublishQuestionGroupResult } from '@/kernel/records/assessment-publication';
+import { DraftSubmitVectorRequired, prepareDraftSubmitVector } from './draft-submit-dedup';
 import {
   SubmitTransactionAbort,
   drainSubmitVerifyIntents,
@@ -142,7 +143,18 @@ export async function submitDraftQuestion(
 ): Promise<SubmitResult> {
   let out: SubmitResult;
   try {
-    out = await db.transaction((tx) => submitDraftQuestionInTx(tx, input, ctx));
+    try {
+      out = await db.transaction((tx) => submitDraftQuestionInTx(tx, input, ctx));
+    } catch (error) {
+      if (!(error instanceof DraftSubmitVectorRequired)) throw error;
+      const draftVector = await prepareDraftSubmitVector(
+        db,
+        error,
+        input.request_id,
+        ctx.taskRunId ? 'worker' : 'api',
+      );
+      out = await db.transaction((tx) => submitDraftQuestionInTx(tx, input, ctx, { draftVector }));
+    }
   } catch (error) {
     if (error instanceof SubmitTransactionAbort) return error.receipt;
     throw error;
