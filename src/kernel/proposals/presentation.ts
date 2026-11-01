@@ -1,11 +1,18 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import remarkMath from 'remark-math';
 import remarkParse from 'remark-parse';
 import { unified } from 'unified';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { learning_session, question, question_block, source_document } from '@/db/schema';
+import {
+  knowledge,
+  learning_session,
+  question,
+  question_block,
+  source_document,
+} from '@/db/schema';
+import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
@@ -64,6 +71,7 @@ export interface ProposalPresentation {
   title: string;
   change_summary: ProposalSummaryItem[];
   evidence_labels: Record<string, string>;
+  knowledge_edge?: { from_label: string; to_label: string };
   block_merge: {
     primary: ProposalBlockPreview | null;
     merged: ProposalBlockPreview[];
@@ -978,6 +986,22 @@ async function loadIngestionSessionNotations(
   return notationBySession;
 }
 
+/** Only the referenced active learner-visible names belong in an edge preview. */
+async function loadEdgeKnowledgeNames(
+  db: DbLike,
+  ids: readonly string[],
+): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  for (const chunk of chunksOf(ids.filter(isLearnerVisibleKnowledgeId))) {
+    const rows = await db
+      .select({ id: knowledge.id, name: knowledge.name })
+      .from(knowledge)
+      .where(and(inArray(knowledge.id, chunk), isNull(knowledge.archived_at)));
+    for (const row of rows) names.set(row.id, row.name);
+  }
+  return names;
+}
+
 /** Batch-enrich proposal cards without an N+1 query per block-merge card. */
 export async function loadProposalPresentations(
   db: DbLike,
@@ -987,6 +1011,7 @@ export async function loadProposalPresentations(
   const blockIds = new Set<string>();
   const questionIds = new Set<string>();
   const blockMergeSessionIds = new Set<string>();
+  const edgeKnowledgeIds = new Set<string>();
   for (const proposal of proposals) {
     presentations.set(proposal.id, {
       title: proposalDisplayTitle(proposal.payload),
@@ -999,10 +1024,63 @@ export async function loadProposalPresentations(
       questionIds.add(evidence.id);
       blockIds.add(evidence.id);
     }
+    if (proposal.payload.kind === 'knowledge_edge') {
+      edgeKnowledgeIds.add(proposal.payload.proposed_change.from_knowledge_id);
+      edgeKnowledgeIds.add(proposal.payload.proposed_change.to_knowledge_id);
+    }
     if (proposal.payload.kind !== 'block_merge') continue;
     blockMergeSessionIds.add(proposal.payload.proposed_change.ingestion_session_id);
     blockIds.add(proposal.payload.proposed_change.primary_block_id);
     for (const id of proposal.payload.proposed_change.merge_block_ids) blockIds.add(id);
+  }
+
+  if (edgeKnowledgeIds.size > 0) {
+    let queryFailure: unknown;
+    let names: Map<string, string>;
+    try {
+      const readNames = async (labelTx: Tx) => {
+        try {
+          return await loadEdgeKnowledgeNames(labelTx, [...edgeKnowledgeIds]);
+        } catch (error) {
+          queryFailure = error;
+          throw error;
+        }
+      };
+      names =
+        '$client' in db
+          ? await db.transaction(readNames, { accessMode: 'read only' })
+          : await db.transaction(readNames);
+    } catch (error) {
+      // The driver must finish rollback and rethrow the query error itself. A
+      // different error can be a failed rollback; never report that as recovery.
+      const cause = error instanceof Error ? error.cause : undefined;
+      const pgError = cause ?? error;
+      const code =
+        typeof pgError === 'object' && pgError !== null && 'code' in pgError
+          ? pgError.code
+          : undefined;
+      // Only statement-local data/access errors degrade. Connection, transaction,
+      // cancellation and resource failures remain on the original failure path.
+      if (
+        error !== queryFailure ||
+        typeof code !== 'string' ||
+        !/^(22|42)[0-9A-Z]{3}$/.test(code)
+      ) {
+        throw error;
+      }
+      console.warn('[proposal_presentation] knowledge edge names unavailable');
+      names = new Map();
+    }
+    for (const proposal of proposals) {
+      if (proposal.payload.kind !== 'knowledge_edge') continue;
+      const presentation = presentations.get(proposal.id);
+      if (!presentation) continue;
+      const change = proposal.payload.proposed_change;
+      presentation.knowledge_edge = {
+        from_label: names.get(change.from_knowledge_id) ?? change.from_knowledge_id.slice(0, 8),
+        to_label: names.get(change.to_knowledge_id) ?? change.to_knowledge_id.slice(0, 8),
+      };
+    }
   }
 
   if (blockIds.size === 0 && questionIds.size === 0) return presentations;
