@@ -13,7 +13,7 @@ import { startLibraryQuestionMistakesClient } from './library-question-mistakes-
 import { startLibraryQuestionRestoreClient } from './library-question-restore-client';
 import { startLibraryQuestionUpdateClient } from './library-question-update-client';
 import { startLibraryServingActionClient } from './library-serving-action-client';
-import { startWorkbenchClient } from './workbench-client';
+import { startKnowledgeTreeClient } from './workbench-client';
 
 export const startLibraryClient: LibraryClient = {
   listMistakes: startLibraryMistakesClient,
@@ -26,7 +26,7 @@ export const startLibraryClient: LibraryClient = {
   patchQuestion: startLibraryQuestionUpdateClient,
   restoreQuestion: startLibraryQuestionRestoreClient,
   listQuestionMistakes: startLibraryQuestionMistakesClient,
-  getQuestionKnowledgeOptions: () => startWorkbenchClient.getTree(),
+  getQuestionKnowledgeOptions: () => startKnowledgeTreeClient(),
   getDraftDetail: startLibraryDraftDetailClient,
   getQuestionFull: startLibraryQuestionDetailClient,
 };
