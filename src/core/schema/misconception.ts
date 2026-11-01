@@ -16,6 +16,7 @@
 // Time dimension: `archived_at` is the ONLY time field besides created/updated.
 // Explicitly no valid_at/invalid_at. The heterogeneous misconception_edge is
 // structural, not bi-temporal.
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { AgentRef } from './business';
 
@@ -74,3 +75,12 @@ export const MisconceptionInsert = z
   })
   .strict();
 export type MisconceptionInsert = z.infer<typeof MisconceptionInsert>;
+
+// 身份约定：misconception id 由 conjecture 身份（cause_category × knowledge_id）哈希决定，
+// 同身份再提议 upsert 同一行而不是铸重复身份。住在 core（而非 agency promote writer）是因为
+// kernel 读面要按同一约定匹配 live misconception，两边不得各自实现一份哈希。
+export function misconceptionIdForConjecture(causeCategory: string, knowledgeId: string): string {
+  const key = `${causeCategory}::${knowledgeId}`;
+  const hash = createHash('sha256').update(key).digest('hex').slice(0, 24);
+  return `misc_${hash}`;
+}

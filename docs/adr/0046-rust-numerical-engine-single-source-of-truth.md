@@ -108,13 +108,13 @@ napi 约定——**反转后从 dev/CI 惯例升为生产正确性契约**，本
 
 ### R3 · SRT 数值路径 + continuous-credit — `src/core/theta.ts`（消费面在 `src/server/**`）
 
-- **是什么**：`srtOutcome`（:342，continuous time-aware outcome-analog ∈ [0,1]，含 SRT_MIN_SIGNAL 地板与 YUK-450 timeWeight 端点精确插值）、`conjunctiveCredits`（:136）/ `conjunctiveCreditsContinuous`（:533，binary 端点逐位 delegate）、`quantile`（:460，type-7 精确分位数）、`resolveSrtTimeLimitFromQuantile`（:503，YUK-449 quantile-d，dark-ship）。+−×÷ 判据成立。消费面：`src/server/mastery/state.ts`、`src/server/calibration/replay.ts`、`src/server/simulator/forward-sampler.ts`。
+- **是什么**：`srtOutcome`（:342，continuous time-aware outcome-analog ∈ [0,1]，含 SRT_MIN_SIGNAL 地板与 YUK-450 timeWeight 端点精确插值）、`conjunctiveCredits`（:136）/ `conjunctiveCreditsContinuous`（:533，binary 端点逐位 delegate）、`quantile`（:460，type-7 精确分位数）、`resolveSrtTimeLimitFromQuantile`（:503，YUK-449 quantile-d，dark-ship）。+−×÷ 判据成立。消费面：`src/kernel/records/mastery-state.ts`、`src/server/calibration/replay.ts`、`src/server/simulator/forward-sampler.ts`。
 - **为何登记**：不是本 ADR 之后的暗渡 —— 基线（srtOutcome / continuous credit，2026-06-19 YUK-433；conjunctiveCredits 更早）**早于本 ADR accept**，本就是 §4「既有 live TS（theta.ts/pfa.ts/calibration/*）触到才迁」点名的迁移窗口本体；YUK-449/450 精修（quantile / timeWeight，2026-06-27，本 ADR 之后）是对该 live 模块的 **dark-ship 扩展**（`SRT_D_FROM_QUANTILE` / `SRT_FISHER_WEIGHT_ENABLED` 默认 false，flag-off 与既有路径逐位相同）—— 严格说触了「新数值 kernel 一律 Rust-first」，本段将其显式收编进 §4 窗口而非默认豁免。它们在 θ̂ 生产热路径上（live 喂 `mastery_state`），§4 的「不主动重写在飞 θ̂ / 逐计算点迁 / port 即删 / 每步独立可验可回滚」正是为这条路设计的风险控制；提前 port 反而违反 §4 的 forward-only 纪律。
 - **PORT TRIGGER**：① theta.ts 的 §4 逐计算点迁移本身（逐点 port 进 crate → 切 binding → 删 TS）；② **「触到」即迁** —— 任何需要改这些 helper 的新特性落地时按 §4 port 而非继续扩 TS；③ #41/#45 需要 θ̂ 家族数字的浏览器 bit-exact 重算（WASM 面）。任何 port 必须 frozen-input replay compatible：与迁移前冻结 fixtures byte-identical；不可 bit-exact 的差异须有显式版本与历史解释策略（YUK-679 扩展 scope 条款）。
 
 ### R4 · Fisher information 家族 — `src/core/theta.ts`
 
-- **是什么**：`fisherInformation`（:579，Rasch 单观测 I = p(1−p)）、`fisherInformation3pl`（:606，3PL 闭式，c=0 端点 delegate 保 1PL 逐位）、`thetaSe`（:620，SE = 1/√precision）、`updateThetaPrecision`（:632，weight²·I 累积）。消费面：`src/core/selection-signals.ts`（MFI/KLP）、`src/core/theta-grid.ts`、`src/server/mastery/state.ts` precision 累积、`src/core/recompute/derive-profile-kc.ts`。
+- **是什么**：`fisherInformation`（:579，Rasch 单观测 I = p(1−p)）、`fisherInformation3pl`（:606，3PL 闭式，c=0 端点 delegate 保 1PL 逐位）、`thetaSe`（:620，SE = 1/√precision）、`updateThetaPrecision`（:632，weight²·I 累积）。消费面：`src/core/selection-signals.ts`（MFI/KLP）、`src/core/theta-grid.ts`、`src/kernel/records/mastery-state.ts` precision 累积、`src/core/recompute/derive-profile-kc.ts`。
 - **为何登记**：同 R3 —— `fisherInformation` / `thetaSe` / `updateThetaPrecision`（2026-06-15，YUK-361 P2）**早于本 ADR**，属 §4 既有 live θ̂ 的一部分；`fisherInformation3pl`（2026-07-03，YUK-436 BKT 嫁接的算法层供件）为本 ADR 之后新增，但 dark-ship（`THETA_GRID_ENABLED` 默认 false，非选择题 c=0 路径与 1PL 逐位相同）且 n=1 红线合规（c 是 `choices_md.length` 派生的设计常量，非拟合参数）。显式收编进 §4 窗口，port 随 theta.ts 整体迁移走。
 - **PORT TRIGGER**：同 R3（theta.ts 逐点迁移 / 触到即 port / 浏览器 bit-exact 需求，replay-compatibility 条款同）；外加：`THETA_GRID_ENABLED` 未来翻转上线时，若 grid 路径成为 recurring 重算负载，随该翻转优先评估 port。
 

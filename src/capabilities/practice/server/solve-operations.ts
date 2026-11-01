@@ -1,4 +1,5 @@
 import type { ZodType } from 'zod';
+import { readHelpLatency } from '@/ai/help-latency';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
@@ -98,6 +99,8 @@ export async function requestPracticeSolveHint(
       issuanceId: parsed.data?.issuance_id,
     });
     const hintRequestId = newId();
+    const { help_latency: helpLatency, ...publicOutcome } = outcome;
+    const denominator = helpLatency ? readHelpLatency([helpLatency]).denominator : undefined;
     await writeEvent(db, {
       id: hintRequestId,
       session_id: sessionId,
@@ -106,22 +109,26 @@ export async function requestPracticeSolveHint(
       action: 'experimental:hint_request',
       subject_kind: 'question',
       subject_id: questionId,
-      outcome: outcome.status === 'ok' ? 'success' : 'failure',
+      outcome: publicOutcome.status === 'ok' ? 'success' : 'failure',
       payload: {
         hint_index: hintIndex,
-        ...(outcome.status === 'ok'
+        ...(helpLatency && denominator ? { help_latency: helpLatency, denominator } : {}),
+        ...(publicOutcome.status === 'ok'
           ? {}
           : {
-              status: outcome.status,
-              reason: outcome.reason,
-              ...(outcome.status === 'fallback' ? { help_kind: outcome.help.kind } : {}),
+              status: publicOutcome.status,
+              reason: publicOutcome.reason,
+              ...(publicOutcome.stop_retry ? { stop_retry: publicOutcome.stop_retry.retry } : {}),
+              ...(publicOutcome.status === 'fallback'
+                ? { help_kind: publicOutcome.help.kind }
+                : {}),
             }),
       },
     });
-    if (outcome.status === 'ok') {
-      return { hint_request_id: hintRequestId, text_md: outcome.text_md };
+    if (publicOutcome.status === 'ok') {
+      return { hint_request_id: hintRequestId, text_md: publicOutcome.text_md };
     }
-    return { hint_request_id: hintRequestId, ...outcome };
+    return { hint_request_id: hintRequestId, ...publicOutcome };
   } catch (err) {
     if (err instanceof SolveError) {
       if (err.code === 'session_not_found' || err.code === 'question_not_found') {

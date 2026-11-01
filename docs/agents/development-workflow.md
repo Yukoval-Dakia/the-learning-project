@@ -110,7 +110,6 @@ pnpm audit:partition
 pnpm audit:question-writers
 pnpm audit:api-contracts
 pnpm audit:api-client
-pnpm audit:api-client-usage
 pnpm audit:tool-params
 pnpm audit:capability-boundaries
 pnpm audit:architecture-deepening
@@ -121,17 +120,20 @@ pnpm audit:structured-judge
 pnpm audit:test-policy
 pnpm audit:task-census
 pnpm audit:draft-status
-pnpm audit:draft-status-reads --strict
 pnpm audit:flags --strict
 pnpm audit:hub-sync-writers
-pnpm audit:provider-attempt-truth
+pnpm audit:provider-lanes
 pnpm audit:model-source
+pnpm audit:advisory-locks
+pnpm audit:relations
+pnpm audit:mastery-provenance
 ```
 
 `pnpm embed:inventory` is a read-only question-vector census (no embedding calls,
 no writes; `scripts/embed-inventory.ts`).
 
-`audit:capability-boundaries` 同时检查 public/ui-public access seam 与三张架构债
+`pnpm audit:capability-boundaries` 执行 capability `*-api.ts` 不得手写 `apiJson`
+（必须使用生成的 operations）这条不变量，并同时检查 public/ui-public access seam 与三张架构债
 ratchet（capability→server、server→capability deep、cross-capability value/SCC）。
 机器可读报告用 `pnpm audit:capability-boundaries --json`。实测 pair 比基线低时审计失败，
 运行 `pnpm audit:capability-boundaries --tighten` 收紧
@@ -175,16 +177,18 @@ CI 检查实测抵消及批准 URL、原话等字段的形状，不联网判断�
 CI 的静态 `audits_architecture` job 必须提供 `CAPABILITY_BASE_SHA`；手动 workflow 使用已有的 `test_policy_base` 输入。
 CircleCI 的事件可能缺少 PR base 和 push before，因此该 job 复用
 `scripts/ci/resolve-circle-audit-base.mjs`，将其验证后的 SHA 输出传给 `CAPABILITY_BASE_SHA`。
+分支 push 可能早于 GitHub 把提交关联到 PR；等到截止仍是同一个 open PR 才采用，中途出现第二个或身份变了立刻失败，截止时仍是 0 也失败。
 无法确认 base 时仍失败，不回退到移动分支或猜测父提交；GitHub 保留原有 event/input 来源。
 `pnpm audit:capability-boundaries:snapshot` 仍只打印实测快照，不带变更记录，不能用它覆盖基线。
 
 ### Lint warning ratchet（YUK-909）
 
-`pnpm lint:ratchet` 对 `biome check .` 的 warning/info 总数执行只降不升的 ratchet，
-CI static lane 用同一次 Biome 扫描检查 errors 与 warning/info 增长。基线在 `scripts/lint-baseline.json`：总数 +
-逐 rule 计数（信息诊断单独计数，不静默丢弃；决策已记录在文件内）。落地一个
-修 warning 的 batch 之后用 `pnpm lint:ratchet:update` 重新生成基线；该命令拒绝
-任何上调——基线只可能下降。
+`pnpm lint:ratchet` 对 `biome check .` 的 warning/info 总数要求与基线逐项相等。
+高于基线或低于基线都失败；低于基线时必须在同一改动里用 `pnpm lint:ratchet:update`
+重写基线，只报告不算通过。CI static lane 用同一次 Biome 扫描检查 errors 与
+warning/info。基线在 `scripts/lint-baseline.json`：总数 + 逐 rule 计数（信息诊断
+单独计数，不静默丢弃；决策已记录在文件内）。`lint:ratchet:update` 拒绝任何上调——
+基线只可能下降。
 
 Before a PR, run:
 
@@ -196,13 +200,11 @@ pnpm lint
 pnpm audit:schema
 pnpm audit:partition
 pnpm audit:api-client
-pnpm audit:api-client-usage
 pnpm audit:capability-boundaries
 pnpm audit:provider-lanes
 pnpm audit:profile
 pnpm audit:task-census
 pnpm audit:draft-status
-pnpm audit:draft-status-reads
 pnpm build
 ```
 
@@ -212,11 +214,15 @@ the unit/DB lanes; only verified docs-only changes skip them. Each lane computes
 `vitest.shared.ts`, and `audit:partition` rejects missing, duplicate or unassigned
 files and direct unmocked DB imports in unit files. The audit lanes run exactly the
 commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition,
-question-writers, API-contract, API-client, API-client-usage, tool-params,
+question-writers, API-contract, API-client, tool-params,
 capability-boundary, architecture-deepening, profile, learner-copy, no-learning-styles,
-structured-judge, test-policy, task-census, draft-status, strict draft-status-read, strict
-flags, hub-sync-writers, provider-attempt-truth and model-source.
-`audit:provider-lanes` is a local-only census and is not in CI.
+structured-judge, test-policy, task-census, draft-status (insert and pool-read), strict
+flags, hub-sync-writers, provider-lanes, model-source, advisory-locks, relations and
+mastery-provenance.
+`audit:provider-lanes` checks lane wiring and attempt-truth (wrapper, legacy cost, zero-cost)
+and runs in the policy audit lane.
+`audit:relations` runs in that same lane as the default report-only command; dead edges and stale declarations do not fail the step.
+`audit:mastery-provenance` runs in that same lane as the default report-only command; unguarded reads and stale tracked paths do not fail the step (`--strict` stays out of CI).
 The build lane injects secret canaries into the build environment, scans
 both SPA and Start browser artifacts, and verifies frontdoor token/exemptions via
 an isolated listener. The parity lane runs `cargo test` plus the native/WASM/JS

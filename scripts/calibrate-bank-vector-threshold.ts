@@ -40,7 +40,7 @@ import {
   BANK_VECTOR_RETRIEVAL_RULE_VERSION,
   type BankVectorRetrievalParams,
   bankVectorBaselinePredicates,
-  bankVectorCountedRank,
+  countedRankV2,
 } from '@/capabilities/practice/server/tools/bank-vector-retrieval';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
@@ -102,7 +102,8 @@ export interface BankDistanceRow {
 
 /** 与引擎 margin 基线共用同一谓词构建器（bankVectorBaselinePredicates，单一真相，
  * 两边不可能漂移）：顶层、非固定窗口诊断题、无墓碑、未撤回、带向量、无 scope 过滤。
- * 只取最近 3 行——规则判定只需要 rank-1/rank-2，第三行供 per_query 细节展示。 */
+ * 只取最近 3 行——簇分支关闭，判定仍只要 rank-1/rank-2；第三行供 per_query 展示。
+ * 不在这里扩窗口或扫 clusterMargin / K（样本未冻结，本脚本不得开始调参）。 */
 export async function fetchBankDistances(
   db: Db,
   vector: readonly number[],
@@ -155,9 +156,13 @@ export interface GridMetrics {
 }
 
 function countedIdFor(ranking: QueryRanking, params: BankVectorRetrievalParams): string | null {
-  const rank = bankVectorCountedRank(
-    ranking.rows.map((row) => row.distance),
-    params,
+  // Cluster axes are not in this grid. Samples are pending_external_fill, and
+  // this harness has no topic facts. null sameTopic keeps the closed branch
+  // from counting. Do not invent pair distances here.
+  const rank = countedRankV2(
+    ranking.rows.map((row) => ({ id: row.id, distance: row.distance })),
+    null,
+    { ...params, cluster: { status: 'closed' } },
   );
   return rank === null ? null : (ranking.rows[rank]?.id ?? null);
 }

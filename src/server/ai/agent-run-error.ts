@@ -2,7 +2,8 @@
 // Admission retains its runtime class identity; SDK result shapes stay here.
 
 import { AgentRunError } from '@/ai/agent-run-error';
-import { ProviderSessionAdmissionError } from './provider-session-admission';
+import type { SealedHelpLatency } from '@/ai/help-latency';
+import { ProviderSessionAdmissionError } from './provider-session-admission-policy';
 import type { SDKMessage } from './sdk-types';
 
 /**
@@ -16,11 +17,28 @@ export function bindAgentRunError(input: {
   taskRunId: string;
   aborted: boolean;
   costUsd?: number;
+  helpLatency?: SealedHelpLatency;
 }): AgentRunError {
   if (input.error instanceof AgentRunError) {
-    return input.costUsd === undefined
-      ? input.error
-      : new AgentRunError({ ...input.error, costUsd: input.costUsd });
+    if (input.costUsd === undefined && input.helpLatency === undefined) return input.error;
+    return new AgentRunError({
+      kind: input.error.kind,
+      taskRunId: input.error.taskRunId,
+      subtype: input.error.subtype,
+      ...(input.error.apiErrorStatus !== undefined
+        ? { apiErrorStatus: input.error.apiErrorStatus }
+        : {}),
+      errors: input.error.errors,
+      ...((input.costUsd ?? input.error.costUsd) !== undefined
+        ? { costUsd: input.costUsd ?? input.error.costUsd }
+        : {}),
+      ...(input.error.helpProviderFault
+        ? { helpProviderFault: input.error.helpProviderFault }
+        : {}),
+      ...((input.helpLatency ?? input.error.helpLatency)
+        ? { helpLatency: input.helpLatency ?? input.error.helpLatency }
+        : {}),
+    });
   }
   if (input.error instanceof ProviderSessionAdmissionError) {
     return new AgentRunError({
@@ -28,6 +46,7 @@ export function bindAgentRunError(input: {
       taskRunId: input.taskRunId,
       subtype: 'provider_admission',
       errors: [input.error.message],
+      ...(input.helpLatency ? { helpLatency: input.helpLatency } : {}),
     });
   }
   return new AgentRunError({
@@ -36,6 +55,7 @@ export function bindAgentRunError(input: {
     costUsd: input.costUsd,
     subtype: input.aborted ? 'budget_timeout' : 'runner_error',
     errors: [input.error instanceof Error ? input.error.message : String(input.error)],
+    ...(input.helpLatency ? { helpLatency: input.helpLatency } : {}),
   });
 }
 

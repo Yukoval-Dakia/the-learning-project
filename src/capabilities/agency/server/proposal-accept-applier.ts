@@ -1,5 +1,3 @@
-import { createLearningIntentKnowledgeNode } from '@/capabilities/knowledge/public';
-import { createLearningIntentNote, dispatchNoteGeneration } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import type {
@@ -14,9 +12,12 @@ import {
   findExistingRateEvent,
   writeProposalRateEvent,
 } from '@/kernel/proposals/applier-helpers';
+import { createLearningIntentNote } from '@/kernel/records/learning-intent-note-birth';
+import { dispatchNoteGeneration } from '@/kernel/records/note-handoff-protocol';
 import * as ownerRuntime from '@/server/proposals/owner-runtime';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
 import { acceptGoalScopeProposal } from './goals/accept';
+import { createLearningIntentKnowledgeNode } from './learning-intent';
 import {
   type AgencyApplierOpts,
   acceptCompletionProposal,
@@ -65,7 +66,7 @@ function runtimeOptions(db: Db, input: ProposalAcceptInput, runtime: unknown): A
   const enqueueLearningIntentNote =
     seams.enqueueLearningIntentNote ??
     (shouldEnqueueBackgroundJobs()
-      ? (artifactId: string) => dispatchNoteGeneration(db, artifactId)
+      ? (artifactId: string) => dispatchNoteGeneration(db as Db, artifactId)
       : undefined);
   return {
     ...seams,

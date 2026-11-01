@@ -1,6 +1,21 @@
 // Frozen solve sessions: issue-bound hints and atomic native submission.
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import {
+  type ExecutableHelpBasis,
+  type HelpModality,
+  type HelpTerminal,
+  type SealedHelpLatency,
+  helpCost,
+  parseSealedHelpLatency,
+  rebaseHelpMark,
+  sealHelpLatency,
+} from '@/ai/help-latency';
+import {
+  type HelpProviderFault,
+  helpExitCopy,
+  readHelpProviderFault,
+} from '@/ai/help-provider-fault';
 import { sanitizeJsonStringLiterals } from '@/core/json-sanitize';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ActivateEvaluationIntentT, PracticeIssuanceDtoT } from '@/core/schema/assessment';
@@ -23,7 +38,16 @@ import {
 import type { SaveSubmissionRequest } from './assessment/submit';
 import { createAssessmentAssetLoader } from './assets';
 import * as Tutor from './tutor-session';
-export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+export type RunTaskFn = (
+  kind: string,
+  input: unknown,
+  ctx: unknown,
+) => Promise<{
+  text: string;
+  help_latency?: SealedHelpLatency;
+  cost_usd?: number;
+  cost_basis?: 'reported' | 'estimated' | 'unknown';
+}>;
 
 // Default mastery threshold for solve-tutor: a judged attempt scoring below this
 // is enrolled as a mistake ("score < subject's mastery threshold").
@@ -118,6 +142,12 @@ export interface PlanSolveHintResult {
   text_md: string;
 }
 
+interface SolveHintAttempt extends PlanSolveHintResult {
+  attempt_latency?: SealedHelpLatency;
+  cost_usd?: number;
+  cost_basis?: 'reported' | 'estimated' | 'unknown';
+}
+
 // AF S4 / U6 (OQ6, Cross-统合) — the pure, session-FREE seed body
 // extracted from planSolveHint (was solve.ts:189-206) so the Copilot solve-skill
 // reuses the SAME TeachingTurnTask input rather than the tutor-session-bound
@@ -188,6 +218,11 @@ export function parseHintTurn(text: string): PlanSolveHintResult {
 }
 
 export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSolveHintResult> {
+  const attempt = await runSolveHintAttempt(params);
+  return { text_md: attempt.text_md };
+}
+
+async function runSolveHintAttempt(params: PlanSolveHintParams): Promise<SolveHintAttempt> {
   const { db, sessionId, hintIndex } = params;
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(db);
 
@@ -241,7 +276,7 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
     createAssessmentAssetLoader(db),
     signal,
   );
-  const { text } =
+  const ran =
     images.length > 0
       ? await runTaskFn(
           'TeachingTurnVisionTask',
@@ -256,7 +291,15 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
           signal,
           providerSessionDeadlineAt: generationDeadlineAt,
         });
-  const result = parseHintTurn(text);
+  let result: PlanSolveHintResult;
+  try {
+    result = parseHintTurn(ran.text);
+  } catch (err) {
+    if (ran.help_latency && err && typeof err === 'object') {
+      (err as { helpLatency?: SealedHelpLatency }).helpLatency = ran.help_latency;
+    }
+    throw err;
+  }
   if (issuanceId)
     await recordAssistanceExposure(db, {
       issuanceId,
@@ -265,7 +308,12 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
       impact: 'unknown',
       contentDigest: `sha256:${canonicalHash(result.text_md)}`,
     });
-  return result;
+  return {
+    text_md: result.text_md,
+    ...(ran.help_latency ? { attempt_latency: ran.help_latency } : {}),
+    ...(ran.cost_basis ? { cost_basis: ran.cost_basis } : {}),
+    ...(ran.cost_usd !== undefined ? { cost_usd: ran.cost_usd } : {}),
+  };
 }
 
 // ─── T4 — hint-generation failure fallback ──────────────────────────
@@ -283,7 +331,8 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
 // - 'deterministic_next_step' help is composed text (re-read the prompt, plus
 // an existing ready note on the question's knowledge nodes) labelled as not
 // produced by AI on demand.
-// - 'unavailable' when neither exists: the learner can retry or skip.
+// - 'unavailable' when neither exists. Quota, 502, and parse say stop and skip.
+//   Other generation failures can still retry or skip.
 
 /** Generation section budget: leaves ~2s of the 20s observation target for
  * fallback construction + response. */
@@ -301,9 +350,16 @@ const KC_NOTE_ARTIFACT_TYPES = ['note_atomic', 'note_long', 'note_hub'] as const
 export type SolveHintFallbackReason =
   | 'timeout'
   | 'provider_error'
+  | 'quota'
+  | 'bad_gateway'
   | 'parse_failed'
   | 'media_unavailable'
   | 'unknown';
+
+export interface SolveHintStopRetry {
+  retry: 'stop';
+  guidance: string;
+}
 
 export interface SolveHintFallbackHelp {
   kind: 'reference' | 'deterministic_next_step';
@@ -322,7 +378,7 @@ export interface SolveHintFallbackHelp {
 }
 
 export type SolveHintOutcome =
-  | { status: 'ok'; text_md: string }
+  | { status: 'ok'; text_md: string; help_latency?: SealedHelpLatency }
   | {
       status: 'fallback';
       reason: SolveHintFallbackReason;
@@ -335,14 +391,18 @@ export type SolveHintOutcome =
       reference_revealed: boolean;
       /** Measured wall-clock for the whole request path — never faked. */
       elapsed_ms: number;
+      stop_retry?: SolveHintStopRetry;
+      help_latency?: SealedHelpLatency;
     }
   | {
       status: 'unavailable';
       reason: SolveHintFallbackReason;
-      options: ['retry', 'skip'];
+      options: ReadonlyArray<'retry' | 'skip'>;
       /** Honest dead-end message — keeps the pre-union {text_md} client shape working. */
       text_md: string;
       elapsed_ms: number;
+      stop_retry?: SolveHintStopRetry;
+      help_latency?: SealedHelpLatency;
     };
 
 /** Generation-class failures become fallbacks; session/state/coordinate errors
@@ -354,8 +414,37 @@ function isHintGenerationFailure(err: unknown): boolean {
   return true;
 }
 
+function hintFault(reason: SolveHintFallbackReason): HelpProviderFault | undefined {
+  if (reason === 'quota') return { kind: 'quota', httpStatus: 429 };
+  if (reason === 'bad_gateway') return { kind: 'bad_gateway', httpStatus: 502 };
+  if (reason === 'parse_failed') return { kind: 'parse' };
+  return undefined;
+}
+
+function presentHintFaultExit(outcome: SolveHintOutcome): SolveHintOutcome {
+  if (outcome.status === 'ok') return outcome;
+  const fault = hintFault(outcome.reason);
+  if (!fault) return outcome;
+  const copy = helpExitCopy(fault);
+  const stop_retry: SolveHintStopRetry = { retry: 'stop', guidance: copy.stopRetryGuidance };
+  const preface = `${copy.reason}\n\n停止重试\n${copy.stopRetryGuidance}\n\n`;
+  if (outcome.status === 'unavailable') {
+    return {
+      ...outcome,
+      options: ['skip'],
+      stop_retry,
+      text_md: `${preface}这题没有封存参考，也没有可引用的笔记。先跳过这一题。`,
+    };
+  }
+  return { ...outcome, stop_retry, text_md: `${preface}${outcome.text_md}` };
+}
+
 function classifyHintFailure(err: unknown, generationAborted: boolean): SolveHintFallbackReason {
   if (generationAborted) return 'timeout';
+  const fault = readHelpProviderFault(err);
+  if (fault?.kind === 'quota') return 'quota';
+  if (fault?.kind === 'bad_gateway') return 'bad_gateway';
+  if (fault?.kind === 'parse') return 'parse_failed';
   if (err instanceof SolveError) return 'parse_failed';
   if (err instanceof ApiError) return 'media_unavailable';
   // Runner errors are matched by their self-set names/subtypes rather than
@@ -565,41 +654,129 @@ async function buildSolveHintFallback(params: {
   };
 }
 
+function attemptLatencyOf(err: unknown): SealedHelpLatency | undefined {
+  if (!err || typeof err !== 'object' || !('helpLatency' in err)) return undefined;
+  return parseSealedHelpLatency((err as { helpLatency?: unknown }).helpLatency);
+}
+
+function sealHintRequest(input: {
+  originAt: number;
+  doneMs: number;
+  settledMs: number;
+  attempt?: SealedHelpLatency;
+  terminal: HelpTerminal;
+  modality: HelpModality;
+  executable: ExecutableHelpBasis | null;
+  complete: boolean;
+  costBasis?: 'reported' | 'estimated' | 'unknown';
+  costUsd?: number;
+}): SealedHelpLatency {
+  const firstToken = input.attempt
+    ? rebaseHelpMark(input.attempt, 'first_token', input.originAt)
+    : null;
+  const settled =
+    (input.attempt ? rebaseHelpMark(input.attempt, 'calls_settled', input.originAt) : null) ??
+    input.settledMs;
+  return sealHelpLatency({
+    origin_at: input.originAt,
+    terminal: input.terminal,
+    modality: input.modality,
+    executable_help: input.executable,
+    marks: {
+      first_token_ms: firstToken,
+      first_executable_help_ms: input.executable ? input.doneMs : null,
+      complete_artifact_ms: input.complete ? input.doneMs : null,
+      calls_settled_ms: settled,
+    },
+    cost: input.attempt?.cost ?? helpCost(input.costBasis, input.costUsd),
+    progress_budget: {
+      budget_ms: SOLVE_HINT_GENERATION_BUDGET_MS,
+      elapsed_ms: input.doneMs,
+    },
+  });
+}
+
 /**
  * Hint entry for the route layer: same session/state validation as
  * planSolveHint, but generation failures resolve to a typed fallback instead of
  * an upstream 502. The failed provider attempt keeps its own durable run row +
- * cost accounting (unknown cost stays unknown); this wrapper only adds the
- * deterministic help on top.
+ * cost accounting (unknown cost stays unknown); this wrapper seals the four
+ * help latencies and does not drop the failed request.
  */
 export async function planSolveHintOutcome(params: PlanSolveHintParams): Promise<SolveHintOutcome> {
-  const startedAt = Date.now();
+  const originAt = Date.now();
   const signal = AbortSignal.timeout(SOLVE_HINT_GENERATION_BUDGET_MS);
   try {
-    const hint = await planSolveHint({
+    const hint = await runSolveHintAttempt({
       ...params,
       signal,
-      generationDeadlineAt: startedAt + SOLVE_HINT_GENERATION_BUDGET_MS,
+      generationDeadlineAt: originAt + SOLVE_HINT_GENERATION_BUDGET_MS,
     });
-    return { status: 'ok', text_md: hint.text_md };
+    const doneMs = Date.now() - originAt;
+    const modality: HelpModality = hint.attempt_latency?.modality === 'vision' ? 'vision' : 'text';
+    return {
+      status: 'ok',
+      text_md: hint.text_md,
+      help_latency: sealHintRequest({
+        originAt,
+        doneMs,
+        settledMs: doneMs,
+        attempt: hint.attempt_latency,
+        terminal: 'success',
+        modality,
+        executable: null,
+        complete: true,
+        costBasis: hint.cost_basis,
+        costUsd: hint.cost_usd,
+      }),
+    };
   } catch (err) {
     if (!isHintGenerationFailure(err)) throw err;
     const reason = classifyHintFailure(err, signal.aborted);
-    const elapsedMs = Date.now() - startedAt;
+    const settledMs = Date.now() - originAt;
+    const attempt = attemptLatencyOf(err);
     console.warn('[solve-hint] generation failed; serving fallback', {
       event: 'solve_hint_fallback',
       session_id: params.sessionId,
       hint_index: params.hintIndex,
       reason,
       error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
-      elapsed_ms: elapsedMs,
+      elapsed_ms: settledMs,
     });
-    return buildSolveHintFallback({
+    const built = await buildSolveHintFallback({
       db: params.db,
       sessionId: params.sessionId,
       hintIndex: params.hintIndex,
       reason,
-      elapsedMs,
+      elapsedMs: settledMs,
+    });
+    const doneMs = Date.now() - originAt;
+    const executable: ExecutableHelpBasis | null =
+      built.status === 'fallback'
+        ? built.reference_revealed
+          ? 'sealed_reference'
+          : 'deterministic_step'
+        : null;
+    const modality: HelpModality =
+      built.status === 'fallback'
+        ? built.reference_revealed
+          ? 'reference'
+          : 'deterministic'
+        : 'none';
+    return presentHintFaultExit({
+      ...built,
+      help_latency: sealHintRequest({
+        originAt,
+        doneMs,
+        settledMs,
+        attempt,
+        terminal: reason === 'timeout' || signal.aborted ? 'timeout' : 'failure',
+        modality,
+        executable,
+        complete: built.status === 'fallback',
+        costBasis: attempt?.cost.basis,
+        costUsd: attempt?.cost.usd ?? undefined,
+      }),
     });
   }
 }

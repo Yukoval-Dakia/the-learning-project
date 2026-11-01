@@ -8,11 +8,12 @@
 // derivation remain settlement-writer internals, so there is no import edge
 // back from the read module.
 
-import { eq } from 'drizzle-orm';
+import { and, eq, gte, or, sql } from 'drizzle-orm';
 
 import { settlementReversions } from '@/core/assessment-settlement-liveness';
 import type { KcObservation } from '@/core/schema/assessment';
 import { EvaluationProvenance } from '@/core/schema/assessment';
+import type { KcEvidenceApply, KcWrongCauseT } from '@/core/schema/assessment/kc-mastery-evidence';
 import type { Tx } from '@/db/client';
 import {
   assessment_issuance,
@@ -51,6 +52,8 @@ interface ThetaApply {
   applied: true;
   outcome: 0 | 1;
   knowledgeIds: string[];
+  /** Present when KCs do not share one full-weight direction. */
+  kcEvidence?: KcEvidenceApply[];
   anchorQuestionId: string;
   anchorDifficulty: number;
   anchorKind: string;
@@ -99,6 +102,8 @@ export interface SettlementPlan {
   /** One knowledge card per scope KC. An empty scope uses the group-root question card. */
   fsrsSubjects: FsrsSubject[];
   kcObservations: KcObservation[];
+  /** Which KC dragged the attempt. null only on plans sealed before this field existed. */
+  kcWrongCause?: KcWrongCauseT;
   theta: ThetaApply | { applied: false; abstainReason: string };
   /** exact only when every unit was deterministic. Mixed routes must not look exact. */
   judgeRoute: string;
@@ -202,11 +207,25 @@ export function candidateSchedulingSuppressed(plan: SettlementPlan): boolean {
   );
 }
 
-export async function loadSettlementEvents(tx: Tx): Promise<SettlementEventRow[]> {
+/** `occurredSince` keeps rows written then, or whose sealed occurrence is then or later. */
+export async function loadSettlementEvents(
+  tx: Tx,
+  occurredSince?: Date,
+): Promise<SettlementEventRow[]> {
   const rows = await tx
     .select({ id: event.id, created_at: event.created_at, payload: event.payload })
     .from(event)
-    .where(eq(event.action, ASSESSMENT_SETTLEMENT_ACTION));
+    .where(
+      occurredSince
+        ? and(
+            eq(event.action, ASSESSMENT_SETTLEMENT_ACTION),
+            or(
+              gte(event.created_at, occurredSince),
+              sql`${event.payload}->>'occurrence_at' >= ${occurredSince.toISOString()}`,
+            ),
+          )
+        : eq(event.action, ASSESSMENT_SETTLEMENT_ACTION),
+    );
   const out: SettlementEventRow[] = [];
   for (const row of rows) {
     const p = (row.payload ?? {}) as Record<string, unknown>;

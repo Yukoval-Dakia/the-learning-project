@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "notes": {
+    "YUK-1579-ops-calibration": "The calibration report moved from scripts/audit-calibration.ts to scripts/ops-calibration.ts (pnpm ops:calibration). The 2026-10-22 stable_contract consumer paths still name the old file: changes is append-only, and those rulings are not re-checked. Import lines are unchanged (effectiveB at 93, effectiveFamilyB at 94).",
     "YUK1571-shared-reads": "LIGHT shared read ownership move: After integrating frontier PR #1837, cross total 47 -> 42 (-5); prior standalone measurement was 48 -> 43. Five capability read consumers now import kernel-owned read models (src/kernel/read-models/{agent-note-hints,notes-read,artifact-backlinks,artifact-corrections,extraction-summary}) instead of sibling capability modules: knowledge/review.ts exits the agency-owned readAgentNotes entry via agent-note-hints (knowledge -> agency 2 -> 1); knowledge/node-page.ts exits notes server reads (knowledge -> notes 1 -> 0); agency/scout/evidence-mcp.ts exits notesForKnowledge (agency -> notes 3 -> 2); agency/tools/learning-item-context.ts exits ingestion extraction-summary reads (agency -> ingestion 1 -> 0); practice/tools/question-context.ts exits them too (practice -> ingestion 2 -> 1). Old capability paths remain explicit compat re-exports (no copied implementations), so residual edges are unchanged; the five-capability SCC {agency, ingestion, knowledge, notes, practice} persists; for example notes -> knowledge -> agency -> notes remains a cycle.",
     "YUK-1571-frontier": "Frontier complete prerequisite closure, canonical mastery gate and sparse/dense/overflow decisions now belong to knowledge. practice -> knowledge 3 -> 4 is a real dependency on that owned decision, not a pass-through count shift. In this PR knowledge -> practice 3 -> 1 removes two reads of the former practice-owned decision (knowledge frontier read and nightly bootstrap); those same-category decreases offset the one added practice -> knowledge edge, cross-capability value total 48 -> 47. practice -> mastery 15 -> 14 moves the algorithm-owned mastery read with the operation, capability -> server total 441 -> 440. Exit condition: address the remaining practice -> knowledge dependency as part of YUK-1571 cycle removal; this slice does not claim SCC elimination. Baseline write ownership released by coordinator on 2026-10-20; audit and CI semantics unchanged.",
     "YUK-1022": "copilot -> ai raised 10 -> 16 (+6, total 435 -> 441). Spec-mandated P3 dual-descriptor wiring: copilot-execution/subagents now import the pi lane parallels (pi-hooks, pi-subagent host, execution-adapter lane pin, pi-agent-adapter types) alongside the existing SDK descriptor edges, plus the test seam in copilot_run.test.ts. Ratified per the YUK-921 migration spec; P4 retires the SDK side of these edges.",
@@ -47,7 +48,16 @@
     "YUK-1571-active-goal-read": "Shared active-goal effective-scope read model (ActiveGoal, listActiveGoals, listActiveGoalsWithResolvedScope) moved verbatim from capabilities/agency/server/goals/queries.ts to src/kernel/read-models/active-goal-scope.ts; agency keeps all goal writes (mutateGoal, updateGoalStatus, updateGoalScope) and the scope vocabulary (commands.ts). ActiveGoal.scope_mode now types against goal.$inferSelect (schema enum explicit|subject_live), not the agency command alias. Six consumers repointed with zero compat shims and no reader re-export: agency jobs coach_daily / dreaming_nightly / goal_scope_propose_nightly (same-capability edges become capabilityToKernel, recorded in edgeRecords), practice/server/due-list.ts (practice -> agency 3 -> 2), copilot/server/learner-state.ts (copilot -> agency 1 -> 0) and scripts/demo-flywheel.ts (outside the audited capability layer). The three retired agency/public read exports are deleted; updateGoalScope and every other export stay. Measured on main 93578223e merged with fabf68ec4: cross-capability value 39 -> 37, capability -> server follows upstream at 403, nontrivial SCCs unchanged at {agency, knowledge, practice}; benefit claimed is shared read-ownership convergence only, not new interface depth.",
     "YUK-1553": "knowledge -> ai 13 -> 12 (-1, total 389 -> 388): review.ts drops the private write_proposal executor (writeToolCallLog edge) — the shared DomainTool bridge now owns tool_call_log. Same-owner ai seams retained: streamTask + piDomainMount.",
     "YUK-1568-ingestion-declarations": "Measured against af4b30bf97a2906f221573f83c19d15d76253e46: compose-presentation directly consumes the existing draftDocumentToContract owner (+1 ingestion -> questions, 10 -> 11). block-structured-edit directly consumes the already kernel-owned complete question-block lifecycle writer instead of the old server re-export (-1 ingestion -> projections, 9 -> 8). Capability -> server stays 384; no audit or total ceiling change, new proxy, copied codec or second writer. This net-zero architecture evidence is separate from declaration preservation, CAS/replay and publish-binding source evidence in docs/planning/2026-10-22-yuk1568-ingestion-declarations.md.",
-    "YUK-1563-custom-providers": "Custom provider CRUD: the observability store writes the custom_provider table directly under the @/db transitional exemption (agency api precedent); definitions/validation/registry live in core/config/custom-providers; catalog integration is wired by the composition root through core ports (no new capability→server or cross-capability edges; two registered capabilityToKernel error-envelope edges)."
+    "YUK-1563-custom-providers": "Custom provider CRUD: the observability store writes the custom_provider table directly under the @/db transitional exemption (agency api precedent); definitions/validation/registry live in core/config/custom-providers; catalog integration is wired by the composition root through core ports (no new capability→server or cross-capability edges; two registered capabilityToKernel error-envelope edges).",
+    "YUK-1571-question-pool-gap": "Signal, not a shared read: quiz_verify no longer calls agency recordQuestionPoolGap. Practice declares experimental:quiz_verify; agency.question-pool-gap subscribes and applies the existing coach-hint command after commit. practice -> agency 2 -> 1, cross-capability value 24 -> 23. SCC stays {agency, practice}. Independent of the unmerged daily-review-plan slice. Historical quiz_verify rows are bootstrap-skipped; only verifications committed after the subscriber activates get a hint.",
+    "YUK-1571-intervention-preparation-read": "The last practice -> agency query is the preparation-stage read. guardInterventionPreparationStage now lives in src/kernel/read-models/intervention-preparation.ts: latest intervention version, preparation job id, concrete recommendation, snapshot, and whether the source probe evidence is still active. Practice imports that kernel read. Agency keeps intervention writes. Unused agency public exports (InterventionAuthoringContextT, InterventionPreparationStageGuard, guardInterventionPreparationStage, loadInterventionAuthoringContext) are deleted; the authoring context type stays in core/schema/intervention.ts, and the unused contracts re-export module is deleted with them. practice -> agency 1 -> 0, cross-capability value 22 -> 21, nontrivial SCC {agency, practice} becomes empty. agency -> practice command edges stay one-way.",
+    "YUK-1571-practice-knowledge-read": "The last practice -> knowledge value edge was the knowledge-runtime pass-through. Failure-learning knowledge and misconception reads now live in src/kernel/read-models/failure-learning-context.ts; resolveSubjectProfileForKnowledgeIds was already the kernel subject-profile read. Practice imports those kernel owners directly. The pass-through file and the knowledge public re-exports of the three readers are deleted. practice -> knowledge 1 -> 0, cross-capability value 21 -> 20. Nontrivial SCC stays empty.",
+    "YUK-1571-learning-intent-node-birth": "agency -> knowledge: learning-intent accept no longer calls knowledge/public createLearningIntentKnowledgeNode. That adapter only forwarded to createKnowledgeNodeFromEvents. Agency now calls src/kernel/records/knowledge-node-birth.ts directly and keeps accept provenance (actorRef learning-intent-accept, proposed_by_ai, role). The knowledge module and public export are deleted. agency -> knowledge 1 -> 0, cross-capability value 20 -> 19. Nontrivial SCC stays empty.",
+    "YUK-1571-note-section-read": "Top-level semanticBlock projection into note sections now lives in src/kernel/read-models/note-sections.ts. Copilot teaching and notes readers import that kernel projection. The notes public re-export and the copilot notes-integration forward are deleted. copilot -> notes 2 -> 1, cross-capability value 19 -> 18. Nontrivial SCC stays empty. Notes keeps block-tree edits.",
+    "YUK-1571-intervention-author-port": "prepare_intervention does not import practice. The preparation attempt sequence (guards, subject profile, paid author stage, review stage, deterministic check) lives in src/kernel/records/intervention-package-author.ts. Practice supplies the two paid stages and the worker binds them before the job mounts. agency -> practice 3 -> 2. Composed with the merged note-section cut (copilot -> notes 1, cross 18): cross-capability value 18 -> 17. Diagnostic materialize and retire stay agency -> practice. Nontrivial SCC stays empty.",
+    "YUK-1571-dreaming-note-refresh": "Signal, not a shared command: dreaming_nightly no longer calls notes enqueueDreamingNoteRefine. A new note_update artifact in the scan becomes experimental:dreaming_note_refresh; notes.dreaming-note-refresh subscribes after commit and enqueues the existing dreaming refine. agency -> notes 2 -> 1 (proposal-accept handoff follows in same PR). The public export of enqueueDreamingNoteRefine is deleted. Historical scans are not replayed.",
+    "YUK-1571-undo-ai-change": "The undo route returns HTTP 200 even when the note was not restored. skipped:version_conflict means the note is unchanged; skipped:already_undone is a real no-op. That judgment now lives in src/ui/lib/undo-ai-change.ts. The note reader, the workbench client, and the Start workbench client call it directly. The shell re-export from notes/ui-public is deleted. shell -> notes 1 -> 0. Composed with main cd9dad17 (dreaming note refresh already cut agency -> notes to 1, cross 16): cross-capability value 16 -> 15. Nontrivial SCC stays empty. Notes keeps the undo route.",
+    "YUK-1571-learning-intent-note-handoff": "agency -> notes proposal-accept cluster retired: createLearningIntentNote and post-accept dispatchNoteGeneration now live in src/kernel/records/{learning-intent-note-birth,note-handoff-protocol}. Notes keeps boss-port wiring and recovery floor as live consumers (no pass-through re-exports). registerNoteHandoffBossResolver wires getStartedBoss at server/app.ts composition root. agency -> notes 1 -> 0 after main 45e197a7 (dreaming refresh + shell undo-ai-change cuts). cross-capability value 15 -> 14."
   },
   "changes": [
     {
@@ -3170,13 +3180,10 @@
       "type": "stable_contract",
       "file": "src/capabilities/practice/public.ts",
       "siteKind": "site",
-      "targetModule": "src/capabilities/practice/server/draft-promotion-operations.ts",
-      "owner": "practice",
-      "issue": "YUK-1358",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-b9e16ad2-3fdb-44eb-a6c9-a68d31037096",
-      "date": "2026-10-27",
       "symbol": "enablePracticeDraft",
+      "targetModule": "src/capabilities/practice/server/draft-promotion-operations.ts",
       "targetSymbol": "enablePracticeDraft",
+      "owner": "practice",
       "consumers": [
         {
           "file": "server/start/library-draft-promotion-operation.ts",
@@ -3184,19 +3191,19 @@
         }
       ],
       "evidence": "The authenticated Start host imports the Practice public entry at await-import AST and module path line 11 and invokes the complete enable operation at line 13. Context type references and the same-capability HTTP adapter are not additional public runtime consumers.",
-      "rationale": "Practice owns the complete normal draft enable request: original ID trim and validation, runner binding, unchanged verify-and-promote gate invocation, not-found mapping and full promotion DTO. HTTP and Start retain transport adaptation without exposing verification, promotion or recovery ordering."
+      "rationale": "Practice owns the complete normal draft enable request: original ID trim and validation, runner binding, unchanged verify-and-promote gate invocation, not-found mapping and full promotion DTO. HTTP and Start retain transport adaptation without exposing verification, promotion or recovery ordering.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-b9e16ad2-3fdb-44eb-a6c9-a68d31037096",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
       "file": "src/capabilities/practice/public.ts",
       "siteKind": "site",
-      "targetModule": "src/capabilities/practice/server/draft-promotion-operations.ts",
-      "owner": "practice",
-      "issue": "YUK-1358",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-b9e16ad2-3fdb-44eb-a6c9-a68d31037096",
-      "date": "2026-10-27",
       "symbol": "forceEnablePracticeDraft",
+      "targetModule": "src/capabilities/practice/server/draft-promotion-operations.ts",
       "targetSymbol": "forceEnablePracticeDraft",
+      "owner": "practice",
       "consumers": [
         {
           "file": "server/start/library-draft-promotion-operation.ts",
@@ -3204,7 +3211,10 @@
         }
       ],
       "evidence": "The authenticated Start host imports the Practice public entry at await-import AST and module path line 25 and invokes the complete force-enable operation at line 27. Its callback only decodes JSON after the operation has validated the ID.",
-      "rationale": "Practice owns the complete force-enable request: ID-before-body order, original reason schema and errors, the throwing no-dispatch guard, unchanged override gate invocation, not-found mapping and full promotion DTO. The transport does not decide override eligibility or reproduce promotion state."
+      "rationale": "Practice owns the complete force-enable request: ID-before-body order, original reason schema and errors, the throwing no-dispatch guard, unchanged override gate invocation, not-found mapping and full promotion DTO. The transport does not decide override eligibility or reproduce promotion state.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-b9e16ad2-3fdb-44eb-a6c9-a68d31037096",
+      "date": "2026-10-27"
     },
     {
       "debt": "capabilityToServer",
@@ -3216,14 +3226,12 @@
     },
     {
       "type": "stable_contract",
-      "siteKind": "site",
-      "owner": "practice",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
       "symbol": "readPracticeQuestionList",
       "targetModule": "src/capabilities/practice/server/question-list-read.ts",
       "targetSymbol": "readPracticeQuestionList",
+      "owner": "practice",
       "consumers": [
         {
           "file": "server/start/library-question-list-reader.ts",
@@ -3232,18 +3240,18 @@
       ],
       "evidence": "The authenticated Start host imports the Practice public entry at await-import AST and module path line 11 and invokes the complete list reader at line 13. The context reference is type-only; the original HTTP GET is an internal consumer of the same owner.",
       "rationale": "Practice owns the complete question-list request: repeated query parameters and boolean parsing, original schema and errors, cursor compatibility, subject knowledge resolution, complete list options and the full collection payload. HTTP and Start adapt transport without reproducing filtering or pagination policy.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4558419c-227e-4c64-b355-2ab538edf1b7"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4558419c-227e-4c64-b355-2ab538edf1b7",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
-      "siteKind": "site",
-      "owner": "practice",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "file": "src/capabilities/practice/ui-public.ts",
+      "siteKind": "site",
       "symbol": "buildQuestionsListQuery",
       "targetModule": "src/capabilities/practice/ui/practice-api.ts",
       "targetSymbol": "buildQuestionsListQuery",
+      "owner": "practice",
       "consumers": [
         {
           "file": "server/start/library-question-list-client.ts",
@@ -3252,18 +3260,18 @@
       ],
       "evidence": "The Start list client imports the builder at ImportDeclaration AST line 1 and module path line 5, then calls it at line 14. The existing HTTP client continues using the unchanged same-file builder.",
       "rationale": "Practice UI owns the existing list filter-to-query contract, including repeated values, enrich, omitted fields, search trimming and finite integer limit/offset normalization. Both transports reuse that exact builder rather than maintaining a second query codec.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4558419c-227e-4c64-b355-2ab538edf1b7"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4558419c-227e-4c64-b355-2ab538edf1b7",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
-      "siteKind": "site",
-      "owner": "practice",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "file": "src/capabilities/practice/ui-public.ts",
+      "siteKind": "site",
       "symbol": "projectQuestionsListResponse",
       "targetModule": "src/capabilities/practice/ui/practice-api.ts",
       "targetSymbol": "projectQuestionsListResponse",
+      "owner": "practice",
       "consumers": [
         {
           "file": "server/start/library-question-list-client.ts",
@@ -3272,7 +3280,9 @@
       ],
       "evidence": "The Start list client imports the projector at ImportDeclaration AST line 1 and module path line 5, then calls it at line 10 after parsing the complete JSON response. The HTTP client calls the same projector in its original response continuation.",
       "rationale": "Practice UI owns the existing full-response spread and items/children projection. The shared projector preserves collection fields, pagination and serving counts and reuses the unchanged toQBankQuestion mapping without adding a second schema or recomputing page state.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4558419c-227e-4c64-b355-2ab538edf1b7"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4558419c-227e-4c64-b355-2ab538edf1b7",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3562,8 +3572,6 @@
       "targetModule": "src/capabilities/practice/server/draft-list-read.ts",
       "targetSymbol": "readPracticeDraftList",
       "owner": "practice",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/library-draft-list-reader.ts",
@@ -3572,7 +3580,9 @@
       ],
       "evidence": "The authenticated Start host imports the Practice public entry at await-import AST and module path line 11 and calls the complete draft-list reader at line 13. The context reference is type-only; the existing HTTP GET is an internal consumer of the same owner.",
       "rationale": "Practice owns the complete draft-list request: original query/schema validation and errors, cursor and explicit-offset compatibility, limit normalization, unchanged draft aggregate invocation, and the full collection envelope. Both transports preserve that operation without copying SQL, verification status or pagination policy.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-cfad9234-b0b6-48b6-9516-31b0e0660d23"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-cfad9234-b0b6-48b6-9516-31b0e0660d23",
+      "date": "2026-10-27"
     },
     {
       "debt": "capabilityToServer",
@@ -3622,8 +3632,6 @@
       "targetModule": "src/capabilities/ingestion/server/session-list-read.ts",
       "targetSymbol": "readIngestionSessions",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/record-session-list-reader.ts",
@@ -3632,7 +3640,9 @@
       ],
       "evidence": "The authenticated Start host imports the Ingestion public entry at await-import AST and module path line 11 and invokes the complete session-list reader at line 13. The context reference is type-only; HTTP consumes the same owner inside Ingestion.",
       "rationale": "Ingestion owns the complete recording-list request and aggregation: limit and cursor rules, evidence-qualified pagination, frozen title lookup, counts and agent-item deduplication, time/null mappings and the full collection envelope. Start transports the result without duplicating SQL or deriving titles from mutable question text.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c5413772-01ff-464f-81ec-f968a8301696"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c5413772-01ff-464f-81ec-f968a8301696",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3642,8 +3652,6 @@
       "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
       "targetSymbol": "projectSessionListResponse",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/record-session-list-client.ts",
@@ -3652,7 +3660,9 @@
       ],
       "evidence": "The Start recording-list client imports the projector at ImportDeclaration AST and module path line 1 and calls it at line 6 after complete JSON parsing. The existing HTTP helper consumes the same projector in its original return position.",
       "rationale": "Ingestion UI owns its original full-response data projection to SessionRow[]. Sharing that exact projection keeps both transports aligned without introducing a second response schema, removing wire fields before serialization or changing page semantics.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c5413772-01ff-464f-81ec-f968a8301696"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c5413772-01ff-464f-81ec-f968a8301696",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3662,8 +3672,6 @@
       "targetModule": "src/capabilities/ingestion/ui/record/record-client.tsx",
       "targetSymbol": "RecordClientProvider",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/routes/record.tsx",
@@ -3672,7 +3680,9 @@
       ],
       "evidence": "The live /record Start route imports RecordClientProvider at ImportDeclaration AST line 3 and module path line 7 and renders it at JSX lines 22 and 37. It supplies a module-stable list binding to the unchanged RecordPage and its useRecordingList consumer.",
       "rationale": "Ingestion owns the recording UI's narrow list transport port and default HTTP implementation. The route injects the authenticated Start implementation while preserving the original page, query callbacks, asynchronous flows and other HTTP transports.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c5413772-01ff-464f-81ec-f968a8301696"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c5413772-01ff-464f-81ec-f968a8301696",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3682,8 +3692,6 @@
       "targetModule": "src/capabilities/ingestion/server/session-blocks-read.ts",
       "targetSymbol": "readIngestionSessionBlocks",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/record-blocks-reader.ts",
@@ -3692,7 +3700,9 @@
       ],
       "evidence": "The authenticated Start host imports the Ingestion public entry at await-import AST and module path line 11 and calls the complete blocks reader at line 13. The context reference is type-only; the existing HTTP handler consumes the same owner inside Ingestion.",
       "rationale": "Ingestion owns the complete session-block read: unchanged session-id lookup, ordinal/id ordering, observation lookup and overwrite order, tolerant historical payload projection, learner-visible knowledge filtering and the full rows envelope. Start transports the complete result without copying SQL or reconstructing observations.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e17b4a6e-1ac4-4cc5-854a-7695ad8d7975"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e17b4a6e-1ac4-4cc5-854a-7695ad8d7975",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3702,8 +3712,6 @@
       "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
       "targetSymbol": "projectSessionBlocksResponse",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/record-blocks-client.ts",
@@ -3712,7 +3720,9 @@
       ],
       "evidence": "The Start blocks client imports the projector at ImportDeclaration AST line 1 and module path line 4 and invokes it at line 9 after complete JSON parsing. The existing HTTP helper calls the same projector in its original return position.",
       "rationale": "Ingestion UI owns the original body.rows as Block[] projection. Both transports reuse that exact projection without introducing a second codec, trimming wire fields or changing the recording status gates and query lifecycle.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e17b4a6e-1ac4-4cc5-854a-7695ad8d7975"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e17b4a6e-1ac4-4cc5-854a-7695ad8d7975",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3722,8 +3732,6 @@
       "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
       "targetSymbol": "buildRecordSessionCreateBody",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/record-session-create-client.ts",
@@ -3732,7 +3740,9 @@
       ],
       "evidence": "The Start recording-create client imports the builder at ImportDeclaration AST line 1 and module path line 5 and calls it at line 14 before JSON serialization. The canonical HTTP helper calls the same builder in its original body position.",
       "rationale": "Ingestion UI owns its recording-create input mapping: unchanged entrypoint, assetIds to asset_ids and the answer_only-only derivation_policy spread. Sharing that mapping preserves field omission and values across the HTTP and Start transports without adding a schema, key or retry policy.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-47b0092e-7a15-4b43-9ad0-143d62aec2be"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-47b0092e-7a15-4b43-9ad0-143d62aec2be",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3742,8 +3752,6 @@
       "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
       "targetSymbol": "projectRecordSessionCreateResponse",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/record-session-create-client.ts",
@@ -3752,7 +3760,9 @@
       ],
       "evidence": "The Start recording-create client imports the projector at ImportDeclaration AST line 1 and module path line 5 and invokes it at line 10 after complete JSON parsing. The canonical HTTP helper calls the same projector in its original return position.",
       "rationale": "Ingestion UI owns the existing body.session.id projection used by both initial send and manual retry. The shared projector preserves that narrow consumer result while the existing creation owner and transport retain terminal errors, Location and replay metadata; it does not promise safe replay for this unkeyed caller.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-47b0092e-7a15-4b43-9ad0-143d62aec2be"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-47b0092e-7a15-4b43-9ad0-143d62aec2be",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3762,8 +3772,6 @@
       "targetModule": "src/capabilities/ingestion/server/session-detail.ts",
       "targetSymbol": "readIngestionSessionDetail",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/record-session-detail-reader.ts",
@@ -3772,7 +3780,9 @@
       ],
       "evidence": "The authenticated Start host imports the Ingestion public entry at await-import AST and module path line 11 and invokes the complete session-detail reader at line 12. The context reference is type-only; the existing HTTP handler remains an internal consumer of the same owner.",
       "rationale": "Ingestion owns the session and its complete trusted usage receipts plus live derivation policy in one repeatable-read, read-only snapshot. The existing owner retains identity, not-found and accounting-error rules, unknown/null semantics and the full projection; Start transports that result without splitting the read or recreating privacy accounting.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4e0ec3b2-d64c-4534-91eb-06dfc2203198"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4e0ec3b2-d64c-4534-91eb-06dfc2203198",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3782,8 +3792,6 @@
       "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
       "targetSymbol": "projectRecordSessionDetailResponse",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/record-session-detail-client.ts",
@@ -3792,7 +3800,9 @@
       ],
       "evidence": "The Start session-detail client imports the projector at ImportDeclaration AST line 1 and module path line 4 and calls it at line 12 after complete JSON parsing. The HTTP helper calls the same projector in its original return position and retains its no-store request.",
       "rationale": "Ingestion UI owns its existing body-as-SessionDetail projection. Sharing that exact projection preserves all session and usage fields across transports while retaining the recording query's status gates and polling cadence; the narrow TypeScript view does not trim the wire or synthesize unavailable accounting.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4e0ec3b2-d64c-4534-91eb-06dfc2203198"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4e0ec3b2-d64c-4534-91eb-06dfc2203198",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3802,8 +3812,6 @@
       "targetModule": "src/capabilities/ingestion/api/contracts.ts",
       "targetSymbol": "CreateMistakeBodySchema",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/record-manual-mistake-operation.ts",
@@ -3812,7 +3820,9 @@
       ],
       "evidence": "The authenticated Start host imports the existing request schema at await-import AST line 20 and module path line 21 and parses the request at line 23. The HTTP handler consumes the same schema internally; no second payload codec is introduced.",
       "rationale": "Ingestion owns the manual-mistake creation input contract, including null, default and strip behavior. The Start adapter reuses that exact schema and HTTP issue formatting before invoking the complete owner, without changing learner content or key policy.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f95c1f1-b006-41a9-b5ac-4991d91388e0"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f95c1f1-b006-41a9-b5ac-4991d91388e0",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3822,8 +3832,6 @@
       "targetModule": "src/capabilities/ingestion/server/create-manual-mistake.ts",
       "targetSymbol": "createManualMistake",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/record-manual-mistake-operation.ts",
@@ -3832,7 +3840,9 @@
       ],
       "evidence": "The authenticated Start host imports createManualMistake at await-import AST line 20 and module path line 21 and calls the complete operation at line 31 with the parsed body and actual request key. Context use is type-only; HTTP remains an internal consumer of the same owner.",
       "rationale": "Ingestion owns the complete manual creation and receipt transaction: live knowledge, subject/cause and asset checks, original identities, question publication and frozen evidence, attempt and learning-record writes, terminal result and keyed replay. Start preserves that operation and its 201 body and metadata without copying SQL, splitting transactions or inventing replay for the unkeyed UI.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f95c1f1-b006-41a9-b5ac-4991d91388e0"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f95c1f1-b006-41a9-b5ac-4991d91388e0",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3842,8 +3852,6 @@
       "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
       "targetSymbol": "buildRecordManualMistakeBody",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/record-manual-mistake-client.ts",
@@ -3852,7 +3860,9 @@
       ],
       "evidence": "The Start manual-mistake client imports the shared builder at ImportDeclaration AST line 1 and module path line 4 and calls it at line 12 before JSON serialization. The canonical HTTP helper uses the same builder in its original body position.",
       "rationale": "Ingestion UI owns its existing typed-question body mapping, including learner text and knowledge IDs, null reference and cause, difficulty 3, short_answer kind and empty image arrays. Both transports reuse those exact values without adding a schema, response projector, key or retry policy.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f95c1f1-b006-41a9-b5ac-4991d91388e0"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f95c1f1-b006-41a9-b5ac-4991d91388e0",
+      "date": "2026-10-27"
     },
     {
       "debt": "capabilityToServer",
@@ -3870,8 +3880,6 @@
       "targetModule": "src/capabilities/ingestion/server/revert-auto-enroll.ts",
       "targetSymbol": "revertIngestionBlock",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/record-revert-operation.ts",
@@ -3880,7 +3888,9 @@
       ],
       "evidence": "The authenticated Start host imports the complete request entry at await-import AST and module path line 20 and invokes it at line 22 with the unchanged session ID and decoded raw body. The context reference is type-only; HTTP is an internal consumer of the same entry.",
       "rationale": "Ingestion owns the complete auto-enrollment revert request: original body schema and message-only errors, block/session/reason mapping and the existing full revert operation. That operation retains its transaction, guards, capture withdrawal, correction event, record archive and block restoration; callers do not duplicate validation or recovery orchestration.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-62b5b930-fc1d-45e5-a00a-c16d68ef3b8c"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-62b5b930-fc1d-45e5-a00a-c16d68ef3b8c",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3890,8 +3900,6 @@
       "targetModule": "src/capabilities/ingestion/server/agent/asks.ts",
       "targetSymbol": "answerIngestionAsk",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/record-ask-answer-operation.ts",
@@ -3900,47 +3908,49 @@
       ],
       "evidence": "The authenticated Start host imports the complete ask-answer request at await-import AST and module path line 16 and invokes it at line 18 with the original session/ask IDs, actual request header and delayed JSON decoder. The context reference is type-only; the canonical HTTP handler is an internal consumer of the same entry.",
       "rationale": "Ingestion owns the complete durable ask-answer request: original ID presence checks, header trim and schema, delayed JSON/body validation and the existing complete acceptance operation. The existing acceptance owner retains ask locking, answer fingerprint replay, active-run checks, transactional claim/resolution/history/resume marker and post-commit dispatch; HTTP and Start callers do not duplicate those decisions.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-1443f795-41de-40b0-b67f-c5e42ae303dd"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-1443f795-41de-40b0-b67f-c5e42ae303dd",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
       "file": "src/capabilities/notes/ui-public.ts",
       "siteKind": "site",
+      "symbol": "buildNoteQuestionsQuery",
       "targetModule": "src/capabilities/notes/ui/notes-api.ts",
+      "targetSymbol": "buildNoteQuestionsQuery",
       "owner": "notes",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/note-question-list-client.ts",
           "line": 1
         }
       ],
-      "symbol": "buildNoteQuestionsQuery",
-      "targetSymbol": "buildNoteQuestionsQuery",
       "evidence": "The Start note question-list adapter imports this value in the ImportDeclaration at AST line 1 (module path line 5) and calls it at line 14 before invoking the existing complete library question-list function. NoteQuestionListClient is type-only; the Notes HTTP helper is an internal consumer.",
       "rationale": "Notes owns the existing question-reference consumer's request projection: append every knowledge_id in its original order and preserve the default limit 20 and String(limit). Sharing this exact builder keeps HTTP and Start aligned without adopting the library UI builder's enrich=true or limit normalization.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f1f81a5e-0c7e-4352-b2c4-3f2cd8f637f6"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f1f81a5e-0c7e-4352-b2c4-3f2cd8f637f6",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
       "file": "src/capabilities/notes/ui-public.ts",
       "siteKind": "site",
+      "symbol": "projectNoteQuestionsResponse",
       "targetModule": "src/capabilities/notes/ui/notes-api.ts",
+      "targetSymbol": "projectNoteQuestionsResponse",
       "owner": "notes",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/note-question-list-client.ts",
           "line": 1
         }
       ],
-      "symbol": "projectNoteQuestionsResponse",
-      "targetSymbol": "projectNoteQuestionsResponse",
       "evidence": "The Start note question-list adapter imports this value in the ImportDeclaration at AST line 1 (module path line 5) and calls it at line 10 after parsing the complete JSON returned by the existing library question-list function. The Notes HTTP helper consumes the same projector internally.",
       "rationale": "Notes owns the existing question-reference response projection: map response.items to the unchanged id, kind and prompt_md fields. The shared projector preserves the same consumer result over HTTP and Start while the canonical Practice reader continues to own validation, filtering, pagination and the full collection.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f1f81a5e-0c7e-4352-b2c4-3f2cd8f637f6"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f1f81a5e-0c7e-4352-b2c4-3f2cd8f637f6",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3950,8 +3960,6 @@
       "targetModule": "src/capabilities/copilot/server/copilot-summary.ts",
       "targetSymbol": "loadCopilotSummary",
       "owner": "copilot",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/copilot-summary-reader.ts",
@@ -3960,7 +3968,9 @@
       ],
       "evidence": "The authenticated Start summary reader imports this complete owner at await-import AST and module path line 11 and invokes it at line 13 with db and no options. The context reference is type-only; the retained HTTP handler is an internal consumer. The Start shell's existing CopilotClientProvider reaches the live SummaryCard query through RootShell and CompanionMount.",
       "rationale": "Copilot owns the complete companion summary: original Coach and Dreaming event selection, guarded daily focus, plan counts, due-review inventory, brief truncation, safe proposal preview and capped pending total, with all eight response fields. HTTP and Start reuse this owner without copying aggregation, defaults or error behavior; transport adds no transaction or alternate summary policy.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-af3992df-460e-4e9f-a571-9f82b358c784"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-af3992df-460e-4e9f-a571-9f82b358c784",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -3970,8 +3980,6 @@
       "targetModule": "src/capabilities/copilot/server/nudge-read.ts",
       "targetSymbol": "loadActiveNudges",
       "owner": "copilot",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/copilot-nudges-reader.ts",
@@ -3980,7 +3988,9 @@
       ],
       "evidence": "The authenticated Start nudge reader imports this complete owner at await-import AST and module path line 11 and invokes it at line 13 with db and no now argument. The context reference is type-only; the retained HTTP handler is an internal consumer. The existing shell CopilotClientProvider reaches the always-mounted CompanionMount nudge query, and RootShell observes the same query key for its badge.",
       "rationale": "Copilot owns the complete active-nudge read: original event eligibility, shadow and expiry predicates, consumed-event exclusion, created_at/id ordering, current active-practice backstop, six-field ISO projection and interrupt-sensitive filtering. HTTP and Start reuse this owner and the full nudges envelope without copying policy or adding pagination, configuration, transactions or alternate timing.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-2e5ddacf-dcbb-427f-a083-3f68e8eee5f8"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-2e5ddacf-dcbb-427f-a083-3f68e8eee5f8",
+      "date": "2026-10-27"
     },
     {
       "debt": "capabilityToServer",
@@ -4006,8 +4016,6 @@
       "targetModule": "src/capabilities/copilot/server/nudge-actions.ts",
       "targetSymbol": "dismissCopilotNudge",
       "owner": "copilot",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/copilot-nudge-actions-operation.ts",
@@ -4016,7 +4024,9 @@
       ],
       "evidence": "The authenticated Start dismiss host imports this complete request at await-import AST and module path line 11 and invokes it at line 13 with db and the original id params. The context reference is type-only; the retained HTTP handler is an internal consumer. The stable shell client reaches the live NudgeBar dismiss mutation through useCopilotNudges.",
       "rationale": "Copilot owns the complete dismissed-nudge request: original params schema, nudge existence check, ID generation, event fields, bounded cause-chain unique-violation handling and full success result. HTTP and Start reuse the same fixed-action entry and private execution without duplicating request policy, adding transactions or changing per-action deduplication.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0b435d18-d6e6-49f1-9919-b482e848aab8"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0b435d18-d6e6-49f1-9919-b482e848aab8",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -4026,8 +4036,6 @@
       "targetModule": "src/capabilities/copilot/server/nudge-actions.ts",
       "targetSymbol": "markCopilotNudgeOpened",
       "owner": "copilot",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/copilot-nudge-actions-operation.ts",
@@ -4036,7 +4044,9 @@
       ],
       "evidence": "The authenticated Start opened host imports this complete request at await-import AST and module path line 22 and invokes it at line 24 with db and the original id params. The context reference is type-only; the retained HTTP handler is an internal consumer. The stable shell client reaches NudgeBar's existing void markOpened call before its immediate conversation-open action.",
       "rationale": "Copilot owns the complete opened-nudge request and fixes the original opened action inside the capability. Its shared private execution preserves schema, existence, new ID, event construction, unique-violation deduplication and response policy. Transport cannot choose an arbitrary event action or redefine opened versus dismissed identity.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0b435d18-d6e6-49f1-9919-b482e848aab8"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0b435d18-d6e6-49f1-9919-b482e848aab8",
+      "date": "2026-10-27"
     },
     {
       "debt": "capabilityToServer",
@@ -4062,8 +4072,6 @@
       "targetModule": "src/capabilities/copilot/server/conversation-requests.ts",
       "targetSymbol": "readCopilotSessions",
       "owner": "copilot",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/copilot-sessions-reader.ts",
@@ -4072,7 +4080,9 @@
       ],
       "evidence": "The authenticated Start session-list host imports this complete request at await-import AST and module path line 11 and invokes it at line 13 with db and no options. The context reference is type-only; the retained HTTP GET is an internal consumer. The existing stable Copilot client serves both visit-session fetchQuery with its signal and the fresh policy read before each restricted send.",
       "rationale": "Copilot owns the complete session-list response and successful no-store policy: await the existing conversation list, then create server_time, include the original supported derivation policies and full session rows, and return typed body and headers. HTTP and Start consume the same descriptor without duplicating policy, changing the query or adding a transaction; the separate create request remains HTTP-only.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-9307c5bb-6345-448a-b28b-d294c19537b7"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-9307c5bb-6345-448a-b28b-d294c19537b7",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -4082,8 +4092,6 @@
       "targetModule": "src/capabilities/copilot/server/conversation-requests.ts",
       "targetSymbol": "createCopilotSession",
       "owner": "copilot",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/copilot-session-create-operation.ts",
@@ -4092,7 +4100,9 @@
       ],
       "evidence": "The authenticated Start create host imports this existing complete request at await-import AST and module path line 11 and invokes it at line 13 with db and no options. The context reference is type-only; the retained HTTP POST is an internal consumer. The stable Copilot client reaches visit-sessions' shared creation method for explicit controls and the automatic visit bootstrap, both of which consume the complete session object.",
       "rationale": "Copilot owns the existing complete session-creation request and its body/status descriptor. HTTP and Start reuse it without exposing or copying the conversation transaction, ID/time generation or job-event construction. Start sets the original 201 only after awaiting the owner and returns the full session; it introduces no key, receipt, retry or alternate creation policy.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f19dc7f-20e6-4795-a06d-70683d154cde"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f19dc7f-20e6-4795-a06d-70683d154cde",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -4102,8 +4112,6 @@
       "targetModule": "src/capabilities/copilot/server/turns-request.ts",
       "targetSymbol": "readCopilotTurns",
       "owner": "copilot",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/copilot-turns-reader.ts",
@@ -4112,7 +4120,9 @@
       ],
       "evidence": "The authenticated Start turns host imports this complete request at await-import AST and module path line 11 and invokes it at line 13 with db and URLSearchParams. The context reference is type-only; the retained HTTP GET is an internal consumer. The stable Copilot client reaches run-tracker's existing session/sequence-checked snapshot refresh and unchanged five-second polling.",
       "rationale": "Copilot owns the complete turns request: first-value query selection, null-to-undefined handling, the existing query schema, parseInt mapping and invocation of the unchanged complete conversation snapshot. HTTP and Start reuse this policy and full session_id/turns/active_runs result without duplicating parsing, tightening validation or altering the repeatable-read snapshot and recovery algorithms.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0b61718c-ccc4-4be6-99ea-cbc624ed662a"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0b61718c-ccc4-4be6-99ea-cbc624ed662a",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -4122,8 +4132,6 @@
       "targetModule": "src/capabilities/copilot/ui/copilot-client.tsx",
       "targetSymbol": "buildCopilotTurnsQuery",
       "owner": "copilot",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/copilot-turns-client.ts",
@@ -4132,7 +4140,9 @@
       ],
       "evidence": "The Start turns client imports this value in the ImportDeclaration at AST and module path line 1 and invokes it at line 9. The existing HTTP listTurns method consumes the same helper internally. Both retain the original typed sessionId/limit call and full response; the real run-tracker continues to supply REPLAY_LIMIT 20.",
       "rationale": "Copilot owns the original turns-query encoding: interpolate limit first and encodeURIComponent(sessionId) second, with no new defaults, clamping, cache, signal or retry policy. Sharing this exact builder keeps HTTP and Start request semantics together instead of duplicating or substituting another list builder.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0b61718c-ccc4-4be6-99ea-cbc624ed662a"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0b61718c-ccc4-4be6-99ea-cbc624ed662a",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -4142,8 +4152,6 @@
       "targetModule": "src/capabilities/copilot/server/run-cancel-request.ts",
       "targetSymbol": "cancelCopilotRun",
       "owner": "copilot",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/copilot-cancel-run-operation.ts",
@@ -4152,7 +4160,9 @@
       ],
       "evidence": "The authenticated Start Stop host imports this complete request in the await-import AST at line 11 (module path line 12) and invokes it at line 16. The context reference is type-only. The retained HTTP handler also consumes the same request, while the stable Copilot client reaches RunFooter and run-tracker.stopRun without changing the UI or default HTTP implementation.",
       "rationale": "Copilot owns the complete cancellation request: the existing ID schema, message-only Zod validation_error/400 mapping across the call, invocation of the original cancellation operation with its production wake dependency, and the full ok/run_id/status response. HTTP and Start share this owner without duplicating cancellation decisions, transaction ordering or response semantics.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e7eda102-abf7-48f4-88aa-e84094573939"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e7eda102-abf7-48f4-88aa-e84094573939",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -4162,8 +4172,6 @@
       "targetModule": "src/capabilities/copilot/server/durable-dispatch.ts",
       "targetSymbol": "dispatchSessionHead",
       "owner": "copilot",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/copilot-cancel-run-operation.ts",
@@ -4172,7 +4180,9 @@
       ],
       "evidence": "The Start composition host imports this existing complete dispatcher in the same await-import AST at line 11 (module path line 12) and invokes it at line 17 inside the wakeSession callback supplied to the complete cancellation request. getStartedBoss is invoked only inside that callback at line 18, matching the retained HTTP manifest's production wake composition.",
       "rationale": "Copilot owns complete current-session-head dispatch, including the session queue transaction/lock, canonical head and protocol checks, already-dispatched decision and transactional job dispatch. The Start composition root supplies the existing boss and transaction adapter; the unchanged cancellation owner alone decides whether to wake after commit and retains its logged wake-failure/reconciler behavior. This is a production dependency port, not a second cancellation or queue algorithm.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e7eda102-abf7-48f4-88aa-e84094573939"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e7eda102-abf7-48f4-88aa-e84094573939",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -4182,8 +4192,6 @@
       "targetModule": "src/capabilities/copilot/server/checkpoint-revert-operation.ts",
       "targetSymbol": "requestCopilotCheckpointRevert",
       "owner": "copilot",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "consumers": [
         {
           "file": "server/start/copilot-checkpoint-revert-operation.ts",
@@ -4192,7 +4200,9 @@
       ],
       "evidence": "The authenticated Start checkpoint-revert host imports this complete request at await-import AST and module path line 13 and invokes it at line 15 with db and the original eventId params. The context reference is type-only; the retained HTTP POST consumes the same request internally. The existing stable client reaches TurnActions.revert, preserving its separate request-error and refresh-error handling.",
       "rationale": "Copilot owns the complete checkpoint-revert request: original eventId schema parsing, message-only Zod validation_error/400 mapping over the original call, and the complete status/body outcome from the unchanged transactional checkpoint operation. HTTP and Start retain success and refusal envelopes; the Start function throws non-200 Response bodies outside the host errorResponse catch so apiFetch preserves refusal details without a second 500 or a success union. No UI, lock, cascade, savepoint, retry or replay policy moves into the caller.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4335bf29-750b-40ec-b7b1-0c4b70de3868"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4335bf29-750b-40ec-b7b1-0c4b70de3868",
+      "date": "2026-10-27"
     },
     {
       "type": "stable_contract",
@@ -4234,8 +4244,6 @@
       "targetModule": "src/capabilities/ingestion/server/session-history-read.ts",
       "targetSymbol": "readIngestionSessionHistory",
       "owner": "ingestion",
-      "issue": "YUK-1358",
-      "date": "2026-10-28",
       "consumers": [
         {
           "file": "server/start/record-session-history-reader.ts",
@@ -4244,7 +4252,9 @@
       ],
       "evidence": "The authenticated Start history host imports the complete reader at await-import AST and module path line 11 and invokes it at line 13 with db and the original id params. The retained history HTTP GET consumes the same owner. The existing record route Provider reaches useRecording's status-keyed history query through its typed getHistory method; context is type-only.",
       "rationale": "Ingestion owns the complete history request: original id and session-type validation, title and agent evidence, ordered blocks and root questions, frozen history and current serving projections, asks and prior runs, missing evidence and the full body including cost evidence. HTTP and Start share this operation without reproducing query order, projection or error policy. Existing title, agent-history and cost readers retain their separate read-only snapshots; cost as_of does not become a whole-history timestamp.",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f05a13d2-0505-4cf6-ab4c-7c543aaff84e"
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f05a13d2-0505-4cf6-ab4c-7c543aaff84e",
+      "date": "2026-10-28"
     },
     {
       "type": "stable_contract",
@@ -7003,6 +7013,96 @@
       "date": "2026-10-30"
     },
     {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> fsrs",
+      "date": "2026-10-30",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "practice -> agency",
+      "date": "2026-10-31",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> practice",
+      "date": "2026-10-31",
+      "from": 4,
+      "to": 3,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "practice -> agency",
+      "date": "2026-10-31",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "practice -> knowledge",
+      "date": "2026-10-31",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> knowledge",
+      "date": "2026-10-31",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "copilot -> notes",
+      "date": "2026-10-31",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> practice",
+      "date": "2026-10-31",
+      "from": 3,
+      "to": 2,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> notes",
+      "date": "2026-10-31",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "shell -> notes",
+      "date": "2026-10-31",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> notes",
+      "date": "2026-10-31",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease",
+      "reason": "Learning-intent proposal accept note birth and post-accept generation dispatch moved to kernel handoff protocol; agency proposal-accept-applier no longer imports notes/public.",
+      "issue": "YUK-1571"
+    },
+    {
       "type": "stable_contract",
       "file": "src/server/questions/submit-question.ts",
       "siteKind": "site",
@@ -9031,24 +9131,24 @@
       "date": "2026-10-27"
     },
     {
-      "file": "src/capabilities/practice/server/draft-promotion-operations.ts",
-      "kind": "value",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/draft-promotion-operations.ts",
       "module": "src/kernel/http.ts",
+      "kind": "value",
       "symbols": ["ApiError"],
-      "owns": "Kernel owns the shared API error type and error-wire vocabulary; Practice owns the original draft promotion request validation order, normal and force-enable errors, gate invocation and complete result projection. HTTP and Start retain their transport error adaptation."
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the shared API error type and error-wire vocabulary; Practice owns the original draft promotion request validation order, normal and force-enable errors, gate invocation and complete result projection. HTTP and Start retain their transport error adaptation.",
+      "date": "2026-10-27"
     },
     {
-      "file": "src/capabilities/practice/server/draft-promotion-operations.ts",
-      "kind": "value",
-      "issue": "YUK-1358",
-      "date": "2026-10-27",
       "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/draft-promotion-operations.ts",
       "module": "src/server/ai/runner-fn.ts",
+      "kind": "value",
       "symbols": ["makeRunTaskFn"],
-      "owns": "Server AI owns binding the canonical task runner to the host Db and its existing execution context. Practice owns when the complete normal draft enable operation constructs that binding and invokes the unchanged verification gate. Force-enable retains its throwing noRunTask guard and does not receive an executable runner."
+      "issue": "YUK-1358",
+      "owns": "Server AI owns binding the canonical task runner to the host Db and its existing execution context. Practice owns when the complete normal draft enable operation constructs that binding and invokes the unchanged verification gate. Force-enable retains its throwing noRunTask guard and does not receive an executable runner.",
+      "date": "2026-10-27"
     },
     {
       "debt": "capabilityToKernel",
@@ -9071,26 +9171,27 @@
       "date": "2026-10-27"
     },
     {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/practice/server/question-list-read.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
       "symbols": ["ApiError", "collectionPayload"],
-      "owns": "Kernel owns the shared API error vocabulary and collection envelope. Practice owns the original list validation order and errors and supplies the complete list data, page and extension fields to that envelope.",
       "issue": "YUK-1358",
-      "date": "2026-10-27",
-      "debt": "capabilityToKernel"
+      "owns": "Kernel owns the shared API error vocabulary and collection envelope. Practice owns the original list validation order and errors and supplies the complete list data, page and extension fields to that envelope.",
+      "date": "2026-10-27"
     },
     {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/practice/server/question-list-read.ts",
       "module": "src/kernel/read-models/knowledge-tree.ts",
       "kind": "value",
       "symbols": ["resolveSubjectKnowledgeIds"],
-      "owns": "Kernel owns the subject-to-knowledge read model. Practice owns invoking it before the question list and preserving the distinction between an absent subject filter and an empty resolved subject set.",
       "issue": "YUK-1358",
-      "date": "2026-10-27",
-      "debt": "capabilityToKernel"
+      "owns": "Kernel owns the subject-to-knowledge read model. Practice owns invoking it before the question list and preserving the distinction between an absent subject filter and an empty resolved subject set.",
+      "date": "2026-10-27"
     },
     {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/practice/server/question-list-read.ts",
       "module": "src/kernel/read-models/questions.ts",
       "kind": "value",
@@ -9102,10 +9203,9 @@
         "QuestionListSortDir",
         "listQuestions"
       ],
-      "owns": "Kernel owns the existing question list read model and result types. Practice owns the complete request policy, cursor compatibility, all original filters and serving options, and full collection projection without rewriting the underlying query or pagination algorithm.",
       "issue": "YUK-1358",
-      "date": "2026-10-27",
-      "debt": "capabilityToKernel"
+      "owns": "Kernel owns the existing question list read model and result types. Practice owns the complete request policy, cursor compatibility, all original filters and serving options, and full collection projection without rewriting the underlying query or pagination algorithm.",
+      "date": "2026-10-27"
     },
     {
       "debt": "capabilityToKernel",
@@ -9173,34 +9273,34 @@
       "date": "2026-10-27"
     },
     {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/practice/server/draft-list-read.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
       "symbols": ["ApiError", "collectionPayload"],
-      "debt": "capabilityToKernel",
       "issue": "YUK-1358",
-      "date": "2026-10-27",
-      "owns": "Kernel owns the shared API error vocabulary and collection envelope. Practice owns the draft-list validation order, cursor/offset request policy and aggregate invocation, and supplies the unchanged rows, page and complete extension fields to that envelope."
+      "owns": "Kernel owns the shared API error vocabulary and collection envelope. Practice owns the draft-list validation order, cursor/offset request policy and aggregate invocation, and supplies the unchanged rows, page and complete extension fields to that envelope.",
+      "date": "2026-10-27"
     },
     {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/ingestion/server/session-list-read.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
       "symbols": ["ApiError", "collectionPayload"],
-      "debt": "capabilityToKernel",
       "issue": "YUK-1358",
-      "date": "2026-10-27",
-      "owns": "Kernel owns the shared API error vocabulary and collection envelope. Ingestion owns the original recording-list cursor errors, limit rules, evidence-qualified aggregation and complete row projection, and passes its unchanged data and page fields to that envelope."
+      "owns": "Kernel owns the shared API error vocabulary and collection envelope. Ingestion owns the original recording-list cursor errors, limit rules, evidence-qualified aggregation and complete row projection, and passes its unchanged data and page fields to that envelope.",
+      "date": "2026-10-27"
     },
     {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/ingestion/server/session-blocks-read.ts",
       "module": "src/kernel/read-models/learner-knowledge-visibility.ts",
       "kind": "value",
       "symbols": ["learnerVisibleKnowledgeIds"],
-      "debt": "capabilityToKernel",
       "issue": "YUK-1358",
-      "date": "2026-10-27",
-      "owns": "Kernel owns learner-visible knowledge identity filtering. Ingestion owns the full recording-block and historical observation read and applies the same existing filter only to the observation's suggested knowledge IDs while preserving its tolerant field projection."
+      "owns": "Kernel owns learner-visible knowledge identity filtering. Ingestion owns the full recording-block and historical observation read and applies the same existing filter only to the observation's suggested knowledge IDs while preserving its tolerant field projection.",
+      "date": "2026-10-27"
     },
     {
       "debt": "capabilityToKernel",
@@ -9349,8 +9449,8 @@
       "kind": "value",
       "symbols": ["costUsdToMicroUsd"],
       "issue": "YUK-1642",
-      "date": "2026-10-28",
-      "owns": "Kernel cost owns the canonical USD→micro-USD conversion for AI event cost evidence; the long-note revision round stamps costMicroUsd on its body_blocks_edit and lifecycle events with the same conversion note_generate/note_verify already use."
+      "owns": "Kernel cost owns the canonical USD→micro-USD conversion for AI event cost evidence; the long-note revision round stamps costMicroUsd on its body_blocks_edit and lifecycle events with the same conversion note_generate/note_verify already use.",
+      "date": "2026-10-28"
     },
     {
       "debt": "capabilityToKernel",
@@ -10662,6 +10762,466 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/jobs/coach_daily.ts",
+      "module": "src/kernel/read-models/weak-points.ts",
+      "kind": "value",
+      "symbols": ["deriveActionableWeakPoints"],
+      "issue": "YUK-1582",
+      "owns": "完整可行动薄弱点只读派生：失败作答×归因×meta-cause先验折叠、KC元数据/科目label解析、live misconception身份匹配与强度升级、unknown显式化；coach_daily 只取派生结果作 Coach brief 注意力压力（additive only），窗口/上限/unknown语义与证据红线归端口，消费方不重定义。",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/node-page.ts",
+      "module": "src/kernel/read-models/learner-judgment.ts",
+      "kind": "value",
+      "symbols": ["abilityReadingsByIdOrFail", "readLearnerJudgments"],
+      "issue": "YUK-1584",
+      "owns": "Learner-judgment contract read (v0-incumbent): one read-only snapshot carries the incumbent mastery and retention readings with explicit unknowns, the explainable component-disagreement reading and the YUK-1600 non-kc role gate. The knowledge node page drops its parallel getMasteryProjection/getFsrsRetrievabilityByIds reads; its displayed mastery-family conclusions come only from this contract.",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-detail.ts",
+      "module": "src/kernel/read-models/learner-judgment.ts",
+      "kind": "value",
+      "symbols": ["abilityReadingsByIdOrFail", "readLearnerJudgments"],
+      "issue": "YUK-1584",
+      "owns": "Learner-judgment contract read (v0-incumbent): one read-only snapshot carries the incumbent mastery and retention readings with explicit unknowns, the explainable component-disagreement reading and the YUK-1600 non-kc role gate. The question detail scheduling block drops its parallel mastery projection read; per-KC due dates stay on the raw scheduling projection, which the contract does not own.",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/node-page.ts",
+      "module": "src/kernel/read-models/review-timing.ts",
+      "kind": "value",
+      "symbols": ["reviewTimingJson"],
+      "issue": "YUK-1586",
+      "owns": "JSON shape of the review-timing reading: uncalibrated recall point, unestimated interval, retrieval and duration basis, decay bucket and mastered shelf. The knowledge node page serializes the judgment contract's freshness onto the existing decay field and does not recompute it.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-detail.ts",
+      "module": "src/kernel/read-models/review-timing.ts",
+      "kind": "value",
+      "symbols": ["reviewTimingJson"],
+      "issue": "YUK-1586",
+      "owns": "JSON shape of the review-timing reading: uncalibrated recall point, unestimated interval, retrieval and duration basis, decay bucket and mastered shelf. Question detail copies that reading onto each scheduling row and does not invent an interval or a second decay path.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/jobs/coach_daily.ts",
+      "module": "src/kernel/read-models/daily-review-plan.ts",
+      "kind": "value",
+      "symbols": ["DailyReviewPlanInputs", "resolveDailyReviewPlanInputs"],
+      "issue": "YUK-1571",
+      "owns": "Shared daily-review-plan input projection: deduped due questions bucketed by subject, plus the practice-supplied minute budget and measured question pace. Coach reads this projection; it does not import the practice due queue.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/public.ts",
+      "module": "src/kernel/read-models/daily-review-plan.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1571",
+      "owns": "Shared daily-review-plan input projection. installDailyReviewPlanFacts binds the practice-owned due/budget/pace reader into that projection before coach jobs mount; the due queue, budget and pace algorithms stay in practice.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/intervention-author.ts",
+      "module": "src/kernel/read-models/intervention-preparation.ts",
+      "kind": "value",
+      "symbols": ["guardInterventionPreparationStage"],
+      "issue": "YUK-1571",
+      "owns": "Read-only intervention preparation fence: latest version, preparation job id, concrete recommendation, snapshot, and active source-probe evidence. Practice reads this before each paid authoring stage; agency keeps the intervention writes.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/no-progress-loop.ts",
+      "module": "src/kernel/proposals/producers.ts",
+      "kind": "value",
+      "symbols": ["writeEvaluationCorrectionProposal"],
+      "issue": "YUK-1413",
+      "owns": "Reversible grading-correction proposal for one completed evaluation. Accept rejudges the frozen submission and does not rewrite the original evaluation.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/no-progress-loop.ts",
+      "module": "src/kernel/read-models/question-activity.ts",
+      "kind": "value",
+      "symbols": ["getQuestionTimeline"],
+      "issue": "YUK-1413",
+      "owns": "Question timeline of attempts and reviews, including the original and effective evaluation ids needed to file a correction proposal.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_gen_persist.ts",
+      "module": "src/kernel/artifacts.ts",
+      "kind": "value",
+      "symbols": ["artifactRowToCreateSnapshot", "emitArtifactCreateEvent"],
+      "issue": "YUK-1572",
+      "owns": "Artifact create snapshot and artifact_create event. The draft transaction emits them from the tool_quiz row returned by the same insert, using that row's timestamp.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_gen_persist.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1572",
+      "owns": "Structural answer-class write rule: explicit non-null answer_class, absent-kind null, kind normalization, and choices/rubric defaults. The draft insert applies it to the question row before publication; draft status and verify intent stay in the same transaction.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_gen_persist.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1572",
+      "owns": "Question-group publication. The draft transaction publishes each newly inserted question in that same transaction and keeps the withheld default; composite parts already publish through their writer, so this call stays idempotent for them.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/judge-retraction-applier.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1572",
+      "owns": "Event envelope insert. Judge-retraction accept writes the appeal resolution and the legacy judge-event retract here, and does not rewrite the original evaluation.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/judge-retraction-applier.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1572",
+      "owns": "Shared API error. Judge-retraction accept throws the same validation and conflict codes the proposal path already used.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/judge-retraction-applier.ts",
+      "module": "src/kernel/proposals/applier-helpers.ts",
+      "kind": "value",
+      "symbols": [
+        "asPlainRecord",
+        "ensureAcceptOnly",
+        "existingAcceptRate",
+        "requiredString",
+        "writeProposalRateEvent"
+      ],
+      "issue": "YUK-1572",
+      "owns": "Shared proposal accept gate, payload read, existing accept rate, required-string check, and rate-event write. Judge-retraction accept keeps the same idempotent replay; the correction policy stays in the applier.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_verify_persist.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1572",
+      "owns": "Event envelope insert for the quiz verify terminal success, hold, and retriable system-error events. Payload, outcome, and the caller transaction stay as they were; the job still decides the verdict.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_verify_persist.ts",
+      "module": "src/kernel/object-storage.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1572",
+      "owns": "Shared object client invoked only when the existing publisher asset barrier calls readAssetBytes. Asset refs, locks, and paid policy stay on the verify publication path.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_verify_persist.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": [
+        "appendAdmissionVerificationRecord",
+        "publishQuestionGroup",
+        "publishQuestionGroupFromRow"
+      ],
+      "issue": "YUK-1572",
+      "owns": "Question-group publication and append-only admission verification records. Promote, hold, and kept-admission writes stay in the same caller transaction; the verify job still chooses the branch.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/source_verify_lifecycle.ts",
+      "module": "src/kernel/object-storage.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1572",
+      "owns": "Shared object client invoked only when the existing publisher asset barrier calls readAssetBytes. Asset refs, locks, and paid policy stay on the verify lifecycle path.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/source_verify_lifecycle.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": [
+        "AdmissionVerificationWrite",
+        "PublishAdmission",
+        "PublishQuestionGroupResult",
+        "SuspensionUpdate",
+        "archiveGroupLifecycle",
+        "loadQuestionGroupContractSnapshot",
+        "publishQuestionGroup",
+        "publishQuestionGroupFromRow"
+      ],
+      "issue": "YUK-1572",
+      "owns": "Question-group publication and lifecycle. The moved verify lifecycle update loads the locked snapshot, archives a fully tombstoned group, publishes a never-published group from its row, and republishes a frozen revision while changing only admission, suspension, verification, and availability. Drift, CAS, and digest rules stay in this owner.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/agent/run.ts",
+      "module": "src/server/ai/provider-session-admission-policy.ts",
+      "kind": "value",
+      "symbols": ["ProviderSessionAdmissionError"],
+      "issue": "YUK-1572",
+      "owns": "Provider-session admission failure identity (reason, lane, task run). The ingestion agent classifies that error when a run stops. The class moved with lane-policy parsing; acquire and the tick loop stay in provider-session-admission.ts, so this replaces that file's edge and the ingestion -> ai count does not grow.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning.ts",
+      "module": "src/kernel/read-models/failure-learning-context.ts",
+      "kind": "value",
+      "symbols": ["loadFailureLearningKnowledgeContext"],
+      "issue": "YUK-1571",
+      "owns": "Bounded failure-learning knowledge read: active named knowledge nodes in caller order, with effective domain, plus active misconception nodes linked to those KCs or resolved by id. Practice reads this projection; knowledge keeps graph writes.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/cause-catalog.ts",
+      "module": "src/kernel/read-models/failure-learning-context.ts",
+      "kind": "value",
+      "symbols": ["loadFailureLearningKnowledgeContext"],
+      "issue": "YUK-1571",
+      "owns": "Bounded failure-learning knowledge read: active named knowledge nodes in caller order, with effective domain, plus active misconception nodes linked to those KCs or resolved by id. Practice reads this projection; knowledge keeps graph writes.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-attribution.ts",
+      "module": "src/kernel/read-models/failure-learning-context.ts",
+      "kind": "value",
+      "symbols": ["listActiveMisconceptionsForKcs"],
+      "issue": "YUK-1571",
+      "owns": "Bounded failure-learning knowledge read: active named knowledge nodes in caller order, with effective domain, plus active misconception nodes linked to those KCs or resolved by id. Practice reads this projection; knowledge keeps graph writes.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "module": "src/kernel/read-models/failure-learning-context.ts",
+      "kind": "value",
+      "symbols": ["getMisconceptionsByIds"],
+      "issue": "YUK-1571",
+      "owns": "Bounded failure-learning knowledge read: active named knowledge nodes in caller order, with effective domain, plus active misconception nodes linked to those KCs or resolved by id. Practice reads this projection; knowledge keeps graph writes.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "module": "src/kernel/read-models/subject-profile.ts",
+      "kind": "value",
+      "symbols": ["resolveSubjectProfileForKnowledgeIds"],
+      "issue": "YUK-1571",
+      "owns": "Subject profile for a question's knowledge ids. Item-prior preparation reads the existing kernel resolver directly.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/learning-intent.ts",
+      "module": "src/kernel/records/knowledge-node-birth.ts",
+      "kind": "value",
+      "symbols": ["createKnowledgeNodeFromEvents"],
+      "issue": "YUK-1571",
+      "owns": "Approved knowledge-node birth from genesis history. Learning-intent accept supplies id, name, domain, parent, role, proposed_by_ai and actorRef learning-intent-accept; the kernel writer keeps the lock, existing-row refusal, domain canonicalization, genesis event and materialization.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/probe-lock.ts",
+      "module": "src/kernel/locks/registry.ts",
+      "kind": "value",
+      "symbols": [
+        "advisoryLockRegistry",
+        "deriveHashtextExtendedIdentityLock",
+        "deriveIntLiteralLockKey"
+      ],
+      "issue": "YUK-1577",
+      "owns": "Named advisory-lock key templates for the probe serve cap (int 4064403), the per-question hashtextextended identity (salt 0), and the conjecture-fold identity (salt 1). The registry derives those arguments and does not acquire the lock.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/teaching.ts",
+      "module": "src/kernel/read-models/note-sections.ts",
+      "kind": "value",
+      "symbols": ["bodyBlocksToNoteSections"],
+      "issue": "YUK-1571",
+      "owns": "Top-level semanticBlock projection into note sections. Teaching reads it; notes keeps block-tree edits.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/note-page.ts",
+      "module": "src/kernel/read-models/note-sections.ts",
+      "kind": "value",
+      "symbols": ["bodyBlocksToNoteSections"],
+      "issue": "YUK-1571",
+      "owns": "Top-level semanticBlock projection into note sections. The note page reads it; notes keeps block-tree edits.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/note-verify-durable-operation.ts",
+      "module": "src/kernel/read-models/note-sections.ts",
+      "kind": "value",
+      "symbols": ["bodyBlocksToNoteSections"],
+      "issue": "YUK-1571",
+      "owns": "Top-level semanticBlock projection into note sections. Note verification reads it; notes keeps block-tree edits.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/sections.ts",
+      "module": "src/kernel/read-models/note-sections.ts",
+      "kind": "value",
+      "symbols": ["bodyBlocksToNoteSections"],
+      "issue": "YUK-1571",
+      "owns": "Top-level semanticBlock projection into note sections. Section edit reads it; notes keeps block-tree edits.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/tasks/note-tasks.ts",
+      "module": "src/kernel/read-models/note-sections.ts",
+      "kind": "value",
+      "symbols": ["bodyBlocksToNoteSections"],
+      "issue": "YUK-1571",
+      "owns": "Top-level semanticBlock projection into note sections. Note generation counts sections from it; notes keeps block-tree edits.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/intervention/intervention-lock.ts",
+      "module": "src/kernel/locks/registry.ts",
+      "kind": "value",
+      "symbols": [
+        "advisoryLockRegistry",
+        "deriveHashtextExtendedExactLockKey",
+        "deriveHashtextExtendedLockKey"
+      ],
+      "issue": "YUK-1577",
+      "owns": "Named advisory-lock key templates and hashtext / hashtextextended text derivation. The registry does not acquire locks and does not record or prove a lock order.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/jobs/prepare_intervention.ts",
+      "module": "src/kernel/records/intervention-package-author.ts",
+      "kind": "value",
+      "symbols": ["authorInterventionPackage"],
+      "issue": "YUK-1571",
+      "owns": "One intervention preparation attempt: preparation guard, subject profile, paid author stage, second guard, paid review stage, deterministic package check. Practice supplies only the two paid stages.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/public.ts",
+      "module": "src/kernel/records/intervention-package-author.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1571",
+      "owns": "One intervention preparation attempt: preparation guard, subject profile, paid author stage, second guard, paid review stage, deterministic package check. installInterventionAuthorStages binds the practice-owned paid stages before prepare_intervention mounts.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/intervention-author.ts",
+      "module": "src/kernel/records/intervention-package-author.ts",
+      "kind": "value",
+      "symbols": ["authorInterventionPackage"],
+      "issue": "YUK-1571",
+      "owns": "One intervention preparation attempt: preparation guard, subject profile, paid author stage, second guard, paid review stage, deterministic package check. Direct callers pass the local paid stages instead of the worker binding.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/proposal-accept-applier.ts",
+      "module": "src/kernel/records/learning-intent-note-birth.ts",
+      "kind": "value",
+      "symbols": ["createLearningIntentNote"],
+      "issue": "YUK-1571",
+      "owns": "Complete learning-intent note artifact birth inside the accept transaction: hub/atomic/long artifact rows, create events and generation intents. Agency keeps proposal accept orchestration and default post-commit dispatch wiring.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/proposal-accept-applier.ts",
+      "module": "src/kernel/records/note-handoff-protocol.ts",
+      "kind": "value",
+      "symbols": ["dispatchNoteGeneration"],
+      "issue": "YUK-1571",
+      "owns": "Post-accept note_generate dispatch via the shared durable handoff protocol. Boss resolution is registered at the composition root; preserve intent/completion records, singleton semantics and idempotent replay.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/note-handoff.ts",
+      "module": "src/kernel/records/note-handoff-protocol.ts",
+      "kind": "value",
+      "symbols": [
+        "BossDispatch",
+        "NOTE_HANDOFF_ACTION",
+        "NOTE_HANDOFF_KINDS",
+        "NOTE_HANDOFF_VERSION",
+        "artifactCanReceiveNoteHandoff",
+        "dispatchNoteGeneration",
+        "dispatchNoteHandoff",
+        "dispatchNoteVerification",
+        "noteHandoffIntentPayloadSchema",
+        "noteVerificationRecoveryJobId",
+        "writeNoteGenerationIntent",
+        "writeNoteVerificationIntent"
+      ],
+      "issue": "YUK-1571",
+      "owns": "Complete note durable handoff protocol moved to kernel. Notes keeps boss-port wiring, legacy synthesis/recovery floor and verification-claim recovery jobs.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/jobs/note_generate.ts",
+      "module": "src/kernel/records/note-handoff-protocol.ts",
+      "kind": "value",
+      "symbols": ["writeNoteVerificationIntent"],
+      "issue": "YUK-1571",
+      "owns": "Generation success enqueues verification intent through the kernel handoff writer inside the same transaction boundary as today.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/practice/server/question-supply/web-supply.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
@@ -11176,6 +11736,78 @@
       "to": 1969,
       "issue": "YUK-1559",
       "responsibilityReason": "YUK-1559/YUK-1661 report-only live integration at the existing shared PreparedExecution allTools.execute boundary: import and instantiate one run monitor per execution, observe prepared arguments immediately before the unchanged delegate, and attach its safe comparison/count/wouldTrigger/group metadata to the existing executed tool trace. Root and nested loops reuse the same wrapper; no additional execution, enforcement, budget, paid, recovery or business policy is added. Monitor mechanism remains in run-monitor.ts; only the actual execution boundary wiring belongs in this adapter."
+    },
+    {
+      "path": "src/capabilities/practice/manifest.ts",
+      "date": "2026-10-31",
+      "baseBlob": "fded48db61ee5acfd0b03e3a4952325b6c0944a8",
+      "from": 1343,
+      "to": 1346,
+      "issue": "YUK-1571",
+      "responsibilityReason": "Declares the existing experimental:quiz_verify action so Agency can subscribe. The verify job body is unchanged; the three lines are the action plus the note that a committed non-promotion is the pool-gap signal. No new route, job, or writer."
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/bank-search.ts",
+      "date": "2026-10-31",
+      "baseBlob": "6593ae2b9c14174f3541b1081a7a977e4beba5de",
+      "from": 1331,
+      "to": 1360,
+      "issue": "YUK-1668",
+      "responsibilityReason": "The existing search_bank baseline count now calls countedRankV2 and passes the authoritative identity columns compileSameTopic already reads. The cluster branch stays closed, so the qualified-surface limit remains the shared two-row window and cursor v3 still restores the issuing search's counted bit. Same retrieval owner; this records the measured 1331 to 1360 growth, not a new path or a ceiling exemption."
+    },
+    {
+      "path": "src/capabilities/practice/manifest.ts",
+      "date": "2026-10-31",
+      "baseBlob": "0bc07a10067f112c68acccdd66403dbea5e0a3c0",
+      "from": 1346,
+      "to": 1350,
+      "issue": "YUK-1607",
+      "responsibilityReason": "Declares experimental:question_or_answer_may_be_faulty, the log-only inference the assessment settlement writer emits. No new route, job, subscription, or serving hold."
+    },
+    {
+      "path": "src/core/schema/assessment/evaluation.ts",
+      "date": "2026-10-31",
+      "baseBlob": "7320885c538ac2b36af17580a236a379dea42ad5",
+      "from": 1399,
+      "to": 1405,
+      "issue": "YUK-1583",
+      "responsibilityReason": "Optional kc_mastery_evidence is threaded from the model outcome onto the scored unit result. Points and aggregate do not read it; the attribution rules live in kc-mastery-evidence.ts and settlement.ts. The six lines are the import, the schema field, and the passthrough. This records measured 1399 to 1405 growth, not a new scoring responsibility or a ceiling exemption."
+    },
+    {
+      "path": "src/server/ai/pi-agent-adapter.ts",
+      "date": "2026-10-31",
+      "baseBlob": "61bc2e2fc51f89f3d084cb5b3262b9d9cb12a8a6",
+      "from": 1365,
+      "to": 1370,
+      "issue": "YUK-1413",
+      "responsibilityReason": "The existing root-response binding now also records HTTP 429 and 502, using the same single-fetch proof as 400. The added lines map that status onto the help-fault field. No new loop, retry, or provider lane."
+    },
+    {
+      "path": "src/server/ai/runner.ts",
+      "date": "2026-10-31",
+      "baseBlob": "284ddbd8319753019984ce00cc3dead26396d6b8",
+      "from": 1348,
+      "to": 1375,
+      "issue": "YUK-1413",
+      "responsibilityReason": "A settled quota, 502, or typed parse failure on the collecting stream returns the executable exit text instead of an empty partial. The attempt still finishes as a failure and unknown cost stays unknown. This is the same stream-collect return, not a new runner."
+    },
+    {
+      "path": "src/server/questions/edit-question.ts",
+      "date": "2026-10-31",
+      "baseBlob": "25ea64a23d88c8955aee7c6079949fa8eafe5719",
+      "from": 1275,
+      "to": 1277,
+      "issue": "YUK-1572",
+      "responsibilityReason": "The save path now imports invalidated-scope and CAS relevant-changes from draft-edit-impact instead of draft-ops. Splitting that import adds two lines. Save, validate, probe, CAS, and the op batch are unchanged. This records measured growth, not a new responsibility or a ceiling exemption."
+    },
+    {
+      "path": "src/server/ai/runner.ts",
+      "date": "2026-10-31",
+      "baseBlob": "fc9c1a5564671f64e9e8d617bbca62d025140c55",
+      "from": 1375,
+      "to": 1388,
+      "issue": "YUK-1413",
+      "responsibilityReason": "The collecting loop records the help-attempt clock and, on a proven quota, 502, or parse fault, notes the executable exit before the existing failure settlement. Unknown cost is unchanged. This is the same runner, not a new loop or lane."
     },
     {
       "path": "src/capabilities/practice/server/tools/submit-question.ts",
@@ -11769,7 +12401,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 160,
+      "total": 159,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -11786,7 +12418,7 @@
         "ingestion -> projections": 2,
         "knowledge -> ai": 7,
         "knowledge -> boss": 3,
-        "knowledge -> fsrs": 2,
+        "knowledge -> fsrs": 1,
         "knowledge -> memory": 2,
         "knowledge -> projections": 2,
         "knowledge -> proposals": 2,
@@ -11813,25 +12445,21 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 24,
+      "total": 14,
       "byOwnerPair": {
-        "agency -> knowledge": 1,
-        "agency -> notes": 2,
-        "agency -> practice": 4,
-        "copilot -> notes": 2,
+        "agency -> notes": 0,
+        "agency -> practice": 2,
+        "copilot -> notes": 1,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,
         "observability -> agency": 1,
         "observability -> practice": 1,
-        "practice -> agency": 2,
-        "practice -> knowledge": 1,
         "shell -> agency": 1,
         "shell -> knowledge": 1,
-        "shell -> notes": 1,
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
-      "nontrivialSccs": [["agency", "practice"]]
+      "nontrivialSccs": []
     }
   }
 }

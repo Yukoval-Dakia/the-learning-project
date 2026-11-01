@@ -19,6 +19,8 @@
 - 判分走 `JudgeResultV2`：coarse_outcome × score_meaning，历史判分不可变（rejudge = 新 event）。
 - paper/组卷容器是 `tool_quiz` artifact；session 内 attempt 走 `learning_session(type='review')`。
 - draft 题须经 `verifyAndPromote` 才能 active；漏 `draft_status` 会被 `audit:draft-status` 抓。
+- 提示生成遇到额度（429）、502 或解析失败时，响应带原因、`stop_retry`（停止重试）和确定性下一步或封存参考。没有这些材料时只建议跳过。
+- 每次提示请求在 `experimental:hint_request` 上封存四段时延和分母。未经验证的模型正文不记成已验证可执行帮助。失败和超时照样入账，未知费用保持 null。18 秒预算在尝试行和提示事件上都是超时。
 
 ## ANTI-PATTERNS
 - 别把 judge 结果回写 attempt event；因果链用 `caused_by_event_id`。

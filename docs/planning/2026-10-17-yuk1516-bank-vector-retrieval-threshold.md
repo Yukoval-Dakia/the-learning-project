@@ -41,7 +41,8 @@ text-embedding-v4@1024 向量）上实测：
 
 保守方向：拿不准时宁可 `none` + gap_request，不造 false `enough`。已知代价：多条同主题
 题贴成簇时 margin 不满足 → 该主题保守判 none（gap 照发）；由标定数据决定是否调参或升
-规则版本（`BANK_VECTOR_RETRIEVAL_RULE_VERSION`）。
+规则版本（`BANK_VECTOR_RETRIEVAL_RULE_VERSION`）现为 2。本节 decisive 锚点不变。
+题簇分支未开：样本未冻结，不把未标定的簇参数写进计入。
 
 ## 查重 matcher 不动
 
@@ -63,8 +64,9 @@ precision/recall、absent 主题的 false-enough 率与全网格；据此修订�
 
 ## 已知边界
 
-- cursor schema 升 v3（pool 条目携带 `vd`/`vc`）：续页不 embed，向量距离与计入判定只能
-  由游标还原；v2 及更早游标（15 分钟 TTL）显式报版本过期/不支持，重新检索即可。
+- cursor **schema** 为 v3（pool 条目携带 `vd`/`vc`）：续页不 embed，也不重算计入。
+  规则版本升到 2 不升游标 schema；15 分钟 TTL 内还原签发那次检索写入的 `vc`
+  （含规则 v1 签发的游标）。schema v2 及更早的游标显式报版本过期，重新检索即可。
 - 标定脚本与引擎共用 `bankVectorBaselinePredicates()`（合格库面谓词，无 scope 过滤）；
   脚本取最近 3 行（rank-1/rank-2 判定 + 细节展示），无向量副本在任何 embed 之前拒绝
   （`count(*)::int`，R1 review P2）。

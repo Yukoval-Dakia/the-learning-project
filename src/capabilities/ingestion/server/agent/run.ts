@@ -18,7 +18,7 @@ import {
   resolveMcpAllowedTools,
 } from '@/kernel/tools/allowlists';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
-import { ProviderSessionAdmissionError } from '@/server/ai/provider-session-admission';
+import { ProviderSessionAdmissionError } from '@/server/ai/provider-session-admission-policy';
 // Import failure-vocabulary modules directly: re-exporting them from runner-fn
 // pulls providers/task-catalog/schema into its cone and breaks vitest module order.
 import { type BoundRunTaskFn, makeRunTaskFn } from '@/server/ai/runner-fn';

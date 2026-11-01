@@ -127,7 +127,7 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043'],
     note: '人工错题 INSERT ⇒ 同事务首版 revision（原错误作答不能成为答案键：在 attempt 事件保留；契约只承载题面/参考 —— 复审裁决即刻收敛）。',
   },
-  'src/capabilities/practice/jobs/quiz_gen.ts': {
+  'src/capabilities/practice/jobs/quiz_gen_persist.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],
     note: 'quiz_gen 新题同事务铸首版 revision：composite 由 createQuestionPart 逐 part 发布（此处幂等 noop）；单题铸 v1。均 withheld/unverified_rules，quiz_verify promote 翻 admitted。',

@@ -4,7 +4,7 @@
 // event → ContextBudgetTracker + propose-cap beforeExecute gate + interceptInput throttle on a
 // piDomainMount → runAgentTask with the `hard+1` summary-turn budgetOverride → inbox after-diff →
 // per-new-row hook → `experimental:<surface>_scan` success/failure events → rethrow. Surface
-// differences stay in the spec: actor_ref, payload slots, TodayPlan extras, note-refine fan-out.
+// differences stay in the spec: actor_ref, payload slots, TodayPlan extras, note-refresh signal.
 
 import { createId } from '@paralleldrive/cuid2';
 import { type BuildMcpServerOptions, piDomainMount } from '@/ai/pi-tool-mount';
@@ -24,7 +24,7 @@ import type { ToolExecutionGateInput } from '@/kernel/tools/types';
 import { type RunAgentTaskCtx, runAgentTask } from '@/server/ai/runner';
 
 /**
- * The inbox row slice the scan diff needs. Only Dreaming's note-refine fan-out reads
+ * The inbox row slice the scan diff needs. Only Dreaming's note-refresh signal reads
  * `kind`/`target`, so both stay optional and each consumer narrows in its own code.
  */
 export type AgencyScanInboxRow = Pick<ProposalInboxRow, 'id' | 'status'> &
@@ -106,13 +106,15 @@ export interface AgencyProposalScanSpec {
   /** Extra scan-failure payload fields (Coach stamps `run_kind`). */
   extraScanFailurePayload?: Record<string, unknown>;
   /**
-   * Runs between the after-diff and the scan-success write — Dreaming's note_update →
-   * note-refine enqueue fan-out. Receives only the NEW rows.
+   * Runs between the after-diff and the scan-success write — Dreaming turns new
+   * note_update rows into refresh events. Receives only the NEW rows and the
+   * scan's event writer.
    */
   onNewProposalRows?: (args: {
     db: Db;
     newRows: AgencyScanInboxRow[];
     triggerEventId: string;
+    writeEventFn: NonNullable<AgencyProposalScanDeps['writeEventFn']>;
   }) => Promise<void>;
 }
 
@@ -205,7 +207,7 @@ export async function runAgencyProposalScan(
     const pendingAfter = afterRows.filter((row) => row.status === 'pending').length;
     const newRows = afterRows.filter((row) => !beforeIds.has(row.id));
     const proposalsCreated = newRows.length;
-    await spec.onNewProposalRows?.({ db, newRows, triggerEventId });
+    await spec.onNewProposalRows?.({ db, newRows, triggerEventId, writeEventFn: write });
 
     const { outcome: scanOutcome, ...payloadExtras } =
       spec.buildScanSuccessPayloadExtras?.(taskResult, input) ?? {};

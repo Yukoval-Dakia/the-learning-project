@@ -7,7 +7,7 @@ import type { FoldEvent } from './fold-event';
 
 // Anchor-only reducer: item_calibration has no runtime mutations, so the only input is
 // the genesis snapshot. Latest anchor wins.
-// Imperative post-anchor writes are invisible here, so audit:projection reports drift
+// Imperative post-anchor writes are invisible here, so ops:projection reports drift
 // until re-anchored; that is the honest event=truth signal.
 
 // Rebuild the parse input from the flat row so a malformed payload is rejected.

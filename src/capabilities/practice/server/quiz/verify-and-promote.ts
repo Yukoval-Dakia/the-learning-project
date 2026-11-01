@@ -9,8 +9,9 @@
 // acceptQuestionDraftProposal (proposal-appliers.ts:286) 的 draft→active+FSRS 同形逻辑 (参照，
 // 非 import)，与 run 函数同款 enroll-if-absent，绝不重置已有 schedule。
 // 边界纪律 : 本模块**只能** import runSourceVerify / runQuizVerify (正常分支
-// 转调) + 少量 promote 操作 (writeEvent / enrollPromotedQuestionScheduling，
-// 仅 override 分支用)。派发判别按 source 字面 (web_sourced/quiz_gen)，比 deriveSourceTier 更稳。
+// 转调) + 少量 promote 操作 (writeEvent / enrollPromotedQuestionScheduling /
+// publishVerifyLifecycleUpdate，仅 override 分支用)。派发判别按 source 字面
+// (web_sourced/quiz_gen)，比 deriveSourceTier 更稳。
 // **绝不** import 或复刻两 handler 的 check 逻辑 / promote 事务 / metadata 构造 / writeAgentNote
 // 那是「合并抽取」的滑坡，被 b1 决策否决。
 
@@ -27,7 +28,8 @@ import { event, knowledge, question, question_group_lifecycle } from '@/db/schem
 import { writeEvent } from '@/kernel/events';
 
 import { type RunTaskFn, runQuizVerify } from '../../jobs/quiz_verify';
-import { publishVerifyLifecycleUpdate, runSourceVerify } from '../../jobs/source_verify';
+import { runSourceVerify } from '../../jobs/source_verify';
+import { publishVerifyLifecycleUpdate } from '../../jobs/source_verify_lifecycle';
 import { enrollPromotedQuestionScheduling } from '../question-scheduling-enrollment';
 import { lockPlacementSupplyScopes } from '../question-supply/placement-supply-lock';
 
