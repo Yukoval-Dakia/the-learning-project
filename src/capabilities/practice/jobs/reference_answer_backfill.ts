@@ -26,15 +26,15 @@
 
 import { and, asc, isNull, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-import type { Db } from '@/db/client';
-import { question } from '@/db/schema';
-import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import {
   type GenerateReferenceSolutionParams,
   type GenerateReferenceSolutionResult,
   type SolutionGenerateRunTaskFn,
   generateReferenceSolution,
-} from '@/server/ai/solution-generate';
+} from '@/capabilities/practice/server/reference-solution';
+import type { Db } from '@/db/client';
+import { question } from '@/db/schema';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 
 export interface ReferenceAnswerBackfillResult {
   /** rows whose reference_md IS NULL that the SELECT returned this run. */
