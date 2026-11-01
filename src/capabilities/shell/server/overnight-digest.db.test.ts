@@ -3,9 +3,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ai_task_runs } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { loadOvernightDigest } from '@/kernel/read-models/overnight-digest-query';
+import { overnightWindow } from '@/kernel/read-models/overnight-digest-summary';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { loadOvernightDigest } from './overnight-digest';
-import { overnightWindow } from './overnight-digest-summary';
 
 describe('loadOvernightDigest degraded scan marking', () => {
   beforeEach(async () => {

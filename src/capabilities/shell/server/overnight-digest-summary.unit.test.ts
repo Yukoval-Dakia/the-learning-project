@@ -7,7 +7,7 @@ import {
   type DegradedScanRow,
   type RunErrorRow,
   computeDegradedKinds,
-} from './overnight-digest-summary';
+} from '@/kernel/read-models/overnight-digest-summary';
 
 const T1 = '2026-10-27T19:00:00.000Z';
 const T2 = '2026-10-27T20:00:00.000Z';

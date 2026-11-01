@@ -1,6 +1,6 @@
 // Shared overnight facts and loader for Today, Start and Copilot.
-// Shell owns the five-source aggregation; Copilot owns its handoff sentence and failure policy.
-// The dynamic imports preserve the existing public-port composition and loading boundary.
+// The shared read model owns aggregation; Copilot owns its handoff sentence and failure policy.
+// Query and cost readers load lazily after the caller supplies its clock and DB.
 
 import type { ProviderCostWindow } from '@/core/schema/cost-observation';
 import type { Db, Tx } from '@/db/client';
@@ -53,8 +53,8 @@ export type LoadTodayOvernightDigest = (db: DbLike, now?: Date) => Promise<Overn
 /** Canonical read point for the previous BJT calendar day's digest. */
 export const loadTodayOvernightDigest: LoadTodayOvernightDigest = async (db, now = new Date()) => {
   const [{ loadOvernightDigest }, { readProviderCostWindow }] = await Promise.all([
-    import('@/capabilities/shell/public'),
-    import('@/capabilities/observability/public'),
+    import('./overnight-digest-query'),
+    import('./provider-cost-projection'),
   ]);
   return loadOvernightDigest(db, now, readProviderCostWindow);
 };
