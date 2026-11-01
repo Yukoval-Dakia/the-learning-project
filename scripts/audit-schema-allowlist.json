@@ -1,13 +1,5 @@
 {
   "_comment": "Schema fields with no INSERT/UPDATE write path. Each entry MUST have reason + resolves_when. When the resolving milestone lands, remove from this allowlist.",
-  "intervention.outcome": {
-    "reason": "YUK-791 creates and activates the versioned preparation aggregate; YUK-792 owns delayed/transfer verification settlement and is the first writer of the terminal outcome.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-792 intervention verification settlement writes outcome",
-      "expected_by": "2026-10-31"
-    }
-  },
   "knowledge.delete_reason": {
     "reason": "Soft-delete metadata; Sub 1 maintenance lane (ADR-0004) will write it | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
@@ -30,38 +22,6 @@
       "kind": "manual",
       "ref": "Sub 1 JudgeTask implemented",
       "expected_by": "2027-01-15"
-    }
-  },
-  "question.source_ref": {
-    "reason": "Provenance ref unused; ADR-0006 v2 后 event.payload.source 替代 | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 落地，决定 keep or drop",
-      "expected_by": "2026-10-31"
-    }
-  },
-  "question.created_by": {
-    "reason": "Provenance for AI-generated questions; ADR-0006 v2 will fill via event(action='generate', subject_kind='question') | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 event generation path implemented",
-      "expected_by": "2026-10-31"
-    }
-  },
-  "learning_item.source_ref": {
-    "reason": "Provenance ref; same as question.source_ref | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 落地，决定 keep or drop",
-      "expected_by": "2026-10-31"
-    }
-  },
-  "learning_item.primary_artifact_id": {
-    "reason": "ADR-0027 (YUK-203 P1) — primary_artifact_id 现为 learning_item→note 的可空 representative 引用指针（INSERT via acceptLearningIntent；无 UPDATE re-point path）。ADR-0004 的双向 ownership 已被 supersede。 | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "ADR-0027 reference-model: 当 learning_item→note 读全量切到 label 交集 (notesForItem, P1-PR2/P4) 后评估 drop 此列",
-      "expected_by": "2026-10-31"
     }
   },
   "learning_item.child_learning_item_ids": {
