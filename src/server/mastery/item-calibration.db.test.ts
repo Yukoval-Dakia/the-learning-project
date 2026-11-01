@@ -6,8 +6,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
 import { item_calibration } from '@/db/schema';
+import { applyItemPrior } from '@/kernel/records/item-calibration';
 import { resetDb } from '../../../tests/helpers/db';
-import { applyItemPrior } from './item-calibration';
 
 describe('applyItemPrior', () => {
   beforeEach(async () => {

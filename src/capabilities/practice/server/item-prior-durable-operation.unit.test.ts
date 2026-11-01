@@ -11,7 +11,7 @@ import {
 } from '@/core/migration/paid-effect-protocol';
 import type { Db } from '@/db/client';
 import { item_calibration, knowledge, question } from '@/db/schema';
-import { applyItemPrior } from '@/server/mastery/item-calibration';
+import { applyItemPrior } from '@/kernel/records/item-calibration';
 import { defaultSubjectProfile } from '@/subjects/profile';
 import {
   type ItemPriorCandidateFrozen,
@@ -46,7 +46,7 @@ vi.mock('@/db/schema', () => ({
     source: 'item_calibration.source',
   },
 }));
-vi.mock('@/server/mastery/item-calibration', () => ({ applyItemPrior: vi.fn() }));
+vi.mock('@/kernel/records/item-calibration', () => ({ applyItemPrior: vi.fn() }));
 vi.mock('@/kernel/read-models/subject-profile', () => ({
   resolveSubjectProfileForKnowledgeIds: async () => defaultSubjectProfile,
 }));
