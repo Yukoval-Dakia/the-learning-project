@@ -1,9 +1,9 @@
 // GET /api/workbench/overnight-digest route shell; the read model lives in
-// ../server/overnight-digest.
+// @/kernel/read-models/overnight-digest.
 
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
-import { loadTodayOvernightDigest } from '@/server/today/overnight-digest';
+import { loadTodayOvernightDigest } from '@/kernel/read-models/overnight-digest';
 
 export async function GET(): Promise<Response> {
   try {

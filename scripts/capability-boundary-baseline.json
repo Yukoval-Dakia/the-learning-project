@@ -7101,6 +7101,22 @@
       "direction": "decrease",
       "reason": "Learning-intent proposal accept note birth and post-accept generation dispatch moved to kernel handoff protocol; agency proposal-accept-applier no longer imports notes/public.",
       "issue": "YUK-1571"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> today",
+      "date": "2026-11-01",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "shell -> today",
+      "date": "2026-11-01",
+      "from": 2,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -12352,7 +12368,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 159,
+      "total": 156,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -12363,7 +12379,6 @@
         "copilot -> proposals": 1,
         "copilot -> revert": 1,
         "copilot -> session": 5,
-        "copilot -> today": 1,
         "ingestion -> ai": 12,
         "ingestion -> boss": 6,
         "ingestion -> projections": 2,
@@ -12387,8 +12402,7 @@
         "practice -> proposals": 4,
         "practice -> questions": 1,
         "shell -> boss": 1,
-        "shell -> proposals": 1,
-        "shell -> today": 2
+        "shell -> proposals": 1
       }
     },
     "serverToCapabilityDeep": {

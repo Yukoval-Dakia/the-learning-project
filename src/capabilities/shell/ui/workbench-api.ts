@@ -13,7 +13,7 @@ export const getWorkbenchSummary = () =>
   });
 
 // ── /api/workbench/overnight-digest wire（YUK-520 A1 夜窗 digest，overnight-digest.db.test.ts
-// 同形态；与 server overnight-digest-summary.ts 的 OvernightDigest 镜像） ──
+// 同形态；与 kernel read-models/overnight-digest.ts 的 OvernightDigest 镜像） ──
 export type OvernightDigest = ApiOperationJsonResponse<'getOvernightDigest'>;
 export type OvernightRunGroup = OvernightDigest['runs'][number];
 // YUK-580：某 task_kind 窗内 error 计数达阈值 → 静默失败标红条目（附最近 N 条 error_message 原串）。
