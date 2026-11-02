@@ -3,7 +3,7 @@
 // decision, and projects nodes in one transaction; no second structural writer.
 
 import { createHash } from 'node:crypto';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { embedHash, knowledgeEmbedText } from '@/core/embed-source';
 import { newId } from '@/core/ids';
 import type { MergeRepairEntryT, SuggestionKindT } from '@/core/schema/event/known';
@@ -27,7 +27,11 @@ import {
   rewriteQuestionKnowledgeIds,
 } from '@/kernel/records/knowledge-merge-attribution';
 import { requireKnowledgeHistory } from '@/kernel/records/knowledge-node-history-guard';
-import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
+import {
+  assertKnowledgeParentExists,
+  prepareProposedKnowledgeId,
+  projectKnowledgeNodeGuarded,
+} from '@/kernel/records/knowledge-node-materialization';
 import { retireLearnerAxisStateOnMerge } from '@/kernel/records/learner-axis-state';
 import { retireMasteryStateOnMerge } from '@/kernel/records/mastery-state';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
@@ -361,39 +365,6 @@ export async function writeKnowledgeProposeEvent(
 // Tree-mutation appliers operate on `knowledge` rows; called by the accept
 // handler below and by tests/audit flows.
 
-async function assertParentExists(db: DbLike, parentId: string): Promise<void> {
-  const row = (
-    await db
-      .select({ id: knowledge.id })
-      .from(knowledge)
-      .where(and(eq(knowledge.id, parentId), isNull(knowledge.archived_at)))
-      .limit(1)
-  )[0];
-  if (!row) {
-    throw new Error(`parent knowledge node not found or archived: ${parentId}`);
-  }
-}
-
-// Shared preparation for explicit acceptance and automatic tagging. It does not
-// write a node: each owner records its creation contract before projection.
-export async function prepareProposedKnowledgeId(
-  db: DbLike,
-  payload: ProposeNewPayload,
-): Promise<string> {
-  // Root creation has no parent to assert; the projected row stamps payload.domain.
-  // Re-check defensively: 'general'/blank can never persist as a node domain.
-  if (payload.parent_id === null) {
-    if (!sanitizeProposedNodeDomain(payload.domain)) {
-      throw new Error(
-        "propose_new root creation requires a selectable payload.domain — 'general'/blank is a fallback identity, not a node domain",
-      );
-    }
-    return newId();
-  }
-  await assertParentExists(db, payload.parent_id);
-  return newId();
-}
-
 type ReparentEmbeddingSnapshot = { id: string; name: string; hash: string | null };
 
 // Single xact-scoped lock serializing reparent accepts. The subtree check below is
@@ -414,7 +385,7 @@ async function prepareReparent(
   if (payload.new_parent_id === payload.node_id) {
     throw new Error(`reparent rejected: node ${payload.node_id} cannot become its own parent`);
   }
-  await assertParentExists(tx, payload.new_parent_id);
+  await assertKnowledgeParentExists(tx, payload.new_parent_id);
   await rejectReparentCycle(tx, payload.node_id, payload.new_parent_id);
 
   // YUK-393 — snapshot name + hash before the move to detect a cross-domain shift.
@@ -542,7 +513,7 @@ export async function prepareKnowledgeArchive(
 async function prepareKnowledgeSplit(tx: Tx, payload: SplitPayload, now: Date): Promise<string[]> {
   for (const entry of payload.into) {
     if (entry.parent_id === null) throw new Error('split into root (parent_id=null) not supported');
-    await assertParentExists(tx, entry.parent_id);
+    await assertKnowledgeParentExists(tx, entry.parent_id);
   }
   await requireKnowledgeRetirementBase(tx, payload.from_id, payload.expected_version);
   await archiveIncidentKnowledgeEdges(

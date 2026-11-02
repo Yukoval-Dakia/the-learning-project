@@ -6,6 +6,7 @@ import {
 import { ProposalDecisionResource } from '@/core/schema/proposal';
 import { rejectUndoVersionConflict } from '@/ui/lib/undo-ai-change';
 import { authenticatedStartFetch } from './authenticated-fetch';
+import { startProbeAnswerClient } from './probe-answer-client';
 import {
   acknowledgeStartTeachingBriefOutcome,
   decideStartProposal,
@@ -67,6 +68,7 @@ export const startWorkbenchClient: WorkbenchClient = {
     }).then((json) => ProposalDecisionResource.parse(JSON.parse(json)).result),
   getPrepDeskConjectures: () => getStartConjectures(transport),
   getActiveProbes: () => getStartActiveProbes(transport),
+  submitProbeAnswer: startProbeAnswerClient,
   getTeachingBrief: () => getStartTeachingBrief(transport),
   ackTeachingBriefOutcome: (probeResultEventId) =>
     acknowledgeStartTeachingBriefOutcome({

@@ -21,7 +21,7 @@
 - `manifest.ts` 只声明归属（`CapabilityManifest`，`src/kernel/manifest.ts`）：必填 `name`、`description`；可选 `events.actions`、`subscriptions.handlers`（`EventSubscriptionDecl[]`）、`api.routes`、`jobs.handlers`、`proposals.kinds`、`copilotTools.tools`、`ui.pages`。`validateComposition()` 在启动（`server/app.ts`）与 CI（`pnpm audit:api-contracts` → `scripts/audit-api-contracts.ts`）校验包名、event action、订阅 `id@vN`（`actions` 必须已被某个包声明、`load` 必填）、route key / `operationId` / 路径参数 / 响应契约、job 名与 DAG、proposal kind、DomainTool 名、UI page 路由的全局唯一性。`load` 是懒加载 thunk；route 与 pg-boss job 没有 `load` 就只是归属元数据、不挂载（`backend: 'dbos'` 的 job 例外，由 DBOS 路径启动）。
 - `public.ts` 是服务端契约，`ui-public.ts` 是客户端契约。`src/server/**` 新增依赖只能落在别人 `public.ts` / `ui-public.ts`（或 kernel 端口），私有模块与 capabilities barrel 一律拒；capability 之间的 value import 按 owner 对计数，同样由 baseline 冻结（`PUBLIC_ENTRYPOINTS`，`scripts/audit-capability-boundaries.ts`）。
 - kernel 端口：`src/kernel/` 承载 manifest、events、tools、read-models、records、proposals、job-dag、cost 等跨 capability 契约。`src/kernel/projection-writer-policy.ts` 拥有 projection writer 审计政策、实体类型与 boot flag-vector 诊断；配置解析和水合仍归 `src/core/config/` 与 `src/server/config/`。跨包读取只走对方 `public.ts`；`audit:capability-boundaries` 禁止新增 kernel / core → capability / server 的 value import，既有 facade 由 ratchet 冻结（`scripts/lib/dependency-ratchet.ts` 的 `auditKernelReverseEdges`）。
-- `pnpm audit:capability-boundaries` 是精确 ratchet：记录 `capability → server`、`server → capability deep`、跨 capability value 三类边数，变化必须在同一 PR 登记进 `scripts/capability-boundary-baseline.json`。三类边数与当前非平凡 SCC 构成以该文件的 `debts` 为准。
+- `pnpm audit:capability-boundaries` 是只降不升的 ratchet：`capability → server`、`server → capability deep`、跨 capability value 三类边数与非平凡 SCC 不得高于 `scripts/capability-boundary-baseline.json` 的 `debts`，也不得高于 base commit 实测；下降用 `--tighten` 收紧台账。
 - `pnpm audit:architecture-deepening` 再查深层 import、公开读环白名单、隐藏写、命令环、TaskSpec / DomainTool / proposal / queue 归属、provider lane census 与依赖上限（严格小于 `DEPENDENCY_CEILINGS`，见 `scripts/audit-architecture-deepening.ts`）。
 - TaskSpec 由各包 `task-public.ts` 贡献、`src/capabilities/task-catalog.ts` 用 `composeTaskCatalog` + `expectedCount` 静态聚合；`src/capabilities/task-registry.ts` 用 `createTaskRegistry` 冻同一 catalog，并导出预算 / prompt readers 给 route 与 job。细节见「五、AI 任务层」。
 
@@ -169,7 +169,7 @@ TaskSpec 由 capability 拥有：`src/capabilities/<name>/tasks/index.ts` 用 `d
 - TaskSpec 字段（`defaultProvider` / `defaultModel` / budget / prompt / `invocation` / `execution`）见 `src/ai/task-spec.ts`；某个 task 用哪个模型、由谁触发，看 owner map 与调用方代码。
 - 分类（compatibility-only、无静态 caller）以 `scripts/audit-task-census.ts` 的 `LIVE_NON_CALLER_CLASSIFICATIONS` 为准；`pnpm audit:task-census` 校验 manifest/job 注册可达性与 run-log 契约。
 
-**仍成立的历史结论**：`EnrichMistakeTask` 已拆成 `AttributionTask`（归因）；`KnowledgeProposeTask` 已移除，答错不再提议新 KC——KC 创建走 content-driven 的 `tagKnowledge`（`src/capabilities/knowledge/server/tag-knowledge.ts`），近重复由 `kc_dedup_nightly`（propose-only）兜底；冷启 reference 生成解耦为 `reference_answer_backfill`；VisionExtract* 只走 ingestion manual rescue。详见 ADR-0045 与 `docs/design/2026-06-22-unified-tagging-axis.md`。
+**仍成立的历史结论**：`EnrichMistakeTask` 已拆成 `AttributionTask`（归因）；`KnowledgeProposeTask` 已移除，答错不再提议新 KC——KC 创建走 content-driven 的 `tagKnowledge`（`src/kernel/records/knowledge-tag.ts`；embedder 由调用方 ingestion 绑定），近重复由 `kc_dedup_nightly`（propose-only）兜底；冷启 reference 生成解耦为 `reference_answer_backfill`；VisionExtract* 只走 ingestion manual rescue。详见 ADR-0045 与 `docs/design/2026-06-22-unified-tagging-axis.md`。
 
 **命名约定**：Task 一律 `PascalCase + 'Task'` 后缀；破坏性操作（删题、合并节点）走 Proposal/Suggestion 流程而非直接 tool（per ADR-0004）。
 

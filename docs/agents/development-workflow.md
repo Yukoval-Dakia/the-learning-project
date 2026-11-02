@@ -134,50 +134,43 @@ no writes; `scripts/embed-inventory.ts`).
 `pnpm audit:capability-boundaries` 执行 capability `*-api.ts` 不得手写 `apiJson`
 （必须使用生成的 operations）这条不变量，并同时检查 public/ui-public access seam 与三张架构债
 ratchet（capability→server、server→capability deep、cross-capability value/SCC）。
-机器可读报告用 `pnpm audit:capability-boundaries --json`。实测 pair 比基线低时审计失败，
-运行 `pnpm audit:capability-boundaries --tighten` 收紧
-`scripts/capability-boundary-baseline.json`。该命令仅下调，并追加 `changes` 记录：
-`direction: "decrease"`、`debt`、`pair`、UTC `date`、`from`、`to`。
-审计仍有任何错误时不写文件；再次运行不会重复追加记录。SCC 只能缩小，不能自动扩张。
+机器可读报告用 `pnpm audit:capability-boundaries --json`。
 
-禁止为让新增依赖通过而直接上调 baseline。现行准入以
-`scripts/audit-capability-boundaries.ts` 的 `raiseJustificationSchema` 和
-`compareBaselineChanges` 为准。
-上调记录必须有非空 `reason`、`exitCondition` 及 `justification`；三种形态与准入限制：
+`scripts/capability-boundary-baseline.json` 只记当前上限：三类债务的 `total`、`byOwnerPair`
+与 `crossCapabilityValue.nontrivialSccs`，不存变更历史或批准记录（批准与理由写在 PR / Linear）。
+审计对每个 pair、每个 total 和 SCC 做两次比较，任何一项上升即失败：
 
-- `{ "kind": "offset" }`：相对同一 PR 的 base，同一债务类别内其他 pair 必须有实测下降，
-  且该类别实测总数不得增加。不能用另一类别的下降、临时降后回涨的记录或只改基线抵消。
-- `{ "kind": "owner_approval", "approval": "<Owner 批准的 HTTP(S) URL>", "quote": "<Owner 原话>" }`：
-  `capabilityToServer` 或 `crossCapabilityValue` 不能按上述条件抵消的上调，必须有 Owner
-  明确批准；`quote` 必须非空并保留原话。协调裁决不能替代 Owner 的增长权限，reviewer
-  须核对批准的 pair、旧值、新值及范围，不能复用历史批准覆盖新增长。
-- `{ "kind": "recorded_ruling", "ruling": "<HTTP(S) URL>" }`：schema 仍可解析历史记录，
-  但现行审计拒绝以它准入新增的 `capabilityToServer` 或 `crossCapabilityValue` 上调。
+- 实测 ≤ 台账：缺失 pair 按 0 处理；
+- 实测 ≤ base commit 实测：同一 PR 的 base 上重新测量，所以单改台账不能准入新增依赖，
+  台账未及时下调留下的余量也不能被后续 PR 用掉。
 
-`serverToCapabilityDeep` 是零边界，任何 `justification`（包括抵消或 Owner 批准）都不能
-通过现行门准入其上调，依赖须经 capability public 入口。
-协调线的精确 `stable_contract` 裁定只分类真实公开转出站点，不参与债务计算；
-`edgeRecords` 只登记真实新增依赖的 file/module、kind、symbols、debt、issue、owns、date；
-新增受审计边无论抵消或获批都须逐条登记。
+实测下降不失败，审计会提示运行 `pnpm audit:capability-boundaries --tighten`，把台账改写为
+实测快照（只会下降；审计有任何错误时不写文件）。建议在同一 PR 收紧；并行 PR 各自收紧不同 pair
+时只在同一个 `total` 行冲突，重跑 `--tighten` 即可解决。台账没有上调通道：
+`serverToCapabilityDeep` 另由 architecture-deepening 强制为 0，同一 owner-pair 内一删一增仍由
+独立 review 对照真实 diff 判断。
 
-获准上调须同步 pair 与 total，并追加含 `debt`、`pair`、UTC `date`、`from`、`to` 的
-`direction: "increase"` 记录（`to > from`）；三类债务的每个 pair 和 total 都须与实测精确一致，
-缺失 pair 按 0 处理。
-CI 从 PR base SHA（push 时为 before SHA）重放新增记录，要求其结果与当前基线一致，
-且旧记录不可删除或改写。
-协调线明确要求追认已在 main 的变化时，`notes` 可保存同一类型的结构化历史记录，
-但不参与 `changes` 重放或新上调准入。YUK-1567 的记录只限 practice→r2 3→4（当时总数443→444），
-出处为 bb3e06ad 与 YUK-1570 的 82d63281；须在下一次 YUK-1570 减边 PR 回到3，最迟不晚于该票关闭。
-CI 检查实测抵消及批准 URL、原话等字段的形状；批准的真实性、授权范围与退出条件由 reviewer 判断。
-校验错误包含基线文件名及记录路径。
+`pnpm audit:architecture-deepening` 的 pass-through ratchet 要求相对 base 新增的纯转出站点
+（module / function / alias / site）在 `scripts/pass-through-classifications.jsonl` 中有一行
+精确绑定（`file`、`kind`、`symbol`、`targetModule`、`targetSymbol`）的分类，否则失败：
+
+- `stable_contract`：经裁定的单符号公开端口，`symbol`/`targetSymbol` 不能是 `*`；
+- `compat_shim`：带 `deadline` 的临时转接，`deadline` 不得晚于当天 +14 天；过期而站点仍在即失败；
+  base 中仍存活站点的 compat 行不得删除、改分类或延期，只能随站点一起删除。
+  `compat_shim` 行数只减不增：不得多于 base 版分类文件中的行数。
+
+文件每行一个 JSON 对象，按 `file|kind|symbol|targetModule|targetSymbol` 排序且唯一；
+站点消失时同一 PR 删除对应行（不匹配任何现存站点的行会失败）。
 
 本地默认比较 `git merge-base HEAD origin/main`，也可用 `--base <commit SHA>`。
 CI 的静态 `audits_architecture` job 必须提供 `CAPABILITY_BASE_SHA`；手动 workflow 使用已有的 `test_policy_base` 输入。
 CircleCI 的事件可能缺少 PR base 和 push before，因此该 job 复用
 `scripts/ci/resolve-circle-audit-base.mjs`，将其验证后的 SHA 输出传给 `CAPABILITY_BASE_SHA`。
 分支 push 可能早于 GitHub 把提交关联到 PR；等到截止仍是同一个 open PR 才采用，中途出现第二个或身份变了立刻失败，截止时仍是 0 也失败。
+main push 缺少 before 时，双父 merge 取第一父；单父提交只有在关联的已合并 PR 的
+`merge_commit_sha` 等于 HEAD 且 base 为 `main`（squash merge）时才取其唯一父提交。
 无法确认 base 时仍失败，不回退到移动分支或猜测父提交；GitHub 保留原有 event/input 来源。
-`pnpm audit:capability-boundaries:snapshot` 只打印实测快照，不带变更记录。
+`pnpm audit:capability-boundaries:snapshot` 只打印实测快照，不做台账或 base 比较。
 
 ### Lint warning ratchet（YUK-909）
 

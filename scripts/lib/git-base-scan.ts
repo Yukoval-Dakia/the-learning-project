@@ -33,7 +33,7 @@ export function resolveAuditBaseSha(projectRoot: string, requested?: string): st
 export interface TreeEntry {
   /** Repo-relative posix path. */
   path: string;
-  /** Base blob SHA — the file identity used by rename/registration checks. */
+  /** Blob SHA at the ref. */
   blob: string;
 }
 

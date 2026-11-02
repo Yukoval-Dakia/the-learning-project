@@ -19,11 +19,14 @@ import {
   runColdStartBridge,
 } from '@/capabilities/ingestion/server/cold-start-bridge';
 import {
+  createKnowledgeTagEmbedder,
+  rethrowKnowledgeTagInvariant,
+} from '@/capabilities/ingestion/server/knowledge-namer';
+import {
   type PinnedFetchResponse,
   fetchWithPinnedDispatcher,
 } from '@/capabilities/ingestion/server/pinned-fetch';
 import { runVisionExtract } from '@/capabilities/ingestion/server/vision';
-import { isTagKnowledgeInvariantError, tagKnowledge } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 // Shared with the client so the literal-host/CIDR rules cannot drift; this module adds
 // the throwing wrapper plus DNS-answer and redirect re-validation.
@@ -50,6 +53,7 @@ import { writeCostLedger } from '@/kernel/records/ai-attempt-facts';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { persistImageAsset } from '@/kernel/records/asset-store';
+import { tagKnowledge } from '@/kernel/records/knowledge-tag';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getKnownSubjects } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
@@ -682,12 +686,12 @@ export async function acceptImageCandidateProposal(
         const tag = await tagKnowledgeFn(
           {
             db,
-            providerAttempt: {
+            embedder: createKnowledgeTagEmbedder({
               db,
               caller: 'api',
               deadlineAt: new Date(Date.now() + 20_000),
               operationAnchor: proposalId,
-            },
+            }),
             // Reuse the classified name; no second model call. Run provenance rides
             // along for the tag audit event (YUK-1604).
             nameKcFn: async () => ({
@@ -710,7 +714,7 @@ export async function acceptImageCandidateProposal(
         // tagKnowledge already committed any PROPOSE KC in its own tx; attribute only.
         knowledgeIds = tag.knowledge_ids;
       } catch (bridgeErr) {
-        if (isTagKnowledgeInvariantError(bridgeErr)) throw bridgeErr;
+        rethrowKnowledgeTagInvariant(bridgeErr);
         // Best-effort: a provider outage, unparseable output, or missing seed root must
         // not lose the upload. Persist an un-attributed draft, which the structural gate
         // below keeps out of the active pool.
