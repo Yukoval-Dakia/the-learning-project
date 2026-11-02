@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { runAttributionAndWriteJudgeEvent } from './failure-learning-attribution';
 import { runVariantGen } from './failure-learning-variant';
 

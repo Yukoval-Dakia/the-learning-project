@@ -8,13 +8,13 @@ import {
 } from '@/kernel/read-models/failure-attempts';
 import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-context';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import type { PracticeTaskRunFn } from '../../server/task-runtime';
 import {
   type AttributionOutcome,
   runAttributionAndWriteJudgeEvent,
 } from './failure-learning-attribution';
 import { loadNativeFailureContext } from './failure-learning-native';
 import { type RunVariantGenResult, runVariantGen } from './failure-learning-variant';
-import type { PracticeTaskRunFn } from './task-runtime';
 
 export type FailureLearningSkipReason =
   | 'attempt_not_found'

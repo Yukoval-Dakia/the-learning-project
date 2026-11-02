@@ -3,7 +3,7 @@
  * Single source of truth for model selection.
  *
  * Model-id literals may live only at their default-declaration sites:
- *   1. `defaultModel:` initializers in task definitions under src/capabilities/<owner>/tasks/**;
+ *   1. `defaultModel:` initializers in task definitions under src/capabilities/<owner>/tasks/** (practice sub-owners: practice/<owner>/tasks/**);
  *   2. the provider catalog / pricing files (those files ARE the catalog);
  *   3. `codeDefault:` initializers of `*_MODEL` / `*.model` keys in the config registry.
  *

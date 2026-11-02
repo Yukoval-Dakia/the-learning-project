@@ -19,10 +19,11 @@
 // retrying variant_gen never produces a second proposal.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, count, eq, inArray, sql } from 'drizzle-orm';
+import { and, count, eq, inArray } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
+import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 import { hasProposalWithCooldownKey } from '@/kernel/proposals/inbox';
 import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
@@ -32,12 +33,12 @@ import { getMisconceptionsByIds } from '@/kernel/read-models/failure-learning-co
 // index and projection. Genesis remains the legacy backfill event, not runtime creation.
 import { createMistakeVariantDraft } from '@/kernel/records/mistake-variant-facts';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import type { PracticeTaskRunFn } from '../../server/task-runtime';
 import { MISCONCEPTION_CANDIDATE_PREFIX } from '../tasks/attribute-retrieve';
 import { type VariantGenInput, parseVariantOutput } from '../tasks/variant-gen';
 import { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './cause-overlay';
 import { hasVariantPermanent, recordVariantPermanent } from './failure-learning-ledger';
 import { loadNativeFailureContext } from './failure-learning-native';
-import type { PracticeTaskRunFn } from './task-runtime';
 
 // per-parent in-flight variant cap. Counts
 // mistake_variant rows where status IN ('draft', 'active') so AI cannot flood
@@ -276,9 +277,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   const persisted = await db.transaction(async (tx) => {
     if (native) {
       await acquireLearningStateWriteLock(tx);
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${native.evaluationGroupId}))`,
-      );
+      await lockAssessmentEvaluationGroup(tx, native.evaluationGroupId);
       const current = await loadNativeFailureContext(tx, attemptEventId);
       const currentFailure = await getFailureAttemptById(tx, attemptEventId);
       if (

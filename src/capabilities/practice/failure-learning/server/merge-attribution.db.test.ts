@@ -7,8 +7,8 @@ import {
 } from '@/kernel/records/knowledge-merge-attribution';
 import { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
 import { learningItemLiveRowToSnapshot } from '@/server/projections/parity';
-import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { migrateCanonicalProjections } from '../../../../../scripts/migrate-canonical-projections';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 
 const T0 = new Date('2026-01-01T00:00:00Z');
 beforeEach(resetDb);

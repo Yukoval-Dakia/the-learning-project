@@ -1,10 +1,7 @@
 import { z } from 'zod';
-import {
-  type VariantProposalResult,
-  createFailureLearning,
-} from '@/capabilities/practice/server/failure-learning';
 import { makePracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
-import type { DomainTool, ToolContext } from './types';
+import type { DomainTool, ToolContext } from '../../tools/types';
+import { type VariantProposalResult, createFailureLearning } from '../server/failure-learning';
 
 const ProposeVariantInputSchema = z.object({
   attempt_event_id: z.string().min(1),
