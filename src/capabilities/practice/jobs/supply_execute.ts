@@ -2,9 +2,11 @@
 // 三个 caller 共用：
 //   (a) supply_planner 门后第二阶段——accepted plan 立即入队本 job（planner 当晚
 //       计划当晚执行；规划与执行分离，各自独立 DLQ 重试语义，planner 不等执行）；
-//   (b) dispatcher 安全网派发——sourcing_web 分支重指向本队列（scanner 构造单路由
-//       需求项；行为等价：chosen route 仍是派发时定死，web 失败不落 quiz_gen——与旧
-//       sourcing job 相同，缺口由下次扫描复现再派）；
+//   (b) dispatcher 安全网派发——sourcing_web 分支重指向本队列（scanner 构造需求项，
+//       route_preference 带所选路由起的完整 plan；web blocked 时同一需求沿余下
+//       路由回落，见 web-supply.ts 的 routesTried/nextRoute）；
+//   (b') web 需求路由回落——observe/recovery 见 blocked 后以同一 demand_id 入队
+//       本队列（plan_event_id=web_supply_fallback_<demandId>，singletonKey 同名）；
 //   (c) 手动 caller：scripts/supply-execute.ts（--plan <id> | --latest）。
 // executor 本体是纯确定性模块（question-supply/plan-executor.ts）：无 LLM 判断，
 // 路由按 route_preference 机械走；LLM 只在候选工具内部（web SourcingTask / jyeoo
