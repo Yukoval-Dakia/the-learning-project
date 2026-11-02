@@ -24,7 +24,11 @@
  *      runtime keeps 222 forever.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
+import {
+  type RestoreFromArchiveOpts,
+  buildBackupArchive,
+  restoreFromArchive as restoreArchive,
+} from '@/capabilities/observability/server/backup/archive';
 import {
   type ConfigSnapshot,
   getConfig,
@@ -33,10 +37,14 @@ import {
   resetTestConfig,
 } from '@/core/config/store';
 import { system_config_epoch } from '@/db/schema';
+import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import { setConfig } from '@/server/config/write';
-import { buildBackupArchive, restoreFromArchive } from '@/server/export/archive';
 import { resetDb, testDb } from '../helpers/db';
 import { memR2 } from '../helpers/r2';
+
+// Restores here re-read config through the same hydrator the API composition root injects.
+const restoreFromArchive = (opts: Omit<RestoreFromArchiveOpts, 'hydrateConfig'>) =>
+  restoreArchive({ ...opts, hydrateConfig: hydrateConfigFromDb });
 
 const EMPTY_SNAPSHOT: ConfigSnapshot = { epoch: 0, entries: new Map(), hydratedAt: '' };
 

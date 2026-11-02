@@ -9,7 +9,6 @@ import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { computePaidEffectIdentity } from '@/core/migration/paid-effect-protocol';
 import { readPaidEffect } from '@/db/paid-effect-store';
 import { event, paid_effect, question } from '@/db/schema';
-import { calibrationSampleScheduledId } from '@/server/durable/calibration-sample-family';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV } from '../jobs/judge-calibration-config';
 import {
@@ -268,7 +267,7 @@ function dispatch(anchor = scheduledAt, deliveryId = 'original-pg-job'): Calibra
       backend: 'pg-boss',
       deliveryId,
       generation: 0,
-      tickId: calibrationSampleScheduledId(anchor),
+      tickId: `sched-judge_calibration_sample-${anchor.toISOString()}`,
     },
   };
 }

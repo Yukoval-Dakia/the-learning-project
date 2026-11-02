@@ -23,13 +23,13 @@ import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
 import { writeRetryableAiFailureLedger } from '@/kernel/records/ai-attempt-facts';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import type { Env } from '@/server/memory/client';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
   type EdgeCandidate,
   type EdgeNeighbor,
   type EdgeProviderAttemptOptions,
   type EdgeReconcileDecision,
+  type Env,
   applyConfidenceThreshold,
   isEdgeReconcileInvariantError,
   judgeEdgeReconcile,

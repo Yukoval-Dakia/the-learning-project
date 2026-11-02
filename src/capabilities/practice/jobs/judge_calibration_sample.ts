@@ -2,10 +2,8 @@
 //
 // Thin retained handler: the whole execution contract lives in
 // ../server/calibration-sample-durable-operation.ts, which this handler remains
-// the REAL runtime consumer of. The DBOS family adapter
-// (src/server/durable/calibration-sample-family.ts) is an unadmitted migration
-// candidate sharing that same operation; pg-boss stays the default backend until
-// parent serial registration and proof.
+// the REAL runtime consumer of. pg-boss is the only backend; DBOS admission
+// is not wired.
 //
 // Family contract:
 //

@@ -1,11 +1,7 @@
 // Client-only public contribution surface.
 export { AgentNotesResponseSchema } from './api/contracts';
 export { AgentNotesBoard } from './ui/AgentNotesBoard';
-export {
-  type AgentNoteClient,
-  AgentNoteClientProvider,
-  httpAgentNoteClient,
-} from './ui/agent-note-client';
+export { type AgentNoteClient, AgentNoteClientProvider } from './ui/agent-note-client';
 export { LearningIntentComposer } from './ui/LearningIntentComposer';
 export type LearningIntentProposalClient =
   typeof import('./ui/learning-intent-api').createLearningIntentProposal;

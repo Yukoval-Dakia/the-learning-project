@@ -13,6 +13,11 @@ import {
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { ApiError } from '@/kernel/http';
 import {
+  issueConversationConfirmation,
+  readConversationConfirmation,
+  submitConversationConfirmation,
+} from '@/kernel/records/conversation-confirmation-assessment';
+import {
   ConfirmationCommand,
   type ConfirmationCommandT,
   ConfirmationOccurrence,
@@ -20,11 +25,6 @@ import {
 } from '../../confirmation-contract';
 import { acquireCopilotExecutionSettlementLock } from '../copilot-run-coordination';
 import { COPILOT_RUN_TABLE, hasCancelRequest } from '../copilot-run-status';
-import {
-  issueConversationConfirmation,
-  readConversationConfirmation,
-  submitConversationConfirmation,
-} from '../practice-port';
 
 const AcceptedCommand = z
   .object({

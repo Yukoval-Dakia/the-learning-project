@@ -19,5 +19,5 @@ correction 留痕 + FSRS 重投影（申诉流程详见 docs/modules/quiz.md §8
   `@/server/orchestrator/json-sanitize` 豁免已清账——共享件 YUK-1570 迁入
   `@/core/json-sanitize`，solve-session 现从 core 引用。
 - 包外主要消费方：proposals/actions（fsrs）、events/queries + cause-policy（effective-truth）、
-  boss handlers quiz_verify/source_verify（fsrs）、copilot solve-skill（solve-session）、
+  boss handlers quiz_verify/source_verify（fsrs）、
   UI practice 页 + PaperCard（practice-read/paper-detail）。

@@ -100,7 +100,7 @@ export const event = pgTable(
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     // YUK-101 / ADR-0021 — transactional outbox cursor. `writeEvent` only
     // INSERTs the row (ADR-0005 single-owner invariant); a separate poll
-    // handler in `src/server/memory/triggers.ts` picks pending rows
+    // handler in `src/capabilities/agency/server/memory/triggers.ts` picks pending rows
     // (`ingest_at IS NULL`) with SELECT…FOR UPDATE SKIP LOCKED, enqueues
     // `memory_event_ingest`, and stamps `ingest_at = now()` in the same tx.
     // The partial index `event_ingest_pending_idx` keeps the pending scan

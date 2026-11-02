@@ -1,0 +1,525 @@
+// Phase 1c.1 Step 9.J: legacy tables (mistake / review_event / dreaming_proposal /
+// ingestion_session) DROPped — major bump.
+// P5.3 (YUK-183): additive nullable `memory_brief_note.long_term_freshness_score`
+// column — minor bump. Column rides the whole-row dump/restore automatically.
+// ②d backup-orphan fix (YUK reverse-lockstep): 7 persistent business tables that
+// had silently dropped out of the wipe-then-restore payload joined FK_ORDER
+// (artifact_block_ref, ai_task_runs, mistake_variant, goal, proposal_signals,
+// practice_stream_item, memory_reconciliation_log) — minor bump to 4.2. New tables
+// ride the whole-row dump/restore automatically. Transient/operational tables
+// (job_events, echo_jobs, editing_presence) were instead recorded in
+// BACKUP_EXCLUDED_TABLES below.
+// B1-W1 (ADR-0035): additive `mastery_state` + `item_calibration` tables — also
+// additive within the 4.2 generation (both ride whole-row dump/restore via
+// FK_ORDER below). 24 → 26 tables; version stays 4.2 (additive, no format break).
+// YUK-361 Phase 1 (观测先行): additive `selection_observation` table — 承重 telemetry
+// (π_i 是 D17 推翻后 active-PPI 重标定必需的慢热资产，不可丢)，故进 FK_ORDER 备份
+// (非 BACKUP_EXCLUDED)。+ `practice_stream_item.signals` additive jsonb 列 (ride 整行
+// dump/restore)。26 → 27 tables；bump 4.2 → 4.3 标注 telemetry 慢热资产入备份的契约变更。
+// YUK-361 Phase 5 (家族级 b_personalized): additive `item_family_calibration` table —
+// 慢热校准资产 (家族级 b_delta 在足够重复客观观测后才 firm-up，攒不回来丢了即灭失)，
+// 同 item_calibration 进 FK_ORDER 备份 (非 BACKUP_EXCLUDED)。27 → 28 tables；bump
+// 4.3 → 4.4 标注慢热校准资产入备份的契约变更 (per archive.ts assertEveryTableIsBackedUpOrExcluded)。
+// YUK-361 Phase 6 (active-PPI 重标定): additive `difficulty_calibration_label` table —
+// active-PPI 的难度标签账本 (锚定 θ̂ 反推的 b_label + π_i)，慢热校准资产 (owner 用工具
+// 的历史，攒不回来丢了即灭失)，同 item_family_calibration 进 FK_ORDER 备份 (非
+// BACKUP_EXCLUDED)。28 → 29 tables；bump 4.4 → 4.5 (NEW FK_ORDER table 必 bump，per
+// archive.ts:92)。**对比**：同 Phase 6 给 item_calibration 加的 b_anchor/b_calib/
+// calibration_n/calibration_weight/last_calibrated_at 是既有 FK_ORDER 表的 additive
+// **列**，随整行 dump/restore，**不 bump**（同 Phase 2 theta_precision 加列不 bump 4.2
+// 的先例）。表 = bump，列 = 不 bump。
+// YUK-344 (调和环增量 2，ADR-0034 §3): additive `edge_reconciliation_log` table —
+// 结构轴知识边调和的 AUDIT / PROVENANCE 日志 (SUPERSEDE 决策来由，provenance 值得保留)，
+// 同 memory_reconciliation_log 进 FK_ORDER 备份 (非 BACKUP_EXCLUDED)。29 → 30 tables；bump
+// 4.5 → 4.6 (NEW FK_ORDER table 必 bump，per archive.ts:92)。这是纯备份登记 + 版本号 bump，
+// 不动任何 reconcile runtime。
+// YUK-355 (D17「数据可丢」推翻续): mem0 个性化半边的 pgvector collection 表 (默认
+// `learning_project_memories`) 纳入备份/恢复。它是 mem0 PGVector provider 运行时自建的表
+// (NOT drizzle-managed，无 pgTable 导出)，故**不**进 FK_ORDER (会让 buildColumnAllowlist 因
+// 找不到 pgTable 而 throw)，而是走 archive.ts 里独立的 mem0-collection 备份/恢复分支
+// (id/vector/payload 固定列 + vector::text 序列化 / ::vector 回插)。这闭合 §1② 端到端验收
+// 接缝 e (「备 WAL 不备 collection 是半截」)——之前只备 memory_reconciliation_log
+// (WAL/provenance)，慢热软画像本体 (collection 行) 仍在 restore 后灭失。新增数据载荷形态
+// (data.json 多一个 mem0-collection key) 必 bump：4.6 → 4.7。
+// YUK-454 increment-1 (ADR-0036 身份层): additive `misconception` identity table —
+// 身份层骨架 (DORMANT in L1：无 writer，写路径 gated 在 ADR-0034 consistency gate /
+// promotion flow 后)。它是 drizzle-managed pgTable，是 AI-proposed/authored 认知身份
+// 实体 (非 transient/derived/operational state)，故按 peer 身份/校准表惯例进 FK_ORDER
+// 备份 (非 BACKUP_EXCLUDED——后者只收瞬态/派生/运维态)。从第一天起就在备份里 wipe/restore，
+// 即便 L1 是空表。表无 enforced FK (loose-coupling text-ref 惯例)，位置不受 PG FK 约束；
+// 置于 knowledge/mastery_state 身份簇相邻可读。NEW FK_ORDER table 必 bump (per
+// archive.ts assertEveryTableIsBackedUpOrExcluded / 92)：30 → 31 tables，4.7 → 4.8。
+// YUK-471 W1 PR-A2a (ADR-0044): additive `materialized_id_index` projection reverse-index
+// → FK_ORDER 备份 (见该数组末尾的 rationale)。31 → 32 tables，4.8 → 4.9 (NEW FK_ORDER table 必 bump)。
+// YUK-440 (A13): additive `kc_typed_state` projection → FK_ORDER。32 → 33 tables，4.9 → 4.10。
+// YUK-445 (A11): additive `learner_axis_state` — per-KC EZ-diffusion caution/speed-accuracy
+// descriptor (single writer = A11 batch). DERIVED-but-physical projection (peer of
+// mastery_state / kc_typed_state — re-derivable from the event log, but a physical table that
+// needs wipe/insert sweep ordering), so it joins FK_ORDER (NOT BACKUP_EXCLUDED). NEW FK_ORDER
+// table 必 bump (per archive.ts assertEveryTableIsBackedUpOrExcluded)：33 → 34 tables，4.10 → 4.11。
+// YUK-531 (A5 S4 / ADR-0036 RT1): additive `misconception_edge` heterogeneous edge
+// table — AI-proposed/authored 认知关系 (误区→KC caused_by / 误区↔误区 confusable_with /
+// 误区→event observed_in)，peer of knowledge_edge。DORMANT until the promotion writer
+// lands，但备份覆盖是纯声明式 (整行 dump/restore)，故按 knowledge_edge 惯例从第一天进
+// FK_ORDER 备份 (非 BACKUP_EXCLUDED——它非瞬态/派生态)。无 enforced FK (loose text-ref to
+// misconception/knowledge/event ids)，位置不受 PG FK 约束。NEW FK_ORDER table 必 bump
+// (per archive.ts assertEveryTableIsBackedUpOrExcluded)：34 → 35 tables，4.11 → 4.12。
+// （misconception 加 status/source/seen/evidence 列是既有 FK_ORDER 表的 additive 列，随整行
+// dump/restore，不单独 bump——表=bump，列=不 bump 的先例同 item_calibration b_anchor 等。）
+// YUK-531 (A5 S4 / PR-3): additive `misconception_reconciliation_log` table — the
+// misconception-edge ring's AUDIT / PROVENANCE log (peer of edge_reconciliation_log).
+// NEW FK_ORDER table 必 bump：35 → 36 tables，4.12 → 4.13。（misconception_edge 加
+// weight CHECK 是既有表的约束，不是新表/新列，不 bump。）
+// YUK-599 (YUK-597 v3 trait 合同 §6): additive subject 控制面六表 —— subject /
+// subject_trait / subject_trait_journal / subject_trait_binding /
+// subject_control_journal / subject_name_claim（owner 授权的科目配置 + append-only
+// 双 journal，authored data 丢了即灭失）→ 全部进 FK_ORDER 备份（父先子后；loose
+// text-ref 惯例无 enforced FK）。round-trip 覆盖两本 journal 的 change_seq 列——
+// **序列本身不随行备份**：restore 尾必须 setval('subject_change_seq', max+1)
+// （archive.ts restore tx 内），不补会撞已有 as-of 坐标。NEW FK_ORDER tables 必
+// bump：36 → 42 tables，4.13 → 4.14。
+// YUK-452 Phase B: placement_starter_claim/attempt/attempt_question/cost_component
+// 四张 admission/成本台账表进 FK_ORDER（见数组尾注记）。NEW FK_ORDER tables 必 bump：
+// 42 → 46 tables，4.14 → 4.15。
+// YUK-350: question_answer_anchor / question_generation_plan / question_generation_binding —
+// 生成溯源三表（immutable authored generation provenance；anchor 先于 plan 先于 binding）进 FK_ORDER。
+// NEW FK_ORDER tables 必 bump：46 → 49 tables，4.15 → 4.16。
+// YUK-791: intervention — immutable snapshot + recommendation/package/review lineage.
+// Authored causal state cannot be rebuilt after restore, so it enters FK_ORDER.
+// NEW FK_ORDER table 必 bump：49 → 50 tables，4.16 → 4.17。
+// YUK-851: provider_attempt is durable provider-call truth, including the irreversible
+// start-reservation marker. It must survive restore; provider_attempt_admission is only
+// a short-lived ownership fence and is deliberately wiped instead. Adding the durable
+// table to FK_ORDER changes the payload shape: 50 → 51 tables, 4.17 → 4.18.
+// YUK-857: note_verification_claim is durable paid-call fencing and staged-result recovery
+// state keyed to artifact. It must survive restore after its artifact parent; adding it to
+// FK_ORDER changes the payload shape: 51 → 52 tables, 4.18 → 4.19.
+// YUK-1016: cause_category_overlay — owner-vetted 错因词表层（accepted proposal 落地的
+// authored catalog 行，非瞬态非派生；retract 只置 archived_at，历史不可重建）→
+// FK_ORDER 非 BACKUP_EXCLUDED。NEW FK_ORDER table 必 bump：52 → 53 tables，4.19 → 4.20。
+// YUK-1007: system_config / system_config_journal / system_config_epoch — owner 可调
+// 运行时配置 + 审计 + 失效轴（authored 运营真相，非瞬态）→ FK_ORDER 非 EXCLUDED。
+// NEW FK_ORDER tables 必 bump：64 → 67 tables，4.23 → 4.24。
+// YUK-766: preserve subscription progress and causal effects; only process claims reset.
+// YUK-1355: preserve paid-effect unknowns, immutable receipts and backend generations.
+// Both durable tables are required even when empty; 4.25 → 4.26.
+// YUK-1523 (P5): worksheet_export / worksheet_export_item / worksheet_region_map_page —
+// the worksheet PDF export triplet (frozen issuance binding, page identity, frozen
+// region maps). Authored export truth: a restore that drops the token→issuance
+// binding or the archived region maps breaks P6 recovery for already-printed
+// sheets, so they ride the wipe-then-restore payload. item/page → export, and
+// item.issuance_id → assessment_issuance (that parent is earlier in FK_ORDER).
+// NEW FK_ORDER tables → bump 4.26 → 4.27.
+// YUK-1496: model_admission_slice — admitted model-grading slices (subject ×
+// response_class × task_kind × model@version) with holdout evidence refs. Admission
+// evidence is authored truth, not derivable operational state; it must survive
+// restore or every AI-grader serving gate silently re-denies. Follows the
+// worksheet triplet already on main, so this branch is 4.28 / migration 0122.
+// YUK-1567: paid_effect_authorization — durable void+reauthorization receipts
+// (lead-authorized void basis + successor delivery binding). Authored truth a
+// restore must keep: losing it would un-block every entity the authorization
+// still gates while orphaning the voided rows' receipts. FK → paid_effect, so
+// it restores right after its parent inside the paid-effect tail.
+// NEW FK_ORDER table → bump 4.28 → 4.29 (migration 0124).
+// YUK-1567: paid_effect_cancellation — durable cancel event receipts for
+// never-sent pending intents (lead-authorized request id + operator + reason +
+// basis + retired fence). Authored truth a restore must keep: losing it would
+// drop the immutable event behind every 'cancelled' row's receipt. FK →
+// paid_effect; restores inside the paid-effect tail after its parent.
+// NEW FK_ORDER table → bump 4.29 → 4.30 (migration 0127).
+// YUK-439 (ADR-0043 2026-10-19 Amendment): additive `difficulty_calibration_evidence`
+// table — 联合标定的证据账本 (连续 score + 来源标签 + 判分路由，b_post 批量后验的
+// 输入)。慢热校准资产 (同 label 账本：证据攒不回来，丢了即联合标定降级回先验)，进
+// FK_ORDER 备份 (非 BACKUP_EXCLUDED)。+ item_calibration 的 b_post/posterior_variance/
+// calibration_source additive 列 (随整行 dump/restore，不 bump——表 = bump，列 = 不
+// bump 的既有先例)。NEW FK_ORDER table → bump 4.30 → 4.31。
+// YUK-1563 part 4: custom_provider — runtime-configured custom provider
+// definitions (endpoint, protocol, credential env NAME; never the key value).
+// Authored config like system_config: a restore that drops it would silently
+// unconfigure every task pinned to a custom provider. No enforced FK. The
+// model_catalog_cache bucket/checks it feeds are refetchable and excluded.
+// NEW FK_ORDER table → bump 4.31 → 4.32 (migration 0130).
+// YUK-1522: permanent creation receipts must survive resource deletion and restore.
+export const SCHEMA_VERSION = '4.33';
+
+export const SUBSCRIPTION_PROGRESS_TABLES = [
+  'event_subscription_checkpoint',
+  'event_subscription_delivery',
+  'event_subscription_effect',
+] as const;
+
+export const PAID_EFFECT_BACKUP_TABLES = [
+  'paid_effect_control',
+  'paid_effect',
+  // YUK-1567: FK → paid_effect; authorization truth rides the same wipe/restore
+  // payload as the rows it voids so a restore never un-gates an entity.
+  'paid_effect_authorization',
+  // YUK-1567: FK → paid_effect; cancellation events ride the same payload so a
+  // restore never orphans a 'cancelled' row's immutable receipt.
+  'paid_effect_cancellation',
+] as const;
+
+// Bound inline asset transfers; larger exports use a refs-only ZIP plus an asset sidecar.
+export const MAX_INLINE_ASSETS = 45;
+
+// FK topological order. Insert sweeps forward; wipe sweeps reverse. Any schema
+// change that adds/removes/renames a table MUST update this array AND bump
+// SCHEMA_VERSION in lockstep. The reverse-lockstep guardrail in archive.ts now
+// ENFORCES this: every pgTable in src/db/schema.ts must appear here OR in
+// BACKUP_EXCLUDED_TABLES, or the module throws at load.
+//
+// Phase 1c.1 Lane A + Step 9.J:
+//   - removed: judgment + user_appeal (Step 1.4) + mistake + review_event +
+//     dreaming_proposal + ingestion_session (Step 9.J)
+//   - added: knowledge_edge (ADR-0010), learning_session (ADR-0008),
+//     material_fsrs_state (ADR-0006 v2 FSRS projection), event (ADR-0006 v2)
+//   - knowledge_mastery view: NOT in FK_ORDER (views are read-only, not exported)
+//
+// ②d backup-orphan fix (reverse-lockstep): added 7 persistent business tables that
+// had silently fallen out of the backup payload — artifact_block_ref (cross-link +
+// embedded-check refs), ai_task_runs (AI run ledger), mistake_variant (variant
+// lifecycle), goal (North-Star entity), proposal_signals (slow-accumulated AI
+// acceptance learning state), practice_stream_item (materialized schedule),
+// memory_reconciliation_log (mem0 reconciliation WAL). These were a pre-existing
+// data-loss hole on restore, not new tables.
+//
+// Topological constraints:
+//   knowledge_edge.from/to → knowledge (FK)
+//   event.session_id → learning_session (FK, nullable)
+//   material_fsrs_state: polymorphic, no enforced FK
+//   artifact_block_ref.from/to_artifact_id → artifact (FK) — MUST follow artifact
+//   All other ②d additions use loose-coupling text refs (no hard FK), so their
+//   position is unconstrained by Postgres FK enforcement (project convention).
+//
+// B1-W1 (ADR-0035): added mastery_state (after knowledge — diagnostic projection
+// keyed by knowledge subject_id, no enforced FK) + item_calibration (after
+// question — logical dependency on question_id, no enforced FK). 24 → 26.
+// Like knowledge_mastery these are DERIVED (rebuildable from the event stream /
+// re-estimable), so they are NOT in the CSV export body — but unlike the view
+// they ARE physical tables that need wipe/insert sweep ordering, so they DO
+// belong in FK_ORDER (CSV-body membership and FK_ORDER membership are orthogonal).
+export const FK_ORDER = [
+  'knowledge',
+  'mastery_state',
+  // YUK-454 inc-1 (ADR-0036 身份层): misconception — AI-proposed/authored 认知身份实体。
+  // DORMANT in L1 (无 writer)，但备份覆盖是纯声明式 (整行 dump/restore via 这个数组 +
+  // getTableColumns-derived COLUMN_ALLOWLIST)，故按 peer 身份/校准表惯例从第一天就进
+  // FK_ORDER (非 BACKUP_EXCLUDED——它非瞬态/派生态)。无 enforced FK (loose-coupling
+  // text-ref)，位置不受 PG FK 约束；紧邻 knowledge/mastery_state 身份簇可读。
+  'misconception',
+  // YUK-531 (A5 S4 / ADR-0036 RT1): misconception_edge — heterogeneous 认知关系边
+  // (peer of knowledge_edge). DORMANT until promotion writer。无 enforced FK (loose
+  // text-ref to misconception/knowledge/event)，位置不受 PG FK 约束；紧邻 misconception
+  // 的 RT1 身份/关系簇可读。NEW FK_ORDER table → bump SCHEMA_VERSION (4.11 → 4.12)。
+  'misconception_edge',
+  'knowledge_edge',
+  'source_asset',
+  'source_document',
+  // YUK-350 — immutable authored generation provenance. Anchor precedes plan;
+  // generated questions bind exact versions/hashes. NEW tables bump 4.15 → 4.16.
+  'question_answer_anchor',
+  'question_generation_plan',
+  'question_generation_binding',
+  'learning_session',
+  'ingestion_creation_receipt',
+  'question_block',
+  'question',
+  // YUK-1044 — 统一评估契约真相源九表（grounding §3/§11）。authoried 数据非瞬态/
+  // 派生：丢 revision/submission/mapping = 不可重建的学习/判分真相灭失（§15 cutover
+  // checkpoint 必须捕获）→ FK_ORDER 备份（非 BACKUP_EXCLUDED）。插入序严格满足
+  // 0105/0106 非 DEFERRABLE 复合 FK 拓扑（wipe 反序）：question_revision 是父表
+  // （lifecycle/verification/issuance/mapping 的复合 FK 目标），紧随 question 题簇；
+  // submission 依赖 issuance+group，evaluation 依赖 submission，head 依赖
+  // submission+evaluation。assessment_identity_mapping 的 supersedes 自 FK 在 0107
+  // 设为 DEFERRABLE INITIALLY IMMEDIATE（restore 序不保证同表父子序，archive.ts
+  // 恢复事务 SET CONSTRAINTS ALL DEFERRED）。9 张 NEW FK_ORDER table 必 bump：
+  // 53 → 62 tables，4.20 → 4.21。
+  'question_revision',
+  'question_group_lifecycle',
+  'question_admission_verification',
+  'assessment_issuance',
+  'evaluation_group',
+  'assessment_submission',
+  // YUK-1052 — assessment_response_draft: ResponseSet autosave 活草稿（服务端 ack 的
+  // in-progress 答案，evaluation_group_ref 软引）。用户可感知的学习中态而非瞬态：
+  // restore 丢它 = 用户作答中草稿静默灭失（「刷新不重交」契约反向），非派生不可重建 →
+  // FK_ORDER 备份（非 BACKUP_EXCLUDED）。FK → assessment_issuance 已保证父先插；
+  // evaluation_group_ref 无 hard FK，位置不受 PG 约束，紧跟 submission 保持作答簇相邻。
+  // NEW FK_ORDER table → bump 62 → 63，4.22 → 4.23。
+  'assessment_response_draft',
+  'evaluation',
+  'evaluation_effective_head',
+  'assessment_identity_mapping',
+  'item_calibration',
+  // YUK-361 Phase 5 (家族级 b_personalized): item_family_calibration — 家族级 b_delta
+  // 慢热校准资产。软引用语义键 (subject:knowledge:kind:source，no enforced FK)，位置
+  // 不受 PG FK 约束；置于 item_calibration 后保持「难度校准簇」相邻可读。
+  'item_family_calibration',
+  // YUK-361 Phase 6 (active-PPI 重标定): difficulty_calibration_label — 难度标签账本
+  // (锚定 θ̂ 反推 b_label + π_i)。慢热校准资产，不可丢，进备份 (非 BACKUP_EXCLUDED)。
+  // 软引用 question.id / event.id (text ref，no enforced FK)，位置不受 PG FK 约束；
+  // 置于 item_family_calibration 后保持「难度校准簇」相邻可读。
+  'difficulty_calibration_label',
+  // YUK-439 (ADR-0043 2026-10-19 Amendment): difficulty_calibration_evidence — 联合
+  // 标定的证据账本 (连续 score + 来源 + 判分路由，b_post 批量后验的输入)。慢热校准
+  // 资产 (证据攒不回来，丢了即降级回先验)，进备份。软引用 (no enforced FK)，置于
+  // 难度校准簇内保持相邻可读。
+  'difficulty_calibration_evidence',
+  'material_fsrs_state',
+  'memory_brief_note',
+  'learning_record',
+  'learning_item',
+  'completion_evidence',
+  'artifact',
+  'note_verification_claim',
+  'artifact_block_ref',
+  'answer',
+  'event',
+  // Event/artifact parents precede checkpoint → delivery → effect.
+  ...SUBSCRIPTION_PROGRESS_TABLES,
+  // YUK-791 — versioned intervention aggregate. Its source/conjecture refs are
+  // enforced event FKs, so place it after event. Authored recommendation,
+  // package, reviews, and terminal reason are not disposable worker state.
+  'intervention',
+  'tool_call_log',
+  'cost_ledger',
+  'ai_task_runs',
+  'mistake_variant',
+  // YUK-1016 (454-B): cause_category_overlay — owner-vetted 错因类目词表层。
+  // proposal accept applier 落地的 authored catalog 行（source='owner'|'llm_propose'），
+  // retract 只置 archived_at——行历史不可从别处重建，丢了即灭失 → FK_ORDER 备份
+  // （非 BACKUP_EXCLUDED）。无 enforced FK（proposal_event_id / evidence_event_ids
+  // 是 loose text-ref），位置不受 PG FK 约束；紧邻 mistake_variant 保持
+  // failure-learning 簇相邻可读。NEW FK_ORDER table → bump SCHEMA_VERSION (4.19 → 4.20)。
+  'cause_category_overlay',
+  'goal',
+  'proposal_signals',
+  'practice_stream_item',
+  // YUK-361 Phase 1 (观测先行): selection_observation — 选题逐项遥测。π_i 是 active-PPI
+  // 重标定必需的慢热资产 (D17 推翻后)，不可丢，故进备份 (非 BACKUP_EXCLUDED)。
+  // 软引用 practice_stream_item.id (text ref，no enforced FK)，位置不受 PG FK 约束。
+  'selection_observation',
+  'memory_reconciliation_log',
+  // YUK-344 调和环增量 2 (ADR-0034 §3): edge_reconciliation_log — 结构轴知识边写入期
+  // 调和的 AUDIT / PROVENANCE 日志 (SUPERSEDE 决策来由)。与 memory_reconciliation_log
+  // (记忆/个性化轴) 结构正交但语义同类 (provenance 值得保留，丢了即灭失 epistemic 来由)，
+  // 故同入 FK_ORDER 备份 (非 BACKUP_EXCLUDED)。软引用 knowledge_edge.id (superseded_edge_id
+  // 是 text ref，无 hard FK)，位置不受 PG FK 约束；置于 memory_reconciliation_log 后保持
+  // 两条 reconciliation 日志相邻可读。
+  'edge_reconciliation_log',
+  // YUK-531 (A5 S4 / ADR-0036 RT1): misconception_reconciliation_log — 异构误区边写入期
+  // 调和的 AUDIT / PROVENANCE 日志 (SUPERSEDE 决策来由)，peer of edge_reconciliation_log。
+  // provenance 值得保留 (丢了即灭失 epistemic 来由)，故同入 FK_ORDER 备份 (非
+  // BACKUP_EXCLUDED)。软引用 misconception_edge.id (superseded_edge_id 是 text ref，无 hard
+  // FK)，位置不受 PG FK 约束；紧邻 edge_reconciliation_log 保持三条 reconciliation 日志相邻
+  // 可读。NEW FK_ORDER table → bump SCHEMA_VERSION (4.12 → 4.13)。
+  'misconception_reconciliation_log',
+  // YUK-471 W1 PR-A2a (ADR-0044): materialized_id_index — the projection reverse-index
+  // (materialized knowledge/knowledge_edge id → anchor event). Cheaply rebuildable from
+  // the event log (db:backfill:genesis), but knowledge/knowledge_edge ARE backed up, so
+  // the index MUST be backed up too — else a restore leaves it empty and a subsequent
+  // rebuild would fold propose_new/split-born nodes to null and DELETE them. Same
+  // "derived-but-physical → FK_ORDER, not BACKUP_EXCLUDED" convention as the calibration
+  // /FSRS projections above. No enforced FK (text refs to knowledge/event ids), position
+  // unconstrained; placed last as the newest additive table. NEW FK_ORDER table → bump
+  // SCHEMA_VERSION (per archive.ts assertEveryTableIsBackedUpOrExcluded).
+  'materialized_id_index',
+  // YUK-440 (A13 typed KC ledger): kc_typed_state — single-writer PROJECTION over resolved
+  // conjecture/probe evidence (peer of mastery_state). Derived-but-physical → FK_ORDER
+  // (rebuildable from the event log via a future foldKcTypedState, but a peer of the
+  // mastery/calibration projections above which ARE backed up). No enforced FK (loose text
+  // refs to knowledge/event ids), position unconstrained; placed last as the newest
+  // additive table. NEW FK_ORDER table → bump SCHEMA_VERSION (4.9 → 4.10).
+  'kc_typed_state',
+  // YUK-445 (A11): learner_axis_state — per-KC EZ-diffusion caution/speed-accuracy descriptor
+  // (single writer = A11 batch). Derived-but-physical → FK_ORDER (peer of the mastery/typed-state
+  // projections above which ARE backed up; re-derivable from the event log but a physical table
+  // needing sweep ordering). No enforced FK (loose text ref to knowledge id), position
+  // unconstrained; placed by the kc_typed_state/mastery_state identity cluster. NEW FK_ORDER
+  // table → bump SCHEMA_VERSION (4.10 → 4.11).
+  'learner_axis_state',
+  // YUK-599 (v3 trait 合同 §6): subject 控制面六表（父先子后——binding/journal 的
+  // subject_id/trait_id 是 loose text-ref，仍按语义父子排序保持 restore 可读）。
+  // authored 配置 + append-only journal（provenance/as-of 轴），非瞬态非派生 →
+  // FK_ORDER 非 BACKUP_EXCLUDED。change_seq 列随整行 dump/restore；序列另行
+  // setval（见 SCHEMA_VERSION 注记 + archive.ts restore 尾）。
+  'subject',
+  'subject_trait',
+  'subject_trait_journal',
+  'subject_trait_binding',
+  'subject_control_journal',
+  'subject_name_claim',
+  // YUK-452 Phase B (0074/0075): placement cold-starter admission 四表 — 冷启 admission
+  // 与付费清算的持久台账（预算 claim / attempt / attempt↔question 链 / settled 成本组件，
+  // 含 task_run_id 与 actual cost provenance）。丢了即 restore 后预算控制失忆（可重复
+  // 超额 admission）+ 付费审计断链，非瞬态非派生 → FK_ORDER 非 BACKUP_EXCLUDED。
+  // 硬 FK 父先子后：claim ← attempt ← (attempt_question, cost_component)。
+  // NEW FK_ORDER tables 必 bump：42 → 46 tables，4.14 → 4.15。
+  'placement_starter_claim',
+  'placement_starter_attempt',
+  'placement_starter_attempt_question',
+  'placement_starter_cost_component',
+  // YUK-1055 — DB contract epoch marker（append-only 迁移历史）。durable
+  // cutover 真相而非运维态：restore 必须携回 epoch 状态（否则恢复出的库丢失
+  // 「是否已切换」的事实，fence 语义靠它）。无 enforced FK，置于末尾附近；
+  // provider_attempt 保持最后（其注释承诺 remains last）。
+  // NEW FK_ORDER table → bump SCHEMA_VERSION (4.21 → 4.22)。
+  'contract_epoch',
+  // YUK-1007 — 热加载配置面三表（system_config / system_config_journal /
+  // system_config_epoch）：owner 写的运行时配置行 + append-only 审计 + 失效轴，
+  // 非瞬态非派生（丢了即灭失 owner 调过的旋钮 + journal 溯源）→ FK_ORDER 备份。
+  // 无 enforced FK（loose text-ref 惯例）；journal 紧随主表（subject_trait →
+  // subject_trait_journal 先例）。change_seq/epoch 两列随行 dump/restore；
+  // config_change_seq 序列另行 setval（archive.ts restore 尾，subject_change_seq
+  // 同先例）。NEW FK_ORDER tables 必 bump：63 → 66，4.23 → 4.24。
+  'system_config',
+  'system_config_journal',
+  'system_config_epoch',
+  // YUK-1563 part 4 — custom_provider：运行时配置的自定义 provider 定义
+  // （endpoint / protocol / 凭据 env 变量名，绝无 key 值）。authored config，
+  // 与 system_config 家族一起备份——restore 丢了它会静默拆掉每个钉在自定义
+  // provider 上的任务配置。无 enforced FK。它喂的 model_catalog_cache
+  // bucket/checks 是可重取运维态（BACKUP_EXCLUDED）。NEW FK_ORDER table →
+  // bump 4.31 → 4.32（migration 0130）。
+  'custom_provider',
+  // YUK-1523 (P5) — 作答卷导出三表：export（页面身份/幂等/拒绝清单）先于
+  // item（冻结题目清单）与 region_map_page（按页冻结区域图）。FK：item/page →
+  // export，且 item.issuance_id → assessment_issuance（父表在本簇之前，插入序
+  // 已满足）。放在 paid-effect 两表之前，使 FK_ORDER 尾部保持
+  // paid_effect_control → paid_effect → provider_attempt（paid-effect 备份契约
+  // 断言尾部顺序）；与 paid-effect 无 FK 关系。
+  // NEW FK_ORDER tables → bump SCHEMA_VERSION (4.26 → 4.27)。
+  'worksheet_export',
+  'worksheet_export_item',
+  'worksheet_region_map_page',
+  // YUK-1496 (C2 / ADR-0073 D2): model_admission_slice — AI 判分准入切片台账
+  // （subject × response_class × task_kind × model@model_version + holdout 证据
+  // ref + admitted_by/at + status）。已准入证据是 authored 运营真相：丢了即灭失
+  // 「哪个判分切片被放行」的来由，非瞬态非派生 → FK_ORDER 非 BACKUP_EXCLUDED。
+  // 无 enforced FK（loose text-ref 惯例），位置不受 PG FK 约束；放在 worksheet
+  // 三表之后、paid-effect 之前，使尾部仍是 paid_effect_control → paid_effect →
+  // provider_attempt。NEW FK_ORDER table → SCHEMA_VERSION 4.28 / migration 0122。
+  'model_admission_slice',
+  // No hard FK: restore owning backend/generation before its immutable effects.
+  // Missing either table would turn an unknown paid outcome into bootstrap state.
+  ...PAID_EFFECT_BACKUP_TABLES,
+  // YUK-851 has no enforced FK, but remains last so durable provider-attempt truth is
+  // restored after the current authored/cost parents and rides whole-row schema changes.
+  'provider_attempt',
+] as const;
+
+export type TableName = (typeof FK_ORDER)[number];
+
+// Tables that are intentionally NOT part of the wipe-then-restore backup payload.
+// The reverse-lockstep guardrail in archive.ts treats membership here as "covered"
+// so these no longer count as orphans. Each entry MUST carry a one-line reason —
+// only transient / derived / operational state belongs here, never authored or
+// slow-accumulated cognitive data.
+export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
+  // YUK-1448: 15-minute actor/role-bound pagination evidence; no durable gap/issuance authority.
+  'bank_search_snapshot',
+  // SSE-replay telemetry of pg-boss job lifecycle; operational, re-derived as jobs
+  // run (ADR-0005/0008). Not authored data — restoring stale replay rows is wrong.
+  'job_events',
+  // Judge control incarnation must be restored with native receipts and both engines.
+  'judge_run_control',
+  // YUK-1355: runtime ownership/receipts must travel with pg-boss and tlp_dbos
+  // in a full PostgreSQL backup. A learner archive cannot restore task execution.
+  'prune_job_events_control',
+  'prune_job_events_receipt',
+  'prune_job_events_disposition',
+  // YUK-1393: immutable admission/receipts and phase/dispositions travel with
+  // both execution engines in a full PostgreSQL backup, never a learner archive.
+  'review_orphan_control',
+  'review_orphan_tick',
+  'review_orphan_receipt',
+  'review_orphan_disposition',
+  // Restore these with domain state, pg-boss and tlp_dbos in a consistent full-DB backup.
+  'session_orphan_control',
+  'session_orphan_tick',
+  'session_orphan_receipt',
+  'session_orphan_disposition',
+  // Sub-0c golden E2E health-check fixture (HTTP enqueue → worker → SSE). Transient
+  // echo-job state, not business data.
+  'echo_jobs',
+  // Cross-process editing-presence state machine (YUK-321 M5); explicitly "纯状态机
+  // 存储非业务实体". A restore starts from an empty presence backend — heartbeats are
+  // re-established live, so persisting them would resurrect stale lock state.
+  'editing_presence',
+  // YUK-384: session-qualified editor presence (peer of editing_presence). 30s-expiry
+  // heartbeat rows keyed (artifact_id, session_id); a restore starts from an empty
+  // presence backend and sessions re-register live — persisting them resurrects stale
+  // lock state. FK → artifact ON DELETE cascade, so the artifact wipe clears them.
+  'artifact_edit_session',
+  // YUK-384: the durable hub-sync reconciliation cursor. It is a reconciler-PROGRESS
+  // ledger over DERIVED desired hub state (computed from the backed-up authored
+  // atomics/knowledge), NOT authored or slow-accumulated data — operational, so it
+  // belongs here rather than FK_ORDER. It is RE-ESTABLISHED automatically on restore:
+  // the FK → artifact is ON DELETE cascade (the artifact wipe clears stale cursors),
+  // and re-inserting the artifact table fires the `hub_sync_artifact_dirty` AFTER
+  // INSERT trigger → mark_hub_sync_dirty → a fresh pending cursor per live hub; the
+  // paginated nightly coverage repair is a further backstop. Backing it up in FK_ORDER
+  // would be futile — that same AFTER INSERT trigger re-dirties every hub during
+  // restore and the `on conflict do nothing` restore insert would drop the archived
+  // rows anyway. (Excluded, not FK_ORDER → no SCHEMA_VERSION bump.)
+  'hub_sync_reconciliation',
+  // YUK-851: short pre-start lease ownership is operational and unsafe to replay;
+  // durable provider-start reservation truth lives on archived provider_attempt.
+  'provider_attempt_admission',
+  // YUK-842: provider query-session admission leases + start-reservation ledger. Terminal rows
+  // become eligible for opportunistic lane-local pruning after seven days; there is no TTL.
+  // Restoring operational rows would resurrect stale claims, family relationships, and rate-window
+  // history, so this remains wipe-only even without FKs.
+  'provider_session_admission',
+  // YUK-839: accepted validator append ledgers are short-lived recovery state bound to
+  // live task/source hashes. Restoring them without the matching live execution context
+  // would make stale paid-attempt progress reusable, so archive restore must wipe them.
+  'copilot_evidence_checkpoint',
+  // YUK-928: process-owned tool runtime; restoring it would resurrect stale handles and owners.
+  'tool_operation',
+  // YUK-932: live mailbox ownership and one-shot continuation claims are operational fences.
+  'subagent_run',
+  'copilot_continuation',
+  // YUK-758 夜间任务编排 DAG 的调度运行态（run 头 + 逐节点态）。纯瞬态运维态：一夜一条
+  // run，丢了下一夜锚点 cron 自然重建，restoring stale scheduling rows 是错的（会复活过
+  // 期的「今晚图」）。也登记进 RESTORE_WIPE_ONLY_TABLES——不是因为 FK（本对表无 enforced
+  // FK），而是因为**残留调度态在 restore 后有害**（YUK-758 review ToTeC，详见那边注释）。
+  // Excluded 非 FK_ORDER → 无 SCHEMA_VERSION bump。
+  'dag_orchestration_run',
+  'dag_orchestration_node',
+  // YUK-1050 — 迁移 apply 运行账本（run 头 + 逐阶段进度/WAL 观测）。纯运维态：
+  // 描述「某次 apply 跑到了哪」，不是 authored/慢累积数据；restore 到旧快照后
+  // 残留旧进度会假装迁移已完成/未完成 —— 必须擦除后由下一次 apply 重建。
+  // 也登记进 RESTORE_WIPE_ONLY_TABLES（phase 有 FK → run，子先于父）。Excluded
+  // 非 FK_ORDER → 无 SCHEMA_VERSION bump。
+  'migration_apply_run',
+  'migration_apply_phase',
+  // YUK-1563: models.dev cache. Refetchable operational state. The committed
+  // snapshot is the floor when the row is absent. A learner restore leaves the
+  // row in place so a retained selected-model entry is not wiped.
+  'model_catalog_cache',
+]);
+
+// Excluded process/queue state must not survive a restore into another data timeline.
+// Wipe child tables before their excluded parents (DAG node→run, migration phase→run).
+// Cascading children of backed-up parents need no separate entry here.
+// Subscription progress is durable and lives in FK_ORDER; restore clears only its claims.
+export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
+  // A learner archive restore must invalidate even unexpired pre-restore cursors.
+  'bank_search_snapshot',
+  // YUK-851: clear pre-restore owners before durable provider_attempt rows are replaced.
+  'provider_attempt_admission',
+  'provider_session_admission',
+  'copilot_evidence_checkpoint',
+  'tool_operation',
+  'copilot_continuation',
+  'subagent_run',
+  'dag_orchestration_node',
+  'dag_orchestration_run',
+  // YUK-1050 — 迁移 apply 运行账本（run 头 + 逐阶段进度/WAL 观测）。纯运维态：
+  // 描述「某次 apply 跑到了哪」，不是 authored/慢累积数据；restore 到旧快照后
+  // 残留旧进度会假装迁移已完成/未完成 —— 必须擦除后由下一次 apply 重建。
+  // 子 phase 先于父 run（phase 有 FK → run，反序 wipe 不被阻）。
+  'migration_apply_phase',
+  'migration_apply_run',
+];

@@ -199,7 +199,7 @@ export const ANTHROPIC_SUB_DEFAULT_MODEL = 'claude-opus-4-8';
  *     unpinned fallback (glm.* chat-completions lanes, bigmodel endpoint)
  *   - GLM_OCR_MODEL_ID — glm.ocr-layout-parsing lane (Zhipu layout_parsing)
  *   - DASHSCOPE_EMBED_MODEL_ID — dashscope.embedding lane (ai/embed.ts) AND
- *     the Mem0 embedder default (memory/client.ts); the lane keeps its
+ *     the Mem0 embedder default (ai/mem0/client.ts); the lane keeps its
  *     dedicated DashScope credential and lane-owned dimensions (1024).
  */
 export const LEGACY_GLM_MODEL_ID = 'glm-5.2';

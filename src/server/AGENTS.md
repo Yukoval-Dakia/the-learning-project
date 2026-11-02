@@ -14,7 +14,6 @@
 | `durable/` | DBOS durable 层：判分、孤儿会话回收、付费副作用控制等 workflow family |
 | `event-subscriptions/` | capability 事件订阅的注册与派发挂载 |
 | `events/` | 事件因果级联遍历 + 进程级 LISTEN 连接 |
-| `export/` | 全库导出/恢复归档、CSV 与评估报表 |
 | `fsrs/` | FSRS 调度状态与引擎选择 |
 | `grounding-gate/` | grounding 门的候选、预检与评测工件 |
 | `http/` | HTTP 错误与 provider 会话截止时间 helper |

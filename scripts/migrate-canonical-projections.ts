@@ -1,6 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event, materialized_id_index } from '@/db/schema';
+import { assertKnowledgeOperationsDecodable } from '@/kernel/records/knowledge-operation';
 import { auditProjectionKind, auditProjectionKindSymmetric } from '@/server/projections/audit-kind';
 import { PROJECTION_ENTITIES } from '@/server/projections/entity-registry';
 import {
@@ -37,6 +38,10 @@ export async function migrateCanonicalProjections(db: Db, now = new Date()) {
     await tx.execute(sql`LOCK TABLE event, materialized_id_index, goal, mistake_variant,
       learning_item, artifact, question_block, knowledge, knowledge_edge IN SHARE ROW EXCLUSIVE MODE`);
     await validateKnowledgeHistory(tx);
+    // v1 pre-check before any backfill/genesis write: an undecodable
+    // knowledge_operation aborts this tx rather than seeding genesis rows over
+    // history the read side cannot interpret.
+    await assertKnowledgeOperationsDecodable(tx);
 
     const report: Record<string, { seeded: number; skipped: number; checked: number }> = {};
     for (const kind of Object.keys(BACKFILLS) as (keyof typeof BACKFILLS)[]) {

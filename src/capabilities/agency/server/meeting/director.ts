@@ -50,8 +50,8 @@ import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
-import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { type RunAgentTaskCtx, runAgentTask } from '@/server/ai/runner';
+import { type TaskTextRunFn, costUsdToMicroUsd } from '../ai-runtime';
 import {
   type BuildDirectorServerOpts,
   DIRECTOR_ALLOWED_TOOLS,

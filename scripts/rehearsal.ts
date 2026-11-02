@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   const { resolve } = await import('node:path');
   const out = args.out === null ? resolve('.remember', 'rehearsal', ts) : resolve(args.out);
 
-  const { runRehearsal } = await import('@/server/rehearsal/orchestrate');
+  const { runRehearsal } = await import('@/server/release/rehearsal/orchestrate');
   const report = await runRehearsal({ out });
 
   console.log(`\n[rehearsal] report: ${report.out_dir}/report.json`);

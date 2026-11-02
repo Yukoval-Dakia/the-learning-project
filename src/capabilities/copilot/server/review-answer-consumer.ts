@@ -5,6 +5,8 @@ import { event, job_events, learning_session } from '@/db/schema';
 import { getCorrectionStatus } from '@/kernel/events';
 import { lockEventCorrectionSource } from '@/kernel/events/correction-lock';
 import { ApiError } from '@/kernel/http';
+import { consumeReviewAnswerBinding } from '@/kernel/records/review-answer-binding';
+import { BoundReviewAnswerSchema } from '@/kernel/tools/review-answer';
 import type { ToolContext } from '@/kernel/tools/types';
 import { acquireCopilotExecutionSettlementLock } from './copilot-run-coordination';
 import {
@@ -13,7 +15,6 @@ import {
   hasCancelRequest,
   isCopilotRunTerminalEvent,
 } from './copilot-run-status';
-import { BoundReviewAnswerSchema, consumeReviewAnswerBinding } from './practice-port';
 
 /** Rebuild only the current accepted ask's binding. Never use a model-selected event. */
 export async function resolveCopilotReviewAnswer(

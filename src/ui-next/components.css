@@ -236,6 +236,48 @@
   & .un-expand[data-open="true"] .un-expand-inner {
     opacity: 1;
   }
+
+  /* ── FoldList: one quiet toggle under a folded secondary list (L5) ── */
+  & button.un-fold-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--un-sp-1);
+    justify-self: start;
+    align-self: flex-start;
+    min-height: 24px;
+    margin: var(--un-sp-1) 0 0 calc(-1 * var(--un-sp-2));
+    padding: 2px var(--un-sp-2);
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: none;
+    font: inherit;
+    font-size: var(--un-fs-1);
+    font-variant-numeric: tabular-nums;
+    color: var(--un-text-3);
+    cursor: pointer;
+    transition:
+      color var(--un-t-feedback) ease-out,
+      background-color var(--un-t-feedback) ease-out;
+  }
+
+  & button.un-fold-toggle:hover {
+    color: var(--un-text-2);
+    background: var(--un-bg-hover);
+  }
+
+  & .un-fold-chev {
+    flex: none;
+  }
+
+  & .un-fold-toggle[aria-expanded="true"] .un-fold-chev {
+    transform: rotate(180deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next] .un-fold-chev {
+    transition: transform var(--un-t-small) var(--un-ease-glide);
+  }
 }
 
 /* ── Judgment (R3): submit → result in one place ─────────

@@ -208,7 +208,7 @@ export const observabilityCapability = defineCapability({
         load: () => import('./api/admin-trait-journal').then((m) => m.GET),
       },
       // YUK-601 (v3.2 §3.1-§3.4) — trait/控制行写面（全部写事务开头控制面
-      // advisory lock；业务在 src/server/subjects/{trait-write,subject-control-write}.ts）。
+      // advisory lock；业务在 ./server/{trait-write,subject-control-write}.ts）。
       {
         method: 'PUT',
         path: '/api/admin/subjects/[id]/traits/[kind]',
@@ -413,6 +413,7 @@ export const observabilityCapability = defineCapability({
           400: ApiErrorResponseSchema,
           401: ApiErrorResponseSchema,
           500: ApiErrorResponseSchema,
+          503: ApiErrorResponseSchema,
         },
         successStatus: 200,
         load: () => import('./api/backup-import').then((m) => m.POST),

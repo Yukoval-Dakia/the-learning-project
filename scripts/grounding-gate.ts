@@ -19,12 +19,13 @@ import { z } from 'zod';
 import { defaultLoadEvidenceImages } from '@/capabilities/agency/jobs/research_meeting_nightly';
 import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/public';
 import { induceConjecture } from '@/capabilities/agency/public';
+import { restoreFromArchive } from '@/capabilities/observability/server/backup/archive';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { source_asset } from '@/db/schema';
 import type { R2Client } from '@/kernel/object-storage';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { restoreFromArchive } from '@/server/export/archive';
+import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   GROUNDING_GATE_DEFAULT_CLUSTERS,
@@ -280,6 +281,7 @@ async function withRestoredBackup<T>(
   return withDisposableDb(async (db) => {
     const r2 = new MemoryR2();
     const restored = await restoreFromArchive({
+      hydrateConfig: hydrateConfigFromDb,
       db,
       r2,
       bytes: backupBytes,

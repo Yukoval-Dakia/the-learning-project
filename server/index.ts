@@ -8,7 +8,7 @@ import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
 import { warnFlipOrder } from '@/kernel/projection-writer-policy';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
-import { resolveApiPort } from '@/server/env';
+import { resolveApiPort } from '@/server/config/env';
 import { buildHonoApp } from './app';
 import { assertComposedRoutesDeclared } from './composed-routes';
 import { loadApiEnv } from './env';
@@ -19,7 +19,7 @@ const env = loadApiEnv();
 // YUK-548: boot-time SoT-flip flag vector + flip-order WARN (never throws — see warnFlipOrder).
 warnFlipOrder();
 
-// YUK-345 / YUK-1007：API_PORT 解析单一真源在 src/server/env.ts resolveApiPort
+// YUK-345 / YUK-1007：API_PORT 解析单一真源在 src/server/config/env.ts resolveApiPort
 // （trim → 空→默认 8787 → 非正整数 throw；admin config 读面 runtime 分区同源）。
 const port = resolveApiPort(env.API_PORT);
 assertComposedRoutesDeclared(capabilities);
@@ -34,7 +34,7 @@ async function hydrateSubjectsBeforeServe(): Promise<void> {
   try {
     const [{ db }, { hydrateSubjectRegistryFromDb }] = await Promise.all([
       import('@/db/client'),
-      import('@/server/subjects/hydrate'),
+      import('@/kernel/read-models/subject-hydration'),
     ]);
     const report = await hydrateSubjectRegistryFromDb(db);
     const skippedNote = report.skipped.length > 0 ? ` (skipped ${report.skipped.length})` : '';
@@ -99,6 +99,12 @@ async function registerToolsBeforeServe(): Promise<void> {
   console.log('[rw:api] capability tools registered');
 }
 
+// API routes and worker jobs both call Practice-owned operations through kernel ports.
+async function installPracticeOperationsBeforeServe(): Promise<void> {
+  const { installPracticeHostOperations } = await import('@/capabilities/practice/public');
+  await installPracticeHostOperations();
+}
+
 // YUK-1007 — admin config 读面的运行时事实注入（providers[] / infra schedules /
 // runtime 常量 / consumer-effective 值）。组合根（本进程）聚合一切真相源后经
 // observability/public setter 注入**工厂**：route 每请求重调，跟随 env/热加载
@@ -130,6 +136,18 @@ async function injectAdminConfigWriterBeforeServe(): Promise<void> {
   }
 }
 
+async function injectBackupConfigHydratorBeforeServe(): Promise<void> {
+  try {
+    const [{ hydrateConfigFromDb }, { setBackupConfigHydrator }] = await Promise.all([
+      import('@/server/config/hydrate'),
+      import('@/capabilities/observability/public'),
+    ]);
+    setBackupConfigHydrator(hydrateConfigFromDb);
+  } catch (error) {
+    console.warn('[rw:api] backup config hydrator unavailable — restores return 503', error);
+  }
+}
+
 async function recoverToolOperationsBeforeServe(): Promise<void> {
   const [{ db }, { recoverToolOperationsOnBoot }] = await Promise.all([
     import('@/db/client'),
@@ -145,7 +163,9 @@ async function startInProcessWorker(): Promise<void> {
     import('@/db/client'),
     import('@/server/boss/start-worker'),
   ]);
-  await startBossWorker(db);
+  // This process already started the config, custom-provider and model-catalog pollers
+  // before serve, so the worker must not start a second set.
+  await startBossWorker(db, { apiPollersRunning: true });
   console.log('[rw:api] in-process pg-boss worker running (RW_WORKER=1)');
 }
 
@@ -159,14 +179,16 @@ void (async () => {
   await hydrateConfigBeforeServe();
   await hydrateModelCatalogBeforeServe();
   await registerToolsBeforeServe();
+  await installPracticeOperationsBeforeServe();
   await recoverToolOperationsBeforeServe();
   await injectAdminConfigFactsBeforeServe();
   await injectAdminConfigWriterBeforeServe();
+  await injectBackupConfigHydratorBeforeServe();
   const { startListenLoop, stopListenLoop } = await import('@/server/events/listen_loop');
   await startListenLoop();
-  // Start owns the Web front door whenever a built SPA is configured. Startup,
-  // DB hydration, tool recovery and shutdown keep their existing single owner.
-  const fetch = env.RW_STATIC_DIR ? await createFrontdoor(app, env.RW_STATIC_DIR) : app.fetch;
+  // Start owns the Web front door when RW_FRONTDOOR=1 (needs the dist/start build).
+  // Startup, DB hydration, tool recovery and shutdown keep their existing single owner.
+  const fetch = env.RW_FRONTDOOR === '1' ? await createFrontdoor(app) : app.fetch;
   const server = serve({ fetch, port }, (info) => {
     const mounted = capabilities.flatMap((c) =>
       (c.api?.routes ?? []).map((r) => `${r.method} ${r.path}`),

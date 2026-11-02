@@ -4,7 +4,8 @@ import { retireInterventionPreparationJobs } from '@/capabilities/agency/public'
 import { getConfig } from '@/core/config/store';
 import { db } from '@/db/client';
 import { getR2 } from '@/kernel/object-storage';
-import { restoreFromArchive } from '@/server/export/archive';
+import { restoreFromArchive } from '../server/backup/archive';
+import { getBackupConfigHydrator } from '../server/backup/config-hydrator';
 import { BackupImportQuerySchema } from './backup-contracts';
 
 // OOM tripwire, not a backup-validity limit: exports have no byte bound, so only a
@@ -53,6 +54,16 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
+  // Fail closed before buffering or wiping: a restore that cannot re-read config would
+  // leave this process serving the pre-restore snapshot.
+  const hydrateConfig = getBackupConfigHydrator();
+  if (!hydrateConfig) {
+    return Response.json(
+      { error: 'config_hydrator_unavailable', message: 'Configuration hydrator is unavailable' },
+      { status: 503 },
+    );
+  }
+
   // Check a declared length before buffering. An absent header falls through to the
   // post-read check; use explicit NaN rather than relying on Number(null).
   const rawContentLength = req.headers.get('content-length');
@@ -74,6 +85,7 @@ export async function POST(req: Request): Promise<Response> {
     r2: getR2(),
     bytes,
     retireInterventionPreparationJobs,
+    hydrateConfig,
   });
   return Response.json(body, { status });
 }

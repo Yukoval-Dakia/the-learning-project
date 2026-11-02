@@ -57,6 +57,16 @@ export const advisoryLockRegistry = {
     encoding: 'hashtext',
     key: 'copilot:session-selection',
   },
+  contractEpochTransition: {
+    family: 'contract-epoch-transition',
+    encoding: 'hashtext',
+    key: 'contract-epoch:transition',
+  },
+  migrationApplyFence: {
+    family: 'migration-apply-fence',
+    encoding: 'hashtext',
+    key: 'yuk1050:migration-apply',
+  },
   learningStateWrite: {
     family: 'learning-state:write',
     encoding: 'hashtext',
@@ -102,6 +112,34 @@ export const advisoryLockRegistry = {
     salt: 0,
     keyPrefix: 'intervention:source:',
     suffixFields: ['eventId'],
+  },
+  memoryIngestSource: {
+    family: 'memory-ingest-source',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'memory:ingest:',
+    suffixFields: ['sourceEventId'],
+  },
+  memoryDispatchSource: {
+    family: 'memory-dispatch-source',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'memory:dispatch:',
+    suffixFields: ['sourceEventId'],
+  },
+  memoryOperatorRequest: {
+    family: 'memory-operator-request',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'memory:operator-request:',
+    suffixFields: ['requestId'],
+  },
+  purposeBriefScope: {
+    family: 'purpose-brief-scope',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'purpose-brief:',
+    suffixFields: ['operationId', 'scopeKey'],
   },
   probeServeCap: {
     family: 'probe-serve-cap',

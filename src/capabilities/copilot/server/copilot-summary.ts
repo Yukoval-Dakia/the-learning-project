@@ -16,8 +16,8 @@ import {
   countPendingProposalInboxByKind,
   listProposalInboxPage,
 } from '@/kernel/proposals/inbox';
+import { executeGetReviewDue } from '@/kernel/read-models/review-due';
 import type { ToolContext } from '@/kernel/tools/types';
-import { executeGetReviewDue } from './practice-port';
 import { executeMemoryBrief } from './tools/memory-brief';
 
 type DbLike = Db | Tx;

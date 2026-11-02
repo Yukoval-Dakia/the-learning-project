@@ -8,7 +8,7 @@ import type { Db } from '@/db/client';
 import type { JobDag } from '@/kernel/job-dag';
 import type { CapabilityManifest } from '@/kernel/manifest';
 import { EXPIRE_FAST, createJobQueue } from '@/server/boss/queue-config';
-import { fenceAwareJobHandler } from '@/server/contract-epoch';
+import { fenceAwareJobHandler } from '@/server/migration/contract-epoch/boss-fence';
 import { ORCHESTRATOR_CRON, ORCHESTRATOR_QUEUE, ORCHESTRATOR_TZ } from './constants';
 import { buildOrchestrationDag } from './members';
 import {

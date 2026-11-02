@@ -4,6 +4,7 @@
 //
 // Consumed by scripts/ops-projection.ts, scripts/b3-gate.ts, and the oracle sweep.
 
+import { UndecodableKnowledgeOperationError } from '@/core/projections/knowledge-operation';
 import { diffSnapshots } from '@/core/projections/snapshot-diff';
 import type { Db, Tx } from '@/db/client';
 import { PROJECTION_ENTITIES, type ProjectionKind } from './entity-registry';
@@ -115,6 +116,9 @@ export async function auditProjectionKindSymmetric(
     try {
       fold = await foldOne(id);
     } catch (err) {
+      // An undecodable knowledge_operation fact is not drift: it fails closed and
+      // is never downgraded to a report row or skipped by the allowlist.
+      if (err instanceof UndecodableKnowledgeOperationError) throw err;
       // Report, don't crash. A DB error poisons the caller's tx anyway; this rescues
       // pure fold/reducer throws.
       out.push({

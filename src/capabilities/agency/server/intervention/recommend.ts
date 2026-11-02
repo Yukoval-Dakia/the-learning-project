@@ -10,8 +10,8 @@ import {
   type PedagogyRecommendationModelOutputT,
   type PedagogyRecommendationT,
 } from '@/core/schema/intervention';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
+import type { TaskTextRunFn } from '../ai-runtime';
 
 export interface RecommendPedagogyInput {
   snapshot: InterventionSnapshotT;
