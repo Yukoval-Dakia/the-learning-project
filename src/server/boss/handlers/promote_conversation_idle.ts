@@ -3,9 +3,8 @@
 
 import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-
+import { idleConversation } from '@/capabilities/copilot/public';
 import type { Db } from '@/db/client';
-import { Conversation } from '@/server/session';
 
 export const IDLE_MS = 5 * 60 * 1000;
 
@@ -40,7 +39,7 @@ export async function runPromoteConversationIdle(
   let skipped = 0;
   for (const id of ids) {
     try {
-      await Conversation.idleConversation(db, id);
+      await idleConversation(db, id);
       promoted += 1;
     } catch (err) {
       skipped += 1;

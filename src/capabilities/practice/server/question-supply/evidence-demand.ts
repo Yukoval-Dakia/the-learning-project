@@ -50,7 +50,8 @@ const EvidenceDemandInventoryGoal = z.object({
 
 const EvidenceDemandControl = z.object({
   needed_by: z.string().datetime({ offset: true }).nullable(),
-  max_budget_micro_usd: z.number().int().nonnegative(),
+  /** null = no money cap (approved background supply policy); spend is still recorded. */
+  max_budget_micro_usd: z.number().int().nonnegative().nullable(),
   max_attempts: z.number().int().positive(),
 });
 
@@ -91,7 +92,7 @@ export const SupplyTargetContextV1 = z.object({
   policy_version: z.string().min(1),
   needed_by: z.string().datetime({ offset: true }).nullable(),
   allowed_uses: z.array(EvidenceAllowedUse).min(1),
-  max_budget_micro_usd: z.number().int().nonnegative(),
+  max_budget_micro_usd: z.number().int().nonnegative().nullable(),
   max_attempts: z.number().int().positive(),
 });
 export type SupplyTargetContextV1T = z.infer<typeof SupplyTargetContextV1>;

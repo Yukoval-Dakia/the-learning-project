@@ -30,27 +30,12 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   // applier imports learning-intent-note-birth and note-handoff-protocol directly.
   // YUK-1571 — dreaming note refresh is an experimental signal; notes subscribes.
   // No agency -> notes command edge remains in the public-read catalog.
-  {
-    owner: 'practice',
-    consumer: 'agency',
-    files: [
-      'src/capabilities/agency/server/intervention/reconcile.ts',
-      'src/capabilities/agency/server/intervention/store.ts',
-    ],
-    symbols: ['materializeInterventionDiagnostics', 'retireInterventionDiagnosticQuestion'],
-    dto: 'intervention diagnostic materialization commands',
-    justification:
-      'agency owns the intervention lifecycle; practice owns diagnostic question materialization. Package authoring sequence lives in the kernel; practice supplies the paid author and review stages. The daily-plan due/budget/pace projection is the kernel read model; practice still supplies those three facts.',
-    reviewIssue: 'YUK-885',
-    commandFiles: [
-      'src/capabilities/agency/server/intervention/reconcile.ts',
-      'src/capabilities/agency/server/intervention/store.ts',
-    ],
-  },
+  // YUK-1571 — intervention diagnostic materialize/retire is the kernel record
+  // src/kernel/records/intervention-diagnostic-materialize.ts; practice binds its
+  // leaves at worker start. No practice -> agency command edge remains.
   // YUK-1571 — the knowledge -> notes read edge is retired: node-page now
   // consumes @/kernel/read-models/{notes-read,artifact-backlinks,artifact-corrections}
   // directly; notes/public keeps the same symbols via compat re-exports.
-
   // YUK-1571 — the practice -> agency query edge is retired: the preparation
   // stage read lives in src/kernel/read-models/intervention-preparation.ts.
   // Practice imports that kernel read. Agency keeps intervention writes.

@@ -12,7 +12,7 @@ import { getRecentCopilotTurns } from '@/capabilities/copilot/server/turns';
 import { db } from '@/db/client';
 import { event, learning_session, tool_operation } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { Conversation } from '@/server/session';
+import * as Conversation from './conversation-lifecycle';
 
 const writtenEventIds: string[] = [];
 const writtenToolOperationIds: string[] = [];
