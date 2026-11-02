@@ -17,11 +17,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import { event, learning_item, materialized_id_index } from '@/db/schema';
 import { writeLearningItemProposal } from '@/kernel/proposals/producers';
+import { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
 import { retractAiProposal } from '@/server/proposals/actions';
 import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { auditProjection } from '../../../scripts/ops-projection';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { gatherAndFoldLearningItem } from './gather';
 
 const T0 = new Date('2026-06-01T00:00:00.000Z');
 
