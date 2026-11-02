@@ -94,11 +94,14 @@ export function mergePublicProse(
   };
 }
 
-/** "约 40 秒" / "约 3 分钟" / "约 2 小时" for a provider's Retry-After. */
+/**
+ * "约 40 秒" / "约 3 分钟" / "约 2 小时" for a provider's Retry-After. Rounds up, so the
+ * stated wait is never shorter than the provider asked for.
+ */
 function retryWait(seconds: number): string {
-  if (seconds < 90) return `约 ${Math.max(1, Math.round(seconds))} 秒`;
-  if (seconds < 60 * 60) return `约 ${Math.round(seconds / 60)} 分钟`;
-  return `约 ${Math.round(seconds / 3600)} 小时`;
+  if (seconds < 90) return `约 ${Math.max(1, Math.ceil(seconds))} 秒`;
+  if (seconds < 60 * 60) return `约 ${Math.ceil(seconds / 60)} 分钟`;
+  return `约 ${Math.ceil(seconds / 3600)} 小时`;
 }
 
 function statusSuffix(status: number | undefined): string {
