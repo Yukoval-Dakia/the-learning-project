@@ -41,13 +41,11 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 5,
+      "total": 3,
       "byOwnerPair": {
         "copilot -> notes": 1,
         "copilot -> practice": 1,
-        "observability -> agency": 1,
-        "observability -> practice": 1,
-        "shell -> practice": 1
+        "observability -> agency": 1
       },
       "nontrivialSccs": []
     }

@@ -84,7 +84,8 @@ export const shellCapability = defineCapability({
         operationId: 'getWorkbenchSummary',
         responses: { 200: WorkbenchSummaryResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
-        load: () => import('./api/workbench-summary').then((m) => m.GET),
+        // No loader: the KPI samples Practice's due queue, so server/composed-routes.ts
+        // supplies the handler with that read, as the Start reader does.
       },
       // Read-only digest; a quiet night is an explicit state, not a missing value.
       {

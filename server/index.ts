@@ -10,6 +10,7 @@ import { warnFlipOrder } from '@/kernel/projection-writer-policy';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
 import { resolveApiPort } from '@/server/env';
 import { buildHonoApp } from './app';
+import { composedRouteLoaders } from './composed-routes';
 import { loadApiEnv } from './env';
 import { createFrontdoor } from './frontdoor';
 import { installApiShutdown } from './shutdown';
@@ -167,7 +168,9 @@ void (async () => {
   const fetch = env.RW_STATIC_DIR ? await createFrontdoor(app, env.RW_STATIC_DIR) : app.fetch;
   const server = serve({ fetch, port }, (info) => {
     const mounted = capabilities.flatMap((c) =>
-      (c.api?.routes ?? []).filter((r) => r.load).map((r) => `${r.method} ${r.path}`),
+      (c.api?.routes ?? [])
+        .filter((r) => r.load || (r.operationId && composedRouteLoaders[r.operationId]))
+        .map((r) => `${r.method} ${r.path}`),
     );
     console.log(`[rw:api] hono listening on :${info.port}`);
     console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
