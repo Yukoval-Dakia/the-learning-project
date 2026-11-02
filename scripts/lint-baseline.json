@@ -4,7 +4,7 @@
   "infoPolicy": "info diagnostics are counted: separate infos ratchet total and per-rule rows; no severity total may exceed the ceiling",
   "totals": {
     "errors": 0,
-    "warnings": 152,
+    "warnings": 144,
     "infos": 0
   },
   "byRule": {
@@ -18,7 +18,7 @@
       "warning": 7
     },
     "lint/complexity/noImportantStyles": {
-      "warning": 5
+      "warning": 4
     },
     "lint/complexity/useOptionalChain": {
       "warning": 25
@@ -30,13 +30,13 @@
       "warning": 2
     },
     "lint/correctness/noUnusedImports": {
-      "warning": 21
+      "warning": 19
     },
     "lint/correctness/noUnusedVariables": {
       "warning": 1
     },
     "lint/style/noDescendingSpecificity": {
-      "warning": 45
+      "warning": 40
     },
     "lint/style/noNonNullAssertion": {
       "warning": 8
