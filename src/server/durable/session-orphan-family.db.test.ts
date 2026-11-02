@@ -12,9 +12,9 @@ import { testDb } from '../../../tests/helpers/db';
 import {
   inspectSessionOrphanAdmission,
   inspectSessionOrphanOutcome,
-  runSessionOrphanTick,
   sessionOrphanKey,
 } from './session-orphan-family';
+import { runSessionOrphanTick } from './session-orphan-tick';
 
 beforeEach(() => resetOrphans());
 afterEach(() => resetOrphans('pg-boss'));

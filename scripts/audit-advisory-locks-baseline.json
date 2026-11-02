@@ -30,10 +30,6 @@
       "count": 3
     },
     {
-      "path": "src/capabilities/copilot/server/review-answer-consumer.ts",
-      "count": 1
-    },
-    {
       "path": "src/capabilities/ingestion/server/agent/asks.ts",
       "count": 2
     },
@@ -132,10 +128,6 @@
     {
       "path": "src/capabilities/practice/server/failure-learning-variant.ts",
       "count": 1
-    },
-    {
-      "path": "src/capabilities/practice/server/intervention-diagnostics.ts",
-      "count": 2
     },
     {
       "path": "src/capabilities/practice/server/judge-operational.ts",
@@ -299,10 +291,6 @@
     },
     {
       "path": "src/server/rehearsal/orchestrate.ts",
-      "count": 1
-    },
-    {
-      "path": "src/server/session/conversation.ts",
       "count": 1
     }
   ]

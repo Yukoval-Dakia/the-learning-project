@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 149,
+      "total": 144,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -13,7 +13,6 @@
         "copilot -> memory": 1,
         "copilot -> proposals": 1,
         "copilot -> revert": 1,
-        "copilot -> session": 5,
         "ingestion -> ai": 13,
         "ingestion -> boss": 6,
         "ingestion -> projections": 2,
@@ -42,9 +41,8 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 7,
+      "total": 5,
       "byOwnerPair": {
-        "agency -> practice": 2,
         "copilot -> notes": 1,
         "copilot -> practice": 1,
         "observability -> agency": 1,
