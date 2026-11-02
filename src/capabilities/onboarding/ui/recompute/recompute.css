@@ -182,7 +182,7 @@
 }
 
 /* drifted row highlight (calm, ochre hairline) */
-.ob-kc.rc-kc-drift {
+.un-ob-kc.rc-kc-drift {
   background: color-mix(in oklab, var(--hard-soft) 38%, transparent);
   box-shadow: inset 2px 0 0 var(--hard-line);
   border-radius: var(--r-2);
@@ -193,7 +193,7 @@
 
 /* running shimmer over band tracks — "觉得是瞬时" */
 @media (prefers-reduced-motion: no-preference) {
-  [data-rc="running"] .ob-band-track::after {
+  [data-rc="running"] .un-ob-band-track::after {
     content: "";
     position: absolute;
     inset: 0;

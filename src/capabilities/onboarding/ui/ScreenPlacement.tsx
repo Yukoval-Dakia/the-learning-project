@@ -33,9 +33,9 @@ import { uploadAsset } from '@/ui/lib/assets';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { computeLatencyMs } from '@/ui/lib/response-latency';
 import { subjectDisplayName } from '@/ui/lib/subject';
-import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button, Chip, UiNextRoot } from '@/ui-next/public';
+import { OnboardingError, OnboardingState } from './OnboardingStatus';
 import { OnboardingSteps } from './OnboardingSteps';
 import type {
   PlacementHeldExit,
@@ -83,42 +83,6 @@ interface ExitSave {
   hold: () => void;
   resume: () => void;
 }
-// A state with no question (no goal, ended, preparing, failed …): one heading, one sentence
-// and the ways out. Presentation only.
-function PlacementState({
-  icon,
-  title,
-  text,
-  action,
-}: {
-  icon: ReactNode;
-  title: string;
-  text: string;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="un-ob-state">
-      <span className="un-ob-state-icon" aria-hidden="true">
-        {icon}
-      </span>
-      <h2 className="un-ob-question">{title}</h2>
-      <p className="un-ob-state-text">{text}</p>
-      {action && <div className="un-ob-actions un-ob-actions-start">{action}</div>}
-    </div>
-  );
-}
-
-// An error line; with a retry it is the ui-next RetryLine.
-function PlacementError({ text, onRetry }: { text: string; onRetry?: () => void }) {
-  if (onRetry) return <RetryLine message={text} onRetry={onRetry} />;
-  return (
-    <p className="un-ob-error" role="alert">
-      <CircleAlert size={16} aria-hidden="true" />
-      {text}
-    </p>
-  );
-}
-
 export interface ScreenPlacementProps {
   navigate: (to: string) => void;
 }
@@ -379,7 +343,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     >
       {exitFailure && (
         <section className="un-ob-section un-ob-panel">
-          <PlacementError text={`退出前未能确认保存或结束：${exitFailure.message}`} />
+          <OnboardingError text={`退出前未能确认保存或结束：${exitFailure.message}`} />
           <div className="un-ob-actions un-ob-actions-start">
             <Button variant="secondary" onClick={() => void leaveProbe(exitFailure.destination)}>
               重试保存并退出
@@ -397,7 +361,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
       )}
       {phase === 'nogoal' && (
         <section className="un-ob-section un-ob-panel">
-          <PlacementState
+          <OnboardingState
             icon={<Target size={24} />}
             title="还没设定目标"
             text="定位练习需要先有一个学习目标来圈定范围。"
@@ -411,7 +375,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
       )}
       {phase === 'error' && (
         <section className="un-ob-section un-ob-panel">
-          <PlacementError
+          <OnboardingError
             text={errMsg ?? '定位练习无法恢复。'}
             onRetry={() => window.location.reload()}
           />
@@ -419,7 +383,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
       )}
       {phase === 'terminal' && (
         <section className="un-ob-section un-ob-panel">
-          <PlacementState
+          <OnboardingState
             icon={<Check size={24} />}
             title="这次定位练习已结束"
             text={
@@ -438,7 +402,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
       )}
       {phase === 'ended' && (
         <section className="un-ob-section un-ob-panel">
-          <PlacementState
+          <OnboardingState
             icon={<Check size={24} />}
             title="定位练习已结束"
             text={`有 ${unresolved.length} 题没有计入结果，下面是原因。它们不算答错。`}
@@ -461,7 +425,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
             onEnd={finish}
             onUpload={() => void leaveProbe('/onboarding/upload')}
           />
-          {errMsg && <PlacementError text={errMsg} onRetry={recheck} />}
+          {errMsg && <OnboardingError text={errMsg} onRetry={recheck} />}
         </section>
       )}
       {phase === 'sourcing' && (
@@ -473,7 +437,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
             onUpload={() => void leaveProbe('/onboarding/upload')}
             onSetGoal={() => void leaveProbe('/welcome')}
           />
-          {errMsg && <PlacementError text={errMsg} />}
+          {errMsg && <OnboardingError text={errMsg} />}
         </section>
       )}
       {phase === 'settling' && (
@@ -526,7 +490,7 @@ function NoItemStatus({
   const preparing = [...new Set(noItem.preparing_subjects.map((id) => subjectDisplayName(id)))];
   return (
     <div role="status" aria-live="polite" className="un-ob-status">
-      <PlacementState
+      <OnboardingState
         icon={<Clock size={24} />}
         title="暂时没有能出的题"
         text={
@@ -624,7 +588,7 @@ function SupplyStatus({
     switch (status.kind) {
       case 'need_goal':
         return (
-          <PlacementState
+          <OnboardingState
             icon={<Target size={24} />}
             title="还缺学习目标"
             text="先说清这次要学什么，才能为你准备题目。"
@@ -639,7 +603,7 @@ function SupplyStatus({
       case 'preparing':
         return (
           <>
-            <PlacementState
+            <OnboardingState
               icon={<Clock size={24} />}
               title="正在准备题目 · 还不能开始"
               text="准备好后这里会出现第一题。可以先离开，回来再查。"
@@ -656,7 +620,7 @@ function SupplyStatus({
       case 'ready':
         return (
           <>
-            <PlacementState
+            <OnboardingState
               icon={<Check size={24} />}
               title="题目准备好了"
               text="加载第一题就可以开始。加载后仍然没有题的话，可以先上传自己的材料。"
@@ -668,7 +632,7 @@ function SupplyStatus({
       case 'failed':
         return (
           <>
-            <PlacementState
+            <OnboardingState
               icon={<CircleAlert size={24} />}
               title="没能准备好题目"
               text="可以上传自己的材料，从里面出题；也可以稍后再试一次。"
@@ -684,7 +648,7 @@ function SupplyStatus({
       case 'unknown':
         return (
           <>
-            <PlacementState
+            <OnboardingState
               icon={<CircleAlert size={24} />}
               title="还不确定题目有没有准备好"
               text={
@@ -703,7 +667,7 @@ function SupplyStatus({
         );
       default:
         return (
-          <PlacementState
+          <OnboardingState
             icon={<Clock size={24} />}
             title="暂时没有可以继续的题"
             text="这个目标现有的题已经用完，目前没有新的题在准备。可以上传自己的材料，从里面出题。"
@@ -1185,7 +1149,7 @@ function PlacementQuestionCard({
         </MathMarkdown>
       ))}
       {unavailable ? (
-        <PlacementError text="这道题需要当前页面尚不支持的作答控件。可以退出并保留这次定位练习的记录。" />
+        <OnboardingError text="这道题需要当前页面尚不支持的作答控件。可以退出并保留这次定位练习的记录。" />
       ) : (
         <>
           <SaveStateChip state={conflict ? 'conflict' : autosave.state} onRetry={autosave.retry} />
@@ -1227,7 +1191,7 @@ function PlacementQuestionCard({
         </>
       )}
       {error && (
-        <PlacementError
+        <OnboardingError
           text={error}
           onRetry={heldExit && !submitting ? () => void release() : undefined}
         />
