@@ -12,8 +12,9 @@
 // (candidate-signals); it never feeds back into the anchor.
 
 import { and, eq, sql } from 'drizzle-orm';
+import { impliedDifficultyResidual } from '@/core/calibration/aipw';
 import { newId } from '@/core/ids';
-import { DIFFICULTY_PROXY_WEIGHT, difficultyToLogitB, expectedScore } from '@/core/theta';
+import { DIFFICULTY_PROXY_WEIGHT, difficultyToLogitB } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, item_family_calibration, mastery_state } from '@/db/schema';
 import {
@@ -69,11 +70,7 @@ export function shrinkageFactor(n: number, priorStrength = SHRINKAGE_PRIOR_STREN
 }
 
 // Raw delta: the mean implied difficulty residual over the family's objective observations.
-//
-// For one observation, p = σ(θ̂ − b_anchor). Dividing the residual (outcome − p) by the
-// Fisher information p(1−p) gives the Newton-style step in b on the logit scale:
-//   residual_logit = −(outcome − p) / max(p(1−p), MIN_FISHER), clamped ±MAX_RESIDUAL_LOGIT.
-// A wrong answer yields a positive (harder) offset; a right answer a negative one.
+// Per-observation residual: impliedDifficultyResidual in core/calibration/aipw.
 //
 // b_delta stores the SHRUNK running mean, so updates reconstruct the old raw mean with
 //   oldRawMean = storedDelta / shrinkageFactor(calibrated_n).
@@ -82,17 +79,6 @@ export function shrinkageFactor(n: number, priorStrength = SHRINKAGE_PRIOR_STREN
 // count gate, permanently diluting b_delta. Folding starts only when both gates pass, so
 //   storedDelta = shrinkFamilyDelta(mean(folded residuals), calibrated_n)
 // holds regardless of gate-crossing order.
-const MIN_FISHER = 0.05; // p(1−p) floor near p≈0.05/0.95, so the logit step cannot explode.
-const MAX_RESIDUAL_LOGIT = 2.0; // Cap one extreme surprise's weight in the mean.
-
-/** One observation's implied difficulty offset in logit scale (wrong → harder). */
-export function impliedDifficultyResidual(theta: number, bAnchor: number, outcome: 0 | 1): number {
-  const p = expectedScore(theta, bAnchor);
-  const fisher = Math.max(p * (1 - p), MIN_FISHER);
-  const raw = -(outcome - p) / fisher;
-  return Math.max(-MAX_RESIDUAL_LOGIT, Math.min(MAX_RESIDUAL_LOGIT, raw));
-}
-
 // Update path: accumulate one objective attempt and recompute the shrunk delta.
 // Gates: (a) objective outcome, (b) n ≥ FAMILY_MIN_EVIDENCE, (c) at least
 // FAMILY_MIN_DISTINCT_QUESTIONS distinct questions. Until all pass, only evidence_count
