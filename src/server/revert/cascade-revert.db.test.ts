@@ -32,10 +32,10 @@ import type {
   ThetaRowSnapshotT,
 } from '@/core/schema/event/state-snapshot';
 import { event, knowledge, knowledge_edge, mastery_state, material_fsrs_state } from '@/db/schema';
+import { upsertMasteryState } from '@/kernel/records/mastery-state';
 import { gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { upsertFsrsState } from '../fsrs/state';
-import { upsertMasteryState } from '../mastery/state';
 import { orchestrateCascadeRevert } from './cascade-revert';
 
 // Direct insert (test fixture; ADR-0005 single-owner applies to production code).

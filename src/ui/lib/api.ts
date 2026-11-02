@@ -1,6 +1,5 @@
 // API client — adds x-internal-token (from localStorage) to every /api call.
-// Plan Step 8 (1c.2) will layer a Token-gate dialog over this; for now the
-// helper just throws ApiAuthError when the token is missing or rejected.
+// web/src/TokenGate.tsx owns the gate/re-gate dialog around ApiAuthError.
 
 import type { operations } from './api-schema.generated';
 

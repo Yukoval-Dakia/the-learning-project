@@ -1,6 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { updateGoalStatus } from '@/capabilities/agency/server/goals/queries';
 import { emitArtifactLifecycleEvent } from '@/capabilities/notes/public';
 import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
 import type { Tx } from '@/db/client';
@@ -10,6 +9,7 @@ import {
   writeVariantQuestionProposal,
 } from '@/kernel/proposals/producers';
 import { writeAiProposal } from '@/kernel/proposals/writer';
+import { updateGoalStatus } from '@/kernel/records/goal-commands';
 import {
   gatherAndFoldArtifact,
   gatherAndFoldGoal,

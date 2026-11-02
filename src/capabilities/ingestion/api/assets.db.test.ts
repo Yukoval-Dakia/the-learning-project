@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { source_asset } from '@/db/schema';
+import type { R2Client } from '@/kernel/object-storage';
 import { persistImageAsset } from '@/kernel/records/asset-store';
-import type { R2Client } from '@/server/r2';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
 
 // Inject in-memory R2 for all tests
 const r2 = memR2();
-vi.mock('@/server/r2', () => ({
+vi.mock('@/kernel/object-storage', () => ({
   getR2: () => r2,
   createR2Client: () => r2,
 }));

@@ -269,7 +269,7 @@ export type QuestionBlockRowSnapshotT = z.infer<typeof QuestionBlockRowSnapshot>
 // UPDATEs, so the only event the fold sees is the genesis anchor (payload.row = the
 // row's current values). The fold is anchor-only and carries every column verbatim.
 //
-// Post-anchor imperative writes are invisible to the log, so audit:projection reports
+// Post-anchor imperative writes are invisible to the log, so ops:projection reports
 // the row as drift until it is re-anchored. That is the honest event=truth signal,
 // not a false positive.
 //

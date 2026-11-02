@@ -18,7 +18,7 @@
 
 `knowledge_edge.relation_type`（ADR-0010 核心集合）有 5 个有意义的 type：`prerequisite`、`related_to`、`contrasts_with`、`applied_in`、`derived_from`。P4 之前这些边只被三类消费：creation-validation（rubric-validator 提议时校验）、generic-read（copilot 邻域一把灌）、少量 specialized（topology-gate 仅 prerequisite 环检测、hub-mesh 笔记上下文）。**没有任何「按 relation_type 驱动 mastery 诊断」的消费**——图在长但不影响 per-KC 能力估计。
 
-「KG 承重借用」把边接进 mastery 诊断轴（`mastery_state.theta_hat` 的读侧投影 `getMasteryProjection`，`src/server/mastery/state.ts`）。这催生了**四个同名异实的「prerequisite propagation」机制**，全 dark（flag 默认 false），语义/半径各异：
+「KG 承重借用」把边接进 mastery 诊断轴（`mastery_state.theta_hat` 的读侧投影 `getMasteryProjection`，`src/kernel/read-models/mastery-projection.ts`）。这催生了**四个同名异实的「prerequisite propagation」机制**，全 dark（flag 默认 false），语义/半径各异：
 
 | 机制 | 方向 | 数值形态 | 影响半径 | flag |
 |---|---|---|---|---|

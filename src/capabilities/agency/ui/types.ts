@@ -1,6 +1,6 @@
 // Wire shape of an agent note as the board receives it over JSON.
 //
-// Mirrors AgentNote in src/server/agents/notes.ts, EXCEPT created_at is a string
+// Mirrors AgentNote in src/kernel/read-models/agent-note-hints.ts, EXCEPT created_at is a string
 // (Date is serialised by Response.json). Kept as a board-local type so the UI
 // never imports server runtime code — only this structural contract.
 

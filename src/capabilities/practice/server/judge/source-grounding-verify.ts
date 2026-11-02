@@ -124,8 +124,7 @@ export async function runSourceGroundingVerify(
         // called from the DURABLE source_verify pg-boss job. On a transient error it returns
         // transient_error → source_verify fails closed (demote) AND THROWS → pg-boss
         // redelivery is the retry layer. Opting into in-process retry here would stack a
-        // second layer on top of queue redelivery (the exact anti-pattern the retry-optin pin
-        // guards). See src/server/ai/retry-optin.test.ts.
+        // second layer on top of queue redelivery.
       },
     );
   } catch (err) {

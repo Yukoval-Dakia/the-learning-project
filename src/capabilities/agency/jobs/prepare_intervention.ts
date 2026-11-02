@@ -1,7 +1,7 @@
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
-import { authorInterventionPackage } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
+import { authorInterventionPackage } from '@/kernel/records/intervention-package-author';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { prepareInterventionWave } from '../server/intervention/prepare';
 import { prepareInterventionJobYield } from './prepare-intervention-yield';

@@ -10,18 +10,18 @@ import type {
   ProposalRetractApplier,
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
-import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
-import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/kernel/proposals/signals';
 import {
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,
   findExistingRateEvent,
   requiredString,
-} from '@/server/proposals/applier-helpers';
+} from '@/kernel/proposals/applier-helpers';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import {
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/kernel/proposals/signals';
 import {
   NOTE_REFINE_ACCEPT_ACTOR,
   persistNoteRefineApply,

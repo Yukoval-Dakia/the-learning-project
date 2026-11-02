@@ -13,12 +13,12 @@ import {
   mastery_state,
   material_fsrs_state,
 } from '@/db/schema';
+import { retireKcTypedStateOnMerge } from '@/kernel/records/kc-typed-state';
+import { retireLearnerAxisStateOnMerge } from '@/kernel/records/learner-axis-state';
+import { retireMasteryStateOnMerge } from '@/kernel/records/mastery-state';
 import { resetDb } from '../../../tests/helpers/db';
-import { retireLearnerAxisStateOnMerge } from '../calibration/axis-writer';
-import { retireKcTypedStateOnMerge } from '../conjectures/typed-state';
 import { initialCandidateState } from '../fsrs/candidate';
 import { retireFsrsStateOnMerge } from '../fsrs/state';
-import { retireMasteryStateOnMerge } from './state';
 
 // Legacy FSRS JSON is opaque to identity rename; no complete Card is required.
 const MINIMAL_FSRS = { stability: 1, difficulty: 5, reps: 0, lapses: 0, state: 0 } as never;

@@ -1,13 +1,9 @@
 import { z } from 'zod';
 import { BlankAnswerShape } from '@/core/schema/assessment';
 import { VersionedAssetRef } from '@/core/schema/assessment/materials';
-import type { ScoringRuleT } from '@/core/schema/assessment/scoring-rule';
 import { ScoringRule } from '@/core/schema/assessment/scoring-rule';
 import type {
   DraftMaterialT,
-  DraftPartT,
-  DraftRubricCriterionT,
-  DraftSelectItemT,
   DraftUnitT,
   QuestionDraftDocumentT,
 } from '@/core/schema/question-draft';
@@ -20,10 +16,26 @@ import {
   DraftUnitKey,
   QuestionDraftDocument,
   mintDraftAssetId,
-  mintDraftItemId,
-  mintDraftMaterialId,
   sha256Hex,
 } from '@/core/schema/question-draft';
+
+import {
+  EditTarget,
+  type EditTargetT,
+  OpError,
+  type OpIssueCode,
+  fail,
+  findPresentationBlock,
+  integrityIssues,
+  locate,
+  remintItemId,
+  remintMaterialId,
+  requireCriterion,
+  requireItem,
+  requireMaterial,
+  requirePart,
+  requireUnit,
+} from '@/server/questions/draft-target';
 
 // edit_question ops engine (pure, no IO).
 //
@@ -33,32 +45,6 @@ import {
 // *_id writes are identity_change_attempt. Metadata cannot self-grant authority fields.
 // Incomplete drafts can be saved; only newly introduced dangling refs or duplicates
 // are op errors.
-
-// ---------- target ----------
-
-const TargetQuestion = z.object({ kind: z.literal('question') }).strict();
-const TargetPart = z.object({ kind: z.literal('part'), id: z.string().min(1) }).strict();
-const TargetUnit = z.object({ kind: z.literal('unit'), id: z.string().min(1) }).strict();
-const TargetItem = z
-  .object({ kind: z.literal('item'), unit_id: z.string().min(1), id: z.string().min(1) })
-  .strict();
-const TargetMaterial = z.object({ kind: z.literal('material'), id: z.string().min(1) }).strict();
-const TargetCriterion = z
-  .object({ kind: z.literal('criterion'), unit_id: z.string().min(1), id: z.string().min(1) })
-  .strict();
-/** Presentation block; this lane allows metadata ops only. */
-const TargetBlock = z.object({ kind: z.literal('block'), id: z.string().min(1) }).strict();
-
-export const EditTarget = z.discriminatedUnion('kind', [
-  TargetQuestion,
-  TargetPart,
-  TargetUnit,
-  TargetItem,
-  TargetMaterial,
-  TargetCriterion,
-  TargetBlock,
-]);
-export type EditTargetT = z.infer<typeof EditTarget>;
 
 // ---------- ops ----------
 
@@ -130,17 +116,7 @@ export type EditOpT = z.infer<typeof EditOp>;
 // ---------- 结果 ----------
 
 export interface OpIssue {
-  code:
-    | 'target_not_found'
-    | 'ambiguous_text_anchor'
-    | 'text_anchor_not_found'
-    | 'dangling_reference'
-    | 'forbidden_field'
-    | 'identity_change_attempt'
-    | 'invalid_value'
-    | 'duplicate_id'
-    | 'unresolved_reference'
-    | 'unsupported_op';
+  code: OpIssueCode;
   detail: string;
   target?: EditTargetT;
   locations?: { offset: number }[];
@@ -234,304 +210,7 @@ function clearValueFor(value: unknown): unknown {
   return undefined;
 }
 
-// ---------- 寻址 ----------
-
-interface Located {
-  part?: DraftPartT;
-  unit?: DraftUnitT;
-  partIndex?: number;
-  unitIndex?: number;
-}
-
-function locate(doc: QuestionDraftDocumentT, target: EditTargetT): Located | null {
-  switch (target.kind) {
-    case 'question':
-      return {};
-    case 'part': {
-      const partIndex = doc.parts.findIndex((p) => p.part_id === target.id);
-      return partIndex >= 0 ? { part: doc.parts[partIndex], partIndex } : null;
-    }
-    case 'unit': {
-      for (const [partIndex, part] of doc.parts.entries()) {
-        const unitIndex = part.units.findIndex((u) => u.unit_id === target.id);
-        if (unitIndex >= 0) return { part, unit: part.units[unitIndex], partIndex, unitIndex };
-      }
-      return null;
-    }
-    case 'item':
-    case 'criterion': {
-      for (const [partIndex, part] of doc.parts.entries()) {
-        const unitIndex = part.units.findIndex((u) => u.unit_id === target.unit_id);
-        if (unitIndex >= 0) {
-          const unit = part.units[unitIndex];
-          if (target.kind === 'item') {
-            if (unit.response_spec.kind !== 'select') return null;
-            return unit.response_spec.items.some((i) => i.item_id === target.id)
-              ? { part, unit, partIndex, unitIndex }
-              : null;
-          }
-          return (unit.rubric?.criteria ?? []).some((c) => c.criterion_id === target.id)
-            ? { part, unit, partIndex, unitIndex }
-            : null;
-        }
-      }
-      return null;
-    }
-    case 'material': {
-      return doc.materials.some((m) => m.material_id === target.id) ? {} : null;
-    }
-    case 'block': {
-      return findPresentationBlock(doc.presentation, target.id) != null ? {} : null;
-    }
-  }
-}
-
-function materialOf(doc: QuestionDraftDocumentT, id: string): DraftMaterialT | undefined {
-  return doc.materials.find((m) => m.material_id === id);
-}
-
-function itemOf(unit: DraftUnitT, id: string) {
-  if (unit.response_spec.kind !== 'select') return undefined;
-  return unit.response_spec.items.find((i) => i.item_id === id);
-}
-
-function criterionOf(unit: DraftUnitT, id: string) {
-  return unit.rubric?.criteria.find((c) => c.criterion_id === id);
-}
-
-/** locate guarantees existence here; throw OpFailure instead of using non-null asserts. */
-function requirePart(located: Located): DraftPartT {
-  if (located.part == null) fail('target_not_found', 'part of target not found');
-  return located.part;
-}
-
-function requireUnit(located: Located): DraftUnitT {
-  if (located.unit == null) fail('target_not_found', 'unit of target not found');
-  return located.unit;
-}
-
-function requireItem(unit: DraftUnitT, id: string): DraftSelectItemT {
-  const item = itemOf(unit, id);
-  if (item == null) fail('target_not_found', `item '${id}' not found`);
-  return item;
-}
-
-function requireCriterion(unit: DraftUnitT, id: string): DraftRubricCriterionT {
-  const criterion = criterionOf(unit, id);
-  if (criterion == null) fail('target_not_found', `criterion '${id}' not found`);
-  return criterion;
-}
-
-function requireMaterial(doc: QuestionDraftDocumentT, id: string): DraftMaterialT {
-  const material = materialOf(doc, id);
-  if (material == null) fail('target_not_found', `material '${id}' not found`);
-  return material;
-}
-
-function findPresentationBlock(node: unknown, id: string): Record<string, unknown> | null {
-  if (node == null || typeof node !== 'object') return null;
-  const obj = node as Record<string, unknown>;
-  if (obj.block_id === id) return obj;
-  for (const value of Object.values(obj)) {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const found = findPresentationBlock(item, id);
-        if (found != null) return found;
-      }
-    } else if (value != null && typeof value === 'object') {
-      const found = findPresentationBlock(value, id);
-      if (found != null) return found;
-    }
-  }
-  return null;
-}
-
-// ---------- 身份重铸级联 ----------
-
-/** Item text change → new content-addressed id; cascade the unit key and per_item rule. */
-function remintItemId(unit: DraftUnitT, oldId: string, newText: string): string {
-  const newId = mintDraftItemId(newText);
-  if (newId === oldId) return oldId;
-  if (unit.response_spec.kind !== 'select') return newId;
-  if (unit.response_spec.items.some((i) => i.item_id === newId)) {
-    throw new OpError('duplicate_id', `reminted item_id '${newId}' collides with an existing item`);
-  }
-  if (unit.key?.kind === 'select') {
-    unit.key.accepted_item_ids = unit.key.accepted_item_ids.map((id) =>
-      id === oldId ? newId : id,
-    );
-  }
-  if (unit.rule != null) {
-    unit.rule = remapRuleItemIds(unit.rule, oldId, newId);
-  }
-  return newId;
-}
-
-/** Material content change → new content-addressed id; cascade part/unit refs. */
-function remintMaterialId(doc: QuestionDraftDocumentT, oldId: string, next: DraftMaterialT): void {
-  const newId = mintDraftMaterialId(
-    next.kind,
-    next.content_md ?? next.asset.digest ?? next.asset.asset_id,
-  );
-  if (newId === oldId) return;
-  if (doc.materials.some((m) => m.material_id === newId && m !== next)) {
-    throw new OpError(
-      'duplicate_id',
-      `reminted material_id '${newId}' collides with an existing material`,
-    );
-  }
-  next.material_id = newId;
-  for (const part of doc.parts) {
-    part.material_ids = part.material_ids.map((id) => (id === oldId ? newId : id));
-    for (const unit of part.units) {
-      unit.material_refs = unit.material_refs.map((id) => (id === oldId ? newId : id));
-    }
-  }
-}
-
-function remapRuleItemIds(rule: ScoringRuleT, oldId: string, newId: string): ScoringRuleT {
-  const remapOutcome = (outcome: ScoringRuleT['otherwise']): ScoringRuleT['otherwise'] => {
-    if (!('per_item' in outcome)) return outcome;
-    const per_item: Record<string, number> = {};
-    for (const [id, points] of Object.entries(outcome.per_item) as [string, number][]) {
-      per_item[id === oldId ? newId : id] = points;
-    }
-    return { ...outcome, per_item };
-  };
-  return {
-    ...rule,
-    cases: rule.cases.map((ruleCase) => ({ ...ruleCase, award: remapOutcome(ruleCase.award) })),
-    otherwise: remapOutcome(rule.otherwise),
-  };
-}
-
-class OpError extends Error {
-  constructor(
-    public code: OpIssue['code'],
-    detail: string,
-    public locations?: { offset: number }[],
-  ) {
-    super(detail);
-  }
-}
-
-// ---------- 引用完整性与重复身份 ----------
-
-interface DocIntegrityIssue {
-  code:
-    | 'unresolved_material_ref'
-    | 'unresolved_key_item'
-    | 'duplicate_id'
-    | 'unresolved_blank_order_slot'
-    | 'blank_order_coverage';
-  detail: string;
-}
-
-function integrityIssues(doc: QuestionDraftDocumentT): DocIntegrityIssue[] {
-  const issues: DocIntegrityIssue[] = [];
-  const materialIds = new Set<string>();
-  for (const m of doc.materials) {
-    if (materialIds.has(m.material_id)) {
-      issues.push({ code: 'duplicate_id', detail: `duplicate material_id '${m.material_id}'` });
-    }
-    materialIds.add(m.material_id);
-  }
-  const partIds = new Set<string>();
-  const slotIds = new Set<string>();
-  const unitIds = new Set<string>();
-  for (const part of doc.parts) {
-    if (partIds.has(part.part_id)) {
-      issues.push({ code: 'duplicate_id', detail: `duplicate part_id '${part.part_id}'` });
-    }
-    partIds.add(part.part_id);
-    for (const id of part.material_ids) {
-      if (!materialIds.has(id)) {
-        issues.push({
-          code: 'unresolved_material_ref',
-          detail: `part '${part.part_id}' references missing material '${id}'`,
-        });
-      }
-    }
-    // blank_order must cover each blank slot of this part exactly once; only this
-    // part's slot ids count.
-    if (part.blank_order != null) {
-      const seen = new Set<string>();
-      const blankSlotIds = new Set<string>();
-      for (const unit of part.units) {
-        if (unit.response_class === 'blank' && unit.response_spec.kind === 'blank') {
-          blankSlotIds.add(unit.slot_id);
-        }
-      }
-      for (const slotId of part.blank_order) {
-        if (seen.has(slotId)) {
-          issues.push({
-            code: 'duplicate_id',
-            detail: `part '${part.part_id}' blank_order lists slot '${slotId}' more than once`,
-          });
-          continue;
-        }
-        seen.add(slotId);
-        if (!blankSlotIds.has(slotId)) {
-          issues.push({
-            code: 'unresolved_blank_order_slot',
-            detail: `part '${part.part_id}' blank_order references '${slotId}', which is not a blank slot of this part`,
-          });
-        }
-      }
-      const missing = [...blankSlotIds].filter((id) => !seen.has(id));
-      if (missing.length > 0) {
-        issues.push({
-          code: 'blank_order_coverage',
-          detail: `part '${part.part_id}' declares blank_order but does not cover its blank slot(s): ${missing.join(', ')}`,
-        });
-      }
-    }
-    for (const unit of part.units) {
-      if (unitIds.has(unit.unit_id)) {
-        issues.push({ code: 'duplicate_id', detail: `duplicate unit_id '${unit.unit_id}'` });
-      }
-      unitIds.add(unit.unit_id);
-      if (slotIds.has(unit.slot_id)) {
-        issues.push({ code: 'duplicate_id', detail: `duplicate slot_id '${unit.slot_id}'` });
-      }
-      slotIds.add(unit.slot_id);
-      for (const ref of unit.material_refs) {
-        if (!materialIds.has(ref)) {
-          issues.push({
-            code: 'unresolved_material_ref',
-            detail: `unit '${unit.unit_id}' references missing material '${ref}'`,
-          });
-        }
-      }
-      if (unit.response_spec.kind === 'select') {
-        const itemIds = new Set(unit.response_spec.items.map((i) => i.item_id));
-        if (itemIds.size !== unit.response_spec.items.length) {
-          issues.push({
-            code: 'duplicate_id',
-            detail: `unit '${unit.unit_id}' has duplicate item_id`,
-          });
-        }
-        if (unit.key?.kind === 'select') {
-          for (const id of unit.key.accepted_item_ids) {
-            if (!itemIds.has(id)) {
-              issues.push({
-                code: 'unresolved_key_item',
-                detail: `unit '${unit.unit_id}' key references item '${id}' not in universe`,
-              });
-            }
-          }
-        }
-      }
-    }
-  }
-  return issues;
-}
-
 // ---------- op 实施 ----------
-
-function fail(code: OpIssue['code'], detail: string, locations?: { offset: number }[]): never {
-  throw new OpError(code, detail, locations);
-}
 
 function applySet(
   doc: QuestionDraftDocumentT,
@@ -1474,199 +1153,4 @@ export function applyEditOps(doc: QuestionDraftDocumentT, ops: EditOpT[]): Apply
   }
   const noop = changes.length === 0 || JSON.stringify(reparsed.data) === JSON.stringify(doc);
   return { ok: true, document: reparsed.data, changes, noop };
-}
-
-// ---------- 失效域（edit-impact 表） ----------
-
-export interface InvalidatedScope {
-  /** Independent solve/calibration units to rerun. */
-  solve_units: string[];
-  calibration_units: string[];
-  /** Rule verification units to rerun. */
-  rule_verification_units: string[];
-  /** Retrieval fields to reindex. */
-  retrieval_fields: string[];
-  /** Parts to re-render. */
-  display_parts: string[];
-  /** Whether presentation needs revalidation. */
-  presentation_validation: boolean;
-}
-
-const SOLVE_AFFECTING = new Set([
-  'prompt_md',
-  'label_md',
-  'items',
-  'key',
-  'reference_md',
-  'response_spec',
-  'material_refs',
-  'material_ids',
-  'content_md',
-  'coordinates',
-  'gap_after_codepoint',
-  'axes',
-  'text',
-  // answer_shape changes response semantics, so it counts as a scoring input.
-  'answer_shape',
-]);
-const RULE_AFFECTING = new Set([
-  'points',
-  'rule',
-  'rubric',
-  'criteria',
-  'statement_md',
-  'max',
-  'allowed_awards',
-]);
-const METHOD_AFFECTING = new Set(['method']);
-const RETRIEVAL_FIELDS = new Set(['knowledge_ids', 'explanation_md', 'kind']);
-const PRESENTATION_AFFECTING = new Set(['block', 'presentation']);
-
-/** CAS relevant_changes: current server values for op targets.
- * field = '<kind>:<id>[.<op-field>]'; current = value or null. */
-export function relevantChangesForOps(
-  doc: QuestionDraftDocumentT,
-  ops: EditOpT[] | undefined,
-): { field: string; current: unknown }[] {
-  const out: { field: string; current: unknown }[] = [];
-  for (const op of ops ?? []) {
-    const target = 'target' in op ? op.target : null;
-    if (target == null) continue;
-    const targetId = 'id' in target ? target.id : 'root';
-    const located = locate(doc, target);
-    const node = nodeOfLocated(doc, target, located);
-    const fieldNames =
-      op.op === 'set'
-        ? Object.keys(op.fields)
-        : op.op === 'clear' || op.op === 'replace_text'
-          ? [op.field]
-          : null;
-    if (fieldNames == null) {
-      out.push({ field: `${target.kind}:${targetId}`, current: node ?? null });
-      continue;
-    }
-    for (const fieldName of fieldNames) {
-      out.push({
-        field: `${target.kind}:${targetId}.${fieldName}`,
-        current: node != null ? ((node as Record<string, unknown>)[fieldName] ?? null) : null,
-      });
-    }
-  }
-  return out;
-}
-
-/** Target → current server node for relevant_changes; null when missing. */
-function nodeOfLocated(
-  doc: QuestionDraftDocumentT,
-  target: EditTargetT,
-  located: Located | null,
-): unknown {
-  if (located == null) return null;
-  switch (target.kind) {
-    case 'question':
-      return doc;
-    case 'part':
-      return located.part ?? null;
-    case 'unit':
-      return located.unit ?? null;
-    case 'item':
-      return (
-        (located.unit?.response_spec.kind === 'select'
-          ? located.unit.response_spec.items.find((i) => i.item_id === target.id)
-          : null) ?? null
-      );
-    case 'criterion':
-      return located.unit?.rubric?.criteria?.find((cr) => cr.criterion_id === target.id) ?? null;
-    case 'material':
-      return doc.materials.find((m) => m.material_id === target.id) ?? null;
-    case 'block':
-      return findPresentationBlock(doc.presentation, target.id) ?? null;
-  }
-}
-
-export function computeInvalidatedScope(changes: AppliedChange[]): InvalidatedScope {
-  const solve = new Set<string>();
-  const calibration = new Set<string>();
-  const ruleVerify = new Set<string>();
-  const retrieval = new Set<string>();
-  const display = new Set<string>();
-  let presentation = false;
-  for (const change of changes) {
-    const target = change.target;
-    const partId =
-      target.kind === 'part'
-        ? target.id
-        : target.kind === 'unit' || target.kind === 'item' || target.kind === 'criterion'
-          ? undefined
-          : undefined;
-    const unitId =
-      target.kind === 'unit'
-        ? target.id
-        : target.kind === 'item' || target.kind === 'criterion'
-          ? target.unit_id
-          : undefined;
-    for (const field of change.fields) {
-      if (
-        SOLVE_AFFECTING.has(field) ||
-        field === 'units' ||
-        field === 'parts' ||
-        field === 'materials' ||
-        field === 'order' ||
-        field === 'parent'
-      ) {
-        if (unitId != null) {
-          solve.add(unitId);
-          calibration.add(unitId);
-        }
-        if (target.kind === 'part' || field === 'parts' || field === 'units') {
-          if (partId != null) display.add(partId);
-        }
-        if (
-          target.kind === 'material' ||
-          field === 'materials' ||
-          field === 'material_ids' ||
-          field === 'material_refs'
-        ) {
-          if (unitId != null) {
-            solve.add(unitId);
-            calibration.add(unitId);
-          }
-        }
-      }
-      if (RULE_AFFECTING.has(field)) {
-        if (unitId != null) {
-          ruleVerify.add(unitId);
-          calibration.add(unitId);
-        }
-      }
-      if (METHOD_AFFECTING.has(field) && unitId != null) calibration.add(unitId);
-      if (RETRIEVAL_FIELDS.has(field)) retrieval.add(field);
-      if (PRESENTATION_AFFECTING.has(field) || target.kind === 'block') presentation = true;
-      // blank_order only affects display/DTO order and the default presentation.
-      if (field === 'blank_order') {
-        if (partId != null) display.add(partId);
-        presentation = true;
-      }
-      if (target.kind === 'item' || target.kind === 'unit' || target.kind === 'criterion') {
-        if (unitId != null && SOLVE_AFFECTING.has(field)) display.add('');
-      }
-    }
-    if (target.kind === 'part') display.add(target.id);
-    if (change.identity_remap != null) {
-      if (unitId != null) {
-        solve.add(unitId);
-        calibration.add(unitId);
-        ruleVerify.add(unitId);
-      }
-    }
-  }
-  display.delete('');
-  return {
-    solve_units: [...solve],
-    calibration_units: [...calibration],
-    rule_verification_units: [...ruleVerify],
-    retrieval_fields: [...retrieval],
-    display_parts: [...display],
-    presentation_validation: presentation,
-  };
 }

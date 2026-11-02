@@ -5,8 +5,9 @@
 //
 // STORAGE — zero schema change: one `experimental:agent_note` ExperimentalEvent
 // (intentionally NOT reserved) with payload { target_agents, refs, summary_md, signal_kind,
-// confidence?, expires_at?, source_task_kind, source_task_run_id? }. Deterministic writers
-// call owner commands (e.g. recordQuestionPoolGap) for product-specific hints.
+// confidence?, expires_at?, source_task_kind, source_task_run_id? }. Product hints stay
+// owner commands. quiz_verify does not import this module: Agency applies
+// recordQuestionPoolGap when it reads a committed non-promotion verification event.
 
 import { createId } from '@paralleldrive/cuid2';
 import { inArray, or, sql } from 'drizzle-orm';

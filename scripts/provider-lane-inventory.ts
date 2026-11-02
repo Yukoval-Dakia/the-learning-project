@@ -624,7 +624,7 @@ export const PROVIDER_LANES = [
       },
     },
     evidence: {
-      path: 'src/db/schema.ts',
+      path: 'src/db/schema/artifacts.ts',
       contains: ['misconception_reconciliation_log'],
     },
     attemptSemantics: {
@@ -643,7 +643,7 @@ export const PROVIDER_LANES = [
       fanOut: 'zero live attempts',
       evidence: [
         {
-          path: 'src/db/schema.ts',
+          path: 'src/db/schema/artifacts.ts',
           calls: ['pgTable'],
           contains: ['misconception_reconciliation_log'],
         },
@@ -870,6 +870,7 @@ export const PROVIDER_LANES = [
       { path: 'src/server/memory/reconcile-store.ts', kind: 'type' },
       { path: 'src/server/memory/search-memories.ts', kind: 'type' },
       { path: 'src/server/memory/triggers.ts', kind: 'runtime' },
+      { path: 'src/server/memory/purpose-repair.ts', kind: 'runtime' },
     ],
     roles: ['api', 'worker'],
     provider: 'Mem0 OSS with product-pinned completions LLM and dedicated DashScope embeddings',

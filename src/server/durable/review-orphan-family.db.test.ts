@@ -3,6 +3,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { PgBoss } from 'pg-boss';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
 import {
   contract_epoch,
   job_events,
@@ -10,7 +11,6 @@ import {
   review_orphan_receipt,
   review_orphan_tick,
 } from '@/db/schema';
-import { Review } from '@/server/session';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   REVIEW_ORPHAN_FAMILY,

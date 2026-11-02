@@ -5,9 +5,8 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '@/db/client';
 import { kc_typed_state } from '@/db/schema';
-
+import { type UpsertKcTypedStateInput, upsertKcTypedState } from '@/kernel/records/kc-typed-state';
 import { resetDb } from '../../../tests/helpers/db';
-import { type UpsertKcTypedStateInput, upsertKcTypedState } from './typed-state';
 
 describe('upsertKcTypedState (single-writer, DB)', () => {
   beforeEach(async () => {

@@ -4,7 +4,6 @@ export type { QuestionDetail } from './ui/practice-api';
 export {
   buildPaperSubmissionBody,
   buildQuestionsListQuery,
-  computeLatencyMs,
   getQuestion,
   projectQuestionDeleteResponse,
   projectQuestionsListResponse,

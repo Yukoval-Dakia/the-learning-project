@@ -1,4 +1,5 @@
-// Prepared only in the implementation lane. Runs in the DB partition; parent owns execution.
+// Real-PG digest parity checks; runs in the DB test lane against disposable
+// testcontainers (no parent lane involvement).
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -103,7 +104,9 @@ afterAll(async () => {
     await client.end();
   }
 });
-describe('actual PG16 logical bytes (UNRUN by author)', () => {
+describe('actual PG16 logical bytes', () => {
+  // @invariant data: the canonical content digest is independent of physical row order but changes when any stored value changes
+  // @fails-if the digest hashes ctid/order or skips a column; a reorder flags a false diff or a real edit goes unnoticed
   it('hashes enum/vector/bigint/long JSON/binary and duplicate rows, independent of physical order', async () => {
     const a = await digest(table('leaf'));
     await client.unsafe(
@@ -116,6 +119,8 @@ describe('actual PG16 logical bytes (UNRUN by author)', () => {
     expect(changed.rows).toBe(a.rows);
     expect(changed.sha256).not.toBe(a.sha256);
   });
+  // @invariant data: partition parents contribute zero local rows and an untouched sequence keeps its exact last_value/is_called state
+  // @fails-if the digest counts parent rows or materializes a never-called sequence; restore parity drifts silently
   it('ONLY parent has zero local rows and never-called large sequence remains exact', async () => {
     expect((await digest(table('parent', 'p'))).rows).toBe('0');
     expect((await digest({ ...table('zero'), columns: [] })).rows).toBe('0');
@@ -124,6 +129,8 @@ describe('actual PG16 logical bytes (UNRUN by author)', () => {
     );
     expect(state).toMatchObject({ last_value: '9007199254741001', is_called: false });
   });
+  // @invariant data: the manifest catalog query sees quoted identifiers, partition parents and leaves under fixed inspector settings
+  // @fails-if the inspector misses a quoted schema or a partition member; the manifest omits a table from the backup
   it('real catalog query includes quoted schema, parent and leaf under fixed inspector settings', async () => {
     const rows = await client.unsafe(CATALOG_SQL);
     const row = z
@@ -146,6 +153,8 @@ describe('actual PG16 logical bytes (UNRUN by author)', () => {
       row.json_build_object.tables.find((t) => t.schema === schema && t.name === 'leaf')?.parents,
     ).toEqual([{ schema, name: 'parent' }]);
   });
+  // @invariant data: the unowned-session SQL predicate classifies exactly the server-owned backend types
+  // @fails-if a server process is counted as unowned; the backup kills a server backend or spares a client one
   it.each([
     ['logical replication launcher', false, '0'],
     ['checkpointer', false, '0'],
@@ -168,6 +177,8 @@ describe('actual PG16 logical bytes (UNRUN by author)', () => {
       ).toBe(expected);
     },
   );
+  // @invariant data: backup connection filtering exempts exactly the keeper PID, never a same-name client
+  // @fails-if an application_name lookalike is exempted; the backup kills its own keeper session
   it('exempts the exact keeper PID, never an application_name lookalike', async () => {
     const query = `WITH pg_stat_activity AS (SELECT pid, 'client backend'::text AS backend_type, NULL::timestamptz AS xact_start FROM (VALUES (123),(124)) AS fixture(pid)) ${boundarySessionSql(123)}`;
     const [row] = await client.unsafe(query);
@@ -231,7 +242,9 @@ const longArrayText = '检查🦆"\\\n'.repeat(4000);
 const arrayQuote = (value: string) => `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 const arrayMatrix = `[0:1][-2:-1]={{${arrayQuote(longArrayText)},NULL},{"NULL",""}}`;
 
-describe('real PG16 partition array pg_dump/pg_restore regression (UNRUN by author)', () => {
+describe('real PG16 partition array pg_dump/pg_restore regression', () => {
+  // @invariant data: pg_dump/pg_restore round-trips inherited array values byte-exactly and rejects value or type drift
+  // @fails-if the round trip rewrites array bounds or escapes; restored data silently differs from the source
   it('round-trips empty and populated inherited arrays, then rejects value and type changes', async () => {
     const container = await new PostgreSqlContainer('pgvector/pgvector:pg16')
       .withDatabase('test_fork_1359')

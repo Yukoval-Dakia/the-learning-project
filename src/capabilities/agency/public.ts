@@ -1,12 +1,11 @@
 // Stable server contract for consumers outside the agency capability.
 
 export { AgentNotesQuerySchema } from './api/contracts';
-export type { CompletedProbeProposal } from './server/conjecture/completed-probe-provenance';
 export {
-  loadCompletedProbeAssessmentAnchors,
-  validateCompletedProbeProvenance,
-  validateIssuedProbeProvenance,
-} from './server/conjecture/completed-probe-provenance';
+  type PredictionAccountability,
+  loadPredictionAccountabilityByKey,
+  rankEvidenceCellsByAccountability,
+} from './server/conjecture/accountability';
 export {
   type ConjectureEvidenceAssetRef,
   type ConjectureEvidenceImageSource,
@@ -28,8 +27,6 @@ export type {
   InduceConjectureResult,
 } from './server/conjecture/induce';
 export { induceConjecture } from './server/conjecture/induce';
-export type { EffectiveProbeResultStatus } from './server/conjecture/probe-evidence';
-export { getEffectiveProbeResultStatuses } from './server/conjecture/probe-evidence';
 // Shared probe lifecycle exercised by shell integration consumers.
 export {
   answerProbe,
@@ -39,15 +36,7 @@ export {
 export type { ConjectureAcceptResult } from './server/conjecture-accept';
 export type { GoalScopeAcceptResult } from './server/goals/accept';
 export { createGoal } from './server/goals/create';
-export { rewriteGoalScopeOnMerge } from './server/goals/merge-attribution';
-export { updateGoalScope } from './server/goals/queries';
-export type { InterventionAuthoringContextT } from './server/intervention/contracts';
 export { retireInterventionPreparationJobs } from './server/intervention/retire-jobs';
-export type { InterventionPreparationStageGuard } from './server/intervention/store';
-export {
-  guardInterventionPreparationStage,
-  loadInterventionAuthoringContext,
-} from './server/intervention/store';
 export type {
   AcceptLearningIntentParams,
   LearningIntentMaterializeResult,

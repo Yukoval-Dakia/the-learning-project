@@ -44,11 +44,8 @@ import { FigureRef, StructuredQuestion } from '@/core/schema/structured_question
 import type { Db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-// capability→questions 边数守恒：统一写口 facade（@/server/questions/submit-question）
-// 是本文件对 questions/* 的唯一 import 边；capability 内部消费方（edit-question
-// 工具、proposal-appliers、store-sourced-question shim）走本文件的下行
-// re-export，不经 facade 重复计数。
 import {
   type DeclaredGroupDomainOutcome,
   type SubmitResult,
@@ -56,7 +53,6 @@ import {
   claimSubmitRequestId,
   insertSourcedDraft,
   persistDeclaredQuestionGroup,
-  publishQuestionGroupFromRow,
   sanitizeSourcedMarkup,
   submitDraftQuestion,
   writeSubmitReceiptEvent,
@@ -68,17 +64,12 @@ export type {
   EditQuestionResult,
   SubmitResult,
 } from '@/server/questions/submit-question';
-// YUK-1568 S3（R1 F2）—— source_verify 需要与写口同一套 revision→flat
-// 投影原语（冻结 revision → verify 输入）：复用本文件对 seam 模块已登记
-// 的 import 边做 capability 内再出口，不新增 capability→questions 债。
+// 冻结 revision 的题型投影与提交使用同一实现。
 export {
   EditQuestionInput,
   deriveKind,
-  draftCanonicalIdentity,
   insertSourcedDraft,
   probeDraftEdit,
-  publishQuestionGroupFromRow,
-  revisionToDraftDocument,
   saveDraftEdit,
   submitDraftQuestion,
   validateDraftEdit,
@@ -270,7 +261,7 @@ const COMMIT_ROUTE_CONFIG = {
 
 type CandidateSubmitContext = Pick<
   ToolContext,
-  'db' | 'sessionId' | 'taskRunId' | 'logTaskRunId' | 'causedByEventId'
+  'db' | 'sessionId' | 'taskRunId' | 'logTaskRunId' | 'causedByEventId' | 'beforeIngestionWrite'
 > & {
   callerActor?: ToolContext['callerActor'];
 };
@@ -418,15 +409,16 @@ async function runCandidateSubmit(
     }
   }
 
-  const merged = await db.transaction((tx) =>
-    mergeExactQuestionDuplicateKnowledgeIds(tx, {
+  const merged = await db.transaction(async (tx) => {
+    await ctx.beforeIngestionWrite?.(tx);
+    return mergeExactQuestionDuplicateKnowledgeIds(tx, {
       canonicalContentHash: canonicalHash,
       knowledgeIds,
       actorRef: routeConfig.mergeActorRef,
       taskRunId: ctx.taskRunId,
       now,
-    }),
-  );
+    });
+  });
   if (merged?.disposition === 'merged') {
     await cleanupStagedForRejected(db, candidate.staged_asset_ids);
     return {
@@ -446,7 +438,10 @@ async function runCandidateSubmit(
     now,
     onTerminal: 'defer' as const,
   };
-  const claimedSource = await db.transaction((tx) => claimHttpSourceDuplicate(tx, sourceClaim));
+  const claimedSource = await db.transaction(async (tx) => {
+    await ctx.beforeIngestionWrite?.(tx);
+    return claimHttpSourceDuplicate(tx, sourceClaim);
+  });
   if (claimedSource != null) {
     await cleanupStagedForRejected(db, candidate.staged_asset_ids);
     return {
@@ -534,6 +529,7 @@ async function runCandidateSubmit(
     | { status: 'source_duplicate'; existingId: string };
   try {
     persisted = await db.transaction(async (tx) => {
+      await ctx.beforeIngestionWrite?.(tx);
       const racedSource = await claimHttpSourceDuplicate(tx, {
         ...sourceClaim,
         onTerminal: 'release',
@@ -568,6 +564,7 @@ async function runCandidateSubmit(
           prompt_md: question.prompt_md,
           reference_md: question.reference_md,
           choices_md: question.choices_md,
+          version: question.version,
         })
         .from(question)
         .where(eq(question.id, questionId));
@@ -582,6 +579,7 @@ async function runCandidateSubmit(
                 prompt_md: storedText.prompt_md,
                 reference_md: storedText.reference_md,
                 choices_md: storedText.choices_md ?? null,
+                version: storedText.version,
               },
               ingestVector,
             )
@@ -992,6 +990,7 @@ async function runDeclaredCandidateSubmit(
     ctx: {
       actorRef: routeConfig.mergeActorRef,
       actorKind: 'agent',
+      beforeWrite: ctx.beforeIngestionWrite,
       sessionId: ctx.sessionId ?? null,
       taskRunId: ctx.taskRunId,
       causedByEventId: ctx.causedByEventId ?? null,
@@ -1058,6 +1057,7 @@ async function runDeclaredCandidateSubmit(
           prompt_md: question.prompt_md,
           reference_md: question.reference_md,
           choices_md: question.choices_md,
+          version: question.version,
           contentHash: question.canonical_content_hash,
         })
         .from(question)
@@ -1074,6 +1074,7 @@ async function runDeclaredCandidateSubmit(
               prompt_md: stored.prompt_md,
               reference_md: stored.reference_md,
               choices_md: stored.choices_md ?? null,
+              version: stored.version,
             },
             ingestVector,
           )
@@ -1082,21 +1083,25 @@ async function runDeclaredCandidateSubmit(
         // 同内容 CAS：canonical_content_hash 是仓库既有的内容身份原语（非
         // 受管内容列）——读写间任何内容编辑都会变 hash，谓词不匹配 ⇒ 零行
         // 更新，戳不落。
-        await db
-          .update(question)
-          .set({
-            embedding: stamp.embedding,
-            embed_model: stamp.embed_model,
-            embed_version: stamp.embed_version,
-            embed_content_hash: stamp.embed_content_hash,
-            updated_at: now,
-          })
-          .where(
-            and(
-              eq(question.id, questionId),
-              sql`${question.canonical_content_hash} IS NOT DISTINCT FROM ${stored.contentHash}`,
-            ),
-          );
+        await db.transaction(async (tx) => {
+          await ctx.beforeIngestionWrite?.(tx);
+          await tx
+            .update(question)
+            .set({
+              embedding: stamp.embedding,
+              embed_model: stamp.embed_model,
+              embed_version: stamp.embed_version,
+              embed_content_hash: stamp.embed_content_hash,
+              embed_source_revision: stamp.embed_source_revision,
+              updated_at: now,
+            })
+            .where(
+              and(
+                eq(question.id, questionId),
+                sql`${question.canonical_content_hash} IS NOT DISTINCT FROM ${stored.contentHash}`,
+              ),
+            );
+        });
       }
     } catch (err) {
       console.warn('[submit_question] declared-path embed stamp skipped:', err);
@@ -1271,6 +1276,7 @@ async function execute(ctx: ToolContext, raw: ExecInput): Promise<Output> {
       {
         actorRef: ctx.callerActor.ref,
         actorKind: 'agent',
+        beforeWrite: ctx.beforeIngestionWrite,
         sessionId: ctx.sessionId ?? null,
         taskRunId: ctx.taskRunId,
         causedByEventId: ctx.causedByEventId ?? null,

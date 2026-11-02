@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { ensureSubjectRoot } from '@/capabilities/knowledge/public';
 import { event, knowledge, materialized_id_index } from '@/db/schema';
+import { ensureSubjectRoot } from '@/kernel/records/knowledge-node-birth';
 import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
 import { knowledgeRowToSnapshot } from '@/server/projections/snapshot-mappers';
 import { KNOWN_SUBJECT_IDS } from '@/subjects/profile-schema';

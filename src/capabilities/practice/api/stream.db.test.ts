@@ -5,9 +5,9 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { knowledge, learning_session, question } from '@/db/schema';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
 import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // G1 (review)：route 永不传 composeDeps，production lazy-compose 走 defaultRunTaskFn →

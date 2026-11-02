@@ -7,7 +7,7 @@
 //   - shell parity: gatherAndFoldLearningItem reproduces the live row over genesis →
 //     complete/relearn/archive; excluded columns (ai_score etc.) never enter the diff.
 //   - completion/relearn and retraction require migration, then use one structural writer.
-//   - audit:projection learning_item section: CLEAN on a coherent fixture, DRIFT on an out-of-band
+//   - ops:projection learning_item section: CLEAN on a coherent fixture, DRIFT on an out-of-band
 //     write; a row differing ONLY in an excluded column folds clean.
 //
 // Hermetic: resetDb() TRUNCATEs ALL_TABLES (incl. learning_item + materialized_id_index).
@@ -18,9 +18,8 @@ import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import { event, learning_item, materialized_id_index } from '@/db/schema';
 import { writeLearningItemProposal } from '@/kernel/proposals/producers';
 import { retractAiProposal } from '@/server/proposals/actions';
-
-import { auditProjection } from '../../../scripts/audit-projection';
 import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
+import { auditProjection } from '../../../scripts/ops-projection';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { gatherAndFoldLearningItem } from './gather';
 

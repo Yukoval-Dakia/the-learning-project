@@ -200,7 +200,9 @@ describe('aggregateUnitResults — 总分只聚合一次', () => {
     expect(outcome.kind).toBe('unresolved');
   });
 
-  it('P1-1: extra results are rejected, never silently ignored (even pending ones)', () => {
+  // @invariant grading: a result for an undeclared unit fails closed as result_set_mismatch
+  // @fails-if extra results are silently ignored or averaged; the ghost unit reaches the published total
+  it('extra results are rejected, never silently ignored (even pending ones)', () => {
     const { basis } = fixture();
     const extra = aggregateUnitResults(basis, [
       scored('u_choice', 4),
@@ -219,7 +221,9 @@ describe('aggregateUnitResults — 总分只聚合一次', () => {
     });
   });
 
-  it('P1-1: scores above the published unit max are invalid, not clamped', () => {
+  // @invariant grading: a score above the published unit max is invalid_result, never clamped
+  // @fails-if the aggregator clamps an over-max score; an impossible total is published
+  it('scores above the published unit max are invalid, not clamped', () => {
     const { basis } = fixture();
     const outcome = aggregateUnitResults(basis, [
       scored('u_choice', 99),
@@ -233,7 +237,9 @@ describe('aggregateUnitResults — 总分只聚合一次', () => {
     });
   });
 
-  it('P1-1: blank_marked_zero is invalid when basis.blank_scores_zero=false', () => {
+  // @invariant grading: blank_marked_zero credit is invalid unless the basis allows blank_scores_zero
+  // @fails-if the zero-credit blank is accepted under a strict basis; the policy flag is bypassed
+  it('blank_marked_zero is invalid when basis.blank_scores_zero=false', () => {
     const { basis } = fixture();
     const strict: ScoringBasisT = ScoringBasis.parse({ ...basis, blank_scores_zero: false });
     const outcome = aggregateUnitResults(strict, [
@@ -248,7 +254,9 @@ describe('aggregateUnitResults — 总分只聚合一次', () => {
     });
   });
 
-  it('P1-1: a missing weight fails closed instead of defaulting to 0', () => {
+  // @invariant grading: a weighted_sum missing a unit weight is invalid, never defaulted
+  // @fails-if the missing weight silently defaults to 0; the unit contributes nothing to the total
+  it('a missing weight fails closed instead of defaulting to 0', () => {
     const { basis } = fixture();
     const holey: ScoringBasisT = ScoringBasis.parse({
       ...basis,
@@ -266,7 +274,9 @@ describe('aggregateUnitResults — 总分只聚合一次', () => {
     });
   });
 
-  it('P1-1: a basis with duplicate unit ids is invalid at the aggregation boundary too', () => {
+  // @invariant grading: a basis with duplicate unit ids is rejected at the aggregation boundary
+  // @fails-if duplicates pass validation; the same unit is counted twice in one total
+  it('a basis with duplicate unit ids is invalid at the aggregation boundary too', () => {
     const { basis } = fixture();
     const dup: ScoringBasisT = {
       ...basis,
@@ -280,7 +290,9 @@ describe('aggregateUnitResults — 总分只聚合一次', () => {
     });
   });
 
-  it('P1-A repro: blank_marked_zero with POSITIVE additive credit is rejected even when blank_scores_zero=true', () => {
+  // @invariant grading: a blank-marked unit cannot carry positive additive credit even when blank_scores_zero=true
+  // @fails-if blank marking coexists with positive credit; a blank answer harvests points
+  it('blank_marked_zero with POSITIVE additive credit is rejected even when blank_scores_zero=true', () => {
     const { basis } = fixture(); // fixture.blank_scores_zero === true
     expect(basis.blank_scores_zero).toBe(true);
     const outcome = aggregateUnitResults(basis, [
@@ -302,7 +314,9 @@ describe('aggregateUnitResults — 总分只聚合一次', () => {
     expect(legit).toMatchObject({ kind: 'points_total', points: 6 });
   });
 
-  it('P1-A repro: blank_marked_zero cannot harvest positive credit through the holistic level mapping either', () => {
+  // @invariant grading: a blank-marked level cannot harvest positive credit through the holistic level mapping
+  // @fails-if the blank level maps to a positive-points rank; zero-credit blanks score
+  it('blank_marked_zero cannot harvest positive credit through the holistic level mapping either', () => {
     const basis: ScoringBasisT = ScoringBasis.parse({
       units: [
         {
@@ -419,7 +433,9 @@ describe('aggregateUnitResults — 总分只聚合一次', () => {
     ).toEqual({ kind: 'points_total', points: 14, policy: { kind: 'sum' } });
   });
 
-  it('YUK-1096 P1-3: holistic unit reporting its own points_awarded is invalid_result — even 0 or a lucky value', () => {
+  // @invariant grading: a holistic unit reporting its own points_awarded is invalid_result
+  // @fails-if the self-reported points are trusted; holistic totals escape the published level_points
+  it('holistic unit reporting its own points_awarded is invalid_result — even 0 or a lucky value', () => {
     const basis: ScoringBasisT = ScoringBasis.parse({
       units: [
         {
@@ -712,7 +728,9 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
 
   // @invariant grading: printed attainable totals must match published maximums.
   // @fails-if exact responses bypass contradictory rule weights or valid decimal weights are rejected.
-  it('P1-2: printed rule attainable max must equal published points — contradictory rules are rejected at canonical scoring validation, even for exact answers', async () => {
+  // @invariant grading: a printed rule's attainable max must equal the published points
+  // @fails-if contradictory rules publish a max the rule set can never reach
+  it('printed rule attainable max must equal published points — contradictory rules are rejected at canonical scoring validation, even for exact answers', async () => {
     // 3 对 × 每对 4 分 = 12 ≠ 发布 6 分。
     await expect(
       evaluate(matchingFixture({ rule: { kind: 'per_correct_pair', points_per_pair: 4 } }), [

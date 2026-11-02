@@ -2026,6 +2026,38 @@
     ]
   },
   {
+    "path": "/api/ingestion-sessions/:id/purpose",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "本人版本化变更上传文档用途并持久化原结果、停止与修复义务",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "request_id": "00000000-0000-4000-8000-000000000001",
+          "source_document_id": "document-id",
+          "expected_version": 0,
+          "target": "answer_only"
+        },
+        "notes": "需要 x-internal-token。target=allow|answer_only；request_id 同输入重放原 receipt，异输入409；expected_version/source绑定CAS。200仅确认 policy commit，不证明 provider 已撤回/全部副本已删除。UI 不传 crisis。"
+      },
+      {
+        "method": "GET",
+        "summary": "读取当前用途与永久命令的停止、Mem0、brief和准入影响",
+        "query": [
+          {
+            "name": "request_id",
+            "required": false,
+            "example": "00000000-0000-4000-8000-000000000001"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "200 current + 原 receipt + stop + repairs/sinks + admission；准入列原 delivery/source、paid state 和历史unknown；未确认关闭、未知来源、backup/trace/SQLite均保持unknown，不返回withdrawn_all。省略request_id仅读current。"
+      }
+    ]
+  },
+  {
     "path": "/api/ingestion-sessions/:id/history",
     "methods": [
       {

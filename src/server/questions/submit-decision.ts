@@ -36,7 +36,7 @@ import {
   draftDocumentToContract,
   revisionToDraftDocument,
   scoringRoundTripIsFaithful,
-} from '@/server/questions/draft-contract';
+} from '@/kernel/records/question-draft-contract';
 import type { SubmitResult, SubmitUnitOutcome } from '@/server/questions/submit-question';
 
 export function canonicalJson(value: unknown): string {

@@ -24,7 +24,7 @@ import { GET } from './backup-export';
 import { POST } from './backup-import';
 
 const r2 = memR2();
-vi.mock('@/server/r2', () => ({
+vi.mock('@/kernel/object-storage', () => ({
   getR2: () => r2,
   createR2Client: () => r2,
 }));

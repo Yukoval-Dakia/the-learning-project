@@ -6,7 +6,7 @@
 // PATCH: edit the question-bank editable surface (prompt/reference/choices/
 //   difficulty/knowledge_ids/kind/draft_status); bloodline fields rejected.
 // DELETE: returns association counts + 409 unless ?confirm=true; soft-archives
-//   by re-drafting (see src/server/questions/write.ts header).
+//   by re-drafting (see src/capabilities/practice/server/question-bank-write.ts header).
 //
 // Auth is enforced upstream by middleware (x-internal-token); the handlers mirror
 // the sibling notes/learning-items routes (zod, 404 on missing, errorResponse).

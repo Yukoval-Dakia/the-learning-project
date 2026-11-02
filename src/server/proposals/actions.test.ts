@@ -12,6 +12,7 @@ import {
   learning_item,
   proposal_signals,
 } from '@/db/schema';
+import { acquireProposalDecisionLock } from '@/kernel/proposals/applier-helpers';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import {
   gatherAndFoldKnowledgeEdge,
@@ -32,7 +33,6 @@ import {
   dismissAiProposal,
   retractAiProposal,
 } from './actions';
-import { acquireProposalDecisionLock } from './applier-helpers';
 
 const KNOWLEDGE_BASE = {
   domain: 'yuwen',

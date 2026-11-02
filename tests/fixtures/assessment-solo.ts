@@ -9,8 +9,8 @@ import type {
 } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
 import { question, question_group_lifecycle } from '@/db/schema';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { normalizeQuestionRowToContract } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import { publishPaperModelFixture } from './assessment-paper';
 import { seedHistoricalAssessmentIssuance } from './historical-assessment-issuance';
 

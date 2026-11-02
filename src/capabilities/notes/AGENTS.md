@@ -16,7 +16,7 @@
 
 ## CONVENTIONS
 - 编辑器栈 = TipTap 3；block-tree 用 optimistic lock。
-- `note_refine` 触发源 = mark_wrong / mastery_change / dreaming / verify（dwell 已裁）。
+- `note_refine` 触发源 = mark_wrong / mastery_change / dreaming / verify（dwell 已裁）。dreaming 由已提交的 `experimental:dreaming_note_refresh` 订阅入队，agency 不直接调用 notes。
 - `note_generate` / `note_verify` 只经同事务 intent + 提交后 dispatcher 衔接；completion 表示 queue dispatch 已确认，不表示模型业务完成。
 - `note_generate` 失败显式落 `failed`，pg-boss redelivery 用 CAS 重开为 `pending`；已 `ready` 的成功重投跳过。
 - `note_verify` 远程调用不得持有 DB transaction；artifact version + fence/token claim 保护 reserve、raw-result stage 与短事务 finalize。provider attempt 只在 central runner durable start 后、真实 query 前原子计数；每个 artifact epoch 上限 3 次，触顶同事务投影 claim `attempts_exhausted` 与 artifact `verification_status='failed'`，只有新 epoch 重置。

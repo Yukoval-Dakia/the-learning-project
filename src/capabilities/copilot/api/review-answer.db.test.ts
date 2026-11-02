@@ -42,7 +42,7 @@ vi.mock('@/server/boss/client', () => ({
   fromPgBossDrizzleTx: () => ({}),
 }));
 // Only queue delivery is substituted. Real route/session/acceptance/original/effect owners run.
-vi.mock('@/server/runtime-env', () => ({ shouldEnqueueBackgroundJobs: () => true }));
+vi.mock('@/kernel/background-job-enqueue', () => ({ shouldEnqueueBackgroundJobs: () => true }));
 registerTool(submitReviewAnswerTool);
 const app = buildHonoApp([copilotCapability, practiceCapability], {
   epochGate: async () => ({ runnable: true }),

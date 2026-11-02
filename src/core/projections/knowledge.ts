@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   GenesisExperimental,
+  KnowledgeApprovalUpdateExperimental,
   KnowledgeRoleUpdateExperimental,
   KnowledgeRowSnapshot,
   type KnowledgeRowSnapshotT,
@@ -49,6 +50,11 @@ function mutationPreviousVersionForNode(fe: FoldEvent, nodeId: string): number |
 
   if (fe.action === 'experimental:knowledge_role_update' && fe.subject_id === nodeId) {
     const update = KnowledgeRoleUpdateExperimental.safeParse(toParseInput(fe));
+    return update.success ? update.data.payload.previous_version : null;
+  }
+
+  if (fe.action === 'experimental:knowledge_approval_update' && fe.subject_id === nodeId) {
+    const update = KnowledgeApprovalUpdateExperimental.safeParse(toParseInput(fe));
     return update.success ? update.data.payload.previous_version : null;
   }
 
@@ -196,6 +202,28 @@ export function foldKnowledgeNode(
       row = {
         ...row,
         role: update.data.payload.role,
+        updated_at: fe.created_at,
+        version: row.version + 1,
+      };
+      continue;
+    }
+
+    // YUK-1604 — approval-status repair (ops backfill of pre-pending auto-tag KCs).
+    // Same control-plane discipline and version counting as the role repair above.
+    if (
+      fe.action === 'experimental:knowledge_approval_update' &&
+      fe.subject_kind === 'knowledge' &&
+      fe.subject_id === nodeId
+    ) {
+      const update = KnowledgeApprovalUpdateExperimental.safeParse(toParseInput(fe));
+      if (!update.success) {
+        warnMalformed('experimental:knowledge_approval_update', fe.id, update.error);
+        continue;
+      }
+      if (row === null) continue;
+      row = {
+        ...row,
+        approval_status: update.data.payload.approval_status,
         updated_at: fe.created_at,
         version: row.version + 1,
       };

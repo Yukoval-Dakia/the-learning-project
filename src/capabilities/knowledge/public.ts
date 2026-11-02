@@ -16,6 +16,7 @@ export {
   getFailureAttemptsWithReasoningTrace,
   getJudgeForAttempt,
 } from '@/kernel/read-models/failure-attempts';
+export { loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
 export {
   batchResolveEffectiveDomains,
   getEffectiveDomain,
@@ -49,38 +50,8 @@ export {
   listKnowledgeEdgesPage,
 } from './server/edges';
 export { readKnowledgeEdges } from './server/edges-list';
-export type {
-  FailureLearningKnowledgeNode,
-  FailureLearningMisconceptionNode,
-} from './server/failure-learning-context';
-export {
-  getMisconceptionsByIds,
-  listActiveMisconceptionsForKcs,
-  loadFailureLearningKnowledgeContext,
-} from './server/failure-learning-context';
-// Practice consumes the frontier decision through this narrow port.
-export type { FrontierResolution } from './server/frontier-read';
-export {
-  isMasteredForFrontier,
-  learnableFrontierResolved,
-  loadFrontierRail,
-} from './server/frontier-read';
-export type {
-  CreateLearningIntentKnowledgeNodeFn,
-  CreateLearningIntentKnowledgeNodeInput,
-} from './server/learning-intent-knowledge';
-export { createLearningIntentKnowledgeNode } from './server/learning-intent-knowledge';
-export {
-  archiveMisconceptionEdge,
-  createMisconceptionEdge,
-} from './server/misconception-edges';
+export { loadFrontierRail } from './server/frontier-read';
 export { loadMisconceptionsForKc } from './server/misconception-read';
-export {
-  createKnowledgeNodeFromEvents,
-  ensureSubjectRoot,
-  subjectRootId,
-  updateSubjectRootNameFromControl,
-} from './server/node-creation';
 export { loadKnowledgeNodePage } from './server/node-page';
 export type { AcceptResult as KnowledgeAcceptResult } from './server/proposals';
 export {
@@ -94,5 +65,4 @@ export type { RubricGate } from './server/rubric-validator';
 export { seedKnowledge } from './server/seed';
 export type { NameKcFn } from './server/tag-knowledge';
 export { isTagKnowledgeInvariantError, tagKnowledge } from './server/tag-knowledge';
-export { loadTreeSnapshot } from './server/tree';
 export { knowledgeTaskSpecs } from './task-public';

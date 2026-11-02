@@ -939,6 +939,13 @@
       "when": 1793124517935,
       "tag": "0134_yuk1600_knowledge_role",
       "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "7",
+      "when": 1793280387555,
+      "tag": "0135_yuk1603_embed_source_revision",
+      "breakpoints": true
     }
   ]
 }

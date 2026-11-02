@@ -10,7 +10,6 @@ import {
   type CalibrationSampleTickRecord,
   calibrationSampleScheduledId,
   registerCalibrationSampleWorkflow,
-  runCalibrationSampleTick,
 } from './calibration-sample-family';
 
 vi.mock('@/db/client', () => ({ db: {} }));
@@ -25,7 +24,6 @@ vi.mock('@dbos-inc/dbos-sdk', () => ({
 
 const scheduledAt = new Date('2026-10-11T22:10:00.000Z');
 const workflowId = calibrationSampleScheduledId(scheduledAt);
-const request = { source: { kind: 'dbos', workflowId, scheduledAt } } as const;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -48,74 +46,11 @@ function port(enabled: boolean) {
   return { operation, runPaidBatch };
 }
 
-describe('gate-only calibration candidate', () => {
-  // @invariant security: a workflow cannot evaluate a different scheduled tick
-  // @fails-if remove the identity check; a mismatched workflow reaches the gate
-  it('rejects mismatched identity before evaluating the gate', async () => {
-    const { operation } = port(true);
-    await expect(
-      runCalibrationSampleTick(
-        {
-          source: { ...request.source, workflowId: 'foreign-workflow' },
-        },
-        { operation },
-      ),
-    ).rejects.toThrow('Native identity');
-    expect(operation.readGate).not.toHaveBeenCalled();
-  });
-
-  // @invariant data: disabled sampling cannot start a paid batch
-  // @fails-if route a disabled tick to paid execution; the sentinel batch throws
-  it('disabled ticks execute no paid work', async () => {
-    const { operation, runPaidBatch } = port(false);
-    expect(await runCalibrationSampleTick(request, { operation })).toEqual({
-      family: CALIBRATION_SAMPLE_FAMILY,
-      tick: { workflowId, scheduledAt },
-      outcome: { kind: 'disabled', flagEnv: null },
-    });
-    expect(runPaidBatch).not.toHaveBeenCalled();
-  });
-
-  // @invariant data: repeated enabled invocations stay held without a durable claim
-  // @fails-if add an authorized path; a repeat invocation can start another paid batch
-  it('holds every enabled invocation without any paid execution', async () => {
-    const { operation, runPaidBatch } = port(true);
-    for (let invocation = 0; invocation < 2; invocation += 1) {
-      expect(await runCalibrationSampleTick(request, { operation })).toEqual({
-        family: CALIBRATION_SAMPLE_FAMILY,
-        tick: { workflowId, scheduledAt },
-        outcome: { kind: 'held', reason: CALIBRATION_SAMPLE_ADMISSION_PREREQUISITE },
-      });
-    }
-    expect(runPaidBatch).not.toHaveBeenCalled();
-  });
-
-  // @invariant data: a dead second lane cannot trigger paid fallback work
-  // @fails-if catch the gate failure and run a fallback; the rejection disappears
-  it('propagates gate failure without running a paid fallback', async () => {
-    const { operation, runPaidBatch } = port(true);
-    const failure = new Error('missing second-lane credentials');
-    operation.readGate.mockRejectedValue(failure);
-    await expect(runCalibrationSampleTick(request, { operation })).rejects.toBe(failure);
-    expect(runPaidBatch).not.toHaveBeenCalled();
-  });
-});
-
 describe('DBOS wrapper with offline SDK doubles', () => {
-  // @invariant data: a held business obligation cannot be reported as workflow success
-  // @fails-if return the held record from the workflow; the rejection assertion fails
-  it('throws the admission prerequisite for an enabled tick', async () => {
-    const { operation, runPaidBatch } = port(true);
-    const workflow = registerCalibrationSampleWorkflow(db, { operation });
-    await expect(workflow(scheduledAt, {})).rejects.toMatchObject({
-      name: 'CalibrationSampleAdmissionRequiredError',
-      record: {
-        tick: { workflowId, scheduledAt },
-        outcome: { kind: 'held', reason: CALIBRATION_SAMPLE_ADMISSION_PREREQUISITE },
-      },
-    });
-    expect(runPaidBatch).not.toHaveBeenCalled();
-  });
+  // Gate outcomes (disabled no-spend, held prerequisite, bare gate-failure
+  // propagation) are proven on real Postgres by
+  // calibration-sample-durable-operation.db.test.ts; this file keeps only the
+  // DBOS SDK replay semantics that the DB lane cannot reach.
 
   // @invariant concurrency: replay uses the saved step result even when its body is skipped
   // @fails-if assign a workflow-local variable inside the step; cached replay loses the result

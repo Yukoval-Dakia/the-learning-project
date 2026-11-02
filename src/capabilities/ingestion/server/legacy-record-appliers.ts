@@ -17,21 +17,21 @@ import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/a
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { lockPlacementSupplyScopes } from '@/kernel/placement';
-import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
-import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/kernel/proposals/signals';
-import { createPendingLearningItem } from '@/kernel/records/learning-items';
-import { updateLearningRecord } from '@/kernel/records/queries';
 import {
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,
   requiredString,
-} from '@/server/proposals/applier-helpers';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
+} from '@/kernel/proposals/applier-helpers';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import {
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/kernel/proposals/signals';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
+import { createPendingLearningItem } from '@/kernel/records/learning-items';
+import { updateLearningRecord } from '@/kernel/records/queries';
 
 // 结构最小化（与 practice / agency / ingestion 包同模式）：只声明本文件 applier
 // 实际读取的字段；壳层 AcceptAiProposalOpts 结构可赋值，调用点无需收窄。

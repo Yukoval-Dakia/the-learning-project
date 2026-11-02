@@ -1,5 +1,4 @@
-// YUK-892 (F4.0) — Practice-owned proposal tools, moved verbatim from the
-// central src/server/ai/tools/proposal-tools.ts.
+// YUK-892 (F4.0) — Practice-owned proposal tools.
 //
 // author_question (ADR-0032 D8 unified question-authoring front door) and
 // propose_question_edit (ADR-0032 D6-B / YUK-203 lane L6) are practice product

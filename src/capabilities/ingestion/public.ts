@@ -1,6 +1,6 @@
 // Stable server contract for consumers outside the ingestion capability.
 
-export type { MistakeProjection } from './api/contracts';
+export type { SourceAssetRow } from '@/kernel/records/asset-store';
 export { CreateIngestionSessionBody, CreateMistakeBodySchema } from './api/contracts';
 export { answerIngestionAsk } from './server/agent/asks';
 export type { ColdStartBridgeRunTaskFn } from './server/cold-start-bridge';
@@ -21,7 +21,6 @@ export type {
   RecordPromotionAcceptResult,
 } from './server/legacy-record-appliers';
 export { readMistakes } from './server/mistakes-read';
-export type { SourceAssetRow } from './server/persist-image-asset';
 // The DOCX text-line session owner writes the same usage receipt as the OCR job;
 // exporting the writer and vocabulary avoids deep imports of capability internals.
 export type {
@@ -33,6 +32,7 @@ export type { BlockMergeAcceptResult } from './server/proposal-appliers';
 export { revertIngestionBlock } from './server/revert-auto-enroll';
 export { readIngestionSessionBlocks } from './server/session-blocks-read';
 export { readIngestionSessionDetail } from './server/session-detail';
+export { readIngestionSessionHistory } from './server/session-history-read';
 export { readIngestionSessions } from './server/session-list-read';
 export {
   bodyBlockSummaries,

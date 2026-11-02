@@ -40,17 +40,17 @@ import type { Db } from '@/db/client';
 import { ai_task_runs, event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { type R2Client, getR2 } from '@/kernel/object-storage';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
 import { writeCostLedger } from '@/kernel/records/ai-attempt-facts';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { persistImageAsset } from '@/kernel/records/asset-store';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
-import { type R2Client, getR2 } from '@/server/r2';
 import { getKnownSubjects } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { redactIngestionText } from './privacy-guard';
@@ -688,8 +688,13 @@ export async function acceptImageCandidateProposal(
               deadlineAt: new Date(Date.now() + 20_000),
               operationAnchor: proposalId,
             },
-            // Reuse the classified name; no second model call.
-            nameKcFn: async () => ({ kc_name: bridge.kc_name }),
+            // Reuse the classified name; no second model call. Run provenance rides
+            // along for the tag audit event (YUK-1604).
+            nameKcFn: async () => ({
+              kc_name: bridge.kc_name,
+              ...(bridge.task_run_id !== undefined ? { task_run_id: bridge.task_run_id } : {}),
+              ...(bridge.cost_usd !== undefined ? { cost_usd: bridge.cost_usd } : {}),
+            }),
           },
           {
             // Redact identifiers at the model boundary. This path owns no ingestion

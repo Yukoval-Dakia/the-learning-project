@@ -419,7 +419,7 @@ artifact 容器 / teaching session 读，不该当独立池题）若漏 set `dra
 
 **审计契约**：`pnpm audit:draft-status`（`scripts/audit-draft-status.ts`）扫所有
 `.insert(question).values({ ... })` 站点，要求每个要么显式携带 `draft_status` key，要么在
-`scripts/audit-draft-status-allowlist.json` 声明 `reason` + `resolves_when{kind,ref,expected_by}`。
+`scripts/audit-draft-status-allowlist.json` 的 `writes` 段声明 `reason` + `resolves_when{kind,ref,expected_by}`。
 NULL≡active 是合法语义的 writer（`auto-enroll` / `import` / 错题 `mistakes` / 卷题 `parts`——
 它们本就是 active 池题）进 allowlist；容器题（`embedded_check_generate` / `materialize-ask-check`）
 YUK-350 起显式 set `draft_status:'draft'`，同时保留在 allowlist 作 harmless-redundant 的
@@ -430,6 +430,13 @@ INSERT 时：要么显式 set `draft_status`，要么加 allowlist 并标注可�
 > 字段有 write path ≠ 每个 INSERT 都填了正确的值。
 
 ## 附录 · `knowledge.approval_status` 的 reserved-for-future 枚举（2026-06-19 · YUK-422）
+
+> **2026-10-28 更新（YUK-1405/YUK-1604）**：`'pending'` 已有写路径——`tagKnowledge` 的
+> `experimental:auto_tag_kc_created` 事件声明 pending（agent 铸 KC 不自批准），fold 只认该
+> claim；存量 pre-pending 出生由 ops 脚本经 `experimental:knowledge_approval_update` 控制面
+> 事件修复为 pending（UPDATE path 由此落地，fold-visible，`scripts/yuk1604-repair-knowledge-
+> classification.ts`，保留 ID 与原证据、JSON 回执）。列仍零过滤读者（inert marker）。下方
+> 原始快照保留作历史。`'rejected'` 仍无写路径。
 
 `knowledge.approval_status` 是三值枚举 `['pending', 'approved', 'rejected']`，但**今天完全 INERT**：
 所有行都被自动 approve，且**零读者**。owner 决策是**记录、不删**（document-not-drop）。
@@ -459,3 +466,28 @@ INSERT 时：要么显式 set `draft_status`，要么加 allowlist 并标注可�
 
 > 同 §6.5 R2 的 `knowledge.approval_status` 行（init-only / UPDATE path 缺失）是同一字段的简记；
 > 本附录是其 reserved-for-future 全文。schema 侧自文档见 `src/db/schema.ts` 的 `approval_status` 注释。
+
+## 附录 · `question/knowledge.embed_source_revision` 的向量版本来源契约（2026-10-29 · YUK-1603）
+
+`embed_source_revision` 记录该行存储向量计算时所依据的行 `version`（question.version /
+knowledge.version）。**NULL 被语义化为「来源未知、仍可用」**：该列上线（drizzle/0135）前写入的
+存量向量全部为 NULL，检索按可用放行，由 embed_backfill 的 provider-free currency sweep
+（内容 hash 核验）逐步补戳或重嵌——不触发全量付费重嵌。
+
+契约三条：
+
+1. **只有向量写入者写它**（embed_backfill 两路径、ingest `questionEmbedStamp`），随向量一起
+   落库并带 revision CAS——晚到的旧版本向量写不进新 revision 的行；置空 `embedding` 的三个
+   写点（editQuestion / solution-generate / applyReparent）同步清空它。
+2. **检索侧当前性谓词**（`src/db/embed-currency.ts`，SQL+JS 孪生单一真相）：
+   `embed_version = EMBED_VERSION AND (embed_source_revision IS NULL OR = version)`，
+   且调用方保留各自 `embedding IS NOT NULL`。消费面：match-similarity（KC 拍卷）、
+   kc_dedup_nightly、quiz pool-fetch、ingest near-dup、search_bank scoped 池与 baseline
+   margin 谓词、similar_to 锚校验（`questionVectorInvalidReason` 新增 `revision_mismatch`）。
+3. **对账**：search_bank 向量命中证据带 `source_revision`；tagKnowledge 审计事件的 matches
+   带 `version/embed_source_revision/embed_content_hash`——每条命中可回对生成它所依据的
+   题面/节点 revision 与内容 hash。
+
+> 与 `embed_content_hash`（内容新鲜度）互补：hash 回答「向量是否还对应这份内容」，
+> revision 回答「这份内容之后行有没有再动过」。metadata-only 编辑 / 同域 reparent 只落后
+> revision、不漂 hash——sweep 免费补戳；hash 漂移（真内容变化且漏失效）则置空重嵌。

@@ -67,8 +67,8 @@ jobs:
       - name: Typecheck
         if: steps.filter.outputs.static_changed != 'false'
         run: pnpm typecheck
-      # YUK-909 — warning-count ratchet at the Biome 2 baseline: warning/info totals
-      # may only decrease. Lower the baseline after a fixing batch: pnpm lint:ratchet:update
+      # YUK-909 — warning/info totals must equal the baseline. Growth fails, and a
+      # shortfall fails until this change rewrites it: pnpm lint:ratchet:update
       - name: Lint and warning ratchet
         if: steps.filter.outputs.static_changed != 'false'
         run: node scripts/ci/lint-ratchet.mjs
@@ -116,7 +116,6 @@ jobs:
           pnpm audit:question-writers
           pnpm audit:api-contracts
           pnpm audit:api-client
-          pnpm audit:api-client-usage
           pnpm audit:tool-params
 
   audits_architecture:
@@ -222,11 +221,13 @@ jobs:
           pnpm audit:test-policy
           pnpm audit:task-census
           pnpm audit:draft-status
-          pnpm audit:draft-status-reads --strict
           pnpm audit:flags --strict
           pnpm audit:hub-sync-writers
-          pnpm audit:provider-attempt-truth
+          pnpm audit:provider-lanes
           pnpm audit:model-source
+          pnpm audit:advisory-locks
+          pnpm audit:relations
+          pnpm audit:mastery-provenance
 
   unit_1:
     name: unit invariant tests (1/2)

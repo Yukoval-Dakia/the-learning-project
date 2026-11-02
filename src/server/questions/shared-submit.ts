@@ -55,21 +55,22 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { question, question_block, question_group_lifecycle, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { getR2 } from '@/kernel/object-storage';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishedContractSeal } from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   applyScoringEditPlan,
   draftCanonicalIdentity,
   draftDocumentToContract,
-} from '@/server/questions/draft-contract';
+} from '@/kernel/records/question-draft-contract';
 import {
   type EditQuestionResult,
   TxAbort,
   findDraftSaveReceipt,
   saveDraftEditInTx,
 } from '@/server/questions/edit-question';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import {
   SOURCE_KIND_TO_QUESTION_SOURCE,
   admissionForContentEdit,
@@ -91,7 +92,6 @@ import {
   bindDeclaredGroupIds,
   typedChildChoicesMd,
 } from '@/server/questions/typed-group';
-import { getR2 } from '@/server/r2';
 
 export const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
 
@@ -99,6 +99,7 @@ type BlockRow = typeof question_block.$inferSelect;
 
 /** 与 submit-question.ts 既有 SubmitContext 同形（facade 委托不窄化）。 */
 export interface SharedSubmitContext {
+  beforeWrite?: (tx: Tx) => Promise<void>;
   actorRef: string;
   actorKind: 'agent' | 'user' | 'system';
   sessionId?: string | null;
@@ -261,6 +262,9 @@ export async function writeSubmitReceiptEvent(
 ): Promise<void> {
   await writeEvent(tx, {
     id: newId(),
+    session_id: ctx.sessionId ?? null,
+    task_run_id: ctx.taskRunId ?? null,
+    caused_by_event_id: ctx.causedByEventId ?? null,
     actor_kind: ctx.actorKind === 'system' ? 'system' : ctx.actorKind,
     actor_ref: ctx.actorRef,
     action: DRAFT_SUBMIT_ACTION,
@@ -285,6 +289,7 @@ export async function submitDraftQuestionInTx(
   ctx: SharedSubmitContext,
   opts?: SharedSubmitOptions,
 ): Promise<SubmitResult> {
+  await ctx.beforeWrite?.(tx);
   const requestId = input.request_id;
   if (requestId == null || requestId.length === 0) {
     return {
@@ -995,6 +1000,7 @@ export async function persistDeclaredQuestionGroupInTx(
   tx: Tx,
   params: DeclaredGroupPersistParams,
 ): Promise<DeclaredGroupPersistResult> {
+  await params.ctx.beforeWrite?.(tx);
   const caller = params.caller;
   const now = params.ctx.now ?? new Date();
   const writeCallerReceipt = async (outcome: DeclaredGroupDomainOutcome) => {

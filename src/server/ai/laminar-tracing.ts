@@ -40,6 +40,11 @@ export interface TraceMetadata {
   business_outcome?: 'unassessed' | 'accepted' | 'rejected' | 'pending' | 'cancelled';
   durable_settled?: boolean;
   executed?: boolean;
+  mode?: 'report_only';
+  comparison?: 'structural_json' | 'comparison_unavailable';
+  sameInputExecutions?: number;
+  wouldTrigger?: boolean;
+  repeatGroup?: string | null;
   usage_observed?: boolean;
   cost_basis?: string;
   cost_ref?: string;
@@ -66,6 +71,11 @@ const metadataKeys = [
   'business_outcome',
   'durable_settled',
   'executed',
+  'mode',
+  'comparison',
+  'sameInputExecutions',
+  'wouldTrigger',
+  'repeatGroup',
   'usage_observed',
   'cost_basis',
   'cost_ref',

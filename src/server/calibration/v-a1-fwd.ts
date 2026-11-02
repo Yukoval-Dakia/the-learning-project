@@ -1,7 +1,7 @@
 // Forward gate for SRT against binary Elo. PASS needs ΔAUC above deltaThreshold and a CI
 // that excludes 0. Thin evidence stays INSUFFICIENT.
 // Replay the full ordered list twice. θ_global is shared across KCs in a domain, so a
-// per-KC replay would not match production. The loader is scripts/audit-calibration.ts.
+// per-KC replay would not match production. The loader is scripts/ops-calibration.ts.
 // deltaThreshold 0.02 comes from the dossier cell. The other defaults have no external source.
 
 import { type ClusterForwardPreds, deltaAucClusterBootstrap } from './bootstrap';

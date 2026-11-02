@@ -9,6 +9,8 @@ import { writeAttemptSnapshotBrackets } from '@/capabilities/practice/public';
 import { scheduleReview } from '@/core/fsrs';
 import { type SchedulingState, isCandidateState } from '@/core/schema/scheduling-state';
 import type { Tx } from '@/db/client';
+import { getMasteryState } from '@/kernel/read-models/mastery-state';
+import { updateThetaForAttempt } from '@/kernel/records/mastery-state';
 import {
   candidateObservations,
   candidateRetention,
@@ -22,7 +24,6 @@ import {
   recordFamilyObservationForAttempt,
 } from '@/server/mastery/personalized-difficulty';
 import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration';
-import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import {
   hasSchedulingEffect,
   planSubjects,
@@ -35,6 +36,18 @@ import {
   candidateSchedulingSuppressed,
   subjectKey,
 } from './settle-read';
+
+/** One item-level bit when every KC evidence row agrees. Mixed directions have no such bit. */
+function sharedItemOutcome(theta: {
+  outcome: 0 | 1;
+  kcEvidence?: ReadonlyArray<{ outcome: 0 | 1 }>;
+}): 0 | 1 | null {
+  const rows = theta.kcEvidence;
+  if (rows === undefined) return theta.outcome;
+  const first = rows[0]?.outcome;
+  if (first === undefined) return theta.outcome;
+  return rows.every((row) => row.outcome === first) ? first : null;
+}
 
 export interface ApplyOutcome {
   fsrsApplied: string[];
@@ -49,7 +62,7 @@ export interface ApplyOutcome {
 /**
  * Apply one plan from its sealed inputs. Do not re-judge.
  * FSRS, then one shared theta update, then brackets, then calibration.
- * Family calibration folds only when the score is objective and theta was applied.
+ * Family calibration folds only when theta was applied and every KC evidence row shares one direction.
  */
 export interface SettlementObservers {
   /** Runs once for the new occurrence at its own ordered position, never for replayed neighbors. */
@@ -206,6 +219,7 @@ export async function executePlan(
       knowledgeIds: theta.knowledgeIds,
       questionId: theta.anchorQuestionId,
       outcome: theta.outcome,
+      ...(theta.kcEvidence ? { kcEvidence: theta.kcEvidence } : {}),
       difficulty: theta.anchorDifficulty,
       attemptEventId: settlementEventId,
       now: occurrenceAt,
@@ -226,7 +240,8 @@ export async function executePlan(
     fsrsSnapshots,
   });
 
-  if (plan.theta.applied) {
+  const itemOutcome = plan.theta.applied ? sharedItemOutcome(plan.theta) : null;
+  if (plan.theta.applied && itemOutcome !== null) {
     const theta = plan.theta;
     try {
       await tx.transaction(async (sp) => {
@@ -236,8 +251,8 @@ export async function executePlan(
           kind: theta.anchorKind,
           source: theta.anchorSource,
           difficulty: theta.anchorDifficulty,
-          outcome: theta.outcome,
-          attemptOutcome: theta.outcome === 1 ? 'success' : 'failure',
+          outcome: itemOutcome,
+          attemptOutcome: itemOutcome === 1 ? 'success' : 'failure',
           judgeRoute: plan.judgeRoute,
           thetaBefore,
           now: occurrenceAt,
@@ -253,7 +268,7 @@ export async function executePlan(
       );
     }
   }
-  if (plan.theta.applied) {
+  if (plan.theta.applied && itemOutcome !== null) {
     const theta = plan.theta;
     try {
       await tx.transaction(async (sp) => {
@@ -261,8 +276,8 @@ export async function executePlan(
           questionId: theta.anchorQuestionId,
           attemptEventId: settlementEventId,
           difficulty: theta.anchorDifficulty,
-          outcome: theta.outcome,
-          attemptOutcome: theta.outcome === 1 ? 'success' : 'failure',
+          outcome: itemOutcome,
+          attemptOutcome: itemOutcome === 1 ? 'success' : 'failure',
           judgeRoute: plan.judgeRoute,
           thetaBefore,
           now: occurrenceAt,
@@ -272,10 +287,20 @@ export async function executePlan(
     } catch (error) {
       console.warn('[assessment-settle] difficulty calibration label failed (non-fatal):', error);
     }
-    await options.onThetaApplied?.(tx, {
-      knowledgeIds: plan.theta.knowledgeIds,
-      outcome: plan.theta.outcome,
-    });
+  }
+  if (plan.theta.applied) {
+    const theta = plan.theta;
+    if (theta.kcEvidence === undefined) {
+      await options.onThetaApplied?.(tx, {
+        knowledgeIds: theta.knowledgeIds,
+        outcome: theta.outcome,
+      });
+    } else {
+      const upIds = theta.kcEvidence.filter((row) => row.outcome === 1).map((row) => row.kc_id);
+      if (upIds.length > 0) {
+        await options.onThetaApplied?.(tx, { knowledgeIds: upIds, outcome: 1 });
+      }
+    }
   }
   // YUK-439 (ADR-0043 Amendment A4) — 联合标定证据：连续分数（含 partial）、模型判分、
   // 非 softmax 来源都进（门在 derivePlan 的 calibrationEligible：automatic 且非

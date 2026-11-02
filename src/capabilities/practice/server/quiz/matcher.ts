@@ -52,7 +52,7 @@ import { verifyAndPromote } from './verify-and-promote';
 // 超此值 → 丢弃（不入保守集 → 落残余生成）。保守 = 偏严 = 阈值偏小：宁可残余也不塞次品。
 // 初值 0.35 ≈ cosine 相似度 ≥ 0.65 才收，无生产数据支撑，靠 db 测试 seed 向量经验标定。
 // TODO 实测调参 — follow-up (生产 embedding 分布回校；可能按科目/题型分档)。
-// Exported so the report-only `pnpm audit:threshold-calibration` replay reads the
+// Exported so the report-only `pnpm ops:threshold-calibration` replay reads the
 // SAME constant under review — a second hard-coded copy in scripts/ would silently drift.
 export const MATCHER_COSINE_MAX_DISTANCE = 0.35;
 

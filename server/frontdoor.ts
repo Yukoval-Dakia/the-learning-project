@@ -61,6 +61,7 @@ import { readStartRecordBlocks } from './start/record-blocks-reader';
 import { createStartRecordManualMistake } from './start/record-manual-mistake-operation';
 import { revertStartRecordBlock } from './start/record-revert-operation';
 import { readStartRecordSessionDetail } from './start/record-session-detail-reader';
+import { readStartRecordSessionHistory } from './start/record-session-history-reader';
 import { readStartRecordSessions } from './start/record-session-list-reader';
 import { saveStartResponseDraft } from './start/response-draft-operation';
 import { createStartHintRequest, createStartSolveSession } from './start/solve-operation';
@@ -121,6 +122,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     createRecordManualMistake: createStartRecordManualMistake,
     revertRecordBlock: revertStartRecordBlock,
     readRecordSessionDetail: readStartRecordSessionDetail,
+    readRecordSessionHistory: readStartRecordSessionHistory,
     readRecordSessions: readStartRecordSessions,
     readPapers: readStartPapers,
     startPaperSession,

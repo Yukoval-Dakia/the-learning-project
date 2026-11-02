@@ -23,6 +23,11 @@ export function createKnowledgeNamer(params: {
       runTaskFn: params.runTaskFn,
       ctx: params.ctx ?? { db: params.db },
     });
-    return { kc_name: bridge.kc_name };
+    // Forward the run provenance (YUK-1604) so tagKnowledge can audit the naming call.
+    return {
+      kc_name: bridge.kc_name,
+      ...(bridge.task_run_id !== undefined ? { task_run_id: bridge.task_run_id } : {}),
+      ...(bridge.cost_usd !== undefined ? { cost_usd: bridge.cost_usd } : {}),
+    };
   };
 }

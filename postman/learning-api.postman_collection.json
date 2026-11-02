@@ -1540,6 +1540,34 @@
           "response": []
         },
         {
+          "name": "GET /api/ingestion-sessions/:id/purpose",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion-sessions/:id/purpose",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion-sessions", ":id", "purpose"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ],
+              "query": [
+                {
+                  "key": "request_id",
+                  "value": "00000000-0000-4000-8000-000000000001",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "读取当前用途与永久命令的停止、Mem0、brief和准入影响\n\n**Query:**\n- `request_id` (optional) e.g. `00000000-0000-4000-8000-000000000001`\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 200 current + 原 receipt + stop + repairs/sinks + admission；准入列原 delivery/source、paid state 和历史unknown；未确认关闭、未知来源、backup/trace/SQLite均保持unknown，不返回withdrawn_all。省略request_id仅读current。"
+          },
+          "response": []
+        },
+        {
           "name": "POST /api/ingestion-sessions",
           "request": {
             "method": "POST",
@@ -1646,6 +1674,40 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"kind\": \"review\",\n  \"input\": {\n    \"checked_blocks\": [\n      {\n        \"block_id\": \"{{ingestionBlockId}}\",\n        \"version\": 0\n      }\n    ]\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/ingestion-sessions/:id/purpose",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion-sessions/:id/purpose",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion-sessions", ":id", "purpose"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "本人版本化变更上传文档用途并持久化原结果、停止与修复义务\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 需要 x-internal-token。target=allow|answer_only；request_id 同输入重放原 receipt，异输入409；expected_version/source绑定CAS。200仅确认 policy commit，不证明 provider 已撤回/全部副本已删除。UI 不传 crisis。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"00000000-0000-4000-8000-000000000001\",\n  \"source_document_id\": \"document-id\",\n  \"expected_version\": 0,\n  \"target\": \"answer_only\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

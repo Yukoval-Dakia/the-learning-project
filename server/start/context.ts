@@ -18,6 +18,7 @@ import type {
   createManualMistake,
   readIngestionSessionBlocks,
   readIngestionSessionDetail,
+  readIngestionSessionHistory,
   readIngestionSessions,
   readMistakes,
   revertIngestionBlock,
@@ -116,6 +117,9 @@ export type FrontdoorContext = {
   readRecordSessionDetail: (
     id: string,
   ) => Promise<Awaited<ReturnType<typeof readIngestionSessionDetail>>>;
+  readRecordSessionHistory: (
+    id: string,
+  ) => Promise<Awaited<ReturnType<typeof readIngestionSessionHistory>>>;
   readRecordSessions: (query: string) => Promise<Awaited<ReturnType<typeof readIngestionSessions>>>;
   createIngestionSession: (input: {
     body: string;

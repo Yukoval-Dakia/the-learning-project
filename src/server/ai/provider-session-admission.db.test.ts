@@ -6,11 +6,11 @@ import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { provider_session_admission } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { acquireProviderSession } from './provider-session-admission';
 import {
   PROVIDER_SESSION_HEARTBEAT_MS,
   type ProviderSessionAdmissionPlan,
-  acquireProviderSession,
-} from './provider-session-admission';
+} from './provider-session-admission-policy';
 
 const BASE_POLICY = {
   laneId: 'xiaomi' as const,

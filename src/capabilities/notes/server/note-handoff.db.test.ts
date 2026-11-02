@@ -2,15 +2,15 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { artifact, event } from '@/db/schema';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   NOTE_GENERATION_SINGLETON_SECONDS,
   NOTE_HANDOFF_KINDS,
-  dispatchNoteGeneration,
   noteHandoffEventId,
   noteHandoffJobId,
   writeNoteGenerationIntent,
-} from './note-handoff';
+} from '@/kernel/records/note-handoff-protocol';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { dispatchNoteGeneration } from './note-handoff';
 
 async function seedNote(
   id: string,

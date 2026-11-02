@@ -1,8 +1,8 @@
 // Recent AI note changes across all artifacts; undo is per event.
 
-import { listNoteRefineChanges } from '@/capabilities/notes/server/note-refine-apply';
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
+import { listNoteRefineChanges } from '@/kernel/read-models/note-refine-changes';
 
 export async function GET(): Promise<Response> {
   try {

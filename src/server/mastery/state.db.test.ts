@@ -94,16 +94,14 @@ import {
   mastery_state,
   question,
 } from '@/db/schema';
-import { resetDb } from '../../../tests/helpers/db';
+import { BORROW_EPS, getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import {
-  BORROW_EPS,
   effectiveThetaForKc,
-  getMasteryProjection,
   getMasteryState,
   globalThetaForDomain,
-  updateThetaForAttempt,
-  upsertMasteryState,
-} from './state';
+} from '@/kernel/read-models/mastery-state';
+import { updateThetaForAttempt, upsertMasteryState } from '@/kernel/records/mastery-state';
+import { resetDb } from '../../../tests/helpers/db';
 
 async function seedKnowledge(id: string) {
   const now = new Date();

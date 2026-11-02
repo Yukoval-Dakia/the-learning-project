@@ -48,18 +48,27 @@ type GenerateEdgePayloadT = z.infer<typeof GenerateEdgePayload>;
 
 const ARCHIVE_EDGE_OP = 'archive';
 
-// ADR-0034 topology gate runs only when a create adds a live prerequisite edge. Genesis
-// seeds are trusted and never re-gated; replay could reject a historically valid row.
-// Reject throws; warn proceeds because there is no verdict column.
+// ADR-0034 topology gate runs only in write mode ('enforce'): checkEdgeTopology then
+// applies per relation type — self-loop for every type, the ordering checks for
+// prerequisite, the inversion check for derived_from. Replay ('trust', the default)
+// never gates — a create that predates a gate, or whose inverse twin appeared later,
+// must still fold or a legal pre-gate pair could never be archived or repaired
+// (YUK-1601 P1). Genesis seeds are likewise trusted. Reject throws; warn proceeds
+// because there is no verdict column.
+
+export type EdgeTopologyMode = 'enforce' | 'trust';
 
 /**
  * Project one edge; caller order is irrelevant. `liveMesh` is the currently live edge
- * set used for topology. Throws when a prerequisite create violates ADR-0034.
+ * set used for topology. Throws only in write mode (`topology: 'enforce'`) when a
+ * create violates ADR-0034 (self-loop for any relation type; ordering/inversion
+ * checks per topology-gate.ts); the default replay mode trusts history.
  */
 export function foldKnowledgeEdge(
   edgeId: string,
   events: FoldEvent[],
   liveMesh: KnowledgeEdgeRowSnapshotT[],
+  opts?: { topology?: EdgeTopologyMode },
 ): KnowledgeEdgeRowSnapshotT | null {
   const ordered = [...events].sort(byCreatedThenId);
 
@@ -115,8 +124,11 @@ export function foldKnowledgeEdge(
       }
 
       const projected = rowFromGenerateEvent(edgeId, ev, payload);
-      // A create always yields a live edge, so the gate applies to every prerequisite create.
-      if (projected.relation_type === 'prerequisite') {
+      // Write mode gates every create: checkEdgeTopology reduces each relation type
+      // to its own applicable checks — self-loop for all types, the ordering checks
+      // for prerequisite, the inversion check for derived_from. Replay mode trusts
+      // the recorded history (YUK-1601 P1).
+      if (opts?.topology === 'enforce') {
         const verdict = checkEdgeTopology(
           {
             from_knowledge_id: projected.from_knowledge_id,

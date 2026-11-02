@@ -37,7 +37,7 @@ export interface QuestionContentWriterEntry {
 
 export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWriterEntry> = {
   // ─── 已收敛（YUK-1043：同事务 publishQuestionGroup*，per-site 验证） ───
-  'src/server/questions/write.ts': {
+  'src/capabilities/practice/server/question-bank-write.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],
     note: 'editQuestion：判分输入字段（题面/答案/选项/题型）变更 ⇒ 先锁组根再改子行、同事务统一发布（part 编辑锁序 question 根→子行）；archiveQuestion ⇒ 组根 archive 落 withdrawn，单 part archive ⇒ 重发组 revision（tombstone part 退出组契约）。',
@@ -127,7 +127,7 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043'],
     note: '人工错题 INSERT ⇒ 同事务首版 revision（原错误作答不能成为答案键：在 attempt 事件保留；契约只承载题面/参考 —— 复审裁决即刻收敛）。',
   },
-  'src/capabilities/practice/jobs/quiz_gen.ts': {
+  'src/capabilities/practice/jobs/quiz_gen_persist.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],
     note: 'quiz_gen 新题同事务铸首版 revision：composite 由 createQuestionPart 逐 part 发布（此处幂等 noop）；单题铸 v1。均 withheld/unverified_rules，quiz_verify promote 翻 admitted。',

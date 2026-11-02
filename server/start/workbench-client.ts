@@ -4,7 +4,7 @@ import {
   proposalDecisionBody,
 } from '@/capabilities/shell/ui-public';
 import { ProposalDecisionResource } from '@/core/schema/proposal';
-import { ApiError } from '@/ui/lib/api';
+import { rejectUndoVersionConflict } from '@/ui/lib/undo-ai-change';
 import { authenticatedStartFetch } from './authenticated-fetch';
 import {
   acknowledgeStartTeachingBriefOutcome,
@@ -76,13 +76,10 @@ export const startWorkbenchClient: WorkbenchClient = {
       data: JSON.stringify({ probe_result_event_id: probeResultEventId }),
     }),
   getRecentAiChanges: () => getStartRecentAiChanges(transport),
-  undoAiChange: async (artifactId, eventId) => {
-    const result = await undoStartArtifactAiChange({ ...transport, data: { artifactId, eventId } });
-    if (result.status === 'skipped:version_conflict') {
-      throw new ApiError('undo skipped: version_conflict', 409, 'version_conflict');
-    }
-    return result;
-  },
+  undoAiChange: async (artifactId, eventId) =>
+    rejectUndoVersionConflict(
+      await undoStartArtifactAiChange({ ...transport, data: { artifactId, eventId } }),
+    ),
 };
 
 export const startKnowledgeFrontierClient = () => getStartKnowledgeFrontier(transport);

@@ -9,16 +9,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { AdmissionEvidenceT } from '@/core/schema/assessment';
 import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
+import {
+  ASSESSMENT_PUBLISH_ACTION,
+  publishQuestionGroup,
+  publishQuestionGroupFromRow,
+} from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   type NormalizableQuestionRow,
   normalizeQuestionRowToContract,
 } from './contract-normalizer';
-import {
-  ASSESSMENT_PUBLISH_ACTION,
-  publishQuestionGroup,
-  publishQuestionGroupFromRow,
-} from './publisher';
 
 const ADMITTED_EVIDENCE: AdmissionEvidenceT = {
   marking_provenance: 'official',

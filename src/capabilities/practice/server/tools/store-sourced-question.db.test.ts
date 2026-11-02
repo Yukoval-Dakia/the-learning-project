@@ -13,7 +13,7 @@ import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
-import type { R2Client } from '@/server/r2';
+import type { R2Client } from '@/kernel/object-storage';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { memR2 } from '../../../../../tests/helpers/r2';
 import { canonicalJyeooQuestionHash } from '../question-supply/jyeoo-candidates';
@@ -23,12 +23,12 @@ import {
 } from './store-sourced-question';
 
 // cleanupStagedForRejected → cleanupStagedAssets 的 r2 走默认参数 getR2()（无注入 seam）。
-// mock '@/server/r2' 让测试注入 memR2 从而断言 R2 对象回收；未设置时保持与生产缺 env
+// mock '@/kernel/object-storage' 让测试注入 memR2 从而断言 R2 对象回收；未设置时保持与生产缺 env
 // 相同的抛错行为（调用方 catch 后降级给 reaper）。本文件只有 staged_asset_ids 非空的
 // 用例会触达 getR2()，既有用例（staged_asset_ids=[]）早退、不受影响。
 const stagedR2 = vi.hoisted(() => ({ client: null as R2Client | null }));
-vi.mock('@/server/r2', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('@/server/r2')>();
+vi.mock('@/kernel/object-storage', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@/kernel/object-storage')>();
   return {
     ...mod,
     getR2: () => {

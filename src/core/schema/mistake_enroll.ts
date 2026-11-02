@@ -4,7 +4,7 @@
 // a CAPTURED, ANSWERED question_block: the graded outcome, the question kind, a
 // difficulty estimate, and (on a wrong answer) a cause draft. The draft is
 // produced observe-only and attached to the `experimental:auto_enroll_observed`
-// audit event (see src/server/ingestion/auto-enroll.ts); it never writes a domain
+// audit event (see src/capabilities/ingestion/server/auto-enroll.ts); it never writes a domain
 // row. The "AI drafted N items" review surface + the actual enroll wiring
 // are deferred behind the OFF enroll flag.
 import { z } from 'zod';

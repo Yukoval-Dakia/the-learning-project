@@ -10,12 +10,15 @@ import {
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
 } from '@/kernel/records/assessment-normalization';
+import {
+  publishQuestionGroup,
+  publishQuestionGroupFromRow,
+} from '@/kernel/records/assessment-publication';
 import type { ToolContext } from '@/kernel/tools/types';
 import { generateReferenceSolution } from '@/server/ai/solution-generate';
-import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
-import { archiveQuestion, editQuestion } from '@/server/questions/write';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { runEmbedBackfill } from '../../jobs/embed_backfill';
+import { archiveQuestion, editQuestion } from '../question-bank-write';
 import { encodeBankRef } from './bank-ref';
 import { checkBankTool } from './check-bank';
 import { readBankTool } from './read-bank';

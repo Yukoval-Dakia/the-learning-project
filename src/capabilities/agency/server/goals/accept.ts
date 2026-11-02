@@ -14,8 +14,8 @@ import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import { materializeAcceptedGoal } from '@/kernel/records/goal-commands';
 import { resolveKnownSubjectId } from '@/subjects/profile';
-import { materializeAcceptedGoal } from './commands';
 
 export interface GoalScopeAcceptResult {
   kind: 'goal_scope';

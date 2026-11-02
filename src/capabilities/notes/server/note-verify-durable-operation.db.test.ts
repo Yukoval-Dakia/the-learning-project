@@ -1,8 +1,7 @@
-// Prepared but NOT RUN in this lane (no DB): these cases pin the DBOS
-// no-repurchase contract against the real note_verification_claim tables.
-// They simulate a crashed durable execution by seeding the claim row in the
-// state a DBOS step recovery would find, then re-enter through the operation.
-// Parent runs them in the scoped DB loop when integrating the family.
+// Real-Postgres proofs of the DBOS no-repurchase contract against the real
+// note_verification_claim tables: a crashed durable execution is simulated by
+// seeding the claim row in the state a DBOS step recovery would find, then
+// re-entering through the operation.
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';

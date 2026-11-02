@@ -7,10 +7,7 @@
 // The source-of-truth implementation lived at this path before Step 9; see
 // git history (commit before 0006_drop_legacy_tables.sql migration) for the
 // full bridgeCause / migrateMistakeRows / migrateReviewEventRows /
-// migrateDreamingProposalRows / migrateIngestionSessionRows logic. Step 9.K
-// removed the test files (scripts/migrate-phase1c1.test.ts +
-// tests/integration/migrate-phase1c1.integration.test.ts) since they
-// depended on the dropped tables.
+// migrateDreamingProposalRows / migrateIngestionSessionRows logic.
 //
 // Phase 1c.1 Step 3 — legacy → event-driven migration (no longer runnable).
 

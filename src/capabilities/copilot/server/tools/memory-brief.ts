@@ -4,6 +4,7 @@
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { memory_brief_note } from '@/db/schema';
+import { briefPurposeCurrent } from '@/kernel/read-models/purpose-change';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
 function iso(value: Date | null | undefined): string | null {
@@ -69,7 +70,7 @@ export async function executeMemoryBrief(
     .from(memory_brief_note)
     .where(eq(memory_brief_note.scope_key, scopeKey))
     .limit(1);
-  if (!note) {
+  if (!note || !(await briefPurposeCurrent(ctx.db, scopeKey, note.version))) {
     return MemoryBriefOutputSchema.parse({
       note: null,
       freshness: {

@@ -10,7 +10,6 @@
 | `edges.ts` / `propose_edge.ts` | mesh edge CRUD + 提议（5 类 `relation_type` + `experimental:*`）|
 | `node-page.ts` | 单节点页面聚合 reader |
 | `proposals.ts` | 知识节点 propose event + accept/dismiss（content-driven：cold-start-bridge / image-candidate-accept / agent proposal-tools / KnowledgeReviewTask 的写路径）|
-| `failure-learning-context.ts` | 给 Practice Failure Learning 的有界、保序、active-only knowledge reader + 归因候选用已晋升 misconception reader（YUK-1015）|
 | `review.ts` | KnowledgeReviewTask（维护流 producer）：经 `knowledge_review` surface 挂共享 `propose_knowledge_*` 工具 |
 | `rubric-validator.ts` | 知识 rubric 校验 |
 | `seed.ts` | 种子知识树 |
@@ -20,7 +19,7 @@
 ## 关键约束
 - `relation_type` 核心 5 类：`prerequisite | related_to | contrasts_with | applied_in | derived_from`，外加 `experimental:*` 命名空间。
 - 节点/edge 的 propose 都写 `event(action='propose')`，**不直接改硬事实**——accept route 才落地真实 mutation。
-- Failure Learning 的 eligibility、归因与变式提议归 Practice；本包只提供 knowledge context reader。
+- Failure Learning 的 eligibility、归因与变式提议归 Practice。有界 knowledge / misconception 读在 `src/kernel/read-models/failure-learning-context.ts`。
 
 ## ANTI-PATTERNS
 - 破坏性动作（合并节点 / reparent / archive）只能 propose，无直接 write tool。

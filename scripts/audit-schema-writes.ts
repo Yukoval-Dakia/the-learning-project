@@ -1027,7 +1027,7 @@ export function audit(repoRoot = REPO_ROOT) {
   const files: string[] = [];
   for (const d of SEARCH_DIRS) walkFiles(resolve(repoRoot, d), files);
   return auditSchemaWrites(
-    readFileSync(resolve(repoRoot, 'src/db/schema.ts'), 'utf8'),
+    readSchemaAggregate(repoRoot),
     new Map(
       files.map((path) => [
         relative(repoRoot, path).replaceAll('\\', '/'),
@@ -1041,6 +1041,22 @@ export function audit(repoRoot = REPO_ROOT) {
       }),
     ),
   );
+}
+
+/**
+ * The drizzle schema is split across the src/db/schema.ts entry and the
+ * domain modules under src/db/schema/; the audit needs every table
+ * definition in one text, so read them concatenated.
+ */
+export function readSchemaAggregate(repoRoot = REPO_ROOT): string {
+  const dir = resolve(repoRoot, 'src/db/schema');
+  const parts = [readFileSync(resolve(repoRoot, 'src/db/schema.ts'), 'utf8')];
+  for (const name of readdirSync(dir)
+    .filter((f) => f.endsWith('.ts'))
+    .sort()) {
+    parts.push(readFileSync(join(dir, name), 'utf8'));
+  }
+  return parts.join('\n');
 }
 
 function main() {

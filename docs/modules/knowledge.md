@@ -15,6 +15,7 @@
 | 设计概念 | 现状 | 备注 |
 |---|---|---|
 | `knowledge` 表 + `parent_id` tree backbone | ✅ | root 节点带 `domain='yuwen'`；子节点继承 effective domain |
+| `knowledge.role` 身份标记 | ✅ | `kc` / `goal` / `container`，默认 `kc`；非 kc 不评掌握、不写 θ/PFA/FSRS、不进供给/选题候选（共享判定 `src/kernel/read-models/knowledge-roles.ts`）。三值语义见 [CONTEXT.md「知识点（knowledge）」](../../CONTEXT.md)；与本文件 §2 的 `SubjectGraphGuide.rootClusters[].role`（cluster 分类）无关 |
 | Yuwen seed | ✅ | `src/subjects/yuwen/curriculum.json` 目前 7 个顶层 cluster：实词 / 虚词 / 句式 / 断句 / 翻译 / 文学常识 / 论述题 |
 | `knowledge_edge` typed mesh | ✅ | 5 个核心 relation type + `experimental:*`；唯一约束 `(from,to,type)` |
 | `knowledge_edge` 单一写入点 | ✅ | `src/kernel/records/knowledge-edge-facts.ts`（capability `src/capabilities/knowledge/server/edges.ts` re-export） |
@@ -39,6 +40,8 @@
 - child 节点 `domain=null`，通过 ancestor 继承 effective domain。
 - tree 关系不应重复存成 mesh edge，除非 edge 语义明显不同。
 - tree 主要服务 UI tree-view、effective domain、Learning Intent 的 hub/atomic 拆分。
+- 节点身份与树位置正交：`knowledge.role` 不是层级，只是「可测知识点 / 目标 / 容器」标记。`seed:<subject>:root` 出生为 `container`，LearningIntent topic 根出生为 `goal`，其余默认 `kc`。
+- 非 kc 节点仍在树上，但 mastery projection 不返回掌握值（缺失即 null），due list 与复习到期摘要跳过它们。
 
 ### 1.2 Mesh edges
 

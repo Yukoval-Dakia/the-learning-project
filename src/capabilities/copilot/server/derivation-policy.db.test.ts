@@ -544,10 +544,9 @@ describe('accepted answer-only lifecycle', () => {
         long_term_evidence_ids: [restricted.run_id],
       };
     });
-    const { row } = await regenerateMemoryBrief({ db: testDb(), scopeKey: 'global', generate });
-    expect(row.recent_week_evidence_ids).toEqual([ordinary.run_id]);
-    expect(row.recent_months_evidence_ids).toEqual([]);
-    expect(row.long_term_evidence_ids).toEqual([]);
+    await expect(
+      regenerateMemoryBrief({ db: testDb(), scopeKey: 'global', generate }),
+    ).rejects.toThrow('restricted input reached brief writer; discard entire draft');
     await expect(
       authorizeMemoryIngestReplay(testDb(), {
         sourceEventId: restricted.run_id,

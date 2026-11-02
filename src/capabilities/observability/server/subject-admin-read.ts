@@ -4,7 +4,7 @@
 // 全量枚举读 DB（含 general 与 retired）；version/notation/capabilityCount 是
 // registry 装配产物，未装配时给 null/0，不编造。
 // `subjectRevision` 是写面 expectedSubjectRevision 的 CAS 轴，UI 首次提交只能从
-// 读面取值。revision/effectiveRevision/degraded 来自 resolution-cache；缓存缺位
+// 读面取值。revision/effectiveRevision/degraded 来自 subject-trait-resolutions；缓存缺位
 // 时回落 live revision + degraded:null。
 
 import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';

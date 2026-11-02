@@ -17,11 +17,18 @@
 // allowedTools:[] → empty SDK tool list + maxTurns:1 → one structured JSON reply,
 // never a tool loop, no memory, no tool budget.
 
+import { AgentRunError } from '@/ai/agent-run-error';
+import {
+  type HelpProviderFault,
+  readHelpProviderFault,
+  renderHelpExitMarkdown,
+} from '@/ai/help-provider-fault';
 import type { RunTaskResult } from '@/ai/task-result';
 import type { MaterializeAskCheckParams } from '@/capabilities/copilot/server/teaching/materialize-ask-check';
 import type { Db } from '@/db/client';
 import { runAgentTask } from '@/server/ai/runner';
 import {
+  TeachingError,
   type TeachingStructuredQuestionT,
   type TeachingTurnOutputT,
   loadTeachingContext,
@@ -66,6 +73,15 @@ export interface TeachingSkillResult {
   task_run_id: string;
 }
 
+function helpExitResult(fault: HelpProviderFault, taskRunId: string): TeachingSkillResult {
+  return {
+    text_md: renderHelpExitMarkdown(fault),
+    kind: 'explain',
+    suggested_next: 'end',
+    task_run_id: taskRunId,
+  };
+}
+
 export interface RunTeachingSkillDeps {
   runAgentTaskFn?: RunAgentTaskFn;
 }
@@ -94,20 +110,39 @@ export async function runTeachingSkill(
     messages: [{ role: 'user' as const, text_md: userMessage }],
   };
 
-  const result = await run('TeachingTurnTask', input, {
-    db,
-    subjectProfile: context.subjectProfile,
-    // Empty tool list → no memory, no tool budget, single structured turn.
-    allowedTools: [],
-    ...(params.taskRunId ? { taskRunId: params.taskRunId } : {}),
-    ...(params.signal ? { signal: params.signal } : {}),
-    ...(providerSessionDeadlineAt !== undefined ? { providerSessionDeadlineAt } : {}),
-  });
+  let result: Pick<RunTaskResult, 'task_run_id' | 'text'>;
+  try {
+    result = await run('TeachingTurnTask', input, {
+      db,
+      subjectProfile: context.subjectProfile,
+      // Empty tool list → no memory, no tool budget, single structured turn.
+      allowedTools: [],
+      ...(params.taskRunId ? { taskRunId: params.taskRunId } : {}),
+      ...(params.signal ? { signal: params.signal } : {}),
+      ...(providerSessionDeadlineAt !== undefined ? { providerSessionDeadlineAt } : {}),
+    });
+  } catch (error) {
+    if (params.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+      throw error;
+    }
+    const fault = readHelpProviderFault(error);
+    const taskRunId = error instanceof AgentRunError ? error.taskRunId : params.taskRunId;
+    if (!fault || !taskRunId) throw error;
+    return helpExitResult(fault, taskRunId);
+  }
 
   // A provider completing at the same time as Stop does not authorize returning
   // an ask_check that the caller could subsequently materialize.
   params.signal?.throwIfAborted();
-  const turn = parseTurnOutput(result.text);
+  let turn: ReturnType<typeof parseTurnOutput>;
+  try {
+    turn = parseTurnOutput(result.text);
+  } catch (error) {
+    if (error instanceof TeachingError && error.code === 'llm_parse_failed') {
+      return helpExitResult({ kind: 'parse' }, result.task_run_id);
+    }
+    throw error;
+  }
 
   let pendingQuestion: PendingAskCheckParams | undefined;
   if (turn.kind === 'ask_check' && turn.structured_question) {

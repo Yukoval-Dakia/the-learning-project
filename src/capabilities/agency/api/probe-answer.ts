@@ -15,8 +15,8 @@ import {
 } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { previewFormalAttempt } from '@/kernel/judge';
+import { validateIssuedProbeProvenance } from '@/kernel/read-models/completed-probe-provenance';
 import { freezeImageEvidence } from '@/kernel/records/assessment-evidence';
-import { validateIssuedProbeProvenance } from '../server/conjecture/completed-probe-provenance';
 import {
   type AnswerProbeResult,
   answerProbe,

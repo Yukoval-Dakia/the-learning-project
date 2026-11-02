@@ -17,8 +17,8 @@ import { Rubric } from '@/core/schema/business';
 import { SolutionGenerateOutput } from '@/core/schema/solution';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 // `RubricT` is private inside db/schema.ts; derive it locally from the Rubric
 // schema so the merged write matches `question.rubric_json`'s `$type<RubricT>()`.
@@ -180,7 +180,7 @@ export async function generateReferenceSolution(
         reference_md: parsed.worked_solution_md,
         updated_at: new Date(),
         ...(nextEmbedHash !== locked.embed_content_hash
-          ? { embedding: null, embed_content_hash: nextEmbedHash }
+          ? { embedding: null, embed_content_hash: nextEmbedHash, embed_source_revision: null }
           : {}),
       })
       .where(updateWhere)

@@ -38,6 +38,7 @@ import {
   listActiveGoalsWithResolvedScope,
 } from '@/kernel/read-models/active-goal-scope';
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { type FailureAttempt, getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 // T-CS / — cross-subject scheduling v1 (, line 242). The due
 // pool is round-robin balanced across the learning-subjects that have due items
@@ -48,7 +49,6 @@ import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 // so the brief-refresh layer shares the SAME canonical bridge.
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
-import { type FailureAttempt, getFailureAttempts } from './attempt-events';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from './placement-scope';
 
 // swappable active-goals reader so DB tests inject goal

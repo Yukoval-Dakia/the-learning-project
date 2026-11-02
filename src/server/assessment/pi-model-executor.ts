@@ -232,6 +232,9 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
         feedback_md: decision.feedback_md,
         evidence_citations: decision.evidence_citations,
         confidence: decision.confidence,
+        ...(decision.kc_mastery_evidence
+          ? { kc_mastery_evidence: decision.kc_mastery_evidence }
+          : {}),
         run_refs: [result.task_run_id],
         cost_usd_micros: cost,
       };

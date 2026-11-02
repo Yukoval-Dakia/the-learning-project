@@ -1,4 +1,4 @@
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import type { question } from '@/db/schema';
 import type { PublishQuestionGroupResult } from '@/kernel/records/assessment-publication';
 import {
@@ -17,7 +17,6 @@ import {
 // its evidence only while the scoring layers are unchanged. Stored and new contracts are
 // normalized through the same draft encoding before comparison.
 
-export { draftCanonicalIdentity, revisionToDraftDocument } from './draft-contract';
 export type { EditQuestionInputT, EditQuestionResult } from './edit-question';
 export {
   EditQuestionInput,
@@ -25,8 +24,7 @@ export {
   saveDraftEdit,
   validateDraftEdit,
 } from './edit-question';
-// Write facade: capabilities reach submit/edit/publish/draft-insert through this module.
-export { publishQuestionGroupFromRow } from './publisher';
+// Write facade: capabilities reach submit/edit/draft-insert through this module.
 export type { DeclaredGroupDomainOutcome } from './shared-submit';
 export {
   claimSubmitRequestId,
@@ -127,6 +125,7 @@ export type SubmitResult =
     };
 
 interface SubmitContext {
+  beforeWrite?: (tx: Tx) => Promise<void>;
   actorRef: string;
   actorKind: 'agent' | 'user' | 'system';
   sessionId?: string | null;

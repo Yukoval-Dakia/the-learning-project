@@ -37,6 +37,14 @@ function scanDeps(
     listActiveItemsFn: async () => [],
     loadProposalFeedbackFn: async () => [],
     readAgentNotesFn: async () => [],
+    // YUK-1582: no-DB unit lane injects an empty derivation (the port is DB-reading).
+    deriveWeakPointsFn: async () => ({
+      as_of: new Date('2026-10-28T04:00:00Z'),
+      window_since: new Date('2026-09-28T04:00:00Z'),
+      scanned_failure_count: 0,
+      weak_points: [],
+      unknowns: [],
+    }),
     resolvePlanInputsFn: async () => ({
       due_count: 12,
       due_by_subject: [{ subject_id: 's_math', due_count: 12 }],

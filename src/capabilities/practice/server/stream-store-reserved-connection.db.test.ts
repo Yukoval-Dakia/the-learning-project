@@ -4,8 +4,8 @@ import postgres from 'postgres';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@/db/client';
 import { knowledge, learning_item, practice_stream_item, question } from '@/db/schema';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb } from '../../../../tests/helpers/db';
 import { handleReviewDue } from './due-list';
 
