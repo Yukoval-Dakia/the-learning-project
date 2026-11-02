@@ -1,8 +1,8 @@
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { artifact, question } from '@/db/schema';
+import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
-import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './review-sessions';
 

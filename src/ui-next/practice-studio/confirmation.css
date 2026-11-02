@@ -1,0 +1,41 @@
+[data-ui-next] .un-confirm {
+  margin-block: 20px;
+  padding: 20px;
+  border-radius: 24px;
+  background: var(--un-md-sys-color-surface-container-low);
+  color: var(--un-md-sys-color-on-surface);
+  overflow-wrap: anywhere;
+}
+[data-ui-next] .un-confirm h3 {
+  font: 600 20px / 1.4 var(--un-font-sans);
+  margin: 0 0 12px;
+}
+[data-ui-next] .un-confirm p {
+  margin-block: 12px;
+}
+[data-ui-next] .un-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-block: 16px;
+}
+[data-ui-next] .un-confirm .un-btn {
+  min-height: 44px;
+}
+[data-ui-next] .un-confirm pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  font-size: 13px;
+}
+[data-ui-next] .un-confirm summary {
+  cursor: pointer;
+  padding-block: 12px;
+}
+[data-ui-next] .un-confirm :is(button, summary):focus-visible {
+  outline: 3px solid var(--un-md-sys-color-primary);
+  outline-offset: 3px;
+}
+[data-ui-next] .un-confirm-assessment {
+  min-width: 0;
+}

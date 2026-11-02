@@ -47,6 +47,7 @@ import {
 } from '@/kernel/records/knowledge-node-history';
 import { projectKnowledgeNode } from '@/kernel/records/knowledge-node-materialization';
 import {
+  assertKnowledgeOperationsDecodable,
   prefetchKnowledgeOperations,
   scanKnowledgeOperationRates,
 } from '@/kernel/records/knowledge-operation';
@@ -62,7 +63,10 @@ import {
   mistakeVariantsWithGenesisAnchor,
   projectMistakeVariantGuarded,
 } from '@/kernel/records/mistake-variant-facts';
-import { gatherAndFoldQuestionBlock } from '@/kernel/records/question-block-projection';
+import {
+  gatherAndFoldQuestionBlock,
+  projectQuestionBlockGuarded,
+} from '@/kernel/records/question-block-projection';
 import { gatherAndFoldItemCalibration } from './gather';
 import { projectItemCalibrationGuarded } from './item_calibration';
 import {
@@ -72,7 +76,6 @@ import {
   questionBlocksWithGenesisAnchor,
 } from './parity';
 import { PROJECTION_FOLDS, type PureFold } from './projection-folds';
-import { projectQuestionBlockGuarded } from './question_block';
 import { itemCalibrationRowToSnapshot, questionBlockRowToSnapshot } from './snapshot-mappers';
 
 type DbLike = Db | Tx;
@@ -342,7 +345,11 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
       readLiveRows: (db) => db.select().from(knowledge_edge),
       toSnapshot: (row) => edgeRowToSnapshot(row) as Record<string, unknown>,
       // The mesh comes from the same read as the snapshot map (O(E), not O(E²)).
+      // The class-level operation pre-check runs here too: edge folds never read
+      // rate payloads, so this is the only point an undecodable edge-target op
+      // can fail closed before the audit reports a verdict.
       makeFoldOne: async (db, rows) => {
+        await assertKnowledgeOperationsDecodable(db);
         const mesh = rows.filter((e) => e.archived_at === null).map(edgeRowToSnapshot);
         return (id) =>
           gatherAndFoldKnowledgeEdgeWithMesh(db, id, mesh) as Promise<Record<

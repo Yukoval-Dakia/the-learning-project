@@ -179,6 +179,9 @@ function MarkdownImage({ node: _node, src, alt, ...props }: MarkdownImageProps):
 }
 
 export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
+  remarkPlugins?: MarkdownRendererProps['remarkPlugins'];
+  components?: MarkdownRendererProps['components'];
+  remarkRehypeOptions?: MarkdownRendererProps['remarkRehypeOptions'];
   /** Markdown source. Supports `$...$` / `\\(...\\)` inline and `$$...$$` / `\\[...\\]` block math. */
   children: string;
   /**
@@ -220,7 +223,14 @@ export function isKatexNotation(notation?: string | null): boolean {
  * arbitrary HTMLAttributes (className, style, data-*) so subjectContentProps-style
  * helpers can be spread directly.
  */
-export function MathMarkdown({ children, notation, ...divProps }: MathMarkdownProps): ReactElement {
+export function MathMarkdown({
+  children,
+  notation,
+  remarkPlugins = [],
+  components,
+  remarkRehypeOptions,
+  ...divProps
+}: MathMarkdownProps): ReactElement {
   const isKatex = isKatexNotation(notation);
   // Read the module cache so an already-warm math mount (or any SSR render, where
   // the cache is warmed at module eval) renders synchronously with no fallback
@@ -236,9 +246,10 @@ export function MathMarkdown({ children, notation, ...divProps }: MathMarkdownPr
   return (
     <MarkdownRenderer
       {...divProps}
-      remarkPlugins={active.remarkPlugins}
+      remarkPlugins={[...active.remarkPlugins, ...(remarkPlugins ?? [])]}
       rehypePlugins={active.rehypePlugins}
-      components={{ img: MarkdownImage }}
+      components={{ ...components, img: MarkdownImage }}
+      remarkRehypeOptions={remarkRehypeOptions}
     >
       {source}
     </MarkdownRenderer>

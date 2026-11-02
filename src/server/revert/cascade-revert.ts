@@ -184,6 +184,13 @@ function classifyRow(row: EventRow): RevertableEffect {
  * An absent edge_op is a create. Refusing only archive also keeps supersede.
  */
 export function copilotAskRevertAllows(row: EventRow, isRoot: boolean): boolean {
+  // Native confirmation originals and settlement live outside this ask's cascade.
+  if (
+    isRoot &&
+    row.action === COPILOT_USER_ASK_ACTION &&
+    (row.payload as { confirmation?: { kind?: string } } | null)?.confirmation?.kind === 'submit'
+  )
+    return false;
   // runQuestionAuthor inserts the draft question in the same transaction as the proposal. That row is outside this chain.
   // The action is already excluded. This marker still refuses it, so a later action change cannot tombstone the turn and leave the draft.
   const proposalKind = (row.payload as { ai_proposal?: { kind?: string } } | null)?.ai_proposal

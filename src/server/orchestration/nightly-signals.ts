@@ -24,6 +24,9 @@ import {
 } from '@/kernel/nightly-eligibility';
 import { loadReturnStockGaps } from '@/kernel/read-models/return-stock';
 
+/** Hard upstream of kc_dedup; its success means freshly embedded nodes to pair. */
+const EMBED_BACKFILL_JOB = 'embed_backfill';
+
 const TERMINAL_FOR_HISTORY = ['succeeded', 'failed', 'skipped', 'not_needed', 'degraded'] as const;
 
 export interface NightlyContext {
@@ -52,14 +55,13 @@ export async function loadNightlyContext(
     loadEmbedPending(db),
     loadReturnStockShort(db),
     names.includes('frontier_fill_nightly') ? loadPendingEdgeProposalCount(db) : Promise.resolve(0),
-    loadJobHistory(db, dagNames),
+    loadJobHistory(db, [...new Set([...dagNames, EMBED_BACKFILL_JOB])]),
     names.includes(MEMORY_BRIEF_SWEEP_JOB) ? loadBriefWatermark(db) : Promise.resolve(null),
   ]);
 
   const tier = classifyActivityTier({
     now,
     lastLearnerEventAt: lastLearner,
-    examWindow: false,
   });
   const lastLearnerEventAt = lastLearner ? lastLearner.toISOString() : null;
 
@@ -72,11 +74,12 @@ export async function loadNightlyContext(
         job: jobName,
         tier,
         lastLearnerEventAt,
-        examWindow: false,
         newLearnerEvidence: isNewer(lastLearner, lastSuccess),
         treeChanged: isNewer(treeWatermark, lastSuccess),
         embedPending,
-        findingsOpen: 0,
+        embedRefreshed:
+          jobName !== EMBED_BACKFILL_JOB &&
+          isNewer(history.get(EMBED_BACKFILL_JOB)?.lastSuccess ?? null, lastSuccess),
         pendingEdgeProposals,
         returnStockShort,
         degradedNights: degradedStreak(row?.recent ?? []),

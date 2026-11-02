@@ -1,9 +1,9 @@
 // DB-side discovery and fact addressing for the v1 `knowledge_operation` rate
 // fact. The strict shape decode lives in @/core/projections/knowledge-operation;
-// this side scans the raw rate rows before any id filtering (a malformed key is
-// unattributable, so the whole knowledge scan fails closed) and verifies that
-// every referenced fact — fact events, the retracted accept, the correction —
-// exists and matches what the operation declares.
+// this side scans the raw rate rows and verifies that every referenced fact —
+// fact events, the retracted accept, the correction — exists and matches what
+// the operation declares. The Knowledge capability owns the writer contract;
+// this module only reads.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
@@ -11,16 +11,18 @@ import {
   type KnowledgeOperationTarget,
   type KnowledgeOperationV1,
   UndecodableKnowledgeOperationError,
+  createdTargetIds,
   decodeKnowledgeOperation,
 } from '@/core/projections/knowledge-operation';
+import { RateEvent } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import type { FoldEventRow } from '@/kernel/records/projection-events';
 
 type DbLike = Db | Tx;
-type EventRow = typeof event.$inferSelect;
 
 export interface KnowledgeOperationEntry {
-  rate: EventRow;
+  rate: FoldEventRow;
   op: KnowledgeOperationV1;
 }
 
@@ -34,37 +36,58 @@ export interface KnowledgeOperationScan {
 export interface KnowledgeOperationContext {
   scan: KnowledgeOperationScan;
   /** Referenced envelopes loaded for verification (facts, accepts, proposals, corrections). */
-  facts: Map<string, EventRow>;
+  facts: Map<string, FoldEventRow>;
 }
 
 export function entityKey(kind: KnowledgeOperationTarget['kind'], id: string): string {
   return `${kind}:${id}`;
 }
 
-/**
- * Scan every rate event carrying an own `knowledge_operation` key and strict-decode
- * each one BEFORE any id filtering. A malformed key cannot be attributed to a
- * target, so it throws instead of being skipped.
- */
-export async function scanKnowledgeOperationRates(db: DbLike): Promise<KnowledgeOperationScan> {
-  const rows = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'rate'),
-        sql`jsonb_exists(${event.payload}, ${KNOWLEDGE_OPERATION_KEY})`,
-      ),
-    );
+// Only the columns a fold consumes: scan rows merge into fold sets verbatim.
+const FOLD_COLUMNS = {
+  id: event.id,
+  created_at: event.created_at,
+  actor_kind: event.actor_kind,
+  actor_ref: event.actor_ref,
+  action: event.action,
+  subject_kind: event.subject_kind,
+  subject_id: event.subject_id,
+  outcome: event.outcome,
+  payload: event.payload,
+  caused_by_event_id: event.caused_by_event_id,
+};
+
+// A decoded operation must sit on a rate the Zod envelope also accepts as an
+// accept — the two validators can never disagree on one row.
+function decodeRateRow(row: FoldEventRow): KnowledgeOperationV1 | 'absent' {
+  const op = decodeKnowledgeOperation({
+    eventId: row.id,
+    subjectId: row.subject_id,
+    causedByEventId: row.caused_by_event_id,
+    payload: row.payload,
+  });
+  if (op === 'absent') return 'absent';
+  const parsed = RateEvent.safeParse({
+    actor_kind: row.actor_kind,
+    actor_ref: row.actor_ref,
+    action: row.action,
+    subject_kind: row.subject_kind,
+    subject_id: row.subject_id,
+    outcome: row.outcome,
+    payload: row.payload,
+    caused_by_event_id: row.caused_by_event_id ?? undefined,
+  });
+  if (!parsed.success || parsed.data.payload.rating !== 'accept') {
+    throw new UndecodableKnowledgeOperationError(row.id, 'not_accept_rate');
+  }
+  return op;
+}
+
+function collectScan(rows: readonly FoldEventRow[]): KnowledgeOperationScan {
   const byRateId = new Map<string, KnowledgeOperationEntry>();
   const targetsByEntity = new Map<string, string[]>();
   for (const row of rows) {
-    const op = decodeKnowledgeOperation({
-      eventId: row.id,
-      subjectId: row.subject_id,
-      causedByEventId: row.caused_by_event_id,
-      payload: row.payload,
-    });
+    const op = decodeRateRow(row);
     if (op === 'absent') continue;
     byRateId.set(row.id, { rate: row, op });
     for (const target of op.targets) {
@@ -77,10 +100,53 @@ export async function scanKnowledgeOperationRates(db: DbLike): Promise<Knowledge
   return { byRateId, targetsByEntity };
 }
 
+/**
+ * Scan every rate event carrying an own `knowledge_operation` key and strict-decode
+ * each one BEFORE any id filtering. A malformed key cannot be attributed to a
+ * target, so it throws instead of being skipped. Class-level paths only —
+ * per-node gathers use the targeted variant below.
+ */
+export async function scanKnowledgeOperationRates(db: DbLike): Promise<KnowledgeOperationScan> {
+  const rows = await db
+    .select(FOLD_COLUMNS)
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'rate'),
+        sql`jsonb_exists(${event.payload}, ${KNOWLEDGE_OPERATION_KEY})`,
+      ),
+    );
+  return collectScan(rows);
+}
+
+/**
+ * Scan only the operations that can declare `id` as a target, via the payload
+ * containment the jsonb_path_ops GIN index serves. Containment keys on the id
+ * alone so a kind-mistyped op still surfaces and throws in the decode; one that
+ * cannot attribute this id at all is the class-level scan's responsibility.
+ */
+export async function scanKnowledgeOperationsForTarget(
+  db: DbLike,
+  id: string,
+): Promise<KnowledgeOperationScan> {
+  const rows = await db
+    .select(FOLD_COLUMNS)
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'rate'),
+        sql`${event.payload} @> ${JSON.stringify({
+          [KNOWLEDGE_OPERATION_KEY]: { targets: [{ id }] },
+        })}::jsonb`,
+      ),
+    );
+  return collectScan(rows);
+}
+
 // Every event id an operation pins: the decision's cause (proposal or archive
 // fact), each target's fact, and — for archives — the retracted accept, its
 // proposal, and the correction.
-function referencedIds(entry: KnowledgeOperationEntry, facts: Map<string, EventRow>): string[] {
+function referencedIds(entry: KnowledgeOperationEntry, facts: Map<string, FoldEventRow>): string[] {
   const ids = new Set<string>();
   if (entry.rate.caused_by_event_id) ids.add(entry.rate.caused_by_event_id);
   for (const target of entry.op.targets) {
@@ -98,7 +164,7 @@ function referencedIds(entry: KnowledgeOperationEntry, facts: Map<string, EventR
 async function loadFactRows(
   db: DbLike,
   ids: Iterable<string>,
-  into: Map<string, EventRow>,
+  into: Map<string, FoldEventRow>,
 ): Promise<void> {
   const missing = [...ids].filter((id) => !into.has(id));
   if (missing.length === 0) return;
@@ -106,20 +172,18 @@ async function loadFactRows(
   for (const row of rows) into.set(row.id, row);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 // The knowledge ids a rate event minted: its own decoded v1 op when present,
 // else the legacy materialized_ids.knowledge field.
-function createdKnowledgeIdsOfRate(row: EventRow, scan: KnowledgeOperationScan): string[] {
+function createdKnowledgeIdsOfRate(row: FoldEventRow, scan: KnowledgeOperationScan): string[] {
   const op = scan.byRateId.get(row.id)?.op;
-  if (op) {
-    return op.targets
-      .filter((t) => t.kind === 'knowledge' && t.effect === 'create')
-      .map((t) => t.id);
-  }
+  if (op) return createdTargetIds(op, 'knowledge');
   const materialized = row.payload.materialized_ids;
-  if (typeof materialized !== 'object' || materialized === null || Array.isArray(materialized)) {
-    return [];
-  }
-  const ids = (materialized as Record<string, unknown>).knowledge;
+  if (!isRecord(materialized)) return [];
+  const ids = materialized.knowledge;
   return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
 }
 
@@ -127,7 +191,7 @@ function fail(rateId: string, reason: 'missing_fact' | 'mismatched_fact', detail
   throw new UndecodableKnowledgeOperationError(rateId, reason, detail);
 }
 
-function factOrThrow(facts: Map<string, EventRow>, id: string, rateId: string): EventRow {
+function factOrThrow(facts: Map<string, FoldEventRow>, id: string, rateId: string): FoldEventRow {
   const row = facts.get(id);
   if (!row) fail(rateId, 'missing_fact', `fact ${id}`);
   return row;
@@ -139,17 +203,18 @@ function factOrThrow(facts: Map<string, EventRow>, id: string, rateId: string): 
 function verifyKnowledgeOperationReferences(
   entry: KnowledgeOperationEntry,
   scan: KnowledgeOperationScan,
-  facts: Map<string, EventRow>,
+  facts: Map<string, FoldEventRow>,
 ): void {
   const { rate, op } = entry;
   const rateId = rate.id;
 
   if (op.kind === 'create') {
     const proposal = factOrThrow(facts, op.proposal_event_id, rateId);
-    const isProposal =
-      proposal.action === 'propose' || proposal.action.startsWith('experimental:knowledge_');
+    // Exactly a propose fact (propose_new or an edge propose) — a mutation fact
+    // such as knowledge_merge/knowledge_archive here is a writer bug that must
+    // surface as a typed error, not fold to null.
     if (
-      !isProposal ||
+      proposal.action !== 'propose' ||
       (proposal.subject_kind !== 'knowledge' && proposal.subject_kind !== 'knowledge_edge')
     ) {
       fail(rateId, 'mismatched_fact', 'proposal_event_id');
@@ -226,8 +291,8 @@ function verifyKnowledgeOperationReferences(
 async function prefetchFacts(
   db: DbLike,
   scan: KnowledgeOperationScan,
-): Promise<Map<string, EventRow>> {
-  const facts = new Map<string, EventRow>();
+): Promise<Map<string, FoldEventRow>> {
+  const facts = new Map<string, FoldEventRow>();
   for (const [rateId, entry] of scan.byRateId) facts.set(rateId, entry.rate);
   // Two rounds: the retracted accept's own proposal is only visible after the
   // first-level facts are loaded.
@@ -245,9 +310,23 @@ async function prefetchFacts(
  * Scan + fact addressing for every knowledge operation in the log. Strict decode
  * happens inside the scan; fact rows are loaded for later verification but no
  * reference is checked here — callers verify the operations they consume.
+ * Class-level: every op in the log loads, so whole-class callers only.
  */
 export async function prefetchKnowledgeOperations(db: DbLike): Promise<KnowledgeOperationContext> {
   const scan = await scanKnowledgeOperationRates(db);
+  const facts = await prefetchFacts(db, scan);
+  return { scan, facts };
+}
+
+/**
+ * Per-node variant of the prefetch: only operations that can declare this node,
+ * served by the payload GIN index, plus the fact rows those ops reference.
+ */
+export async function prefetchKnowledgeOperationsForNode(
+  db: DbLike,
+  nodeId: string,
+): Promise<KnowledgeOperationContext> {
+  const scan = await scanKnowledgeOperationsForTarget(db, nodeId);
   const facts = await prefetchFacts(db, scan);
   return { scan, facts };
 }
@@ -259,8 +338,8 @@ export async function prefetchKnowledgeOperations(db: DbLike): Promise<Knowledge
 export function verifyKnowledgeOperationFacts(
   ctx: KnowledgeOperationContext,
   entries: readonly KnowledgeOperationEntry[],
-): Map<string, EventRow> {
-  const resolved = new Map<string, EventRow>();
+): Map<string, FoldEventRow> {
+  const resolved = new Map<string, FoldEventRow>();
   for (const entry of entries) {
     verifyKnowledgeOperationReferences(entry, ctx.scan, ctx.facts);
     for (const id of referencedIds(entry, ctx.facts)) {
@@ -272,9 +351,10 @@ export function verifyKnowledgeOperationFacts(
 }
 
 /**
- * Fail-closed pre-check for full-class writers (rebuild / canonical migration):
- * every knowledge operation in the log must decode AND verify before the first
- * entity write, so an undecodable fact aborts the surrounding transaction.
+ * Fail-closed pre-check for full-class writers (rebuild / canonical migration)
+ * and class audits: every knowledge operation in the log must decode AND verify
+ * before the first entity write or verdict, so an undecodable fact aborts the
+ * surrounding transaction or audit.
  */
 export async function assertKnowledgeOperationsDecodable(db: DbLike): Promise<void> {
   const ctx = await prefetchKnowledgeOperations(db);

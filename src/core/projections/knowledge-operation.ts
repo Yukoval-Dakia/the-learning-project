@@ -9,6 +9,8 @@ export const KNOWLEDGE_OPERATION_KEY = 'knowledge_operation';
 export type KnowledgeOperationDecodeReason =
   // key present but value is null / non-object / carries unknown fields
   | 'malformed_operation'
+  // key present on a rate that is not a valid accept (rating/envelope)
+  | 'not_accept_rate'
   | 'unknown_version'
   | 'unknown_kind'
   | 'invalid_targets'
@@ -176,11 +178,18 @@ function normaliseMaterializedIds(
   };
   if (raw === undefined) return out;
   if (!isRecord(raw)) fail('materialized_mismatch');
+  // Same strictness as the Zod materialized_ids (.strict()): an unknown key must
+  // fail here too so the two validators can never disagree on one payload.
+  for (const key of Object.keys(raw)) {
+    if (key !== 'knowledge' && key !== 'knowledge_edge') fail('materialized_mismatch', key);
+  }
   for (const kind of ['knowledge', 'knowledge_edge'] as const) {
     const ids = raw[kind];
     if (ids === undefined) continue;
-    if (!Array.isArray(ids) || ids.some((id) => !isId(id))) fail('materialized_mismatch', kind);
-    out[kind] = ids as string[];
+    if (!Array.isArray(ids)) fail('materialized_mismatch', kind);
+    const valid = ids.filter(isId);
+    if (valid.length !== ids.length) fail('materialized_mismatch', kind);
+    out[kind] = valid;
   }
   return out;
 }
@@ -204,6 +213,11 @@ export function decodeKnowledgeOperation(input: {
   };
 
   if (!isRecord(payload) || !Object.hasOwn(payload, KNOWLEDGE_OPERATION_KEY)) return 'absent';
+
+  // The key is only valid on an accept rate; anything else is undecodable, never
+  // silently skipped. Envelope fields the payload cannot express (actor/outcome)
+  // are checked by the RateEvent parse at the call sites.
+  if (payload.rating !== 'accept') fail('not_accept_rate');
 
   const raw = payload[KNOWLEDGE_OPERATION_KEY];
   if (!isRecord(raw)) fail('malformed_operation');
