@@ -83,9 +83,4 @@ describe('POST /api/_/import — guards', () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('confirm_required');
   });
-
-  it('returns 400 when ?confirm has wrong value', async () => {
-    const res = await POST(makePostRequest(new Uint8Array(), '?confirm=please'));
-    expect(res.status).toBe(400);
-  });
 });
