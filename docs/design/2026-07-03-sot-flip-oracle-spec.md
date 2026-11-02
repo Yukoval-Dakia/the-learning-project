@@ -56,7 +56,7 @@
 **目标**：
 1. 给「敢翻 goal/mistake_variant/learning_item」定义显式、可复用、可执行的就绪判据。
 2. **两条独立职责的 post-flip oracle**：（Q4a）持续 report-only 的 out-of-band-写 + rowset 存在性探测器；（Q4b）register line 673 点名的**非同源**独立 oracle——retained-golden 命令式参照 + reducer/gather 变更触发的离线重审——覆盖 fold 管线内部漂移，**必须在翻 learning_item 前落地**。
-3. 把 B3 gate 骨架从 2 实体泛化到 7，复用现成 7 组 `project*`/`gatherAndFoldX`，**零 reducer 改动**；泛化工具对每个新实体必须有 **NO-GO 腿测试**（种 drift/deleted/ghost），不能用「复现 CLEAN」冒充捕获能力。
+3. 把 B3 gate 骨架从 2 实体泛化到 7，复用现成 7 组 `project*`/`gatherAndFoldX`，**零 reducer 改动**；泛化工具对每个新实体必须有 **NO-GO 腿测试**（种 drift/deleted/ghost）。
 4. git-track 生产 flag 清单。
 5. 落地 YUK-547（性能，非正确性）。
 6. 补 OFF 实体 prod-warn 分支测试。
@@ -90,7 +90,7 @@
 
 **攻击修入**：
 - **per-kind 事务，非 all-7 单 tx**（Lens B m7）：先核验 7 kind 间 FK 图（`learning_item.primary_artifact_id`→artifact？`parent_learning_item_id` 自引？`question_block`↔`question_part`？`child_learning_item_ids`？），**仅**在真实 FK 强制处配对（knowledge→knowledge_edge 保持同 tx）；其余 per-kind 独立 tx。理由：`runB3Gate(db, kind)` 本就 per-kind，all-7 共享 tx 既与之不一致、又把一个 kind 的 topology reject 放大成 7 kind 全回滚。FK 图核验是 slice 2 的前置步骤。
-- **`RebuildCounts` shape 变更是真接口变更，不冒充 behavior-preserving**（Lens B m10）：`RebuildCounts` 从 `{nodes,edges}`（`rebuild-projection.ts:45-48`）扩成 `Record<ProjectionKind, number>`，**同步更新** `printReport`（`b3-gate.ts:206-209` 读 `.nodes/.edges`）+ `--json`（line 266）+ 计数断言测试；「behavior-preserving」的范围**显式收窄为 GO/NO-GO verdict**，不含 counts shape。W1 的 `{nodes,edges}` 保留为兼容视图或改断言，二选一由 executor 定，但必须 own 这些下游改动。
+- **`RebuildCounts` shape 变更是真接口变更**（Lens B m10）：`RebuildCounts` 从 `{nodes,edges}`（`rebuild-projection.ts:45-48`）扩成 `Record<ProjectionKind, number>`，**同步更新** `printReport`（`b3-gate.ts:206-209` 读 `.nodes/.edges`）+ `--json`（line 266）+ 计数断言测试；「behavior-preserving」的范围**显式收窄为 GO/NO-GO verdict**，不含 counts shape。W1 的 `{nodes,edges}` 保留为兼容视图或改断言，二选一由 executor 定，但必须 own 这些下游改动。
 
 ### Q3 — per-entity readiness checklist
 
