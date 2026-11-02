@@ -7,8 +7,8 @@ import {
   createMem0OpaqueOperationContext,
   executeMem0OpaqueOperation,
 } from '@/server/ai/provider-attempt-runtime';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { type Mem0Like, createMemoryClient } from './client';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { type Mem0Like, createMemoryClient } from '@/server/ai/mem0/client';
 import type { MemoryIngestReplayRequest } from './memory-ingest-recovery-contract';
 import {
   assertMemoryIngestReplayGrant,

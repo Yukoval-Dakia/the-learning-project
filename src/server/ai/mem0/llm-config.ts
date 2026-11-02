@@ -9,6 +9,8 @@ import {
   resolveGlobalProviderSwitch,
 } from '@/server/ai/providers';
 
+export type Env = Record<string, string | undefined>;
+
 export type MemoryLlmConfig = {
   provider: string;
   apiKey: string;
@@ -18,7 +20,7 @@ export type MemoryLlmConfig = {
 
 /** Mem0 extraction and both direct reconciliation callers share the product pin. */
 export function resolveMemoryLlmConfig(
-  env: Record<string, string | undefined> = process.env,
+  env: Env = process.env,
 ): MemoryLlmConfig {
   const pin = resolveGlobalProviderSwitch(env, getLaneOverride('global'));
   if (!pin) {

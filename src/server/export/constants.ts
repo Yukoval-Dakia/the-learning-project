@@ -537,7 +537,7 @@ export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
 // a dedicated mem0-collection backup/restore branch in archive.ts.
 //
 // The default collection name MUST stay in sync with DEFAULT_COLLECTION in
-// src/server/memory/client.ts. Both resolve the same MEM0_PGVECTOR_COLLECTION env
+// src/server/ai/mem0/client.ts. Both resolve the same MEM0_PGVECTOR_COLLECTION env
 // override so a backup taken with a custom collection name restores to the same
 // table the live client reads from.
 export const MEM0_COLLECTION_DEFAULT = 'learning_project_memories';

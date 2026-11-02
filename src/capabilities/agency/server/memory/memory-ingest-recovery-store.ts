@@ -6,7 +6,7 @@ import {
   lockEventDerivationSources,
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
-import { providerOperationIdForInvocation } from '@/server/ai/provider-attempt-runtime';
+import { lockMemoryIngestSource, lockMemoryOperatorRequest } from '@/kernel/locks/memory-locks';
 import {
   type MemoryIngestReplayGrant,
   MemoryIngestReplayGrantSchema,
@@ -24,6 +24,7 @@ import {
   readMemoryIngestStarted,
   writeMemoryHandoffRecord,
 } from './memory-reconcile-handoff-store';
+import { providerOperationIdForInvocation } from './mem0-runtime';
 
 const AUTHORIZED = 'operator_replay_authorized';
 const STARTED = 'operator_add_started';
@@ -36,12 +37,6 @@ export function memoryIngestReplayGrantId(grant: MemoryIngestReplayGrant): strin
 
 export function memoryIngestReplayAnchor(grant: MemoryIngestReplayGrant, anchor: string): string {
   return `memory-ingest-replay:${memoryIngestReplayGrantId(grant)}:${anchor}`;
-}
-
-async function lockSource(tx: Tx, sourceId: string): Promise<void> {
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`memory:ingest:${sourceId}`}, 0))`,
-  );
 }
 
 async function grantsForSource(db: Db | Tx, sourceId: string): Promise<MemoryIngestReplayGrant[]> {
@@ -146,11 +141,9 @@ export async function authorizeMemoryIngestReplay(
     allow_paid_replay: true,
   };
   return db.transaction(async (tx) => {
-    await lockSource(tx, input.sourceEventId);
+    await lockMemoryIngestSource(tx, input.sourceEventId);
     // Global request identity also fences accidental reuse for another source.
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`memory:operator-request:${input.requestId}`}, 0))`,
-    );
+    await lockMemoryOperatorRequest(tx, input.requestId);
     await assertUserSource(tx, input.sourceEventId);
     const existing = await tx
       .select({ payload: event.payload })
@@ -209,7 +202,7 @@ export async function claimMemoryIngestReplay(
   sourceId: string,
 ): Promise<void> {
   await db.transaction(async (tx) => {
-    await lockSource(tx, sourceId);
+    await lockMemoryIngestSource(tx, sourceId);
     await assertMemoryIngestReplayGrant(tx, grant, sourceId);
     await lockEventDerivationSources(tx, sourceId);
     await assertUserSource(tx, sourceId);

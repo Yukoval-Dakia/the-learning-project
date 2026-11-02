@@ -50,6 +50,28 @@ export {
   parseLearningIntentOutline,
   planLearningIntent,
 } from './server/learning-intent';
+// The platform boss layer mounts the memory pipeline queues; admin config reads its crons and mode.
+export type { GenerateBrief } from './server/memory/brief';
+export { buildBriefGenerator } from './server/memory/brief-writer';
+export {
+  MEMORY_RECONCILE_QUEUE,
+  memoryReconcileHandoffMode,
+} from './server/memory/memory-reconcile-handoff';
+export {
+  MEMORY_BRIEF_REGEN_QUEUE,
+  MEMORY_BRIEF_SWEEP_QUEUE,
+  MEMORY_EVENT_INGEST_QUEUE,
+  MEMORY_INFRA_SCHEDULES,
+  MEMORY_INGEST_OUTBOX_POLL_QUEUE,
+  MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
+  type ReconcileMemInput,
+  buildMemoryBriefRegenHandler,
+  buildMemoryBriefSweepHandler,
+  buildMemoryEventIngestHandler,
+  buildMemoryIngestOutboxPollHandler,
+  buildMemoryIngestOutboxRecoverHandler,
+  buildMemoryReconcileHandler,
+} from './server/memory/triggers';
 export { misconceptionHardConfirmEnabled } from './server/misconception-promote';
 export {
   type AgentNoteBoardDto,
@@ -66,5 +88,3 @@ export type {
 } from './server/proposal-appliers';
 // Task composition uses the narrow task-public entry directly.
 export { agencyTaskSpecs } from './task-public';
-export type { BriefDraftOutput } from './tasks/memory-brief';
-export { BriefDraftOutputSchema, parseBriefDraftOutput } from './tasks/memory-brief';

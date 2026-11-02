@@ -12,8 +12,9 @@ import {
 // client must resolve the same default so a restore lands on the table read here.
 import { DASHSCOPE_EMBED_MODEL_ID } from '@/server/ai/providers';
 import { MEM0_COLLECTION_DEFAULT } from '@/server/export/constants';
-import { memoryLlmHeaders, resolveMemoryLlmConfig } from './llm-config';
+import { type Env, memoryLlmHeaders, resolveMemoryLlmConfig } from './llm-config';
 
+export type { Env } from './llm-config';
 export { memoryLlmHeaders, resolveMemoryLlmConfig } from './llm-config';
 
 // The global product pin selects the extraction LLM; embeddings keep their own
@@ -22,8 +23,6 @@ const DEFAULT_COLLECTION = MEM0_COLLECTION_DEFAULT;
 const DEFAULT_EMBEDDING_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
 const DEFAULT_EMBEDDING_DIMS = 1024; // embedder and vectorStore must agree
 const DEFAULT_HISTORY_DB_PATH = '/var/lib/mem0/history.db'; // absolute; prod compose mounts it, dev overrides
-
-export type Env = Record<string, string | undefined>;
 
 /**
  * One mem0 SQLite memory_history tombstone. A DELETE carries the deleted text in

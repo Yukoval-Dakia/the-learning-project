@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createMem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
+import { createMem0OpaqueOperationContext } from '../provider-attempt-runtime';
 import { createMemoryClient } from './client';
 
 const sdk = vi.hoisted(() => ({

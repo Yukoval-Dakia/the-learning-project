@@ -38,7 +38,7 @@ RUN npm install --omit=dev --no-audit --no-fund \
     @modelcontextprotocol/sdk@1.29.0
 
 # Stage 2.7: install better-sqlite3 into its own clean flat node_modules.
-# YUK-341 — mem0 history (disableHistory:false, src/server/memory/client.ts) uses
+# YUK-341 — mem0 history (disableHistory:false, src/server/ai/mem0/client.ts) uses
 # SQLiteManager → loads the native better_sqlite3.node. esbuild
 # --external:better-sqlite3 (build:server + build:worker) keeps the .node out of
 # the bundle, so the runner needs it as a flat overlay (like sharp above).

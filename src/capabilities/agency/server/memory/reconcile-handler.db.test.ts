@@ -11,7 +11,7 @@ import { RetryableError } from '@/core/schema/structured_question';
 import { cost_ledger, provider_attempt } from '@/db/schema';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { providerOperationIdForInvocation } from '@/server/ai/provider-attempt-runtime';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 
 beforeEach(() => {
   vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
@@ -34,9 +34,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-import { createMem0Collection } from '../../../tests/helpers/mem0-collection';
-import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
-import type { MemoryClient } from './client';
+import { createMem0Collection } from '../../../../../tests/helpers/mem0-collection';
+import { memoryClientMock } from '../../../../../tests/helpers/memory-client-mock';
+import type { MemoryClient } from '@/server/ai/mem0/client';
+import { judgeReconciliation } from '@/server/ai/mem0/reconcile-llm';
 import { insertPlannedRows, loadUnappliedLog, makePlannedRow } from './reconcile-store';
 import { buildMemoryReconcileHandler } from './triggers';
 
@@ -362,7 +363,10 @@ describe('reconcile handler — direct provider-start fence after abort', () => 
         );
       });
       vi.stubGlobal('fetch', fetchImpl);
-      const handler = buildMemoryReconcileHandler(db, { memoryClient: client });
+      const handler = buildMemoryReconcileHandler(db, {
+        memoryClient: client,
+        judge: judgeReconciliation,
+      });
       const jobs = makeJob({
         memories: [{ id: newId, text, kind: 'preference', created_ms: 2000 }],
         user_id: 'self',

@@ -1,43 +1,10 @@
-export type ReconcileAction = 'KEEP_BOTH' | 'SUPERSEDE' | 'MERGE' | 'RETRACT_NEW';
-
-export type ReconcileDecision = {
-  new_index: number;
-  action: ReconcileAction;
-  old_index: number | null;
-  confidence: number;
-  reason: string;
-  /**
-   * MERGE only: the rewritten text that absorbs the new memory. The parser requires
-   * it for MERGE; reason is never a substitute for merged text.
-   */
-  merged_text?: string | null;
-};
-
-/** A new memory with its extracted text and metadata for the prompt. */
-export type NewMemoryEntry = {
-  index: number;
-  kind: string;
-  text: string;
-  memory_id: string;
-  /** epoch-ms of the new memory (threaded from the ingest event) for recency. */
-  created_ms: number;
-};
-
-/** An existing candidate memory for the prompt. */
-export type CandidateEntry = {
-  index: number;
-  text: string;
-  memory_id: string;
-  created_ms?: number;
-  /**
-   * mem0's fused search score for this candidate. The structural corroboration
-   * gate uses it; undefined means no score, so that gate abstains.
-   */
-  score?: number;
-};
-
-/** Per-new-memory candidates: new_index → candidates found by search. */
-export type CandidatesByNew = Map<number, CandidateEntry[]>;
+import type {
+  CandidateEntry,
+  CandidatesByNew,
+  NewMemoryEntry,
+  ReconcileAction,
+  ReconcileDecision,
+} from './mem0-runtime';
 
 type Warn = (message: string) => void;
 const ignoreWarning: Warn = () => {};

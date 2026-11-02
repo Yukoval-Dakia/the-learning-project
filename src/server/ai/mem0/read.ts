@@ -1,7 +1,7 @@
 import type { SearchResult } from 'mem0ai/oss';
-import type { Mem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
+import type { Mem0OpaqueOperationContext } from '../provider-attempt-runtime';
 
-export { createMem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
+export { createMem0OpaqueOperationContext } from '../provider-attempt-runtime';
 
 import { type MemoryClient, createMemoryClient } from './client';
 import { type SearchMemoriesOpts, searchMemories } from './search-memories';
@@ -15,7 +15,7 @@ export type MemoryReadClientFactory = () => MemoryReadClient;
 /**
  * Read learner facts through the canonical filtering/reranking path.
  *
- * This seam belongs in `server/memory`, not `kernel`: client construction and vector search are
+ * This seam belongs in `server/ai/mem0`, not `kernel`: client construction and vector search are
  * server-only IO. Keeping both operations behind one interface prevents capability callers from
  * coupling to the concrete mem0 client plus its search wrapper independently.
  */

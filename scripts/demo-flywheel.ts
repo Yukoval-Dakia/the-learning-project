@@ -27,9 +27,9 @@ import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/public'
 import { db } from '@/db/client';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { listActiveGoals } from '@/kernel/read-models/active-goal-scope';
-import { loadSubjectBriefEvents } from '@/server/memory/active-subjects';
-import { regenerateMemoryBrief } from '@/server/memory/brief';
-import { buildBriefGenerator } from '@/server/memory/brief-writer';
+import { loadSubjectBriefEvents } from '@/capabilities/agency/server/memory/active-subjects';
+import { regenerateMemoryBrief } from '@/capabilities/agency/server/memory/brief';
+import { buildBriefGenerator } from '@/capabilities/agency/server/memory/brief-writer';
 import { acceptAiProposal } from '@/server/proposals/actions';
 
 const NOW = new Date();

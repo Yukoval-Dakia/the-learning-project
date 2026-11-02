@@ -7,6 +7,7 @@ import {
   lockEventDerivationSources,
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
+import { lockMemoryDispatchSource, lockMemoryIngestSource } from '@/kernel/locks/memory-locks';
 import {
   MEMORY_RECONCILE_HANDOFF_ACTION,
   MemoryReconcileHandoffError,
@@ -94,9 +95,7 @@ export async function claimMemoryIngest(
   sourceId: string,
 ): Promise<'winner' | 'started' | 'completed'> {
   return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`memory:ingest:${sourceId}`}, 0))`,
-    );
+    await lockMemoryIngestSource(tx, sourceId);
     const completedId = memoryReconcileHandoffEventId('ingest_completed', sourceId);
     await lockEventDerivationSources(tx, sourceId);
     if ((await readEventDerivationPolicy(tx, sourceId)) !== 'allow')
@@ -164,9 +163,7 @@ export async function persistIngestCompleted(
     intent_digest: digest,
   };
   await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`memory:ingest:${input.sourceEventId}`}, 0))`,
-    );
+    await lockMemoryIngestSource(tx, input.sourceEventId);
     if (input.resolution === 'provider_result') {
       const startedId = memoryReconcileHandoffEventId('add_started', input.sourceEventId);
       const startedRows = await tx
@@ -242,9 +239,7 @@ export async function persistDispatchCompleted(
   )
     throw new MemoryReconcileHandoffError(`dispatch batch mismatch ${completion.source_event_id}`);
   await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`memory:dispatch:${completion.source_event_id}`}, 0))`,
-    );
+    await lockMemoryDispatchSource(tx, completion.source_event_id);
     for (const memory of normalized)
       await writeMemoryHandoffRecord(
         tx,
@@ -271,9 +266,7 @@ export async function persistObserveDispatchSkipped(
   jobId: string,
 ): Promise<void> {
   await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`memory:dispatch:${sourceId}`}, 0))`,
-    );
+    await lockMemoryDispatchSource(tx, sourceId);
     await writeMemoryHandoffRecord(
       tx,
       sourceId,

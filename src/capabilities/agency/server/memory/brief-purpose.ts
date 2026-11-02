@@ -9,6 +9,7 @@ import {
   readPurposeReceipt,
   readPurposeRepairs,
 } from '@/kernel/read-models/purpose-change';
+import { lockPurposeBriefScope } from '@/kernel/locks/memory-locks';
 import { recordPurposeRepair } from './purpose-repair-store';
 
 export async function scopeBriefPurposeCurrent(db: Db | Tx, scopeKey: string) {
@@ -56,9 +57,7 @@ export async function executePurposeBrief(
   const taskRunId = operationId ? `memory-purpose-brief:${jobId}` : undefined;
   const run = await db.transaction(async (tx) => {
     if (!operationId) return scopeBriefPurposeCurrent(tx, scopeKey);
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`purpose-brief:${operationId}:${scopeKey}`}, 0))`,
-    );
+    await lockPurposeBriefScope(tx, operationId, scopeKey);
     const receipt = await readPurposeReceipt(tx, operationId);
     if (
       !receipt?.cleanup_required ||
