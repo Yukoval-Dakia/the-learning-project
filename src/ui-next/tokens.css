@@ -298,7 +298,8 @@
   [data-un-m3e="practice-foundation"],
   [data-un-m3e="companion-content"],
   [data-un-m3e="record-purpose"],
-  [data-un-m3e="record-cost"]
+  [data-un-m3e="record-cost"],
+  [data-un-m3e="practice-studio"]
 ) {
   --un-md-sys-color-primary: #6750a4;
   --un-md-sys-color-on-primary: #ffffff;
@@ -366,13 +367,15 @@
     [data-un-m3e="practice-foundation"],
     [data-un-m3e="companion-content"],
     [data-un-m3e="record-purpose"],
-    [data-un-m3e="record-cost"]
+    [data-un-m3e="record-cost"],
+    [data-un-m3e="practice-studio"]
   ):not([data-un-theme="light"]),
 [data-ui-next]:is(
   [data-un-m3e="practice-foundation"],
   [data-un-m3e="companion-content"],
   [data-un-m3e="record-purpose"],
-  [data-un-m3e="record-cost"]
+  [data-un-m3e="record-cost"],
+  [data-un-m3e="practice-studio"]
 )[data-un-theme="dark"] {
   --un-md-sys-color-primary: #d0bcff;
   --un-md-sys-color-on-primary: #381e72;
@@ -398,7 +401,8 @@
       [data-un-m3e="practice-foundation"],
       [data-un-m3e="companion-content"],
       [data-un-m3e="record-purpose"],
-      [data-un-m3e="record-cost"]
+      [data-un-m3e="record-cost"],
+      [data-un-m3e="practice-studio"]
     ):not([data-un-theme="light"]) {
     --un-md-sys-color-primary: #d0bcff;
     --un-md-sys-color-on-primary: #381e72;

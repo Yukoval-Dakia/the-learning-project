@@ -58,6 +58,7 @@
     "YUK-1571-dreaming-note-refresh": "Signal, not a shared command: dreaming_nightly no longer calls notes enqueueDreamingNoteRefine. A new note_update artifact in the scan becomes experimental:dreaming_note_refresh; notes.dreaming-note-refresh subscribes after commit and enqueues the existing dreaming refine. agency -> notes 2 -> 1 (proposal-accept handoff follows in same PR). The public export of enqueueDreamingNoteRefine is deleted. Historical scans are not replayed.",
     "YUK-1571-undo-ai-change": "The undo route returns HTTP 200 even when the note was not restored. skipped:version_conflict means the note is unchanged; skipped:already_undone is a real no-op. That judgment now lives in src/ui/lib/undo-ai-change.ts. The note reader, the workbench client, and the Start workbench client call it directly. The shell re-export from notes/ui-public is deleted. shell -> notes 1 -> 0. Composed with main cd9dad17 (dreaming note refresh already cut agency -> notes to 1, cross 16): cross-capability value 16 -> 15. Nontrivial SCC stays empty. Notes keeps the undo route.",
     "YUK-1571-learning-intent-note-handoff": "agency -> notes proposal-accept cluster retired: createLearningIntentNote and post-accept dispatchNoteGeneration now live in src/kernel/records/{learning-intent-note-birth,note-handoff-protocol}. Notes keeps boss-port wiring and recovery floor as live consumers (no pass-through re-exports). registerNoteHandoffBossResolver wires getStartedBoss at server/app.ts composition root. agency -> notes 1 -> 0 after main 45e197a7 (dreaming refresh + shell undo-ai-change cuts). cross-capability value 15 -> 14.",
+    "YUK-1571-shell-route-composed-parts": "Today and Coach take their agency/onboarding parts from the route shells (Start server/start/routes/{today,coach}.tsx, dev SPA web/src/router.tsx): agent-note board reader, AgentNotesBoard, LearningIntentComposer, ColdStart, placement-profile reader, calibration reader, and CalibrationMaturityBadge. Shell keeps type-only imports. The badge gate and maturity summary stay in onboarding (CalibrationMaturityBadge); the RcMaturityBadge/RECOMPUTE_BADGE_ENABLED/summarizeMaturity public exports are deleted. shell -> agency 1 -> 0, shell -> onboarding 3 -> 0, cross-capability value 13 -> 9. Nontrivial SCC stays empty. No compat re-export.",
     "YUK-1571-ingestion-knowledge-tag": "ingestion -> knowledge tagging commands retired: match-or-propose lives in src/kernel/records/knowledge-tag.ts, cosine retrieval and the match threshold in src/kernel/read-models/knowledge-similarity.ts, and propose-new id preparation in src/kernel/records/knowledge-node-materialization.ts (knowledge proposals consumes the same function). The tagger takes the embedder as an explicit dependency; ingestion binds DashScope in server/knowledge-namer.ts. ingestion -> knowledge 2 -> 0; cross-capability value 13 -> 11; the embed edge moves from knowledge -> ai (7 -> 6) to ingestion -> ai (12 -> 13), capability -> server total unchanged at 149."
   },
   "changes": [
@@ -7240,6 +7241,42 @@
       "direction": "decrease"
     },
     {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "requestIngestionOperation",
+      "targetModule": "src/capabilities/ingestion/server/operation-request.ts",
+      "targetSymbol": "requestIngestionOperation",
+      "owner": "ingestion",
+      "consumers": [
+        {
+          "file": "server/start/ingestion-operation-create-operation.ts",
+          "line": 15
+        }
+      ],
+      "evidence": "The authenticated Start host imports the Ingestion public entry at await-import AST and module path line 15 and calls the complete operation request at line 17. The context reference is type-only; the HTTP adapter is an internal consumer of the same owner.",
+      "rationale": "Ingestion owns the full operation request contract: session identity, deferred body parsing and schema errors, idempotency-header validation, unchanged acceptance and dispatch invocation, and the complete resource response descriptor with status and headers. HTTP and Start transport that descriptor without reproducing acceptance, recovery or response policy.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-462603d8-558b-48f6-86fd-4f28857b776e",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "shell -> agency",
+      "date": "2026-11-02",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "shell -> onboarding",
+      "date": "2026-11-02",
+      "from": 3,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
       "debt": "crossCapabilityValue",
       "pair": "ingestion -> knowledge",
       "date": "2026-11-02",
@@ -11448,6 +11485,26 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/operation-request.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the shared API error type and error-wire vocabulary; Ingestion owns the original operation request validation order and errors, calls its unchanged acceptance owner, and projects the complete resource response policy. HTTP and Start retain transport error adaptation.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/help-explanation-record.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1413",
+      "owns": "Kernel owns append-only event persistence. Copilot keeps the explanation-replay identity, actor, verdict, digests, task-run, provider, model and cost.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/ingestion/server/auto-enroll.ts",
       "module": "src/kernel/records/knowledge-tag.ts",
       "kind": "value",
@@ -12700,7 +12757,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 11,
+      "total": 7,
       "byOwnerPair": {
         "agency -> notes": 0,
         "agency -> practice": 2,
@@ -12708,8 +12765,6 @@
         "copilot -> practice": 1,
         "observability -> agency": 1,
         "observability -> practice": 1,
-        "shell -> agency": 1,
-        "shell -> onboarding": 3,
         "shell -> practice": 1
       },
       "nontrivialSccs": []

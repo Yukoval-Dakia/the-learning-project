@@ -12,6 +12,8 @@ import {
   isDurablePickupStalled,
 } from '@/capabilities/copilot/durable-pickup';
 
+import { type PublicProse, mergePublicProse, parsePublicProse } from './public-prose';
+
 export const COPILOT_RUN_STEP_EVENT = 'copilot_run.step' as const;
 
 export type CopilotSubtaskStatus = 'running' | 'completed' | 'failed';
@@ -55,6 +57,7 @@ export interface CopilotRunView {
   phase: CopilotRunPhase;
   lastEventId: number;
   replyText: string;
+  publicProse?: PublicProse;
   /** Authoritative reply metadata; decoded into presentation only by message-projection. */
   replyPayload?: Record<string, unknown>;
   failureReason?: string;
@@ -277,6 +280,13 @@ export function foldCopilotRunFrames(
   const frames = [...byId.values()].sort((a, b) => a.event_id - b.event_id);
   let phase: CopilotRunPhase = 'queued';
   let replyText = '';
+  let publicProse: PublicProse | undefined;
+  const publicDeltas = new Map<number, string>();
+  const receivePublicProse = (item: CopilotRunJobFrame) => {
+    const snapshot = parsePublicProse(item.payload.public_prose);
+    if (!snapshot || snapshot.last_event_id > item.event_id) return;
+    publicProse = mergePublicProse(snapshot, publicDeltas);
+  };
   let replyPayload: Record<string, unknown> | undefined;
   let failureReason: string | undefined;
   let checkpointEventId: string | undefined;
@@ -324,14 +334,21 @@ export function foldCopilotRunFrames(
         break;
       }
       case 'copilot_run.delta': {
-        if (terminalRun) break;
+        if (terminalRun || (publicProse && publicProse.status !== 'streaming')) break;
         phase = 'running';
         const text = typeof item.payload.text === 'string' ? item.payload.text : '';
-        if (text) replyText += text;
+        if (text) {
+          replyText += text;
+          if (!publicProse || publicProse.status === 'streaming') {
+            publicDeltas.set(item.event_id, text);
+            if (publicProse) publicProse = mergePublicProse(publicProse, publicDeltas);
+          }
+        }
         break;
       }
       case 'copilot_run.reply': {
         if (terminalRun) break;
+        receivePublicProse(item);
         replyPayload = { ...replyPayload, ...item.payload };
         phase = 'running';
         if (typeof item.payload.reply_md === 'string') replyText = item.payload.reply_md;
@@ -342,6 +359,7 @@ export function foldCopilotRunFrames(
       }
       case 'copilot_run.done':
         if (!terminalRun) {
+          receivePublicProse(item);
           // Only REPLY owns terminal content; DONE may add product metadata.
           replyPayload = { ...replyPayload, ...item.payload, reply_md: replyPayload?.reply_md };
           phase = 'completed';
@@ -360,6 +378,7 @@ export function foldCopilotRunFrames(
             phase = 'running';
             break;
           }
+          receivePublicProse(item);
           phase = 'failed';
           replyPayload = undefined;
           if (typeof item.payload.reply_md === 'string') replyText = item.payload.reply_md;
@@ -386,6 +405,7 @@ export function foldCopilotRunFrames(
     phase,
     lastEventId: frames.at(-1)?.event_id ?? 0,
     replyText,
+    ...(publicProse ? { publicProse } : {}),
     ...(replyPayload ? { replyPayload } : {}),
     ...(failureReason ? { failureReason } : {}),
     ...(checkpointEventId ? { checkpointEventId } : {}),
