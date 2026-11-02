@@ -5,16 +5,10 @@ import { allowsDerivation } from '@/core/schema/derivation-policy';
 // runTask. The writer throws on failure; the regen handler owns the graceful
 // per-scope skip that leaves the prior brief intact.
 
-// The writer-side output contract is owned by the agency task spec; consume it
-// through the agency public entrypoint.
-import { BriefDraftOutputSchema, parseBriefDraftOutput } from '@/capabilities/agency/public';
-
-export { BriefDraftOutputSchema, parseBriefDraftOutput };
-
 import type { Db } from '@/db/client';
 import { KNOWLEDGE_EXCERPT_MAX } from '@/kernel/tools/budgets'; // I-3 — payload excerpt cap
-import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { parseBriefDraftOutput } from '../../tasks/memory-brief';
+import { type RunTaskCallCtx, type TaskTextRunFn, makeRunTaskFn } from '../ai-runtime';
 import type { BriefDraft, BriefEvent, BriefFact, GenerateBrief } from './brief';
 
 // Writer output schema: the three prose fields only. Evidence ids are server-owned
@@ -95,7 +89,7 @@ export async function runBriefWriter(params: {
   events: BriefEvent[];
   facts: BriefFact[];
   now: string; // real-clock ISO anchor for the server-owned 7d/90d buckets
-  ctx?: import('@/server/ai/runner-fn').RunTaskCallCtx;
+  ctx?: RunTaskCallCtx;
 }): Promise<BriefDraft> {
   const { runTaskFn, scopeKey, template, facts, now } = params;
   const events = params.events.filter((event) => allowsDerivation(event.payload));

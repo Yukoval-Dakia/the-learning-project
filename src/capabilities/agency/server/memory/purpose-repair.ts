@@ -8,6 +8,7 @@ import {
   eventBelongsToDocumentSql,
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
+import { lockPurposeBriefScope } from '@/kernel/locks/memory-locks';
 import {
   PURPOSE_CHANGE_ACTION,
   PURPOSE_REPAIR_ACTION,
@@ -15,7 +16,7 @@ import {
   type PurposeRepairRecordT,
   readPurposeRepairs,
 } from '@/kernel/read-models/purpose-change';
-import { type MemoryClient, createMemoryClient } from './client';
+import { type MemoryClient, createMemoryClient } from './mem0-runtime';
 import { readIngestCompleted, readMemoryIngestStarted } from './memory-reconcile-handoff-store';
 import { recordPurposeRepair } from './purpose-repair-store';
 
@@ -178,9 +179,7 @@ export async function recoverPurposeChanges(
       )
       .slice(0, 10)) {
       const jobId = await db.transaction(async (tx) => {
-        await tx.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtextextended(${`purpose-brief:${receipt.operation_id}:${scope.scope_key}`}, 0))`,
-        );
+        await lockPurposeBriefScope(tx, receipt.operation_id, scope.scope_key);
         const prior = (await readPurposeRepairs(tx, receipt.operation_id)).find(
           (r) => r.sink === 'brief_dispatch' && r.source_id === scope.scope_key,
         );

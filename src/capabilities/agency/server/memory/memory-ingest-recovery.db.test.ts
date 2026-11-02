@@ -3,12 +3,12 @@ import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, provider_attempt, provider_attempt_admission } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { type Mem0Like, createMemoryClient } from '@/server/ai/mem0/client';
 import {
   createMem0OpaqueOperationContext,
   executeMem0OpaqueOperation,
 } from '@/server/ai/provider-attempt-runtime';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { type Mem0Like, createMemoryClient } from './client';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import type { MemoryIngestReplayRequest } from './memory-ingest-recovery-contract';
 import {
   assertMemoryIngestReplayGrant,

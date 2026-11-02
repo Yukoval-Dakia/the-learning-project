@@ -5,10 +5,10 @@
 // almost nothing and regenerate an empty brief every night.
 
 import { and, eq, gt, inArray, like, sql } from 'drizzle-orm';
-import { batchResolveSubjectIds } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event, learning_record, memory_brief_note } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
+import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
 import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
 import type { BriefEvent } from './brief';
 

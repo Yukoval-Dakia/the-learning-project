@@ -19,9 +19,9 @@ stage copies patches before frozen install. On a Mem0 upgrade, verify the upstre
 behavior and remove/rebase the patch deliberately. The real-SDK ESM/CJS unit suite
 and PG/ingestion-owner DB suite are the behavioral acceptance, not patch text hashes.
 
-`src/server/memory/mem0-sdk-failure.unit.test.ts` covers local HTTP failures,
+`src/capabilities/agency/server/memory/mem0-sdk-failure.unit.test.ts` covers local HTTP failures,
 invalid outputs, valid empty extraction and stored result identity.
-`src/server/memory/mem0-sdk-failure.db.test.ts` covers atomic writes and failed
+`src/capabilities/agency/server/memory/mem0-sdk-failure.db.test.ts` covers atomic writes and failed
 attempt/no-completion/no-reburn versus legitimate empty completion.
 
 

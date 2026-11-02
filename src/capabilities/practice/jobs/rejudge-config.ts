@@ -27,6 +27,6 @@
  * 60s comfortably covers the observed same-instant double-send (dev double-worker
  * consume / a retry re-send) and can never suppress a legitimate distinct appeal
  * — each appeal POST mints a NEW appeal-event id = a NEW singletonKey. Mirrors
- * `AUTO_ENROLL_SINGLETON_SECONDS` + `memory/triggers.ts`.
+ * `AUTO_ENROLL_SINGLETON_SECONDS` + `agency/server/memory/triggers.ts`.
  */
 export const REJUDGE_SINGLETON_SECONDS = 60;

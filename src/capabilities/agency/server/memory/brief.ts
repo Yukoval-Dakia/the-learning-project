@@ -3,11 +3,8 @@ import { allowsDerivation } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
 import { event, memory_brief_note } from '@/db/schema';
 import { allowedEventIds, eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
-import {
-  PURPOSE_BRIEF_LOCK,
-  briefPurposeCurrent,
-  latestPurposeWithdrawal,
-} from '@/kernel/read-models/purpose-change';
+import { lockPurposeBrief } from '@/kernel/locks/memory-locks';
+import { briefPurposeCurrent, latestPurposeWithdrawal } from '@/kernel/read-models/purpose-change';
 import { BRIEF_REFRESH_BUDGET, LONG_TERM_FRESHNESS_BUDGET } from '@/kernel/tools/budgets';
 import { scoreLongTermFreshness } from './brief-freshness';
 import { markBriefPurpose, scopeBriefPurposeCurrent } from './brief-purpose';
@@ -139,7 +136,7 @@ async function loadEventsFromDb(db: Db, scopeKey: string): Promise<BriefEvent[]>
 
 async function upsertBriefInDb(db: Db, row: BriefRow, withdrawal: string | null): Promise<void> {
   await db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${PURPOSE_BRIEF_LOCK}, 0))`);
+    await lockPurposeBrief(tx);
     if ((await latestPurposeWithdrawal(tx)) !== withdrawal)
       throw new Error('purpose changed during brief generation; discard prose');
     const ids = [
