@@ -14,6 +14,7 @@ import {
 } from '@/kernel/proposals/applier-helpers';
 import { createLearningIntentNote } from '@/kernel/records/learning-intent-note-birth';
 import { dispatchNoteGeneration } from '@/kernel/records/note-handoff-protocol';
+import { getStartedBoss } from '@/server/boss/client';
 import * as ownerRuntime from '@/server/proposals/owner-runtime';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
 import { acceptGoalScopeProposal } from './goals/accept';
@@ -66,7 +67,8 @@ function runtimeOptions(db: Db, input: ProposalAcceptInput, runtime: unknown): A
   const enqueueLearningIntentNote =
     seams.enqueueLearningIntentNote ??
     (shouldEnqueueBackgroundJobs()
-      ? (artifactId: string) => dispatchNoteGeneration(db as Db, artifactId)
+      ? async (artifactId: string) =>
+          dispatchNoteGeneration(db as Db, artifactId, { boss: await getStartedBoss() })
       : undefined);
   return {
     ...seams,
