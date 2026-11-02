@@ -250,6 +250,16 @@ export async function commitFormalAttempt(
     ) => Promise<void>;
   } = {},
 ) {
+  const [boundIssuance] = await database
+    .select({ container: assessment_issuance.container_occurrence_ref })
+    .from(assessment_issuance)
+    .where(eq(assessment_issuance.issuance_id, request.issuance_id));
+  if (boundIssuance?.container?.startsWith('conversation-confirmation:') && !options.beforeActivate)
+    throw new ApiError(
+      'confirmation_unbound',
+      'confirmation requires its conversation authorization',
+      409,
+    );
   if (options.selfReport && !options.userRating) {
     throw new ApiError('rating_required', 'self-report requires an explicit rating', 400);
   }
