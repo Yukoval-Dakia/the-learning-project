@@ -1,23 +1,18 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 
-import {
-  type IngestionRedactionField,
-  writeIngestionUsageReceipt,
-} from '@/capabilities/ingestion/public';
 import { dispatchExtractionFollowUps } from '@/capabilities/ingestion/server/extraction-follow-up';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { learning_session, source_document } from '@/db/schema';
+import { learning_session } from '@/db/schema';
 import { writeJobEvent } from '@/kernel/job-events';
-import {
-  USAGE_POLICY_PROVENANCE_KEY,
-  resolveSessionDerivationPolicy,
-} from '@/kernel/read-models/usage-policy';
+import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
 import { writeSessionEvent } from '../events/session-extract';
-import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './omission';
+import { type IngestionRedactionField, writeIngestionUsageReceipt } from '../privacy-guard';
+import { writeIngestionSessionBirth } from '../session/birth';
+import type { DocxExternalRefOmissionFacts } from './omission';
 
 // YUK-258 — DOCX text-line session lifecycle owner.
 //
@@ -96,11 +91,6 @@ export async function initiateDocxTextUpload(
 
   const result = await db.transaction(async (tx) => {
     const now = new Date();
-    const sourceDocumentId = createId();
-    const sessionId = createId();
-    const omission = params.externalRefOmission;
-    const warnings = omission ? [EXTERNAL_REF_OMISSION_NOTICE] : [];
-
     // The import route checks every block.image_ref against the session's
     // source_asset_ids, but embedded-image ids live only on the blocks. Pin them
     // on the session too, or import fails with 'image_ref … not in session
@@ -108,61 +98,14 @@ export async function initiateDocxTextUpload(
     const embeddedRefs = Array.from(new Set(params.blocks.flatMap((b) => b.imageRefs)));
     const sessionAssetIds = Array.from(new Set([...params.evidenceAssetIds, ...embeddedRefs]));
 
-    // YUK-1476 — provenance carries the omission audit (both digests and the
-    // omitted facts: part/rId/type, never the external Target URL).
-    await tx.insert(source_document).values({
-      id: sourceDocumentId,
-      title: null,
-      source_asset_ids: sessionAssetIds,
-      body_md: null,
-      provenance: {
-        entrypoint: 'docx',
-        line: 'text',
-        // YUK-1408 — explicit consent signal; absence = default 'allow'.
-        ...(params.derivationPolicy
-          ? {
-              [USAGE_POLICY_PROVENANCE_KEY]: {
-                derivation_policy: params.derivationPolicy,
-              },
-            }
-          : {}),
-        ...(omission
-          ? {
-              docx_external_ref_omission: {
-                input_sha256: omission.inputSha256,
-                converter_input_sha256: omission.converterInputSha256,
-                omitted: omission.omissions,
-                learner_notice: EXTERNAL_REF_OMISSION_NOTICE,
-              },
-            }
-          : {}),
-      } as Record<string, unknown>,
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-
-    await tx.insert(learning_session).values({
-      id: sessionId,
-      type: 'ingestion',
-      source_document_id: sourceDocumentId,
-      source_asset_ids: sessionAssetIds,
-      status: 'uploaded',
+    const { sessionId, sourceDocumentId, warnings } = await writeIngestionSessionBirth(tx, {
+      sourceAssetIds: sessionAssetIds,
+      uploadedAssetCount: params.evidenceAssetIds.length,
       entrypoint: 'docx',
-      error_message: null,
-      warnings,
-      started_at: now,
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-
-    // Same job_events shape as initiateUpload, so SSE replay is shared.
-    await writeJobEvent(tx, {
-      business_table: SESSION_TABLE,
-      business_id: sessionId,
-      event_type: 'ingestion.uploaded',
-      payload: { asset_count: params.evidenceAssetIds.length, entrypoint: 'docx' },
+      line: 'text',
+      derivationPolicy: params.derivationPolicy,
+      externalRefOmission: params.externalRefOmission,
+      now,
     });
 
     // Blocks pin the evidence pages as source_asset_ids; image_refs carry the

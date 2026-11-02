@@ -21,6 +21,7 @@ import {
 } from '@/kernel/read-models/usage-policy';
 import { AGENT_BUDGET_LOCK_KEY, parseAgentBudget } from './agent/budget-state';
 import { agentStopState, requestAgentStop } from './agent/ownership';
+import { commitDocumentUsagePolicy } from './session/source-document-provenance';
 
 /** Complete private owner. The API never updates provenance or reconstructs a receipt. */
 export async function changeIngestionPurpose(db: Db, sessionId: string, raw: unknown) {
@@ -124,21 +125,7 @@ export async function changeIngestionPurpose(db: Db, sessionId: string, raw: unk
       external_effect: 'unknown_or_irreversible',
       derivation_policy: 'answer_only',
     });
-    await tx
-      .update(source_document)
-      .set({
-        provenance: {
-          ...doc.provenance,
-          usage_policy: {
-            ...(rawPolicy as Record<string, unknown> | undefined),
-            derivation_policy: input.target,
-          },
-          usage_epoch: epoch,
-        },
-        version: doc.version + 1,
-        updated_at: new Date(),
-      })
-      .where(eq(source_document.id, doc.id));
+    await commitDocumentUsagePolicy(tx, doc, { target: input.target, epoch });
     await writeEvent(tx, {
       id: operationId,
       session_id: sessionId,
