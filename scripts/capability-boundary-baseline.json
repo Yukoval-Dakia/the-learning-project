@@ -7192,6 +7192,14 @@
     },
     {
       "debt": "capabilityToServer",
+      "pair": "practice -> coldstart",
+      "date": "2026-11-01",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
       "pair": "practice -> mastery",
       "date": "2026-11-01",
       "from": 2,
@@ -12507,7 +12515,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 154,
+      "total": 153,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -12535,7 +12543,6 @@
         "practice -> ai": 38,
         "practice -> assessment": 1,
         "practice -> boss": 12,
-        "practice -> coldstart": 1,
         "practice -> fsrs": 2,
         "practice -> mastery": 1,
         "practice -> memory": 1,

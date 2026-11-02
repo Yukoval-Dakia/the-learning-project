@@ -84,7 +84,7 @@ export async function pickProbeForKnowledge(
 1. **recall 原题重复**：fill_blank/translation 题，lastQuestionId 命中 → 重选同题（非轮换）。
 2. **recall 降级**：上次题被降 draft → 退到 K 下 created_at 首个 non-draft。
 3. **application 家族轮换序（生产形态）**：root(depth0) + 2 个 depth-1 变式 V1/V2（这是 variant_gen 唯一能产出的形态——depth≥2 被 `variant_gen.ts:161` 封死，见 §3 备忘）。序 = `(variant_depth ASC, created_at ASC, id ASC)` → `[root, V1, V2]`（V1/V2 同 depth=1，靠 created_at 定序）。lastQuestionId=root → 选 V1；last=V1 → 选 V2；last=V2 → 环绕回 root。断言确定性序，并显式断言两个变式 depth 相等（守护「variant_depth 在生产中只分隔原题/变式」的不变量）。
-   - **(可选) 前向兼容守护**：单独构造一个**直插**的 depth-2 行（绕过 variant_gen），断言排序键在 depth 0/1/2 混合时仍稳定。明确标注此 fixture 是 forward-compat guard，**不代表生产数据分布**，仅防未来放宽 depth cap 时排序回归。
+   - **(可选) 前向兼容守护**：单独构造一个**直插**的 depth-2 行（绕过 variant_gen），断言排序键在 depth 0/1/2 混合时仍稳定。此 fixture 是 forward-compat guard，仅防未来放宽 depth cap 时排序回归。
 4. **无变式降级**：application 题家族仅原题（len=1）→ 选回原题自身。
 5. **单题家族 / Q_last 不在 family**：last 已删 → 取序首。
 6. **家族跨知识点边界**：变式标 [K1,K2]，root 只标 [K1]；K2 到期时 family 只含标 K2 的成员，不误选只标 K1 的 root。

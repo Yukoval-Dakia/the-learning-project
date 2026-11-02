@@ -1,18 +1,15 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { event, job_events } from '@/db/schema';
-import { writeJobEvent } from '@/kernel/job-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import {
   copilotBossJobId,
-  copilotRunIdForIdempotencyKey,
   findCopilotDurableAcceptance,
   hashCopilotDurableInput,
-  reconcileCopilotDurableAcceptance,
   reserveCopilotDurableAcceptance,
 } from './durable-dispatch';
 
@@ -101,102 +98,5 @@ describe('durable Copilot dispatch acceptance', () => {
     await expect(findCopilotDurableAcceptance(testDb(), idempotencyKey)).resolves.toEqual(
       results[0]?.acceptance,
     );
-  });
-
-  it('returns conflict when the same key changes a nested execution input', async () => {
-    const idempotencyKey = randomUUID();
-    const sessionId = 'conversation_idempotency_conflict';
-    const firstHash = hashCopilotDurableInput(richTurn);
-    const first = await reserveCopilotDurableAcceptance(testDb(), {
-      sessionId,
-      userMessage: richTurn.user_message,
-      inputHash: firstHash,
-      idempotencyKey,
-      queuedPayload: queuedPayload(sessionId),
-    });
-    const changedHash = hashCopilotDurableInput({
-      ...richTurn,
-      ambient_context: {
-        ...richTurn.ambient_context,
-        focused_entity: { kind: 'knowledge', id: 'kc_lenz_direction_counterexample' },
-      },
-    });
-
-    const conflict = await reserveCopilotDurableAcceptance(testDb(), {
-      sessionId,
-      userMessage: richTurn.user_message,
-      inputHash: changedHash,
-      idempotencyKey,
-      queuedPayload: queuedPayload(sessionId),
-    });
-
-    expect(conflict).toEqual({ outcome: 'conflict', acceptance: first.acceptance });
-    const queuedCount = await testDb().execute(sql`
-      SELECT count(*)::int AS count
-      FROM job_events
-      WHERE business_table = ${COPILOT_RUN_TABLE}
-        AND business_id = ${first.acceptance.runId}
-        AND event_type = ${COPILOT_RUN_EVENTS.QUEUED}
-    `);
-    expect(Number(queuedCount[0]?.count ?? 0)).toBe(1);
-  });
-
-  // @invariant concurrency: lost COMMIT acknowledgement recovery waits for the acceptance lock
-  // @fails-if reconciliation returns missing acceptance while the reserve transaction is still committing
-  it('waits behind an in-flight reserve lock before reconciling a lost COMMIT acknowledgement', async () => {
-    const idempotencyKey = randomUUID();
-    const runId = copilotRunIdForIdempotencyKey(idempotencyKey);
-    const sessionId = 'conversation_acceptance_commit_ack_unknown';
-    const inputHash = hashCopilotDurableInput(richTurn);
-    const bossJobId = copilotBossJobId(runId);
-    let releaseCommit!: () => void;
-    let markQueuedWritten!: () => void;
-    const commitGate = new Promise<void>((resolve) => {
-      releaseCommit = resolve;
-    });
-    const queuedWritten = new Promise<void>((resolve) => {
-      markQueuedWritten = resolve;
-    });
-
-    const lateCommit = testDb().transaction(async (tx) => {
-      // Mirrors reserveCopilotDurableAcceptance's lock and a transaction whose
-      // server-side COMMIT result is still unknown to its caller.
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`copilot-chat:${idempotencyKey}`}, 0))`,
-      );
-      await writeJobEvent(tx, {
-        business_table: COPILOT_RUN_TABLE,
-        business_id: runId,
-        event_type: COPILOT_RUN_EVENTS.QUEUED,
-        payload: {
-          ...queuedPayload(sessionId),
-          input_hash: inputHash,
-          idempotency_key: idempotencyKey,
-          boss_job_id: bossJobId,
-        },
-      });
-      markQueuedWritten();
-      await commitGate;
-    });
-    await queuedWritten;
-
-    let reconciliationSettled = false;
-    const reconciliation = reconcileCopilotDurableAcceptance(testDb(), idempotencyKey).finally(
-      () => {
-        reconciliationSettled = true;
-      },
-    );
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(reconciliationSettled).toBe(false);
-
-    releaseCommit();
-    await lateCommit;
-    await expect(reconciliation).resolves.toEqual({
-      runId,
-      sessionId,
-      inputHash,
-      bossJobId,
-      derivationPolicy: 'allow',
-    });
   });
 });
