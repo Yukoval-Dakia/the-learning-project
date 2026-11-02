@@ -47,6 +47,10 @@ import {
 } from '@/kernel/records/knowledge-node-history';
 import { projectKnowledgeNode } from '@/kernel/records/knowledge-node-materialization';
 import {
+  prefetchKnowledgeOperations,
+  scanKnowledgeOperationRates,
+} from '@/kernel/records/knowledge-operation';
+import {
   gatherAndFoldLearningItem,
   learningItemsWithGenesisAnchor,
   prefetchLearningItemMergeEvents,
@@ -266,6 +270,17 @@ async function eventSubjectIdSet(
       .where(eq(materialized_id_index.subject_kind, kind));
     for (const r of idxRows) out.add(r.materialized_id);
   }
+  if (kind === 'knowledge' || kind === 'knowledge_edge') {
+    // Raw pre-check before id filtering (the scan itself throws on an undecodable
+    // fact), then v1 targets join discovery so a declared entity is never missed
+    // because a derived index is absent.
+    const ops = await scanKnowledgeOperationRates(db);
+    for (const { op } of ops.byRateId.values()) {
+      for (const target of op.targets) {
+        if (target.kind === kind) out.add(target.id);
+      }
+    }
+  }
   return out;
 }
 
@@ -301,12 +316,14 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
     ...defineScan({
       readLiveRows: (db) => db.select(KNOWLEDGE_STRUCTURAL_COLUMNS).from(knowledge),
       toSnapshot: (row) => knowledgeLiveRowToSnapshot(row) as Record<string, unknown>,
-      // Prefetch the node-independent merge and rate legs once for the whole scan.
+      // Prefetch the node-independent merge, rate and v1-operation legs once for
+      // the whole scan; the operation prefetch strict-decodes before id filtering.
       makeFoldOne: async (db) => {
         const merges = await prefetchKnowledgeMergeEvents(db);
         const rates = await prefetchKnowledgeRates(db);
+        const ops = await prefetchKnowledgeOperations(db);
         return (id) =>
-          gatherAndFoldKnowledgeNode(db, id, merges, rates) as Promise<Record<
+          gatherAndFoldKnowledgeNode(db, id, merges, rates, ops) as Promise<Record<
             string,
             unknown
           > | null>;

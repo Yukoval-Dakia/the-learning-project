@@ -11,6 +11,7 @@ import {
 } from '../schema/event';
 import { KnowledgeMutationProposalChange } from '../schema/proposal';
 import type { FoldEvent } from './fold-event';
+import { createdTargetIds, decodeKnowledgeOperation } from './knowledge-operation';
 
 // Archive is its own propose path, outside the mutation union; validate its payload.
 const KnowledgeArchivePayload = z.object({
@@ -137,6 +138,14 @@ export function foldKnowledgeNode(
 
   for (const fe of events) {
     if (fe.action !== 'rate') continue;
+    // Strict pre-strip check: a rate carrying its own knowledge_operation key must
+    // decode — a malformed fact throws here instead of being skipped with the row.
+    const operation = decodeKnowledgeOperation({
+      eventId: fe.id,
+      subjectId: fe.subject_id,
+      causedByEventId: fe.caused_by_event_id,
+      payload: fe.payload,
+    });
     const rate = RateEvent.safeParse(toParseInput(fe));
     if (!rate.success) continue;
     if (rate.data.payload.rating !== 'accept') continue;
@@ -145,8 +154,13 @@ export function foldKnowledgeNode(
     acceptedProposeIds.add(proposeId);
     // Stamped at accept time, not propose time.
     acceptedAtByProposeId.set(proposeId, fe.created_at);
-    const mk = rate.data.payload.materialized_ids?.knowledge;
-    if (mk) materializedKnowledgeByProposeId.set(proposeId, mk);
+    const mk =
+      operation !== 'absent'
+        ? operation.kind === 'create'
+          ? createdTargetIds(operation, 'knowledge')
+          : undefined
+        : rate.data.payload.materialized_ids?.knowledge;
+    if (mk && mk.length > 0) materializedKnowledgeByProposeId.set(proposeId, mk);
   }
 
   // ---------- pass 2: apply in canonical replay order ----------

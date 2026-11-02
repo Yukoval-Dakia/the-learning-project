@@ -7,6 +7,12 @@ import { foldKnowledgeNode } from '@/core/projections/knowledge';
 import type { KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event, materialized_id_index } from '@/db/schema';
+import {
+  type KnowledgeOperationContext,
+  entityKey,
+  prefetchKnowledgeOperations,
+  verifyKnowledgeOperationFacts,
+} from './knowledge-operation';
 import { getAnchorEventId } from './materialized-id-index';
 import { rowToFoldEvent } from './projection-events';
 
@@ -71,7 +77,13 @@ export async function gatherAndFoldKnowledgeNode(
   nodeId: string,
   prefetchedMergeEvents?: Map<string, EventRow[]>,
   prefetchedRates?: Map<string, EventRow[]>,
+  prefetchedOps?: KnowledgeOperationContext,
 ): Promise<KnowledgeRowSnapshotT | null> {
+  // Raw pre-check before any id filtering: every knowledge_operation rate fact in
+  // the log must strict-decode; an undecodable fact is unattributable and fails
+  // the whole knowledge scan closed.
+  const ops = prefetchedOps ?? (await prefetchKnowledgeOperations(db));
+
   // Q1: events whose subject_id is nodeId.
   // Covers genesis, auto_tag, reparent, archive, merge-as-into, and split-as-from.
   const q1 = await db
@@ -105,6 +117,19 @@ export async function gatherAndFoldKnowledgeNode(
   // Dedup the gathered rows by event id; the legs overlap.
   const byId = new Map<string, EventRow>();
   for (const r of [...q1, ...q2, ...q3]) byId.set(r.id, r);
+
+  // v1 discovery: a node declared as an operation target joins the set even when
+  // the derived index is absent. Every referenced fact (fact events, retracted
+  // accept + its proposal, the correction) must exist and match, and the exact
+  // envelopes merge into the fold set.
+  const opRateIds = ops.scan.targetsByEntity.get(entityKey('knowledge', nodeId)) ?? [];
+  const opEntries = opRateIds.flatMap((rateId) => {
+    const entry = ops.scan.byRateId.get(rateId);
+    return entry ? [entry] : [];
+  });
+  const opFacts = verifyKnowledgeOperationFacts(ops, opEntries);
+  for (const entry of opEntries) byId.set(entry.rate.id, entry.rate);
+  for (const [id, row] of opFacts) byId.set(id, row);
 
   // Rate resolution: the reducer needs the accept rates chained to the gathered events.
   const gatheredIds = [...byId.keys()];
@@ -166,8 +191,10 @@ export function knowledgeLiveRowToSnapshot(row: {
 }
 
 /**
- * Whether a node is event-sourced: a genesis/auto-tag event or an index anchor.
- * Pre-event rows fold to null, so callers gate the assert on this to avoid false mismatches.
+ * Whether a node is event-sourced: a genesis/auto-tag event, an index anchor, or a
+ * declared v1 create target. Birth eligibility applies only to create effects — an
+ * archive target is never a genesis. Pre-event rows fold to null, so callers gate
+ * the assert on this to avoid false mismatches.
  */
 export async function hasKnowledgeNodeGenesisAnchor(db: DbLike, nodeId: string): Promise<boolean> {
   const genesisOrAutoTag = await db
@@ -198,7 +225,20 @@ export async function hasKnowledgeNodeGenesisAnchor(db: DbLike, nodeId: string):
       ),
     )
     .limit(1);
-  return indexed.length > 0;
+  if (indexed.length > 0) return true;
+
+  const ops = await prefetchKnowledgeOperations(db);
+  for (const rateId of ops.scan.targetsByEntity.get(entityKey('knowledge', nodeId)) ?? []) {
+    const entry = ops.scan.byRateId.get(rateId);
+    if (
+      entry?.op.targets.some(
+        (t) => t.kind === 'knowledge' && t.id === nodeId && t.effect === 'create',
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -235,5 +275,22 @@ export async function knowledgeNodesWithGenesisAnchor(
       ),
     );
   for (const r of idxRows) out.add(r.materialized_id);
+
+  // v1 create targets are genesis claims; archive targets never birth a node.
+  const ops = await prefetchKnowledgeOperations(db);
+  const remaining = nodeIds.filter((id) => !out.has(id));
+  for (const nodeId of remaining) {
+    for (const rateId of ops.scan.targetsByEntity.get(entityKey('knowledge', nodeId)) ?? []) {
+      const entry = ops.scan.byRateId.get(rateId);
+      if (
+        entry?.op.targets.some(
+          (t) => t.kind === 'knowledge' && t.id === nodeId && t.effect === 'create',
+        )
+      ) {
+        out.add(nodeId);
+        break;
+      }
+    }
+  }
   return out;
 }
