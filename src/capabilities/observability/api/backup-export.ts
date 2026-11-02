@@ -2,7 +2,7 @@
 
 import { db } from '@/db/client';
 import { getR2 } from '@/kernel/object-storage';
-import { buildBackupArchive } from '@/server/export/archive';
+import { buildBackupArchive } from '../server/backup/archive';
 import { BackupExportQuerySchema } from './backup-contracts';
 
 export async function GET(req: Request): Promise<Response> {

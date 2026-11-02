@@ -80,7 +80,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `MEM0_EMBEDDING_MODEL` | app、worker | `text-embedding-v4` | `src/server/ai/mem0/client.ts`；`src/server/ai/providers.ts` |
 | `MEM0_EMBEDDING_BASE_URL` | app、worker | `https://dashscope.aliyuncs.com/compatible-mode/v1`；`embed.ts` 也读同一个键；host 须过模型端点 allowlist（含代码声明的 DashScope 双端点，以及北京 workspace MaaS `ws-tcvd1h9009b55vr0.cn-beijing.maas.aliyuncs.com`） | `src/server/ai/mem0/client.ts`；`src/server/ai/embed.ts` |
 | `MEM0_EMBEDDING_DIMS` | app、worker | `1024`；非正整数抛错 | `src/server/ai/mem0/client.ts` |
-| `MEM0_PGVECTOR_COLLECTION` | app、worker | `learning_project_memories` | `src/server/export/constants.ts` |
+| `MEM0_PGVECTOR_COLLECTION` | app、worker | `learning_project_memories` | `src/kernel/records/mem0-collection.ts` |
 | `MEM0_PGVECTOR_HNSW` | app、worker | `false`；只有字面 `true` 开启 | `src/server/ai/mem0/client.ts` |
 | `MEM0_PGVECTOR_DISKANN` | app、worker | `false`；只有字面 `true` 开启 | `src/server/ai/mem0/client.ts` |
 | `MEM0_HISTORY_DB_PATH` | app、worker | `/var/lib/mem0/history.db`；compose 覆盖 app 为 `/tmp/mem0/history.db`、worker 为 `/var/lib/mem0/history.db` | `src/server/ai/mem0/client.ts`；`docker-compose.yml` |

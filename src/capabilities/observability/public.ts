@@ -74,6 +74,12 @@ export {
   parseAdminFailuresQuery,
   parseAdminRunsQuery,
 } from './server/ai-observability';
+export {
+  type BackupConfigHydrator,
+  setBackupConfigHydrator,
+} from './server/backup/config-hydrator';
+// The rehearsal DB proof reads the same table order the backup restores.
+export { FK_ORDER } from './server/backup/constants';
 export { reconcileBuiltinTraits } from './server/builtin-trait-reconcile';
 export { loadCalibrationMaturity } from './server/calibration-maturity';
 export { observabilityConfigEffectiveFacts } from './server/config-effective-facts';

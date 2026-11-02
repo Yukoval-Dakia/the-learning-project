@@ -14,6 +14,7 @@ import {
   event,
   knowledge,
 } from '@/db/schema';
+import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import { loadEventSubscriptionRegistry } from '@/server/events/subscriptions/registry';
 import {
   bootstrapSubscription,
@@ -23,10 +24,18 @@ import {
   discoverSubscriptionDeliveries,
   renewSubscriptionLease,
 } from '@/server/events/subscriptions/runtime';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { createMem0Collection, seedMem0Row } from '../../../tests/helpers/mem0-collection';
-import { memR2 } from '../../../tests/helpers/r2';
-import { buildBackupArchive, restoreFromArchive } from './archive';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { createMem0Collection, seedMem0Row } from '../../../../../tests/helpers/mem0-collection';
+import { memR2 } from '../../../../../tests/helpers/r2';
+import {
+  type RestoreFromArchiveOpts,
+  buildBackupArchive,
+  restoreFromArchive as restoreArchive,
+} from './archive';
+
+// Restores here re-read config through the same hydrator the API composition root injects.
+const restoreFromArchive = (opts: Omit<RestoreFromArchiveOpts, 'hydrateConfig'>) =>
+  restoreArchive({ ...opts, hydrateConfig: hydrateConfigFromDb });
 
 const TABLES = [
   'event_subscription_checkpoint',

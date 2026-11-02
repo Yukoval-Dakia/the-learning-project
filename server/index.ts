@@ -136,6 +136,18 @@ async function injectAdminConfigWriterBeforeServe(): Promise<void> {
   }
 }
 
+async function injectBackupConfigHydratorBeforeServe(): Promise<void> {
+  try {
+    const [{ hydrateConfigFromDb }, { setBackupConfigHydrator }] = await Promise.all([
+      import('@/server/config/hydrate'),
+      import('@/capabilities/observability/public'),
+    ]);
+    setBackupConfigHydrator(hydrateConfigFromDb);
+  } catch (error) {
+    console.warn('[rw:api] backup config hydrator unavailable — restores return 503', error);
+  }
+}
+
 async function recoverToolOperationsBeforeServe(): Promise<void> {
   const [{ db }, { recoverToolOperationsOnBoot }] = await Promise.all([
     import('@/db/client'),
@@ -169,6 +181,7 @@ void (async () => {
   await recoverToolOperationsBeforeServe();
   await injectAdminConfigFactsBeforeServe();
   await injectAdminConfigWriterBeforeServe();
+  await injectBackupConfigHydratorBeforeServe();
   const { startListenLoop, stopListenLoop } = await import('@/server/events/listen_loop');
   await startListenLoop();
   // Start owns the Web front door when RW_FRONTDOOR=1 (needs the dist/start build).
