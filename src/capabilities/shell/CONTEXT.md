@@ -11,10 +11,11 @@ src/server/proposals/actions.ts 瘦壳。
   decision 资源；同决策幂等复用，冲突决策 409，retract 写 correction event）
 - api/proposal-decide.ts + api/proposal-retract.ts — 旧决策路径兼容层（保留原
   payload/status，返回 Deprecation + successor Link）
-- server/workbench-summary.ts + api/workbench-summary.ts —
-  GET /api/workbench/summary：today 重生聚合（新端点，设计自由）。
-  proposals KPI（loadTodayProposalKpi）/ due_count（内部 Request 调 practice
-  handleReviewDue，M5 提炼 read 函数后换直调）/ pending_attribution_count
+- server/workbench-summary.ts —
+  GET /api/workbench/summary：today 重生聚合（新端点，设计自由；Hono handler 在
+  server/composed-routes.ts，Start 读者在 server/start/workbench-reader.ts）。
+  proposals KPI（loadTodayProposalKpi）/ due_count（组合层传入的 practice
+  queryReviewDue 采样，shell 不 import practice）/ pending_attribution_count
   （listMistakeProjectionRows filter cause===null）/ knowledge_count
   （non-archived count）/ active_sessions（review 会话 + reviewed_count）/
   week_heat（event 近 7 天 BJT 分天 count，旧 today 页 OMITTED 的新聚合）

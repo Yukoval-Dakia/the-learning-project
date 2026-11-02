@@ -3,13 +3,6 @@
 // confusable_contrast comes from a different discovery source, so it is not joined.
 
 import { and, asc, eq, gte } from 'drizzle-orm';
-import {
-  COVERAGE_DEPTH_THRESHOLD,
-  NEAR_WINDOW,
-  SUPPLY_DISPATCH_COOLDOWN_DAYS,
-  assembleScanInput,
-  scanCoverageGaps,
-} from '@/capabilities/practice/public';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
@@ -20,14 +13,13 @@ import {
   aggregateSupplyActivity,
   buildCoverageLattice,
 } from './coverage-lattice-core';
-
-export type {
-  CoverageLatticeRead,
-  GapActivity,
-  KcCoverageRow,
-  LatticeGap,
-  SubjectCoverage,
-} from './coverage-lattice-core';
+import { SUPPLY_DISPATCH_COOLDOWN_DAYS } from './dispatcher';
+import {
+  COVERAGE_DEPTH_THRESHOLD,
+  NEAR_WINDOW,
+  assembleScanInput,
+  scanCoverageGaps,
+} from './target-discovery';
 
 const SUPPLY_EVENT_ACTION = 'experimental:question_supply';
 const DAY_MS = 24 * 60 * 60 * 1000;

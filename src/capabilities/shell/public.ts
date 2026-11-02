@@ -3,6 +3,7 @@ export type {
   WorkbenchHeatDay,
   WorkbenchSessionRow,
   WorkbenchSummary,
+  WorkbenchSummaryParts,
 } from './server/workbench-summary';
 
 type LoadWorkbenchSummary = typeof import('./server/workbench-summary').loadWorkbenchSummary;

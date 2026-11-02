@@ -1,3 +1,4 @@
+import type { CoverageLatticeRead } from '@/capabilities/practice/public';
 import { apiJson } from '@/ui/lib/api';
 import type {
   AdminCostDto,
@@ -5,7 +6,6 @@ import type {
   AdminRunDetailDto,
   AdminRunsDto,
   ConjectureScoresRead,
-  CoverageLatticeRead,
   parseAdminCostQuery,
   parseAdminFailuresQuery,
   parseAdminRunsQuery,

@@ -43,6 +43,11 @@ cost / failures / subjects）旁做**第五面**。
 
 owner 今日已拍的三决策（UI design pre-flight 已过，无需再等批）：
 1. **归属 = admin 第五页**（走先例 B：`admin-subjects.ts` T4b 套路）。
+   **读模型与路由归 Practice（2026-11-03 起）**：页面仍是 Observability 的 admin 第五页，但覆盖
+   细目读模型（`loadCoverageLattice`）与 `GET /api/admin/coverage-lattice` 由 Practice 拥有、经
+   practice manifest 贡献。理由：覆盖事实由 Practice 的供题扫描器（`assembleScanInput` +
+   `scanCoverageGaps` + 派发冷却期）计算，一项事实只归一个完整 owner；Observability 只展示，不重算
+   也不拼装。路径与返回形状不变。
 2. **首版形态 = 朴素分组只读 table**（Card + PageHeader + Stateful + 原生 table + inline
    `CSSProperties` 走 tokens；**不做 heatmap，二期再议**）。
 3. **壳形态跟 `observability/AGENTS.md` 现状**（admin 套主 chrome），本单补一段 design note
@@ -371,9 +376,9 @@ generated 07-07 15:40 · scan 840ms · 3 subjects · 42 active KCs · 11 with ga
 ## 8. Touch 清单（Lane J 修正版）
 
 **创建**：
-- `src/capabilities/observability/server/coverage-lattice.ts`（读模型：`loadCoverageLattice(db)` +
-  纯变换 + `GapActivity` 事件派生）。
-- `src/capabilities/observability/api/coverage-lattice.ts`（薄 GET）。
+- `src/capabilities/practice/server/question-supply/coverage-lattice.ts` + `coverage-lattice-core.ts`
+  （读模型：`loadCoverageLattice(db)` + 纯变换 + `GapActivity` 事件派生；归属见 §0 决策 1）。
+- `src/capabilities/practice/api/coverage-lattice.ts`（薄 GET）+ `coverage-lattice-contracts.ts`（响应 schema）。
 - `src/capabilities/observability/ui/coverage-lattice.tsx`（第五面 surface）。
 - `src/capabilities/observability/server/coverage-lattice.unit.test.ts`（纯变换 RED 靶）。
 - `src/capabilities/observability/api/coverage-lattice.db.test.ts`（route db test）。
@@ -382,8 +387,8 @@ generated 07-07 15:40 · scan 840ms · 3 subjects · 42 active KCs · 11 with ga
 **修改**：
 - `src/server/question-supply/target-discovery.ts`（导出 `assembleScanInput` + 重构
   `discoverSupplyTargets` + 导出 `COVERAGE_DEPTH_THRESHOLD`；行为等价）。
-- `src/capabilities/observability/manifest.ts`（`api.routes += /api/admin/coverage-lattice`；
-  `ui.pages += /admin/coverage-lattice`）。
+- `src/capabilities/practice/manifest.ts`（`api.routes += /api/admin/coverage-lattice`）；
+  `src/capabilities/observability/manifest.ts`（`ui.pages += /admin/coverage-lattice`）。
 - `web/src/router.tsx`（import surface + route wrapper + `addChildren`；仅本 lane 动）。
 - `src/capabilities/observability/ui/observability.tsx`（**should#5**：`AdminLinks` :241-248 补齐
   **完整五链** runs/cost/failures/**subjects**/coverage——现仅三链漏 subjects；**should#4**：替换
