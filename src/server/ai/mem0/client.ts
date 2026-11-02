@@ -4,14 +4,14 @@ import { assertModelEndpointHostAllowed } from '@/core/config/model-endpoint-all
 import { allowsDerivation } from '@/core/schema/derivation-policy';
 import { allowedEventIds, readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { latestPurposeWithdrawal } from '@/kernel/read-models/purpose-change';
+// Single source of truth for the mem0 pgvector collection name: backup and live
+// client must resolve the same default so a restore lands on the table read here.
+import { MEM0_COLLECTION_DEFAULT } from '@/kernel/records/mem0-collection';
 import {
   type Mem0OpaqueOperationContext,
   executeMem0OpaqueOperation,
 } from '@/server/ai/provider-attempt-runtime';
-// Single source of truth for the mem0 pgvector collection name: backup and live
-// client must resolve the same default so a restore lands on the table read here.
 import { DASHSCOPE_EMBED_MODEL_ID } from '@/server/ai/providers';
-import { MEM0_COLLECTION_DEFAULT } from '@/server/export/constants';
 import { type Env, memoryLlmHeaders, resolveMemoryLlmConfig } from './llm-config';
 
 // The global product pin selects the extraction LLM; embeddings keep their own

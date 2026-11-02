@@ -136,6 +136,18 @@ async function injectAdminConfigWriterBeforeServe(): Promise<void> {
   }
 }
 
+async function injectBackupConfigHydratorBeforeServe(): Promise<void> {
+  try {
+    const [{ hydrateConfigFromDb }, { setBackupConfigHydrator }] = await Promise.all([
+      import('@/server/config/hydrate'),
+      import('@/capabilities/observability/public'),
+    ]);
+    setBackupConfigHydrator(hydrateConfigFromDb);
+  } catch (error) {
+    console.warn('[rw:api] backup config hydrator unavailable — restores return 503', error);
+  }
+}
+
 async function recoverToolOperationsBeforeServe(): Promise<void> {
   const [{ db }, { recoverToolOperationsOnBoot }] = await Promise.all([
     import('@/db/client'),
@@ -151,7 +163,9 @@ async function startInProcessWorker(): Promise<void> {
     import('@/db/client'),
     import('@/server/boss/start-worker'),
   ]);
-  await startBossWorker(db);
+  // This process already started the config, custom-provider and model-catalog pollers
+  // before serve, so the worker must not start a second set.
+  await startBossWorker(db, { apiPollersRunning: true });
   console.log('[rw:api] in-process pg-boss worker running (RW_WORKER=1)');
 }
 
@@ -169,6 +183,7 @@ void (async () => {
   await recoverToolOperationsBeforeServe();
   await injectAdminConfigFactsBeforeServe();
   await injectAdminConfigWriterBeforeServe();
+  await injectBackupConfigHydratorBeforeServe();
   const { startListenLoop, stopListenLoop } = await import('@/server/events/listen_loop');
   await startListenLoop();
   // Start owns the Web front door when RW_FRONTDOOR=1 (needs the dist/start build).

@@ -10,9 +10,18 @@
 
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { memR2 } from '../../../tests/helpers/r2';
-import { buildBackupArchive, restoreFromArchive } from './archive';
+import { hydrateConfigFromDb } from '@/server/config/hydrate';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { memR2 } from '../../../../../tests/helpers/r2';
+import {
+  type RestoreFromArchiveOpts,
+  buildBackupArchive,
+  restoreFromArchive as restoreArchive,
+} from './archive';
+
+// Restores here re-read config through the same hydrator the API composition root injects.
+const restoreFromArchive = (opts: Omit<RestoreFromArchiveOpts, 'hydrateConfig'>) =>
+  restoreArchive({ ...opts, hydrateConfig: hydrateConfigFromDb });
 
 async function seedContractRows(): Promise<void> {
   const db = testDb();

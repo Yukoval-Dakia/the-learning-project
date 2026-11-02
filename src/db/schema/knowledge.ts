@@ -402,7 +402,7 @@ export const subject_trait_journal = pgTable(
     source_revision: integer('source_revision'),
     rolled_back_from: integer('rolled_back_from'),
     // 两本 journal 共用全局序列 subject_change_seq（v3.2 / owner R2-P2）；
-    // restore 尾必须 setval（序列不随行备份，见 export/constants.ts）。
+    // restore 尾必须 setval（序列不随行备份，见 observability/server/backup/constants.ts）。
     change_seq: bigint('change_seq', { mode: 'number' })
       .notNull()
       .default(sql`nextval('subject_change_seq')`),

@@ -72,7 +72,7 @@ docker compose run --rm migrate
 
 三层备份互不替代：
 
-- **应用归档 API**：`GET /api/_/export` / `POST /api/_/import?confirm=wipe-and-reload`，只含 `src/server/export/archive.ts` 登记的表，可选内联 R2 对象；需要 Hono 在运行。
+- **应用归档 API**：`GET /api/_/export` / `POST /api/_/import?confirm=wipe-and-reload`，只含 `src/capabilities/observability/server/backup/archive.ts` 登记的表，可选内联 R2 对象；需要 Hono 在运行。
 - **Postgres custom dump**：完整库与 schema，灾难恢复用；不含 R2 对象字节。
 - **R2 对象备份**：单独做；归档 API 的 R2 sidecar 只覆盖被引用的 key。
 
