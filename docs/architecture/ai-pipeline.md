@@ -123,7 +123,7 @@ flowchart TB
 ### 1. Task Registry (58 TaskSpecs)
 
 The central `src/capabilities/task-catalog.ts` composes TaskSpecs from 6 capability owner maps
-via `composeTaskCatalog` from `src/ai/task-catalog.ts` (which enforces `expectedCount = 59` at module load):
+via `composeTaskCatalog` from `src/ai/task-catalog.ts` (which enforces `expectedCount = 58` at module load):
 
 | Capability | Task Count | Examples |
 |------------|------------|----------|
