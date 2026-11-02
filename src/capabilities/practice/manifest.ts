@@ -137,6 +137,8 @@ export const practiceCapability = defineCapability({
   // 每次 run 一行（mass-skip 自曝面）。写者只有 judge_calibration_sample job。
   events: {
     actions: [
+      'experimental:confirmation_assessment',
+      'experimental:confirmation_original',
       // Canonical learner response fact. Failure Learning subscribes to this
       // owner event instead of coupling every producer to a queue name.
       'attempt',
@@ -188,6 +190,17 @@ export const practiceCapability = defineCapability({
         actions: ['experimental:assessment_publish'],
         load: () =>
           import('./server/admission/enqueue').then((m) => m.buildQuestionAdmissionSubscriber),
+      },
+      {
+        // YUK-1664: a web demand advances on its question's real publication result, not on
+        // the nightly recovery sweep (which stays as the lost-delivery fallback).
+        id: 'practice.web-supply-observe',
+        version: 1,
+        actions: ['experimental:assessment_publish'],
+        load: () =>
+          import('./server/question-supply/web-supply').then(
+            (m) => m.buildWebSupplyObserveSubscriber,
+          ),
       },
       {
         id: 'practice.failure-learning-attempt',
@@ -801,6 +814,8 @@ export const practiceCapability = defineCapability({
       {
         name: 'supply_execute',
         queue: 'agent',
+        // Placement deliveries need job id/retryCount/startedOn/expiry/signal for attempt authority.
+        includeMetadata: true,
         load: () => import('./jobs/supply_execute').then((m) => m.buildSupplyExecuteHandler),
       },
       {

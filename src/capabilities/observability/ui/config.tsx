@@ -1,9 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Button } from '@/ui/primitives/Button';
-import { PageHeader } from '@/ui/primitives/PageHeader';
+import { Button, Mascot } from '@/ui-next/public';
+import '@/ui-next/config/config.css';
 import { Stateful } from '@/ui/primitives/Stateful';
-import { TabBar } from '@/ui/primitives/TabBar';
 import { type AdminControlClient, httpAdminControlClient } from './admin-control-client';
 import {
   CONFIG_QUERY_KEY,
@@ -43,24 +42,34 @@ export function AdminConfigSurface({
     await query.refetch();
   };
   return (
-    <div className="page min-w-0 w-full space-y-5">
-      <PageHeader title="配置" eyebrow="ADMIN" sub="查看运行配置，管理 AI 模型与输出偏好。">
-        <AdminLinks navigate={navigate} />
-      </PageHeader>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0 max-w-full overflow-x-auto">
-          <TabBar
-            items={SECTIONS}
-            active={section}
-            onSelect={(value) => setQuery('section', value)}
-          />
+    <main data-ui-next="" data-un-m3e="practice-foundation" className="un-root un-config">
+      <header className="un-config-heading">
+        <div>
+          <h1>配置</h1>
+          <p>查看真实运行选择，按任务管理模型与输出偏好。</p>
+          <AdminLinks navigate={navigate} />
         </div>
+        <Mascot />
+      </header>
+      <div className="un-config-toolbar">
+        <nav className="un-config-sections" aria-label="配置分区">
+          {SECTIONS.map((item) => (
+            <button
+              type="button"
+              key={item.id}
+              aria-current={section === item.id ? 'page' : undefined}
+              onClick={() => setQuery('section', item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
         <Button
           variant="secondary"
           disabled={query.isFetching}
           onClick={() => void query.refetch()}
         >
-          刷新配置
+          刷新配置快照
         </Button>
       </div>
       <label className="block">
@@ -103,6 +112,6 @@ export function AdminConfigSurface({
           </>
         )}
       </Stateful>
-    </div>
+    </main>
   );
 }

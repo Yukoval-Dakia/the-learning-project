@@ -5,9 +5,8 @@
 // generation stays outside this transaction: a persist failure rolls the drafts
 // back and leaves the provider call already recorded on the attempt.
 
-import { randomUUID } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { aiAgentRef } from '@/ai/task-result';
 import {
   DifficultyEvidence,
@@ -17,12 +16,7 @@ import {
 import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 import type { QuizGenMetadataT } from '@/core/schema/quiz_gen';
 import type { Tx } from '@/db/client';
-import {
-  artifact,
-  placement_starter_attempt_question,
-  question,
-  source_document,
-} from '@/db/schema';
+import { artifact, question, source_document } from '@/db/schema';
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
@@ -31,11 +25,8 @@ import {
   type SupplyTraceV1T,
   withSupplyTraceDifficultyEvidence,
 } from '../server/question-supply/evidence-demand';
-import {
-  type PlacementAttemptAuthority,
-  type PlacementVerificationAuthority,
-  assertPlacementAttemptFence,
-} from '../server/question-supply/placement-starter-attempts';
+import { assertPlacementAttemptFence } from '../server/question-supply/placement-starter-attempts';
+import { authorizePlacementQuestion as authorizePlacementQuestionTx } from '../server/question-supply/placement-starter-paid-authority';
 import {
   type ExactQuestionDuplicateKnowledgeMerge,
   canonicalQuestionContentHash,
@@ -53,76 +44,6 @@ import type {
   QuizGenerationEvidence,
   RunQuizGenParams,
 } from './quiz_gen';
-
-async function authorizeAndDispatchPlacementQuestion(
-  tx: Tx,
-  input: {
-    attempt: PlacementAttemptAuthority | undefined;
-    questionId: string;
-    canonicalHash: string;
-    supplyTrace: SupplyTraceV1T | undefined;
-    allowPersistedReplay: boolean;
-    now: Date;
-  },
-): Promise<boolean> {
-  const { attempt, questionId, canonicalHash, supplyTrace, allowPersistedReplay, now } = input;
-  if (!attempt) return false;
-  const inserted = await tx
-    .insert(placement_starter_attempt_question)
-    .values({
-      attempt_id: attempt.attemptId,
-      claim_id: attempt.claimId,
-      question_id: questionId,
-      canonical_hash: canonicalHash,
-      verification_authority_epoch: randomUUID(),
-      verification_status: 'authorized',
-      created_at: now,
-    })
-    .onConflictDoNothing()
-    .returning({
-      claimId: placement_starter_attempt_question.claim_id,
-      attemptId: placement_starter_attempt_question.attempt_id,
-      questionId: placement_starter_attempt_question.question_id,
-      epoch: placement_starter_attempt_question.verification_authority_epoch,
-    });
-  let persisted = inserted[0];
-  if (inserted.length > 1) {
-    throw new Error('placement authority insert returned multiple rows');
-  }
-  if (!persisted && allowPersistedReplay) {
-    [persisted] = await tx
-      .select({
-        claimId: placement_starter_attempt_question.claim_id,
-        attemptId: placement_starter_attempt_question.attempt_id,
-        questionId: placement_starter_attempt_question.question_id,
-        epoch: placement_starter_attempt_question.verification_authority_epoch,
-      })
-      .from(placement_starter_attempt_question)
-      .where(
-        and(
-          eq(placement_starter_attempt_question.attempt_id, attempt.attemptId),
-          eq(placement_starter_attempt_question.question_id, questionId),
-        ),
-      )
-      .limit(1);
-  }
-  if (!persisted) return false;
-  const authority: PlacementVerificationAuthority = {
-    claim_id: persisted.claimId,
-    attempt_id: persisted.attemptId,
-    question_id: persisted.questionId,
-    verification_authority_epoch: persisted.epoch,
-    fencing_token: attempt.fencingToken,
-  };
-  await writeVerifyDispatchIntent(tx, {
-    questionId: persisted.questionId,
-    verifier: 'quiz_verify',
-    supplyTrace,
-    placementAuthority: authority,
-    createdAt: now,
-  });
-  return true;
-}
 
 async function reconcileRacedDuplicate(
   tx: Tx,
@@ -243,14 +164,15 @@ export async function persistQuizDrafts(
       supplyTrace: SupplyTraceV1T | undefined,
       allowPersistedReplay: boolean,
     ) =>
-      authorizeAndDispatchPlacementQuestion(tx, {
+      authorizePlacementQuestionTx(tx, {
         attempt: params.placementAttempt,
         questionId,
         canonicalHash,
+        verifier: 'quiz_verify',
         supplyTrace,
         allowPersistedReplay,
         now,
-      });
+      }).then((authority) => authority !== null);
     for (const [index, q] of parsed.questions.entries()) {
       const id = createId();
       // YUK-1011 — composite item's normalized stem+subs tree (gated +

@@ -83,6 +83,7 @@ import { resolveCopilotModeCompletion } from '../server/mode-completion';
 import { fileSealedCorrection } from '../server/no-progress-loop';
 import type { CopilotReplyFinalizationReceipt } from '../server/reply-finalization';
 import type { SpawnBudgetObservation } from '../server/subagents';
+import { runConversationConfirmation } from '../server/teaching/confirmation';
 import { projectCopilotActivity } from '../server/tool-activity';
 
 export type {
@@ -519,6 +520,83 @@ async function executeAcceptedCopilotRun(
     });
   };
   try {
+    if (data.confirmation) {
+      if (derivationPolicy !== 'allow')
+        throw new Error('confirmation is not authorized for this turn');
+      const command = data.confirmation;
+      const submitted =
+        command.kind === 'submit'
+          ? await runConversationConfirmation(db, {
+              sessionId: data.session_id,
+              askId: runId,
+              command,
+              signal: cancellationControl.signal,
+            })
+          : undefined;
+      if ((await cancellationControl.probe()) === 'cancel_requested')
+        return await settleObservedCancellation();
+      const marker = await ensureCopilotOutcomeMarker(
+        db,
+        runId,
+        async (tx) => {
+          const result =
+            submitted ??
+            (await runConversationConfirmation(tx, {
+              sessionId: data.session_id,
+              askId: runId,
+              command,
+              signal: cancellationControl.signal,
+            }));
+          const skillContext = {
+            skill: 'teaching' as const,
+            ref: { kind: 'learning_item', id: result.occurrence.learning_item_id },
+          };
+          const modeState = {
+            skill_turn: { kind: 'explain' as const, suggested_next: 'continue' as const },
+            skill_context: skillContext,
+            confirmation: result.occurrence,
+          };
+          const replyText = result.assessment?.submission
+            ? '作答原文已保存。判分与实际生效状态按原回执展示；本次对话确认不证明独立掌握。'
+            : result.occurrence.state === 'offered'
+              ? '要不要用一道题确认？也可以不做或稍后。'
+              : result.occurrence.state === 'issued'
+                ? '已准备一道确认题，是否作答由你决定。'
+                : result.occurrence.state === 'blocked'
+                  ? '暂时没有符合条件的确认题，本次不出题。'
+                  : '好的，已保留你的选择，不会自动再次邀请。';
+          const reply = await writeCopilotReply(tx, {
+            sessionId: data.session_id,
+            userAskEventId: runId,
+            replyEventId: `confirmation_reply_${runId}`,
+            actorRef,
+            taskRunId,
+            replyText,
+            confirmation: result.occurrence,
+            modeState,
+            outcome: 'success',
+            durableFinishReason: 'end_turn',
+            now: new Date(),
+          });
+          return {
+            outcome: 'success' as const,
+            replyMd: reply.cleanedReply,
+            taskRunId,
+            finishReason: 'end_turn',
+            modeState,
+          };
+        },
+        { createCancelled: cancellationMarker() },
+      );
+      if (marker.outcome === 'already_terminal') return terminalRunResult(marker.events, taskRunId);
+      return await projectCopilotOutcomeMarker(
+        db,
+        runId,
+        taskRunId,
+        projectSuccessfulTerminal,
+        projectFailedTerminal,
+      );
+    }
     if (answerOnly && data.skill_context?.skill === 'teaching') {
       throw new Error('仅用于本次回答：不能创建教学练习。请重新提交需要用于日常学习的内容。');
     }
@@ -555,7 +633,11 @@ async function executeAcceptedCopilotRun(
               replyMd: committed.cleanedReply,
               taskRunId: skillResult.task_run_id,
               finishReason: 'end_turn',
-              modeState: { skill_turn: committed.skillTurn, skill_context: skillContext },
+              modeState: {
+                skill_turn: committed.skillTurn,
+                skill_context: skillContext,
+                ...(committed.confirmation ? { confirmation: committed.confirmation } : {}),
+              },
             };
           },
           { createCancelled: cancellationMarker() },

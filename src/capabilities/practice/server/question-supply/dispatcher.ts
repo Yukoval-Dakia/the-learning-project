@@ -211,6 +211,8 @@ export interface DispatchDeps {
   webSearchAvailable?: () => boolean;
   /** Typed quiz_gen seam for claim-owned transactional sends. */
   enqueueQuizGen?: EnqueueQuizGenFn;
+  /** supply_execute seam for claim-owned transactional sends (placement web deliveries). */
+  enqueueSupplyExecute?: (data: Record<string, unknown>) => Promise<string | null>;
   /** Test seam for validating the fully augmented trace immediately before parsing. */
   transformSupplyTrace?: (trace: SupplyTraceV1T) => unknown;
   /** Claim-owned transactions require enqueue/event failures to abort rather than degrade. */
@@ -436,6 +438,8 @@ export async function dispatchSupplyTarget(
         if (queue === 'quiz_gen' && deps.enqueueQuizGen) {
           if (!quizGenData) throw new Error('quiz_gen payload was not constructed');
           jobId = await deps.enqueueQuizGen(quizGenData);
+        } else if (queue === 'supply_execute' && deps.enqueueSupplyExecute) {
+          jobId = await deps.enqueueSupplyExecute(executorData);
         } else if (quizGenData) {
           const { trigger, ref_id, ...rest } = quizGenData;
           jobId = await enqueue(queue, { trigger, ref_id, ...rest });
