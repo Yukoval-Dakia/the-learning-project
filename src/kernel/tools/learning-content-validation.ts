@@ -4,6 +4,7 @@
 
 import type { TaskTextResult } from '@/ai/task-result';
 import type { Db } from '@/db/client';
+import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 import type {
   LearningContentValidationOutcome,
   LearningContentValidationRequest,
@@ -34,7 +35,7 @@ export async function validateLearningContent(
   deps: LearningContentValidationDeps,
 ): Promise<LearningContentValidationOutcome> {
   if (!installedValidator) {
-    throw new Error(
+    throw new HostOperationNotInstalledError(
       'learning-content validator is not installed; call installPracticeHostOperations at startup',
     );
   }

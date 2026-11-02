@@ -6,6 +6,7 @@
 
 import type { GroupEvidenceT, ResponseSetT } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
+import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 
 export type ConfirmationIssueResult =
   | { status: 'issued'; issuance_id: string }
@@ -46,7 +47,7 @@ export function installConversationConfirmationAssessment(
 
 function operations(): ConversationConfirmationAssessmentOperations {
   if (!installed) {
-    throw new Error(
+    throw new HostOperationNotInstalledError(
       'conversation confirmation assessment is not installed; call installPracticeHostOperations at startup',
     );
   }

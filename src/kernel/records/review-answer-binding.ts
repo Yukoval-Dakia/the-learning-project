@@ -4,6 +4,7 @@
 // both operations at API and worker startup.
 
 import type { Db, Tx } from '@/db/client';
+import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 import type { BoundReviewAnswer, ReviewAnswerAttachment } from '@/kernel/tools/review-answer';
 import type { ToolContext } from '@/kernel/tools/types';
 
@@ -31,7 +32,7 @@ export function installReviewAnswerBindingOperations(
 
 function operations(): ReviewAnswerBindingOperations {
   if (!installed) {
-    throw new Error(
+    throw new HostOperationNotInstalledError(
       'review-answer binding operations are not installed; call installPracticeHostOperations at startup',
     );
   }
