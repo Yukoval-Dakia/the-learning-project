@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import { Button } from '@/ui/primitives/Button';
+import { Button } from '@/ui-next/public';
 import {
   BUDGET_FIELDS,
   type ConfigProvider,
@@ -38,12 +38,21 @@ export function ConfigTaskEditor({
   const selected = providers.find((p) => p.name === provider);
   const models = selected?.models ?? [];
   const disabledReason = !selected ? '尚未取得 provider 目录' : providerUnavailable(selected);
+  const selectedModel = models.find((entry) => entry.id === model);
+  const modelIssue =
+    disabledReason ??
+    (!selectedModel
+      ? '当前模型不在目录中，保留原选择；请明确选择后再保存。'
+      : selectedModel.runnable === false
+        ? '目录标记此模型当前不可运行，原配置未更改。'
+        : null);
   if (!taskEditable(task)) return <p>此任务使用专用执行通道，当前只读。</p>;
   async function commit() {
     if (!confirm || pending) return;
     setError(null);
     setPending(true);
     try {
+      if (confirm === 'model' && modelIssue) throw new Error(modelIssue);
       const changes =
         confirm === 'model'
           ? modelChanges(task, provider, model)
@@ -82,9 +91,8 @@ export function ConfigTaskEditor({
               className={inputClass}
               value={provider}
               onChange={(e) => {
-                const next = providers.find((p) => p.name === e.target.value);
                 setProvider(e.target.value);
-                setModel(next?.models?.[0]?.id ?? '');
+                setModel('');
                 setError(null);
               }}
             >
@@ -107,10 +115,15 @@ export function ConfigTaskEditor({
               onChange={(e) => setModel(e.target.value)}
               disabled={Boolean(disabledReason)}
             >
-              {!models.some((m) => m.id === model) && <option value={model}>请选择原生模型</option>}
+              {!models.some((m) => m.id === model) && (
+                <option value={model}>
+                  {model ? `${model} · 已选值，当前目录未列出` : '请选择模型（不会自动选第一项）'}
+                </option>
+              )}
               {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.id} · {m.api}
+                <option key={m.id} value={m.id} disabled={m.runnable === false}>
+                  {m.id} · {m.api ?? '协议未知'}
+                  {m.runnable === false ? ' · 当前不可运行' : ''}
                   {m.input.includes('image') ? ' · 图像' : ''}
                 </option>
               ))}
@@ -120,12 +133,10 @@ export function ConfigTaskEditor({
         <p className="text-[var(--ink-3)]">
           pi provider：{selected?.pi_provider ?? '不可用'} · 凭据只在服务端管理。
         </p>
-        {disabledReason && <p>{disabledReason}</p>}
+        {modelIssue && <p role="status">{modelIssue}</p>}
+        <p>目录刷新不会替换已选模型；更改 provider 后需明确选择模型并确认保存。</p>
         <div className="flex gap-2">
-          <Button
-            disabled={Boolean(disabledReason) || !models.some((m) => m.id === model)}
-            onClick={() => setConfirm('model')}
-          >
+          <Button disabled={Boolean(modelIssue)} onClick={() => setConfirm('model')}>
             保存模型组合
           </Button>
           <Button variant="secondary" onClick={() => setConfirm('reset-model')}>

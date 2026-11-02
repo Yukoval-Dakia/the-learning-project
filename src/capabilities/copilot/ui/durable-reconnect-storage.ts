@@ -1,3 +1,4 @@
+import { ConfirmationCommand } from '../confirmation-contract';
 // YUK-948 — reload handoff for POSTs whose 202 acceptance is not yet known.
 //
 // Accepted runs are deliberately NOT cached here. GET /api/copilot/turns is the
@@ -22,6 +23,7 @@ const MAX_IDEMPOTENCY_KEY_CHARS = 200;
 
 export type PersistedPendingCopilotRequestBody = Pick<
   CopilotChatRequestT,
+  | 'confirmation'
   | 'derivation_policy'
   | 'user_message'
   | 'triggered_by'
@@ -125,6 +127,11 @@ function parsePendingCopilotTurn(value: unknown): PersistedPendingCopilotTurn | 
       : boundedString(rawBody.correction_target_turn_id, 160);
   if (rawBody.correction_target_turn_id !== undefined && !correctionTargetTurnId) return null;
 
+  const confirmation =
+    rawBody.confirmation === undefined
+      ? undefined
+      : ConfirmationCommand.safeParse(rawBody.confirmation);
+  if (confirmation && !confirmation.success) return null;
   let ambientContext: CopilotChatRequestT['ambient_context'];
   if (rawBody.ambient_context !== undefined) {
     const rawAmbient = objectRecord(rawBody.ambient_context);
@@ -149,6 +156,7 @@ function parsePendingCopilotTurn(value: unknown): PersistedPendingCopilotTurn | 
       user_message: userMessage,
       ...(policy.data !== undefined ? { derivation_policy: policy.data } : {}),
       triggered_by: 'chat',
+      ...(confirmation?.success ? { confirmation: confirmation.data } : {}),
       ...(skillContext ? { skill_context: skillContext } : {}),
       ...(ambientContext ? { ambient_context: ambientContext } : {}),
       ...(correctionTargetTurnId ? { correction_target_turn_id: correctionTargetTurnId } : {}),

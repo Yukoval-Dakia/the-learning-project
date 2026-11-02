@@ -9,6 +9,9 @@ export {
   consumeReviewAnswerBinding,
   executeGetReviewDue,
   isLiveQuestionReference,
+  issueConversationConfirmation,
   parseHintTurn,
+  readConversationConfirmation,
+  submitConversationConfirmation,
   validateLearningContent,
 } from '@/capabilities/practice/public';

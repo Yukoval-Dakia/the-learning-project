@@ -1,3 +1,4 @@
+import type { ConfirmationAssessmentRenderer } from '../confirmation';
 // The shell's one companion instance. Always mounted (closed it renders nothing visible): it restores
 // unconfirmed sends from the browser once, claims open requests published by pages, polls nudges
 // for the shell's badge, and shows the panel while `open`. Unmounting only detaches streams.
@@ -9,6 +10,7 @@ import { type CompanionLayout, CompanionPanel } from './CompanionPanel';
 import { useCompanionController, useTurnPolling } from './use-companion';
 
 export interface CompanionMountProps {
+  confirmationRenderer?: ConfirmationAssessmentRenderer;
   open: boolean;
   presentation?: 'workspace';
   onOpenChange: (open: boolean) => void;
@@ -28,6 +30,7 @@ export function CompanionMount({
   sessionId,
   navigate,
   presentation,
+  confirmationRenderer,
 }: CompanionMountProps) {
   const controller = useCompanionController();
   const nudges = useCopilotNudges();
@@ -58,6 +61,7 @@ export function CompanionMount({
       <span ref={attachOpenRequests} hidden />
       {open ? (
         <CompanionPanel
+          confirmationRenderer={confirmationRenderer}
           controller={controller}
           presentation={presentation}
           layout={layout}

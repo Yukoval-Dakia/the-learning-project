@@ -406,3 +406,108 @@
   font-size: 13px;
   line-height: 1.65;
 }
+
+[data-ui-next] .un-st-support .un-cp-rich-text {
+  font-size: 15px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+[data-ui-next] .un-st-support .un-cp-rich-text :is(h1, h2, h3, h4) {
+  font-family: var(--un-font-sans);
+  color: var(--st-ink);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 24px 0 10px;
+}
+[data-ui-next] .un-st-support .un-cp-rich-text > :first-child {
+  margin-top: 0;
+}
+[data-ui-next] .un-st-support .un-cp-rich-text :is(p, ul, ol, blockquote) {
+  margin-block: 12px;
+}
+[data-ui-next] .un-st-support .un-cp-rich-text li + li {
+  margin-top: 8px;
+}
+[data-ui-next] .un-st-support .un-cp-rich-text :is(ul, ol) {
+  padding-inline-start: 24px;
+}
+[data-ui-next] .un-st-support .un-cp-rich-text blockquote {
+  margin-inline: 0;
+  padding-inline-start: 16px;
+  border-inline-start: 3px solid var(--st-line);
+  color: var(--st-muted);
+}
+[data-ui-next] .un-st-support .un-cp-rich-text a {
+  color: var(--st-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+[data-ui-next] .un-st-support .un-cp-rich-text .katex-display,
+[data-ui-next] .un-st-support .un-cp-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 8px;
+}
+[data-ui-next] .un-st-support .un-cp-table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+[data-ui-next] .un-st-support .un-cp-table-scroll :is(th, td) {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--st-line);
+  text-align: start;
+  vertical-align: top;
+}
+[data-ui-next] .un-st-support .un-cp-table-scroll th {
+  font-weight: 600;
+  background: var(--st-raised);
+}
+[data-ui-next] .un-st-support .un-cp-code-block {
+  margin-block: 16px;
+  border: 1px solid var(--st-line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--st-panel);
+}
+[data-ui-next] .un-st-support .un-cp-code-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-inline: 12px;
+  background: var(--st-raised);
+  font-size: 12px;
+}
+[data-ui-next] .un-st-support .un-cp-code-tools button {
+  min-height: 48px;
+  min-width: 48px;
+  color: var(--st-accent);
+}
+[data-ui-next] .un-st-support .un-cp-code-block pre {
+  margin: 0;
+  padding: 16px;
+  border: 0;
+  background: transparent;
+  overflow: auto;
+  font-family: var(--un-font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre;
+}
+[data-ui-next] .un-st-support .un-cp-code-notice {
+  display: block;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--st-muted);
+}
+[data-ui-next] .un-st-support .un-cp-rich-text .footnotes {
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid var(--st-line);
+  font-size: 13px;
+}
+[data-ui-next] .un-st-support .un-cp-rich-text .task-list-item {
+  list-style: none;
+}

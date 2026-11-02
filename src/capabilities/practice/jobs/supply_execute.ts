@@ -11,16 +11,18 @@
 // subprocess / quiz_gen job）。幂等键 plan_event_id（planner 路径）；scanner/手动
 // 路径 plan_event_id=null，幂等由 store seam 的 canonical hash 承担（重投只吃
 // duplicate_exact 软拒，不堆重复 draft）。
-import type { Job } from 'pg-boss';
+import type { JobWithMetadata } from 'pg-boss';
 import { z } from 'zod';
 import type { Db } from '@/db/client';
-import { writeAiProposal } from '@/kernel/proposals/writer';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import type { SupplyTraceV1T } from '../server/question-supply/evidence-demand';
+import {
+  type PlacementWebDelivery,
+  runPlacementWebDelivery,
+} from '../server/question-supply/placement-starter-web-delivery';
 import type { JyeooFetchConfig } from '../server/question-supply/plan-executor';
 import {
   type ExecuteSupplyPlanDeps,
-  type ImageCandidateProposalArgs,
   type SupplyDemandItem,
   executeSupplyPlan,
 } from '../server/question-supply/plan-executor';
@@ -70,10 +72,10 @@ export type SupplyExecuteJobDataT = z.infer<typeof SupplyExecuteJobData>;
 /**
  * 生产 deps 装配（supply_planner phase-2 / 手动 caller 共用）。web 生产线的
  * runSourcingAgent/parseLoose 经 defaultWebSourcingDeps() 唯一组装点；
- * quiz_gen enqueue 失败上抛（pg-boss 语义保留）；image proposal 走
- * writeAiProposal 真身。
+ * quiz_gen enqueue 失败上抛（pg-boss 语义保留）；web 由同 demand owner
+ * 持久恢复，不将来源获取变成用户 proposal。
  */
-export function buildSupplyExecutorDeps(db: Db): ExecuteSupplyPlanDeps {
+export function buildSupplyExecutorDeps(_db: Db): ExecuteSupplyPlanDeps {
   return {
     runWebFetchCandidates: (params) =>
       runWebFetchCandidates({
@@ -86,7 +88,6 @@ export function buildSupplyExecutorDeps(db: Db): ExecuteSupplyPlanDeps {
         payload as unknown as Record<string, unknown>,
         ...(opts?.singletonKey ? [{ singletonKey: opts.singletonKey }] : []),
       )) ?? undefined,
-    writeImageCandidateProposal: (args: ImageCandidateProposalArgs) => writeAiProposal(db, args),
   };
 }
 
@@ -98,6 +99,7 @@ export async function runSupplyExecuteJobData(
   jobId: string,
   data: unknown,
   executorDeps: ExecuteSupplyPlanDeps,
+  placementDelivery?: PlacementWebDelivery,
 ): Promise<void> {
   const parsed = SupplyExecuteJobData.safeParse(data);
   if (!parsed.success) {
@@ -130,6 +132,7 @@ export async function runSupplyExecuteJobData(
       ...(parsedData.supply_trace
         ? { supplyTrace: parsedData.supply_trace as SupplyTraceV1T }
         : {}),
+      ...(placementDelivery ? { placementDelivery } : {}),
       jyeooFetch: parsedData.jyeoo_fetch
         ? {
             grade: parsedData.jyeoo_fetch.grade,
@@ -146,14 +149,37 @@ export async function runSupplyExecuteJobData(
   console.log('[supply_execute] job %s → %s', jobId, result.status);
 }
 
+/** A placement delivery is exactly one item bound to a claim (see dispatchPlacementStarterClaim). */
+function placementClaimIdOf(data: unknown): string | undefined {
+  const parsed = SupplyExecuteJobData.safeParse(data);
+  if (!parsed.success) return undefined;
+  const claimed = parsed.data.items.filter((item) => item.placement_claim_id);
+  if (claimed.length === 0) return undefined;
+  if (parsed.data.items.length !== 1) {
+    throw new Error('supply_execute: a placement claim item must be the only item of its job');
+  }
+  return claimed[0]?.placement_claim_id;
+}
+
 export function buildSupplyExecuteHandler(db: Db, deps: SupplyExecuteJobDeps = {}) {
-  return async (jobs: Job[]) => {
+  return async (jobs: JobWithMetadata[]) => {
     const executorDeps: ExecuteSupplyPlanDeps = {
       ...buildSupplyExecutorDeps(db),
       ...deps,
     };
     for (const job of jobs) {
-      await runSupplyExecuteJobData(db, job.id, job.data, executorDeps);
+      const claimId = placementClaimIdOf(job.data);
+      if (!claimId) {
+        await runSupplyExecuteJobData(db, job.id, job.data, executorDeps);
+        continue;
+      }
+      await runPlacementWebDelivery({
+        db,
+        job,
+        claimId,
+        execute: (delivery) =>
+          runSupplyExecuteJobData(db, job.id, job.data, executorDeps, delivery),
+      });
     }
   };
 }
