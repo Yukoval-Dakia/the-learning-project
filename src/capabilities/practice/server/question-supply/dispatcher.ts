@@ -111,6 +111,18 @@ async function defaultEnqueue(
 }
 
 /**
+ * supply_execute send carrying a pg-boss singleton key — used by the web-supply
+ * route fallback so a retried delivery cannot double-enqueue the same demand's
+ * fallback executor run (kernel seam stays the single pg-boss send site).
+ */
+export function enqueueSupplyExecuteJob(
+  data: Record<string, unknown>,
+  singletonKey: string,
+): Promise<string | null> {
+  return enqueueSupplyDispatchJob('supply_execute', data, { singletonKey });
+}
+
+/**
  * query-based fingerprint cooldown 探针（不新建表）。
  *
  * 查最近 `cooldownDays` 内是否有同 fingerprint 的、**真派过的**（payload.status='dispatched'）
@@ -304,6 +316,8 @@ export async function dispatchSupplyTarget(
 
   let result: DispatchResult;
   let persistedSupplyTrace: SupplyTraceV1T | null = null;
+  /** The supply demand this dispatch continues (trace demand_id) or minted for it. */
+  let dispatchedDemandId: string | null = null;
 
   if (!anchorKid) {
     // 防御：扫描器永远给至少一个 KC，但 dispatch 不该在无锚时盲发。
@@ -337,6 +351,15 @@ export async function dispatchSupplyTarget(
         reason: target.reason,
       };
     } else if (
+      // YUK-1664 S3 — the 7-day fingerprint cooldown throttles only dispatches
+      // without a demand identity. A demand-identified dispatch (the target's
+      // evidence demand_id reaches the supply_execute executor, which re-reads
+      // the demand ledger and lets its claimed routes decide) follows DEMAND
+      // STATE, not the window: a blocked demand falls back to its next route,
+      // an exhausted one cheaply no-ops on resume. quiz_gen is NOT demand-governed
+      // (its job payload is the whole contract), so it keeps the window, and so do
+      // context-less/legacy callers and pre-#2216 dispatch evidence.
+      !(autoRoute === 'sourcing_web' && target.context?.demand_id != null) &&
       cooldownDays > 0 &&
       (await recentDispatchExists(db, target.fingerprint, cooldownDays))
     ) {
@@ -405,14 +428,17 @@ export async function dispatchSupplyTarget(
               ...(placementTrace ? { supply_trace: placementTrace } : {}),
             }
           : null;
-      // E3 — sourcing_web 分支重指向确定性 executor：单路由需求项（chosen
-      // route 派发时定死，与旧 sourcing job 行为等价——web 失败不落 quiz_gen，缺口由
-      // 下次扫描复现再派）。supply_trace 顶层携带，executor 透传进每个 store commit。
+      // E3 — sourcing_web 分支重指向确定性 executor。route_preference 携带从
+      // 所选路由起的完整 route plan（含不可执行尾项，executor 记 skipped 留痕）：
+      // 需求持久化整份计划后，web blocked 时同一需求可沿余下路由回落（YUK-1664
+      // S3，executor 内 in-run / observe·recovery 异步各一次，routeTried 有界）。
+      // supply_trace 顶层携带，executor 透传进每个 store commit。
+      const executorDemandId = `dispatch_${target.id}_${newId()}`;
       const executorData = {
         plan_event_id: null,
         items: [
           {
-            demand_id: `dispatch_${target.id}_${newId()}`,
+            demand_id: executorDemandId,
             knowledge_id: anchorKid,
             kind: target.kind && target.kind !== 'any' ? target.kind : 'any',
             // forward the target's difficulty band (was hardcoded null).
@@ -421,7 +447,7 @@ export async function dispatchSupplyTarget(
             // DIFFICULTY_BANDS and feeds it to runJyeooFetchCandidates' band filter.
             difficulty_band: target.difficultyBand,
             count: target.desiredCount,
-            route_preference: [autoRoute],
+            route_preference: routePlan.slice(routePlan.indexOf(autoRoute)),
             ...(target.placementStarter
               ? { placement_claim_id: target.placementStarter.claimId }
               : {}),
@@ -433,6 +459,8 @@ export async function dispatchSupplyTarget(
           ? { supply_trace: placementTrace ?? dispatchTrace }
           : {}),
       };
+      if (queue === 'supply_execute')
+        dispatchedDemandId = (placementTrace ?? dispatchTrace)?.demand_id ?? executorDemandId;
       try {
         let jobId: string | null;
         if (queue === 'quiz_gen' && deps.enqueueQuizGen) {
@@ -521,6 +549,7 @@ export async function dispatchSupplyTarget(
         stop_condition: result.stopCondition,
         reason: result.reason,
         constraints: target.constraints,
+        ...(dispatchedDemandId ? { demand_id: dispatchedDemandId } : {}),
         ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
       },
     });
