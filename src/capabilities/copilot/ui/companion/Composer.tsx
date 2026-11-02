@@ -6,6 +6,7 @@
 import { ArrowUp, X } from 'lucide-react';
 import { DerivationPolicy } from '@/core/schema/derivation-policy';
 import { useCompanionFocus } from '@/ui/lib/use-copilot-dwell';
+import { StudioComposer } from '@/ui-next/practice-studio/CompanionStudio';
 import { ChipButton } from '@/ui-next/primitives/Chip';
 import { IconButton, Segmented } from '@/ui-next/public';
 import type { CompanionController } from './companion-controller';
@@ -24,9 +25,11 @@ const POLICY_NOTES = {
 export function Composer({
   controller,
   stick,
+  presentation,
 }: {
   controller: CompanionController;
   stick: StickToBottom;
+  presentation?: 'workspace';
 }) {
   const ready = useCompanion(controller, conversationReady);
   const draft = useCompanion(controller, (s) => s.draft);
@@ -44,6 +47,38 @@ export function Composer({
     stick.stick();
     void sender.send(text);
   };
+
+  if (presentation === 'workspace')
+    return (
+      <StudioComposer
+        draft={draft}
+        ready={ready}
+        canSend={ready && draft.trim().length > 0 && !blockedByCheck}
+        policy={policy}
+        policyOptions={[
+          { value: 'allow', label: '日常学习' },
+          {
+            value: 'answer_only',
+            label: support === 'unsupported' ? '仅本次回答（暂不可用）' : '仅本次回答',
+          },
+        ]}
+        policyNote={policy === 'answer_only' ? POLICY_NOTES[support] : undefined}
+        correction={
+          correction ? { turn: correction.turnNumber, clear: actions.clearCorrection } : undefined
+        }
+        suggestions={chips.map((chip) => ({
+          label: chip.label,
+          run: () => {
+            stick.stick();
+            if (chip.quiz) sender.sendQuiz(chip.text, chip.quiz.knowledgeId);
+            else void sender.send(chip.text);
+          },
+        }))}
+        onDraft={actions.setDraft}
+        onPolicy={(value) => actions.setPolicy(DerivationPolicy.parse(value))}
+        onSend={() => submit(draft)}
+      />
+    );
 
   return (
     <div className="un-cp-composer">

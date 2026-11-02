@@ -16,6 +16,7 @@ import {
   helpExitCopy,
   readHelpProviderFault,
 } from '@/ai/help-provider-fault';
+import type { SealedHelpExplanationReplay } from '@/ai/help-reply-grounding';
 import { sanitizeJsonStringLiterals } from '@/core/json-sanitize';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ActivateEvaluationIntentT, PracticeIssuanceDtoT } from '@/core/schema/assessment';
@@ -37,6 +38,7 @@ import {
 } from './assessment/study-context';
 import type { SaveSubmissionRequest } from './assessment/submit';
 import { createAssessmentAssetLoader } from './assets';
+import { groundHintExplanation } from './hint-explanation';
 import * as Tutor from './tutor-session';
 export type RunTaskFn = (
   kind: string,
@@ -44,6 +46,7 @@ export type RunTaskFn = (
   ctx: unknown,
 ) => Promise<{
   text: string;
+  task_run_id?: string;
   help_latency?: SealedHelpLatency;
   cost_usd?: number;
   cost_basis?: 'reported' | 'estimated' | 'unknown';
@@ -144,6 +147,7 @@ export interface PlanSolveHintResult {
 
 interface SolveHintAttempt extends PlanSolveHintResult {
   attempt_latency?: SealedHelpLatency;
+  reply_grounding?: SealedHelpExplanationReplay;
   cost_usd?: number;
   cost_basis?: 'reported' | 'estimated' | 'unknown';
 }
@@ -300,16 +304,24 @@ async function runSolveHintAttempt(params: PlanSolveHintParams): Promise<SolveHi
     }
     throw err;
   }
+  const replayed = await groundHintExplanation(
+    db,
+    context.prompt_md,
+    result.text_md,
+    hintIndex,
+    ran,
+  );
   if (issuanceId)
     await recordAssistanceExposure(db, {
       issuanceId,
       questionId,
       kind: 'hint',
       impact: 'unknown',
-      contentDigest: `sha256:${canonicalHash(result.text_md)}`,
+      contentDigest: `sha256:${canonicalHash(replayed.text_md)}`,
     });
   return {
-    text_md: result.text_md,
+    text_md: replayed.text_md,
+    ...(replayed.replay ? { reply_grounding: replayed.replay } : {}),
     ...(ran.help_latency ? { attempt_latency: ran.help_latency } : {}),
     ...(ran.cost_basis ? { cost_basis: ran.cost_basis } : {}),
     ...(ran.cost_usd !== undefined ? { cost_usd: ran.cost_usd } : {}),
@@ -378,7 +390,12 @@ export interface SolveHintFallbackHelp {
 }
 
 export type SolveHintOutcome =
-  | { status: 'ok'; text_md: string; help_latency?: SealedHelpLatency }
+  | {
+      status: 'ok';
+      text_md: string;
+      help_latency?: SealedHelpLatency;
+      reply_grounding?: SealedHelpExplanationReplay;
+    }
   | {
       status: 'fallback';
       reason: SolveHintFallbackReason;
@@ -717,6 +734,7 @@ export async function planSolveHintOutcome(params: PlanSolveHintParams): Promise
     return {
       status: 'ok',
       text_md: hint.text_md,
+      ...(hint.reply_grounding ? { reply_grounding: hint.reply_grounding } : {}),
       help_latency: sealHintRequest({
         originAt,
         doneMs,

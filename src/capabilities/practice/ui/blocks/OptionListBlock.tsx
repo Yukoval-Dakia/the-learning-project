@@ -4,6 +4,7 @@
 // Keyboard: one tab stop, arrows move (single pick follows focus, the ARIA radio pattern), Space or
 // Enter toggles, digits 1–9 pick the option at that display position while focus is in the list.
 import { type KeyboardEvent, useRef, useState } from 'react';
+import { displayOptionContent } from '@/ui/components/response/display-option-content';
 
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 
@@ -160,7 +161,7 @@ export function OptionListBlock({
                 {mark}
               </span>
               <MathMarkdown className="un-blk-opt-text" notation={notation}>
-                {item.label_md}
+                {displayOptionContent(item.label_md, marker === 'letter' ? mark : null)}
               </MathMarkdown>
             </button>
           );
