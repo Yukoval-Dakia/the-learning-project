@@ -1,6 +1,11 @@
 import { createContext, useContext } from 'react';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
-import { type ApiOperationJsonResponse, apiFetch, apiJson } from '@/ui/lib/api';
+import {
+  type ApiOperationJsonResponse,
+  type ApiOperationRequestBody,
+  apiFetch,
+  apiJson,
+} from '@/ui/lib/api';
 import type { ReplayTurn } from './replay';
 
 // Copilot transport (YUK-1473). The protocol stays with the consumers: the companion (and the new
@@ -31,6 +36,10 @@ export interface CopilotCancelResult {
 }
 
 export type CopilotClient = {
+  acceptTeachingChip: (
+    sessionId: string,
+    body: ApiOperationRequestBody<'acceptTeachingSessionChip'>,
+  ) => Promise<ApiOperationJsonResponse<'acceptTeachingSessionChip'>>;
   dismissNudge: (id: string) => Promise<unknown>;
   markNudgeOpened: (id: string) => Promise<unknown>;
   getNudges: () => Promise<ApiOperationJsonResponse<'listCopilotNudges'>>;
@@ -52,6 +61,11 @@ export function buildCopilotTurnsQuery(sessionId: string, limit: number): string
 }
 
 export const httpCopilotClient: CopilotClient = {
+  acceptTeachingChip: (sessionId, body) =>
+    apiJson<ApiOperationJsonResponse<'acceptTeachingSessionChip'>>(
+      `/api/teaching-sessions/${sessionId}/accept-chip`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
   dismissNudge: (id) => apiFetch(`/api/copilot/nudges/${id}/dismiss`, { method: 'POST' }),
   markNudgeOpened: (id) => apiFetch(`/api/copilot/nudges/${id}/opened`, { method: 'POST' }),
   getNudges: () => apiJson<ApiOperationJsonResponse<'listCopilotNudges'>>('/api/copilot/nudges'),

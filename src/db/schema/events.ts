@@ -145,6 +145,8 @@ export const event_subscription_checkpoint = pgTable(
     claim_lease_until: timestamp('claim_lease_until', { withTimezone: true }),
     bootstrapped_at: timestamp('bootstrapped_at', { withTimezone: true }),
     activated_at: timestamp('activated_at', { withTimezone: true }),
+    // YUK-1113: historical SQL/archive compatibility only; no business timestamp producer.
+    // Keep this property so typed export/restore preserves existing values (including null).
     paused_at: timestamp('paused_at', { withTimezone: true }),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
