@@ -29,7 +29,7 @@ export function Composer({
   onStarted: (sessionId: string) => void;
   navigate: (to: string) => void;
 }) {
-  const { createSession } = useRecordClient();
+  const { createSession, startLane } = useRecordClient();
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
   const [text, setText] = useState('');
@@ -71,7 +71,7 @@ export function Composer({
     const handed = { material, policy, lane, previews };
     setFiles([]);
     setPreviews([]);
-    const id = await recordMaterial(handed, createSession);
+    const id = await recordMaterial(handed, createSession, startLane);
     if (id) onStarted(id);
   };
 

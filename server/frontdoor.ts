@@ -25,6 +25,7 @@ import { createStartKnowledgeEdge } from './start/knowledge-edge-create-operatio
 import { readStartKnowledgeEdges } from './start/knowledge-edges-reader';
 import { readStartKnowledgeMisconceptions } from './start/knowledge-misconceptions-reader';
 import { readStartKnowledgeNodePage } from './start/knowledge-node-reader';
+import { createStartLearningIntent } from './start/learning-intent-operation';
 import { readStartLibraryDraftDetail } from './start/library-draft-detail-reader';
 import { readStartLibraryDrafts } from './start/library-draft-list-reader';
 import {
@@ -61,6 +62,8 @@ import { readStartPlacementProfile } from './start/profile-reader';
 import { answerStartRecordAsk } from './start/record-ask-answer-operation';
 import { readStartRecordBlocks } from './start/record-blocks-reader';
 import { createStartRecordManualMistake } from './start/record-manual-mistake-operation';
+import { changeStartRecordPurpose } from './start/record-purpose-change-operation';
+import { readStartRecordPurposeImpact } from './start/record-purpose-impact-reader';
 import { revertStartRecordBlock } from './start/record-revert-operation';
 import { readStartRecordSessionDetail } from './start/record-session-detail-reader';
 import { readStartRecordSessionHistory } from './start/record-session-history-reader';
@@ -121,6 +124,8 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     createIngestionSession: createStartIngestionSession,
     createIngestionOperation: createStartIngestionOperation,
     answerRecordAsk: answerStartRecordAsk,
+    changeRecordPurpose: changeStartRecordPurpose,
+    readRecordPurposeImpact: readStartRecordPurposeImpact,
     readRecordBlocks: readStartRecordBlocks,
     createRecordManualMistake: createStartRecordManualMistake,
     revertRecordBlock: revertStartRecordBlock,
@@ -171,6 +176,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     submitPlacementAnswer: submitStartPlacementAnswer,
     createSubject: createStartSubject,
     createGoal: createStartGoal,
+    createLearningIntent: createStartLearningIntent,
     submitConjectureProbeAnswer: answerStartConjectureProbe,
     legacySpa: buildLegacySpa(spaRoot),
     startAssets,
