@@ -4,9 +4,9 @@
 //   B 逐条人审（真裁决项，复用既有 ProposalCard；含 breaker 退回 B 的 completion）；
 //   C 纯状态（无 accept applier 的 defer/archive/judge_retraction；折叠链到 AI 观察面）。
 // tier 映射以 core 强度表为单一真相（inbox-tier.ts），不照抄设计稿 v0 的 INBOX_TIER。
-// 设计基准 docs/design/loom-refresh/project/screen-inbox-a4.jsx + inbox-a4.css（PORT 进
-// shell.css）。偏差（design pre-flight 预批）：①不渲 demo window 全局数据，A 块走真读模型；
-// ②C 块「去向」用 KIND_META label + reason_md（真 wire，非设计 demo 文案）。
+// M3E 呈现（YUK-1473）：外壳 UiNextRoot.ib-page + main.un-m3e-bridge，样式在 inbox-m3e.css，
+// 设计记录 docs/design/2026-11-03-inbox-agent-notes-events-m3e.md。查询、分页补齐、撤销与
+// 裁决逻辑未动；页级错误提示改走 ui-next 的 showToast / ToastHost。
 
 import {
   type InfiniteData,
@@ -19,14 +19,25 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
-import { Btn } from '@/ui/primitives/Btn';
-import { EmptyState } from '@/ui/primitives/EmptyState';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
-import { SectionLabel } from '@/ui/primitives/SectionLabel';
-import { SkLines } from '@/ui/primitives/SkLines';
-import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
+import {
+  ArrowRight,
+  Check,
+  ChevronDown,
+  CircleAlert,
+  Clock,
+  Eye,
+  History,
+  Lock,
+  Network,
+  Undo2,
+  Zap,
+} from 'lucide-react';
+import { type ReactNode, useId, useMemo, useState, useSyncExternalStore } from 'react';
+import { ToastHost } from '@/ui-next/feedback/ToastHost';
+import { showToast } from '@/ui-next/feedback/toast-store';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button, UiNextRoot } from '@/ui-next/public';
 import {
   type AutoAppliedRowWire,
   KIND_META,
@@ -38,6 +49,7 @@ import {
   kindMeta,
   mergeProposalPages,
 } from './inbox-api';
+import { inboxTone, kindIcon } from './inbox-look';
 import {
   TIER_C_COPY,
   TIER_META,
@@ -47,11 +59,7 @@ import {
 } from './inbox-tier';
 import { ProposalCard } from './ProposalCard';
 import { type WorkbenchClient, useWorkbenchClient } from './workbench-client';
-import './shell.css';
-
-function tierIcon(name: string): LoomIconName {
-  return name as LoomIconName;
-}
+import './inbox-m3e.css';
 
 // A 档撤销窗口的重渲染节拍：每 15s 刷新 nowMs，让倒计时 + live→consumed 过渡随时间走。
 const UNDO_TICK_MS = 15_000;
@@ -177,19 +185,19 @@ function windowText(state: 'live' | 'consumed', remainingMinutes: number): strin
   return `${remainingMinutes} 分钟内可撤销`;
 }
 
-function TierHead({ tier, count }: { tier: 'A' | 'B' | 'C'; count: number }) {
+function TierHead({ tier, count, id }: { tier: 'A' | 'B' | 'C'; count: number; id: string }) {
   const m = TIER_META[tier];
   return (
-    <div className="tier-head">
-      <span className={`tier-no tone-${m.tone}`}>{tier}</span>
-      <div className="tier-head-txt">
-        <div className="tier-title">
+    <header className="ib-tier-head" data-tone={inboxTone(m.tone)}>
+      <span className="ib-tier-mark">{tier}</span>
+      <div className="ib-tier-text">
+        <h2 id={id} className="ib-tier-title">
           {m.label}
-          <span className="tier-count">· {count} 项</span>
-        </div>
-        <div className="tier-sub">{m.sub}</div>
+          <span className="ib-tier-count">{count} 项</span>
+        </h2>
+        <p className="ib-tier-sub">{m.sub}</p>
       </div>
-    </div>
+    </header>
   );
 }
 
@@ -197,9 +205,11 @@ function BreakerMeter({ breaker }: { breaker: VerdictBreakerWire }) {
   const windowLabel = formatWindowLabel(breaker.window);
   const pct = breaker.cap > 0 ? Math.min(100, (breaker.applied / breaker.cap) * 100) : 0;
   return (
-    <div className={`aa-breaker ${breaker.tripped ? 'tripped' : 'ok'}`}>
-      <LoomIcon name={breaker.tripped ? 'alert' : 'check'} size={16} className="ico" />
-      <div className="aa-breaker-txt">
+    <div className="ib-breaker" data-state={breaker.tripped ? 'tripped' : 'ok'}>
+      <span className="ib-breaker-ic" aria-hidden="true">
+        {breaker.tripped ? <CircleAlert size={16} /> : <Check size={16} />}
+      </span>
+      <div className="ib-breaker-text">
         {breaker.tripped ? (
           <>
             <b>自动应用已暂停。</b>
@@ -211,11 +221,13 @@ function BreakerMeter({ breaker }: { breaker: VerdictBreakerWire }) {
             <b>自动通道正常。</b>auto-apply 在阈值内，安全可逆的小操作不占你的裁决队列。
           </>
         )}
-        <div className="aa-breaker-meter">
-          <span className="aa-breaker-track">
-            <span className="aa-breaker-fill" style={{ width: `${pct}%` }} />
+        <div className="ib-breaker-meter">
+          <span className="ib-breaker-track" aria-hidden="true">
+            <span className="ib-breaker-fill" style={{ width: `${pct}%` }} />
           </span>
-          {breaker.applied} / {breaker.cap} · {windowLabel}
+          <span className="un-num">
+            {breaker.applied} / {breaker.cap} · {windowLabel}
+          </span>
         </div>
       </div>
     </div>
@@ -234,6 +246,7 @@ function AutoAppliedCard({
   onRevert: (proposalId: string) => void;
 }) {
   const [trace, setTrace] = useState(false);
+  const traceId = useId();
   const appliedMs = Date.parse(row.applied_at);
   const state = autoAppliedState(appliedMs, nowMs, row.reverted);
   const consumed = state === 'consumed';
@@ -245,60 +258,70 @@ function AutoAppliedCard({
   if (consumed) revertLabel = '已无法干净撤销';
   else if (reverting) revertLabel = '撤销中…';
   else revertLabel = '撤销';
+  const KindIcon = consumed ? Lock : kindIcon(meta.icon);
   return (
-    <div className={`aa-card ${state}`}>
-      <span className="aa-ic">
-        <LoomIcon name={consumed ? 'lock' : tierIcon(meta.icon)} size={16} />
+    <article className="ib-aa" data-state={state}>
+      <span className="ib-aa-ic" aria-hidden="true">
+        <KindIcon size={16} />
       </span>
-      <div className="aa-body">
-        <div className="aa-top">
-          <span className="aa-kind">{meta.label}</span>
-          <span className="aa-title">{row.title}</span>
+      <div className="ib-aa-body">
+        <div className="ib-aa-top">
+          <span className="ib-tag" data-tone="positive">
+            {meta.label}
+          </span>
+          <span className="ib-aa-title">{row.title}</span>
         </div>
-        <p className="aa-text">自动判定为完成并已记录 · 安全可逆，不放心的窗口内一键撤回即可。</p>
+        <p className="ib-aa-text">
+          自动判定为完成并已记录 · 安全可逆，不放心的窗口内一键撤回即可。
+        </p>
         {trace && (
-          <div className="aa-trace">
+          <div id={traceId} className="ib-aa-trace">
             来自 <b>completion</b> · 干净可逆 · proposal：
-            <code className="evt">{row.proposal_id.slice(0, 10)}</code>
+            <code>{row.proposal_id.slice(0, 10)}</code>
             <br />
             静态可逆性兜底 · 非 confidence 判定（apply 档位 {row.level}）
           </div>
         )}
-        <div className="aa-foot">
+        <div className="ib-acts ib-aa-foot">
           {state === 'reverted' ? (
-            <span className="aa-window">
-              <LoomIcon name="undo" size={13} />
+            <span className="ib-aa-window">
+              <Undo2 size={13} aria-hidden="true" />
               已撤销 · 恢复到应用前
             </span>
           ) : (
             <>
-              <span className={`aa-window ${state}`}>
-                <LoomIcon name={consumed ? 'alert' : 'clock'} size={13} />
+              <span className="ib-aa-window" data-state={state}>
+                {consumed ? (
+                  <CircleAlert size={13} aria-hidden="true" />
+                ) : (
+                  <Clock size={13} aria-hidden="true" />
+                )}
                 {windowText(state, remainingMinutes)}
               </span>
-              <button
-                type="button"
-                className="aa-revert"
+              <Button
+                size="sm"
                 disabled={consumed || reverting}
                 onClick={() => onRevert(row.proposal_id)}
               >
-                <LoomIcon name="undo" size={13} />
+                <Undo2 size={14} aria-hidden="true" />
                 {revertLabel}
-              </button>
+              </Button>
             </>
           )}
-          <button
-            type="button"
-            className="aa-link"
+          <Button
+            size="sm"
+            variant="quiet"
+            className="ib-aa-trace-btn"
+            aria-expanded={trace}
+            aria-controls={trace ? traceId : undefined}
             onClick={() => setTrace((v) => !v)}
-            style={{ marginLeft: 'auto' }}
           >
-            <LoomIcon name="history" size={13} />
+            <History size={14} aria-hidden="true" />
             追溯
-          </button>
+          </Button>
         </div>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -310,70 +333,95 @@ function TierCBlock({
   navigate: (to: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const bodyId = useId();
   return (
-    <div className={`co-fold${open ? ' open' : ''}`}>
+    <div className="ib-fold" data-open={open}>
       <button
         type="button"
-        className="co-bar"
+        className="ib-fold-bar"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
+        aria-controls={open ? bodyId : undefined}
       >
-        <span className="ec-ic">
-          <LoomIcon name="archive" size={16} />
+        <span className="ib-fold-ic" aria-hidden="true">
+          <Eye size={16} />
         </span>
-        <span>
-          <span className="co-t">{TIER_C_COPY.summary(items.length)}</span>
-          <span className="co-s">{open ? TIER_C_COPY.expanded : TIER_C_COPY.collapsed}</span>
+        <span className="ib-fold-text">
+          <span className="ib-fold-t">{TIER_C_COPY.summary(items.length)}</span>
+          <span className="ib-fold-s">{open ? TIER_C_COPY.expanded : TIER_C_COPY.collapsed}</span>
         </span>
-        <LoomIcon name="chevronDown" size={18} className="co-chev" />
+        <ChevronDown size={18} aria-hidden="true" className="ib-fold-chev" />
       </button>
       {open && (
-        <div className="co-body">
-          {items.map((it) => {
-            const meta = kindMeta(it.kind);
-            return (
-              <div key={it.id} className="co-row">
-                <span className="co-row-ic">
-                  <LoomIcon name={tierIcon(meta.icon)} size={14} />
-                </span>
-                <div className="co-row-body">
-                  <div className="co-row-top">
-                    <span className="co-row-title">{meta.label}</span>
-                    <span className="co-row-act">{TIER_C_COPY.itemState}</span>
+        <div id={bodyId} className="ib-fold-body">
+          <ul className="ib-fold-list">
+            {items.map((it) => {
+              const meta = kindMeta(it.kind);
+              const ItemIcon = kindIcon(meta.icon);
+              return (
+                <li key={it.id} className="ib-fold-row">
+                  <span className="ib-fold-row-ic" aria-hidden="true">
+                    <ItemIcon size={14} />
+                  </span>
+                  <div className="ib-fold-row-body">
+                    <div className="ib-fold-row-top">
+                      <span className="ib-fold-row-title">{meta.label}</span>
+                      <span className="ib-fold-row-state">{TIER_C_COPY.itemState}</span>
+                    </div>
+                    <div className="ib-fold-row-text">{it.payload.reason_md}</div>
                   </div>
-                  <div className="co-row-text">{it.payload.reason_md}</div>
-                </div>
-              </div>
-            );
-          })}
-          <button
-            type="button"
-            className="aa-link"
-            onClick={() => navigate('/today')}
-            style={{ alignSelf: 'flex-start' }}
-          >
-            <LoomIcon name="eye" size={14} />去 AI 观察面回看
-          </button>
+                </li>
+              );
+            })}
+          </ul>
+          <Button size="sm" variant="ghost" onClick={() => navigate('/today')}>
+            <Eye size={14} aria-hidden="true" />去 AI 观察面回看
+          </Button>
         </div>
       )}
     </div>
   );
 }
 
+/** One line of status inside a tier (still loading, partial, limit reached …). */
+function TierNote({ children }: { children: ReactNode }) {
+  return <div className="ib-note">{children}</div>;
+}
+
 export interface InboxPageProps {
   navigate: (to: string) => void;
 }
+
+export type InboxStatus = 'loading' | 'empty' | 'error' | 'ok';
 
 export function resolveInboxStatus(input: {
   loading: boolean;
   error: boolean;
   hasVisibleContent: boolean;
   hasDiagnostic: boolean;
-}): StatefulStatus {
+}): InboxStatus {
   if (input.loading) return 'loading';
   if (input.error) return 'error';
   if (!input.hasVisibleContent && !input.hasDiagnostic) return 'empty';
   return 'ok';
+}
+
+/** Loading → error → empty → content, one at a time (the order the page always had). */
+function InboxGate({
+  status,
+  onRetry,
+  empty,
+  children,
+}: {
+  status: InboxStatus;
+  onRetry: () => void;
+  empty: ReactNode;
+  children: ReactNode;
+}) {
+  if (status === 'loading') return <SkeletonLines rows={4} label="正在读取收件箱" />;
+  if (status === 'error') return <RetryLine message="提议列表暂不可用。" onRetry={onRetry} />;
+  if (status === 'empty') return empty;
+  return children;
 }
 
 export default function InboxPage({ navigate }: InboxPageProps) {
@@ -385,7 +433,6 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   } = useWorkbenchClient();
   const [resolved, setResolved] = useState<Record<string, string>>({});
   const [reverting, setReverting] = useState<Record<string, true>>({});
-  const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
 
   const queryClient = useQueryClient();
   const decisionQ = useInfiniteQuery(decisionQueryOptions(listDecisionProposalPage));
@@ -400,16 +447,10 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   const [drain] = useState(() => new DecisionBacklogDrain(queryClient, listDecisionProposalPage));
   const backlog = useSyncExternalStore(drain.subscribe, drain.getSnapshot, drain.getSnapshot);
 
+  // Errors go to the app-wide ui-next toast (ToastHost below; it closes itself after 4.5 s).
   const showError = (msg: string) => {
-    setToast((prev) => ({ id: (prev?.id ?? 0) + 1, text: msg }));
+    showToast({ message: msg });
   };
-  // Each toast closes itself after 5s. The timer belongs to the toast node: a newer toast or
-  // leaving the page removes the node and clears its timer, so nothing fires after unmount.
-  const dismissToastLater = useCallback((node: HTMLDivElement | null) => {
-    if (!node) return;
-    const id = setTimeout(() => setToast(null), 5000);
-    return () => clearTimeout(id);
-  }, []);
 
   const decisionPages = decisionQ.data?.pages ?? EMPTY_DECISION_PAGES;
   const decisionPageParams = decisionQ.data?.pageParams ?? EMPTY_DECISION_PAGE_PARAMS;
@@ -489,206 +530,190 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   });
 
   const clearedEmpty = (
-    <EmptyState
-      icon="checkCircle"
-      title="收件箱已清空"
-      text="所有提议都已裁决或自动处理。新提议会在下次 Dreaming session 后出现。"
-      action={
-        <Btn variant="secondary" iconEnd="arrow" onClick={() => navigate('/knowledge')}>
-          去看知识图
-        </Btn>
-      }
-    />
+    <div className="ib-empty">
+      <span className="ib-empty-icon" aria-hidden="true">
+        <Check size={20} />
+      </span>
+      <p className="ib-empty-title">收件箱已清空</p>
+      <p className="ib-empty-text">
+        所有提议都已裁决或自动处理。新提议会在下次 Dreaming session 后出现。
+      </p>
+      <Button onClick={() => navigate('/knowledge')}>
+        <Network size={16} aria-hidden="true" />
+        去看知识图
+        <ArrowRight size={16} aria-hidden="true" />
+      </Button>
+    </div>
   );
 
   return (
-    <main className="page wide inbox-loom">
-      <header className="page-head">
-        <div className="eyebrow">INBOX · AI 提议 · 按出手强度分流</div>
-        <h1 className="page-title serif">收件箱</h1>
-        <p className="page-lead">
-          AI 提议会按影响自动分流：安全可撤的建议已替你处理，需要判断的留在这里，提醒类信息归入 AI
-          观察。
-        </p>
-      </header>
+    <UiNextRoot className="ib-page">
+      <main className="ib-main un-m3e-bridge">
+        <header className="ib-head">
+          <h1 className="ib-title">收件箱</h1>
+          <p className="ib-lead">
+            AI 提议会按影响自动分流：安全可撤的建议已替你处理，需要判断的留在这里，提醒类信息归入 AI
+            观察。
+          </p>
+        </header>
 
-      <Stateful
-        status={status}
-        onRetry={() => {
-          void decisionQ.refetch();
-          void observationQ.refetch();
-          void aaQ.refetch();
-        }}
-        errorText="提议列表暂不可用。"
-        skeleton={<SkLines rows={4} />}
-        empty={clearedEmpty}
-      >
-        {/* ── A 档 · 自动应用 + 熔断 ── */}
-        {showTierA && (
-          <section>
-            <TierHead tier="A" count={autoApplied.length} />
-            {aaQ.isLoading && (
-              <LoomCard pad sunk>
-                <output className="meta" aria-live="polite">
-                  自动应用记录正在加载；待裁决提议不受影响。
-                </output>
-              </LoomCard>
-            )}
-            {/* aaQ 失败显式 surface（CodeRabbit #2）：否则 A 档卡 + breaker 被当空数据静默
-                吞掉，用户以为没有自动应用项，实则 fetch 失败、撤销入口也丢了。 */}
-            {aaQ.isError && (
-              <LoomCard pad sunk>
-                <div className="meta">
-                  自动应用列表暂不可用。{' '}
-                  <button type="button" className="aa-link" onClick={() => void aaQ.refetch()}>
-                    <LoomIcon name="refresh" size={13} />
-                    重试
-                  </button>
+        <InboxGate
+          status={status}
+          onRetry={() => {
+            void decisionQ.refetch();
+            void observationQ.refetch();
+            void aaQ.refetch();
+          }}
+          empty={clearedEmpty}
+        >
+          {/* ── A 档 · 自动应用 + 熔断 ── */}
+          {showTierA && (
+            <section className="ib-tier" aria-labelledby="ib-tier-a">
+              <TierHead tier="A" count={autoApplied.length} id="ib-tier-a" />
+              {aaQ.isLoading && (
+                <TierNote>
+                  <output aria-live="polite">自动应用记录正在加载；待裁决提议不受影响。</output>
+                </TierNote>
+              )}
+              {/* aaQ 失败显式 surface（CodeRabbit #2）：否则 A 档卡 + breaker 被当空数据静默
+                  吞掉，用户以为没有自动应用项，实则 fetch 失败、撤销入口也丢了。 */}
+              {aaQ.isError && (
+                <RetryLine message="自动应用列表暂不可用。" onRetry={() => void aaQ.refetch()} />
+              )}
+              {breaker && <BreakerMeter breaker={breaker} />}
+              {autoApplied.length > 0 && (
+                <p className="ib-aa-banner">
+                  <Zap size={16} aria-hidden="true" />
+                  <span>
+                    <b>这些已经替你做了。</b>
+                    都是安全可逆的小操作，没占用你的裁决队列 —— 不放心的，窗口内一键撤回即可。
+                  </span>
+                </p>
+              )}
+              {autoApplied.length > 0 && (
+                <div className="ib-aa-list">
+                  {autoApplied.map((row) => (
+                    <AutoAppliedCard
+                      key={row.proposal_id}
+                      row={row}
+                      nowMs={nowMs}
+                      reverting={reverting[row.proposal_id] === true}
+                      onRevert={onRevert}
+                    />
+                  ))}
                 </div>
-              </LoomCard>
-            )}
-            {breaker && <BreakerMeter breaker={breaker} />}
-            {autoApplied.length > 0 && (
-              <div className="aa-banner">
-                <LoomIcon name="bolt" size={18} className="ico" />
-                <div className="aa-banner-txt">
-                  <b>这些已经替你做了。</b>
-                  都是安全可逆的小操作，没占用你的裁决队列 —— 不放心的，窗口内一键撤回即可。
-                </div>
-              </div>
-            )}
-            {autoApplied.map((row) => (
-              <AutoAppliedCard
-                key={row.proposal_id}
-                row={row}
-                nowMs={nowMs}
-                reverting={reverting[row.proposal_id] === true}
-                onRevert={onRevert}
-              />
-            ))}
-          </section>
-        )}
-
-        {/* ── B 档 · 逐条人审 ── */}
-        <section>
-          <TierHead tier="B" count={decideRemaining} />
-          {backlog.isFetchingNextPage && (
-            <LoomCard pad sunk>
-              <output className="meta" aria-live="polite">
-                正在继续加载待裁决提议；已显示 {decide.length} 条，可以先处理。
-              </output>
-            </LoomCard>
+              )}
+            </section>
           )}
-          {backlog.isFetchNextPageError && (
-            <LoomCard pad sunk>
-              <div className="meta">
-                后续待裁决提议暂时无法加载；已显示的 {decide.length} 条仍可处理。{' '}
-                <button type="button" className="aa-link" onClick={drain.continueLoading}>
-                  <LoomIcon name="refresh" size={13} />
+
+          {/* ── B 档 · 逐条人审 ── */}
+          <section className="ib-tier" aria-labelledby="ib-tier-b">
+            <TierHead tier="B" count={decideRemaining} id="ib-tier-b" />
+            {backlog.isFetchingNextPage && (
+              <TierNote>
+                <output aria-live="polite">
+                  正在继续加载待裁决提议；已显示 {decide.length} 条，可以先处理。
+                </output>
+              </TierNote>
+            )}
+            {backlog.isFetchNextPageError && (
+              <TierNote>
+                <span>后续待裁决提议暂时无法加载；已显示的 {decide.length} 条仍可处理。</span>
+                <button
+                  type="button"
+                  className="ib-note-btn un-hit"
+                  onClick={drain.continueLoading}
+                >
                   继续加载
                 </button>
-              </div>
-            </LoomCard>
-          )}
-          {decisionDiagnostics.cursorRepeated && (
-            <LoomCard pad sunk>
-              <output className="meta">
-                待裁决分页返回了重复游标，已停止自动加载以免重复请求；当前 {decide.length}{' '}
-                条仍可处理，刷新后可重试。
-              </output>
-            </LoomCard>
-          )}
-          {decisionDiagnostics.pageLimitReached && (
-            <LoomCard pad sunk>
-              <output className="meta">
-                待裁决积压超过本次安全加载上限；当前 {decide.length}{' '}
-                条仍可处理，处理后刷新即可继续。
-              </output>
-            </LoomCard>
-          )}
-          {decide.length === 0 &&
-            !backlog.isFetchingNextPage &&
-            !backlog.isFetchNextPageError &&
-            !decisionDiagnostics.incomplete && (
-              <LoomCard pad sunk>
-                <div className="meta">没有待裁决的提议。</div>
-              </LoomCard>
+              </TierNote>
             )}
-          {decide.length > 0 &&
-            laneKinds.map((k) => {
-              const laneRows = decide.filter((r) => r.kind === k);
-              const live = laneRows.filter((r) => !resolved[r.id]).length;
-              const meta = kindMeta(k);
-              return (
-                <section key={k}>
-                  <SectionLabel count={live || null}>
-                    <span className="inbox-lane-label">
-                      <span className={`lane-ic tone-${meta.tone}`}>
-                        <LoomIcon name={tierIcon(meta.icon)} size={14} />
+            {decisionDiagnostics.cursorRepeated && (
+              <TierNote>
+                <output>
+                  待裁决分页返回了重复游标，已停止自动加载以免重复请求；当前 {decide.length}{' '}
+                  条仍可处理，刷新后可重试。
+                </output>
+              </TierNote>
+            )}
+            {decisionDiagnostics.pageLimitReached && (
+              <TierNote>
+                <output>
+                  待裁决积压超过本次安全加载上限；当前 {decide.length}{' '}
+                  条仍可处理，处理后刷新即可继续。
+                </output>
+              </TierNote>
+            )}
+            {decide.length === 0 &&
+              !backlog.isFetchingNextPage &&
+              !backlog.isFetchNextPageError &&
+              !decisionDiagnostics.incomplete && <TierNote>没有待裁决的提议。</TierNote>}
+            {decide.length > 0 &&
+              laneKinds.map((k) => {
+                const laneRows = decide.filter((r) => r.kind === k);
+                const live = laneRows.filter((r) => !resolved[r.id]).length;
+                const meta = kindMeta(k);
+                const LaneIcon = kindIcon(meta.icon);
+                return (
+                  <section key={k} className="ib-lane" aria-labelledby={`ib-lane-${k}`}>
+                    <h3 id={`ib-lane-${k}`} className="ib-lane-head">
+                      <span
+                        className="ib-lane-ic"
+                        data-tone={inboxTone(meta.tone)}
+                        aria-hidden="true"
+                      >
+                        <LaneIcon size={14} />
                       </span>
                       {meta.label}
-                    </span>
-                  </SectionLabel>
-                  <div style={{ display: 'grid', gap: 'var(--s-4)' }}>
-                    {laneRows.map((p, i) => (
-                      <ProposalCard
-                        key={p.id}
-                        p={p}
-                        index={i}
-                        resolved={resolved[p.id] ?? null}
-                        navigate={navigate}
-                        onResolve={(id, label) => setResolved((r) => ({ ...r, [id]: label }))}
-                        onError={showError}
-                      />
-                    ))}
-                  </div>
-                </section>
-              );
-            })}
-        </section>
+                      {live > 0 && <span className="ib-lane-count un-num">{live}</span>}
+                    </h3>
+                    <div className="ib-lane-cards">
+                      {laneRows.map((p, i) => (
+                        <ProposalCard
+                          key={p.id}
+                          p={p}
+                          index={i}
+                          resolved={resolved[p.id] ?? null}
+                          navigate={navigate}
+                          onResolve={(id, label) => setResolved((r) => ({ ...r, [id]: label }))}
+                          onError={showError}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
+          </section>
 
-        {/* ── C 档 · 纯状态（折叠） ── */}
-        {(observationQ.isLoading ||
-          moved.length > 0 ||
-          observationTruncated ||
-          observationUnavailable) && (
-          <section>
-            <TierHead tier="C" count={moved.length} />
-            {observationQ.isLoading && (
-              <LoomCard pad sunk>
-                <output className="meta" aria-live="polite">
-                  AI 观察记录正在加载；上方待裁决提议不受影响。
-                </output>
-              </LoomCard>
-            )}
-            {observationUnavailable && (
-              <LoomCard pad sunk>
-                <output className="meta">
-                  AI 观察记录暂时无法加载；上方待裁决提议不受影响，可以继续处理。
-                </output>
-              </LoomCard>
-            )}
-            {observationTruncated && (
-              <LoomCard pad sunk>
-                <div className="meta">
+          {/* ── C 档 · 纯状态（折叠） ── */}
+          {(observationQ.isLoading ||
+            moved.length > 0 ||
+            observationTruncated ||
+            observationUnavailable) && (
+            <section className="ib-tier" aria-labelledby="ib-tier-c">
+              <TierHead tier="C" count={moved.length} id="ib-tier-c" />
+              {observationQ.isLoading && (
+                <TierNote>
+                  <output aria-live="polite">AI 观察记录正在加载；上方待裁决提议不受影响。</output>
+                </TierNote>
+              )}
+              {observationUnavailable && (
+                <TierNote>
+                  <output>AI 观察记录暂时无法加载；上方待裁决提议不受影响，可以继续处理。</output>
+                </TierNote>
+              )}
+              {observationTruncated && (
+                <TierNote>
                   AI 观察当前显示前 {moved.length}{' '}
                   条，还有更多记录未在本页展开；待裁决提议不受影响。
-                </div>
-              </LoomCard>
-            )}
-            {moved.length > 0 && <TierCBlock items={moved} navigate={navigate} />}
-          </section>
-        )}
-      </Stateful>
-
-      {toast && (
-        <div key={toast.id} ref={dismissToastLater} className="pf-toasts" aria-live="polite">
-          <div className="pf-toast t-info">
-            <LoomIcon name="close" size={15} className="ico" />
-            <span>{toast.text}</span>
-          </div>
-        </div>
-      )}
-    </main>
+                </TierNote>
+              )}
+              {moved.length > 0 && <TierCBlock items={moved} navigate={navigate} />}
+            </section>
+          )}
+        </InboxGate>
+      </main>
+      <ToastHost />
+    </UiNextRoot>
   );
 }
