@@ -27,7 +27,6 @@
 //   - subject profile sourcingRoutePreference：subjectProfiles（src/subjects/profile.ts）。
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { rotationClassForKind } from '@/capabilities/practice/server/variant-rotation';
 import { OBJECTIVE_ANSWER_KINDS } from '@/core/schema/answer-class';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import {
@@ -54,6 +53,7 @@ import {
 } from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
+import { rotationClassForKind } from '../../scheduling/public';
 
 // ── Types（Task 13 Step 1，prompt 字面给定的形状即权威）────────────────────────
 

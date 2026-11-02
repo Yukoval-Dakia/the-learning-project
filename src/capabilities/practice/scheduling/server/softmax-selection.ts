@@ -10,13 +10,13 @@
 // core; this module owns the async signal/LLM/sampler path.
 
 import type { Db, Tx } from '@/db/client';
-import { type CollectedSignal, collectCandidateSignals } from '../../server/candidate-signals';
 import {
   DEFAULT_TEMPERATURE,
   MEM0_PRIOR_CAP,
   type SelectionPolicyConfig,
 } from '../../server/selection-constants';
 import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from '../../server/task-runtime';
+import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { planNonDueSelection } from './non-due-selection-plan';
 import { applyL3LearningMixGuard, learningMixContextFromInputs } from './post-filter';
 import {

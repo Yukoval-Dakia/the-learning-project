@@ -16,10 +16,14 @@ import { goal, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
 import {
+  resolveGoalPlacementScope,
+  resolveNearbyPlacementScope,
+} from '../../../server/placement-scope';
+import {
   dispatchPlacementStarterClaim,
   materializePlacementStartersForGoal,
   readPlacementStarterOutcomes,
-} from '../../supply/public';
+} from '../../../supply/public';
 import {
   noItemField,
   placementNoItem,
@@ -32,7 +36,6 @@ import {
   readPlacementSessionInfo,
   readPlacementUnresolvedItems,
 } from '../placement-assessment';
-import { resolveGoalPlacementScope, resolveNearbyPlacementScope } from '../placement-scope';
 import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../placement-select';
 import * as Placement from '../placement-session-lifecycle';
 
