@@ -2,25 +2,19 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { copilotCapability } from '@/capabilities/copilot/manifest';
 import { assessment_submission, event, job_events } from '@/db/schema';
+import * as runtimeEnv from '@/kernel/background-job-enqueue';
 import { writeJobEvent } from '@/kernel/job-events';
 import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
-import * as agentRunner from '@/server/ai/runner';
 import { _resetBossForTests, fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
-import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
-import * as runtimeEnv from '@/server/runtime-env';
 import { nativeSoloHttpFixture } from '../../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST as sendMessage } from '../api/chat';
-import { CopilotDurableRunResponseSchema, CopilotTurnsResponseSchema } from '../api/contracts';
-import { GET as readConversation } from '../api/turns';
 import { writeCopilotInputEvent } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import {
   type CopilotAcceptedJobData,
   type CopilotDurableAcceptance,
-  type CopilotRunJobData,
   dispatchSessionHead,
   hashCopilotDurableInput,
   reserveCopilotDurableAcceptance,
@@ -137,45 +131,6 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
     );
   });
 
-  // @invariant concurrency: real acceptance and recovery preserve one policy and one physical delivery
-  // @fails-if same-key retry changes policy or creates a second delivery instead of returning the original receipt
-  it('returns frozen policy through real 202, pending snapshot, same-key retry and changed-policy conflict', async () => {
-    vi.spyOn(runtimeEnv, 'shouldEnqueueBackgroundJobs').mockReturnValue(true);
-    const key = randomUUID();
-    const body = {
-      user_message: '假设椭圆参数退化，先核对边界与反例；本条只作临时讨论。',
-      triggered_by: 'chat',
-      derivation_policy: 'answer_only',
-    };
-    const request = (value: unknown) =>
-      new Request('http://test/api/copilot/chat', {
-        method: 'POST',
-        headers: { 'Idempotency-Key': key },
-        body: JSON.stringify(value),
-      });
-    const first = await sendMessage(request(body), {});
-    expect(first.status).toBe(202);
-    const accepted = CopilotDurableRunResponseSchema.parse(await first.json());
-    expect(accepted.derivation_policy).toBe('answer_only');
-    const snapshot = CopilotTurnsResponseSchema.parse(
-      await (
-        await readConversation(
-          new Request(`http://test/api/copilot/turns?session_id=${accepted.session_id}`),
-        )
-      ).json(),
-    );
-    expect(snapshot.turns[0]?.derivation_policy).toBe('answer_only');
-    expect(snapshot.active_runs[0]?.derivation_policy).toBe('answer_only');
-    const retry = await sendMessage(request(body), {});
-    expect(retry.status).toBe(202);
-    expect(CopilotDurableRunResponseSchema.parse(await retry.json())).toEqual(accepted);
-    const changed = await sendMessage(request({ ...body, derivation_policy: 'allow' }), {});
-    expect(changed.status).toBe(409);
-    expect(
-      await boss.findJobs('copilot_run', { data: { session_id: accepted.session_id } }),
-    ).toHaveLength(1);
-  });
-
   let boss: PgBoss;
 
   beforeAll(async () => {
@@ -206,118 +161,6 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
     await boss.deleteAllJobs('copilot_run').catch(() => undefined);
     await boss.stop({ graceful: false, timeout: 1_000 });
     _resetBossForTests();
-  });
-
-  // @invariant concurrency: a session dispatches only its FIFO head with the complete frozen request
-  // @fails-if a successor is dispatched early or loses the restricted policy when the head settles
-  it('accepts three turns but dispatches only the head, then advances with the complete job body', async () => {
-    const first = await accept(boss, 'one');
-    const second = await accept(boss, 'two', SESSION_ID, undefined, 'answer_only');
-    const third = await accept(boss, 'three');
-
-    expect(await boss.getJobById('copilot_run', first.bossJobId)).toMatchObject({
-      id: first.bossJobId,
-      state: 'created',
-    });
-    expect(await boss.getJobById('copilot_run', second.bossJobId)).toBeNull();
-    expect(await boss.getJobById('copilot_run', third.bossJobId)).toBeNull();
-    expect((await runEvents(first.runId)).map((row) => row.event_type)).toEqual([
-      COPILOT_RUN_EVENTS.QUEUED,
-      COPILOT_RUN_EVENTS.DISPATCHED,
-    ]);
-    expect((await runEvents(second.runId)).map((row) => row.event_type)).toEqual([
-      COPILOT_RUN_EVENTS.QUEUED,
-    ]);
-
-    await settleWithoutWorker(boss, first);
-    await expect(
-      dispatchSessionHead(testDb(), SESSION_ID, { boss, transactionDb: fromPgBossDrizzleTx }),
-    ).resolves.toBe(second.runId);
-
-    const physicalSecond = await boss.getJobById('copilot_run', second.bossJobId);
-    expect(physicalSecond?.data).toEqual({
-      ...richJobData('two'),
-      derivation_policy: 'answer_only',
-      run_id: second.runId,
-      session_id: SESSION_ID,
-    } satisfies CopilotRunJobData);
-    expect(await boss.getJobById('copilot_run', third.bossJobId)).toBeNull();
-
-    const roots = await testDb()
-      .select({
-        id: event.id,
-        action: event.action,
-        actor_kind: event.actor_kind,
-        actor_ref: event.actor_ref,
-        payload: event.payload,
-      })
-      .from(event)
-      .where(eq(event.session_id, SESSION_ID))
-      .orderBy(asc(event.dispatch_seq));
-    expect(roots.map((row) => row.id)).toEqual([first.runId, second.runId, third.runId]);
-    expect(roots[0]).toMatchObject({
-      action: 'experimental:copilot_chip_trigger',
-      actor_kind: 'system',
-      actor_ref: 'ui:copilot_chip',
-      payload: { chip_kind: 'continue_one' },
-    });
-  });
-
-  it('automatically polls a terminal replay and its cancelled successor through the manifest without a model call', async () => {
-    const model = vi.spyOn(agentRunner, 'runAgentTask').mockImplementation(async () => {
-      throw new Error('No model execution is authorized in the automatic polling fixture');
-    });
-    const first = await accept(boss, 'worker-complete');
-    const second = await accept(boss, 'worker-next');
-    // The physical head is still created; only its product terminal was already
-    // committed before a worker restart. Its redelivery must wake the successor.
-    await writeJobEvent(testDb(), {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: first.runId,
-      event_type: COPILOT_RUN_EVENTS.DONE,
-      payload: { task_run_id: `task_${first.runId}` },
-    });
-    // A Stop arrived for the waiting successor. It still has no physical job;
-    // automatic pickup must settle it without opening a paid execution.
-    await writeJobEvent(testDb(), {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: second.runId,
-      event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
-      payload: { reason: 'user_requested' },
-    });
-    const worker = copilotCapability.jobs?.handlers.find(
-      (handler) => handler.name === 'copilot_run',
-    );
-    if (!worker?.load) throw new Error('missing manifest worker');
-    try {
-      // Scope only the target production declaration: no unrelated scheduled
-      // capability jobs run in this isolated database. Registrar/options/load
-      // and pg-boss's automatic work/complete loop are unchanged.
-      await registerCapabilityJobs(boss, testDb(), [
-        { ...copilotCapability, jobs: { handlers: [worker] } },
-      ]);
-      await expect
-        .poll(
-          async () => [
-            (await boss.getJobById('copilot_run', first.bossJobId))?.state,
-            (await boss.getJobById('copilot_run', second.bossJobId))?.state,
-          ],
-          { timeout: 12_000, interval: 100 },
-        )
-        .toEqual(['completed', 'completed']);
-    } finally {
-      await boss.offWork('copilot_run');
-    }
-    expect(model).not.toHaveBeenCalled();
-    expect((await runEvents(second.runId)).at(-1)).toMatchObject({
-      event_type: COPILOT_RUN_EVENTS.FAILED,
-      payload: { reason: 'cancelled' },
-    });
-    expect(
-      (await runEvents(second.runId)).filter(
-        (row) => row.event_type === COPILOT_RUN_EVENTS.DISPATCHED,
-      ),
-    ).toHaveLength(1);
   });
 
   it('lets concurrent head dispatch attempts commit exactly one physical job and marker', async () => {

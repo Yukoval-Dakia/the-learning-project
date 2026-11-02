@@ -229,6 +229,7 @@ export const composePresentationTool: DomainTool<
     // The owner validates the locked draft and owns lock/replay/CAS/save ordering;
     // raw tx.update would be invisible to fold/rebuild.
     const saved = await setPresentation(ctx.db, {
+      beforeWrite: ctx.beforeIngestionWrite,
       blockId,
       presentation,
       expectedVersion,

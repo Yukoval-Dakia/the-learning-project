@@ -18,7 +18,7 @@ import type { FigureRefT, StructuredQuestionT } from './structured_question';
 // `question_block.structured` 升级为可识别的统一草稿文档：question → parts →
 // scoring units，外加材料与每层任意 metadata。提交时该文档直接映射到评估契约
 // 四层（structure / response_spec / scoring_basis / execution_plan），由
-// `draftDocumentToContract`（server/questions/draft-contract.ts）承担——本文件
+// `draftDocumentToContract`（kernel/records/question-draft-contract.ts）承担——本文件
 // 只持有文档形状、类型守卫与【入方向】适配器（legacy StructuredQuestion → 草稿），
 // 不依赖 kernel/server，保持 core/schema 的纯类型纪律。
 //

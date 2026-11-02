@@ -14,105 +14,14 @@
 
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
-import type { Db } from '@/db/client';
+import { type BuildMcpServerOptions, type PiToolMount, piToolWireName } from '@/ai/pi-tool-mount';
 import { writeToolCallLog, writeUnpricedToolCost } from '@/kernel/tools/call-evidence';
 import {
   ensureToolParametersObjectRoot,
   zodToToolParametersSchema,
 } from '@/kernel/zod-json-schema';
-import { type BuildMcpServerOptions, executeDomainToolCall } from './mcp-bridge';
+import { executeDomainToolCall } from './mcp-bridge';
 import { getTool } from './registry';
-
-/** Namespaced wire name used by every mount kind. */
-export function piToolWireName(serverName: string, toolName: string): string {
-  return `mcp__${serverName}__${toolName}`;
-}
-
-/** Loom-owned remote MCP config — the `{type:'http', url, headers}` subset the bridge consumes. */
-export interface RemoteMcpHttpConfig {
-  type: 'http';
-  url: string;
-  headers?: Record<string, string>;
-}
-
-/** Declarative tool mount callers hand to the runner. */
-export type PiToolMount =
-  | {
-      type: 'domain';
-      /** Registry DomainTools compiled via {@link buildPiDomainAgentTools}. */
-      options: BuildMcpServerOptions;
-    }
-  | {
-      type: 'remote-mcp';
-      serverName: string;
-      config: RemoteMcpHttpConfig;
-      /** Upstream tool names to expose (mirrors the caller's allowedTools scope). */
-      toolNames: readonly string[];
-      /**
-       * YUK-1557 — required to persist one tool_call_log row (and unknown-cost
-       * ledger row) per remote call; omitted mounts leave no audit row.
-       */
-      db?: Db;
-    }
-  | {
-      type: 'custom';
-      /**
-       * Escape hatch for non-registry tools (agency evidence / director). The
-       * caller owns execute and must keep logging semantics identical.
-       */
-      tools: AgentTool[];
-    };
-
-/** Convenience constructor for a domain mount descriptor. */
-export function piDomainMount(options: BuildMcpServerOptions): PiToolMount {
-  return { type: 'domain', options };
-}
-
-/**
- * Build one bespoke AgentTool for a `custom` mount. Wire name is
- * `mcp__<server>__<name>`; the handler returns the MCP-shaped payload.
- */
-export function piCustomTool(
-  serverName: string,
-  name: string,
-  description: string,
-  schema: Record<string, z.ZodTypeAny> | z.ZodTypeAny,
-  handler: (
-    args: Record<string, unknown>,
-  ) => Promise<{ content: { type: 'text'; text: string }[] }>,
-): AgentTool {
-  return {
-    name: piToolWireName(serverName, name),
-    label: name,
-    description,
-    // YUK-1547 — the parameters root must declare type:"object": a union of object
-    // branches otherwise compiles to a bare anyOf root the provider rejects (400).
-    parameters: zodToToolParametersSchema(
-      // A full Zod schema is the tool's parameters as-is (envelope-less submit);
-      // a raw shape keeps the object wrapper.
-      schema instanceof z.ZodType ? schema : z.object(schema),
-      {
-        io: 'input',
-        reused: 'inline',
-        target: 'draft-07',
-      },
-    ) as AgentTool['parameters'],
-    execute: async (_toolCallId, params) => {
-      const result = await handler((params ?? {}) as Record<string, unknown>);
-      return { content: result.content, details: null };
-    },
-  };
-}
-
-/** Convenience constructor for a remote-MCP mount descriptor. */
-export function piRemoteMcpMount(
-  serverName: string,
-  config: RemoteMcpHttpConfig,
-  toolNames: readonly string[],
-  db?: Db,
-): PiToolMount {
-  return { type: 'remote-mcp', serverName, config, toolNames, ...(db ? { db } : {}) };
-}
 
 /**
  * Compile registry DomainTools into pi AgentTools. pi validates raw arguments

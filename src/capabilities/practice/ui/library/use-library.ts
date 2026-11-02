@@ -23,31 +23,37 @@ import { groupMistakes } from './mistake-read';
 export const LIBRARY_KEY = 'questions-lib';
 
 export function useViewCounts() {
+  const { getQuestionsList, getReviewDrafts } = useLibraryClient();
   const all = useQuery({
     queryKey: [LIBRARY_KEY, 'count', 'all'],
-    queryFn: () => countQuestions('active'),
+    queryFn: () => countQuestions('active', getQuestionsList),
   });
-  const review = useQuery({ queryKey: [LIBRARY_KEY, 'count', 'review'], queryFn: countDrafts });
+  const review = useQuery({
+    queryKey: [LIBRARY_KEY, 'count', 'review'],
+    queryFn: () => countDrafts(getReviewDrafts),
+  });
   const held = useQuery({
     queryKey: [LIBRARY_KEY, 'count', 'held'],
-    queryFn: () => countQuestions('not_servable'),
+    queryFn: () => countQuestions('not_servable', getQuestionsList),
   });
   return { all: all.data, review: review.data, held: held.data };
 }
 
 export function useQuestionPages(status: 'active' | 'not_servable', scope: LibraryScope) {
+  const { getQuestionsList } = useLibraryClient();
   return useInfiniteQuery({
     queryKey: [LIBRARY_KEY, 'list', status, scope],
-    queryFn: ({ pageParam }) => listQuestionPage(status, scope, pageParam),
+    queryFn: ({ pageParam }) => listQuestionPage(status, scope, pageParam, getQuestionsList),
     initialPageParam: 0,
     getNextPageParam: (last) => (last.hasMore ? last.nextOffset : undefined),
   });
 }
 
 export function useDraftPages(scope: LibraryScope) {
+  const { getReviewDrafts } = useLibraryClient();
   const query = useInfiniteQuery({
     queryKey: [LIBRARY_KEY, 'drafts', scope.kind, scope.source],
-    queryFn: ({ pageParam }) => listDraftPage(scope, pageParam),
+    queryFn: ({ pageParam }) => listDraftPage(scope, pageParam, getReviewDrafts),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
@@ -64,9 +70,10 @@ export function useDraftPages(scope: LibraryScope) {
 
 /** Partial read: questions grouped from the mistake pages loaded so far. */
 export function useMistakeQuestions(scope: LibraryScope) {
+  const { listMistakes } = useLibraryClient();
   const query = useInfiniteQuery({
     queryKey: [LIBRARY_KEY, 'mistakes', scope.subject],
-    queryFn: ({ pageParam }) => listMistakePage(scope, pageParam),
+    queryFn: ({ pageParam }) => listMistakePage(scope, pageParam, listMistakes),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   });

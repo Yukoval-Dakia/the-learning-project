@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
-
-import { db } from '@/db/client';
-import { question_generation_binding, question_generation_plan } from '@/db/schema';
-import { resetDb } from '../../../tests/helpers/db';
 import {
   bindGeneratedQuestion,
   canonicalSourceContentHash,
   markQuestionGenerationFailed,
   prepareQuestionGeneration,
-} from './question-generation-grounding';
+} from '@/capabilities/practice/server/question-generation-grounding';
+import { db } from '@/db/client';
+import { question_generation_binding, question_generation_plan } from '@/db/schema';
+import { resetDb } from '../../../tests/helpers/db';
 
 // '北京' is 6 UTF-8 bytes; the locator is a HALF-OPEN [0, 6) byte range.
 const authoritativeBytes = new TextEncoder().encode('北京');

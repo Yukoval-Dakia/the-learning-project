@@ -1,8 +1,8 @@
 // Backup export: streams a ZIP of the database and, with include_assets=1, R2 assets.
 
 import { db } from '@/db/client';
+import { getR2 } from '@/kernel/object-storage';
 import { buildBackupArchive } from '@/server/export/archive';
-import { getR2 } from '@/server/r2';
 import { BackupExportQuerySchema } from './backup-contracts';
 
 export async function GET(req: Request): Promise<Response> {

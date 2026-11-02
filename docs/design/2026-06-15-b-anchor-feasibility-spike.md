@@ -8,7 +8,7 @@
 - `docs/adr/0043-difficulty-data-driven-recalibration.md`（半数据驱动 b 的四路线裁决；`b_anchor` 是其 §4 Q2 的「锚源」角色）
 - `docs/adr/0042-mfi-selection-signal-three-layer-engine.md`（选题引擎；π_i 持久化缺口的来源）
 - `docs/design/2026-06-15-difficulty-data-driven-research.md`（ADR-0043 承重研究，本 spike 的上游）
-- `docs/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md`（YUK-361，8 阶段；feature→b 落地序在 **Phase 6 — Active-PPI Recalibration**）
+- `docs/archive/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md`（YUK-361，8 阶段；feature→b 落地序在 **Phase 6 — Active-PPI Recalibration**）
 
 > **术语锚定（防混淆）**：本仓库没有 v0.4 roadmap 的「Phase 6」承载难度校准——难度校准的实施序在 **YUK-361 个性化校准 roadmap 的 Phase 6（Active-PPI Recalibration）**。下文凡说「Phase 6」一律指 YUK-361 Phase 6，不是 `v0.4-complete-form-roadmap.md` 的 Phase 6。原 spike 题面的「ADR-0043/roadmap Phase 6」即此。
 

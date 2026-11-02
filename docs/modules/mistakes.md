@@ -132,6 +132,8 @@ User 标注「我做错过」+ 可选填错答
 Mistake.create({source: 'vision_single', ...})
 ```
 
+**幂等**：创建入口 `POST /api/ingestion-sessions`（legacy `POST /api/ingestion` 同契约，成功码 200）接受可选请求头 `Idempotency-Key`（1–200 字符，显式空串/纯空白非法，400）。同 key 同输入重放已提交的终态响应并带 `Idempotency-Replayed: true`，不重跑资产与科目校验、不再建 session；同 key 不同输入 409 `idempotency_conflict`，收据不可用或提交结果不确定 503 `creation_receipt_unavailable`（用同 key 与原输入重试）；不带 key 则照旧创建、不落收据（收据表见[架构基础](../architecture.md) §七）。source package 物化失败以 500 `ingestion_source_package_failed` 作为终态落库，同 key 重试重放该失败，不会另建 session。
+
 **必审字段**：题面、参考答案、关联知识点（影响 mastery 计算）。其他自动通过。
 
 ### 2.3 卷子拍照 / 批改识别（vision_paper，Phase 1.5）
@@ -169,7 +171,7 @@ N × AttributionTask 走 batch（夜间）
 - 所有题（含对的）都进 Question 题库（题库丰富）
 - 用户可勾选「保留为模拟卷」→ 整套 Question 包成 standalone `tool_quiz` Artifact，未来可重刷
 
-**图片存储**：vision_paper 单次上传 1~N 张图片（每张 2-5MB），用户审核完批量录入时图片必须可重复读取。卷子图片走 R2 / S3-compat 持久化（`@aws-sdk/client-s3` via `src/server/r2.ts`，bucket 配置走 `R2_*` env vars，NAS Docker 容器内运行，**不是** Cloudflare Worker 也没有 wrangler.toml）；DB 中 `source_asset.storage_key` 持的是 object key（旧 `Mistake.wrong_answer_image_refs[]` 已 collapse 到 `payload.wrong_answer_image_refs` per learning_record schema）。client 上传走 `POST /api/assets` → 写 R2 → 返 asset id（见 `src/capabilities/ingestion/api/assets.ts`）。
+**图片存储**：vision_paper 单次上传 1~N 张图片（每张 2-5MB），用户审核完批量录入时图片必须可重复读取。卷子图片走 R2 / S3-compat 持久化（`@aws-sdk/client-s3` via `src/kernel/object-storage.ts`，bucket 配置走 `R2_*` env vars，NAS Docker 容器内运行，**不是** Cloudflare Worker 也没有 wrangler.toml）；DB 中 `source_asset.storage_key` 持的是 object key（旧 `Mistake.wrong_answer_image_refs[]` 已 collapse 到 `payload.wrong_answer_image_refs` per learning_record schema）。client 上传走 `POST /api/assets` → 写 R2 → 返 asset id（见 `src/capabilities/ingestion/api/assets.ts`）。
 
 ### 2.4 手动粘贴（manual）
 
@@ -182,6 +184,8 @@ Mistake.create({source: 'manual', source_ref: null})
 ```
 
 无 AI 介入题面识别（已结构化文本输入），AttributionTask 仍跑。
+
+**幂等**：`POST /api/mistakes` 与 §2.2 同语义（`Idempotency-Key` 校验、重放、409 / 503、不带 key 的规则一致），唯一差异是成功码固定 201，重放时复用原 `Location`（`/api/events/<mistake_id>`）。
 
 ### 2.5 从 artifact 或会话反向标记（reverse_mark）
 

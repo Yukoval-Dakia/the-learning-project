@@ -1,6 +1,6 @@
 // YUK-261 — practice 选择题点选交互组件（可点选项卡片）。
 //
-// Design authority: docs/superpowers/plans/2026-06-05-u5-paper-model.md §5
+// Design authority: docs/archive/superpowers/plans/2026-06-05-u5-paper-model.md §5
 // (practice 做卷答题页)；owner 已批 pre-flight（含一处修正）。
 //
 // 组件类型：嵌入 /practice/[id] 答题页的「选项卡片组」（非 drawer/modal/route）。

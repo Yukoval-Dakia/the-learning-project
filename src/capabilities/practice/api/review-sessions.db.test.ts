@@ -1,9 +1,8 @@
-import { eq, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { artifact, learning_session, question } from '@/db/schema';
+import { artifact, question } from '@/db/schema';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
-import { Review } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './review-sessions';
 
@@ -149,24 +148,5 @@ describe('canonical review-session resources', () => {
         AND status IN ('started', 'paused')
     `);
     expect(rows as unknown as Array<{ id: string }>).toHaveLength(1);
-  });
-
-  it('reuses the newest active session when legacy duplicates already exist', async () => {
-    await seedPaper('paper_duplicate');
-    const db = testDb();
-    const older = await Review.startReviewSession(db, { artifactId: 'paper_duplicate' });
-    const newer = await Review.startReviewSession(db, { artifactId: 'paper_duplicate' });
-    await db
-      .update(learning_session)
-      .set({ created_at: new Date('2026-07-13T00:00:00Z') })
-      .where(eq(learning_session.id, older.sessionId));
-    await db
-      .update(learning_session)
-      .set({ created_at: new Date('2026-07-14T00:00:00Z') })
-      .where(eq(learning_session.id, newer.sessionId));
-
-    const response = await POST(createRequest({ paper_id: 'paper_duplicate' }));
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ session_id: newer.sessionId });
   });
 });

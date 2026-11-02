@@ -1,0 +1,171 @@
+[data-ui-next] .rc-purpose {
+  --un-accent: var(--un-md-sys-color-primary);
+  --un-accent-strong: var(--un-md-sys-color-primary);
+  --un-accent-ink: var(--un-md-sys-color-primary);
+  --un-text-on-accent: var(--un-md-sys-color-on-primary);
+  color: var(--un-md-sys-color-on-surface);
+  font-family: var(--un-font-sans);
+  margin-block: 24px;
+  border-block: 1px solid var(--un-md-sys-color-outline-variant);
+}
+[data-ui-next] .rc-purpose > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  cursor: pointer;
+  font-weight: 600;
+}
+[data-ui-next] .rc-purpose > summary .rc-quiet {
+  margin-inline-start: auto;
+  font-weight: 400;
+}
+[data-ui-next] .rc-purpose-body {
+  padding-block: 8px 24px;
+}
+[data-ui-next] .rc-purpose h3 {
+  font-size: 18px;
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+[data-ui-next] .rc-purpose h4 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+[data-ui-next] .rc-purpose h5 {
+  font-size: 14px;
+  margin: 16px 0 8px;
+}
+[data-ui-next] .rc-purpose p {
+  line-height: 1.7;
+  margin-block: 8px;
+}
+[data-ui-next] .rc-purpose-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+[data-ui-next] .rc-purpose-current {
+  padding: 16px;
+  background: var(--un-md-sys-color-surface-container-low);
+  border-radius: 12px;
+  display: grid;
+  gap: 8px;
+}
+[data-ui-next] .rc-purpose-options {
+  border: 0;
+  padding: 0;
+  margin: 20px 0;
+  display: grid;
+  gap: 12px;
+}
+[data-ui-next] .rc-purpose-options legend {
+  padding: 0 0 12px;
+  font-weight: 500;
+}
+[data-ui-next] .rc-purpose-options label {
+  display: flex;
+  align-items: start;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--un-md-sys-color-outline-variant);
+  border-radius: 12px;
+  cursor: pointer;
+}
+[data-ui-next] .rc-purpose-options label:has(:checked) {
+  border-color: var(--un-accent);
+  box-shadow: inset 3px 0 var(--un-accent);
+}
+[data-ui-next] .rc-purpose-options input {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  accent-color: var(--un-accent);
+  margin-top: 2px;
+}
+[data-ui-next] .rc-purpose-options label > span {
+  display: grid;
+  gap: 6px;
+}
+[data-ui-next] .rc-purpose-options label > span > span {
+  font-size: 14px;
+  line-height: 1.6;
+}
+[data-ui-next] .rc-purpose-options:disabled label {
+  cursor: default;
+}
+[data-ui-next] .rc-purpose-request {
+  margin-top: 24px;
+}
+[data-ui-next] .rc-purpose-committed {
+  border-inline-start: 3px solid var(--un-accent);
+  padding-inline-start: 12px;
+  font-weight: 500;
+}
+[data-ui-next] .rc-purpose-retry {
+  margin-block: 16px;
+  padding: 16px;
+  border: 1px solid var(--un-md-sys-color-outline-variant);
+  border-radius: 12px;
+}
+[data-ui-next] .rc-purpose-impact {
+  display: grid;
+  gap: 24px;
+  margin-top: 24px;
+}
+[data-ui-next] .rc-purpose-impact > section {
+  border-top: 1px solid var(--un-md-sys-color-outline-variant);
+  padding-top: 16px;
+}
+[data-ui-next] .rc-purpose ul {
+  margin: 8px 0;
+  padding-inline-start: 20px;
+}
+[data-ui-next] .rc-purpose li {
+  margin-block: 12px;
+  overflow-wrap: anywhere;
+}
+[data-ui-next] .rc-purpose dl {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+  gap: 6px 16px;
+  font-size: 13px;
+}
+[data-ui-next] .rc-purpose dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+[data-ui-next] .rc-purpose details details > summary {
+  min-height: 40px;
+  padding-block: 8px;
+  cursor: pointer;
+}
+[data-ui-next] .rc-purpose :focus-visible {
+  outline: 3px solid var(--un-accent);
+  outline-offset: 3px;
+}
+@media (max-width: 600px) {
+  [data-ui-next] .rc-purpose > summary {
+    flex-wrap: wrap;
+    padding-block: 12px;
+  }
+  [data-ui-next] .rc-purpose > summary .rc-quiet {
+    flex-basis: 100%;
+    margin-inline-start: 28px;
+  }
+}
+
+[data-ui-next] .rc-purpose .un-btn {
+  min-height: 48px;
+  gap: 8px;
+  font-size: var(--un-md-sys-typescale-label-large-size);
+}
+[data-ui-next] .rc-purpose .un-btn-primary {
+  border-radius: var(--un-md-sys-shape-full);
+}
+[data-ui-next] .rc-purpose-options label:focus-within {
+  outline: 3px solid var(--un-md-sys-color-primary);
+  outline-offset: 2px;
+}

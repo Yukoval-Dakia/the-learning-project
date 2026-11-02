@@ -3,7 +3,7 @@
 // is still an owner decision.
 // scoresSrt holds the dark grid probability. scoresBinary holds the live Elo+SRT probability.
 // The names come from the shared bootstrap shape. RT-less steps stay in, unlike V-A1-fwd,
-// because the two engines differ without an RT. The loader is scripts/audit-calibration.ts.
+// because the two engines differ without an RT. The loader is scripts/ops-calibration.ts.
 
 import { SRT_ENABLED } from '@/core/theta';
 import { type ClusterForwardPreds, deltaAucClusterBootstrap } from './bootstrap';

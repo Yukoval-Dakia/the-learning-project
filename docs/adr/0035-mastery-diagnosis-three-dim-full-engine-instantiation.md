@@ -67,6 +67,8 @@
 
 ## 推论 —— 未校准不确定性 = 软信号伪装成硬（2026-06-20 增补）
 
-**源**：axis-2 校准机制数学 dossier（11 专家审 A1–A12/B1，`docs/superpowers/research/2026-06-20-axis2-calibration-math-dossier.md`；Linear Document 挂 YUK-439）。每个 reviewer 独立抓到同一站岗风险：A4 后验 SE / A5 图-shrunk 方差 / A12 LLM 自述 σ 都是「看起来校准好的」不确定性。
+**源**：axis-2 校准机制数学 dossier（11 专家审 A1–A12/B1，`docs/archive/superpowers/research/2026-06-20-axis2-calibration-math-dossier.md`；Linear Document 挂 YUK-439）。每个 reviewer 独立抓到同一站岗风险：A4 后验 SE / A5 图-shrunk 方差 / A12 LLM 自述 σ 都是「看起来校准好的」不确定性。
 
 **推论（扩展三维正交红线①「calibration never lets soft feed θ̂」的精神）**：任何 gate 一个 **user-visible 决策** 或 **下游-θ̂ 决策** 的不确定性量（后验 SE、graph-shrunk 方差、LLM 自述 σ、置信度等），在过 **owner-data 校准闸**（如 ECE ≤ 0.10 + 90% 区间覆盖 ∈ [0.80, 0.95]）之前，**一律 shadow-only，不得当硬置信用**。未校准的 confidence 当校准用 = 软信号伪装成硬，与本 ADR 决定 #4「实例化 ≠ 可信」同源。dossier 各 item 的校准闸（V-A4-ECE / V-A5-LOKO / V-A12-σcal）即此推论的逐项落点。
+
+**扩展（judge-bootstrap 铁律，源：vision §6 + §8 红线 4，`docs/archive/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md`，YUK-1575 重立档）**：「judge 够准」是单点故障——**任何依赖 judge 的机制，上线即绑 calibration harness + owner 锚点**；先在客观可判子集（数学/理科）建立信任再推向开放题；多 judge 组合（Jury/panel）用**异构 provider lane** 破同质化偏置。本推论与该铁律同源：前者管「不确定性量不得当硬」，后者管「判分本身不得裸奔」。

@@ -7,9 +7,9 @@ import type { AgentBudgetUnavailableReason } from '@/capabilities/ingestion/serv
 import { ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
 import {
+  type createSession as CreateSession,
   type UsePolicy,
   createDocxSession,
-  createSession,
   startLane,
   uploadPages,
 } from './record-api';
@@ -194,10 +194,13 @@ let sending = false;
 /**
  * Uploads the material, creates the recording and starts its lane. Resolves to its id, or null
  * when it failed or another send is still going (one at a time, so a double press cannot create
- * two recordings). The create routes take no Idempotency-Key, so a create whose answer was lost
+ * two recordings). This create caller sends no Idempotency-Key, so a create whose answer was lost
  * can still leave one extra recording behind; the uploaded pages are at least never sent twice.
  */
-export async function recordMaterial(input: Omit<DraftState, 'done' | 'failed'>) {
+export async function recordMaterial(
+  input: Omit<DraftState, 'done' | 'failed'>,
+  createSession: typeof CreateSession,
+) {
   if (sending) return null;
   sending = true;
   setDraft({ ...input, done: input.assetIds?.length ?? 0, failed: null });

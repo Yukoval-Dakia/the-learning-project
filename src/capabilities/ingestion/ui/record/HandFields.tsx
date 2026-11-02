@@ -1,7 +1,7 @@
 import { useMutation } from '@tanstack/react-query';
 import { Button } from '@/ui-next/public';
 import { KnowledgePick } from './KnowledgePick';
-import { createWrongAnswer } from './record-api';
+import { useRecordClient } from './record-client';
 
 /** What the learner filled in under a typed-out question. Held by the composer. */
 export interface Hand {
@@ -15,7 +15,7 @@ export const HAND_EMPTY: Hand = { answer: '', knowledge: [] };
  * The rest of a typed-out question: the learner's own answer and its knowledge point. A typed
  * question goes into the library together with the answer, as one they got wrong.
  *
- * The mistake route takes no Idempotency-Key, so the only guard against saving twice is here:
+ * This caller sends no Idempotency-Key, so the only guard against saving twice is here:
  * one save at a time, and nothing to press again once it went in.
  */
 export function HandFields({
@@ -29,6 +29,7 @@ export function HandFields({
   onHand: (next: Hand) => void;
   onSaved: () => void;
 }) {
+  const { createWrongAnswer } = useRecordClient();
   const save = useMutation({
     mutationFn: () =>
       createWrongAnswer({

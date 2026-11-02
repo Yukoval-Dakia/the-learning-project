@@ -21,6 +21,8 @@
 
 2. **立写入期结构一致性闸（拓扑层，补 `rubric-validator.ts` 语义闸之外）**，在**边**写入路径（`runEdgeProposeAndWrite`，`src/capabilities/knowledge/server/propose_edge.ts`——边批量提议/落库的真实入口；节点提议走 `propose.ts` 的 `runProposeAndWrite`，拓扑闸只关边故只挂边路径）执行三类检查：① **环检测**——`prerequisite` 边不得成环，hard-reject；② **方向矛盾**——A prereq B 且 B prereq A，hard-reject；③ **传递冗余**——A→B→C 已存在时，直接 A→C 拒绝或降权，warning。语义闸（`rubric-validator.ts`：prerequisite 序证据 / contrasts 混淆 / related_to dumping-ground 等，Phase 1.5 §4 复核确认已成熟）与拓扑闸叠加生效，二者正交。
 
+> **2026-10-28 修订（YUK-1601）**：闸的作用面在「拒绝退化形状」上**收窄例外**——①自环（from === to）对**全部 relation_type** hard-reject（自边对任何类型都无意义，merge rewire 早已把自环当退化折叠）；②方向矛盾扩展到 `derived_from`：A 派生自 B 且 B 派生自 A 的互挂对（推导 DAG 的 2-环）hard-reject。`prerequisite` 专属的环检测/传递冗余、以及 applied_in 的豁免维持不变。同 PR 在**树骨架**侧补齐对称拒绝：reparent accept 经单一 xact advisory lock 串行化后，拒绝 new_parent ∈ 被移动节点子树（含 new_parent === node 自环与两节点互挂），拒绝即整事务回滚。
+
 3. **立写入期调和环（知识侧）**，复用 mem0 P2 reconcile 骨架（ADR-0017 个性化侧，`docs/design/2026-06-13-memory-architecture.md` §3.4 调和层）的 prompt 形制与 `memory_reconciliation_log` 表设计，作用于 `knowledge_edge`：AI 提议新边时检索既有相邻边喂决策 prompt，让「新提议与旧结构矛盾」在写入期被显式判定（取代/并存），而非堆积到读取端。共享 P2 骨架但**作用对象是 `knowledge_edge` 不是 mem0 collection**；其 `blockedBy YUK-342`（P2 reconcile，PR #405 待 merge）—— P2 merge 后方可起跑（复用其 `memory_reconciliation_log` 设计），在此之前是结构前置就位、调和环实现待 P2 落地。
 
 4. **epistemic 纠错复用 `CorrectionKind`（ADR-0019），不引 valid-time**。结构「不再为真」走 correction event（`CorrectionKind` ∈ {supersede, retract, mark_wrong, restore}，已有 `getEffectiveTruth` event-层实现，`core/schema/event/known.ts`）表达知识论纠正，不再用 `valid_at`/`invalid_at` 表达时段有效性。

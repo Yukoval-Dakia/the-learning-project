@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { Memory } from 'mem0ai/oss';
 import type { Job } from 'pg-boss';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installModelEndpointHostAllowlist } from '@/core/config/model-endpoint-allowlist';
 import { provider_attempt } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -53,6 +54,9 @@ beforeAll(async () => {
   const address = server.address();
   if (!address || typeof address === 'string') throw Error('Fixture bind failed');
   endpoint = `http://127.0.0.1:${address.port}`;
+  // YUK-1654 — the memory lanes gate MEM0_*_BASE_URL through the model
+  // endpoint allowlist; admit the local fixture endpoint explicitly.
+  installModelEndpointHostAllowlist([new URL(endpoint).host]);
 });
 beforeEach(async () => {
   await resetDb();

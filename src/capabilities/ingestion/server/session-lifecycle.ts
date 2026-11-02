@@ -5,13 +5,16 @@ import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { learning_session, question_block, source_document } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
-import { USAGE_POLICY_PROVENANCE_KEY } from '@/kernel/read-models/usage-policy';
+import { assertFromState } from '@/kernel/learning-session-guard';
+import {
+  USAGE_POLICY_PROVENANCE_KEY,
+  resolveSessionDerivationPolicy,
+} from '@/kernel/read-models/usage-policy';
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
-import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
-import { assertFromState } from '@/server/session/guards';
 import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx/omission';
 
 // LearningSession.Ingestion.* — Phase 1c.1 Step 5 evolution of the ADR-0005
@@ -181,6 +184,9 @@ export async function enqueueAgentRun(
       params.sessionId,
       'Ingestion.enqueueAgentRun',
     );
+    // Budget lock remains FIRST; policy is authoritative under the session lock.
+    if ((await resolveSessionDerivationPolicy(tx, params.sessionId)) !== 'allow')
+      throw new ApiError('purpose_restricted', 'source does not permit agent ingestion', 422);
 
     await tx
       .update(learning_session)

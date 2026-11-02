@@ -3,6 +3,7 @@
 // projections in stream-view.ts.
 
 import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
+import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
 import { getConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
@@ -10,7 +11,6 @@ import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { event, knowledge, learning_session, practice_stream_item, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
-import { Review } from '@/server/session';
 import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
 import { readQuestionPace } from './question-pace';

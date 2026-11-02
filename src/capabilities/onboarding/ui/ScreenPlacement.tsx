@@ -1,6 +1,5 @@
 // Placement waits for native evaluation and settlement before the next adaptive selection.
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { computeLatencyMs } from '@/capabilities/practice/ui-public';
 import type { GroupEvidenceT, ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
@@ -19,6 +18,7 @@ import { useResponseDraftAutosave } from '@/ui/hooks/useResponseDraftAutosave';
 import { ApiError } from '@/ui/lib/api';
 import { uploadAsset } from '@/ui/lib/assets';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { computeLatencyMs } from '@/ui/lib/response-latency';
 import { subjectDisplayName } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';

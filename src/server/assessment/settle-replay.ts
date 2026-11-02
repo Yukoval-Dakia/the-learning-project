@@ -12,7 +12,7 @@ import {
   mastery_state,
   material_fsrs_state,
 } from '@/db/schema';
-import { resetPosteriorToPriorIfNoEvidence } from '@/server/mastery/item-calibration';
+import { resetPosteriorToPriorIfNoEvidence } from '@/kernel/records/item-calibration';
 import { unfoldFamilyCalibration } from '@/server/mastery/personalized-difficulty';
 import { clearCalibrationBelowThreshold } from '@/server/mastery/recalibration';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
@@ -95,8 +95,10 @@ export async function revertSettlementMember(
     .where(eq(difficulty_calibration_label.attempt_event_id, member.id))
     .returning({ question_id: difficulty_calibration_label.question_id });
   for (const { question_id: questionId } of removedLabels) {
+    // Savepoint, not a bare catch: a SQL error aborts the caller's transaction and
+    // every later statement would fail. Same discipline as the settle-apply hooks.
     try {
-      await clearCalibrationBelowThreshold(tx, questionId);
+      await tx.transaction((sp) => clearCalibrationBelowThreshold(sp, questionId));
     } catch (err) {
       console.warn(
         `[assessment-settle] clearCalibrationBelowThreshold failed for ${questionId} (non-fatal):`,

@@ -162,6 +162,10 @@ export class ProviderTransportCollector {
     this.abortInitiators.push({ at: now(), kind });
   }
 
+  abortInitiatorKinds(): readonly TransportAbortInitiator[] {
+    return this.abortInitiators.map((marker) => marker.kind);
+  }
+
   /** The exact bound the lifecycle armed — min(task budget, deadline remaining). */
   noteExecutionTimeoutMs(timeoutMs: number): void {
     this.budget.execution_timeout_ms = timeoutMs;

@@ -1,9 +1,28 @@
 import type { Hono } from 'hono';
 import type { createGoal } from '@/capabilities/agency/public';
 import type {
+  cancelCopilotRun,
+  createCopilotSession,
+  dismissCopilotNudge,
+  loadActiveNudges,
+  loadCopilotSummary,
+  markCopilotNudgeOpened,
+  readCopilotSessions,
+  readCopilotTurns,
+  requestCopilotCheckpointRevert,
+  requestTeachingChipAcceptance,
+} from '@/capabilities/copilot/public';
+import type {
+  answerIngestionAsk,
   createIngestionSession,
+  createManualMistake,
+  readIngestionSessionBlocks,
+  readIngestionSessionDetail,
+  readIngestionSessionHistory,
+  readIngestionSessions,
   readMistakes,
   requestIngestionOperation,
+  revertIngestionBlock,
 } from '@/capabilities/ingestion/public';
 import type {
   createManualKnowledgeEdge,
@@ -32,6 +51,8 @@ import type {
   readJudgeRunStatus,
   readPaperList,
   readPlacementSession,
+  readPracticeDraftList,
+  readPracticeQuestionList,
   readQuestionDetail,
   recomposePracticeStream,
   releaseHeldPlacement,
@@ -55,6 +76,23 @@ export type FrontdoorContext = {
     body: string;
     key: string | null;
   }) => Promise<Awaited<ReturnType<typeof requestIngestionOperation>>>;
+  acceptTeachingChip: (input: {
+    sessionId: string;
+    body: string;
+  }) => Promise<Awaited<ReturnType<typeof requestTeachingChipAcceptance>>>;
+  revertCopilotCheckpoint: (
+    checkpointEventId: string,
+  ) => Promise<Awaited<ReturnType<typeof requestCopilotCheckpointRevert>>>;
+  cancelCopilotRun: (runId: string) => Promise<Awaited<ReturnType<typeof cancelCopilotRun>>>;
+  readCopilotTurns: (query: string) => Promise<Awaited<ReturnType<typeof readCopilotTurns>>>;
+  createCopilotSession: () => Promise<Awaited<ReturnType<typeof createCopilotSession>>>;
+  readCopilotSessions: () => Promise<Awaited<ReturnType<typeof readCopilotSessions>>>;
+  dismissCopilotNudge: (id: string) => Promise<Awaited<ReturnType<typeof dismissCopilotNudge>>>;
+  markCopilotNudgeOpened: (
+    id: string,
+  ) => Promise<Awaited<ReturnType<typeof markCopilotNudgeOpened>>>;
+  readCopilotNudges: () => Promise<{ nudges: Awaited<ReturnType<typeof loadActiveNudges>> }>;
+  readCopilotSummary: () => Promise<Awaited<ReturnType<typeof loadCopilotSummary>>>;
   enableLibraryDraft: (id: string) => Promise<Awaited<ReturnType<typeof enablePracticeDraft>>>;
   forceEnableLibraryDraft: (input: {
     id: string;
@@ -65,6 +103,30 @@ export type FrontdoorContext = {
     idempotencyKey: string | null;
   }) => Promise<Awaited<ReturnType<typeof runPracticeServingAction>>>;
   adminControls: () => Promise<AdminControlClient>;
+  answerRecordAsk: (input: {
+    sessionId: string;
+    askId: string;
+    body: string;
+    key: string | null;
+  }) => Promise<Awaited<ReturnType<typeof answerIngestionAsk>>>;
+  revertRecordBlock: (input: {
+    sessionId: string;
+    body: string;
+  }) => Promise<Awaited<ReturnType<typeof revertIngestionBlock>>>;
+  createRecordManualMistake: (input: {
+    body: string;
+    key: string | null;
+  }) => Promise<
+    Extract<Awaited<ReturnType<typeof createManualMistake>>, { body: { mistake_id: string } }>
+  >;
+  readRecordBlocks: (id: string) => Promise<Awaited<ReturnType<typeof readIngestionSessionBlocks>>>;
+  readRecordSessionDetail: (
+    id: string,
+  ) => Promise<Awaited<ReturnType<typeof readIngestionSessionDetail>>>;
+  readRecordSessionHistory: (
+    id: string,
+  ) => Promise<Awaited<ReturnType<typeof readIngestionSessionHistory>>>;
+  readRecordSessions: (query: string) => Promise<Awaited<ReturnType<typeof readIngestionSessions>>>;
   createIngestionSession: (input: {
     body: string;
     key: string | null;
@@ -114,6 +176,11 @@ export type FrontdoorContext = {
     id: string,
   ) => Promise<Awaited<ReturnType<typeof readDraftReviewDetail>>>;
   readLibraryQuestionMistakes: (id: string) => Promise<Awaited<ReturnType<typeof readMistakes>>>;
+  readLibraryMistakes: (query: string) => Promise<Awaited<ReturnType<typeof readMistakes>>>;
+  readLibraryDrafts: (query: string) => Promise<Awaited<ReturnType<typeof readPracticeDraftList>>>;
+  readLibraryQuestions: (
+    query: string,
+  ) => Promise<Awaited<ReturnType<typeof readPracticeQuestionList>>>;
   restoreLibraryQuestion: (input: {
     id: string;
     body: string;

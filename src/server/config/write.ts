@@ -20,6 +20,7 @@
 // journal 是 append-only 的真持久轴；取 system_config 行 revision 会在
 // clear 删行后倒回 1，撞上 journal 的 (key,revision) PK）。
 
+import type { MutableModels as PiMutableModels } from '@earendil-works/pi-ai';
 import { eq, inArray, sql } from 'drizzle-orm';
 import type { TaskDefinition } from '@/ai/task-spec';
 import type { TaskKind } from '@/capabilities/task-registry';
@@ -277,10 +278,17 @@ function valueAsNonEmptyString(v: unknown): string | undefined {
   return typeof v === 'string' && v !== '' ? v : undefined;
 }
 
+/** YUK-1658 — prebuilt outside the write tx so the epoch row lock never waits on registry assembly. */
+type ConfigPairModels = Pick<PiMutableModels, 'getModel'>;
+
 /**
  * 终态校验：写面触碰到的每个 provider/model 对，按 tx 内 DB 终态行（刚写的值也在
  * 其中）求 effective provider + effective model；providerRequiresExplicitModel 时
  * 缺显式 model → 422（整 tx 回滚）。
+ *
+ * `models` 由调用方在开 tx 前构建（YUK-1658）：它只含进程内事实（getModel 每次
+ * 查找现读目录），持 epoch 行锁构建它会把所有 config 写串行在 import + 注册表
+ * 装配后面。
  *
  * 生效层序与读面一致：priority 键 env 显式 > DB > default；fallback 键 DB > env >
  * codeDefault。rejudge 的 model codeDefault（'claude-opus-4-8'）不算「显式」——
@@ -290,6 +298,7 @@ function valueAsNonEmptyString(v: unknown): string | undefined {
 async function validateFinalProviderPairs(
   tx: Tx,
   touchedScopes: ReadonlyMap<string, PairScope>,
+  models: ConfigPairModels,
 ): Promise<void> {
   const scopes = new Map(touchedScopes);
   // A global reset exposes task-level configuration previously hidden by the pin.
@@ -302,7 +311,6 @@ async function validateFinalProviderPairs(
     }
   }
   if (scopes.size === 0) return;
-  const models = await createLoomPiModels();
   function validateNativeModel(
     label: string,
     provider: Provider,
@@ -354,6 +362,7 @@ async function validateFinalProviderPairs(
     ...[...solveTasks, ...visionTasks].flatMap((kind) => [
       `task.${kind}.provider`,
       `task.${kind}.model`,
+      `task.${kind}.override_global_pin`,
     ]),
     ...([...scopes.values()].some((scope) => scope.providerKey === 'lane.global.provider')
       ? Object.keys(tasks).map((kind) => `task.${kind}.model`)
@@ -411,15 +420,19 @@ async function validateFinalProviderPairs(
           valueAsNonEmptyString(rowByKey.get('lane.global.model')),
       });
       for (const kind of scopedTasks) {
+        // YUK-1658 — an opted-out task runs its own pair under a scoped lane
+        // (read side: call arg > task pair > registry, global pin skipped), so
+        // the global switch must not leak into its lane resolution here.
+        const followsGlobal = rowByKey.get(`task.${kind}.override_global_pin`) !== true;
         const rawProvider =
           configuredProvider ??
-          global?.provider ??
+          (followsGlobal ? global?.provider : undefined) ??
           valueAsNonEmptyString(rowByKey.get(`task.${kind}.provider`)) ??
           tasks[kind].defaultProvider;
         const provider = readProviderId(rawProvider);
         const model =
           configuredModel ??
-          global?.model ??
+          (followsGlobal ? global?.model : undefined) ??
           valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) ??
           (provider === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : tasks[kind].defaultModel);
         if (!provider || !isProviderImplemented(provider)) {
@@ -516,6 +529,11 @@ async function validateFinalProviderPairs(
       if (isGlobal && isProviderImplemented(provider)) {
         for (const [kind, definition] of Object.entries(tasks)) {
           if ((definition as TaskDefinition).execution === 'typed') continue;
+          // YUK-1658 — an opted-out task never runs on the global pair (its own
+          // pair is validated in its task scope above, including when a global
+          // reset exposes it), so validating it here 422'd global saves on
+          // bindings that will never execute.
+          if (rowByKey.get(`task.${kind}.override_global_pin`) === true) continue;
           const effectiveModel =
             effModel ??
             valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) ??
@@ -605,6 +623,11 @@ export async function mutateConfigs(
   }
 
   const now = new Date();
+  // YUK-1658 — the executable-model registry is pure in-process state (getModel
+  // re-reads catalog facts on every lookup), so build it BEFORE the transaction:
+  // assembling it inside held the epoch row lock — which serializes every config
+  // batch — hostage to a dynamic import + provider-registry construction.
+  const models = touchedPairs.size > 0 ? await createLoomPiModels() : undefined;
   const results = await db.transaction(async (tx) => {
     // This epoch row lock serializes all config batches before any key or journal write.
     const epoch = await bumpEpoch(tx);
@@ -674,7 +697,7 @@ export async function mutateConfigs(
         ...(action === 'clear' ? { cleared: Boolean(prevRow) } : {}),
       });
     }
-    await validateFinalProviderPairs(tx, touchedPairs);
+    if (models) await validateFinalProviderPairs(tx, touchedPairs, models);
     return out;
   });
   // Hydration is best-effort. HTTP reports both committed and observed epochs separately.

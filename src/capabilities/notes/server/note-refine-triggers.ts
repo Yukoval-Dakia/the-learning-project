@@ -3,7 +3,7 @@ import type { NoteRefineTriggerKind } from '@/capabilities/notes/jobs/note-refin
 import { getConfig } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { job_events } from '@/db/schema';
-import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
+import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { getNotesBoss, notesBossTransaction } from './boss-port';
 
 export const NOTE_REFINE_TRIGGER_DEBOUNCE_MS = 60 * 60_000;

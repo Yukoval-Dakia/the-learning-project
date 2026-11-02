@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-15
 **Status:** Accepted as implementation sequencing guidance
-**Part of:** YUK-361 personalized calibration roadmap (`docs/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md` Phase 0 / Task 1)
+**Part of:** YUK-361 personalized calibration roadmap (`docs/archive/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md` Phase 0 / Task 1)
 **Amends:** ADR-0042（选题引擎，编排档2）· ADR-0043（难度数据驱动校准）
 
 ## Decision

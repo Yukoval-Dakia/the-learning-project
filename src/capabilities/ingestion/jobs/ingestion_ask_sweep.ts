@@ -9,6 +9,7 @@ import {
 } from '../server/agent/asks';
 import { enqueueAgentContinuation, enqueueAgentResume } from '../server/agent/dispatch';
 import { STALE_SEGMENT_MS } from '../server/agent/ledger';
+import { recoverAgentPurposeStops } from '../server/agent/purpose-stop';
 import { failSessionForUnknownPaidAttempt } from '../server/agent/run';
 
 // Ask sweeper (fast queue, every minute).
@@ -30,6 +31,7 @@ import { failSessionForUnknownPaidAttempt } from '../server/agent/run';
 
 export function buildIngestionAskSweepHandler(db: Db) {
   return async (_jobs: Job[]) => {
+    await recoverAgentPurposeStops(db);
     const expired = await listExpiredOpenAsks(db, 50);
     for (const askId of expired) {
       await resolveAskByTimeout(db, askId).catch((err) =>

@@ -29,6 +29,9 @@ export function resolveMemoryLlmConfig(
       env.MEM0_LLM_BASE_URL?.trim() ||
       resolveModelProfile('zhipuai-coding-plan', model, env).baseUrl;
     if (!baseURL) throw new Error('Memory LLM catalog endpoint is unknown');
+    // YUK-1654 — the unpinned rollback still sends ZHIPU_API_KEY: the endpoint
+    // host must be one the catalog declares, explicit override or not.
+    assertModelEndpointHostAllowed(baseURL, 'MEM0_LLM_BASE_URL (unpinned memory LLM fallback)');
     return {
       provider: 'glm',
       apiKey,

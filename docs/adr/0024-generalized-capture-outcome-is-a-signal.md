@@ -8,7 +8,7 @@
 
 ## Context
 
-T-OC OCR/录入 pipeline 重建 design（`docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md`，OC-3）暴露一个 model 层硬伤：
+T-OC OCR/录入 pipeline 重建 design（`docs/archive/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md`，OC-3）暴露一个 model 层硬伤：
 
 `app/api/ingestion/[id]/import` 对**每一个**导入块都写死：
 - `event(action='attempt', outcome='failure')`，以及

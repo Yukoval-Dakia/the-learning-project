@@ -1,6 +1,6 @@
 # subjects/physics/
 
-Physics 学科 bundle。Subject #3，用于 Foundation 真 Closeout phase（spec `docs/superpowers/specs/2026-05-22-foundation-true-closeout-design.md`）。
+Physics 学科 bundle。Subject #3，用于 Foundation 真 Closeout phase（spec `docs/archive/superpowers/specs/2026-05-22-foundation-true-closeout-design.md`）。
 
 ## P-1 状态（2026-05-22）
 
@@ -20,7 +20,7 @@ Physics 学科 bundle。Subject #3，用于 Foundation 真 Closeout phase（spec
 - **P3**：rating-advisor + UI advisory；**Foundation C acid test 3**（score 真贯穿 FSRS 调度）
 - **P4**：closeout audit + status.md 收口
 
-详 outline doc `docs/superpowers/plans/2026-05-22-foundation-true-closeout-phases.md`。
+详 outline doc `docs/archive/superpowers/plans/2026-05-22-foundation-true-closeout-phases.md`。
 
 ## 约束
 

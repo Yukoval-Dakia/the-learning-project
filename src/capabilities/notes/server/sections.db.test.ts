@@ -1,10 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  bodyBlocksToNoteSections,
-  noteSectionsToBodyBlocks,
-} from '@/capabilities/notes/server/body-blocks';
+import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import { artifact, event } from '@/db/schema';
+import { bodyBlocksToNoteSections } from '@/kernel/read-models/note-sections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { editArtifactSection } from './sections';
 

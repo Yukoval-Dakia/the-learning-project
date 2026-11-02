@@ -22,9 +22,9 @@ import { z } from 'zod';
 
 import type { Db, Tx } from '@/db/client';
 import { artifact, question } from '@/db/schema';
+import { acquireProposalDecisionLock } from '@/kernel/proposals/applier-helpers';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { acquireProposalDecisionLock } from '@/server/proposals/applier-helpers';
 import { writeToolQuizArtifact } from './tool-quiz-core';
 
 const WriteQuizInputSchema = z.object({

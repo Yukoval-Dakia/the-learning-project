@@ -5,11 +5,11 @@ import {
   type ProposalLifecycleResult,
   getProposalLifecycleOperation,
 } from '@/kernel/proposals';
+import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { ensureProposalDecisionSignal } from '@/kernel/proposals/signals';
 import { extractRecordEvidenceIds, markRecordsActioned } from '@/kernel/records/record-processing';
 import type { AcceptAiProposalOpts } from './action-types';
-import { findExistingRateEvent } from './applier-helpers';
 import {
   assertPending,
   ownerInput,
@@ -151,7 +151,19 @@ export async function acceptAiProposal(
 
   const recordIds = extractRecordEvidenceIds(proposal.payload.evidence_refs);
   if (recordIds.length > 0 && dispatched.lifecycleOutcome === 'accepted') {
-    await markRecordsActioned(db, recordIds);
+    // The accept already committed above; this flip is best-effort bookkeeping
+    // (record-processing.ts). A failed flip must not report the committed accept as a
+    // failure — execution outcome and domain bookkeeping stay separate (YUK-1578), so
+    // the degradation is surfaced, and the idempotent accept replay re-flips.
+    try {
+      await markRecordsActioned(db, recordIds);
+    } catch (err) {
+      console.warn('[proposal-accept] records actionization degraded', {
+        proposal_id: proposalId,
+        record_ids: recordIds,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
   return dispatched.result;
 }

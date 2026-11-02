@@ -1,4 +1,5 @@
 import { MASTERY_PROGRESS_ACTION } from '@/core/schema/event';
+import { DREAMING_NOTE_REFRESH_ACTION } from '@/core/schema/event/dreaming-note-refresh';
 import { API_ERROR_RESPONSES } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { nightlyEligibility } from '@/kernel/nightly-eligibility';
@@ -48,6 +49,17 @@ export const notesCapability = defineCapability({
         load: () =>
           import('./server/mastery-progress-subscription').then(
             (m) => m.buildMasteryProgressNoteRefineSubscriber,
+          ),
+      },
+      {
+        // Dreaming commits the refresh signal. Notes owns the refine enqueue.
+        // Delivery is after commit, so an enqueue failure cannot retry the scan.
+        id: 'notes.dreaming-note-refresh',
+        version: 1,
+        actions: [DREAMING_NOTE_REFRESH_ACTION],
+        load: () =>
+          import('./server/dreaming-note-refresh-subscription').then(
+            (m) => m.buildDreamingNoteRefreshSubscriber,
           ),
       },
     ],

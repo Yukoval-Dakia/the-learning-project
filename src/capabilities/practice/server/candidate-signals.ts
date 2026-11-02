@@ -6,8 +6,8 @@
 // Task 8 余）。
 //
 // 权威 spec：
-//   - docs/superpowers/plans/2026-06-16-phase3-randomized-mfi-impl.md（Step A）
-//   - docs/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md Task 7
+//   - docs/archive/superpowers/plans/2026-06-16-phase3-randomized-mfi-impl.md（Step A）
+//   - docs/archive/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md Task 7
 //   - ADR-0042 §1/§2 + 编排档2 amendment（L1 信号集扩充 §9.2）
 //   - ADR-0035（三轴正交：FSRS=R 调度 / mastery_state=p(L) 诊断 / item_calibration=b 锚）
 //

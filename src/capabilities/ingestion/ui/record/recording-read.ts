@@ -10,7 +10,8 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useIngestionSSE } from '@/ui/lib/sse';
-import { getHistory, getSession, listBlocks, listKnowledge, listSessions } from './record-api';
+import type { getSession as GetSession } from './record-api';
+import { useRecordClient } from './record-client';
 import { useStartState } from './record-start';
 import { foldLive } from './recording-live';
 import { type Recording, deriveRecording } from './recording-model';
@@ -28,14 +29,16 @@ export const recordKeys = {
 
 export interface RecordingRead {
   recording: Recording;
-  detail: Awaited<ReturnType<typeof getSession>> | undefined;
+  detail: Awaited<ReturnType<typeof GetSession>> | undefined;
   /** The server's title for this recording; null today for most material. */
   title: string | null;
   failedToLoad: boolean;
+  historyReading: boolean;
   retry: () => void;
 }
 
 export function useRecording(id: string): RecordingRead {
+  const { listBlocks, getSession, getHistory } = useRecordClient();
   const start = useStartState(id);
   const detailQ = useQuery({
     queryKey: recordKeys.session(id),
@@ -53,9 +56,11 @@ export function useRecording(id: string): RecordingRead {
     queryKey: [...recordKeys.history(id), status],
     queryFn: () => getHistory(id),
     enabled: status !== '',
-    placeholderData: (prev) => prev,
+    placeholderData: (prev) => (prev?.session.id === id ? prev : undefined),
   });
-  const runState = SETTLED.has(status) ? null : (historyQ.data?.run?.run_state ?? null);
+  const history = historyQ.data?.session.id === id ? historyQ.data : undefined;
+  const historyFailed = historyQ.isError || (!!historyQ.data && !history);
+  const runState = SETTLED.has(status) ? null : (history?.run?.run_state ?? null);
   const going =
     (status !== '' && status !== 'uploaded' && !SETTLED.has(status)) ||
     runState === 'in_progress' ||
@@ -84,8 +89,8 @@ export function useRecording(id: string): RecordingRead {
   const recording = deriveRecording({
     id,
     detail: detailQ.data,
-    history: historyQ.data,
-    historyFailed: historyQ.isError,
+    history,
+    historyFailed,
     live,
     runCounts,
     blocks: blocksQ.data ?? [],
@@ -95,8 +100,9 @@ export function useRecording(id: string): RecordingRead {
   return {
     recording,
     detail: detailQ.data,
-    title: historyQ.data?.session.title ?? null,
+    title: history?.session.title ?? null,
     failedToLoad: detailQ.isError,
+    historyReading: historyQ.isFetching,
     retry: () => {
       void detailQ.refetch();
       void historyQ.refetch();
@@ -106,9 +112,11 @@ export function useRecording(id: string): RecordingRead {
 }
 
 export function useRecordingList() {
+  const { listSessions } = useRecordClient();
   return useQuery({ queryKey: recordKeys.list, queryFn: listSessions });
 }
 
 export function useKnowledgeList() {
+  const { listKnowledge } = useRecordClient();
   return useQuery({ queryKey: recordKeys.knowledge, queryFn: listKnowledge, staleTime: 60_000 });
 }

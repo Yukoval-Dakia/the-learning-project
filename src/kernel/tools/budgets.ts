@@ -1,5 +1,5 @@
 // P5.1 Context Budget Policy (YUK-143) — spec
-// `docs/superpowers/specs/2026-05-31-p5.1-context-budget-design.md`.
+// `docs/archive/superpowers/specs/2026-05-31-p5.1-context-budget-design.md`.
 //
 // Single tunable source of truth for per-surface DomainTool context budgets.
 // Before P5.1 these numbers were smeared across 7 files (knowledge-readers,
@@ -145,7 +145,7 @@ export const MISTAKE_PROMPT_SNIPPET_MAX = 160;
 // ── P5.2 brief-refresh budget (BR-9) ────────────────────────────────────────
 //
 // Single tunable source for the activity-gated per-subject brief refresh
-// (`docs/superpowers/specs/2026-05-31-p5.2-brief-refresh-design.md` §3.6).
+// (`docs/archive/superpowers/specs/2026-05-31-p5.2-brief-refresh-design.md` §3.6).
 // Same const/interface pattern as the ContextBudget surfaces above: a typed
 // interface + one named const, no class/factory. These are the ONLY place the
 // per-run and per-brief limits are defined — no per-file fallbacks (BR-9,
@@ -174,7 +174,7 @@ export const BRIEF_REFRESH_BUDGET: BriefRefreshBudget = {
 // ContextBudget surfaces and BriefRefreshBudget above: one typed interface + one
 // named const, no class/factory. These are the ONLY place the digest caps are
 // defined — no per-file fallbacks (acceptance §8 "single-source budget").
-// Spec: docs/superpowers/specs/2026-05-31-p5.4-l2-adaptive-bias-design.md §3.1.
+// Spec: docs/archive/superpowers/specs/2026-05-31-p5.4-l2-adaptive-bias-design.md §3.1.
 export interface ProposalFeedbackBudget {
   /** Max `(kind, relation)` cells surfaced to a prompt. Subsumes the prior
    *  Dreaming-local `DREAMING_ACCEPTANCE_RATE_TOP_N` (8) slice — the relation
@@ -292,7 +292,7 @@ export const PROPOSAL_GATE_BIAS_CONFIG: GateBiasConfig = {
 
 // ── P5.3 long-term brief freshness/decay budget ─────────────────────────────
 // Single tunable source for the long_term_md evidence-decay freshness score
-// (docs/superpowers/specs/2026-05-31-p5.3-long-term-brief-stale-design.md §4).
+// (docs/archive/superpowers/specs/2026-05-31-p5.3-long-term-brief-stale-design.md §4).
 // Pure arithmetic over SoT event.created_at — no LLM/embedding call.
 export interface LongTermFreshnessBudget {
   /** Exponential decay half-life in days. freshness contribution of one

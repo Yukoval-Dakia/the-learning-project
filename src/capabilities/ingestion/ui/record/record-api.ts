@@ -2,7 +2,13 @@
 // src/capabilities/ingestion/manifest.ts; no learner rules live here.
 
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
-import { ApiError, type ApiOperationJsonResponse, apiFetch, apiOperationJson } from '@/ui/lib/api';
+import {
+  ApiError,
+  type ApiOperationJsonResponse,
+  type ApiOperationRequestBody,
+  apiFetch,
+  apiOperationJson,
+} from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset } from '@/ui/lib/assets';
 import {
   type IngestionOperationResource,
@@ -109,12 +115,18 @@ export type AskAnswerBody =
   | { kind: 'text'; text: string; via_option?: 'none_of_these' }
   | { kind: 'skipped'; by: 'learner' };
 
+export function projectSessionListResponse(
+  body: ApiOperationJsonResponse<'listIngestionSessions'>,
+): SessionRow[] {
+  return body.data as SessionRow[];
+}
+
 export async function listSessions(): Promise<SessionRow[]> {
   const body = await apiOperationJson('listIngestionSessions', {
     url: '/api/ingestion-sessions?limit=30',
     method: 'GET',
   });
-  return body.data as SessionRow[];
+  return projectSessionListResponse(body);
 }
 
 export const getHistory = (id: string) =>
@@ -124,13 +136,25 @@ export const getHistory = (id: string) =>
     init: { cache: 'no-store' },
   });
 
+export function projectRecordSessionDetailResponse(
+  body: ApiOperationJsonResponse<'getIngestionSession'>,
+): SessionDetail {
+  return body as SessionDetail;
+}
+
 export async function getSession(id: string): Promise<SessionDetail> {
   const body = await apiOperationJson('getIngestionSession', {
     url: `/api/ingestion-sessions/${encodeURIComponent(id)}`,
     method: 'GET',
     init: { cache: 'no-store' },
   });
-  return body as SessionDetail;
+  return projectRecordSessionDetailResponse(body);
+}
+
+export function projectSessionBlocksResponse(
+  body: ApiOperationJsonResponse<'listIngestionSessionBlocks'>,
+): Block[] {
+  return body.rows as Block[];
 }
 
 export async function listBlocks(id: string): Promise<Block[]> {
@@ -138,7 +162,7 @@ export async function listBlocks(id: string): Promise<Block[]> {
     url: `/api/ingestion/${encodeURIComponent(id)}/blocks`,
     method: 'GET',
   });
-  return body.rows as Block[];
+  return projectSessionBlocksResponse(body);
 }
 
 export async function listKnowledge(): Promise<KnowledgeNode[]> {
@@ -165,21 +189,33 @@ export async function uploadPages(files: File[], onPage: (done: number) => void)
   return ids;
 }
 
-export async function createSession(input: {
+export type CreateRecordSessionInput = {
   entrypoint: Exclude<Entrypoint, 'docx'>;
   assetIds: string[];
   policy: UsePolicy;
-}): Promise<string> {
+};
+
+export function buildRecordSessionCreateBody(input: CreateRecordSessionInput) {
+  return {
+    entrypoint: input.entrypoint,
+    asset_ids: input.assetIds,
+    ...(input.policy === 'answer_only' ? { derivation_policy: 'answer_only' as const } : {}),
+  };
+}
+
+export function projectRecordSessionCreateResponse(
+  body: ApiOperationJsonResponse<'createIngestionSession'>,
+): string {
+  return body.session.id;
+}
+
+export async function createSession(input: CreateRecordSessionInput): Promise<string> {
   const body = await apiOperationJson('createIngestionSession', {
     url: '/api/ingestion-sessions',
     method: 'POST',
-    body: {
-      entrypoint: input.entrypoint,
-      asset_ids: input.assetIds,
-      ...(input.policy === 'answer_only' ? { derivation_policy: 'answer_only' as const } : {}),
-    },
+    body: buildRecordSessionCreateBody(input),
   });
-  return body.session.id;
+  return projectRecordSessionCreateResponse(body);
 }
 
 export async function createDocxSession(file: File, policy: UsePolicy): Promise<string> {
@@ -258,24 +294,87 @@ export async function revertBlock(id: string, blockId: string) {
   });
 }
 
-export async function createWrongAnswer(input: {
+export type RecordManualMistakeInput = {
   prompt: string;
   answer: string;
   knowledgeIds: string[];
-}) {
+};
+
+export function buildRecordManualMistakeBody(
+  input: RecordManualMistakeInput,
+): ApiOperationRequestBody<'createMistake'> {
+  return {
+    prompt_md: input.prompt,
+    reference_md: null,
+    wrong_answer_md: input.answer,
+    knowledge_ids: input.knowledgeIds,
+    cause: null,
+    difficulty: 3,
+    question_kind: 'short_answer',
+    prompt_image_refs: [],
+    wrong_answer_image_refs: [],
+  };
+}
+
+export async function createWrongAnswer(input: RecordManualMistakeInput) {
   return apiOperationJson('createMistake', {
     url: '/api/mistakes',
     method: 'POST',
-    body: {
-      prompt_md: input.prompt,
-      reference_md: null,
-      wrong_answer_md: input.answer,
-      knowledge_ids: input.knowledgeIds,
-      cause: null,
-      difficulty: 3,
-      question_kind: 'short_answer',
-      prompt_image_refs: [],
-      wrong_answer_image_refs: [],
-    },
+    body: buildRecordManualMistakeBody(input),
   });
+}
+
+export type PurposeInput = ApiOperationRequestBody<'changeIngestionPurpose'>;
+export type PurposeImpact = ApiOperationJsonResponse<'getIngestionPurposeImpact'>;
+export type PurposeResult = ApiOperationJsonResponse<'changeIngestionPurpose'>;
+
+export function purposeLocation(id: string, requestId?: string): string {
+  const path = `/api/ingestion-sessions/${encodeURIComponent(id)}/purpose`;
+  return requestId ? `${path}?request_id=${encodeURIComponent(requestId)}` : path;
+}
+
+/** A receipt Location must stay bound to this session and this exact request. */
+function checkedPurposeLocation(id: string, requestId: string, location: string): string {
+  const base = window.location.origin;
+  const actual = new URL(location, base);
+  const expected = new URL(purposeLocation(id, requestId), base);
+  if (actual.href !== expected.href) {
+    throw new ApiError(
+      '用途回执地址与原请求不一致，保留原请求等待核对。',
+      0,
+      'purpose_location_mismatch',
+    );
+  }
+  return actual.pathname + actual.search;
+}
+
+export async function getPurposeImpact(id: string, requestId?: string, location?: string) {
+  const url =
+    requestId && location
+      ? checkedPurposeLocation(id, requestId, location)
+      : purposeLocation(id, requestId);
+  const impact = await apiOperationJson('getIngestionPurposeImpact', {
+    url,
+    method: 'GET',
+    init: { cache: 'no-store' },
+  });
+  if (impact.current.session_id !== id) {
+    throw new ApiError('用途记录与这次录入不一致。', 0, 'purpose_session_mismatch');
+  }
+  return impact;
+}
+
+/** Generated wire types; raw response retained only to consume the canonical Location header. */
+export async function changePurpose(id: string, body: PurposeInput) {
+  const response = await apiFetch(purposeLocation(id), {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  const location = checkedPurposeLocation(
+    id,
+    body.request_id,
+    response.headers.get('Location') ?? purposeLocation(id, body.request_id),
+  );
+  const result = (await response.json()) as PurposeResult;
+  return { ...result, location };
 }

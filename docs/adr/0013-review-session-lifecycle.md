@@ -106,3 +106,5 @@ Phase 1c.1 ADR-0008 已经把 `learning_session.type='review'` 的状态机定�
 - **不破坏** ADR-0005 single-owner / ADR-0006 v2 event-driven core / ADR-0007 单用户假设
 
 > **M5 路径注（YUK-321，2026-06-13）**：本文提及的 `app/api/**` Next route 路径已随旧栈拆除迁移至 capability manifests（`src/capabilities/*/manifest.ts` + 各包 `api/*.ts`），由组合根 `server/app.ts` 挂载；决策本身不受影响。
+
+> **生命周期演进注（YUK-57，源：`docs/archive/superpowers/plans/2026-05-24-yuk-57-review-skip-pause-resume.md` D2/D3，YUK-1575 重立档）**：review session 状态机已扩展 `paused`（`started ⇄ paused`，且 `paused → completed | abandoned` 合法，供 sendBeacon 关闭与 cron abandon）；orphan 清理 cron 覆盖 `status IN ('started','paused') AND started_at < now()-6h`。本文正文只写 `started → completed | abandoned`，以本注为准。

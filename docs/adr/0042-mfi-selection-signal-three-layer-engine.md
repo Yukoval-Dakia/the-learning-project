@@ -45,7 +45,7 @@ FSRS when 不并进 / 到期 hard constraint（H8）/ frontier 一等公民 + �
 
 ## 2026-06-15 Amendment — 编排档2（LLM 出权重 + sampler + π_i）+ Urnings-lite sequencing
 
-owner 2026-06-15 拍「让 LLM 强一些」（承 copilot 全能 + 成本无所谓立场）后，把 §1 的 L2/L3 分工**精化为「档2」**——LLM 当主脑、统计降为薄 sampler，同时不破 π_i positivity。承重设计 = `docs/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md`（YUK-361，8 阶段）+ `docs/design/2026-06-15-question-supply-target-discovery-architecture.md`（供给引擎，Phase 8）。
+owner 2026-06-15 拍「让 LLM 强一些」（承 copilot 全能 + 成本无所谓立场）后，把 §1 的 L2/L3 分工**精化为「档2」**——LLM 当主脑、统计降为薄 sampler，同时不破 π_i positivity。承重设计 = `docs/archive/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md`（YUK-361，8 阶段）+ `docs/design/2026-06-15-question-supply-target-discovery-architecture.md`（供给引擎，Phase 8）。
 
 **核心机制（让 LLM 强而不破 π_i）**：**LLM 对每个候选输出 weight/score（+ role + arrangement + reason），一个薄 tempered-softmax sampler 按权重抽样落具体题，π_i = 该抽样分布的 inclusion probability。** LLM 主导「选哪些题 + 怎么排 + 为什么」；只要 sampler 温度 T>0，每个 LLM 给正权重的候选 π_i>0（满足 ADR-0043 §7 要求的 positivity，**正是它指定的「真随机抽样、非确定性 top-item 事后归一化」**）。
 
@@ -64,9 +64,7 @@ per-(KC,context) 或可等价证明跨情境差异的 reader。此前 runtime �
 `transfer_gap=n/a` 并写进 LLM prompt；这不是证据，只是一个无消费者/无生产者的占位。
 
 本修订删除 runtime type、候选投影与 prompt 中的 `transfer_gap`。YUK-792 的
-intervention transfer diagnostic 会形成逐次、可审计的 settlement 事实，但在有跨
-intervention 聚合定义、真实 reader 和 red-capable tests 前，不把单次结果冒充通用选题
-信号。未来恢复该字段时，producer、reader、分桶测试和 prompt 必须同一 change 落地。
+intervention transfer diagnostic 会形成逐次、可审计的 settlement 事实，但在跨 intervention 聚合定义、真实 reader 和 red-capable tests 齐备前，单次结果按单例证据记录。未来恢复该字段时，producer、reader、分桶测试和 prompt 必须同一 change 落地。
 方向未取消；无数据时不向 LLM 暗示存在该维度。
 
 ### 2026-07-18 Reconciliation — 反舒适 floor 与 fatigue 的 L3 归属（YUK-673）

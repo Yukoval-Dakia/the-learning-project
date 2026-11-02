@@ -5,7 +5,7 @@
 //
 // These functions only SELECT and fold; they never write.
 
-import { and, eq, inArray, or } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 import { foldItemCalibration } from '@/core/projections/item_calibration';
 import type { ItemCalibrationRowSnapshotT } from '@/core/schema/event/genesis';
@@ -13,23 +13,7 @@ import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { rowToFoldEvent } from '@/kernel/records/projection-events';
 
-export { gatherAndFoldGoal } from '@/kernel/records/goal-history';
-export {
-  edgeRowToSnapshot,
-  gatherAndFoldKnowledgeEdge,
-  gatherAndFoldKnowledgeEdgeWithMesh,
-} from '@/kernel/records/knowledge-edge-facts';
-export { gatherAndFoldKnowledgeNode } from '@/kernel/records/knowledge-node-history';
-export { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
-// Canonical implementation; retained for the retract-clock DB consumer.
-export { gatherAndFoldMistakeVariant } from '@/kernel/records/mistake-variant-facts';
-
 type DbLike = Db | Tx;
-type EventRow = typeof event.$inferSelect;
-
-export { gatherAndFoldArtifact } from '@/kernel/records/artifact-history';
-
-export { gatherAndFoldQuestionBlock } from '@/kernel/records/question-block-projection';
 
 /**
  * Gather the events affecting a calibration row and run the pure item_calibration fold.

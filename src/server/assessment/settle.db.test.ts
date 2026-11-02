@@ -2,8 +2,9 @@ import { FsrsStateSchema } from '@/core/schema/event/blocks';
 // YUK-1053 — 学习结算集成 DB 测试（db 分区；testcontainer + resetDb）。
 //
 // 覆盖 acceptance criteria 的可执行面：
-//   - D13：全对/全错 ⇒ per-KC obs + 恰好一次共享 θ̂ update；partial/mixed ⇒
-//     abstain；blank_marked_zero 不当全部 KC failure；总分只读 aggregate 一次；
+//   - D13：全对/全错 ⇒ per-KC obs + 恰好一次共享 θ̂ update；partial ⇒ abstain；
+//     混合位按各自方向更新掌握，不把作答分摊成同一位；blank_marked_zero 不当
+//     全部 KC failure；总分只读 aggregate 一次；
 //   - D14：三等级评级落 FSRS（correct→good / partial→hard / incorrect→again；
 //     unsupported ⇒ 不结算）；
 //   - D15：manual/self_report ⇒ 只写 FSRS，不写 θ̂（无 self-report θ̂）；
@@ -31,14 +32,15 @@ import {
   question,
   question_group_lifecycle,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
   type NormalizableQuestionRow,
   type PartRow,
   normalizeQuestionGroupToContract,
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { activateEvaluation, insertInitialEvaluationHead } from './activate';
 import { ASSESSMENT_SETTLEMENT_ACTION, learningSettlement } from './settle';
@@ -121,6 +123,30 @@ interface SeedIds {
   submissionId: string;
 }
 
+/**
+ * YUK-1604 — independent-attempt receipt (mirrors submit.ts's assistance snapshot).
+ * Settlement gates θ̂/automatic rating on provable independence, so fixtures standing
+ * in for ordinary independent submissions must carry this receipt.
+ */
+async function writeIndependentReceipt(
+  db: ReturnType<typeof testDb>,
+  receiptId: string,
+  submissionId: string,
+  submittedAt: Date,
+): Promise<void> {
+  await writeEvent(db, {
+    id: receiptId,
+    action: 'experimental:assessment_submission',
+    subject_kind: 'submission',
+    subject_id: submissionId,
+    actor_kind: 'system',
+    actor_ref: 'fixture',
+    outcome: null,
+    payload: { assistance: { status: 'independent', event_ids: [] } },
+    created_at: submittedAt,
+  });
+}
+
 /** 单 submission group + head 同事务（§11 原子不变量）。 */
 async function seedChain(
   prefix: string,
@@ -167,6 +193,7 @@ async function seedChain(
       now: submittedAt,
     });
   });
+  await writeIndependentReceipt(db, `${prefix}_receipt`, submissionId, submittedAt);
   return { qid, revisionId, issuanceId, groupId, submissionId };
 }
 
@@ -844,7 +871,9 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(locks.has(Number(writeLock))).toBe(true);
   });
 
-  it('多 part 混合 KC 位 ⇒ θ̂ abstain(mixed)；各自 per-KC obs 如实记录', async () => {
+  // @invariant grading: mixed per-KC bits write each KC's own mastery direction and leave the answer aggregate untouched while FSRS cards still land per KC
+  // @fails-if a mixed-bit batch gives both KCs the same success/fail tally, rewrites the answer aggregate, or drops either KC's FSRS card
+  it('多 part 混合 KC 位 ⇒ 各自掌握方向不同，作答总分不变', async () => {
     const db = testDb();
     // 复合组：root + 两个物理 part（各 1 KC、各 1 单元）。
     await seedKnowledge('kc_a', { domain: 'dom_x' });
@@ -912,6 +941,7 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
         now: NOW,
       });
     });
+    await writeIndependentReceipt(db, 'mp_receipt', submissionId, NOW);
     // p1 全对（kc_a=1）、p2 全错（kc_b=0）—— per-KC 位混合。
     await db.insert(evaluation).values({
       evaluation_id: 'mp_ev1',
@@ -937,24 +967,65 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     // per-KC obs：kc_a=1、kc_b=0（局部证据各自成立）……
     const se = (await settlementEvents(groupId))[0] as {
       payload: {
-        kc_observations?: { kc_id: string; bit: unknown }[];
-        theta_decision?: { applied?: boolean; abstainReason?: string };
+        kc_observations?: {
+          kc_id: string;
+          bit: unknown;
+          direction?: unknown;
+          weight?: unknown;
+          uncertain?: unknown;
+        }[];
+        kc_wrong_cause?: { kc_id: string | null; uncertain: boolean };
+        theta_decision?: {
+          applied?: boolean;
+          abstainReason?: string;
+          kcEvidence?: { kc_id: string; outcome: number; weight: number }[];
+        };
       };
     };
     const obs = se.payload.kc_observations ?? [];
-    expect(obs.find((o) => o.kc_id === 'kc_a')?.bit).toBe(1);
-    expect(obs.find((o) => o.kc_id === 'kc_b')?.bit).toBe(0);
-    // ……但 bounded adapter 不能把 mixed 位塞进 one-bit update ⇒ θ̂ 全 abstain。
+    expect(obs.find((o) => o.kc_id === 'kc_a')).toMatchObject({
+      bit: 1,
+      direction: 'up',
+      weight: 1,
+      uncertain: false,
+    });
+    expect(obs.find((o) => o.kc_id === 'kc_b')).toMatchObject({
+      bit: 0,
+      direction: 'down',
+      weight: 1,
+      uncertain: false,
+    });
+    expect(se.payload.kc_wrong_cause).toEqual({ kc_id: 'kc_b', uncertain: false });
     const theta = se.payload.theta_decision;
-    expect(theta?.applied).toBe(false);
-    expect(theta?.abstainReason).toBe('mixed_kc_bits');
-    expect(await masteryRow('kc_a')).toBeUndefined();
-    expect(await masteryRow('kc_b')).toBeUndefined();
+    expect(theta?.applied).toBe(true);
+    expect(theta?.kcEvidence).toEqual([
+      { kc_id: 'kc_a', outcome: 1, weight: 1 },
+      { kc_id: 'kc_b', outcome: 0, weight: 1 },
+    ]);
+    expect(await masteryRow('kc_a')).toMatchObject({
+      evidence_count: 1,
+      success_count: 1,
+      fail_count: 0,
+    });
+    expect(await masteryRow('kc_b')).toMatchObject({
+      evidence_count: 1,
+      success_count: 0,
+      fail_count: 1,
+    });
+    expect(await masteryRow('dom_x', 'ability_global')).toMatchObject({
+      evidence_count: 1,
+      success_count: 0,
+      fail_count: 1,
+    });
+    const [ev] = await db.select().from(evaluation).where(eq(evaluation.evaluation_id, 'mp_ev1'));
+    expect(ev?.aggregate).toMatchObject({ kind: 'points_total', points: 1 });
     // FSRS 不受 mixed 位影响：组级 partial ⇒ hard 评级落两张 KC 卡。
     expect((await fsrsRow('knowledge', 'kc_a'))?.state?.reps).toBe(1);
     expect((await fsrsRow('knowledge', 'kc_b'))?.state?.reps).toBe(1);
   });
 
+  // @invariant grading: an issued-part subset settles only in-scope KCs with scoped FSRS/θ̂ effects
+  // @fails-if unissued parts leak into the settlement scope or their KCs receive FSRS/θ̂ writes
   it.each([false, true])(
     'issued subset: full credit and scoped FSRS/theta even with root union tags=%s',
     async (rootUnion) => {
@@ -1025,6 +1096,7 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
           now: NOW,
         });
       });
+      await writeIndependentReceipt(db, 'mp_receipt', submissionId, NOW);
       // 仅发 p1 且全对；p2 不产生结果，不参与分母或其独有 KC 的结算。
       await db.insert(evaluation).values({
         evaluation_id: 'mp_ev1',

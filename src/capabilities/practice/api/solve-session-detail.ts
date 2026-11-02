@@ -1,40 +1,10 @@
-import { and, eq } from 'drizzle-orm';
-
 import { db } from '@/db/client';
-import { learning_session } from '@/db/schema';
-import { ApiError, errorResponse } from '@/kernel/http';
-import { Tutor } from '@/server/session';
+import { errorResponse } from '@/kernel/http';
+import { readTutorSessionDetail } from '../server/tutor-session';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const rows = await db
-      .select({
-        id: learning_session.id,
-        type: learning_session.type,
-        status: learning_session.status,
-        question_id: learning_session.goal_id,
-        started_at: learning_session.started_at,
-        ended_at: learning_session.ended_at,
-        updated_at: learning_session.updated_at,
-      })
-      .from(learning_session)
-      .where(and(eq(learning_session.id, params.sid), eq(learning_session.type, 'tutor')))
-      .limit(1);
-    const session = rows[0];
-    if (!session) {
-      throw new ApiError('not_found', `solve session ${params.sid} not found`, 404);
-    }
-    const binding = await Tutor.getTutorQuestionId(db, session.id);
-    return Response.json({
-      ...session,
-      ...(binding.issuanceId
-        ? {
-            issuance_id: binding.issuanceId,
-            evaluation_group_id: `solve_${session.id}`,
-            idempotency_key: `solve_${session.id}`,
-          }
-        : {}),
-    });
+    return Response.json(await readTutorSessionDetail(db, params.sid));
   } catch (err) {
     return errorResponse(err);
   }

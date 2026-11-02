@@ -2,15 +2,18 @@ import { eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
+import {
+  getFailureAttemptById,
+  getFailureAttemptWithReasoningTraceById,
+} from '@/kernel/read-models/failure-attempts';
+import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-context';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { getFailureAttemptById, getFailureAttemptWithReasoningTraceById } from './attempt-events';
 import {
   type AttributionOutcome,
   runAttributionAndWriteJudgeEvent,
 } from './failure-learning-attribution';
 import { loadNativeFailureContext } from './failure-learning-native';
 import { type RunVariantGenResult, runVariantGen } from './failure-learning-variant';
-import { loadFailureLearningKnowledgeContext } from './knowledge-runtime';
 import type { PracticeTaskRunFn } from './task-runtime';
 
 export type FailureLearningSkipReason =

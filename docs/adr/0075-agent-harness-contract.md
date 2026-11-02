@@ -4,7 +4,7 @@ status: accepted
 
 # ADR-0075 — Agent harness 契约：工作单、边界契约、领域写入者、需求门控
 
-**Status:** Accepted（设计方向，2026-10-18，含 owner 当日 19:48 三项决定与 20:20 协调线对照补充 §10）；**尚未实施**——本文是决策落档，不代表任何软件已实现；owner 已批决定与实际实现状态始终分开陈述。
+**Status:** Accepted（设计方向，2026-10-18，含 owner 当日 19:48 三项决定与 20:20 协调线对照补充 §10）；**尚未实施**——本文是决策落档。
 **Decision source:** owner 2026-10-18「原地打转需要治本」「harness的优化是个系统工程，不是一个guard可解决。没人学习时后台自适应降频。你给的修复票治标不治本」；同日 19:48 原话「**两件都允许 空闲按推荐 主席层也现在做**」（设计稿 §9）；同日 20:20 协调线并入对照补充、20:23 owner 指示 auto-compact（设计稿 §10，含 owner 20:11「工具没做统一吗」、20:16 skills/MCP/按需加载、20:23「auto-compact 也要做，先看开源」）。**normative 真相源（仓库外绝对路径）**：`/Volumes/YukovalSBak/yukoval-projects/tlp-status/discussions/agent-harness-redesign.md`（SHA256 `3b82bd872f16bef1c3cd6111a7538983e0ca9158bc8f48f9761c31df4e820ef5`，622 行，代码基准 `origin/main` @ `9ce433fa2`）。**§9 与 §10 是最新决定，优先级高于正文中的推荐/推迟表述；§10 对 §2/§5 的修订以 §10 条文为准**（本文已消除相互矛盾的有效门槛）；本文与设计稿冲突处，以设计稿（含 §9、§10）为准。
 **Tracking:** [YUK-1559](https://linear.app/yukoval-studios/issue/YUK-1559)（本文档落档）；受处置票据见「票据处置」。
 **Related:** [ADR-0004](0004-pattern-c-two-type-agent-architecture.md)、[ADR-0039](0039-single-orchestrator-action-strength-tiers.md)（A/B/C 出手档）、[ADR-0053](0053-copilot-durable-subagent-mailbox.md)、[ADR-0056](0056-native-task-tool-result-into-live-parent.md)、[ADR-0065](0065-pi-execution-and-conversation-replay.md)、[ADR-0067](0067-teaching-team-whiteboard-and-event-meetings.md)（**Amendment 2026-10-18**，随本文生效）、[ADR-0069](0069-single-supply-agent.md)、[ADR-0072](0072-question-bank-agent-tools.md)；YUK-572 spec `docs/design/2026-07-06-yuk572-agent-meeting-lane-spec.md`；TT 草案（ADR-0067 指定的细节真相源）；工具面清单 `tlp-status/discussions/agent-tools-inventory.md`（INV）；运行审查证据 `tlp-status/review/loom-runs-20261018/`（summary / AR / IR / DJ / TB，本文证据缩写同设计稿）；工具对照 `tlp-status/review/harness-benchmark-20261018/`（tools-vs-notion-linear.md、harness-vs-codex-cli.md @ `8c076942`，§10 的依据；context-management-survey.md，§10.5 的依据与其 A1–A9 验收节）。
@@ -176,7 +176,7 @@ owner 2026-10-18 19:48 拍板「两件都允许」。**系统可自行执行、�
 | M6 | 空闲期花费 | 约 57 M / USD 1.63 每天 | ≤ 基线的 5% |
 | M7 | guard 触发数 | 未记录 | 0；触发即 harness 缺陷，生成 finding |
 
-**计分板口径（YUK-1647，2026-10-21）。** M3/M4/M5 由 `harness_scoreboard` 的 `parts[]` 逐子项给出分子/分母与 `basis`，不再用单一代理定义：M3 = QuizGen 终止批次、source_verify 题目终判、NoteGenerate 终态迁移、KR propose 工具调用（成功边写入按 `event_id` 计落地）；M4 = 窗口结束时刻收件箱投影的 pending 条数、最老天数、可关条数（目标缺失/归档或 `expected_version` 失配）、卷入冲突条数（与另一 pending 行共享被引用知识点）；可关与 block_merge 归属读当前行，按 `proxy` 记录；M5 = 提交回执 duplicate_exact/source/near_dup（同一逻辑提交只计一次）加 QuizGen exact duplicate 除以窗口新建题数、窗口内同父同名知识双胞胎。基线列中 M4「可关 9 条」「17/26 卷入冲突」是人工读数，确定性口径按定义重算，不承诺逐条相同；重算步骤与 NOT_RUN 交接见 `docs/planning/2026-10-21-yuk1647-harness-scoreboard-real-metrics.md`。
+**计分板口径（YUK-1647，2026-10-21）。** M3/M4/M5 由 `harness_scoreboard` 的 `parts[]` 逐子项给出分子/分母与 `basis`，不再用单一代理定义：M3 = QuizGen 终止批次、source_verify 题目终判、NoteGenerate 终态迁移、KR propose 工具调用（成功边写入按 `event_id` 计落地）；M4 = 窗口结束时刻收件箱投影的 pending 条数、最老天数、可关条数（目标缺失/归档或 `expected_version` 失配）、卷入冲突条数（与另一 pending 行共享被引用知识点）；可关与 block_merge 归属读当前行，按 `proxy` 记录；M5 = 提交回执 duplicate_exact/source/near_dup（同一逻辑提交只计一次）加 QuizGen exact duplicate 除以窗口新建题数、窗口内同父同名知识双胞胎。基线列中 M4「可关 9 条」「17/26 卷入冲突」是人工读数，确定性口径按定义重算；重算步骤与未跑项交接见 `docs/planning/2026-10-21-yuk1647-harness-scoreboard-real-metrics.md`。
 
 **测量纪律**：before/after 均取 TEST 真实运行（夜链自然运行 + 回放集真实 provider 重跑，不用 mock）；每阶段至少观察 3 个完整夜晚或跑完一轮回放集，封存 revision、digest、task-run ID 与费用；付费重跑在 USD 20/周内。**删除**：`kt_estimate_nightly`（写了没人读）、`axis_state_nightly` 夜写、`HUB_SYNC_MODE=off` 时 `hub_sync_recovery` 的每分钟 cron。
 > **实施记录 2026-10-21（YUK-1560）**：kt 夜链已随 YUK-1576 删除，axis manifest 与 batch writer 已删。`hub_sync_recovery` 每分钟 cron **保留**：它是 Notes generation/verification handoff 与 claim 的唯一恢复地板（ADR-0052），删掉会丢漏发恢复；hub-sync 自身在 `HUB_SYNC_MODE=off` 时已在 `runHubSyncCycle` 入口短路。
@@ -192,7 +192,7 @@ owner 2026-10-18 19:48 拍板「两件都允许」。**系统可自行执行、�
 - **P3 需求门控**（§3 全部 + `degraded`/`not_needed` 两终态 + 删 `kt_estimate`/`axis` 夜写/`hub_sync` cron）：TEST 至少 3 个空闲档日 M6 ≤ 基线 5% 且 `dag_orchestration_node.detail` 逐节点说明不跑原因；唤醒验收 = coordinator 在 TEST 做一次带测试标记的真实会话（不进记忆），10 分钟内完成「回来即可练」准备（今日安排可出、缺题 KC 收到 GapTicket）；零产出节点不再显示 succeeded。
 - **P4 发现有主、上下文快照、领域写入者**（C3、C4 + YUK-1549 合并 + 1407 闭环部分 + 1554 + 1556）：S5 类事实 1 晚内恰好 1 条 `grading_suspect` finding 且被执行（申诉加重判，或按 D5 进 A 档），之后同 subject 新增 LLM note 为 0；M4 达标；新叶子挂根 = 0（无同科目候选时除外、且必须有对应 finding）；简报无系统流水线叙述、无新学习者证据时重算 0 次；现有重复子树与 33 个重复簇由 Maintenance 各出 1 份变更集提议、owner 一次确认。
 - **主席层提前（§9 决定 3，覆盖原 P5 推迟）**：ADR-0067 **D3 主席决定、D6 指标与白板管理页现在也做**，不等「连续 7 天中 ≥3 天有学习者事件」的使用触发；排在 **P1 之后**；白板管理页走 UI pre-flight 与 owner 三次设计检查。D3/D6 的决策内容不变（恰好一个被回读验证的决定、按链预注册度量）；学习层有用性数值在真实使用达到预注册样本量之前仍是预注册假设——**提前的是实施时点，不是测量结论**。
-- **维持推迟的 FULL 项（§9 未批，不得当作已批推进）**：A 档自动应用的全面铺开（超出 D5 两类）、回放集固化为每次 prompt/模型变更的强制闸、WorldSnapshot 覆盖所有面（含 Copilot 全量）、Copilot 的模型摘要压缩（§10.5 FULL：仅 Copilot、遮蔽之后叠加；后台任务不用，A9 只在该项启动时验收）。原触发条件不变。
+- **维持推迟的 FULL 项（§9 未批）**：A 档自动应用的全面铺开（超出 D5 两类）、回放集固化为每次 prompt/模型变更的强制闸、WorldSnapshot 覆盖所有面（含 Copilot 全量）、Copilot 的模型摘要压缩（§10.5 FULL：仅 Copilot、遮蔽之后叠加；后台任务不用，A9 只在该项启动时验收）。原触发条件不变。
 - **顺序依据**（§5.3）：P0 不做则后续验收无数据；P1 先于 P2（工具坏时进展检测只会让失败更早结束、产出不增）；P3 可与 P1/P2 并行（不依赖契约，独立拿到 M6 大部分收益）；P4 依赖 P1 的 Maintenance 工具已修好；**P1/P2 的验收依赖 P0 落地**。各阶段 before/after 指标按 D7 测量纪律执行。
 
 ## 与既有 ADR 的关系（§4.4）
@@ -224,14 +224,14 @@ owner 2026-10-18 19:48 拍板「两件都允许」。**系统可自行执行、�
 
 ## 硬边界（后果）
 
-1. **自动动作仅 D5 两类**：同名同父且双方无作答记录的合并、判错自动重判；其余（新建知识点、改关系、合并有作答记录的点、付费抽图）一律 proposal + owner 逐条确认。不得借「降频/报警水位」扩大自动面。
+1. **自动动作仅 D5 两类**：同名同父且双方无作答记录的合并、判错自动重判；其余（新建知识点、改关系、合并有作答记录的点、付费抽图）一律 proposal + owner 逐条确认；「降频/报警水位」不改变自动面边界。
 2. **guard 只在最外圈**；guard 触发即 harness 缺陷（M7 目标 0），不得把 guard 当正常停止机制或设计手段。
 3. **ADR-0067 D7 日上限降为报警水位 ≠ 删除其他预算/守卫**：每次召集调用上限（例会 ≤2 次模型调用、周回顾 ≤3 次）、每链 kill switch、Copilot 学习者主动会话豁免（YUK-1373）、按任务执行信封（D2 C2-4）、付费重放 USD 20/周、付费抽图逐条确认，全部保留有效。
 4. rewrite-prep §9 八项 pre-AI 承重能力不降级；housekeeping cron 语义与时区不动。
 5. 确定性兜底不可降级（练习流永不依赖例会可用）；危机与隐私永不进白板（ADR-0067 硬边界 3 沿用）；finding 的 `evidence_refs` 防自喂红线不可破。
 6. 不建没有 live consumer 的子系统；不出现第二事件总线或第二 proposal inbox。
 7. 无 owner 批准的测试文本方案，不写测试代码；测试不阻塞开发（Owner rules 2026-10-12）。
-8. 本文所有预期数字是**预注册目标，不是承诺**；未实测前不得当作已验证结果汇报；owner 已批决定与实现状态分开陈述。
+8. 本文所有预期数字是预注册目标。
 
 ## 被拒绝的备选（§1.2、§4.2、§4.3）
 
@@ -241,7 +241,7 @@ owner 2026-10-18 19:48 拍板「两件都允许」。**系统可自行执行、�
 - **单独加一层「agent 间协调」**：候选根因 g 不独立——由 C3（快照/单写者）+ C4（发现有主）联合造成，单独加协调层修不了。
 - **YUK-572 的议程权/scout 深化路线**：瓶颈不在议程权与取证深度；更多议程权只会在坏契约上花更多 token；charter 化改为 C2-1 机器可检查契约。
 - **等 shadow 对照翻转**：owner 无真实使用，可预见未来无法裁决；按 ADR-0067 D4 先 census、再 drain、然后删除。
-- **照搬 Codex CLI 机制（§10.4）**：模型自评为主判据、计划工具、后台写摘要压缩、后台 resume、无限重连——都依赖有人在场；且本设计的重复检测、进展检测、领域幂等键与 C3/C4/C5 比 Codex 更严，不得以「业界参考也没有」为由削减。
+- **照搬 Codex CLI 机制（§10.4）**：模型自评为主判据、计划工具、后台写摘要压缩、后台 resume、无限重连——都依赖有人在场；且本设计的重复检测、进展检测、领域幂等键与 C3/C4/C5 比 Codex 更严。
 
 ## 未决问题（§7）
 

@@ -5,7 +5,7 @@
 import { and, isNotNull, isNull } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
-import { isGeneralFallbackFor } from '@/server/subjects/resolution-cache';
+import { isGeneralFallbackFor } from '@/kernel/read-models/subject-trait-resolutions';
 import {
   type SubjectRegistry,
   getDefaultSubjectRegistry,

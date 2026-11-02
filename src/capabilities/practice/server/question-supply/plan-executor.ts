@@ -13,7 +13,7 @@
 // 本模块只做路由决策、归属解析（jyeoo hints → 知识树精确名匹配 / web 锚点前置）与
 // 单次完成事件（experimental:supply_executor，#598 canary 单写规则）。
 //
-// 幂等（YUK-988 Oracle P1-1）：执行前查同 plan_event_id 的 executor 完成事件 →
+// 幂等：执行前查同 plan_event_id 的 executor 完成事件 →
 // already_executed 全量短路；每个 item 完成即写 experimental:supply_executor_item
 // 增量事件，崩溃重跑按 demand_id 跳过已完成 item（resume 语义——重跑只补 undone
 // item，单 item 内的副作用窗口收敛到该 item）；quiz_gen 派发带 singletonKey
@@ -176,7 +176,7 @@ export interface ImageCandidateProposalArgs {
   created_at: Date;
 }
 
-/** quiz_gen 派发的可选 enqueue 选项（P1-1：崩溃窗口幂等键透传到 pg-boss）。 */
+/** quiz_gen 派发的可选 enqueue 选项（崩溃窗口幂等键透传到 pg-boss）。 */
 export interface EnqueueQuizGenDispatchOptions {
   /** pg-boss 单例键——同 (plan_event_id, demand_id) 重投不重复入队（由 runQuizGenRoute 派生）。 */
   singletonKey?: string;
@@ -273,7 +273,7 @@ export type ExecuteSupplyPlanResult =
 
 export const SUPPLY_EXECUTOR_EVENT_ACTION = 'experimental:supply_executor';
 
-/** P1-1 逐 item 增量完成事件：崩溃重跑的 resume 凭证（demand_id 粒度幂等）。 */
+/** 逐 item 增量完成事件：崩溃重跑的 resume 凭证（demand_id 粒度幂等）。 */
 export const SUPPLY_EXECUTOR_ITEM_EVENT_ACTION = 'experimental:supply_executor_item';
 
 // ── 锚点解析（镜像 supply_planner.loadLiveKnowledge 的 parent 链有效 domain 求解） ──
@@ -329,7 +329,7 @@ async function priorExecutorEvent(db: Db, planEventId: string): Promise<string |
 }
 
 /**
- * P1-1 resume 探针：同 plan_event_id 下已有增量完成事件的 demand_id 集合——崩溃
+ * resume 探针：同 plan_event_id 下已有增量完成事件的 demand_id 集合——崩溃
  * 重跑只补 undone item（上次运行死在完成事件之前时，逐 item 事件仍在）。
  */
 async function priorItemDemandIds(db: Db, planEventId: string): Promise<Set<string>> {
@@ -352,7 +352,7 @@ function errorMessage(err: unknown): string {
 }
 
 /**
- * P1-2：supply_trace 的路由级克隆——顶层 trace 的 producer_route 覆写为实际执行的
+ * supply_trace 的路由级克隆——顶层 trace 的 producer_route 覆写为实际执行的
  * 路由（fallback 路由不得继承 planner 标注的 producer_route）。caller 侧 trace 是
  * job payload z.unknown() 的未校验透传，覆写后必须 safeParse 复验：失败返回 null
  * （caller 丢弃 trace 并在 tally.detail 留痕，绝不盲 cast）；无 trace 返回 undefined。
@@ -396,7 +396,7 @@ function webCandidateToStoreInput(candidate: WebCandidate): StoreCandidateInput 
   };
 }
 
-/** commit 单候选的判别结果（P1-5：per-candidate 轨迹不再坍缩为 null）。 */
+/** commit 单候选的判别结果（inserted / rejected / threw 逐候选区分）。 */
 export type CommitCandidateResult =
   | { status: 'inserted'; questionId: string }
   | {
@@ -442,7 +442,7 @@ async function commitCandidate(
   }
 }
 
-/** P1-5：路由 tally 的 per-candidate 拒绝计数（reason→count）。 */
+/** 路由 tally 的 per-candidate 拒绝计数（reason→count）。 */
 function recordRejection(tally: RouteExecutionTally, reason: string): void {
   tally.rejections[reason] = (tally.rejections[reason] ?? 0) + 1;
 }
@@ -457,10 +457,10 @@ interface RouteRunContext {
   subjectProfile: SubjectProfile;
   taskRunId: string;
   causedByEventId: string | null;
-  /** planner 事件 id（P1-1：quiz_gen singletonKey 派生键；null = scanner/手动）。 */
+  /** planner 事件 id（quiz_gen singletonKey 派生键；null = scanner/手动）。 */
   planEventId: string | null;
   now: Date;
-  /** 供应链路（可选）——透传进 sourced 路由 store commit（P1-2：路由级克隆后使用）。 */
+  /** 供应链路（可选）——透传进 sourced 路由 store commit（路由级克隆后使用）。 */
   supplyTrace?: SupplyTraceV1T;
   /** 还需获取的数量（执行中递减）。 */
   remaining: number;
@@ -531,7 +531,7 @@ async function runJyeooRoute(
       now: run.now,
     });
   } catch (err) {
-    // P1-4：抓取核未预期异常（子进程崩溃/网络栈炸等）确定性降级为 skipped:'spawn'，
+    // 抓取核未预期异常（子进程崩溃/网络栈炸等）确定性降级为 skipped:'spawn'，
     // 路由回落继续，不把整个 job 送 retry/DLQ。预算查询等 DB 错误在 catch 之外，仍上抛。
     tally.skipped = 'spawn';
     tally.detail = errorMessage(err);
@@ -548,7 +548,7 @@ async function runJyeooRoute(
   }
 
   tally.status = 'ok';
-  // P1-2：trace 路由级克隆（producer_route 覆写）；复验失败丢弃并留痕 detail。
+  // trace 路由级克隆（producer_route 覆写）；复验失败丢弃并留痕 detail。
   const routeTrace = cloneSupplyTraceForRoute(run.supplyTrace, 'jyeoo_fetch');
   if (routeTrace === null) {
     tally.detail =
@@ -648,7 +648,7 @@ async function runWebRoute(
       now: run.now,
     });
   } catch (err) {
-    // P1-4：注入的 web 生产线（含 LLM 相位）未预期异常确定性降级为 skipped:'llm'，
+    // 注入的 web 生产线（含 LLM 相位）未预期异常确定性降级为 skipped:'llm'，
     // 路由回落（如 quiz_gen），不把整个 job 送 retry/DLQ；生产线自身的 failed
     // 返回仍走 failureClass 路径（下方），两类都 deterministic。
     tally.skipped = 'llm';
@@ -662,7 +662,7 @@ async function runWebRoute(
   }
 
   tally.status = 'ok';
-  // P1-2：trace 路由级克隆（producer_route 覆写）；复验失败丢弃并留痕 detail。
+  // trace 路由级克隆（producer_route 覆写）；复验失败丢弃并留痕 detail。
   const routeTrace = cloneSupplyTraceForRoute(run.supplyTrace, 'sourcing_web');
   if (routeTrace === null) {
     tally.detail =
@@ -772,7 +772,7 @@ async function runQuizGenRoute(
     ...(run.item.kindRequired ? { kind_required: true } : {}),
     ...(run.item.placementClaimId ? { placement_starter_claim_id: run.item.placementClaimId } : {}),
   };
-  // P1-1：enqueue 与逐 item 完成事件之间的崩溃窗口用 pg-boss 单例键封——同
+  // enqueue 与逐 item 完成事件之间的崩溃窗口用 pg-boss 单例键封——同
   // (plan_event_id, demand_id) 重投不重复入队。scanner/手动（planEventId null）
   // 无键，沿用裸 enqueue 语义。
   const singletonKey =
@@ -816,7 +816,7 @@ export async function executeSupplyPlan(
     }
   }
 
-  // P1-1 resume 探针：完成事件缺失（崩溃）时，已完成 item 的增量事件仍在——按
+  // resume 探针：完成事件缺失（崩溃）时，已完成 item 的增量事件仍在——按
   // demand_id 跳过，只补 undone item。
   const doneDemandIds =
     params.planEventId !== null ? await priorItemDemandIds(db, params.planEventId) : null;
@@ -826,8 +826,8 @@ export async function executeSupplyPlan(
   let dispatchedItems = 0;
 
   /**
-   * P1-1：item 完成（含确定性跳过）即写增量事件（resume 凭证），再进 aggregate。
-   * plan_event_id null（scanner/手动直调）无幂等事件——沿用旧语义，重投去重由
+   * item 完成（含确定性跳过）即写增量事件（resume 凭证），再进 aggregate。
+   * plan_event_id null（scanner/手动直调）无幂等事件——重投去重由
    * store seam 的 canonical hash 承担。
    */
   const completeItem = async (
@@ -872,7 +872,7 @@ export async function executeSupplyPlan(
       opportunistic: 0,
     };
 
-    // P1-1 resume：该 demand 已有增量完成事件（上次崩溃前的完成凭证）→ 跳过重执行。
+    // resume：该 demand 已有增量完成事件（上次崩溃前的完成凭证）→ 跳过重执行。
     if (doneDemandIds?.has(item.demandId)) {
       result.skipped = 'already_executed_item';
       results.push(result);

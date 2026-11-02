@@ -20,8 +20,3 @@
 ## 关键约束
 - **session 状态机**：修改抽取、复核、导入或重试行为时，使用 [`session-lifecycle.ts`](session-lifecycle.ts) 的守卫维护状态转换与终态只读约束；DOCX 文本初始化见 [`docx/text-session-lifecycle.ts`](docx/text-session-lifecycle.ts)，package 失败补偿由 `markSessionPackageFailed` 保留产出后的状态。
 - ingestion session 现在是 `learning_session(type='ingestion')`，**不是**旧的独立 `ingestion_session` 表（已 DROP）。
-- Tencent `tencent_grading` 结果是 **evidence only**，不作系统真相——JudgeTask 独立判分。
-
-## ANTI-PATTERNS
-- 救援是**显式、付费可见、用户授权**的——别做自动 cascade fallback。
-- 别绕过 session 守卫直接改 status。

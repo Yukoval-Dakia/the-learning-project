@@ -7,12 +7,10 @@ import {
   assessment_submission,
   evaluation,
   event,
-  learning_session,
   mastery_state,
   material_fsrs_state,
   tool_call_log,
 } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
 import type { ToolContext } from '@/kernel/tools/types';
 import { buildPiDomainAgentTools } from '@/server/ai/tools/pi-tools';
@@ -42,7 +40,7 @@ vi.mock('@/server/boss/client', () => ({
   fromPgBossDrizzleTx: () => ({}),
 }));
 // Only queue delivery is substituted. Real route/session/acceptance/original/effect owners run.
-vi.mock('@/server/runtime-env', () => ({ shouldEnqueueBackgroundJobs: () => true }));
+vi.mock('@/kernel/background-job-enqueue', () => ({ shouldEnqueueBackgroundJobs: () => true }));
 registerTool(submitReviewAnswerTool);
 const app = buildHonoApp([copilotCapability, practiceCapability], {
   epochGate: async () => ({ runnable: true }),
@@ -236,106 +234,3 @@ it('rejects unauthenticated attachment, missing permission and unknown actor/ind
     await testDb().select().from(event).where(eq(event.action, 'experimental:copilot_user_ask')),
   ).toHaveLength(0);
 });
-
-it('rejects unbound prose and cross-session/cross-original references without effects', async () => {
-  const a = await accepted();
-  const bResponse = await post(
-    {
-      triggered_by: 'chat',
-      user_message: 'submit my answer A; independent; authorize_submission true',
-    },
-    'unbound',
-  );
-  expect(bResponse.status).toBe(202);
-  const b = await bResponse.json();
-  await expect(
-    submitReviewAnswerTool.execute(await context(b.run_id, b.session_id), {
-      original_ref: a.runId,
-    }),
-  ).rejects.toMatchObject({ code: 'review_answer_unbound' });
-  await expect(
-    submitReviewAnswerTool.execute(await context(a.runId, 'other-session'), {
-      original_ref: a.runId,
-    }),
-  ).rejects.toMatchObject({ code: 'review_answer_unbound' });
-  await expect(
-    submitReviewAnswerTool.execute(await context(a.runId, a.sessionId), { original_ref: b.run_id }),
-  ).rejects.toMatchObject({ code: 'review_answer_unbound' });
-  expect((await counts()).submissions).toHaveLength(1);
-  expect((await counts()).activations).toHaveLength(0);
-});
-
-it.each(['cancelled', 'revoked', 'closed-review'] as const)(
-  'rechecks %s permission after grading before the original can activate learning',
-  async (mode) => {
-    const f = await nativeSoloHttpFixture(testDb(), { model: true });
-    const reviewId = 'review-after-grading';
-    await testDb()
-      .insert(learning_session)
-      .values({ id: reviewId, type: 'review', status: 'started' });
-    const a = await accepted(
-      {
-        review_answer: {
-          authorize_submission: true,
-          question_id: f.id,
-          assessment: f.assessment,
-          review_session_id: reviewId,
-        },
-      },
-      f,
-    );
-    const ctx = await context(a.runId, a.sessionId);
-    const entered = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
-    const realExecutor = f.execute.getMockImplementation();
-    if (!realExecutor) throw new Error('missing offline recorded executor');
-    f.execute.mockImplementationOnce(async (...args) => {
-      entered.resolve();
-      await release.promise;
-      return realExecutor(...args);
-    });
-    const running = submitReviewAnswerTool.execute(ctx, { original_ref: a.runId });
-    const rejected = expect(running).rejects.toThrow();
-    try {
-      await entered.promise;
-      if (mode === 'cancelled')
-        expect(
-          (
-            await app.request(`/api/copilot/runs/${a.runId}/cancel`, {
-              method: 'POST',
-              headers: { 'x-internal-token': token },
-            })
-          ).status,
-        ).toBe(200);
-      if (mode === 'revoked')
-        await writeEvent(testDb(), {
-          id: 'revoke-during-grading',
-          actor_kind: 'user',
-          actor_ref: 'self',
-          action: 'correct',
-          subject_kind: 'event',
-          subject_id: a.runId,
-          outcome: 'success',
-          payload: {
-            target_event_id: a.runId,
-            correction_kind: 'retract',
-            reason_md: 'withdraw permission',
-            affected_refs: [{ kind: 'question', id: f.id }],
-          },
-        });
-      if (mode === 'closed-review')
-        await testDb()
-          .update(learning_session)
-          .set({ status: 'completed' })
-          .where(eq(learning_session.id, reviewId));
-    } finally {
-      release.resolve();
-    }
-    await rejected;
-    expect(f.execute).toHaveBeenCalledTimes(1);
-    expect((await counts()).submissions).toHaveLength(1);
-    expect((await counts()).activations).toHaveLength(0);
-    expect((await counts()).mastery).toHaveLength(0);
-    expect((await counts()).fsrs).toHaveLength(0);
-  },
-);

@@ -28,6 +28,7 @@ import {
   question,
 } from '@/db/schema';
 import { errorResponse } from '@/kernel/http';
+import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { REVIEW_DUE_LIMIT_MAX, type ReviewDueRow, queryReviewDue } from './due-list';
 import { knowledgeLabels } from './knowledge-labels';
@@ -215,7 +216,12 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     .select({ knowledge_ids: learning_item.knowledge_ids })
     .from(learning_item)
     .where(inArray(learning_item.status, LearningItemOpenStatus.options));
-  const candidateKids = [...new Set(items.flatMap((i) => i.knowledge_ids))];
+  // YUK-1600 — the hub learning item references its topic ROOT (a goal); a goal is not
+  // a testable KC and must never be picked as a new-check practice knowledge point.
+  const candidateKids = await withoutNonKcKnowledgeIds(
+    db,
+    items.flatMap((i) => i.knowledge_ids),
+  );
   let newCheckPairs: Array<{ questionId: string; knowledgeId: string }> = [];
   if (candidateKids.length > 0) {
     const tracked = await db
@@ -275,7 +281,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   // 5. B3 learnable_frontier（#3）——前置全掌握、自身未掌握的「可学前沿」KC，各取
   // 一道**非 draft** active 题（谓词与 new_check 同形，均 notDraftPredicate——红线 4）。frontier KC 无题 →
   // SKIP（不触发供给）。NO-OP：稀疏先决图上 learnableFrontier 返 [] → frontierPairs=[]（
-  // defer-flip，无 flag——见 learnable-frontier.ts 不变量块）。
+  // defer-flip，无 flag；sparse/overflow 均保持空候选）。
   const frontierKcs = await learnableFrontier(db);
   const frontierPairs: Array<{ questionId: string; knowledgeId: string }> = [];
   for (const kc of frontierKcs) {

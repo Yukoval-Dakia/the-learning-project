@@ -9,11 +9,25 @@ import {
   looksLikeCustomProviderId,
 } from '@/core/config/custom-providers';
 import {
+  type ProviderKeyEndpointBindings,
   assertModelEndpointHostAllowed,
+  assertProviderKeyEnvBound,
   isModelEndpointHostAllowed,
+  isProviderKeyEnvBound,
+  setProviderKeyEndpointBindingsSource,
 } from '@/core/config/model-endpoint-allowlist';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
-import { type ProviderModelBinding, resolveModelProfile } from './model-profiles';
+import { catalogEndpointHostKeys } from './model-catalog';
+import {
+  DASHSCOPE_EMBEDDING_ENDPOINT_KEYS,
+  TOKEN_PLAN_ENDPOINT_KEYS,
+  builtinEndpointKeysFor,
+} from './model-catalog-overrides';
+import {
+  CATALOG_PROVIDER_BY_INTERNAL,
+  type ProviderModelBinding,
+  resolveModelProfile,
+} from './model-profiles';
 import { executablePiModel, nativePiModelApi, piProviderId } from './pi-provider-catalog';
 
 // YUK-608 — re-export the provider union so override consumers (solve-lane, verify-framework)
@@ -250,6 +264,49 @@ export function providerCredentialEnvName(provider: Provider): string | undefine
   return config.authMode === 'oauth' ? config.oauthTokenEnv : config.apiKeyEnv;
 }
 
+// ─── provider credential <-> endpoint binding (YUK-1654) ─────────────────────
+//
+// Repo-known provider credentials are bound to their own provider's endpoints:
+// provider A's key never reaches provider B's host, and a built-in endpoint
+// never receives another env's credential. Bucket-less providers carry their
+// code-owned endpoint keys; the memory lanes that read a credential outside
+// PROVIDERS (legacy unpinned ZHIPU GLM, DashScope embedding) bind to the
+// bucket/first-party endpoints they actually read.
+
+function providerKeyEndpointBindings(): ProviderKeyEndpointBindings {
+  const byEnv = new Map<string, ReadonlySet<string>>();
+  const byHost = new Map<string, Set<string>>();
+  const bind = (credentialEnv: string, keys: ReadonlySet<string>) => {
+    byEnv.set(credentialEnv, keys);
+    for (const key of keys) {
+      const accepting = byHost.get(key) ?? new Set<string>();
+      accepting.add(credentialEnv);
+      byHost.set(key, accepting);
+    }
+  };
+  for (const [name, config] of Object.entries(PROVIDERS)) {
+    const credentialEnv = config.authMode === 'oauth' ? config.oauthTokenEnv : config.apiKeyEnv;
+    // A provider's endpoint set is its catalog bucket plus the code-owned
+    // override endpoints (the snapshot omits the anthropic/openai roots).
+    const keys = new Set<string>(builtinEndpointKeysFor(name));
+    const bucket = CATALOG_PROVIDER_BY_INTERNAL[name as KnownProvider];
+    if (bucket) for (const key of catalogEndpointHostKeys(bucket)) keys.add(key);
+    if (name === 'xiaomi-token-plan') {
+      for (const key of TOKEN_PLAN_ENDPOINT_KEYS) keys.add(key);
+    }
+    bind(credentialEnv, keys);
+  }
+  // Legacy memory lanes: the unpinned GLM rollback reads ZHIPU_API_KEY against
+  // the zhipuai-coding-plan bucket endpoint; the embedder reads DASHSCOPE_API_KEY.
+  const glmKeys = new Set<string>(catalogEndpointHostKeys('zhipuai-coding-plan'));
+  for (const key of builtinEndpointKeysFor('zhipuai-coding-plan')) glmKeys.add(key);
+  bind('ZHIPU_API_KEY', glmKeys);
+  bind('DASHSCOPE_API_KEY', DASHSCOPE_EMBEDDING_ENDPOINT_KEYS);
+  return { byEnv, byHost };
+}
+
+setProviderKeyEndpointBindingsSource(providerKeyEndpointBindings);
+
 export function isProviderLaneReady(provider: Provider): boolean {
   const envName = providerCredentialEnvName(provider);
   return envName !== undefined && Boolean(process.env[envName]);
@@ -358,6 +415,9 @@ export function providerModelsRoot(
     if (!definition) return null;
     // Never send the credential to a host the catalog does not declare.
     if (!isModelEndpointHostAllowed(definition.baseUrl)) return null;
+    // The /models read is credentialed: another provider's key never travels
+    // to this endpoint either (YUK-1654).
+    if (!isProviderKeyEnvBound(definition.apiKeyEnv, definition.baseUrl)) return null;
     return definition.protocol === 'anthropic-messages' && !definition.baseUrl.endsWith('/v1')
       ? `${definition.baseUrl}/v1`
       : definition.baseUrl;
@@ -828,6 +888,7 @@ export function resolveTaskProvider(
     }
     const baseUrl = catalogBaseUrl ?? definition.baseUrl;
     assertModelEndpointHostAllowed(baseUrl, `custom provider '${providerName}'`);
+    assertProviderKeyEnvBound(definition.apiKeyEnv, baseUrl, `custom provider '${providerName}'`);
     const wireReasoning = resolveTaskNativeReasoningParams(
       kind,
       providerName,

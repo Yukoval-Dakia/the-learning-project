@@ -6,17 +6,21 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { updatePrompt } from '@/capabilities/ingestion/server/block-structured-edit';
 import { editArtifactBodyBlocks } from '@/capabilities/notes/server/body-blocks-edit';
+import { diffSnapshots } from '@/core/projections/snapshot-diff';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { artifact, question_block } from '@/db/schema';
+import {
+  artifactRowToSnapshot as artifactLiveRowToSnapshot,
+  gatherAndFoldArtifact,
+} from '@/kernel/records/artifact-history';
+import { gatherAndFoldQuestionBlock } from '@/kernel/records/question-block-projection';
 import {
   backfillArtifactGenesis,
   backfillQuestionBlockGenesis,
 } from '../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { gatherAndFoldArtifact, gatherAndFoldQuestionBlock } from './gather';
-import { artifactLiveRowToSnapshot, questionBlockLiveRowToSnapshot } from './parity';
-import { diffSnapshots } from './snapshot-diff';
+import { questionBlockLiveRowToSnapshot } from './parity';
 
 const T0 = new Date('2026-06-01T00:00:00.000Z');
 

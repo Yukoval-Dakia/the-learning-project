@@ -17,6 +17,8 @@ interface KnowledgeRow {
   domain: string | null;
   parent_id: string | null;
   archived_at: Date | null;
+  /** YUK-1600 identity role; consumers render 不评掌握 for non-kc nodes. */
+  role: 'kc' | 'goal' | 'container';
   mastery: number | null;
   // ADR-0035 confidence band. Absent when never attempted, so the client shows the
   // unknown band.
@@ -66,6 +68,7 @@ export async function loadTreeSnapshot(db: Db, subject?: string): Promise<Knowle
       domain: knowledge.domain,
       parent_id: knowledge.parent_id,
       archived_at: knowledge.archived_at,
+      role: knowledge.role,
       last_active_at: sql<Date>`COALESCE(${knowledge_mastery.last_active_at}, ${knowledge.created_at})`,
     })
     .from(knowledge)
@@ -92,6 +95,7 @@ export async function loadTreeSnapshot(db: Db, subject?: string): Promise<Knowle
       domain: r.domain,
       parent_id: r.parent_id,
       archived_at: r.archived_at,
+      role: r.role,
       mastery: proj ? proj.mastery : null,
       // Band fields from the same projection; absent -> null/false, rendered as
       // the unknown band.

@@ -7,7 +7,7 @@
 
 ---
 
-> **Supersession note (2026-06-15)**：本文是 understand 阶段快照。其「B1 校准代码侧零」类判断在 B1-W1（PR #414）后已 stale——仓库现已有 `mastery_state` / `item_calibration` / `ItemPriorTask` / θ̂ 更新接线。选题/校准/供给的应然实施序见 `docs/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md`（YUK-361）。本文留作历史 pipeline 证据，非当前状态。
+> **Supersession note (2026-06-15)**：本文是 understand 阶段快照。其「B1 校准代码侧零」类判断在 B1-W1（PR #414）后已 stale——仓库现已有 `mastery_state` / `item_calibration` / `ItemPriorTask` / θ̂ 更新接线。选题/校准/供给的应然实施序见 `docs/archive/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md`（YUK-361）。本文留作历史 pipeline 证据，非当前状态。
 
 ## 一句话现状
 

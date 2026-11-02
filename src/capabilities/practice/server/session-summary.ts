@@ -4,8 +4,6 @@
 // chained events, runs the task, and stores the result in
 // learning_session.summary_md. The handler logs and rethrows failures so
 // pg-boss can retry; a missing summary degrades to the UI stub.
-// moved VERBATIM from src/server/session/summary.ts (only consumer
-// was this capability's job; session summary is a review-domain operation).
 // `getFailureAttempts` now comes from the kernel read-model directly (the
 // knowledge public seam only re-exported it); the run function is the
 // capability-local PracticeTaskRunFn port.

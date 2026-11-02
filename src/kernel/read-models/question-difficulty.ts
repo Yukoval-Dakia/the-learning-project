@@ -65,6 +65,9 @@ export async function getFamilyCalibration(
   return rows[0] ?? null;
 }
 
+// family_key = `${subject}:${primaryKnowledgeId}:${kind}:${source}`. `subject` is derived
+// from the primary KC's effective domain; the exact question id is deliberately absent
+// because questions in a family share one delta.
 export function buildFamilyKey(
   subject: string,
   primaryKnowledgeId: string,

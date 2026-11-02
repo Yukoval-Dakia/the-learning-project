@@ -6,6 +6,7 @@ import {
   startNotePageClient,
   startNoteReferenceSearchClient,
 } from '../note-page-client';
+import { startNoteQuestionListClient } from '../note-question-list-client';
 import { startNoteSaveClient } from '../note-save-client';
 import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
@@ -29,6 +30,7 @@ function NoteReaderPage() {
           readAiChanges={startNoteAiChangesClient}
           undo={startWorkbenchClient.undoAiChange}
           searchReferences={startNoteReferenceSearchClient}
+          readQuestions={startNoteQuestionListClient}
         />
       </Suspense>
     </StartWorkbenchShell>

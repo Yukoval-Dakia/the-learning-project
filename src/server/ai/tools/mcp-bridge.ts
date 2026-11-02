@@ -8,6 +8,7 @@
 import { createHash } from 'node:crypto';
 
 import { createId } from '@paralleldrive/cuid2';
+import type { BuildMcpServerOptions } from '@/ai/pi-tool-mount';
 import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import { writeEvent } from '@/kernel/events';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
@@ -23,15 +24,13 @@ import {
 import type {
   DomainTool,
   ProposalEffectContract,
-  ToolCallerActor,
   ToolContext,
   ToolEffect,
   ToolExecutionGateInput,
   ToolExecutionResultObservation,
-  ToolMirrorPolicy,
 } from '@/kernel/tools/types';
 import { TOOL_OUTPUT_IMAGES_FIELD } from '@/kernel/tools/types';
-import { getTool } from './registry';
+import { __resolveMirrorPolicy } from './tool-mirror-policy';
 
 /**
  * Engine-neutral tool-result content: MCP-shaped JSON text, or real image bytes
@@ -46,59 +45,7 @@ const MAX_TOOL_OUTPUT_IMAGES = 8;
 /** Absolute long-edge cap for the returned view; tools may request smaller. */
 const MAX_TOOL_IMAGE_EDGE = 2048;
 
-function matchesAgentRef(ref: string, family: string): boolean {
-  const bare = ref.replace(/^agent:/i, '').toLowerCase();
-  return bare === family || bare.startsWith(`${family}:`);
-}
-
-/**
- * Whether one call mirrors to the `event` table. `ToolUseQuery` requires
- * actor_kind='agent', so user-fired calls never mirror. Declared policies:
- *
- *   - 'never'             → never
- *   - 'always'            → always (agent callers only)
- *   - 'when_user_visible' → copilot / teaching caller_ref
- *   - 'when_causal'       → propose | write effect, or dreaming caller_ref
- *
- * Exported with `__` so tests can pin the policy table.
- */
-export function __resolveMirrorPolicy(
-  policy: ToolMirrorPolicy,
-  callerActor: ToolCallerActor,
-  effect: ToolEffect,
-): boolean {
-  if (callerActor.kind !== 'agent') return false;
-  if (policy === 'never') return false;
-  if (policy === 'always') return true;
-  if (policy === 'when_user_visible') {
-    return (
-      matchesAgentRef(callerActor.ref, 'copilot') || matchesAgentRef(callerActor.ref, 'teaching')
-    );
-  }
-  // when_causal
-  if (effect === 'propose' || effect === 'write') return true;
-  return matchesAgentRef(callerActor.ref, 'dreaming');
-}
-
 export type { ToolExecutionGateInput, ToolExecutionResultObservation } from '@/kernel/tools/types';
-
-/**
- * YUK-457 — live tool_use SSE gate. Applies the same mirror policy that governs
- * the persisted mirror, so live cards and replay cannot diverge. Names outside
- * this server and unregistered suffixes pass through: their visibility is
- * governed elsewhere (subtask SSE / finalize force-done).
- */
-export function shouldEmitToolUseForCaller(
-  blockName: string,
-  serverName: string,
-  callerActor: ToolCallerActor,
-): boolean {
-  const prefix = `mcp__${serverName}__`;
-  if (!blockName.startsWith(prefix)) return true;
-  const dt = getTool(blockName.slice(prefix.length));
-  if (!dt) return true;
-  return __resolveMirrorPolicy(dt.mirrorEvent, callerActor, dt.effect);
-}
 
 function formatToolOperationFailure(record: ToolOperationRecord): string {
   const risk = record.sideEffectRisk ? `; side_effect_risk:${record.sideEffectRisk}` : '';
@@ -155,69 +102,6 @@ function proposalEffectContract(
     };
   }
   return base;
-}
-
-/**
- * Result of the per-call input interceptor (P5.1 / YUK-143): `args` is what the
- * tool actually runs with; a `truncationNote` is merged into output under
- * `context_budget` so the agent can self-correct.
- */
-export interface ToolInputInterceptResult {
-  args: unknown;
-  /** Budget notice merged verbatim as `context_budget`; kept loosely typed so the
-   *  bridge stays decoupled from the throttle's notice type. */
-  truncationNote?: object | null;
-  /**
-   * Soft-stop: when a budget dimension is exhausted the interceptor returns a
-   * reason here INSTEAD of capped args. The tool does not run and the reason is
-   * surfaced as the result (never a hard reject/throw, never `limit:0`).
-   */
-  softStop?: string | null;
-}
-
-export interface BuildMcpServerOptions {
-  ctx: ToolContext;
-  /** YUK-1557 — active ai_task_runs.id for tool log/mirror attribution. */
-  logTaskRunId?: string;
-  /** Logical mount name; tools surface as `mcp__<name>__<tool>`. */
-  serverName: string;
-  /** Subset of registered DomainTool names to expose. */
-  toolNames: readonly string[];
-  /** `task_kind` recorded on each tool_call_log row (defaults to ctx.callerActor.ref). */
-  taskKind?: string;
-  toolOperations?: ToolOperations;
-  cancellationSignals?: ReadonlyArray<{
-    signal: AbortSignal;
-    requestedBy: 'system' | 'user';
-  }>;
-  /** Optional per-call runtime gate. Return a reason string to block execution. */
-  beforeExecute?: (
-    tool: ToolExecutionGateInput,
-  ) => string | undefined | Promise<string | undefined>;
-  /** Begins the in-flight effect barrier immediately before DomainTool.execute. */
-  onExecuteStart?: (tool: ToolExecutionGateInput) => Promise<void> | void;
-  /** Releases the barrier only after execution, logging and event mirroring settle. */
-  onExecuteSettled?: (tool: ToolExecutionGateInput) => Promise<void> | void;
-  /** Observes the exact agent-visible result after input interception and output decoration. */
-  onResult?: (result: ToolExecutionResultObservation) => Promise<void> | void;
-  /**
-   * YUK-457 — fires with the human-facing summary after summarize, for Copilot
-   * inline SSE done-state cards. Fires only when the mirror policy fires: a live
-   * card without a persisted mirror would vanish on refresh. Failures swallowed.
-   */
-  onToolComplete?: (result: {
-    toolName: string;
-    input: Record<string, unknown>;
-    summary: string;
-    errorReason?: string;
-    /** YUK-920 — correlation id for same-name parallel calls. */
-    toolUseId?: string;
-  }) => void;
-  /**
-   * P5.1 / YUK-143 — runs after `beforeExecute` clears and before execute on the
-   * happy path; returns possibly limit-capped args plus an optional note.
-   */
-  interceptInput?: (tool: ToolExecutionGateInput, args: unknown) => ToolInputInterceptResult;
 }
 
 /**
@@ -330,7 +214,7 @@ async function resolveOutputImages(
 
   const loader = createAssessmentAssetLoader(call.ctx.db, async (key) => {
     // Lazy: R2 env is only required when a media-producing tool actually runs.
-    const { getR2 } = await import('@/server/r2');
+    const { getR2 } = await import('@/kernel/object-storage');
     return getR2().get(key);
   });
   const signal = call.ctx.signal ?? new AbortController().signal;

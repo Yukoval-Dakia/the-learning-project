@@ -139,7 +139,7 @@ export async function runBriefWriter(params: {
 // `now`, so the factory stamps a real-clock bucket anchor.
 export function buildBriefGenerator(deps: { db: Db; runTaskFn?: TaskTextRunFn }): GenerateBrief {
   const runTaskFn: TaskTextRunFn = deps.runTaskFn ?? makeRunTaskFn(deps.db);
-  return async ({ scopeKey, template, events, facts }) =>
+  return async ({ scopeKey, template, events, facts, taskRunId }) =>
     runBriefWriter({
       runTaskFn,
       scopeKey,
@@ -147,5 +147,6 @@ export function buildBriefGenerator(deps: { db: Db; runTaskFn?: TaskTextRunFn })
       events,
       facts,
       now: new Date().toISOString(),
+      ctx: taskRunId ? { taskRunId } : undefined,
     });
 }

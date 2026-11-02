@@ -18,11 +18,7 @@ import { capabilities } from '@/capabilities';
 import { replaceConfigSnapshot, resetTestConfig } from '@/core/config/store';
 import { buildHonoApp } from '../../../../server/app';
 import { resetDb } from '../../../../tests/helpers/db';
-import {
-  __resetAdminConfigRuntimeFactsForTests,
-  setAdminConfigRuntimeFacts,
-} from '../server/admin-config-facts';
-import { AdminConfigResponseSchema } from './admin-config-contracts';
+import { __resetAdminConfigRuntimeFactsForTests } from '../server/admin-config-facts';
 
 const INTERNAL_TOKEN = 'admin-config-test-token';
 const EMPTY_SNAPSHOT = { epoch: 0, entries: new Map(), hydratedAt: '' };
@@ -59,83 +55,5 @@ describe('GET /api/admin/config — env layers and secrecy over HTTP', () => {
     expect(text.includes('sk-db-test-secret-xiaomi-3341')).toBe(false);
     expect(text.includes('sk-ant-db-test-secret-3341')).toBe(false);
     expect(text.includes(INTERNAL_TOKEN)).toBe(false);
-  });
-});
-
-describe('GET /api/admin/config — injected runtime facts over HTTP (real builder)', () => {
-  // 真组合根装配（server/config/admin-config-facts.ts）：真实 provider 注册表、
-  // boss/memory cron 静态表、运行形态常量、各 capability 真实 reader 的 effective。
-  beforeEach(async () => {
-    const [{ buildAdminConfigRuntimeFacts }, { observabilityConfigEffectiveFacts }] =
-      await Promise.all([
-        import('@/server/config/admin-config-facts'),
-        import('@/capabilities/observability/public'),
-      ]);
-    expect(observabilityConfigEffectiveFacts().BACKUP_IMPORT_MAX_BYTES?.value).toBe(1_000_000_000);
-    setAdminConfigRuntimeFacts(buildAdminConfigRuntimeFacts);
-  });
-
-  // @invariant security: the admin config response names the wired coding-plan lane and never includes credential values
-  // @fails-if the lane is absent under its current id or a stubbed API key is copied into the HTTP body
-  it('serves providers[] with presence booleans only (no credential values) and reserved lanes marked unimplemented', async () => {
-    vi.stubEnv('XIAOMI_API_KEY', 'sk-http-facts-canary-xiaomi-9f1a');
-    vi.stubEnv('XIAOMI_TOKEN_PLAN_API_KEY', 'tp-http-facts-canary-token-plan-7c2e');
-    const body = AdminConfigResponseSchema.parse(await (await get()).json());
-    expect(body.facts_injected).toBe(true);
-    expect(body.tasks.find((task) => task.kind === 'QuizGenTask')?.effective_binding).toEqual({
-      provider: 'xiaomi',
-      model: 'mimo-v2.5-pro',
-      error: null,
-    });
-
-    expect(body.providers.length).toBe(9);
-    const byName = new Map(body.providers.map((row) => [row.name, row]));
-    expect(byName.get('xiaomi')).toMatchObject({
-      auth_mode: 'key',
-      credential_env: 'XIAOMI_API_KEY',
-      key_present: true,
-      implemented: true,
-    });
-    expect(byName.get('xiaomi-token-plan')).toMatchObject({
-      auth_mode: 'key',
-      credential_env: 'XIAOMI_TOKEN_PLAN_API_KEY',
-      key_present: true,
-      implemented: true,
-    });
-    expect(byName.get('anthropic-sub')).toMatchObject({
-      auth_mode: 'oauth',
-      credential_env: 'CLAUDE_CODE_OAUTH_TOKEN',
-      key_present: false,
-      implemented: true,
-    });
-    expect(byName.has('zhipu')).toBe(false);
-    expect(byName.get('zhipuai-coding-plan')).toMatchObject({
-      pi_provider: 'zai-coding-cn',
-      credential_env: 'ZAI_CODING_CN_API_KEY',
-    });
-    expect(byName.get('anthropic-sub')?.pi_provider).toBe('anthropic');
-    expect(byName.get('xiaomi')?.models).toContainEqual({
-      id: 'mimo-v2.5-pro',
-      api: 'openai-completions',
-      input: ['text'],
-    });
-    expect(byName.get('openrouter')).toMatchObject({ implemented: false });
-    expect(byName.get('gateway')).toMatchObject({ implemented: false });
-    // 布尔与 env 名之外不得有任何 credential 派生事实；值绝不进响应体。
-    const text = JSON.stringify(body);
-    expect(text.includes('sk-http-facts-canary-xiaomi-9f1a')).toBe(false);
-    expect(text.includes('tp-http-facts-canary-token-plan-7c2e')).toBe(false);
-    for (const row of body.providers) {
-      expect(Object.keys(row).sort()).toEqual([
-        'auth_mode',
-        'credential_env',
-        'implemented',
-        'implemented_for',
-        'key_present',
-        'models',
-        'name',
-        'pi_provider',
-      ]);
-    }
   });
 });

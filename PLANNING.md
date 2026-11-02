@@ -10,9 +10,9 @@
 
 **Current roadmap → [`docs/planning/v0.3-generalized-ai-learning-framework.md`](docs/planning/v0.3-generalized-ai-learning-framework.md) §1.5**（Foundation A/B/C → Product Track 1/2 → Later）
 
-**Anchor ADR → [ADR-0014 — Generalized Learning Activity + Capability Registry](docs/adr/0014-generalized-activity-and-capability-registry.md)**（accepted, 2026-05-29；10 决议见 [`docs/discussion/summary.md`](docs/discussion/summary.md)；N+1 实施步骤见 [`docs/superpowers/plans/2026-05-18-capability-registry-foundation.md`](docs/superpowers/plans/2026-05-18-capability-registry-foundation.md)）
+**Anchor ADR → [ADR-0014 — Generalized Learning Activity + Capability Registry](docs/adr/0014-generalized-activity-and-capability-registry.md)**（accepted, 2026-05-29；10 决议见 [`docs/discussion/summary.md`](docs/discussion/summary.md)；N+1 实施步骤见 [`docs/archive/superpowers/plans/2026-05-18-capability-registry-foundation.md`](docs/archive/superpowers/plans/2026-05-18-capability-registry-foundation.md)）
 
-**Phase 进度索引 → [`docs/superpowers/status.md`](docs/superpowers/status.md)**
+**Phase 进度索引 → [`docs/archive/superpowers/status.md`](docs/archive/superpowers/status.md)**
 
 下面 Phase 1 / 1a / 1b / 1.5 / 2 / 3 / 4 是 **v0.12 historical roadmap**，整段保留作为历史决策记录，但**已被 v0.3 superseded**。理由：v0.12 假设"文言文先 → 其他学科 Phase 4 再说"；现在 SubjectProfile / CapabilityRegistry / renderConfig 已经成为基础层，Phase 顺序必须重排，否则后续实现会继续半泛化半硬编码。
 
@@ -35,7 +35,7 @@
 
 只要锚不丢，模块就不会变成孤岛。**架构是泛化的**，不锁单一学科或场景；**Phase 1 首发数据集 = 文言文（高中语文）**。
 
-长期 AI 形态不是一个直接改数据的万能聊天 agent，而是横跨模块的 **Learning Orchestrator / Control Plane**：读取学习状态，决定下一步，调度 Task，写 proposal / evidence。ABC 都要实现：A 错题复习、B 新知识学习、C 全局教练；交付顺序按 A → B → C。详见 `docs/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md`。
+长期 AI 形态不是一个直接改数据的万能聊天 agent，而是横跨模块的 **Learning Orchestrator / Control Plane**：读取学习状态，决定下一步，调度 Task，写 proposal / evidence。ABC 都要实现：A 错题复习、B 新知识学习、C 全局教练；交付顺序按 A → B → C。详见 `docs/archive/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md`。
 
 ---
 
@@ -68,13 +68,13 @@ the-learning-project/
 | Artifact: Note (note_hub / note_atomic) | 阅读型；hub + atomic 结构；source tier 防幻觉 | [docs/modules/notes.md](docs/modules/notes.md) |
 | Artifact: Tool (tool_quiz) | 互动型当前唯一实例；可独立或嵌入 Note；Question/Answer/Judgment + ai_flexible 兜底 | [docs/modules/quiz.md](docs/modules/quiz.md) |
 | Dreaming + Maintenance | AI 主动产出（生产 + 维护）两条 lane | [docs/modules/lanes.md](docs/modules/lanes.md) |
-| Learning Orchestrator / Source / Ingestion | 长期控制面；Exa/Search-grounded quiz；图片/PDF/长阅读优雅录入 | [长期 spec](docs/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md) |
+| Learning Orchestrator / Source / Ingestion | 长期控制面；Exa/Search-grounded quiz；图片/PDF/长阅读优雅录入 | [长期 spec](docs/archive/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md) |
 
 ---
 
 ## 阶段路线图（v0.12 historical, superseded by [v0.3 §1.5](docs/planning/v0.3-generalized-ai-learning-framework.md)）
 
-> 下面 Phase 1 / 1a / 1b / 1.5 / 2 / 3 / 4 是 2026-05 重构前的执行计划。许多 checkbox 项已落地（详见 [`docs/superpowers/status.md`](docs/superpowers/status.md)），剩余项的优先级和顺序已在 v0.3 中重排。**不要再按下面顺序认领新工作**——按 v0.3 §1.5 Foundation A/B/C → Product Track 1/2 → Later 走。
+> 下面 Phase 1 / 1a / 1b / 1.5 / 2 / 3 / 4 是 2026-05 重构前的执行计划。许多 checkbox 项已落地（详见 [`docs/archive/superpowers/status.md`](docs/archive/superpowers/status.md)），剩余项的优先级和顺序已在 v0.3 中重排。**不要再按下面顺序认领新工作**——按 v0.3 §1.5 Foundation A/B/C → Product Track 1/2 → Later 走。
 >
 > 保留这段是为了：① 不丢历史决策的 why；② 让 v0.12 时期的引用（specs / brainstorms / 旧 PR 描述）仍有 anchor 可指。
 
@@ -82,7 +82,7 @@ the-learning-project/
 
 只做错题管理 + 学习项 + 知识点挂载 + Note 录入 + tool_quiz 骨架，验证数据模型。
 
-拆为 1a（最小可上手 MVP，5-7 天）和 1b（补完，1a 跑出第一周数据后做）。完整决策见 `docs/superpowers/specs/2026-05-08-phase1-improvements-design.md` 改进 3。
+拆为 1a（最小可上手 MVP，5-7 天）和 1b（补完，1a 跑出第一周数据后做）。完整决策见 `docs/archive/superpowers/specs/2026-05-08-phase1-improvements-design.md` 改进 3。
 
 #### Phase 1a · 最小可用（目标 5-7 天上手）
 
@@ -98,9 +98,9 @@ the-learning-project/
 - [ ] **Sub 4A** — Mistake FSRS 复习闭环（用 OSS `ts-fsrs`） + `review_event` 行为日志表 + 简陋 `/review` UI（键盘 1/2/3 串行）
 - [ ] **Sub 4B** — LearningItem 简化版（仅 pending / in_progress / done 三态走通；6 状态字段保留 schema，状态机本身先简化）+ CompletionEvidence 自我宣告写入路径
 - [x] **Sub 4C** — Capture 流重整 + Tencent OCR Tier-1 + 退役 /record（OCR cascade + /capture 主入口 + 审核页全字段编辑；PR 当前分支待 merge）
-- [x] **Sub 5** — 数据导出 + 还原（ZIP 含 manifest + data.json + 2 CSV + README + 可选 R2 字节；POST /api/_/import 清空式还原；详见 `docs/superpowers/specs/2026-05-10-phase1a-sub5-design.md`）
+- [x] **Sub 5** — 数据导出 + 还原（ZIP 含 manifest + data.json + 2 CSV + README + 可选 R2 字节；POST /api/_/import 清空式还原；详见 `docs/archive/superpowers/specs/2026-05-10-phase1a-sub5-design.md`）
 
-**Sub 4A 关键决策**（详见 `docs/superpowers/specs/2026-05-10-phase1a-sub4a-design.md`）：
+**Sub 4A 关键决策**（详见 `docs/archive/superpowers/specs/2026-05-10-phase1a-sub4a-design.md`）：
 - FSRS 只调度 Mistake（错题），不管 LearningItem 是否完成
 - rating 三档：incorrect → Again / partial → Hard / correct → Good（不暴露 Easy）
 - 不做 cause 差异化复习权重（Phase 2 跑数据再说）
@@ -122,7 +122,7 @@ the-learning-project/
 
 **Reference bundle**: `docs/design/loom-design/`（claude.ai design 出的 v1 handoff，2026-05-10）。当前**只作 reference 不接 CSS** —— 等 Phase 1 收尾让 claude design 看完整项目重出 v2 production code。
 
-每加新 module / page 必须遵循（详见 `docs/superpowers/specs/2026-05-10-phase1a-sub4c-design.md` § 八 + bundle README）：
+每加新 module / page 必须遵循（详见 `docs/archive/superpowers/specs/2026-05-10-phase1a-sub4c-design.md` § 八 + bundle README）：
 
 1. **扩展 token 而非重写** — 在 `src/index.css` 既有 `--token-*` 之上加新 token，不替换已有名字；命名向 bundle 的 `colors_and_type.css` 对齐
 2. **重复 ≥3 次抽 component** — 抽到 `src/components/`，业务命名（`Card` / `StatusBadge` / `KnowledgePicker`），不是 `BoxV2`
@@ -135,7 +135,7 @@ the-learning-project/
 
 **触发**：Phase 1a 5 sub 全 ship 后，发现一路 sub-level 推进**没横向审视战略一致性**。Architecture review 整理 7 个跨模块决策：
 
-详见 `docs/superpowers/specs/2026-05-11-architecture-review.md`。**所有后续 sub 必须对照此文档实施**。
+详见 `docs/archive/superpowers/specs/2026-05-11-architecture-review.md`。**所有后续 sub 必须对照此文档实施**。
 
 **TL;DR — 7 lock'd 决策**：
 - Q1: Session 升格为一等公民（kind enum + summary_json + 一等列 subject/session_id）

@@ -1,6 +1,6 @@
 # Drift Audit — 2026-05-28 (Wave 4 closeout)
 
-**Scope**: ADR-0011 / ADR-0014 / ADR-0015 / ADR-0017 / ADR-0018 / ADR-0020 / ADR-0021 / ADR-0022; active plans in `docs/superpowers/plans/` (master roadmap §5.1, Wave 2-4 ready-to-launch, T-DR / T-D2 / T-D4 driver docs); CLAUDE.md Architecture / Layering sections.
+**Scope**: ADR-0011 / ADR-0014 / ADR-0015 / ADR-0017 / ADR-0018 / ADR-0020 / ADR-0021 / ADR-0022; active plans in `docs/archive/superpowers/plans/` (master roadmap §5.1, Wave 2-4 ready-to-launch, T-DR / T-D2 / T-D4 driver docs); CLAUDE.md Architecture / Layering sections.
 **Run by**: Claude Code (manual `/audit-drift`, post Wave 4 `d99c3bb1` ship).
 **Gate state**: typecheck / lint / audit:schema / audit:partition / audit:profile / `pnpm test` (1052 + 11 migration) / `pnpm build` all green this run.
 

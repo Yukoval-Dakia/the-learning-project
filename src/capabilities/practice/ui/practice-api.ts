@@ -307,14 +307,6 @@ export async function getAdvice(
   return response;
 }
 
-// YUK-433 — solo 路径 per-attempt response-time（RT）capture 的纯计算核。
-// Clamp to the solo submit wire-contract range [0, 3_600_000]. Paper timing uses its
-// separate safe-integer contract and sends its cumulative value directly.
-export function computeLatencyMs(shownAtMs: number | null, nowMs: number): number | null {
-  if (shownAtMs === null) return null;
-  return Math.max(0, Math.min(3_600_000, Math.trunc(nowMs - shownAtMs)));
-}
-
 type CreateAttemptWire = ApiOperationJsonResponse<'createAttempt'>;
 type PendingAttemptWire = Extract<CreateAttemptWire, { verdict: 'pending' }>;
 export type SubmitResult = Exclude<CreateAttemptWire, PendingAttemptWire>;
@@ -392,7 +384,7 @@ export const solveHint = (
   });
 
 // ── 题库面 /questions（YUK-409, loom screen-questions）─────────────────────────
-// GET /api/questions?enrich=true 的投影（src/server/questions/list.ts QuestionListItem）。
+// GET /api/questions?enrich=true 的投影（src/kernel/read-models/questions.ts QuestionListItem）。
 // enrich 路径补了 subject（派生学科 profile id）/ knowledge_labels（kchip 中文名）/
 // is_composite + children（大题展开小题）——基础投影没有的派生量，YUK-409 additive 补。
 type QBankWireResult = ApiOperationJsonResponse<'listQuestions'>;
@@ -463,14 +455,18 @@ export function buildQuestionsListQuery(filters: QBankListFilters = {}): string 
   return sp.toString();
 }
 
+export function projectQuestionsListResponse(response: QBankWireResult): QBankListResult {
+  return {
+    ...response,
+    items: response.items.map(toQBankQuestion),
+  };
+}
+
 export const getQuestionsList = (filters: QBankListFilters = {}): Promise<QBankListResult> =>
   apiOperationJson('listQuestions', {
     url: `/api/questions?${buildQuestionsListQuery(filters)}`,
     method: 'GET',
-  }).then((response) => ({
-    ...response,
-    items: response.items.map(toQBankQuestion),
-  }));
+  }).then(projectQuestionsListResponse);
 
 // ── 卷（papers list / detail / 草稿 / 逐题提交 / 会话） ─────────
 export interface PaperListItem {

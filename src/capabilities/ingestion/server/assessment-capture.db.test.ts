@@ -19,6 +19,7 @@ import {
   question_block,
   question_revision,
   source_asset,
+  source_document,
 } from '@/db/schema';
 import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
@@ -46,6 +47,14 @@ async function fixture(answer = '42') {
     byte_size: 4096,
     sha256: 'a'.repeat(64),
     created_at: now,
+  });
+  await db.insert(source_document).values({
+    id: 'capture-document',
+    source_asset_ids: ['capture-page'],
+    provenance: { usage_policy: { derivation_policy: 'allow' } },
+    created_at: now,
+    updated_at: now,
+    version: 0,
   });
   await db.insert(learning_session).values({
     id: 'capture-session',

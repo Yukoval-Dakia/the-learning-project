@@ -5,7 +5,7 @@ import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
-import { assertFromState } from './guards';
+import { assertFromState } from '@/kernel/learning-session-guard';
 
 // LearningSession.Conversation.* — Phase 2C Active Teaching Session.
 //

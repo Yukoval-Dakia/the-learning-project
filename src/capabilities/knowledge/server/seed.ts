@@ -1,6 +1,6 @@
 import type { Db } from '@/db/client';
+import { createKnowledgeNodeFromEvents } from '@/kernel/records/knowledge-node-birth';
 import { KNOWN_SUBJECT_IDS, subjectProfiles } from '@/subjects/profile';
-import { createKnowledgeNodeFromEvents } from './node-creation';
 
 export interface SeedResult {
   inserted: number;
@@ -23,6 +23,7 @@ export async function seedKnowledge(db: Db): Promise<SeedResult> {
           domain: subjectId,
           parent_id: null,
           proposed_by_ai: false,
+          role: 'container',
           created_at: new Date(),
         },
         { actorRef: 'knowledge-seed' },

@@ -6,11 +6,21 @@ import {
   getDraftDetail,
   getQuestionFull,
   getQuestionKnowledgeOptions,
+  getQuestionsList,
   patchQuestion,
 } from '../practice-api';
-import { listQuestionMistakes, restoreQuestion, runServingAction } from './library-api';
+import {
+  getReviewDrafts,
+  listMistakes,
+  listQuestionMistakes,
+  restoreQuestion,
+  runServingAction,
+} from './library-api';
 
 export type LibraryClient = {
+  listMistakes: typeof listMistakes;
+  getReviewDrafts: typeof getReviewDrafts;
+  getQuestionsList: typeof getQuestionsList;
   enableDraft: typeof enableDraft;
   forceEnableDraft: typeof forceEnableDraft;
   runServingAction: typeof runServingAction;
@@ -23,6 +33,8 @@ export type LibraryClient = {
   getQuestionFull: (id: string) => ReturnType<typeof getQuestionFull>;
 };
 const httpLibraryClient: LibraryClient = {
+  listMistakes,
+  getReviewDrafts,
   enableDraft,
   forceEnableDraft,
   runServingAction,
@@ -31,6 +43,7 @@ const httpLibraryClient: LibraryClient = {
   restoreQuestion,
   listQuestionMistakes,
   getQuestionKnowledgeOptions,
+  getQuestionsList,
   getDraftDetail,
   getQuestionFull: (id) => getQuestionFull(id),
 };

@@ -2,9 +2,10 @@ import { eq, inArray } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { source_asset, source_document } from '@/db/schema';
+import type { R2Client } from '@/kernel/object-storage';
+import type { SourceAssetRow } from '@/kernel/records/asset-store';
 import { persistSourceAsset, sha256Hex } from '@/kernel/records/asset-store';
 import type { PdfPageText } from './pdf-text';
-import type { R2Client, SourceAssetRow } from './persist-image-asset';
 
 // Unified source package for one ingestion session.
 //

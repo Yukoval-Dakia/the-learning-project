@@ -8,7 +8,48 @@
 // facts_injected=false rather than inventing data.
 import type { ConfigEffectiveFacts } from '@/core/config/effective';
 
-/** One provider row; the only credential fact is key_present. */
+/**
+ * One catalog model row: every model in the provider's catalog bucket, runnable
+ * or not. Missing catalog facts stay 'unknown'/'null' — they are never inferred.
+ */
+export interface AdminConfigCatalogModelRow {
+  readonly id: string;
+  /** Wire protocol; null when neither the catalog nor a protocol template declares it. */
+  readonly api: string | null;
+  /** Input modalities; ['unknown'] when the catalog does not declare them. */
+  readonly input: readonly string[];
+  /** Whether the save-time registry accepts this model (required executable facts present). */
+  readonly runnable: boolean;
+  readonly tool_call: boolean | 'unknown';
+  readonly reasoning: boolean | 'unknown';
+  readonly structured_output: boolean | 'unknown';
+  readonly vision: boolean | 'unknown';
+  readonly forced_tool_choice: boolean | 'unknown';
+  readonly context_window_tokens: number | null;
+  readonly max_input_tokens: number | null;
+  readonly max_output_tokens: number | null;
+  /** Catalog rate card (USD per Mtok); null when the catalog has no card (unknown, not free). */
+  readonly cost: {
+    readonly input: number;
+    readonly output: number;
+    readonly cache_read: number;
+    readonly cache_write?: number;
+  } | null;
+}
+
+/**
+ * Auth status projected from the probe/settlement facts (provider-models-check);
+ * the only credential-derived facts beyond key_present, and never the value.
+ */
+export interface AdminConfigProviderAuth {
+  readonly status: 'unconfigured' | 'configured' | 'auth_failed';
+  /** HTTP status of the failed /models read or inference probe; null otherwise. */
+  readonly http_status: number | null;
+  /** Provider error type of the failure (e.g. invalid_api_key); null otherwise. */
+  readonly error_type: string | null;
+}
+
+/** One provider row; the only credential facts are key_present and the auth status. */
 export interface AdminConfigProviderRow {
   readonly name: string;
   readonly auth_mode: 'key' | 'oauth';
@@ -21,8 +62,10 @@ export interface AdminConfigProviderRow {
   readonly implemented_for?: { readonly chat: boolean; readonly typed: boolean };
   /** Actual native pi identity; null for providers using a non-pi execution path. */
   readonly pi_provider?: string | null;
-  /** Only models the save-time registry accepts (required executable facts present). */
-  readonly models?: readonly { id: string; api: string; input: readonly string[] }[];
+  /** Full catalog listing (YUK-1563 AC1); absent for an older/uninjected facts source. */
+  readonly models?: readonly AdminConfigCatalogModelRow[];
+  /** Absent for an older/uninjected facts source. */
+  readonly auth?: AdminConfigProviderAuth;
 }
 
 /** Static cron declaration; read-only and triggers no worker behavior. */

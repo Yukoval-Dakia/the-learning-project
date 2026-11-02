@@ -1,13 +1,5 @@
 {
   "_comment": "Schema fields with no INSERT/UPDATE write path. Each entry MUST have reason + resolves_when. When the resolving milestone lands, remove from this allowlist.",
-  "intervention.outcome": {
-    "reason": "YUK-791 creates and activates the versioned preparation aggregate; YUK-792 owns delayed/transfer verification settlement and is the first writer of the terminal outcome.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-792 intervention verification settlement writes outcome",
-      "expected_by": "2026-10-31"
-    }
-  },
   "knowledge.delete_reason": {
     "reason": "Soft-delete metadata; Sub 1 maintenance lane (ADR-0004) will write it | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
@@ -30,38 +22,6 @@
       "kind": "manual",
       "ref": "Sub 1 JudgeTask implemented",
       "expected_by": "2027-01-15"
-    }
-  },
-  "question.source_ref": {
-    "reason": "Provenance ref unused; ADR-0006 v2 后 event.payload.source 替代 | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 落地，决定 keep or drop",
-      "expected_by": "2026-10-31"
-    }
-  },
-  "question.created_by": {
-    "reason": "Provenance for AI-generated questions; ADR-0006 v2 will fill via event(action='generate', subject_kind='question') | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 event generation path implemented",
-      "expected_by": "2026-10-31"
-    }
-  },
-  "learning_item.source_ref": {
-    "reason": "Provenance ref; same as question.source_ref | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 落地，决定 keep or drop",
-      "expected_by": "2026-10-31"
-    }
-  },
-  "learning_item.primary_artifact_id": {
-    "reason": "ADR-0027 (YUK-203 P1) — primary_artifact_id 现为 learning_item→note 的可空 representative 引用指针（INSERT via acceptLearningIntent；无 UPDATE re-point path）。ADR-0004 的双向 ownership 已被 supersede。 | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "ADR-0027 reference-model: 当 learning_item→note 读全量切到 label 交集 (notesForItem, P1-PR2/P4) 后评估 drop 此列",
-      "expected_by": "2026-10-31"
     }
   },
   "learning_item.child_learning_item_ids": {
@@ -97,11 +57,11 @@
     }
   },
   "answer.vision_extracted": {
-    "reason": "Rechecked 2026-10-11 at main 755297781: answer-draft.ts autosave/freeze writes content_md and image_refs, not vision_extracted; migration capture/redaction only preserves existing values. The image-attempt text producer remains pending in YUK-1404. Keep student work as attempt evidence, never as the answer key. 2026-10-18 is a review date, not a promised delivery date. | Re-dated 2026-10-16 to 2026-10-30: Stage「第一天能用」 owns this (YUK-1404, photo / answer-sheet per-question reading, G8). Review date, not a delivery promise; the writer does not exist yet.",
+    "reason": "Rechecked 2026-10-11 at main 755297781: answer-draft.ts autosave/freeze writes content_md and image_refs, not vision_extracted; migration capture/redaction only preserves existing values. The image-attempt text producer remains pending in YUK-1404. Keep student work as attempt evidence, never as the answer key. 2026-10-18 is a review date, not a promised delivery date. | Re-dated 2026-10-16 to 2026-10-30: Stage「第一天能用」 owns this (YUK-1404, photo / answer-sheet per-question reading, G8). Review date, not a delivery promise; the writer does not exist yet. | Re-dated 2026-10-31 by EL for Gate hygiene on #2218 (YUK-1584): review cliff, writer still YUK-1404",
     "resolves_when": {
       "kind": "manual",
-      "ref": "YUK-1404 (YUK-1113 census): implement and verify the image-attempt extraction writer to answer.vision_extracted and its actual attempt consumer together, or preserve historical values in an approved compatible retirement migration; review by 2026-10-30",
-      "expected_by": "2026-10-30"
+      "ref": "YUK-1404 (YUK-1113 census): implement and verify the image-attempt extraction writer to answer.vision_extracted and its actual attempt consumer together, or preserve historical values in an approved compatible retirement migration; review by 2026-11-30",
+      "expected_by": "2026-11-30"
     }
   },
   "artifact.id": {
@@ -267,7 +227,7 @@
     }
   },
   "mastery_state.theta_grid_json": {
-    "reason": "A4 (YUK-436) 离散网格贝叶斯 θ_KC offset 后验 — inc-1 是 PURE-ADDITIVE SHADOW：写路径已存在（THETA_GRID_ENABLED=true 且单 KC 题时由 updateThetaForAttempt 尾部 shadow-write）。inc-2 读侧已接线（candidate-signals.ts → klpScoreFromGrid 选题），但**仍 flag-gated dark-ship**（THETA_GRID_ENABLED 默认 false → 选题永不读它，theta_hat 仍是 SoT，选题评分逐位等同今天）。故**尚无 LIVE reader**——真正的 grid→SoT cut-over = 校准验证（audit:calibration verdict）后翻 THETA_GRID_ENABLED，那时本 entry 解除。写侧 + 读侧（flag-OFF byte-identical + flag-ON klp_grid）双向均有单测守（state.db.test.ts + candidate-signals.db.test.ts）。",
+    "reason": "A4 (YUK-436) 离散网格贝叶斯 θ_KC offset 后验 — inc-1 是 PURE-ADDITIVE SHADOW：写路径已存在（THETA_GRID_ENABLED=true 且单 KC 题时由 updateThetaForAttempt 尾部 shadow-write）。inc-2 读侧已接线（candidate-signals.ts → klpScoreFromGrid 选题），但**仍 flag-gated dark-ship**（THETA_GRID_ENABLED 默认 false → 选题永不读它，theta_hat 仍是 SoT，选题评分逐位等同今天）。故**尚无 LIVE reader**——真正的 grid→SoT cut-over = 校准验证（ops:calibration verdict）后翻 THETA_GRID_ENABLED，那时本 entry 解除。写侧 + 读侧（flag-OFF byte-identical + flag-ON klp_grid）双向均有单测守（state.db.test.ts + candidate-signals.db.test.ts）。",
     "resolves_when": {
       "kind": "phase",
       "ref": "A4 inc-2 grid→SoT cut-over (YUK-436)",
@@ -520,14 +480,6 @@
       "kind": "manual",
       "ref": "YUK-384 Task 5 session-qualified PgPresenceStore write path",
       "expected_by": "2027-01-31"
-    }
-  },
-  "event_subscription_checkpoint.paused_at": {
-    "reason": "Rechecked 2026-10-11 at main 755297781: runtime.ts still has no production paused_at write; runtime.db.test.ts writes it only as a fixture. This is not a raw-SQL scanner false negative and not satisfied by DBOS/judge migration or green CI. YUK-1113 owns dispatcher pause/resume producer and consumer, or compatible retirement. 2026-10-18 is the YUK-1113 review date, not a migration delivery commitment. | Re-dated 2026-10-16 to 2026-10-31: Migration line owns this (YUK-1113 dispatcher pause/resume producer). Review date, not a delivery promise; the writer does not exist yet.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-1113: implement and verify dispatcher pause/resume production writes to paused_at and the corresponding consumer behavior together, or preserve historical state in a compatible retirement migration; review by 2026-10-31",
-      "expected_by": "2026-10-31"
     }
   },
   "_comment_yuk850_historical_misconception_reconciliation": "YUK-850 deletes the unreachable misconception reconciliation runtime and its writer while deliberately retaining the table declaration and migrations so existing databases and any historical rows remain readable. F4.1 must make the final retain-or-drop decision; no new runtime writer may be added in the meantime.",

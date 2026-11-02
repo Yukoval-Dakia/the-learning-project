@@ -8,7 +8,7 @@ status: accepted
 **Amended by:** [ADR-0075](0075-agent-harness-contract.md)（Amendment 2026-10-18，YUK-1559：D2 L3 资格门、D7 日上限改报警水位、D3/D6+白板页实施时点提前）。
 **Decision source:** owner 2026-10-10「我们后台有一些定时的agent会进行分析和产出。但是我一直模糊的觉得他们的配合有限，并且定时这种办法不够『智能』，没能更快更准确的抓住信息」，按设计草案推进并转成本 ADR（[YUK-1449](https://linear.app/yukoval-studios/issue/YUK-1449)）。
 **Tracking:** [YUK-1449](https://linear.app/yukoval-studios/issue/YUK-1449)。
-**Related:** ADR-0066（实时自适应学习目标）；[ADR-0075](0075-agent-harness-contract.md)（agent harness 契约，含对本文 D2/D7 的修订与 D3/D6 时点提前）；ADR-0017（逐事件 memory ingest 先例）；owner 愿景语料 `docs/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md`、`2026-06-18-jiaoyantuan-deliberative-panel-design.md`、`2026-06-18-jiaoyantuan-integration-and-build-start.md`、`docs/design/2026-06-25-recommendation-engine-x-algorithm-mapping.md`；设计草案（细节真相源，绝对 artifact 路径）`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1388/stage4/final/teaching-team-design-draft.md`。
+**Related:** ADR-0066（实时自适应学习目标）；[ADR-0075](0075-agent-harness-contract.md)（agent harness 契约，含对本文 D2/D7 的修订与 D3/D6 时点提前）；ADR-0017（逐事件 memory ingest 先例）；owner 愿景语料 `docs/archive/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md`、`2026-06-18-jiaoyantuan-deliberative-panel-design.md`、`2026-06-18-jiaoyantuan-integration-and-build-start.md`、`docs/design/2026-06-25-recommendation-engine-x-algorithm-mapping.md`；设计草案（细节真相源，绝对 artifact 路径）`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1388/stage4/final/teaching-team-design-draft.md`。
 
 ## 背景与问题
 
@@ -94,7 +94,8 @@ panel 设计中仍然成立的思想，折进新例会作为主席裁决面的�
 3. **危机与隐私永不进白板**：危机识别与支持是独立协议（YUK-1398），例会不诊断、不排队、不降级它；finding 只引用证据 id 不复制私密正文，派生读取遵守用途边界（YUK-1408 方向）。
 4. **不出现第二事件总线或第二 proposal inbox**：白板=投影、触发=manifest 订阅、执行=现有队列/DAG——「不加平行总线」是验收项。
 5. **学习者可见面只有一个决定**：其余全部留板默认不推；维护类内部建议永不推给学习者；白板对 owner 默认只读可见。
-6. **`docs/superpowers/` 是 owner 的愿景语料，不是可归档的流程历史**：S13-A01（docs/superpowers 历史流程语料，DELETE/W0）执行时，其「将有效决定归并进现行 ADR」的路径对本 ADR 成立——但愿景与设计文档（vision §11–§13、panel design、integration capstone、X-algorithm mapping、phase0 plan）必须保留为**活跃参考**，不得随历史语料一起退出默认上下文或降级为仅归档索引；它们是本决策与后续 panel/教学法工作的语义来源。
+6. **superpowers 愿景语料是语义来源，不是可归档遗忘的流程历史**：S13-A01（superpowers 历史流程语料，DELETE/W0）执行时，其「将有效决定归并进现行 ADR」的路径对本 ADR 成立——但愿景与设计文档（vision §11–§13、panel design、integration capstone、X-algorithm mapping、phase0 plan）必须保留为**活跃参考**，不得随历史语料一起退出默认上下文或降级为仅归档索引；它们是本决策与后续 panel/教学法工作的语义来源。
+   > **YUK-1575 执行注（2026-10-28）**：owner 拍板整目录归档至 `docs/archive/superpowers/`（git mv 保留历史）。「活跃参考」按以下方式兑现：vision / panel design / integration capstone 三篇仍由本 ADR Related 与本条**点名直链**（不是仅归档索引），其中仍有效的 judge 校准铁律已并入 [ADR-0035](0035-mastery-diagnosis-three-dim-full-engine-instantiation.md) 推论节；X-algorithm mapping 与 phase0 plan 本就在 `docs/design/` 未随目录移动。后续 panel/教学法工作继续以三篇归档原文为语义来源。
 
 ## 分阶段交付（对齐 AGENTS.md 交付阶段）
 
@@ -130,4 +131,4 @@ panel 设计中仍然成立的思想，折进新例会作为主席裁决面的�
 2. **D7 修订——后台日上限降为报警水位（alert-only）。** 「触顶当日不再召集非安全类例会」废止；以需求门控为主，日上限只用于发现事故，不阻断。保留不变：每次召集的调用上限（例会 ≤2 次模型调用、周回顾 ≤3 次，超过即弃权并记失败面）、每条触发链独立 kill switch、Copilot 学习者主动会话不计入不设上限（YUK-1373）、veto 七条。理由：ADR-0069 D4 已拍板供题花费不设上限；需求门控之后空闲期花费趋近 0，上限只用来发现事故（设计稿 §3.6）。报警水位定值仍按未决问题所述先量一周基线。
 3. **D3/D6 与白板管理页实施时点提前。** owner 决定 3：主席层（D3 主席决定、D6 指标）与白板管理页**现在也做**，不等「owner 恢复真实使用（连续 7 天中 ≥3 天有学习者事件）」触发；排在 ADR-0075 **P1（边界契约）之后**；白板管理页走 UI pre-flight 与 owner 三次设计检查（UI 线）。D3/D6 决策内容不变（恰好一个经回读验证的 typed 决定；按链预注册度量）；学习层有用性数值在真实使用达到预注册样本量前仍是预注册假设——**提前的是实施时点，不是测量结论**。
 
-**以上均为 owner 已批决定与实施排序的落档，不代表任何软件已实现**；实现状态以代码与运行证据为准。
+**以上均为 owner 已批决定与实施排序的落档**；实现状态以代码与运行证据为准。

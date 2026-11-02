@@ -19,8 +19,8 @@ import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { sanitizeSourcedMarkup } from '@/server/questions/sourced-markup';
 
 // Single-sourced from the schema so both producers type created_by identically.

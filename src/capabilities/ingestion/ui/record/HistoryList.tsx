@@ -3,7 +3,8 @@ import { useAssetUrl } from '@/ui/lib/assets';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SectionHead } from '@/ui-next/primitives/SectionHead';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
-import { type SessionRow, getSession } from './record-api';
+import type { SessionRow } from './record-api';
+import { useRecordClient } from './record-client';
 import { materialWords, whenWords } from './record-copy';
 import { recordKeys, useRecordingList } from './recording-read';
 
@@ -60,6 +61,7 @@ function Row({ row, onOpen, now }: { row: SessionRow; onOpen: () => void; now: n
  * from its own facts until it does.
  */
 function VisitRow({ id, onOpen, now }: { id: string; onOpen: () => void; now: number }) {
+  const { getSession } = useRecordClient();
   const q = useQuery({ queryKey: recordKeys.session(id), queryFn: () => getSession(id) });
   const s = q.data?.session;
   if (!s) return null;

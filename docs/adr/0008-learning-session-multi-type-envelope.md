@@ -60,3 +60,15 @@ Sub 0d plan 之前规划的 agent_sessions / agent_messages 表已**作废**—�
 这次只归位已有完整操作。`markSessionPackageFailed` 的既有补偿也随状态 owner 迁入：已有产出时保留状态并尽力记录 provenance，否则沿原分支标记失败。它原本没有的事务、锁、事件和 type 筛选均不补加。各操作的 Db/Tx 合同、队列发送方式、调用顺序及付费/恢复边界保持；不能把历史“同事务”的描述外推到接受裸 Db 的所有调用。
 
 录入 caller 直接消费同域实现，不新增跨能力状态写接口。共享题块事实继续调用已有 kernel 操作。本修订不授权 #2037 尚在途的 Db→Db|Tx 签名变化；该片后续在新 canonical 路径接线，沿各自原批准范围交付。
+
+## 归属修订（2026-10-27，YUK-1570）：共享 allowed-state guard
+
+完整既有 `assertFromState` 机制从 `src/server/session/guards.ts` 原文迁入 `src/kernel/learning-session-guard.ts`，Ingestion、Tutor、Conversation、Placement、Review 五个现役 consumer 直接消费新 owner，旧文件退出。泛型 assertion、allowed membership 判断、同步 throw 和精确 409 冲突错误保持；值依赖仍只有 `@/kernel/http` 的原 `ApiError` class，无 wrapper、barrel、兼容出口或工厂。
+
+各 type 的 allowed/from/to 政策、调用位置、锁与事务仍归各自原业务 owner。统一冲突错误原本就是一个完整机制，本次只改变归属，新增深度为 0；维护 Tutor 或 Ingestion 的合法状态集合仍须修改各业务 owner，不能据此声称新增状态政策隐藏或全局并发安全证明。2026-10-23 修订保留为当时归属的历史记录。
+
+## 归属修订（2026-10-30，YUK-1570）：Placement 完整生命周期
+
+Placement 的既有完整状态操作及 runtime flag 归 `src/capabilities/practice/server/placement-session-lifecycle.ts`。原 `src/server/session/placement.ts` 与混合 namespace 的 Placement 出口退出；Practice 本域直接调用，外部 orphan caller 通过既有 `practice/public.ts` 绑定操作与同一错误类，Practice recovery 直接从同一私有 owner 取得 flag，旧 kernel flag 转出口退出。
+
+迁址不改变 Db/Tx、嵌套事务、行锁、clock、job_events、strict 与 canonical 幂等差异、orphan cutoff/version 合同。共享 durable family 保留 selection、phase/epoch fence、receipt 与恢复；Placement public 在实际 mutation 的 transaction 开始前动态加载，不进入 CLI 的环境加载前依赖图。准入、选题、终止、judge、θ、付费和恢复政策保持原 owner；新增 depth 为 0。

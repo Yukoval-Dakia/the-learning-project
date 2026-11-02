@@ -1,0 +1,11 @@
+-- YUK-1600 — knowledge-node identity role (kc / goal / container).
+--
+-- Default 'kc' keeps every existing node's behavior byte-identical. The stock repair
+-- (seed roots → container, LearningIntent 3a topic roots → goal) is NOT done here: it
+-- is a fold-owned structural value, so it goes through dedicated
+-- `experimental:knowledge_role_update` control-plane events written by the ops backfill
+-- script `pnpm ops:yuk1600-backfill-knowledge-roles`, which also emits the repair
+-- receipt (per-node from→to, id preservation, evidence-row counts). Raw-SQL role
+-- writes would silently revert on the next node re-projection — that failure mode is
+-- the reason the repair is event-sourced.
+ALTER TABLE "knowledge" ADD COLUMN "role" text DEFAULT 'kc' NOT NULL;

@@ -40,6 +40,11 @@ export const KnowledgeRowSnapshot = z.object({
   archived_at: z.coerce.date().nullable(), // nullable timestamp
   proposed_by_ai: z.boolean(),
   approval_status: z.enum(['pending', 'approved', 'rejected']),
+  // OPTIONAL for the same legacy-payload reason as GoalRowSnapshot.scope_mode (YUK-603
+  // precedent): genesis payloads written before the column existed carry no role, and the
+  // fold defaults 'kc' (mirrors the DB column default). Backfilled nodes get their role
+  // from experimental:knowledge_role_update, never from a rewritten genesis.
+  role: z.enum(['kc', 'goal', 'container']).optional(),
   created_at: z.coerce.date(),
   updated_at: z.coerce.date(),
   version: z.number().int(),
@@ -264,7 +269,7 @@ export type QuestionBlockRowSnapshotT = z.infer<typeof QuestionBlockRowSnapshot>
 // UPDATEs, so the only event the fold sees is the genesis anchor (payload.row = the
 // row's current values). The fold is anchor-only and carries every column verbatim.
 //
-// Post-anchor imperative writes are invisible to the log, so audit:projection reports
+// Post-anchor imperative writes are invisible to the log, so ops:projection reports
 // the row as drift until it is re-anchored. That is the honest event=truth signal,
 // not a false positive.
 //

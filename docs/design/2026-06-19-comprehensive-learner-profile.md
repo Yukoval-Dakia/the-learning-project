@@ -24,7 +24,7 @@
 | -- | -- | -- | -- |
 | P0 前置 | YUK-432 | — | ✅ Done |
 | P1 量化底座 | A1 SRT→A2 分层Elo+A3 KLP+A4 网格θ | YUK-432；drop-in | ✅ **LIVE**（SRT/HIER/KLP flag 已翻 #499/#500；A4 inc-2 grid→SoT 待，YUK-436） |
-| P2 typed 失败 | A8 distractor→misconception+A9 step-grading | judge 校准；A8 schema | 🚧 **plan 落定**（重定性为「consume 已有 cause」，见 `docs/superpowers/plans/2026-06-19-p2-typed-failure-plan.md`） |
+| P2 typed 失败 | A8 distractor→misconception+A9 step-grading | judge 校准；A8 schema | 🚧 **plan 落定**（重定性为「consume 已有 cause」，见 `docs/archive/superpowers/plans/2026-06-19-p2-typed-failure-plan.md`） |
 | P3 架构融合 | A12 先验→贝叶斯+A13 prediction-grounding(=教研团 Phase 0) | judge；P1 baseline | 待 |
 | P4 KG 承重 | A5 图-Laplacian+A6 prereq 有向 | YUK-344+relation_type ADR | 待 |
 | P5 效率/描述符 | A7 MEPV+A10 confidence+A11 谨慎轴 | usage-gated | 待 |

@@ -6,7 +6,8 @@
 // a projection bug never breaks a user's accept; dev and test throw so drift fails loudly.
 // The diff helper is shared with the offline audit so both agree on what "fold == row" means.
 
-import { and, eq, inArray, or } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
+import { diffSnapshots } from '@/core/projections/snapshot-diff';
 import type {
   ArtifactRowSnapshotT,
   GoalRowSnapshotT,
@@ -19,21 +20,12 @@ import type {
 import type { Db, Tx } from '@/db/client';
 import { event, materialized_id_index } from '@/db/schema';
 import { gatherAndFoldArtifact } from '@/kernel/records/artifact-history';
+import { gatherAndFoldGoal } from '@/kernel/records/goal-history';
+import { gatherAndFoldKnowledgeEdge } from '@/kernel/records/knowledge-edge-facts';
+import { gatherAndFoldKnowledgeNode } from '@/kernel/records/knowledge-node-history';
 import { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
 import { gatherAndFoldMistakeVariant } from '@/kernel/records/mistake-variant-facts';
-import {
-  gatherAndFoldGoal,
-  gatherAndFoldKnowledgeEdge,
-  gatherAndFoldKnowledgeNode,
-  gatherAndFoldQuestionBlock,
-} from './gather';
-import { diffSnapshots } from './snapshot-diff';
-
-export { goalRowToSnapshot as goalLiveRowToSnapshot } from '@/kernel/records/goal-history';
-export { knowledgeLiveRowToSnapshot } from '@/kernel/records/knowledge-node-history';
-export { hasLearningItemGenesisAnchor } from '@/kernel/records/learning-items';
-// Canonical implementation; retained for the retract-clock DB consumer.
-export { mistakeVariantLiveRowToSnapshot } from '@/kernel/records/mistake-variant-facts';
+import { gatherAndFoldQuestionBlock } from '@/kernel/records/question-block-projection';
 
 type DbLike = Db | Tx;
 
@@ -356,10 +348,6 @@ export async function itemCalibrationsWithGenesisAnchor(
 //
 // Write-time fold==row guard for the artifact sites. Callers assert only anchored artifacts;
 // an edit against a pre-event artifact is skipped.
-
-// The shared mapper lives in artifact-history so audit, backfill, and parity cannot drift.
-// Re-exported under the name existing callers import.
-export { artifactRowToSnapshot as artifactLiveRowToSnapshot } from '@/kernel/records/artifact-history';
 
 /** Assert that the artifact fold reproduces the live row; see the node assert for throw handling. */
 export async function assertArtifactParity(

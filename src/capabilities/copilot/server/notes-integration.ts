@@ -1,7 +1,5 @@
-import { bodyBlocksToNoteSections, getLiveArtifactType } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
-
-export { bodyBlocksToNoteSections };
+import { getLiveArtifactType } from '@/kernel/read-models/live-artifact-reference';
 
 function artifactKindMatchesType(kind: string, artifactType: string): boolean {
   const normalized = kind.trim().toLowerCase();
@@ -19,7 +17,7 @@ function artifactKindMatchesType(kind: string, artifactType: string): boolean {
   return normalized === artifactType;
 }
 
-/** Validate Copilot's semantic kind against the Notes-owned live artifact row. */
+/** Validate Copilot's semantic kind against the shared live artifact facts. */
 export async function resolveLiveArtifactPrimaryView(
   db: Db,
   ref: { kind: string; id: string },

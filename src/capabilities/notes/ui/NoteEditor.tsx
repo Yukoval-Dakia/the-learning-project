@@ -17,6 +17,7 @@ import {
   type NotePageLabel,
   SEMANTIC_KIND_LABEL,
   type SemanticKind,
+  questionsForKnowledge,
   searchArtifacts,
 } from './notes-api';
 import { type BlockEditorRegistry, RichNoteBlockEditor } from './RichNoteBlockEditor';
@@ -201,6 +202,7 @@ export function NoteEditor({
   onChange,
   rootRef,
   searchReferences = searchArtifacts,
+  readQuestions = questionsForKnowledge,
 }: {
   blocks: BodyBlock[];
   labels: NotePageLabel[];
@@ -209,6 +211,7 @@ export function NoteEditor({
   /** Attached while this edit session's editor is on screen (host presence lease). */
   rootRef?: Ref<HTMLDivElement>;
   searchReferences?: typeof searchArtifacts;
+  readQuestions?: typeof questionsForKnowledge;
 }) {
   const [slashAt, setSlashAt] = useState<number | null>(null);
   const [picker, setPicker] = useState<'none' | 'xlink' | 'question'>('none');
@@ -307,6 +310,7 @@ export function NoteEditor({
       {slashAt === i && picker === 'question' && (
         <QuestionPicker
           knowledgeIds={labels.map((l) => l.id)}
+          readQuestions={readQuestions}
           onClose={() => setPicker('none')}
           onPick={(q) =>
             insertAt(i, {

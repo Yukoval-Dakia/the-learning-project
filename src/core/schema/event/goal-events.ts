@@ -8,7 +8,7 @@ import { DeclaredStage } from '../business';
 // goal is a WEAK event-sourced entity (design §0): its proposal/accept/retract chain is
 // event-logged (experimental:proposal → rate(accept) → correct(retract)), and status/scope
 // changes go through these two dedicated typed action events (written by mutateGoal,
-// capabilities/agency/server/goals/commands.ts, behind updateGoalStatus/updateGoalScope)
+// kernel/records/goal-commands.ts, behind updateGoalStatus/updateGoalScope)
 // so a status/scope change is fold-visible. They are reserved experimental actions (see
 // RESERVED_EXPERIMENTAL_ACTIONS in ./experimental.ts) so a malformed payload is rejected at
 // the parseEvent barrier instead of falling through to the loose generic ExperimentalEvent.

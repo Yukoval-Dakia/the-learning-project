@@ -18,9 +18,9 @@ import {
   hashCopilotDurableInput,
 } from '@/capabilities/copilot/server/durable-dispatch';
 import { db } from '@/db/client';
+import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { checkRateLimit } from '@/kernel/request-rate-limit';
-import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Conversation } from '@/server/session';
 import { classifyCopilotTurn } from '../server/crisis-guard';
 

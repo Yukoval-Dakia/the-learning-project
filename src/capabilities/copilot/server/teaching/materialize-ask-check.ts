@@ -10,7 +10,7 @@ import { eq } from 'drizzle-orm';
 
 import type { Tx } from '@/db/client';
 import { learning_item, question } from '@/db/schema';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import type { TeachingStructuredQuestionT } from '../../tasks/teaching-turn';
 
 export interface MaterializeAskCheckParams {

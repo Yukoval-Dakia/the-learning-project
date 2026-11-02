@@ -1,0 +1,112 @@
+import type { Db } from '@/db/client';
+import { ApiError, collectionPayload } from '@/kernel/http';
+import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
+import {
+  type QuestionFamily,
+  type QuestionListDraftStatus,
+  type QuestionListItem,
+  type QuestionListSortBy,
+  type QuestionListSortDir,
+  listQuestions,
+} from '@/kernel/read-models/questions';
+import { QuestionListQuerySchema } from '../api/question-solve-contracts';
+
+const MAX_LIMIT = 200;
+
+function parseBool(raw: string | null): boolean {
+  return raw === '1' || raw === 'true';
+}
+
+export async function readPracticeQuestionList(db: Db, sp: URLSearchParams) {
+  const parsed = QuestionListQuerySchema.safeParse({
+    knowledge_id: sp.getAll('knowledge_id'),
+    subject: sp.get('subject') ?? undefined,
+    source: sp.get('source') ?? undefined,
+    kind: sp.get('kind') ?? undefined,
+    difficulty: sp.getAll('difficulty'),
+    visual_complexity: sp.get('visual_complexity') ?? undefined,
+    search: sp.get('search') ?? undefined,
+    source_tier: sp.getAll('source_tier'),
+    sort_by: sp.get('sort_by') ?? undefined,
+    sort_dir: sp.get('sort_dir') ?? undefined,
+    status: sp.get('status') ?? undefined,
+    group_by_family: parseBool(sp.get('group_by_family')),
+    expand_root: sp.get('expand_root') ?? undefined,
+    include_drafts: parseBool(sp.get('include_drafts')),
+    include_serving_counts: parseBool(sp.get('include_serving_counts')),
+    enrich: parseBool(sp.get('enrich')),
+    limit: sp.get('limit') ?? undefined,
+    offset: sp.get('offset') ?? undefined,
+    cursor: sp.get('cursor') ?? undefined,
+  });
+  if (!parsed.success) {
+    throw new ApiError(
+      'validation_error',
+      parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+      400,
+    );
+  }
+  const q = parsed.data;
+
+  if (q.cursor && sp.has('offset')) {
+    throw new ApiError('invalid_cursor', 'cursor and offset are mutually exclusive', 400);
+  }
+  if (
+    q.cursor &&
+    (q.group_by_family ||
+      q.expand_root !== undefined ||
+      q.source_tier.length > 0 ||
+      q.sort_by === 'source_tier' ||
+      // Serving requests retain their offset-only API contract.
+      q.status === 'not_servable' ||
+      q.include_serving_counts)
+  ) {
+    throw new ApiError(
+      'invalid_cursor',
+      'cursor pagination is available for flat created_at/difficulty question lists',
+      400,
+    );
+  }
+
+  const limit = Math.min(Math.max(q.limit, 1), MAX_LIMIT);
+  const offset = Math.max(q.offset, 0);
+
+  // subject 派生轴: resolve the subject profile id to its knowledge-id
+  // set BEFORE the list query so the list ANDs an OR-of-containment over it.
+  // undefined → no subject filter; [] → subject labels no questions → empty list.
+  const subjectKnowledgeIds =
+    q.subject !== undefined ? await resolveSubjectKnowledgeIds(db, q.subject) : undefined;
+
+  const result = await listQuestions(db, {
+    knowledgeIds: q.knowledge_id.length > 0 ? q.knowledge_id : undefined,
+    subjectKnowledgeIds,
+    source: q.source,
+    kind: q.kind,
+    difficulties: q.difficulty.length > 0 ? q.difficulty : undefined,
+    visualComplexity: q.visual_complexity,
+    search: q.search,
+    sourceTier: q.source_tier.length > 0 ? (q.source_tier as (1 | 2 | 3 | 4)[]) : undefined,
+    sortBy: q.sort_by as QuestionListSortBy | undefined,
+    sortDir: q.sort_dir as QuestionListSortDir | undefined,
+    groupByFamily: q.group_by_family,
+    expandRoot: q.expand_root,
+    includeDrafts: q.include_drafts,
+    // not_servable keeps both drafts and actives in the held set
+    // (a draft awaiting verification is a live hold reason).
+    draftStatus:
+      q.status === 'not_servable' ? 'all' : (q.status as QuestionListDraftStatus | undefined),
+    notServable: q.status === 'not_servable',
+    includeServingCounts: q.include_serving_counts || q.status === 'not_servable',
+    enrich: q.enrich,
+    limit,
+    offset,
+    cursor: q.cursor,
+  });
+
+  const data: Array<QuestionFamily | QuestionListItem> = result.families ?? result.items;
+  return collectionPayload<QuestionFamily | QuestionListItem, typeof result>(
+    data,
+    result.page,
+    result,
+  );
+}

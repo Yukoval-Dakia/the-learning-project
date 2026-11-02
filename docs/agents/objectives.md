@@ -1,9 +1,9 @@
 # Agent Objectives — runtime 速查卡
 
 > **What this is**: 运行期速查。每张卡用最短篇幅回答"这个 agent 是谁、吃什么、吐什么、能碰哪些工具、边界在哪"。
-> **What this is NOT**: 设计记录。形态决策、为什么这样切、被推翻的旧案，全在
-> [agent-framework-design spec（AF，2026-06-04 U0 修订）](../superpowers/specs/2026-06-04-agent-framework-design.md)。
-> 本卡与 AF spec 互链而不重复：spec 改了，回这里同步授权矩阵与边界；这里发现矛盾，以 spec + [U0 裁决记录](../design/2026-06-04-u0-decisions.md) 为准。
+> **What this is NOT**: 设计记录。形态决策、为什么这样切、被推翻的旧案，现行出处是
+> [ADR-0076 — Agent 框架产品形态](../adr/0076-agent-framework-product-shape.md)（AF 决定重立档）。
+> 本卡与该 ADR 互链而不重复：ADR 改了，回这里同步授权矩阵与边界；这里发现矛盾，以 ADR-0076 + [U0 裁决记录](../design/2026-06-04-u0-decisions.md) 为准（AF spec 原文已归档：`docs/archive/superpowers/specs/2026-06-04-agent-framework-design.md`）。
 >
 > **授权事实源**：工具面一律引 `src/server/ai/tools/allowlists.ts` 的现状常量，不凭记忆列。
 > 卡片里若标 *planned*，表示 spec 已裁决但 allowlists.ts 尚未落地（实施时回填）。

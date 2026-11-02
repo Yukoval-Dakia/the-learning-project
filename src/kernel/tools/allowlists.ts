@@ -1,7 +1,7 @@
 // Wave 3 / T-D4 DomainTool surface policy.
 //
 // This is the narrow allowlist matrix from
-// docs/superpowers/specs/2026-05-17-agent-context-tools-design.md. Runtime
+// docs/archive/superpowers/specs/2026-05-17-agent-context-tools-design.md. Runtime
 // callers can build an MCP server from these names and pass the matching
 // mcp__loom__* names into runTask/streamTask allowedTools.
 

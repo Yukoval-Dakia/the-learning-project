@@ -2,8 +2,9 @@
 
 export type { AiChangeRow } from './ui/notes-api';
 export {
+  buildNoteQuestionsQuery,
   getNotePage,
-  undoAiChange,
+  projectNoteQuestionsResponse,
 } from './ui/notes-api';
 
 export const loadNoteReaderPage = () =>
@@ -22,3 +23,5 @@ export type NoteSaveClient = typeof import('./ui/notes-api').saveBodyBlocks;
 export type NoteAiChangesClient = typeof import('./ui/notes-api').getAiChanges;
 
 export type NoteReferenceSearchClient = typeof import('./ui/notes-api').searchArtifacts;
+
+export type NoteQuestionListClient = typeof import('./ui/notes-api').questionsForKnowledge;

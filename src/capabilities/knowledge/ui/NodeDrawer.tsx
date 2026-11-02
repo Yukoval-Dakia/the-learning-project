@@ -32,7 +32,7 @@ import { REL_CUE } from './relation-cue';
 // SEE ALSO（YUK-551, spec Q3）: 本函数的 0.67/0.45 是 S5/YUK-335 跨三面统一点的第三面（ring
 // disc masteryTone + 本 decay pill + legend——本面正是当年漂移出 0.7/0.4 vs 0.67/0.45 分裂的
 // 那面,audit §3.8）。阈值语义、与 frontier gate 0.7+evidence-floor(4) 的分工、对齐的三面同步
-// 成本见 mastery-tone.ts 顶注 + learnable-frontier.ts「阈值/常量联合记录」docblock;任何对齐
+// 成本见 mastery-tone.ts 顶注与 docs/design/2026-07-03-frontier-gate-spec.md §Q3；任何对齐
 // 动作须三面同步,勿单改本函数。
 export function decayCue(mastery: number | null): { label: string; icon: string; tone: string } {
   if (mastery == null) return { label: '未训练', icon: 'history', tone: 'neutral' };

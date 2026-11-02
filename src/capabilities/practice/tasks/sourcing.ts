@@ -20,7 +20,7 @@ import { parseTaskOutput } from './parse-output';
 // the prompt refers to tools by capability, not by mcp__* identifier. Domain
 // content (题型规范) lives in the Agent Skill; this builder stays thin.
 //
-// docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3
+// docs/archive/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3
 function buildSourcingPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}题源检索员。任务：根据输入的学科 + 考点/题型 + 数量，**联网检索现成的练习题**，把每道题抽取并结构化为 SourcedQuestion。输入 { subject, knowledge_context, kinds?, objective_only?: boolean, kind_required?: boolean, count, whitelist } —— count 是期望题数，whitelist 是可信题源域名列表（可能为空）。objective_only=true 时 kinds 中指定的 kind 是硬约束（客观题），kind_required=true 时它是硬约束（结构）；任一为 true 时每道文本题的 kind 都必须与它一致；否则 kinds 是检索时的答案类型与题面结构指导，不要求整批输出复刻同一个 kind 字符串，应忠实抽取每道题的实际结构。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -97,7 +97,7 @@ export const sourcingTaskSpec = {
   definition: {
     kind: 'SourcingTask',
     description:
-      "YUK-216 S2 slice 2 (题源扩展 Strategy D, docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3). Tool-calling agent: given a subject + 考点/题型 + count, searches the web (Tavily) for EXISTING practice questions, restructures each into a SourcedQuestion (kind + prompt_md + reference_md + per-question source_url/title provenance), and emits a SourcingTaskOutput. First cut extracts from HTML/TEXT sources only (OF-1; no image sources). The sourcing handler injects the Tavily remote MCP + the in-process domain-tool MCP at run time (mirrors QuizGenTask's mount pattern) — allowedTools stays [] here so non-handler callers / tests register no tools. Output questions land as draft_status='draft' (source='web_sourced', tier 2) and chain a source_verify job.",
+      "YUK-216 S2 slice 2 (题源扩展 Strategy D, docs/archive/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3). Tool-calling agent: given a subject + 考点/题型 + count, searches the web (Tavily) for EXISTING practice questions, restructures each into a SourcedQuestion (kind + prompt_md + reference_md + per-question source_url/title provenance), and emits a SourcingTaskOutput. First cut extracts from HTML/TEXT sources only (OF-1; no image sources). The sourcing handler injects the Tavily remote MCP + the in-process domain-tool MCP at run time (mirrors QuizGenTask's mount pattern) — allowedTools stays [] here so non-handler callers / tests register no tools. Output questions land as draft_status='draft' (source='web_sourced', tier 2) and chain a source_verify job.",
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 8, timeout: 120_000 },

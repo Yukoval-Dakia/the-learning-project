@@ -24,7 +24,10 @@ import {
   customProviderDefinitions,
   customProvidersRegistryHydrated,
 } from '@/core/config/custom-providers';
-import { installModelEndpointHostAllowlist } from '@/core/config/model-endpoint-allowlist';
+import {
+  endpointKeyOf,
+  installModelEndpointHostAllowlist,
+} from '@/core/config/model-endpoint-allowlist';
 import type { Db, Tx } from '@/db/client';
 import { model_catalog_cache, system_config } from '@/db/schema';
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
@@ -286,7 +289,26 @@ function partitionProviders(providers: ProviderMap): { known: ProviderMap; custo
 function addEndpointHost(hosts: Set<string>, value: unknown): void {
   const endpoint = catalogEndpoint(value);
   if (!endpoint) return;
-  hosts.add(new URL(endpoint).hostname);
+  // Keep the port when the declared endpoint names one (YUK-1654).
+  const key = endpointKeyOf(endpoint);
+  if (key !== undefined) hosts.add(key);
+}
+
+/**
+ * Endpoint keys (host[:port]) one catalog bucket declares for model endpoints.
+ * Feeds the provider credential/endpoint binding (YUK-1654); an unknown bucket
+ * id yields the empty set.
+ */
+export function catalogEndpointHostKeys(catalogProviderId: string): ReadonlySet<string> {
+  const keys = new Set<string>();
+  const provider = asJson(active.providers[catalogProviderId]);
+  if (provider) {
+    addEndpointHost(keys, provider.api);
+    for (const model of Object.values(asJson(provider.models) ?? {})) {
+      addEndpointHost(keys, asJson(asJson(model)?.provider)?.api);
+    }
+  }
+  return keys;
 }
 
 /**

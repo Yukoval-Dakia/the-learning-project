@@ -407,6 +407,7 @@ const REGISTRY_SEMANTIC_RES = [
 const CENTRAL_TOOL_INFRASTRUCTURE = new Set([
   'src/server/ai/tools/registry.ts',
   'src/server/ai/tools/mcp-bridge.ts',
+  'src/server/ai/tools/tool-mirror-policy.ts',
   'src/server/ai/tools/pi-tools.ts',
   // pi-side spawn contract + Task/Agent tool shell: the nested-run host lives in the adapter;
   // this file is spec mapping + gate wiring only.
@@ -999,7 +1000,7 @@ export function scanProposalLifecycle(input: ProposalLifecycleInput): OwnershipV
 // ---------------------------------------------------------------------------
 
 export interface ProviderAttemptCensusInput {
-  /** Violations from scripts/audit-provider-attempt-truth.ts (wrapper/legacy/zero-cost/lane drift). */
+  /** Wrapper, legacy-cost, zero-cost, and lane-drift findings from the provider lane audit. */
   readonly attemptTruthViolations: readonly {
     readonly path: string;
     readonly rule: string;
@@ -1253,8 +1254,9 @@ async function runCli(): Promise<void> {
     './audit-task-census.js'
   );
   const { scanForbiddenTaskCatalogPatterns } = await import('./lib/task-census-guards.js');
-  const { collectProviderWireFindings } = await import('./audit-provider-lanes.js');
-  const { runProviderAttemptTruthAudit } = await import('./audit-provider-attempt-truth.js');
+  const { collectProviderWireFindings, runProviderAttemptTruthAudit } = await import(
+    './audit-provider-lanes.js'
+  );
   const {
     collectDependencySnapshot,
     compareDependencySnapshot,

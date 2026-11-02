@@ -2,7 +2,7 @@
 // call these through React Query and never build URLs themselves.
 
 import { type ApiOperationJsonResponse, apiOperationJson } from '@/ui/lib/api';
-import { type QBankQuestion, type QuestionFullDetail, getQuestionsList } from '../practice-api';
+import type { QBankQuestion, QuestionFullDetail, getQuestionsList } from '../practice-api';
 import type { LibraryScope } from './library-url';
 
 export type { QBankQuestion, QuestionFullDetail };
@@ -10,6 +10,7 @@ export type { QBankQuestion, QuestionFullDetail };
 export const LIBRARY_PAGE = 30;
 
 type ServingStatus = 'active' | 'not_servable';
+type QuestionListReader = typeof getQuestionsList;
 
 export interface QuestionPage {
   items: QBankQuestion[];
@@ -23,6 +24,7 @@ export async function listQuestionPage(
   status: ServingStatus,
   scope: LibraryScope,
   offset: number,
+  getQuestionsList: QuestionListReader,
 ): Promise<QuestionPage> {
   const result = await getQuestionsList({
     status,
@@ -48,7 +50,10 @@ export async function listQuestionPage(
 }
 
 /** True totals for the view switch. 做错过 has none until the backend adds has_mistake. */
-export async function countQuestions(status: ServingStatus): Promise<number> {
+export async function countQuestions(
+  status: ServingStatus,
+  getQuestionsList: QuestionListReader,
+): Promise<number> {
   const page = await getQuestionsList({
     status,
     includeDrafts: status === 'not_servable',
@@ -60,26 +65,30 @@ export async function countQuestions(status: ServingStatus): Promise<number> {
 type DraftList = ApiOperationJsonResponse<'listReviewDrafts'>;
 export type DraftRow = DraftList['rows'][number];
 
+type DraftListReader = (query: string) => Promise<DraftList>;
+
+export function getReviewDrafts(query: string): Promise<DraftList> {
+  return apiOperationJson('listReviewDrafts', {
+    url: `/api/review/drafts?${query}`,
+    method: 'GET',
+  });
+}
+
 export async function listDraftPage(
   scope: LibraryScope,
   cursor: string | null,
+  getReviewDrafts: DraftListReader,
 ): Promise<{ rows: DraftRow[]; total: number; nextCursor: string | null }> {
   const sp = new URLSearchParams({ limit: String(LIBRARY_PAGE) });
   if (scope.kind) sp.set('kind', scope.kind);
   if (scope.source) sp.set('source', scope.source);
   if (cursor) sp.set('cursor', cursor);
-  const page = await apiOperationJson('listReviewDrafts', {
-    url: `/api/review/drafts?${sp}`,
-    method: 'GET',
-  });
+  const page = await getReviewDrafts(sp.toString());
   return { rows: page.rows, total: page.total, nextCursor: page.next_cursor };
 }
 
-export async function countDrafts(): Promise<number> {
-  const page = await apiOperationJson('listReviewDrafts', {
-    url: '/api/review/drafts?limit=1',
-    method: 'GET',
-  });
+export async function countDrafts(getReviewDrafts: DraftListReader): Promise<number> {
+  const page = await getReviewDrafts('limit=1');
   return page.total;
 }
 
@@ -89,11 +98,17 @@ type MistakeList = ApiOperationJsonResponse<'listMistakes'>;
 /** One mistake record as /api/mistakes sends it. */
 export type MistakeRow = MistakeList['rows'][number];
 
-function listMistakes(query: URLSearchParams): Promise<MistakeList> {
+export function listMistakes(query: URLSearchParams): Promise<MistakeList> {
   return apiOperationJson('listMistakes', { url: `/api/mistakes?${query}`, method: 'GET' });
 }
 
-export function listMistakePage(scope: LibraryScope, cursor: string | null) {
+type MistakeListReader = typeof listMistakes;
+
+export function listMistakePage(
+  scope: LibraryScope,
+  cursor: string | null,
+  listMistakes: MistakeListReader,
+) {
   const sp = new URLSearchParams({ limit: String(MISTAKE_PAGE) });
   if (scope.subject) sp.set('subject', scope.subject);
   if (cursor) sp.set('cursor', cursor);

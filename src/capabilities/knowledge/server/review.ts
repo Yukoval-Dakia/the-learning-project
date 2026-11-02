@@ -3,6 +3,7 @@
 // user accepts in the inbox. runWriteProposal is a compatibility adapter for
 // existing programmatic callers and forwards to the same registered tools.
 
+import { piDomainMount } from '@/ai/pi-tool-mount';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
@@ -12,7 +13,6 @@ import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { DOMAIN_TOOL_MCP_SERVER_NAME, resolveDomainToolNames } from '@/kernel/tools/allowlists';
 import type { ToolContext } from '@/kernel/tools/types';
 import { streamTask } from '@/server/ai/runner';
-import { piDomainMount } from '@/server/ai/tools/pi-tools';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   type KnowledgeMutationOutput,

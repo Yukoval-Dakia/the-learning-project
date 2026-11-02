@@ -15,6 +15,7 @@ import type {
   ProposalRetractInput,
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
+import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 import * as ownerRuntime from '@/server/proposals/owner-runtime';
 import { decideKnowledgeEdgeProposal } from './edge-proposal-accept';
@@ -110,7 +111,7 @@ export const knowledgeEdgeProposalDismissApplier: ProposalDismissApplier = async
 });
 
 async function retractKnowledgeNode(tx: Tx, input: ProposalRetractInput): Promise<void> {
-  const rate = await ownerRuntime.findExistingRateEvent(tx, input.proposalId);
+  const rate = await findExistingRateEvent(tx, input.proposalId);
   if (rate?.decision !== 'accept') return;
 
   const mintedIds = (rate.payload as { materialized_ids?: { knowledge?: unknown } })

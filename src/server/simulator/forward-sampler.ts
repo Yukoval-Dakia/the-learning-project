@@ -41,6 +41,7 @@
 // the misspecification note above.
 
 import { PFA_GAMMA, PFA_RHO, pLearned, pfaLogit } from '@/core/pfa';
+import { mulberry32 } from '@/core/rng';
 import {
   conjunctiveCredits,
   conjunctiveCreditsContinuous,
@@ -51,7 +52,6 @@ import {
   thetaSe,
   updateThetaPrecision,
 } from '@/core/theta';
-import { mulberry32 } from '@/server/calibration/rng';
 
 // ── Scenario types ───────────────────────────────────────────────────────────────────
 

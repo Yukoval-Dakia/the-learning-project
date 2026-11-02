@@ -1,4 +1,4 @@
-import { buildExaMcpServer } from '@/server/ai/mcp/exa';
+import { buildExaMcpServer } from '@/ai/exa-mcp';
 
 /** Web search backend availability: a configured key means available. */
 export function supplyDispatchWebSearchAvailable(): boolean {
