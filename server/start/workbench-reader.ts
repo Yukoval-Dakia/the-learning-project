@@ -20,7 +20,7 @@ export const readStartWorkbenchSummary = () =>
   });
 export const readStartOvernightDigest = () =>
   withStartDb(async (db) => {
-    const { loadTodayOvernightDigest } = await import('@/server/today/overnight-digest');
+    const { loadTodayOvernightDigest } = await import('@/kernel/read-models/overnight-digest');
     return loadTodayOvernightDigest(db);
   });
 export const readStartTodayCost = () =>

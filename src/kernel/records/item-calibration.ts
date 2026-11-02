@@ -1,9 +1,6 @@
-// item_calibration 单写者（ADR-0035 决定#3）：insert/update 只允许出现在
-// src/server/mastery/。本模块是 ItemPriorTask 的硬轨 applier（锚 + 后验初始化），
-// 并负责结算 revert 清空证据后把后验修回先验；θ̂ 在线路径只读 b，写 b 的是
-// joint-calibration.ts。
-//
-// 软轨列不产出，留 NULL；kt_json 保留历史值，BKT 夜写已退役（YUK-1576）。
+// Cold-start hard-track anchors and posterior restoration after evidence removal.
+// The caller owns the transaction; ongoing posterior estimation belongs to the calibration batch.
+// Soft-track columns stay NULL; kt_json retains historical values.
 
 import { and, eq, sql } from 'drizzle-orm';
 import { priorTau } from '@/core/difficulty-posterior';

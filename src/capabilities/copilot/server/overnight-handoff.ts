@@ -3,9 +3,9 @@ import {
   type LoadTodayOvernightDigest,
   type OvernightDigest,
   loadTodayOvernightDigest,
-} from '@/server/today/overnight-digest';
+} from '@/kernel/read-models/overnight-digest';
 
-export type { LoadTodayOvernightDigest } from '@/server/today/overnight-digest';
+export type { LoadTodayOvernightDigest } from '@/kernel/read-models/overnight-digest';
 
 const OVERNIGHT_HANDOFF_UNAVAILABLE = '夜链数据暂不可用。';
 

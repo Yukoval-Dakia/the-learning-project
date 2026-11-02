@@ -20,14 +20,12 @@ import {
   overnightWindow,
 } from './overnight-digest-summary';
 
-// Backward-compatible re-exports keep existing import paths working.
 export type {
   DegradedKind,
   OvernightDigest,
   OvernightRunGroup,
   OvernightWindow,
 } from './overnight-digest-summary';
-export { overnightWindow } from './overnight-digest-summary';
 
 type DbLike = Db | Tx;
 
@@ -136,8 +134,8 @@ async function loadDegradedScanRows(db: DbLike, from: Date, to: Date): Promise<D
  * 昨夜 digest 读模型。聚五个夜间事实源到一个 payload，纯读零写（红线①③）。
  * has_overnight_activity 由五源 count 显式组合（红线②）；内部校准概率永不进 payload（红线④）。
  *
- * Shared Today composition supplies the clock and cost reader through public ports.
- * The shell owns the window; observability owns accounting authority and deduplication.
+ * Shared digest composition supplies the clock and canonical cost reader.
+ * The cost projection owns accounting authority and deduplication.
  */
 export async function loadOvernightDigest(
   db: DbLike,

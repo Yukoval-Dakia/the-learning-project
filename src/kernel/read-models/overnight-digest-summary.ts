@@ -2,14 +2,14 @@
 // model imports the same functions. This is a read-only observation surface: it counts
 // and groups, and never emits internal calibration probabilities.
 
-import type { DegradedKind, OvernightRunGroup } from '@/server/today/overnight-digest';
+import type { DegradedKind, OvernightRunGroup } from './overnight-digest';
 
 export type {
   DegradedKind,
   OvernightDigest,
   OvernightRunGroup,
   OvernightWindow,
-} from '@/server/today/overnight-digest';
+} from './overnight-digest';
 
 // Asia/Shanghai is fixed UTC+8 (no DST), so the window is deterministic in pure JS. All
 // queries receive the same JS-derived UTC instants, avoiding JS/SQL date mixing.
