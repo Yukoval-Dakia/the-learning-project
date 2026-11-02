@@ -132,32 +132,41 @@ Local development has its own Postgres, isolated from the TEST stack (whose Post
 
 ```bash
 pnpm install
-pnpm dev:local      # then open http://127.0.0.1:8788/
+pnpm dev:local      # then open the printed origin, e.g. http://127.0.0.1:8788/
 ```
 
 `dev:local` starts the dev-only Postgres (`docker-compose.dev.yml`, service `postgres-dev`,
-host port **5434**, role/database `loom_dev`, named volume `loom-dev_loom-dev-pgdata`), waits
-until it is healthy, applies pending migrations, then starts the API and worker against it.
-Re-running reuses the volume and only applies new migrations. Docker/OrbStack must be running
+host port **5434**, role `loom_dev`, named volume `loom-dev_loom-dev-pgdata`), waits until it
+is healthy, then creates **one database per worktree** inside that shared container —
+`loom_dev_<worktree>_<path hash>`, deterministic from the worktree root (`DEV_DB_NAME`
+overrides) — applies pending migrations, and starts the API and worker against it. The port
+is the first free 127.0.0.1 port from **8788** up (`DEV_PORT` pins one; 8787 stays TEST's),
+so several worktrees run dev at the same time without sharing data or ports. Re-running
+reuses the same database and only applies new migrations. Docker/OrbStack must be running
 (`open -ga OrbStack`).
 
 - **Guard:** `dev:local` refuses to start if the database target is TEST's (port 5433/5544 or
   database `loom`). The only override is `DEV_ALLOW_TEST_DB=1`, which prints a warning banner and
   runs the dev API and worker against TEST's data and jobs — do not use it casually.
 - **Seed questions:** a fresh dev DB starts with 7 admitted math questions (ids `devseed:q:*`, fixed answer keys graded without any model call) so the question bank, practice and today pages have content; re-running adds nothing. Dev DB only — never with `DEV_ALLOW_TEST_DB=1`.
-- **Reset the dev DB:** `docker compose -f docker-compose.dev.yml --profile dev down -v`
-  (deletes the dev volume; the next `pnpm dev:local` recreates, migrates and re-seeds it).
+- **Reset the dev DB:** `pnpm dev:reset` drops **only the current worktree's** database (the
+  next `pnpm dev:local` recreates, migrates and re-seeds it). Never
+  `docker compose -f docker-compose.dev.yml down -v` — the volume holds every worktree's
+  database at once.
+- **Legacy shared DB:** older worktrees may still use the shared `loom_dev` database. Once
+  nothing needs it, drop it by hand:
+  `docker compose -f docker-compose.dev.yml exec postgres-dev psql -U loom_dev -d postgres -c 'drop database if exists loom_dev with (force)'`.
 
-`pnpm dev:local`（= `tsx scripts/dev-local.ts`）spawn **两进程**，启动后打印要打开的地址（默认 <http://127.0.0.1:8788/>，可用 `DEV_PORT` 改；8787 留给 TEST 的 app 容器，避免抢端口或误开到 TEST）：
+`pnpm dev:local`（= `tsx scripts/dev-local.ts`）spawn **两进程**，启动后打印要打开的地址（自动探测 8788 起首个空闲的 127.0.0.1 端口，可用 `DEV_PORT` 固定；8787 留给 TEST 的 app 容器，避免抢端口或误开到 TEST）：
 
 | 进程 | 端口 | 命令 | 角色 |
 | --- | --- | --- | --- |
-| API + Start 前门 | :8788（`DEV_PORT`） | `pnpm rw:api`（`tsx watch server/index.ts`，`RW_WORKER=1` 同进程启 pg-boss worker；dev-local 另设 `RW_FRONTDOOR=dev`） | Hono 组合根 + in-process worker；Vite dev server 以 middleware 模式跑在同一进程、同一端口（`server/dev-frontdoor.ts`），页面与 `/api/*` 同源，**页面改动热更新（HMR），不需要构建**；改 `server/`、`src/server/` 等服务端文件由 tsx watch 重启 API |
+| API + Start 前门 | 自动选择（8788 起，`DEV_PORT` 固定） | `pnpm rw:api`（`tsx watch server/index.ts`，`RW_WORKER=1` 同进程启 pg-boss worker；dev-local 另设 `RW_FRONTDOOR=dev`） | Hono 组合根 + in-process worker；Vite dev server 以 middleware 模式跑在同一进程、同一端口（`server/dev-frontdoor.ts`），页面与 `/api/*` 同源，**页面改动热更新（HMR），不需要构建**；改 `server/`、`src/server/` 等服务端文件由 tsx watch 重启 API |
 | Worker | — | `pnpm worker:dev`（`tsx scripts/worker.ts`） | 独立 pg-boss worker 进程 |
 
 dev 拓扑必须 api（含 Vite 前门）+ worker 两进程齐活（YUK-321 M5 双进程拓扑）：`LISTEN loop 不消费 boss job`，dev 也必须有独立 worker 进程；同进程 worker 是 RW_WORKER=1 的兜底，不替代独立 worker。
 
-`pnpm dev` 是 `pnpm dev:local` 的别名。dev 的 `DATABASE_URL` 由 dev-local 固定指向 dev Postgres（:5434），忽略 `.env` / `.env.local` 里的 `DATABASE_URL` 与 `POSTGRES_*`。
+`pnpm dev` 是 `pnpm dev:local` 的别名。dev 的 `DATABASE_URL` 由 dev-local 固定指向 dev Postgres（:5434）中本 worktree 自己的库（`loom_dev_<worktree>_<hash>`），忽略 `.env` / `.env.local` 里的 `DATABASE_URL` 与 `POSTGRES_*`。
 
 ```bash
 pnpm smoke:local

@@ -20,7 +20,8 @@ ignored local files after the merge. Do not reintroduce another lane's task stat
 ## Local processes
 
 ```bash
-pnpm dev:local        # 唯一入口：起 dev Postgres(:5434，与 TEST 隔离)+迁移+API/Start 前门 :8788(Vite HMR)+worker；打开 http://127.0.0.1:8788/；全新 dev 库自带 7 道已准入的种子题（`devseed:q:*`，固定答案、无需模型即可判分，仅 dev 库），重置：`docker compose -f docker-compose.dev.yml --profile dev down -v`
+pnpm dev:local        # 唯一入口：起 dev Postgres(:5434，与 TEST 隔离)+本 worktree 独立库(loom_dev_<name>_<hash>)+迁移+API/Start 前门(自动选 8788 起空闲端口，Vite HMR)+worker；打开打印的地址；全新 dev 库自带 7 道已准入的种子题（`devseed:q:*`，固定答案、无需模型即可判分，仅 dev 库）；重置本 worktree 库：`pnpm dev:reset`（不要 down -v，卷里有全部 worktree 的库）
+pnpm dev:reset        # 只删本 worktree 的 dev 库；下次 dev:local 重建+迁移+播种
 pnpm dev              # alias for dev:local
 pnpm rw:api           # Hono API（设 RW_FRONTDOOR=dev 才带 Vite 前门；dev:local 已设）
 pnpm worker:dev       # standalone pg-boss worker

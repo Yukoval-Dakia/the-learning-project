@@ -2,8 +2,11 @@
 # its own project name, so the TEST/production stack in docker-compose*.yml never sees it and a
 # plain `docker compose up` cannot start it; the `dev` profile makes that explicit.
 #
-# Isolated from TEST: host port 5434 (TEST uses 5433/5544), its own role/database, its own
-# named volume. Reset the dev DB: `docker compose -f docker-compose.dev.yml down -v`.
+# One shared container, one database per worktree (`loom_dev_<name>_<path hash>`, created by
+# dev-local; the legacy shared `loom_dev` may still exist alongside). Isolated from TEST:
+# host port 5434 (TEST uses 5433/5544), its own role, its own named volume. Reset only the
+# current worktree's DB with `pnpm dev:reset` — never `down -v`, which deletes every
+# worktree's data at once.
 name: loom-dev
 
 services:

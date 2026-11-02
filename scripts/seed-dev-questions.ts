@@ -8,8 +8,9 @@
 // (exact_option_set / exact_text) and needs no provider.
 //
 // Idempotent by deterministic ids (`devseed:`); markered with `metadata.dev_seed = true`. Guarded by
-// SEED_SYNTHETIC_OK=1 + a loopback DATABASE_URL (assertProdFence) and by requiring the dev database
-// name, so TEST's loopback database is refused. `dev:local` runs it on the dev-DB path only.
+// SEED_SYNTHETIC_OK=1 + a loopback DATABASE_URL (assertProdFence) and by requiring a dev database
+// name (`loom_dev` or the per-worktree `loom_dev_*`), so TEST's loopback database is refused.
+// `dev:local` runs it on the dev-DB path only.
 
 import './load-env';
 
@@ -21,11 +22,11 @@ import { knowledge, question } from '@/db/schema';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { enrollFsrsStateIfAbsent, initialSchedulingState } from '@/server/fsrs/state';
+import { DEV_DATABASE_PATTERN } from './dev-worktree-db';
 import { assertProdFence } from './seed-synthetic';
 
 type DbLike = Db | Tx;
 
-const DEV_DATABASE_NAME = 'loom_dev';
 const SEED = 'devseed:';
 const SUBJECT_DOMAIN = 'math';
 
@@ -119,7 +120,7 @@ const QUESTIONS: SeedQuestion[] = [
 
 const questionId = (ref: string) => `${SEED}q:${ref}`;
 
-/** Refuse anything but the dev database: loopback alone also matches TEST's database. */
+/** Refuse anything but a dev database: loopback alone also matches TEST's database. */
 export function assertDevDatabase(env: NodeJS.ProcessEnv = process.env): void {
   assertProdFence(env);
   let name = '';
@@ -128,9 +129,9 @@ export function assertDevDatabase(env: NodeJS.ProcessEnv = process.env): void {
   } catch {
     name = '';
   }
-  if (name !== DEV_DATABASE_NAME) {
+  if (!DEV_DATABASE_PATTERN.test(name)) {
     throw new Error(
-      `seed-dev-questions refused: DATABASE_URL must name the dev database "${DEV_DATABASE_NAME}". Got: "${name || '<unset>'}".`,
+      `seed-dev-questions refused: DATABASE_URL must name a dev database ("loom_dev" or per-worktree "loom_dev_*"). Got: "${name || '<unset>'}".`,
     );
   }
 }
