@@ -126,8 +126,13 @@
     transition: background-color var(--un-t-feedback) var(--un-ease-glide);
   }
 
-  & .un-chip-toggle:hover {
+  & .un-chip-toggle:hover:not(:disabled) {
     background: var(--un-bg-hover);
+  }
+
+  & .un-chip-toggle:disabled {
+    cursor: default;
+    opacity: 0.45;
   }
 
   & .un-chip-action {
@@ -235,6 +240,48 @@
 
   & .un-expand[data-open="true"] .un-expand-inner {
     opacity: 1;
+  }
+
+  /* ── FoldList: one quiet toggle under a folded secondary list (L5) ── */
+  & button.un-fold-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--un-sp-1);
+    justify-self: start;
+    align-self: flex-start;
+    min-height: 24px;
+    margin: var(--un-sp-1) 0 0 calc(-1 * var(--un-sp-2));
+    padding: 2px var(--un-sp-2);
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: none;
+    font: inherit;
+    font-size: var(--un-fs-1);
+    font-variant-numeric: tabular-nums;
+    color: var(--un-text-3);
+    cursor: pointer;
+    transition:
+      color var(--un-t-feedback) ease-out,
+      background-color var(--un-t-feedback) ease-out;
+  }
+
+  & button.un-fold-toggle:hover {
+    color: var(--un-text-2);
+    background: var(--un-bg-hover);
+  }
+
+  & .un-fold-chev {
+    flex: none;
+  }
+
+  & .un-fold-toggle[aria-expanded="true"] .un-fold-chev {
+    transform: rotate(180deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next] .un-fold-chev {
+    transition: transform var(--un-t-small) var(--un-ease-glide);
   }
 }
 
@@ -657,4 +704,32 @@
       transparent
     );
   }
+}
+
+/* ── M3E role bridge ────────────────────────────────────
+   For a page's main column inside an M3E-marked scope: rebinds the legacy --un-* colour aliases
+   (which ui-next primitives and older page CSS read) to the Google M3 roles. Put it on a child of
+   the [data-ui-next] root, not the root itself: the base dark-theme token rule targets the root
+   with higher specificity and would reset it. The M3 roles follow the app theme. Width tokens
+   (e.g. --un-hairline) and positive/caution (no M3 role) are left as they are. */
+[data-ui-next] .un-m3e-bridge {
+  --un-bg: var(--un-md-sys-color-surface);
+  --un-bg-raised: var(--un-md-sys-color-surface-container-lowest);
+  --un-bg-sunk: var(--un-md-sys-color-surface-container-low);
+  --un-bg-hover: var(--un-md-sys-color-surface-container-high);
+  --un-line: var(--un-md-sys-color-outline-variant);
+  --un-line-strong: var(--un-md-sys-color-outline);
+  --un-text-1: var(--un-md-sys-color-on-surface);
+  --un-text-2: var(--un-md-sys-color-on-surface-variant);
+  --un-text-3: var(--un-md-sys-color-on-surface-variant);
+  --un-text-4: var(--un-md-sys-color-outline);
+  --un-text-disabled: color-mix(in srgb, var(--un-md-sys-color-on-surface) 38%, transparent);
+  --un-text-on-accent: var(--un-md-sys-color-on-primary);
+  --un-accent: var(--un-md-sys-color-primary);
+  --un-accent-strong: var(--un-md-sys-color-primary);
+  --un-accent-ink: var(--un-md-sys-color-primary);
+  --un-accent-soft: var(--un-md-sys-color-secondary-container);
+  --un-critical: var(--un-md-sys-color-on-error-container);
+  --un-critical-soft: var(--un-md-sys-color-error-container);
+  --un-focus: var(--un-md-sys-color-primary);
 }

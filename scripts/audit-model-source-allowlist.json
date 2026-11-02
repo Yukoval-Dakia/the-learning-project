@@ -8,7 +8,7 @@
       "expected_by": "2027-01-01"
     }
   },
-  "src/server/rehearsal/corpus.ts": {
+  "src/server/release/rehearsal/corpus.ts": {
     "literals": ["mimo-v2.5", "unpriced:xiaomi/mimo-v2.5", "typesafe/jev-1.13"],
     "reason": "rehearsal fixture: synthetic ai_task_runs/cost_ledger seed rows mirror a historical run ledger; fixtures are read-only evidence, not runtime config",
     "resolves_when": {

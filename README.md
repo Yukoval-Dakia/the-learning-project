@@ -1,15 +1,15 @@
 # AI 学习工具 (the-learning-project)
 
-自用 AI 学习系统。当前实现是 **Hono API + Vite SPA + pg-boss worker** 三进程的 self-hosted 单用户应用；规划与架构以当前代码、ADR 与 [docs/architecture.md](./docs/architecture.md) 为准；进程、发布、备份与访问约束见 [docs/operations.md](./docs/operations.md)；配置见 [docs/configuration.md](./docs/configuration.md)。
+自用 AI 学习系统。当前实现是 **Hono API + TanStack Start 前门 + pg-boss worker** 三进程的 self-hosted 单用户应用；规划与架构以当前代码、ADR 与 [docs/architecture.md](./docs/architecture.md) 为准；进程、发布、备份与访问约束见 [docs/operations.md](./docs/operations.md)；配置见 [docs/configuration.md](./docs/configuration.md)。
 
-> **2026-06-13 形态变更（YUK-321 M5）**：Next.js 全栈已退场。现形状 = Hono API（`server/index.ts`，:8787）+ Vite SPA（`web/`，:5173）+ pg-boss worker（`scripts/worker.ts`，dev 入口 `pnpm worker:dev`、prod 入口 `node dist/worker.cjs`）。后端真相源 = capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 `server/app.ts`。旧 Next/App Router/middleware.ts/Redis 描述出现在历史 docs/ 里，均不再适用。
+> **2026-06-13 形态变更（YUK-321 M5）**：Next.js 全栈已退场。现形状 = Hono API（`server/index.ts`，:8787）+ Vite SPA（`web/`，:5173）+ pg-boss worker（`scripts/worker.ts`，dev 入口 `pnpm worker:dev`、prod 入口 `node dist/worker.cjs`）。后端真相源 = capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 `server/app.ts`。旧 Next/App Router/middleware.ts/Redis 描述出现在历史 docs/ 里，均不再适用。后续 Vite SPA（独立 :5173 路由表）已被 TanStack Start 前门取代并移除，页面由 `server/start/routes/` 同源提供于 :8787。
 
 ## 技术栈
 
 | 层 | 选型 |
 | --- | --- |
 | API | Hono（组合根 `server/app.ts` 挂载 capability manifests，`@hono/node-server` :8787，`hono/streaming` SSE） |
-| Web SPA | Vite + React 19 + TanStack Router + TanStack Query + TypeScript strict（root=`web/`） |
+| Web | TanStack Start 前门（`server/start/`，Vite 构建）+ React 19 + TanStack Query + TypeScript strict；壳层资源在 `web/src/` |
 | 样式 | Tailwind v4（CSS-first，`@tailwindcss/vite`） |
 | 状态 / 数据 | TanStack Query + Zustand |
 | Schema / 校验 | Zod |
@@ -127,28 +127,36 @@ CI（`CI`、`GITHUB_ACTIONS` 或 `CIRCLECI` 为 `true` / `1`）不拿槽、不�
 它不自动删除旧槽，避免与其他进程回收竞争。若主机重启或 SIGKILL 留下槽位，先核
 `owner` PID 及运行资源，再由运营清理确认为过期的槽；不要删除仍由其他线持有的槽。
 
-Local development uses the docker-compose Postgres database as the source of truth.
-Inside compose, services use `postgres:5432`; host-side commands use the local overlay
-port `127.0.0.1:5433`.
+Local development has its own Postgres, isolated from the TEST stack (whose Postgres is
+`127.0.0.1:5433` / `5544`). Install once, then one command:
 
 ```bash
 pnpm install
-docker compose -f docker-compose.yml -f docker-compose.local.yml up postgres -d
-pnpm db:migrate:local
-pnpm dev:local
+pnpm dev:local      # then open http://127.0.0.1:8788/
 ```
 
-`pnpm dev:local`（= `tsx scripts/dev-local.ts`）spawn **三进程**：
+`dev:local` starts the dev-only Postgres (`docker-compose.dev.yml`, service `postgres-dev`,
+host port **5434**, role/database `loom_dev`, named volume `loom-dev_loom-dev-pgdata`), waits
+until it is healthy, applies pending migrations, then starts the API and worker against it.
+Re-running reuses the volume and only applies new migrations. Docker/OrbStack must be running
+(`open -ga OrbStack`).
+
+- **Guard:** `dev:local` refuses to start if the database target is TEST's (port 5433/5544 or
+  database `loom`). The only override is `DEV_ALLOW_TEST_DB=1`, which prints a warning banner and
+  runs the dev API and worker against TEST's data and jobs — do not use it casually.
+- **Reset the dev DB:** `docker compose -f docker-compose.dev.yml --profile dev down -v`
+  (deletes the dev volume; the next `pnpm dev:local` recreates and migrates it).
+
+`pnpm dev:local`（= `tsx scripts/dev-local.ts`）spawn **两进程**，启动后打印要打开的地址（默认 <http://127.0.0.1:8788/>，可用 `DEV_PORT` 改；8787 留给 TEST 的 app 容器，避免抢端口或误开到 TEST）：
 
 | 进程 | 端口 | 命令 | 角色 |
 | --- | --- | --- | --- |
-| API | :8787 | `pnpm rw:api`（`tsx watch server/index.ts`，`RW_WORKER=1` 同进程启 pg-boss worker） | Hono 组合根 + in-process worker |
-| Web | :5173 | `pnpm rw:web`（`vite --config web/vite.config.ts`） | Vite SPA + `/api` proxy → :8787 |
+| API + Start 前门 | :8788（`DEV_PORT`） | `pnpm rw:api`（`tsx watch server/index.ts`，`RW_WORKER=1` 同进程启 pg-boss worker；dev-local 另设 `RW_FRONTDOOR=dev`） | Hono 组合根 + in-process worker；Vite dev server 以 middleware 模式跑在同一进程、同一端口（`server/dev-frontdoor.ts`），页面与 `/api/*` 同源，**页面改动热更新（HMR），不需要构建**；改 `server/`、`src/server/` 等服务端文件由 tsx watch 重启 API |
 | Worker | — | `pnpm worker:dev`（`tsx scripts/worker.ts`） | 独立 pg-boss worker 进程 |
 
-dev 拓扑必须 api + web + worker 三进程齐活（YUK-321 M5 双进程拓扑）：`LISTEN loop 不消费 boss job`，dev 也必须有独立 worker 进程；同进程 worker 是 RW_WORKER=1 的兜底，不替代独立 worker。
+dev 拓扑必须 api（含 Vite 前门）+ worker 两进程齐活（YUK-321 M5 双进程拓扑）：`LISTEN loop 不消费 boss job`，dev 也必须有独立 worker 进程；同进程 worker 是 RW_WORKER=1 的兜底，不替代独立 worker。
 
-`pnpm dev` 是 `pnpm dev:local` 的别名。不要使用 stale `.env.local` remote `DATABASE_URL` 做 UI smoke。
+`pnpm dev` 是 `pnpm dev:local` 的别名。dev 的 `DATABASE_URL` 由 dev-local 固定指向 dev Postgres（:5434），忽略 `.env` / `.env.local` 里的 `DATABASE_URL` 与 `POSTGRES_*`。
 
 ```bash
 pnpm smoke:local
@@ -210,7 +218,7 @@ finding 语义。配置面板经 `GET /api/admin/custom-providers` 读列表（�
 pg-boss worker 在服务端执行。
 
 API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，再由
-`src/server/env.ts` 用 @t3-oss/env-core + zod 校验 server schema。加载顺序、
+`src/server/config/env.ts` 用 @t3-oss/env-core + zod 校验 server schema。加载顺序、
 必填项、compose 与本机 dev 的取值、逐键默认值及 DB 配置层见
 [docs/configuration.md](./docs/configuration.md)。
 
@@ -224,7 +232,7 @@ pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI 
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
 pnpm audit:task-census # task registry 的 static caller / compatibility 分类与 wiring、run-log 契约
-pnpm build            # SPA + TanStack Start + 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
+pnpm build            # TanStack Start + 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
 ```
 
 快速迭代用 watch 模式：`pnpm test:unit:watch`（无 DB，覆盖 UI / core / schema / parser）、
@@ -331,11 +339,11 @@ reachable through the Cloudflare Tunnel; port 8787 is bound only inside the comp
 network，不暴露到 host。
 
 `migrate` / `app` / `mem0-init` 都显式 `target: runner`；只有 `worker` 用
-`target: worker`。Dockerfile（node:24-slim 多阶段）build 产物为 `web/dist`（原 SPA）、
+`target: worker`。Dockerfile（node:24-slim 多阶段）build 产物为
 `dist/start`（TanStack Start 前门）和 `dist/server.cjs`、`dist/worker.cjs`、`dist/migrate.cjs`。
-app 容器 `CMD ["node", "dist/server.cjs"]`，`RW_STATIC_DIR=/app/web/dist` 启用 Start 前门：
-`/api/*` 直接交给原 Hono app，`/_build/*` 提供 Start 客户端资产，已接管的页面以
-`server/start/routes/` 为准，其余页面回落到原 SPA。API hydration、tool recovery 和 shutdown
+app 容器 `CMD ["node", "dist/server.cjs"]`，`RW_FRONTDOOR=1` 启用 Start 前门：
+`/api/*` 直接交给原 Hono app，`/_build/*` 与站点根的 PWA 文件（manifest、图标）提供 Start 客户端资产，全部页面以
+`server/start/routes/` 为准（无旧 SPA 回落）。API hydration、tool recovery 和 shutdown
 的 owner 保持不变。切换/回退及 P7 清理条件见[前门 runbook](docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
 **无 Redis 服务**——editing presence 走 PG 表 `editing_presence`（PgPresenceStore，YUK-321
 M5 gate 选项 b）。
@@ -371,7 +379,7 @@ pnpm db:restore < /tmp/loom-20260101-000000.sql
 ```text
 server/           # Hono API 入口（index.ts）+ 组合根工厂（app.ts）+ env 加载
   start/          # TanStack Start 前门：routes、server functions、授权 middleware
-web/              # Vite SPA 工程（root=web/；TanStack Router；@ alias 指 ../src）
+web/              # Start 路由共用的壳层资源（RootShell、TokenGate、globals.css、字体）
 crates/
   calibration-native/ # Rust 离线 calibration 核心（napi + WASM，与 TS oracle parity）
 src/

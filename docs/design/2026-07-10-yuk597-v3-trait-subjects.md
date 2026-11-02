@@ -228,7 +228,7 @@ GET /api/subjects                    → v2 §7 payload 合同原样 + isGeneral
 
 ### 5.1 传播（判词 B 成文）
 
-v2 §4 原样承接：app serve 前水合 + 写后进程内 post-commit 重装（即时）；worker `startSubjectRefresh` 60s 全量 reconcile（level-triggered，是承重路径不是兜底）；浏览器 mutation 即时失效 + 窗口聚焦重取。**LISTEN/NOTIFY、SSE、BroadcastChannel、outbox、catalog epoch 均不进合同**（B：新工作新配置足够；面板检索席：fan-out≈1 时流式无正当性、K8s level-triggered 定律、LISTEN 推送半边在本仓是死代码）。BroadcastChannel 若实施者顺手加（~15 行零服务端）不算违约，但不是验收项。**in-flight 稳定性（owner proposal D7 的处置，防漏账）**：任务在入口取 `ctx.subjectProfile` 拿到的是不可变装配对象，registry 重装是**换 Map 引用**不改旧对象——已捕获引用天然稳定；长 job 中途**重读** registry 会拿到新版（最终一致，v1 接受），D7 的全量 per-job snapshot 机构不采纳，触发器 = 真实的中途换挡事故。
+v2 §4 原样承接：app serve 前水合 + 写后进程内 post-commit 重装（即时）；worker 与 API 进程（`server/index.ts`，YUK-1692）各 `startSubjectRefresh` 60s 全量 reconcile（level-triggered，是承重路径不是兜底）；浏览器 mutation 即时失效 + 窗口聚焦重取。**LISTEN/NOTIFY、SSE、BroadcastChannel、outbox、catalog epoch 均不进合同**（B：新工作新配置足够；面板检索席：fan-out≈1 时流式无正当性、K8s level-triggered 定律、LISTEN 推送半边在本仓是死代码）。BroadcastChannel 若实施者顺手加（~15 行零服务端）不算违约，但不是验收项。**in-flight 稳定性（owner proposal D7 的处置，防漏账）**：任务在入口取 `ctx.subjectProfile` 拿到的是不可变装配对象，registry 重装是**换 Map 引用**不改旧对象——已捕获引用天然稳定；长 job 中途**重读** registry 会拿到新版（最终一致，v1 接受），D7 的全量 per-job snapshot 机构不采纳，触发器 = 真实的中途换挡事故。
 
 ### 5.2 资产层（method_pack）
 

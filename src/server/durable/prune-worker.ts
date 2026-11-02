@@ -4,7 +4,7 @@ import type { PgBoss } from 'pg-boss';
 import type { Db } from '@/db/client';
 import type { JobDecl } from '@/kernel/manifest';
 import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
-import { waitForRunnableEpoch } from '@/server/contract-epoch';
+import { waitForRunnableEpoch } from '@/server/migration/contract-epoch/epoch';
 import {
   type JudgeWorkerBoundary,
   createJudgeBackend,

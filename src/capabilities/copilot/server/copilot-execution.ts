@@ -23,6 +23,7 @@ import {
 import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { ANSWER_ONLY_TOOL_NAMES, derivationToolDenial } from '@/kernel/tools/derivation-policy';
+import { validateLearningContent as validatePreparedLearningContent } from '@/kernel/tools/learning-content-validation';
 import type { ValidateLearningContentFn } from '@/kernel/tools/types';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
@@ -51,7 +52,6 @@ import {
   mergeNoProgressReply,
   renderNoProgressClosure,
 } from './no-progress-loop';
-import { validateLearningContent as validatePreparedLearningContent } from './practice-port';
 import { resolveLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import { createCopilotProseStream } from './prose-stream';

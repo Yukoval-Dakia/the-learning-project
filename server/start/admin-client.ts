@@ -4,11 +4,9 @@ import {
   AdminRunDetailResponseSchema,
   AdminRunsResponseSchema,
 } from '@/capabilities/observability/api/admin-observability-contracts';
-import {
-  ConjectureScoresResponseSchema,
-  CoverageLatticeResponseSchema,
-} from '@/capabilities/observability/api/diagnostic-contracts';
+import { ConjectureScoresResponseSchema } from '@/capabilities/observability/api/diagnostic-contracts';
 import type { AdminReadClient } from '@/capabilities/observability/ui/admin-client';
+import { CoverageLatticeResponseSchema } from '@/capabilities/practice/ui-public';
 import {
   getStartAdminConjectureScores,
   getStartAdminCost,

@@ -1,6 +1,14 @@
 /* 录入 (YUK-1473): page, input box, recording sheet, pages, bars.
    Design language: docs/design/2026-10-07-ui-visual-direction.md (T1 semantic tokens, T3 glass
-   only on floating layers, M1 motion only on change, M3 interruptible, A2 hit areas, M14 states). */
+   only on floating layers, M1 motion only on change, M3 interruptible, A2 hit areas, M14 states);
+   colours and type follow Google M3 Expressive (docs/design/2026-11-03-record-m3e.md). */
+
+/* M3E roles: the main column carries .un-m3e-bridge (src/ui-next/components.css). The purpose
+   and cost sections are their own M3E-marked roots and read the roles directly. */
+[data-ui-next].rc-page {
+  background: var(--un-md-sys-color-surface);
+  color: var(--un-md-sys-color-on-surface);
+}
 
 [data-ui-next].rc-page {
   & .rc-main {
@@ -27,11 +35,8 @@
   }
 
   & .rc-title {
-    font-family: var(--un-font-serif);
-    font-size: var(--un-fs-5);
-    font-weight: var(--un-fw-regular);
-    letter-spacing: var(--un-ls-tight);
-    line-height: var(--un-lh-tight);
+    font: 600 32px / 1.25 var(--un-font-sans);
+    letter-spacing: 0;
     color: var(--un-text-1);
   }
 
@@ -207,7 +212,8 @@
     }
 
     & .rc-title {
-      font-size: var(--un-fs-4);
+      font-size: 24px;
+      line-height: 1.33;
     }
 
     & .rc-mascot {

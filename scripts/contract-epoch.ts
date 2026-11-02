@@ -10,7 +10,7 @@
 // 纪律（与 migration-capture/apply 同款）：--target 必须是非空可解析、带 host/db
 // 的 postgres URL；写命令必须 --confirm-write。绝不回退 DATABASE_URL。
 //
-// 语义见 src/server/contract-epoch/rules.ts：
+// 语义见 src/server/migration/contract-epoch/rules.ts：
 //   begin-prepare → (target, 'preparing')   维护窗：runtime 全 fenced
 //   mark-ready    → (target, 'ready')       迁移核验通过、待激活（仍 fenced）
 //   activate      → (target, 'active')      统一切换点（同 epoch 可从
@@ -20,12 +20,12 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
+import { reportOutstandingBossJobs } from '@/server/migration/contract-epoch/boss-fence';
 import {
-  type EpochTransitionKind,
   readContractEpoch,
   transitionContractEpoch,
-} from '@/server/contract-epoch';
-import { reportOutstandingBossJobs } from '@/server/contract-epoch/boss-fence';
+} from '@/server/migration/contract-epoch/epoch';
+import type { EpochTransitionKind } from '@/server/migration/contract-epoch/rules';
 
 const USAGE = `usage:
   contract-epoch status|outstanding --target=<postgres-url>

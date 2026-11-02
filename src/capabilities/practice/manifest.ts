@@ -3,11 +3,9 @@ import {
   API_ERROR_RESPONSES,
   ApiErrorResponseSchema,
   ApiIdParamsSchema,
-  BinaryResponseSchema,
-  CursorQuerySchema,
 } from '@/kernel/http-contracts';
-import { defineCapability } from '@/kernel/manifest';
-import { LEARNING_EVENT_ACTIONS, nightlyEligibility } from '@/kernel/nightly-eligibility';
+import { type CapabilityManifest, defineCapability } from '@/kernel/manifest';
+import { nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
   CreateSubmissionBodySchema,
@@ -25,12 +23,8 @@ import {
   AttemptResponseSchema,
   CreateAppealBodySchema,
   CreateAttemptBodySchema,
-  CreateReviewSessionBody,
-  ReviewSessionCreatedSchema,
-  ReviewSessionSchema,
-  ReviewSessionTransitionSchema,
-  UpdateReviewSessionBody,
 } from './api/contracts';
+import { CoverageLatticeResponseSchema } from './api/coverage-lattice-contracts';
 import {
   DraftForceEnableBodySchema,
   DraftModerationParamsSchema,
@@ -39,17 +33,6 @@ import {
   DraftReviewListQuerySchema,
   DraftReviewListResponseSchema,
 } from './api/draft-moderation-contracts';
-import {
-  CreatePaperAnswerDraftBodySchema,
-  CreatePaperSubmissionBodySchema,
-  PaperAnswerDraftCreatedSchema,
-  PaperAnswerDraftParamsSchema,
-  PaperAnswerDraftSchema,
-  PaperDetailResponseSchema,
-  PaperListResponseSchema,
-  PaperParamsSchema,
-  PaperSubmissionResponseSchema,
-} from './api/paper-contracts';
 import {
   CreatePlacementHeldReleaseBodySchema,
   CreatePlacementQuestionSelectionBodySchema,
@@ -92,41 +75,40 @@ import {
   QuizGenTriggerAcceptedSchema,
   QuizGenTriggerBodySchema,
 } from './api/quiz-gen-trigger-contracts';
-import {
-  FixedAnchorBodySchema,
-  FixedAnchorResponseSchema,
-  ReviewAdviceBodySchema,
-  ReviewAdviceResponseSchema,
-  ReviewDueQuerySchema,
-  ReviewDueResponseSchema,
-  ReviewWeeklyQuerySchema,
-  ReviewWeeklyResponseSchema,
-} from './api/review-planning-contracts';
-import {
-  PracticeStreamItemUpdatedResponseSchema,
-  PracticeStreamQuerySchema,
-  PracticeStreamRecomposedResponseSchema,
-  PracticeStreamResponseSchema,
-  RecomposePracticeStreamBodySchema,
-  UpdatePracticeStreamItemBodySchema,
-} from './api/stream-contracts';
-// YUK-1523（P5）— 作答卷 PDF 导出：发放、区域图存档与 P6 读面契约。
-import {
-  WorksheetExportCreateBodySchema,
-  WorksheetExportStateSchema,
-  WorksheetPageParamsSchema,
-  WorksheetPageResponseSchema,
-  WorksheetRegionMapArchiveBody,
-  WorksheetRegionMapArchivedSchema,
-  WorksheetTokenParamsSchema,
-} from './api/worksheet-contracts';
+import { FixedAnchorBodySchema, FixedAnchorResponseSchema } from './api/review-planning-contracts';
+import { failureLearningManifestPart } from './failure-learning/manifest-part';
+import { gradingManifestPart } from './grading/manifest-part';
+import { placementManifestPart } from './placement/manifest-part';
+import { questionBankManifestPart } from './question-bank/manifest-part';
+import { schedulingManifestPart } from './scheduling/manifest-part';
 // YUK-594 (durable judge main path, W1) — judge_run poll-tier status + 202-pending schemas
 // (live in the db-free judge-run-status module so this eager import stays db-light).
 import {
   JudgeDurablePendingResponseSchema,
   JudgeRunStatusResponseSchema,
 } from './server/judge-run-status';
-import { WORKSHEET_RENDER_QUEUE } from './worksheet-render-queue';
+import { sessionManifestPart } from './session/manifest-part';
+import { settlementManifestPart } from './settlement/manifest-part';
+import { supplyManifestPart } from './supply/manifest-part';
+
+type OwnerManifestPart = Omit<CapabilityManifest, 'name' | 'description'>;
+
+// 片段顺序就是各 owner 条目的注册顺序。Hono 按注册顺序匹配路由，scheduling 的
+// `/api/practice/stream*` 必须先于 session 的 `/api/practice/[id]` 注册。
+const OWNER_MANIFEST_PARTS: readonly OwnerManifestPart[] = [
+  gradingManifestPart,
+  settlementManifestPart,
+  questionBankManifestPart,
+  failureLearningManifestPart,
+  schedulingManifestPart,
+  sessionManifestPart,
+  supplyManifestPart,
+  placementManifestPart,
+];
+
+function fromOwnerParts<T>(pick: (part: OwnerManifestPart) => readonly T[] | undefined): T[] {
+  return OWNER_MANIFEST_PARTS.flatMap((part) => pick(part) ?? []);
+}
 
 export const practiceCapability = defineCapability({
   name: 'practice',
@@ -156,7 +138,6 @@ export const practiceCapability = defineCapability({
       // 未作答录入与记录捕获写这个事件。声明放在练习侧，回来唤醒才能订阅，
       // 只挂练习的组合也不会报 undeclared action。
       'experimental:record_capture',
-      'experimental:assessment_feedback_released',
       'experimental:assessment_placement_issued',
       // YUK-1405 L1 — learner-released held issuance (recorded unresolved).
       'experimental:assessment_placement_released',
@@ -180,6 +161,7 @@ export const practiceCapability = defineCapability({
       // Inference only: repeated independent wrongs against independent corrects
       // on other admitted questions of the same KC. Not a serving hold.
       QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION,
+      ...fromOwnerParts((part) => part.events?.actions),
     ],
   },
   subscriptions: {
@@ -202,27 +184,7 @@ export const practiceCapability = defineCapability({
             (m) => m.buildWebSupplyObserveSubscriber,
           ),
       },
-      {
-        id: 'practice.failure-learning-attempt',
-        version: 3,
-        actions: [
-          'attempt',
-          'experimental:assessment_attempt',
-          'experimental:assessment_activation',
-          'experimental:assessment_feedback_released',
-        ],
-        load: () =>
-          import('./server/failure-learning-subscription').then(
-            (m) => m.buildFailureLearningAttemptSubscriber,
-          ),
-      },
-      {
-        id: 'practice.learner-return-wake',
-        version: 1,
-        actions: [...LEARNING_EVENT_ACTIONS],
-        load: () =>
-          import('./server/learner-return-wake').then((m) => m.buildLearnerReturnWakeSubscriber),
-      },
+      ...fromOwnerParts((part) => part.subscriptions?.handlers),
     ],
   },
   api: {
@@ -245,25 +207,6 @@ export const practiceCapability = defineCapability({
         load: () => import('./api/submit').then((m) => m.createAttemptResource),
       },
       {
-        method: 'GET',
-        path: '/api/review/due',
-        operationId: 'listDueReviews',
-        request: { query: ReviewDueQuerySchema },
-        responses: { 200: ReviewDueResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        pagination: 'none',
-        load: () => import('./api/due').then((m) => m.GET),
-      },
-      {
-        method: 'POST',
-        path: '/api/review/advice',
-        operationId: 'previewReviewAdvice',
-        request: { body: ReviewAdviceBodySchema },
-        responses: { 200: ReviewAdviceResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/advice').then((m) => m.POST),
-      },
-      {
         // YUK-594 (durable judge main path, W1) — poll-tier status snapshot for a
         // durable judge_run (D2 three-tier backfill: SSE + poll + replay). Read-only
         // Permanent native completion/disposition precedes engine observation. The 202-pending
@@ -277,15 +220,6 @@ export const practiceCapability = defineCapability({
         load: () => import('./api/judge-run-status-route').then((m) => m.GET),
       },
       {
-        method: 'GET',
-        path: '/api/review/weekly',
-        operationId: 'getWeeklyReviewReport',
-        request: { query: ReviewWeeklyQuerySchema },
-        responses: { 200: ReviewWeeklyResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/weekly').then((m) => m.GET),
-      },
-      {
         method: 'POST',
         path: '/api/appeals',
         operationId: 'createAppeal',
@@ -293,68 +227,6 @@ export const practiceCapability = defineCapability({
         responses: { 201: AppealResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 201,
         load: () => import('./api/appeal').then((m) => m.createAppealResource),
-      },
-      {
-        method: 'POST',
-        path: '/api/review-sessions',
-        operationId: 'createReviewSession',
-        request: { body: CreateReviewSessionBody },
-        responses: {
-          200: ReviewSessionCreatedSchema,
-          201: ReviewSessionCreatedSchema,
-          ...API_ERROR_RESPONSES,
-        },
-        successStatus: [200, 201],
-        load: () => import('./api/review-sessions').then((m) => m.POST),
-      },
-      {
-        method: 'GET',
-        path: '/api/review-sessions/[id]',
-        operationId: 'getReviewSession',
-        request: { params: ApiIdParamsSchema },
-        responses: { 200: ReviewSessionSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/review-session-detail').then((m) => m.GET),
-      },
-      {
-        method: 'PATCH',
-        path: '/api/review-sessions/[id]',
-        operationId: 'updateReviewSession',
-        request: { params: ApiIdParamsSchema, body: UpdateReviewSessionBody },
-        responses: { 200: ReviewSessionTransitionSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/review-session-detail').then((m) => m.PATCH),
-      },
-      {
-        method: 'POST',
-        path: '/api/review-sessions/[id]/answer-drafts',
-        operationId: 'createPaperAnswerDraft',
-        request: { params: ApiIdParamsSchema, body: CreatePaperAnswerDraftBodySchema },
-        responses: {
-          200: PaperAnswerDraftCreatedSchema,
-          201: PaperAnswerDraftCreatedSchema,
-          ...API_ERROR_RESPONSES,
-        },
-        successStatus: [200, 201],
-        load: () => import('./api/resource-routes').then((m) => m.createPaperAnswerDraftResource),
-      },
-      {
-        method: 'GET',
-        path: '/api/review-sessions/[id]/answer-drafts/[answerId]',
-        operationId: 'getPaperAnswerDraft',
-        request: { params: PaperAnswerDraftParamsSchema },
-        responses: { 200: PaperAnswerDraftSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/paper-answer-route').then((m) => m.GET),
-      },
-      {
-        method: 'POST',
-        path: '/api/review-sessions/[id]/submissions',
-        operationId: 'createPaperSubmission',
-        request: { params: ApiIdParamsSchema, body: CreatePaperSubmissionBodySchema },
-        responses: { 201: PaperSubmissionResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 201,
-        load: () => import('./api/resource-routes').then((m) => m.createPaperSubmissionResource),
       },
       // YUK-468 cold-start inc-B — placement probe 会话 API (dark-ship, gated on
       // PLACEMENT_PROBE_ENABLED). start → first question; [id]/next → terminate-check + next
@@ -469,70 +341,6 @@ export const practiceCapability = defineCapability({
         responses: { 200: DraftPromotionResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/review-draft-force-enable').then((m) => m.POST),
-      },
-      {
-        method: 'GET',
-        path: '/api/papers',
-        operationId: 'listPapers',
-        request: { query: CursorQuerySchema },
-        responses: {
-          200: PaperListResponseSchema,
-          ...API_ERROR_RESPONSES,
-        },
-        successStatus: 200,
-        pagination: { kind: 'cursor', defaultLimit: 50, maxLimit: 200 },
-        load: () => import('./api/papers-list').then((m) => m.GET),
-      },
-      {
-        method: 'GET',
-        path: '/api/papers/[id]',
-        operationId: 'getPaper',
-        request: { params: ApiIdParamsSchema },
-        responses: {
-          200: PaperDetailResponseSchema,
-          ...API_ERROR_RESPONSES,
-        },
-        successStatus: 200,
-        load: () => import('./api/paper-detail-route').then((m) => m.GET),
-      },
-      {
-        // M2 流编排器（YUK-316）。静态段 'stream' 在 Hono 中优先于 :id 匹配。
-        method: 'GET',
-        path: '/api/practice/stream',
-        operationId: 'getPracticeStream',
-        request: { query: PracticeStreamQuerySchema },
-        responses: { 200: PracticeStreamResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        pagination: 'none',
-        load: () => import('./api/stream').then((m) => m.GET),
-      },
-      {
-        method: 'POST',
-        path: '/api/practice/stream/recompose',
-        operationId: 'recomposePracticeStream',
-        request: { body: RecomposePracticeStreamBodySchema, bodyRequired: false },
-        responses: { 200: PracticeStreamRecomposedResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/stream').then((m) => m.POST),
-      },
-      {
-        method: 'PATCH',
-        path: '/api/practice/stream/items/[id]',
-        operationId: 'updatePracticeStreamItem',
-        request: { params: ApiIdParamsSchema, body: UpdatePracticeStreamItemBodySchema },
-        responses: { 200: PracticeStreamItemUpdatedResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/stream').then((m) => m.PATCH),
-      },
-      {
-        method: 'GET',
-        path: '/api/practice/[id]',
-        operationId: 'getPaperLegacy',
-        request: { params: PaperParamsSchema },
-        responses: { 200: PaperDetailResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        deprecation: { successor: '/api/papers/[id]', since: '@1783987200' },
-        load: () => import('./api/legacy-paper-detail').then((m) => m.GET),
       },
       {
         method: 'POST',
@@ -731,75 +539,18 @@ export const practiceCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/assessment-route').then((m) => m.revealStudyReference),
       },
-      // YUK-1523（P5）— 作答卷 PDF 导出。导出 = 逐题经既有 issueAssessment 发放
-      //（G4 门只放可判题，拒掉的题随响应返回 typed 原因）；token/短码是页面
-      // 身份码 tlp://ws/v1/<token>/<页>/<总页> 的锚；同 idempotency_key 重放不重发。
+      // Coverage facts are computed by Practice's supply scanner, so Practice owns their read:
+      // scanCoverageGaps pool rules plus supply-event activity. Read-only, no LLM.
       {
-        method: 'POST',
-        path: '/api/worksheet-exports',
-        operationId: 'createWorksheetExport',
-        request: { body: WorksheetExportCreateBodySchema },
-        responses: {
-          200: WorksheetExportStateSchema,
-          201: WorksheetExportStateSchema,
-          ...API_ERROR_RESPONSES,
-        },
-        successStatus: [200, 201],
-        load: () =>
-          import('./api/worksheet-export-route').then((m) => m.createWorksheetExportRoute),
-      },
-      {
-        // 渲染器恢复/总览读面（token 不可猜；无私有答案）。
         method: 'GET',
-        path: '/api/worksheet-exports/[token]',
-        operationId: 'getWorksheetExport',
-        request: { params: WorksheetTokenParamsSchema },
-        responses: { 200: WorksheetExportStateSchema, ...API_ERROR_RESPONSES },
+        path: '/api/admin/coverage-lattice',
+        operationId: 'getCoverageLattice',
+        responses: { 200: CoverageLatticeResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
-        load: () => import('./api/worksheet-export-route').then((m) => m.getWorksheetExportRoute),
+        pagination: 'none',
+        load: () => import('./api/coverage-lattice').then((m) => m.GET),
       },
-      {
-        // 区域图存档：界面线与 PDF 同一渲染 pass 量出的区域图 POST 回后端，
-        // 对冻结发放校验后按页 write-once 存档（同图重 POST 幂等）。
-        method: 'POST',
-        path: '/api/worksheet-exports/[token]/region-map',
-        operationId: 'archiveWorksheetRegionMap',
-        request: {
-          params: WorksheetTokenParamsSchema,
-          body: WorksheetRegionMapArchiveBody,
-        },
-        responses: {
-          200: WorksheetRegionMapArchivedSchema,
-          201: WorksheetRegionMapArchivedSchema,
-          ...API_ERROR_RESPONSES,
-        },
-        successStatus: [200, 201],
-        load: () =>
-          import('./api/worksheet-export-route').then((m) => m.archiveWorksheetRegionMapRoute),
-      },
-      {
-        // YUK-1529 — 已存档 PDF 下载（content-addressed R2 对象，不可变）。
-        // 未渲染 / blob 缺失分开 404 如实上报。
-        method: 'GET',
-        path: '/api/worksheet-exports/[token]/pdf',
-        operationId: 'getWorksheetExportPdf',
-        request: { params: WorksheetTokenParamsSchema },
-        responses: { 200: BinaryResponseSchema, ...API_ERROR_RESPONSES },
-        responseMediaTypes: { 200: 'application/pdf' },
-        successStatus: 200,
-        load: () =>
-          import('./api/worksheet-export-route').then((m) => m.getWorksheetExportPdfRoute),
-      },
-      {
-        // P6 回读面：token + 页 → issuance id、该页冻结区域图与 part/slot 坐标。
-        method: 'GET',
-        path: '/api/worksheet-exports/[token]/pages/[page]',
-        operationId: 'getWorksheetPage',
-        request: { params: WorksheetPageParamsSchema },
-        responses: { 200: WorksheetPageResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/worksheet-export-route').then((m) => m.getWorksheetPageRoute),
-      },
+      ...fromOwnerParts((part) => part.api?.routes),
     ],
   },
   jobs: {
@@ -847,29 +598,6 @@ export const practiceCapability = defineCapability({
         queue: 'llm',
         load: () => import('./jobs/variant_verify').then((m) => m.buildVariantVerifyHandler),
       },
-      {
-        // YUK-1529 — 服务端作答卷渲染：无头 Chromium 开 /print/worksheet/<token>，
-        // 同一 pass 量区域图 + page.pdf() → R2（content-addressed）→ #1773
-        // write-once 存档。submitWorksheetExport 经创建 route 对 created/replayed 入队。
-        // 'agent' 档：多步浏览器任务，DLQ + 重试兜瞬时失败；不调模型零成本。
-        name: WORKSHEET_RENDER_QUEUE,
-        queue: 'agent',
-        load: () => import('./jobs/worksheet_render').then((m) => m.buildWorksheetRenderHandler),
-      },
-      {
-        // Durable stage 1: classify an active question failure, write the exact
-        // causal judge, then hand off stage 2 with a stable per-attempt job id.
-        name: 'attribution_followup',
-        queue: 'llm',
-        load: () =>
-          import('./jobs/attribution_followup').then((m) => m.buildAttributionFollowupHandler),
-      },
-      {
-        // Durable stage 2: propose-only cause-targeted variant generation.
-        name: 'variant_gen',
-        queue: 'llm',
-        load: () => import('./jobs/variant_gen').then((m) => m.buildVariantGenHandler),
-      },
       // YUK-870 (F3.5b) — rejudge 注册自中央渐缩簿收编（等价平移红线：LLM 档
       // 1h expire + DLQ、非默认 1s polling、batchSize 1——原中央行的 inline 动态
       // import + handleRejudge 循环 flatten 成 jobs/rejudge.ts 的标准工厂）。
@@ -890,17 +618,6 @@ export const practiceCapability = defineCapability({
         pollingIntervalSeconds: 2,
         batchSize: 1,
         includeMetadata: true,
-      },
-      // YUK-870 (F3.5b) — Phase 1d session_summary 注册自中央渐缩簿收编（等价
-      // 平移红线：LLM 档 1h expire + DLQ、2s/1 worker 选项——与原中央行显式 opts
-      // 相同；handler 实现已随 jobs/session_summary.ts 迁入本包；TaskSpec 归
-      // practice owner map，中央 semantic quarry 至此零 transitional entry）。
-      {
-        name: 'session_summary',
-        queue: 'llm',
-        pollingIntervalSeconds: 2,
-        batchSize: 1,
-        load: () => import('./jobs/session_summary').then((m) => m.buildSessionSummaryHandler),
       },
       // YUK-777 A3 — durable judge 的 domain-state-scan reconcile sweeper。扫「作答已录、
       // 判词未落」的 pending attempt，经同一 rate-limited 入队面重投 judge_run。自身不做
@@ -943,27 +660,6 @@ export const practiceCapability = defineCapability({
         queue: 'llm',
         load: () =>
           import('./jobs/item_prior_backfill').then((m) => m.buildItemPriorBackfillHandler),
-      },
-      // YUK-361 Phase 4 (Task 9) — hybrid 运行时夜间预产 job。每夜（用户晨起前）为「今天」
-      // 预产练习流，省去首读 lazy compose 的 LLM 网络往返。排在数据预产链之后跑，让选题
-      // 信号（θ̂ / b 锚）已新鲜——YUK-758 起该次序由下面的 dependsOn 硬边保证，不再靠 cron
-      // 错峰。（旧注「mastery 夜链」已删——该 job 从不存在，mastery_state 在线写入；YUK-377
-      // 复审 §6.4。）queue=llm：softmax_mfi 默认路径会调 SelectionOrchestratorTask（LLM
-      // 编排），与 item_prior 同档。
-      // 幂等由 composeNightly 的单飞锁 + 双重检查保证（夜产后用户首读 lazy 命中 no-op）。
-      {
-        // YUK-758 DAG 成员：compose 选题（candidate-signals）实读 item_calibration.b_post，故对
-        // recalibration_nightly 是**真硬边**（读最终标定态）。注：reference_md / answer_class **不**入
-        // compose 选题路径（reference_md 走判分/UI、answer_class 走 quiz/pool-fetch），旧 05:00/05:20
-        // 排在 compose 前是时钟巧合，不作伪边纳入（见 PR 考据表）。cron 移除，orchestrator 触发。
-        name: 'practice_stream_compose_nightly',
-        dependsOn: ['recalibration_nightly'],
-        eligibility: nightlyEligibility('deterministic', { usesModel: true }),
-        queue: 'llm',
-        load: () =>
-          import('./jobs/practice_stream_compose_nightly').then(
-            (m) => m.buildStreamComposeNightlyHandler,
-          ),
       },
       // YUK-1496 C2（G3 模型判分准入，migration 线）— 留出题准入 run：冻结
       // 留出题集（每科 ≥30、带独立参考分）过生产同源判分端口，逐题 agreement
@@ -1156,17 +852,12 @@ export const practiceCapability = defineCapability({
       // 单次 admission = 2×solve（+1×crosscheck）LLM 调用 → 'llm' 档；
       // pending admission 的发布事件经上方 subscriber 在事务内入队；恢复不重付。
       {
-        name: 'learner_return_wake',
-        queue: 'llm',
-        load: () =>
-          import('./server/learner-return-wake').then((m) => m.buildLearnerReturnWakeHandler),
-      },
-      {
         name: 'question_admission_run',
         queue: 'llm',
         load: () =>
           import('./jobs/question_admission_run').then((m) => m.buildQuestionAdmissionRunHandler),
       },
+      ...fromOwnerParts((part) => part.jobs?.handlers),
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft
@@ -1227,24 +918,6 @@ export const practiceCapability = defineCapability({
             ),
         },
       },
-      // YUK-1016 / 454-B — 错因 catalog 扩张：accept INSERT overlay 行、retract
-      // 置 archived_at。dismiss 无定制语义（pending 期尚无行可立），走 generic
-      // rate-event 路径。
-      {
-        kind: 'cause_category',
-        accept: {
-          load: () =>
-            import('./server/proposal-accept-applier').then(
-              (module) => module.causeCategoryProposalAcceptApplier,
-            ),
-        },
-        retract: {
-          load: () =>
-            import('./server/proposal-accept-applier').then(
-              (module) => module.causeCategoryProposalRetractApplier,
-            ),
-        },
-      },
       {
         kind: 'question_edit',
         accept: {
@@ -1260,6 +933,7 @@ export const practiceCapability = defineCapability({
             ),
         },
       },
+      ...fromOwnerParts((part) => part.proposals?.kinds),
     ],
   },
   ui: { pages: uiPagesFor('practice') },
@@ -1272,31 +946,6 @@ export const practiceCapability = defineCapability({
         name: 'submit_review_answer',
         load: () =>
           import('./server/tools/submit-review-answer').then((m) => m.submitReviewAnswerTool),
-      },
-      {
-        name: 'get_question_context',
-        load: () => import('./server/tools/question-context').then((m) => m.getQuestionContextTool),
-      },
-      {
-        name: 'get_review_due',
-        load: () => import('./server/tools/question-context').then((m) => m.getReviewDueTool),
-      },
-      {
-        name: 'get_attempt_context',
-        load: () =>
-          import('./server/tools/get-attempt-context').then((m) => m.getAttemptContextTool),
-      },
-      {
-        name: 'query_mistakes',
-        load: () => import('./server/tools/query-mistakes').then((m) => m.queryMistakesTool),
-      },
-      {
-        name: 'attribute_mistake',
-        load: () => import('./tools/attribute-mistake').then((m) => m.attributeMistakeTool),
-      },
-      {
-        name: 'propose_variant',
-        load: () => import('./tools/propose-variant').then((m) => m.proposeVariantTool),
       },
       {
         name: 'author_question',
@@ -1355,10 +1004,6 @@ export const practiceCapability = defineCapability({
         name: 'file_bank_gap',
         load: () => import('./server/tools/file-bank-gap').then((m) => m.fileBankGapTool),
       },
-      {
-        name: 'write_quiz',
-        load: () => import('./server/tools/write-quiz').then((m) => m.writeQuizTool),
-      },
       // YUK-1468 — `propose_question_edit` 保留在 inventory 但【无 surface
       // 授权】：Copilot 调 edit_question（工具按 caller surface 自动落
       // question_edit proposal，accept 走同一 ops→submit gate）。壳模块
@@ -1376,6 +1021,7 @@ export const practiceCapability = defineCapability({
             (m) => m.proposeGradingCorrectionTool,
           ),
       },
+      ...fromOwnerParts((part) => part.copilotTools?.tools),
     ],
   },
 });

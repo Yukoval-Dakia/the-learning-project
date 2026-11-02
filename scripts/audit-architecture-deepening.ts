@@ -423,6 +423,10 @@ const CENTRAL_EVENTS_TRANSPORT_FILES = new Set([
   'src/server/events/listen_loop.ts',
   'src/server/events/sse_replay.ts',
   'src/server/events/sse_router.ts',
+  'src/server/events/subscriptions/dispatch-mount.ts',
+  'src/server/events/subscriptions/registry.ts',
+  'src/server/events/subscriptions/runtime.ts',
+  'src/server/events/subscriptions/types.ts',
   'src/server/events/writer.ts',
 ]);
 
@@ -1330,14 +1334,8 @@ async function runCli(): Promise<void> {
       batchSize: job.batchSize,
     })),
   );
-  const centralSources = [
-    ...sourceFilesUnder(projectRoot, resolve(projectRoot, 'src/server/boss')),
-    ...sourceFilesUnder(projectRoot, resolve(projectRoot, 'src/server/memory')),
-  ];
-  const centralLiterals = scanCentralQueueLiterals(centralSources, [
-    'src/server/boss/',
-    'src/server/memory/',
-  ]);
+  const centralSources = sourceFilesUnder(projectRoot, resolve(projectRoot, 'src/server/boss'));
+  const centralLiterals = scanCentralQueueLiterals(centralSources, ['src/server/boss/']);
 
   // --- proposal facts ------------------------------------------------------
   const proposalDeclarations = capabilities.flatMap((cap) =>

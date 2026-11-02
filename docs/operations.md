@@ -16,27 +16,30 @@
 | `cloudflared` | `cloudflare/cloudflared:2026.5.2` | `tunnel --no-autoupdate --metrics 0.0.0.0:2000 … run` | 可选公网入口，读 `TUNNEL_TOKEN` |
 
 - `migrate` 幂等，靠 drizzle 的 `__drizzle_migrations` 记录已应用版本；`docker compose up` 每次都会先跑它。
-- `app` 用 `RW_STATIC_DIR=/app/web/dist` 提供 SPA 静态文件。健康检查只请求 `/api/health`，任意 HTTP 响应算存活；`/api/health` 是进程活性（永远 200），readiness 由 `/api/ready` 的 200/503 表达。
+- `app` 用 `RW_FRONTDOOR=1` 启用 Start 前门，页面与静态资产来自镜像内的 `dist/start`。健康检查只请求 `/api/health`，任意 HTTP 响应算存活；`/api/health` 是进程活性（永远 200），readiness 由 `/api/ready` 的 200/503 表达。
 - `worker` 是唯一执行 `worksheet_render` 的进程，所以单独用 `target: worker`：在 runner 上叠 `playwright-core@1.64.0` 和 `chromium-headless-shell`（`PLAYWRIGHT_BROWSERS_PATH=/ms-playwright`），并通过 `WORKSHEET_RENDER_APP_ORIGIN=http://app:8787` 打开 app 容器。它的健康检查读 `/proc/1/cmdline`，确认 PID 1 仍是 `worker.cjs`。
 - 运行期只有 `worker` 写 `mem0data` 卷；`mem0-init` 在 worker 启动前修好属主。
 - Dockerfile 最后一个 stage 是 `worker`；`app` / `migrate` / `mem0-init` 必须显式钉 `target: runner`，否则会构建到带 Chromium 的 worker 镜像。
 - 没有 Redis：editing presence 走 Postgres 表 `editing_presence`。
 
-本地开发的三进程与 compose 的对应关系（`scripts/dev-local.ts` 依次 spawn `pnpm rw:api` / `rw:web` / `worker:dev`）：
+本地开发的两进程与 compose 的对应关系（`scripts/dev-local.ts` 依次 spawn `pnpm rw:api` / `worker:dev`）：
 
 | dev 子进程 | 端口 | 对应 compose |
 | --- | --- | --- |
-| `rw:api`（`RW_WORKER=1 tsx watch server/index.ts`） | :8787 | `app`；同进程 pg-boss 只是兜底，不替代独立 worker |
-| `rw:web`（`vite --config web/vite.config.ts`） | :5173 | 无独立服务；生产由 `app` 直接提供 `web/dist` |
+| `rw:api`（`RW_WORKER=1 tsx watch server/index.ts`，dev-local 设 `RW_FRONTDOOR=dev`） | dev-local 下 :8788（`DEV_PORT`，避开 TEST app 的 :8787）；单独跑时按 `API_PORT`，缺省 :8787 | `app`；页面由同进程的 Vite dev server（middleware 模式）提供，HMR 热更新；生产 `app` 仍直接提供 `dist/start`（`RW_FRONTDOOR=1`）；同进程 pg-boss 只是兜底，不替代独立 worker |
 | `worker:dev`（`tsx scripts/worker.ts`） | — | `worker` |
 
-`dev:local` 从 `POSTGRES_*` 派生 `DATABASE_URL`（默认 `127.0.0.1:5433`），数据库仍是 compose 的 `postgres`：
+dev 数据库与 TEST 隔离：`dev:local` 用独立的 `docker-compose.dev.yml`（项目名 `loom-dev`，服务 `postgres-dev`，profile `dev`，pgvector 同镜像，宿主端口 **5434**，用户/库 `loom_dev`，命名卷 `loom-dev_loom-dev-pgdata`）。TEST 的 `postgres`（:5433/:5544）与生产 compose 文件不含该服务，普通 `docker compose up` 不会启动它。使用方式只有一条：
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.local.yml up postgres -d
-pnpm db:migrate:local
-pnpm dev:local
+pnpm dev:local      # 打开 http://127.0.0.1:8788/
 ```
+
+`dev:local` 依次：`docker compose -f docker-compose.dev.yml --profile dev up -d --wait postgres-dev`（等 healthcheck）→ `pnpm db:migrate:local`（对 dev 库，已有卷只应用新迁移）→ 幂等写入代码当前的 contract epoch（新库只有隐式 legacy epoch，会让所有请求 503）→ 启动 API 与 worker，`DATABASE_URL` 固定指向 dev 库（忽略 `.env` 的 `POSTGRES_*`）。
+
+保护：目标库端口为 5433/5544 或库名等于 TEST 的 `POSTGRES_DB`（缺省 `loom`）时，`dev:local` 拒绝启动并指向 dev 库；唯一覆盖是 `DEV_ALLOW_TEST_DB=1`（沿用旧行为，用 `.env` 的 `POSTGRES_*` 连 `LOCAL_POSTGRES_HOST:LOCAL_POSTGRES_PORT`，跳过启动/迁移 dev 库，启动日志打印醒目警告）。
+
+重置 dev 库（删卷，下次 `pnpm dev:local` 重建并迁移）：`docker compose -f docker-compose.dev.yml --profile dev down -v`。
 
 ## 发布与启动顺序
 
@@ -69,7 +72,7 @@ docker compose run --rm migrate
 
 三层备份互不替代：
 
-- **应用归档 API**：`GET /api/_/export` / `POST /api/_/import?confirm=wipe-and-reload`，只含 `src/server/export/archive.ts` 登记的表，可选内联 R2 对象；需要 Hono 在运行。
+- **应用归档 API**：`GET /api/_/export` / `POST /api/_/import?confirm=wipe-and-reload`，只含 `src/capabilities/observability/server/backup/archive.ts` 登记的表，可选内联 R2 对象；需要 Hono 在运行。
 - **Postgres custom dump**：完整库与 schema，灾难恢复用；不含 R2 对象字节。
 - **R2 对象备份**：单独做；归档 API 的 R2 sidecar 只覆盖被引用的 key。
 

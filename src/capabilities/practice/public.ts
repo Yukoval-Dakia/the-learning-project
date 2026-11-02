@@ -1,14 +1,8 @@
 // Stable server contract for consumers outside the practice capability.
 
-// Compatibility exports; shared read models consume their owner, kernel/events,
+// Compatibility export; shared read models consume their owner, kernel/events,
 // directly so initialization does not re-enter the practice runtime barrel.
 export type { EffectiveTruth } from '@/kernel/events';
-export {
-  type BoundReviewAnswer,
-  BoundReviewAnswerSchema,
-  type ReviewAnswerAttachment,
-  ReviewAnswerAttachmentSchema,
-} from '@/kernel/tools/review-answer';
 export { IssueAssessmentBodySchema } from './api/assessment-contracts';
 export { embedQuestionTextForIngest } from './jobs/embed_backfill';
 export type { QuizGenJobData } from './jobs/quiz_gen';
@@ -51,8 +45,6 @@ export {
   itemPriorMemberRequestSchema,
   readItemPriorPgBossDelivery,
 } from './server/item-prior-paid-effect-adapter';
-export { validateLearningContent } from './server/learning-content-validation';
-export { isLiveQuestionReference } from './server/live-question-reference';
 // The seed-root anchor regex is owned by placement-scope but consumed from server/*;
 // re-export it here so consumers stay on the public seam.
 export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
@@ -71,12 +63,6 @@ export {
 } from './server/quiz/content-fingerprint';
 export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
 
-export { captureReviewAnswerBinding, consumeReviewAnswerBinding } from './server/review-operation';
-export {
-  SolveError,
-  buildSolveHintInput,
-  parseHintTurn,
-} from './server/solve-session';
 export type { PracticeTaskRunFn } from './server/task-runtime';
 export {
   type EnqueueVerifyFn,
@@ -97,6 +83,41 @@ export async function installDailyReviewPlanFacts(): Promise<void> {
     import('./server/daily-review-plan'),
   ]);
   installDailyReviewPlanFactReader(readDailyReviewPlanFacts);
+}
+
+// Binds the operations Practice owns behind kernel ports that API routes and worker
+// jobs both call. Hosts call this before serving or mounting handlers.
+export async function installPracticeHostOperations(): Promise<void> {
+  const [
+    { installReviewAnswerBindingOperations },
+    { installReviewDueReader },
+    { installLearningContentValidator },
+    { installConversationConfirmationAssessment },
+    { captureReviewAnswerBinding, consumeReviewAnswerBinding },
+    { executeGetReviewDue },
+    { validateLearningContent },
+    { issueConversationConfirmation, readConversationConfirmation, submitConversationConfirmation },
+  ] = await Promise.all([
+    import('@/kernel/records/review-answer-binding'),
+    import('@/kernel/read-models/review-due'),
+    import('@/kernel/tools/learning-content-validation'),
+    import('@/kernel/records/conversation-confirmation-assessment'),
+    import('./server/review-operation'),
+    import('./server/tools/question-context'),
+    import('./server/learning-content-validation'),
+    import('./server/conversation-confirmation'),
+  ]);
+  installReviewAnswerBindingOperations({
+    capture: captureReviewAnswerBinding,
+    consume: consumeReviewAnswerBinding,
+  });
+  installReviewDueReader(executeGetReviewDue);
+  installLearningContentValidator(validateLearningContent);
+  installConversationConfirmationAssessment({
+    issue: issueConversationConfirmation,
+    submit: submitConversationConfirmation,
+    read: readConversationConfirmation,
+  });
 }
 
 export async function installInterventionAuthorStages(): Promise<void> {
@@ -250,25 +271,15 @@ export {
   resolvePlacementStarterGoalAuthority,
 } from './server/question-supply/placement-starter-store';
 export { lockPlacementSupplyScopes } from './server/question-supply/placement-supply-lock';
+
 // Keep executeSupplyPlan/buildSupplyExecutorDeps out of this barrel: that chain
 // (plan-executor → web-candidates → SourcingTask → pi agent runtime) pulls the SDK into the
 // migrate cjs bundle, whose top-level createRequire(import.meta.url) fails at startup.
 // server/worker mark it external, so only migrate is affected. scripts/supply-execute.ts
 // imports the deep path directly.
 
-export type {
-  DifficultyBand,
-  QuestionSupplyTarget,
-  ScanInput,
-  SupplyGapKind,
-  SupplyRoute,
-} from './server/question-supply/target-discovery';
-export {
-  COVERAGE_DEPTH_THRESHOLD,
-  NEAR_WINDOW,
-  assembleScanInput,
-  scanCoverageGaps,
-} from './server/question-supply/target-discovery';
+export { loadCoverageLattice } from './server/question-supply/coverage-lattice';
+export type { CoverageLatticeRead } from './server/question-supply/coverage-lattice-core';
 export { projectReviewAnswerResponse } from './server/review-answer-response';
 export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-operation';
 export {
@@ -278,8 +289,6 @@ export {
   SELECTION_ORCHESTRATOR_CANDIDATE_CAP,
 } from './server/selection-constants';
 
-// due-review queue reader for non-LLM read paths (today summary).
-export { executeGetReviewDue } from './server/tools/question-context';
 export { submitQuestionTool } from './server/tools/submit-question';
 // store_sourced_question is folded into submit_question (the old tool is no longer
 // registered or granted); the function-level compat export remains.
@@ -373,11 +382,6 @@ export { CreateReviewSessionBody } from './api/contracts';
 export { previewReviewAdvice } from './server/advice-operation';
 export { createPracticeAppeal } from './server/appeal-operation';
 export { revealFrozenStudyReference } from './server/assessment/study-context';
-export {
-  issueConversationConfirmation,
-  readConversationConfirmation,
-  submitConversationConfirmation,
-} from './server/conversation-confirmation';
 export { readPracticeDraftList } from './server/draft-list-read';
 export { readDraftReviewDetail } from './server/draft-review';
 export { getPaperDetail } from './server/paper-detail';
@@ -395,3 +399,4 @@ export {
   transitionReviewSession,
 } from './server/session-operations/review-session';
 export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';
+export { readWorksheetExport } from './server/worksheet/export-store';

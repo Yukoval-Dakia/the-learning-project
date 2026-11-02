@@ -56,7 +56,7 @@
 
 ## Switchable AI provider lane (YUK-365, post-P4)
 
-当前产品配置目标为 `AI_PROVIDER_OVERRIDE=opencode-go` + `AI_PROVIDER_MODEL=mimo-v2.6-pro`，认证变量 `OPENCODE_API_KEY`。此 env pin 压过所有显式聊天 override/modelBinding 和 DB task/lane 配置；Jev typed 协议保留其专用绑定。未设 pin 时才回到 registry 的旧 Xiaomi 默认。Mem0 抽取与两类直接调和经 `../memory/llm-config.ts` 读取同一全局 pair，embedding 保留 DashScope。设 `AI_PROVIDER_OVERRIDE=anthropic-sub` 全局切到 **Opus 4.8 via owner's Claude Max 订阅（OAuth）** —— token 是 `claude setup-token` 生成的长效 `CLAUDE_CODE_OAUTH_TOKEN`，**绝不入库不打印**。**Token + `AI_PROVIDER_OVERRIDE` 必须对所有 AI 进程可见**（API + worker 各自在启动期跑 `loadEnv()`；`dev:local` 透传给 child；生产经 docker-compose `.env` 注入）。订阅 token 与 mimo 互斥。可选 `AI_PROVIDER_MODEL` 覆盖模型 id（lane 默认 `claude-opus-4-8`）；切到非 mimo 的其它 provider 若不设 `AI_PROVIDER_MODEL` 会 throw 明确 config 错（YUK-365 Finding 4）。Wiring 在 `providers.ts`（`authMode: 'key' | 'oauth'` + override 开关）+ `pi-models.ts`（oauth variant 把 `sk-ant-oat*` token 交给 pi anthropic-messages 驱动，自动走 Bearer 头）。
+当前产品配置目标为 `AI_PROVIDER_OVERRIDE=opencode-go` + `AI_PROVIDER_MODEL=mimo-v2.6-pro`，认证变量 `OPENCODE_API_KEY`。此 env pin 压过所有显式聊天 override/modelBinding 和 DB task/lane 配置；Jev typed 协议保留其专用绑定。未设 pin 时才回到 registry 的旧 Xiaomi 默认。Mem0 抽取与两类直接调和经 `mem0/llm-config.ts` 读取同一全局 pair，embedding 保留 DashScope。设 `AI_PROVIDER_OVERRIDE=anthropic-sub` 全局切到 **Opus 4.8 via owner's Claude Max 订阅（OAuth）** —— token 是 `claude setup-token` 生成的长效 `CLAUDE_CODE_OAUTH_TOKEN`，**绝不入库不打印**。**Token + `AI_PROVIDER_OVERRIDE` 必须对所有 AI 进程可见**（API + worker 各自在启动期跑 `loadEnv()`；`dev:local` 透传给 child；生产经 docker-compose `.env` 注入）。订阅 token 与 mimo 互斥。可选 `AI_PROVIDER_MODEL` 覆盖模型 id（lane 默认 `claude-opus-4-8`）；切到非 mimo 的其它 provider 若不设 `AI_PROVIDER_MODEL` 会 throw 明确 config 错（YUK-365 Finding 4）。Wiring 在 `providers.ts`（`authMode: 'key' | 'oauth'` + override 开关）+ `pi-models.ts`（oauth variant 把 `sk-ant-oat*` token 交给 pi anthropic-messages 驱动，自动走 Bearer 头）。
 
 ## Xiaomi official Token Plan (YUK-1402)
 
@@ -87,7 +87,7 @@ Token Plan `tp-` key 与按量 `XIAOMI_API_KEY` 不互通，旧 `xiaomi` lane �
 `api.xiaomimimo.com` probe/base URL 在此 lane 明确报配置错，不能混用 key。
 全局 env pin 下 vision judge 不重试 registry `xiaomi` fallback。
 字符级 GLM/Tencent OCR 保留专用 credentials，不属于此 AI lane。
-Mem0 抽取与直接调和通过 `memory/llm-config.ts` 走同一 Token Plan `/v1`
+Mem0 抽取与直接调和通过 `mem0/llm-config.ts` 走同一 Token Plan `/v1`
 模型/credential/region/base URL，缺配置明确失败，无按量 fallback；pin 端点与任务
 执行同过模型端点 host allowlist（YUK-1646）；embedding 保留
 DashScope。pi cost 只按 catalog 估值记录。

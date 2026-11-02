@@ -1,0 +1,29 @@
+# Dev-only Postgres for `pnpm dev:local` (scripts/dev-local.ts starts it). Standalone file with
+# its own project name, so the TEST/production stack in docker-compose*.yml never sees it and a
+# plain `docker compose up` cannot start it; the `dev` profile makes that explicit.
+#
+# Isolated from TEST: host port 5434 (TEST uses 5433/5544), its own role/database, its own
+# named volume. Reset the dev DB: `docker compose -f docker-compose.dev.yml down -v`.
+name: loom-dev
+
+services:
+  postgres-dev:
+    profiles: ["dev"]
+    image: pgvector/pgvector:0.8.2-pg16-bookworm
+    environment:
+      POSTGRES_USER: loom_dev
+      POSTGRES_PASSWORD: loom_dev
+      POSTGRES_DB: loom_dev
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - loom-dev-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loom_dev -d loom_dev"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  loom-dev-pgdata:

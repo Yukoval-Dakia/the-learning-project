@@ -1,6 +1,13 @@
 /* 题目 library (YUK-1473): page frame, head, switch + scope, reading-line rows, groups, the
    floating review bar. Design language: docs/design/2026-10-07-ui-visual-direction.md
-   (T1 semantic tokens, T3 glass only on floating layers, M1 motion only on change, A2 hit areas). */
+   (T1 semantic tokens, T3 glass only on floating layers, M1 motion only on change, A2 hit areas);
+   colours, type and shape follow Google M3 Expressive (docs/design/2026-11-03-question-library-m3e.md). */
+
+/* M3E roles: each page's main column carries .un-m3e-bridge (src/ui-next/components.css). */
+[data-ui-next].ql-page {
+  background: var(--un-md-sys-color-surface);
+  color: var(--un-md-sys-color-on-surface);
+}
 
 [data-ui-next].ql-page {
   /* ── Knowledge-point links (rows and the question banner) ── */
@@ -48,11 +55,8 @@
   & .ql-title,
   & .qd-title {
     color: var(--un-text-1);
-    font-family: var(--un-font-serif);
-    font-size: var(--un-fs-6);
-    font-weight: var(--un-fw-regular);
-    letter-spacing: var(--un-ls-tight);
-    line-height: var(--un-lh-tight);
+    font: 600 32px / 1.25 var(--un-font-sans);
+    letter-spacing: 0;
   }
 
   & .ql-sentence {
@@ -209,7 +213,8 @@
 
     & .ql-title,
     & .qd-title {
-      font-size: var(--un-fs-5);
+      font-size: 24px;
+      line-height: 1.33;
     }
 
     & .ql-sentence {

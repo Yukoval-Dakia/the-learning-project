@@ -4,6 +4,7 @@ import { SECURITY_HEADERS } from './app';
 import { createStartAdminControlReader } from './start/admin-control-reader';
 import type { FrontdoorContext } from './start/context';
 import { cancelStartCopilotRun } from './start/copilot-cancel-run-operation';
+import { sendStartCopilotChat } from './start/copilot-chat-operation';
 import { revertStartCopilotCheckpoint } from './start/copilot-checkpoint-revert-operation';
 import {
   dismissStartCopilotNudge,
@@ -73,29 +74,22 @@ import { createStartHintRequest, createStartSolveSession } from './start/solve-o
 import { revealStartStudyReference } from './start/study-reference-operation';
 import { createStartSubject } from './start/subject-create-operation';
 import { readStartSubjects } from './start/subject-reader';
+import { readStartWorksheetExport } from './start/worksheet-export-reader';
 
-export function buildLegacySpa(root: string): Hono {
-  const spa = new Hono();
-  spa.use('*', SECURITY_HEADERS);
-  spa.use('*', serveStatic({ root }));
-  // Missing assets must not masquerade as an HTML document (or run stale chunks).
-  spa.get('/assets/*', (c) => c.notFound());
-  spa.get('/_build/*', (c) => c.notFound());
-  for (const asset of [
-    '/manifest.webmanifest',
-    '/apple-touch-icon.png',
-    '/icon-192.png',
-    '/icon-512.png',
-    '/icon-maskable-512.png',
-    '/favicon.svg',
-  ]) {
-    spa.get(asset, (c) => c.notFound());
-  }
-  spa.get('*', serveStatic({ root, path: 'index.html' }));
-  return spa;
-}
+const START_CLIENT_ROOT = 'dist/start/client';
 
-export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorContext {
+// Files the document <head> and the web manifest request from the site root; vite copies
+// public/ into the client output, so they are served from there.
+const ROOT_PUBLIC_FILES = [
+  '/manifest.webmanifest',
+  '/apple-touch-icon.png',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/icon-maskable-512.png',
+  '/favicon.svg',
+];
+
+export function createFrontdoorContext(api: Hono): FrontdoorContext {
   // Cache only the canonical operation bindings. Every call still reads the
   // current facts/store/writer; no configuration snapshot or second writer.
   // The first resolution is requested only after the Start auth/epoch gate.
@@ -104,13 +98,14 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
   startAssets.use(
     '/_build/*',
     serveStatic({
-      root: 'dist/start/client',
+      root: START_CLIENT_ROOT,
       rewriteRequestPath: (path) => path.replace(/^\/_build/, ''),
     }),
   );
   const context: FrontdoorContext = {
     api,
     acceptTeachingChip: acceptStartTeachingChip,
+    sendCopilotChat: sendStartCopilotChat,
     revertCopilotCheckpoint: revertStartCopilotCheckpoint,
     cancelCopilotRun: cancelStartCopilotRun,
     readCopilotTurns: readStartCopilotTurns,
@@ -167,6 +162,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     releaseHeldPlacement: releaseStartHeldPlacement,
     transitionPlacementSession: transitionStartPlacementSession,
     readPlacementProfile: readStartPlacementProfile,
+    readWorksheetExport: readStartWorksheetExport,
     readSubjects: readStartSubjects,
     revealStudyReference: revealStartStudyReference,
     createSolveSession: createStartSolveSession,
@@ -178,17 +174,32 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     createGoal: createStartGoal,
     createLearningIntent: createStartLearningIntent,
     submitConjectureProbeAnswer: answerStartConjectureProbe,
-    legacySpa: buildLegacySpa(spaRoot),
     startAssets,
   };
   return context;
 }
 
-export async function createFrontdoor(api: Hono, spaRoot: string) {
-  const entry = await import('../dist/start/server/server.js');
-  const context = createFrontdoorContext(api, spaRoot);
+export type StartEntryFetch = (
+  request: Request,
+  options: { context: FrontdoorContext },
+) => Response | Promise<Response>;
+
+// Shared by the built front door and the Vite dev front door (server/dev-frontdoor.ts) so both
+// reach the Hono app through the same request context and security headers.
+export function buildFrontdoor(
+  api: Hono,
+  entryFetch: StartEntryFetch,
+  publicRoot: string = START_CLIENT_ROOT,
+) {
+  const context = createFrontdoorContext(api);
   const frontdoor = new Hono();
   frontdoor.use('*', SECURITY_HEADERS);
-  frontdoor.all('*', (c) => entry.default.fetch(c.req.raw, { context }));
+  for (const path of ROOT_PUBLIC_FILES) frontdoor.get(path, serveStatic({ root: publicRoot }));
+  frontdoor.all('*', (c) => entryFetch(c.req.raw, { context }));
   return (request: Request) => frontdoor.fetch(request);
+}
+
+export async function createFrontdoor(api: Hono) {
+  const entry = await import('../dist/start/server/server.js');
+  return buildFrontdoor(api, (request, options) => entry.default.fetch(request, options));
 }

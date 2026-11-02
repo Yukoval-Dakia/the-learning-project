@@ -7,7 +7,7 @@ export const getStartSubjects = createServerFn({ method: 'GET' }).handler(({ con
 );
 
 export const createStartSubjectFunction = createServerFn({ method: 'POST' })
-  .inputValidator((displayName: string) => displayName)
+  .validator((displayName: string) => displayName)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () =>
       JSON.stringify(await context.createSubject(data)),

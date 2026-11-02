@@ -6,7 +6,7 @@ import { defineConfig } from 'vite';
 
 const optionalDbosLoggers = ['winston', 'winston-transport'];
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   root: resolve(import.meta.dirname, '../..'),
   base: '/_build/',
   plugins: [
@@ -19,10 +19,14 @@ export default defineConfig({
     tailwindcss(),
   ],
   resolve: { alias: { '@': resolve(import.meta.dirname, '../../src') } },
-  // Keep the fetch-style server self-contained for the existing Node/Compose image.
-  ssr: { noExternal: true, external: optionalDbosLoggers },
+  // The build keeps the fetch-style server self-contained for the Node/Compose image; the dev
+  // server (server/dev-frontdoor.ts) leaves node_modules external so CJS deps load natively.
+  ssr:
+    command === 'build'
+      ? { noExternal: true, external: optionalDbosLoggers }
+      : { external: optionalDbosLoggers },
   environments: {
     ssr: { build: { rolldownOptions: { external: optionalDbosLoggers } } },
   },
   build: { outDir: 'dist/start' },
-});
+}));

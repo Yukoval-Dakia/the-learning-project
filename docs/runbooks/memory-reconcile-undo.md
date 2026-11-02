@@ -1,7 +1,7 @@
 # Runbook — mem0 记忆调和误操作回滚（YUK-557）
 
 > 单元 `memory-reconcile-policy`，设计 SoT：`docs/design/2026-07-03-memory-reconcile-spec.md`。
-> 前提：`client.restoreVerbatim` 已落地（S3，`src/server/memory/client.ts`）——本 runbook 的逐字恢复 hop 依赖它。
+> 前提：`client.restoreVerbatim` 已落地（S3，`src/server/ai/mem0/client.ts`）——本 runbook 的逐字恢复 hop 依赖它。
 
 调和 job（`memory_reconcile`）用 GLM 判定新记忆与既有记忆的关系并执行破坏性动作
 （MERGE 改写+删、RETRACT_NEW 删、SUPERSEDE 软取代覆写）。YUK-557 后每条决策的原文/payload
@@ -52,7 +52,7 @@ owner 现实中几乎不会自发注意到某条记忆被误删——回滚依�
    ```ts
    import { db } from '@/db/client';
    import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
-   import { createMemoryClient } from '@/server/memory/client';
+   import { createMemoryClient } from '@/server/ai/mem0/client';
 
    const client = createMemoryClient();
    const reconciliationLogId = '<memory_reconciliation_log.id>';

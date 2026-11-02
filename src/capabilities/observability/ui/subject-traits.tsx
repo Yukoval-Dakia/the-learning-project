@@ -1,7 +1,7 @@
 // YUK-601 (UI design doc v1.1 §2.2-§2.4，APPROVED #762) — /admin/subjects/$id
 // trait 编辑面（detail 页）。组件只收 props（subjectId + navigate），零路由库
 // import（capability ui 不 import 路由——observability.tsx:2-3 既有边界；$id 由
-// web/src/router.tsx 的 route wrapper 读出后以 prop 注入）。
+// Start route（server/start/routes/admin.subjects.$id.tsx）读出后以 prop 注入）。
 //
 // 数据（§2.4）：GET /api/admin/subjects（header 行 + sharedBy 名称映射，与列表页
 // 共享 ['admin-subjects'] 缓存但**直达刷新不依赖其在场**——本组件自行 query）+

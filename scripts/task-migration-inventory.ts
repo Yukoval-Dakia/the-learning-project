@@ -62,7 +62,9 @@ const rows: {
 const declarations = sources.filter(
   ({ path }) =>
     /^src\/capabilities\/[^/]+\/manifest.ts$/.test(path) ||
-    ['src/server/boss/handlers.ts', 'src/server/memory/triggers.ts'].includes(path),
+    ['src/server/boss/handlers.ts', 'src/capabilities/agency/server/memory/triggers.ts'].includes(
+      path,
+    ),
 );
 for (const { path, text } of declarations) {
   const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
@@ -95,9 +97,9 @@ for (const { path, text } of declarations) {
 }
 for (const [name, owner, queue, cron, tz] of [
   ['echo', 'src/server/boss/handlers.ts', 'fast', null, null],
-  ['memory_event_ingest', 'src/server/memory/triggers.ts', 'llm', null, null],
-  ['memory_brief_regen', 'src/server/memory/triggers.ts', 'llm', null, null],
-  ['memory_reconcile', 'src/server/memory/triggers.ts', 'llm', null, null],
+  ['memory_event_ingest', 'src/capabilities/agency/server/memory/triggers.ts', 'llm', null, null],
+  ['memory_brief_regen', 'src/capabilities/agency/server/memory/triggers.ts', 'llm', null, null],
+  ['memory_reconcile', 'src/capabilities/agency/server/memory/triggers.ts', 'llm', null, null],
   [
     'nightly_orchestrator',
     'src/server/orchestration/register.ts',
@@ -107,7 +109,7 @@ for (const [name, owner, queue, cron, tz] of [
   ],
   [
     'event_subscription_dispatch',
-    'src/server/event-subscriptions/dispatch-mount.ts',
+    'src/server/events/subscriptions/dispatch-mount.ts',
     'fast',
     '* * * * *',
     'Asia/Shanghai',

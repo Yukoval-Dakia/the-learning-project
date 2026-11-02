@@ -5,7 +5,6 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { db as httpDb } from '@/db/client';
 import * as schema from '@/db/schema';
 import * as hydration from '@/kernel/read-models/subject-hydration';
-import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
 import { BUILTIN_TRAIT_SEEDS, seedTraitId } from '@/subjects/builtin-trait-seeds';
 import { SubjectRegistry } from '@/subjects/profile';
 import { CharterTraitSchema } from '@/subjects/trait-schemas';
@@ -28,6 +27,7 @@ import {
   resetTraitToSeed,
   rollbackTrait,
 } from '../public';
+import { reconcileBuiltinTraits } from './builtin-trait-reconcile';
 import { thinCreateSubject } from './subject-create';
 
 const isolated = vi.hoisted(() => ({ getRegistry: vi.fn() }));

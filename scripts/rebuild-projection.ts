@@ -26,7 +26,8 @@
 import './load-env';
 
 import { type Db, type Tx, db } from '@/db/client';
-import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
+import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
+import { assertKnowledgeOperationsDecodable } from '@/kernel/records/knowledge-operation';
 import {
   PROJECTION_ENTITIES,
   PROJECTION_FK_CLUSTERS,
@@ -50,6 +51,12 @@ export async function rebuildProjectionForKinds(
   db: DbLike,
   kinds: readonly ProjectionKind[],
 ): Promise<RebuildCounts> {
+  // Knowledge v1 pre-check before the first entity write: an undecodable
+  // knowledge_operation fact rolls back this FK-cluster tx instead of writing
+  // around a history the read side cannot interpret.
+  if (kinds.includes('knowledge') || kinds.includes('knowledge_edge')) {
+    await assertKnowledgeOperationsDecodable(db);
+  }
   const counts: RebuildCounts = {};
   for (const kind of kinds) {
     const adapter = PROJECTION_ENTITIES[kind];

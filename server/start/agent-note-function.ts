@@ -5,5 +5,5 @@ import { runAuthenticatedStartAgentNoteBoard } from './agent-note-read';
 
 // Identity only: canonical input validation must run after token and epoch authorization.
 export const getStartAgentNoteBoard = createServerFn({ method: 'GET' })
-  .inputValidator((input: AgentNoteBoardQuery) => input)
+  .validator((input: AgentNoteBoardQuery) => input)
   .handler(({ context, data }) => runAuthenticatedStartAgentNoteBoard(context, getRequest(), data));
