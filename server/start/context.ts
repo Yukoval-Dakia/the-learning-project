@@ -1,5 +1,9 @@
 import type { Hono } from 'hono';
-import type { createGoal, submitConjectureProbeAnswer } from '@/capabilities/agency/public';
+import type {
+  createGoal,
+  requestLearningIntent,
+  submitConjectureProbeAnswer,
+} from '@/capabilities/agency/public';
 import type {
   cancelCopilotRun,
   createCopilotSession,
@@ -22,6 +26,8 @@ import type {
   readIngestionSessions,
   readMistakes,
   requestIngestionOperation,
+  requestPurposeChange,
+  requestPurposeImpact,
   revertIngestionBlock,
 } from '@/capabilities/ingestion/public';
 import type {
@@ -124,6 +130,14 @@ export type FrontdoorContext = {
     Extract<Awaited<ReturnType<typeof createManualMistake>>, { body: { mistake_id: string } }>
   >;
   readRecordBlocks: (id: string) => Promise<Awaited<ReturnType<typeof readIngestionSessionBlocks>>>;
+  changeRecordPurpose: (input: {
+    sessionId: string;
+    body: string;
+  }) => Promise<Awaited<ReturnType<typeof requestPurposeChange>>>;
+  readRecordPurposeImpact: (input: {
+    sessionId: string;
+    query: string;
+  }) => Promise<Awaited<ReturnType<typeof requestPurposeImpact>>>;
   readRecordSessionDetail: (
     id: string,
   ) => Promise<Awaited<ReturnType<typeof readIngestionSessionDetail>>>;
@@ -148,6 +162,9 @@ export type FrontdoorContext = {
     rows: Awaited<ReturnType<typeof loadMisconceptionsForKc>>;
   }>;
   createGoal: (body: string) => Promise<Awaited<ReturnType<typeof createGoal>>>;
+  createLearningIntent: (
+    body: string,
+  ) => Promise<Awaited<ReturnType<typeof requestLearningIntent>>>;
   startPlacement: (body: string) => Promise<Awaited<ReturnType<typeof startPlacementProbe>>>;
   readPlacementSession: typeof readPlacementSession;
   selectNextPlacementQuestion: (

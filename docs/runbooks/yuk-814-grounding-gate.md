@@ -44,7 +44,7 @@ committing the exact code revision:
 ```bash
 umask 077
 pnpm grounding:gate review-intervention \
-  --cases src/server/grounding-gate/fixtures/intervention-review-regressions.v1.json \
+  --cases src/capabilities/practice/server/quiz/fixtures/intervention-review-regressions.v1.json \
   --out .tmp/yuk-829/reviewer-regression-result.json \
   --env-file /absolute/path/to/private.env
 ```

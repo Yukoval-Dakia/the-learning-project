@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react';
 import { Badge } from '@/ui/primitives/Badge';
-import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
+import { Button } from '@/ui-next/public';
 import {
   type ConfigData,
   type ConfigKey,
@@ -10,10 +10,10 @@ import {
   displayValue,
   inputClass,
   matchesSearch,
-  providerStatus,
   tableClass,
   taskEditable,
 } from './config-model';
+import { ConfigProviderCatalog } from './config-provider-catalog';
 import { ConfigTaskEditor } from './config-task-editor';
 
 function NoMatches() {
@@ -194,43 +194,7 @@ function Models({ data, query, save }: { data: ConfigData; query: string; save: 
           </table>
         </div>
       )}
-      <h3 className="font-medium">Provider 目录</h3>
-      <div className="overflow-x-auto">
-        <table className={tableClass}>
-          <thead>
-            <tr>
-              <th scope="col">Provider</th>
-              <th scope="col">pi 原生身份</th>
-              <th scope="col">状态</th>
-              <th scope="col">pi 模型数</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.providers
-              .filter((p) => matchesSearch(query, p.name, p.pi_provider))
-              .map((p) => (
-                <tr key={p.name}>
-                  <th scope="row">{p.name}</th>
-                  <td>
-                    {p.pi_provider ?? (p.implemented_for?.typed ? 'typed 专用通道' : '未接线')}
-                  </td>
-                  <td>{providerStatus(p)}</td>
-                  <td>{p.models?.length ?? 0}</td>
-                </tr>
-              ))}
-          </tbody>
-        </table>
-      </div>
-      <h3 className="font-medium">全局与专用通道（只读）</h3>
-      <ConfigKeys
-        rows={data.keys.filter(
-          (k) =>
-            k.key.startsWith('lane.') ||
-            k.key.startsWith('JUDGE_CALIBRATION_REJUDGE') ||
-            k.key === 'JUDGE_FALLBACK_PROVIDER',
-        )}
-        query={query}
-      />
+      <ConfigProviderCatalog providers={data.providers} query={query} />
     </div>
   );
 }

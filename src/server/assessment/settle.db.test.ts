@@ -34,13 +34,13 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
-import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
   type NormalizableQuestionRow,
   type PartRow,
   normalizeQuestionGroupToContract,
   normalizeQuestionRowToContract,
-} from '@/server/questions/contract-normalizer';
+} from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { activateEvaluation, insertInitialEvaluationHead } from './activate';
 import { ASSESSMENT_SETTLEMENT_ACTION, learningSettlement } from './settle';

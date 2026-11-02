@@ -250,25 +250,15 @@ export {
   resolvePlacementStarterGoalAuthority,
 } from './server/question-supply/placement-starter-store';
 export { lockPlacementSupplyScopes } from './server/question-supply/placement-supply-lock';
+
 // Keep executeSupplyPlan/buildSupplyExecutorDeps out of this barrel: that chain
 // (plan-executor → web-candidates → SourcingTask → pi agent runtime) pulls the SDK into the
 // migrate cjs bundle, whose top-level createRequire(import.meta.url) fails at startup.
 // server/worker mark it external, so only migrate is affected. scripts/supply-execute.ts
 // imports the deep path directly.
 
-export type {
-  DifficultyBand,
-  QuestionSupplyTarget,
-  ScanInput,
-  SupplyGapKind,
-  SupplyRoute,
-} from './server/question-supply/target-discovery';
-export {
-  COVERAGE_DEPTH_THRESHOLD,
-  NEAR_WINDOW,
-  assembleScanInput,
-  scanCoverageGaps,
-} from './server/question-supply/target-discovery';
+export { loadCoverageLattice } from './server/question-supply/coverage-lattice';
+export type { CoverageLatticeRead } from './server/question-supply/coverage-lattice-core';
 export { projectReviewAnswerResponse } from './server/review-answer-response';
 export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-operation';
 export {
@@ -373,6 +363,11 @@ export { CreateReviewSessionBody } from './api/contracts';
 export { previewReviewAdvice } from './server/advice-operation';
 export { createPracticeAppeal } from './server/appeal-operation';
 export { revealFrozenStudyReference } from './server/assessment/study-context';
+export {
+  issueConversationConfirmation,
+  readConversationConfirmation,
+  submitConversationConfirmation,
+} from './server/conversation-confirmation';
 export { readPracticeDraftList } from './server/draft-list-read';
 export { readDraftReviewDetail } from './server/draft-review';
 export { getPaperDetail } from './server/paper-detail';

@@ -6,9 +6,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Btn } from '@/ui/primitives/Btn';
 import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { PracticeListHeader } from '@/ui-next/practice-studio/PracticeQueue';
 import { prefersReducedMotion, useSharedMorph } from '@/ui-next/public';
 import './practice-face.css';
 
@@ -738,48 +738,14 @@ export default function PracticeFacePage({
       />
     );
   } else {
-    let eyebrowText = '今日练习 · 按当前学习状态编排';
-    if (scopeKnowledgeId) {
-      eyebrowText = `知识点专项 · ${visibleStream?.scope?.label ?? '正在读取范围'}`;
-    } else if (view === 'shelf') {
-      eyebrowText = '练习卷 · 待做 / 在做 / 已完成';
-    }
     body = (
       <>
-        <div className="page-head">
-          <span className="eyebrow">{eyebrowText}</span>
-          <div className="pface-head-row">
-            <h1 className="page-title">{scopeKnowledgeId ? '针对性练习' : '练习'}</h1>
-            {scopeKnowledgeId ? (
-              <Btn size="sm" variant="ghost" icon="arrowL" onClick={clearScope}>
-                返回今日流
-              </Btn>
-            ) : (
-              <div className="seg" role="tablist" aria-label="练习视图">
-                <button
-                  type="button"
-                  className={view === 'stream' ? 'on' : ''}
-                  role="tab"
-                  aria-selected={view === 'stream'}
-                  onClick={() => switchView('stream')}
-                >
-                  <LoomIcon name="review" size={14} />
-                  今日流
-                </button>
-                <button
-                  type="button"
-                  className={view === 'shelf' ? 'on' : ''}
-                  role="tab"
-                  aria-selected={view === 'shelf'}
-                  onClick={() => switchView('shelf')}
-                >
-                  <LoomIcon name="archive" size={14} />
-                  卷架
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
+        <PracticeListHeader
+          scopeLabel={scopeKnowledgeId ? (visibleStream?.scope?.label ?? '正在读取范围') : null}
+          view={view}
+          onView={switchView}
+          onClearScope={clearScope}
+        />
         {view === 'shelf' ? (
           <PfShelf
             openPaper={(artifactId) => setMode({ kind: 'paper', artifactId })}
@@ -807,7 +773,15 @@ export default function PracticeFacePage({
     // paper and retro views keep the shared page padding.
     <main
       id="main-content"
-      className={mode.kind === 'solo' ? 'pface-loom pface-next' : 'page wide pface-loom'}
+      data-ui-next={mode.kind === 'list' ? '' : undefined}
+      data-un-m3e={mode.kind === 'list' ? 'practice-foundation' : undefined}
+      className={
+        mode.kind === 'solo'
+          ? 'pface-loom pface-next'
+          : mode.kind === 'list'
+            ? 'un-root un-pq-page pface-loom'
+            : 'page wide pface-loom'
+      }
     >
       <div className="pface-root" ref={attachHost}>
         <div aria-live="assertive">

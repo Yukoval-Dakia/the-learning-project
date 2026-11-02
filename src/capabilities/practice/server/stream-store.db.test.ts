@@ -17,8 +17,8 @@ import {
   question,
   selection_observation,
 } from '@/db/schema';
+import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
-import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { composeNightly, getStream, reRankAfterAnswer, streamLocalDate } from './stream-store';
 
