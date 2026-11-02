@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
+import { lockConjectureReconcile } from './probe-lock';
 import {
   PREDICTION_SCORE_ACTION,
   PROBE_RESULT_PROJECTED_ACTION,
@@ -130,7 +131,15 @@ export async function reconcileResearchMeetingExecution(
   // an earlier attempt (crash after reconcile, before checkpoint), then persist one
   // deterministic aggregate checkpoint before proposal work.
   const previouslyReconciled = await countReconciledForExecutionFn(db, executionId);
-  const freshResult = await reconcileFn(db);
+  // The probe-result subscription and the nightly meeting reach the same reconcile.
+  // One global advisory lock serializes them: the loser blocks, then observes the
+  // winner's committed anchors and reconciles nothing twice. The transaction owns
+  // only the lock; the reconcile keeps its own short transactions on `db` (same
+  // shape as the nightly execution lock), so a crash releases it automatically.
+  const freshResult = await db.transaction(async (tx) => {
+    await lockConjectureReconcile(tx);
+    return reconcileFn(db);
+  });
   const reconcileResult = {
     reconciled: previouslyReconciled + freshResult.reconciled,
     skipped: freshResult.skipped,

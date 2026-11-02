@@ -1,6 +1,6 @@
 // YUK-495 Phase 1 (S5) — WASM EXECUTION-parity: the SAME Rust crate compiled to
 // `wasm32-wasip1-threads` (the browser / #41-recompute-badge target) vs the JS ORACLE
-// (the live src/server/calibration/* + src/core/poly-exp.ts), asserted Object.is-equal.
+// (the live src/core/calibration/* + src/core/poly-exp.ts), asserted Object.is-equal.
 //
 // This closes the U1 unknown that Phase 0 deferred (spike §U1 "execution-parity =
 // Phase-1 plumbing"): it empirically proves the isomorphic-core chain end-to-end —
@@ -22,14 +22,14 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { polyExp, polySigmoid } from '@/core/poly-exp';
-import { mulberry32 } from '@/core/rng';
-import { forwardAuc } from '@/server/calibration/auc';
+import { forwardAuc } from '@/core/calibration/auc';
 import {
   type ClusterForwardPreds,
   deltaAucClusterBootstrap,
   resolveBootstrapB,
-} from '@/server/calibration/bootstrap';
+} from '@/core/calibration/bootstrap';
+import { polyExp, polySigmoid } from '@/core/poly-exp';
+import { mulberry32 } from '@/core/rng';
 
 // Load the WASI loader DIRECTLY (not the index.js dispatcher) so this suite always
 // exercises the WASM binding — never a stray `.node` (index.js prefers native). The

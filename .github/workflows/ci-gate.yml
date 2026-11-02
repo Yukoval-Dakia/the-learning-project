@@ -831,8 +831,8 @@ jobs:
           test -f crates/calibration-native/calibration-native.wasm32-wasi.wasm
           test -f crates/calibration-native/calibration-native.wasi.cjs
           pnpm exec vitest run --config vitest.unit.config.ts \
-            src/server/calibration/native-parity.unit.test.ts \
-            src/server/calibration/wasm-parity.unit.test.ts \
+            src/core/calibration/native-parity.unit.test.ts \
+            src/core/calibration/wasm-parity.unit.test.ts \
             src/core/poly-exp-parity.unit.test.ts \
             src/core/coldstart-solver-parity.unit.test.ts
 
