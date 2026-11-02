@@ -1,6 +1,6 @@
 # src/ui — 共享 React 设计系统
 
-> 客户端组件层（React 19 + Tailwind v4 CSS-first + Zustand + TanStack Query）。**写任何 UI 前先做 design-doc pre-flight**（见 [CLAUDE.md § UI Design Compliance](../../CLAUDE.md)）：逐字引用 design doc 段落 + 声明组件类型 + 列出 touch 文件，等批准再动手。
+> 客户端组件层（React 19 + Tailwind v4 CSS-first + Zustand + TanStack Query）。**写任何 UI 前先做 design-doc pre-flight**（规则见根 `AGENTS.md`）：引用 design doc 原文（路径+行号）+ 声明组件类型 + 列出创建与修改文件。
 
 ## WHERE TO LOOK
 | 目录 | 职责 |
@@ -18,7 +18,3 @@
 - SPA QueryClient 归 `web/src/main.tsx`；领域级缓存策略贴近 query owner，不在设计系统另建全局 client。
 - 编辑器栈 = TipTap 3（`@tiptap/*`）；图谱 = cytoscape；数学 = KaTeX（`rehype-katex`/`remark-math`）。
 - UI 默认不写测试（YUK-1401）；只有承载五类不变量的 UI 行为才写，放 unit config（无 DB）。
-
-## ANTI-PATTERNS
-- 浏览器代码**不持** provider key——所有 LLM 调用走 `/api/*` route。
-- 别在客户端直接 import `src/server/*`（server-only）。
