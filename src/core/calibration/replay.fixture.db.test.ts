@@ -1,4 +1,4 @@
-// TASK 7 — replay FAITHFULNESS fixture (the ONLY DB test in src/server/calibration/).
+// TASK 7 — replay FAITHFULNESS fixture (the ONLY DB test in src/core/calibration/).
 //
 // Proves replayTheta produces BYTE-IDENTICAL post-attempt θ_KC and θ_global to the REAL
 // production updateThetaForAttempt for a short attempt sequence, under LIVE flags. If
@@ -49,6 +49,7 @@ vi.mock('@/core/theta-grid', async (importOriginal) => {
   };
 });
 
+import { type ReplayAttempt, replayTheta } from '@/core/calibration/replay';
 import { newId } from '@/core/ids';
 import { difficultyToLogitB } from '@/core/theta';
 import { GRID_POINTS, type ThetaGridPosterior } from '@/core/theta-grid';
@@ -62,7 +63,6 @@ import {
 } from '@/db/schema';
 import { getFamilyCalibration } from '@/kernel/read-models/question-difficulty';
 import { updateThetaForAttempt } from '@/kernel/records/mastery-state';
-import { type ReplayAttempt, replayTheta } from '@/server/calibration/replay';
 import { effectiveFamilyB } from '@/server/mastery/personalized-difficulty';
 import { effectiveB } from '@/server/mastery/recalibration';
 import { resetDb } from '../../../tests/helpers/db';

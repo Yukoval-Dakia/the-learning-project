@@ -6,9 +6,9 @@
 // 硬门控 + label hook）自 YUK-439 起转为离线审计/对照工具：生产夜跑（recalibration_
 // nightly）改喂 src/kernel/records/joint-calibration.ts 的连续后验批（RECALIBRATION_
 // MIN_LABELS 硬门控与 b_calib 首写语义随之退出生产路径，A3）；label hook 仍被 settle
-// 调用（既有契约 pin 的审计面），但 label 账本不再喂标定。AIPW 估计器（aipwMean /
-// ppiPlusMean / estimateLambdaStar）保留：重放对照脚本（scripts/replay-joint-calibration）
-// 以它复刻现行方案作比较基线。
+// 调用（既有契约 pin 的审计面），但 label 账本不再喂标定。AIPW 估计器（aipwMean 在
+// core/calibration/aipw；ppiPlusMean / estimateLambdaStar 在此）保留：重放对照脚本
+// （scripts/replay-joint-calibration）以它复刻现行方案作比较基线。
 //
 // 在线 θ̂ 半边锁死 b（G4）。本模块是离线/批量的 b 去偏引擎：攒够锚定 θ̂ 反推的难度
 // 标签后，用 active-PPI（AIPW）把冷启锚 b_anchor 的尺度偏差校正成 b_calib。θ̂ 快、
@@ -28,8 +28,15 @@
 // （均匀 π 时 Σ1/π 为整，恰好掩盖该 bug）。positivity：任何 π ≤ 0 抛错。
 
 import { and, desc, eq } from 'drizzle-orm';
+import {
+  IPW_WEIGHT_CAP_C,
+  type LabeledSample,
+  RECALIBRATION_MIN_LABELS,
+  cappedIpwWeights,
+  impliedBLabel,
+} from '@/core/calibration/aipw';
 import { newId } from '@/core/ids';
-import { difficultyToLogitB, quantile } from '@/core/theta';
+import { difficultyToLogitB } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import {
   difficulty_calibration_label,
@@ -38,7 +45,7 @@ import {
   selection_observation,
 } from '@/db/schema';
 import { effectiveB } from '@/kernel/read-models/question-difficulty';
-import { impliedDifficultyResidual, isObjectiveJudgeRoute } from './personalized-difficulty';
+import { isObjectiveJudgeRoute } from './personalized-difficulty';
 
 export { type ItemCalibrationBRow, effectiveB } from '@/kernel/read-models/question-difficulty';
 
@@ -56,69 +63,6 @@ export function attemptLocalDate(now: Date): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// impliedBLabel — 单次 fixed-anchor IRT 反推的难度标签（Task 11 step 3，ADR-0043 §6）。
-//
-// 给定 (outcome, theta_snapshot, b_anchor)，反推「这道题对这个能力学习者隐含的难度」：
-//   b_label = b_anchor + impliedDifficultyResidual(θ, b_anchor, outcome)
-// 即从锚出发沿 1PL 对数似然对 b 走一步牛顿方向：答错 → 更难，答对 → 更易。
-// 这是锚定 θ 的反推，不是裸 outcome；单条噪声大，池上聚合去噪。
-// ─────────────────────────────────────────────────────────────────────────────
-export function impliedBLabel(theta: number, bAnchor: number, outcome: 0 | 1): number {
-  return bAnchor + impliedDifficultyResidual(theta, bAnchor, outcome);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// aipwMean — AIPW / PPI rectifier 均值，Hájek 自归一化形：
-//   aipwMean = predictionMean(pool) + [Σ_labeled(ξ_j/π_j)] / [Σ_labeled(1/π_j)]
-//   ξ_j = label_j − 锚预测_j
-// 先在整池取锚预测均值（低方差但有偏），再用已标注子集的残差做自归一化 IPW 校正。
-// 分母必须是精确的 Σ(1/π)；labeled 为空 → 校正项 0。π ≤ 0 抛错（positivity）。
-// ─────────────────────────────────────────────────────────────────────────────
-export interface LabeledResidual {
-  /** ξ = label − 锚预测（该已标注样本的残差）。 */
-  residual: number;
-  /** π = 真随机抽样的 inclusion probability ∈ (0, 1]。≤0 抛错（positivity）。 */
-  pi: number;
-}
-
-export function aipwMean(
-  poolPredictions: number[],
-  labeledResiduals: LabeledResidual[],
-  capFactor: number = IPW_WEIGHT_CAP_C,
-): number {
-  const N = poolPredictions.length;
-  if (N === 0) {
-    throw new Error('aipwMean: poolPredictions must be non-empty (N=0 → undefined mean)');
-  }
-  const predictionMean = poolPredictions.reduce((a, b) => a + b, 0) / N;
-  // positivity 先于 cap（YUK-558 M1）——IPW 权重分母 ≤0 是上游 bug（伪 π / 确定性选题），
-  // fail-fast，且必须先于截权（cap 不救 ≤0 的 π）。
-  for (const r of labeledResiduals) {
-    if (!(Number.isFinite(r.pi) && r.pi > 0)) {
-      throw new Error(
-        `aipwMean: inclusion probability must be a finite number > 0 (positivity), got ${r.pi}`,
-      );
-    }
-  }
-  // median-相对截权（与 ppiPlusMean(λ=1) 恒等；aipwMean 保留导出）。
-  const { weights } = cappedIpwWeights(
-    labeledResiduals.map((r) => r.pi),
-    capFactor,
-  );
-  let residualCorrection = 0;
-  let weightSum = 0; // Σ(capped 1/π)，Hájek 分母。
-  for (let i = 0; i < labeledResiduals.length; i++) {
-    const r = labeledResiduals[i];
-    const w = weights[i];
-    // 未截项保留 residual/π 单舍入，与旧实现逐位一致；截项走 residual*w。
-    residualCorrection += w === 1 / r.pi ? r.residual / r.pi : r.residual * w;
-    weightSum += weights[i];
-  }
-  // Hájek 自归一化：÷ Σ(capped 1/π)；labeled 为空 → 校正项 0。
-  return predictionMean + (weightSum > 0 ? residualCorrection / weightSum : 0);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // PPI++ power-tuning λ*（ADR-0043 §7）。
 //
 // 坏锚会放大 AIPW 方差；λ ∈ [0,1] 给锚预测项降权：
@@ -127,15 +71,6 @@ export function aipwMean(
 // λ* = Cov(m̂, label_via_ipw) / Var(m̂_via_ipw)，用 IPW 加权矩近似；强相关 → 1，
 // 弱相关 → 0。clamp 到 [0,1]（理论上可超界）。
 // ─────────────────────────────────────────────────────────────────────────────
-export interface LabeledSample {
-  /** 难度标签 b_label（该样本反推的隐含难度）。 */
-  label: number;
-  /** 该样本的锚预测 m̂（= b_anchor，候选池预测同源）。 */
-  prediction: number;
-  /** 真随机抽样 inclusion probability ∈ (0, 1]。 */
-  pi: number;
-}
-
 /**
  * 估计 λ*（PPI++ power-tuning）。样本不足 2 条或锚方差≈0 → 1（退化标准 AIPW）；
  * clamp [0,1]。
@@ -221,52 +156,6 @@ export function ppiPlusMean(
   }
   // Hájek 自归一化：÷ Σ(capped 1/π)（精确），不是 ÷N / ÷round(Σ1/π)（FINDING #1）。
   return lambda * predictionMean + (weightSum > 0 ? correction / weightSum : 0);
-}
-
-// 该题攒够这么多 difficulty_calibration_label 条才 firm-up b_calib；未达则不写，
-// effectiveB 退回 b_anchor ?? b。owner 可调的保守起步值（单题标签稀疏）。
-export const RECALIBRATION_MIN_LABELS = 12;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// IPW_WEIGHT_CAP_C — median-相对 IPW 截权常数（owner 拍 C=4）。
-//
-// 保守初值，非拟合结果：单条标签权重 1/π 封顶于 C·median(该题标签批内未截权重)。
-// median-相对而非绝对 floor：honest 权重尺度随候选池增长，固定 floor 在大池时把
-// 所有权重压平成无权均值。
-//
-// 这是 deliberate bias-for-variance 交易，不免费：截权拉向高-π 标签的均值，部分
-// 重引入 IPW 要去除的 selection bias。默认 ON 只立足「首写不可逆 + 在线消费不可回放
-// ⇒ 有界方差优于无偏」。回滚旋钮 = C = Infinity，精确还原 uncapped 旧行为。
-// ─────────────────────────────────────────────────────────────────────────────
-export const IPW_WEIGHT_CAP_C = 4;
-
-/**
- * 批内 median-相对截权：w_j = min(1/π_j, C·median(1/π))。
- *
- * positivity throw 由 caller 先行（cap 不救 ≤0 的 π）。capFactor=Infinity ⇒ cap 永不
- * bind，weights 与原始 1/π 逐位相等，精确还原旧行为。下方 `1/pi` 必须保持字面除法：
- * estimator 用 `w === 1/π` 判别未截项，改写成 Math.pow 会破坏逐位回滚。
- *
- * @returns weights 与 pis 等长同序；clipped 为被截权条数。
- */
-export function cappedIpwWeights(
-  pis: number[],
-  capFactor: number = IPW_WEIGHT_CAP_C,
-): { weights: number[]; clipped: number } {
-  if (pis.length === 0) return { weights: [], clipped: 0 };
-  const raw = pis.map((pi) => 1 / pi);
-  // 批内未截权重中位数（quantile type-7，与旧 medianOfWeights 偶数取中两点均值逐位一致）。
-  // 空数组已被上方 early-return 挡 ⇒ quantile 的 NaN-on-empty 契约不可达。
-  const cap = capFactor * quantile(raw, 0.5);
-  let clipped = 0;
-  const weights = raw.map((w) => {
-    if (w > cap) {
-      clipped++;
-      return cap;
-    }
-    return w;
-  });
-  return { weights, clipped };
 }
 
 // Bound 陈述纪律：这些界是 regime-conditional 的，不能写成无条件 estimator 保证。

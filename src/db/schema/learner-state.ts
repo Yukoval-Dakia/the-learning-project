@@ -464,9 +464,10 @@ export const placement_starter_claim = pgTable(
       .on(t.goal_id, t.subject_id)
       .where(sql`${t.status} IN ('queued','running','verifying','retry_scheduled')`),
     // YUK-761 — LIVE CONSUMER: sweepStalePlacementStarterClaims
-    // (src/capabilities/practice/server/placement-starter-recovery.ts), run from the tail of the
-    // question_supply_nightly job. Its three independently capped scans cover pending_dispatch,
-    // retry_scheduled, and queued/running/verifying with `next_reconcile_at <= now() ORDER BY
+    // (src/capabilities/practice/server/placement-starter-recovery.ts), run by the standalone
+    // placement_starter_recovery cron job (YUK-1664). Its three independently capped scans cover
+    // pending_dispatch, retry_scheduled, and queued/running/verifying with
+    // `next_reconcile_at <= now() ORDER BY
     // next_reconcile_at, created_at`: re-drive never-dispatched claims, reap dead retries, and use
     // queue expiry / attempt lease + job liveness to fence lost in-flight deliveries.
     // `next_reconcile_at` doubles as that sweeper's acquire cursor (conditional-UPDATE CAS), which

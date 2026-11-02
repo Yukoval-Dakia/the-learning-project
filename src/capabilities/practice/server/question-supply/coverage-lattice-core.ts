@@ -10,7 +10,7 @@ import type {
   ScanInput,
   SupplyGapKind,
   SupplyRoute,
-} from '@/capabilities/practice/public';
+} from './target-discovery';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

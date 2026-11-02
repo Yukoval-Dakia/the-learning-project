@@ -25,6 +25,7 @@ import { source_asset } from '@/db/schema';
 import type { R2Client } from '@/kernel/object-storage';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { restoreFromArchive } from '@/server/export/archive';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   GROUNDING_GATE_DEFAULT_CLUSTERS,
   GROUNDING_GATE_MAX_CLUSTERS,
@@ -37,17 +38,16 @@ import {
   scoreGroundingBlindPacket,
   scoreGroundingCanaryPacket,
   selectGroundingCandidates,
-} from '@/server/grounding-gate/artifacts';
+} from './grounding-gate/artifacts';
 import {
   GROUNDING_GATE_WINDOW_DAYS,
   type GroundingGateCandidateReport,
   collectGroundingGateCandidates,
-} from '@/server/grounding-gate/candidates';
+} from './grounding-gate/candidates';
 import {
   validateInterventionReviewEvalProviderEnv,
   validateShadowProviderEnv,
-} from '@/server/grounding-gate/preflight';
-import { resolveSubjectProfile } from '@/subjects/profile';
+} from './grounding-gate/preflight';
 
 const BackupManifestSchema = z.object({
   schema_version: z.string().min(1),
@@ -469,7 +469,7 @@ async function runReviewIntervention(options: Map<string, string>): Promise<numb
     throw new Error(`refusing to overwrite intervention review result: ${outPath}`);
   }
   const { InterventionReviewRegressionPacket, runInterventionReviewActualOutputEval } =
-    await import('@/server/grounding-gate/intervention-review-eval');
+    await import('./grounding-gate/intervention-review-eval');
   const packet = InterventionReviewRegressionPacket.parse(
     JSON.parse(new TextDecoder().decode(casesBytes)),
   );

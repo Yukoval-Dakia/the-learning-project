@@ -56,6 +56,19 @@ export const agencyCapability = defineCapability({
           ),
       },
       {
+        // YUK-1664 — an answered probe is an open obligation: reconcile the typed
+        // ledger at answer time instead of waiting for the paid nightly meeting.
+        // The nightly run stays as the catch-up sweep; both callers serialize on
+        // the shared conjecture-reconcile advisory lock.
+        id: 'agency.probe-result-reconcile',
+        version: 1,
+        actions: [PROBE_RESULT_ACTION],
+        load: () =>
+          import('./server/conjecture/reconcile-subscription').then(
+            (m) => m.buildProbeResultReconcileSubscriber,
+          ),
+      },
+      {
         // Trusted canonical judge events advance the Agency-owned settlement aggregate;
         // rejudge events recompute the same diagnostic.
         id: 'agency.intervention-diagnostic-review-settlement',

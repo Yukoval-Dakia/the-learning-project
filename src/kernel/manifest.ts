@@ -59,7 +59,8 @@ export interface ApiRouteDecl {
   deprecation?: ApiDeprecationDecl;
   /**
    * Lazy thunk keeps manifest pure metadata (no runtime deps at import); resolved
-   * only when mounted. No load = ownership metadata, not mounted.
+   * only when mounted. Without a load, the route is composed in server/composed-routes.ts
+   * by operationId; a missing handler there fails app construction.
    */
   load?: () => Promise<RouteHandler>;
 }

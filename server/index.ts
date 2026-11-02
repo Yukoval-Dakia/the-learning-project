@@ -10,6 +10,7 @@ import { warnFlipOrder } from '@/kernel/projection-writer-policy';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
 import { resolveApiPort } from '@/server/env';
 import { buildHonoApp } from './app';
+import { assertComposedRoutesDeclared } from './composed-routes';
 import { loadApiEnv } from './env';
 import { createFrontdoor } from './frontdoor';
 import { installApiShutdown } from './shutdown';
@@ -21,6 +22,7 @@ warnFlipOrder();
 // YUK-345 / YUK-1007：API_PORT 解析单一真源在 src/server/env.ts resolveApiPort
 // （trim → 空→默认 8787 → 非正整数 throw；admin config 读面 runtime 分区同源）。
 const port = resolveApiPort(env.API_PORT);
+assertComposedRoutesDeclared(capabilities);
 const app = buildHonoApp(capabilities);
 
 // YUK-599（v2 §4 / v3 §2.2）— hydrate-before-serve：serve 前把 DB 六表装配水合进
@@ -174,7 +176,7 @@ void (async () => {
   const fetch = env.RW_STATIC_DIR ? await createFrontdoor(app, env.RW_STATIC_DIR) : app.fetch;
   const server = serve({ fetch, port }, (info) => {
     const mounted = capabilities.flatMap((c) =>
-      (c.api?.routes ?? []).filter((r) => r.load).map((r) => `${r.method} ${r.path}`),
+      (c.api?.routes ?? []).map((r) => `${r.method} ${r.path}`),
     );
     console.log(`[rw:api] hono listening on :${info.port}`);
     console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
