@@ -14,11 +14,8 @@ import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
-import {
-  emitArtifactBodyBlocksEditEvent,
-  emitArtifactLifecycleEvent,
-} from '@/capabilities/notes/server/artifacts/mutation-events';
-import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
+import { commitArtifactBody } from '@/capabilities/notes/server/artifact-body-commit';
+import { emitArtifactLifecycleEvent } from '@/capabilities/notes/server/artifacts/mutation-events';
 import {
   type NoteGenerateSourceRow,
   loadNoteGenerateTaskInput,
@@ -33,11 +30,7 @@ import {
   runNoteVerify,
 } from '@/capabilities/notes/server/note-verify-durable-operation';
 import { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
-import type {
-  ArtifactBodyBlocksT,
-  ArtifactHistoryEntryT,
-  NoteVerificationResultT,
-} from '@/core/schema/business';
+import type { ArtifactBodyBlocksT, NoteVerificationResultT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { costUsdToMicroUsd } from '@/kernel/cost';
@@ -468,94 +461,46 @@ async function writeLongNoteRevisionBody(params: {
       referenceArtifacts,
     );
     assertNoteGenerationReferences(bodyBlocks, currentReferences);
-    const rows = await tx
-      .select({
-        version: artifact.version,
-        body_blocks: artifact.body_blocks,
-        history: artifact.history,
-        attrs: artifact.attrs,
-        generation_status: artifact.generation_status,
-        verification_status: artifact.verification_status,
-        archived_at: artifact.archived_at,
-      })
-      .from(artifact)
-      .where(eq(artifact.id, artifactId))
-      .for('update')
-      .limit(1);
-    const before = rows[0];
-    const marker = before ? readNoteLongCheck(before.attrs) : null;
-    if (
-      !before ||
-      before.generation_status !== 'ready' ||
-      before.verification_status !== 'needs_review' ||
-      before.archived_at !== null ||
-      before.version !== claim.baseVersion ||
-      marker?.status !== 'revising' ||
-      marker.base_version !== claim.baseVersion
-    ) {
-      return false;
-    }
-    const now = new Date();
-    const nextVersion = before.version + 1;
     const generatedByRef = aiAgentRef('NoteGenerateTask', result);
-    const attrs = attrsWithNoteLongCheck(before.attrs, {
-      ...marker,
-      revised_version: nextVersion,
-      task_run_id: result.task_run_id ?? null,
-      at: now.toISOString(),
+    const commit = await commitArtifactBody(tx, {
+      artifactId,
+      where: eq(artifact.verification_status, 'needs_review'),
+      plan: (before, next) => {
+        const marker = readNoteLongCheck(before.attrs);
+        if (
+          before.generation_status !== 'ready' ||
+          before.archived_at !== null ||
+          before.version !== claim.baseVersion ||
+          marker?.status !== 'revising' ||
+          marker.base_version !== claim.baseVersion
+        ) {
+          return { skip: 'claim_lost' as const };
+        }
+        const attrs = attrsWithNoteLongCheck(before.attrs, {
+          ...marker,
+          revised_version: next.version,
+          task_run_id: result.task_run_id ?? null,
+          at: next.at.toISOString(),
+        });
+        return {
+          body: bodyBlocks,
+          lifecycle: {
+            op: 'set_verification_status',
+            verificationStatus: 'queued',
+            attrs,
+            generatedBy: generatedByRef,
+          },
+          actor: {
+            kind: 'agent',
+            ref: NOTE_LONG_CHECK_ACTOR_REF,
+            taskRunId: result.task_run_id ?? null,
+            costMicroUsd: costUsdToMicroUsd(result.cost_usd),
+          },
+          optOutMemoryIngestion: true,
+        };
+      },
     });
-    const historyAfter = (
-      Array.isArray(before.history) ? before.history : []
-    ) as ArtifactHistoryEntryT[];
-    const updated = await tx
-      .update(artifact)
-      .set({
-        body_blocks: bodyBlocks as never,
-        verification_status: 'queued',
-        generated_by: { ...generatedByRef } as never,
-        attrs: attrs as never,
-        version: nextVersion,
-        updated_at: now,
-      })
-      .where(
-        and(
-          eq(artifact.id, artifactId),
-          eq(artifact.version, before.version),
-          eq(artifact.verification_status, 'needs_review'),
-        ),
-      )
-      .returning({ id: artifact.id });
-    if (updated.length !== 1) return false;
-
-    await syncBlockRefsForArtifact(tx, artifactId, bodyBlocks);
-    await emitArtifactBodyBlocksEditEvent(tx, {
-      subjectId: artifactId,
-      previousArtifactVersion: before.version,
-      nextArtifactVersion: nextVersion,
-      bodyBlocks,
-      previousBodyBlocks: (before.body_blocks ?? null) as ArtifactBodyBlocksT | null,
-      historyAfter,
-      actorKind: 'agent',
-      actorRef: NOTE_LONG_CHECK_ACTOR_REF,
-      taskRunId: result.task_run_id ?? null,
-      costMicroUsd: costUsdToMicroUsd(result.cost_usd),
-      createdAt: now,
-      optOutMemoryIngestion: true,
-    });
-    await emitArtifactLifecycleEvent(tx, {
-      subjectId: artifactId,
-      op: 'set_verification_status',
-      verificationStatus: 'queued',
-      attrs,
-      generatedBy: generatedByRef,
-      nextVersion,
-      actorKind: 'agent',
-      actorRef: NOTE_LONG_CHECK_ACTOR_REF,
-      taskRunId: result.task_run_id ?? null,
-      costMicroUsd: costUsdToMicroUsd(result.cost_usd),
-      createdAt: now,
-    });
-    return true;
+    return commit.status === 'committed';
   });
 }
 
