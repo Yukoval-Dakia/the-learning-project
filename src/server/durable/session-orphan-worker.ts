@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm';
 import type { Job, PgBoss } from 'pg-boss';
 import type { Db } from '@/db/client';
 import type { JobDecl } from '@/kernel/manifest';
-import { fenceAwareJobHandler } from '@/server/contract-epoch';
+import { fenceAwareJobHandler } from '@/server/migration/contract-epoch/boss-fence';
 import {
   type SessionOrphanBoundaryHook,
   type SessionOrphanFamily,

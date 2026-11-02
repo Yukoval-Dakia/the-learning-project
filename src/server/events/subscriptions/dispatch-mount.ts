@@ -17,7 +17,7 @@ import {
   JOB_RETRY_LIMIT,
   createOrUpdateQueue,
 } from '@/server/boss/queue-config';
-import { fenceAwareJobHandler } from '@/server/contract-epoch';
+import { fenceAwareJobHandler } from '@/server/migration/contract-epoch/boss-fence';
 
 import { loadEventSubscriptionRegistry } from './registry';
 import { runSubscriptionDispatchCycle } from './runtime';

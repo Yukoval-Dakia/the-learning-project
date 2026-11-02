@@ -16,7 +16,8 @@ import {
   createJobQueue,
   createOrUpdateQueue,
 } from '@/server/boss/queue-config';
-import { fenceAwareJobHandler, waitForRunnableEpoch } from '@/server/contract-epoch';
+import { fenceAwareJobHandler } from '@/server/migration/contract-epoch/boss-fence';
+import { waitForRunnableEpoch } from '@/server/migration/contract-epoch/epoch';
 import {
   JUDGE_FAMILY,
   JUDGE_RECONCILE_FAMILY,

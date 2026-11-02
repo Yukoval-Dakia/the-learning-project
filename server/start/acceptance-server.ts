@@ -3,7 +3,7 @@
 // Does not load .env, start workers/listeners for events, recover jobs, or call AI.
 import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
-import { getServerEnv, requireApiInternalToken, resolveApiPort } from '@/server/env';
+import { getServerEnv, requireApiInternalToken, resolveApiPort } from '@/server/config/env';
 import { buildHonoApp } from '../app';
 import { assertComposedRoutesDeclared } from '../composed-routes';
 import { createFrontdoor } from '../frontdoor';

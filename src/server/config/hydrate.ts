@@ -1,6 +1,6 @@
 // YUK-1007 — 配置水合（server-only：唯一允许碰 db 的文件；读面 store.ts 纯内存）。
 //
-// 模式 = src/server/subjects/hydrate.ts 先例：
+// 模式 = src/kernel/read-models/subject-hydration.ts 先例：
 //   - never-throws：表未建（42P01）/ DB down / 坏行 → WARN + 保留 last-good
 //     （首启 = 空快照 = 纯 env 行为，天然回滚位，§5.2）。
 //   - epoch 探测：先 SELECT system_config_epoch；与快照 epoch 相同 → 跳过全量

@@ -2,7 +2,7 @@ import type { PgBoss } from 'pg-boss';
 import type { PlacementVerificationAuthority } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
-import { fenceAwareJobHandler } from '@/server/contract-epoch';
+import { fenceAwareJobHandler } from '@/server/migration/contract-epoch/boss-fence';
 import { buildEchoHandler } from './handlers/echo';
 import { buildPromoteConversationIdleHandler } from './handlers/promote_conversation_idle';
 import { registerMemoryHandlers } from './memory-queues';

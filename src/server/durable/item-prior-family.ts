@@ -34,7 +34,7 @@ import {
 } from '@/core/migration/paid-effect-protocol';
 import type { Db, Tx } from '@/db/client';
 import { readPaidEffectControl } from '@/db/paid-effect-control';
-import { waitForRunnableEpoch } from '@/server/contract-epoch';
+import { waitForRunnableEpoch } from '@/server/migration/contract-epoch/epoch';
 
 export const ITEM_PRIOR_MEMBER = 'item_prior_backfill';
 // The retained manifest declares dependsOn: []; this candidate is only that root.
