@@ -280,7 +280,7 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
   const infraSchedules: AdminConfigScheduleRow[] = [
     {
       ...EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE,
-      owner: 'server/event-subscriptions',
+      owner: 'server/events/subscriptions',
       source: 'server-event-subscriptions',
     },
     ...INFRA_HOUSEKEEPING_SCHEDULES.map((decl) => ({
