@@ -1,5 +1,6 @@
-// Recovery sweeper for stranded placement starter claims, run from the tail of
-// question_supply_nightly.
+// Recovery sweeper for stranded placement starter claims, run by the standalone
+// placement_starter_recovery cron job (moved off the question_supply_nightly tail in YUK-1664
+// so recovery is driven by due obligations, not the nightly timetable).
 // pending_dispatch: re-drive. The claim committed but its separate dispatch never
 // enqueued a quiz_gen job; dispatchPlacementStarterClaimTx re-checks status under FOR UPDATE
 // and CASes pending to queued, so /placement/start and this sweeper cannot both dispatch.
@@ -15,6 +16,7 @@
 // pushes next_reconcile_at forward, including declined and failed paths.
 
 import { and, asc, eq, inArray, lte } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { goal, placement_starter_attempt, placement_starter_claim } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
@@ -107,8 +109,6 @@ export interface PlacementStarterRecoveryResult {
   legErrors: number;
   /** True when PLACEMENT_PROBE_ENABLED is off: the paid re-drive leg did not run; reap legs did. */
   redispatchSuppressed: boolean;
-  /** True when the host caught a top-level sweep failure (see runQuestionSupplyNightly). */
-  errored: boolean;
 }
 
 export interface PlacementStarterRecoveryDeps {
@@ -148,7 +148,6 @@ export function emptyPlacementStarterRecoveryResult(
     claimErrors: 0,
     legErrors: 0,
     redispatchSuppressed: false,
-    errored: false,
     ...overrides,
   };
 }
@@ -827,4 +826,51 @@ async function sweepRetryScheduled(
   } else {
     result.lost += 1;
   }
+}
+
+/**
+ * Due-work probe for the cron handler: one indexed LIMIT 1 read over the same status set the
+ * three leg scans cover. When nothing is due the job returns without touching pg-boss
+ * (getStartedBoss inside the per-claim probes/dispatch), a provider, or the sweeper's own
+ * per-leg scans.
+ */
+async function hasDueClaims(db: Db, now: Date): Promise<boolean> {
+  const rows = await db
+    .select({ id: placement_starter_claim.id })
+    .from(placement_starter_claim)
+    .where(
+      and(
+        inArray(placement_starter_claim.status, [
+          'pending_dispatch',
+          'queued',
+          'running',
+          'verifying',
+          'retry_scheduled',
+        ]),
+        lte(placement_starter_claim.next_reconcile_at, now),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
+/**
+ * Job handler factory for the standalone placement_starter_recovery cron (practice manifest).
+ * The claim is the durable obligation: the job polls `next_reconcile_at <= now` on a short
+ * cadence instead of riding a nightly slot, so a stranded claim recovers within minutes and a
+ * dormant learner's claims still reconcile. A top-level throw propagates to pg-boss retry —
+ * unlike the old nightly host, this job owns no downstream work that a failure could orphan.
+ */
+export function buildPlacementStarterRecoveryHandler(
+  db: Db,
+  deps: PlacementStarterRecoveryDeps = {},
+): (
+  jobs: Job<Record<string, never>>[],
+) => Promise<PlacementStarterRecoveryResult | { skipped: 'no_due_claims' }> {
+  return async () => {
+    if (!(await hasDueClaims(db, deps.now ?? new Date()))) {
+      return { skipped: 'no_due_claims' };
+    }
+    return sweepStalePlacementStarterClaims(db, deps);
+  };
 }
