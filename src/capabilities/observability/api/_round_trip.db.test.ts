@@ -40,7 +40,9 @@ describe('round-trip: export → import → DB state mirrored', () => {
     await resetDb();
   });
 
-  it('preserves knowledge rows and resets event ingest cursor end-to-end', async () => {
+  // @invariant data: a whole-database export → restore keeps knowledge rows and each event's memory-ingest state, so restored rows are not re-sent to paid memory extraction
+  // @fails-if let restore drop knowledge rows or clear/alter event.ingest_at; the knowledge row equality and restored ingest_at === backed-up value assertions fail
+  it('preserves knowledge rows and each event ingest state end-to-end', async () => {
     const db = testDb();
 
     // 1. Seed DB with fixtures
