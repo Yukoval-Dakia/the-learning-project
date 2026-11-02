@@ -25,7 +25,7 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
-import { getCorrectionStatuses } from '@/kernel/events';
+import { eventCorrectionActiveSql, getCorrectionStatuses } from '@/kernel/events';
 import { type ProposalInboxRow, getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { proposalReasonPlainText } from '@/kernel/proposals/reason-text';
 import {
@@ -34,6 +34,7 @@ import {
   validateCompletedProbeProvenance,
   validateIssuedProbeProvenance,
 } from '@/kernel/read-models/completed-probe-provenance';
+import { probeIssuanceIdSql } from '@/kernel/read-models/probe-delivery';
 import {
   type EffectiveProbeResultStatus,
   getEffectiveProbeResultStatuses,
@@ -649,7 +650,7 @@ export async function validateAckableOutcome(
       .from(question)
       .leftJoin(
         assessment_issuance,
-        eq(assessment_issuance.issuance_id, sql<string>`'iss_probe_' || ${question.id}`),
+        eq(assessment_issuance.issuance_id, probeIssuanceIdSql(question.id)),
       )
       .leftJoin(
         question_revision,
@@ -732,26 +733,9 @@ export async function loadOutcomeBrief(
         // Keep this SQL mirror aligned with validateCanonicalProbeResult; the
         // in-loop validation below stays authoritative for provenance.
         canonicalProbeResolutionOutcomeSql(),
-        // Corrected outcomes are excluded before the bounded window. The subquery
-        // ignores structurally invalid correction kinds (notably supersede without
-        // a replacement) just as getCorrectionStatuses does; the in-memory gate
+        // Corrected outcomes are excluded before the bounded window; the in-memory gate
         // additionally validates the full event and recurrence dependencies.
-        sql`COALESCE((
-          SELECT correction.payload->>'correction_kind'
-          FROM ${event} AS correction
-          WHERE correction.action = 'correct'
-            AND correction.subject_kind = 'event'
-            AND correction.subject_id = ${event.id}
-            AND (
-              (correction.payload->>'correction_kind' = 'supersede'
-                AND COALESCE(correction.payload->>'replacement_event_id', '') <> '')
-              OR (correction.payload->>'correction_kind' IN
-                  ('retract', 'mark_wrong', 'restore')
-                AND NOT correction.payload ? 'replacement_event_id')
-            )
-          ORDER BY correction.created_at DESC, correction.id DESC
-          LIMIT 1
-        ), '') NOT IN ('retract', 'mark_wrong', 'supersede')`,
+        eventCorrectionActiveSql(event.id),
         // An acknowledged outcome loses eligibility. Filter before the window cap so a
         // burst of acks cannot evict an older valid outcome; ack existence is binary.
         sql`NOT EXISTS (
@@ -983,7 +967,7 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
     .innerJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
     .innerJoin(
       assessment_issuance,
-      eq(assessment_issuance.issuance_id, sql<string>`'iss_probe_' || ${question.id}`),
+      eq(assessment_issuance.issuance_id, probeIssuanceIdSql(question.id)),
     )
     .innerJoin(
       question_revision,
@@ -1222,8 +1206,9 @@ async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null
           sql`, `,
         )})`,
         // Only the latest correction decides (last-write-wins), so a corrected-then-
-        // restored proposal stays eligible. A malformed latest supersede fails closed;
-        // getCorrectionStatuses below remains the authoritative second gate.
+        // restored proposal stays eligible. Unlike eventCorrectionActiveSql, a malformed
+        // latest correction fails closed; getCorrectionStatuses below remains the
+        // authoritative second gate.
         sql`COALESCE((
           SELECT correction.payload->>'correction_kind'
           FROM ${event} AS correction

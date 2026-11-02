@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lt } from 'drizzle-orm';
+import { type SQLWrapper, and, asc, eq, inArray, lt, sql } from 'drizzle-orm';
 import { CorrectEvent } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
@@ -29,6 +29,31 @@ function rowToCorrectEventInput(row: EventRow): unknown {
     task_run_id: row.task_run_id ?? undefined,
     cost_micro_usd: row.cost_micro_usd ?? undefined,
   };
+}
+
+/**
+ * SQL pre-filter for getCorrectionStatuses' latest-write-wins fold: true when the
+ * target's latest kind-valid correction leaves it active. Readers use it to drop
+ * corrected rows before a LIMIT window; the TS fold (full schema, dispatch_seq
+ * tiebreak) stays authoritative.
+ */
+export function eventCorrectionActiveSql(targetEventId: SQLWrapper) {
+  return sql`COALESCE((
+    SELECT correction.payload->>'correction_kind'
+    FROM ${event} AS correction
+    WHERE correction.action = 'correct'
+      AND correction.subject_kind = 'event'
+      AND correction.subject_id = ${targetEventId}
+      AND (
+        (correction.payload->>'correction_kind' = 'supersede'
+          AND COALESCE(correction.payload->>'replacement_event_id', '') <> '')
+        OR (correction.payload->>'correction_kind' IN
+            ('retract', 'mark_wrong', 'restore')
+          AND NOT correction.payload ? 'replacement_event_id')
+      )
+    ORDER BY correction.created_at DESC, correction.id DESC
+    LIMIT 1
+  ), '') NOT IN ('retract', 'mark_wrong', 'supersede')`;
 }
 
 export async function getCorrectionStatus(
