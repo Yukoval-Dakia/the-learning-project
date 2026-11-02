@@ -10,17 +10,21 @@ import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { event, knowledge, learning_session, practice_stream_item, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import {
+  lockPracticeStreamPartition,
+  lockPracticeStreamScope,
+} from '@/kernel/locks/practice-stream';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
-import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
-import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
-import { readQuestionPace } from './question-pace';
-// 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
-import { type RefillDeps, refillActiveLearningPools } from './question-supply/refill';
+// 取题瞬间 refill（池见底补题）经根 public 按需调用：compose 后 best-effort，flag-off 为 no-op。
+import type { RefillDeps } from '../../public';
+import { type CollectedSignal, collectCandidateSignals } from '../../server/candidate-signals';
 import {
   DEFAULT_SELECTION_POLICY,
   DEFAULT_TEMPERATURE,
   type SelectionPolicyConfig,
-} from './selection-constants';
+} from '../../server/selection-constants';
+import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
+import { readQuestionPace } from './question-pace';
 import {
   type SelectionObservationInput,
   recordSelectionObservation,
@@ -46,7 +50,6 @@ import {
   filterProspectiveStreamQuestions,
 } from './stream-view';
 
-export { streamLocalDate } from './stream-date';
 // 候选收集 / 预算解析已迁 stream-inputs.ts，视图类型与单行投影已迁
 // stream-view.ts；以下 reexport 保持本模块既有导出面不变（既有消费者与测试的
 // import 路径不动）。
@@ -78,12 +81,8 @@ function streamPartitionPredicate(date: string, sessionId?: string | null) {
     : and(eq(practice_stream_item.date, date), isNull(practice_stream_item.session_id));
 }
 
-function streamPartitionLockKey(date: string, sessionId?: string | null): string {
-  return sessionId ? `stream:session:${sessionId}` : `stream:compose:${date}`;
-}
-
 async function lockDailyStreamPartition(db: DbLike, date: string): Promise<void> {
-  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${streamPartitionLockKey(date)}))`);
+  await lockPracticeStreamPartition(db, date);
 }
 
 /** Rows inserted by this call plus the refs that were actually newly inserted. */
@@ -244,7 +243,7 @@ async function prepareCompose(
 ): Promise<PreparedCompose> {
   // Preparation deliberately does not read practice_stream_item. Candidate collection, the
   // optional Mem0 prior, and runTask therefore cannot capture a stale stream snapshot. Callers
-  // probe and finalize under streamPartitionLockKey, the ordering boundary also used by
+  // probe and finalize under lockPracticeStreamPartition, the ordering boundary also used by
   // reRankAfterAnswer and intervention materialization.
   const inputs = await collectComposerInputs(db, date);
   // Injected for tests; production uses composeSoftmaxStream's defaults. Tightening max
@@ -465,9 +464,7 @@ async function materializeKnowledgeScopedSession(
     // Scope identity lock prevents two first opens from creating duplicate sessions. Once the
     // session is known, also take the physical partition lock shared with answer-time rerank so
     // materialization and rerank can never assign rows in the same partition concurrently.
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:scope:${date}:${knowledgeId}`}))`,
-    );
+    await lockPracticeStreamScope(tx, date, knowledgeId);
 
     let session = await findKnowledgeScopedSession(tx, date, knowledgeId);
     if (!session) {
@@ -477,9 +474,7 @@ async function materializeKnowledgeScopedSession(
       session = { id: created.sessionId, status: 'started' };
     }
     const sessionId = session.id;
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext(${streamPartitionLockKey(date, sessionId)}))`,
-    );
+    await lockPracticeStreamPartition(tx, date, sessionId);
 
     const existing = await tx
       .select()
@@ -621,7 +616,7 @@ async function trimStoredPendingItemsToBudget(
   questionMinutes: number,
 ): Promise<StreamItemRow[]> {
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
+    await lockPracticeStreamPartition(tx, date);
     const current = await tx
       .select()
       .from(practice_stream_item)
@@ -701,6 +696,7 @@ export async function getStream(
     // 流一次」的 on-demand 补充（非 per-question / 非每次读），不在 day-one 关键路径。refill 失败
     // 绝不破坏取题（try/catch best-effort，mirror writeObservationsBestEffort 纪律）。
     try {
+      const { refillActiveLearningPools } = await import('../../public');
       await refillActiveLearningPools(db, opts.refillDeps);
     } catch (err) {
       console.error('[stream-store] refillActiveLearningPools failed (post-compose, best-effort)', {
@@ -1009,9 +1005,7 @@ export async function reRankAfterAnswer(
 
   const { added, observations } = await db.transaction(async (tx) => {
     // Same key as every compose path, so rerank cannot race lazy/recompose/nightly.
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext(${streamPartitionLockKey(date, sessionId)}))`,
-    );
+    await lockPracticeStreamPartition(tx, date, sessionId);
 
     const rows = await tx
       .select()

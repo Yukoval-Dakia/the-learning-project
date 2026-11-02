@@ -19,6 +19,10 @@ import {
   SubmissionCreatedSchema,
 } from './api/assessment-contracts';
 import {
+  FixedAnchorBodySchema,
+  FixedAnchorResponseSchema,
+} from './api/calibration-anchors-contracts';
+import {
   AppealResponseSchema,
   AttemptResponseSchema,
   CreateAppealBodySchema,
@@ -75,7 +79,6 @@ import {
   QuizGenTriggerAcceptedSchema,
   QuizGenTriggerBodySchema,
 } from './api/quiz-gen-trigger-contracts';
-import { FixedAnchorBodySchema, FixedAnchorResponseSchema } from './api/review-planning-contracts';
 import { failureLearningManifestPart } from './failure-learning/manifest-part';
 import { gradingManifestPart } from './grading/manifest-part';
 import { placementManifestPart } from './placement/manifest-part';

@@ -7,7 +7,7 @@ import * as schema from '@/db/schema';
 import { knowledge, learning_item, question } from '@/db/schema';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
-import { resetDb } from '../../../../tests/helpers/db';
+import { resetDb } from '../../../../../tests/helpers/db';
 import { composeNightly } from './stream-store';
 
 const DATE = '2026-08-10';

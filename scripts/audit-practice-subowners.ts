@@ -7,7 +7,8 @@
  *   对即失败；基线里已消失的对只提示，不要求同 PR 删除——并行切片不必争改同一个基线文件，
  *   `--write-baseline` 只收紧（删除消失的对），新增对只能在 PR 里手改基线并说明。
  * - 已建子 owner 目录只能经 `<owner>/public.ts` 被目录外引用；根 `manifest.ts` 另可引用
- *   `<owner>/manifest-part.ts`。
+ *   `<owner>/manifest-part.ts`，根 `tasks/index.ts` 另可引用 `<owner>/tasks/*`（task catalog
+ *   只装 TaskSpec，经 public 会把 owner 运行时拉进 catalog 的模块图）。
  */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { relative, resolve, sep } from 'node:path';
@@ -183,7 +184,8 @@ export function scanPracticeSubowners(projectRoot: string): PracticeSubownerScan
       if (toDir && toDir !== fromDir) {
         const allowed =
           to === `${toDir}/public.ts` ||
-          (from === 'manifest.ts' && to === `${toDir}/manifest-part.ts`);
+          (from === 'manifest.ts' && to === `${toDir}/manifest-part.ts`) ||
+          (from === 'tasks/index.ts' && to.startsWith(`${toDir}/tasks/`));
         if (!allowed) publicOnlyViolations.push(`${from} -> ${to}`);
       }
       if (COMPOSITION_FILES.has(from) || TEST_RE.test(to)) continue;

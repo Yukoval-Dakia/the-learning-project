@@ -8,7 +8,7 @@ import { knowledge, learning_session, question } from '@/db/schema';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 
 // G1 (review)：route 永不传 composeDeps，production lazy-compose 走 defaultRunTaskFn →
 //   动态 import('@/server/ai/runner') runTask。mock 该模块证明**真实路由**能命中 LLM 软

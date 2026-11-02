@@ -9,7 +9,7 @@ import {
   ReviewDueResponseSchema,
   ReviewWeeklyQuerySchema,
   ReviewWeeklyResponseSchema,
-} from '../api/review-planning-contracts';
+} from './api/review-planning-contracts';
 import {
   PracticeStreamItemUpdatedResponseSchema,
   PracticeStreamQuerySchema,
@@ -17,7 +17,7 @@ import {
   PracticeStreamResponseSchema,
   RecomposePracticeStreamBodySchema,
   UpdatePracticeStreamItemBodySchema,
-} from '../api/stream-contracts';
+} from './api/stream-contracts';
 
 export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'description'> = {
   subscriptions: {
@@ -27,7 +27,7 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
         version: 1,
         actions: [...LEARNING_EVENT_ACTIONS],
         load: () =>
-          import('../server/learner-return-wake').then((m) => m.buildLearnerReturnWakeSubscriber),
+          import('./server/learner-return-wake').then((m) => m.buildLearnerReturnWakeSubscriber),
       },
     ],
   },
@@ -41,7 +41,7 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
         responses: { 200: ReviewDueResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         pagination: 'none',
-        load: () => import('../api/due').then((m) => m.GET),
+        load: () => import('./api/due').then((m) => m.GET),
       },
       {
         method: 'POST',
@@ -50,7 +50,7 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
         request: { body: ReviewAdviceBodySchema },
         responses: { 200: ReviewAdviceResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
-        load: () => import('../api/advice').then((m) => m.POST),
+        load: () => import('./api/advice').then((m) => m.POST),
       },
       {
         method: 'GET',
@@ -59,7 +59,7 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
         request: { query: ReviewWeeklyQuerySchema },
         responses: { 200: ReviewWeeklyResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
-        load: () => import('../api/weekly').then((m) => m.GET),
+        load: () => import('./api/weekly').then((m) => m.GET),
       },
       {
         // M2 流编排器（YUK-316）。
@@ -70,7 +70,7 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
         responses: { 200: PracticeStreamResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         pagination: 'none',
-        load: () => import('../api/stream').then((m) => m.GET),
+        load: () => import('./api/stream').then((m) => m.GET),
       },
       {
         method: 'POST',
@@ -79,7 +79,7 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
         request: { body: RecomposePracticeStreamBodySchema, bodyRequired: false },
         responses: { 200: PracticeStreamRecomposedResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
-        load: () => import('../api/stream').then((m) => m.POST),
+        load: () => import('./api/stream').then((m) => m.POST),
       },
       {
         method: 'PATCH',
@@ -88,7 +88,7 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
         request: { params: ApiIdParamsSchema, body: UpdatePracticeStreamItemBodySchema },
         responses: { 200: PracticeStreamItemUpdatedResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
-        load: () => import('../api/stream').then((m) => m.PATCH),
+        load: () => import('./api/stream').then((m) => m.PATCH),
       },
     ],
   },
@@ -111,7 +111,7 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
         eligibility: nightlyEligibility('deterministic', { usesModel: true }),
         queue: 'llm',
         load: () =>
-          import('../jobs/practice_stream_compose_nightly').then(
+          import('./jobs/practice_stream_compose_nightly').then(
             (m) => m.buildStreamComposeNightlyHandler,
           ),
       },
@@ -119,7 +119,7 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
         name: 'learner_return_wake',
         queue: 'llm',
         load: () =>
-          import('../server/learner-return-wake').then((m) => m.buildLearnerReturnWakeHandler),
+          import('./server/learner-return-wake').then((m) => m.buildLearnerReturnWakeHandler),
       },
     ],
   },
@@ -127,12 +127,11 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
     tools: [
       {
         name: 'get_question_context',
-        load: () =>
-          import('../server/tools/question-context').then((m) => m.getQuestionContextTool),
+        load: () => import('./tools/question-context').then((m) => m.getQuestionContextTool),
       },
       {
         name: 'get_review_due',
-        load: () => import('../server/tools/question-context').then((m) => m.getReviewDueTool),
+        load: () => import('./tools/question-context').then((m) => m.getReviewDueTool),
       },
     ],
   },

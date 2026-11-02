@@ -13,10 +13,9 @@ import type {
 } from '@/kernel/manifest';
 import { LEARNING_EVENT_ACTIONS } from '@/kernel/nightly-eligibility';
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
-import { runQuestionSupplyNightly } from '../jobs/question_supply_nightly';
-import { loadActivityTier } from './activity-tier';
-import { getPracticeBoss } from './queue-runtime';
-import { streamLocalDate } from './stream-date';
+import { streamLocalDate } from '@/kernel/stream-date';
+import { loadActivityTier } from '../../server/activity-tier';
+import { getPracticeBoss } from '../../server/queue-runtime';
 import { composeNightly } from './stream-store';
 
 export const LEARNER_RETURN_WAKE_QUEUE = 'learner_return_wake';
@@ -65,6 +64,7 @@ export function buildLearnerReturnWakeHandler(
     const added = await composeNightly(db, streamLocalDate(row.created_at), {
       policy: { policy: 'legacy' },
     });
+    const { runQuestionSupplyNightly } = await import('../../public');
     const supply = await runQuestionSupplyNightly(db, { returnStock: true });
     const policy = await readEventDerivationPolicy(db, eventId);
     if (policy !== 'allow') {

@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-
+import { getStream } from '@/capabilities/practice/scheduling/server/stream-store';
 import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
 import { getFrozenPaperDetail } from '@/capabilities/practice/server/assessment/paper-detail';
 import { PaperAssessmentBinding } from '@/capabilities/practice/server/assessment/paper-issuance';
@@ -13,7 +13,6 @@ import {
   type EvaluateSubmissionRequest,
   evaluateSubmission,
 } from '@/capabilities/practice/server/judge/evaluate-submission';
-import { getStream, streamLocalDate } from '@/capabilities/practice/server/stream-store';
 import type { ModelUnitOutcomeT } from '@/core/schema/assessment';
 import {
   artifact,
@@ -35,6 +34,7 @@ import {
   normalizeQuestionRowToContract,
 } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import { streamLocalDate } from '@/kernel/stream-date';
 import { seedHistoricalAssessmentIssuance } from '../../../tests/fixtures/historical-assessment-issuance';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { activateEvaluation } from './activate';
