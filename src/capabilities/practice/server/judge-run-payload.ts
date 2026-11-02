@@ -93,7 +93,7 @@ export type FrozenAbilityGlobalByKnowledgeId = z.infer<
  * difficulty，判分与调度就打在与学习者当时所见**不同**的题面上（判词错、FSRS 脏）。
  *
  * 为什么不用 version 锚：`question.version` 只在 structured 编辑路径自增
- * （practice/server/proposal-appliers.ts 的乐观写），纯 prompt_md / reference_md 编辑
+ * （practice/question-bank/server/proposal-appliers.ts 的乐观写），纯 prompt_md / reference_md 编辑
  * 不动它——拿它当 staleness 锚会**漏检**恰好是本 finding 说的那类编辑。`updated_at`
  * 覆盖面更广但同样不是每条写路径的硬契约。故取**内容冻结**：把判分 + 调度真正读的
  * 字段整体冻进 payload，worker 按冻结值判分，与同步面（单次读行）语义一致。

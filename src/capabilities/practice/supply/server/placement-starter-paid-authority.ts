@@ -14,7 +14,7 @@ import {
 } from '@/db/schema';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import type { PlacementVerificationAuthority, SupplyTraceV1T } from '@/kernel/supply-contracts';
-import { writeVerifyDispatchIntent } from '../../server/verify-dispatch-outbox';
+import { writeVerifyDispatchIntent } from '../../question-bank/public';
 import {
   type PlacementAttemptAuthority,
   type PlacementCostComponentKind,

@@ -10,7 +10,7 @@ import { parseTaskOutput } from './parse-output';
 // promotes. Subject-neutral inline prompt; maxIterations 1, no tools.
 
 // The prompt declares exactly clarity / unique_answer / distractor_power? / summary.
-// The consumer (runTeachingQualityCheck in practice/server/quiz/verify-framework.ts)
+// The consumer (runTeachingQualityCheck in practice/question-bank/server/quiz/verify-framework.ts)
 // degrades a missing mandatory axis to a non-blocking 'unsupported' verdict rather
 // than trusting a partial payload.
 const TeachingQualityAxisSchema = z.object({

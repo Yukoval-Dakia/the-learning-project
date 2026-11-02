@@ -16,7 +16,7 @@ import { knowledge } from '@/db/schema';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { answerClassCompatible, questionKindToSkillKind } from '@/subjects/question-kind';
-import { poolFetch } from './pool-fetch';
+import { poolFetch } from '../../question-bank/public';
 
 // The downstream production steps, in default order. Step 1 (existing pool) is the
 // synchronous query below and is NOT part of this enum (it never enqueues).

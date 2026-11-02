@@ -154,7 +154,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'knowledge',
-    file: 'src/capabilities/practice/jobs/embed_backfill.ts',
+    file: 'src/capabilities/practice/question-bank/jobs/embed_backfill.ts',
     marker: '.update(knowledge)',
     role: 'maintenance',
     note: 'Embedding maintenance writes derived search columns only.',
@@ -355,7 +355,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'item_calibration',
-    file: 'src/capabilities/practice/server/fixed-anchor.ts',
+    file: 'src/capabilities/practice/question-bank/server/fixed-anchor.ts',
     marker: '.insert(item_calibration)',
     role: 'off-path-writer',
     note: 'fixed-anchor upsert (INSERT + onConflictDoUpdate; OFF-path sole writer — 方案 A keeps it imperative).',

@@ -5,15 +5,18 @@ import {
   causeCategoryProposeTaskSpec,
   variantGenTaskSpec,
 } from '../failure-learning/public';
+import {
+  bankConditionVerifyTaskSpec,
+  bankRequirementInterpretTaskSpec,
+} from '../question-bank/tasks/bank-search-semantic';
+import { itemPriorLlasaTaskSpec, itemPriorTaskSpec } from '../question-bank/tasks/item-prior';
+import { questionAdmissionSolveTaskSpec } from '../question-bank/tasks/question-admission-solve';
+import { quizVerifyTaskSpec } from '../question-bank/tasks/quiz-verify';
+import { variantVerifyTaskSpec } from '../question-bank/tasks/variant-verify';
 import { selectionOrchestratorTaskSpec } from '../scheduling/tasks/selection-orchestrator';
 import { sessionSummaryTaskSpec } from '../session/tasks/session-summary';
 import { assessmentRubricTaskSpec } from './assessment-rubric';
 import { assessmentRuleTaskSpec } from './assessment-rule';
-import {
-  bankConditionVerifyTaskSpec,
-  bankRequirementInterpretTaskSpec,
-} from './bank-search-semantic';
-import { itemPriorLlasaTaskSpec, itemPriorTaskSpec } from './item-prior';
 import { jevScoringDecisionTaskSpec } from './jev-typed';
 import {
   multimodalDirectJudgeTaskSpec,
@@ -21,17 +24,14 @@ import {
   stepsJudgeTaskSpec,
   unitDimensionFallbackTaskSpec,
 } from './judges';
-import { questionAdmissionSolveTaskSpec } from './question-admission-solve';
 import { questionAuthorTaskSpec } from './question-author';
 import { quizGenTaskSpec } from './quiz-generation';
 import { quizPlanTaskSpec } from './quiz-planning';
-import { quizVerifyTaskSpec } from './quiz-verify';
 import { solutionGenerateTaskSpec, solutionGenerateVisionTaskSpec } from './solution-generation';
 import { sourceGroundingVerifyTaskSpec } from './source-grounding-verify';
 import { sourcingTaskSpec } from './sourcing';
 import { supplyPlanTaskSpec } from './supply-planning';
 import { teachingQualityTaskSpec } from './teaching-quality';
-import { variantVerifyTaskSpec } from './variant-verify';
 
 export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
   BankRequirementInterpretTask: bankRequirementInterpretTaskSpec,

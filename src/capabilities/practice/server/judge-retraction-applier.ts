@@ -21,11 +21,9 @@ import {
   requiredString,
   writeProposalRateEvent,
 } from '@/kernel/proposals/applier-helpers';
-import {
-  type PracticeApplierOpts,
-  type ProposalInboxRow,
-  recordPracticeProposalDecision as recordProposalDecisionSignal,
-} from './proposal-appliers';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import { recordProposalDecisionSignal } from '@/kernel/proposals/signals';
+import type { PracticeApplierOpts } from '../question-bank/public';
 
 // ====================================================================
 // judge_retraction accept applier（判分纠错提案的真身）

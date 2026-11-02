@@ -9,12 +9,12 @@ import {
   type ItemPriorPreparedWork,
   executeItemPriorRep,
   prepareItemPriorWork,
-} from '@/capabilities/practice/server/item-prior-durable-operation';
+} from '@/capabilities/practice/question-bank/server/item-prior-durable-operation';
 import {
   ItemPriorPaidEffectAdapter,
   itemPriorPaidEffectInput,
   itemPriorPaidEffectRevision,
-} from '@/capabilities/practice/server/item-prior-paid-effect-adapter';
+} from '@/capabilities/practice/question-bank/server/item-prior-paid-effect-adapter';
 import { readPaidEffect } from '@/db/paid-effect-store';
 import { paid_effect, question } from '@/db/schema';
 import { resetDb, testDb } from '../helpers/db';

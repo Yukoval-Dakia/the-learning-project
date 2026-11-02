@@ -11,10 +11,7 @@ import type {
 import { requireLaterProposalCorrection, toProposalLifecycleResult } from '@/kernel/proposals';
 import { asPlainRecord } from '@/kernel/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
-import {
-  type PracticeApplierOpts,
-  acceptCauseCategoryProposal,
-} from '../../server/proposal-appliers';
+import { type PracticeApplierOpts, acceptCauseCategoryProposal } from '../../question-bank/public';
 
 function inboxView(input: { proposal: ProposalAcceptInput['proposal'] }): ProposalInboxRow {
   const { proposal } = input;

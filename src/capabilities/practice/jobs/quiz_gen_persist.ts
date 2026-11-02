@@ -21,18 +21,18 @@ import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/a
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { type SupplyTraceV1T, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
-import { materializeGeneratedQuestionParts } from '../server/question-parts';
 import {
   type ExactQuestionDuplicateKnowledgeMerge,
   canonicalQuestionContentHash,
   combineExactDuplicateKnowledgeIds,
+  materializeGeneratedQuestionParts,
   mergeExactQuestionDuplicateKnowledgeIds,
-} from '../server/quiz/content-fingerprint';
+  writeVerifyDispatchIntent,
+} from '../question-bank/public';
 import {
   embedMaterialInPrompt,
   synthesizeMaterialSourceRefs,
 } from '../server/quiz/quiz-gen-material';
-import { writeVerifyDispatchIntent } from '../server/verify-dispatch-outbox';
 import {
   assertPlacementAttemptFence,
   authorizePlacementQuestion as authorizePlacementQuestionTx,

@@ -391,16 +391,16 @@ export const PROVIDER_LANES = [
     },
     callers: [
       {
-        path: 'src/capabilities/practice/jobs/embed_backfill.ts',
+        path: 'src/capabilities/practice/question-bank/jobs/embed_backfill.ts',
         imports: ['@/server/ai/embed'],
       },
       {
-        path: 'src/capabilities/practice/server/quiz/matcher.ts',
+        path: 'src/capabilities/practice/question-bank/server/quiz/matcher.ts',
         imports: ['@/server/ai/embed'],
       },
       {
         // ADR-0072 LIGHT — search_bank 查询嵌入：与池向量同一 seam（matcher §190 铁律）。
-        path: 'src/capabilities/practice/server/tools/bank-search.ts',
+        path: 'src/capabilities/practice/question-bank/tools/bank-search.ts',
         imports: ['@/server/ai/embed'],
       },
       {
@@ -418,10 +418,10 @@ export const PROVIDER_LANES = [
     ],
     directImporters: [
       { path: 'src/capabilities/ingestion/server/knowledge-namer.ts', kind: 'runtime' },
-      { path: 'src/capabilities/practice/jobs/embed_backfill.ts', kind: 'runtime' },
-      { path: 'src/capabilities/practice/server/quiz/matcher.ts', kind: 'runtime' },
+      { path: 'src/capabilities/practice/question-bank/jobs/embed_backfill.ts', kind: 'runtime' },
+      { path: 'src/capabilities/practice/question-bank/server/quiz/matcher.ts', kind: 'runtime' },
       // ADR-0072 LIGHT — search_bank 向量通道的查询嵌入（默认 embedFn）。
-      { path: 'src/capabilities/practice/server/tools/bank-search.ts', kind: 'runtime' },
+      { path: 'src/capabilities/practice/question-bank/tools/bank-search.ts', kind: 'runtime' },
     ],
     roles: ['api', 'worker'],
     provider: 'DashScope OpenAI-compatible endpoint; MEM0_EMBEDDING_BASE_URL is env-configurable',
@@ -478,7 +478,7 @@ export const PROVIDER_LANES = [
           contains: ['EMBED_MAX_BATCH = 10'],
         },
         {
-          path: 'src/capabilities/practice/jobs/embed_backfill.ts',
+          path: 'src/capabilities/practice/question-bank/jobs/embed_backfill.ts',
           calls: ['runEmbedBackfill'],
           contains: ['operationAnchor: jobs[0]?.id', 'runEmbedBackfill(db, 100'],
         },

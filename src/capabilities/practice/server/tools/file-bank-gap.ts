@@ -44,17 +44,17 @@ import {
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 import {
+  BankGapRequestSchema,
+  type BankSearchScope,
+  verifyBankGapEvidenceMac,
+} from '../../question-bank/public';
+import {
   type DifficultyBand,
   type DispatchResult,
   type QuestionSupplyTarget,
   dispatchSupplyTarget,
   targetFingerprint,
 } from '../../supply/public';
-import {
-  BankGapRequestSchema,
-  type BankSearchScope,
-  verifyBankGapEvidenceMac,
-} from './bank-search';
 
 // ── 输入 / 输出契约 ──────────────────────────────────────────────────────────
 

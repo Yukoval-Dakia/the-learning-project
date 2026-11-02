@@ -20,7 +20,7 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import type { EventSubscriptionDelivery, EventSubscriptionOutcome } from '@/kernel/manifest';
-import { runSystemServingRecheck } from './serving-actions';
+import { runSystemServingRecheck } from '../question-bank/public';
 
 /**
  * Cheap pre-filter: a publish that cannot have produced admission_failed or

@@ -29,10 +29,7 @@ import type { EventSubscriptionDelivery, EventSubscriptionOutcome } from '@/kern
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import { SupplyTraceV1, type SupplyTraceV1T } from '@/kernel/supply-contracts';
 import { answerClassCompatible } from '@/subjects/question-kind';
-import {
-  type EnqueueVerifyFn,
-  dispatchPendingVerifyIntents,
-} from '../../server/verify-dispatch-outbox';
+import { type EnqueueVerifyFn, dispatchPendingVerifyIntents } from '../../question-bank/public';
 import {
   dispatchSourceVerifyIntents,
   readCandidateSubmitReceipt,

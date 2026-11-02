@@ -48,8 +48,7 @@ import { newId } from '@/core/ids';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { learning_item } from '@/db/schema';
-import { type Demand, demandToSupplyTarget } from '../../server/quiz/matcher';
-import { poolFetch } from '../../server/quiz/pool-fetch';
+import { type Demand, demandToSupplyTarget, poolFetch } from '../../question-bank/public';
 import { type DispatchDeps, type DispatchResult, dispatchSupplyTarget } from './dispatcher';
 import type { QuestionSupplyTarget } from './target-discovery';
 
