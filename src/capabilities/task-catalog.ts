@@ -29,5 +29,6 @@ export const taskCatalog = composeTaskCatalog(
   // YUK-1496: AI rubric 判定任务（C2 model grading）→ 56.
   // YUK-1445: +QuestionAdmissionSolveTask（入库准入双盲解题）→ 57.
   // YUK-1522: +IngestionAgentTask（R8 录入 agent 本体）→ 58.
-  58,
+  // YUK-1448: +BankRequirementInterpretTask +BankConditionVerifyTask → 60.
+  60,
 );
