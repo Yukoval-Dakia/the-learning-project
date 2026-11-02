@@ -1,5 +1,5 @@
-// KC-keyed cosine retriever over `knowledge.embedding`, used by match-or-propose
-// tagging.
+// KC-keyed cosine retriever over `knowledge.embedding` and the match cutoff used by
+// match-or-propose tagging.
 //
 // `<=>` is pgvector cosine distance (0 nearest, 2 farthest). Archived and unembedded
 // rows are excluded. This is a pure global top-K read: effective domain is derived in
@@ -15,10 +15,32 @@
 // trail can reconcile which revision produced each match.
 
 import { and, eq, isNull, sql } from 'drizzle-orm';
+import { getConfig } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { embedCurrencyPredicate } from '@/db/embed-currency';
 import { knowledge } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
+
+/**
+ * Cosine distance ceiling for a match. The query embeds the full question while KCs
+ * embed name and domain, so distances run higher than a symmetric compare; the quiz
+ * matcher's 0.35 was too tight here and matched nothing in the probe. 0.55 sits inside
+ * the correct band but is still untuned on a real corpus. Too tight creates duplicates
+ * (dedup catches them); too loose is a wrong match, which is rarer.
+ */
+const DEFAULT_MATCH_THRESHOLD = 0.55;
+
+/** DB, then env, then the default. Non-finite values fall back. */
+export function matchThreshold(): number {
+  const v = getConfig('TAGGING_MATCH_THRESHOLD');
+  return typeof v === 'number' && Number.isFinite(v) ? v : DEFAULT_MATCH_THRESHOLD;
+}
+
+/**
+ * Global retrieval window before the subject filter runs, so an in-domain KC ranked
+ * past it is invisible. Shared with the calibration replay.
+ */
+export const RETRIEVAL_TOP_K = 10;
 
 export interface KnowledgeSimilarityCandidate {
   knowledge_id: string;

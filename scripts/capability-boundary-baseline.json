@@ -57,7 +57,8 @@
     "YUK-1571-intervention-author-port": "prepare_intervention does not import practice. The preparation attempt sequence (guards, subject profile, paid author stage, review stage, deterministic check) lives in src/kernel/records/intervention-package-author.ts. Practice supplies the two paid stages and the worker binds them before the job mounts. agency -> practice 3 -> 2. Composed with the merged note-section cut (copilot -> notes 1, cross 18): cross-capability value 18 -> 17. Diagnostic materialize and retire stay agency -> practice. Nontrivial SCC stays empty.",
     "YUK-1571-dreaming-note-refresh": "Signal, not a shared command: dreaming_nightly no longer calls notes enqueueDreamingNoteRefine. A new note_update artifact in the scan becomes experimental:dreaming_note_refresh; notes.dreaming-note-refresh subscribes after commit and enqueues the existing dreaming refine. agency -> notes 2 -> 1 (proposal-accept handoff follows in same PR). The public export of enqueueDreamingNoteRefine is deleted. Historical scans are not replayed.",
     "YUK-1571-undo-ai-change": "The undo route returns HTTP 200 even when the note was not restored. skipped:version_conflict means the note is unchanged; skipped:already_undone is a real no-op. That judgment now lives in src/ui/lib/undo-ai-change.ts. The note reader, the workbench client, and the Start workbench client call it directly. The shell re-export from notes/ui-public is deleted. shell -> notes 1 -> 0. Composed with main cd9dad17 (dreaming note refresh already cut agency -> notes to 1, cross 16): cross-capability value 16 -> 15. Nontrivial SCC stays empty. Notes keeps the undo route.",
-    "YUK-1571-learning-intent-note-handoff": "agency -> notes proposal-accept cluster retired: createLearningIntentNote and post-accept dispatchNoteGeneration now live in src/kernel/records/{learning-intent-note-birth,note-handoff-protocol}. Notes keeps boss-port wiring and recovery floor as live consumers (no pass-through re-exports). registerNoteHandoffBossResolver wires getStartedBoss at server/app.ts composition root. agency -> notes 1 -> 0 after main 45e197a7 (dreaming refresh + shell undo-ai-change cuts). cross-capability value 15 -> 14."
+    "YUK-1571-learning-intent-note-handoff": "agency -> notes proposal-accept cluster retired: createLearningIntentNote and post-accept dispatchNoteGeneration now live in src/kernel/records/{learning-intent-note-birth,note-handoff-protocol}. Notes keeps boss-port wiring and recovery floor as live consumers (no pass-through re-exports). registerNoteHandoffBossResolver wires getStartedBoss at server/app.ts composition root. agency -> notes 1 -> 0 after main 45e197a7 (dreaming refresh + shell undo-ai-change cuts). cross-capability value 15 -> 14.",
+    "YUK-1571-ingestion-knowledge-tag": "ingestion -> knowledge tagging commands retired: match-or-propose lives in src/kernel/records/knowledge-tag.ts, cosine retrieval and the match threshold in src/kernel/read-models/knowledge-similarity.ts, and propose-new id preparation in src/kernel/records/knowledge-node-materialization.ts (knowledge proposals consumes the same function). The tagger takes the embedder as an explicit dependency; ingestion binds DashScope in server/knowledge-namer.ts. ingestion -> knowledge 2 -> 0; cross-capability value 13 -> 11; the embed edge moves from knowledge -> ai (7 -> 6) to ingestion -> ai (12 -> 13), capability -> server total unchanged at 149."
   },
   "changes": [
     {
@@ -7237,6 +7238,35 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "ingestion -> knowledge",
+      "date": "2026-11-02",
+      "from": 2,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> ai",
+      "date": "2026-11-02",
+      "from": 7,
+      "to": 6,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> ai",
+      "date": "2026-11-02",
+      "from": 12,
+      "to": 13,
+      "direction": "increase",
+      "reason": "Match-or-propose tagging moves to the kernel, which cannot import server/ai, so the caller binds the DashScope embedder. The single embed edge moves from knowledge/server/tag-knowledge.ts to ingestion/server/knowledge-namer.ts; knowledge -> ai drops 7 -> 6 in the same change, total 149 -> 149. No forwarding layer or counting scope change.",
+      "exitCondition": "Retire when embedding binding moves to a kernel-approved port or tagging gains a server-side owner through a separately scoped approved change; do not add facades to move counts.",
+      "justification": {
+        "kind": "offset"
+      }
     }
   ],
   "edgeRecords": [
@@ -11415,6 +11445,51 @@
       "issue": "YUK-1570",
       "owns": "Server AI owns binding the logged task runner to the host Db. Practice owns reference-solution input construction, output parsing, logged skips, guarded rubric/reference writes and same-transaction publication; runner construction timing is unchanged.",
       "date": "2026-11-01"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/auto-enroll.ts",
+      "module": "src/kernel/records/knowledge-tag.ts",
+      "kind": "value",
+      "symbols": ["NameKcFn", "tagKnowledge"],
+      "issue": "YUK-1571",
+      "owns": "Kernel knowledge-tag owns match-or-propose tagging: similarity match or a pending child KC with its audit events, event-first creation and projection in one transaction. Ingestion supplies the embedder and the naming seam; the decision and writes are unchanged.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/image-candidate-accept.ts",
+      "module": "src/kernel/records/knowledge-tag.ts",
+      "kind": "value",
+      "symbols": ["tagKnowledge"],
+      "issue": "YUK-1571",
+      "owns": "Kernel knowledge-tag owns match-or-propose tagging: similarity match or a pending child KC with its audit events, event-first creation and projection in one transaction. Ingestion supplies the embedder and the naming seam; the decision and writes are unchanged.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/knowledge-namer.ts",
+      "module": "src/server/ai/embed.ts",
+      "kind": "value",
+      "symbols": [
+        "EMBED_MODEL",
+        "EmbedProviderAttemptOptions",
+        "embedText",
+        "isDirectProviderAttemptInvariantError"
+      ],
+      "issue": "YUK-1571",
+      "owns": "Server AI owns the DashScope embed wire and its provider-attempt lifecycle errors. Ingestion binds that embedder for kernel tagging with the caller's provider attempt, exactly as the knowledge default did; no new provider call.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/config-effective-facts.ts",
+      "module": "src/kernel/read-models/knowledge-similarity.ts",
+      "kind": "value",
+      "symbols": ["matchThreshold"],
+      "issue": "YUK-1571",
+      "owns": "Kernel knowledge-similarity owns KC cosine retrieval and the TAGGING_MATCH_THRESHOLD read; knowledge reports the effective value unchanged.",
+      "date": "2026-11-02"
     }
   ],
   "sourceSizeRecords": [
@@ -12597,10 +12672,10 @@
         "copilot -> proposals": 1,
         "copilot -> revert": 1,
         "copilot -> session": 5,
-        "ingestion -> ai": 12,
+        "ingestion -> ai": 13,
         "ingestion -> boss": 6,
         "ingestion -> projections": 2,
-        "knowledge -> ai": 7,
+        "knowledge -> ai": 6,
         "knowledge -> boss": 3,
         "knowledge -> fsrs": 1,
         "knowledge -> memory": 2,
@@ -12625,13 +12700,12 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 13,
+      "total": 11,
       "byOwnerPair": {
         "agency -> notes": 0,
         "agency -> practice": 2,
         "copilot -> notes": 1,
         "copilot -> practice": 1,
-        "ingestion -> knowledge": 2,
         "observability -> agency": 1,
         "observability -> practice": 1,
         "shell -> agency": 1,

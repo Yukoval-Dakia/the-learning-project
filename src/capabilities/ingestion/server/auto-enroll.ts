@@ -11,7 +11,11 @@ import {
 } from '@/capabilities/ingestion/server/cold-start-bridge';
 import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
 import { figuresForQuestion } from '@/capabilities/ingestion/server/figure_attach';
-import { createKnowledgeNamer } from '@/capabilities/ingestion/server/knowledge-namer';
+import {
+  createKnowledgeNamer,
+  createKnowledgeTagEmbedder,
+  rethrowKnowledgeTagInvariant,
+} from '@/capabilities/ingestion/server/knowledge-namer';
 import {
   MistakeEnrollTaskError,
   type RunMistakeEnrollTaskParams,
@@ -31,11 +35,6 @@ import {
   observeEnabled,
   studentAnswerGradingEnabled,
 } from '@/capabilities/ingestion/server/workflow-judge-config';
-import {
-  type NameKcFn,
-  isTagKnowledgeInvariantError,
-  tagKnowledge,
-} from '@/capabilities/knowledge/public';
 import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
 import {
   type StructuredQuestionT,
@@ -61,6 +60,7 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subje
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
+import { type NameKcFn, tagKnowledge } from '@/kernel/records/knowledge-tag';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 import { getKnownSubjects } from '@/subjects/profile';
 import { enrollNativeCapture } from './assessment-capture';
@@ -91,7 +91,7 @@ export interface RunAutoEnrollResult {
 export interface RunAutoEnrollParams {
   db: Db;
   sessionId: string;
-  providerAttempt?: Parameters<typeof tagKnowledge>[0]['providerAttempt'];
+  providerAttempt?: Parameters<typeof createKnowledgeTagEmbedder>[0];
   /** Restrict TaggingTask's candidate grid to one subject. */
   subjectId?: string;
   /** Test seam for observe-mode TaggingTask; enroll mode uses tagKnowledgeFn. */
@@ -266,7 +266,7 @@ export async function runAutoEnrollForSession(
         const tag = await tagKnowledgeFn(
           {
             db: params.db,
-            providerAttempt: params.providerAttempt,
+            embedder: createKnowledgeTagEmbedder(params.providerAttempt),
             nameKcFn:
               bridgeNameKc ??
               createKnowledgeNamer({
@@ -291,7 +291,7 @@ export async function runAutoEnrollForSession(
         );
         tagging = synthesizeTaggingOutput(tag.knowledge_ids);
       } catch (err) {
-        if (isTagKnowledgeInvariantError(err)) throw err;
+        rethrowKnowledgeTagInvariant(err);
         // Tagging failures must never auto-enroll, including plain errors from a missing
         // seed root. Swallow and log every non-invariant throw: aborting the batch would
         // retry forever, while human review is the backstop for anything not enrolled.
