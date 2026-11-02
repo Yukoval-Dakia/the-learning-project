@@ -1,1 +1,1 @@
-export { getEffectiveDomain } from '@/capabilities/knowledge/public';
+export { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';

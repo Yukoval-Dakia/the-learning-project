@@ -1,6 +1,6 @@
-import type { FailureAttempt } from '@/capabilities/knowledge/public';
-import type { EffectiveTruth } from '@/capabilities/practice/public';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
+import type { EffectiveTruth } from '@/kernel/events';
+import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 
 export type EffectiveFailureCause =
   | {
