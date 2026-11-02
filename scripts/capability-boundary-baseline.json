@@ -57,7 +57,8 @@
     "YUK-1571-intervention-author-port": "prepare_intervention does not import practice. The preparation attempt sequence (guards, subject profile, paid author stage, review stage, deterministic check) lives in src/kernel/records/intervention-package-author.ts. Practice supplies the two paid stages and the worker binds them before the job mounts. agency -> practice 3 -> 2. Composed with the merged note-section cut (copilot -> notes 1, cross 18): cross-capability value 18 -> 17. Diagnostic materialize and retire stay agency -> practice. Nontrivial SCC stays empty.",
     "YUK-1571-dreaming-note-refresh": "Signal, not a shared command: dreaming_nightly no longer calls notes enqueueDreamingNoteRefine. A new note_update artifact in the scan becomes experimental:dreaming_note_refresh; notes.dreaming-note-refresh subscribes after commit and enqueues the existing dreaming refine. agency -> notes 2 -> 1 (proposal-accept handoff follows in same PR). The public export of enqueueDreamingNoteRefine is deleted. Historical scans are not replayed.",
     "YUK-1571-undo-ai-change": "The undo route returns HTTP 200 even when the note was not restored. skipped:version_conflict means the note is unchanged; skipped:already_undone is a real no-op. That judgment now lives in src/ui/lib/undo-ai-change.ts. The note reader, the workbench client, and the Start workbench client call it directly. The shell re-export from notes/ui-public is deleted. shell -> notes 1 -> 0. Composed with main cd9dad17 (dreaming note refresh already cut agency -> notes to 1, cross 16): cross-capability value 16 -> 15. Nontrivial SCC stays empty. Notes keeps the undo route.",
-    "YUK-1571-learning-intent-note-handoff": "agency -> notes proposal-accept cluster retired: createLearningIntentNote and post-accept dispatchNoteGeneration now live in src/kernel/records/{learning-intent-note-birth,note-handoff-protocol}. Notes keeps boss-port wiring and recovery floor as live consumers (no pass-through re-exports). registerNoteHandoffBossResolver wires getStartedBoss at server/app.ts composition root. agency -> notes 1 -> 0 after main 45e197a7 (dreaming refresh + shell undo-ai-change cuts). cross-capability value 15 -> 14."
+    "YUK-1571-learning-intent-note-handoff": "agency -> notes proposal-accept cluster retired: createLearningIntentNote and post-accept dispatchNoteGeneration now live in src/kernel/records/{learning-intent-note-birth,note-handoff-protocol}. Notes keeps boss-port wiring and recovery floor as live consumers (no pass-through re-exports). registerNoteHandoffBossResolver wires getStartedBoss at server/app.ts composition root. agency -> notes 1 -> 0 after main 45e197a7 (dreaming refresh + shell undo-ai-change cuts). cross-capability value 15 -> 14.",
+    "YUK-1571-intervention-diagnostic-materialize": "Intervention diagnostic materialize and retire (question lineage, draft/admission gates, one-shot publication, today-stream placement) now live in src/kernel/records/intervention-diagnostic-materialize.ts. Agency store/reconcile call it inside their unchanged intervention transactions. Practice keeps the stream day, judge-run activity and FSRS question enrollment/retire it owns and binds them through installInterventionDiagnosticLeaves before worker jobs and subscription dispatch mount; FSRS writes stay with server/fsrs. agency -> practice 2 -> 0, cross-capability value 13 -> 11. Nontrivial SCC stays empty. Lock keys, lock order, lock_timeout window and transaction boundaries unchanged."
   },
   "changes": [
     {
@@ -7237,6 +7238,14 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> practice",
+      "date": "2026-11-02",
+      "from": 2,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -11415,6 +11424,36 @@
       "issue": "YUK-1570",
       "owns": "Server AI owns binding the logged task runner to the host Db. Practice owns reference-solution input construction, output parsing, logged skips, guarded rubric/reference writes and same-transaction publication; runner construction timing is unchanged.",
       "date": "2026-11-01"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/intervention/reconcile.ts",
+      "module": "src/kernel/records/intervention-diagnostic-materialize.ts",
+      "kind": "value",
+      "symbols": ["materializeInterventionDiagnostics"],
+      "issue": "YUK-1571",
+      "owns": "Kernel owns intervention diagnostic materialization and retirement: lineage, draft/admission gates, one-shot publication and today-stream placement. Agency archive recovery calls it inside its unchanged learning-state/instance-locked transaction.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/intervention/store.ts",
+      "module": "src/kernel/records/intervention-diagnostic-materialize.ts",
+      "kind": "value",
+      "symbols": ["materializeInterventionDiagnostics", "retireInterventionDiagnosticQuestion"],
+      "issue": "YUK-1571",
+      "owns": "Kernel owns intervention diagnostic materialization and retirement: lineage, draft/admission gates, one-shot publication and today-stream placement. Agency activation and diagnostic review call it inside their unchanged intervention transactions.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/public.ts",
+      "module": "src/kernel/records/intervention-diagnostic-materialize.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1571",
+      "owns": "Kernel owns intervention diagnostic materialization and retirement: lineage, draft/admission gates, one-shot publication and today-stream placement. Practice binds the leaves it owns (stream day, judge-run activity, FSRS question enrollment/retire) before worker jobs and subscription dispatch mount.",
+      "date": "2026-11-02"
     }
   ],
   "sourceSizeRecords": [
@@ -12625,10 +12664,10 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 13,
+      "total": 11,
       "byOwnerPair": {
         "agency -> notes": 0,
-        "agency -> practice": 2,
+        "agency -> practice": 0,
         "copilot -> notes": 1,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,

@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import {
-  INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
   JUDGE_RUN_EVENTS,
   JUDGE_RUN_TABLE,
   authorInterventionPackage,
   handleReviewDue,
+  installInterventionDiagnosticLeaves,
 } from '@/capabilities/practice/public';
 
 import {
@@ -59,6 +59,7 @@ import { eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
 import type { EventSubscriptionDelivery } from '@/kernel/manifest';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import { INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS } from '@/kernel/records/intervention-diagnostic-materialize';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import {
   contractIntegrityDigest,
@@ -730,7 +731,10 @@ async function prepareAdmittedDiagnosticFixture(label: string) {
 }
 
 describe('YUK-791 intervention preparation closed loop', () => {
-  beforeEach(resetDb);
+  beforeEach(async () => {
+    await installInterventionDiagnosticLeaves();
+    await resetDb();
+  });
   afterEach(async () => {
     await resetTestConfig();
     vi.restoreAllMocks();
