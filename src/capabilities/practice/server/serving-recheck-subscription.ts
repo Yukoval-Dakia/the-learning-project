@@ -59,14 +59,17 @@ async function serveDelivery(
     return { status: 'skipped', reason: 'publish carries no hold signal' };
   }
   const report = await runSystemServingRecheck(db, { groupIds: [source.subjectId] });
-  if (report.attempted.length === 0) {
+  if (report.attempted.length === 0 && report.replayed.length === 0) {
     return {
       status: 'skipped',
       reason: report.skipped[0]?.reason ?? 'no recheckable hold',
       detail: { group_id: source.subjectId },
     };
   }
-  return { status: 'succeeded', detail: { attempted: report.attempted } };
+  return {
+    status: 'succeeded',
+    detail: { attempted: report.attempted, replayed: report.replayed },
+  };
 }
 
 export const buildServingRecheckSubscriber = (db: Db) => (delivery: EventSubscriptionDelivery) =>

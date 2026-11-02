@@ -6,7 +6,7 @@
 //
 // YUK-1664 — reverify and recheck_source are system duties: the result-event
 // subscription and the verify-dispatch recovery pass run them through
-// runSystemServingRecheck with an `auto:<group>:<digest>:<n>` Idempotency-Key
+// runSystemServingRecheck with an `auto:<group>:<digest>:<command>:<n>` Idempotency-Key
 // and actor 'system' in the same ledger. release_verify_hold stays a user command.
 
 import { createHash } from 'node:crypto';
@@ -24,6 +24,7 @@ import {
   paid_effect,
   placement_starter_attempt_question,
   question,
+  question_admission_verification,
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
@@ -808,7 +809,7 @@ export async function runServingAction(
 // Technical repair is the system's unfinished work, not a user chore. The
 // automatic path reuses the same command pipeline — paid-effect claims, the
 // deterministic command-event id and the same ledger — with an
-// `auto:<group>:<digest>:<n>` Idempotency-Key and actor 'system'. A replay of
+// `auto:<group>:<digest>:<command>:<n>` Idempotency-Key and actor 'system'. A replay of
 // the key never starts a second paid attempt.
 
 /** One delivery or recovery pass may process at most this many groups. */
@@ -819,18 +820,29 @@ const SYSTEM_AUTO_ATTEMPT_LIMIT = 1;
 
 const AUTO_RECHECK_KEY_PREFIX = 'auto';
 
-function autoRecheckIdempotencyKey(groupId: string, digest: string, attempt: number): string {
-  return `${AUTO_RECHECK_KEY_PREFIX}:${groupId}:${digest}:${attempt}`;
+function autoRecheckIdempotencyKey(
+  groupId: string,
+  digest: string,
+  command: SystemServingRecheckCommand,
+  attempt: number,
+): string {
+  return `${AUTO_RECHECK_KEY_PREFIX}:${groupId}:${digest}:${command}:${attempt}`;
 }
 
 export type SystemServingRecheckCommand = 'reverify' | 'recheck_source';
 
 export interface SystemServingRecheckReport {
   attempted: { groupId: string; command: SystemServingRecheckCommand }[];
+  /** Accepted-but-undispatched commands replayed under the SAME key (P1 heal). */
+  replayed: { groupId: string; command: SystemServingRecheckCommand }[];
   skipped: { groupId: string; reason: string }[];
 }
 
-const RECHECKABLE_HOLDS = new Set(['admission_failed', 'source_check_failed']);
+const RECHECKABLE_HOLDS = new Set([
+  'admission_failed',
+  'awaiting_admission',
+  'source_check_failed',
+]);
 
 /**
  * Evaluate held question groups and run at most one automatic reverify /
@@ -842,7 +854,7 @@ export async function runSystemServingRecheck(
   db: Db,
   input: { groupIds: readonly string[] },
 ): Promise<SystemServingRecheckReport> {
-  const report: SystemServingRecheckReport = { attempted: [], skipped: [] };
+  const report: SystemServingRecheckReport = { attempted: [], replayed: [], skipped: [] };
   const ids = [...new Set(input.groupIds)].slice(0, SYSTEM_SERVING_RECHECK_BATCH_LIMIT);
   if (ids.length === 0) return report;
   const skip = (groupId: string, reason: string) => {
@@ -919,7 +931,7 @@ export async function runSystemServingRecheck(
   const appliedKeys = new Set(applied.map((row) => `${row.entityId}\0${row.revision}`));
 
   // The command ledger is the attempt counter: count `auto:` keys per
-  // (group, digest, command). Each key is `auto:<group>:<digest>:<n>`; the
+  // (group, digest, command). Each key is `auto:<group>:<digest>:<command>:<n>`; the
   // attempt tuple is (subject, command, <group>:<digest>), so drop only the
   // `auto:` prefix and the trailing `:<n>` segment.
   const ledgerRows = await db
@@ -932,15 +944,14 @@ export async function runSystemServingRecheck(
         sql`${event.payload}->>'idempotency_key' like ${`${AUTO_RECHECK_KEY_PREFIX}:%`}`,
       ),
     );
-  const autoAttempts = new Set<string>();
+  const autoAttempts = new Map<string, boolean>();
   for (const row of ledgerRows) {
     const payload = row.payload as Record<string, unknown> | null;
-    const command = payload?.command;
     const key = payload?.idempotency_key;
-    if (typeof command !== 'string' || typeof key !== 'string') continue;
+    if (typeof key !== 'string') continue;
     const head = key.slice(AUTO_RECHECK_KEY_PREFIX.length + 1, key.lastIndexOf(':'));
     if (head === '' || head === key) continue;
-    autoAttempts.add(`${row.subjectId}\0${command}\0${head}`);
+    autoAttempts.set(`${row.subjectId}\0${head}`, payload?.accepted === true);
   }
 
   for (const groupId of ids) {
@@ -955,7 +966,19 @@ export async function runSystemServingRecheck(
       continue;
     }
     const command: SystemServingRecheckCommand =
-      holdReason === 'admission_failed' ? 'reverify' : 'recheck_source';
+      holdReason === 'source_check_failed' ? 'recheck_source' : 'reverify';
+    if (holdReason === 'awaiting_admission') {
+      // A stuck pending admission only gets its repair past the same window the
+      // retired user button used; younger groups still have time to finish.
+      const heldSince = projection?.held_since ? Date.parse(projection.held_since) : Number.NaN;
+      if (
+        !Number.isFinite(heldSince) ||
+        Date.now() - heldSince < AWAITING_ADMISSION_REVERIFY_AFTER_MS
+      ) {
+        skip(groupId, 'awaiting_admission_window');
+        continue;
+      }
+    }
     if (boundGroups.has(groupId)) {
       skip(groupId, 'placement_bound');
       continue;
@@ -969,19 +992,35 @@ export async function runSystemServingRecheck(
       skip(groupId, 'verdict_applied');
       continue;
     }
-    if (autoAttempts.has(`${groupId}\0${command}\0${groupId}:${digest}`)) {
+    const consumed = autoAttempts.get(`${groupId}\0${groupId}:${digest}:${command}`);
+    if (consumed === false) {
+      // A recorded rejection is terminal for this (group, digest, command).
       skip(groupId, 'auto_attempt_consumed');
       continue;
     }
+    const idempotencyKey = autoRecheckIdempotencyKey(
+      groupId,
+      digest,
+      command,
+      SYSTEM_AUTO_ATTEMPT_LIMIT,
+    );
     try {
       const outcome = await runServingAction(db, {
         questionId: groupId,
         command,
-        idempotencyKey: autoRecheckIdempotencyKey(groupId, digest, SYSTEM_AUTO_ATTEMPT_LIMIT),
+        idempotencyKey,
         actor: 'system',
       });
-      if (outcome.accepted) report.attempted.push({ groupId, command });
-      else skip(groupId, 'rejected');
+      if (consumed === true) {
+        // Accepted earlier but its dispatch never landed: the same-key replay
+        // re-enters ensureCommandDispatched and heals — never a second paid
+        // attempt and never a new key (P1-B).
+        report.replayed.push({ groupId, command });
+      } else if (outcome.accepted) {
+        report.attempted.push({ groupId, command });
+      } else {
+        skip(groupId, 'rejected');
+      }
     } catch (err) {
       // A recorded ApiError rejection is an honest terminal outcome for this
       // attempt — the ledger row exists, so the budget stays consumed.
@@ -1003,23 +1042,116 @@ export async function runSystemServingRecheck(
  * held before the subscription existed and deliveries the bus lost.
  */
 export async function recoverHeldServingRechecks(db: Db): Promise<SystemServingRecheckReport> {
-  const candidates = await db
-    .select({ groupId: question_group_lifecycle.group_id })
-    .from(question_group_lifecycle)
-    .where(
-      and(
-        eq(question_group_lifecycle.withdrawn, false),
-        or(
-          eq(question_group_lifecycle.suspended, true),
-          and(
-            eq(question_group_lifecycle.scoring_admission_state, 'withheld'),
-            // A deliberate owner hold is not a repairable failure.
-            sql`${question_group_lifecycle.scoring_admission_withheld_reason} is distinct from 'owner_hold'`,
-          ),
-        ),
-      ),
-    )
-    .orderBy(question_group_lifecycle.updated_at)
-    .limit(SYSTEM_SERVING_RECHECK_BATCH_LIMIT);
-  return runSystemServingRecheck(db, { groupIds: candidates.map((row) => row.groupId) });
+  // Every skip the loop below can make is pushed into SQL so the 50-slot window
+  // is filled by groups a pass can actually move — oldest first, so progress is
+  // guaranteed. Excluded: withdrawn, retraction_hold, placement-bound, in-flight
+  // admission/source_verify jobs (pending_action), holds that are not
+  // recheckable now (verify_hold, owner_hold, awaiting_admission inside its
+  // window), and commands already settled for the current digest — a rejected
+  // attempt or an accepted one whose dispatch landed (paid_effect claim or the
+  // terminal recheck verdict). Accepted-but-undispatched stays a candidate and
+  // is retried by replaying the same key.
+  const stuckBefore = new Date(Date.now() - AWAITING_ADMISSION_REVERIFY_AFTER_MS);
+  const admissionUnits = sql.join(
+    QUESTION_ADMISSION_PAID_UNITS.map((unit) => sql`${unit}`),
+    sql`, `,
+  );
+  const candidates = await db.execute<{ group_id: string }>(sql`
+    select l.group_id
+    from ${question_group_lifecycle} l
+    left join ${question_revision} r on r.revision_id = l.current_revision_id
+    where not ${question_group_lifecycle.withdrawn}
+      and not (
+        ${question_group_lifecycle.suspended}
+        and ${question_group_lifecycle.suspension_reason} = 'retraction_hold'
+      )
+      and not exists (
+        select 1 from ${placement_starter_attempt_question} paq
+        join ${question} pq on pq.id = paq.question_id
+        where paq.verification_status = 'authorized'
+          and (pq.id = l.group_id or pq.parent_question_id = l.group_id)
+      )
+      and not exists (
+        select 1 from pgboss.job j
+        where j.name = ${ADMISSION_FAMILY}
+          and j.data->>'question_id' = l.group_id
+          and j.state in ('created', 'retry', 'active')
+      )
+      and not exists (
+        select 1 from pgboss.job j
+        where j.name = ${SERVING_SOURCE_VERIFY_JOB}
+          and j.data->'question_ids' ? l.group_id
+          and j.state in ('created', 'retry', 'active')
+      )
+      and (
+        (
+          l.scoring_admission_state = 'withheld'
+          and l.scoring_admission_withheld_reason <> 'owner_hold'
+          and (
+            l.scoring_admission_withheld_reason in ('verification_failed', 'no_admitted_executor')
+            or l.updated_at <= ${stuckBefore}
+            or exists (
+              select 1 from ${paid_effect} pa
+              where pa.family = ${ADMISSION_FAMILY}
+                and pa.entity_id = l.group_id
+                and pa.entity_revision = r.integrity_digest
+                and pa.unit in (${admissionUnits})
+                and pa.state = 'applied'
+            )
+          )
+          and not exists (
+            select 1 from ${event} e
+            where e.action = ${SERVING_ACTION_EVENT_ACTION}
+              and e.subject_id = l.group_id
+              and e.payload->>'idempotency_key'
+                like 'auto:' || l.group_id || ':' || r.integrity_digest || ':reverify:%'
+              and (
+                e.payload->>'accepted' = 'false'
+                or (
+                  e.payload->>'accepted' = 'true'
+                  and exists (
+                    select 1 from ${paid_effect} pa
+                    where pa.family = ${ADMISSION_FAMILY}
+                      and pa.entity_id = l.group_id
+                      and pa.entity_revision = r.integrity_digest
+                      and pa.unit in (${admissionUnits})
+                  )
+                )
+              )
+          )
+        )
+        or (
+          ${question_group_lifecycle.suspended}
+          and exists (
+            select 1 from ${question_admission_verification} v
+            join ${question_revision} vr on vr.revision_id = v.revision_id
+            where vr.group_id = l.group_id
+              and v.policy_id = 'source_verify@1'
+              and v.outcome = 'failed'
+          )
+          and not exists (
+            select 1 from ${event} e
+            where e.action = ${SERVING_ACTION_EVENT_ACTION}
+              and e.subject_id = l.group_id
+              and e.payload->>'idempotency_key'
+                like 'auto:' || l.group_id || ':' || r.integrity_digest || ':recheck_source:%'
+              and (
+                e.payload->>'accepted' = 'false'
+                or (
+                  e.payload->>'accepted' = 'true'
+                  and exists (
+                    select 1 from ${event} tv
+                    where tv.action = 'experimental:source_verify'
+                      and tv.subject_id = l.group_id
+                      and tv.payload->>'recheck_command_event_id' = e.id
+                  )
+                )
+              )
+          )
+        )
+      )
+    order by l.updated_at asc
+    limit ${SYSTEM_SERVING_RECHECK_BATCH_LIMIT}
+  `);
+  return runSystemServingRecheck(db, { groupIds: candidates.map((row) => row.group_id) });
 }

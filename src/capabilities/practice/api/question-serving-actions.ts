@@ -6,7 +6,7 @@
 //                        never mints a revision
 //
 // YUK-1664 — reverify and recheck_source are system duties driven by result
-// events and the recovery pass (auto:<group>:<digest>:<n> ledger keys); old
+// events and the recovery pass (auto:<group>:<digest>:<command>:<n> ledger keys); old
 // clients posting them get the params-schema 400.
 //
 // Every command requires an Idempotency-Key header and returns
