@@ -1,5 +1,5 @@
 // YUK-493 Phase -1 — differential parity: the napi crate (crates/calibration-native)
-// vs the JS ORACLE (the live src/server/calibration/* used in production).
+// vs the JS ORACLE (the live src/core/calibration/* used in production).
 //
 // The .node is OPT-IN / dev-CI-only: built by `pnpm build:native`. When absent
 // (e.g. CI without Rust), this suite SKIPS rather than failing — the JS oracle is
@@ -13,13 +13,13 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { mulberry32 } from '@/core/rng';
-import { forwardAuc } from '@/server/calibration/auc';
+import { forwardAuc } from '@/core/calibration/auc';
 import {
   type ClusterForwardPreds,
   deltaAucClusterBootstrap,
   resolveBootstrapB,
-} from '@/server/calibration/bootstrap';
+} from '@/core/calibration/bootstrap';
+import { mulberry32 } from '@/core/rng';
 
 const NODE_PATH = resolve('crates/calibration-native/calibration-native.node');
 const present = existsSync(NODE_PATH);
