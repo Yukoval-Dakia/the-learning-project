@@ -155,6 +155,12 @@ export const advisoryLockRegistry = {
     keyPrefix: 'notes:handoff-complete:',
     suffixFields: ['completionId'],
   },
+  conjectureReconcile: {
+    family: 'conjecture-reconcile',
+    encoding: 'hashtextextended',
+    salt: 0,
+    key: 'conjecture:reconcile:all',
+  },
 } as const satisfies Record<string, AdvisoryLockNamespace>;
 
 export function deriveHashtextLockKey<T extends string>(namespace: {

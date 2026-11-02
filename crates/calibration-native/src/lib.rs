@@ -1,12 +1,12 @@
 //! YUK-493 Phase -1 — napi port of the offline calibration core.
 //!
 //! Bit-exact-parity port of:
-//!   - src/server/calibration/rng.ts       (mulberry32)
-//!   - src/server/calibration/auc.ts       (forwardAuc — Mann–Whitney U)
-//!   - src/server/calibration/bootstrap.ts (resolveBootstrapB, percentile, deltaAucClusterBootstrap)
+//!   - src/core/rng.ts                   (mulberry32)
+//!   - src/core/calibration/auc.ts       (forwardAuc — Mann–Whitney U)
+//!   - src/core/calibration/bootstrap.ts (resolveBootstrapB, percentile, deltaAucClusterBootstrap)
 //!
 //! The TS implementations stay the always-on ORACLE + runtime fallback. This crate
-//! is verified bit-for-bit against them by src/server/calibration/native-parity.unit.test.ts.
+//! is verified bit-for-bit against them by src/core/calibration/native-parity.unit.test.ts.
 //!
 //! Determinism invariants (must hold for the parity test to pass):
 //!   - mulberry32 is pure-integer (u32 wrapping) → bit-identical to JS (Math.imul == i32 wrapping_mul).

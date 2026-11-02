@@ -6,9 +6,9 @@ import { TencentSubmitInProgressError } from '@/capabilities/ingestion/server/pr
 import type { DescribeResponse } from '@/capabilities/ingestion/server/tencent_mark';
 import { db } from '@/db/client';
 import { learning_session, provider_attempt } from '@/db/schema';
-import { createImageR2, seedIngestionSession } from '@/server/session/ingestion-test-support';
 import tencentDone from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import { resetDb } from '../../../../tests/helpers/db';
+import { createImageR2, seedIngestionSession } from './ingestion-test-support';
 import { buildTencentOcrHandler } from './tencent_ocr_extract';
 
 function structureResult() {

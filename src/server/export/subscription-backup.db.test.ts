@@ -46,6 +46,7 @@ const liveSubscriberIdentities = [
   ['agency.intervention-diagnostic-review-settlement', 4],
   ['agency.probe-evidence-intervention-prepare', 1],
   ['agency.probe-publication-serve', 1],
+  ['agency.probe-result-reconcile', 1],
   ['agency.question-pool-gap', 1],
   ['notes.dreaming-note-refresh', 1],
   ['notes.mastery-progress-note-refine', 1],
@@ -269,7 +270,9 @@ describe('YUK-766 subscription progress backup', () => {
     const counts = actionCounts(registry.subscriptions);
     const shared = registry.subscriptions.filter((sub) => (counts.get(sub.actions[0]) ?? 0) > 1);
     expect(shared.map((sub) => sub.id)).toEqual([
+      'agency.probe-evidence-intervention-prepare',
       'agency.probe-publication-serve',
+      'agency.probe-result-reconcile',
       'practice.failure-learning-attempt',
       'practice.learner-return-wake',
       'practice.question-admission-enqueue',

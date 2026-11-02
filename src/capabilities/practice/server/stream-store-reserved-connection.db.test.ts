@@ -3,8 +3,8 @@ import postgres from 'postgres';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@/db/client';
 import { knowledge, learning_item, practice_stream_item, question } from '@/db/schema';
+import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
-import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
 import { resetDb } from '../../../../tests/helpers/db';
 
 const DATES = Array.from({ length: 10 }, (_, index) => `2026-08-${10 + index}`);

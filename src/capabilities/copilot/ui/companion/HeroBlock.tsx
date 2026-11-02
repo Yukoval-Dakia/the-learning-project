@@ -7,7 +7,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, FileText, Layers, ListChecks, Sparkles } from 'lucide-react';
-import { getNotePage } from '@/capabilities/notes/ui-public';
+import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
 import {
   type ArtifactHero,
@@ -62,13 +62,15 @@ function ArtifactCard({
 function InteractiveArtifact({
   artifactRef,
   navigate,
+  readNotePage,
 }: {
   artifactRef: { kind: string; id: string };
   navigate: (to: string) => void;
+  readNotePage: NotePageClient;
 }) {
   const page = useQuery({
     queryKey: ['note-page', artifactRef.id],
-    queryFn: () => getNotePage(artifactRef.id),
+    queryFn: () => readNotePage(artifactRef.id),
   });
   const html = page.data?.interactive?.html ?? null;
   if (html) {
@@ -90,9 +92,12 @@ function InteractiveArtifact({
 export function HeroBlock({
   view,
   navigate,
+  readNotePage,
 }: {
   view: ReplayPrimaryView;
   navigate: (to: string) => void;
+  /** Notes' reader, supplied by the route host; Copilot does not import Notes values. */
+  readNotePage: NotePageClient;
 }) {
   if (view.source === 'ephemeral_html') {
     return (
@@ -103,7 +108,13 @@ export function HeroBlock({
   }
   if (view.source === 'artifact') {
     if (isInteractiveArtifactRef(view.ref.kind)) {
-      return <InteractiveArtifact artifactRef={view.ref} navigate={navigate} />;
+      return (
+        <InteractiveArtifact
+          artifactRef={view.ref}
+          navigate={navigate}
+          readNotePage={readNotePage}
+        />
+      );
     }
     return (
       <ArtifactCard
