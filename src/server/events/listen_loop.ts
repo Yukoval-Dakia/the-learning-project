@@ -1,5 +1,5 @@
 import postgres from 'postgres';
-import { type SSEPayload, broadcast } from './sse_router';
+import { type SSEPayload, broadcast } from '@/kernel/job-event-stream';
 
 // One dedicated LISTEN connection for the process lifetime. max:1 keeps it off
 // the pg-boss and drizzle pools. There is no reconnect; a dropped connection

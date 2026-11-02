@@ -43,26 +43,26 @@ const PoliciesSchema = z
   .strict();
 
 /**
- * 配置来源分层（YUK-1007）：DB 行 > env > 'off'。env 层是 JSON 原文字符串；
- * DB 层存的是解析后的对象（registry schema 拦形状、write.ts 拦 lane 名）。
- * 非法值（错 mode 字符串 / 坏 JSON / 未知 lane）**照旧 throw**——admission
- * 是断流面，fail-open 回归禁装（registry envParse 原文透传就是为保这个）。
+ * Config layering (YUK-1007): DB row > env > 'off'. env carries JSON text; DB
+ * stores parsed objects (registry schema checks shape, write.ts checks lane
+ * names). Invalid values still throw — admission is a circuit breaker and must
+ * not fail open.
  */
 function policiesInput(raw: ConfigValue | string | undefined): unknown {
   if (raw === undefined) return undefined;
   if (typeof raw === 'string') {
     const trimmed = raw.trim();
     if (trimmed === '') return undefined;
-    return JSON.parse(trimmed); // 原语义：JSON.parse throw 直通
+    return JSON.parse(trimmed);
   }
-  return raw; // DB 层来的对象直过
+  return raw;
 }
 
 export function resolveProviderAttemptAdmission(
   env: NodeJS.ProcessEnv,
   lane: ProviderAttemptAdmissionLane,
 ): ResolvedProviderAttemptAdmission {
-  // env 形参保签名：作 env fallback 层传给 getConfig（DB 行在场时 DB 恒赢）。
+  // The env argument is only the fallback layer for getConfig; a DB row always wins.
   const rawMode = getConfig('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', env);
   const mode = rawMode === undefined || rawMode === '' ? 'off' : ModeSchema.parse(rawMode);
   if (mode === 'off') return { mode: 'off', policy: null };

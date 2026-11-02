@@ -1,147 +1,32 @@
 // YUK-921 P2 (YUK-1021) — the pi-side tool mount surface.
 //
-// Two mount kinds feed `AgentContext.tools` on the pi lane:
+//   - 'domain'     — registry DomainTools compiled into pi AgentTools; execute
+//     delegates to `executeDomainToolCall`, so logging, mirroring, gates, output
+//     validation and summarize stay one pipeline.
+//   - 'remote-mcp' — hosted MCP servers (Exa today) bridged through the MCP SDK
+//     client. `listTools` JSON Schema is passed to pi verbatim.
 //
-//   - 'domain'      — DomainTools from the registry, compiled into pi
-//     `AgentTool`s. The execute body delegates to the SAME
-//     `executeDomainToolCall` pipeline the SDK mcp-bridge wraps, so
-//     tool_call_log / tool_use mirror / beforeExecute gates /
-//     interceptInput / output-schema enforcement / summarize are
-//     byte-identical between engines.
-//   - 'remote-mcp'  — hosted MCP servers (Exa today), bridged through a real
-//     `@modelcontextprotocol/sdk` client. `listTools` at mount-build time
-//     gives us each remote tool's JSON Schema verbatim — pi's
-//     `validateToolArguments` accepts plain JSON Schema (non-TypeBox path),
-//     so no schema translation is needed on this side either.
+// Wire naming: `mcp__<serverName>__<tool>` everywhere, so recordToolCall,
+// allowedTools filtering and mirror policy see one name space.
 //
-// Wire naming parity: pi AgentTool names are `mcp__<serverName>__<tool>` —
-// exactly what the SDK subprocess puts on assistant tool_use blocks. That
-// single choice makes runner-side `recordToolCall`, `allowedTools`
-// filtering, `shouldEmitToolUseForCaller` and every downstream consumer see
-// identical names on both engines.
-//
-// Correlation: the SDK path needed createToolUseCorrelation's PreToolUse
-// hook to learn the tool_use_id. Pi hands `execute()` the native
-// toolCall.id, so the pi mount simply passes it as `correlatedToolUseId` —
+// pi hands `execute()` the native toolCall.id, so the mount passes it straight
+// through as `correlatedToolUseId`.
 
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
-import type { Db } from '@/db/client';
+import { type BuildMcpServerOptions, type PiToolMount, piToolWireName } from '@/ai/pi-tool-mount';
 import { writeToolCallLog, writeUnpricedToolCost } from '@/kernel/tools/call-evidence';
 import {
   ensureToolParametersObjectRoot,
   zodToToolParametersSchema,
 } from '@/kernel/zod-json-schema';
-import { type BuildMcpServerOptions, executeDomainToolCall } from './mcp-bridge';
+import { executeDomainToolCall } from './mcp-bridge';
 import { getTool } from './registry';
 
-/** Namespaced wire name — identical to the SDK's `mcp__<server>__<tool>` convention. */
-export function piToolWireName(serverName: string, toolName: string): string {
-  return `mcp__${serverName}__${toolName}`;
-}
-
-/** Loom-owned remote MCP config — the `{type:'http', url, headers}` subset the bridge consumes. */
-export interface RemoteMcpHttpConfig {
-  type: 'http';
-  url: string;
-  headers?: Record<string, string>;
-}
-
-/** Declarative tool mount callers hand to the runner. */
-export type PiToolMount =
-  | {
-      type: 'domain';
-      /** Registry DomainTools compiled via {@link buildPiDomainAgentTools}. */
-      options: BuildMcpServerOptions;
-    }
-  | {
-      type: 'remote-mcp';
-      serverName: string;
-      config: RemoteMcpHttpConfig;
-      /** Upstream tool names to expose (mirrors the caller's allowedTools scope). */
-      toolNames: readonly string[];
-      /**
-       * YUK-1557 — required to persist one tool_call_log row (and unknown-cost
-       * ledger row) per remote call. Omitted mounts keep the wire behavior but
-       * leave no audit row.
-       */
-      db?: Db;
-    }
-  | {
-      type: 'custom';
-      /**
-       * Escape hatch for tools that are NOT registered DomainTools — e.g. the
-       * agency evidence / director servers. The caller owns the AgentTool's
-       * execute body and must keep its logging semantics identical to the
-       * domain bridge.
-       */
-      tools: AgentTool[];
-    };
-
-/** Convenience constructor for a domain mount descriptor. */
-export function piDomainMount(options: BuildMcpServerOptions): PiToolMount {
-  return { type: 'domain', options };
-}
-
 /**
- * Build one bespoke `AgentTool` for a `custom` mount — used by hand-rolled
- * tool sets (evidence/director). Wire name is `mcp__<server>__<name>`;
- * the zod raw shape compiles through the same zodToJsonSchemaCompat path as
- * the domain bridge; the handler returns the MCP-shaped `{content}` payload.
- */
-export function piCustomTool(
-  serverName: string,
-  name: string,
-  description: string,
-  schema: Record<string, z.ZodTypeAny> | z.ZodTypeAny,
-  handler: (
-    args: Record<string, unknown>,
-  ) => Promise<{ content: { type: 'text'; text: string }[] }>,
-): AgentTool {
-  return {
-    name: piToolWireName(serverName, name),
-    label: name,
-    description,
-    // YUK-1547 — the parameters root must declare type:"object" on the wire:
-    // a union of object branches compiles to a bare anyOf root, which the
-    // provider rejects (400, type:null). zodToToolParametersSchema declares
-    // the object root while keeping the union and every business validation
-    // (required / additionalProperties / the submit arguments staying the
-    // plain output object — no result envelope).
-    parameters: zodToToolParametersSchema(
-      // A full Zod schema is compiled as-is (the tool's parameters ARE that
-      // shape — YUK-1547's envelope-less structured submit); a raw shape keeps
-      // the object wrapper every other caller relies on.
-      schema instanceof z.ZodType ? schema : z.object(schema),
-      {
-        io: 'input',
-        reused: 'inline',
-        target: 'draft-07',
-      },
-    ) as AgentTool['parameters'],
-    execute: async (_toolCallId, params) => {
-      const result = await handler((params ?? {}) as Record<string, unknown>);
-      return { content: result.content, details: null };
-    },
-  };
-}
-
-/** Convenience constructor for a remote-MCP mount descriptor. */
-export function piRemoteMcpMount(
-  serverName: string,
-  config: RemoteMcpHttpConfig,
-  toolNames: readonly string[],
-  db?: Db,
-): PiToolMount {
-  return { type: 'remote-mcp', serverName, config, toolNames, ...(db ? { db } : {}) };
-}
-
-/**
- * Compile the registry's DomainTools into pi AgentTools. Validation order on
- * a call is the same double-layer the SDK path uses: pi validates the raw
- * arguments against `parameters` (plain JSON Schema from
- * zodToJsonSchemaCompat), then the shared pipeline zod-parses again for the
- * typed Input value — identical defence in depth.
+ * Compile registry DomainTools into pi AgentTools. pi validates raw arguments
+ * against `parameters`, then the shared pipeline zod-parses again for the typed
+ * value — the same defence in depth as the direct bridge.
  */
 export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTool[] {
   return options.toolNames.map((name) => {
@@ -168,9 +53,8 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
       description: dt.description,
       parameters,
       execute: async (toolCallId, params, signal) => {
-        // The in-process loop abort must reach the tool the way the SDK
-        // subprocess kill reached it — merge the loop signal with the
-        // caller-owned ctx.signal so either source cancels execution.
+        // The loop abort must reach the tool: merge it with the caller's
+        // ctx.signal so either source cancels execution.
         const signals = [options.ctx.signal, signal].filter(
           (s): s is AbortSignal => s !== undefined,
         );
@@ -189,10 +73,8 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
             ...(signal ? [{ signal, requestedBy: 'system' as const }] : []),
           ],
         });
-        // YUK-1559 — forward the bridge's authoritative failure flag. pi marks
-        // the tool_result isError from this bit, so gated/refused/soft-stopped/
-        // failed calls surface as errors to the model without throwing (which
-        // would discard content/details).
+        // YUK-1559 — forward the bridge's failure flag: pi marks tool_result
+        // isError from it without throwing (which would discard content/details).
         return {
           content: result.content,
           details: null,
@@ -210,19 +92,16 @@ export interface PiRemoteMcpMountHandle {
 }
 
 /**
- * Bridge a hosted MCP server into pi AgentTools (~the design's "mcp-bridge.ts
- * 反向"). The client connects at startup so `tools/list` failures surface
- * before any paid token — a misconfigured remote mount fails the run loudly
- * instead of silently running tool-less.
+ * Bridge a hosted MCP server into pi AgentTools. The client connects at startup so
+ * `tools/list` failures surface before any paid token.
  */
 export async function connectPiRemoteMcp(
   mount: Extract<PiToolMount, { type: 'remote-mcp' }>,
   timeoutMs: number,
   run?: { taskRunId: string; taskKind: string },
 ): Promise<PiRemoteMcpMountHandle> {
-  // Dynamic imports keep the migrate bundle free of the MCP client (the same
-  // boundary as the pi packages — build:migrate marks these external and the
-  // import only evaluates when a pi tool-loop run actually starts).
+  // Dynamic imports keep the migrate bundle free of the MCP client (same boundary
+  // as the pi packages: build:migrate marks them external).
   const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all([
     import('@modelcontextprotocol/sdk/client/index.js'),
     import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
@@ -232,20 +111,17 @@ export async function connectPiRemoteMcp(
     requestInit: { headers: mount.config.headers ?? {} },
   });
   try {
-    // Connect AND list inside the same cleanup scope — a transport failure
-    // must still release the client socket.
+    // Connect AND list inside the same cleanup scope so a transport failure
+    // still releases the client socket.
     await client.connect(transport, { timeout: timeoutMs });
     const listed = await client.listTools();
     const wanted = new Set(mount.toolNames);
     const tools = listed.tools
       .filter((remote) => wanted.has(remote.name))
       .map((remote): AgentTool => {
-        // MCP tool inputSchema is already plain JSON Schema — pi validates
-        // it through the non-TypeBox path, no translation needed. The same
-        // provider object-root contract still applies (YUK-1547): an
-        // object-union root is normalized like a compiled Zod union; a
-        // genuinely non-object root is a remote contract violation — fail
-        // the mount loudly instead of letting the provider 400 mid-run.
+        // MCP inputSchema is already plain JSON Schema. The object-root contract
+        // still applies (YUK-1547): normalize it or fail the mount loudly rather
+        // than let the provider 400 mid-run.
         let parameters: AgentTool['parameters'];
         try {
           parameters = ensureToolParametersObjectRoot(
@@ -323,9 +199,8 @@ export async function connectPiRemoteMcp(
                 : [],
             );
             if (res.isError) {
-              // SDK parity: an isError MCP result becomes an error tool
-              // result. Pi marks errors via a thrown execute — carry the
-              // serialized content so the model still sees the payload.
+              // SDK parity: an isError MCP result becomes an error tool result (pi
+              // marks errors by throwing), carrying the content so the model sees it.
               await record(
                 { content: content.length > 0 ? content : (res.content ?? res) },
                 'remote_mcp_is_error',

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AgentRunError } from '@/ai/agent-run-error';
+import type { RunTaskResult } from '@/ai/task-result';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
 import type {
   ModelExecutorRequest,
@@ -15,7 +16,7 @@ import {
   traceMetadata,
   traceOperation,
 } from '@/server/ai/laminar-tracing';
-import type { RunTaskCtx, RunTaskResult } from '@/server/ai/runner';
+import type { RunTaskCtx } from '@/server/ai/runner';
 import {
   type AssessmentAssetLoader,
   createAssessmentAssetLoader,
@@ -231,6 +232,9 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
         feedback_md: decision.feedback_md,
         evidence_citations: decision.evidence_citations,
         confidence: decision.confidence,
+        ...(decision.kc_mastery_evidence
+          ? { kc_mastery_evidence: decision.kc_mastery_evidence }
+          : {}),
         run_refs: [result.task_run_id],
         cost_usd_micros: cost,
       };

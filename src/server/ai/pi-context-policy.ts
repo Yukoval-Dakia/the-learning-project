@@ -9,11 +9,8 @@ import type { LoomPiModel } from './pi-models';
  */
 const PI_COMPACT_CHARS_PER_TOKEN = 4;
 /**
- * CJK codepoints estimate to ~1 token each — the repo's own budget note puts
- * 400 CJK chars at ~400–1000 tokens (kernel/tools/budgets.ts), so the generic
- * divisor would undercount a Chinese transcript 4–10× and the window would
- * overflow before the compaction trigger ever fired. Erring toward early compaction
- * is the safe direction.
+ * CJK codepoints estimate to ~1 token each; the generic divisor would undercount a
+ * Chinese transcript 4–10× and the window could overflow before the trigger fired.
  */
 const PI_COMPACT_CJK_RE = /[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/gu;
 
@@ -63,10 +60,8 @@ export function createPiLlmMessageConverter() {
 }
 
 /**
- * Decide whether to compact, then select the complete retained transcript.
- * The adapter still owns system-delta replay, clocks, frames and failure recovery.
- * The message factory runs after history filtering, at the original injection
- * point; selection therefore does not claim purity for that callback.
+ * Decide whether to compact, then select the retained transcript. The adapter still
+ * owns system-delta replay, clocks, frames and failure recovery.
  */
 export function createPiContextCompactionPolicy(
   model: Pick<LoomPiModel, 'contextWindow' | 'maxInputTokens'>,
@@ -107,8 +102,8 @@ export function createPiContextCompactionPolicy(
           budget -= cost;
           if (i === 0) break;
         }
-        // A fresh injection replaces any previously injected copy so repeated
-        // compactions never stack duplicate session contexts.
+        // A fresh injection replaces any previous copy, so repeated compactions never
+        // stack duplicate session contexts.
         const tail = kept.filter((message) => !isSessionContextMessage(message));
         return [...prefix, ...tail];
       },

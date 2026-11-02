@@ -1,9 +1,13 @@
-// Shared PostgreSQL transaction lock for assessment and intervention learning writes.
-// This module owns the lock; it has no server or capability runtime dependency.
+// Shared PostgreSQL transaction locks for learning writes: global G and sorted caller keys.
+// G's hashtext argument comes from the lock registry; this module still issues the same SQL.
+// No server or capability runtime dependency.
 import { sql } from 'drizzle-orm';
+import { advisoryLockRegistry, deriveHashtextLockKey } from '@/kernel/locks/registry';
 import type { Db, Tx } from './client';
 
-export const LEARNING_STATE_WRITE_LOCK = 'learning-state:write';
+export const LEARNING_STATE_WRITE_LOCK = deriveHashtextLockKey(
+  advisoryLockRegistry.learningStateWrite,
+);
 
 /** Serialize every material_fsrs_state / mastery_state mutation before any row access. */
 export async function acquireLearningStateWriteLock(tx: Tx): Promise<void> {
@@ -11,14 +15,13 @@ export async function acquireLearningStateWriteLock(tx: Tx): Promise<void> {
 }
 
 /**
- * Run `fn` under the global learning-state write lock G, inside a transaction. Standardizes the
- * Db-vs-Tx dispatch on the DOCUMENTED `'$client' in db` polarity (src/db/client.ts: a `Tx` does not
- * carry `$client`) instead of the undocumented `'rollback' in db` duck-type — if a future drizzle
- * added `rollback` to the base `Db`, that heuristic would silently run the mutation OUTSIDE a
- * transaction and release the xact-scoped advisory lock immediately (session-level per statement).
- * A top-level `Db` opens a real tx so G is HELD across `fn`; an already-open `Tx` runs inline (the
- * caller owns the tx and its G ordering). Extracted from the duplicated apply-closure in
- * fsrs/state.ts + mastery/state.ts (YUK-497 wave-4).
+ * Run `fn` under the global learning-state write lock G, inside a transaction. Dispatch uses the
+ * DOCUMENTED `'$client' in db` polarity (src/db/client.ts: a `Tx` does not carry `$client`) rather
+ * than the undocumented `'rollback' in db` duck-type — if a future drizzle added `rollback` to the
+ * base `Db`, that heuristic would run the mutation OUTSIDE a transaction and release the
+ * xact-scoped advisory lock immediately (session-level per statement). A top-level `Db` opens a
+ * real tx so G is HELD across `fn`; an already-open `Tx` runs inline (the caller owns the tx and
+ * its G ordering).
  */
 export async function withLearningStateLock<T>(
   db: Db | Tx,
@@ -30,4 +33,15 @@ export async function withLearningStateLock<T>(
   };
   if ('$client' in db) return db.transaction(apply);
   return apply(db);
+}
+
+/** 按 id 排序逐个取 `pg_advisory_xact_lock(hashtext('<namespace>:<id>'))`，避免重叠 id 集死锁。 */
+export async function acquireSortedAdvisoryLocks(
+  tx: Tx,
+  namespace: string,
+  ids: readonly string[],
+): Promise<void> {
+  for (const id of [...ids].sort()) {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`${namespace}:${id}`}))`);
+  }
 }

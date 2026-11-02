@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
-import { writeJobEvent } from '@/server/events/writer';
+import { writeJobEvent } from '@/kernel/job-events';
 
 export const INGESTION_EXTRACTION_PROGRESS = 'ingestion.extraction_progress' as const;
 

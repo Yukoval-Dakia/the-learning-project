@@ -3,7 +3,7 @@
  * are actually one split question, and writes a `block_merge` proposal per candidate.
  * It only proposes; `mergeQuestions` runs on user accept.
  *
- * Adjacency is session block array order (INSERT order). Spatial signals are used
+ * Adjacency is the caller's block array order. Spatial signals are used
  * only when a session has real page indices; all-placeholder sessions (Tencent
  * fallback) stay semantic-only. The model works on text, not page images.
  */
@@ -52,7 +52,7 @@ export interface BlockAssemblyInputBlock {
 
 export interface BlockAssemblyInput {
   ingestion_session_id: string;
-  /** Draft blocks in session array order; adjacency is INSERT order. */
+  /** Draft blocks in caller order; adjacency follows this array. */
   blocks: BlockAssemblyInputBlock[];
 }
 
@@ -124,7 +124,7 @@ export interface BlockAssemblySourceBlock {
 
 export interface RunBlockAssemblyForSessionParams {
   sessionId: string;
-  /** Draft blocks in session array order. */
+  /** Draft blocks in caller order. */
   blocks: BlockAssemblySourceBlock[];
   /** Inject in tests; defaults to the production BlockAssemblyTask invoker. */
   runTaskFn?: BlockAssemblyRunTaskFn;

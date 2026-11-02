@@ -587,6 +587,9 @@ const ExpandOutputSchema = z.object({
       version: z.number().int(),
     })
     .nullable(),
+  /** YUK-1601 — set when the parent chain is corrupt (a parent_id cycle); the
+   * bounded walk stops at the cycle instead of looping forever. */
+  structure_error: z.string().optional(),
   nodes: z.array(
     z.object({
       id: z.string(),
@@ -640,11 +643,24 @@ async function executeExpand(ctx: ToolContext, raw: ExpandInput): Promise<Expand
   const selected = new Map<string, 'ancestor' | 'child' | 'neighbor' | 'center'>([
     [center.id, 'center'],
   ]);
+  // YUK-1601 — the ancestor walk must terminate inside the process budget even when
+  // the tree already contains an illegal parent cycle: a visited set bounds it
+  // synchronously (no Promise timeout can interrupt a runaway loop), and the cycle is
+  // reported as a structure error instead of hanging the request.
+  let structureError: string | undefined;
   if (included.includes('ancestors')) {
+    const seen = new Set<string>([center.id]);
     let current = center;
     while (current.parent_id) {
       const parent = byId.get(current.parent_id);
       if (!parent) break;
+      if (seen.has(parent.id)) {
+        structureError =
+          `knowledge structure error: parent_id cycle detected on the ancestor chain of ` +
+          `${center.id} (re-entered ${parent.id}); ancestors were gathered only up to the cycle`;
+        break;
+      }
+      seen.add(parent.id);
       selected.set(parent.id, 'ancestor');
       current = parent;
     }
@@ -683,6 +699,7 @@ async function executeExpand(ctx: ToolContext, raw: ExpandInput): Promise<Expand
       path: pathFor(center.id, byId),
       version: center.version,
     },
+    ...(structureError ? { structure_error: structureError } : {}),
     nodes: selectedIds.map((id) => {
       const row = byId.get(id) as KnowledgeRow;
       return {

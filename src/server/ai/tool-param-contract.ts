@@ -1,39 +1,29 @@
 // YUK-1547 / YUK-1559 (C1/C6) — shared tool-parameter contract repair.
 //
-// The observed wire failure: the model serializes an array/object field as a
-// JSON STRING inside otherwise well-formed tool arguments (`"units":"[...]"`,
-// `"per_unit":"[...]"`). The envelope parses, so the assistant turn lands —
-// then the declared schema rejects the string field and the call is dead.
-// Pi's own `validateToolArguments` runs BEFORE `AgentTool.execute` and its
-// coercion pass does not JSON-parse strings, so the fix cannot live inside a
-// tool's execute body; it must run at the `prepareArguments` seam pi calls
-// ahead of validation.
+// Observed wire failure: the model serializes an array/object field as a JSON
+// string inside otherwise well-formed arguments. The envelope parses and the
+// assistant turn lands, but the declared schema rejects the field and the call is
+// dead. pi validates before `AgentTool.execute` and does not JSON-parse strings,
+// so the repair must run at the `prepareArguments` seam pi calls ahead of it.
 //
-// Policy (shared verbatim by the runtime mounts and the admission preflight
-// script — no second implementation):
-//   - for each field whose sub-schema expects array or object and does NOT
-//     accept a string, a string value gets exactly ONE strict JSON.parse;
-//   - the parsed value is adopted only when its structural type matches the
-//     expectation AND it passes that sub-schema;
-//   - a required repair that fails rejects the call with a
-//     `ToolParamContractError` — the isError tool result carries actionable
-//     feedback and the `[tool_param_contract]` marker so the bounded landing
-//     machine can recognize this as the ONE correction-eligible failure.
+// Policy (shared with the admission preflight — no second implementation): a
+// string field whose sub-schema expects array/object and rejects strings gets
+// exactly ONE strict JSON.parse, adopted only when the parsed value has the
+// expected structure and passes that sub-schema. A required repair that fails
+// rejects the call with `ToolParamContractError`, whose `[tool_param_contract]`
+// marker identifies the one correction-eligible failure.
 //
-// Never: guessing, markdown extraction, primitive coercion, provider/model/
-// task-name special-casing, silent field deletion, recursive re-parsing of a
-// parsed field, or schema loosening. Fields whose schema legitimately accepts
-// strings are never touched.
+// Never: guessing, markdown extraction, primitive coercion, provider/model/task
+// special-casing, silent field deletion, re-parsing a parsed field, or schema
+// loosening. Fields whose schema accepts strings are never touched.
 
 import { z } from 'zod';
 
-/** Marker carried by the isError result so the landing machine / evidence
- *  capture can identify the correction-eligible parameter-contract failure. */
+/** Marker identifying the correction-eligible parameter-contract failure. */
 export const TOOL_PARAM_CONTRACT_MARKER = '[tool_param_contract]';
 
 export interface ToolParamCoercion {
-  /** Dotted field path inside the arguments object; `(root)` when the whole
-   *  arguments value was a serialized JSON string. */
+  /** Dotted field path; `(root)` when the whole arguments value was a string. */
   field_path: string;
   /** String length of the model's serialized value, before parsing. */
   original_length: number;
@@ -45,9 +35,8 @@ export interface ToolParamRepairOutcome {
 }
 
 /**
- * Rejection for the correction-eligible parameter-contract failure. The marker
- * stays first so pi's error tool result is identifiable without parsing the
- * human-facing sentence.
+ * Rejection for the correction-eligible failure. The marker stays first so pi's
+ * error result is identifiable without parsing the human-facing sentence.
  */
 export class ToolParamContractError extends Error {
   constructor(detail: string) {
@@ -64,11 +53,9 @@ export function isToolParamContractError(error: unknown): error is ToolParamCont
 }
 
 /**
- * True when an isError tool result failed at the argument-contract seam —
- * either our parameter-contract rejection or pi's own schema validation —
- * versus an unknown-tool lookup, a beforeToolCall block, or an abort. Used to
- * decide which non-executed calls get C6 raw-arguments evidence; the landing
- * correction is stricter (marker only, see the adapter).
+ * True when an isError result failed at the argument-contract seam (our rejection
+ * or pi's schema validation) rather than at lookup, a hook block or an abort —
+ * these are the non-executed calls that get C6 raw-arguments evidence.
  */
 export function isToolArgumentContractFailure(result: {
   isError?: boolean;
@@ -79,8 +66,7 @@ export function isToolArgumentContractFailure(result: {
   return text.includes(TOOL_PARAM_CONTRACT_MARKER) || text.startsWith('Validation failed for tool');
 }
 
-/** True when the result is OUR parameter-contract rejection (the one
- *  correction-eligible failure), not a generic schema validation error. */
+/** True when the result is OUR contract rejection — the one correction-eligible failure. */
 export function isToolParamContractRejection(result: {
   isError?: boolean;
   content?: unknown;
@@ -109,11 +95,9 @@ function toolResultText(content: unknown): string {
 
 // ─── JSON Schema expectation analysis ────────────────────────────────────────
 //
-// The walk inspects the tool's `parameters` document (the wire schema pi
-// validates against) — plain draft-07 JSON Schema for every mount kind. Local
-// `#/definitions/*` / `#/$defs/*` refs resolve against the document's own
-// definition maps; anything unresolvable or cyclic is treated as opaque (no
-// repair — the downstream validator remains the authority).
+// The walk inspects the tool's `parameters` document — the wire schema pi
+// validates against. Local refs resolve against the document's own definitions;
+// anything unresolvable or cyclic stays opaque (no repair — the validator owns it).
 
 type SchemaNode = Record<string, unknown> | boolean;
 
@@ -164,10 +148,9 @@ function unionBranches(node: Record<string, unknown>): SchemaNode[] {
 }
 
 /**
- * Structural kinds a value must take to satisfy this node: 'array' / 'object'
- * from `type` or from combinator members. `seen` tracks resolved nodes so
- * recursive schemas terminate; siblings get a fresh copy because a shared
- * sub-schema is a distinct constraint position, not a cycle.
+ * Structural kinds that satisfy this node: 'array' / 'object' from `type` or
+ * combinator members. `seen` terminates recursive schemas; siblings get a fresh
+ * copy because a shared sub-schema is a distinct constraint position, not a cycle.
  */
 function expectedCompositeKinds(
   node: SchemaNode,
@@ -188,8 +171,7 @@ function expectedCompositeKinds(
 }
 
 /**
- * Whether a string value can satisfy this node at all. Only when it cannot is
- * a string the "model serialized the field" failure — repairing a field that
+ * Whether a string can satisfy this node at all. Repairing a field that
  * legitimately accepts strings would rewrite valid arguments.
  */
 function acceptsString(node: SchemaNode, defs: Definitions, seen = new Set<SchemaNode>()): boolean {
@@ -230,12 +212,10 @@ function structuralMatch(kind: 'array' | 'object', value: unknown): boolean {
 const compiledSubSchemas = new WeakMap<Record<string, unknown>, z.ZodTypeAny | null>();
 
 /**
- * Whether the parsed value satisfies this sub-schema, checked with the SAME
- * zod the domain parse runs (`z.fromJSONSchema` on the wire schema — the
- * `parameters` document pi validates against). Local refs resolve against the
- * document's definition maps. A schema the converter cannot express counts as
- * NOT passing — the repair is then treated as failed rather than adopted on
- * trust; the field fails at the real validator either way.
+ * Whether the parsed value satisfies this sub-schema, checked with the same zod
+ * the domain parse runs (`z.fromJSONSchema` on the wire schema). A schema the
+ * converter cannot express counts as NOT passing, so the repair fails here rather
+ * than being adopted on trust.
  */
 function subSchemaAccepts(node: SchemaNode, value: unknown, defs: Definitions): boolean {
   node = resolveNode(node, defs);
@@ -336,12 +316,10 @@ function rejectContract(path: string, kinds: Set<'array' | 'object'>): never {
 }
 
 /**
- * Expand a schema node into conjunctive leaf positions: each anyOf/oneOf
- * member becomes its own position with the node's sibling constraints folded
- * in via allOf, so a repair decision always validates the WHOLE applicable
- * sub-schema — discriminators, required fields, and conjunctive constraints —
- * instead of treating flattened alternative property schemas as independent
- * repair authorities.
+ * Expand a node into conjunctive leaf positions: each anyOf/oneOf member becomes
+ * its own position with sibling constraints folded in via allOf, so a repair
+ * validates the WHOLE applicable sub-schema (discriminators, required fields)
+ * instead of treating flattened alternatives as independent authorities.
  */
 function collectConjunctive(
   node: SchemaNode,
@@ -420,19 +398,14 @@ function repairArrayElements(
 }
 
 /**
- * Walk `value` against the sub-schemas applying at this position. Returns the
- * original or repaired value; throws ToolParamContractError when a string
- * field REQUIRES repair (some conjunctive candidate expects array/object and
- * rejects strings) but no candidate's repair succeeds.
+ * Walk `value` against the sub-schemas at this position, returning the original or
+ * repaired value and throwing ToolParamContractError when a required repair fails.
  *
- * Branch discipline (the union-flattening P1): a value that already validates
- * under ANY applicable schema is preserved untouched — an already-valid
- * string in one union branch is never reinterpreted through another branch.
- * A repair is adopted only when the WHOLE repaired position validates under
- * the same conjunctive candidate AND under the position's original schema
- * set (oneOf uniqueness, sibling constraints). A per-position repair that
- * throws falls through to the next candidate; the first field-level contract
- * error wins so the model sees the most specific path.
+ * Branch discipline: a value valid under ANY applicable schema is preserved
+ * untouched — a valid string in one union branch is never reinterpreted through
+ * another. A repair is adopted only when the whole repaired position validates
+ * under the same conjunctive candidate and the original schema set (oneOf
+ * uniqueness, sibling constraints). The first field-level error wins.
  */
 function repairValue(
   value: unknown,
@@ -520,11 +493,9 @@ function repairValue(
 }
 
 /**
- * Shared tool-parameter repair: one strict JSON.parse for each string field
- * whose sub-schema expects array/object and rejects strings. Adopted repairs
- * are recorded in `coercions` (field path + original length only — never the
- * payload). Throws {@link ToolParamContractError} when a required repair
- * fails; the caller turns that into the isError tool result.
+ * Shared repair: one strict JSON.parse per string field whose sub-schema expects
+ * array/object and rejects strings. `coercions` records path + original length
+ * only, never the payload. Throws when a required repair fails.
  */
 export function repairToolArguments(parameters: unknown, args: unknown): ToolParamRepairOutcome {
   const root: SchemaNode = isSchemaNode(parameters) ? parameters : {};

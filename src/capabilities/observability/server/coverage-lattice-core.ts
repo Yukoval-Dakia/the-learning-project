@@ -1,5 +1,4 @@
-// Pure coverage-lattice core with no DB imports, so it can run in the unit lane. The
-// read model imports these same functions and injects the three constants.
+// Pure coverage-lattice core with no DB imports, so it can run in the unit lane.
 //
 // The scanner's four rules are pool-level; this never produces a per-cell matrix. Pool
 // booleans are read back from which gap kinds fired, and an empty pool leaves the three
@@ -221,7 +220,6 @@ export function buildCoverageLattice(
     rowsBySubject.set(f.subjectId, list);
   }
 
-  // KC 排序：有缺口者优先（按最高缺口 priority 降序），满覆盖者随后（按 knowledgeId）。
   const maxPriority = (r: KcCoverageRow) =>
     r.gaps.reduce((m, g) => Math.max(m, g.priority), Number.NEGATIVE_INFINITY);
   const sortRows = (rows: KcCoverageRow[]) =>

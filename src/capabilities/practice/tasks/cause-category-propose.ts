@@ -1,9 +1,6 @@
-// YUK-1016 / 454-B — 错因 catalog 扩张的 LLM 提议任务。
-//
-// 触发链：`other` 归因复发（effective cause tally ≥ floor）→ 本任务读复发
-// 样本 + 现有词表 → 判定是否存在「现有类目覆盖不了的连贯错因模式」→ propose
-// 或 abstain。提议不自动生效——落 `cause_category` proposal，owner accept 才
-// 写 cause_category_overlay。
+// 错因 catalog 扩张：`other` 归因复发到阈值后，读复发样本 + 现有词表，判断是否
+// 存在现有类目覆盖不了的连贯错因模式。提议只是 `cause_category` proposal，owner
+// accept 后才写 cause_category_overlay。
 
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';

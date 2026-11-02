@@ -5,18 +5,28 @@
 // approval_status='pending': an agent-invented KC is not self-approved. Both branches
 // write audit-only events; neither creates an inbox proposal.
 //
+// YUK-1604 — input-entry semantic classification: goal/container nodes are never
+// match candidates (role='kc' gate in the retriever), and every audit event carries
+// the classification basis (original quote, mapping confidence, embed/naming
+// provider·model·revision·cost) plus the pending reason for the await-confirmation
+// bucket (unresolved domain / non-kc parent).
+//
 // The naming model call runs outside any DB transaction. Creation is event-first and
 // projected in the same transaction.
 
+import { eq } from 'drizzle-orm';
 import { questionEmbedText } from '@/core/embed-source';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
+import { ai_task_runs, knowledge } from '@/db/schema';
+import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 // Projection parity assert: throws in dev/test, warns in prod.
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 import {
+  EMBED_MODEL,
   type EmbedProviderAttemptOptions,
   embedText,
   isDirectProviderAttemptInvariantError,
@@ -31,15 +41,72 @@ export function isTagKnowledgeInvariantError(error: unknown): boolean {
 }
 
 /**
+ * YUK-1604 — revision of the input-entry classification contract stamped on every
+ * tag audit event (semantic role / original quote / mapping confidence / pending
+ * basis). Bump when the classification semantics change.
+ */
+export const TAG_CLASSIFICATION_REVISION = 'yuk1604-kc-classification-v1';
+
+/** Bounded excerpt of the question text when extraction gave no knowledge hint. */
+const ORIGINAL_QUOTE_MAX_CHARS = 240;
+
+function originalQuoteOf(questionText: string, knowledgeHint: string | null): string {
+  if (knowledgeHint && knowledgeHint.trim().length > 0) return knowledgeHint.trim();
+  const collapsed = questionText.trim().replace(/\s+/g, ' ');
+  return collapsed.slice(0, ORIGINAL_QUOTE_MAX_CHARS);
+}
+
+/** match confidence from cosine distance, clamped to [0,1]; null for propose_new. */
+function matchConfidence(cosineDistance: number): number {
+  return Math.min(1, Math.max(0, 1 - cosineDistance));
+}
+
+export interface NamingProvenance {
+  /** The naming task run (ColdStartPlacementBridgeTask); absent for stub names. */
+  task_run_id?: string;
+  /** Known USD cost of the naming run; absent when unpriced. */
+  cost_usd?: number;
+}
+
+/** Best-effort provider/model/revision readback for the naming run; null fields stay null. */
+async function namingRunFacts(
+  db: Db,
+  taskRunId: string | undefined,
+): Promise<{ provider: string | null; model: string | null; revision: string | null }> {
+  if (!taskRunId) return { provider: null, model: null, revision: null };
+  try {
+    const [run] = await db
+      .select({
+        provider: ai_task_runs.provider,
+        model: ai_task_runs.model,
+        // The run-bound prompt fingerprint is the naming contract's revision.
+        revision: ai_task_runs.prompt_fingerprint,
+      })
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.id, taskRunId))
+      .limit(1);
+    return {
+      provider: run?.provider ?? null,
+      model: run?.model ?? null,
+      revision: run?.revision ?? null,
+    };
+  } catch {
+    // Audit readback only — a missing run row must not fail the tagging decision.
+    return { provider: null, model: null, revision: null };
+  }
+}
+
+/**
  * Naming seam: the caller owns model naming; Knowledge owns only the match-or-propose
- * decision and its writes.
+ * decision and its writes. YUK-1604 — the result may carry the naming run's
+ * provenance so the audit events stay provider/model/revision/cost auditable.
  */
 export type NameKcFn = (args: {
   questionText: string;
   knowledgeHint: string | null;
   subjectId: string;
   knownSubjects: ReadonlyArray<{ id: string; display_name: string; aliases?: string[] }>;
-}) => Promise<{ kc_name: string }>;
+}) => Promise<{ kc_name: string } & NamingProvenance>;
 
 export interface TagKnowledgeDeps {
   /**
@@ -91,21 +158,16 @@ export type TagKnowledgeResult =
   | { kind: 'match'; knowledge_ids: string[] }
   | { kind: 'propose'; knowledge_ids: string[]; kc_name: string };
 
-/** Extracts `<subjectId>` from a `seed:<subjectId>:root` id, else null. */
 function subjectIdFromRoot(subjectRootId: string): string | null {
   const m = /^seed:([^:]+):root$/.exec(subjectRootId);
   return m ? m[1] : null;
 }
 
-/** Stable cache key — subject root + case/space-normalized name. */
 function batchCacheKey(subjectRootId: string, kcName: string): string {
   return `${subjectRootId}::${kcName.trim().toLowerCase()}`;
 }
 
-/**
- * Match-or-propose tagging: embed, retrieve, then match within threshold or propose.
- * A proposal reuses the batch cache before naming, and projects in the same transaction.
- */
+/** Match-or-propose tagging; a proposal reuses the batch cache before naming. */
 export async function tagKnowledge(
   deps: TagKnowledgeDeps,
   input: TagKnowledgeInput,
@@ -118,6 +180,7 @@ export async function tagKnowledge(
   // invoker would receive an undefined subject.
   const knownSubjects = input.knownSubjects?.length ? input.knownSubjects : getKnownSubjects();
   const knowledgeHint = input.knowledgeHint ?? null;
+  const originalQuote = originalQuoteOf(input.questionText, knowledgeHint);
 
   // Stamp both events with the session policy; binding the id keeps consent
   // withdrawal retroactive.
@@ -144,7 +207,6 @@ export async function tagKnowledge(
     (_c, i) => candidateDomains[i] === targetDomain,
   );
 
-  // Nearest in-subject candidate decides the branch.
   const nearest = subjectScoped[0];
   if (nearest && nearest.cosine_distance <= threshold) {
     const matchingCandidates = subjectScoped.filter(
@@ -173,11 +235,32 @@ export async function tagKnowledge(
           ...policyField,
           threshold,
           primary_knowledge_id: nearest.knowledge_id,
+          // YUK-1604 — input-entry semantic classification: what was attributed, from
+          // which source quote, and how confidently the embedding mapping was made.
+          classification: {
+            revision: TAG_CLASSIFICATION_REVISION,
+            semantic_role: 'kc',
+            original_quote: originalQuote,
+            mapping: {
+              kind: 'match',
+              confidence: matchConfidence(nearest.cosine_distance),
+              threshold,
+            },
+          },
           matches: matchingCandidates.map((c) => ({
             knowledge_id: c.knowledge_id,
             name: c.name,
             cosine_distance: c.cosine_distance,
+            confidence: matchConfidence(c.cosine_distance),
+            // YUK-1603 — version provenance so each attributed match reconciles back to
+            // the node revision whose vector produced it (NULL = pre-column legacy).
+            version: c.version,
+            embed_source_revision: c.embed_source_revision,
+            embed_content_hash: c.embed_content_hash,
           })),
+          provenance: {
+            embed: { provider: 'dashscope', model: EMBED_MODEL },
+          },
         },
         caused_by_event_id: null,
         task_run_id: null,
@@ -192,7 +275,7 @@ export async function tagKnowledge(
 
   // Propose: name outside any transaction, then create and audit atomically.
   const subjectId = subjectIdFromRoot(input.subjectRootId);
-  const { kc_name } = await nameKcFn({
+  const { kc_name, ...namingProvenance } = await nameKcFn({
     questionText: input.questionText,
     knowledgeHint,
     // A non-canonical root still needs a valid pinned subject for the naming invoker.
@@ -214,7 +297,23 @@ export async function tagKnowledge(
     }
   }
 
-  // Creation event, projection and timestamp are atomic.
+  // YUK-1604 — classify the placement before minting: a new KC whose effective domain
+  // is unresolved or whose parent is a goal/container is exactly the population the
+  // owner ruled must await confirmation (待确认), never silently pass. The parent-role
+  // read runs outside the creation tx; a concurrent role change folds later and the
+  // ops repair (yuk1604) re-derives the basis, so no lock is needed for an audit fact.
+  const [parentRow] = await db
+    .select({ role: knowledge.role })
+    .from(knowledge)
+    .where(eq(knowledge.id, input.subjectRootId))
+    .limit(1);
+  const parentRole: 'kc' | 'goal' | 'container' | null = parentRow?.role ?? null;
+  const pendingReasons: Array<'domain_unresolved' | 'parent_non_kc'> = [];
+  if (targetDomain === null) pendingReasons.push('domain_unresolved');
+  if (parentRole === null || parentRole !== 'kc') pendingReasons.push('parent_non_kc');
+  const namingFacts = await namingRunFacts(db, namingProvenance.task_run_id);
+  const namingCostMicroUsd = costUsdToMicroUsd(namingProvenance.cost_usd);
+
   const newKcId = await db.transaction(async (tx) => {
     const now = new Date();
     const createdId = await prepareProposedKnowledgeId(tx, {
@@ -242,12 +341,41 @@ export async function tagKnowledge(
         // Agent-minted KCs are not self-approved. Nothing gates on this today, so
         // tagging still works, but the node is honestly marked for later review.
         approval_status: 'pending',
+        // YUK-1604 — which owner rule puts this KC in the await-confirmation bucket.
+        // A resolved domain under a kc parent would leave this empty (其余不变);
+        // today every propose parents under the subject root, so 'parent_non_kc'
+        // is the expected basis.
+        pending_reasons: pendingReasons,
+        // YUK-1604 — input-entry semantic classification with audit-grade provenance
+        // (original quote, mapping decision, embed/naming provider·model·revision·cost).
+        classification: {
+          revision: TAG_CLASSIFICATION_REVISION,
+          semantic_role: 'kc',
+          original_quote: originalQuote,
+          mapping: {
+            kind: 'propose_new',
+            confidence: null,
+            threshold,
+          },
+        },
+        parent_role: parentRole,
+        effective_domain: targetDomain,
+        provenance: {
+          embed: { provider: 'dashscope', model: EMBED_MODEL },
+          naming: {
+            task_run_id: namingProvenance.task_run_id ?? null,
+            provider: namingFacts.provider,
+            model: namingFacts.model,
+            revision: namingFacts.revision,
+            cost_usd: namingProvenance.cost_usd ?? null,
+          },
+        },
         reasoning: `unified tagging auto-created KC "${kc_name}" under ${input.subjectRootId} (no live KC within matchThreshold()=${threshold}); pending owner review, applied as ${createdId}`,
         ...policyField,
       },
       caused_by_event_id: null,
-      task_run_id: null,
-      cost_micro_usd: null,
+      task_run_id: namingProvenance.task_run_id ?? null,
+      cost_micro_usd: namingCostMicroUsd,
       created_at: now,
     });
 

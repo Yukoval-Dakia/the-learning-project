@@ -1,7 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
 import { learning_session } from '@/db/schema';
-import { Review } from '@/server/session';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const cutoff = new Date('2026-10-09T00:00:00Z');

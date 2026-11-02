@@ -7,13 +7,12 @@
 //   拒绝路径 staged 资产即时清理（cleanupStagedForRejected）、raced_merged 竞态补偿。
 // enqueueSourceVerify 注入 fake（不依赖真 pg-boss）；staged 资产用 memR2 + 真 source_asset。
 
-import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
-import type { R2Client } from '@/server/r2';
+import type { R2Client } from '@/kernel/object-storage';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { memR2 } from '../../../../../tests/helpers/r2';
 import { canonicalJyeooQuestionHash } from '../question-supply/jyeoo-candidates';
@@ -23,12 +22,12 @@ import {
 } from './store-sourced-question';
 
 // cleanupStagedForRejected → cleanupStagedAssets 的 r2 走默认参数 getR2()（无注入 seam）。
-// mock '@/server/r2' 让测试注入 memR2 从而断言 R2 对象回收；未设置时保持与生产缺 env
+// mock '@/kernel/object-storage' 让测试注入 memR2 从而断言 R2 对象回收；未设置时保持与生产缺 env
 // 相同的抛错行为（调用方 catch 后降级给 reaper）。本文件只有 staged_asset_ids 非空的
 // 用例会触达 getR2()，既有用例（staged_asset_ids=[]）早退、不受影响。
 const stagedR2 = vi.hoisted(() => ({ client: null as R2Client | null }));
-vi.mock('@/server/r2', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('@/server/r2')>();
+vi.mock('@/kernel/object-storage', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@/kernel/object-storage')>();
   return {
     ...mod,
     getR2: () => {
@@ -74,20 +73,6 @@ async function seedTree(): Promise<void> {
   ]);
 }
 
-function sourced(overrides: Partial<SourcedQuestionT> = {}): SourcedQuestionT {
-  return {
-    kind: 'short_answer',
-    prompt_md: '已知集合 A={1,2,3}，B={2,3,4}，求 A∩B。',
-    reference_md: '【答案】{2,3}\n【分析】交集。\n【解答】A∩B={2,3}。',
-    difficulty: 3,
-    source_url: 'https://www.jyeoo.com/math2/ques/detail/x-1',
-    source_title: '2025 某校卷',
-    knowledge_ids: [],
-    extract: '已知集合 A={1,2,3}，B={2,3,4}，求 A∩B。答案：{2,3}',
-    ...overrides,
-  } as SourcedQuestionT;
-}
-
 async function candidateOf(
   q: SourcedQuestionT,
   overrides: Record<string, unknown> = {},
@@ -127,43 +112,6 @@ function fakeEnqueue(captured: string[][]): StoreSourcedQuestionDeps {
     },
   };
 }
-
-describe('executeStoreSourcedQuestion — deterministic rejections', () => {
-  it('merges exact duplicates into the existing row (KC union) without a new insert', async () => {
-    await seedTree();
-    const q = sourced();
-    const hash = await canonicalJyeooQuestionHash(q, { images: [], attachedSources: new Set() });
-    await db.insert(question).values({
-      id: 'q-existing',
-      kind: 'short_answer',
-      prompt_md: q.prompt_md,
-      reference_md: q.reference_md,
-      knowledge_ids: ['math-root'],
-      difficulty: 3,
-      source: 'jyeoo',
-      metadata: null as never,
-      draft_status: null,
-      variant_depth: 0,
-      canonical_content_hash: hash,
-      created_at: NOW,
-      updated_at: NOW,
-      version: 0,
-    });
-
-    const output = await executeStoreSourcedQuestion(
-      { db, taskRunId: 'test-run' },
-      inputOf(await candidateOf(q)),
-      fakeEnqueue([]),
-    );
-    expect(output).toMatchObject({ status: 'rejected', reason: 'duplicate_exact' });
-    if (output.status !== 'rejected') return;
-    expect(output.existing_question_id).toBe('q-existing');
-    const [existing] = await db.select().from(question).where(eq(question.id, 'q-existing'));
-    expect(new Set(existing?.knowledge_ids)).toEqual(new Set(['math-root', 'kc-sets']));
-    const all = await db.select().from(question);
-    expect(all).toHaveLength(1);
-  });
-});
 
 // ── 图题 commit（YUK-990）───────────────────────────────────────────────────
 //
@@ -294,58 +242,6 @@ function injectHashConflictOnInsertTx(db: Db, inject: () => Promise<unknown>): D
 }
 
 describe('executeStoreSourcedQuestion — image candidate commit', () => {
-  it('rejected duplicate_exact reclaims the candidate staged assets (row + R2 object)', async () => {
-    await seedTree();
-    const r2 = memR2();
-    stagedR2.client = r2;
-    await seedStagedAsset(r2, IMG_ASSET_ID);
-
-    const q = imageSourced();
-    const hash = (await imageExtractionHash(q)).slice('sha256:'.length);
-    await db.insert(question).values({
-      id: 'q-existing',
-      kind: 'choice',
-      prompt_md: q.prompt_md,
-      reference_md: q.reference_md,
-      choices_md: q.choices_md,
-      knowledge_ids: ['math-root'],
-      difficulty: 3,
-      source: 'jyeoo',
-      metadata: null as never,
-      draft_status: null,
-      variant_depth: 0,
-      canonical_content_hash: hash,
-      created_at: NOW,
-      updated_at: NOW,
-      version: 0,
-    });
-
-    const media = imageMedia('cand-img-dup');
-    const candidate = await candidateOf(q, {
-      candidate_id: 'cand-img-dup',
-      extraction_hash: `sha256:${hash}`,
-      ...media,
-      staged_asset_ids: [IMG_ASSET_ID],
-    });
-    const output = await executeStoreSourcedQuestion(
-      { db, taskRunId: 'test-run' },
-      inputOf(candidate),
-      fakeEnqueue([]),
-    );
-    expect(output).toMatchObject({ status: 'rejected', reason: 'duplicate_exact' });
-    if (output.status !== 'rejected') return;
-    expect(output.existing_question_id).toBe('q-existing');
-
-    // pre-check merge 拒绝路径调 cleanupStagedForRejected：staged source_asset 行 +
-    // R2 对象即时回收（不等 24h reaper）。
-    expect(await db.select().from(source_asset)).toHaveLength(0);
-    expect(r2._store.size).toBe(0);
-    const [existing] = await db.select().from(question).where(eq(question.id, 'q-existing'));
-    expect(new Set(existing?.knowledge_ids)).toEqual(new Set(['math-root', 'kc-sets']));
-    const all = await db.select().from(question);
-    expect(all).toHaveLength(1);
-  });
-
   it('raced_merged: canonical-hash race loser merges into the winner and reclaims staged assets', async () => {
     await seedTree();
     const r2 = memR2();

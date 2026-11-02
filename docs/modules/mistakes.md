@@ -56,7 +56,7 @@ variant_question proposal
 | `Mistake.cause`（user 手填或 AI 归因） | AI: `event(action='judge', subject_kind='event', caused_by=<attempt id>, payload.cause)`。<br>User: `event(action='experimental:user_cause', subject_kind='event', caused_by=<attempt id>, payload={primary_category, user_notes})` | 用户优先 |
 | `Mistake.fsrs_state` | `material_fsrs_state(subject_kind='question', subject_id=<qid>, state, due_at, last_review_event_id)` | 一行 / 题 |
 | `Mistake.source = 'quiz_answer' / 'manual' / 'vision_*' / 'reverse_mark'` | 当前只跑 `manual` (POST /api/mistakes) + `vision_single` / `vision_paper`（OCR → import）；`quiz_answer` 自动管线 + `reverse_mark` 留到 Phase 2 quiz 时再展开 | |
-| `Mistake.variants[]` / 变式繁殖 | Phase 2 Task #17 + YUK-44 + ADR-0018 ✅：`variant_gen` pg-boss handler 由 `attribution_followup` 链路触发，先写 `event(action='propose', subject_kind='question')` payload `AiProposal.kind='variant_question'`（src/core/schema/proposal.ts；`ai_proposal` 表已 DROP），不再直接物化 `question`。**双 pass 已上线**：`variant_verify` handler（src/server/boss/handlers/variant_verify.ts）verdict='fail' 时翻 `mistake_variant.status='broken'`、verdict='pass' 时保持 `active`。这里的 `mistake_variant` 是独立 lifecycle ledger：按 `parent_question_id` 跟踪 proposal/物化/验证状态，不含错误作答事实。它用于 per-parent variants_max=3 防繁殖；3 层防繁殖（depth≤1 / variant 不再生变式 / cause∈{carelessness,time_pressure,other} 跳过）。接受 proposal 后物化 `question(source='mistake_variant', draft_status, variant_depth, root_question_id, parent_variant_id)`。详见 §3.4 + ADR-0018 | |
+| `Mistake.variants[]` / 变式繁殖 | Phase 2 Task #17 + YUK-44 + ADR-0018 ✅：`variant_gen` pg-boss handler 由 `attribution_followup` 链路触发，先写 `event(action='propose', subject_kind='question')` payload `AiProposal.kind='variant_question'`（src/core/schema/proposal.ts；`ai_proposal` 表已 DROP），不再直接物化 `question`。**双 pass 已上线**：`variant_verify` handler（`src/capabilities/practice/jobs/variant_verify.ts`）verdict='fail' 时翻 `mistake_variant.status='broken'`、verdict='pass' 时保持 `active`。这里的 `mistake_variant` 是独立 lifecycle ledger：按 `parent_question_id` 跟踪 proposal/物化/验证状态，不含错误作答事实。它用于 per-parent variants_max=3 防繁殖；3 层防繁殖（depth≤1 / variant 不再生变式 / cause∈{carelessness,time_pressure,other} 跳过）。接受 proposal 后物化 `question(source='mistake_variant', draft_status, variant_depth, root_question_id, parent_variant_id)`。详见 §3.4 + ADR-0018 | |
 | `judgment` 表 + `JudgeRouter` | DROPped（1c.1 Step 1.4）；判分走 `event(action='judge')` 替代 | |
 | `mistake.deleted_at` soft-delete | 未实现（event 流没有 retraction 机制）；申诉翻盘 Phase 1d 再设计 | |
 
@@ -64,7 +64,7 @@ variant_question proposal
 
 **实际录入入口（v0.1 上线）**：
 - `manual` —— POST /api/mistakes（手填题面 + 错答 + 知识点 + 可选 cause）
-- `vision_single` —— 1 张图 → /api/assets → /api/ingestion → /api/ingestion/[id]/extract → SSE → /api/ingestion/[id]/blocks → /api/ingestion/[id]/import
+- `vision_single` —— 1 张图 → `POST /api/assets` → `POST /api/ingestion-sessions` → `POST /api/ingestion-sessions/[id]/operations`（`kind='extract'`）→ 轮询 `GET /api/ingestion-operations/[id]` → `GET /api/ingestion/[id]/blocks` → `POST /api/ingestion-sessions/[id]/operations`（`kind='import'`）
 - `vision_paper` —— 1-5 张图，同上 + 跨页 block 合并 UI（vision 1c.2.C）
 
 ---
@@ -132,6 +132,8 @@ User 标注「我做错过」+ 可选填错答
 Mistake.create({source: 'vision_single', ...})
 ```
 
+**幂等**：创建入口 `POST /api/ingestion-sessions`（legacy `POST /api/ingestion` 同契约，成功码 200）接受可选请求头 `Idempotency-Key`（1–200 字符，显式空串/纯空白非法，400）。同 key 同输入重放已提交的终态响应并带 `Idempotency-Replayed: true`，不重跑资产与科目校验、不再建 session；同 key 不同输入 409 `idempotency_conflict`，收据不可用或提交结果不确定 503 `creation_receipt_unavailable`（用同 key 与原输入重试）；不带 key 则照旧创建、不落收据（收据表见[架构基础](../architecture.md) §七）。source package 物化失败以 500 `ingestion_source_package_failed` 作为终态落库，同 key 重试重放该失败，不会另建 session。
+
 **必审字段**：题面、参考答案、关联知识点（影响 mastery 计算）。其他自动通过。
 
 ### 2.3 卷子拍照 / 批改识别（vision_paper，Phase 1.5）
@@ -169,7 +171,7 @@ N × AttributionTask 走 batch（夜间）
 - 所有题（含对的）都进 Question 题库（题库丰富）
 - 用户可勾选「保留为模拟卷」→ 整套 Question 包成 standalone `tool_quiz` Artifact，未来可重刷
 
-**图片存储**：vision_paper 单次上传 1~N 张图片（每张 2-5MB），用户审核完批量录入时图片必须可重复读取。卷子图片走 R2 / S3-compat 持久化（`@aws-sdk/client-s3` via `src/server/r2.ts`，bucket 配置走 `R2_*` env vars，Next standalone build 在 NAS Docker 容器内运行，**不是** Cloudflare Worker 也没有 wrangler.toml）；DB 中 `source_asset.storage_key` 持的是 object key（旧 `Mistake.wrong_answer_image_refs[]` 已 collapse 到 `payload.wrong_answer_image_refs` per learning_record schema）。client 上传走 `POST /api/assets` → 写 R2 → 返 asset id（已落地，见 `app/api/assets/route.ts`）。
+**图片存储**：vision_paper 单次上传 1~N 张图片（每张 2-5MB），用户审核完批量录入时图片必须可重复读取。卷子图片走 R2 / S3-compat 持久化（`@aws-sdk/client-s3` via `src/kernel/object-storage.ts`，bucket 配置走 `R2_*` env vars，NAS Docker 容器内运行，**不是** Cloudflare Worker 也没有 wrangler.toml）；DB 中 `source_asset.storage_key` 持的是 object key（旧 `Mistake.wrong_answer_image_refs[]` 已 collapse 到 `payload.wrong_answer_image_refs` per learning_record schema）。client 上传走 `POST /api/assets` → 写 R2 → 返 asset id（见 `src/capabilities/ingestion/api/assets.ts`）。
 
 ### 2.4 手动粘贴（manual）
 
@@ -182,6 +184,8 @@ Mistake.create({source: 'manual', source_ref: null})
 ```
 
 无 AI 介入题面识别（已结构化文本输入），AttributionTask 仍跑。
+
+**幂等**：`POST /api/mistakes` 与 §2.2 同语义（`Idempotency-Key` 校验、重放、409 / 503、不带 key 的规则一致），唯一差异是成功码固定 201，重放时复用原 `Location`（`/api/events/<mistake_id>`）。
 
 ### 2.5 从 artifact 或会话反向标记（reverse_mark）
 
@@ -267,7 +271,7 @@ Mistake.create({source: 'reverse_mark', source_ref: artifact_id})
 
 ### 3.4 异步：变式题生成（双 pass + 防"错题繁殖"）
 
-**当前状态（Task #17 + YUK-44 + ADR-0018，2026-05-28）**：**双 pass 已上线** —— `attribution_followup` 写完 judge 后入队 `variant_gen`（pg-boss），worker 拉 `VariantGenTask` 产出一条 `variant_question` proposal（写为 `event(action='propose')` payload `AiProposal.kind='variant_question'`）。YUK-44 后不再直接写 `question` 行；接受 proposal 后才物化 `source='mistake_variant'`、`draft_status`、`variant_depth=parent+1` 的 question 行，并 enqueue `variant_verify`（mistake_variant ledger 表 `status='draft' → 'active' | 'broken'`，见 `src/server/boss/handlers/variant_verify.ts`）。`mistake_variant` 表 track in-flight per-parent count = variants_max=3。UI 显式列表仍是后续 work。
+**当前状态（Task #17 + YUK-44 + ADR-0018，2026-05-28）**：**双 pass 已上线** —— `attribution_followup` 写完 judge 后入队 `variant_gen`（pg-boss），worker 拉 `VariantGenTask` 产出一条 `variant_question` proposal（写为 `event(action='propose')` payload `AiProposal.kind='variant_question'`）。YUK-44 后不再直接写 `question` 行；接受 proposal 后才物化 `source='mistake_variant'`、`draft_status`、`variant_depth=parent+1` 的 question 行，并 enqueue `variant_verify`（mistake_variant ledger 表 `status='draft' → 'active' | 'broken'`，见 `src/capabilities/practice/jobs/variant_verify.ts`）。`mistake_variant` 表 track in-flight per-parent count = variants_max=3。UI 显式列表仍是后续 work。
 
 变式 Question 跟主题库平级——`source: mistake_variant`，可被 daily quiz 抽，也可入 standalone tool_quiz。
 
@@ -407,7 +411,6 @@ FSRS 更新 (correct → 加大 interval；incorrect → lapses+1, 重置 interv
 - **FSRS 到期自动**：每天 dreaming 夜间任务挑出今日到期 Mistake，生成 review tool_quiz
 - **每日 quiz**：每日 quiz 优先抽到期错题（见 [`lanes.md`](lanes.md)）
 - **用户主动**：用户在错题本点「我现在想复习」→ 生成临时 tool_quiz
-- **Note embedded check 错题反向**：embedded check 答错入错题，下次到期由 FSRS 调度
 
 ### 4.3 partial credit 错题的复习策略
 

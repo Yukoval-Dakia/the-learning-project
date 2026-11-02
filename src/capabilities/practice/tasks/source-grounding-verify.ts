@@ -6,12 +6,10 @@ import {
 import type { SubjectProfile } from '@/subjects/profile';
 import { parseTaskOutput } from './parse-output';
 
-// YUK-230 (PR #1063 review, thread 2) — source-grounding verifier prompt. UNLIKE
-// MultimodalDirectJudgeTask (which grades a student ANSWER), this asks ONLY「题面是否
-// 真的来自这张图片」. It exists to catch VLM hallucination on the image_candidate
-// extraction path: a single VLM call can emit a self-consistent 题面 + 答案 that is
-// unrelated to the source image; grading that pair by text alone判 correct, so the
-// grounding gate MUST re-read the image and ask the presence question directly.
+// Source-grounding verifier: asks only whether the 题面 really comes from the
+// attached image. It exists to catch VLM hallucination on the image_candidate
+// extraction path, where a self-consistent 题面 + 答案 can be unrelated to the
+// source; grading text alone would call it correct.
 function buildSourceGroundingVerifyPrompt(profile: SubjectProfile): string {
   return `你是题目来源核验器（source grounding verifier）。给你一张来源图片（这道题据称从中抽取）和一道题的 { prompt_md（题面）, reference_md（参考答案，可能为 null）, image_present }。图片会附在 user message 中。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -42,16 +40,15 @@ export const sourceGroundingVerifyTaskSpec = {
       'YUK-230 — Source-grounding verification for image-sourced questions. Single vision LLM call re-reads the source image and decides whether the question 题面 actually appears in / derives from it (grounded boolean), catching VLM extraction hallucination on the image_candidate accept path. Distinct from multimodal_direct (answer judging).',
     structuredOutputSchema: SourceGroundingVerifyOutput,
     defaultProvider: 'xiaomi',
-    // Same vision model + single-call/90s budget as the multimodal judges, but WITHOUT the
-    // transientRetries opt-in: this runner is called from the durable source_verify pg-boss
-    // job (throws on transient → queue redelivery is the retry layer), so an in-process retry
-    // would stack a second transient layer (single-transient-layer principle, YUK-576 §3.2).
+    // Same vision model and 90s single-call budget as the multimodal judges, but no
+    // transientRetries: the durable source_verify job's queue redelivery is the retry
+    // layer, so an in-process retry would stack a second transient layer.
     defaultModel: 'mimo-v2.5',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 90_000 },
     needsToolCall: false,
     isMultimodal: true,
-    // invocation omitted (defaults to 'auto'): called from source_verify as part of
-    // the tier-2 promotion gate for single_source_grounding rows (after user accept).
+    // invocation omitted (defaults to 'auto'): part of the tier-2 promotion gate,
+    // not a user-initiated rescue.
     allowedTools: [],
     prompt: { kind: 'profile', build: buildSourceGroundingVerifyPrompt },
   },

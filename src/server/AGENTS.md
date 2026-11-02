@@ -7,11 +7,11 @@
 |--------|------|
 | `ai/` | Pi agent runner（唯一执行引擎，YUK-1025 后无 SDK 子进程）+ domain tool registry + tool bridge（见本目录 AGENTS.md）|
 | `boss/` | pg-boss client + handler 注册；`handlers/` 是 job/cron 目录（见 AGENTS.md）|
-| `ingestion/` | OCR / Tencent Mark / Vision rescue / 抽取 pipeline + session 状态机（见 AGENTS.md）|
+| `../capabilities/ingestion/server/` | 录入状态操作、OCR / Vision rescue 与 DOCX 文本初始化（见该域 AGENTS.md）|
 | `knowledge/` | 知识树 + mesh edge + propose/attribute/review（见 AGENTS.md）|
 | `events/` | event 写入 + 查询（事件驱动核的 IO 层）|
-| `conjectures/` | 关系脑 A13 结算与分型：`reconcile.ts` 预测打分 → `typed-state.ts`（`kc_typed_state` 单写者）、`hard-confirm.ts` 硬确认判定、`accountability.ts` 候选排序、`scoring.ts` 单探针评分占位；取证聚合与归纳前 grounding 在 `src/capabilities/agency/server/conjecture/` |
-| `session/` | learning_session envelope + 状态守卫（ingestion/review/conversation）|
+| `../capabilities/agency/server/conjecture/` | 预测问责排序、硬确认事实读取与判定、probe 记账及纠错回放；typed ledger 与共享单探针评分归 `@/kernel/records/` |
+| `session/` | 剩余会话状态操作；Placement 归 `../capabilities/practice/server/placement-session-lifecycle.ts`，录入归 ingestion capability，共享守卫归 `../kernel/learning-session-guard.ts` |
 | `proposals/` | propose event 的 accept/dismiss/retract actions（破坏性动作落地点）|
 | `artifacts/` | Living Note body-blocks / sections / editing-session / hub-dismiss |
 | `review/` + `fsrs/` | FSRS 调度（ts-fsrs）+ review event → `material_fsrs_state` 投影 |
@@ -24,7 +24,8 @@
 | `agents/` | `leave_agent_note` 软提示 channel（→ Dreaming / Maintenance）|
 | `learning-items/` | active learning-item reader（Coach brief 的 attention pressure）|
 | `goals/` · `today/` · `records/` · `admin/` | learning intent / today plan / learning record / 管理面 |
-| `export/` · `http/` · `redis/` · `r2.ts` | 导入导出 / HTTP helper / redis / R2 blob client |
+| `export/` · `http/` · `redis/` | 导入导出 / HTTP helper / redis |
+| `../kernel/object-storage.ts` | 共享 R2/S3 对象 I/O 与首次调用时构造的 client；资产引用、锁、恢复及付费策略归业务 owner |
 
 ## CONVENTIONS
 - 每个 service owns 自己的 write path（schema audit 要求）。AI tool 只能包装已有 owner service，不能传任意 mutation payload。

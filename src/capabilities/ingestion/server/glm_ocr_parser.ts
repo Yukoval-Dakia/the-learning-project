@@ -145,7 +145,6 @@ export function parseGlmLayoutResponse(resp: GlmLayoutResponse, pageIndexBase = 
         if (block.native_label === 'header_image') {
           continue;
         }
-        // image-label blocks (native_label image) → figures.
         figures.push({ bbox, source_page_index: pageIndex });
         continue;
       }
@@ -164,10 +163,7 @@ export function parseGlmLayoutResponse(resp: GlmLayoutResponse, pageIndexBase = 
     });
   });
 
-  // layout_quality heuristic:
-  //   'structured' if every page has ≥1 text block,
-  //   'text_only'  if any page yielded only image/empty blocks,
-  //   'partial'    otherwise (no page has text at all).
+  // Worst page wins: any page without text downgrades the layout.
   const quality = deriveGlmLayoutQuality(pages);
   warnings.push(...quality.warnings);
 

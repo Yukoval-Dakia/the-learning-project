@@ -1,3 +1,4 @@
+import { QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION } from '@/core/schema/event';
 import {
   API_ERROR_RESPONSES,
   ApiErrorResponseSchema,
@@ -8,7 +9,6 @@ import {
 import { defineCapability } from '@/kernel/manifest';
 import { LEARNING_EVENT_ACTIONS, nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
-import { WORKSHEET_RENDER_QUEUE } from '@/server/boss/queue-names';
 import {
   CreateSubmissionBodySchema,
   IssuanceCreatedSchema,
@@ -126,6 +126,7 @@ import {
   JudgeDurablePendingResponseSchema,
   JudgeRunStatusResponseSchema,
 } from './server/judge-run-status';
+import { WORKSHEET_RENDER_QUEUE } from './worksheet-render-queue';
 
 export const practiceCapability = defineCapability({
   name: 'practice',
@@ -171,6 +172,12 @@ export const practiceCapability = defineCapability({
       // YUK-1514 — serving-hold command ledger (reverify / recheck_source /
       // release_verify_hold); the per-key idempotency + pending_action anchor.
       'experimental:question_serving_action',
+      // Quiz draft verification ledger. Agency subscribes and turns a committed
+      // non-promotion into a coach pool-gap hint; the verify job does not call Agency.
+      'experimental:quiz_verify',
+      // Inference only: repeated independent wrongs against independent corrects
+      // on other admitted questions of the same KC. Not a serving hold.
+      QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION,
     ],
   },
   subscriptions: {
@@ -639,7 +646,7 @@ export const practiceCapability = defineCapability({
       // YUK-453 (cold-start inc-A) — owner FIXED-ANCHOR write face. owner 钦定 ~5-10 道
       // 锚题的难度档（粗分桶）→ item_calibration source='fixed_anchor'。n=1 唯一不违红线
       // 的「校 LLM 难度系统性 offset」杠杆（cold-start day-one design §5 inc-A / §4.1）。
-      // 写真身在 src/server/mastery/fixed-anchor.ts（item_calibration 单写者契约）；handler
+      // 写真身在 src/capabilities/practice/server/fixed-anchor.ts（fold sanctioned off-path writer）；handler
       // 只 CALL setFixedAnchors。/api/* internal-token 由组合根中间件统一施加。
       {
         method: 'POST',
@@ -828,7 +835,7 @@ export const practiceCapability = defineCapability({
       {
         // YUK-1529 — 服务端作答卷渲染：无头 Chromium 开 /print/worksheet/<token>，
         // 同一 pass 量区域图 + page.pdf() → R2（content-addressed）→ #1773
-        // write-once 存档。由 createWorksheetExportRoute（created/replayed）入队。
+        // write-once 存档。submitWorksheetExport 经创建 route 对 created/replayed 入队。
         // 'agent' 档：多步浏览器任务，DLQ + 重试兜瞬时失败；不调模型零成本。
         name: WORKSHEET_RENDER_QUEUE,
         queue: 'agent',
@@ -1093,7 +1100,7 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/answer_class_backfill').then((m) => m.buildAnswerClassBackfillHandler),
       },
-      // YUK-1560 停掉 axis_state_nightly 夜写；learner_axis_state 显示保留最后一次写入。
+      // YUK-1560 删除 axis_state_nightly 夜写及 batch writer；learner_axis_state 只保留历史行（merge 时 rename/freeze）。
       // YUK-573 — judge 校准不同意率采样（report-only，dark-ship）。kill switch
       // JUDGE_CALIBRATION_SAMPLING_ENABLED 默认 OFF（cron 保持注册，handler no-op，
       // 零 spend）。复判走第二 lane（per-call ctx.override=anthropic-sub，绝不翻

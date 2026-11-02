@@ -102,22 +102,30 @@ napi 约定——**反转后从 dev/CI 惯例升为生产正确性契约**，本
 
 ### R2 · EZ-diffusion — `src/server/calibration/ez-diffusion.ts`
 
-- **是什么**：`computeEzDiffusion` / `ezFromResponses` / `edgeCorrectPc`（207 行纯闭式）—— Wagenmakers et al. (2007) EZ-diffusion 闭式恢复（Pc/MRT/VRT → v/a/Ter，含 Pc∈{0,1} edge-correction 与退化 null 裁决）。+−×÷ ln exp 判据成立。2026-06-27 ship（YUK-445，PR #651）。live 消费：`axis-writer.ts:95` → nightly `axis_state_nightly` → `learner_axis_state` → placement-profile 显示读出。
+- **是什么**：`computeEzDiffusion` / `ezFromResponses` / `edgeCorrectPc`（207 行纯闭式）—— Wagenmakers et al. (2007) EZ-diffusion 闭式恢复（Pc/MRT/VRT → v/a/Ter，含 Pc∈{0,1} edge-correction 与退化 null 裁决）。+−×÷ ln exp 判据成立。2026-06-27 ship（YUK-445，PR #651）。历史 live 消费：`axis-writer.ts` → nightly `axis_state_nightly` → `learner_axis_state`；writer 与 job 已于 2026-10-21（YUK-1560）退役，`placement-profile` 仍只读历史行。
 - **为何豁免**：TS 纯闭式模块是 **ADR-0048 的成文形态决策**（其「形态」节：纯闭式模块；Accepted，owner 2026-07-23 YUK-678，ratify 的是 shipped 代码本身），但 0048 ratify 时未与本文铁律做 reconcile —— 本段即该 reconcile 的落地（ADR-0048 侧同步标注见其「形态」节 cross-ref）。豁免依据是 ADR-0048 的**描述符-only 红线**：A11 输出绝不喂 θ̂ / p(L) / 选题调度 —— 无引擎消费者、无浏览器 bit-exact 重算面；该红线存续期间，把 200 行闭式 port 进 crate 只添 lane 协调成本、不买任何同构性。
 - **PORT TRIGGER**（任一即失效）：① ADR-0048 描述符-only 红线松动（a/Ter 修正 A1 的 d —— YUK-449 territory —— 或进任何选题/引擎路径）；② UI 需要浏览器端 bit-exact 重算 (v, a, Ter)（#41/#45 家族）；③ Rust 线按本文 Open 项「calibration 先迁」顺序整体吸收 calibration barrel（ez-diffusion 随 barrel 进 crate，diff-test vs 冻结 TS 输出后删 TS）。
 
 ### R3 · SRT 数值路径 + continuous-credit — `src/core/theta.ts`（消费面在 `src/server/**`）
 
-- **是什么**：`srtOutcome`（:342，continuous time-aware outcome-analog ∈ [0,1]，含 SRT_MIN_SIGNAL 地板与 YUK-450 timeWeight 端点精确插值）、`conjunctiveCredits`（:136）/ `conjunctiveCreditsContinuous`（:533，binary 端点逐位 delegate）、`quantile`（:460，type-7 精确分位数）、`resolveSrtTimeLimitFromQuantile`（:503，YUK-449 quantile-d，dark-ship）。+−×÷ 判据成立。消费面：`src/server/mastery/state.ts`、`src/server/calibration/replay.ts`、`src/server/simulator/forward-sampler.ts`。
+- **是什么**：`srtOutcome`（:342，continuous time-aware outcome-analog ∈ [0,1]，含 SRT_MIN_SIGNAL 地板与 YUK-450 timeWeight 端点精确插值）、`conjunctiveCredits`（:136）/ `conjunctiveCreditsContinuous`（:533，binary 端点逐位 delegate）、`quantile`（:460，type-7 精确分位数）、`resolveSrtTimeLimitFromQuantile`（:503，YUK-449 quantile-d，dark-ship）。+−×÷ 判据成立。消费面：`src/kernel/records/mastery-state.ts`、`src/server/calibration/replay.ts`、`src/server/simulator/forward-sampler.ts`。
 - **为何登记**：不是本 ADR 之后的暗渡 —— 基线（srtOutcome / continuous credit，2026-06-19 YUK-433；conjunctiveCredits 更早）**早于本 ADR accept**，本就是 §4「既有 live TS（theta.ts/pfa.ts/calibration/*）触到才迁」点名的迁移窗口本体；YUK-449/450 精修（quantile / timeWeight，2026-06-27，本 ADR 之后）是对该 live 模块的 **dark-ship 扩展**（`SRT_D_FROM_QUANTILE` / `SRT_FISHER_WEIGHT_ENABLED` 默认 false，flag-off 与既有路径逐位相同）—— 严格说触了「新数值 kernel 一律 Rust-first」，本段将其显式收编进 §4 窗口而非默认豁免。它们在 θ̂ 生产热路径上（live 喂 `mastery_state`），§4 的「不主动重写在飞 θ̂ / 逐计算点迁 / port 即删 / 每步独立可验可回滚」正是为这条路设计的风险控制；提前 port 反而违反 §4 的 forward-only 纪律。
 - **PORT TRIGGER**：① theta.ts 的 §4 逐计算点迁移本身（逐点 port 进 crate → 切 binding → 删 TS）；② **「触到」即迁** —— 任何需要改这些 helper 的新特性落地时按 §4 port 而非继续扩 TS；③ #41/#45 需要 θ̂ 家族数字的浏览器 bit-exact 重算（WASM 面）。任何 port 必须 frozen-input replay compatible：与迁移前冻结 fixtures byte-identical；不可 bit-exact 的差异须有显式版本与历史解释策略（YUK-679 扩展 scope 条款）。
 
 ### R4 · Fisher information 家族 — `src/core/theta.ts`
 
-- **是什么**：`fisherInformation`（:579，Rasch 单观测 I = p(1−p)）、`fisherInformation3pl`（:606，3PL 闭式，c=0 端点 delegate 保 1PL 逐位）、`thetaSe`（:620，SE = 1/√precision）、`updateThetaPrecision`（:632，weight²·I 累积）。消费面：`src/core/selection-signals.ts`（MFI/KLP）、`src/core/theta-grid.ts`、`src/server/mastery/state.ts` precision 累积、`src/core/recompute/derive-profile-kc.ts`。
+- **是什么**：`fisherInformation`（:579，Rasch 单观测 I = p(1−p)）、`fisherInformation3pl`（:606，3PL 闭式，c=0 端点 delegate 保 1PL 逐位）、`thetaSe`（:620，SE = 1/√precision）、`updateThetaPrecision`（:632，weight²·I 累积）。消费面：`src/core/selection-signals.ts`（MFI/KLP）、`src/core/theta-grid.ts`、`src/kernel/records/mastery-state.ts` precision 累积、`src/core/recompute/derive-profile-kc.ts`。
 - **为何登记**：同 R3 —— `fisherInformation` / `thetaSe` / `updateThetaPrecision`（2026-06-15，YUK-361 P2）**早于本 ADR**，属 §4 既有 live θ̂ 的一部分；`fisherInformation3pl`（2026-07-03，YUK-436 BKT 嫁接的算法层供件）为本 ADR 之后新增，但 dark-ship（`THETA_GRID_ENABLED` 默认 false，非选择题 c=0 路径与 1PL 逐位相同）且 n=1 红线合规（c 是 `choices_md.length` 派生的设计常量，非拟合参数）。显式收编进 §4 窗口，port 随 theta.ts 整体迁移走。
 - **PORT TRIGGER**：同 R3（theta.ts 逐点迁移 / 触到即 port / 浏览器 bit-exact 需求，replay-compatibility 条款同）；外加：`THETA_GRID_ENABLED` 未来翻转上线时，若 grid 路径成为 recurring 重算负载，随该翻转优先评估 port。
 
 ### 定位说明（extended scope 尽调）
 
 YUK-679 extended scope 要求定位的「src/server/** 中的 srtOutcome 数值路径与 continuous-credit/Fisher helpers」：**定义面实际在 `src/core/theta.ts`**（server 侧是消费面，见 R3/R4 所列）。extended scope 全部条目均已定位、无一缺席；`resolveSrtTimeLimit`（theta.ts:380）为平凡 difficulty→秒查表（非 kernel），仅在此记录、不单独豁免、不改其头注释。
+
+
+## proper-scoring 路径导航
+
+YUK-1570 的原样归属迁移后，原 `src/server/conjectures/scoring.ts` 对应
+`src/kernel/records/conjecture-prediction-scoring.ts`，仍为同一完整三标量到四标量 TS 占位规则。
+真实消费者为 Agency 私有 reconcile、accountability 和 hard-confirm；
+本 ADR R1 的描述符边界、历史 score 解释与 PORT TRIGGER 均不变。

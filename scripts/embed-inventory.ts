@@ -3,8 +3,9 @@
 // 统一问题定级设计 §7：补向量前先清点真实内容 digest、模型/维度/版本、有效 vectors
 // ——历史 35/83 只是待核基数，这里给当前真值。纯读：零 embedding 调用、零写。
 // 有效判据与 embed_backfill 写入同源（questionVectorInvalidReason）：有向量、
-// 维度 = EMBED_DIMS、embed_version = EMBED_VERSION、embed_content_hash = 按当前
-// 内容重算的 digest（内容编辑后未回填的行算 hash_mismatch）。
+// 维度 = EMBED_DIMS、embed_version = EMBED_VERSION、embed_source_revision = 当前行
+// revision（NULL = 列上线前的旧向量，YUK-1603 sweep 会补戳）、embed_content_hash =
+// 按当前内容重算的 digest（内容编辑后未回填的行算 hash_mismatch）。
 //
 // CLI:
 //   pnpm embed:inventory                 # summary（最近 5000 行）
@@ -52,6 +53,10 @@ async function main(): Promise<number> {
       embed_model: question.embed_model,
       embed_version: question.embed_version,
       embed_content_hash: question.embed_content_hash,
+      // YUK-1603 — revision provenance feeds the shared validity check
+      // (revision_mismatch) and the per-row reconciliation output.
+      version: question.version,
+      embed_source_revision: question.embed_source_revision,
       dimension: sql<number | null>`vector_dims(${question.embedding})`,
     })
     .from(question)
@@ -72,6 +77,8 @@ async function main(): Promise<number> {
       embed_model: row.embed_model,
       dimension: row.dimension,
       embed_version: row.embed_version,
+      version: row.version,
+      embed_source_revision: row.embed_source_revision,
       vector_valid: reason === null,
       invalid_reason: reason,
     };

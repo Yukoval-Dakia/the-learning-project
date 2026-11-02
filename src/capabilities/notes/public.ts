@@ -1,3 +1,4 @@
+export { listNoteRefineChanges } from '@/kernel/read-models/note-refine-changes';
 // Stable server contract for consumers outside the notes capability.
 
 export {
@@ -23,38 +24,15 @@ export {
   listBacklinks,
   resolveOwningLearningItemIds,
 } from './server/block-refs';
-// The teaching context loader projects body blocks into note sections; expose
-// that one projection instead of letting other capabilities deep-import.
-export { bodyBlocksToNoteSections } from './server/body-blocks';
 export { editArtifactBodyBlocks } from './server/body-blocks-edit';
 // Notes owns the consumer-effective facts for its config keys; the composition
 // root folds them into GET /api/admin/config.
 export { notesConfigEffectiveFacts } from './server/config-effective-facts';
-export type {
-  CreateLearningIntentNoteFn,
-  CreateLearningIntentNoteInput,
-} from './server/learning-intent-note';
-export { createLearningIntentNote } from './server/learning-intent-note';
-export { getLiveArtifactType } from './server/live-artifact-reference';
-export {
-  NOTE_HANDOFF_ACTION,
-  dispatchNoteGeneration,
-  writeNoteGenerationIntent,
-} from './server/note-handoff';
 export type { NoteListQuery, NoteListResponse } from './server/note-list-read';
 export { loadNoteList } from './server/note-list-read';
 export { loadNotePage } from './server/note-page';
-export {
-  type PersistNoteRefineApplyResult,
-  listNoteRefineChanges,
-  persistNoteRefineApply,
-  undoNoteRefineApplyEvent,
-} from './server/note-refine-apply';
-export {
-  enqueueDreamingNoteRefine,
-  enqueueMasteryNoteRefine,
-  enqueueNoteRefineTrigger,
-} from './server/note-refine-triggers';
+export { undoNoteRefineApplyEvent } from './server/note-refine-apply';
+export { enqueueMasteryNoteRefine, enqueueNoteRefineTrigger } from './server/note-refine-triggers';
 export {
   type RunNoteVerifyResult,
   type RunTaskFn,

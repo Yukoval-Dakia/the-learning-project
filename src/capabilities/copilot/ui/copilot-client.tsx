@@ -1,6 +1,11 @@
 import { createContext, useContext } from 'react';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
-import { type ApiOperationJsonResponse, apiFetch, apiJson } from '@/ui/lib/api';
+import {
+  type ApiOperationJsonResponse,
+  type ApiOperationRequestBody,
+  apiFetch,
+  apiJson,
+} from '@/ui/lib/api';
 import type { ReplayTurn } from './replay';
 
 // Copilot transport (YUK-1473). The protocol stays with the consumers: the companion (and the new
@@ -31,6 +36,14 @@ export interface CopilotCancelResult {
 }
 
 export type CopilotClient = {
+  acceptTeachingChip: (
+    sessionId: string,
+    body: ApiOperationRequestBody<'acceptTeachingSessionChip'>,
+  ) => Promise<ApiOperationJsonResponse<'acceptTeachingSessionChip'>>;
+  dismissNudge: (id: string) => Promise<unknown>;
+  markNudgeOpened: (id: string) => Promise<unknown>;
+  getNudges: () => Promise<ApiOperationJsonResponse<'listCopilotNudges'>>;
+  getSummary: () => Promise<ApiOperationJsonResponse<'getTodayCopilotSummary'>>;
   /** Fresh server capabilities, including before restricted sends; never a cached snapshot. */
   listSessions: (signal?: AbortSignal) => Promise<CopilotSessionsResponse>;
   createSession: () => Promise<CopilotCreateSessionResponse>;
@@ -43,15 +56,27 @@ export type CopilotClient = {
   revertCheckpoint: (checkpointEventId: string) => Promise<unknown>;
 };
 
+export function buildCopilotTurnsQuery(sessionId: string, limit: number): string {
+  return `limit=${limit}&session_id=${encodeURIComponent(sessionId)}`;
+}
+
 export const httpCopilotClient: CopilotClient = {
+  acceptTeachingChip: (sessionId, body) =>
+    apiJson<ApiOperationJsonResponse<'acceptTeachingSessionChip'>>(
+      `/api/teaching-sessions/${sessionId}/accept-chip`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  dismissNudge: (id) => apiFetch(`/api/copilot/nudges/${id}/dismiss`, { method: 'POST' }),
+  markNudgeOpened: (id) => apiFetch(`/api/copilot/nudges/${id}/opened`, { method: 'POST' }),
+  getNudges: () => apiJson<ApiOperationJsonResponse<'listCopilotNudges'>>('/api/copilot/nudges'),
+  getSummary: () =>
+    apiJson<ApiOperationJsonResponse<'getTodayCopilotSummary'>>('/api/today/copilot-summary'),
   listSessions: (signal) =>
     apiJson<CopilotSessionsResponse>('/api/copilot/sessions', { signal, cache: 'no-store' }),
   createSession: () =>
     apiJson<CopilotCreateSessionResponse>('/api/copilot/sessions', { method: 'POST' }),
   listTurns: (sessionId, limit) =>
-    apiJson<CopilotTurnsResponse>(
-      `/api/copilot/turns?limit=${limit}&session_id=${encodeURIComponent(sessionId)}`,
-    ),
+    apiJson<CopilotTurnsResponse>(`/api/copilot/turns?${buildCopilotTurnsQuery(sessionId, limit)}`),
   sendChat: (body, idempotencyKey) =>
     apiFetch('/api/copilot/chat', {
       method: 'POST',

@@ -3,7 +3,7 @@
 **Status**：方案 A 已实施（`scripts/audit-test-partition.ts` + `pnpm audit:partition`）。方案 B 待触发。
 **Related**：
 - [`vitest.shared.ts`](../../vitest.shared.ts) — `fastTestInclude` allowlist 单一源
-- [`docs/superpowers/plans/2026-05-21-test-feedback-loop-optimization.md`](../superpowers/plans/2026-05-21-test-feedback-loop-optimization.md) — vitest 拆分原始 plan
+- [`docs/archive/superpowers/plans/2026-05-21-test-feedback-loop-optimization.md`](../archive/superpowers/plans/2026-05-21-test-feedback-loop-optimization.md) — vitest 拆分原始 plan
 
 ## 背景
 

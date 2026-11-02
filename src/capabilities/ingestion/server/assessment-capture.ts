@@ -64,7 +64,7 @@ interface CaptureInput {
   now: Date;
   /** Session-level usage resolved once by the caller; the fallback costs a lookup. */
   docUsage?: DocumentUsage;
-  /** G8：逐单元读取结果；缺省 = 旧 flat 路径（wrong_answer_md 单槽）。 */
+  /** 逐单元读取结果；缺省 = 旧 flat 路径（wrong_answer_md 单槽）。 */
   unit_captures?: CapturedUnitAnswer[];
   /** 学习者红笔偏好（缺省保守 post_correction）。 */
   red_ink_preference?: RedInkClassification;
@@ -296,7 +296,7 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
     pages: block.source_asset_ids,
     page_spans: block.page_spans,
     image_refs: block.image_refs,
-    // G8：逐单元捕获也是 capture 身份的一部分 —— 同一块不同的 per-unit
+    // 逐单元捕获也是 capture 身份的一部分 —— 同一块不同的 per-unit
     // 读数不得复用旧 capture（capture_conflict 如实冲突）。仅当调用方真的
     // 传入才进 digest（缺席时键整体省略，旧 capture 的 digest 逐字节一致）。
     ...(input.unit_captures != null ? { unit_captures: input.unit_captures } : {}),
@@ -460,7 +460,7 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
         source_document_id: session.source_document_id ?? '',
         source_asset_ids: block.source_asset_ids,
         generated_by: 'workflow_judge',
-        // G8：逐单元读入的落位/未决与红笔归类留痕（不判分）。
+        // 逐单元读入的落位/未决与红笔归类留痕（不判分）。
         ...(captureRecords.length > 0
           ? {
               unit_captures: captureRecords,

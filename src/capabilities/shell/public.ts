@@ -11,8 +11,7 @@ export const loadWorkbenchSummary: LoadWorkbenchSummary = async (...args) => {
   return workbench.loadWorkbenchSummary(...args);
 };
 
-export { loadOvernightDigest } from './server/overnight-digest';
-
+export { getAutoAppliedDigest } from './server/auto-applied-read';
 export { loadPrepDeskConjectures } from './server/prep-desk';
 export { loadActiveProbes } from './server/prep-desk-probes';
 export { type ProposalInboxQuery, readProposalInbox } from './server/proposal-inbox-read';

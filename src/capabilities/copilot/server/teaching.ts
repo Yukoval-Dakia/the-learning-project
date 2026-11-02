@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge, learning_item } from '@/db/schema';
+import { bodyBlocksToNoteSections } from '@/kernel/read-models/note-sections';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   TeachingError,
@@ -18,7 +19,6 @@ import {
   type TeachingTurnOutputT,
   parseTurnOutput,
 } from '../tasks/teaching-turn';
-import { bodyBlocksToNoteSections } from './notes-integration';
 
 export {
   TeachingError,

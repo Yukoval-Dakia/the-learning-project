@@ -16,7 +16,11 @@ import { GenesisExperimental } from './genesis';
 import { GoalScopeUpdateExperimental, GoalStatusUpdateExperimental } from './goal-events';
 import { JudgeOperationalEvent } from './judge-operational-events';
 import { JudgePendingAttemptExperimental } from './judge-pending-events';
-import { SubjectRootNameUpdateExperimental } from './knowledge-node-events';
+import {
+  KnowledgeApprovalUpdateExperimental,
+  KnowledgeRoleUpdateExperimental,
+  SubjectRootNameUpdateExperimental,
+} from './knowledge-node-events';
 import { KnownEvent } from './known';
 import {
   LearningItemArchiveExperimental,
@@ -75,6 +79,10 @@ export * from './subagent-events';
 //      （使 status/scope 变更 fold-visible，./goal-events.ts）
 //   7b. SubjectRootNameUpdateExperimental — subject control-plane 根节点名称转移事件特化
 //       （使 rename/reset 的 knowledge root mirror fold-visible）
+//   7c. KnowledgeRoleUpdateExperimental — knowledge 节点身份 role 修复事件特化
+//       （YUK-1600：使存量 goal/container 回填 fold-visible，./knowledge-node-events.ts）
+//   7d. KnowledgeApprovalUpdateExperimental — knowledge 节点审批状态修复事件特化
+//       （YUK-1604：使存量 auto-tag KC 的待确认回填 fold-visible，./knowledge-node-events.ts）
 //   8. MistakeVariantCreateExperimental — mistake_variant 运行时 creation BASE 事件特化
 //       （携带 fold-blind cause_category；genesis 仅 backfill，
 //       runtime create 用专属事件，./mistake-variant-events.ts）
@@ -118,6 +126,8 @@ export const Event = z.union([
   GoalStatusUpdateExperimental,
   GoalScopeUpdateExperimental,
   SubjectRootNameUpdateExperimental,
+  KnowledgeRoleUpdateExperimental,
+  KnowledgeApprovalUpdateExperimental,
   MistakeVariantCreateExperimental,
   LearningItemCompleteExperimental,
   LearningItemRelearnExperimental,

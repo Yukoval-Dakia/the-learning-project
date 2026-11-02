@@ -171,7 +171,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- goal (canonical, YUK-973) ----
   {
     table: 'goal',
-    file: 'src/server/projections/goal.ts',
+    file: 'src/kernel/records/goal-history.ts',
     marker: '.insert(goal)',
     role: 'throat',
     note: 'Sole structural row writer; business mutations append events then project in the same transaction.',
@@ -180,7 +180,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- mistake_variant (canonical, YUK-973) ----
   {
     table: 'mistake_variant',
-    file: 'src/server/projections/mistake_variant.ts',
+    file: 'src/kernel/records/mistake-variant-facts.ts',
     marker: '.insert(mistake_variant)',
     role: 'throat',
     note: 'Sole structural row writer; business mutations append events then project in the same transaction.',
@@ -198,7 +198,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- artifact (switchable; actual deployment flags are checked separately) ----
   {
     table: 'artifact',
-    file: 'src/server/projections/artifact.ts',
+    file: 'src/kernel/records/artifact-history.ts',
     marker: '.insert(artifact)',
     role: 'throat',
     note: 'Artifact projection write-through shell; activation is runtime-specific.',
@@ -261,7 +261,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/practice/jobs/quiz_gen.ts',
+    file: 'src/capabilities/practice/jobs/quiz_gen_persist.ts',
     marker: '.insert(artifact)',
     role: 'event-native-by-caller',
     note: 'Quiz artifact INSERT and artifact_create share the generation transaction and timestamp.',
@@ -282,7 +282,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/notes/server/learning-intent-note.ts',
+    file: 'src/kernel/records/learning-intent-note-birth.ts',
     marker: '.insert(artifact)',
     role: 'event-native-by-caller',
     note: 'Tx-only learning-intent materialization emits artifact_create from the returned row with the supplied creation timestamp.',
@@ -333,24 +333,10 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'question_block',
-    file: 'src/capabilities/ingestion/server/import-completion.ts',
+    file: 'src/kernel/records/question-block-creation.ts',
     marker: '.insert(question_block)',
     role: 'event-native-by-caller',
-    note: 'Import completion owns one transaction for create snapshots, import-link and ignore-sweep lifecycle events; extracted_prompt_md/ordinal remain explicit non-fold fields.',
-  },
-  {
-    table: 'question_block',
-    file: 'src/server/session/docx-ingestion.ts',
-    marker: '.insert(question_block)',
-    role: 'event-native-by-caller',
-    note: 'DOCX session transaction emits create snapshots for inserted blocks; extraction text/ordinal are explicitly outside fold truth.',
-  },
-  {
-    table: 'question_block',
-    file: 'src/server/session/ingestion.ts',
-    marker: '.insert(question_block)',
-    role: 'event-native-by-caller',
-    note: 'Extraction create/replacement writes emit full question_block_create snapshots on the caller transaction; extraction text/ordinal are non-fold fields.',
+    note: 'Captured OCR, DOCX, virtual/manual import and edit-draft creation pair actual RETURNING rows with complete create snapshots; rescue UPDATE pairs its after-row likewise. The supplied Tx keeps row/event (and edit-draft projection) atomic; a bare Db retains its existing non-atomic boundary. extracted_prompt_md/ordinal remain explicit non-fold fields.',
   },
   // ---- item_calibration (YUK-496 方案 A — anchor-only coverage, default OFF, no flip planned) ----
   {
@@ -362,14 +348,14 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'item_calibration',
-    file: 'src/server/mastery/item-calibration.ts',
+    file: 'src/kernel/records/item-calibration.ts',
     marker: '.insert(item_calibration)',
     role: 'off-path-writer',
     note: 'applyItemPrior hard-track INSERT (the B1 cold-start applier the ticket names; OFF-path sole writer — 方案 A keeps it imperative, no flip planned).',
   },
   {
     table: 'item_calibration',
-    file: 'src/server/mastery/fixed-anchor.ts',
+    file: 'src/capabilities/practice/server/fixed-anchor.ts',
     marker: '.insert(item_calibration)',
     role: 'off-path-writer',
     note: 'fixed-anchor upsert (INSERT + onConflictDoUpdate; OFF-path sole writer — 方案 A keeps it imperative).',
@@ -383,7 +369,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'item_calibration',
-    file: 'src/server/mastery/joint-calibration.ts',
+    file: 'src/kernel/records/joint-calibration.ts',
     marker: '.update(item_calibration)',
     role: 'off-path-writer',
     note: 'YUK-439 joint-calibration batch posterior UPDATE (b_post/posterior_variance/calibration_n/calibration_weight/calibration_source/last_calibrated_at — the production b writer; post-anchor writes surface as audit drift, the documented 方案 A boundary, same as the retired b_calib firm-up).',

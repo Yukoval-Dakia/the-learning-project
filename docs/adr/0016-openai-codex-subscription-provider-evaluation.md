@@ -6,8 +6,7 @@
 provider 需求后来由 [YUK-365](https://linear.app/yukoval-studios/issue/YUK-365) 以
 Claude Max OAuth 的 `anthropic-sub` / Opus 4.8 lane 落地；跨 protocol/provider
 抽象由 [YUK-416](https://linear.app/yukoval-studios/issue/YUK-416) 明确 deferred。
-如重新评估 OpenAI Codex，必须基于当时 SDK、认证、配额和模型能力重新运行 spike，
-不得把本文的未验证假设当作现行决策。
+如重新评估 OpenAI Codex，必须基于当时 SDK、认证、配额和模型能力重新运行 spike。
 **前置 / 抵触**：
 - 与 ADR-0003（defer-ai-provider-abstraction）抵触：ADR-0003 在 2026-05-17 revision 后明确"single Provider Manager + Anthropic-protocol providers (anthropic / xiaomi mimo)"，本 ADR 提议引入**非 Anthropic protocol 的 provider**，必须先 revisit ADR-0003
 - 关联 ADR-0014（CapabilityRegistry）：capability 抽象是天然多 provider 友好的——同一 `steps@1` capability 可挂不同 provider 实现，是本 ADR 落地的好接口位
@@ -119,7 +118,7 @@ spike 的目标是给这三条**每条一个明确 PASS / FAIL**：
 - 安装 `@openai/codex` + Codex CLI；走一次 OAuth 用 Plus 订阅认证
 - 实现一个 `src/server/ai/providers/codex.ts` adapter — 把内部 `runTask(kind, input, ctx)` 形态翻译到 Codex SDK 的 `runAgent` / `runOnce`
 - 跑 3 个 task 各 10 次，记 Zod parse 成功率 + 延迟 + 配额消耗
-- spike report：`docs/superpowers/specs/2026-05-XX-codex-spike.md`，给 U1 + U2 各一个明确 PASS / FAIL
+- spike report：`docs/archive/superpowers/specs/2026-05-XX-codex-spike.md`，给 U1 + U2 各一个明确 PASS / FAIL
 
 **Non-scope**:
 - 不替换现有任何 task 的 provider 路由（spike 只读不写 prod）
@@ -185,5 +184,5 @@ spike U1 (配额)
 
 - 本 ADR 不阻塞当前 vision MVP（M-1 + M0 + M2 + M3 plan）
 - spike 优先级：**M-1 + M0 完成后再考虑启动**——避免分散 attention
-- 如果 spike 启动，spike report 命名 `docs/superpowers/specs/2026-05-XX-codex-spike.md`
+- 如果 spike 启动，spike report 命名 `docs/archive/superpowers/specs/2026-05-XX-codex-spike.md`
 - 用户没 Pro tier 这一点是个 hard constraint，不要在 spike 阶段假设有

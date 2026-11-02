@@ -16,14 +16,14 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { piCustomTool } from '@/ai/pi-tool-mount';
 import { PROBE_RESOLUTION_RULE_VERSION } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, kc_typed_state, question } from '@/db/schema';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 import { notesForKnowledge } from '@/kernel/read-models/notes-read';
+import { getEffectiveProbeResultStatuses } from '@/kernel/read-models/probe-evidence';
 import { writeToolCallLog } from '@/kernel/tools/call-evidence';
-import { piCustomTool } from '@/server/ai/tools/pi-tools';
-import { getEffectiveProbeResultStatuses } from '../../public';
 import { readAgentNotes } from '../notes';
 import type { FindingsCapture } from './report-findings';
 import { ReportFindingsSchema, ReportFindingsShape } from './report-findings';

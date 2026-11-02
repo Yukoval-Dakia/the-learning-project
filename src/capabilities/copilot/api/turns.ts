@@ -1,21 +1,11 @@
-import { getCopilotConversationSnapshot } from '@/capabilities/copilot/server/turns';
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
-import { CopilotTurnsQuerySchema } from './contracts';
+import { readCopilotTurns } from '../server/turns-request';
 
 export async function GET(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);
-    const raw = url.searchParams.get('limit');
-    const query = CopilotTurnsQuerySchema.parse({
-      limit: raw ?? undefined,
-      session_id: url.searchParams.get('session_id') ?? undefined,
-    });
-    const limit = query.limit === undefined ? undefined : Number.parseInt(query.limit, 10);
-    const snapshot = await getCopilotConversationSnapshot(db, {
-      limit,
-      sessionId: query.session_id,
-    });
+    const snapshot = await readCopilotTurns(db, url.searchParams);
     return Response.json(snapshot);
   } catch (err) {
     return errorResponse(err);

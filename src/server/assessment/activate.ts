@@ -39,6 +39,7 @@ import { ActivateEvaluationIntent, resolveActivationCas } from '@/core/schema/as
 import { EvaluationProvenance, type EvaluationRecordT } from '@/core/schema/assessment/judgment';
 import { FsrsRating } from '@/core/schema/business';
 import type { Tx } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
   assessment_issuance,
   assessment_submission,
@@ -51,7 +52,6 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 
 export const ASSESSMENT_ACTIVATION_ACTION = 'experimental:assessment_activation';
 export const ASSESSMENT_ACTIVATION_VERSION = 1 as const;

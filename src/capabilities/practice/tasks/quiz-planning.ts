@@ -1,16 +1,11 @@
-// ADR-0038 决定#2 — plan-then-generate: QuizPlanTask (Phase 1).
+// ADR-0038 决定#2 — plan-then-generate Phase 1 (QuizPlanTask).
 //
-// docs/adr/0038-unified-verify-contract-plan-then-generate.md 决定#2 first bullet:
-// 出题分两段——先产出题计划（要考哪个知识点、什么题型、客观题的标准答案锚点），
-// 再据计划生成题面。The plan is a machine-checkable artifact, NOT prompt-internal
-// prose: this task emits the strict QuizGenPlan JSON, the Q3 handler validates it
-// deterministically (src/capabilities/practice/jobs/quiz_gen_plan.ts — schema +
-// real knowledge-point existence read + kind/anchor sanity), and only an ACCEPTED
-// plan proceeds to the existing QuizGenTask generation call.
+// 先产出可机检的题计划（知识点 / 题型 / 难度 / 客观题答案锚点），而不是 prompt 内部
+// 散文：本任务只输出 QuizGenPlan JSON，handler 确定性机检（schema、知识点真实存在、
+// kind/anchor 合理性），通过后才进入 QuizGenTask 生成。handler 挂只读领域工具，不挂
+// 检索——规划选考什么，不选拉什么素材。
 //
-// The handler mounts the same in-process domain-tool MCP as QuizGenTask (read the
-// knowledge graph / user mistakes) but NO Tavily — planning picks what to test,
-// not what material to fetch (that stays in the generation phase).
+// docs/adr/0038-unified-verify-contract-plan-then-generate.md
 
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { QuizGenPlan, type QuizGenPlanT } from '@/core/schema/quiz_gen';

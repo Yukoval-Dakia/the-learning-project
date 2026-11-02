@@ -27,8 +27,8 @@ import {
   question,
   question_group_lifecycle,
 } from '@/db/schema';
-import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-import { publishQuestionGroup } from '@/server/questions/publisher';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { issueHistoricalSoloFixture } from '../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -38,8 +38,8 @@ import * as evaluationService from '../server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '../server/judge/recorded-model-executor';
 import { fenceJudgeUnitClaim } from '../server/judge-operational';
 
-vi.mock('@/server/runtime-env', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/server/runtime-env')>();
+vi.mock('@/kernel/background-job-enqueue', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/kernel/background-job-enqueue')>();
   return { ...actual, shouldEnqueueBackgroundJobs: () => true };
 });
 

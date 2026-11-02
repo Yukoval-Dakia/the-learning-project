@@ -149,8 +149,7 @@ export function hasUnitDimensionReference(
  * read of the answer-class axis (deriveAnswerClass, core/schema/answer-class.ts
  * the single source of truth); the profile-aware gates (unit_dimension,
  * derivation steps ladder, multimodal_direct) keep their legacy positions on
- * top of it. Route parity with the pre-convergence chain is pinned cell-for-cell
- * by src/core/schema/answer-class-route-parity.test.ts.
+ * top of it.
  */
 export function resolveQuestionJudgeRoute(
   q: JudgeRouteQuestionRow,

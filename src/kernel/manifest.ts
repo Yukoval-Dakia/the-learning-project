@@ -121,6 +121,13 @@ export interface JobDecl {
    * the registrar evaluates scheduled jobs at handler entry.
    */
   eligibility?: NightlyEligibilityFn;
+  /**
+   * Scheduled jobs only: housekeeping that must run even when `eligibility`
+   * declines. Runs at handler entry before the decision; DAG members cannot use
+   * it because their eligibility runs before any handler exists.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: same variance escape hatch as JobHandlerFactory
+  beforeEligibility?: (db: any) => Promise<void>;
   /** 懒加载 handler 工厂（ApiRouteDecl.load 同构语义）；无 load 的 decl 是纯归属元数据，不被挂载。 */
   load?: () => Promise<JobHandlerFactory>;
 }
@@ -500,6 +507,14 @@ export function validateComposition(capabilities: CapabilityManifest[]): void {
         // Orchestrated jobs must not keep a cron, or they double-run.
         throw new Error(
           `job '${job.name}' (${cap.name}) is a DAG member (declares dependsOn) but also declares a cron schedule; orchestrated jobs must not keep their own cron`,
+        );
+      }
+      if (
+        job.beforeEligibility !== undefined &&
+        (job.schedule === undefined || job.eligibility === undefined)
+      ) {
+        throw new Error(
+          `job '${job.name}' (${cap.name}) declares beforeEligibility without both a cron schedule and eligibility; the hook only runs for scheduled eligibility gates`,
         );
       }
     }

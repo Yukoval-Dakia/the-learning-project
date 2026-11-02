@@ -1,20 +1,10 @@
 /**
- * task-catalog.ts — shared immutable composer for injected owner TaskDefinition specs.
+ * Task catalog — immutable composer for owner-supplied TaskSpecs.
  *
- * YUK-863 / YUK-939 — Census and compose owner TaskSpecs.
- *
- * Rules (enforced at module load):
- *  - Each spec appears under exactly one owner.
- *  - The map key must equal spec.kind.
- *  - Every spec must carry non-empty prompt, provider, model, budget, and
- *    tool metadata (plus structuredOutputSchema when needed).
- *  - No mutable registration: the returned map is frozen after composition.
- *
- * Forbidden patterns (do NOT reintroduce):
- *  - registerTask / setTask / global service-locator mutations
- *  - filesystem / glob scan at import time
- *  - env-selected owner or fallback owner
- *  - dynamic import() task discovery
+ * Enforced at module load: each spec has exactly one owner, its map key equals
+ * spec.kind, and the composed map is frozen. Task definitions stay static: no
+ * mutable registration, filesystem/glob discovery, dynamic import, or
+ * env-selected owner.
  */
 
 import type { TaskOwner } from './owned-task-specs';

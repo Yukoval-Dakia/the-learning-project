@@ -8,6 +8,8 @@
 | `manifest.ts` | API、job/cron、proposal kinds、copilot tools、event subscriptions/actions 与 todayBlock 的权威注册面（清单以 `manifest.ts` 为准） |
 | `api/*.ts` | agent-notes、goal-create、probe-answer（conjecture 判别探针作答，#13 通电——与 attempt/FSRS 写面隔离，只写 1 个 `experimental:probe_result` 事件） |
 | `server/` | dreaming nightly、coach daily/weekly、goal scope propose、conjecture、agent-notes、proposal-appliers、`meeting/`（YUK-572 agent-led 例会 director + 写工具） |
+| `server/conjecture/reconcile.ts` | 有效 probe 结果记账与纠错回放；先写 typed ledger，最后写确定性 anchor；execution checkpoint 归相邻 `reconciliation-execution.ts` |
+| `server/conjecture/accountability.ts` / `hard-confirm.ts` | 共享预测问责排序与纠错有效事实/判定；nightly 与 grounding candidate collector 消费同一 reader/ranker，硬确认写入仍需原独立授权 |
 | `jobs/` | `dreaming_nightly`、`coach_daily`、`coach_weekly`、`goal_scope_propose_nightly`、`research_meeting_nightly`、`research_meeting_agent_nightly`（YUK-572 shadow lane，kill switch `RESEARCH_MEETING_AGENT_ENABLED` 默认 OFF），以及 `prepare_intervention` / `intervention_prepare_recovery` |
 | `ui/AgentNotesPage.tsx` | `/agent-notes` 观察窗 |
 
@@ -15,8 +17,8 @@
 - 夜链 cron 全部 `Asia/Shanghai`；pg-boss cron 自带 singleton 语义。
 - queue 档：`agent` 给多 tool-call LLM job（dreaming、research meeting）；`llm` 给单次/轻量 LLM job（coach）。
 - proposal kind 归属与 applier 存在性解耦：有 producer 无 accept applier 的 kind（如 `defer`）在 dispatch 壳 default throw。
+- dreaming 扫到新的 `note_update` artifact 时只写 `experimental:dreaming_note_refresh`；笔记 refine 入队由 notes 订阅完成。
 
 ## ANTI-PATTERNS
-- 别把 agent-notes 当用户可写的事实层；它是 hint channel。
 - 别让夜链直写硬事实；产出必须是 propose event，用户 accept 才落地。
 - 改 cron 时刻前先看链上 offset 注释，避免锁竞争/读不到同夜 proposal。

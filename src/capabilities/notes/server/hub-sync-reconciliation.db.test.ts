@@ -13,7 +13,7 @@ import postgres from 'postgres';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { artifact, knowledge, knowledge_edge } from '@/db/schema';
-import { gatherAndFoldArtifact } from '@/server/projections/gather';
+import { gatherAndFoldArtifact } from '@/kernel/records/artifact-history';
 import { backfillArtifactGenesis } from '../../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {

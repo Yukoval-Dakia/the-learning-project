@@ -1,34 +1,28 @@
 // ADR-0036 身份层 — misconception identity-table skeleton.
 //
-// HAND-WRITTEN Zod (NOT drizzle-zod generated). This is the canonical domain
-// shape for a misconception: a named, reusable "误区" identity that diagnosis /
-// recommendation / review can later attach evidence to.
+// Hand-written Zod (not drizzle-zod generated). Canonical domain shape: a named,
+// reusable "误区" identity that diagnosis / recommendation / review attach evidence to.
 //
 // RED LINES baked into this module by construction:
-//   1. ADR-0035 — misconception is the SOFT track. There is NO mastery / p(L) /
-//      θ̂ / b / FSRS / difficulty field here, and `.strict()` makes any such key
-//      a hard parse failure. The soft-track invariant is enforced at the schema
-//      boundary BEFORE any writer exists (the promotion-flow
-//      writer is gated behind the ADR-0034 consistency gate). The REVERSE red-line
-//      test (step9-invariant-audit) also asserts this module references none of
-//      the soft-track engine symbols by name.
-//   2. subject=view — there is NO subject/domain field. Subject is a derived
-//      view (effective_domain), never stored on an entity (项目铁律).
+//   1. ADR-0035 — misconception is the SOFT track. There is no mastery / p(L) /
+//      θ̂ / b / FSRS / difficulty field here, and `.strict()` makes any such key a
+//      hard parse failure.
+//   2. subject=view — there is no subject/domain field. Subject is a derived view
+//      (effective_domain), never stored on an entity.
 //   3. `weight` is a CONFIDENCE signal (how strongly this misconception is held /
 //      how salient it is), NOT a mastery / p(L) value. It never feeds the
 //      diagnostic engines.
 //
 // Time dimension: `archived_at` is the ONLY time field besides created/updated.
-// Explicitly NO valid_at/invalid_at. The heterogeneous misconception_edge
-// (see misconception-edge.ts, YUK-531) is STRUCTURAL, not bi-temporal — it shares
-// this archived_at-only convention; bi-temporal edges remain rejected by design.
+// Explicitly no valid_at/invalid_at. The heterogeneous misconception_edge is
+// structural, not bi-temporal.
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { AgentRef } from './business';
 
-// Canonical select/domain shape. `.strict()` is load-bearing: it is the
-// machine-checkable red line that rejects any soft-track diagnostic field
-// (theta/pL/mastery/fsrs/difficulty) or a subject/domain column from ever
-// riding on a misconception row.
+// Canonical select/domain shape. `.strict()` is load-bearing: it rejects any
+// soft-track diagnostic field (theta/pL/mastery/fsrs/difficulty) or a
+// subject/domain column from riding on a misconception row.
 export const MisconceptionSchema = z
   .object({
     id: z.string(),
@@ -81,3 +75,12 @@ export const MisconceptionInsert = z
   })
   .strict();
 export type MisconceptionInsert = z.infer<typeof MisconceptionInsert>;
+
+// 身份约定：misconception id 由 conjecture 身份（cause_category × knowledge_id）哈希决定，
+// 同身份再提议 upsert 同一行而不是铸重复身份。住在 core（而非 agency promote writer）是因为
+// kernel 读面要按同一约定匹配 live misconception，两边不得各自实现一份哈希。
+export function misconceptionIdForConjecture(causeCategory: string, knowledgeId: string): string {
+  const key = `${causeCategory}::${knowledgeId}`;
+  const hash = createHash('sha256').update(key).digest('hex').slice(0, 24);
+  return `misc_${hash}`;
+}

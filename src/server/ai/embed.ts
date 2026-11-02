@@ -5,6 +5,7 @@
 // vector(1024) columns instead of the mem0 black-box collection. EMBED_DIMS MUST
 // equal the vector(dims) in schema.ts.
 
+import { assertModelEndpointHostAllowed } from '@/core/config/model-endpoint-allowlist';
 import {
   type DirectProviderOperationContext,
   type DirectProviderOperationOptions,
@@ -68,14 +69,27 @@ async function embedChunk(
     async (attempt) => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15_000);
+      const signal = providerAttempt.signal
+        ? AbortSignal.any([controller.signal, providerAttempt.signal])
+        : controller.signal;
+      let wireStarted = false;
       try {
+        try {
+          signal.throwIfAborted();
+          await providerAttempt.beforeSend?.();
+          signal.throwIfAborted();
+        } catch (error) {
+          attempt.markTerminal('aborted', 'provider_send_not_authorized', 0);
+          throw error;
+        }
         let res: Response;
         try {
+          wireStarted = true;
           res = await fetch(`${BASE_URL}/embeddings`, {
             method: 'POST',
             headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
             body: JSON.stringify({ model: EMBED_MODEL, input: chunk, dimensions: EMBED_DIMS }),
-            signal: controller.signal,
+            signal,
           });
         } catch (error) {
           attempt.markTerminal('failed', 'provider_network_error');
@@ -129,7 +143,7 @@ async function embedChunk(
         }
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
-          attempt.markTerminal('aborted', 'provider_request_aborted');
+          attempt.markTerminal('aborted', 'provider_request_aborted', wireStarted ? 1 : 0);
         }
         throw error;
       } finally {
@@ -141,10 +155,8 @@ async function embedChunk(
 }
 
 /** Embed a batch of texts into 1024-dim vectors via the openai-compat /embeddings
- *  endpoint, reusing DASHSCOPE_API_KEY. Chunks at EMBED_MAX_BATCH (=10) to respect
- *  the DashScope per-request cap and stitches chunk results back in input order.
- *  Throws on a non-ok response so callers (the nightly backfill job) leave rows
- *  NULL and retry next run (§9 fallback). */
+ *  endpoint. Chunks at EMBED_MAX_BATCH (10) and stitches results in input order.
+ *  Throws on non-ok so callers leave rows NULL and retry next run. */
 export async function embedMany(
   texts: string[],
   providerAttempt?: EmbedProviderAttemptOptions,
@@ -154,6 +166,9 @@ export async function embedMany(
   const providerOperation = createDirectProviderOperationContext(providerAttempt);
   const apiKey = process.env.DASHSCOPE_API_KEY?.trim();
   if (!apiKey) throw new Error('embedMany: DASHSCOPE_API_KEY is unset');
+  // YUK-1654 — the DashScope credential only travels to a catalog-declared
+  // embedding endpoint; a rogue MEM0_EMBEDDING_BASE_URL fails before the send.
+  assertModelEndpointHostAllowed(BASE_URL, 'MEM0_EMBEDDING_BASE_URL (domain embedder)');
   const out: number[][] = [];
   for (let i = 0; i < texts.length; i += EMBED_MAX_BATCH) {
     const chunk = texts.slice(i, i + EMBED_MAX_BATCH);

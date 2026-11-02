@@ -6,6 +6,7 @@ import {
   collectionResponseSchema,
 } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
+import { PurposeChangeInput } from '@/kernel/read-models/purpose-change';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
   AssetContentResponseSchema,
@@ -14,18 +15,23 @@ import {
   CreateIngestionSessionBody,
   CreateMistakeBodySchema,
   CreateMistakeResponseSchema,
+  CreationInternalErrorSchema,
+  CreationReceiptConflictSchema,
+  CreationReceiptHeadersSchema,
+  CreationReceiptUnavailableSchema,
   DocxIngestionResponseSchema,
   IngestionAskAnswerBodySchema,
   IngestionAskAnswerHeadersSchema,
   IngestionAskAnswerResponseSchema,
   IngestionAskParamsSchema,
   IngestionBlocksResponseSchema,
+  IngestionCreationErrorSchema,
   IngestionEventStreamResponseSchema,
   IngestionEventsHeadersSchema,
   IngestionOperationSchema,
+  IngestionSessionCreationResponseSchema,
   IngestionSessionDetailResponseSchema,
   IngestionSessionHistoryResponseSchema,
-  IngestionSessionResponseSchema,
   IngestionSessionSchema,
   LegacyMakePaperResponseSchema,
   LegacyRescueResponseSchema,
@@ -38,6 +44,11 @@ import {
   RevertAutoEnrolledBlockResponseSchema,
 } from './api/contracts';
 import { IngestionOperationRequest, MakePaperBody, RescueBody } from './api/operation-schema';
+import {
+  PurposeChangeResponse,
+  PurposeImpactQuery,
+  PurposeImpactResponse,
+} from './api/purpose-contracts';
 
 export const ingestionCapability = defineCapability({
   name: 'ingestion',
@@ -47,6 +58,25 @@ export const ingestionCapability = defineCapability({
     // Every route lazy-loads through `load` so the manifest stays pure metadata.
     // [id] segments are converted to :id by the app and passed to the handler.
     routes: [
+      {
+        method: 'POST',
+        path: '/api/ingestion-sessions/[id]/purpose',
+        operationId: 'changeIngestionPurpose',
+        request: { params: ApiIdParamsSchema, body: PurposeChangeInput },
+        responses: { 200: PurposeChangeResponse, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/purpose').then((m) => m.POST),
+      },
+      {
+        method: 'GET',
+        path: '/api/ingestion-sessions/[id]/purpose',
+        operationId: 'getIngestionPurposeImpact',
+        request: { params: ApiIdParamsSchema, query: PurposeImpactQuery },
+        responses: { 200: PurposeImpactResponse, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/purpose').then((m) => m.GET),
+      },
       {
         method: 'GET',
         path: '/api/ingestion',
@@ -65,8 +95,14 @@ export const ingestionCapability = defineCapability({
         method: 'POST',
         path: '/api/ingestion',
         operationId: 'createLegacyIngestionSession',
-        request: { body: CreateIngestionSessionBody },
-        responses: { 200: IngestionSessionResponseSchema, ...API_ERROR_RESPONSES },
+        request: { body: CreateIngestionSessionBody, headers: CreationReceiptHeadersSchema },
+        responses: {
+          200: IngestionSessionCreationResponseSchema,
+          ...API_ERROR_RESPONSES,
+          409: CreationReceiptConflictSchema,
+          500: IngestionCreationErrorSchema,
+          503: CreationReceiptUnavailableSchema,
+        },
         successStatus: 200,
         deprecation: { successor: '/api/ingestion-sessions' },
         load: () => import('./api/sessions').then((m) => m.legacyCreateIngestionSession),
@@ -88,8 +124,14 @@ export const ingestionCapability = defineCapability({
         method: 'POST',
         path: '/api/ingestion-sessions',
         operationId: 'createIngestionSession',
-        request: { body: CreateIngestionSessionBody },
-        responses: { 201: IngestionSessionResponseSchema, ...API_ERROR_RESPONSES },
+        request: { body: CreateIngestionSessionBody, headers: CreationReceiptHeadersSchema },
+        responses: {
+          201: IngestionSessionCreationResponseSchema,
+          ...API_ERROR_RESPONSES,
+          409: CreationReceiptConflictSchema,
+          500: IngestionCreationErrorSchema,
+          503: CreationReceiptUnavailableSchema,
+        },
         successStatus: 201,
         load: () => import('./api/sessions').then((m) => m.createIngestionSessionResource),
       },
@@ -110,7 +152,11 @@ export const ingestionCapability = defineCapability({
         path: '/api/ingestion-sessions/[id]/history',
         operationId: 'getIngestionSessionHistory',
         request: { params: ApiIdParamsSchema },
-        responses: { 200: IngestionSessionHistoryResponseSchema, ...API_ERROR_RESPONSES },
+        responses: {
+          200: IngestionSessionHistoryResponseSchema,
+          ...API_ERROR_RESPONSES,
+          503: ApiErrorResponseSchema,
+        },
         successStatus: 200,
         pagination: 'none',
         load: () => import('./api/session-history').then((m) => m.GET),
@@ -284,8 +330,14 @@ export const ingestionCapability = defineCapability({
         method: 'POST',
         path: '/api/mistakes',
         operationId: 'createMistake',
-        request: { body: CreateMistakeBodySchema },
-        responses: { 201: CreateMistakeResponseSchema, ...API_ERROR_RESPONSES },
+        request: { body: CreateMistakeBodySchema, headers: CreationReceiptHeadersSchema },
+        responses: {
+          201: CreateMistakeResponseSchema,
+          ...API_ERROR_RESPONSES,
+          409: CreationReceiptConflictSchema,
+          500: CreationInternalErrorSchema,
+          503: CreationReceiptUnavailableSchema,
+        },
         successStatus: 201,
         load: () => import('./api/mistakes').then((m) => m.POST),
       },
@@ -320,7 +372,7 @@ export const ingestionCapability = defineCapability({
         load: async () => {
           const [{ buildTencentOcrHandler }, { getR2 }] = await Promise.all([
             import('./jobs/tencent_ocr_extract'),
-            import('@/server/r2'),
+            import('@/kernel/object-storage'),
           ]);
           return (db: Parameters<typeof buildTencentOcrHandler>[0]['db']) =>
             buildTencentOcrHandler({

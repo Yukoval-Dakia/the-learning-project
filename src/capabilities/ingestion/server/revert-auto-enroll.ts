@@ -16,6 +16,7 @@ import { ApiError } from '@/kernel/http';
 import { withdrawCapturedOccurrence } from '@/kernel/judge';
 import { archiveLearningRecord } from '@/kernel/records/queries';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
+import { RevertAutoEnrolledBlockBodySchema } from '../api/contracts';
 
 export interface RevertAutoEnrolledBlockParams {
   blockId: string;
@@ -154,5 +155,21 @@ export async function revertAutoEnrolledBlock(
     );
 
     return { questionId, recordId: record.id, retractEventId, retractedEventId };
+  });
+}
+
+export async function revertIngestionBlock(db: Db, sessionId: string, raw: unknown) {
+  const parsed = RevertAutoEnrolledBlockBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new ApiError(
+      'validation_error',
+      parsed.error.issues.map((i) => i.message).join('; '),
+      400,
+    );
+  }
+  return await revertAutoEnrolledBlock(db, {
+    blockId: parsed.data.block_id,
+    sessionId,
+    reasonMd: parsed.data.reason_md,
   });
 }

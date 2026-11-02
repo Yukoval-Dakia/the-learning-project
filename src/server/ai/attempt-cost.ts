@@ -1,4 +1,5 @@
 import type { Provider } from '@/ai/registry';
+import type { AttemptCostTruth } from '@/ai/task-result';
 import { looksLikeCustomProviderId } from '@/core/config/custom-providers';
 import { catalogModelCost, currentModelCatalog } from './model-catalog';
 import { catalogProviderFor } from './model-profiles';
@@ -12,13 +13,7 @@ import {
   localCostUsd,
 } from './pricing';
 
-/** The one semantic cost truth owned by a central-runner model attempt. */
-export type AttemptCostTruth =
-  | { basis: 'reported'; amountUsd: number; ref: string }
-  | { basis: 'estimated'; amountUsd: number; ref: string }
-  | { basis: 'unknown'; amountUsd: null; ref: string };
-
-export type AttemptCostBasis = AttemptCostTruth['basis'];
+export type { AttemptCostBasis, AttemptCostTruth } from '@/ai/task-result';
 
 export function unknownAttemptCostTruth(provider: string, model: string): AttemptCostTruth {
   return { basis: 'unknown', amountUsd: null, ref: `unpriced:${provider}/${model}` };

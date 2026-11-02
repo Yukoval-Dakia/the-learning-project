@@ -17,7 +17,6 @@ import { DIFFICULTY_PROXY_WEIGHT, difficultyToLogitB, expectedScore } from '@/co
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, item_family_calibration, mastery_state } from '@/db/schema';
 import {
-  buildFamilyKey,
   getFamilyCalibration,
   resolveFamilyKeyForQuestion,
 } from '@/kernel/read-models/question-difficulty';
@@ -25,7 +24,6 @@ import {
 export {
   type FamilyCalibrationRow,
   effectiveFamilyB,
-  getFamilyCalibration,
 } from '@/kernel/read-models/question-difficulty';
 
 type DbLike = Db | Tx;
@@ -51,13 +49,6 @@ export const OBJECTIVE_JUDGE_ROUTES: ReadonlySet<string> = new Set<string>(['exa
 export function isObjectiveJudgeRoute(route: string | null | undefined): boolean {
   return route != null && OBJECTIVE_JUDGE_ROUTES.has(route);
 }
-
-// family_key = `${subject}:${primaryKnowledgeId}:${kind}:${source}`. `subject` is derived
-// from the primary KC's effective domain; the exact question id is deliberately absent
-// because questions in a family share one delta. The format itself lives in
-// kernel/read-models/question-difficulty.ts; `familyKey` keeps the writer
-// and existing test imports on the same implementation.
-export const familyKey = buildFamilyKey;
 
 // Empirical-Bayes shrinkage: shrunk = n/(n+priorStrength)·rawDelta. n=0 → 0 (fully
 // shrunk), n=priorStrength → half, n→∞ → raw. Keeps noisy families near zero until they
@@ -113,19 +104,18 @@ export function impliedDifficultyResidual(theta: number, bAnchor: number, outcom
 // layer and must never abort the θ̂/FSRS/event write.
 
 export interface UpdateFamilyCalibrationInput {
-  /** familyKey(...) result. */
   familyKey: string;
   /** Pre-attempt θ̂ (the fast-scale anchor). */
   theta: number;
-  /** Question anchor b (item_calibration.b, or the weak difficultyToLogitB fallback). */
+  /** item_calibration.b, or the weak difficultyToLogitB fallback. */
   bAnchor: number;
-  /** Objective outcome: success=1 / failure=0. */
+  /** success=1 / failure=0. */
   outcome: 0 | 1;
-  /** Gate (a): whether the judge route is objective. */
+  /** Gate (a): the judge route is objective. */
   isObjective: boolean;
   /** Gate (c): distinct questions in this family, including the current one. */
   distinctQuestionCount: number;
-  /** Weak difficulty-proxy anchors are down-weighted, matching the θ̂ update. Default 1. */
+  /** Weak proxy anchors are down-weighted, matching the θ̂ update. Default 1. */
   anchorWeight?: number;
   now: Date;
 }
@@ -271,11 +261,9 @@ export interface RecordFamilyObservationInput {
   primaryKnowledgeId: string | null | undefined;
   /** question.id — used only for the anchor and distinct count, never in family_key. */
   questionId: string;
-  /** question.kind. */
   kind: string;
-  /** question.source. */
   source: string;
-  /** question.difficulty (weak-anchor fallback). */
+  /** Weak-anchor fallback when no calibrated b exists. */
   difficulty: number;
   /** Clean binary outcome: success=1 / failure=0. Never coerce partial into 1. */
   outcome: 0 | 1;
@@ -405,9 +393,9 @@ export async function recordFamilyObservationForAttempt(
     theta,
     bAnchor,
     outcome: input.outcome,
-    isObjective: true, // Already checked above.
+    isObjective: true,
     distinctQuestionCount,
-    anchorWeight, // Weak-anchor down-weight, matching the θ̂ update.
+    anchorWeight,
     now: input.now,
   });
 }

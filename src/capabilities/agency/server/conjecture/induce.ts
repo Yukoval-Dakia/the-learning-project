@@ -20,6 +20,7 @@
 // predicted_p is authored only after the hypothesis is frozen; `discriminating=true`
 // means the package passed structural and independent semantic review.
 
+import type { TaskTextResult } from '@/ai/task-result';
 import {
   CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH,
   type ConjectureAbstainDraftT,
@@ -31,11 +32,7 @@ import {
   type ConjectureProbeQualityAttemptT,
   type ConjectureProposalDraftT,
 } from '@/core/schema/business';
-import {
-  type TaskTextResult,
-  type TaskTextRunFn,
-  sumAllKnownCostUsd,
-} from '@/server/ai/provenance';
+import { type TaskTextRunFn, sumAllKnownCostUsd } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 import { ConjectureGroupingOutputSchema } from '../../tasks/conjecture-induction';
 import type { EnrichedEvidenceCell, LoadedConjectureEvidenceImage } from './evidence';

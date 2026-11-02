@@ -42,9 +42,9 @@ export const ConjectureProbeResponseJudgement = z
 export type ConjectureProbeResponseJudgementT = z.infer<typeof ConjectureProbeResponseJudgement>;
 
 /**
- * Cross-reader/writer semantic matrix for a persisted probe disposition.
- * Shape validation alone is insufficient: a well-formed gold judgement cannot
- * support outcome=0, and a target-error judgement cannot support outcome=1.
+ * Cross-reader/writer semantic matrix for a persisted probe disposition. Shape
+ * alone is insufficient: a well-formed gold judgement cannot support outcome=0,
+ * nor a target-error judgement outcome=1.
  */
 export function isCanonicalProbeOutcomeJudgement(input: {
   outcome: 0 | 1 | null;
@@ -100,9 +100,9 @@ function ungradableJudgement(
 }
 
 /**
- * Reconcile the ordinary correctness verdict with the SAME judge call's
- * semantic comparison against the immutable gold and target-error signatures.
- * Missing, ambiguous, or contradictory evidence fails closed.
+ * Reconcile the correctness verdict against the SAME judge call's comparison
+ * with the immutable gold and target-error signatures; missing, ambiguous or
+ * contradictory evidence fails closed.
  */
 export function classifyConjectureProbeResponseFromJudgeMatch(
   coarseOutcome: 'correct' | 'incorrect' | 'partial' | 'unsupported',

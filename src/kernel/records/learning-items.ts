@@ -1,13 +1,18 @@
 // Shared creation and structural materialization for event-native learning items.
 // Derived child_learning_item_ids / ai_score / due_at / reviewed_at remain outside the snapshot.
 
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
+import type { z } from 'zod';
 import { newId } from '@/core/ids';
 import { foldLearningItem } from '@/core/projections/learning_item';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
+import type {
+  LearningItemKnowledgeIdsRewriteExperimental,
+  LearningItemStateRestoreExperimental,
+} from '@/core/schema/event/learning-item-events';
 import type { Db, Tx } from '@/db/client';
 import { event, learning_item, materialized_id_index } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import { nextProjectionEventTime, writeEvent } from '@/kernel/events';
 import { upsertMaterializedIdIndex } from './materialized-id-index';
 import { rowToFoldEvent } from './projection-events';
 
@@ -256,4 +261,67 @@ export async function learningItemsWithGenesisAnchor(
     );
   for (const r of idxRows) out.add(r.materialized_id);
   return out;
+}
+
+type LearningItemRepairEvent =
+  | z.infer<typeof LearningItemKnowledgeIdsRewriteExperimental>
+  | z.infer<typeof LearningItemStateRestoreExperimental>;
+
+/** Caller holds the item row lock. Anchor, causal time, append and projection stay inseparable. */
+export async function applyLearningItemRepair(
+  tx: Tx,
+  input: LearningItemRepairEvent,
+  requestedAt: Date,
+): Promise<void> {
+  if (!(await hasLearningItemGenesisAnchor(tx, input.subject_id))) {
+    throw new Error(`Learning item ${input.subject_id} needs canonical projection migration`);
+  }
+  const createdAt = await nextProjectionEventTime(
+    tx,
+    'learning_item',
+    input.subject_id,
+    requestedAt,
+  );
+  await writeEvent(tx, { ...input, id: newId(), created_at: createdAt, ingest_at: requestedAt });
+  await projectLearningItemGuarded(tx, input.subject_id);
+}
+
+// Read-only active learning-item reader for the Coach brief. Results are attention
+// pressure only: this reader never reads or writes scheduling, due, mastery, or
+// bookkeeping state. `status` is free text; 'in_progress' is the live value.
+
+export interface ActiveLearningItem {
+  id: string;
+  knowledge_ids: string[];
+  status: string;
+  user_pinned: boolean;
+}
+
+/**
+ * Active items are not archived and are either in progress or pinned, oldest first.
+ * The `archived_at` guard is explicit because archiving only sets that column; it
+ * leaves status and pin intact, so a just-archived item would still match.
+ */
+export async function listActiveLearningItems(db: DbLike): Promise<ActiveLearningItem[]> {
+  const rows = await db
+    .select({
+      id: learning_item.id,
+      knowledge_ids: learning_item.knowledge_ids,
+      status: learning_item.status,
+      user_pinned: learning_item.user_pinned,
+    })
+    .from(learning_item)
+    .where(
+      and(
+        isNull(learning_item.archived_at),
+        or(eq(learning_item.status, 'in_progress'), eq(learning_item.user_pinned, true)),
+      ),
+    )
+    .orderBy(asc(learning_item.created_at), asc(learning_item.id));
+  return rows.map((r) => ({
+    id: r.id,
+    knowledge_ids: r.knowledge_ids ?? [],
+    status: r.status,
+    user_pinned: r.user_pinned,
+  }));
 }

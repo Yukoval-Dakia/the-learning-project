@@ -15,7 +15,7 @@
 // FK is knowledge_edge → knowledge, so that pair shares one tx (knowledge first); every other kind is
 // its own tx. A topology/FK reject rolls back only its cluster, not all 7 (Lens B m7).
 //
-// The owner runs this against a PROD-CLONE for the B3 gate (rebuild, then audit:projection CLEAN),
+// The owner runs this against a PROD-CLONE for the B3 gate (rebuild, then ops:projection CLEAN),
 // not against live prod. BEHAVIOR-PRESERVING: a standalone operational script; NOT wired into any
 // request path.
 //

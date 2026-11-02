@@ -1,11 +1,8 @@
-// Pure trend math (no DB or schema imports), so the direction/confidence decision can
-// run in the no-DB lane. The read model uses these same functions.
+// Pure trend math (no DB or schema imports), shared with the read model.
 //
-// A trend is never a raw delta: it reports a qualitative direction and a confidence.
-// The confidence is what keeps noise from being drawn as a certain rise.
-//
-// Minimum events before any direction is asserted; below it the result is insufficient.
-// High confidence needs twice that, because a trend is a delta of deltas. Holding is a
+// A trend is never a raw delta: it reports a qualitative direction and confidence, so
+// noise is not drawn as a certain rise. Minimum events gate any direction; high
+// confidence needs twice that because a trend is a delta of deltas. Holding is a
 // theta-mean difference inside the band; otherwise effect size must clear the noise
 // thresholds for medium/high.
 export const MIN_EVENTS_FOR_TREND = 4;
@@ -93,14 +90,12 @@ export function summarizeTrend(points: EffectivenessTrendPoint[]): Effectiveness
 
   let confidence: TrendConfidence;
   if (direction === 'holding') {
-    // Confidence in flatness comes from sample size.
     confidence = n >= FIRM_TREND_EVIDENCE ? 'high' : 'medium';
   } else if (n >= FIRM_TREND_EVIDENCE && ratio >= EFFECT_RATIO_HIGH) {
     confidence = 'high';
   } else if (ratio >= EFFECT_RATIO_MEDIUM) {
     confidence = 'medium';
   } else {
-    // A weak or noise-level move is not a firm trend.
     confidence = 'low';
   }
 
@@ -136,7 +131,6 @@ export function rollupSubjectDirection(trends: EffectivenessTrendSummary[]): {
   for (const d of order) {
     if (counts[d] > counts[direction]) direction = d;
   }
-  // Higher agreement is more credible, capped by the credible count.
   const agree = counts[direction] / credible.length;
   let confidence: TrendConfidence;
   if (credible.length >= MIN_EVENTS_FOR_TREND && agree >= ROLLUP_AGREE_HIGH) {

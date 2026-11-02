@@ -53,6 +53,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
+import { checkRateLimit } from '@/kernel/request-rate-limit';
 import {
   type ActivateEvaluationRequestT,
   ModelSliceRegistrationError,
@@ -71,7 +72,6 @@ import {
   snapshotAssessmentLearningScope,
   withdrawCapturedOccurrence,
 } from '@/server/assessment/runtime';
-import { checkRateLimit } from '@/server/http/rate-limit';
 import { bindAppealExecution, reservedEvaluationAttempt } from '../assessment/appeal-execution';
 import {
   type JudgeExecution,

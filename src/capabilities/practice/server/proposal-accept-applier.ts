@@ -12,18 +12,20 @@ import type {
 } from '@/kernel/proposals';
 import { requireLaterProposalCorrection, toProposalLifecycleResult } from '@/kernel/proposals';
 import {
-  type ProposalInboxRow,
   asPlainRecord,
   findExistingRateEvent,
+  writeProposalRateEvent,
+} from '@/kernel/proposals/applier-helpers';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import { recordProposalDecisionSignal } from '@/kernel/proposals/signals';
+import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
-  recordProposalDecisionSignal,
-  writeProposalRateEvent,
-} from '@/server/proposals/practice-runtime';
+} from '@/kernel/records/mistake-variant-facts';
+import { acceptJudgeRetractionProposal } from './judge-retraction-applier';
 import {
   type PracticeApplierOpts,
   acceptCauseCategoryProposal,
-  acceptJudgeRetractionProposal,
   acceptQuestionDraftProposal,
   acceptQuestionEditProposal,
   acceptVariantQuestionProposal,
@@ -139,7 +141,7 @@ export const questionEditProposalAcceptApplier: ProposalAcceptApplier = async (
 
 // judge_retraction accept：判分纠错提案（evaluation 目标走
 // appeal/rejudge/CAS 激活 + settlement replay；legacy judge-event 目标写
-// CorrectEvent）。真身在 proposal-appliers.ts。
+// CorrectEvent）。真身在 judge-retraction-applier.ts。
 export const judgeRetractionProposalAcceptApplier: ProposalAcceptApplier = async (
   db,
   input,

@@ -10,6 +10,7 @@ import { useCallback, useRef, useState } from 'react';
 import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
 import { ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
+import { undoAiChange } from '@/ui/lib/undo-ai-change';
 import { Btn } from '@/ui/primitives/Btn';
 import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -29,9 +30,9 @@ import {
   editingHeartbeat,
   getAiChanges,
   getNotePage,
+  questionsForKnowledge,
   saveBodyBlocks,
   searchArtifacts,
-  undoAiChange,
 } from './notes-api';
 
 const NOTE_TYPE_LABEL: Record<string, string> = {
@@ -170,6 +171,7 @@ export default function NoteReaderPage({
   readAiChanges = getAiChanges,
   undo = undoAiChange,
   searchReferences = searchArtifacts,
+  readQuestions = questionsForKnowledge,
 }: {
   id: string;
   navigate: (to: string) => void;
@@ -178,6 +180,7 @@ export default function NoteReaderPage({
   readAiChanges?: typeof getAiChanges;
   undo?: typeof undoAiChange;
   searchReferences?: typeof searchArtifacts;
+  readQuestions?: typeof questionsForKnowledge;
 }) {
   const qc = useQueryClient();
   const noteQ = useQuery({ queryKey: ['note-page', id], queryFn: () => read(id) });
@@ -492,6 +495,7 @@ export default function NoteReaderPage({
               onChange={setDraft}
               rootRef={editSessionRef}
               searchReferences={searchReferences}
+              readQuestions={readQuestions}
             />
           ) : (
             <NoteDocBody

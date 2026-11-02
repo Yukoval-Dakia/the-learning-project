@@ -1,10 +1,12 @@
 // Client-only public contribution surface.
 
 export type { KnowledgeTreeNode } from './ui/knowledge-api';
-export { getTree } from './ui/knowledge-api';
+export { getTree, projectKnowledgeEdges } from './ui/knowledge-api';
 export { masteryTone } from './ui/mastery-tone';
 
 export const loadKnowledgePage = () =>
   import('./ui/KnowledgePage').then((module) => module.default);
 export const loadKnowledgeDetailPage = () =>
   import('./ui/KnowledgeDetailPage').then((module) => module.default);
+
+export { type KnowledgeClient, KnowledgeClientProvider } from './ui/knowledge-client';

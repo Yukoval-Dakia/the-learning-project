@@ -1,7 +1,7 @@
 # Partial Credit Trace + Framework Diff Baseline — P-1
 
 **Date**: 2026-05-22
-**Scope**: P-1 Phase of Foundation 真 Closeout（spec `docs/superpowers/specs/2026-05-22-foundation-true-closeout-design.md`）
+**Scope**: P-1 Phase of Foundation 真 Closeout（spec `docs/archive/superpowers/specs/2026-05-22-foundation-true-closeout-design.md`）
 **Run by**: P-1 plan agent (Claude Code, inline execution)
 **Purpose**: (1) 列 `JudgeResultV2.score` / `coarse_outcome` 在判分链路各层的流向 + 标"断点"；(2) snapshot framework LOC + git SHA 作为 P0 / P1 / P2 / P3 / P4 acid test baseline；(3) `mathjs` 依赖评估笔记（spec §9 Q1）。
 

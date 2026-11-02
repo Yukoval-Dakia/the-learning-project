@@ -9,9 +9,9 @@
 > 对抗验证对全部 30 条发现给出 **upheld=true**，无一被驳回（见附录 A）。
 
 三份文档（简称）：
-- **CO** = `docs/superpowers/specs/2026-06-03-coach-led-review-engine-design.md`
-- **PS** = `docs/superpowers/specs/2026-06-03-editable-profile-studio-design.md`
-- **AF** = `docs/superpowers/specs/2026-06-04-agent-framework-design.md`
+- **CO** = `docs/archive/superpowers/specs/2026-06-03-coach-led-review-engine-design.md`
+- **PS** = `docs/archive/superpowers/specs/2026-06-03-editable-profile-studio-design.md`
+- **AF** = `docs/archive/superpowers/specs/2026-06-04-agent-framework-design.md`
 
 ---
 
@@ -212,7 +212,7 @@ Slice 1（文档 + agent-objective docs + 标 ADR-0004 superseded，S）→ **�
 
 ### 附录 B — 原料文件清单
 
-**三 doc 原文**（`/tmp/tlp-docs-sync/docs/superpowers/specs/`）：`2026-06-03-coach-led-review-engine-design.md`、`2026-06-03-editable-profile-studio-design.md`、`2026-06-04-agent-framework-design.md`。
+**三 doc 原文**（`/tmp/tlp-docs-sync/docs/archive/superpowers/specs/`）：`2026-06-03-coach-led-review-engine-design.md`、`2026-06-03-editable-profile-studio-design.md`、`2026-06-04-agent-framework-design.md`。
 
 **审计 + critic + cross-critic**（`/tmp/tlp-audit/findings/`）：
 coach-data.md、coach-runtime.md、coach-sequencing.md、coach-critic-product.md、coach-critic-simplicity.md、coach-review-verifier-summary.txt；

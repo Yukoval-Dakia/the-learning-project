@@ -80,8 +80,8 @@ export async function dispatchNativeAttempt(
     const payload = JudgePendingAttemptPayload.parse(existing.payload);
     if (payload.caller !== 'native_assessment')
       throw new ApiError('coordinate_mismatch', 'durable operation caller changed', 409);
-    // Capture is first-write-wins. Compare the frozen original and execution options,
-    // not a retry's capture, current question metadata or materialized effective head.
+    // Capture is first-write-wins: compare the frozen original and execution options,
+    // not the retry's capture, current question metadata, or materialized head.
     const { capture, ...acceptedIdentity } = payload.submit;
     if (
       payload.run_id !== runId ||
@@ -161,7 +161,7 @@ export async function dispatchNativeAttempt(
       return { run_id: runId, caller: 'native_assessment' as const, submit: input };
     });
   } catch (error) {
-    // A lost COMMIT acknowledgement is not rollback. Inspect the deterministic intent under R.
+    // A lost COMMIT acknowledgement is not a rollback; inspect the deterministic intent.
     const existing = await db.transaction(async (tx) => {
       await lockJudgeRun(tx, runId);
       const [row] = await tx.select().from(event).where(eq(event.id, pendingId));
@@ -205,7 +205,7 @@ export async function dispatchNativeAttempt(
   return runId;
 }
 
-/** Queue payload is only a pointer; immutable domain rows own the accepted response. */
+/** The queue payload is only a pointer; immutable domain rows own the accepted response. */
 export async function executeNativeAttempt(
   db: Db,
   job: NativeJudgeRunJobData,
@@ -265,8 +265,8 @@ export async function executeNativeAttempt(
           .from(evaluation)
           .where(eq(evaluation.evaluation_id, head.effective_evaluation_id))
       : [];
-    // Allow recovery of this very operation, but never pay to overwrite a later
-    // explicit self-report, manual correction, or appeal.
+    // Recover this operation, but never pay to overwrite a later explicit self-report,
+    // manual correction, or appeal.
     if (
       effective?.submission_id !== input.submission_id ||
       EvaluationProvenance.safeParse(effective?.provenance).data?.execution_receipt?.key !==
@@ -310,7 +310,7 @@ export async function executeNativeAttempt(
           submission_id: input.submission_id,
           evaluation_group_id: input.evaluation_group_id,
           candidate_id: candidateId,
-          // The accepted CAS coordinates stay immutable after the native head advances.
+          // Accepted CAS coordinates stay immutable after the native head advances.
           activation_intent: { evaluation_id: candidateId, ...input.expected_head },
         },
       }),
@@ -340,8 +340,8 @@ export async function executeNativeAttempt(
     }
     const state = await readJudgeRunPermanent(tx, job.run_id);
     if (state.kind === 'resolved') {
-      // With no run-id event, resolved means the selector proved exact native
-      // activation + settlement. Only that same completion may finish its receipt.
+      // With no run-id event, "resolved" means the selector proved exact native activation
+      // and settlement; only that same completion may finish the receipt.
       const completion = state.result.assessment;
       if (
         status !== 'effective' ||
@@ -357,7 +357,7 @@ export async function executeNativeAttempt(
       await requireJudgeRunOpen(tx, authority);
     }
     await writeEvent(tx, wanted);
-    // writeEvent is first-write-wins, so a returned id alone is not a receipt acknowledgement.
+    // writeEvent is first-write-wins, so a returned id is not a receipt acknowledgement.
     const [saved] = await tx.select().from(event).where(eq(event.id, job.run_id));
     validateReceipt(saved);
   };
@@ -386,7 +386,7 @@ export async function executeNativeAttempt(
       },
     },
   );
-  // Held evaluation and recovery of a previously activated candidate have no fresh activation callback.
+  // Held evaluation and recovery of an already-activated candidate skip the activation callback.
   await db.transaction((tx) => writeResolution(tx, committed, committed.status));
   return committed;
 }

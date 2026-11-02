@@ -40,6 +40,11 @@ export interface TraceMetadata {
   business_outcome?: 'unassessed' | 'accepted' | 'rejected' | 'pending' | 'cancelled';
   durable_settled?: boolean;
   executed?: boolean;
+  mode?: 'report_only';
+  comparison?: 'structural_json' | 'comparison_unavailable';
+  sameInputExecutions?: number;
+  wouldTrigger?: boolean;
+  repeatGroup?: string | null;
   usage_observed?: boolean;
   cost_basis?: string;
   cost_ref?: string;
@@ -66,6 +71,11 @@ const metadataKeys = [
   'business_outcome',
   'durable_settled',
   'executed',
+  'mode',
+  'comparison',
+  'sameInputExecutions',
+  'wouldTrigger',
+  'repeatGroup',
   'usage_observed',
   'cost_basis',
   'cost_ref',
@@ -175,7 +185,7 @@ export async function initializeLaminarTracing(
             setAttribute: (name, value) => {
               span.setAttribute(name, value);
             },
-            // 0.8.49 returns LaminarSpan at runtime, but startSpan declares OTel Span.
+            // Laminar's startSpan is typed as OTel Span, but returns LaminarSpan at runtime.
             setInput: (value) => {
               if ('setInput' in span && typeof span.setInput === 'function') span.setInput(value);
             },

@@ -1,4 +1,4 @@
-// Math, replay, and the forward gate. The DB loader stays in scripts/audit-calibration.ts
+// Math, replay, and the forward gate. The DB loader stays in scripts/ops-calibration.ts
 // so this barrel does not import the database client.
 
 export { type AucResult, forwardAuc } from './auc';
@@ -28,7 +28,6 @@ export {
   type ReplayStep,
   replayTheta,
 } from './replay';
-export { mulberry32 } from './rng';
 export {
   type AssembledClusters,
   type VA1Config,

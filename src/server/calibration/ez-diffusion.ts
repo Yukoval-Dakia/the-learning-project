@@ -1,12 +1,12 @@
 // Closed-form EZ recovery. Wagenmakers, van der Maas & Grasman, Psychonomic Bulletin
 // & Review 2007. It fits one learner from that learner's own Pc and correct-RT moments.
-// No cohort variance enters. The database writer is axis-writer.ts.
-// ADR-0048 keeps this closed form in TypeScript. ADR-0046 lists the exemption while the
-// axis stays a descriptor. Port triggers are in that ADR.
+// No cohort variance enters. The database writer was retired in YUK-1560; this module
+// remains the pure closed form. ADR-0048 keeps it in TypeScript while the axis stays a
+// descriptor; ADR-0046 lists the exemption and its port triggers.
 // `a` is this learner's caution boundary. It is not a 2PL item discrimination.
 // `s` is the fixed 0.1 scale, not an estimated parameter.
 // Nothing here is an input to θ̂, p(L), or item selection.
-// v is confounded when selection pins Pc, so the writer stores it only for a probe set.
+// v is confounded when selection pins Pc, so the retired writer stored it only for a probe set.
 // a and Ter stay meaningful in an adaptive flow.
 
 /** Owner-fixed scaling constant `s` (Wagenmakers convention). NOT an estimated parameter. */

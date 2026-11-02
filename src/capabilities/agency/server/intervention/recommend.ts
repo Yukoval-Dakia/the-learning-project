@@ -1,3 +1,4 @@
+import type { TaskTextResult } from '@/ai/task-result';
 import { parseJsonObjectLoose } from '@/core/json-extract';
 import { PEDAGOGY_METHOD_LIBRARY, selectPedagogyCandidates } from '@/core/pedagogy';
 import {
@@ -9,7 +10,7 @@ import {
   type PedagogyRecommendationModelOutputT,
   type PedagogyRecommendationT,
 } from '@/core/schema/intervention';
-import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 
 export interface RecommendPedagogyInput {

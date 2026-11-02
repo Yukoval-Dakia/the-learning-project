@@ -1,0 +1,280 @@
+/* One question (YUK-1473): banner, the notice, the question on white paper (R2: no card, no
+   border, no shadow), my history, next steps, tidying. Shares the frame from library.css. */
+
+[data-ui-next].qd-page {
+  & .qd-main {
+    gap: var(--un-sp-7);
+    width: min(760px, 100%);
+  }
+
+  /* ── Banner ── */
+  & .qd-banner {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .qd-parent {
+    justify-self: start;
+    color: var(--un-accent-strong);
+    font-size: var(--un-fs-1);
+  }
+
+  & .qd-facts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2) var(--un-sp-4);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  /* ── Notice: one thing the question needs from you ── */
+  & .qd-notice {
+    display: grid;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-4) var(--un-sp-5);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-sunk);
+    box-shadow: inset 3px 0 0 var(--un-text-4);
+  }
+
+  & .qd-notice[data-tone="accent"] {
+    box-shadow: inset 3px 0 0 var(--un-accent);
+  }
+  & .qd-notice[data-tone="caution"] {
+    box-shadow: inset 3px 0 0 var(--un-caution);
+  }
+  & .qd-notice[data-tone="critical"] {
+    box-shadow: inset 3px 0 0 var(--un-critical);
+  }
+
+  & .qd-notice-title {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .qd-notice-text {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .qd-notice-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+    margin-top: var(--un-sp-1);
+  }
+
+  & .qd-force {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--un-sp-3);
+    padding-top: var(--un-sp-3);
+  }
+
+  & .qd-force .qd-field {
+    flex: 1 1 260px;
+  }
+
+  /* ── The question on white paper ── */
+  & .qd-paper {
+    display: grid;
+    gap: var(--un-sp-4);
+  }
+
+  & .qd-paper-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+
+  & .qd-label {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .qd-stem {
+    max-width: var(--un-w-prose);
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    line-height: var(--un-lh-prose);
+  }
+
+  & .qd-stem img,
+  & .qd-answer-body img {
+    max-width: 100%;
+    border-radius: var(--un-r-1);
+  }
+
+  & .qd-choices,
+  & .qd-parts {
+    display: grid;
+    gap: var(--un-sp-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .qd-choice {
+    display: flex;
+    align-items: baseline;
+    gap: var(--un-sp-3);
+    font-size: var(--un-fs-2);
+  }
+
+  & .qd-choice-letter,
+  & .qd-part-no {
+    flex-shrink: 0;
+    width: 1.5em;
+    color: var(--un-text-3);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .qd-part {
+    display: flex;
+    align-items: baseline;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-2);
+    margin: 0 calc(-1 * var(--un-sp-2));
+    border-radius: var(--un-r-1);
+    color: inherit;
+  }
+
+  & .qd-part:hover {
+    background: var(--un-bg-hover);
+  }
+
+  & .qd-part-stem {
+    flex: 1;
+    min-width: 0;
+  }
+
+  & .qd-part-kind,
+  & .qd-quiet {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .qd-answer {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-2);
+    padding-top: var(--un-sp-3);
+    box-shadow: inset 0 var(--un-hairline) 0 var(--un-line);
+  }
+
+  & .qd-answer .un-expand {
+    width: 100%;
+  }
+
+  & .qd-answer-body {
+    padding-top: var(--un-sp-2);
+    color: var(--un-text-1);
+    line-height: var(--un-lh-prose);
+  }
+
+  & .qd-variants {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .qd-variant-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-2) var(--un-sp-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--un-fs-1);
+  }
+
+  & .qd-variant-list a,
+  & .qd-evidence {
+    color: var(--un-accent-strong);
+    font-size: var(--un-fs-1);
+  }
+
+  /* ── Sections ── */
+  & .qd-section {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+
+  & .qd-section-title {
+    padding-bottom: var(--un-sp-2);
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    font-weight: var(--un-fw-medium);
+    box-shadow: inset 0 calc(-1 * var(--un-hairline)) 0 var(--un-line-strong);
+  }
+
+  /* ── Next steps and tidying: label on the left, one button on the right ── */
+  & .qd-next {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .qd-next-row {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-4);
+    padding: var(--un-sp-3) 0;
+  }
+
+  & .qd-next li + li {
+    box-shadow: inset 0 var(--un-hairline) 0 var(--un-line);
+  }
+
+  & .qd-next-text {
+    display: grid;
+    flex: 1;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  & .qd-next-name {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .qd-confirm {
+    display: grid;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-1);
+    background: var(--un-critical-soft);
+    color: var(--un-text-1);
+    font-size: var(--un-fs-1);
+  }
+
+  & .qd-danger {
+    background: var(--un-critical);
+    color: var(--un-text-on-accent);
+  }
+
+  & .qd-error {
+    color: var(--un-critical);
+    font-size: var(--un-fs-1);
+  }
+}
+
+@media (max-width: 720px) {
+  [data-ui-next].qd-page {
+    & .qd-main {
+      gap: var(--un-sp-6);
+    }
+
+    & .qd-stem {
+      font-size: var(--un-fs-2);
+    }
+
+    & .qd-notice {
+      padding: var(--un-sp-3) var(--un-sp-4);
+    }
+  }
+}

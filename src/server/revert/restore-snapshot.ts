@@ -9,10 +9,10 @@ import { and, eq } from 'drizzle-orm';
 
 import type { StateSnapshotExperimentalT } from '@/core/schema/event/state-snapshot';
 import type { Tx } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { mastery_state, material_fsrs_state } from '@/db/schema';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
+import { upsertMasteryState } from '@/kernel/records/mastery-state';
 import { upsertFsrsState } from '@/server/fsrs/state';
-import { upsertMasteryState } from '@/server/mastery/state';
 
 /** A bare-number θ̂ before has no other columns, so the call refuses and writes nothing. */
 export type RestoreSnapshotResult =

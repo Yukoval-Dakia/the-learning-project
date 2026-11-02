@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { PublicMaterialView } from '@/core/schema/assessment';
 import {
   CauseCategory,
   FigureRef,
@@ -15,6 +14,7 @@ import {
   BinaryResponseSchema,
   MultipartFilePartSchema,
 } from '@/kernel/http-contracts';
+import { MistakeProjectionSchema } from '@/kernel/records/mistake-projection-contract';
 import {
   IngestionAskAnswer,
   IngestionAskAnswerBody,
@@ -41,6 +41,58 @@ export const CreateIngestionSessionBody = z.object({
   derivation_policy: IngestionDerivationPolicy.optional(),
 });
 
+/** Optional creation identity; explicitly supplied empty keys are invalid. */
+export const CreationReceiptHeadersSchema = z.object({
+  'Idempotency-Key': z.string().trim().min(1).max(200).optional(),
+});
+
+export const IngestionSessionCreationResponseSchema = z.strictObject({
+  session: z.strictObject({
+    id: z.string().min(1),
+    source_document_id: z.string().min(1),
+    status: z.literal('uploaded'),
+    source_asset_ids: z.array(z.string().min(1)).min(1),
+    entrypoint: IngestionEntrypoint,
+  }),
+});
+
+export const CreationReceiptConflictSchema = z.strictObject({
+  error: z.literal('idempotency_conflict'),
+  message: z.literal('Idempotency-Key was used with a different creation input'),
+});
+
+export const CreationReceiptUnavailableSchema = z.strictObject({
+  error: z.literal('creation_receipt_unavailable'),
+  message: z.literal('Creation receipt unavailable; retry with the same key and original input'),
+});
+
+export const CreationInternalErrorSchema = z.strictObject({
+  error: z.literal('internal_error'),
+  message: z.literal('Internal Server Error'),
+});
+
+export const IngestionSourcePackageFailedSchema = z.strictObject({
+  error: z.literal('ingestion_source_package_failed'),
+  message: z.literal('Source package materialization failed'),
+  details: z.strictObject({
+    session_id: z.string().min(1),
+    source_document_id: z.string().min(1),
+  }),
+});
+
+export const IngestionCreationErrorSchema = z.union([
+  CreationInternalErrorSchema,
+  IngestionSourcePackageFailedSchema,
+]);
+
+export const IngestionSessionTitleSourceSchema = z.enum([
+  'source_document',
+  'agent_item_preview',
+  'extracted_prompt_md',
+  'question_block_create',
+]);
+export type IngestionSessionTitleSource = z.infer<typeof IngestionSessionTitleSourceSchema>;
+
 export const IngestionSessionSchema = z
   .object({
     id: z.string(),
@@ -53,7 +105,7 @@ export const IngestionSessionSchema = z
     // lifecycle timestamps. Absent on create/detail echoes.
     path: z.enum(['agent', 'extract']).nullable().optional(),
     title: z.string().nullable().optional(),
-    title_source: z.enum(['source_document']).nullable().optional(),
+    title_source: IngestionSessionTitleSourceSchema.nullable().optional(),
     item_count: z.number().int().min(0).optional(),
     started_at: z.number().int().optional(),
     ended_at: z.number().int().nullable().optional(),
@@ -65,15 +117,19 @@ export const IngestionSessionResponseSchema = z.object({
 });
 
 /**
- * The latest usage receipt for the session document. derivation_policy is the
- * document's live policy, so a later withdrawal shows immediately. Counts only;
- * redacted values never go on the wire.
+ * All persisted privacy-guard receipts for this session and its source document,
+ * read with the session and live derivation_policy in one read-only snapshot.
+ * Counts sum recorded mutated spans per use/segment, including repeated source
+ * spans across runs; they are neither unique source positions nor fees. Categories
+ * are a union; values never go on the wire. Missing receipts or any unavailable
+ * accounting yields a null usage_receipt, never partial counts or invented zero.
  */
 export const IngestionUsageReceiptSchema = z.object({
   derivation_policy: IngestionDerivationPolicy,
-  /** Extraction engine that produced this receipt (e.g. tencent / glm / docx_text). */
+  /** The common recorded engine; null for mixed or missing engines. */
   engine: z.string().nullable(),
-  /** Channels that left the server; page images are raw, text is redacted. */
+  /** Recorded channel union: raw/redacted if ever used, none only if all say none;
+   * null when any receipt lacks channels. No missing channel is guessed as none. */
   channels: z
     .object({
       page_images: z.enum(['raw', 'none']),
@@ -82,6 +138,7 @@ export const IngestionUsageReceiptSchema = z.object({
     .nullable(),
   redacted_fields: z.array(z.string()),
   redaction_counts: z.record(z.string(), z.number()),
+  /** Latest actual creation time among the attributed persisted receipts. */
   recorded_at: z.string().datetime(),
 });
 
@@ -90,13 +147,35 @@ export const IngestionSessionDetailResponseSchema = z.object({
   usage_receipt: IngestionUsageReceiptSchema.nullable(),
 });
 
-export const IngestionOperationSchema = z
+const IngestionOperationBaseSchema = z
   .object({
     id: z.string(),
+    kind: z.literal('ingestion_operation'),
+    operation_kind: z.enum(['extract', 'agent', 'review', 'import', 'make_paper', 'rescue']),
     session_id: z.string(),
-    status: z.string(),
+    status: z.enum(['queued', 'running', 'succeeded', 'failed']),
+    result: z.unknown().optional(),
+    error: z.object({ code: z.string(), message: z.string(), status: z.number().int() }).optional(),
+    created_at: z.string().datetime(),
+    updated_at: z.string().datetime(),
+    events_url: z.string(),
   })
   .passthrough();
+
+export const IngestionOperationSchema = z.union([
+  IngestionOperationBaseSchema.extend({
+    operation_kind: z.enum(['extract', 'agent', 'import', 'make_paper', 'rescue']),
+  }),
+  IngestionOperationBaseSchema.extend({
+    operation_kind: z.literal('review'),
+    status: z.enum(['queued', 'running', 'failed']),
+  }),
+  IngestionOperationBaseSchema.extend({
+    operation_kind: z.literal('review'),
+    status: z.literal('succeeded'),
+    result: z.object({ status: z.literal('reviewed') }),
+  }),
+]);
 
 /** Runtime FormData carries a File; OpenAPI renders the shared marker as format: binary. */
 export const MultipartFileUploadSchema = z.object({ file: MultipartFilePartSchema }).passthrough();
@@ -162,70 +241,10 @@ export const MistakeListQuerySchema = z.object({
   cursor: z.string().min(1).optional(),
 });
 
-export const CreateMistakeResponseSchema = z.object({
-  question_id: z.string(),
-  mistake_id: z.string(),
-  record_id: z.string(),
-});
-
-const MistakeCorrectionStepSchema = z.object({
-  event_id: z.string(),
-  state: z.enum(['active', 'retracted', 'marked_wrong', 'superseded']),
-  correction_event_id: z.string().nullable(),
-  replacement_event_id: z.string().nullable(),
-});
-
-const MistakeCorrectionStateSchema = z.object({
-  original_event_id: z.string(),
-  state: z.enum(['active', 'retracted', 'marked_wrong', 'superseded', 'missing', 'cycle']),
-  terminal_state: z.enum(['active', 'retracted', 'marked_wrong', 'missing', 'cycle']),
-  effective_event_id: z.string().nullable(),
-  correction_event_id: z.string().nullable(),
-  replacement_event_id: z.string().nullable(),
-  chain: z.array(MistakeCorrectionStepSchema),
-});
-
-const PromptMaterialTextSchema = PublicMaterialView.omit({ asset_id: true });
-
-/** Frozen public material only. Available means asset metadata matches; blob delivery is separate. */
-export const MistakePromptMaterialSchema = z.discriminatedUnion('availability', [
-  PromptMaterialTextSchema.extend({
-    availability: z.literal('inline'),
-    kind: PublicMaterialView.shape.kind.extract(['passage', 'table', 'plaintext']),
-    content_md: z.string(),
-  }).strict(),
-  PublicMaterialView.extend({ availability: z.literal('available') }).strict(),
-  PromptMaterialTextSchema.extend({
-    // Missing row and present-but-incompatible metadata are distinct. Neither exposes a download ID.
-    availability: z.enum(['missing', 'unavailable']),
-  }).strict(),
-]);
-
-export const MistakeProjectionSchema = z.object({
-  id: z.string(),
-  record_id: z.string(),
-  question_id: z.string(),
-  prompt_md: z.string(),
-  prompt_materials: z.array(MistakePromptMaterialSchema).default([]),
-  reference_md: z.string().nullable(),
-  wrong_answer_md: z.string(),
-  wrong_answer_image_refs: z.array(z.string()).default([]),
-  knowledge_ids: z.array(z.string()),
-  cause: z
-    .object({
-      source: z.enum(['agent', 'user']),
-      primary_category: CauseCategory,
-      // Display backfill from active misconception titles; null when not a misc id.
-      primary_label: z.string().nullable(),
-      secondary_categories: z.array(CauseCategory),
-      // Display backfill for misc ids; absent entries fall back to raw ids.
-      secondary_labels: z.record(z.string(), z.string()),
-      user_notes: z.string().nullable(),
-      confidence: z.number().min(0).max(1).nullable(),
-    })
-    .nullable(),
-  correction_state: MistakeCorrectionStateSchema,
-  created_at: z.number().int().nonnegative(),
+export const CreateMistakeResponseSchema = z.strictObject({
+  question_id: z.string().min(1),
+  mistake_id: z.string().min(1),
+  record_id: z.string().min(1),
 });
 
 export const MistakeListResponseSchema = z.object({
@@ -235,7 +254,6 @@ export const MistakeListResponseSchema = z.object({
   next_cursor: z.string().nullable(),
 });
 
-export type MistakeProjection = z.infer<typeof MistakeProjectionSchema>;
 export type MistakeListResponse = z.infer<typeof MistakeListResponseSchema>;
 
 export const PdfExpansionResponseSchema = z.object({
@@ -276,6 +294,7 @@ const AutoEnrollObservationSchema = z.object({
 export const IngestionBlockSchema = z
   .object({
     id: z.string(),
+    version: z.number().int().nonnegative(),
     ingestion_session_id: z.string(),
     source_asset_ids: z.array(z.string()),
     page_spans: z.array(PageSpan),
@@ -537,6 +556,76 @@ export const IngestionHistoryPriorRunSchema = z
   })
   .strict();
 
+const IngestionCostIdentitySchema = z.object({
+  kind: z.enum(['agent_task', 'ocr']),
+  task_run_id: z.string(),
+  attempt_id: z.string().nullable(),
+  operation_id: z.string().nullable(),
+});
+
+/** Session-owned observed evidence only; never the full package/admission bill. */
+export const IngestionSessionCostEvidenceSchema = z
+  .object({
+    scope: z.literal('ingestion_agent_observed'),
+    coverage: z.literal('partial'),
+    /** DB snapshot time of cost identities + canonical costs, not all history. */
+    as_of: z.iso.datetime(),
+    /** Full-session total is unknown under partial coverage, even with known zeros. */
+    total: z.null(),
+    by_currency: z.array(
+      z
+        .object({
+          currency: z.string(),
+          /** Null means no known amount; numeric zero requires actual amount evidence. */
+          known_subtotal: z.number().nonnegative().nullable(),
+          reported: z.number().nonnegative().nullable(),
+          estimated: z.number().nonnegative().nullable(),
+          legacy: z.number().nonnegative().nullable(),
+        })
+        .strict(),
+    ),
+    /** Canonical rows, without provider payloads or synthetic call counts. */
+    records: z.array(
+      IngestionCostIdentitySchema.extend({
+        provider: z.string(),
+        model: z.string().nullable(),
+        source: z.enum(['cost_ledger', 'provider_attempt']),
+        entry_kind: z.enum(['legacy', 'attempt']),
+        cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable(),
+        cost_ref: z.string().nullable(),
+        currency: z.string(),
+        amount: z.number().nonnegative().nullable(),
+      }).strict(),
+    ),
+    /** One entry per durable identity with gaps; entries are not unknown calls. */
+    unsettled: z.array(
+      IngestionCostIdentitySchema.extend({
+        reasons: z.array(
+          z.enum([
+            'missing_task_run',
+            'task_in_progress',
+            'missing_attempt_binding',
+            'missing_canonical_cost',
+            'unknown_cost_basis',
+            'missing_amount',
+            'missing_cost_reference',
+            'unknown_currency',
+          ]),
+        ),
+      }).strict(),
+    ),
+    missing: z.array(
+      z.enum([
+        'outside_agent_scope',
+        'no_budget',
+        'no_durable_identities',
+        'historical_ocr_attribution_unproven',
+      ]),
+    ),
+  })
+  .strict();
+export type IngestionSessionCostEvidence = z.infer<typeof IngestionSessionCostEvidenceSchema>;
+
 export const IngestionSessionHistoryResponseSchema = z
   .object({
     session: z
@@ -549,7 +638,7 @@ export const IngestionSessionHistoryResponseSchema = z
         source_document_id: z.string().nullable(),
         source_asset_ids: z.array(z.string()),
         title: z.string().nullable(),
-        title_source: z.enum(['source_document']).nullable(),
+        title_source: IngestionSessionTitleSourceSchema.nullable(),
         started_at: z.string(),
         ended_at: z.string().nullable(),
         created_at: z.string(),
@@ -563,6 +652,8 @@ export const IngestionSessionHistoryResponseSchema = z
     prior_runs: z.array(IngestionHistoryPriorRunSchema),
     items: z.array(IngestionHistoryItemSchema),
     asks: z.array(IngestionHistoryAskSchema),
+    /** Absent only on older servers; consumers must treat absence as unavailable. */
+    cost_evidence: IngestionSessionCostEvidenceSchema.optional(),
     evidence: z
       .object({
         snapshot: z.boolean(),

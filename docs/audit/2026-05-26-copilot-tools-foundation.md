@@ -17,7 +17,7 @@ Foundation D M1 phase issue YUK-78 closes when this PR lands.
 
 ## 2. Spec sequence progress
 
-`docs/superpowers/specs/2026-05-17-agent-context-tools-design.md` §"Engineering Sequence" L1171-1206 enumerates 8 steps. M1 advances the counter from step 0 → step 5:
+`docs/archive/superpowers/specs/2026-05-17-agent-context-tools-design.md` §"Engineering Sequence" L1171-1206 enumerates 8 steps. M1 advances the counter from step 0 → step 5:
 
 | Step | Description | Status pre-M1 | Status post-M1 |
 |---|---|---|---|

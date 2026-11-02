@@ -172,13 +172,13 @@ AI 大量产出意味着用户要信任成本可控：
 7. **`docs/design/loom-design/project/colors_and_type.css`** ← design tokens（直接 port）
 
 Optional：
-- `docs/superpowers/specs/2026-05-14-phase1c-design.md`（spec D2-D9，含 page list / UI 决策）
-- `docs/superpowers/specs/2026-05-15-phase1c-loom-design-addendum.md`（loom L1-L8）
-- Sub 0c plan `docs/superpowers/plans/2026-05-11-sub0c-async-and-ocr-upgrade.md`（异步抽取 / SSE / rescue 现实）
+- `docs/archive/superpowers/specs/2026-05-14-phase1c-design.md`（spec D2-D9，含 page list / UI 决策）
+- `docs/archive/superpowers/specs/2026-05-15-phase1c-loom-design-addendum.md`（loom L1-L8）
+- Sub 0c plan `docs/archive/superpowers/plans/2026-05-11-sub0c-async-and-ocr-upgrade.md`（异步抽取 / SSE / rescue 现实）
 
 **Skip**：
 - `docs/design/loom-design/project/ui_kits/loom-app/*.jsx` —— 旧 mistake-centric 实现，作 reference 看 Primitives 形状但不照 port
-- `docs/superpowers/plans/2026-05-11-sub0d-agent-layer.md` —— DEFERRED，等 1c.1 后 refresh
+- `docs/archive/superpowers/plans/2026-05-11-sub0d-agent-layer.md` —— DEFERRED，等 1c.1 后 refresh
 
 ---
 

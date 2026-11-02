@@ -10,6 +10,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 import type { QuestionAuthorIntentSchema } from '@/ai/task-intents';
+import { aiAgentRef } from '@/ai/task-result';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import {
   type QuestionAuthorDraftT,
@@ -23,19 +24,19 @@ import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import type { ToolContext } from '@/kernel/tools/types';
-import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { resolveSubjectProfile } from '@/subjects/profile';
+import { normalizeToCanonicalKind } from '@/subjects/question-kind';
+import { parseQuestionAuthorOutput } from '../../tasks/question-author';
+import { assertGeneratedQuestionHasJudgeContract } from '../judge/question-contract';
 import {
   bindGeneratedQuestion,
   canonicalSourceContentHash,
   markQuestionGenerationFailed,
   prepareQuestionGeneration,
-} from '@/server/questions/question-generation-grounding';
-import { resolveSubjectProfile } from '@/subjects/profile';
-import { normalizeToCanonicalKind } from '@/subjects/question-kind';
-import { parseQuestionAuthorOutput } from '../../tasks/question-author';
-import { assertGeneratedQuestionHasJudgeContract } from '../judge/question-contract';
+} from '../question-generation-grounding';
 
 const PROMPT_PREVIEW_CHARS = 120;
 

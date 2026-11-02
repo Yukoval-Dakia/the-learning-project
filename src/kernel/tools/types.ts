@@ -1,4 +1,4 @@
-// YUK-79 / Foundation D M1 / spec `docs/superpowers/specs/2026-05-17-agent-context-tools-design.md`
+// YUK-79 / Foundation D M1 / spec `docs/archive/superpowers/specs/2026-05-17-agent-context-tools-design.md`
 //
 // DomainTool contract — the canonical type that every read / propose / write
 // tool exposed to LLM tool-call loops must implement. Tools are registered
@@ -12,7 +12,7 @@
 
 import { z } from 'zod';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 
 export type ToolEffect = 'read' | 'propose' | 'write' | 'control';
 
@@ -113,6 +113,8 @@ export type ValidateLearningContentFn = (
 ) => Promise<LearningContentValidationOutcome>;
 
 export interface ToolContext {
+  /** Original execution owner authorizes the actual write transaction. */
+  beforeIngestionWrite?: (tx: Tx) => Promise<void>;
   derivationPolicy?: DerivationPolicyT;
   db: Db;
   /** Server-bound current-turn original; never populated from model arguments. */

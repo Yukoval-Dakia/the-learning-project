@@ -3,7 +3,7 @@
 **Status**: Accepted — governance/contract ratified; empirical decisions and runtime activation deferred (YUK-675, 2026-07-23). This acceptance does not authorize any flag flip.
 **Part of**: YUK-441（A5 图-Laplacian 平滑先验）+ YUK-442（A6 prereq 有向 θ̂ 传播）+ YUK-455（A13 prereq 诊断向后传播 producer）+ YUK-559（kg-borrowing 借用纪律加固：provenance 契约 / 分量守卫 / shadow 遥测）。P4「KG 承重」里程碑——让知识图谱的边数学承重于 per-KC mastery。
 **Partially supersedes:** [ADR-0036](0036-dual-layer-heterogeneous-knowledge-graph.md) Decision 4 (RT2) only. ADR-0036’s remaining decisions stay authoritative.
-**Decision source**: 数学 dossier `docs/superpowers/research/2026-06-20-axis2-calibration-math-dossier.md` §1(a)/§2 A5 行 + YUK-441/442「数学 dossier 裁决」comment（2026-06-20）+「🛠 实施讨论 · grounded」comment（2026-06-27）+ YUK-452 §6 Q5（A13 owner 裁决）+ `docs/design/2026-07-04-kg-borrowing-spec.md`（reconcile 终稿：M1 撤回 / 半径纪律从 A13 移到 A5 / 遥测重做 shadow）。
+**Decision source**: 数学 dossier `docs/archive/superpowers/research/2026-06-20-axis2-calibration-math-dossier.md` §1(a)/§2 A5 行 + YUK-441/442「数学 dossier 裁决」comment（2026-06-20）+「🛠 实施讨论 · grounded」comment（2026-06-27）+ YUK-452 §6 Q5（A13 owner 裁决）+ `docs/design/2026-07-04-kg-borrowing-spec.md`（reconcile 终稿：M1 撤回 / 半径纪律从 A13 移到 A5 / 遥测重做 shadow）。
 **Related**: ADR-0010（knowledge_edge typed mesh / relation_type 核心集合）· ADR-0021（event memory-ingestion outbox opt-out）· ADR-0034（结构一致性闸 + `archived_at` 软归档，取代 bi-temporal）· ADR-0035（三轴正交 + p(L) 诊断轴 + 不确定性必过校准闸 corollary）· ADR-0036（双层异构 KG）· ADR-0040（决定2「先埋点 N 周再定阈」）· YUK-357 `audit:relations`（KG 死边反向审计）· YUK-539（evidence-floor，已关 register P1 判据）· YUK-551（frontier-gate 借用侧 UI/tone）· YUK-559（本单元）。
 
 > 合并记录（YUK-559 / S5，2026-07-04）：本文合并原两篇 on-topic 的 ADR-0047 草案
@@ -18,7 +18,7 @@
 
 `knowledge_edge.relation_type`（ADR-0010 核心集合）有 5 个有意义的 type：`prerequisite`、`related_to`、`contrasts_with`、`applied_in`、`derived_from`。P4 之前这些边只被三类消费：creation-validation（rubric-validator 提议时校验）、generic-read（copilot 邻域一把灌）、少量 specialized（topology-gate 仅 prerequisite 环检测、hub-mesh 笔记上下文）。**没有任何「按 relation_type 驱动 mastery 诊断」的消费**——图在长但不影响 per-KC 能力估计。
 
-「KG 承重借用」把边接进 mastery 诊断轴（`mastery_state.theta_hat` 的读侧投影 `getMasteryProjection`，`src/server/mastery/state.ts`）。这催生了**四个同名异实的「prerequisite propagation」机制**，全 dark（flag 默认 false），语义/半径各异：
+「KG 承重借用」把边接进 mastery 诊断轴（`mastery_state.theta_hat` 的读侧投影 `getMasteryProjection`，`src/kernel/read-models/mastery-projection.ts`）。这催生了**四个同名异实的「prerequisite propagation」机制**，全 dark（flag 默认 false），语义/半径各异：
 
 | 机制 | 方向 | 数值形态 | 影响半径 | flag |
 |---|---|---|---|---|
@@ -105,7 +105,7 @@ A5/A6 都 ship 成软层：**只移 surfaced `theta_hat`（能力后验均值）
 ### 9. Rust 落点与 S6 前置
 
 **本单元零 Rust 改动**。A6 kernel 平凡（O(E) 加法）零收益；A5 GMRF 是唯一重数值，但问题是「解形态在 batch-read 尺寸下不可扩展」——**先界定解规模（决定 8 分量守卫 / 将来稀疏 solver），再谈 port 语言**。S6（Rust A5 GMRF port）defer 触发 =（A5 flag 翻 + bit-exact 跨端一致或大分量性能需求），前置四件套：
-1. **deployment-aware loader（非 cwd-relative）+ .node/.wasm 进部署镜像**——`propagate-priors.ts` 白纸黑字：cwd-relative `NODE_PATH` 下 deployment-aware loader 是翻 flag 显式 PREREQUISITE；连 coldstart Rust 都未接生产，任何新 port 继承同 gap。
+1. **deployment-aware loader（非 cwd-relative）+ .node/.wasm 进部署镜像**——`src/capabilities/practice/server/day-one-priors.ts` 白纸黑字：cwd-relative `NODE_PATH` 下 deployment-aware loader 是翻 flag 显式 PREREQUISITE；连 coldstart Rust 都未接生产，任何新 port 继承同 gap。
 2. YUK-501 wasm CI skip 接通（否则 parity 无 gate）。
 3. wasm32-wasip1-threads + napi 双构建面。
 4. crate `napi.targets:["wasm32-wasip1-threads"]`。

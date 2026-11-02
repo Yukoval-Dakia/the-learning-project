@@ -178,16 +178,16 @@ function checkModelUnitAdmission(
 }
 
 /**
- * 网页逐槽渲染已有输入控件的槽位种类（YUK-1496）。没有控件的题后端判得了也不发，
+ * 网页逐槽渲染已有输入控件的槽位种类。没有控件的题后端判得了也不发，
  * 避免「题出了却没有输入框」。只能由展示层积木画出的种类见 BLOCK_INPUT_SLOT_KINDS。
- * 清单单一来源在 slot-renderers.ts（YUK-1573），与 nativeSlotFieldSpec 编译期绑定。
+ * 清单单一来源在 slot-renderers.ts，与 nativeSlotFieldSpec 编译期绑定。
  */
 export const INPUT_RENDERER_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> =
   NATIVE_FIELD_SLOT_KIND_SET;
 
 /**
- * YUK-1497 —— 只能由展示层输入积木画出的槽位种类（spec §4）：没有逐槽控件，
- * 只有 revision 的 presentation 用声明式输入积木绑定它时才可出。
+ * 只能由展示层输入积木画出的槽位种类：没有逐槽控件，只有 revision 的
+ * presentation 用声明式输入积木绑定它时才可出。
  */
 const BLOCK_INPUT_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> = new Set(
   PRESENTATION_INPUT_SLOT_KINDS,
@@ -305,9 +305,8 @@ export function decideAutomaticServing(
     };
   }
   // 有展示层时网页按积木树作答：select/blank 只有被声明式输入积木绑定才有输入面；
-  // 自定义块（沙箱）网页尚不能运行，被它绑定的槽一律没有输入面。
-  // YUK-1497：网页沙箱渲染器已在（practice/ui/blocks/CustomBlock.tsx），但这里继续扣发，
-  // 直到后端准入预演（YUK-1513）完成；届时放行条件为「渲染器在 + digest 是 sha256: 而非 unverified:」。
+  // 自定义块（沙箱）绑定的槽一律扣发，直到网页能运行该块且 digest 是 sha256:
+  // 而非 unverified:。
   const binders = shapedPresentation?.success
     ? presentationBinders(shapedPresentation.data)
     : new Map<string, 'block' | 'custom'>();

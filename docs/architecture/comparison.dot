@@ -13,7 +13,7 @@ digraph ArchitectureComparison {
     TLP_Client [label="Vite SPA\nReact 19", shape=box, style=filled, fillcolor="#bbdefb"];
     TLP_API [label="Hono API\n:8787", shape=box, style=filled, fillcolor="#90caf9"];
     TLP_Worker [label="pg-boss Worker\nBackground Jobs", shape=box, style=filled, fillcolor="#90caf9"];
-    TLP_Tasks [label="51 TaskSpecs\nTyped AI Tasks", shape=box, style=filled, fillcolor="#64b5f6"];
+    TLP_Tasks [label="58 TaskSpecs\nTyped AI Tasks", shape=box, style=filled, fillcolor="#64b5f6"];
     TLP_Tools [label="DomainTool Registry\nMCP Bridge", shape=box, style=filled, fillcolor="#64b5f6"];
     TLP_DB [label="PostgreSQL\nEvent Sourcing", shape=cylinder, style=filled, fillcolor="#42a5f5"];
     TLP_Providers [label="MiMo / Anthropic", shape=ellipse, style=filled, fillcolor="#1e88e5"];

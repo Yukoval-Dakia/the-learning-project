@@ -87,6 +87,11 @@ export interface ListProposalInboxOpts {
    * never affected.
    */
   includeInadmissibleBlockMerges?: boolean;
+  /**
+   * Historical replay: only proposals, terminal rates and corrections created
+   * before this instant count. Admission checks still read current rows.
+   */
+  asOf?: Date;
   limit?: number;
   cursor?: string;
 }
@@ -519,15 +524,23 @@ function proposalCursorWhere(cursor: ProposalCursor, nowIso: string) {
 
 async function loadProposalEvents(
   db: DbLike,
-  opts: Pick<ListProposalInboxOpts, 'limit' | 'cursor' | 'lane'> & { nowIso?: string } = {},
+  opts: Pick<ListProposalInboxOpts, 'limit' | 'cursor' | 'lane' | 'asOf'> & {
+    nowIso?: string;
+  } = {},
 ): Promise<LoadedProposalEvent[]> {
   const nowIso = opts.nowIso ?? new Date().toISOString();
   const cursor = opts.cursor ? decodeProposalCursor(opts.cursor) : null;
   const cooldownActive = proposalCooldownActiveExpr(nowIso);
   const acceptanceRate = proposalAcceptanceRateExpr();
+  const asOfWhere = opts.asOf ? lt(event.created_at, opts.asOf) : undefined;
   const where = cursor
-    ? and(proposalWhere(), proposalLaneWhere(opts.lane), proposalCursorWhere(cursor, nowIso))
-    : and(proposalWhere(), proposalLaneWhere(opts.lane));
+    ? and(
+        proposalWhere(),
+        proposalLaneWhere(opts.lane),
+        proposalCursorWhere(cursor, nowIso),
+        asOfWhere,
+      )
+    : and(proposalWhere(), proposalLaneWhere(opts.lane), asOfWhere);
   const query = db
     .select({
       acceptance_rate: acceptanceRate,
@@ -568,6 +581,7 @@ async function loadProposalEventById(db: DbLike, proposalId: string): Promise<Ev
 async function loadLatestRateByProposal(
   db: DbLike,
   proposalIds: string[],
+  asOf?: Date,
 ): Promise<Map<string, EventRow>> {
   if (proposalIds.length === 0) return new Map();
   const rateRows = await db
@@ -578,6 +592,7 @@ async function loadLatestRateByProposal(
         eq(event.action, 'rate'),
         inArray(event.caused_by_event_id, proposalIds),
         isNotNull(event.caused_by_event_id),
+        asOf ? lt(event.created_at, asOf) : undefined,
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id));
@@ -593,9 +608,14 @@ async function loadLatestRateByProposal(
 async function loadCorrectionDecisionByProposal(
   db: DbLike,
   proposalIds: string[],
+  asOf?: Date,
 ): Promise<Map<string, ProposalCorrectionDecision>> {
   if (proposalIds.length === 0) return new Map();
-  const correctionStatuses = await getCorrectionStatuses(db, proposalIds);
+  const correctionStatuses = await getCorrectionStatuses(
+    db,
+    proposalIds,
+    asOf ? { createdBefore: asOf } : undefined,
+  );
   const correctionIds = [...correctionStatuses.values()]
     .map((status) => status.correction_event_id)
     .filter((id): id is string => Boolean(id));
@@ -778,18 +798,20 @@ async function projectLoadedProposalRows(
   loadedProposalRows: LoadedProposalEvent[],
   filters: Pick<
     ListProposalInboxOpts,
-    'status' | 'kind' | 'lane' | 'actorRef' | 'includeInadmissibleBlockMerges'
+    'status' | 'kind' | 'lane' | 'actorRef' | 'includeInadmissibleBlockMerges' | 'asOf'
   > = {},
 ): Promise<ProposalInboxRow[]> {
-  const { status, kind, lane, actorRef } = filters;
+  const { status, kind, lane, actorRef, asOf } = filters;
   const proposalRows = loadedProposalRows.map((loaded) => loaded.row);
   const latestRateByProposal = await loadLatestRateByProposal(
     db,
     proposalRows.map((row) => row.id),
+    asOf,
   );
   const correctionDecisionByProposal = await loadCorrectionDecisionByProposal(
     db,
     proposalRows.map((row) => row.id),
+    asOf,
   );
 
   const out: ProposalInboxRow[] = [];
@@ -827,10 +849,9 @@ async function projectLoadedProposalRows(
     ? out
     : await dropInadmissibleBlockMerges(db, out);
 
-  const [signalsByProposalId, presentationByProposalId] = await Promise.all([
-    loadProposalSignalsForRows(db, visibleRows),
-    loadProposalPresentations(db, visibleRows),
-  ]);
+  // Presentation may isolate optional reads in a savepoint on this same Tx.
+  const signalsByProposalId = await loadProposalSignalsForRows(db, visibleRows);
+  const presentationByProposalId = await loadProposalPresentations(db, visibleRows);
   for (const row of visibleRows) {
     row.signals = signalsByProposalId.get(row.id) ?? null;
     row.presentation = presentationByProposalId.get(row.id) ?? null;
@@ -848,6 +869,7 @@ export async function listProposalInboxPage(
     const loadedProposalRows = await loadProposalEvents(db, {
       cursor: opts.cursor,
       lane: opts.lane,
+      asOf: opts.asOf,
       nowIso: rankingNowIso,
     });
     return {
@@ -866,6 +888,7 @@ export async function listProposalInboxPage(
     const loadedProposalRows = await loadProposalEvents(db, {
       cursor,
       lane: opts.lane,
+      asOf: opts.asOf,
       limit: batchLimit,
       nowIso: rankingNowIso,
     });
@@ -930,10 +953,9 @@ export async function getProposalInboxRow(
     const verdict = evaluateBlockMergeAdmission(input, ctx);
     if (!verdict.eligible && verdict.reason !== 'not_draft') return null;
   }
-  const [presentationByProposalId, signalsByProposalId] = await Promise.all([
-    loadProposalPresentations(db, [row]),
-    loadProposalSignalsForRows(db, [row]),
-  ]);
+  // Finish the presentation savepoint before another read uses this Tx.
+  const presentationByProposalId = await loadProposalPresentations(db, [row]);
+  const signalsByProposalId = await loadProposalSignalsForRows(db, [row]);
   row.presentation = presentationByProposalId.get(row.id) ?? null;
   row.signals = signalsByProposalId.get(row.id) ?? null;
   return row;

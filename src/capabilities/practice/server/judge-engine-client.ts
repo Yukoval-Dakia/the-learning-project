@@ -73,7 +73,7 @@ async function withClient<T>(fn: (client: DBOSClient) => Promise<T>) {
 export interface JudgeLegacySender {
   send: (name: string, data: unknown, options?: { id?: string }) => Promise<string | null>;
 }
-/** The engine owns both legacy sending and lookup; dispatch retains authorization and receipts. */
+/** The engine owns legacy sending and lookup; dispatch retains authorization and receipts. */
 export async function enqueueLegacyJudgeDelivery(
   job: JudgeRunJobData,
   input: JudgeWorkflowInputT,
@@ -159,7 +159,7 @@ export async function observeJudgeDelivery(
     return { kind: 'unavailable', reason: 'backend_unavailable' };
   }
 }
-/** With no domain pointer, all deterministic legacy IDs and the DBOS initial ID must answer. */
+/** With no domain pointer, every deterministic legacy ID and the DBOS initial ID must answer. */
 export async function observeUnmappedJudgeRun(runId: string): Promise<JudgeWorkflowObservation> {
   try {
     const boss = getRunningBoss();
@@ -219,7 +219,7 @@ export function validateJudgeEngineInventory(value: JudgeEngineInventoryT) {
     throw new Error('Judge engine inventory seal conflict');
   return parsed;
 }
-/** Enumerate every page, including terminal tasks and scheduled ticks. Unverifiable inputs abort the census. */
+/** Enumerate every page, including terminal tasks and scheduled ticks; unverifiable input aborts the census. */
 export async function inspectDbosJudgeInventory(): Promise<JudgeEngineInventoryT> {
   return withClient(async (client) => {
     const items: JudgeEngineInventoryT['items'] = [];

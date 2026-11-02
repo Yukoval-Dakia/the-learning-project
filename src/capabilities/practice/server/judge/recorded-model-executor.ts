@@ -17,8 +17,8 @@ type Executor = (
   taskRunId: string,
 ) => Promise<ModelUnitOutcomeT>;
 
-/** Claim/result receipts commit independently of the candidate transaction.
- * A lost result is held for recovery, never interpreted as permission to spend again.
+/** Claim and result receipts commit independently of the candidate transaction.
+ * A lost result is held for recovery, never permission to spend again.
  */
 export function createRecordedModelExecutor(
   database: Db,
@@ -43,13 +43,13 @@ export function createRecordedModelExecutor(
     const held = (detail: string, reservation = cap): ModelUnitOutcomeT => ({
       kind: 'pending',
       pending: { reason: 'infra_failure', retryable: false, detail },
-      // This is a conservative reservation, not a reported charge or proof that
-      // the runner started. The claim's planned task ID remains separately auditable.
+      // Conservative reservation, not a reported charge or proof the runner started;
+      // the claim's planned task ID stays separately auditable.
       run_refs: [],
       ...(reservation === undefined ? {} : { cost_usd_micros: reservation }),
     });
     const prior = await database.transaction(async (tx) => {
-      // R precedes C. The callback validates the retained run/binding with read-only native queries.
+      // R precedes C. The callback validates the retained run/binding with read-only queries.
       const blocked = await options.fence?.(tx, request);
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${claimId}))`);
       const [claim] = await tx.select().from(event).where(eq(event.id, claimId)).limit(1);

@@ -1,7 +1,8 @@
 // Runtime facts for GET /api/admin/config. This module may import truth sources
 // directly and is re-invoked per request so env/hot-reload changes stay fresh.
 // Effective values come from the real readers (never copied rules); non-scalar
-// keys return a note, and provider rows carry only presence booleans and env names.
+// keys return a note, and provider rows carry presence booleans, env names and
+// the auth-status projection (never credential values).
 
 import { capabilities } from '@/capabilities';
 import { copilotConfigEffectiveFacts } from '@/capabilities/copilot/public';
@@ -9,6 +10,8 @@ import { ingestionConfigEffectiveFacts } from '@/capabilities/ingestion/public';
 import { knowledgeConfigEffectiveFacts } from '@/capabilities/knowledge/public';
 import { notesConfigEffectiveFacts } from '@/capabilities/notes/public';
 import type {
+  AdminConfigCatalogModelRow,
+  AdminConfigProviderAuth,
   AdminConfigProviderRow,
   AdminConfigRuntimeFacts,
   AdminConfigScheduleRow,
@@ -19,10 +22,24 @@ import { type TaskKind, getLearnerLocale, tasks } from '@/capabilities/task-regi
 import type { ConfigEffectiveFact } from '@/core/config/effective';
 import { DB_POOL_MAX } from '@/db/pool';
 import { projectDagMembers } from '@/kernel/manifest';
-import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
-import { piMaxRetries } from '@/server/ai/pi-agent-adapter';
-import { nativePiModel, nativePiModels, piProviderId } from '@/server/ai/pi-provider-catalog';
+import { resolveConfig as resolveAiRateLimitConfig } from '@/kernel/request-rate-limit';
+import { catalogModelCost, catalogModelIds, currentModelCatalog } from '@/server/ai/model-catalog';
 import {
+  assertModelProfileCapabilityFit,
+  catalogProviderFor,
+  resolveModelProfile,
+} from '@/server/ai/model-profiles';
+import { piMaxRetries } from '@/server/ai/pi-agent-adapter';
+import {
+  executablePiModel,
+  executablePiModels,
+  nativePiModelApi,
+  piProviderId,
+} from '@/server/ai/pi-provider-catalog';
+import { providerAuthStatus } from '@/server/ai/provider-auth-status';
+import { providerCredentialFingerprint } from '@/server/ai/provider-models-check';
+import {
+  type ProviderAuthSurfaceRow,
   isProviderLaneReady,
   providerAuthSurface,
   readGlobalProviderSwitch,
@@ -37,7 +54,6 @@ import { INFRA_HOUSEKEEPING_SCHEDULES } from '@/server/boss/handlers';
 import { EXPIRE_AGENT, EXPIRE_FAST, EXPIRE_LLM, RETENTION_7D } from '@/server/boss/queue-config';
 import { resolveApiPort } from '@/server/env';
 import { EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE } from '@/server/event-subscriptions/dispatch-mount';
-import { resolveConfig as resolveAiRateLimitConfig } from '@/server/http/rate-limit';
 import { memoryReconcileHandoffMode } from '@/server/memory/memory-reconcile-handoff';
 import { MEMORY_INFRA_SCHEDULES } from '@/server/memory/triggers';
 import {
@@ -71,8 +87,8 @@ function visionOverrideFacts(): { provider: ConfigEffectiveFact; model: ConfigEf
     const bindings = VISION_JUDGE_TASK_KINDS.map((kind) => {
       try {
         const binding = resolveTaskProvider(kind, override);
-        if (!nativePiModel(binding.provider, binding.model))
-          throw new Error('native model unavailable');
+        if (!executablePiModel(binding.provider, binding.model))
+          throw new Error('model is not executable in the runtime catalog');
         assertModelProfileCapabilityFit(tasks[kind], binding.provider, binding.model);
         // Project only public catalog identities; never return an auth-bearing binding.
         return { kind, provider: binding.provider, model: binding.model };
@@ -153,10 +169,10 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
       'resolveProviderAttemptAdmission（src/server/ai/provider-attempt-admission-config.ts）',
     ),
     AI_PROVIDER_SESSION_ADMISSION_MODE: laneResolvedNote(
-      'resolveProviderSessionAdmissionPlan（src/server/ai/provider-session-admission.ts）',
+      'resolveProviderSessionAdmissionPlan（src/server/ai/provider-session-admission-policy.ts）',
     ),
     AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON: laneResolvedNote(
-      'resolveProviderSessionAdmissionPlan（src/server/ai/provider-session-admission.ts）',
+      'resolveProviderSessionAdmissionPlan（src/server/ai/provider-session-admission-policy.ts）',
     ),
     'lane.vision_judge.provider': vision.provider,
     'lane.vision_judge.model': vision.model,
@@ -189,6 +205,61 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
   };
 }
 
+/**
+ * YUK-1563 AC1 — the provider's full catalog listing: every model in its
+ * runtime catalog bucket plus anything the executable registry already accepts,
+ * so a catalog-only model is never filtered out by the runnable gate. Missing
+ * catalog facts surface as 'unknown'/'null', never inferred.
+ */
+function catalogModelRows(provider: ProviderAuthSurfaceRow['name']): AdminConfigCatalogModelRow[] {
+  const executable = new Set(executablePiModels(provider).map(({ id }) => id));
+  const catalogProvider = catalogProviderFor(provider);
+  const ids = [
+    ...new Set([...(catalogProvider ? catalogModelIds(catalogProvider) : []), ...executable]),
+  ].sort();
+  return ids.map((id) => {
+    const profile = resolveModelProfile(provider, id);
+    const rates = catalogProvider ? catalogModelCost(catalogProvider, id) : undefined;
+    return {
+      id,
+      api: profile.api ?? nativePiModelApi(provider, id) ?? null,
+      input: profile.inputModalities === 'unknown' ? ['unknown'] : [...profile.inputModalities],
+      runnable: executable.has(id),
+      tool_call: profile.capabilities.toolCalling,
+      reasoning: profile.capabilities.reasoning,
+      structured_output: profile.capabilities.structuredOutput,
+      vision: profile.capabilities.vision,
+      forced_tool_choice: profile.capabilities.forcedToolChoice,
+      context_window_tokens: profile.limits.contextWindowTokens ?? null,
+      max_input_tokens: profile.limits.maxInputTokens ?? null,
+      max_output_tokens: profile.limits.maxOutputTokens ?? null,
+      cost: rates
+        ? {
+            input: rates.input,
+            output: rates.output,
+            cache_read: rates.cache_read,
+            ...(rates.cache_write !== undefined ? { cache_write: rates.cache_write } : {}),
+          }
+        : null,
+    };
+  });
+}
+
+/**
+ * YUK-1563 AC3 — auth status from the probe/settlement facts (never the key):
+ * unconfigured / configured / auth_failed(+http, error type). A receipt only
+ * counts for the credential fingerprint that produced it.
+ */
+function providerAuthFacts(provider: ProviderAuthSurfaceRow['name']): AdminConfigProviderAuth {
+  const check = currentModelCatalog().providerChecks.find((row) => row.provider === provider);
+  const status = providerAuthStatus(check, providerCredentialFingerprint(provider, process.env));
+  return {
+    status: status.status,
+    http_status: status.httpStatus,
+    error_type: status.errorType,
+  };
+}
+
 export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
   const typedBindings = registeredTypedTaskBindings();
   const providers: AdminConfigProviderRow[] = providerAuthSurface().map((row) => ({
@@ -202,11 +273,8 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
       typed: typedBindings.some((binding) => binding.provider === row.name),
     },
     pi_provider: row.implemented ? piProviderId(row.name) : null,
-    models: Object.entries(nativePiModels(row.name)).map(([id, model]) => ({
-      id,
-      api: model.api,
-      input: model.input,
-    })),
+    models: catalogModelRows(row.name),
+    auth: providerAuthFacts(row.name),
   }));
 
   const infraSchedules: AdminConfigScheduleRow[] = [

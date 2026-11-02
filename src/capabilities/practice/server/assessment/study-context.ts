@@ -15,7 +15,7 @@ import {
 import { recordAssistanceExposure } from './assistance';
 import { issuanceRowToContract, revisionRowToContract } from './issue';
 
-/** Teaching receives exactly the issued face and published marking for its scope. */
+/** Teaching sees exactly the issued face and published marking for its scope. */
 export async function loadFrozenStudyContext(
   database: Db,
   issuanceId: string,
@@ -48,7 +48,7 @@ export function projectFrozenStudyContext(
   const projected = projectFrozenStudyReference(revision, issuanceRowToContract(issuance));
   return {
     question_id: questionId ?? row.group_id,
-    // Teaching needs the complete served controls/material metadata, not just flattened prose.
+    // Teaching needs the complete served controls/material metadata, not just prose.
     practice_dto: projected.practiceDto,
     public_materials: revision.structure.materials.filter((material) =>
       projected.practiceDto.materials.some(

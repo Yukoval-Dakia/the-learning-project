@@ -9,7 +9,9 @@
 // soft dims (cause/mastery/syllabus, unmaterialized); cross-KC / effective-domain
 // (app-layer derived, not a SQL column).
 // ⚠️ INCREMENT-2 MIGRATION CONTRACT — poolFetch is NOT a drop-in for
-// queryExistingPool. The WHERE clause is byte-identical, but poolFetch returns the
+// queryExistingPool. The WHERE clause matches the legacy shape plus the
+// YUK-1603 embed-currency predicate (vector ordering only over current-revision
+// vectors), but poolFetch returns the
 // RAW scalar pool ({id, difficulty}) only. queryExistingPool additionally (a)
 // filters in-memory by `answerClassCompatible(r.kind, kind)` (sourcing-sequence.ts) so a node
 // full of off-class rows can't short-circuit the request (the A2 regression;
@@ -22,6 +24,7 @@
 
 import { type SQL, and, asc, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
+import { embedCurrencyPredicate } from '@/db/embed-currency';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { question } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
@@ -109,7 +112,11 @@ export async function poolFetch(db: Db, c: PoolFetchCriteria): Promise<PoolRow[]
   }
 
   const useVector = c.queryEmbedding != null && c.queryEmbedding.length > 0;
-  if (useVector) preds.push(sql`${question.embedding} IS NOT NULL`);
+  // YUK-1603 — vector ordering only over current-revision vectors; a stale vector
+  // must not shape the pool order.
+  if (useVector) {
+    preds.push(sql`${question.embedding} IS NOT NULL`, embedCurrencyPredicate(question));
+  }
 
   // INCREMENT-3 — distance expression reused for both the ORDER BY and the cosine_distance
   // projection (single truth: the column the consumer thresholds on IS the column it sorts

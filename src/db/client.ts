@@ -4,26 +4,20 @@ import { getServerEnv } from '@/server/env';
 import { DB_POOL_MAX } from './pool';
 import * as schema from './schema';
 
-// Fail fast on missing DATABASE_URL. Empty-string fallback (`?? ''`) would let the
-// module load and defer the failure until the first query hits postgres-js, which
-// surfaces a confusing "tcp connect to ''" error far from the root cause.
+// Fail fast on missing DATABASE_URL. An empty-string fallback (`?? ''`) would let
+// the module load and defer the failure to the first query, surfacing a confusing
+// "tcp connect to ''" far from the root cause.
 const env = getServerEnv();
 const databaseUrl = env.DATABASE_URL;
 
-// Singleton client. In the standalone app container and the worker process,
-// this module is cached per Node process; postgres-js handles pooling.
-// In `next dev`, HMR re-evaluates this module on every recompile — without a
-// globalThis cache each re-evaluation calls postgres() again and leaks a fresh
-// pool that nobody end()s (observed 2026-06-07: 97/100 Postgres connections
-// idle after ~207 recompiles, starving every API route into 3–11s stalls).
-// Cache the pool on globalThis outside production so it survives module reloads;
-// production (standalone container / worker) has no HMR, so the module cache
-// alone suffices and we never write to globalThis there — behaviour unchanged.
+// Singleton client. postgres-js pools per module instance, so a second module
+// evaluation in one process would open a second pool that nobody end()s. Cache the
+// pool on globalThis outside production; production runs one module cache per
+// process and never writes to globalThis.
 // Disable SSL for local/test connections (localhost or 127.0.0.1) so testcontainers
-// and local dev containers work without a TLS certificate. Also honour an
-// explicit `sslmode=disable` in the URL — the option object otherwise wins over
-// URL params, which silently breaks docker-compose-internal hostnames like
-// `postgres:5432`.
+// and local dev containers work without a TLS certificate. Also honour an explicit
+// `sslmode=disable` in the URL — the option object otherwise wins over URL params,
+// which silently breaks docker-compose-internal hostnames like `postgres:5432`.
 const isLocalConnection = /localhost|127\.0\.0\.1/.test(databaseUrl);
 const hasSslDisable = /[?&]sslmode=disable\b/.test(databaseUrl);
 const globalForDb = globalThis as typeof globalThis & {
@@ -33,8 +27,7 @@ const queryClient =
   globalForDb.__loomQueryClient ??
   postgres(databaseUrl, {
     ssl: isLocalConnection || hasSslDisable ? false : 'require',
-    // YUK-1007：池上限抽为命名常量（admin config 读面 runtime 分区同源投影，
-    // 不另抄一份 10）。
+    // 池上限与 admin config 读面同源，不另抄一份数字。
     max: DB_POOL_MAX,
   });
 if (env.NODE_ENV !== 'production') {
@@ -46,8 +39,7 @@ export type Db = typeof db;
 
 /**
  * Transaction handle (the argument passed to `db.transaction(async (tx) => …)`).
- * 与 `Db` 的查询/写入 API 完全一致，但**不**含 `$client`（raw postgres-js client）。
- * 模块需要在调用方事务内做写入时（如 `writeJobEvent` / `IngestionSession.*`），
- * 接收类型 `Tx | Db` 同时支持两种调用方式。
+ * 查询/写入 API 与 `Db` 一致，但不含 `$client`；需要在调用方事务内写入时接收
+ * `Tx | Db`。
  */
 export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];

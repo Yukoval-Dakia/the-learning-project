@@ -17,23 +17,23 @@
 | 设计概念 | 现状 | 备注 |
 |---|---|---|
 | Mastery 双层（base_mastery + ai_delta_mastery） | ❌ DROPped (ADR-0012) | 两列 1c.1 Step 1 同步删除 |
-| Mastery derived view (`knowledge_mastery`) | ✅ Phase 1c.1 Step 1 落地 | 30 天指数衰减，权重 attempts/reviews（`src/db/schema.ts` L673） |
+| Mastery derived view (`knowledge_mastery`) | ✅ Phase 1c.1 Step 1 落地 | 30 天指数衰减，权重 attempts/reviews（`src/db/schema.ts` L3838） |
 | StudyLog 5 kind | 🔴 废弃 | ADR-0015：无真实数据，已直接迁移到 `LearningRecord` |
-| LearningRecord 统一活动上下文 | ✅ 落地 | `learning_record` 表 (`src/db/schema.ts` L223)，7 个 kind，API `app/api/records/*` |
-| `memory_brief_note` 三段式画像 | ✅ schema 落地 (`src/db/schema.ts` L257)；Dreaming refresh 接 mem0 ingest (ADR-0017 / ADR-0021) | 三段：`recent_week_md` / `recent_months_md` / `long_term_md` |
-| 单题 timeline（`/api/questions/[id]/timeline`） | ✅ 落地 | 返回 attempt + review 事件链；judge cause hydrate 到 attempt |
+| LearningRecord 统一活动上下文 | ✅ 落地 | `learning_record` 表 (`src/db/schema.ts` L1222)，7 个 kind；mistake 记录经 `POST /api/mistakes` 物化 |
+| `memory_brief_note` 三段式画像 | ✅ schema 落地 (`src/db/schema.ts` L1266)；Dreaming refresh 接 mem0 ingest (ADR-0017 / ADR-0021) | 三段：`recent_week_md` / `recent_months_md` / `long_term_md` |
+| 单题 timeline（`GET /api/questions/[id]?timeline_limit=`） | ✅ 落地 | 返回 attempt + review 事件链；judge cause hydrate 到 attempt |
 | 学习时间线视图（统一 auto event + LearningRecord） | 🟡 部分 | `/today` 与单题 timeline 已落，全局活动时间线 (cross-knowledge / cross-record) 仍 Phase 2 |
-| WeeklyReview Cron 跑批 | 🟡 Coach lane（`coach_weekly` boss handler）已 ship；advice route 在 `app/api/review/weekly` | 用户层"周复盘体验"仍在迭代 |
+| WeeklyReview Cron 跑批 | 🟡 Coach lane（`coach_weekly` boss handler）已 ship；advice route 在 `src/capabilities/practice/api/weekly.ts` | 用户层"周复盘体验"仍在迭代 |
 | 按 cause 差异化复习权重 / mastery 衰减 | ❌ Phase 2 | 跑数据后才决定权重 |
 | Coach Orchestrator | ✅ Wave 5 落地 | `coach_daily` / `coach_weekly` boss handlers + `/api/today/copilot-summary` + `/coach` 页面 + Copilot Drawer MVP (PR #179) |
 
 **当前可看进度的 UI**：
 - `/today` 主页 — Coach 摘要 + KPI strip + cost ribbon（`/api/today/copilot-summary` 接 cost_ledger + recent events）
 - `/coach` 页面 — Wave 5 落地的 coach 视图（PR #179）
-- `/inbox` — proposal inbox（AiProposal 13 kind 聚合视图）
+- `/inbox` — proposal inbox（AiProposal 13 kind 聚合视图；**单一 reader/writer 规则**：pending/accepted/dismissed 真相只在 `listProposalInboxPage` reader + `writeAiProposal` writer 一处，任何面——inbox UI、/today KPI、copilot summary——都消费同一 reader，**不得从 event 表重建 pending 判定**。源：`docs/archive/superpowers/plans/2026-05-23-l5-1-proposal-union-writer.md` + `2026-05-26-today-kpi-inbox.md`，YUK-1575 重立档）
 - `/knowledge/[id]` per-node mistake 列表
 - `/record` 统一录入入口 — 见 [`records.md`](records.md)
-- `/events/[id]` 单事件 chain 浏览 + `/api/questions/[id]/timeline` 单题事件链
+- `/events/[id]` 单事件 chain 浏览 + `GET /api/questions/[id]?timeline_limit=` 单题事件链
 
 ---
 
@@ -90,6 +90,8 @@ AI 在以下场景 propose delta：
 - artifact 触达 + 时长
 
 **关键原则**：阅读时长、点击、停留等行为信号只用作 dreaming / 周复盘的输入，**不直接喂 mastery**——避免"刷时长"成为掌握度信号。确认作答不是普通行为信号；`attempt(success/failure/partial)` 是表现信号，可以参与 mastery / 复习 / 周复盘。
+
+**skip 是 UI-only（不写任何事件）**：练习流里跳过一题不产生 attempt/review 事件、不调 submit、不影响 FSRS/mastery（纯客户端状态；源：`docs/archive/superpowers/plans/2026-05-24-yuk-57-review-skip-pause-resume.md` D1，YUK-1575 重立档）。若未来 skip 要成为行为信号，必须先显式新增 `experimental:` 事件 kind，不得复用现有事件。
 
 ---
 
@@ -169,7 +171,7 @@ LearningRecord
 
 ## 4. 学习时间线视图
 
-整合所有学习事件 + LearningRecord 到时间线。当前已落：单题 timeline (`GET /api/questions/[id]/timeline`，单 question 视图)；全局跨知识点 / 跨 record 的活动 timeline 仍是 Phase 2：
+整合所有学习事件 + LearningRecord 到时间线。当前已落：单题 timeline (`GET /api/questions/[id]?timeline_limit=`，单 question 视图)；全局跨知识点 / 跨 record 的活动 timeline 仍是 Phase 2：
 
 ```
 [自动事件]

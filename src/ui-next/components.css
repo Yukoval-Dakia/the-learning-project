@@ -464,3 +464,197 @@
     transform: rotate(1turn);
   }
 }
+
+/* PracticeSolo opts in per control, so nested drawers and unmigrated consumers keep their
+   existing rules. This is a static M3E foundation, not a Web spring/ripple implementation. */
+[data-ui-next][data-un-m3e="practice-foundation"] {
+  & button.un-m3e-control:is(.un-btn, .un-icon-btn, .un-chip-toggle) {
+    --un-md-control-height: var(--un-md-comp-button-small-height);
+    --un-md-control-shape: var(--un-md-sys-shape-full);
+    --un-md-control-pressed-shape: var(--un-md-sys-shape-small);
+    --un-md-control-container: transparent;
+    --un-md-control-ink: var(--un-md-sys-color-on-surface-variant);
+    --un-md-control-outline: transparent;
+    --un-md-control-state: 0%;
+
+    position: relative;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    min-width: var(--un-md-comp-control-target);
+    min-height: var(--un-md-control-height);
+    max-width: 100%;
+    height: auto;
+    margin-block: max(
+      0px,
+      calc((var(--un-md-comp-control-target) - var(--un-md-control-height)) / 2)
+    );
+    padding: var(--un-md-comp-control-gap) var(--un-md-comp-button-small-space);
+    gap: var(--un-md-comp-control-gap);
+    border: var(--un-md-comp-control-outline) solid var(--un-md-control-outline);
+    border-radius: var(--un-md-control-shape);
+    background: color-mix(
+      in srgb,
+      var(--un-md-control-ink) var(--un-md-control-state),
+      var(--un-md-control-container)
+    );
+    color: var(--un-md-control-ink);
+    font-family: var(--un-font-sans);
+    font-size: var(--un-md-sys-typescale-label-large-size);
+    font-weight: var(--un-md-sys-typescale-label-large-weight);
+    line-height: var(--un-md-sys-typescale-label-large-line-height);
+    letter-spacing: var(--un-md-sys-typescale-label-large-tracking);
+    white-space: normal;
+    overflow-wrap: anywhere;
+    box-shadow: none;
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  /* Reserve the minimum target in layout; the transparent extension never overlaps a row.
+     Keep the native button as the hit owner, including its disabled and keyboard behavior. */
+  & button.un-m3e-control::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, var(--un-md-comp-control-target));
+    height: max(100%, var(--un-md-comp-control-target));
+    transform: translate(-50%, -50%);
+  }
+
+  & button.un-m3e-control.un-btn > svg {
+    width: var(--un-md-comp-button-small-icon);
+    height: var(--un-md-comp-button-small-icon);
+    flex-shrink: 0;
+  }
+
+  & button.un-m3e-control.un-btn-primary {
+    --un-md-control-container: var(--un-md-sys-color-primary);
+    --un-md-control-ink: var(--un-md-sys-color-on-primary);
+  }
+
+  & button.un-m3e-control.un-btn-primary.un-btn-md {
+    --un-md-control-height: var(--un-md-comp-button-medium-height);
+    --un-md-control-pressed-shape: var(--un-md-sys-shape-medium);
+
+    padding-inline: var(--un-md-comp-button-medium-space);
+    font-size: var(--un-md-sys-typescale-title-medium-size);
+    line-height: var(--un-md-sys-typescale-title-medium-line-height);
+    letter-spacing: var(--un-md-sys-typescale-title-medium-tracking);
+  }
+
+  & button.un-m3e-control.un-btn-secondary {
+    --un-md-control-outline: var(--un-md-sys-color-outline-variant);
+  }
+
+  & button.un-m3e-control.un-btn[data-on] {
+    /* Disclosure, not a rating: retain aria-expanded and the existing show/hide label. */
+    text-decoration: underline;
+    text-underline-offset: var(--un-md-comp-focus-offset);
+  }
+
+  & button.un-m3e-control.un-icon-btn {
+    --un-md-control-height: var(--un-md-comp-icon-button-size);
+
+    width: var(--un-md-comp-icon-button-size);
+    min-width: var(--un-md-comp-icon-button-size);
+    padding: 0;
+    margin-inline: calc(
+      (var(--un-md-comp-control-target) - var(--un-md-comp-icon-button-size)) /
+      2
+    );
+  }
+
+  & button.un-m3e-control .un-icon-btn-glyph,
+  & button.un-m3e-control .un-icon-btn-glyph > svg {
+    width: var(--un-md-comp-icon-button-icon);
+    height: var(--un-md-comp-icon-button-icon);
+  }
+
+  & button.un-m3e-control.un-chip-toggle {
+    --un-md-control-height: var(--un-md-comp-filter-chip-height);
+    --un-md-control-shape: var(--un-md-sys-shape-small);
+    --un-md-control-outline: var(--un-md-sys-color-outline-variant);
+
+    padding-block: 0;
+  }
+
+  & button.un-m3e-control.un-chip-toggle[aria-pressed="true"] {
+    --un-md-control-container: var(--un-md-sys-color-secondary-container);
+    --un-md-control-ink: var(--un-md-sys-color-on-secondary-container);
+    --un-md-control-outline: transparent;
+  }
+
+  /* Non-color selection cue; empty alternative text leaves aria-pressed as the state owner. */
+  & button.un-m3e-control.un-chip-toggle::before {
+    content: "✓" / "";
+    display: inline-grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: var(--un-md-comp-filter-chip-icon);
+    height: var(--un-md-comp-filter-chip-icon);
+    visibility: hidden;
+  }
+
+  & button.un-m3e-control.un-chip-toggle[aria-pressed="true"]::before {
+    visibility: visible;
+  }
+
+  @media (hover: hover) {
+    & button.un-m3e-control:hover:not(:disabled, :focus-visible, :active) {
+      --un-md-control-state: var(--un-md-sys-state-hover);
+    }
+
+    & button.un-m3e-control.un-btn-primary:hover:not(:disabled, :focus-visible, :active),
+    &
+      button.un-m3e-control.un-chip-toggle[aria-pressed="true"]:hover:not(
+        :disabled,
+        :focus-visible,
+        :active
+      ) {
+      box-shadow: var(--un-md-sys-elevation-1);
+    }
+  }
+
+  & button.un-m3e-control:focus-visible {
+    --un-md-control-state: var(--un-md-sys-state-focus);
+
+    outline: var(--un-md-comp-focus-width) solid var(--un-md-sys-color-secondary);
+    outline-offset: var(--un-md-comp-focus-offset);
+    box-shadow: none;
+  }
+
+  & button.un-m3e-control.un-chip-toggle[aria-pressed="false"]:focus-visible {
+    --un-md-control-outline: var(--un-md-sys-color-on-surface-variant);
+  }
+
+  & button.un-m3e-control:active:not(:disabled) {
+    --un-md-control-state: var(--un-md-sys-state-pressed);
+
+    border-radius: var(--un-md-control-pressed-shape);
+    box-shadow: none;
+    transform: none;
+  }
+
+  & button.un-m3e-control:disabled {
+    --un-md-control-state: 0%;
+    --un-md-control-ink: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-surface-variant) var(--un-md-sys-state-disabled-content),
+      transparent
+    );
+
+    cursor: default;
+    opacity: 1;
+    box-shadow: none;
+  }
+
+  & button.un-m3e-control.un-btn-primary:disabled {
+    --un-md-control-container: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-surface) var(--un-md-sys-state-disabled-container),
+      transparent
+    );
+  }
+}

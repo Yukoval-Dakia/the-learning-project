@@ -16,13 +16,8 @@ import { PfPaper } from './PfPaper';
 import { PfRetro } from './PfRetro';
 import { PfShelf } from './PfShelf';
 import { PfStream, practiceMorphKey } from './PfStream';
-import {
-  type StreamItem,
-  type StreamStatus,
-  type StreamView,
-  advanceStreamItem,
-  getStream,
-} from './practice-api';
+import type { StreamItem, StreamStatus, StreamView } from './practice-api';
+import { usePracticeClient } from './practice-client';
 import { type Running, glideToTop, leaveQuestion } from './solo/advance-motion';
 import { PracticeSolo } from './solo/PracticeSolo';
 import { questionDetailQuery } from './use-practice-submit';
@@ -113,6 +108,7 @@ export default function PracticeFacePage({
   writeItemParam,
   historyBack,
 }: PracticeFacePageProps) {
+  const { advanceStreamItem, getStream, getQuestionDetail } = usePracticeClient();
   const qc = useQueryClient();
   const [scopeKnowledgeId, setScopeKnowledgeId] = useState<string | null>(() => {
     const value = getQuery('kc')?.trim();
@@ -321,7 +317,7 @@ export default function PracticeFacePage({
     const fresh = await getStream(scopeKnowledgeId ?? undefined);
     qc.setQueryData<StreamView>(streamQueryKey, fresh);
     return fresh;
-  }, [qc, scopeKnowledgeId, streamQueryKey]);
+  }, [getStream, qc, scopeKnowledgeId, streamQueryKey]);
 
   const refreshStream = useCallback(
     async function refresh(): Promise<StreamView | null> {
@@ -359,7 +355,7 @@ export default function PracticeFacePage({
       await onConfirmed(confirmed);
       return confirmed;
     },
-    [qc, recordFailure, streamQueryKey],
+    [advanceStreamItem, qc, recordFailure, streamQueryKey],
   );
 
   const clearScope = useCallback(() => {
@@ -575,7 +571,7 @@ export default function PracticeFacePage({
       // Read the next question's text (a GET; usually already prefetched) while it is started,
       // so it arrives without a blank wait; after 8s it moves on and loads in place.
       const ready = Promise.race([
-        qc.ensureQueryData(questionDetailQuery(next.ref_id)).then(
+        qc.ensureQueryData(questionDetailQuery(next.ref_id, getQuestionDetail)).then(
           () => undefined,
           () => undefined,
         ),
@@ -609,6 +605,7 @@ export default function PracticeFacePage({
       endAdvance,
       exitToList,
       fetchFreshStream,
+      getQuestionDetail,
       openQuestionUrl,
       qc,
       recordFailure,
@@ -643,9 +640,9 @@ export default function PracticeFacePage({
       );
       if (!next || prefetched.current.has(next.ref_id)) return;
       prefetched.current.add(next.ref_id);
-      void qc.prefetchQuery(questionDetailQuery(next.ref_id));
+      void qc.prefetchQuery(questionDetailQuery(next.ref_id, getQuestionDetail));
     },
-    [items, qc],
+    [getQuestionDetail, items, qc],
   );
 
   // YUK-432 (Bugbot FINDING 1) — 客观题自动 commit 后「返回流」的退出。review 已落库 → 该 slot

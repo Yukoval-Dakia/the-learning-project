@@ -218,7 +218,11 @@ export async function retainAgentTaskLiability(db: Db, sessionId: string, taskRu
 
 function requireTaskOwner(budget: AgentBudgetEnvelope | null, taskRunId: string, prefix: string) {
   const owner = budget?.execution_owner;
-  if (owner?.state !== 'active' || !taskRunId.startsWith(`${prefix}:${owner.run_ref}:seg:`)) {
+  if (
+    owner?.state !== 'active' ||
+    owner.stop_request_id ||
+    !taskRunId.startsWith(`${prefix}:${owner.run_ref}:seg:`)
+  ) {
     budgetUnavailable('unsettled_cost');
   }
 }

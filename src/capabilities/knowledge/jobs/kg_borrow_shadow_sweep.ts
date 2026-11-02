@@ -1,15 +1,8 @@
-// Weekly shadow of the dark A5/A6 borrowing layer. Both flags are off, so the live path
-// produces no data to decide a flip. This sweep runs the same pure math regardless of
-// flags and emits one summary event, without changing live behavior.
-//
-// The payload attributes the counterfactual three ways: A5 only, A6 only, and joint. It
-// also snapshots the constants and component structure so the owner can re-read the
-// distribution later. Quantiles use the shared type-7 convention; histogram bounds derive
-// from the component cap.
-//
-// Read-only: the only write is the fold-inert summary event, stamped to opt out of memory
-// ingestion. Components over the cap are skipped and their sizes reported. A failed run
-// logs and no-ops; a missed week must never crash the worker.
+// Weekly shadow of the dark A5/A6 borrowing layer. The flags are off, so this runs the
+// same pure math regardless of flags and emits one summary event, attributing the
+// counterfactual as A5-only, A6-only, and joint. Read-only apart from the fold-inert
+// summary event (opted out of memory ingestion). A failed run logs and no-ops so a
+// missed week never crashes the worker.
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -78,7 +71,6 @@ export function quantileSummary(sample: number[]): QuantileSummary | null {
   };
 }
 
-/** Power-of-two buckets up to the cap, plus one overflow bucket. */
 export function componentHistogram(sizes: number[], cap: number): Record<string, number> {
   const buckets: number[] = [];
   let b = 1;
@@ -86,7 +78,7 @@ export function componentHistogram(sizes: number[], cap: number): Record<string,
     buckets.push(b);
     b *= 2;
   }
-  buckets.push(b); // first power of two ≥ cap
+  buckets.push(b);
   const overflowLabel = `>${buckets[buckets.length - 1]}`;
   const h: Record<string, number> = {};
   for (const s of sizes) {
@@ -102,7 +94,6 @@ export function componentHistogram(sizes: number[], cap: number): Record<string,
   return h;
 }
 
-/** One counterfactual's move/borrow summary. */
 export interface VariantStats {
   observed_moved_count: number;
   would_borrow_count: number;
@@ -126,7 +117,6 @@ export interface ShadowBorrowStats {
   skipped_component_sizes: number[];
 }
 
-/** Count moved observed KCs and would-borrow unobserved ones, plus distributions. */
 function summariseVariant(
   nodeIds: string[],
   thetaTilde: Map<string, number>,

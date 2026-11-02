@@ -23,7 +23,8 @@ import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 
-import { type PaperSlot, getPaperDetail } from './practice-api';
+import type { PaperSlot } from './practice-api';
+import { usePracticeClient } from './practice-client';
 
 type Verdict = 'good' | 'hard' | 'again';
 
@@ -184,6 +185,7 @@ export function PfrQRow({
 }
 
 export function PfRetro({ artifactId, onBack }: { artifactId: string; onBack: () => void }) {
+  const { getPaperDetail } = usePracticeClient();
   const detailQ = useQuery({
     queryKey: ['paper', artifactId, 'retro'],
     queryFn: () => getPaperDetail(artifactId),

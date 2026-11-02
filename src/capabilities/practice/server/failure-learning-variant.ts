@@ -20,29 +20,23 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
-import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import { hasProposalWithCooldownKey } from '@/kernel/proposals/inbox';
+import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
+import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import { getMisconceptionsByIds } from '@/kernel/read-models/failure-learning-context';
 // Runtime creation records its complete base, including cause_category, before
 // index and projection. Genesis remains the legacy backfill event, not runtime creation.
-import {
-  anchorMistakeVariant,
-  projectMistakeVariant,
-} from '@/server/projections/mistake-variant-runtime';
-import {
-  hasProposalWithCooldownKey,
-  writeVariantQuestionProposal,
-} from '@/server/proposals/practice-runtime';
+import { createMistakeVariantDraft } from '@/kernel/records/mistake-variant-facts';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { MISCONCEPTION_CANDIDATE_PREFIX } from '../tasks/attribute-retrieve';
 import { type VariantGenInput, parseVariantOutput } from '../tasks/variant-gen';
-import { effectiveCauseForFailureAttempt, getFailureAttemptById } from './attempt-events';
 import { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './cause-overlay';
 import { hasVariantPermanent, recordVariantPermanent } from './failure-learning-ledger';
 import { loadNativeFailureContext } from './failure-learning-native';
-import { getMisconceptionsByIds } from './knowledge-runtime';
 import type { PracticeTaskRunFn } from './task-runtime';
 
 // per-parent in-flight variant cap. Counts
@@ -315,45 +309,13 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
       created_at: now,
     });
 
-    // W2 (critic A4) — the initial mistake_variant snapshot. cause_category is the
-    // FOLD-BLIND field (computed here at INSERT, carried by NO downstream event), so the runtime
-    // BASE event MUST snapshot the whole row so the fold can reproduce it. This is the ONE W2
-    // entity that writes a base event at creation — but it is a CREATE event, NOT genesis (A4).
-    const baseRow = {
+    await createMistakeVariantDraft(tx, {
       id: mistakeVariantId,
-      parent_question_id: parent.id,
-      variant_question_id: null,
-      proposal_event_id: proposalId,
-      status: 'draft' as const,
-      failure_reasons: [],
-      cause_category: cause.primary_category,
-      created_at: now,
-      updated_at: now,
-    };
-
-    // Record the base before materialization; creation seeds opt out of memory ingestion.
-    const createEventId = newId();
-    await writeEvent(tx, {
-      id: createEventId,
-      actor_kind: 'agent',
-      actor_ref: 'variant_gen',
-      action: 'experimental:mistake_variant_create',
-      subject_kind: 'mistake_variant',
-      subject_id: mistakeVariantId,
-      outcome: 'success',
-      payload: { row: baseRow },
-      caused_by_event_id: proposalId,
-      // Stamp the event with `now` (the SAME timestamp baseRow.created_at/updated_at carry) so the
-      // create event's created_at == the row's timestamps. Today parity-safe regardless (the fold
-      // reads timestamps from payload.row, not the event), but aligning the sibling runtime seam +
-      // hardening against a future fold that reads the event created_at. (review NIT.)
-      created_at: now,
-      ingest_at: now,
+      parentQuestionId: parent.id,
+      proposalEventId: proposalId,
+      causeCategory: cause.primary_category,
+      now,
     });
-    // Anchor the new id to its originating event before materialization.
-    await anchorMistakeVariant(tx, mistakeVariantId, createEventId);
-    // Materialize canonical structural state from the events in this transaction.
-    await projectMistakeVariant(tx, mistakeVariantId);
     return true;
   });
   if (!persisted) return { status: 'skipped:attempt_not_active' };

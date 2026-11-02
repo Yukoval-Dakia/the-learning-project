@@ -27,9 +27,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decideKnowledgeEdgeProposal } from '@/capabilities/knowledge/public';
 import { createKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 import { newId } from '@/core/ids';
+import { acquireSortedAdvisoryLocks } from '@/db/learning-state-lock';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const KNOWLEDGE_BASE = {

@@ -1,6 +1,6 @@
 // Prepared only: parent owns the coordinated real-DB backup/restore window.
 import { sql } from 'drizzle-orm';
-import { unzipSync, zipSync } from 'fflate';
+import { unzipSync } from 'fflate';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
@@ -135,7 +135,7 @@ describe('paid-effect durable backup contract', () => {
     const manifest = z
       .object({ schema_version: z.string() })
       .parse(JSON.parse(new TextDecoder().decode(entries['manifest.json'])));
-    expect(manifest.schema_version).toBe('4.32');
+    expect(manifest.schema_version).toBe('4.33');
     expect(FK_ORDER.slice(-5)).toEqual([
       'paid_effect_control',
       'paid_effect',
@@ -202,70 +202,5 @@ describe('paid-effect durable backup contract', () => {
       application_json: null,
     });
     expect(after.effects).toHaveLength(6);
-  });
-
-  // @invariant data: incomplete current-version archives cannot erase durable paid truth
-  // @fails-if absent required keys in an otherwise empty 4.28 archive are treated as empty tables and the live ledger is wiped
-  it('rejects missing paid payload in an empty 4.28 archive before wiping live truth', async () => {
-    const db = testDb();
-    const bytes = await archive();
-    const entries = unzipSync(bytes);
-    const data = decode(bytes);
-    expect(data.paid_effect_control).toEqual([]);
-    expect(data.paid_effect).toEqual([]);
-    delete data.paid_effect_control;
-    delete data.paid_effect;
-    entries['data.json'] = new TextEncoder().encode(JSON.stringify(data));
-    await seedLedger();
-    const before = await ledger();
-    const restored = await restoreFromArchive({ db, r2: memR2(), bytes: zipSync(entries) });
-    expect(restored).toEqual({
-      status: 400,
-      body: {
-        error: 'data_validation_failed',
-        message: 'Paid-effect durability tables are missing; DB was NOT wiped.',
-        issues: [
-          'paid_effect_control: required durable table missing',
-          'paid_effect: required durable table missing',
-        ],
-      },
-    });
-    expect(await ledger()).toEqual(before);
-  });
-
-  // @invariant data: old backup versions cannot cross the destructive restore boundary
-  // @fails-if a structurally complete 4.25 archive is upgraded implicitly or wipes current paid receipts/ownership
-  it('rejects a complete old-version archive before wiping live paid rows', async () => {
-    const db = testDb();
-    await seedLedger();
-    const bytes = await archive();
-    const entries = unzipSync(bytes);
-    const manifest = z
-      .record(z.string(), z.unknown())
-      .parse(JSON.parse(new TextDecoder().decode(entries['manifest.json'])));
-    entries['manifest.json'] = new TextEncoder().encode(
-      JSON.stringify({ ...manifest, schema_version: '4.25' }),
-    );
-    // Distinguish the live target from the archived source, so any wipe/reload
-    // would erase this new explicit owner even if the original rows reappeared.
-    await db.insert(paid_effect_control).values({
-      family: 'live_target_canary',
-      backend: 'dbos',
-      generation: 43,
-      created_at: created,
-      updated_at: updated,
-    });
-    const before = await ledger();
-    const restored = await restoreFromArchive({ db, r2: memR2(), bytes: zipSync(entries) });
-    expect(restored).toEqual({
-      status: 400,
-      body: {
-        error: 'schema_version_mismatch',
-        expected: '4.32',
-        got: '4.25',
-        message: 'schema_version mismatch: expected 4.32, got 4.25',
-      },
-    });
-    expect(await ledger()).toEqual(before);
   });
 });

@@ -20,7 +20,7 @@ export const readStartWorkbenchSummary = () =>
   });
 export const readStartOvernightDigest = () =>
   withStartDb(async (db) => {
-    const { loadTodayOvernightDigest } = await import('@/server/today/overnight-digest');
+    const { loadTodayOvernightDigest } = await import('@/kernel/read-models/overnight-digest');
     return loadTodayOvernightDigest(db);
   });
 export const readStartTodayCost = () =>
@@ -35,7 +35,7 @@ export const readStartProposalInbox = (input: unknown) =>
   });
 export const readStartAutoApplied = () =>
   withStartDb(async (db) => {
-    const { getAutoAppliedDigest } = await import('@/server/proposals/auto-applied-read');
+    const { getAutoAppliedDigest } = await import('@/capabilities/shell/public');
     return getAutoAppliedDigest(db);
   });
 

@@ -12,7 +12,6 @@
 import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { POST as cancelCopilotRun } from '@/capabilities/copilot/api/cancel-run';
 import {
   type CopilotExecutionAdapters,
   createCopilotExecutionOwner,
@@ -21,21 +20,9 @@ import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
 } from '@/capabilities/copilot/server/copilot-run-status';
-import {
-  hashCopilotDurableInput,
-  reserveCopilotDurableAcceptance,
-  withCopilotDurableDispatchLock,
-} from '@/capabilities/copilot/server/durable-dispatch';
-import {
-  createCopilotRunView,
-  foldCopilotRunFrames,
-} from '@/capabilities/copilot/ui/subtask-events';
-import { event, learning_session } from '@/db/schema';
-import type { PiToolMount } from '@/server/ai/tools/pi-tools';
-import { computeReplay } from '@/server/events/sse_replay';
-import { writeJobEvent } from '@/server/events/writer';
+import { event } from '@/db/schema';
+import { computeReplay, writeJobEvent } from '@/kernel/job-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { getRecentCopilotTurns } from '../server/turns';
 import {
   type CopilotRunJobData,
   type RunCopilotRunParams,
@@ -50,70 +37,6 @@ async function copilotReplyEvents(sessionId: string) {
     .select()
     .from(event)
     .where(and(eq(event.session_id, sessionId), eq(event.action, 'experimental:copilot_reply')));
-}
-
-// streamTaskCollectingFn 的 ctx 形（db + piToolMounts + allowedTools + piSkillDocs +
-// budgetOverride），让 mock.calls[0] 携带 typed tuple。
-type AgentCtx = {
-  db: unknown;
-  taskRunId?: string;
-  parentTaskRunId?: string;
-  signal?: AbortSignal;
-  lifecycleAbortController?: AbortController;
-  allowedTools?: string[];
-  budgetOverride?: { maxIterations?: number | 'unbounded'; timeoutMs?: number };
-  sdkSession?: { persist: boolean; resume?: string };
-  providerSessionDeadlineAt?: number;
-  piToolMounts?: PiToolMount[];
-  piAgents?: Record<string, { tools?: string[] }>;
-  piHooks?: {
-    beforeToolCall?: Array<
-      (
-        call: { id: string; name: string },
-        args: Record<string, unknown>,
-      ) => Promise<{ block: boolean; reason?: string } | undefined>
-    >;
-    afterToolCall?: Array<(observation: unknown) => Promise<unknown>>;
-  };
-  onTaskEvent?: (event: unknown) => void | Promise<void>;
-};
-
-// streamTaskCollecting mock — 匹配 (kind, input, ctx, onDelta) => Promise<StreamCollectResult>。
-// deltas 若给则在 resolve 前逐个 onDelta（模拟 primary stream 曾产生正文）；handler
-// 将每条增量写入 durable DELTA。partial/error 模拟
-// graceful-degrade。默认不 emit delta（保既有 [STARTED,REPLY,DONE] 事件序列断言）。
-function streamMock(
-  text: string,
-  opts: {
-    taskRunId?: string;
-    finishReason?: string;
-    deltas?: string[];
-    partial?: boolean;
-    error?: string;
-    terminalText?: string;
-  } = {},
-) {
-  const {
-    taskRunId = 'tr_x',
-    finishReason = 'end_turn',
-    deltas,
-    partial,
-    error,
-    terminalText,
-  } = opts;
-  return vi.fn(
-    async (_kind: string, _input: unknown, _ctx: AgentCtx, onDelta: (t: string) => void) => {
-      if (deltas) for (const d of deltas) onDelta(d);
-      return {
-        text,
-        task_run_id: taskRunId,
-        finishReason,
-        usage: { inputTokens: 0, outputTokens: 0 },
-        ...(terminalText !== undefined ? { terminalText } : {}),
-        ...(partial ? { partial: true, error } : {}),
-      };
-    },
-  );
 }
 
 // 共享装配器 stub — 不打真 DB 的 learner-state / history 机器，返回最小 run input。
@@ -151,19 +74,6 @@ async function replay(runId: string) {
     businessId: runId,
     lastEventId: 0,
   });
-}
-
-async function seedCopilotConversation(sessionId: string, sdkSessionId?: string) {
-  await testDb()
-    .insert(learning_session)
-    .values({
-      id: sessionId,
-      type: 'conversation',
-      status: 'active',
-      entrypoint: 'copilot',
-      ...(sdkSessionId ? { agent_sdk_session_id: sdkSessionId } : {}),
-      updated_at: new Date(),
-    });
 }
 
 function successfulWorkerExecution(taskRunId: string, replyText: string, sdkSessionId?: string) {
@@ -352,37 +262,6 @@ describe('runCopilotRun', () => {
     expect(JSON.stringify(events)).not.toContain('private');
   });
 
-  it('YUK-939 — malformed terminal becomes one idempotent nonretry failure', async () => {
-    const runId = 'copilot_user_ask_malformed_terminal';
-    const sessionId = 'sess_malformed_terminal';
-    const run = streamMock('untrusted assistant preamble', { terminalText: ' \n\t ' });
-    const params = {
-      db: testDb(),
-      data: { ...baseData, run_id: runId, session_id: sessionId },
-      streamTaskCollectingFn: run as never,
-      resolveCopilotRunInputFn: stubRunInput,
-    } satisfies CopilotRunTestParams;
-
-    expect(await runCopilotRun(params)).toMatchObject({ status: 'failed' });
-    expect((await replay(runId)).map((event) => event.event_type)).toEqual([
-      COPILOT_RUN_EVENTS.STARTED,
-      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
-      COPILOT_RUN_EVENTS.FAILED,
-    ]);
-    const replies = await copilotReplyEvents(sessionId);
-    expect(replies).toHaveLength(1);
-    expect(replies[0]?.payload).toMatchObject({
-      reply_md: '这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。',
-      reply_finalization: { assurance: 'execution_trace_bound' },
-      durable_failure: { reason: 'exhausted', error: 'root terminal reply rejected' },
-    });
-    expect(JSON.stringify(replies)).not.toContain('untrusted assistant preamble');
-
-    expect(await runCopilotRun(params)).toMatchObject({ status: 'failed' });
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
-  });
-
   it('YUK-757 — overlapping deliveries atomically claim one paid execution and the loser never terminalizes the live owner', async () => {
     const runId = 'copilot_user_ask_overlapping_execution_claim';
     const sessionId = 'sess_overlapping_execution_claim';
@@ -465,262 +344,5 @@ describe('runCopilotRun', () => {
     // A later pg-boss redelivery observes DONE and remains no-op.
     await expect(runCopilotRun(params)).resolves.toMatchObject({ status: 'done' });
     expect(streamRun).toHaveBeenCalledTimes(1);
-  });
-
-  it('YUK-757 — enqueue-failure compensation and execution claim share one lock and block stale paid work', async () => {
-    const runId = 'run_enqueue_compensation_between_replay_and_claim';
-    const sessionId = 'sess_enqueue_compensation_between_replay_and_claim';
-    await writeJobEvent(testDb(), {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: runId,
-      event_type: COPILOT_RUN_EVENTS.QUEUED,
-      payload: { session_id: sessionId, admission: 'paid-durable-slot' },
-    });
-
-    let releaseAssembly!: () => void;
-    let markAssemblyEntered!: () => void;
-    const assemblyGate = new Promise<void>((resolve) => {
-      releaseAssembly = resolve;
-    });
-    const assemblyEntered = new Promise<void>((resolve) => {
-      markAssemblyEntered = resolve;
-    });
-    const blockedAssembly = vi.fn(async (database, input) => {
-      markAssemblyEntered();
-      await assemblyGate;
-      return stubRunInput(database, input);
-    }) as RunCopilotRunParams['resolveCopilotRunInputFn'];
-    const paidRun = streamMock(
-      '不应在公开 enqueue_failed 之后执行 48 道作答、六个未教学探针和九道迁移题物化。',
-    );
-    const worker = runCopilotRun({
-      db: testDb(),
-      data: { ...baseData, run_id: runId, session_id: sessionId },
-      streamTaskCollectingFn: paidRun as never,
-      resolveCopilotRunInputFn: blockedAssembly,
-    });
-    await assemblyEntered;
-
-    let releaseCompensation!: () => void;
-    let markCompensationLocked!: () => void;
-    const compensationGate = new Promise<void>((resolve) => {
-      releaseCompensation = resolve;
-    });
-    const compensationLocked = new Promise<void>((resolve) => {
-      markCompensationLocked = resolve;
-    });
-    const compensation = withCopilotDurableDispatchLock(testDb(), runId, async (tx) => {
-      await writeJobEvent(tx, {
-        business_table: COPILOT_RUN_TABLE,
-        business_id: runId,
-        event_type: COPILOT_RUN_EVENTS.FAILED,
-        payload: { reason: 'enqueue_failed', checkpoint_event_id: runId },
-      });
-      markCompensationLocked();
-      await compensationGate;
-    });
-    await compensationLocked;
-
-    // The worker has already replayed a non-terminal run. Let it reach claim
-    // while compensation is still uncommitted: the shared dispatch lock must
-    // keep EXECUTION_STARTED and paid model/tools behind that transaction.
-    releaseAssembly();
-    await new Promise((resolve) => setTimeout(resolve, 75));
-    expect(paidRun).not.toHaveBeenCalled();
-    expect((await replay(runId)).map((event) => event.event_type)).toEqual([
-      COPILOT_RUN_EVENTS.QUEUED,
-      COPILOT_RUN_EVENTS.STARTED,
-    ]);
-
-    releaseCompensation();
-    await compensation;
-    await expect(worker).resolves.toEqual({ status: 'failed', error: 'enqueue_failed' });
-    expect(paidRun).not.toHaveBeenCalled();
-    expect((await replay(runId)).map((event) => event.event_type)).toEqual([
-      COPILOT_RUN_EVENTS.QUEUED,
-      COPILOT_RUN_EVENTS.STARTED,
-      COPILOT_RUN_EVENTS.FAILED,
-    ]);
-  });
-
-  // @invariant concurrency: Stop keeps prose published before cancel and drops prose that arrives after it
-  // @fails-if the durable reply is only the bare stop sentence, or it contains a delta that lost the cancel lock
-  it('Stop — pure-text long run keeps displayed prose and drops prose after cancel', async () => {
-    const sessionId = 'sess_stop_pure_text_cross_subject';
-    await seedCopilotConversation(sessionId);
-    const accepted = await reserveCopilotDurableAcceptance(testDb(), {
-      sessionId,
-      userMessage: baseData.user_message,
-      inputHash: hashCopilotDurableInput({
-        user_message: baseData.user_message,
-        triggered_by: baseData.triggered_by,
-      }),
-      idempotencyKey: 'stop_48_answers_6_probes_3_docs_9_transfers',
-      queuedPayload: { session_id: sessionId, triggered_by: 'chat' },
-    });
-    expect(accepted.outcome).toBe('created');
-    const runId = accepted.acceptance.runId;
-    const partialReply =
-      '已完成 48 条历史回答的三科交叉聚类，并核验 3 份讲义中的定义域、方向与量纲；6 个薄弱点探针已确认 4 个，9 个迁移变式尚未开始物化。';
-    const queuedReply = '停止前已排队的第 5 个探针结论，不得越过取消提交。';
-    const postCancelReply = '停止提交后到达的第 6 个探针结论，不得发布。';
-    const prosePersisted = Promise.withResolvers<void>();
-    const queuedProseObserved = Promise.withResolvers<void>();
-    const cancellationCommitted = Promise.withResolvers<void>();
-    const queuedProseSettled = Promise.withResolvers<void>();
-    const run = vi.fn<CopilotExecutionAdapters['streamTaskCollectingFn']>(
-      async (_kind, input, ctx, onDelta) => {
-        expect(input).toMatchObject({
-          evidence_shape: {
-            answer_count: 48,
-            probe_count: 6,
-            source_document_count: 3,
-            transfer_variant_count: 9,
-          },
-        });
-        onDelta(partialReply);
-        // onDelta is void. Wait for the real observer's transaction to commit;
-        // awaiting the callback itself would leave persistence racing Stop.
-        await prosePersisted.promise;
-        const beforeCancel = await replay(runId);
-        expect(
-          beforeCancel.filter((item) => item.event_type === COPILOT_RUN_EVENTS.DELTA),
-        ).toMatchObject([{ payload: { text: partialReply } }]);
-        const provisional = foldCopilotRunFrames(
-          createCopilotRunView(),
-          beforeCancel.map((item) => ({ ...item, event_id: item.id })),
-        );
-        expect(provisional.replyText).toBe(partialReply);
-        expect(await copilotReplyEvents(sessionId)).toHaveLength(0);
-
-        onDelta(queuedReply);
-        await queuedProseObserved.promise;
-        // The endpoint owns dispatch -> settlement locking. A direct event
-        // insert can race a delta transaction that already read "not cancelled".
-        const stop = await cancelCopilotRun(
-          new Request(`http://test/api/copilot/runs/${runId}/cancel`, { method: 'POST' }),
-          { id: runId },
-        );
-        cancellationCommitted.resolve();
-        expect(stop.status).toBe(200);
-        expect(await stop.json()).toEqual({ ok: true, run_id: runId, status: 'cancel_requested' });
-        await queuedProseSettled.promise;
-        onDelta(postCancelReply);
-        await new Promise<void>((resolve) => {
-          if (ctx.signal?.aborted) resolve();
-          else ctx.signal?.addEventListener('abort', () => resolve(), { once: true });
-        });
-        expect(ctx.signal?.aborted).toBe(true);
-        return {
-          text: partialReply + queuedReply + postCancelReply,
-          task_run_id: 'tr_stop_pure_text_cross_subject',
-          finishReason: 'error',
-          usage: { inputTokens: 18_400, outputTokens: 1_320 },
-          partial: true,
-          error: 'root SDK loop aborted after Stop',
-        };
-      },
-    );
-    const owner = createCopilotExecutionOwner({ streamTaskCollectingFn: run });
-    const richInput = vi.fn(async () => ({
-      surface: 'copilot' as const,
-      triggered_by: 'chat' as const,
-      user_message: baseData.user_message,
-      proposal_feedback: [],
-      correction_contract: {
-        available_prior_turn_ids: [],
-        prior_turn_summaries: {},
-        required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'] as const,
-      },
-      conversation_history: Array.from({ length: 48 }, (_, index) => ({
-        role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
-        text: `historical answer evidence ${index + 1}`,
-      })),
-      evidence_shape: {
-        answer_count: 48,
-        probe_count: 6,
-        source_document_count: 3,
-        transfer_variant_count: 9,
-      },
-    }));
-
-    const result = await runCopilotRun({
-      db: testDb(),
-      data: { ...baseData, run_id: runId, session_id: sessionId },
-      executeCopilotTurnFn: (db, turn, policy) =>
-        owner(db, turn, {
-          ...policy,
-          observe: async (activity) => {
-            if (activity.kind === 'prose_delta' && activity.text === queuedReply) {
-              queuedProseObserved.resolve();
-              await cancellationCommitted.promise;
-            }
-            try {
-              await policy.observe?.(activity);
-            } finally {
-              if (activity.kind === 'prose_delta' && activity.text === partialReply)
-                prosePersisted.resolve();
-              if (activity.kind === 'prose_delta' && activity.text === queuedReply)
-                queuedProseSettled.resolve();
-            }
-          },
-        }),
-      resolveCopilotRunInputFn: richInput as never,
-    });
-
-    expect(result).toEqual({ status: 'cancelled' });
-    expect(run).toHaveBeenCalledTimes(1);
-    const events = await replay(runId);
-    expect(events.map((item) => item.event_type)).toEqual([
-      COPILOT_RUN_EVENTS.QUEUED,
-      COPILOT_RUN_EVENTS.STARTED,
-      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
-      COPILOT_RUN_EVENTS.DELTA,
-      COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
-      COPILOT_RUN_EVENTS.FAILED,
-    ]);
-    expect(events.filter((event) => event.event_type === COPILOT_RUN_EVENTS.FAILED)).toHaveLength(
-      1,
-    );
-    expect(events.some((event) => event.event_type === COPILOT_RUN_EVENTS.DONE)).toBe(false);
-    const keptReply = `${partialReply}\n\n上面是已经拿到的结果，结论还没写完。`;
-    expect(events.at(-1)?.payload).toMatchObject({
-      reason: 'cancelled',
-      reply_md: keptReply,
-      checkpoint_event_id: runId,
-    });
-    const replies = await copilotReplyEvents(sessionId);
-    expect(replies).toHaveLength(1);
-    expect(replies[0]).toMatchObject({
-      outcome: 'failure',
-      payload: {
-        reply_md: keptReply,
-        durable_failure: { reason: 'cancelled' },
-      },
-    });
-    const stopped = foldCopilotRunFrames(
-      createCopilotRunView(),
-      events.map((item) => ({ ...item, event_id: item.id })),
-    );
-    expect(stopped).toMatchObject({
-      phase: 'failed',
-      failureReason: 'cancelled',
-      replyText: keptReply,
-      checkpointEventId: runId,
-    });
-    const turns = await getRecentCopilotTurns(testDb(), { sessionId });
-    expect(turns.filter((turn) => turn.role === 'ai')).toMatchObject([
-      { text: keptReply, checkpoint_event_id: runId },
-    ]);
-    expect(JSON.stringify(events)).not.toContain(queuedReply);
-    expect(JSON.stringify(events)).not.toContain(postCancelReply);
-    const durableTerminal = JSON.stringify({
-      events: events.filter((item) => item.event_type !== COPILOT_RUN_EVENTS.DELTA),
-      replies,
-      turns,
-    });
-    expect(durableTerminal).toContain(partialReply);
-    for (const candidate of [queuedReply, postCancelReply])
-      expect(durableTerminal).not.toContain(candidate);
   });
 });

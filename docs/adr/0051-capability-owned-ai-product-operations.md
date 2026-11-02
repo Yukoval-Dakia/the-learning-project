@@ -2,7 +2,7 @@
 
 **Status**: Accepted（Phase 0 closed；Phase 1 F1 implemented, review pending）
 **Decision source**: owner 2026-08-02「直接启动 FULL」；YUK-840
-**Amends**: `docs/superpowers/specs/2026-06-10-architecture-redesign-design.md` §2.1–2.2 的当前代码执行方式，不推翻其产品裁决
+**Amends**: `docs/archive/superpowers/specs/2026-06-10-architecture-redesign-design.md` §2.1–2.2 的当前代码执行方式，不推翻其产品裁决
 **Related**: YUK-767 · YUK-840 · YUK-841 · YUK-842 · YUK-847 · YUK-848 · YUK-849 · ADR-0004 · ADR-0021 · ADR-0032
 
 **2026-10-06 target amendment**: [ADR-0066](0066-typescript-adaptive-learning-architecture.md)
@@ -68,9 +68,8 @@ route、pg-boss job、Copilot tool 和 cron 只是 operation 的入口或触发�
 - SDK event → terminal result/error 的统一翻译；
 - model-attempt usage、成本与审计留痕。
 
-它不负责领域 parse 后的业务有效性、领域 transaction、proposal 语义或产品成功。观测上必须
-区分 `model_attempt` 与 `product_operation`；模型 terminal success 不能冒充产品已经 parse、
-commit 或交付成功。
+它不负责领域 parse 后的业务有效性、领域 transaction、proposal 语义或产品成功。观测上必须区分 `model_attempt` 与 `product_operation`；模型 terminal success 与产品侧 parse、
+commit、交付成功分属两层判据。
 
 ### 3. Task contract 归 capability，中央 catalog 退化为 projection
 

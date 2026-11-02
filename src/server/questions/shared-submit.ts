@@ -34,10 +34,9 @@ import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import {
-  DEDUP_OVERLAP_THRESHOLD,
   canonicalQuestionContentHash,
-  claimHttpSourceDuplicate,
-  mergeExactQuestionDuplicateKnowledgeIds,
+  dispatchPendingVerifyIntents,
+  writeVerifyDispatchIntent,
 } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
 import { encodeDraftRef, parseDraftRef } from '@/core/question-draft-ref';
@@ -53,25 +52,22 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { question, question_block, question_group_lifecycle, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { getR2 } from '@/kernel/object-storage';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishedContractSeal } from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
-import {
-  dispatchPendingVerifyIntents,
-  writeVerifyDispatchIntent,
-} from '@/server/boss/verify-dispatch-outbox';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   applyScoringEditPlan,
   draftCanonicalIdentity,
   draftDocumentToContract,
-} from '@/server/questions/draft-contract';
+} from '@/kernel/records/question-draft-contract';
 import {
   type EditQuestionResult,
   TxAbort,
   findDraftSaveReceipt,
   saveDraftEditInTx,
 } from '@/server/questions/edit-question';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import {
   SOURCE_KIND_TO_QUESTION_SOURCE,
   admissionForContentEdit,
@@ -80,8 +76,6 @@ import {
   contractBarrierIssues,
   conversionWithheld,
   deriveKind,
-  draftCarriesFigure,
-  nearDuplicateInKnowledge,
   presentationForDraft,
   runAdmissionChecks,
 } from '@/server/questions/submit-decision';
@@ -93,7 +87,7 @@ import {
   bindDeclaredGroupIds,
   typedChildChoicesMd,
 } from '@/server/questions/typed-group';
-import { getR2 } from '@/server/r2';
+import { type DraftSubmitVector, deduplicateNewDraftInTx } from './draft-submit-dedup';
 
 export const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
 
@@ -101,6 +95,7 @@ type BlockRow = typeof question_block.$inferSelect;
 
 /** 与 submit-question.ts 既有 SubmitContext 同形（facade 委托不窄化）。 */
 export interface SharedSubmitContext {
+  beforeWrite?: (tx: Tx) => Promise<void>;
   actorRef: string;
   actorKind: 'agent' | 'user' | 'system';
   sessionId?: string | null;
@@ -123,6 +118,10 @@ export interface TrustedNewGroupProjection {
 }
 
 export interface SharedSubmitOptions {
+  /** The public draft-submit boundary owns the outside-transaction vector preparation. */
+  checkDraftVector?: boolean;
+  /** Derived from a validated draft outside the transaction; never a model input. */
+  draftVector?: DraftSubmitVector;
   producer?: TrustedNewGroupProjection;
   /**
    * 绑定器产出的 declared→bound 映射（仅给子行投影写 declared_part_id
@@ -263,6 +262,9 @@ export async function writeSubmitReceiptEvent(
 ): Promise<void> {
   await writeEvent(tx, {
     id: newId(),
+    session_id: ctx.sessionId ?? null,
+    task_run_id: ctx.taskRunId ?? null,
+    caused_by_event_id: ctx.causedByEventId ?? null,
     actor_kind: ctx.actorKind === 'system' ? 'system' : ctx.actorKind,
     actor_ref: ctx.actorRef,
     action: DRAFT_SUBMIT_ACTION,
@@ -287,6 +289,7 @@ export async function submitDraftQuestionInTx(
   ctx: SharedSubmitContext,
   opts?: SharedSubmitOptions,
 ): Promise<SubmitResult> {
+  await ctx.beforeWrite?.(tx);
   const requestId = input.request_id;
   if (requestId == null || requestId.length === 0) {
     return {
@@ -559,96 +562,32 @@ export async function submitDraftQuestionInTx(
   }).canonical;
   const producer = opts?.producer;
   if (isNew) {
-    // Claim the source URL in this transaction so concurrent candidates serialize;
-    // a hit becomes duplicate_source with a receipt rather than a dropped claim.
-    if (input.sourced?.source_claim != null) {
-      const claimedSource = await claimHttpSourceDuplicate(tx, {
-        sourceUrl: input.sourced.source_claim.source_url,
-        knowledgeIds: doc.knowledge_ids,
-        actorRef: input.sourced.source_claim.actor_ref,
-        taskRunId: ctx.taskRunId,
-        now,
-        onTerminal: 'release',
-      });
-      if (claimedSource != null) {
-        const conflict: SubmitResult = {
-          status: 'conflict',
-          reason: 'duplicate_source',
-          detail: `同一来源网址命中既有题 ${claimedSource.existingQuestionId}；目标 KC 已并入`,
-          question_id: claimedSource.existingQuestionId,
-          existing_question_id: claimedSource.existingQuestionId,
-          request_id: requestId,
-        };
-        await writeSubmitReceiptEvent(
-          tx,
-          { kind: 'question_block', id: block.id },
-          requestId,
-          fingerprint,
-          conflict,
-          ctx,
-          now,
-        );
-        return conflict;
-      }
-    }
-    // The injected flat fingerprint wins so exact dedup matches legacy flat rows.
-    const hashForDedup = input.sourced?.canonical_content_hash ?? canonicalHash;
-    // Live dedup claim: merge into the canonical-hash holder, else insert.
-    const merged = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
-      canonicalContentHash: hashForDedup,
-      knowledgeIds: doc.knowledge_ids,
-      actorRef: 'sourcing',
+    const dedup = await deduplicateNewDraftInTx(tx, {
+      input,
+      document: doc,
+      groupId,
+      blockId: block.id,
+      draftVersion: block.version,
+      canonicalHash,
+      text: { prompt_md: promptMd, reference_md: referenceMd, choices_md: choicesMd },
       taskRunId: ctx.taskRunId,
       now,
+      checkDraftVector: opts?.checkDraftVector === true,
+      draftVector: opts?.draftVector,
     });
-    if (merged?.disposition === 'merged') {
-      const conflict: SubmitResult = {
-        status: 'conflict',
-        reason: 'duplicate_exact',
-        detail: `canonical hash 命中既有题 ${merged.id}；目标 KC 已并入`,
-        question_id: merged.id,
-        existing_question_id: merged.id,
-        request_id: requestId,
-      };
+    if ('conflict' in dedup) {
       await writeSubmitReceiptEvent(
         tx,
         { kind: 'question_block', id: block.id },
         requestId,
         fingerprint,
-        conflict,
+        dedup.conflict,
         ctx,
         now,
       );
-      return conflict;
+      return dedup.conflict;
     }
-    if (!draftCarriesFigure(doc)) {
-      const near = await nearDuplicateInKnowledge(
-        tx,
-        doc.knowledge_ids,
-        promptMd,
-        referenceMd,
-        choicesMd,
-        groupId,
-      );
-      if (near != null) {
-        const conflict: SubmitResult = {
-          status: 'conflict',
-          reason: 'near_dup',
-          detail: `n-gram overlap ${near.overlap.toFixed(3)} ≥ ${DEDUP_OVERLAP_THRESHOLD}（KC 池 ${near.poolSize} 题）`,
-          request_id: requestId,
-        };
-        await writeSubmitReceiptEvent(
-          tx,
-          { kind: 'question_block', id: block.id },
-          requestId,
-          fingerprint,
-          conflict,
-          ctx,
-          now,
-        );
-        return conflict;
-      }
-    }
+    const hashForDedup = dedup.canonicalHash;
     await tx.insert(question).values({
       id: groupId,
       kind: deriveKind(doc),
@@ -669,6 +608,7 @@ export async function submitDraftQuestionInTx(
         schema_version: 2,
         // System provenance/supply metadata; source_verify depends on it.
         ...(input.sourced?.metadata ?? {}),
+        ...dedup.metadata,
       },
       created_at: now,
       updated_at: now,
@@ -997,6 +937,7 @@ export async function persistDeclaredQuestionGroupInTx(
   tx: Tx,
   params: DeclaredGroupPersistParams,
 ): Promise<DeclaredGroupPersistResult> {
+  await params.ctx.beforeWrite?.(tx);
   const caller = params.caller;
   const now = params.ctx.now ?? new Date();
   const writeCallerReceipt = async (outcome: DeclaredGroupDomainOutcome) => {

@@ -8,9 +8,27 @@ import {
   customProviderDefinitions,
   looksLikeCustomProviderId,
 } from '@/core/config/custom-providers';
+import {
+  type ProviderKeyEndpointBindings,
+  assertModelEndpointHostAllowed,
+  assertProviderKeyEnvBound,
+  isModelEndpointHostAllowed,
+  isProviderKeyEnvBound,
+  setProviderKeyEndpointBindingsSource,
+} from '@/core/config/model-endpoint-allowlist';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
-import { type ProviderModelBinding, resolveModelProfile } from './model-profiles';
-import { nativePiModel, piProviderId } from './pi-provider-catalog';
+import { catalogEndpointHostKeys } from './model-catalog';
+import {
+  DASHSCOPE_EMBEDDING_ENDPOINT_KEYS,
+  TOKEN_PLAN_ENDPOINT_KEYS,
+  builtinEndpointKeysFor,
+} from './model-catalog-overrides';
+import {
+  CATALOG_PROVIDER_BY_INTERNAL,
+  type ProviderModelBinding,
+  resolveModelProfile,
+} from './model-profiles';
+import { executablePiModel, nativePiModelApi, piProviderId } from './pi-provider-catalog';
 
 // YUK-608 — re-export the provider union so override consumers (solve-lane, verify-framework)
 // type `override.provider` as `Provider` (matching the runner's RunTaskCallCtx) without each
@@ -246,6 +264,49 @@ export function providerCredentialEnvName(provider: Provider): string | undefine
   return config.authMode === 'oauth' ? config.oauthTokenEnv : config.apiKeyEnv;
 }
 
+// ─── provider credential <-> endpoint binding (YUK-1654) ─────────────────────
+//
+// Repo-known provider credentials are bound to their own provider's endpoints:
+// provider A's key never reaches provider B's host, and a built-in endpoint
+// never receives another env's credential. Bucket-less providers carry their
+// code-owned endpoint keys; the memory lanes that read a credential outside
+// PROVIDERS (legacy unpinned ZHIPU GLM, DashScope embedding) bind to the
+// bucket/first-party endpoints they actually read.
+
+function providerKeyEndpointBindings(): ProviderKeyEndpointBindings {
+  const byEnv = new Map<string, ReadonlySet<string>>();
+  const byHost = new Map<string, Set<string>>();
+  const bind = (credentialEnv: string, keys: ReadonlySet<string>) => {
+    byEnv.set(credentialEnv, keys);
+    for (const key of keys) {
+      const accepting = byHost.get(key) ?? new Set<string>();
+      accepting.add(credentialEnv);
+      byHost.set(key, accepting);
+    }
+  };
+  for (const [name, config] of Object.entries(PROVIDERS)) {
+    const credentialEnv = config.authMode === 'oauth' ? config.oauthTokenEnv : config.apiKeyEnv;
+    // A provider's endpoint set is its catalog bucket plus the code-owned
+    // override endpoints (the snapshot omits the anthropic/openai roots).
+    const keys = new Set<string>(builtinEndpointKeysFor(name));
+    const bucket = CATALOG_PROVIDER_BY_INTERNAL[name as KnownProvider];
+    if (bucket) for (const key of catalogEndpointHostKeys(bucket)) keys.add(key);
+    if (name === 'xiaomi-token-plan') {
+      for (const key of TOKEN_PLAN_ENDPOINT_KEYS) keys.add(key);
+    }
+    bind(credentialEnv, keys);
+  }
+  // Legacy memory lanes: the unpinned GLM rollback reads ZHIPU_API_KEY against
+  // the zhipuai-coding-plan bucket endpoint; the embedder reads DASHSCOPE_API_KEY.
+  const glmKeys = new Set<string>(catalogEndpointHostKeys('zhipuai-coding-plan'));
+  for (const key of builtinEndpointKeysFor('zhipuai-coding-plan')) glmKeys.add(key);
+  bind('ZHIPU_API_KEY', glmKeys);
+  bind('DASHSCOPE_API_KEY', DASHSCOPE_EMBEDDING_ENDPOINT_KEYS);
+  return { byEnv, byHost };
+}
+
+setProviderKeyEndpointBindingsSource(providerKeyEndpointBindings);
+
 export function isProviderLaneReady(provider: Provider): boolean {
   const envName = providerCredentialEnvName(provider);
   return envName !== undefined && Boolean(process.env[envName]);
@@ -352,6 +413,11 @@ export function providerModelsRoot(
   if (looksLikeCustomProviderId(provider)) {
     const definition = customProviderDefinition(provider);
     if (!definition) return null;
+    // Never send the credential to a host the catalog does not declare.
+    if (!isModelEndpointHostAllowed(definition.baseUrl)) return null;
+    // The /models read is credentialed: another provider's key never travels
+    // to this endpoint either (YUK-1654).
+    if (!isProviderKeyEnvBound(definition.apiKeyEnv, definition.baseUrl)) return null;
     return definition.protocol === 'anthropic-messages' && !definition.baseUrl.endsWith('/v1')
       ? `${definition.baseUrl}/v1`
       : definition.baseUrl;
@@ -361,10 +427,12 @@ export function providerModelsRoot(
   try {
     const base = resolveModelProfile(provider, model, env).baseUrl;
     if (!base) return null;
-    return nativePiModel(provider, model, env)?.api === 'anthropic-messages' &&
-      !base.endsWith('/v1')
-      ? `${base}/v1`
-      : base;
+    if (!isModelEndpointHostAllowed(base)) return null;
+    // Root routing depends only on the wire protocol; other facts gate execution,
+    // not the endpoint. Without an api there is no protocol to route a root from.
+    const api = nativePiModelApi(provider, model, env);
+    if (!api) return null;
+    return api === 'anthropic-messages' && !base.endsWith('/v1') ? `${base}/v1` : base;
   } catch {
     return null;
   }
@@ -712,8 +780,8 @@ export function resolveTaskBinding(
 /**
  * YUK-1547 — an opted-in task pair must be complete AND servable for this
  * task, checked at binding resolution (config error before any attempt/paid
- * call). Servable = provider implemented for the kind + model present in the
- * provider's native pi catalog; capability-fit still gates at run start.
+ * call). Servable = provider implemented for the kind + model passes the
+ * executable-facts gate; capability-fit still gates at run start.
  */
 function assertOptedTaskPair(
   kind: TaskKind,
@@ -737,8 +805,8 @@ function assertOptedTaskPair(
   if (!isProviderImplementedForTask(provider, kind)) {
     fail(`provider '${rawProvider}' is not implemented for task '${kind}'`);
   }
-  if (!nativePiModel(provider, model)) {
-    fail(`model '${model}' is not in native pi provider '${piProviderId(provider)}'`);
+  if (!executablePiModel(provider, model)) {
+    fail(`model '${model}' is not executable in native pi provider '${piProviderId(provider)}'`);
   }
 }
 
@@ -763,10 +831,10 @@ function resolveTaskNativeReasoningParams(
 ): TaskNativeReasoningParams | undefined {
   const effort = params?.reasoning_effort;
   if (effort === undefined) return undefined;
-  const native = nativePiModel(provider, model);
+  const native = executablePiModel(provider, model);
   if (native?.api !== 'openai-completions' || native.reasoning !== true) {
     throw new Error(
-      `task.${kind}.reasoning sets reasoning_effort='${effort}', but '${provider}/${model}' is not an OpenAI-completions reasoning model — the param would be dropped or rejected on the wire. Remove the task override or point the task at a lane whose own reasoning parameter is reasoning_effort.`,
+      `task.${kind}.reasoning sets reasoning_effort='${effort}', but '${provider}/${model}' is not an executable OpenAI-completions reasoning model — the param would be dropped or rejected on the wire. Remove the task override or point the task at a lane whose own reasoning parameter is reasoning_effort.`,
     );
   }
   const supported = resolveModelProfile(provider, model).reasoning.supportedEfforts;
@@ -809,6 +877,18 @@ export function resolveTaskProvider(
         `Unknown provider '${providerName}' for task ${kind}: the custom provider definition no longer exists. Remove the task override or recreate the provider.`,
       );
     }
+    // The key is sent to the catalog bucket's endpoint, not necessarily the
+    // registry definition during a PUT→refresh window. Validate the URL that
+    // will actually go on the wire and fail closed while the two disagree.
+    const catalogBaseUrl = resolveModelProfile(providerName, modelId).baseUrl;
+    if (catalogBaseUrl !== undefined && catalogBaseUrl !== definition.baseUrl) {
+      throw new Error(
+        `Custom provider '${providerName}' endpoint is out of sync: the saved definition has '${definition.baseUrl}' but the runtime catalog bucket still has '${catalogBaseUrl}'. Refusing to send ${definition.apiKeyEnv} until the provider's /models refresh completes.`,
+      );
+    }
+    const baseUrl = catalogBaseUrl ?? definition.baseUrl;
+    assertModelEndpointHostAllowed(baseUrl, `custom provider '${providerName}'`);
+    assertProviderKeyEnvBound(definition.apiKeyEnv, baseUrl, `custom provider '${providerName}'`);
     const wireReasoning = resolveTaskNativeReasoningParams(
       kind,
       providerName,
@@ -826,7 +906,7 @@ export function resolveTaskProvider(
       provider: providerName,
       model: modelId,
       apiKey,
-      baseUrl: resolveModelProfile(providerName, modelId).baseUrl ?? definition.baseUrl,
+      baseUrl,
       ...(wireReasoning !== undefined ? { nativeReasoningParams: wireReasoning } : {}),
       selectionRule: binding.selectionRule,
     };
@@ -888,12 +968,17 @@ export function resolveTaskProvider(
     );
   }
 
+  const profile = resolveModelProfile(providerName, modelId);
+  const baseUrl = profile.baseUrl;
+  if (baseUrl !== undefined) {
+    assertModelEndpointHostAllowed(baseUrl, `provider '${providerName}' model '${modelId}'`);
+  }
   return {
     authMode: 'key',
     provider: providerName,
     model: modelId,
     apiKey,
-    baseUrl: resolveModelProfile(providerName, modelId).baseUrl,
+    baseUrl,
     selectionRule,
     ...nativeReasoning,
   };

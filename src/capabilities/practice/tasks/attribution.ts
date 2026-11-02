@@ -52,8 +52,7 @@ export function parseAttributionOutput(
   const parsed = validateCauseAgainstProfile(AttributionOutputSchema.parse(json), profile);
   return {
     ...parsed,
-    // YUK-739 — cold-start prior comes from the subject's own category
-    // declaration, not the deleted cross-subject mirror.
+    // Cold-start prior comes from the subject's own category declaration.
     meta_cause:
       parsed.meta_cause === undefined
         ? getMetaCausePrior(profile, parsed.primary_category)
@@ -67,9 +66,7 @@ export function parseAttributionOutput(
 }
 
 function metaCausePriorList(profile: SubjectProfile): string {
-  // YUK-739 — the prior list is generated from the profile's own declarations
-  // (undefined = undeclared → rendered as null, matching the normalized
-  // runtime fallback in getMetaCausePrior).
+  // Undeclared prior renders as null, matching getMetaCausePrior's runtime fallback.
   return profile.causeCategories
     .map((category) => `- ${category.id} → ${category.meta_cause_prior ?? 'null'}`)
     .join('\n');

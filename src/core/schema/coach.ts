@@ -22,9 +22,9 @@ export const PlanAdjustment = z.object({
 export type PlanAdjustmentT = z.infer<typeof PlanAdjustment>;
 
 // Strategic review brief: the single attention prior handed down to
-// ReviewPlanTask (CO §6:621-622, no new artifact type). The brief fields are
-// optional/defaulted so plans emitted before they existed (and re-parsed by
-// parseTodayPlan) still parse unchanged.
+// ReviewPlanTask, with no new artifact type. The brief fields are optional/defaulted
+// so plans emitted before they existed (and re-parsed by parseTodayPlan) still parse
+// unchanged.
 //
 // `count` / `estimated_minutes` / `time_box_minutes` / `subject_mix`
 // are written by `composeTodayPlan` from the due queue + daily budget, never by
@@ -67,14 +67,13 @@ export const MaintenanceProposal = z.object({
 });
 export type MaintenanceProposalT = z.infer<typeof MaintenanceProposal>;
 
-// ADR-0025 — North-Star goal strand. One item = "today's goal-oriented
-// action toward goal X, touching these knowledge nodes". This strand is PURELY
-// ADDITIVE to the plan (ND-5): it never suppresses FSRS-due reviews or other
-// capture tasks, never preempts daily quota, never changes due times. It only
-// adds direction + provenance tags (every item is traceable to a `serves_goal_id`
-// — that traceability is the "sense of direction" payoff, spec §5). It also
-// closes the graph-signals gap: plan items now carry `knowledge_ids` so Coach
-// output knows which nodes an action touches.
+// ADR-0025 — North-Star goal strand. One item = "today's goal-oriented action
+// toward goal X, touching these knowledge nodes". This strand is purely additive to
+// the plan: it never suppresses FSRS-due reviews or other capture tasks, never
+// preempts daily quota, never changes due times. It only adds direction + provenance
+// tags (every item is traceable to a `serves_goal_id`). It also closes the
+// graph-signals gap: plan items carry `knowledge_ids` so Coach output knows which
+// nodes an action touches.
 export const GoalStrandItem = z.object({
   // which active goal this action serves (← direction-sense provenance tag).
   serves_goal_id: z.string().min(1),

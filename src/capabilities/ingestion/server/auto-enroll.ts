@@ -43,26 +43,25 @@ import {
 } from '@/core/schema/structured_question';
 import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { knowledge, learning_session, question, question_block, source_asset } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
 /**
  * WorkflowJudge auto-enroll path.
  *
- * Off by default: with the flag unset the function returns before any tagging,
- * judging, or enrollment, so every block stays 'draft' for human review. When
- * enabled it tags and judges at most AUTO_ENROLL_MAX_BLOCKS_PER_RUN draft blocks;
- * 'auto' blocks are enrolled through the same enrollCapturedBlock owner as the
- * human path (only provenance differs), and 'review' blocks stay untouched. It
- * runs between extraction and review and never closes the session.
+ * Off by default: blocks stay draft for human review. When enabled, it tags and
+ * judges at most AUTO_ENROLL_MAX_BLOCKS_PER_RUN draft blocks; 'auto' blocks are
+ * enrolled through the same enrollCapturedBlock owner as the human path (only
+ * provenance differs), and 'review' blocks stay untouched. It runs between
+ * extraction and review and never closes the session.
  */
 import { writeEvent } from '@/kernel/events';
 import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { getKnownSubjects } from '@/subjects/profile';
 import { enrollNativeCapture } from './assessment-capture';
 import { capturedQuestionShape } from './captured-question-shape';
@@ -146,7 +145,7 @@ export async function runAutoEnrollForSession(
   // enroll mode.
   const studentGrading = mode === 'enroll' && studentAnswerGradingEnabled(env);
 
-  // Load the session; it must be an ingestion session in an extractable state.
+  // This session must be an ingestion session in an extractable state.
   const sessionRows = await params.db
     .select()
     .from(learning_session)
@@ -222,7 +221,6 @@ export async function runAutoEnrollForSession(
       ? structuredToPromptMarkdown(block.structured)
       : (block.extracted_prompt_md ?? '');
     if (questionMd.trim().length === 0) {
-      // Nothing to tag → leave for human review.
       routedToReview += 1;
       continue;
     }
@@ -257,8 +255,13 @@ export async function runAutoEnrollForSession(
             ctx: params.ctx ?? { db: params.db },
           });
           subjectRootId = `seed:${bridge.subject_id}:root`;
-          // Reuse the classified name so a PROPOSE makes no second model call.
-          bridgeNameKc = async () => ({ kc_name: bridge.kc_name });
+          // Reuse the classified name so a PROPOSE makes no second model call, and
+          // forward the bridge run's provenance for the tag audit event (YUK-1604).
+          bridgeNameKc = async () => ({
+            kc_name: bridge.kc_name,
+            ...(bridge.task_run_id !== undefined ? { task_run_id: bridge.task_run_id } : {}),
+            ...(bridge.cost_usd !== undefined ? { cost_usd: bridge.cost_usd } : {}),
+          });
         }
         const tag = await tagKnowledgeFn(
           {

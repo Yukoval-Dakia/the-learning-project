@@ -1,6 +1,6 @@
+import type { RunTaskResult, TaskTextResult } from '@/ai/task-result';
 import type { Db } from '@/db/client';
-import type { TaskTextResult } from '@/server/ai/provenance';
-import type { RunTaskCtx, RunTaskResult } from '@/server/ai/runner';
+import type { RunTaskCtx } from '@/server/ai/runner';
 
 export type RunTaskCallCtx = Omit<RunTaskCtx, 'db' | 'enableTransientRetry'>;
 
@@ -44,12 +44,11 @@ export function makeRunTaskTextFn(db: Db, baseCtx: RunTaskCallCtx = {}): BoundRu
       cost_ref: result.cost_ref,
       structured_output: result.structured_output,
       ...(result.phases ? { phases: result.phases } : {}),
+      ...(result.help_latency ? { help_latency: result.help_latency } : {}),
     };
   };
 }
 
-// YUK-1522 (R8 R1) — the run-outcome failure vocabulary is intentionally NOT
-// re-exported here: agent-run-error/provider-* pull `providers` → the task
-// catalog → the schema barrel into runner-fn's import cone, which creates a
-// vitest-visible cycle through core/schema/generated ↔ db/schema. Callers
-// import the error modules directly.
+// 不在此处 re-export run-outcome 的错误词表：provider-* 会经 task catalog 把 schema
+// barrel 拉进 runner-fn 的 import cone，对 core/schema/generated ↔ db/schema 形成
+// vitest 可见的循环。调用方直接从错误模块 import。

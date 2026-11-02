@@ -46,7 +46,7 @@ Census: `docs/triage/2026-09-25/issues.json` (34 open). This report covers the 2
 ### YUK-369 — A3 步骤级证据切分（限数学/推导型，future）
 - **Category:** enhancement.
 - **Grounding:** `StepsJudgeTask` exists and is live for math/derivation (`src/capabilities/practice/tasks/index.ts`, `judges.ts`, `server/judge/steps-judge.ts`; prompt hashes pinned). Desc says scope = extend StepsJudgeTask step-level evidence, **explicitly ratified "future"** by owner 2026-06-16, **not generalized to all question types**.
-- **Drift found:** parent YUK-350 is now **Canceled** — this child is orphaned. The ratified decision doc (`docs/superpowers/plans/2026-06-16-A1-A5-ratified-decisions.md`) is standalone, so the ticket remains valid on its own merits; recommend de-parenting or leaving as-is.
+- **Drift found:** parent YUK-350 is now **Canceled** — this child is orphaned. The ratified decision doc (`docs/archive/superpowers/plans/2026-06-16-A1-A5-ratified-decisions.md`) is standalone, so the ticket remains valid on its own merits; recommend de-parenting or leaving as-is.
 - **Disposition:** keep Backlog (deliberate future, not ready-for-agent — owner explicitly deferred). Add `area:practice`. Comment notes parent cancellation.
 
 ### YUK-405 — 私人教研团 epic（关系脑 · conjecture 引擎）

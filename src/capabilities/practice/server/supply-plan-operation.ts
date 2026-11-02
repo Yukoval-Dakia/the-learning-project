@@ -19,6 +19,7 @@
 // cost ledger 语义不变）。run 异常原样上抛（pg-boss DLQ 重试语义不变）。
 
 import { createId } from '@paralleldrive/cuid2';
+import { type PiToolMount, piDomainMount } from '@/ai/pi-tool-mount';
 import type { SupplyPlanV1T } from '@/core/schema/supply_plan';
 import type { Db } from '@/db/client';
 import {
@@ -27,7 +28,6 @@ import {
   toMcpAllowedToolName,
 } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
-import { type PiToolMount, piDomainMount } from '@/server/ai/tools/pi-tools';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
   checkSupplyPlanKnowledgeIds,

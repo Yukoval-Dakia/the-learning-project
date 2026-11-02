@@ -16,14 +16,15 @@
 
 ## CONVENTIONS
 - 编辑器栈 = TipTap 3；block-tree 用 optimistic lock。
-- `note_refine` 触发源 = mark_wrong / mastery_change / dreaming / verify（dwell 已裁）。
+- `note_refine` 触发源 = mark_wrong / mastery_change / dreaming / verify（dwell 已裁）。dreaming 由已提交的 `experimental:dreaming_note_refresh` 订阅入队，agency 不直接调用 notes。
 - `note_generate` / `note_verify` 只经同事务 intent + 提交后 dispatcher 衔接；completion 表示 queue dispatch 已确认，不表示模型业务完成。
 - `note_generate` 失败显式落 `failed`，pg-boss redelivery 用 CAS 重开为 `pending`；已 `ready` 的成功重投跳过。
 - `note_verify` 远程调用不得持有 DB transaction；artifact version + fence/token claim 保护 reserve、raw-result stage 与短事务 finalize。provider attempt 只在 central runner durable start 后、真实 query 前原子计数；每个 artifact epoch 上限 3 次，触顶同事务投影 claim `attempts_exhausted` 与 artifact `verification_status='failed'`，只有新 epoch 重置。
+- note_long 首检 needs_review 且含 error 级问题时，`note_verify` handler 追加一轮修订 + 复检（YUK-1642）：修订走 `NoteGenerateTask`（`server/note-long-check.ts` 的 attrs.note_long_check 状态机，单轮不循环），复检走同一 claim machine（版本 bump 即新 epoch）。
 - `hub_sync_recovery` 是唯一 Notes 定时 recovery floor；hub reconcile 与 handoff/claim 分支隔离执行，claim batch 也会处理完其余项后聚合抛错，任一失败最终仍供 pg-boss 重试。
 - `NotePatch ≤3 ops AND ≤2 new blocks` 走 mutator，否则 propose。
 
 ## ANTI-PATTERNS
 - 别在客户端直接改 note body；所有持久化走 `/api/artifacts/[id]/body-blocks` 或 refine 链。
-- 别把 embedded_check 孤儿链当可用路径（YUK-358 决定3 已真删）。
-- editing-session heartbeat 现在纯 presence 写，不做 dwell refine。
+- `embedded_check` 孤儿链已删除（YUK-358 决定3）。
+- editing-session heartbeat 只做 presence 写，不做 dwell refine。

@@ -28,7 +28,7 @@ import {
   positionLabel,
 } from './hint-ladder';
 import type { QuestionDetail, SolveHintFallbackHelp } from './practice-api';
-import { solveHint, solveStart } from './practice-api';
+import { usePracticeClient } from './practice-client';
 
 // YUK-1409 — 一阶拿到的内容：AI 现生成的提示，或 AI 失败时服务端给的固定帮助（fallback）。
 type StageHint = { kind: 'ai'; text: string } | { kind: 'fallback'; help: SolveHintFallbackHelp };
@@ -59,6 +59,7 @@ export function HintLadder({
   // question.reference_md（现状行为，题面 DTO 仍带参考的现状由服务端 lane 收口）。
   requestFullSolution?: () => Promise<string | null>;
 }) {
+  const { solveStart, solveHint } = usePracticeClient();
   const [sessionId, setSessionId] = useState<string | null>(null);
   // 已揭示的最高 hint 阶索引（-1 = 尚未要任何提示）。H0-H4 走 hint，H5 由 revealedFull 单独管。
   const [reached, setReached] = useState(-1);

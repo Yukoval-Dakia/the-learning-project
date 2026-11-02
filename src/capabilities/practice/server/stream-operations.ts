@@ -7,7 +7,7 @@
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
-import { checkRateLimit } from '@/server/http/rate-limit';
+import { checkRateLimit } from '@/kernel/request-rate-limit';
 import {
   PracticeStreamCalendarDateSchema,
   PracticeStreamQuerySchema,

@@ -179,8 +179,8 @@ export async function recordFormalAttemptCapture(
   capture: FormalAttemptCapture = {},
 ) {
   const attemptId = `evt_assessment_${submission.submission_id}`;
-  // Pending receipts and retries share the same occurrence anchor. Capture is
-  // first-write-wins; a retry's wall-clock latency cannot rewrite the attempt.
+  // Pending receipts and retries share one occurrence anchor; capture is
+  // first-write-wins so retry latency cannot rewrite the attempt.
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${attemptId}))`);
   const [existing] = await tx.select({ id: event.id }).from(event).where(eq(event.id, attemptId));
   if (existing) return;
@@ -192,8 +192,8 @@ export async function recordFormalAttemptCapture(
     action: 'experimental:assessment_attempt',
     subject_kind: 'question',
     subject_id: questionId,
-    // This event records participation. The group's effective evaluation owns
-    // its verdict; self-report and a pending evaluation have no right/wrong bit.
+    // Participation record only: the group's effective evaluation owns the verdict,
+    // and self-report/pending evaluations have no right/wrong bit.
     outcome: null,
     payload: {
       version: 1,
@@ -226,7 +226,7 @@ export async function recordFormalAttemptCapture(
   });
 }
 
-/** The response and candidate are immutable; the activation is the only learning writer. */
+/** The response and candidate are immutable; activation is the only learning writer. */
 export async function commitFormalAttempt(
   database: Db,
   entry: GradingEntryPoint,
@@ -318,7 +318,7 @@ export async function commitFormalAttempt(
       allowCapturedOriginal: entry === 'ingestion_grading' && options.onActivated !== undefined,
       onThetaApplied: async (tx, observation) => {
         if (observation.outcome !== 1) return;
-        // Isolate optional telemetry failures without poisoning the activation.
+        // Optional telemetry must not poison the activation.
         try {
           await tx.transaction(async (sp) => {
             await emitMasteryProgressSignal({

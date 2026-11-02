@@ -7,16 +7,22 @@
 //     （unsupported_proposal_kind）。归属声明与 applier 存在性解耦。
 //
 // import 环 gate：本文件不得 import producers/writer/actions（含 type-only）；
-// 共享 helper 一律走 @/server/proposals/applier-helpers。
+// 共享 helper 一律走 @/kernel/proposals/applier-helpers。
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 
-import type { CreateLearningIntentKnowledgeNodeFn } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { artifact, completion_evidence, event, learning_item } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import { nextProjectionEventTime, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import {
+  asPlainRecord,
+  ensureAcceptOnly,
+  existingAcceptRate,
+  requiredString,
+  stringArray,
+} from '@/kernel/proposals/applier-helpers';
 import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
@@ -27,16 +33,9 @@ import {
   hasLearningItemGenesisAnchor,
   projectLearningItemGuarded,
 } from '@/kernel/records/learning-items';
-import { nextProjectionEventTime } from '@/server/projections/event-clock';
-import {
-  asPlainRecord,
-  ensureAcceptOnly,
-  existingAcceptRate,
-  requiredString,
-  stringArray,
-} from '@/server/proposals/applier-helpers';
 import {
   type AcceptLearningIntentParams,
+  type CreateLearningIntentKnowledgeNodeFn,
   type LearningIntentMaterializeResult,
   acceptLearningIntent,
 } from './learning-intent';

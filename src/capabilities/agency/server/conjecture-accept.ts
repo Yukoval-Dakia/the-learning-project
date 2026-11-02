@@ -15,7 +15,7 @@
 // the kind literal is `'conjecture'` (NOT `'mind_model'`).
 //
 // import 环 gate：本文件不得 import producers/writer/actions；共享 helper 走
-// @/server/proposals/applier-helpers（与 sibling proposal-appliers 同约束）。
+// @/kernel/proposals/applier-helpers（与 sibling proposal-appliers 同约束）。
 
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
@@ -40,17 +40,17 @@ import {
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
-import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/kernel/proposals/signals';
 import {
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,
   requiredString,
-} from '@/server/proposals/applier-helpers';
+} from '@/kernel/proposals/applier-helpers';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import {
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/kernel/proposals/signals';
 
 // Wire error code (typed ApiError, HTTP 409) raised when the accept cannot serve its
 // discriminating probe because MAX_CONCURRENT_ACTIVE_PROBES probes are already active.

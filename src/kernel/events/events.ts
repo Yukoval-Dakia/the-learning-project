@@ -1,17 +1,18 @@
 // Generic event-envelope storage; the single INSERT owner for event rows (ADR-0005 / ADR-0021).
 
-import { and, desc, eq, gte, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, ne } from 'drizzle-orm';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import { type EventT, parseEvent } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey } from './correction-lock';
+import { lockEventCorrectionSource, lockEventCorrectionsAll } from './correction-lock';
 import {
   type CorrectionStatus,
   activeCorrectionStatus,
   getCorrectionStatuses,
 } from './corrections';
 import { eventAllowsDerivationSql } from './derivation-policy';
+import { bindEventUsage } from './event-usage';
 import { computeAffectedScopes } from './scope-tagger';
 
 type DbLike = Db | Tx;
@@ -268,7 +269,8 @@ function prepareEventInsert(input: WriteEventInput): typeof event.$inferInsert {
 /** Validate the whole batch before one INSERT; duplicate ids keep the first write. */
 export async function writeEvents(db: DbLike, inputs: WriteEventInput[]): Promise<string[]> {
   if (inputs.length === 0) return [];
-  const rows = inputs.map(prepareEventInsert);
+  // Validate the complete original batch before acquiring any write locks.
+  inputs.forEach(prepareEventInsert);
   const correctionTargetIds = [
     ...new Set(
       inputs
@@ -276,26 +278,18 @@ export async function writeEvents(db: DbLike, inputs: WriteEventInput[]): Promis
         .map((input) => input.subject_id),
     ),
   ].sort();
-
-  if (correctionTargetIds.length === 0) {
-    await db.insert(event).values(rows).onConflictDoNothing({ target: event.id });
-  } else {
-    // Corrections serialize with activation decisions on their target. On Tx the
-    // lock lasts until the outer transaction ends; sort targets to avoid deadlock.
-    await db.transaction(async (tx) => {
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
-      );
+  return db.transaction(async (tx) => {
+    // corrections:all before any source, matching activation's direct-chain read.
+    if (correctionTargetIds.length) {
+      await lockEventCorrectionsAll(tx);
       for (const targetId of correctionTargetIds) {
-        await tx.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionLockKey(targetId)}, 0))`,
-        );
+        await lockEventCorrectionSource(tx, targetId);
       }
-      await tx.insert(event).values(rows).onConflictDoNothing({ target: event.id });
-    });
-  }
-
-  return inputs.map((input) => input.id);
+    }
+    const rows = (await bindEventUsage(tx, inputs)).map(prepareEventInsert);
+    await tx.insert(event).values(rows).onConflictDoNothing({ target: event.id });
+    return inputs.map((input) => input.id);
+  });
 }
 
 export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<string> {
@@ -303,4 +297,21 @@ export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<st
 
   // INSERT-only: the outbox picks the row up after commit; a rollback leaves no job.
   return input.id;
+}
+
+/** Caller holds the entity write lock. Include genesis in the stream watermark
+ * so same-clock or delayed transitions cannot sort backward. No wall-clock read. */
+export async function nextProjectionEventTime(
+  tx: Tx,
+  kind: 'goal' | 'learning_item' | 'mistake_variant',
+  id: string,
+  requestedAt: Date,
+): Promise<Date> {
+  const [latest] = await tx
+    .select({ created_at: event.created_at })
+    .from(event)
+    .where(and(eq(event.subject_kind, kind), eq(event.subject_id, id)))
+    .orderBy(desc(event.created_at))
+    .limit(1);
+  return new Date(Math.max(requestedAt.getTime(), (latest?.created_at.getTime() ?? -1) + 1));
 }

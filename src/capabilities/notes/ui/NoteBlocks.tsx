@@ -157,14 +157,16 @@ export function QuestionPicker({
   knowledgeIds,
   onPick,
   onClose,
+  readQuestions = questionsForKnowledge,
 }: {
   knowledgeIds: string[];
   onPick: (q: { id: string; prompt_md: string }) => void;
   onClose: () => void;
+  readQuestions?: typeof questionsForKnowledge;
 }) {
   const qQ = useQuery({
     queryKey: ['question-pick', knowledgeIds],
-    queryFn: () => questionsForKnowledge(knowledgeIds),
+    queryFn: () => readQuestions(knowledgeIds),
     enabled: knowledgeIds.length > 0,
   });
   return (

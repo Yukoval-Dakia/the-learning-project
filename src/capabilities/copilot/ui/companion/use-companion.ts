@@ -5,7 +5,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
-import { apiJson } from '@/ui/lib/api';
 import { useCopilotClient } from '../copilot-client';
 import { type CompanionController, createCompanionController } from './companion-controller';
 import { type CompanionState, selectionValidated } from './companion-state';
@@ -65,9 +64,10 @@ export interface CompanionSummary {
 
 /** Today's summary (Coach focus, due reviews, brief, pending suggestions); only while open. */
 export function useCompanionSummary(open: boolean) {
+  const { getSummary } = useCopilotClient();
   return useQuery({
     queryKey: ['copilot-summary'],
-    queryFn: () => apiJson<CompanionSummary>('/api/today/copilot-summary'),
+    queryFn: () => getSummary(),
     enabled: open,
     refetchInterval: open ? 60_000 : false,
   });

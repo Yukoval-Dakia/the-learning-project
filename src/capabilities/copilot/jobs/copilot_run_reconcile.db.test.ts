@@ -16,7 +16,7 @@ import {
   settleNativeSubagentRun,
 } from '@/capabilities/copilot/server/subagent-mailbox';
 import { copilot_continuation, event, job_events, subagent_run } from '@/db/schema';
-import { writeJobEvent } from '@/server/events/writer';
+import { writeJobEvent } from '@/kernel/job-events';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { seedLegacySubagentRun } from '../../../../tests/helpers/legacy-subagent';

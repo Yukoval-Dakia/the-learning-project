@@ -28,12 +28,12 @@ async function seedKnowledge(id: string) {
     .onConflictDoNothing();
 }
 
-async function seedQuestion(id: string, knowledgeIds: string[]) {
+async function seedQuestion(id: string, knowledgeIds: string[], promptMd?: string) {
   const now = new Date();
   await db.insert(question).values({
     id,
     kind: 'short_answer',
-    prompt_md: `Prompt ${id}`,
+    prompt_md: promptMd ?? `Prompt ${id}`,
     knowledge_ids: knowledgeIds,
     difficulty: 3,
     source: 'manual',
@@ -42,6 +42,10 @@ async function seedQuestion(id: string, knowledgeIds: string[]) {
     updated_at: now,
     version: 0,
   });
+}
+
+function output(b: number, confidence: number) {
+  return JSON.stringify({ b_logit: b, confidence, reasoning: '认知步骤数 2 + 一个前置概念' });
 }
 
 describe('runItemPriorBackfill (DB integration)', () => {
@@ -82,5 +86,30 @@ describe('runItemPriorBackfill (DB integration)', () => {
       .from(item_calibration)
       .where(eq(item_calibration.question_id, qDone));
     expect(doneRows[0].b).toBeCloseTo(-0.5, 5);
+  });
+
+  // Migrated from item-prior-durable-operation.unit.test.ts (B2④); same
+  // invariants now proven against the real schema and float4 columns.
+
+  // @invariant grading: the retained backfill settles the median of three prior estimates into the hard calibration row
+  // @fails-if default reps becomes one or aggregation uses the mean; the persisted b/confidence differ
+  it('settles the median of three prior estimates into the calibration row', async () => {
+    const q = createId();
+    await seedQuestion(q, []);
+    const outputs = [output(5.3, 0.9), output(0.1, 0.2), output(0.7, 0.4)];
+    const runTaskFn = vi.fn(async () => ({ text: outputs.shift() ?? '' }));
+
+    const result = await runItemPriorBackfill(db, { runTaskFn });
+
+    expect(result).toEqual({ considered: 1, calibrated: 1, skipped_failed: 0 });
+    expect(runTaskFn).toHaveBeenCalledTimes(3);
+    const rows = await db
+      .select()
+      .from(item_calibration)
+      .where(eq(item_calibration.question_id, q));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ source: 'llm_prior' });
+    expect(rows[0].b).toBeCloseTo(0.7, 5);
+    expect(rows[0].confidence).toBeCloseTo(0.4, 5);
   });
 });

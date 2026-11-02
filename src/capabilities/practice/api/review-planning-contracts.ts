@@ -7,7 +7,7 @@ import {
   PartialUnknownJudgeResult,
   ScoreMeaning,
 } from '@/kernel/capability-contract-schemas';
-import { ANCHOR_BUCKETS, type AnchorBucket } from '@/server/mastery/fixed-anchor';
+import { ANCHOR_BUCKETS, type AnchorBucket } from '../server/fixed-anchor';
 import { CreateSubmissionBodySchema } from './assessment-contracts';
 import { AttemptCorrectionStateSchema, FsrsStateWireSchema } from './contracts';
 

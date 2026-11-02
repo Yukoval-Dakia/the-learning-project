@@ -19,7 +19,7 @@
   （`docs/adr/0011-tool-use-and-edge-event-paths.md:173`）；同文 :290 预留升级路径
   （「若代码 guard 后仍有 leak，考虑 PG check constraint」）。
 - ADR-0010（knowledge mesh）经 `docs/planning/v0.4-complete-form-roadmap.md:101` 锁定，
-  invariant 列入锁定后果；`docs/superpowers/specs/2026-06-10-functional-goal-map.md:222`
+  invariant 列入锁定后果；`docs/archive/superpowers/specs/2026-06-10-functional-goal-map.md:222`
   第 6 条复述（「树是骨架，网是肌肉……mesh edge 不存树已表达的边」）。
 
 ### 起源考古

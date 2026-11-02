@@ -1,25 +1,21 @@
-// Pure hub mesh curation (ADR-0020 §9). Given a hub, the loaded tree, mesh edges
-// and candidate atomics, decide which atomics join the auto-zone and which
-// relation chip to show. All inputs are in-memory; no IO.
+// Pure hub mesh curation (ADR-0020 §9): decide which atomics join a hub's
+// auto-zone and which relation chip each shows. All inputs are in-memory; no IO.
 //
-// An atomic is included when any holds against the hub's knowledge_ids:
-//   subtopic: atomic ids are contained in the hub's ids, or its node is a tree
-//             descendant;
-//   prerequisite: incoming edge to the hub;
-//   derived_from: an edge whose `to` is in the hub (ADR-0010: from 派生自 to, so
-//                 the atomic is the derived node);
+// Inclusion rules, evaluated against the hub's knowledge_ids:
+//   subtopic: every atomic id is a hub id or a tree descendant of one;
+//   prerequisite: incoming edge to the hub (hub topic depends on it);
+//   derived_from: outgoing edge from the hub (ADR-0010: from 派生自 to, so the
+//     hub topic is the derived node and the base `to` is what it builds on);
 //   contrasts_with: either endpoint in the hub.
 // related_to/applied_in and experimental:* are excluded.
 //
 // Rule priority: subtopic > prerequisite > derived_from > contrasts_with.
 
-// Only the tree backbone the algorithm reads; wider knowledge rows remain assignable.
 export interface HubMeshNode {
   id: string;
   parent_id: string | null;
 }
 
-// Relation provenance shown on the curated atomic's chip.
 export type HubMeshRelation = 'subtopic' | 'prerequisite' | 'derived_from' | 'contrasts_with';
 
 // Most specific matching relation wins the chip.
@@ -30,21 +26,18 @@ const RELATION_PRIORITY: HubMeshRelation[] = [
   'contrasts_with',
 ];
 
-// Excluded relations; experimental:* is matched by prefix.
 const EXCLUDED_RELATIONS = new Set(['related_to', 'applied_in']);
 
 function isExcludedRelation(relationType: string): boolean {
   return EXCLUDED_RELATIONS.has(relationType) || relationType.startsWith('experimental:');
 }
 
-// Edge shape shared by both edge row types.
 export interface HubMeshEdge {
   from_knowledge_id: string;
   to_knowledge_id: string;
   relation_type: string;
 }
 
-// Candidate artifact shape the curation needs.
 export interface HubMeshAtomicInput {
   artifact_id: string;
   title: string;
@@ -115,8 +108,12 @@ function meshRelatedKnowledgeIds(
         if (toInHub && !fromInHub) prerequisite.add(edge.from_knowledge_id);
         break;
       case 'derived_from':
-        // ADR-0010: `from 派生自 to`; `to` in hub → `from` is the derived node.
-        if (toInHub && !fromInHub) derived_from.add(edge.from_knowledge_id);
+        // ADR-0010 + ADR-0020 §9 "outgoing": `from 派生自 to`, so a hub topic at
+        // `from` is the derived node and the base `to` is what it builds on —
+        // the same dependency-incoming shape as the prerequisite rule above
+        // (YUK-1601: the previous incoming read included reversed-direction
+        // material in auto hubs).
+        if (fromInHub && !toInHub) derived_from.add(edge.to_knowledge_id);
         break;
       case 'contrasts_with':
         // Symmetric: either endpoint in the hub pulls in the other.
@@ -124,7 +121,7 @@ function meshRelatedKnowledgeIds(
         if (fromInHub && !toInHub) contrasts_with.add(edge.to_knowledge_id);
         break;
       default:
-        // Already filtered by isExcludedRelation; stay defensive.
+        // Excluded relations were filtered above; stay defensive.
         break;
     }
   }
@@ -145,7 +142,6 @@ export function resolveHubMeshAtomics(
   const hubKnowledgeIds = new Set(hub.knowledge_ids);
   if (hubKnowledgeIds.size === 0) return [];
 
-  // Subtopic rule: hub ids plus all tree descendants.
   const subtopicKnowledgeIds = new Set<string>(hubKnowledgeIds);
   for (const id of treeDescendantIds(nodes, hubKnowledgeIds)) subtopicKnowledgeIds.add(id);
 
@@ -159,11 +155,9 @@ export function resolveHubMeshAtomics(
 
     const matched = new Set<HubMeshRelation>();
 
-    // Every atomic id in the subtopic set counts as subtopic.
     if (atomicKnowledgeIds.every((id) => subtopicKnowledgeIds.has(id))) {
       matched.add('subtopic');
     }
-    // Mesh rules: any atomic id in the relation's reachable set.
     if (atomicKnowledgeIds.some((id) => mesh.prerequisite.has(id))) matched.add('prerequisite');
     if (atomicKnowledgeIds.some((id) => mesh.derived_from.has(id))) matched.add('derived_from');
     if (atomicKnowledgeIds.some((id) => mesh.contrasts_with.has(id))) matched.add('contrasts_with');

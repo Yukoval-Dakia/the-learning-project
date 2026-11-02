@@ -24,10 +24,6 @@ import {
   sql,
 } from 'drizzle-orm';
 
-import {
-  batchResolveSubjectDisplayIds,
-  resolveSubjectRenderNotation,
-} from '@/capabilities/knowledge/public';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import {
   type SourceTier,
@@ -39,6 +35,10 @@ import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { knowledge, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import {
+  batchResolveSubjectDisplayIds,
+  resolveSubjectRenderNotation,
+} from '@/kernel/read-models/subject-resolution';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 import {
   type QuestionServing,

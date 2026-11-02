@@ -1,4 +1,4 @@
-// The only correction HTTP surface. The id arrives as a Hono param.
+// Event correction HTTP surface: create a correction event for the given event id.
 
 import { db } from '@/db/client';
 import {

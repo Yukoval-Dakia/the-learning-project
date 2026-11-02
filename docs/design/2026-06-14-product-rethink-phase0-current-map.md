@@ -232,5 +232,5 @@ registry `src/ai/registry.ts`、runner `src/server/ai/runner.ts`（3 入口）�
 - 张力：registry fallbackChain/maxCost/systemPrompt 死装饰 / 文档说有 browser-side caller 实无 / handlers.ts 渐缩簿 18 job / copilotTools no-op / YUK-299 structured-output 几乎未采用 / model id 漂移 / cost_ledger 对 mimo 恒记 0 / 生成→入库闭环未通。
 
 ### R9 元层｜已锁决策 & ADR & D1-D20
-权威源 `docs/superpowers/specs/2026-06-10-architecture-redesign-design.md`（D1-D20 + 六契约 + M0-M5）、33 篇 ADR（`docs/adr/`）、`ARCHITECTURE.md`、`status.md`、中心收费站 `src/server/proposals/actions.ts:585`。
+权威源 `docs/archive/superpowers/specs/2026-06-10-architecture-redesign-design.md`（D1-D20 + 六契约 + M0-M5）、33 篇 ADR（`docs/adr/`）、`ARCHITECTURE.md`、`status.md`、中心收费站 `src/server/proposals/actions.ts:585`。
 - 张力：提议生命周期契约最大缺口（dispatchAccept 22-case 中心 switch 未下放）/ ARCHITECTURE.md 六契约表停在 P1 时点 / docs/architecture.md 概念段漂移（旧 Mistake/Question+embedded_check）/ D14 编号语义被压缩 / 九个 ⚖️ 争议行未裁 / status.md M0-M4 shipped 行缺失 / quiz 包定位悬而未决 / 部分 ADR 缺 Status 行。

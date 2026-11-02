@@ -11,7 +11,7 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FailureAttempt } from '@/capabilities/knowledge/public';
 import { event } from '@/db/schema';
-import type { MasteryProjection } from '@/server/mastery/state';
+import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../../tests/helpers/conjecture-probe-fixtures';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -26,8 +26,8 @@ const mockPi = vi.hoisted(() => ({
   >(),
 }));
 
-vi.mock('@/server/ai/tools/pi-tools', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/server/ai/tools/pi-tools')>();
+vi.mock('@/ai/pi-tool-mount', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/ai/pi-tool-mount')>();
   return {
     ...actual,
     piCustomTool: (

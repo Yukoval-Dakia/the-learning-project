@@ -1,7 +1,9 @@
 // Hub-sync job family. Every scheduled path converges through `runHubSyncCycle`;
 // none applies a body directly. Durability comes from the topology trigger that
 // marks a cursor dirty plus the every-minute recovery floor, so convergence is
-// bounded by about a minute even if the immediate wake is lost.
+// bounded by about a minute even if the immediate wake is lost. Abandoned
+// edit-session presence is swept in the manifest pre-eligibility hook so
+// dormancy skips coverage repair only.
 
 import type { Job } from 'pg-boss';
 
@@ -9,7 +11,6 @@ import { getRunningNotesBoss } from '@/capabilities/notes/server/boss-port';
 import {
   type HubSyncCycleResult,
   runHubSyncCycle,
-  sweepAbandonedEditSessions,
 } from '@/capabilities/notes/server/hub-sync-reconciliation';
 import { recoverNoteHandoffsAndClaims } from '@/capabilities/notes/server/note-handoff';
 import type { Db } from '@/db/client';
@@ -96,9 +97,6 @@ export async function runHubAutoSyncNightly(
   db: Db,
   opts: { now?: Date } = {},
 ): Promise<HubSyncCycleResult> {
-  // Presence hygiene is not reconciler work, so it runs before the mode gate:
-  // abandoned edit sessions must still be reaped when HUB_SYNC_MODE=off.
-  await sweepAbandonedEditSessions(db);
   return runHubSyncCycle(db, {
     reason: 'nightly_repair',
     maxArtifacts: NIGHTLY_MAX_ARTIFACTS,

@@ -27,7 +27,6 @@ async function handleLegacyKnowledgeDecision(
       return Response.json(result);
     }
 
-    // reject
     await dismissProposal(db, id);
     return Response.json({ kind: 'dismissed' });
   } catch (err) {

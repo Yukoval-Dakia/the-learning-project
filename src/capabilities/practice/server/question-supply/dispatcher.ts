@@ -77,7 +77,7 @@ export const SUPPLY_DISPATCH_COOLDOWN_DAYS = 7;
 export type DispatchStatus =
   | 'dispatched' // 成功发了一个后台 job。
   | 'manual' // 选定路由当前无法自动派（image/ingest/author），emit + 留给人工/UI。
-  | 'skipped' // 无可用知识点锚（防御）**或** 同 fingerprint 在 cooldown 窗内已派过（FINDING #1/#2）。
+  | 'skipped' // 无可用知识点锚（防御）**或** 同 fingerprint 在 cooldown 窗内已派过。
   | 'failed'; // 派发抛错（enqueue 失败）。
 
 export interface DispatchResult {
@@ -263,7 +263,7 @@ function chooseAutoRoute(
 ): SupplyRoute | null {
   for (const route of routePlan) {
     if (!AUTO_DISPATCHABLE.has(route)) return null; // 硬偏好边界：不可派路由 → manual。
-    if (!webSearchAvailable && routeNeedsWebSearch(route, target)) continue; // FINDING #5：跳过注定失败的检索依赖路由。
+    if (!webSearchAvailable && routeNeedsWebSearch(route, target)) continue; // 跳过注定失败的检索依赖路由。
     return route;
   }
   return null;
@@ -477,7 +477,7 @@ export async function dispatchSupplyTarget(
   // caller 看到失败」的撕裂态（caller 可能重试 → 重复 job）。故把 writeEvent 包 try/catch：
   // 留痕失败只 log，**绝不 reject**，结果 result 已是真相（job 发没发由 result.status 定）。
   // observability 是辅助轴，不该反过来污染主派发结果。
-  // ⚠️ cooldown 凭证依赖此 writeEvent 成功（已知接受的权衡， review FINDING）：dispatched
+  // ⚠️ cooldown 凭证依赖此 writeEvent 成功（已知接受的权衡）：dispatched
   // 路径的 cooldown 记录就是这条 payload.status='dispatched' 事件（recentDispatchExists 查它）。
   // 若 boss.send 成功但此 writeEvent 因瞬时 DB 错失败 → 本次真派的 job **没留 cooldown 凭证** →
   // 下轮夜扫对同 fingerprint 不命中 cooldown → 可能再 enqueue 一个付费 job。概率低、自限（下轮

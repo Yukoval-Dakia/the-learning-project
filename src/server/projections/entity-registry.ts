@@ -20,7 +20,24 @@ import {
   mistake_variant,
   question_block,
 } from '@/db/schema';
-import { projectKnowledgeEdge } from '@/kernel/records/knowledge-edge-facts';
+import type { ProjectionEntity } from '@/kernel/projection-writer-policy';
+import {
+  artifactRowToSnapshot,
+  artifactsWithGenesisAnchor,
+  gatherAndFoldArtifact,
+  projectArtifactGuarded,
+} from '@/kernel/records/artifact-history';
+import {
+  gatherAndFoldGoal,
+  goalRowToSnapshot as goalLiveRowToSnapshot,
+  goalsWithGenesisAnchor,
+  projectGoalGuarded,
+} from '@/kernel/records/goal-history';
+import {
+  edgeRowToSnapshot,
+  gatherAndFoldKnowledgeEdgeWithMesh,
+  projectKnowledgeEdge,
+} from '@/kernel/records/knowledge-edge-facts';
 import {
   gatherAndFoldKnowledgeNode,
   knowledgeLiveRowToSnapshot,
@@ -35,38 +52,24 @@ import {
   prefetchLearningItemMergeEvents,
   projectLearningItemGuarded,
 } from '@/kernel/records/learning-items';
-import { projectArtifactGuarded } from './artifact';
 import {
-  edgeRowToSnapshot,
-  gatherAndFoldArtifact,
-  gatherAndFoldGoal,
-  gatherAndFoldItemCalibration,
-  gatherAndFoldKnowledgeEdgeWithMesh,
   gatherAndFoldMistakeVariant,
-  gatherAndFoldQuestionBlock,
-} from './gather';
-import { projectGoalGuarded } from './goal';
+  mistakeVariantLiveRowToSnapshot,
+  mistakeVariantsWithGenesisAnchor,
+  projectMistakeVariantGuarded,
+} from '@/kernel/records/mistake-variant-facts';
+import { gatherAndFoldQuestionBlock } from '@/kernel/records/question-block-projection';
+import { gatherAndFoldItemCalibration } from './gather';
 import { projectItemCalibrationGuarded } from './item_calibration';
-import { projectMistakeVariantGuarded } from './mistake_variant';
 import {
-  artifactsWithGenesisAnchor,
-  goalLiveRowToSnapshot,
-  goalsWithGenesisAnchor,
   itemCalibrationsWithGenesisAnchor,
   knowledgeEdgesWithGenesisAnchor,
   learningItemLiveRowToSnapshot,
-  mistakeVariantLiveRowToSnapshot,
-  mistakeVariantsWithGenesisAnchor,
   questionBlocksWithGenesisAnchor,
 } from './parity';
 import { PROJECTION_FOLDS, type PureFold } from './projection-folds';
 import { projectQuestionBlockGuarded } from './question_block';
-import {
-  artifactRowToSnapshot,
-  itemCalibrationRowToSnapshot,
-  questionBlockRowToSnapshot,
-} from './snapshot-mappers';
-import type { ProjectionEntity } from './sot-flag';
+import { itemCalibrationRowToSnapshot, questionBlockRowToSnapshot } from './snapshot-mappers';
 
 type DbLike = Db | Tx;
 
@@ -82,6 +85,7 @@ const KNOWLEDGE_STRUCTURAL_COLUMNS = {
   archived_at: knowledge.archived_at,
   proposed_by_ai: knowledge.proposed_by_ai,
   approval_status: knowledge.approval_status,
+  role: knowledge.role,
   created_at: knowledge.created_at,
   updated_at: knowledge.updated_at,
   version: knowledge.version,

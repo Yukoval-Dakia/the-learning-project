@@ -29,7 +29,7 @@ pnpm build            # Vite + server/worker/migrate bundles
 ```
 
 Development requires the API, web app, and standalone worker. `RW_WORKER=1`
-is a fallback and does not replace the standalone worker.
+is only a fallback; run the standalone worker.
 
 ## Local validation commands
 
@@ -88,8 +88,7 @@ constraints, and transactions remain enabled. This suite does not establish
 durability across a host reboot or container replacement.
 Migration smoke also uses bounded tmpfs for each of its independently owned
 containers. It runs the unchanged migration/backfill matrix and checks that
-PostgreSQL `fsync` and `synchronous_commit` remain on; it is not a host-reboot
-durability test.
+PostgreSQL `fsync` and `synchronous_commit` remain on.
 Files importing DB clients, `postgres`, Drizzle, or live `PgBoss` belong in the
 DB config, not the unit config. DB files run in isolated fork databases. The default
 remains `resetDb()` in `beforeEach`; transaction rollback is opt-in only when every
@@ -110,7 +109,6 @@ pnpm audit:partition
 pnpm audit:question-writers
 pnpm audit:api-contracts
 pnpm audit:api-client
-pnpm audit:api-client-usage
 pnpm audit:tool-params
 pnpm audit:capability-boundaries
 pnpm audit:architecture-deepening
@@ -121,17 +119,20 @@ pnpm audit:structured-judge
 pnpm audit:test-policy
 pnpm audit:task-census
 pnpm audit:draft-status
-pnpm audit:draft-status-reads --strict
 pnpm audit:flags --strict
 pnpm audit:hub-sync-writers
-pnpm audit:provider-attempt-truth
+pnpm audit:provider-lanes
 pnpm audit:model-source
+pnpm audit:advisory-locks
+pnpm audit:relations
+pnpm audit:mastery-provenance
 ```
 
 `pnpm embed:inventory` is a read-only question-vector census (no embedding calls,
 no writes; `scripts/embed-inventory.ts`).
 
-`audit:capability-boundaries` 同时检查 public/ui-public access seam 与三张架构债
+`pnpm audit:capability-boundaries` 执行 capability `*-api.ts` 不得手写 `apiJson`
+（必须使用生成的 operations）这条不变量，并同时检查 public/ui-public access seam 与三张架构债
 ratchet（capability→server、server→capability deep、cross-capability value/SCC）。
 机器可读报告用 `pnpm audit:capability-boundaries --json`。实测 pair 比基线低时审计失败，
 运行 `pnpm audit:capability-boundaries --tighten` 收紧
@@ -141,9 +142,8 @@ ratchet（capability→server、server→capability deep、cross-capability valu
 
 禁止为让新增依赖通过而直接上调 baseline。现行准入以
 `scripts/audit-capability-boundaries.ts` 的 `raiseJustificationSchema` 和
-`compareBaselineChanges` 为准；2026-10-19 的“协调线裁决可准入无抵消增长”提示已过期。
-上调记录必须有非空 `reason`、`exitCondition` 及 `justification`；schema 支持的三种形态
-与实际准入限制如下，仅有理由或格式合法不构成批准：
+`compareBaselineChanges` 为准。
+上调记录必须有非空 `reason`、`exitCondition` 及 `justification`；三种形态与准入限制：
 
 - `{ "kind": "offset" }`：相对同一 PR 的 base，同一债务类别内其他 pair 必须有实测下降，
   且该类别实测总数不得增加。不能用另一类别的下降、临时降后回涨的记录或只改基线抵消。
@@ -157,34 +157,36 @@ ratchet（capability→server、server→capability deep、cross-capability valu
 `serverToCapabilityDeep` 是零边界，任何 `justification`（包括抵消或 Owner 批准）都不能
 通过现行门准入其上调，依赖须经 capability public 入口。
 协调线的精确 `stable_contract` 裁定只分类真实公开转出站点，不参与债务计算；
-`edgeRecords` 只登记真实新增依赖的 file/module、kind、symbols、debt、issue、owns、date。
-两者都不能替代增长批准；抵消或 Owner 批准也不能免除新增受审计边的逐条事实登记。
+`edgeRecords` 只登记真实新增依赖的 file/module、kind、symbols、debt、issue、owns、date；
+新增受审计边无论抵消或获批都须逐条登记。
 
 获准上调须同步 pair 与 total，并追加含 `debt`、`pair`、UTC `date`、`from`、`to` 的
 `direction: "increase"` 记录（`to > from`）；三类债务的每个 pair 和 total 都须与实测精确一致，
 缺失 pair 按 0 处理。
 CI 从 PR base SHA（push 时为 before SHA）重放新增记录，要求其结果与当前基线一致，
-且旧记录不可删除或改写。历史 `notes` 不追溯补写，也不能代替新上调记录。
+且旧记录不可删除或改写。
 协调线明确要求追认已在 main 的变化时，`notes` 可保存同一类型的结构化历史记录，
 但不参与 `changes` 重放或新上调准入。YUK-1567 的记录只限 practice→r2 3→4（当时总数443→444），
 出处为 bb3e06ad 与 YUK-1570 的 82d63281；须在下一次 YUK-1570 减边 PR 回到3，最迟不晚于该票关闭。
-CI 检查实测抵消及批准 URL、原话等字段的形状，不联网判断批准的真实性、授权范围及退出条件是否达成。
-这些判断仍由 reviewer 负责。校验错误包含基线文件名及记录路径。
+CI 检查实测抵消及批准 URL、原话等字段的形状；批准的真实性、授权范围与退出条件由 reviewer 判断。
+校验错误包含基线文件名及记录路径。
 
 本地默认比较 `git merge-base HEAD origin/main`，也可用 `--base <commit SHA>`。
 CI 的静态 `audits_architecture` job 必须提供 `CAPABILITY_BASE_SHA`；手动 workflow 使用已有的 `test_policy_base` 输入。
 CircleCI 的事件可能缺少 PR base 和 push before，因此该 job 复用
 `scripts/ci/resolve-circle-audit-base.mjs`，将其验证后的 SHA 输出传给 `CAPABILITY_BASE_SHA`。
+分支 push 可能早于 GitHub 把提交关联到 PR；等到截止仍是同一个 open PR 才采用，中途出现第二个或身份变了立刻失败，截止时仍是 0 也失败。
 无法确认 base 时仍失败，不回退到移动分支或猜测父提交；GitHub 保留原有 event/input 来源。
-`pnpm audit:capability-boundaries:snapshot` 仍只打印实测快照，不带变更记录，不能用它覆盖基线。
+`pnpm audit:capability-boundaries:snapshot` 只打印实测快照，不带变更记录。
 
 ### Lint warning ratchet（YUK-909）
 
-`pnpm lint:ratchet` 对 `biome check .` 的 warning/info 总数执行只降不升的 ratchet，
-CI static lane 用同一次 Biome 扫描检查 errors 与 warning/info 增长。基线在 `scripts/lint-baseline.json`：总数 +
-逐 rule 计数（信息诊断单独计数，不静默丢弃；决策已记录在文件内）。落地一个
-修 warning 的 batch 之后用 `pnpm lint:ratchet:update` 重新生成基线；该命令拒绝
-任何上调——基线只可能下降。
+`pnpm lint:ratchet` 对 `biome check .` 的 warning/info 总数要求与基线逐项相等。
+高于基线或低于基线都失败；低于基线时必须在同一改动里用 `pnpm lint:ratchet:update`
+重写基线。CI static lane 用同一次 Biome 扫描检查 errors 与
+warning/info。基线在 `scripts/lint-baseline.json`：总数 + 逐 rule 计数（信息诊断
+单独计数，不静默丢弃；决策已记录在文件内）。`lint:ratchet:update` 拒绝任何上调——
+基线只可能下降。
 
 Before a PR, run:
 
@@ -196,13 +198,11 @@ pnpm lint
 pnpm audit:schema
 pnpm audit:partition
 pnpm audit:api-client
-pnpm audit:api-client-usage
 pnpm audit:capability-boundaries
 pnpm audit:provider-lanes
 pnpm audit:profile
 pnpm audit:task-census
 pnpm audit:draft-status
-pnpm audit:draft-status-reads
 pnpm build
 ```
 
@@ -212,11 +212,15 @@ the unit/DB lanes; only verified docs-only changes skip them. Each lane computes
 `vitest.shared.ts`, and `audit:partition` rejects missing, duplicate or unassigned
 files and direct unmocked DB imports in unit files. The audit lanes run exactly the
 commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition,
-question-writers, API-contract, API-client, API-client-usage, tool-params,
+question-writers, API-contract, API-client, tool-params,
 capability-boundary, architecture-deepening, profile, learner-copy, no-learning-styles,
-structured-judge, test-policy, task-census, draft-status, strict draft-status-read, strict
-flags, hub-sync-writers, provider-attempt-truth and model-source.
-`audit:provider-lanes` is a local-only census and is not in CI.
+structured-judge, test-policy, task-census, draft-status (insert and pool-read), strict
+flags, hub-sync-writers, provider-lanes, model-source, advisory-locks, relations and
+mastery-provenance.
+`audit:provider-lanes` checks lane wiring and attempt-truth (wrapper, legacy cost, zero-cost)
+and runs in the policy audit lane.
+`audit:relations` runs in that same lane as the default report-only command; dead edges and stale declarations do not fail the step.
+`audit:mastery-provenance` runs in that same lane as the default report-only command; unguarded reads and stale tracked paths do not fail the step (`--strict` stays out of CI).
 The build lane injects secret canaries into the build environment, scans
 both SPA and Start browser artifacts, and verifies frontdoor token/exemptions via
 an isolated listener. The parity lane runs `cargo test` plus the native/WASM/JS
@@ -224,8 +228,8 @@ parity suites with `REQUIRE_RUST_PARITY=1` for every code change, main push,
 manual full invocation and unknown/invalid base. Only an explicit successful docs-only
 plan may skip work. Missing planner output selects work, and planner failure fails the
 lane. The
-plan lives in `scripts/ci/gate-plan.mjs`. The explicit local audit commands
-remain useful for clear attribution, but they do not replace the GitHub gate.
+plan lives in `scripts/ci/gate-plan.mjs`. Local audit commands help with clear
+attribution; the GitHub gate is authoritative.
 
 ### Test admission
 
@@ -240,13 +244,14 @@ it('rejects a stale answer write', async () => { /* real write and rejection ass
 
 Categories are `data`, `grading`, `concurrency`, `security`, and `crisis`, matching
 the five classes in AGENTS.md. Formatting-only changes and deletions do not require new
-declarations. Existing cases are inherited, not retroactively certified.
+declarations. Existing cases are inherited without retroactive certification.
 
-The check enforces explicit admission and reports the exact registration. It cannot decide
-whether the claim is true. Independent review must trace the named defect to the assertion;
-use a scoped mutation or known failure when that relationship is uncertain. Delete a case
-whose only outcome is a UI shape, config/DTO shape, helper call, or implementation mirror.
-Do not label one of those cases as an invariant to satisfy the check.
+The check enforces explicit admission and reports the exact registration; whether the
+claim is true is for review to judge. Independent review must trace the named defect to
+the assertion; use a scoped mutation or known failure when that relationship is
+uncertain. Delete a case whose only outcome is a UI shape, config/DTO shape, helper
+call, or implementation mirror. Do not label one of those cases as an invariant to
+satisfy the check.
 
 No fine-grained tests (owner 2026-10-11). The five invariants decide *whether* a test is
 needed; this rule decides *where it enters*. An invariant carried by a helper is tested through
@@ -254,14 +259,20 @@ the nearest real boundary or its module's public entry, not the helper itself. R
 are a route, job, DB transaction (including lock/CAS/idempotency primitives exercised on real
 Postgres), the settlement/grading chain, an agent tool contract, or a deterministic core
 module's public entry (functions exported from the module index; TS↔Rust parity suites count).
-One case per invariant; a table-driven case counts as one. Add a branch or boundary case only
+One case per invariant; a table-driven case counts as one. Test each behavior once at its
+nearest real boundary; do not keep both a unit and a DB version of the same behavior — once
+the DB case proves it, delete the unit version. Before adding a case, first look for existing
+cases to merge or delete; when behavior changes, update or delete the stale tests in the same
+PR. Add a branch or boundary case only
 when removing it would let a specific defect through that no other case catches, and name that
 defect in `@fails-if`. Reject internal-helper tests, parameter permutations over the same path,
 and assertions on mock interactions or call counts. Mock only external dependencies (provider,
 network, clock, blob storage); DB-backed invariants belong in the DB lane on real Postgres.
-When a PR adds more test lines (fixtures included) than production lines (non-test files under
-`src/`, `server/`, `web/`, `scripts/`, plus migration SQL), its description must justify each
-invariant. This is a justification trigger, not a hard cap; delete what cannot be justified.
+When a PR adds new test lines (fixtures included), they target roughly 10% of new production
+lines (non-test files under `src/`, `server/`, `web/`, `scripts/`, plus migration SQL); beyond
+that budget the PR description must justify each invariant. This is a justification trigger,
+not a hard cap; delete what cannot be justified. Test names and comments state the behavior —
+no ticket numbers, review rounds, or status markers such as `UNRUN`/`prepared`.
 
 Locally the base is `git merge-base HEAD origin/main`; use
 `pnpm audit:test-policy --base <commit>` to reproduce a CI comparison. CI fetches history

@@ -15,6 +15,7 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
+import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { ApiError } from '@/kernel/http';
 import {
   type BoundReviewAnswer,
@@ -23,7 +24,6 @@ import {
   type ReviewAnswerAttachment,
   ReviewAnswerAttachmentSchema,
 } from '@/kernel/tools/review-answer';
-import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from '../api/contracts';
 import { normalizeReviewSubmitActivityRef } from './activity-ref';
 import { recordAssistanceExposure } from './assessment/assistance';

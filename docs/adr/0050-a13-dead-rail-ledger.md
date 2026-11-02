@@ -117,8 +117,7 @@ score 时间排序，两条时间轴不得互相覆盖。
 `MISCONCEPTION_HARD_CONFIRM_ENABLED` 继续默认 OFF，理由不是 defer 问责，而是两条
 仍未满足的诚实门：当前 Judge 没有明确 `target_error_match`，且 soft→hard 必须
 owner 当刻新确认。nightly caller 强制 `ownerFreshlyConfirmed=false`，所以即使 flag
-误开也不能执行 hard mutation；它只能看到 `EMERGING`。不得把普通答错冒充
-M-diagnostic，也不得把后台 job 冒充 owner 确认。flag ledger 已同步为 live caller。
+误开也不能执行 hard mutation；它只能看到 `EMERGING`。普通答错计为普通作答证据，后台 job 计为后台来源证据。flag ledger 已同步为 live caller。
 
 ---
 
@@ -154,7 +153,7 @@ real-observation/canary gate 通过后才允许 flip。
 
 - 全仓零代码命中（`planning_panel` / `planning-panel` 仅出现在 design/planning/audit **文档**里）。
 - 运行时拓扑是**既决约束**：single-director + 至多一名条件性侦察兵（anti-swarm）。约束点：`docs/design/2026-07-06-yuk572-agent-meeting-lane-spec.md` §0.C（深度封顶为真结构性）、`src/ai/registry.ts:1853` director prompt 内「【anti-swarm】你是单一决策者 + 至多一名条件性侦察兵」、`src/server/agency/scout/scout-agent.unit.test.ts`（AgentDefinition 结构性 pin：scout 无 `Task`）。
-- 2026-06-18 的 fan-out panel 规格（`docs/superpowers/specs/2026-06-18-jiaoyantuan-deliberative-panel-design.md`）与之冲突；`docs/audit/2026-07-16-drift.md` 已记该冲突。
+- 2026-06-18 的 fan-out panel 规格（`docs/archive/superpowers/specs/2026-06-18-jiaoyantuan-deliberative-panel-design.md`）与之冲突；`docs/audit/2026-07-16-drift.md` 已记该冲突。
 
 ### 裁定：**owner 2026-07-30 — 要审议能力，但不建独立 Planning Panel。**
 

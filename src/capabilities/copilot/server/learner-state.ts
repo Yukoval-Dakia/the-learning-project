@@ -17,6 +17,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { A5_BANDS, masteryBandView } from '@/core/mastery-band';
+import type { LearnerJudgmentBatch } from '@/core/schema/learner-judgment';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
@@ -28,22 +29,15 @@ import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-go
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
-import {
-  type MasteryProjection,
-  getMasteryProjection,
-} from '@/kernel/read-models/mastery-projection';
+import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
+import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
 import {
   LEARNER_STATE_HEADER_BUDGET,
   type LearnerStateHeaderBudget,
   PROPOSAL_FEEDBACK_BUDGET,
 } from '@/kernel/tools/budgets';
-import { type CopilotSummary, loadCopilotSummary } from '@/server/today/copilot-summary';
-import {
-  type LoadTodayOvernightDigest,
-  OVERNIGHT_HANDOFF_UNAVAILABLE,
-  formatOvernightHandoffSentence,
-  loadTodayOvernightDigest,
-} from '@/server/today/overnight-digest';
+import { type CopilotSummary, loadCopilotSummary } from './copilot-summary';
+import { type LoadTodayOvernightDigest, readOvernightHandoffSentence } from './overnight-handoff';
 
 type DbLike = Db | Tx;
 
@@ -80,6 +74,7 @@ export interface LearnerStateProjection {
   topCauseCategories: string[];
   masterySummary: string | null;
   meanTheta: number | null;
+  judgmentSentence?: string | null;
   overnightSentence: string | null;
 }
 
@@ -161,6 +156,7 @@ export function assembleLearnerStateHeaderMd(
     const theta = p.meanTheta === null ? '' : `（θ̂≈${p.meanTheta.toFixed(1)}）`;
     lines.push(`掌握度：${p.masterySummary}${theta}`);
   }
+  if (p.judgmentSentence) lines.push(p.judgmentSentence);
   if (p.overnightSentence) lines.push(`昨夜交班：${p.overnightSentence}`);
   const md = lines.join('\n');
   return md.length > budget.maxChars ? md.slice(0, budget.maxChars) : md;
@@ -236,6 +232,79 @@ function summarizeMastery(proj: Map<string, MasteryProjection>): {
   return { masterySummary: parts.join(' '), meanTheta };
 }
 
+function summarizeJudgment(batch: LearnerJudgmentBatch): {
+  masterySummary: string | null;
+  meanTheta: number | null;
+  judgmentSentence: string;
+} {
+  const observed = new Map<string, MasteryProjection>();
+  let lowObserved = false;
+  let insufficient = false;
+  let notEvaluable = false;
+  let unavailable = false;
+  let growing = false;
+  let undated = false;
+  let unknownRetention = false;
+  let divergentCount = 0;
+  const readingEngines = new Set<string>();
+  for (const item of batch.items) {
+    switch (item.ability_claim.kind) {
+      case 'low_observed':
+        lowObserved = true;
+        if (item.ability.kind === 'available')
+          observed.set(item.knowledge_id, item.ability.reading);
+        break;
+      case 'observed':
+        if (item.ability.kind === 'available')
+          observed.set(item.knowledge_id, item.ability.reading);
+        break;
+      case 'insufficient_evidence':
+        insufficient = true;
+        break;
+      case 'not_evaluable':
+        notEvaluable = true;
+        break;
+      case 'unavailable':
+        unavailable = true;
+        break;
+    }
+    const age = item.uncertainty.evidence_age;
+    if (age.kind === 'dated' && age.growing) growing = true;
+    if (age.kind === 'undated') undated = true;
+    if (
+      item.retention.kind === 'unknown' ||
+      (typeof item.retention.reading !== 'number' && item.retention.reading.kind === 'unknown')
+    ) {
+      unknownRetention = true;
+    }
+    if (item.retention.kind === 'available') readingEngines.add(item.retention.engine);
+    if (item.uncertainty.component_disagreement.kind === 'divergence_observed') divergentCount += 1;
+  }
+  const engineName =
+    readingEngines.size !== 1 || readingEngines.has('unknown')
+      ? '实际引擎混合或未知'
+      : readingEngines.has('fsrs')
+        ? 'FSRS'
+        : '候选遗忘引擎';
+  return {
+    ...summarizeMastery(observed),
+    judgmentSentence: [
+      `共用判断 ${batch.version}：尚未个人校准。`,
+      lowObserved ? '有本人作答落在低掌握一侧（不会），这不是证据不足。' : '',
+      insufficient ? '有知识点还不知道你会不会，不能当成不会或未训练。' : '',
+      notEvaluable ? '有节点不评掌握，不计入会不会。' : '',
+      unavailable ? '掌握读取失败，不能当成不会或不知道。' : '',
+      growing ? '有作答已变旧，不确定在增大；这不是新的预测区间。' : '',
+      undated ? '有作答缺少时间，不能判断不确定是否在增大。' : '',
+      unknownRetention
+        ? `保持：同范围存在未知项（${engineName}），不能据此断言记得或忘了。`
+        : `保持：同范围现役读数可用（${engineName}），尚不能据此声称已校准或保持良好。`,
+      divergentCount > 0 ? `读数分歧：${divergentCount} 项会做与保持两读数背离。` : '',
+      '只作文字解读，不向学习者新增预测数字。',
+    ].join(''),
+  };
+}
+
 /** IO dependencies for the projection read. */
 export interface ReadProjectionDeps {
   loadCopilotSummaryFn?: (db: DbLike) => Promise<CopilotSummary>;
@@ -250,7 +319,7 @@ export async function readLearnerStateProjection(
   deps: ReadProjectionDeps = {},
 ): Promise<LearnerStateProjection> {
   const loadSummary = deps.loadCopilotSummaryFn ?? ((d: DbLike) => loadCopilotSummary(d));
-  const loadOvernightDigest = deps.loadOvernightDigestFn ?? loadTodayOvernightDigest;
+  const loadOvernightDigest = deps.loadOvernightDigestFn;
   // Resolved read: the default is only invoked with the outer Db (call site below);
   // the DbLike dep shape stays for fakes, hence the narrow cast.
   const loadGoals =
@@ -258,19 +327,8 @@ export async function readLearnerStateProjection(
   const loadFailures =
     deps.getFailureAttemptsFn ??
     ((d: DbLike) => getFailureAttempts(d, { limit: FAILURE_SCAN_LIMIT }));
-  const loadMastery =
-    deps.getMasteryProjectionFn ??
-    ((d: DbLike, ids: string[]) => getMasteryProjection(d as Db, ids));
 
-  const overnightSentencePromise = loadOvernightDigest(db)
-    .then(formatOvernightHandoffSentence)
-    .catch((err) => {
-      console.warn('[learner-state] overnight_digest_unavailable', {
-        event: 'overnight_digest_unavailable',
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return OVERNIGHT_HANDOFF_UNAVAILABLE;
-    });
+  const overnightSentencePromise = readOvernightHandoffSentence(db, loadOvernightDigest);
   const [summary, goals, failures, overnightSentence] = await Promise.all([
     loadSummary(db),
     loadGoals(db),
@@ -283,9 +341,14 @@ export async function readLearnerStateProjection(
   const scopeKcs = activeGoal?.scope_knowledge_ids ?? [];
   let masterySummary: string | null = null;
   let meanTheta: number | null = null;
+  let judgmentSentence: string | null = null;
   if (scopeKcs.length > 0) {
-    const proj = await loadMastery(db, scopeKcs);
-    ({ masterySummary, meanTheta } = summarizeMastery(proj));
+    const judgment = await readLearnerJudgments(
+      db,
+      { knowledge_ids: scopeKcs, context: 'any', as_of: new Date() },
+      { getMasteryProjectionFn: deps.getMasteryProjectionFn },
+    );
+    ({ masterySummary, meanTheta, judgmentSentence } = summarizeJudgment(judgment));
   }
 
   return {
@@ -294,6 +357,7 @@ export async function readLearnerStateProjection(
     topCauseCategories,
     masterySummary,
     meanTheta,
+    judgmentSentence,
     overnightSentence,
   };
 }

@@ -1,9 +1,8 @@
 import type { TokenCounts } from './pricing';
 
 /**
- * USD for estimated tokens using the same pi catalog card that prices a
- * finished run's `usage.cost`. Xiaomi Token Plan entries are copies of the
- * xiaomi card, so they resolve there. No card → null, never a fabricated 0.
+ * USD for estimated tokens using the same pi catalog card that prices a finished
+ * run. Token Plan entries copy the xiaomi card. No card → null, never a fake 0.
  */
 export async function piCatalogCostUsd(
   provider: string,

@@ -4,9 +4,11 @@
 // event → ContextBudgetTracker + propose-cap beforeExecute gate + interceptInput throttle on a
 // piDomainMount → runAgentTask with the `hard+1` summary-turn budgetOverride → inbox after-diff →
 // per-new-row hook → `experimental:<surface>_scan` success/failure events → rethrow. Surface
-// differences stay in the spec: actor_ref, payload slots, TodayPlan extras, note-refine fan-out.
+// differences stay in the spec: actor_ref, payload slots, TodayPlan extras, note-refresh signal.
 
 import { createId } from '@paralleldrive/cuid2';
+import { type BuildMcpServerOptions, piDomainMount } from '@/ai/pi-tool-mount';
+import type { RunTaskResult } from '@/ai/task-result';
 import type { Db } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { type ProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
@@ -18,12 +20,11 @@ import {
 } from '@/kernel/tools/allowlists';
 import type { ContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
-import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import type { BuildMcpServerOptions, ToolExecutionGateInput } from '@/server/ai/tools/mcp-bridge';
-import { piDomainMount } from '@/server/ai/tools/pi-tools';
+import type { ToolExecutionGateInput } from '@/kernel/tools/types';
+import { type RunAgentTaskCtx, runAgentTask } from '@/server/ai/runner';
 
 /**
- * The inbox row slice the scan diff needs. Only Dreaming's note-refine fan-out reads
+ * The inbox row slice the scan diff needs. Only Dreaming's note-refresh signal reads
  * `kind`/`target`, so both stay optional and each consumer narrows in its own code.
  */
 export type AgencyScanInboxRow = Pick<ProposalInboxRow, 'id' | 'status'> &
@@ -56,6 +57,15 @@ export interface AgencyProposalScanDeps {
   runAgentTaskFn?: AgencyScanRunFn;
 }
 
+/**
+ * Scan-event outcome for the execution-success branch. 'degraded' = the run completed
+ * (no throw, cost accounted) but the surface's domain artifact is invalid — e.g. Coach's
+ * TodayPlan failed to parse. Execution outcome and domain validity stay distinct:
+ * 'failure' stays reserved for execution errors, so watchdog/digest readers filtering
+ * `outcome` never count a silently degraded run as a plain success.
+ */
+export type AgencyScanSuccessOutcome = 'success' | 'degraded';
+
 export interface AgencyProposalScanSpec {
   /**
    * DomainTool surface — resolves the mount toolNames + MCP allowedTools, names the agent
@@ -86,22 +96,25 @@ export interface AgencyProposalScanSpec {
   /**
    * Scan-success payload extras computed from the task result and the built runner input —
    * the SAME object passed to runAgentTask, so facts computed in prepareInput reach the
-   * payload without a second read.
+   * payload without a second read. May stamp `outcome: 'degraded'` when the surface's
+   * domain artifact is invalid; the key is lifted onto the event envelope, not the payload.
    */
   buildScanSuccessPayloadExtras?: (
     taskResult: AgencyScanRunResult,
     input: unknown,
-  ) => Record<string, unknown>;
+  ) => Record<string, unknown> & { outcome?: AgencyScanSuccessOutcome };
   /** Extra scan-failure payload fields (Coach stamps `run_kind`). */
   extraScanFailurePayload?: Record<string, unknown>;
   /**
-   * Runs between the after-diff and the scan-success write — Dreaming's note_update →
-   * note-refine enqueue fan-out. Receives only the NEW rows.
+   * Runs between the after-diff and the scan-success write — Dreaming turns new
+   * note_update rows into refresh events. Receives only the NEW rows and the
+   * scan's event writer.
    */
   onNewProposalRows?: (args: {
     db: Db;
     newRows: AgencyScanInboxRow[];
     triggerEventId: string;
+    writeEventFn: NonNullable<AgencyProposalScanDeps['writeEventFn']>;
   }) => Promise<void>;
 }
 
@@ -194,7 +207,10 @@ export async function runAgencyProposalScan(
     const pendingAfter = afterRows.filter((row) => row.status === 'pending').length;
     const newRows = afterRows.filter((row) => !beforeIds.has(row.id));
     const proposalsCreated = newRows.length;
-    await spec.onNewProposalRows?.({ db, newRows, triggerEventId });
+    await spec.onNewProposalRows?.({ db, newRows, triggerEventId, writeEventFn: write });
+
+    const { outcome: scanOutcome, ...payloadExtras } =
+      spec.buildScanSuccessPayloadExtras?.(taskResult, input) ?? {};
 
     await write(db, {
       id: `${spec.surface}_scan_${createId()}`,
@@ -203,12 +219,14 @@ export async function runAgencyProposalScan(
       action: `experimental:${spec.surface}_scan`,
       subject_kind: 'query',
       subject_id: triggerEventId,
-      outcome: 'success',
+      // 'degraded' = execution completed but the surface's domain artifact is invalid;
+      // the extras' `outcome` key is lifted here and never reaches the payload.
+      outcome: scanOutcome ?? 'success',
       payload: {
         proposals_created: proposalsCreated,
         pending_after: pendingAfter,
         tool_context_task_run_id: toolContextTaskRunId,
-        ...spec.buildScanSuccessPayloadExtras?.(taskResult, input),
+        ...payloadExtras,
       },
       caused_by_event_id: triggerEventId,
       task_run_id: taskResult.task_run_id,

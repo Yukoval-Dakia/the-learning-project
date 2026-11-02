@@ -35,23 +35,25 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { OpaqueJsonInput } from '@/kernel/tools/types';
-import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
-import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
+import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
 import {
   applyScoringEditPlan,
   draftDocumentToContract,
   revisionToDraftDocument,
-} from '@/server/questions/draft-contract';
+} from '@/kernel/records/question-draft-contract';
+import { OpaqueJsonInput } from '@/kernel/tools/types';
+import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
+import {
+  type InvalidatedScope,
+  computeInvalidatedScope,
+  relevantChangesForOps,
+} from '@/server/questions/draft-edit-impact';
 import {
   type AppliedChange,
   EditOp,
   type EditOpT,
-  type InvalidatedScope,
   type OpIssue,
   applyEditOps,
-  computeInvalidatedScope,
-  relevantChangesForOps,
 } from '@/server/questions/draft-ops';
 
 // ====================================================================
@@ -80,7 +82,6 @@ import {
 const DRAFT_SAVE_ACTION = 'experimental:question_draft_save';
 const DRAFT_PROBE_ACTION = 'experimental:question_draft_probe';
 const DRAFT_EDIT_ACTION = 'experimental:edit_question_block_structured';
-const DRAFT_SESSION_PREFIX = 'draft:';
 
 /**
  * expected_revision 输入：`qrev1:<id>:<digest12>` bank ref 或裸 revision id。
@@ -230,6 +231,7 @@ export type EditQuestionResult =
   | { status: 'proposed'; proposal_id: string; draft_ref?: string; changes: AppliedChange[] };
 
 interface EditContext {
+  beforeWrite?: (tx: Tx) => Promise<void>;
   actorRef: string;
   actorKind: 'agent' | 'user' | 'system';
   taskRunId?: string;
@@ -491,46 +493,6 @@ async function ensureDraftForQuestion(
   return { seed: doc, importedQuestionId: questionId };
 }
 
-async function createDraftBlock(
-  tx: Tx,
-  params: {
-    doc: QuestionDraftDocumentT;
-    importedQuestionId: string | null;
-    ctx: EditContext;
-    /** 这次保存已经是终态时直接铸这个版本，避免同事务再写一条编辑事件。 */
-    version?: number;
-  },
-): Promise<BlockRow> {
-  const now = params.ctx.now ?? new Date();
-  const blockId = createId();
-  const [row] = await tx
-    .insert(question_block)
-    .values({
-      id: blockId,
-      ingestion_session_id: `${DRAFT_SESSION_PREFIX}${params.ctx.actorRef}`,
-      source_document_id: null,
-      source_asset_ids: [],
-      page_spans: [],
-      ordinal: 0,
-      structured: params.doc as unknown as StructuredQuestionT,
-      figures: [],
-      status: 'draft',
-      imported_question_id: params.importedQuestionId,
-      created_at: now,
-      updated_at: now,
-      version: params.version ?? 0,
-    })
-    .returning();
-  await writeQuestionBlockCreateEvent(tx, {
-    row,
-    origin: 'edit_draft',
-    actorKind: params.ctx.actorKind === 'system' ? 'system' : params.ctx.actorKind,
-    actorRef: params.ctx.actorRef,
-    now,
-  });
-  return row;
-}
-
 /**
  * YUK-1568 — save 的完整事务内核（可信 InTx 入口）。承载原 saveDraftEdit
  * 的全部业务：请求形状校验、advisory request 锁、回执重放/复用冲突、
@@ -544,6 +506,7 @@ export async function saveDraftEditInTx(
   params: SaveDraftParams,
 ): Promise<EditQuestionResult> {
   const { input, ctx } = params;
+  await ctx.beforeWrite?.(tx);
   const requestId = input.request_id;
   if (requestId == null || requestId.length === 0) {
     return {
@@ -783,14 +746,22 @@ export async function saveDraftEditInTx(
     // 还没有行：终态直接铸成 create 快照。不再同事务写编辑事件。
     let fresh = false;
     if (block == null) {
-      block = await createDraftBlock(tx, {
-        doc: docAfter,
-        importedQuestionId,
-        ctx: txCtx,
-        version: 1,
-      });
+      const draftNow = txCtx.now ?? new Date();
+      const blockId = createId();
+      block = await persistCapturedQuestionBlock(
+        tx,
+        {
+          origin: 'edit_draft',
+          blockId,
+          doc: docAfter,
+          importedQuestionId,
+          actorKind: txCtx.actorKind,
+          actorRef: txCtx.actorRef,
+          version: 1,
+        },
+        draftNow,
+      );
       fresh = true;
-      await projectQuestionBlockGuarded(tx, block.id);
     }
 
     const issues = publishIssues(docAfter, groupId ?? `draft-${block.id}`, currentRevisionRow);

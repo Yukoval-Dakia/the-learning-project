@@ -10,6 +10,7 @@ export {
   ReviewAnswerAttachmentSchema,
 } from '@/kernel/tools/review-answer';
 export { IssueAssessmentBodySchema } from './api/assessment-contracts';
+export { embedQuestionTextForIngest } from './jobs/embed_backfill';
 export type { QuizGenJobData } from './jobs/quiz_gen';
 export { runQuestionAdmissionChecks } from './server/admission/checks';
 // Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
@@ -17,7 +18,6 @@ export { runQuestionAdmissionChecks } from './server/admission/checks';
 export { issueAssessment } from './server/assessment/issue';
 export { projectIssuanceResult } from './server/assessment/issue-response';
 export { getIssuanceState, saveResponseDraft, saveSubmission } from './server/assessment/submit';
-
 export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
 export {
   type CalibrationSampleDispatch,
@@ -26,7 +26,6 @@ export {
 // practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
-
 export { scheduleReview } from './server/fsrs';
 export {
   DEFAULT_MAX_PER_RUN,
@@ -52,15 +51,16 @@ export {
   itemPriorMemberRequestSchema,
   readItemPriorPgBossDelivery,
 } from './server/item-prior-paid-effect-adapter';
-export type { FrontierResolution } from './server/learnable-frontier';
-export { isMasteredForFrontier } from './server/learnable-frontier';
 export { validateLearningContent } from './server/learning-content-validation';
 export { isLiveQuestionReference } from './server/live-question-reference';
 // The seed-root anchor regex is owned by placement-scope but consumed from server/*;
 // re-export it here so consumers stay on the public seam.
 export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
-
-export { claimHttpSourceDuplicate } from './server/question-supply/ingest-dedup';
+export {
+  claimHttpSourceDuplicate,
+  findVectorNearDuplicate,
+  vectorNearHoldMetadata,
+} from './server/question-supply/ingest-dedup';
 export {
   DEDUP_OVERLAP_THRESHOLD,
   maxNgramOverlap,
@@ -78,14 +78,35 @@ export {
   parseHintTurn,
 } from './server/solve-session';
 export type { PracticeTaskRunFn } from './server/task-runtime';
+export {
+  type EnqueueVerifyFn,
+  VERIFY_DISPATCH_COMPLETE_ACTION,
+  VERIFY_DISPATCH_INTENT_ACTION,
+  VERIFY_DISPATCH_VERSION,
+  dispatchPendingVerifyIntents,
+  recoverOrphanVerifyDispatches,
+  writeVerifyDispatchIntent,
+} from './server/verify-dispatch-outbox';
 export const queryReviewDue: typeof import('./server/due-list').queryReviewDue = async (...args) =>
   (await import('./server/due-list')).queryReviewDue(...args);
-// Coach's nightly daily-plan inputs share the practice due queue and
-// measured question pace.
-export const resolveDailyReviewPlanInputs: typeof import('./server/daily-review-plan').resolveDailyReviewPlanInputs =
-  async (...args) =>
-    (await import('./server/daily-review-plan')).resolveDailyReviewPlanInputs(...args);
-export type { DailyReviewPlanInputs } from './server/daily-review-plan';
+// Binds practice's due queue, minute budget and measured pace into the kernel
+// plan projection. Coach calls the kernel reader; it does not import this module.
+export async function installDailyReviewPlanFacts(): Promise<void> {
+  const [{ installDailyReviewPlanFactReader }, { readDailyReviewPlanFacts }] = await Promise.all([
+    import('@/kernel/read-models/daily-review-plan'),
+    import('./server/daily-review-plan'),
+  ]);
+  installDailyReviewPlanFactReader(readDailyReviewPlanFacts);
+}
+
+export async function installInterventionAuthorStages(): Promise<void> {
+  const [{ installInterventionAuthorStages: install }, { interventionAuthorStages }] =
+    await Promise.all([
+      import('@/kernel/records/intervention-package-author'),
+      import('./server/intervention-author'),
+    ]);
+  install(interventionAuthorStages);
+}
 
 type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;
 export const handleReviewDue: HandleReviewDue = async (...args) => {
@@ -163,10 +184,6 @@ export {
 } from './server/judge';
 export { withdrawCapturedOccurrence } from './server/judge/evaluate-submission';
 export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
-export {
-  rewriteLearningItemKnowledgeIds,
-  rewriteQuestionKnowledgeIds,
-} from './server/merge-attribution';
 export { submitPaperSlot } from './server/paper-submit';
 
 export type {
@@ -327,9 +344,42 @@ export const transitionPlacementSession: typeof import('./server/session-operati
 
 export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
 export { CreatePlacementSessionBodySchema } from './api/placement-contracts';
+export { enablePracticeDraft, forceEnablePracticeDraft } from './server/draft-promotion-operations';
 export { readPaperList } from './server/papers-list';
+export { readQuestionDetail } from './server/question-detail-read';
+export { readPracticeQuestionList } from './server/question-list-read';
+export {
+  archivePracticeQuestion,
+  restorePracticeQuestion,
+  updatePracticeQuestion,
+} from './server/question-write-operations';
+export { runPracticeServingAction } from './server/serving-action-operation';
 export { releaseHeldPlacement } from './server/session-operations/placement-held-release';
 export { selectNextPlacementQuestion } from './server/session-operations/placement-next';
+export {
+  getPracticeStream,
+  recomposePracticeStream,
+  updatePracticeStreamItem,
+} from './server/stream-operations';
 export const startPlacementProbe: typeof import('./server/session-operations/placement-session').startPlacementProbe =
   async (...args) =>
     (await import('./server/session-operations/placement-session')).startPlacementProbe(...args);
+
+export { CreateReviewSessionBody } from './api/contracts';
+export { previewReviewAdvice } from './server/advice-operation';
+export { createPracticeAppeal } from './server/appeal-operation';
+export { revealFrozenStudyReference } from './server/assessment/study-context';
+export { readPracticeDraftList } from './server/draft-list-read';
+export { readDraftReviewDetail } from './server/draft-review';
+export { getPaperDetail } from './server/paper-detail';
+export { createPracticePaperSubmission } from './server/paper-submission-operation';
+export {
+  PlacementOrphanStateError,
+  abandonOrphanPlacementTx,
+} from './server/placement-session-lifecycle';
+export { abandonOrphanReviewSession } from './server/review-session-lifecycle';
+export {
+  createReviewSession,
+  transitionReviewSession,
+} from './server/session-operations/review-session';
+export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';

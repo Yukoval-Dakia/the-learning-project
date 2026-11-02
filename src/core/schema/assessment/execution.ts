@@ -2,21 +2,17 @@ import { z } from 'zod';
 
 import type { ScoringBasisT, ScoringUnitCriterionT } from './scoring';
 
-// ====================================================================
-// YUK-1046 — 五层模型 · 第四层：执行计划（grounding §4.3、§5.3）
-// ====================================================================
-//
 // 运行时【发布 plan】是评分语义权威：哪个执行器判哪些 scoring unit。
 // profile 配置只是未来规划的默认值来源，不得静默覆盖已发题 plan。
 // 服务可因模态/故障/低置信【升级执行器】（escalation），但绝不修改给分规则
 // —— 给分规则只存在于 ScoringBasis，升级只换执行器。
 //
-// 执行器纪律（§4.1/§4.2/§5.3）：
+// 执行器纪律：
 //   - deterministic：保留确定性比较能力（exact V2 的集合/文本比较、
 //     mathjs 数值/单位检查），固定梯度数值政策降级为历史，不做新题默认；
 //   - model_executor：仅当该能力切片按 D17 准入后才可用于发题（admitted_slice
 //     引用准入证据）；“声明了但实际没有 runner”的假能力不保留（fail-closed）；
-//   - human_review：显式人工 / D9 手动路径（带 provenance，仅手动学习效应）。
+//   - human_review：显式人工 / 手动路径（带 provenance，仅手动学习效应）。
 
 /**
  * 确定性比较器 id（保留的确定性能力子集；新历史政策不当默认）。

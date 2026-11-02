@@ -5,35 +5,13 @@
 // (needs_review / failed + reason). actor='user' marks the verify event as
 // owner-driven. Auth is enforced upstream by the /api/* internal-token middleware.
 
-import { verifyAndPromote } from '@/capabilities/practice/server/quiz/verify-and-promote';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/kernel/http';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { errorResponse } from '@/kernel/http';
+import { enablePracticeDraft } from '../server/draft-promotion-operations';
 
-export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+export async function POST(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const id = (params.id ?? '').trim();
-    if (!id) {
-      throw new ApiError('validation_error', 'question id is required', 400);
-    }
-
-    const result = await verifyAndPromote({
-      db,
-      questionId: id,
-      runTaskFn: makeRunTaskFn(db),
-      actor: { kind: 'user', ref: 'self' },
-    });
-
-    if (result.status === 'skipped:not_found') {
-      throw new ApiError('not_found', `question ${id} not found`, 404);
-    }
-
-    return Response.json({
-      promoted: result.promoted,
-      status: result.status,
-      verify_event_id: result.verifyEventId ?? null,
-      reason: result.reason ?? null,
-    });
+    return Response.json(await enablePracticeDraft(db, params));
   } catch (err) {
     return errorResponse(err);
   }

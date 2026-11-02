@@ -20,7 +20,7 @@ interface ReferenceAnswerSource {
   choices_md: string[] | null;
 }
 
-// the question's declared answer for solve-check comparison. solution-generate.ts
+// the question's declared answer for solve-check comparison. reference-solution.ts
 // writes the STRUCTURED final answer to rubric_json.reference_solution.final_answer
 // (+ answer_equivalents) while reference_md holds the full worked solution prose.
 // Comparing an exact solver answer against an entire worked solution would falsely

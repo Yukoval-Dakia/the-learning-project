@@ -134,7 +134,7 @@ function extractImagePath(line: string): string | null {
 // `media/<name>` form the manifest + persist stage key on.
 //
 // Exported so the route's pathToAssetId map keys go through the SAME
-// normalization as segmentMarkdown's imagePaths lookup (coderabbit-b): the two
+// normalization as segmentMarkdown's imagePaths lookup: the two
 // sides must agree regardless of what raw path form a future converter emits.
 export function normalizeMediaPath(raw: string): string {
   const idx = raw.lastIndexOf('media/');
@@ -155,7 +155,6 @@ export function segmentMarkdown(input: SegmentInput): SegmentedBlock[] {
   const md = normalizeHtmlImageTags(normalizeMathDelimiters(input.markdown));
   const lines = md.split('\n');
 
-  // Build the tiny-image deny set from the manifest (§3.4 微小尺寸).
   const tinyPaths = new Set(
     input.media
       .filter((m) => m.width != null && m.height != null && (m.width < 50 || m.height < 50))

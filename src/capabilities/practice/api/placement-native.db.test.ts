@@ -27,8 +27,6 @@ import {
   question,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { Placement } from '@/server/session';
-
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { publishPlacementFixture } from '../../../../tests/fixtures/assessment-placement';
 import { seedHistoricalAssessmentIssuance } from '../../../../tests/fixtures/historical-assessment-issuance';
@@ -44,6 +42,7 @@ import { createRecordedModelExecutor } from '../server/judge/recorded-model-exec
 import { fenceJudgeUnitClaim } from '../server/judge-operational';
 import { readJudgeRunPermanent } from '../server/judge-run-observation';
 import type { NativeJudgeRunJobData } from '../server/judge-run-payload';
+import * as Placement from '../server/placement-session-lifecycle';
 import { placementStarterIdentity } from '../server/question-supply/placement-starter-identity';
 import { readPlacementStarterOutcomes } from '../server/question-supply/placement-starter-outcome-reader';
 import { materializePlacementStartersForGoal } from '../server/question-supply/placement-starter-store';

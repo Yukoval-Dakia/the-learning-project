@@ -99,7 +99,12 @@ export function CompanionPanel({
 
   const CloseIcon = layout === 'side' ? PanelRightClose : X;
   return (
-    <UiNextRoot ref={attachVisit} className="un-cp-root" data-layout={layout}>
+    <UiNextRoot
+      ref={attachVisit}
+      className="un-cp-root"
+      data-un-m3e="companion-content"
+      data-layout={layout}
+    >
       {layout === 'sheet' ? (
         <button
           type="button"

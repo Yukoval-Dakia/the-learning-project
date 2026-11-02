@@ -24,7 +24,6 @@ import { defineCapability } from '@/kernel/manifest';
 import { nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 
-// Knowledge capability: tree, node page, edges, proposals and review reads.
 export const knowledgeCapability = defineCapability({
   name: 'knowledge',
   description:
@@ -186,10 +185,7 @@ export const knowledgeCapability = defineCapability({
     ],
   },
   jobs: {
-    // This declaration is the single ownership source; registration collects it.
     handlers: [
-      // Node proposal was removed: KC creation is content-driven, not triggered by a
-      // wrong answer. Failures feed cause/mastery instead.
       {
         // Propose-only topology producer. No real upstream, which is why it is a root.
         name: 'knowledge_edge_propose_nightly',
@@ -202,8 +198,7 @@ export const knowledgeCapability = defineCapability({
           ),
       },
       {
-        // Propose-only bootstrap for an empty frontier. The old pre-compose slot was a
-        // clock coincidence: proposals do not affect compose until a human accepts.
+        // Propose-only bootstrap for an empty frontier.
         name: 'frontier_fill_nightly',
         dependsOn: [],
         eligibility: nightlyEligibility('structure', { respectPendingCap: true }),
@@ -316,7 +311,6 @@ export const knowledgeCapability = defineCapability({
       { kind: 'archive' },
     ],
   },
-  // Four graph readers and two proposal writers.
   copilotTools: {
     tools: [
       {

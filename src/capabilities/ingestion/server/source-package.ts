@@ -1,10 +1,11 @@
 import { eq, inArray } from 'drizzle-orm';
 
-import type { Db } from '@/db/client';
-import { learning_session, source_asset, source_document } from '@/db/schema';
+import type { Db, Tx } from '@/db/client';
+import { source_asset, source_document } from '@/db/schema';
+import type { R2Client } from '@/kernel/object-storage';
+import type { SourceAssetRow } from '@/kernel/records/asset-store';
 import { persistSourceAsset, sha256Hex } from '@/kernel/records/asset-store';
 import type { PdfPageText } from './pdf-text';
-import type { R2Client, SourceAssetRow } from './persist-image-asset';
 
 // Unified source package for one ingestion session.
 //
@@ -272,7 +273,7 @@ export function pdfPageImageProvenance(stamp: PdfPackageDraftStamp): Record<stri
 
 // ---------- materialize (session create / docx attach) ----------
 
-async function loadPackageAssets(db: Db, assetIds: string[]): Promise<SourceAssetRow[]> {
+async function loadPackageAssets(db: Db | Tx, assetIds: string[]): Promise<SourceAssetRow[]> {
   if (assetIds.length === 0) return [];
   const rows = await db.select().from(source_asset).where(inArray(source_asset.id, assetIds));
   const byId = new Map(rows.map((r) => [r.id, r]));
@@ -298,7 +299,7 @@ function draftStamp(row: SourceAssetRow): PdfPackageDraftStamp | null {
  * otherwise 'images'. Word documents use attachWordSourcePackage.
  */
 export async function materializeSourcePackage(
-  db: Db,
+  db: Db | Tx,
   sourceDocumentId: string,
 ): Promise<SourcePackageV1 | null> {
   const [doc] = await db
@@ -620,62 +621,4 @@ export async function attachWordSourcePackage(
     .set({ body_md: bodyMd, provenance, updated_at: new Date() })
     .where(eq(source_document.id, input.sourceDocumentId));
   return pkg;
-}
-
-/**
- * A package failure must not leave a session orphaned: pre-output sessions are
- * marked failed, while sessions with extracted output are never downgraded and the
- * error is recorded on document provenance instead.
- */
-export async function markSessionPackageFailed(
-  db: Db,
-  sessionId: string,
-  err: unknown,
-): Promise<'kept_extracted' | 'marked_failed' | 'missing'> {
-  const msg = err instanceof Error ? err.message : String(err);
-  const [session] = await db
-    .select({
-      status: learning_session.status,
-      source_document_id: learning_session.source_document_id,
-    })
-    .from(learning_session)
-    .where(eq(learning_session.id, sessionId))
-    .limit(1);
-  if (!session) return 'missing';
-  // Extracted output must not be downgraded: record the attach failure on document
-  // provenance and still propagate the original error.
-  if (['extracted', 'partial', 'reviewed', 'imported'].includes(session.status)) {
-    if (session.source_document_id) {
-      try {
-        const [doc] = await db
-          .select({ provenance: source_document.provenance })
-          .from(source_document)
-          .where(eq(source_document.id, session.source_document_id))
-          .limit(1);
-        await db
-          .update(source_document)
-          .set({
-            provenance: {
-              ...((doc?.provenance as Record<string, unknown> | null) ?? {}),
-              source_package_attach_error: msg.slice(0, 500),
-            },
-          })
-          .where(eq(source_document.id, session.source_document_id));
-      } catch {
-        // Best-effort marker; the attach error still propagates.
-      }
-    }
-    return 'kept_extracted';
-  }
-  // No extracted output yet: mark failed so it is not orphaned. Materialization
-  // sits outside the session guard, so the route writes this transition.
-  await db
-    .update(learning_session)
-    .set({
-      status: 'failed',
-      error_message: `source_package: ${msg.slice(0, 500)}`,
-      updated_at: new Date(),
-    })
-    .where(eq(learning_session.id, sessionId));
-  return 'marked_failed';
 }

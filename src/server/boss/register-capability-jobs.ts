@@ -17,7 +17,11 @@ import {
 } from '@/server/boss/queue-config';
 import { fenceAwareJobHandler } from '@/server/contract-epoch';
 import { startDurableWorker } from '@/server/durable/prune-worker';
-import { loadNightlyContext, noteEligibilitySkip } from '@/server/orchestration/nightly-signals';
+import {
+  eligibilitySkipOutput,
+  loadNightlyContext,
+  noteEligibilitySkip,
+} from '@/server/orchestration/nightly-signals';
 
 function withScheduledEligibility(
   db: Db,
@@ -25,14 +29,16 @@ function withScheduledEligibility(
   handler: ReturnType<JobHandlerFactory>,
 ): ReturnType<JobHandlerFactory> {
   const decide = decl.schedule ? decl.eligibility : undefined;
-  if (!decide) return handler;
+  const before = decl.schedule ? decl.beforeEligibility : undefined;
+  if (!decide && !before) return handler;
   return async (jobs) => {
-    const decision = decide(
-      (await loadNightlyContext(db, new Date(), [decl.name])).forJob(decl.name),
-    );
+    if (before) await before(db);
+    if (!decide) return handler(jobs);
+    const signals = (await loadNightlyContext(db, new Date(), [decl.name])).forJob(decl.name);
+    const decision = decide(signals);
     if (!decision.run) {
       noteEligibilitySkip(decl.name, decision);
-      return;
+      return eligibilitySkipOutput(decl.name, signals, decision);
     }
     return handler(jobs);
   };
@@ -101,12 +107,39 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   }
 }
 
+const COACH_JOBS = new Set(['coach_daily', 'coach_weekly']);
+
+// Coach reads the kernel plan projection. Practice owns the due/budget/pace
+// facts and binds them here, before any coach handler is mounted. Kernel
+// read-models cannot import that capability.
+async function installCoachDailyReviewPlan(capabilities: CapabilityManifest[]): Promise<void> {
+  const coaches = capabilities.some((capability) =>
+    (capability.jobs?.handlers ?? []).some((handler) => COACH_JOBS.has(handler.name)),
+  );
+  if (!coaches) return;
+  const { installDailyReviewPlanFacts } = await import('@/capabilities/practice/public');
+  await installDailyReviewPlanFacts();
+}
+
+// prepare_intervention runs the kernel author sequence. Practice owns the paid
+// author and review stages and binds them here, before that handler can run.
+async function installPrepareInterventionAuthor(capabilities: CapabilityManifest[]): Promise<void> {
+  const prepares = capabilities.some((capability) =>
+    (capability.jobs?.handlers ?? []).some((handler) => handler.name === 'prepare_intervention'),
+  );
+  if (!prepares) return;
+  const { installInterventionAuthorStages } = await import('@/capabilities/practice/public');
+  await installInterventionAuthorStages();
+}
+
 /** Called after registerHandlers. Chain targets in that book must already exist. */
 export async function registerCapabilityJobs(
   boss: PgBoss,
   db: Db,
   capabilities: CapabilityManifest[],
 ): Promise<void> {
+  await installCoachDailyReviewPlan(capabilities);
+  await installPrepareInterventionAuthor(capabilities);
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
     .filter((d) => d.load || d.backend === 'dbos');

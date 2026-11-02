@@ -3,15 +3,26 @@
 // in the job.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, gte, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
+import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
-import { applyNotePatch, filterMissingNotePatchTargets } from '@/core/blocks/apply-note-patch';
-import { type NotePatchT, countNewBlocks, summarizeNotePatch } from '@/core/schema/note-patch';
+import {
+  NoteRefineApplyError,
+  applyNotePatch,
+  filterMissingNotePatchTargets,
+} from '@/core/blocks/apply-note-patch';
+import {
+  type NotePatchOpT,
+  type NotePatchT,
+  countNewBlocks,
+  summarizeNotePatch,
+} from '@/core/schema/note-patch';
 import type { Db, Tx } from '@/db/client';
 import { artifact, event } from '@/db/schema';
+import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
-import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from './note-ai-provenance';
+import { noteBlockSource } from '../shared/note-block-source';
 
 type DbLike = Db | Tx;
 
@@ -56,24 +67,49 @@ export interface PersistNoteRefineApplyResult {
   skipped_ops?: number;
 }
 
-export interface NoteRefineChangeRow {
-  event_id: string;
-  artifact_id: string;
-  created_at: Date;
-  actor_ref: string;
-  ops_count: number;
-  new_blocks: number;
-  previous_artifact_version: number;
-  next_artifact_version: number;
-  undone: boolean;
-}
-
 function noteRefineReversePatch(bodyBlocks: unknown, previousArtifactVersion: number) {
   return {
     kind: 'restore_body_blocks' as const,
     body_blocks: bodyBlocks,
     artifact_version: previousArtifactVersion,
   };
+}
+
+// Blocks that never read a source mirror. Pure reference blocks render from
+// their own attrs (title / prompt preview) — same exclusion as
+// materializeGeneratedBodyBlocks — and autoLinksContainer is the server-built
+// hub auto-zone container (hub-auto-zone.ts) whose readers walk its children;
+// the model is told never to emit either kind.
+const MIRROR_EXEMPT_BLOCK_TYPES = new Set([
+  'crossLinkBlock',
+  'artifactRefBlock',
+  'questionRefBlock',
+  'autoLinksContainer',
+]);
+
+/**
+ * The reader renders attrs.source_markdown, but the model never authors it: the
+ * mirror is derived from each op block's content before it can enter the tree,
+ * so an applied block can never read as empty.
+ */
+function withDerivedSourceMirror(patch: NotePatchT): NotePatchT {
+  const derive = (op: NotePatchOpT): NotePatchOpT => {
+    if (!('block' in op) || MIRROR_EXEMPT_BLOCK_TYPES.has(String(op.block.type))) return op;
+    try {
+      const block = op.block as Record<string, unknown>;
+      const attrs = { ...(block.attrs as Record<string, unknown> | undefined) };
+      attrs.source_markdown = noteBlockSource(block);
+      return { ...op, block: { ...block, attrs } };
+    } catch (err) {
+      throw new NoteRefineApplyError(
+        'invalid_body_blocks',
+        `applyNotePatch: ${op.kind} block has no derivable source mirror: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  };
+  return { ops: patch.ops.map(derive) };
 }
 
 /**
@@ -89,6 +125,9 @@ export async function persistNoteRefineApply(
   if (patch.ops.length === 0) {
     return { status: 'skipped:empty_patch', artifact_id: artifactId };
   }
+  // Derived before any apply so the event payload records the exact ops that
+  // entered the tree — the projection replay stays identical.
+  const mirroredPatch = withDerivedSourceMirror(patch);
 
   const runInTx = async (tx: Tx): Promise<PersistNoteRefineApplyResult> => {
     const rows = await tx
@@ -120,13 +159,13 @@ export async function persistNoteRefineApply(
     const filtered =
       actorRef === NOTE_REFINE_ACCEPT_ACTOR
         ? {
-            patch,
-            body_blocks: applyNotePatch(row.body_blocks, patch, {
+            patch: mirroredPatch,
+            body_blocks: applyNotePatch(row.body_blocks, mirroredPatch, {
               enforceUserVerifiedGuard: false,
             }),
             skipped_ops: 0,
           }
-        : filterMissingNotePatchTargets(row.body_blocks, patch);
+        : filterMissingNotePatchTargets(row.body_blocks, mirroredPatch);
     if (filtered.patch.ops.length === 0) {
       return {
         status: 'skipped:target_not_found' as const,
@@ -208,57 +247,6 @@ export async function persistNoteRefineApply(
     return runInTx(db as Tx);
   }
   return (db as Db).transaction(runInTx);
-}
-
-function toNumber(value: unknown, fallback = 0): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-}
-
-export async function listNoteRefineChanges(
-  db: DbLike,
-  opts: { artifactId?: string; since?: Date; limit?: number } = {},
-): Promise<NoteRefineChangeRow[]> {
-  const conditions = [eq(event.action, 'experimental:note_refine_apply')];
-  if (opts.artifactId) conditions.push(eq(event.subject_id, opts.artifactId));
-  if (opts.since) conditions.push(gte(event.created_at, opts.since));
-  const query = db
-    .select()
-    .from(event)
-    .where(and(...conditions))
-    .orderBy(desc(event.created_at), desc(event.id));
-  const rows = opts.limit === undefined ? await query : await query.limit(opts.limit);
-  const applyEventIds = rows.map((row) => row.id);
-  const undoRows =
-    applyEventIds.length === 0
-      ? []
-      : await db
-          .select()
-          .from(event)
-          .where(
-            and(
-              eq(event.action, 'experimental:note_refine_undo'),
-              inArray(event.caused_by_event_id, applyEventIds),
-            ),
-          );
-  const undoneIds = new Set(
-    undoRows
-      .map((row) => (row.payload as { undone_event_id?: unknown }).undone_event_id)
-      .filter((id): id is string => typeof id === 'string'),
-  );
-  return rows.map((row) => {
-    const payload = row.payload as Record<string, unknown>;
-    return {
-      event_id: row.id,
-      artifact_id: row.subject_id,
-      created_at: row.created_at,
-      actor_ref: row.actor_ref,
-      ops_count: toNumber(payload.ops_count),
-      new_blocks: toNumber(payload.new_blocks),
-      previous_artifact_version: toNumber(payload.previous_artifact_version),
-      next_artifact_version: toNumber(payload.next_artifact_version),
-      undone: undoneIds.has(row.id),
-    };
-  });
 }
 
 // Accepts Db | Tx so a retract can run the undo inside its own transaction; the

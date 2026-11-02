@@ -6,16 +6,13 @@ import {
 import type { SubjectProfile } from '@/subjects/profile';
 import { parseTaskOutput } from './parse-output';
 
-// YUK-361 Phase 3 Step B (Task 8 L2, ADR-0042 编排档2 amendment) —
-// SelectionOrchestratorTask prompt. 档2 的 LLM **主脑**：对每个**非到期**候选输出
-// { weight≥0, role, arrangement?, reason }。persona = D14 单人格编排者。
+// SelectionOrchestratorTask (ADR-0042 编排档2) — the LLM 主脑 over non-due
+// candidates: emits { weight≥0, role, arrangement?, reason } per candidate.
 //
-// signal-fidelity（ADR-0042:68）：输入信号是**分桶**的（high/mid/low），不是原始浮点
-// （LLM 对浮点不敏感）——prompt 据此教 LLM 综合多维信号加权，而非读数。真实数值由
-// Step C 的 sampler 兜 π_i，prompt 只塑造相对权重。
-//
-// 范围铁律（ADR-0042:58）：到期项相对序 + presence 是 L1 确定性契约，**不交给 LLM**。
-// 本 task 只编排非到期候选——到期项根本不在输入里，prompt 明确禁止 LLM 触碰/重排它们。
+// Signals are bucketed (high/mid/low), not raw floats, because the model is not
+// float-sensitive; the Step C sampler still owns π_i, the prompt only shapes
+// relative weights. Due-order + presence stay deterministic L1 and never reach
+// the LLM.
 function buildSelectionOrchestratorPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}的学习编排者（单人格主脑），负责决定今天**非到期**候选题/卷里：选哪些值得现在练、怎么排、为什么。一次处理一批候选。
 科目上下文：${profile.displayName}。${profile.languageStyle}

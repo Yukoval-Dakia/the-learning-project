@@ -6,6 +6,7 @@ import {
   type IngestionExtractionProgressPayloadT,
   writeExtractionProgress,
 } from '@/capabilities/ingestion/server/events/extraction-progress';
+import { dispatchExtractionFollowUps } from '@/capabilities/ingestion/server/extraction-follow-up';
 import {
   assignFigures,
   assignFiguresFromVlm,
@@ -33,6 +34,7 @@ import {
   executeTencentOcrSubmit,
   extractionPageOperationId,
 } from '@/capabilities/ingestion/server/provider-attempts';
+import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import {
   type StructureResult,
   StructureTaskError,
@@ -50,19 +52,13 @@ import {
   type LayoutQuality,
   parseMarkAgentResponse,
 } from '@/capabilities/ingestion/server/tencent_mark_parser';
-import {
-  AUTO_ENROLL_SINGLETON_SECONDS,
-  autoEnrollJobEnabled,
-} from '@/capabilities/ingestion/server/workflow-judge-config';
 import { getConfig } from '@/core/config/store';
 import type { FigureRefT } from '@/core/schema/structured_question';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset } from '@/db/schema';
+import type { R2Client } from '@/kernel/object-storage';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
-import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
-import type { R2Client } from '@/server/r2';
-import { Ingestion } from '@/server/session';
 
 // ---------- helpers ----------
 
@@ -230,8 +226,8 @@ async function processOneOcrJob(
   const engine: 'glm' | 'tencent' =
     deps.engine ?? (getConfig('EXTRACT_OCR_ENGINE') === 'tencent' ? 'tencent' : 'glm');
 
-  // 1. Load the session and all assets; the VLM sees every page so it can assemble
-  //    cross-page questions.
+  // Load the session and all assets; the VLM sees every page so it can assemble
+  // cross-page questions.
   const sessionRows = await deps.db
     .select()
     .from(learning_session)
@@ -271,7 +267,6 @@ async function processOneOcrJob(
     assetById.set(id, asset);
   }
 
-  // 2. markExtractionStarted
   await deps.db.transaction((tx) => Ingestion.markExtractionStarted(tx, sessionId));
   await emitOperationEventSafely(deps.db, operationId, 'operation.running', {
     pg_boss_job_id: bossJobId,
@@ -285,9 +280,9 @@ async function processOneOcrJob(
     const sourceDocumentId = session.source_document_id ?? '';
     const warnings: string[] = [];
 
-    // 3-9. Per page: download, measure, OCR, parse, crop figures. OCR supplies text
-    //      and figure boxes; its structure is only a hint. Both engines feed the
-    //      same accumulators so the VLM layer below stays engine-agnostic.
+    // Per page: download, measure, OCR, parse, crop figures. OCR supplies text
+    // and figure boxes; its structure is only a hint. Both engines feed the
+    // same accumulators so the VLM layer below stays engine-agnostic.
     const pageImages: Array<{ data: string; mediaType: string }> = [];
     // Tencent path: per-page demoted structure → hint. GLM path: per-page markdown.
     const tencentPages: Array<{
@@ -423,10 +418,10 @@ async function processOneOcrJob(
       { stage: 'structure' },
     );
 
-    // 10. VLM StructureTask: all page images plus the OCR hint produce the cross-page
-    //     tree. If the VLM fails, fall back to the engine's OCR structure so an outage
-    //     never hard-fails extraction. On the fallback, only OCR containment binds
-    //     figures because there are no VLM assignments.
+    // VLM StructureTask: all page images plus the OCR hint produce the cross-page
+    // tree. If the VLM fails, fall back to the engine's OCR structure so an outage
+    // never hard-fails extraction. On the fallback, only OCR containment binds
+    // figures because there are no VLM assignments.
     let ocrHintMd: string;
     let ocrFallbackQuestions: ReturnType<typeof parseMarkAgentResponse>['questions'];
     // Carries the GLM fallback warning into the fallback structure; empty on the
@@ -491,7 +486,7 @@ async function processOneOcrJob(
     }
     warnings.push(...structure.warnings);
 
-    // 11. Bind only evidenced ownership; ambiguous crops stay source assets.
+    // Bind only evidenced ownership; ambiguous crops stay source assets.
     let figureRefs: FigureRefT[];
     if (allPreFigures.length === 0) {
       figureRefs = [];
@@ -511,10 +506,10 @@ async function processOneOcrJob(
       }
     }
 
-    // 12. One question_block per top-level question; a cross-page stem is one block.
-    //     VLM and GLM fallback carry real page indices, while the Tencent fallback
-    //     deliberately keeps page_index=0 so block assembly stays semantic-only.
-    //     Out-of-range page indices are hallucinated: clamp to 0 and warn.
+    // One question_block per top-level question; a cross-page stem is one block.
+    // VLM and GLM fallback carry real page indices, while the Tencent fallback
+    // deliberately keeps page_index=0 so block assembly stays semantic-only.
+    // Out-of-range page indices are hallucinated: clamp to 0 and warn.
     const pageCount = assetIds.length;
     const blocks = structure.questions.map((q) => {
       const useQuestionPageIndex = usedVlmPath || engine === 'glm';
@@ -575,38 +570,7 @@ async function processOneOcrJob(
       return result;
     });
 
-    // Paid modes are opt-in. Enqueue failures are logged, never fatal to a
-    // committed extraction; the dedicated auto_enroll queue isolates its failures,
-    // and the extraction state guard means this hook fires once.
-    if (autoEnrollJobEnabled(process.env)) {
-      try {
-        const { getStartedBoss } = await import('@/server/boss/client');
-        const boss = await getStartedBoss();
-        // singletonSeconds is required: a bare singletonKey is a no-op on a
-        // standard-policy queue. This only reduces duplicates; the per-block FOR
-        // UPDATE claim is the structural guard.
-        await boss.send(
-          'auto_enroll',
-          { sessionId },
-          { singletonKey: sessionId, singletonSeconds: AUTO_ENROLL_SINGLETON_SECONDS },
-        );
-      } catch (err) {
-        console.error('[tencent_ocr_extract] failed to enqueue auto_enroll', err);
-      }
-    }
-
-    // Post-commit, observe-only nudge evaluation. Isolated from auto_enroll so
-    // neither enqueue failure masks the other or fails the extraction.
-    try {
-      const { getStartedBoss } = await import('@/server/boss/client');
-      const boss = await getStartedBoss();
-      await boss.send(COPILOT_NUDGE_EVALUATE_QUEUE, {
-        kind: 'ingestion_complete',
-        session_id: sessionId,
-      });
-    } catch (err) {
-      console.error('[tencent_ocr_extract] failed to enqueue copilot_nudge_evaluate', err);
-    }
+    await dispatchExtractionFollowUps(sessionId, 'tencent_ocr_extract');
 
     await emitOperationEventSafely(deps.db, operationId, 'operation.completed', {
       result: { session_id: sessionId, status: extractionResult.status },

@@ -17,7 +17,7 @@ import {
   misconception_edge,
   question,
 } from '@/db/schema';
-import { gatherAndFoldLearningItem } from '@/server/projections/gather';
+import { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
 import { learningItemLiveRowToSnapshot } from '@/server/projections/parity';
 import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb } from '../../../../tests/helpers/db';

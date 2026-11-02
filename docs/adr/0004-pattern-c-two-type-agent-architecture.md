@@ -6,10 +6,8 @@
 **状态**：accepted（product shape 部分被 supersede，见下方 2026-06-04 update note）
 **日期**：2026-05-15
 
-> **2026-06-04 product-shape supersede（U0 / YUK-203 U3 / YUK-205）**：本 ADR 的**产品形态**——"两类 agent = Backend Purpose + User Copilot"——被
-> [agent-framework-design spec（AF，2026-06-04 U0 修订）](../superpowers/specs/2026-06-04-agent-framework-design.md)
-> supersede：新形态是**一个用户面全能 Copilot + 三个后台专职 agent（Coach 规划 / Dreaming 综合 / Maintenance 维护）+ 窄任务**，各 agent 的 objective 速查见
-> [docs/agents/objectives.md](../agents/objectives.md)。本 ADR 下文仍把 Coach/Dreaming/Maintenance 笼统归为"后端目的型一类"、并把 Copilot 描述成侧边栏 orchestrator，这些**产品描述已过时**，以 AF spec 为准。
+> **2026-06-04 product-shape supersede（U0 / YUK-203 U3 / YUK-205；2026-10-28 起由 [ADR-0076](./0076-agent-framework-product-shape.md) 正式承接）**：本 ADR 的**产品形态**——"两类 agent = Backend Purpose + User Copilot"——被 AF（原 spec `docs/archive/superpowers/specs/2026-06-04-agent-framework-design.md`）supersede，现行出处为 ADR-0076：**一个用户面全能 Copilot + 三个后台专职 agent（Coach 规划 / Dreaming 综合 / Maintenance 维护）+ 窄任务**，各 agent 的 objective 速查见
+> [docs/agents/objectives.md](../agents/objectives.md)。本 ADR 下文仍把 Coach/Dreaming/Maintenance 笼统归为"后端目的型一类"、并把 Copilot 描述成侧边栏 orchestrator，这些**产品描述已过时**，以 ADR-0076 为准。
 > 同步裁决簇记录于 [ADR-0029](./0029-review-engine-lands-on-existing-primitives.md)。
 > **2026-06-04 的 runner/tooling 保留范围（历史记录，执行机制现已替代）**：不自建 tool-calling loop、用 Claude Agent SDK query loop、Provider Manager / Task Model Selector、`TaskDef.allowedTools` + 审计表镜像、proposal-only 破坏性操作原则（正主 [ADR-0025 ND-5](./0025-north-star-goal-entity-and-coach-coexistence.md)）——是当时的实现记录；当前执行机制已由上方 ADR-0065 注记替代。
 
@@ -27,7 +25,7 @@
 
 - Provider Manager / Task Model Selector
 - `TaskDef.allowedTools`
-- Domain Tool Registry（计划中；当前只有 `KnowledgeReviewTask` 的本地 in-process MCP tool，见 `docs/superpowers/specs/2026-05-17-agent-context-tools-design.md`）
+- Domain Tool Registry（计划中；当前只有 `KnowledgeReviewTask` 的本地 in-process MCP tool，见 `docs/archive/superpowers/specs/2026-05-17-agent-context-tools-design.md`）
 - `tool_call_log` / `cost_ledger` / `event` mirror
 
 ### Provider Manager (`src/server/ai/providers.ts`)

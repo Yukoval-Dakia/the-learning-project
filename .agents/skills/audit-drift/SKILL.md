@@ -1,6 +1,6 @@
 ---
 name: audit-drift
-description: 检测 ADR / planning-doc ↔ 代码实现之间的漂移。支持交互与定时调用；交互报告写 docs/audit/，定时调用只收口到 Linear，不开分支/PR。配套 schema 漂移由 pnpm audit:schema 管。Use when user says "audit drift", "看漂移", "/audit-drift", or asks if code matches docs.
+description: 检测 ADR / planning-doc ↔ 代码实现之间的漂移。支持交互与定时调用；交互报告写 /Volumes/YukovalSBak/yukoval-projects/tlp-docs/audit/，定时调用只收口到 Linear，不开分支/PR。配套 schema 漂移由 pnpm audit:schema 管。Use when user says "audit drift", "看漂移", "/audit-drift", or asks if code matches docs.
 ---
 
 # Audit Drift
@@ -9,7 +9,7 @@ description: 检测 ADR / planning-doc ↔ 代码实现之间的漂移。支持�
 
 ## 运行模式（先判定）
 
-- **交互模式**：用户在当前会话显式调用。报告写入 `docs/audit/YYYY-MM-DD-drift.md`，后续是否 commit / PR 只按用户明确要求处理。
+- **交互模式**：用户在当前会话显式调用。报告写入 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/audit/YYYY-MM-DD-drift.md`，后续是否 commit / PR 只按用户明确要求处理。
 - **定时模式**：由 timer / automation / unattended loop 调用。报告只保留在本次结果中；**不写仓库、不建分支、不 commit、不建 PR**。有 finding 时执行 Linear closeout gate，空报告不产生任何外部 artifact。
 
 若定时器外层要求“每次写文件并开 PR”，视为与本 skill 冲突：停止该发布步骤并报告需要修改外部调度配置，不能退化为每日孤儿 draft PR。
@@ -21,8 +21,9 @@ description: 检测 ADR / planning-doc ↔ 代码实现之间的漂移。支持�
 读：
 - `docs/adr/*.md`（所有 ADR）
 - `AGENTS.md`（Architecture / Layering / Design principles 三段）
-- `docs/superpowers/plans/*.md`（活跃 plan）
 - `docs/design/*.md`（最近 30 天）
+
+（历史归档 `docs/archive/superpowers/` 已退役，不是活跃决策源，不进扫描输入；溯源见该目录 README。）
 
 抽取每个**可验证的决策点**——能在代码里找到证据的那种。**忽略**纯设计语录、纯前置说明。
 
@@ -45,7 +46,7 @@ description: 检测 ADR / planning-doc ↔ 代码实现之间的漂移。支持�
 
 ### 4. 报告
 
-交互模式写到 `docs/audit/YYYY-MM-DD-drift.md`（用今天日期）；定时模式用同一模板生成会话内结果但不落盘：
+交互模式写到 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/audit/YYYY-MM-DD-drift.md`（用今天日期）；定时模式用同一模板生成会话内结果但不落盘：
 
 ```markdown
 # Drift Audit — YYYY-MM-DD

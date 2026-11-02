@@ -311,8 +311,8 @@ export const PROVIDER_LANES = [
     configuration: {
       endpoint: {
         summary:
-          'resolved model wire baseUrl via nativePiModel — single endpoint literal lives in src/server/ai/opencode-go.ts',
-        source: { path: 'scripts/yuk1547-admission-reopen.ts', calls: ['nativePiModel'] },
+          'resolved model wire baseUrl via executablePiModel — single endpoint literal lives in src/server/ai/opencode-go.ts',
+        source: { path: 'scripts/yuk1547-admission-reopen.ts', calls: ['executablePiModel'] },
       },
       credential: {
         summary: 'resolved lane credential via resolveTaskProvider, never printed',
@@ -525,7 +525,7 @@ export const PROVIDER_LANES = [
         source: {
           path: 'src/server/memory/llm-config.ts',
           contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
-          calls: ['resolveGlobalProviderSwitch', 'nativePiModel', 'resolveModelProfile'],
+          calls: ['resolveGlobalProviderSwitch', 'executablePiModel', 'resolveModelProfile'],
         },
       },
       credential: {
@@ -624,7 +624,7 @@ export const PROVIDER_LANES = [
       },
     },
     evidence: {
-      path: 'src/db/schema.ts',
+      path: 'src/db/schema/artifacts.ts',
       contains: ['misconception_reconciliation_log'],
     },
     attemptSemantics: {
@@ -643,7 +643,7 @@ export const PROVIDER_LANES = [
       fanOut: 'zero live attempts',
       evidence: [
         {
-          path: 'src/db/schema.ts',
+          path: 'src/db/schema/artifacts.ts',
           calls: ['pgTable'],
           contains: ['misconception_reconciliation_log'],
         },
@@ -678,7 +678,7 @@ export const PROVIDER_LANES = [
         source: {
           path: 'src/server/memory/llm-config.ts',
           contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
-          calls: ['resolveGlobalProviderSwitch', 'nativePiModel', 'resolveModelProfile'],
+          calls: ['resolveGlobalProviderSwitch', 'executablePiModel', 'resolveModelProfile'],
         },
       },
       credential: {
@@ -870,6 +870,7 @@ export const PROVIDER_LANES = [
       { path: 'src/server/memory/reconcile-store.ts', kind: 'type' },
       { path: 'src/server/memory/search-memories.ts', kind: 'type' },
       { path: 'src/server/memory/triggers.ts', kind: 'runtime' },
+      { path: 'src/server/memory/purpose-repair.ts', kind: 'runtime' },
     ],
     roles: ['api', 'worker'],
     provider: 'Mem0 OSS with product-pinned completions LLM and dedicated DashScope embeddings',
@@ -1157,6 +1158,12 @@ export const PROVIDER_LANES = [
       // root) projects the stored check's auth label for the panel and reads
       // nothing else. Read-only: it sends nothing.
       { path: 'src/server/config/custom-providers-hydrate.ts', kind: 'runtime' },
+      // YUK-1563 QA AC3 — the admin config facts source reads the credential
+      // fingerprint (never the value) to bind stored receipts to the current
+      // key; the auth verdict projection lives in provider-auth-status.ts and
+      // type-imports the check shape only. Read-only: neither sends anything.
+      { path: 'src/server/config/admin-config-facts.ts', kind: 'runtime' },
+      { path: 'src/server/ai/provider-auth-status.ts', kind: 'type' },
     ],
     roles: ['api', 'worker'],
     provider:

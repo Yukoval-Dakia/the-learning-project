@@ -23,8 +23,8 @@ import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { checkRateLimit, refundRateLimit } from '@/kernel/request-rate-limit';
 import { observeBossJob } from '@/server/boss/job-observation';
-import { checkRateLimit, refundRateLimit } from '@/server/http/rate-limit';
 import { JUDGE_RUN_QUEUE } from './judge-durable-config';
 import {
   type JudgeLegacySender,

@@ -449,7 +449,7 @@ Task 工具调用**不经** mcp-bridge（那是 in-process MCP 工具的 wrapper
 - 创建 `src/server/agency/scout/{evidence-mcp,report-findings,scout-agent}.ts` + 单/db 测。
 - `runner.ts` §2 三字段透传 seam + 回归锚测。
 - `notes.ts`：`AgentNoteTarget` 加 `'research_meeting'` + `excludeSourceKinds`——**本 PR 独占此改动**（终裁，Lens B #8：scout spec §6 集成已被取代、其独立集成 PR 不复存在；若 YUK-560 形态复活则依赖本片）。
-- **零 runtime 消费者——诚实标注（Lens B #8）：PR-1 是不可运行的脚手架**。其 gate 绿只证明「不破坏既有」（负向锚：seam 三字段 OMITTED 时 Options 字节等价）+ 装配纯逻辑正确；`agents` 的**正向**传递（真 spawn）到 PR-2 dev 的 E-1..E-4 才首次被验证——不得把 PR-1 gate 绿表述为「独立验证通过」。gate：typecheck/lint/test/build 绿，seam 零回归。
+- **零 runtime 消费者——诚实标注（Lens B #8）：PR-1 是不可运行的脚手架**。其 gate 绿只证明「不破坏既有」（负向锚：seam 三字段 OMITTED 时 Options 字节等价）+ 装配纯逻辑正确；`agents` 的**正向**传递（真 spawn）到 PR-2 dev 的 E-1..E-4 才首次被验证。gate：typecheck/lint/test/build 绿，seam 零回归。
 
 ### PR-2：director job + 工具 + kill switch + schedule（flag OFF dark-ship）
 

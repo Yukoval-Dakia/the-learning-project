@@ -13,7 +13,7 @@ import {
 } from '@/core/schema/assessment';
 import { ai_task_runs, question } from '@/db/schema';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
-import { publishQuestionGroup } from '@/server/questions/publisher';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { seedHistoricalAssessmentIssuance } from '../../../tests/fixtures/historical-assessment-issuance';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {

@@ -35,10 +35,11 @@ export type IngestionStatusT = z.infer<typeof IngestionStatus>;
 
 // review 状态机：started ⇄ paused → completed | abandoned (↳ reopened → started)
 //
-// 'paused' 由 src/server/session/review.ts 写入/读出（pauseReviewSession /
-// resumeReviewSession）；缺了它 LearningSessionStatusByType.parse({type:'review',
-// status:'paused'}) 会抛错（paper attempt session 走 review 状态机，practice
-// 列表读时过 Zod 校验，paused 卷会爆）。
+// 'paused' 由 src/capabilities/practice/server/review-session-lifecycle.ts
+// 写入/读出（pauseReviewSession / resumeReviewSession）；缺了它
+// LearningSessionStatusByType.parse({type:'review', status:'paused'}) 会抛错
+// （paper attempt session 走 review 状态机，practice 列表读时过 Zod 校验，
+// paused 卷会爆）。
 export const ReviewStatus = z.enum(['started', 'paused', 'completed', 'abandoned']);
 export type ReviewStatusT = z.infer<typeof ReviewStatus>;
 
@@ -52,7 +53,7 @@ export type ReviewStatusT = z.infer<typeof ReviewStatus>;
 export const ConversationStatus = z.enum(['active', 'idle', 'ended', 'abandoned']);
 export type ConversationStatusT = z.infer<typeof ConversationStatus>;
 
-// tutor 状态机 (解题陪练 / docs/superpowers/specs/2026-06-01-solve-tutor-design.md §3.1)：
+// tutor 状态机 (解题陪练 / docs/archive/superpowers/specs/2026-06-01-solve-tutor-design.md §3.1)：
 //   active → submitted → judged → ended  (+ abandoned terminal)
 // active   : 会话已开，可请求 hint / 提交作答
 // submitted: 已收到一次作答提交，判分进行中（瞬态，submit 路由内同事务推进到 judged）

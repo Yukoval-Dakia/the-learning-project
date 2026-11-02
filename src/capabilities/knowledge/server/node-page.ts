@@ -8,7 +8,10 @@
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
+import type { MasteryDecayBucket } from '@/core/mastery-freshness';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
+import type { ReviewTimingJson } from '@/core/schema/learner-judgment';
+import type { RetentionReading } from '@/core/schema/scheduling-state';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
 import {
@@ -18,24 +21,24 @@ import {
   resolveOwningLearningItemIds,
 } from '@/kernel/read-models/artifact-backlinks';
 import { getArtifactCorrectionStates } from '@/kernel/read-models/artifact-corrections';
-import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import {
-  getMasteryProjection,
-  getRepresentativeKcBeta,
-} from '@/kernel/read-models/mastery-projection';
+  abilityReadingsByIdOrFail,
+  readLearnerJudgments,
+} from '@/kernel/read-models/learner-judgment';
+import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
+import { getRepresentativeKcBeta } from '@/kernel/read-models/mastery-projection';
 import {
   type NoteSummary,
   interactiveForKnowledge,
   notesForKnowledge,
 } from '@/kernel/read-models/notes-read';
+import { reviewTimingJson } from '@/kernel/read-models/review-timing';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import { type RetentionReading, getFsrsRetrievabilityByIds } from '@/server/fsrs/state';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
 const CROSS_LINK_REF_KIND = 'cross_link';
 const NOTE_ATOMIC_TYPE = 'note_atomic';
 const TIMELINE_LIMIT = 30;
-export type MasteryDecayBucket = 'untrained' | 'fresh' | 'mild' | 'stale' | 'unknown';
 
 export interface NodePagePrimaryAtomic {
   id: string;
@@ -92,6 +95,8 @@ export interface KnowledgeNodePage {
   parent_id: string | null;
   parent_name: string | null;
   effective_domain: string | null;
+  /** YUK-1600 identity role: 'kc' is mastery-evaluable; goal/container faces read 不评掌握. */
+  role: 'kc' | 'goal' | 'container';
   mastery: number | null;
   // Mastery interval and low-confidence flag; cold start is null/null/false.
   mastery_lo: number | null;
@@ -107,7 +112,9 @@ export interface KnowledgeNodePage {
   beta: number | null;
   difficulty_anchored: boolean;
   last_evidence_at: string | null;
+  // 'unknown' when there is no evidenced ability. That is not the untrained label.
   mastery_decay_bucket: MasteryDecayBucket;
+  review_timing: ReviewTimingJson;
   subject_profile: SlimSubjectProfile;
   children: NodePageChild[];
   mesh_neighbors: NodePageMeshNeighbor[];
@@ -119,18 +126,6 @@ export interface KnowledgeNodePage {
   backlinks: NodePageBacklink[];
   backlinks_by_type: BacklinksByArtifactType<NodePageBacklink>;
   timeline: NodePageTimelineEntry[];
-}
-
-/**
- * Batched FSRS retrievability for knowledge ids. A missing map entry means no state
- * row, i.e. unknown retention, not zero. `now` is injectable for deterministic tests.
- */
-export async function loadRetrievabilityMap(
-  db: Db,
-  knowledgeIds: string[],
-  now: Date = new Date(),
-): Promise<Map<string, RetentionReading>> {
-  return getFsrsRetrievabilityByIds(db, 'knowledge', knowledgeIds, now);
 }
 
 /**
@@ -151,6 +146,7 @@ export async function loadKnowledgeNodePage(
       domain: knowledge.domain,
       parent_id: knowledge.parent_id,
       archived_at: knowledge.archived_at,
+      role: knowledge.role,
     })
     .from(knowledge)
     .where(and(eq(knowledge.id, knowledgeId), isNull(knowledge.archived_at)))
@@ -174,7 +170,6 @@ export async function loadKnowledgeNodePage(
     effectiveDomain = await resolveEffectiveDomain(db, node.parent_id);
   }
 
-  // Non-archived children, name-ordered; mastery comes from the same projection.
   const childRows = await db
     .select({
       id: knowledge.id,
@@ -186,10 +181,17 @@ export async function loadKnowledgeNodePage(
 
   // Independent reads: mastery may not exist before an attempt, while a difficulty
   // anchor can. Map presence is the has-anchor bit beta=0 alone cannot express.
-  const [masteryProjection, focalBetaMap] = await Promise.all([
-    getMasteryProjection(db, [node.id, ...childRows.map((c) => c.id)]),
+  // One judgment-contract read carries both mastery-family readings (mastery +
+  // retention) under one snapshot, and owns the YUK-1600 non-kc role gate.
+  const [judgmentBatch, focalBetaMap] = await Promise.all([
+    readLearnerJudgments(db, {
+      knowledge_ids: [node.id, ...childRows.map((c) => c.id)],
+      context: 'any',
+      as_of: new Date(),
+    }),
     getRepresentativeKcBeta(db, [node.id]),
   ]);
+  const masteryProjection = abilityReadingsByIdOrFail(judgmentBatch);
   const nodeMastery = masteryProjection.get(node.id);
   const difficultyAnchored = focalBetaMap.has(node.id);
   const focalBeta = focalBetaMap.get(node.id) ?? nodeMastery?.beta ?? null;
@@ -201,13 +203,19 @@ export async function loadKnowledgeNodePage(
       mastery: masteryProjection.get(row.id)?.mastery ?? null,
     }));
 
-  // Mesh neighbors and focal retrievability are independent reads.
-  const [focalRetrievabilityMap, outEdges, inEdges] = await Promise.all([
-    loadRetrievabilityMap(db, [node.id]),
+  const [outEdges, inEdges] = await Promise.all([
     listKnowledgeEdges(db, { from: knowledgeId }),
     listKnowledgeEdges(db, { to: knowledgeId }),
   ]);
-  const focalRetrievability = focalRetrievabilityMap.get(node.id);
+  // The contract returns an honest unknown retention for a goal/container focal
+  // node; only a number or candidate score reaches the wire below, so the
+  // payload keeps its cold-start null semantics for unreadable retention.
+  const focalRetention = judgmentBatch.items.find(
+    (item) => item.knowledge_id === node.id,
+  )?.retention;
+  const focalReading = focalRetention?.kind === 'available' ? focalRetention.reading : undefined;
+  const focalRetrievability =
+    typeof focalReading === 'number' || focalReading?.kind === 'score' ? focalReading : undefined;
   const neighborIds = Array.from(
     new Set([
       ...outEdges.map((e) => e.to_knowledge_id),
@@ -240,10 +248,8 @@ export async function loadKnowledgeNodePage(
   ];
 
   // Five independent reads run concurrently; backlinks wait for the primary atomic.
-  // Named promises prevent a silent swap between the two NoteSummary results. The
-  // inline builders are executed once and their promises reused.
-  //
-  // The primary atomic is the newest non-archived note_atomic containing this node.
+  // Named promises prevent swapping the two NoteSummary results.
+  // Primary atomic = newest non-archived note_atomic containing this node.
   const atomicPromise = db
     .select({
       id: artifact.id,
@@ -264,7 +270,6 @@ export async function loadKnowledgeNodePage(
     .orderBy(desc(artifact.created_at))
     .limit(1)
     .execute();
-  // Events referencing this node, newest first.
   const timelinePromise = db
     .select({
       event_id: event.id,
@@ -284,7 +289,6 @@ export async function loadKnowledgeNodePage(
   const notesPromise = notesForKnowledge(db, knowledgeId);
   const interactivePromise = interactiveForKnowledge(db, knowledgeId);
   const profilePromise = resolveSubjectProfileForKnowledgeIds(db, [knowledgeId]);
-  // Single rejection point; all five reads are already in flight.
   await Promise.all([
     atomicPromise,
     timelinePromise,
@@ -302,7 +306,6 @@ export async function loadKnowledgeNodePage(
   const backlinks: NodePageBacklink[] = [];
   const atomic = atomicRows[0];
   if (atomic) {
-    // Link through the owning learning item; artifact ids 404 on that route.
     const owningLearningItemForAtomic = await resolveOwningLearningItemIds(db, [atomic.id]);
     primaryAtomic = {
       id: atomic.id,
@@ -362,7 +365,6 @@ export async function loadKnowledgeNodePage(
     }
   }
 
-  // Map rows to the wire shape; they are already newest first.
   const timeline: NodePageTimelineEntry[] = timelineRows.map((r) => ({
     event_id: r.event_id,
     action: r.action,
@@ -372,9 +374,12 @@ export async function loadKnowledgeNodePage(
     created_at: r.created_at.toISOString(),
   }));
 
-  // Absent projection means cold start: no mastery, zero evidence, no last attempt.
+  // A missing evidenced reading is insufficient evidence or a non-evaluable role,
+  // not a cold-start low score. The decay bucket stays unknown, not untrained.
   const nodeEvidenceCount = nodeMastery?.evidence_count ?? 0;
   const nodeLastEvidenceAt = nodeMastery?.last_outcome_at ?? null;
+  const focalJudgment = judgmentBatch.items.find((item) => item.knowledge_id === node.id);
+  if (!focalJudgment) throw new Error(`learner-judgment missing knowledge ${node.id}`);
 
   return {
     id: node.id,
@@ -383,8 +388,9 @@ export async function loadKnowledgeNodePage(
     parent_id: node.parent_id,
     parent_name: parentName,
     effective_domain: effectiveDomain,
+    role: node.role,
     mastery: nodeMastery?.mastery ?? null,
-    // Cold start is null/false; the client maps null mastery to the unknown band.
+    // Null mastery is insufficient evidence, not a prior point treated as low.
     mastery_lo: nodeMastery?.mastery_lo ?? null,
     mastery_hi: nodeMastery?.mastery_hi ?? null,
     low_confidence: nodeMastery?.low_confidence ?? false,
@@ -401,7 +407,8 @@ export async function loadKnowledgeNodePage(
     beta: focalBeta,
     difficulty_anchored: difficultyAnchored,
     last_evidence_at: nodeLastEvidenceAt ? nodeLastEvidenceAt.toISOString() : null,
-    mastery_decay_bucket: masteryDecayBucket(nodeEvidenceCount, nodeLastEvidenceAt),
+    mastery_decay_bucket: focalJudgment.review_timing.freshness.decay_bucket,
+    review_timing: reviewTimingJson(focalJudgment.review_timing),
     subject_profile: toSlimSubjectProfile(profile),
     children,
     mesh_neighbors: meshNeighbors,
@@ -412,19 +419,6 @@ export async function loadKnowledgeNodePage(
     backlinks_by_type: groupBacklinksByArtifactType(backlinks),
     timeline,
   };
-}
-
-export function masteryDecayBucket(
-  evidenceCount: number,
-  lastEvidenceAt: Date | null,
-  now = new Date(),
-): MasteryDecayBucket {
-  if (evidenceCount <= 0) return 'untrained';
-  if (!lastEvidenceAt) return 'unknown';
-  const ageDays = Math.max(0, Math.floor((now.getTime() - lastEvidenceAt.getTime()) / 86_400_000));
-  if (ageDays >= 30) return 'stale';
-  if (ageDays >= 7) return 'mild';
-  return 'fresh';
 }
 
 // Archived and invisible ids are omitted so their chips can be dropped.

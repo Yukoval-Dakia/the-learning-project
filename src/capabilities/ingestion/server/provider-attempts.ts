@@ -175,7 +175,7 @@ export type OcrPageProviderContext = DirectProviderOperationContext;
 export type OcrPageProviderAttemptControl = DirectProviderAttemptControl;
 
 export const GLM_OCR_PROVIDER = 'glm' as const;
-// C1-10: the declared model id lives in the provider catalog
+// The declared model id lives in the provider catalog
 // (src/server/ai/providers.ts); this module only wires it into the lane
 // descriptor below.
 export const GLM_OCR_MODEL = GLM_OCR_MODEL_ID;

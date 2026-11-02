@@ -1,10 +1,13 @@
 import { z } from 'zod';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
+import { ReviewTimingJsonSchema } from '@/core/schema/learner-judgment';
 import { RetentionReadingSchema } from '@/core/schema/scheduling-state';
 import { ApiPageSchema } from '@/kernel/http-contracts';
 import { SubjectProfileSchema } from '@/subjects/profile-schema';
 
 export const KnowledgeIdParamsSchema = z.object({ id: z.string().trim().min(1) });
+
+export const KnowledgeRoleSchema = z.enum(['kc', 'goal', 'container']);
 
 export const KnowledgeTreeNodeSchema = z.object({
   id: z.string(),
@@ -12,6 +15,7 @@ export const KnowledgeTreeNodeSchema = z.object({
   domain: z.string().nullable(),
   parent_id: z.string().nullable(),
   archived_at: z.string().nullable(),
+  role: KnowledgeRoleSchema,
   mastery: z.number().nullable(),
   mastery_lo: z.number().nullable(),
   mastery_hi: z.number().nullable(),
@@ -197,6 +201,7 @@ export const KnowledgeNodePageResponseSchema = z.object({
   parent_id: z.string().nullable(),
   parent_name: z.string().nullable(),
   effective_domain: z.string().nullable(),
+  role: KnowledgeRoleSchema,
   mastery: z.number().nullable(),
   mastery_lo: z.number().nullable(),
   mastery_hi: z.number().nullable(),
@@ -208,6 +213,7 @@ export const KnowledgeNodePageResponseSchema = z.object({
   difficulty_anchored: z.boolean(),
   last_evidence_at: z.string().nullable(),
   mastery_decay_bucket: z.enum(['untrained', 'fresh', 'mild', 'stale', 'unknown']),
+  review_timing: ReviewTimingJsonSchema,
   subject_profile: SubjectProfileSchema.pick({
     id: true,
     displayName: true,

@@ -46,8 +46,8 @@ export function createGenerateQuestionCandidateExecutor(
     const draft = parseQuestionAuthorOutput(result.text);
     const allowedIds = new Set(prepared.input.knowledge_context.map((node) => node.id));
     return {
-      // Canonical task output, with owner-resolved subject and knowledge scope.
-      // No second model call, draft, proposal or duplicated validation manifest.
+      // Canonical task output with owner-resolved subject and knowledge scope: no second
+      // model call, draft, proposal, or duplicated validation manifest.
       text: JSON.stringify({
         ...draft,
         knowledge_ids: draft.knowledge_ids.filter((id) => allowedIds.has(id)),
@@ -68,8 +68,8 @@ const executeGenerateQuestionCandidate = createGenerateQuestionCandidateExecutor
 });
 
 /**
- * Produces a one-shot question candidate only. It intentionally does not use
- * author_question, which remains the distinct retained draft/proposal surface.
+ * Returns a one-shot question candidate only; author_question remains the distinct
+ * retained draft/proposal surface.
  */
 export const generateQuestionCandidateTool: DomainTool<
   GenerateQuestionCandidateInput,

@@ -1,16 +1,13 @@
-// YUK-987 (985/E2) — SupplyPlanTask：供给需求层的 planner agent。
+// SupplyPlanTask — 供给需求层 planner（YUK-987, 985/E2）。
 //
-// 照 ADR-0038 quiz_gen_plan 范式（plan-then-gate）：LLM 只产出需求计划
-// （补哪个知识点、什么题型、多少道、偏好哪条获取路线、为什么），产出的
-// SupplyPlanV1 JSON 由确定性机器门验证（supply-plan-gate.ts：schema +
-// 活 knowledge_id + 词表 + 去重 + 预算声明），通过后计划才生效；拒绝则
-// ≤2 轮有界重生成，仍不过 fail closed（当晚零需求事件，扫描器安全网照常
-// 派发缺口）。执行面（E3 executor）未落地前，需求逐项 emit manual 留痕。
+// 仿 ADR-0038 plan-then-gate：LLM 只产出需求计划（补哪个知识点、什么题型、多少道、
+// 偏好哪条获取路线、为什么）；SupplyPlanV1 由确定性机器门验证（schema、活
+// knowledge_id、词表、去重、预算声明），拒绝则 ≤2 轮有界重生成，仍不过 fail closed
+// （当晚零需求事件，扫描器照常兜底）。E3 executor 未落地前，接受的需求逐项 emit
+// manual 留痕。
 //
-// 读面原则：handler 预装**原始信号**（知识树 + 每 KC 可用题数 + 掌握信号 +
-// 待处理 placement claim + jyeoo 预算余量），不喂扫描器的目标结论——
-// planner 的需求必须独立形成，shadow 对比才有信号价值。agent 另挂只读
-// 知识图谱 DomainTool 用于下钻核实节点（绝不发明 id，机检回查）。
+// Handler 只喂原始信号（知识树、每 KC 可用题数、掌握信号、placement claim、jyeoo
+// 预算），不喂扫描器的结论——planner 的需求必须独立形成，shadow 对比才有信号价值。
 
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { SupplyPlanV1, type SupplyPlanV1T } from '@/core/schema/supply_plan';

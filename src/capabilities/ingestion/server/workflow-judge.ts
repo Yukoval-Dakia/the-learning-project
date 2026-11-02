@@ -24,8 +24,8 @@ export interface RunWorkflowJudgeInput {
    */
   defaultDifficulty?: number;
   /**
-   * Default question_kind for the prefilled question. Slice 3 does not run a
-   * kind classifier (DEFERRED); callers pass the subject's safe default.
+   * Default question_kind for the prefilled question. No kind classifier runs
+   * yet (DEFERRED); callers pass the subject's safe default.
    */
   defaultQuestionKind?: QuestionKindT;
 }
@@ -36,8 +36,7 @@ export interface RunWorkflowJudgeInput {
  *
  * `outcome` is always `'unanswered'` (item/material) — the SAFEST signal: a
  * captured exam question with no graded answer is item-bank, never a fabricated
- * attempt. Grading the handwritten answer to produce success/partial/failure is
- * a separate EnrollTask (spec §3) DEFERRED beyond slice 3.
+ * attempt. Graded student work is enrolled by the capture path, not here.
  */
 export function runWorkflowJudge(input: RunWorkflowJudgeInput): WorkflowJudgeResultT {
   const extraction = clamp01(input.extractionConfidence);

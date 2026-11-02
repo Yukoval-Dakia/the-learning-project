@@ -4,7 +4,8 @@ import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset, source_document } from '@/db/schema';
 
-import { type R2Client, type SourceAssetRow, getR2 } from '../persist-image-asset';
+import type { R2Client } from '@/kernel/object-storage';
+import type { SourceAssetRow } from '@/kernel/records/asset-store';
 import {
   type AssetRefInput,
   loadAssetBytesVerified,
@@ -84,7 +85,7 @@ export function requireIngestionScope(ctx: ToolContext): string {
 }
 
 /**
- * Scope enforcement (inventory §5.1.3): an asset is in scope iff it is a
+ * Scope enforcement: an asset is in scope iff it is a
  * package member or a derived asset whose derived_from chain reaches one (≤6
  * hops). A scope that resolves to no session/document fails CLOSED.
  */
@@ -123,7 +124,7 @@ export async function loadVerifiedAssetBytes(
 }
 
 /**
- * The source_document that owns this asset. Codex 4293474471 — embedded
+ * The source_document that owns this asset. Embedded
  * package media and crop/rotate-derived assets are not in
  * `source_asset_ids`, so the flat membership query reported null. Resolve the
  * way assertAssetInScope does: package membership + derived_from lineage
@@ -168,5 +169,3 @@ export async function findOwningDocument(
     .limit(1);
   return rows[0]?.id ?? null;
 }
-
-export { getR2 };

@@ -3,8 +3,8 @@
 // Strata below the minimum sample size report insufficient data, never a bare ratio.
 // Same-lane samples (where the re-judge lane matches the inferred original) measure
 // self-consistency, so they are excluded from headline and strata and counted apart.
-// Notes state that agreement is not accuracy and that lane inference uses sample-time
-// env, which a mid-window flip can skew.
+// Agreement is not accuracy, and lane inference uses sample-time env, which a mid-window
+// flip can skew.
 //
 // Re-judge runs share a task kind with production runs, so admin runs/cost surfaces
 // still include them; the per-sample task-run id allows later separation.

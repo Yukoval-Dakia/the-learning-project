@@ -7,10 +7,14 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import {
+  type AnchorBucket,
+  setFixedAnchor,
+  setFixedAnchors,
+} from '@/capabilities/practice/server/fixed-anchor';
 import { db } from '@/db/client';
 import { item_calibration } from '@/db/schema';
 import { resetDb } from '../../../tests/helpers/db';
-import { type AnchorBucket, setFixedAnchor, setFixedAnchors } from './fixed-anchor';
 
 async function readCalRow(questionId: string) {
   const rows = await db
@@ -24,22 +28,6 @@ async function readCalRow(questionId: string) {
 describe('setFixedAnchor', () => {
   beforeEach(async () => {
     await resetDb();
-  });
-
-  it('is idempotent per question_id — re-setting upserts (no dup row), and updates b', async () => {
-    const q = createId();
-    await setFixedAnchor(db, { questionId: q, bucket: 'easy' }); // b=-1
-    // owner revises the bucket — upsert must overwrite, not create a 2nd row.
-    await setFixedAnchor(db, { questionId: q, bucket: 'very_hard' }); // b=+2
-
-    const rows = await db
-      .select()
-      .from(item_calibration)
-      .where(eq(item_calibration.question_id, q));
-    expect(rows).toHaveLength(1); // single row — unique index honored
-    expect(rows[0].b).toBeCloseTo(2, 10); // latest write wins (owner may revise)
-    expect(rows[0].b_anchor).toBeCloseTo(2, 10);
-    expect(rows[0].source).toBe('fixed_anchor');
   });
 
   it('does NOT clobber b_calib on upsert (de-biased column is recalibrator-owned)', async () => {

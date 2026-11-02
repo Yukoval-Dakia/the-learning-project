@@ -14,12 +14,12 @@ import {
   isCandidateState,
 } from '@/core/schema/scheduling-state';
 import type { Db, Tx } from '@/db/client';
-import { material_fsrs_state } from '@/db/schema';
 import {
   acquireLearningStateWriteLock,
   acquireSortedAdvisoryLocks,
   withLearningStateLock,
-} from '@/server/advisory-locks';
+} from '@/db/learning-state-lock';
+import { material_fsrs_state } from '@/db/schema';
 import { initialCandidateState, projectCandidateDue } from './candidate';
 import { type RetentionReading, retrievabilityForKc } from './retention';
 

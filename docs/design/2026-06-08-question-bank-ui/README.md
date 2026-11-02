@@ -16,7 +16,7 @@
 mock 用 `stem/options[{key,text}]/answer/knowledge/source/composite/children/passage`；真 API
 （`src/server/questions/list.ts` + `detail.ts`）用 `prompt_md / choices_md:string[] / reference_md /
 labels:[{id,name}] / 派生 source_tier / parent_question_id+part_index`。完整映射表见实施计划
-`docs/superpowers/plans/2026-06-08-yuk288-qbank-ui.md` §4。
+`docs/archive/superpowers/plans/2026-06-08-yuk288-qbank-ui.md` §4。
 
 ## 红线（实测记录）
 

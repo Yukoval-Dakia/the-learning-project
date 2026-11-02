@@ -1,13 +1,12 @@
-// YUK-1049 — Jev typed scoring task (OpenRouter native decisions endpoint).
+// Jev typed scoring task (OpenRouter native decisions endpoint).
 //
-// This is a TYPED task spec (execution:'typed'), not a chat task: the typed
-// runner (src/server/ai/typed-primitive-runner.ts) derives the canonical
-// POST /api/v1/systemone body from the schema-parsed input and parses the
-// response directly — no prompt, no tools, no free-text JSON extraction.
+// Typed spec (execution:'typed'), not a chat task: the typed runner
+// (src/server/ai/typed-primitive-runner.ts) derives the canonical
+// POST /api/v1/systemone body from schema-parsed input and parses the response
+// directly — no prompt, no tools, no free-text JSON extraction.
 //
-// Wire contract lives in src/core/schema/jev-systemone.ts (subject-agnostic
-// transport); this file owns the TASK definition + spec registration only,
-// keeping server→capability import edges at zero (capability-boundaries).
+// Wire contract lives in src/core/schema/jev-systemone.ts; this file owns the
+// task definition + registration only.
 
 import { DEFAULT_TASK_BUDGET, type TaskDefinition, type TypedTaskSpec } from '@/ai/task-spec';
 import { JevScoringDecisionInput, JevSystemOneResponse } from '@/core/schema/jev-systemone';
@@ -26,11 +25,10 @@ export const jevScoringDecisionTaskDefinition = {
   execution: 'typed',
   defaultProvider: 'openrouter',
   defaultModel: 'typesafe/jev-1.13',
-  // Typed lane enforces maxCost itself (reserve-per-unknown-cost-call): the
-  // SDK-era maxBudgetUsd wiring died with Adapter A. One Jev call ≈$0.00002,
-  // worst observed 401ms; timeout/retries sized for the durable funnel, not
-  // the 60s sync route. transientRetries=1 mirrors the durable single-
-  // transient-layer precedent (the queue re-drive is the second layer).
+  // The typed lane enforces maxCost itself (reserve-per-unknown-cost-call). One
+  // Jev call ≈$0.00002, worst observed 401ms; timeout/retries are sized for the
+  // durable funnel, not the 60s sync route. transientRetries=1 keeps a single
+  // transient layer — the queue re-drive is the second.
   budget: {
     ...DEFAULT_TASK_BUDGET,
     maxIterations: 1,

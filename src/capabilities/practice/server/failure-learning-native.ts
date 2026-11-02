@@ -6,8 +6,8 @@ import {
   nativeAttemptOutcome,
   resolveVerdictsForNativeAttempts,
 } from '@/kernel/read-models/assessment-verdict';
+import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 import { projectFrozenStudyContext } from './assessment/study-context';
-import { getFailureAttemptById } from './attempt-events';
 
 /** Content and scope for attribution come from the original issuance and submission. */
 export async function loadNativeFailureContext(db: Db | Tx, attemptEventId: string) {

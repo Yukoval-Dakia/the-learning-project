@@ -1,4 +1,17 @@
+import {
+  EXA_MCP_ALLOWED_TOOLS,
+  EXA_MCP_SERVER_NAME,
+  EXA_SCOPED_TOOL_NAMES,
+  buildExaMcpServer,
+} from '@/ai/exa-mcp';
+import {
+  type BuildMcpServerOptions,
+  type RemoteMcpHttpConfig,
+  piDomainMount,
+  piRemoteMcpMount,
+} from '@/ai/pi-tool-mount';
 import { observeTaskOperation } from '@/ai/task-observation';
+import type { RunTaskResult } from '@/ai/task-result';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { PiAfterToolCall } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
@@ -12,27 +25,8 @@ import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { ANSWER_ONLY_TOOL_NAMES, derivationToolDenial } from '@/kernel/tools/derivation-policy';
 import type { ValidateLearningContentFn } from '@/kernel/tools/types';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
-import {
-  EXA_MCP_ALLOWED_TOOLS,
-  EXA_MCP_SERVER_NAME,
-  EXA_SCOPED_TOOL_NAMES,
-  buildExaMcpServer,
-} from '@/server/ai/mcp/exa';
-import {
-  type RunTaskResult,
-  type StreamCollectResult,
-  runAgentTask,
-  streamTaskCollecting,
-} from '@/server/ai/runner';
-import {
-  type BuildMcpServerOptions,
-  shouldEmitToolUseForCaller,
-} from '@/server/ai/tools/mcp-bridge';
-import {
-  type RemoteMcpHttpConfig,
-  piDomainMount,
-  piRemoteMcpMount,
-} from '@/server/ai/tools/pi-tools';
+import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
+import { shouldEmitToolUseForCaller } from '@/server/ai/tools/tool-mirror-policy';
 import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
 import type { CopilotRunInput } from './copilot-run-input';
@@ -48,11 +42,21 @@ import {
   compileCopilotModelInput,
   compileCopilotSessionContext,
 } from './live-turn-context';
+import {
+  NO_PROGRESS_BUDGET_LANDING_MARGIN_MS,
+  type SealedCorrectionFiling,
+  assistantProse,
+  chooseVerifiedFallback,
+  createNoProgressLoop,
+  mergeNoProgressReply,
+  renderNoProgressClosure,
+} from './no-progress-loop';
 import { validateLearningContent as validatePreparedLearningContent } from './practice-port';
 import { resolveLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import { createCopilotProseStream } from './prose-stream';
 import {
+  COPILOT_REPLY_CHAR_LIMIT,
   type CopilotReplyFinalizationResult,
   createCopilotReplyFinalizer,
   piToolErrorText,
@@ -145,6 +149,7 @@ export interface CopilotExecutionResult {
   error?: string;
   sdkSessionId?: string;
   contextDigest: string;
+  correctionFiling?: SealedCorrectionFiling;
 }
 
 export type ExecuteCopilotTurn = (
@@ -156,7 +161,7 @@ export type ExecuteCopilotTurn = (
 type AgentResult = Pick<RunTaskResult, 'task_run_id' | 'text'> & { finishReason?: string };
 type StreamResult = Pick<
   StreamCollectResult,
-  'task_run_id' | 'text' | 'terminalText' | 'partial' | 'error'
+  'task_run_id' | 'text' | 'terminalText' | 'partial' | 'error' | 'failure'
 > & { finishReason?: string };
 
 /** Process-level adapters. Product callers use ExecuteCopilotTurn, never this seam. */
@@ -432,17 +437,31 @@ export function createCopilotExecutionOwner(
       return undefined;
     };
 
-    // The hook stack: finalizer entries first, then cancellation, spawn gate
-    // last — the spawn gate's `{block:false}` allow short-circuit requires it
-    // to run after every deny-capable entry. The loop's native toolCall.id
-    // reaches the pipeline verbatim (no correlation hook needed).
-    const piHooks = prependCopilotPiFinalizationHooks(finalizer.piHooks, {
+    // Assembled stack: finalizer, then cancellation, spawn gate last — the spawn
+    // gate's `{block:false}` allow short-circuit requires it to run after every
+    // other deny. No-progress is prepended so a repeat is blocked before the
+    // finalizer records it and before the spawn gate can allow it.
+    const noProgress = createNoProgressLoop();
+    const budgetLandingTimer = setTimeout(
+      () => noProgress.landBeforeBudget(),
+      Math.max(
+        0,
+        DURABLE_COPILOT_EXECUTION_BUDGET.timeoutMs - NO_PROGRESS_BUDGET_LANDING_MARGIN_MS,
+      ),
+    );
+    budgetLandingTimer.unref?.();
+    const assembledHooks = prependCopilotPiFinalizationHooks(finalizer.piHooks, {
       beforeToolCall: [
         policy.cancellation.piBeforeToolCall,
         ...(piSpawnContract ? [piSpawnContract.gate] : []),
       ],
       afterToolCall: [remoteMcpToolFinished],
     });
+    // No-progress runs before the finalizer so a blocked repeat never enters the trace.
+    const piHooks = {
+      beforeToolCall: [noProgress.beforeToolCall, ...(assembledHooks.beforeToolCall ?? [])],
+      afterToolCall: [...(assembledHooks.afterToolCall ?? []), noProgress.afterToolCall],
+    };
     const piSkillDocs = answerOnly ? undefined : await adapters.resolveCopilotSkillDocsFn();
     const contextDigest = copilotSessionContextDigest(input);
     const resumeSessionId = answerOnly ? undefined : policy.resumeSessionId;
@@ -560,12 +579,44 @@ export function createCopilotExecutionOwner(
       // reaches the durable reply.
       const terminalText = result.terminalText ?? '';
       const nativeChildrenComplete = await drainNativeTasks();
-      const partial = result.partial === true;
-      const executionError = result.error;
+      const closure = noProgress.closure();
+      const cancelled =
+        policy.cancellation.signal.aborted || policy.cancellation.hasConfirmedCancellation;
+      const providerRejected = result.failure?.kind === 'provider_request_rejected';
+      const sealedClosure =
+        closure !== undefined && !cancelled && !providerRejected ? closure : undefined;
+      const planned = sealedClosure
+        ? await chooseVerifiedFallback({
+            db,
+            sessionId: turn.sessionId,
+            taskRunId: result.task_run_id,
+            actorRef,
+            ...(turn.sourceEventId ? { causedByEventId: turn.sourceEventId } : {}),
+            allowProposal: !answerOnly,
+            evidence: sealedClosure.evidence,
+          })
+        : undefined;
+      // Keep the assistant prose; the closure is appended, not a replacement.
+      const closureText =
+        sealedClosure && planned
+          ? mergeNoProgressReply(
+              assistantProse(result.text, terminalText),
+              renderNoProgressClosure(sealedClosure, planned.fallback),
+              COPILOT_REPLY_CHAR_LIMIT,
+            )
+          : undefined;
+      const partial = closureText !== undefined ? false : result.partial === true;
+      const executionError = closureText !== undefined ? undefined : result.error;
+      const finishReason = sealedClosure
+        ? sealedClosure.reason
+        : (result.finishReason ?? 'unknown');
       const finalization = await observeTaskOperation(
         { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: result.task_run_id },
         async (reportOutcome) => {
-          const finalized = await finalizer.finalizeTerminal(terminalText);
+          const finalized = await finalizer.finalizeTerminal(
+            closureText ?? (partial ? '' : terminalText),
+            closureText === undefined && partial ? result.failure : undefined,
+          );
           reportOutcome(finalized.accepted ? 'accepted' : 'rejected');
           return finalized;
         },
@@ -573,14 +624,16 @@ export function createCopilotExecutionOwner(
       retainSdkSession = !answerOnly && !partial && finalization.accepted && nativeChildrenComplete;
       return {
         taskRunId: result.task_run_id,
-        finishReason: result.finishReason ?? 'unknown',
+        finishReason,
         finalization,
         partial,
         ...(executionError ? { error: executionError } : {}),
+        ...(finalization.accepted && planned?.filing ? { correctionFiling: planned.filing } : {}),
         ...(observedSdkSessionId && retainSdkSession ? { sdkSessionId: observedSdkSessionId } : {}),
         contextDigest,
       };
     } finally {
+      clearTimeout(budgetLandingTimer);
       await drainNativeTasks();
       if (!retainSdkSession) {
         if (observedSdkSessionId) clearCopilotWorkerSession(turn.sessionId, observedSdkSessionId);

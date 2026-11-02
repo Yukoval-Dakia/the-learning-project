@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import {
-  type FailureAttemptJudge,
-  getFailureAttemptWithReasoningTraceById,
-} from '@/capabilities/practice/server/attempt-events';
 import { createFailureLearning } from '@/capabilities/practice/server/failure-learning';
 import { makePracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
+import {
+  type FailureAttemptJudge,
+  getFailureAttemptWithReasoningTraceById,
+} from '@/kernel/read-models/failure-attempts';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { DomainTool, ToolContext } from './types';
 
@@ -27,11 +27,10 @@ const AttributeMistakeOutputSchema = z.object({
   cause: z
     .object({
       primary_category: z.string(),
-      // YUK-1018 — misc_ id 的显示回填（active misconception title）；非 misc /
-      // unresolvable → null。
+      // misc_ id 的显示回填（active misconception title）；非 misc / 解析不到 → null。
       primary_label: z.string().nullable(),
       secondary_categories: z.array(z.string()),
-      // YUK-1020 — secondary 里 misc_ id 的显示回填（id→title map；缺席→裸 id）。
+      // secondary 里 misc_ id 的显示回填（缺席 → 裸 id）。
       secondary_labels: z.record(z.string(), z.string()),
       confidence: z.number().nullable(),
       analysis_excerpt: z.string(),
@@ -49,7 +48,7 @@ async function judgeOutput(
   judge: FailureAttemptJudge,
 ): Promise<AttributeMistakeOutput> {
   const secondary = judge.cause.secondary_categories ?? [];
-  // YUK-1020 — primary + secondary 的 misc_ id 同一批查询。
+  // primary + secondary 的 misc_ id 一次查完。
   const labels = await resolveMiscCauseLabels(db, [judge.cause.primary_category, ...secondary]);
   return {
     status,
@@ -103,8 +102,8 @@ async function attributeMistakeExecute(
     return { status: 'failed' };
   }
 
-  // YUK-1054 (§9 dual-track) — 链解析后的 effective 判（subject∪caused_by
-  // 双锚）；caused_by-only 读面会漏申诉重判行的同时拿错回读指针。
+  // 用链解析后的 effective 判（subject ∪ caused_by 双锚）：caused_by-only 读面会漏
+  // 申诉重判行。
   const verdicts = await resolveVerdictForAttempt(ctx.db, input.attempt_event_id);
   const effectiveJudge = verdicts.effective;
   if (!effectiveJudge || effectiveJudge.verdict.cause === null) {

@@ -10,10 +10,9 @@ import {
 import type { SubjectProfile } from '@/subjects/profile';
 import { parseTaskOutput } from './parse-output';
 
-// B1-W1 (ADR-0035 慢热阶段①) — ItemPriorTask prompt. 给一道新题估冷启先验
-// 难度 b（logit 尺度）。反占位约束：直接主观打分难度文献 r≈0
-// （phase2-synthesis-lanes:770）——prompt 强制「先抽教学特征（认知步骤数 / 所需
-// 前置知识 / 典型错误类型 / 题型固有难度），再由特征推 b」。
+// ADR-0035 慢热阶段① — 给新题估冷启先验难度 b（logit 尺度）。直接主观打分与真实
+// 难度几乎无关（r≈0），所以 prompt 强制先抽教学特征（认知步骤 / 前置知识 / 典型
+// 错误 / 题型），再由特征推 b。
 function buildItemPriorPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}题目难度标定员，一次只给**恰好一道**题估冷启先验难度。输入 { prompt_md, kind, knowledge_context: [{ name, anchored_b? }] } —— prompt_md 是题面，kind 是题型，knowledge_context 是这道题考查的知识点（anchored_b 若给出是该知识点已标定的难度锚，可作参考）。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -36,8 +35,7 @@ reasoning 里**必须**引用上述教学特征说明你为什么给这个 b，�
 - 禁止：emoji、套话、JSON 之外的任何文字、用 markdown 代码块包裹整段 JSON。`;
 }
 
-// 题型固有难度提示——按**答案语义结构描述符**（受限 vs 开放的答案空间）说明，而非
-// 绑死某串题型名字，保持科目中立（不写死任何单一科目的题型套话）。
+// 按答案空间受限/开放说明固有难度，不绑死题型名，保持科目中立。
 function kindDifficultyHint(_profile: SubjectProfile): string {
   return '答案空间**受限**（exact：选项/判断/唯一确定的最终值，可逐字或规范化比对）的题通常比同知识点**开放**（semantic：需自己组织表述、靠采分点核查的译/答/证/算过程）的题易——受限答案可猜测、空间小；开放答案要自行组织、固有难度更高。';
 }
@@ -46,15 +44,12 @@ export function parseItemPriorOutput(text: string): ItemPriorDraftT {
   return parseTaskOutput(text, 'parseItemPriorOutput', ItemPriorDraft);
 }
 
-// ─── YUK-376 — LLaSA 学生模拟变体（opt-in，默认路径仍是上面的 feature→b）───
+// ─── LLaSA 学生模拟变体（opt-in，默认仍是上面的 feature→b）───
 //
-// LLaSA「LLMs are Students at Various Levels」（EMNLP 2024）：不直接估难度，
-// 让模型扮演 5 档能力学习者**实际作答**，由逐档答对率经 1PL MLE 反推 b
-// （src/core/item-prior-llasa.ts）。写路径与 ItemPriorTask 共用 applyItemPrior，
-// provenance 用 source='llm_prior_llasa' 区分（eval 可比性）。
-//
-// 输入比 feature→b 版多 reference_md / choices_md：模拟学生作答需要选项
-// （choice 题的 prompt_md 不含选项），判对错需要参考答案。
+// 不直接估难度：让模型扮演 5 档能力学习者实际作答，由逐档答对率经 1PL MLE 反推 b
+// （src/core/item-prior-estimation.ts）。写路径共用 applyItemPrior，provenance
+// source='llm_prior_llasa' 区分。比 feature→b 版多 reference_md / choices_md：
+// 作答需要选项（choice 的 prompt_md 不含选项），判对错需要参考答案。
 function buildItemPriorLlasaPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}学习者模拟器。给一道题，你要扮演 ${LLASA_ABILITY_TIERS.length} 个能力档的学生**实际作答**，每档各 ${LLASA_STUDENTS_PER_TIER} 名（学生之间是不同个体，作答独立、可有差异）。输入 { prompt_md, kind, knowledge_context: [{ name, anchored_b? }], reference_md?, choices_md? } —— prompt_md 是题面，kind 是题型，choices_md 是选择题的选项列表（若有），reference_md 是参考答案（若有），knowledge_context 是考查知识点。
 

@@ -1,25 +1,18 @@
 // 题源扩展：在线检索线 (SourcingTask → tier 2)。
 //
-// docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §3 / §5
-// docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3 + 实证 2.
-//
 // SourcingTask fetches EXISTING questions off the web and structures them into
-// review-pool drafts (source='web_sourced', tier 2 "sourced"). Its LLM output
-// shape is `SourcedQuestion` — a NEW schema modelled on QuizGenQuestion (实证 2:
-// StructuredQuestion is an OCR evidence tree with bbox / handwriting / page_index
-// semantics that a web-text-sourced question has none of; reusing it would drag in
-// a pile of undefined optional fields — the wrong abstraction). The difference vs
-// QuizGenQuestion is PROVENANCE: a sourced question carries its origin URL/title
+// review-pool drafts (source='web_sourced', tier 2 "sourced"). Its LLM output shape is
+// `SourcedQuestion`, not StructuredQuestion: the latter is an OCR evidence tree with
+// bbox / handwriting / page_index semantics that a web-text-sourced question has none
+// of, so reusing it would drag in undefined optional fields. The difference vs
+// QuizGenQuestion is provenance: a sourced question carries its origin URL/title
 // (WebSourcedProvenance) instead of generator source_refs.
 //
-// OF-1 回填：HTML/TEXT sources are extracted
-// inline and INSERTed as drafts (the `questions` path below). Image-type sources —
-// pages whose question stem lives in an image that tavily_extract cannot lift as
-// plain text — are NOT auto-extracted (守 ADR-0002: VLM 抽图是用户授权的付费动作).
-// Instead the agent reports them as `image_candidates`; the handler turns each into
-// an `image_candidate` proposal (proposal inbox), and a VLM extraction runs ONLY on
-// explicit user accept. See docs/superpowers/plans/2026-06-06-yuk227-s3-image-
-// reachability.md §2 + §4 cost gate.
+// HTML/TEXT sources are extracted inline and INSERTed as drafts. Image-type sources —
+// pages whose stem lives in an image that text extraction cannot lift — are NOT
+// auto-extracted (VLM extraction is a user-authorized paid action). The agent reports
+// them as `image_candidates`; the handler turns each into an `image_candidate`
+// proposal, and extraction runs only on explicit user accept.
 import { z } from 'zod';
 import { QuestionKind, Rubric } from './business';
 import { ProducerDifficultyEvidence } from './difficulty-evidence';
@@ -29,12 +22,11 @@ import { DraftPart } from './question-draft';
 //
 // Mirrors QuizGenQuestion (kind + prompt_md + reference_md + optional choices /
 // judge / rubric + difficulty + knowledge_ids) but swaps generator source_refs for
-// a single source URL/title pair (the page the question was lifted + restructured
-// from). judge_kind_override is constrained to exact|keyword|semantic for the SAME
-// reason as QuizGenQuestion (quiz_gen.ts:132 comment): 'steps' / 'unit_dimension'
-// are profile-preferred first-class routes (never a generator/sourcing override)
-// and 'rubric' has no runner — allowing them would let a question enter the pool yet
-// return `unsupported` the moment the learner answers.
+// a single source URL/title pair. judge_kind_override is constrained to
+// exact|keyword|semantic: 'steps' / 'unit_dimension' are profile-preferred
+// first-class routes (never a generator/sourcing override) and 'rubric' has no
+// runner — allowing them would let a question enter the pool yet return
+// `unsupported` the moment the learner answers.
 export const SourcedQuestion = z.object({
   kind: QuestionKind,
   prompt_md: z.string().min(1),

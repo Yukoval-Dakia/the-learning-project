@@ -1,7 +1,7 @@
-// YUK-1496 C2 — AI rubric 判定任务（free 单元逐 criterion 评分细则）。
-// 统一设计 §3 free 段 / §4 ai-rubric 行 / 附录 A5；ADR-0073 D7（解答/简答/
-// 语文阅读）。模型只返回逐 criterion award + 理由 + 证据引用；满分、档位与
-// 求和全部由代码按发布时冻结的 rubric 校验，输出契约里没有总分字段。
+// AI rubric judgment task: score each free-response criterion separately. The model
+// returns per-criterion awards, reasons, and evidence citations only; totals, bands,
+// and sums are computed in code from the rubric frozen at publication, so the output
+// contract has no total field.
 
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { assessmentRubricTimeoutFromCensoredHoldout } from '@/core/assessment-rubric-timeout';
@@ -20,7 +20,8 @@ export const assessmentRubricTaskSpec = {
       'Admitted frozen per-criterion rubric judgment through native pi; awards validated against published allowed steps; no learning writes',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5',
-    // 单次超时来自 QA r4 截尾分布，不用 90s。超时重试在执行器里做一次。
+    // Timeout comes from the censored holdout distribution, not a fixed 90s; the
+    // executor retries once.
     budget: {
       ...DEFAULT_TASK_BUDGET,
       maxIterations: 1,

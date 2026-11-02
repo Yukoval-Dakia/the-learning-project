@@ -3,19 +3,17 @@ import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { BlankAnswerShape } from '@/core/schema/assessment/blank-answer-shape';
 import { parseTaskOutput } from './parse-output';
 
-// YUK-1445 (Stage 1 / G1+G2) — QuestionAdmissionSolveTask.
+// Admission solve task: one typed task, two blind prompt modes.
 //
-// One typed task, two prompt modes, both blind:
-//   - 'solve': independently solve a frozen admission definition (structure +
-//     response spec + per-unit scoring intent, NO reference answer, NO other
-//     solver output, NO learner work) and emit typed keys per unit. Run twice
-//     in isolated contexts; agreement is checked by the caller on typed ids.
-//   - 'source_crosscheck': compare printed source-answer prose (evidence,
-//     never a key source) against the agreed typed proposals. It never mints
-//     or edits keys — consistent/conflict/unknown only.
+//   - 'solve': solve a frozen admission definition (structure + response spec +
+//     per-unit scoring intent; no reference answer, other solver output or learner
+//     work) and emit typed keys. Run twice in isolated contexts; the caller checks
+//     agreement on typed ids.
+//   - 'source_crosscheck': compare printed source-answer prose (evidence, never a
+//     key source) against the agreed typed proposals — consistent/conflict/unknown
+//     only, never minting keys.
 //
-// The schemas live HERE (capability-owned) because src/core/schema/assessment
-// is frozen for this lane; nothing below is a scoring contract type.
+// Schemas stay capability-owned: src/core/schema/assessment is frozen for this lane.
 
 const SolveMaterial = z.object({
   material_id: z.string().min(1),
@@ -26,8 +24,7 @@ const SolvePart = z.object({
   part_id: z.string().min(1),
   question_no: z.string().optional(),
   prompt_md: z.string(),
-  /** Public stimulus materials only (private solution/rubric materials are
-   *  never sent to the solver — the caller filters via isPublicSharedMaterial). */
+  /** Public stimulus only; the caller filters private solution/rubric materials. */
   materials: z.array(SolveMaterial).default([]),
 });
 
@@ -35,7 +32,7 @@ const SolveUnit = z.object({
   scoring_unit_id: z.string().min(1),
   part_id: z.string().min(1),
   kind: z.enum(['select', 'blank', 'free']),
-  /** 卷面印出的分值；null = 未印分。Never invent or rescale. */
+  /** 卷面印出的分值；null = 未印分，禁止推测或换算。 */
   printed_points: z.number().nullable(),
   /** 卷面印出的判分规则原文（如有，typed 录入的证据，非指令）。 */
   printed_rule_md: z.string().optional(),
@@ -59,11 +56,7 @@ const SolveUnit = z.object({
       unit_hint: z.string().optional(),
       /** Seeded blank shape. The value stays hidden; only the kind is declared. */
       answer_kind: z.enum(['blank_text', 'blank_numeric']).optional(),
-      /**
-       * YUK-1568 第 2 片：公开答案声明（同一 Zod 权威，无第二份定义）。只
-       * 声明这一空回答什么数学对象与允许的输入语法 —— 不携带答案、端点、
-       * 系数或容差；私有 scoring key 不进 solve 载荷。
-       */
+      /** 公开答案声明：只声明这一空的数学对象与允许语法，不携带答案或容差。 */
       answer_shape: BlankAnswerShape.optional(),
     })
     .optional(),
@@ -114,10 +107,7 @@ const SolveUnitOutput = z.object({
   reason_md: z.string().optional(),
   answer: SolvedKey.optional(),
   worked_md: z.string().optional(),
-  /**
-   * 与参考答案【等价】的合法写法（判分必须接受）。select 给 item_id 集合的
-   * 等价形态（通常无需 —— 集合比较天然无序）；blank 给替代文本。
-   */
+  /** 与参考答案等价的合法写法（判分必须接受）；select 给等价 item_id 集合，blank 给替代文本。 */
   equivalent_forms: z
     .array(
       z.object({
@@ -249,7 +239,7 @@ function coerceObjectList(
   return strings.map((itemId) => ({ item_ids: [itemId] }));
 }
 
-/** Map the shapes real solvers emit onto the typed key. Unmappable values stay put so Zod still rejects them. */
+/** Map solver-emitted shapes onto the typed key; unmappable values pass through so Zod rejects them. */
 export function coerceQuestionAdmissionSolveOutput(
   raw: unknown,
   units: readonly QuestionAdmissionSolveUnitT[],
@@ -276,12 +266,10 @@ export function coerceQuestionAdmissionSolveOutput(
 
 function jsonObjectFromModel(raw: unknown): unknown {
   if (typeof raw !== 'string') return raw;
-  // MiMo stringifies structured payloads inside tool arguments, so the whole
-  // string is usually exactly one JSON document — strict-parse it first. That
-  // is the honest interpretation of "the model returned a string", and it is
-  // also what keeps a double-encoded submit diagnosable: a strict failure on
-  // `{...} trailing }` preserves the real parse error instead of letting
-  // brace-slicing silently over/under-capture the document boundaries.
+  // MiMo stringifies structured payloads inside tool arguments, usually as one
+  // complete JSON document: strict-parse first. A strict failure (e.g. `{...}
+  // trailing }`) then preserves the real error instead of letting brace-slicing
+  // silently capture the wrong boundaries.
   try {
     return JSON.parse(raw);
   } catch {
@@ -308,8 +296,8 @@ export function parseQuestionAdmissionSolveModelOutput(
   const parsed = QuestionAdmissionSolveOutput.safeParse(json);
   if (parsed.success) return parsed.data;
   if (repairBudget.remaining <= 0) throw parsed.error;
-  // ONE deterministic normalization across both blind passes in a paid batch.
-  // No syntax guessing, missing numeric values, or new model request.
+  // One deterministic normalization for both blind passes; no syntax guessing, no
+  // filling missing numbers, no extra model request.
   repairBudget.remaining -= 1;
   return QuestionAdmissionSolveOutput.parse(coerceQuestionAdmissionSolveOutput(json, units));
 }

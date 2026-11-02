@@ -13,6 +13,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { Agent } from 'undici';
 
+import { aiAgentRef } from '@/ai/task-result';
 import {
   type ColdStartBridgeRunTaskFn,
   runColdStartBridge,
@@ -39,18 +40,17 @@ import type { Db } from '@/db/client';
 import { ai_task_runs, event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { type R2Client, getR2 } from '@/kernel/object-storage';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
+import { writeCostLedger } from '@/kernel/records/ai-attempt-facts';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { persistImageAsset } from '@/kernel/records/asset-store';
-import { writeCostLedger } from '@/server/ai/log';
-import { aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
-import { type R2Client, getR2 } from '@/server/r2';
 import { getKnownSubjects } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { redactIngestionText } from './privacy-guard';
@@ -586,7 +586,6 @@ export async function acceptImageCandidateProposal(
     const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
     const writeCostLedgerFn = deps.writeCostLedgerFn ?? writeCostLedger;
 
-    // Download and persist the source asset.
     const { bytes, mimeType } = await fetchImageBytes(change.source_url);
     if (bytes.byteLength === 0) {
       throwSourceFetchFailure('source_fetch_failed', `0 bytes from ${change.source_url}`);
@@ -655,7 +654,6 @@ export async function acceptImageCandidateProposal(
       );
     }
 
-    // Build the web_sourced draft from the VLM block.
     const promptMd = block.extracted_prompt_md;
     // The OCR-extracted answer only; reference generation is out of scope here.
     const referenceMd = block.reference_md ?? '';
@@ -690,8 +688,13 @@ export async function acceptImageCandidateProposal(
               deadlineAt: new Date(Date.now() + 20_000),
               operationAnchor: proposalId,
             },
-            // Reuse the classified name; no second model call.
-            nameKcFn: async () => ({ kc_name: bridge.kc_name }),
+            // Reuse the classified name; no second model call. Run provenance rides
+            // along for the tag audit event (YUK-1604).
+            nameKcFn: async () => ({
+              kc_name: bridge.kc_name,
+              ...(bridge.task_run_id !== undefined ? { task_run_id: bridge.task_run_id } : {}),
+              ...(bridge.cost_usd !== undefined ? { cost_usd: bridge.cost_usd } : {}),
+            }),
           },
           {
             // Redact identifiers at the model boundary. This path owns no ingestion
@@ -851,7 +854,6 @@ export async function acceptImageCandidateProposal(
         tokens_out: 0,
       });
 
-      // Accept rate event chained to the proposal.
       await writeEvent(tx, {
         id: rateEventId,
         actor_kind: 'user',

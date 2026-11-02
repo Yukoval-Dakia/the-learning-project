@@ -4,6 +4,7 @@ import { randomId } from './random-id';
 export type IngestionOperationRequest =
   | { kind: 'extract' }
   | { kind: 'import'; input: unknown }
+  | { kind: 'review'; input: { checked_blocks: { block_id: string; version: number }[] } }
   | { kind: 'make_paper'; input?: { question_ids?: string[] } }
   | {
       kind: 'rescue';
@@ -36,12 +37,13 @@ function newIdempotencyKey(): string {
 export async function startIngestionOperation<Result = unknown>(
   sessionId: string,
   request: IngestionOperationRequest,
+  idempotencyKey: string = newIdempotencyKey(),
 ): Promise<{ resource: IngestionOperationResource<Result>; location: string }> {
   const response = await apiFetch(
     `/api/ingestion-sessions/${encodeURIComponent(sessionId)}/operations`,
     {
       method: 'POST',
-      headers: { 'Idempotency-Key': newIdempotencyKey() },
+      headers: { 'Idempotency-Key': idempotencyKey },
       body: JSON.stringify(request),
     },
   );
@@ -55,10 +57,11 @@ export async function startIngestionOperation<Result = unknown>(
 export async function runIngestionOperation<Result = unknown>(
   sessionId: string,
   request: IngestionOperationRequest,
-  options: { timeoutMs?: number; pollIntervalMs?: number } = {},
+  /** idempotencyKey: pass the same key on a retry so a lost response replays the same operation. */
+  options: { timeoutMs?: number; pollIntervalMs?: number; idempotencyKey?: string } = {},
 ): Promise<Result> {
   const { timeoutMs = 5 * 60_000, pollIntervalMs = 1_000 } = options;
-  const started = await startIngestionOperation<Result>(sessionId, request);
+  const started = await startIngestionOperation<Result>(sessionId, request, options.idempotencyKey);
   let operation = started.resource;
   const deadline = Date.now() + timeoutMs;
 

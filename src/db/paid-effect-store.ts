@@ -1,22 +1,11 @@
-// YUK-1355 Lane B — paid-effect store: the transactional state transitions for
-// the shared protocol. Every transition runs inside the CALLER's transaction
-// and takes the identity row lock (SELECT … FOR UPDATE); the composite primary
-// key IS the effect identity, so cross-backend races serialize on the row —
-// that lock is the CAS. This module never opens transactions for effect
-// transitions (reserve/sweep/switch are the documented exceptions) and never
-// touches identity columns with UPDATE.
+// paid-effect store：共享协议的事务转移。每次转移都在调用方事务里并先取 identity 行锁
+// （SELECT … FOR UPDATE）；复合主键即 effect identity，跨 backend 的竞争在行上串行化——
+// 那把行锁就是 CAS。除 reserve/sweep/switch 外本模块不自己开事务，也绝不用 UPDATE 改
+// identity 列。
 //
-// Pinned semantics (docs/planning/2026-10-11-yuk1355-paid-effect-protocol.md):
-// - intent before physical send; ONE send admission (reservePaidEffect /
-//   claimPaidEffectSend) with the winner/held/completed discrimination;
-// - immutable result receipt (semantic JSON equality; unequal rewrite
-//   rejected), completable only by the winning delivery and exact fence;
-// - unknown outcomes are durable unresolved obligations, never auto-replayed,
-//   including under a new tick or a new revision/workset of the same entity —
-//   enforced by the fixed entity gate with only A's recognized rep exemption;
-// - failed application leaves the row in receipt_ready (readable unfinished
-//   obligation) and the only way forward is replaying the application from the
-//   receipt — there is no path back to a physical send.
+// 协议不变量（intent 先于物理发送、唯一 send admission、不可变 receipt、unknown 不自动
+// 重放、应用失败只能从 receipt 重放）见
+// docs/planning/2026-10-11-yuk1355-paid-effect-protocol.md。
 import { type SQL, and, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import {
   PAID_EFFECT_AUTHORIZATION_OPEN_STATES,
@@ -173,9 +162,7 @@ async function lockRow(tx: Tx, identity: PaidEffectIdentity): Promise<PaidEffect
 /**
  * Serialize send admissions per gate scope: the advisory xact lock closes the
  * check-then-act window where two concurrent reserves for DIFFERENT identities
- * covered by one scope could both pass the gate scan and both send. Mirrors
- * the repo's established hashtextextended advisory-lock pattern
- * (producer-fence-lock.ts, session-orphan-family.ts).
+ * covered by one scope could both pass the gate scan and both send.
  */
 async function lockEntityGate(tx: Tx, identity: PaidEffectIdentity): Promise<void> {
   await tx.execute(
@@ -185,12 +172,11 @@ async function lockEntityGate(tx: Tx, identity: PaidEffectIdentity): Promise<voi
 
 /**
  * Gate scan under the FIXED predicate (paidEffectGateBlocks): an open
- * sending/unknown effect of the same (family, entityId) blocks this claim
- * UNLESS it is an item_prior_backfill feature rep of the SAME revision.
- * Same revision + same unit
- * + different digest BLOCKS (reconciliation); a different revision BLOCKS
- * (entity-level cross-revision/cross-night). Runs inside the caller's
- * transaction AFTER lockEntityGate; returns the blocker's identity, or null.
+ * sending/unknown effect of the same (family, entityId) blocks this claim unless it
+ * is an item_prior_backfill feature rep of the SAME revision. Same revision + same
+ * unit + different digest BLOCKS (reconciliation); a different revision BLOCKS
+ * (entity-level cross-revision/cross-night). Runs inside the caller's transaction
+ * AFTER lockEntityGate; returns the blocker's identity, or null.
  */
 async function findGateBlocker(
   tx: Tx,
@@ -319,15 +305,15 @@ function sameIdentity(a: PaidEffectIdentity, b: PaidEffectIdentity): boolean {
 }
 
 /**
- * THE successor-authorization gate (YUK-1567). Runs inside the caller's
- * transaction after lockEntityGate, serialized by the same family advisory +
- * entity-gate locks as the void that wrote the authorization. While ANY
- * authorization for this (family, entityId) is still open — its successor row
- * missing or not yet terminal — only the authorized successor identity may be
- * claimed, and only by the exact bound delivery. A claim on the successor
- * identity under any other delivery throws (fail-closed) so the delivery
- * visibly fails instead of silently holding a parked intent; a claim on any
- * other identity is blocked with the voided row named as the blocker.
+ * THE successor-authorization gate: runs inside the caller's transaction after
+ * lockEntityGate, serialized by the same family advisory + entity-gate locks as the
+ * void that wrote the authorization. While ANY authorization for this
+ * (family, entityId) is still open — its successor row missing or not yet
+ * terminal — only the authorized successor identity may be claimed, and only by
+ * the exact bound delivery. A claim on the successor identity under any other
+ * delivery throws (fail-closed) so the delivery visibly fails instead of silently
+ * holding a parked intent; a claim on any other identity is blocked with the
+ * voided row named as the blocker.
  */
 async function checkSuccessorAuthorization(
   tx: Tx,
@@ -402,10 +388,10 @@ async function claimLockedRow(
   delivery: PaidEffectSendClaimDelivery,
 ): Promise<{ fence: number } | { blockedBy: PaidEffectIdentity }> {
   await lockEntityGate(tx, identity);
-  // P1-2: control owner/generation verified in the SAME transaction and the
-  // SAME lock order as the claim (family → row → entity → control FOR SHARE),
-  // so a concurrent switch (control FOR UPDATE) serializes against every
-  // admission and a fenced backend can never win a claim.
+  // Control owner/generation is verified in the SAME transaction and the SAME lock
+  // order as the claim (family → row → entity → control FOR SHARE), so a concurrent
+  // switch (control FOR UPDATE) serializes against every admission and a fenced
+  // backend can never win a claim.
   const admission = await admitPaidEffectDeliveryControl(tx, identity.family, {
     backend: delivery.backend,
     deliveryId: delivery.deliveryId,
@@ -545,10 +531,10 @@ function requireOwnerDelivery(
 
 /**
  * Record the exact immutable result receipt — completable only by the winning
- * delivery and exact winner fence, including equal-receipt retries. Re-writing a
- * semantically equal receipt is idempotent; an unequal rewrite is rejected
- * without mutating the row. A late receipt resolving an 'unknown' row is
- * monotone information gain and stays allowed for the owning delivery.
+ * delivery and exact winner fence. Re-writing a semantically equal receipt is
+ * idempotent; an unequal rewrite is rejected without mutating the row. A late
+ * receipt resolving an 'unknown' row is monotone information gain and stays allowed
+ * for the owning delivery.
  */
 export async function recordPaidEffectResult(
   tx: Tx,
@@ -639,23 +625,22 @@ export type PaidEffectVoidOutcome =
     };
 
 /**
- * THE manual void + successor reauthorization (YUK-1567). One call, inside the
- * caller's transaction, atomically:
- *   1. CAS the locked 'unknown' row to 'voided' (identity + fence; fence
- *      bumps so the retired delivery's late receipt/unknown-marking is
- *      rejected by the same owner/fence CAS as every other write),
- *   2. persist the authorization row (reason / operator / basis / exact
- *      successor identity / exact bound delivery),
- *   3. admit the successor's pending intent — so the authorization and its
- *      reservation commit or roll back TOGETHER and no background claim can
- *      race into the voided gap.
- * Only an explicit 'unknown' row may be voided (a 'sending' row has an active
- * send; 'pending' is an un-sent intent; receipts/applied are paid truth).
+ * THE manual void + successor reauthorization. One call, inside the caller's
+ * transaction, atomically:
+ *   1. CAS the locked 'unknown' row to 'voided' (identity + fence; the fence bump
+ *      makes the retired delivery's late receipt/unknown-marking fail the same
+ *      owner/fence CAS as every other write),
+ *   2. persist the authorization row (reason / operator / basis / exact successor
+ *      identity / exact bound delivery),
+ *   3. admit the successor's pending intent — authorization and reservation commit
+ *      or roll back TOGETHER, so no background claim can race into the voided gap.
+ * Only an explicit 'unknown' row may be voided ('sending' has an active send;
+ * 'pending' is an un-sent intent; receipts/applied are paid truth).
  * Replaying with the same authorizationId returns 'already_voided' and mints
- * nothing; replaying under a different id is a conflict error, not a second
- * receipt. Several rows may be voided under ONE authorizationId for the same
- * successor inside one transaction (multi-blocker entity): the second call
- * recognizes its own freshly-bound successor and admits nothing twice.
+ * nothing; replaying under a different id is a conflict error. Several rows may be
+ * voided under ONE authorizationId for the same successor inside one transaction
+ * (multi-blocker entity): the second call recognizes its own freshly-bound
+ * successor and admits nothing twice.
  */
 export async function voidPaidEffectWithSuccessor(
   tx: Tx,
@@ -814,10 +799,7 @@ export async function voidPaidEffectWithSuccessor(
   };
 }
 
-/**
- * All authorization rows for one (family, entityId) — the void CLI's plan and
- * the driver's verification read; not part of the claim hot path.
- */
+/** Authorization rows for one (family, entityId): the void CLI's plan and verify read. */
 export async function readPaidEffectAuthorizations(
   db: Db | Tx,
   scope: { family: string; entityId: string },
@@ -852,29 +834,26 @@ export type PaidEffectCancelOutcome =
     };
 
 /**
- * THE generic cancel of a never-sent intent (YUK-1567). One call, inside the
- * caller's transaction, atomically:
+ * THE generic cancel of a never-sent intent. One call, inside the caller's
+ * transaction, atomically:
  *   1. prove the locked row is a 'pending' intent that was NEVER sent
  *      (delivery/backend/tick null, no lease, no result, no application,
  *      fence === expectedFence),
  *   2. refuse when the intent is the bound successor of a
- *      paid_effect_authorization row (this slice never unbinds an
- *      authorization gate),
+ *      paid_effect_authorization row (this module never unbinds an authorization gate),
  *   3. insert the immutable cancellation EVENT row
  *      (requestId / operator / reason / basis / previous fence), and
  *   4. CAS pending → cancelled with a fence bump, persisting the cancellation
  *      receipt on the row.
- * The event insert and the state CAS commit or roll back TOGETHER — a failed
- * event aborts the transition. Only 'pending' may be cancelled: 'sending' has
- * a live send, 'unknown' is an unresolved obligation (void + successor owns
- * its retirement), and receipts/applied are paid truth. The never-sent fence
- * is literal: BOTH the request's expectedFence and the row's live fence must
- * be exactly 0 — any advanced fence means a claim already touched the row.
- * Replaying the request returns 'already_cancelled' with the stored receipt
- * ONLY when every request field (requestId, reason, operator, basis), the
- * full identity, and the receipt's previousFence all match; ANY divergence
- * or a different requestId throws — replay never mints a second event and
- * never mutates the recorded receipt.
+ * Event insert and state CAS commit or roll back TOGETHER. Only 'pending' may be
+ * cancelled: 'sending' has a live send, 'unknown' is an unresolved obligation
+ * (void + successor owns its retirement), receipts/applied are paid truth. The
+ * never-sent fence is literal: BOTH expectedFence and the row's live fence must be
+ * exactly 0 — any advanced fence means a claim already touched the row.
+ * Replaying returns 'already_cancelled' with the stored receipt ONLY when every
+ * request field, the full identity, and previousFence match; ANY divergence or a
+ * different requestId throws — replay never mints a second event and never mutates
+ * the recorded receipt.
  */
 export async function cancelPaidEffectUnsentIntent(
   tx: Tx,
@@ -895,10 +874,9 @@ export async function cancelPaidEffectUnsentIntent(
   if (!row) throw new PaidEffectProtocolError('paid-effect row missing');
   const existing = row.cancel_json as PaidEffectCancelReceipt | null;
   if (row.state === 'cancelled') {
-    // Replay is identified by the FULL recorded request, not the id alone:
-    // every audit field, the embedded identity, and the retired fence must
-    // match before the stored receipt is returned. Anything else fails
-    // closed — a borrowed request id never laundered through an old receipt.
+    // Replay is identified by the FULL recorded request, not the id alone: every
+    // audit field, the embedded identity, and the retired fence must match, else a
+    // borrowed request id could be laundered through an old receipt.
     const replayMatches =
       existing !== null &&
       existing.requestId === request.requestId &&
@@ -1052,19 +1030,19 @@ export interface PaidEffectCancelEligibility {
 }
 
 /**
- * Read-side eligibility predicate for cancelling a never-sent intent — the
- * SAME checks the ops CLI freezes in plan and re-verifies under the apply
- * transaction's locks before any write. Pure SELECTs; the caller's
- * transaction supplies the isolation/locks. A target is eligible only when:
- *   - the row exists, is 'pending', carries the expected fence, and shows NO
+ * Read-side eligibility predicate for cancelling a never-sent intent — the SAME
+ * checks the ops CLI freezes in plan and re-verifies under the apply transaction's
+ * locks. Pure SELECTs; the caller's transaction supplies isolation/locks. Eligible
+ * only when:
+ *   - the row exists, is 'pending', has the expected fence, and shows NO
  *     send/lease/receipt/application evidence;
  *   - it is NOT the bound successor of a paid_effect_authorization row;
  *   - no 'sending' sibling exists for the same (family, entityId);
  *   - no non-terminal pg-boss job of the family references the entity;
  *   - no non-terminal event_subscription_delivery references the entity; and
- *   - every declared watch (action, subscriberId, subscriberVersion) has a
- *     delivery row — at the CURRENT declared version — for every matching
- *     event; an old-version delivery does not prove this version saw it.
+ *   - every declared watch (action, subscriberId, subscriberVersion) has a delivery
+ *     row at the CURRENT declared version for every matching event; an old-version
+ *     delivery does not prove this version saw it.
  * Any read failure fails closed (the caller's transaction aborts).
  */
 export async function evaluatePaidEffectCancelEligibility(

@@ -1,6 +1,6 @@
 # Drift Audit — 2026-05-29 (Wave 5 closeout)
 
-**Scope**: ADR-0006 / ADR-0011 / ADR-0014 / ADR-0017 / ADR-0018 / ADR-0020 / ADR-0021 / ADR-0022; active plans in `docs/superpowers/plans/` (master roadmap §5.1 Wave 5, T-D3 / T-D6 ready-to-launch); CLAUDE.md Layer 4 / Layer 8 architectural notes.
+**Scope**: ADR-0006 / ADR-0011 / ADR-0014 / ADR-0017 / ADR-0018 / ADR-0020 / ADR-0021 / ADR-0022; active plans in `docs/archive/superpowers/plans/` (master roadmap §5.1 Wave 5, T-D3 / T-D6 ready-to-launch); CLAUDE.md Layer 4 / Layer 8 architectural notes.
 **Run by**: Devin (single-PR Wave 5 — covers YUK-118 / YUK-119 / YUK-120 / YUK-121 / YUK-122 / YUK-123 / YUK-124 / YUK-125; parents YUK-116 / YUK-117).
 **Gate state**: typecheck / lint / audit:schema / audit:partition / audit:profile / `pnpm test:unit` (727) / `pnpm test:db` (1057 passing, 1 todo) / `pnpm build` all green.
 

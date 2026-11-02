@@ -5,9 +5,12 @@
 > Substrate decisions: [ADR-0015](../adr/0015-learning-record-memory-brief.md) (brief as
 > first-class entity) and [ADR-0017](../adr/0017-memory-mem0-plus-brief-layer.md) (Mem0 + brief
 > layer: scope taxonomy, write triggers, anti-storm, cost). Code:
-> `src/server/memory/{brief,triggers,active-subjects,scope_tagger,client}.ts`.
+> `src/server/memory/{brief,triggers,active-subjects,client}.ts`；scope tagging 在
+> `src/kernel/events/scope-tagger.ts`。
 
 ## What it is
+
+**CORE 单写者不变量（源：`docs/archive/superpowers/plans/2026-06-18-phase0-relationship-brain.md` Task B，YUK-1575 重立档）**：mem0 CORE 只由 sleep job（例会/dreaming）写入；copilot 与请求路径对 CORE **只读**。owner 在备课台改写猜想不直写 CORE——写 `correct` 事件（`corrected_by_owner=true`），由下一次例会 job 经 rate-event outbox 异步 reconcile 进 CORE（`conjecture-accept.ts` 契约注释同款）。
 
 `memory_brief_note` is the pre-summarized "方向感" the Layer-8 orchestrator, Dreaming, and Coach read
 before consulting the SoT. Each row is a three-段 short text (recent week / recent months / long
@@ -49,7 +52,7 @@ brief's `refreshed_at`** (or, for a never-built subject, any qualifying activity
    a single global scan floor.
 3. Resolve each event → subject via the **canonical knowledge→subject bridge** —
    `knowledge_ids[0] → getEffectiveDomain → resolveSubjectProfile.id` (BR-4,
-   `@/server/knowledge/subject-resolution.batchResolveSubjectIds`, the SAME bridge the review
+   `@/kernel/read-models/subject-resolution.batchResolveSubjectIds`, the SAME bridge the review
    scheduler uses, so "active subject" and "review round-robin subject" can never diverge). Orphan
    ids and capture events (no `referenced_knowledge_ids`) fall back to the default subject (YUK-56).
 4. Group by subject, keep the max `created_at`; a subject is active iff its newest qualifying event
@@ -82,7 +85,7 @@ do not qualify for a user-visible `tool_use` mirror. The tool description tells 
 stale/missing briefs as low-confidence direction and verify against source tools. This is an
 observability/degradation signal only; it does not mutate the brief or block the night chain.
 
-## Budgets (single source: `src/server/ai/tools/budgets.ts`)
+## Budgets (single source: `src/kernel/tools/budgets.ts`)
 
 `BRIEF_REFRESH_BUDGET` is the only place the P5.2 limits live (BR-9):
 

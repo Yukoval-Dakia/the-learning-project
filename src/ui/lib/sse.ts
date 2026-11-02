@@ -95,7 +95,7 @@ async function readStream(sessionId: string, stream: SessionStream): Promise<voi
           // frame then closes. parseSSEChunk drops it (no numeric event_id), so
           // without this branch EOF lands on 'closed' and the consumer can't
           // tell a healthy finish from a mid-stream DB/connection error —
-          // recovery branches (e.g. VisionTab) would then hang on 'extracting'.
+          // a reopened recording would then hang on 'extracting'.
           streamError = new Error('录入进度连接中断');
         } else {
           const ev = parseSSEChunk(chunk);

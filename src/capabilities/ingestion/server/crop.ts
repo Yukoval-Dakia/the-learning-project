@@ -4,11 +4,10 @@ import sharp from 'sharp';
 import type { BBoxT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
+import type { R2Client } from '@/kernel/object-storage';
+import type { SourceAssetRow } from '@/kernel/records/asset-store';
 import { isUniqueViolation, lockImageStorageKey, sha256Hex } from '@/kernel/records/asset-store';
-import type { R2Client } from '@/server/r2';
-
 import { clampPixelBBox, normalizedToPixel, probeImage } from './image-ops';
-import type { SourceAssetRow } from './persist-image-asset';
 
 /**
  * 单张题目图（"figure"）裁剪后的元信息——未挂归属。 attach_confidence /
@@ -69,13 +68,12 @@ async function persistFigureCrop(
 
   // A prior pass may already have registered this deterministic id, and
   // concurrent extractions may be writing different bytes under the same
-  // `<page>-fig-N` identity. The unlocked existence check is racy (Codex
-  // 4292929371): the loser can put its bytes over the winner's object before
-  // its duplicate-id insert fails, leaving the winning row pointing at bytes
-  // with a different SHA. So ALL decisions — re-read, adopt, update, insert —
-  // happen AFTER acquiring the storage-key advisory lock, and the
-  // compensating oldBytes snapshot is taken under the same lock (round-2
-  // P2-1) so a restore can never write stale bytes.
+  // `<page>-fig-N` identity. An unlocked existence check is racy: the loser
+  // can put its bytes over the winner's object before its duplicate-id insert
+  // fails, leaving the winning row pointing at bytes with a different SHA. So
+  // ALL decisions — re-read, adopt, update, insert — happen AFTER acquiring
+  // the storage-key advisory lock, and the compensating oldBytes snapshot is
+  // taken under the same lock so a restore can never write stale bytes.
   const dims = await probeImage(input.png);
   let oldBytes: Uint8Array | null = null;
   let overwroteObject = false;

@@ -17,7 +17,7 @@ import { GRID_POINTS } from '@/core/theta-grid'; // YUK-561 FIX-3 — grid vecto
 import type { Tx } from '@/db/client';
 import { db as rootDb } from '@/db/client';
 import { mastery_state } from '@/db/schema';
-import { upsertMasteryState } from '@/server/mastery/state';
+import { upsertMasteryState } from '@/kernel/records/mastery-state';
 import { restoreStateSnapshot } from '@/server/revert/restore-snapshot';
 
 import { resetDb, testDb } from '../helpers/db';

@@ -1,9 +1,5 @@
-// YUK-1570 — canonical mastery p(L) projection read model: the SINGLE
-// display/AI-facing read of mastery, plus the A5/A6 KG-borrowing soft layer and
-// the representative-KC β resolution it consumes. Moved verbatim from
-// src/server/mastery/state.ts; the server module remains the SOLE writer of
-// `mastery_state` (ADR-0035) and keeps an explicit compat re-export for current
-// tests/external users.
+// Canonical mastery p(L) projection, KG borrowing and representative-KC beta reads.
+// Online diagnostic writes belong to kernel/records/mastery-state (ADR-0035).
 
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
@@ -26,6 +22,7 @@ import {
 import { thetaSe } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { knowledge_edge, mastery_state } from '@/db/schema';
+import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 
 type DbLike = Db | Tx;
 
@@ -184,11 +181,24 @@ export async function getMasteryProjection(
     new Set(knowledgeIds.map((id) => id.trim()).filter((id) => id.length > 0)),
   );
   if (ids.length === 0) return new Map();
+  // YUK-1600 — the single display/AI-facing mastery read owns the non-kc gate: a
+  // goal/container never gets a mastery entry, so EVERY consumer surface (tree,
+  // node-page, readers, detail, frontier, meetings) renders 不评掌握 (absent ⇒ null)
+  // instead of a mastery band. Only the 'knowledge' axis carries node identity; other
+  // subject kinds are orthogonal axes and pass through untouched.
+  let evaluableIds = ids;
+  if (subjectKind === 'knowledge') {
+    const nonKc = await getNonKcKnowledgeIds(db, ids);
+    if (nonKc.size > 0) evaluableIds = ids.filter((id) => !nonKc.has(id));
+  }
   const rows = await db
     .select()
     .from(mastery_state)
     .where(
-      and(eq(mastery_state.subject_kind, subjectKind), inArray(mastery_state.subject_id, ids)),
+      and(
+        eq(mastery_state.subject_kind, subjectKind),
+        inArray(mastery_state.subject_id, evaluableIds),
+      ),
     );
   // B1 FULL (YUK-420) — per-KC representative β = the KC's HARD-track item
   // difficulty (logit). β feeds the difficulty-aware p(L) (harder KC ⇒ lower p(L)
@@ -246,9 +256,9 @@ export async function getMasteryProjection(
   if (
     (GRAPH_LAPLACIAN_ENABLED || PREREQ_THETA_PROPAGATION_ENABLED) &&
     subjectKind === 'knowledge' &&
-    ids.length > 0
+    evaluableIds.length > 0
   ) {
-    await applyKgSoftLayer(db, ids, rows, projection);
+    await applyKgSoftLayer(db, evaluableIds, rows, projection);
   }
 
   return projection;

@@ -6,153 +6,27 @@
 // PATCH: edit the question-bank editable surface (prompt/reference/choices/
 //   difficulty/knowledge_ids/kind/draft_status); bloodline fields rejected.
 // DELETE: returns association counts + 409 unless ?confirm=true; soft-archives
-//   by re-drafting (see src/server/questions/write.ts header).
+//   by re-drafting (see src/capabilities/practice/server/question-bank-write.ts header).
 //
 // Auth is enforced upstream by middleware (x-internal-token); the handlers mirror
 // the sibling notes/learning-items routes (zod, 404 on missing, errorResponse).
 
-import { eq } from 'drizzle-orm';
-import {
-  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-  InterventionDiagnosticQuestionMetadata,
-} from '@/core/schema/intervention';
 import { db } from '@/db/client';
-import { question } from '@/db/schema';
-import { ApiError, errorResponse } from '@/kernel/http';
-import { assertKnowledgeIdsExist } from '@/kernel/read-models/knowledge-validate';
-import { readQuestionServing } from '@/kernel/read-models/question-serving';
-import { loadQuestionDetail } from '@/server/questions/detail';
+import { errorResponse } from '@/kernel/http';
+import { readQuestionDetail } from '../server/question-detail-read';
 import {
-  BLOODLINE_FIELDS,
-  archiveQuestion,
-  countQuestionAssociations,
-  editQuestion,
-  hasAnyAssociation,
-} from '@/server/questions/write';
-import { loadCommittedInterventionDiagnosticAttempt } from '../server/intervention-diagnostics';
-import { QuestionParamsSchema, UpdateQuestionBodySchema } from './question-solve-contracts';
-
-// Distinct, friendlier error when a bloodline field is the offender.
-function rejectBloodlineKeys(raw: unknown): void {
-  if (raw && typeof raw === 'object') {
-    const keys = Object.keys(raw as Record<string, unknown>);
-    const offenders = keys.filter((k) => (BLOODLINE_FIELDS as readonly string[]).includes(k));
-    if (offenders.length > 0) {
-      throw new ApiError(
-        'validation_error',
-        `variant/composite lineage fields cannot be edited via this endpoint: ${offenders.join(', ')}`,
-        400,
-      );
-    }
-  }
-}
-
-const DEFAULT_TIMELINE_LIMIT = 10;
-const MAX_TIMELINE_LIMIT = 50;
-
-function parseTimelineLimit(raw: string | null): number {
-  if (raw === null || raw === '') return DEFAULT_TIMELINE_LIMIT;
-  // Strict positive-integer match — Number.parseInt is too lenient and would
-  // accept partial-numeric input ('10abc' → 10, '1.5' → 1). Require the WHOLE
-  // string to be a positive integer before parsing.
-  if (!/^[1-9]\d*$/.test(raw)) {
-    throw new ApiError('validation_error', `invalid timeline_limit '${raw}'`, 400);
-  }
-  const parsed = Number.parseInt(raw, 10);
-  return Math.min(parsed, MAX_TIMELINE_LIMIT);
-}
+  archivePracticeQuestion,
+  updatePracticeQuestion,
+} from '../server/question-write-operations';
 
 export async function GET(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const parsed = QuestionParamsSchema.safeParse(params);
-    if (!parsed.success) {
-      throw new ApiError('validation_error', 'question id is required', 400);
-    }
     const url = new URL(req.url);
-    const timelineLimit = parseTimelineLimit(url.searchParams.get('timeline_limit'));
-    const surface = url.searchParams.get('surface');
-    if (surface !== null && surface !== 'practice') {
-      throw new ApiError('validation_error', `invalid question surface '${surface}'`, 400);
-    }
-
-    const detail = await loadQuestionDetail(db, parsed.data.id, timelineLimit);
-    if (
-      !detail ||
-      (detail.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE && surface !== 'practice')
-    ) {
-      throw new ApiError('not_found', `question ${parsed.data.id} not found`, 404);
-    }
-    // same serving projection as the list items (a part row reports
-    // its own per-part verdict with the group's shared hold facts).
-    const serving =
-      (await readQuestionServing(db, [detail.id])).byId.get(detail.id) ??
-      ({
-        servable: false,
-        hold_reason: null,
-        held_since: null,
-        next_action: null,
-        pending_action: null,
-      } as const);
-    if (detail.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
-      const [diagnosticRow] = await db
-        .select({
-          draft_status: question.draft_status,
-          metadata: question.metadata,
-        })
-        .from(question)
-        .where(eq(question.id, detail.id))
-        .limit(1);
-      const schedule = InterventionDiagnosticQuestionMetadata.safeParse(
-        diagnosticRow?.metadata?.intervention_diagnostic,
-      );
-      const committedAttempt = await loadCommittedInterventionDiagnosticAttempt(db, detail.id);
-      // `surface=practice` is client-controlled, so it is not a fence by itself.
-      // Only the current active one-shot may be read after its immutable due
-      // time. A retired one-shot is readable only when its canonical committed
-      // result exists, allowing refresh/response-loss recovery without reopening
-      // the submission gate. Derived future IDs reveal neither prompt nor timing.
-      if (
-        !schedule.success ||
-        (diagnosticRow?.draft_status === 'draft' && committedAttempt === null) ||
-        (diagnosticRow?.draft_status !== 'draft' &&
-          Date.now() < new Date(schedule.data.due_at).getTime())
-      ) {
-        throw new ApiError('not_found', `question ${parsed.data.id} not found`, 404);
-      }
-      // The Practice face needs the prompt/options/labels to render the scheduled
-      // one-shot, but must not receive any answer-bearing material before the
-      // canonical /api/attempts submission has been judged. Keep the question-bank
-      // GET behavior above (404) and expose only this explicit learner-safe view.
-      return Response.json({
-        ...detail,
-        reference_md: null,
-        rubric_json: null,
-        source_ref: null,
-        // Diagnostic metadata contains the response-aware judge contract
-        // (`probe_spec`), including gold and target-error signatures. The
-        // learner surface needs none of it; expose no metadata rather than
-        // attempting an answer-field denylist that can drift with the schema.
-        metadata: {},
-        backlinks: [],
-        backlinks_by_intent_source: {},
-        timeline: [],
-        committed_attempt: committedAttempt,
-        serving,
-      });
-    }
-    if (surface === 'practice') {
-      return Response.json({
-        ...detail,
-        reference_md: null,
-        rubric_json: null,
-        metadata: {},
-        source_ref: null,
-        backlinks: [],
-        backlinks_by_intent_source: {},
-        serving,
-      });
-    }
-    return Response.json({ ...detail, serving });
+    const detail = await readQuestionDetail(db, params, {
+      timelineLimit: url.searchParams.get('timeline_limit'),
+      surface: url.searchParams.get('surface'),
+    });
+    return Response.json(detail);
   } catch (err) {
     return errorResponse(err);
   }
@@ -161,83 +35,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
 // ── PATCH — edit the question-bank editable surface ─────────────────────────
 export async function PATCH(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const parsedParams = QuestionParamsSchema.safeParse(params);
-    if (!parsedParams.success) {
-      throw new ApiError('validation_error', 'question id is required', 400);
-    }
-    const id = parsedParams.data.id;
-
-    const raw = await req.json().catch(() => null);
-    // Loud bloodline rejection BEFORE the generic .strict() error so the message
-    // names the lineage fields explicitly.
-    rejectBloodlineKeys(raw);
-    const parsed = UpdateQuestionBodySchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new ApiError(
-        'validation_error',
-        parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
-        400,
-      );
-    }
-    const { version, ...patch } = parsed.data;
-
-    // Require at least one editable field (version-only PATCH is a no-op error).
-    if (Object.keys(patch).length === 0) {
-      throw new ApiError('validation_error', 'no editable fields provided', 400);
-    }
-
-    // Validate knowledge_ids exist (non-archived) for a friendly early 400.
-    // An empty array is a deliberate "clear all knowledge associations" — valid
-    // and skipped here. editQuestion re-validates inside its transaction to close
-    // the TOCTOU window (a node archived between this check and the commit).
-    if (patch.knowledge_ids && patch.knowledge_ids.length > 0) {
-      const check = await assertKnowledgeIdsExist(db, patch.knowledge_ids);
-      if (!check.ok) {
-        throw new ApiError(
-          'validation_error',
-          `unknown knowledge_ids: ${check.missing.join(', ')}`,
-          400,
-        );
-      }
-    }
-
-    const result = await editQuestion(db, id, version, patch, 'self');
-    if (result.status === 'not_found') {
-      throw new ApiError('not_found', `question ${id} not found`, 404);
-    }
-    if (result.status === 'knowledge_invalid') {
-      throw new ApiError(
-        'validation_error',
-        `unknown knowledge_ids: ${(result.missing_knowledge_ids ?? []).join(', ')}`,
-        400,
-      );
-    }
-    if (result.status === 'protected') {
-      throw new ApiError(
-        'immutable_question',
-        'intervention diagnostic questions cannot be edited through the question bank',
-        409,
-      );
-    }
-    if (result.status === 'composite_lifecycle') {
-      throw new ApiError(
-        'composite_lifecycle',
-        'draft_status on a composite parent or question_part is group-owned: parts promote via the parent verify cascade (or owner force-enable), and a parent deactivates via archive',
-        409,
-      );
-    }
-    if (result.status === 'conflict') {
-      throw new ApiError('conflict', `question ${id} concurrently modified`, 409);
-    }
-
-    // `noop` (patch matched the current row) returns ok with the unchanged
-    // version and no event_id — the client can treat it as a successful save.
-    return Response.json({
-      ok: true,
-      noop: result.status === 'noop',
-      version: result.version,
-      event_id: result.event_id,
-    });
+    return Response.json(await updatePracticeQuestion(db, params, () => req.json()));
   } catch (err) {
     return errorResponse(err);
   }
@@ -255,81 +53,8 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
 //      confirming a cascade after a newer API starts reporting child counts.
 export async function DELETE(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const parsedParams = QuestionParamsSchema.safeParse(params);
-    if (!parsedParams.success) {
-      throw new ApiError('validation_error', 'question id is required', 400);
-    }
-    const id = parsedParams.data.id;
-    const url = new URL(req.url);
-    const confirm = url.searchParams.get('confirm') === 'true';
-    const confirmChildren = url.searchParams.get('confirm_children') === 'true';
-
-    const counts = await countQuestionAssociations(db, id);
-
-    if (!confirm) {
-      // Confirmation gate runs BEFORE version validation: the first (unconfirmed)
-      // DELETE must always return the 409 association warning the UI needs, even
-      // if the caller hasn't supplied ?version yet. version is only required for
-      // the confirmed destructive write below.
-      return Response.json(
-        {
-          error: 'confirm_required',
-          message: 'question has associations; re-send with ?confirm=true to archive',
-          associations: counts,
-          has_associations: hasAnyAssociation(counts),
-        },
-        { status: 409 },
-      );
-    }
-
-    if (counts.children > 0 && !confirmChildren) {
-      return Response.json(
-        {
-          error: 'children_confirmation_required',
-          message:
-            'question has attached children; re-send with ?confirm=true&confirm_children=true to archive',
-          associations: counts,
-          has_associations: true,
-        },
-        { status: 409 },
-      );
-    }
-
-    // `version` is required for optimistic locking on the confirmed write.
-    // Strict integer match (Number.parseInt is too lenient: '5abc' → 5). 0 is a
-    // valid version (a freshly-created question), so allow a bare '0'.
-    const versionRaw = url.searchParams.get('version');
-    if (!versionRaw || !/^(0|[1-9]\d*)$/.test(versionRaw)) {
-      throw new ApiError(
-        'validation_error',
-        'version query param required (non-negative integer)',
-        400,
-      );
-    }
-    const version = Number.parseInt(versionRaw, 10);
-
-    const result = await archiveQuestion(db, id, version, 'self');
-    if (result.status === 'not_found') {
-      throw new ApiError('not_found', `question ${id} not found`, 404);
-    }
-    if (result.status === 'protected') {
-      throw new ApiError(
-        'immutable_question',
-        'intervention diagnostic questions cannot be archived through the question bank',
-        409,
-      );
-    }
-    if (result.status === 'conflict') {
-      throw new ApiError('conflict', `question ${id} concurrently modified`, 409);
-    }
-
-    return Response.json({
-      ok: true,
-      archived: true,
-      event_id: result.event_id,
-      cascaded_part_ids: result.cascaded_part_ids ?? [],
-      associations: counts,
-    });
+    const result = await archivePracticeQuestion(db, params, () => new URL(req.url).searchParams);
+    return Response.json(result.body, { status: result.status });
   } catch (err) {
     return errorResponse(err);
   }

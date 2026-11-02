@@ -1,0 +1,84 @@
+/* 录入 (YUK-1473): what a reopened recording could not keep, today's line, earlier runs. */
+
+[data-ui-next].rc-page {
+  /* A long first-question title must not squeeze 收起 onto two lines on a phone. */
+  & .rc-sheet-head > .rc-link {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  & .rc-line-now {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .rc-gaps {
+    display: grid;
+    gap: var(--un-sp-1);
+    margin: 0;
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: 0 var(--un-r-1) var(--un-r-1) 0;
+    background: var(--un-bg-sunk);
+    box-shadow: inset 2px 0 0 var(--un-line-strong);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    list-style: none;
+  }
+
+  & .rc-prior {
+    border-top: var(--un-hairline) solid var(--un-line);
+    padding-top: var(--un-sp-3);
+  }
+
+  & .rc-prior-sum {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--un-sp-1);
+    min-height: var(--un-h-chip);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    cursor: pointer;
+    list-style: none;
+
+    &::-webkit-details-marker {
+      display: none;
+    }
+
+    &::after {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      transform: translateY(-2px) rotate(45deg);
+    }
+
+    &:hover {
+      color: var(--un-text-2);
+    }
+  }
+
+  & .rc-prior[open] > .rc-prior-sum::after {
+    transform: translateY(2px) rotate(-135deg);
+  }
+
+  & .rc-prior-runs {
+    display: grid;
+    gap: var(--un-sp-4);
+    margin: var(--un-sp-3) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .rc-prior-run {
+    display: grid;
+    gap: var(--un-sp-2);
+    opacity: 0.82;
+  }
+
+  & .rc-prior-head {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+}

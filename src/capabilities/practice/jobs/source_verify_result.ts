@@ -1,5 +1,5 @@
-// Pure result projections for tier-2 source verification. Promotion is already
-// decided by the job; this module only maps solve outcomes and summarizes checks.
+// Result projection for tier-2 source verification: map solve outcomes and summarize
+// checks after the job has decided promotion.
 
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { VectorNearHold } from '../server/question-supply/ingest-dedup';
@@ -7,8 +7,8 @@ import type { SolveCheckResult } from '../server/quiz/verify-framework';
 import type { CheckOutcome } from './source_verify_prechecks';
 
 export function solveCheckToOutcome(result: SolveCheckResult): CheckOutcome {
-  // verify-framework's solve-check is conservative: 'unsupported' carries no signal.
-  // Map its verdict onto the verify outcome — only a confident 'fail' blocks promotion.
+  // The solve-check is conservative: 'unsupported' carries no signal, so only a
+  // confident 'fail' blocks promotion.
   return {
     check: 'solve_check',
     verdict:
@@ -52,9 +52,8 @@ export function projectSourceVerifyResult({
     source: 'source',
     promote,
     summary_md: sourceSummaryMd,
-    // tier-2 checks are deterministic (or conservative solve-check); the handler has no
-    // calibrated scalar confidence, so report a flat 1 on a verdict and let the axes /
-    // overall carry the signal (mirrors the pre-existing absence of a confidence field).
+    // The handler has no calibrated scalar confidence, so report a flat 1 per verdict;
+    // the axes and overall carry the signal.
     confidence: 1,
     checks: checks.map((c) => ({ check: c.check, verdict: c.verdict, reason: c.reason })),
   });

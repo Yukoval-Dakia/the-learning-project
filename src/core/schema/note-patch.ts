@@ -112,7 +112,7 @@ export type NotePatchT = z.infer<typeof NotePatch>;
 //
 // Exposed so the gating caller can apply the locked mutator threshold without
 // re-implementing op-kind awareness. Locked threshold (see
-// `docs/superpowers/plans/2026-05-29-wave6-ready-to-launch.md` §Human
+// `docs/archive/superpowers/plans/2026-05-29-wave6-ready-to-launch.md` §Human
 // decision points): `≤3 patch ops AND ≤2 new blocks → mutator; else
 // propose`. The thresholds themselves live with the gating code,
 // not here.

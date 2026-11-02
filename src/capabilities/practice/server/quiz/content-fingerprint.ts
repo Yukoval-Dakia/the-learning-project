@@ -3,9 +3,9 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { Db, Tx } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { enrollAddedKnowledgeScheduling } from '../question-scheduling-enrollment';
 
 // Bumping this version rewrites the canonical string, so every persisted

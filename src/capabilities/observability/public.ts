@@ -29,6 +29,8 @@ export {
   EventParamsSchema,
 } from './api/event-contracts';
 export type {
+  AdminConfigCatalogModelRow,
+  AdminConfigProviderAuth,
   AdminConfigProviderRow,
   AdminConfigRuntimeFacts,
   AdminConfigRuntimeFactsSource,

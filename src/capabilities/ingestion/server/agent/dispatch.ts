@@ -34,15 +34,15 @@ export async function sendAgentRun(payload: AgentRunJobPayload): Promise<string 
   });
 }
 
-/** Deterministic uuid-shaped id — a duplicate send is a true no-op (R2-4/R3-4). */
+/** Deterministic uuid-shaped id — a duplicate send is a true no-op. */
 function deterministicJobId(key: string): string {
   const hex = createHash('sha256').update(key).digest('hex');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
 /**
- * Enqueue a resume segment. `intentId` is the durable resume marker's row id
- * (R3-4): the job id is derived from it, so a duplicate send of the SAME
+ * Enqueue a resume segment. `intentId` is the durable resume marker's row id:
+ * the job id is derived from it, so a duplicate send of the SAME
  * intent is a no-op while a NEW intent gets a fresh id — the previous
  * per-session id collided with its retained predecessor.
  */

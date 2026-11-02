@@ -1,6 +1,6 @@
 # Teaching Idle State Machine — Design
 
-**Status**: design only — 等用户 approve（per `docs/superpowers/plans/2026-05-24-product-track-1-closeout.md` §M1.1 exit criteria）。实现交给 [YUK-14](https://linear.app/yukoval-studios/issue/YUK-14)。
+**Status**: design only — 等用户 approve（per `docs/archive/superpowers/plans/2026-05-24-product-track-1-closeout.md` §M1.1 exit criteria）。实现交给 [YUK-14](https://linear.app/yukoval-studios/issue/YUK-14)。
 **Date**: 2026-05-24
 **Linear**: [YUK-13](https://linear.app/yukoval-studios/issue/YUK-13)
 **Author**: AI subagent (Wave 1 Lane 1)
@@ -9,7 +9,7 @@
 - [`docs/adr/0008-learning-session-multi-type-envelope.md`](../adr/0008-learning-session-multi-type-envelope.md) — `learning_session(type='conversation')` envelope + 三态 enum `active | idle | ended` 占位
 - [`src/server/session/conversation.ts`](../../src/server/session/conversation.ts) — Phase 2C MVP，当前只走 `active → ended`
 - [`src/ui/components/TeachingDrawer.tsx`](../../src/ui/components/TeachingDrawer.tsx) — chat drawer，目前 mount=start / unmount-不-end / 无 idle UX
-- [`docs/superpowers/brainstorms/2026-05-17-phase2c-active-teaching.md`](../superpowers/brainstorms/2026-05-17-phase2c-active-teaching.md) §"最可能漂移的点" #4 — idle 留空的原始决策点
+- [`docs/archive/superpowers/brainstorms/2026-05-17-phase2c-active-teaching.md`](../archive/superpowers/brainstorms/2026-05-17-phase2c-active-teaching.md) §"最可能漂移的点" #4 — idle 留空的原始决策点
 
 ---
 
@@ -281,7 +281,7 @@ export async function assertAcceptingTurns(
 
 ## Cross-cutting concerns
 
-参考 `docs/superpowers/plans/2026-05-24-product-track-1-closeout.md` §"Cross-cutting concerns"：
+参考 `docs/archive/superpowers/plans/2026-05-24-product-track-1-closeout.md` §"Cross-cutting concerns"：
 
 - **CC-5 (Subject profile validator)**：本 design **不改 subject profile**（不引入新 `judgeCapabilities` 字段、不引入新 session-type）。`ConversationStatus` enum 是 cross-subject 的 lifecycle，跟 capability registry 解耦。
 - **CC-1 / CC-2 / CC-3 / CC-4**：本 design 仅触及 conversation session lifecycle，不写 attempt / judge / correction / proposal event，跟这 4 个 CC 解耦。

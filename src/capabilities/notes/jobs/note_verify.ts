@@ -1,9 +1,6 @@
 import type { Job } from 'pg-boss';
-
-import {
-  type BossDispatch,
-  dispatchNoteVerificationClaimRecovery,
-} from '@/capabilities/notes/server/note-handoff';
+import { dispatchNoteVerificationClaimRecovery } from '@/capabilities/notes/server/note-handoff';
+import { driveLongNoteCheck } from '@/capabilities/notes/server/note-long-check';
 import {
   listRecoverableNoteVerificationResults,
   prepareNoteVerificationResultRecovery,
@@ -26,6 +23,7 @@ import {
   lockPaidEffectControlFamily,
   paidEffectControlTableExists,
 } from '@/db/paid-effect-control';
+import type { BossDispatch } from '@/kernel/records/note-handoff-protocol';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 
 // Retained pg-boss consumer. The verification execution is backend-agnostic in
@@ -156,6 +154,16 @@ export function buildNoteVerifyHandler(
       }
       if (result.status === 'verified' && result.artifact_type === 'note_atomic') {
         await deps.onPassed?.(artifactId);
+      }
+      if (result.artifact_type === 'note_long') {
+        // YUK-1642 — long notes get the bounded check→revise→recheck round on
+        // top of the verdict that was just persisted.
+        await driveLongNoteCheck({
+          db,
+          artifactId,
+          runTaskFn,
+          controlAdmission: buildControlAdmission(job.id),
+        });
       }
       console.log(`[note_verify] ${artifactId} -> ${result.status}`);
     }

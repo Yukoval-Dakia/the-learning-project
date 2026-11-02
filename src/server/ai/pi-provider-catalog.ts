@@ -11,7 +11,7 @@ import {
 } from './model-profiles';
 import snapshot from './pi-provider-catalog.snapshot.json' with { type: 'json' };
 
-export interface PiModelMetadata {
+interface PiModelMetadata {
   api: string;
   baseUrl?: string;
   input: string[];
@@ -22,6 +22,34 @@ export interface PiModelMetadata {
   catalogReasoning: ModelProfileReasoning;
   thinkingLevelMap?: Record<string, string | null>;
   thinkingFormat?: string;
+}
+
+/** Facts narrowed to the executable set (endpoint, limits, reasoning, inputs all known). */
+export interface ExecutablePiModelFacts {
+  api: string;
+  baseUrl: string;
+  input: readonly string[];
+  reasoning: boolean;
+  contextWindow: number;
+  maxInputTokens?: number;
+  maxTokens: number;
+  catalogReasoning: ModelProfileReasoning;
+  thinkingLevelMap?: Record<string, string | null>;
+  thinkingFormat?: string;
+}
+
+/** Undefined when a required fact is missing — the model is then not executable. */
+function executableFacts(facts: PiModelMetadata): ExecutablePiModelFacts | undefined {
+  if (
+    !facts.baseUrl ||
+    facts.contextWindow === undefined ||
+    facts.maxTokens === undefined ||
+    facts.reasoning === 'unknown' ||
+    facts.input.includes('unknown')
+  ) {
+    return undefined;
+  }
+  return facts as ExecutablePiModelFacts;
 }
 
 const protocols: Record<
@@ -37,7 +65,7 @@ export function piProviderId(provider: Provider): string {
   return provider;
 }
 
-export function nativePiModels(
+function nativePiModels(
   provider: Provider,
   env: Record<string, string | undefined> = process.env,
 ): Record<string, PiModelMetadata> {
@@ -118,11 +146,32 @@ export function nativePiModels(
   );
 }
 
-export function nativePiModel(
+export function executablePiModels(
+  provider: Provider,
+  env: Record<string, string | undefined> = process.env,
+): ReadonlyArray<ExecutablePiModelFacts & { id: string }> {
+  return Object.entries(nativePiModels(provider, env)).flatMap(([id, facts]) => {
+    const executable = executableFacts(facts);
+    return executable ? [{ id, ...executable }] : [];
+  });
+}
+
+/** One model's executable facts; undefined = the save-time registry would reject it too. */
+export function executablePiModel(
   provider: Provider,
   model: string,
   env: Record<string, string | undefined> = process.env,
-): PiModelMetadata | undefined {
+): ExecutablePiModelFacts | undefined {
   const models = nativePiModels(provider, env);
-  return Object.hasOwn(models, model) ? models[model] : undefined;
+  return Object.hasOwn(models, model) ? executableFacts(models[model]) : undefined;
+}
+
+/** Wire protocol declared for a catalog model; facts execution needs are not required. */
+export function nativePiModelApi(
+  provider: Provider,
+  model: string,
+  env: Record<string, string | undefined> = process.env,
+): string | undefined {
+  const models = nativePiModels(provider, env);
+  return Object.hasOwn(models, model) ? models[model].api : undefined;
 }

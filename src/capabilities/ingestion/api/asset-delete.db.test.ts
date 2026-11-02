@@ -7,7 +7,7 @@ import { DELETE } from './asset-delete';
 
 // Inject in-memory R2 for all tests
 const r2 = memR2();
-vi.mock('@/server/r2', () => ({
+vi.mock('@/kernel/object-storage', () => ({
   getR2: () => r2,
   createR2Client: () => r2,
 }));

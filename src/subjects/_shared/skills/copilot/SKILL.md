@@ -11,7 +11,7 @@ description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向
 
 <!-- 与 KnowledgeReviewTask(registry.ts:531) 的 mutation 分类知识同源；本期各表一份，
      后续若出现第三处 mutation 分类需求可抽 src/subjects/_shared/skills/knowledge-ops 共享包。
-     见 docs/superpowers/plans/2026-06-08-yuk284-debt-wave.md §2 OPEN-Q2。 -->
+     见 docs/archive/superpowers/plans/2026-06-08-yuk284-debt-wave.md §2 OPEN-Q2。 -->
 
 要整理知识树的「形状」时用 `propose_knowledge_mutation`：
 

@@ -1,0 +1,119 @@
+/* One question (YUK-1473): the in-place editor, form fields and the question's pictures. Split
+   from question.css. */
+
+[data-ui-next].qd-page {
+  /* ── Editor fields ── */
+  & .qd-editor {
+    gap: var(--un-sp-5);
+  }
+
+  & .qd-field {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .qd-field-label {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .qd-input {
+    width: 100%;
+    min-height: var(--un-h-control);
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+    color: var(--un-text-1);
+    font: inherit;
+  }
+
+  & .qd-input:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 1.5px var(--un-focus);
+  }
+
+  & .qd-textarea {
+    resize: vertical;
+    line-height: var(--un-lh-prose);
+  }
+
+  & .qd-kn-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-2) var(--un-sp-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .qd-kn {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--un-sp-2);
+    color: var(--un-text-1);
+  }
+
+  /* ── Options: one box each ── */
+  & .qd-choice-edit {
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  & .qd-choice-inputs {
+    display: grid;
+    gap: var(--un-sp-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .qd-choice-input {
+    display: grid;
+    grid-template-columns: 1.5em minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--un-sp-3);
+  }
+
+  & .qd-choice-add {
+    justify-self: start;
+  }
+
+  /* After a clash: what happened and the one way forward. */
+  & .qd-stale {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-2);
+  }
+
+  /* ── Pictures under the stem ── */
+  & .qd-figures {
+    display: grid;
+    gap: var(--un-sp-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .qd-figure {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-1);
+  }
+
+  & .qd-figure img {
+    max-width: 100%;
+    max-height: 420px;
+    border-radius: var(--un-r-1);
+    box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  & .qd-figure-caption,
+  & .qd-figure-missing {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+}

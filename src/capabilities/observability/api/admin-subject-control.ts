@@ -1,6 +1,6 @@
-// Subject control writes: rename, retire, restore, reset (rebind only) and a
-// stateless validate. Shared operations live in the server module; a successful
-// write rehydrates the registry.
+// Subject control writes: rename, retire, restore, reset and a stateless validate.
+// Shared operations live in the server module; a successful write rehydrates the
+// registry.
 
 import { type Db, db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';

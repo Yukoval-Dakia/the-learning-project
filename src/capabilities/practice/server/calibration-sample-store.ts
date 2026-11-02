@@ -36,8 +36,7 @@ const intentMetadata = z.object({
   freezeDigest: z.string().regex(/^[0-9a-f]{64}$/),
 });
 
-// A future producer persists this generation in the dispatch payload. Neither
-// the retained handler nor the gate-only DBOS candidate consumes it yet.
+// Dispatch must retain its scheduled tick identity so replays resolve the same delivery.
 export const calibrationSampleDispatchSchema = z
   .strictObject({
     version: z.literal(1),
@@ -124,9 +123,9 @@ export async function admitCalibrationStoreDispatch(db: Db, dispatch: Calibratio
   });
 }
 
-/** Applied rows are durable reuse authority even when the obligation reader
- * no longer returns them. Every validation/read here runs under the existing
- * family lock; this creates no new ownership or paid-effect identity. */
+/** Applied rows are durable reuse authority even after the obligation reader stops
+ *  returning them. All reads run under the existing family lock; this adds no new
+ *  ownership or paid-effect identity. */
 async function readCalibrationReuseDecision(
   tx: Tx,
   requested: PaidEffectInput,
@@ -189,7 +188,7 @@ async function hasCalibrationWorkSet(tx: Tx, workSetId: string): Promise<boolean
 }
 
 /** Freeze all member intents together before the first claim. The family lock
- * serializes competing freezes of the same scheduled/config workset. */
+ *  serializes competing freezes of the same workset. */
 export async function prepareCalibrationStoreWorkSet(
   db: Db,
   input: {
@@ -232,22 +231,22 @@ export async function prepareCalibrationStoreWorkSet(
       }
       const reuse = await readCalibrationReuseDecision(tx, effect, input.verifyReuse);
       if (reuse.kind !== 'none') continue;
-      // prepare seals all admitted member intents atomically. An omitted member
-      // of a persisted freeze therefore needs its original application proof;
-      // loss/corruption of that proof must never turn replay into a new intent.
+      // prepare seals all admitted members atomically. An omitted member of a persisted
+      // freeze needs its original application proof; lost or corrupt proof must never
+      // turn a replay into a new intent.
       if (rows.length > 0 && !(await readPaidEffect(tx, computePaidEffectIdentity(effect))))
         continue;
       await admitPaidEffectIntent(tx, effect);
     }
-    // An empty freeze has no paid_effect row. Parent must supply a durable tick
+    // An empty freeze has no paid_effect row, so the parent must supply a durable tick
     // receipt before claiming replay-stable empty selection or runtime admission.
     return { kind: 'prepared' } as const;
   });
 }
 
 /** Uses the shared admission/claim operations inside one family transaction.
- * Calibration additionally blocks a new purchase while an older receipt still
- * needs application. This check is serialized with every result/apply write. */
+ *  Calibration additionally blocks a new purchase while an older receipt still needs
+ *  application; this check is serialized with every result/apply write. */
 export async function reserveCalibrationStoreEffect(
   db: Db,
   input: PaidEffectInput,
@@ -335,9 +334,9 @@ export async function reserveCalibrationStoreEffect(
   });
 }
 
-/** Core freeze rows can contain DB Dates. Preserve their exact ISO JSON face
- * while keeping undefined/non-finite/other invalid values for B's strict
- * canonicalizer to reject. This does not change either effect identity. */
+/** Core freeze rows can contain Dates. Preserve their exact ISO JSON face while
+ *  leaving other invalid values for the strict canonicalizer to reject; this changes
+ *  neither effect identity. */
 export function serializeCalibrationStoreResult(value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
   if (Array.isArray(value))
@@ -373,8 +372,8 @@ export function markCalibrationStoreUnknown(db: Db, lease: CalibrationSendLease,
   );
 }
 
-/** A bounded read fails loudly instead of hiding a historical obligation. The
- * shared reader needs pagination before a larger family can be admitted. */
+/** Bounded read: fail loudly instead of hiding a historical obligation. The shared
+ *  reader needs pagination before a larger family is admitted. */
 export async function readCalibrationStoreObligations(db: Db) {
   const rows = await listPaidEffectObligations(db, { family: FAMILY, limit: 1001 });
   if (rows.length > 1000)
@@ -433,8 +432,8 @@ export async function applyCalibrationStoreReceipt(
       });
       return { kind: 'applied', application } as const;
     } catch (error) {
-      // The savepoint rolls back domain + receipt together, including a caught
-      // MF8 unique violation that leaves PostgreSQL's transaction aborted.
+      // The savepoint rolls back domain and receipt together, including a caught unique
+      // violation that left the transaction aborted.
       const message = error instanceof Error ? error.message : String(error);
       await notePaidEffectApplicationFailure(tx, identity, message);
       return { kind: 'pending', error: message } as const;

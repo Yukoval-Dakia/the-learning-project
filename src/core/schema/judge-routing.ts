@@ -1,21 +1,16 @@
 // Shared judge-route inference for AI-generated questions.
 //
-// Extracted from src/server/boss/handlers/embedded_check_generate.ts
-// (docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md
-// §2 / §5). Both EmbeddedCheckGenerate and QuizGen (and any future generator)
-// need the same default judge_kind for a freshly generated question, so the
-// routing rule lives here in core/ (cross-subject, no IO) rather than being
-// duplicated per handler.
+// EmbeddedCheckGenerate and QuizGen need the same default judge_kind for a freshly
+// generated question, so the routing rule lives here in core/ (cross-subject, no IO)
+// instead of being duplicated per handler.
 //
 // The input is structural (kind + optional override + optional rubric) so any
-// generated-question shape that carries those fields can be routed without
-// importing the per-handler Zod schema.
+// generated-question shape carrying those fields can be routed without importing the
+// per-handler Zod schema.
 //
-// The default route is a pure read of the answer-class
-// axis (core/schema/answer-class.ts, the single source of truth). This is the
-// PROFILE-FREE generation twin of route-resolve.ts
-// (resolveQuestionJudgeRoute); the two must stay behavior-synced — pinned by
-// src/core/schema/answer-class-route-parity.test.ts.
+// The default route is a pure read of the answer-class axis
+// (core/schema/answer-class.ts, the single source of truth). This is the profile-free
+// generation twin of resolveQuestionJudgeRoute; keep the two behavior-synced.
 import type { z } from 'zod';
 import { deriveAnswerClass } from './answer-class';
 import type { JudgeKind, QuestionKind, Rubric } from './business';
@@ -54,21 +49,15 @@ const EXPLANATION_TAIL_RE =
   /\n+\s*(?:【\s*(?:解析|详解|解答|分析|点评|点拨|答案解析)\s*】|\**\s*(?:解析|详解|解答|证明|分析|点评|点拨)\s*[：:])/;
 const LEADING_ANSWER_MARKER_RE = /^(?:答案|答|解)\s*[：:．.]\s*/;
 
-// Trailing-junk stripping, shared by both head-extraction
-// branches. This replaced a single end-anchored regex
-//   /(?:[\s。．.，,；;：:、*]|\s*[（(]\s*(?:选项|正确答案)\s*[A-Z]{0,4}\s*[)）]?)+$/
-// whose outer `+` overlapped on whitespace (the bare `\s` alternative vs. the
-// `\s*`-prefixed option annotation). On learner-supplied text such as
-// `(' (选项A'.repeat(20)).trim() + 'x'` V8 enumerated an exponential number of
-// partitions before concluding the end-anchored pattern does not match — a
-// ~140-char submission stalled the event loop (the API allows 12 000 chars).
-// stripTrailingJunk accepts the SAME language in linear time: the trailing run
-// is the longest suffix that is a concatenation of tokens, each either
+// Trailing-junk stripping, shared by both head-extraction branches. The previous
+// end-anchored regex had overlapping whitespace alternatives, so V8 enumerated an
+// exponential number of partitions on a ~140-char learner submission (the API allows
+// 12 000 chars) before concluding it did not match. stripTrailingJunk accepts the same
+// language in linear time: the trailing run is the longest suffix that is a
+// concatenation of tokens, each either
 //   (a) one junk char (whitespace or the punctuation/`*` set), or
-//   (b) an optional-whitespace + '(' / '（' + whitespace + 选项|正确答案 +
-//       whitespace + 0-4 [A-Z] + whitespace + optional ')' / '）' annotation.
-// judge-routing.test.ts pins it against the retired expression (differential
-// oracle) and asserts the pathological input stays bounded.
+//   (b) optional whitespace + '(' / '（' + whitespace + 选项|正确答案 + whitespace +
+//       0-4 [A-Z] + whitespace + optional ')' / '）' annotation.
 const JUNK_CHAR_RE = /[\s。．.，,；;：:、*]/;
 const WHITESPACE_CHAR_RE = /\s/;
 const OPTION_ANNOTATION_KEYWORDS = ['选项', '正确答案'] as const;

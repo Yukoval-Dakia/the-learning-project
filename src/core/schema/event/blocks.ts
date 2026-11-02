@@ -3,16 +3,15 @@ import { CauseCategoryId, CauseSchema as CauseSchemaBase } from '../cause';
 
 // ---------- ActorKind ----------
 //
-// 谁触发了这个 event。ADR-0006 v2 / 0007 — 单用户 actor='self'；agent / cron / system
-// 由后端写入路径填。
+// 谁触发了这个 event。单用户场景写 'user'；agent / cron / system 由后端写入路径填。
 
 export const ActorKind = z.enum(['user', 'agent', 'cron', 'system']);
 export type ActorKindT = z.infer<typeof ActorKind>;
 
 // ---------- SubjectKind ----------
 //
-// event 落在哪种 material / 元事件上。ADR-0006 v2 + 0010 (knowledge_edge) + 0011
-// (chip / query)。注意：'event' 表自我引用（judge / rate 作用在 prior event 上）。
+// event 落在哪种 material / 元事件上。'event' 表自我引用（judge / rate 作用在
+// prior event 上）。
 
 export const SubjectKind = z.enum([
   'question',
@@ -30,8 +29,7 @@ export type SubjectKindT = z.infer<typeof SubjectKind>;
 
 // ---------- MaterialRef ----------
 //
-// 一个 polymorphic 指针，用于 payload 内部交叉引用 material。kind discriminant 锁
-// 引用类型；id 是被引 material 的主键。
+// payload 内部交叉引用 material 的 polymorphic 指针。
 
 export const MaterialRef = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('question'), id: z.string() }),
@@ -46,10 +44,9 @@ export type MaterialRefT = z.infer<typeof MaterialRef>;
 
 // ---------- CauseSchema ----------
 //
-// profile-scoped cause id + analysis_md + confidence(0-1)。
-// 与 src/core/schema/business.ts 从同一 cause.ts re-export，避免多份 taxonomy drift。
-// 这里用于 event.payload，走 jsonb roundtrip，字段命名按 v2 spec 对齐
-//（analysis_md / confidence 顶级）。
+// profile-scoped cause id + analysis_md + confidence。与 business.ts 从同一
+// cause.ts re-export，避免多份 taxonomy drift。event.payload 走 jsonb roundtrip，
+// 字段命名按 v2 spec 对齐（analysis_md / confidence 顶级）。
 
 export const CauseCategory = CauseCategoryId;
 export const CauseSchema = CauseSchemaBase;
@@ -58,9 +55,8 @@ export type CauseSchemaT = z.infer<typeof CauseSchema>;
 
 // ---------- FsrsStateSchema ----------
 //
-// ts-fsrs v5 Card 的 JSON dump。jsonb roundtrip 安全 —— z.coerce.date() 把 ISO 串
-// 自动转回 Date。elapsed_days 在 ts-fsrs v6 deprecated，保 optional 以便 forward
-// compatibility。
+// ts-fsrs v5 Card 的 JSON dump；z.coerce.date() 把 jsonb ISO 串转回 Date。
+// elapsed_days 在 ts-fsrs v6 deprecated，保留 optional 以兼容旧 dump。
 
 export const FsrsCardState = z.enum(['new', 'learning', 'review', 'relearning']);
 export type FsrsCardStateT = z.infer<typeof FsrsCardState>;
@@ -81,8 +77,8 @@ export type FsrsStateSchemaT = z.infer<typeof FsrsStateSchema>;
 
 // ---------- RelationTypeSchema ----------
 //
-// ADR-0010 — 5 个核心 relation_type + experimental:* 命名空间逃逸阀。新关系按 ADR-0006
-// v2 Option 折中规则：experimental:* 先跑稳，再 promote 到核心 enum。
+// 5 个核心 relation_type + experimental:* 命名空间逃逸阀：新关系先在
+// experimental:* 跑稳，再 promote 到核心 enum。
 
 export const CoreRelationType = z.enum([
   'prerequisite',

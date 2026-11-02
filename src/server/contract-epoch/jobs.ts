@@ -86,7 +86,8 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   // 校准/估计写难度与掌握投影 —— 输入是旧合同 attempt。
   item_prior_backfill: 'translate',
   recalibration_nightly: 'translate',
-  axis_state_nightly: 'translate',
+  // axis_state_nightly retired by YUK-1560; its leftover queue rows use the
+  // fail-closed default ('fenced').
   embed_backfill: 'translate',
   kc_dedup_nightly: 'translate',
   confusable_contrast_nightly: 'translate',

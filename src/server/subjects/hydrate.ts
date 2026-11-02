@@ -1,7 +1,7 @@
 // 装配水合的兼容入口。引擎在 `@/kernel/read-models/subject-hydration`，让
 // capability 侧 strict 消费者与全局 boot/refresh 共用同一实现，而不深 import
 // server/subjects。本文件保留既有 import 面：defaultDb 缺省、60s refresh 接线、
-// 四字段 HydrationReport，以及 TraitResolution 读面。
+// 四字段 HydrationReport。
 
 import { type Db, db as defaultDb } from '@/db/client';
 import {
@@ -15,15 +15,6 @@ export type HydrationReport = Pick<
   DetailedHydrationReport,
   'hydrated' | 'builtinFloor' | 'skipped' | 'removed'
 >;
-// 缓存与派生的权威在 kernel read-models/subject-trait-resolutions.ts；
-// 这里经兼容层 re-export 维持既有 import 面。
-export {
-  type TraitDegradation,
-  type TraitResolution,
-  getSubjectTraitResolutions,
-  isGeneralFallbackFor,
-} from './resolution-cache';
-
 export async function hydrateSubjectRegistryFromDb(
   db: DbOrTx = defaultDb,
   registry: SubjectRegistry = getDefaultSubjectRegistry(),
