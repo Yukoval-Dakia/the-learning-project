@@ -1,0 +1,118 @@
+{
+  "code_revision": "14cb6b3263b6d78a4b3e142575f67e3f9727a88d",
+  "captured_at": "2026-10-06T23:24:04.322Z",
+  "capture_id": "1ff4a95b-c9e6-42c1-870a-a17e261d049f",
+  "case": "memory-reconcile",
+  "synthetic_only": true,
+  "reserved_usd": 0.75,
+  "max_total_reserve_usd": 3,
+  "provider": "opencode-go",
+  "model": "mimo-v2.6-pro",
+  "task_run_id": null,
+  "provider_attempt_id": null,
+  "cost": {
+    "basis": "unknown",
+    "amount_usd": null
+  },
+  "input": {
+    "memories": [
+      {
+        "index": 0,
+        "memory_id": "d8194f25-c965-4547-8bb8-f78187d5a858",
+        "created_ms": 2000,
+        "kind": "preference",
+        "text": "学习椭圆时先画图，保留反例；不要把一次答对解释为稳定掌握。"
+      }
+    ],
+    "candidates": [
+      [
+        0,
+        [
+          {
+            "index": 0,
+            "memory_id": "synthetic-old",
+            "created_ms": 1000,
+            "score": 0.9,
+            "text": "学习椭圆时喜欢直接看代数公式，不画图。"
+          }
+        ]
+      ]
+    ]
+  },
+  "input_digest": "sha256:410e0f5606d62553c2ba41d3ba345991bfac07595ca8ceb6eae3798fbb1e3def",
+  "raw_response": {
+    "id": "9c6eb384-5e7d-4fec-8cd0-38209dcce4fe_a2b6acfc5c2c4d479233c7b506fd4354",
+    "model": "mimo-v2.6-pro",
+    "usage": {
+      "prompt_tokens": 529,
+      "completion_tokens": 131,
+      "total_tokens": 660,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 48
+      }
+    },
+    "choices": [
+      {
+        "index": 0,
+        "finish_reason": "stop",
+        "message": {
+          "role": "assistant",
+          "content": "{\"decisions\": [{\"new_index\": 0, \"action\": \"SUPERSEDE\", \"old_index\": 0, \"confidence\": 0.88, \"reason\": \"新偏好（学椭圆先画图、保留反例）与旧偏好（直接看代数公式、不画图）直接矛盾，属于偏好更新，以最新为准。\"}]}"
+        }
+      }
+    ]
+  },
+  "output": [
+    {
+      "new_index": 0,
+      "action": "SUPERSEDE",
+      "old_index": 0,
+      "confidence": 0.88,
+      "reason": "新偏好（学椭圆先画图、保留反例）与旧偏好（直接看代数公式、不画图）直接矛盾，属于偏好更新，以最新为准。",
+      "merged_text": null
+    }
+  ],
+  "output_digest": "sha256:48c1bc2bd92382b1298c449f5eb11140f3013963b76847e4b841dcb2df9c15d0",
+  "provider_attempt": [
+    {
+      "attempt_id": "1c24583b-13bd-4b1c-9311-42953e0e9e4d",
+      "operation_id": "d8194f25-c965-4547-8bb8-f78187d5a858",
+      "attempt_kind": "wire",
+      "provider": "opencode-go",
+      "model": "mimo-v2.6-pro",
+      "lane_id": "glm.memory-reconcile",
+      "protocol": "http",
+      "endpoint_class": "openai-compatible.chat-completions",
+      "caller": "worker",
+      "operation_kind": "memory_reconcile",
+      "external_request_id": "9c6eb384-5e7d-4fec-8cd0-38209dcce4fe_a2b6acfc5c2c4d479233c7b506fd4354",
+      "terminal_status": "succeeded",
+      "terminal_reason": "provider_response_accepted",
+      "wire_count": 1,
+      "usage_json": {
+        "unit": "tokens",
+        "basis": "reported",
+        "input": 529,
+        "total": 660,
+        "output": 131,
+        "source": "provider_response"
+      },
+      "cost_basis": "unknown",
+      "cost_amount": null,
+      "cost_currency": "USD",
+      "cost_source": "provider_cost_absent",
+      "started_at": "2026-10-06T23:24:04.327Z",
+      "provider_start_reserved_at": "2026-10-06T23:24:04.330Z",
+      "finished_at": "2026-10-06T23:24:10.072Z"
+    }
+  ],
+  "evidence_redaction": {
+    "reason": "Provider raw reasoning was captured by the task probe; retained evidence is now final-content/usage allowlisted. The task-owned uncommitted original was removed; no paid retry or business-result change.",
+    "original_artifact_sha256": "d0e4b5f8cf0b81adc280443b4b87833dd1ceab398ea908b07bb5212778f64981",
+    "code_revision_of_call": "14cb6b3263b6d78a4b3e142575f67e3f9727a88d",
+    "raw_provider_response_digests_are_integrity_only": true
+  }
+}

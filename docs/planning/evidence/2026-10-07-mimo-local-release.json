@@ -1,0 +1,142 @@
+{
+  "recordedAt": "2026-10-07T00:44:08.833297+00:00",
+  "revision": "0f81e198f2b2cf51bdc5df231e3b7e5fbba06ad4",
+  "imageId": "sha256:64b568db760de76c22f29edc72b39ee67e3f8e21c679cf02d0c9aa33c3b18906",
+  "ci": {
+    "revision": "6ca8d8f3cd7c0694c12fd06230d540dac1aa6da5",
+    "run": 37548065515,
+    "attempt": 2,
+    "aggregateJob": 112564492729,
+    "result": "success"
+  },
+  "runtimeArtifactHashes": {
+    "the-learning-project-app:0f81e198f": {
+      "/app/dist/server.cjs": "b586ac37696cf96e45bb11e652cf86d18b5a73cf3d5f22e36b81aa9ee30dfb78",
+      "/app/dist/worker.cjs": "0d6f140007555f44da52b018513e183a913ce1958653b5cf0bddfea4f650453a",
+      "/app/dist/migrate.cjs": "3006350b5d98a30a187d9d199506810959b6156ea1581987c904eebe23e70474",
+      "/app/web/dist/index.html": "875904f96001386175f4074d8c12dd956334b1edcf6e7d3d33657766f40937f5"
+    },
+    "the-learning-project-app:6ca8d8f3c": {
+      "/app/dist/server.cjs": "b586ac37696cf96e45bb11e652cf86d18b5a73cf3d5f22e36b81aa9ee30dfb78",
+      "/app/dist/worker.cjs": "0d6f140007555f44da52b018513e183a913ce1958653b5cf0bddfea4f650453a",
+      "/app/dist/migrate.cjs": "3006350b5d98a30a187d9d199506810959b6156ea1581987c904eebe23e70474",
+      "/app/web/dist/index.html": "875904f96001386175f4074d8c12dd956334b1edcf6e7d3d33657766f40937f5"
+    }
+  },
+  "candidateRuntimeFilesIdentical": true,
+  "backupDumpSha256": "5c25a54c716bbf88aae9229ad4f2b32c80b65021ad01363fe1861f847e459ddb",
+  "r2Verification": {
+    "at": "2026-10-07T00:43:15.991Z",
+    "originalCaptureFinishedAt": "2026-10-07T00:28:11.796Z",
+    "writersConfirmedStoppedAt": "2026-10-07T00:28:19.302482+00:00",
+    "objectCount": 63,
+    "bytes": 7961112,
+    "sameKeySetAndBytesAndVersionMetadata": true,
+    "allLastModifiedBeforeStop": true,
+    "latestLastModified": "2026-09-14T14:12:57.191Z",
+    "verified": true,
+    "scope": "Retrospective read-only full object comparison after release. Original snapshot preceded stop confirmation; current objects have identical content and version metadata, all last-modified before that stop. This does not relabel capture time."
+  },
+  "copilot": {
+    "evidence": "evidence/production-copilot-resume-v2.json",
+    "passed": true,
+    "session": {
+      "id": "h2ech9r3vwb0j4ej6hy5z1cw",
+      "status": "active",
+      "agent_sdk_session_id": "pi:be7d8c1d-56ee-44dc-ba4d-f2bfa8d5f739"
+    },
+    "runIds": [
+      "copilot_run_tool_copilot_user_ask_d362b0046d84f929ae4a1aa639bfbd3c8caa03c84592de38b475ca8ca6bca0cc",
+      "copilot_run_tool_copilot_user_ask_363a380b31dae526a7dbc24b1ffa4c5bed20084db436459b0370c8f7434adfa7"
+    ],
+    "estimatedCostUsd": 0.002744009,
+    "manualModelRequests": 2,
+    "note": "First browser driver failed reading202body after acceptance. SQL confirmed success; recovered original session and made only the planned second turn. Both answers survive reload. No tool calls or mastery/plan mutations from these turns."
+  },
+  "syntheticAnswers": [
+    "5分钟自检：前2分钟遮住解答，默写解题路线（设参、列式、化简、检验）；后3分钟自问三句——关键一步为何这样设？条件改动一处，结论如何变？哪一步当时想不到？三问都能默答才算可独立迁移，卡壳处即薄弱点。此结果仅反映当下表现，不等于已掌握。",
+    "刚才谈的是解析几何中的椭圆综合题，涉及设参列式与化简推导。若遮住答案后第一步就卡住，把自检降级为「分步对照」：先只看解答的第一步，理解后合上再复述这一步，逐步推进，把当前能独立复述到的位置记为薄弱边界，而非继续硬默全篇。"
+  ],
+  "reloadMatches": true,
+  "pageErrors": [],
+  "evidenceHashes": {
+    "evidence/production-copilot-browser.json": "79d4cd7722bc22d88773b577895f8dc52d9f759a5355193b4c58ff4b41d16e5a",
+    "evidence/production-copilot-resume.json": "0558a7fa27963582b0aedd291bff90479809402467d64a563b1ebc08d0343f23",
+    "evidence/production-copilot-resume-v2.json": "0dc0e3152f526e38eb95039fcb1ba528d5bf9961e2e9e0a64fda36152ff6f9e2",
+    "evidence/production-ledger-final.json": "82ed6384801da45212eb1db75ad88b2dbee06a7f4189940959b97d9bfd0d5d3f",
+    "evidence/production-http-health.json": "4682238f91f1fcd153ea2e0037779698a0e6d01200e58f95e3a070c0e30a36bc",
+    "evidence/production-http-auth.json": "f8adc2865ef06ce65d3261f2c7b22681355b2631718daa18d6ce1497ebe30ade",
+    "evidence/r2-post-release-verification.private.json": "6cf9277a46ae1092defa83ab3535a756e97c89b582a90977749e1c236b2c4bfa",
+    "copilot-browser-acceptance.cjs": "740dece4564ea8d76456e668aa06314c8f7b5d2551546b418920c96329a99f21",
+    "copilot-browser-resume-v2.cjs": "7ba2cc6b40cc6a15624da6c6e7ecfe3e9572e3d99c3e011ad879f3836264b265"
+  },
+  "backgroundTaskSnapshot": [
+    {
+      "id": "copilot_run_tool_copilot_user_ask_d362b0046d84f929ae4a1aa639bfbd3c8caa03c84592de38b475ca8ca6bca0cc",
+      "task_kind": "CopilotTask",
+      "provider": "opencode-go",
+      "model": "mimo-v2.6-pro",
+      "status": "success",
+      "cost_usd": 0.001417462,
+      "cost_basis": "estimated",
+      "cost_ref": "pi-catalog:opencode-go/mimo-v2.6-pro",
+      "started_at": "2026-10-07T00:38:43.049+00:00",
+      "finished_at": "2026-10-07T00:38:58.168+00:00"
+    },
+    {
+      "id": "c401nujf5j0xrp2ru2elkf1a",
+      "task_kind": "MemoryBriefTask",
+      "provider": "opencode-go",
+      "model": "mimo-v2.6-pro",
+      "status": "success",
+      "cost_usd": 0.00580464,
+      "cost_basis": "estimated",
+      "cost_ref": "pi-catalog:opencode-go/mimo-v2.6-pro",
+      "started_at": "2026-10-07T00:40:07.507+00:00",
+      "finished_at": "2026-10-07T00:41:07.409+00:00"
+    },
+    {
+      "id": "copilot_run_tool_copilot_user_ask_363a380b31dae526a7dbc24b1ffa4c5bed20084db436459b0370c8f7434adfa7",
+      "task_kind": "CopilotTask",
+      "provider": "opencode-go",
+      "model": "mimo-v2.6-pro",
+      "status": "success",
+      "cost_usd": 0.001326547,
+      "cost_basis": "estimated",
+      "cost_ref": "pi-catalog:opencode-go/mimo-v2.6-pro",
+      "started_at": "2026-10-07T00:40:15.666+00:00",
+      "finished_at": "2026-10-07T00:40:23.339+00:00"
+    },
+    {
+      "id": "nbrzsm9rtczlst2s0x2kd33h",
+      "task_kind": "MemoryBriefTask",
+      "provider": "opencode-go",
+      "model": "mimo-v2.6-pro",
+      "status": "success",
+      "cost_usd": 0.004260825,
+      "cost_basis": "estimated",
+      "cost_ref": "pi-catalog:opencode-go/mimo-v2.6-pro",
+      "started_at": "2026-10-07T00:41:07.8+00:00",
+      "finished_at": "2026-10-07T00:41:39.832+00:00"
+    },
+    {
+      "id": "rpy7vdqan9fch1qkhv2dh1q6",
+      "task_kind": "MemoryBriefTask",
+      "provider": "opencode-go",
+      "model": "mimo-v2.6-pro",
+      "status": "success",
+      "cost_usd": 0.004876785,
+      "cost_basis": "estimated",
+      "cost_ref": "pi-catalog:opencode-go/mimo-v2.6-pro",
+      "started_at": "2026-10-07T00:42:02.303+00:00",
+      "finished_at": "2026-10-07T00:42:45.657+00:00"
+    }
+  ],
+  "memoryProbeOverallPass": false,
+  "limitations": [
+    "YUK1340 PR1583 session-entry/reuse fixes remain open; explicit new conversation path used.",
+    "Not all54chat tasks or assessment quality slices accepted. Dedicated embedding, typedJev and OCR protocols retained.",
+    "Tailscale tested on this Mac and existing separate tailnet peer; no off-home physical-device test.",
+    "Full continuous learning behavior remains unfinished."
+  ]
+}

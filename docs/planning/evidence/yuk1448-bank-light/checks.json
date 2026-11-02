@@ -1,0 +1,265 @@
+{
+  "base": "8fb160ed517c85a56cabbebfe1f1a19f137e4639",
+  "recovered_remote_head": "40777e5e970f40833c0779693cc808d0850d5e0f",
+  "merge_head": "755919dd45f3a862e5e16d0b4c59b6489f050bb5",
+  "validated_product_head": "9493ebe51323b5fc604b19826f19e37526abedce",
+  "product_diff_sha256": "7e60b094a1b4b76dbdf8094e1b1474b20eac465e3c01d809fcdac58d9b474cc3",
+  "environment": {
+    "node": "v24.19.0",
+    "pnpm": "11.13.1",
+    "database": "disposable testcontainers PG16; real/project DB not accessed",
+    "network_providers_called": false,
+    "external_mcp_handshake": "Existing ambient Exa mount attempted connection in diagnostic; failed before provider delta; disabled for final offline validation; no paid search/generation executed."
+  },
+  "db": {
+    "command": "pnpm vitest run --config vitest.db.config.ts src/capabilities/practice/server/tools/bank-tools.db.test.ts --maxWorkers=1",
+    "passed": 6,
+    "failed": 0,
+    "case_count_unchanged": true,
+    "initial_fixture_result": "5 passed / 1 failed; empty answer/options correctly withheld",
+    "snapshot_initial_result": "5 passed / 1 failed; real RLS guard and typecheck rejected invalid readOnly config; fixed to accessMode: read only",
+    "cases": [
+      {
+        "name": "hard filters cannot be bypassed: withdrawn never served; draft/admission filters hold",
+        "status": "passed"
+      },
+      {
+        "name": "a ref never silently swaps to latest; expired/withdrawn refs are explicit errors",
+        "status": "passed"
+      },
+      {
+        "name": "missing figures are reported honestly, not hidden behind a readable stem",
+        "status": "passed"
+      },
+      {
+        "name": "the tools neither read nor write learner state",
+        "status": "passed"
+      },
+      {
+        "name": "after a reference-solution backfill changes content, the old vector is no longer used",
+        "status": "passed"
+      },
+      {
+        "name": "check_bank preserves unknown for unsupported claims and assertions",
+        "status": "passed"
+      }
+    ]
+  },
+  "local_gates": {
+    "typecheck": "pass",
+    "lint": "pass; 172 existing warnings",
+    "build": "pass",
+    "test_policy": "pass; 6 cases",
+    "capability_boundaries": "429/0/48; +1 embed edge inherited from recovered branch",
+    "architecture_deepening": "pass",
+    "partition": "pass",
+    "provider_lanes": "pass",
+    "provider_attempt_truth": "pass",
+    "question_writers": "pass",
+    "copilot_units": "2/2; unchanged projection source since fc231d92"
+  },
+  "review": {
+    "initial_head": "755919dd45f3a862e5e16d0b4c59b6489f050bb5",
+    "initial_findings": ["P1 lifecycle-only serving"],
+    "verification_head": "fc231d921753c4058298356c7c39d1950b318b05",
+    "verification_findings": ["P1 cross-revision mixed reads"],
+    "resolution": "serving gate per selected part; final reads share read-only repeatable-read transaction; author verified with real PG RLS guard",
+    "budget": "one initial + one verification; no third pass",
+    "cross_model_claude_opus": "not available in this environment; independent agent only"
+  },
+  "test_volume": {
+    "added_tests_including_fixtures": 572,
+    "added_product_lines": 2287
+  },
+  "ci": "initial exact-head run failed; root causes fixed; final exact-head terminal run recorded in PR body/final delivery",
+  "remaining": [
+    "real relevance/difficulty/automatic-grading blind comparison, 42 seeds plus real demands, same snapshot",
+    "actual gap filing/dispatch; current EvidenceDemand seed is not a receipt",
+    "supply-agent registration and consumer UI same-ref delivery",
+    "read_bank raw source/draft content/image decoding/long-content cursor not implemented",
+    "historical question.id mapping requires migration registry; no real data migration run"
+  ],
+  "artifacts": [
+    {
+      "file": "db-initial.log.gz",
+      "uncompressed_sha256": "75e3a7d02fc711c5274748ecda000839f56e2d04ed16d97638e4f9afd73eade6",
+      "compressed_sha256": "2c72dc7405cc5d528c398dbe618a7c16d742b8482299223523a4b0982fcfcea5"
+    },
+    {
+      "file": "db-snapshot.log.gz",
+      "uncompressed_sha256": "4b4e6564154349465a59de4671a0345fb0c5f9f63432747af9dc4a8aada3450d",
+      "compressed_sha256": "54cee741c300d07d7a2b27082ea14c82f5fcb039a44c890ec0a4cd3352b5d87b"
+    },
+    {
+      "file": "typecheck-snapshot-initial.log.gz",
+      "uncompressed_sha256": "c5096a2d7bbd5caa172bbcf95e6e764a5df2ee2c5f849f0cd318ea8edbef873b",
+      "compressed_sha256": "593b8b7e6b1ba8c273d825fa055f1552784dcc8655f100979f8d60f1d6995e61"
+    },
+    {
+      "file": "db-snapshot-final.log.gz",
+      "uncompressed_sha256": "ad9bc1f6bd5555c09145c2bfad6dd3ec11945c199abf35db3712ca827dbc4e0b",
+      "compressed_sha256": "5e6fcc608661eb2a780a11859cc1c8ecd910c3e266fc2aaa9c28f76f8152c719"
+    },
+    {
+      "file": "typecheck-final.log.gz",
+      "uncompressed_sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+      "compressed_sha256": "3c1fada38edcabc17a6cc26ba1584d035bfdc6be434e7682974b56c652a68182"
+    },
+    {
+      "file": "lint-final.log.gz",
+      "uncompressed_sha256": "a4aec9f7f2973b25279031440bce55f5f5f5501681661599c07048788a7c202f",
+      "compressed_sha256": "5d93804b7c2e40745229376afce24d1fc1562ca409ec0645b03c204d712ec42d"
+    },
+    {
+      "file": "build-final.log.gz",
+      "uncompressed_sha256": "cc926e217f7a4a319ceec28fedcfea5bdf426b5314ffc59ec93604a86196a63b",
+      "compressed_sha256": "02aac58ae800e5c895f36c07951da6a4c46ead4a66f4aa03770f42d2fcaf6bf9"
+    },
+    {
+      "file": "units.log.gz",
+      "uncompressed_sha256": "49a3af9bfbff4592862e4b553b119540dfd43ab8c8d9bc1a37c1662d1f6c9139",
+      "compressed_sha256": "8af72802f33e6255d499d54e43ef0b03d622a3b9a6e10d11a12d4c34ad2898ae"
+    },
+    {
+      "file": "test-policy.log.gz",
+      "uncompressed_sha256": "0d32e48c34156dc9d724c3aeb9a84d36b9cddcffa9a7fa73e3b120662f98ce60",
+      "compressed_sha256": "be891776f31c14ee5dee0aee83c72a375e0ba1c2dab852247ca5da5e08072fc6"
+    },
+    {
+      "file": "partition.log.gz",
+      "uncompressed_sha256": "99fd9e72c3c5e93dd4afc5a65d95b1e08b84d7175ba4c11d5b9251ed2f8b3e27",
+      "compressed_sha256": "3e6e14ff2c345103d0a6c0efa7c81dea5f1f2e4d1802f251783e07a340c28ed4"
+    },
+    {
+      "file": "capability-boundaries.log.gz",
+      "uncompressed_sha256": "d8546757cbb41cd0dd7bdc477355b56c67f1c8f7206bf5b2cd742d95ed2ced66",
+      "compressed_sha256": "d14692e80ea08fd3ba85b3ca7c3edb6660d99730748ee9bd5aadf8c842f5e906"
+    },
+    {
+      "file": "architecture-deepening.log.gz",
+      "uncompressed_sha256": "4ab1fcb216591c25e3505bf24f5d80a7bc250600af80ecd9993cc1950cf54929",
+      "compressed_sha256": "5c9c921d34542c637a9fd549d188f820c9404e0aeac50da859e5bdf34546e113"
+    },
+    {
+      "file": "provider-lanes.log.gz",
+      "uncompressed_sha256": "4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c",
+      "compressed_sha256": "053a53c5a01e98124f1c2ba78bbcbaf9b1288cd9404216b9419c9195249439d0"
+    },
+    {
+      "file": "provider-attempt-truth.log.gz",
+      "uncompressed_sha256": "29bdbca513c3121fd6156e6dbabd3a720733d5e993340f0c32558835ec5cc81e",
+      "compressed_sha256": "2be0b3d0415b79af01744c079224317e2c1a6fc7b8543cbb906f19020aeccd28"
+    },
+    {
+      "file": "question-writers.log.gz",
+      "uncompressed_sha256": "2b69f3f1c8991b2a5d4d1ebadce6123132d15d935c9556fd6573abd8f6e2831d",
+      "compressed_sha256": "1012009215b7779d68c7045dbb623e1e8a0bcc7f9de7767321cf52fb2965360c"
+    },
+    {
+      "file": "db-snapshot-final.json.gz",
+      "uncompressed_sha256": "4ef19a8b1d24736392bb332f78c9594910ebc4c01b28cb0796c0dd2fba17ff2a",
+      "compressed_sha256": "75f3c4ecf35475b57d025caac02d53d7e6becb664aa34cf7082fcca7a3e7f44a"
+    },
+    {
+      "file": "ci-policy-failure.log.gz",
+      "uncompressed_sha256": "3ffaf2862816f47229c0830193dff261ee5fee679196dd31fcdcc7794c1a7b39",
+      "compressed_sha256": "91eacd0df04c18d06628da5ae3375a1c70b94d5b0284d000fbde949a19a22ee1"
+    },
+    {
+      "file": "ci-db2-failure.log.gz",
+      "uncompressed_sha256": "05625b00ad33d1f91ea7528440d02b477944e83d2e1014ca0452aced6e081c31",
+      "compressed_sha256": "07f26d6c4307ce69421776f537fb7da477d91732fe891287ef93ca46284e3f49"
+    },
+    {
+      "file": "ci-draft-status-reads.log.gz",
+      "uncompressed_sha256": "fc0cadf6af78f0abd6a60980cc5310c9b8c0fddc8c2320f31ce94a71bc293ef3",
+      "compressed_sha256": "5881716b3669c581f3c1c5bf280dd07cff765d8fc5d40417738fc1778f408beb"
+    },
+    {
+      "file": "ci-draft-status-reads-fixed.log.gz",
+      "uncompressed_sha256": "a596e3882da284ccd770f5c8d5fb65cd906fe0ba4f32fef0dc0d1720b38c38cf",
+      "compressed_sha256": "4dc4c02ece7cf755f56849e42c3d23aba5ed93e6478cb79cc9c2f8a672743452"
+    },
+    {
+      "file": "ci-task-census.log.gz",
+      "uncompressed_sha256": "03afb0d2be8fad15cd30755b7971366f5c887f606be653c374e4d870f361be2e",
+      "compressed_sha256": "592251b02f802e8a2896a74404f37c85390c5bddc9d6ac6c65e85b8a55b623b5"
+    },
+    {
+      "file": "ci-draft-status.log.gz",
+      "uncompressed_sha256": "de3569839d7a890654a591c9c6b77334b1031fa56e3ecedef457f132dd24eb8d",
+      "compressed_sha256": "555a6230038f4f990a9ffff746b7cce48d429f669600d0baa61d9d4452bf3c25"
+    },
+    {
+      "file": "ci-flags.log.gz",
+      "uncompressed_sha256": "2b197dacfd53a8ee0382a9e942a7c901a36581ef3e5c241326390e4973061e0f",
+      "compressed_sha256": "d6d286ca184372ca8195a92c78d6507eaaa60da29d23c4d7e2a259da9e963c57"
+    },
+    {
+      "file": "ci-hub-sync-writers.log.gz",
+      "uncompressed_sha256": "013f9280d55c6616d010b6164c0766d2285b22253e7b7c1664574d6b20aaf0c2",
+      "compressed_sha256": "b27342e53b5fabc3933069f86fe3e2b7ad648931837ee4e178494e9efcd8f591"
+    },
+    {
+      "file": "copilot-stream-diagnostic.log.gz",
+      "uncompressed_sha256": "4a45b24e7d7857a652408c59b59e72ee4371f4d6408a4850e76128d56b5111cf",
+      "compressed_sha256": "233b9311ab47b413681b12a1e8c3f81e8f170e9f46bf1c97c6c5a3e6a81ffdeb"
+    },
+    {
+      "file": "copilot-stream-object-diagnostic.log.gz",
+      "uncompressed_sha256": "512092428c44ab945be1e249f6f64560268834ee56d60aa8d8e755f3126aa6d3",
+      "compressed_sha256": "42c9602b497f7300f079f007d5292838491a4ec04a24c85d60f7a2dfd1137619"
+    },
+    {
+      "file": "copilot-fetch-diagnostic.log.gz",
+      "uncompressed_sha256": "698ba635e0838f496c9d82965e376880aa7e3e9c3ec9f569e7db7e67733e6f62",
+      "compressed_sha256": "9480720ae94dab74c9bf62d2503182fb76646286130e167ebf41ade235896abf"
+    },
+    {
+      "file": "db-ci-fix-offline.log.gz",
+      "uncompressed_sha256": "36a0abc01ee3d00c552b7f1bfae2772ca1a410343fbd32641d18254f3b00ca72",
+      "compressed_sha256": "2ef489f522ee88c82cb40a510f454f08a51e4aa079873a816070b6051c4ca291"
+    },
+    {
+      "file": "db-ci-fix-offline.json.gz",
+      "uncompressed_sha256": "ee00a40a8614e7394b08cd1f8b2226ae4d68ce9048008c13f62a18cd238e0375",
+      "compressed_sha256": "4353ae6a45edaa74b95ab110d3ffb87a0270c0af9f54841390737b598d109c3c"
+    },
+    {
+      "file": "typecheck-ci-fix.log.gz",
+      "uncompressed_sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+      "compressed_sha256": "3c1fada38edcabc17a6cc26ba1584d035bfdc6be434e7682974b56c652a68182"
+    },
+    {
+      "file": "build-ci-fix.log.gz",
+      "uncompressed_sha256": "a402e87fe9b493b5652f6daf97e1b713dd42412c9edb68d1f75138bf0849fc3b",
+      "compressed_sha256": "753747c08eded1f3c84ab297c281903587243ed1264aa97bc003e68e94562883"
+    }
+  ],
+  "post_ci_fix": {
+    "prior_head": "0f2a05e2524bbfe3ec3baaff9817e60be2a9cc1c",
+    "failed_run": 38246290114,
+    "failed_jobs": {
+      "policy": 114800866097,
+      "db_shard_2": 114800866244
+    },
+    "root_causes": [
+      "raw SQL draft-only predicate was an unknown audit shape",
+      "search_bank top-level ZodUnion rejected by existing Pi bridge before first provider delta"
+    ],
+    "fixes": [
+      "Drizzle eq predicate; no audit/baseline/allowlist change",
+      "object input schema preserves exclusive query/cursor forms and new-query defaults"
+    ],
+    "product_diff_sha256": "d5f0ae9c4f540db77b08170f0511242cbae34a785068a9ccd1f39db4f114a5f3",
+    "validation": {
+      "bank_existing_cases": "6/6",
+      "copilot_existing_streaming_cases": "2/2 unmodified",
+      "duration_seconds": 20.46,
+      "typecheck": "pass",
+      "build": "pass",
+      "policy_followup_audits": "pass"
+    },
+    "local_fixture_note": "after schema fix, ambient optional Exa MCP attempted a handshake and failed; final offline run set EXA_API_KEY empty, no secret read or live search/generation; diagnostic edits restored"
+  }
+}

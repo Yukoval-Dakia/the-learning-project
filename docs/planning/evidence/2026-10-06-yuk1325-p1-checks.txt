@@ -1,0 +1,197 @@
+YUK-1325 initial-review P1 correction evidence, 2026-10-06
+Worktree: /tmp/tlp-laminar-yuk1325
+Branch: feat/yuk-1325-laminar
+Reviewed HEAD: 81a0606feaca1b395561a12cefa450bd6c852784
+Node: v26.10.0; pnpm: 11.13.1; SDK: 0.8.49; Vitest: 4.1.10
+
+Scope: recheck LMNR_DEBUG, LMNR_TRACE_METADATA, LMNR_SPAN_CONTEXT after SDK import,
+immediately before Laminar.initialize. No dependency change or other production change.
+No credentials, remote export, real model call, database, full test gate, push, PR,
+delegation, deployment, or access to the frozen runtime-evidence resources.
+Parent owns verification review, renewed runtime acceptance, and tracker/status capture.
+No separate actionable product follow-up was discovered.
+
+Unrelated .serena/project.yml SHA256 before and after validation:
+922f74785b417d114a6ba0b8969f0de7f96306ea6ff1d485eef9f27a3648e913
+That file remains dirty and is excluded from staging/commit.
+
+SDK side-effect inspection:
+ESM index.mjs:2014,7950 and CJS index.cjs:2021,7957 synchronously call loadEnv.
+utils-CbvnF9B9.mjs:1504-1520 reads four dotenv paths from cwd.
+Import initializes logger/context storage, but Laminar.isInitialized=false and debug runtime=null.
+Laminar.initialize in ESM index.mjs:2106-2157 reads global metadata, installs tracing,
+initializes debug, and imports parent context. CJS has the corresponding method.
+The new guard executes after both import-time dotenv calls and before this synchronous setup.
+
+Formal regression sequence:
+1. Added the real-SDK metadata-dotenv test while production helper still matched reviewed HEAD.
+2. RED: 1 test failed, 14 skipped. SDK initialized once; two in-memory spans carried
+   metadata.private_context with PRIVATE_CONTEXT_SENTINEL; networkAttempts=0.
+3. Added the shared setting guard immediately after import. Same test GREEN: 1 passed, 14 skipped.
+4. Expanded to five retained scenarios and final scoped units: 9 files, 174 tests passed.
+   The initial test title was 'refuses global metadata loaded by the real SDK from isolated dotenv'.
+   The retained title is 'isolates real SDK initialization from dotenv: %s'.
+
+Offline fixture:
+Fresh process per scenario, cwd created under tmpdir and removed after completion,
+only NODE_ENV=production inherited, synthetic .env.production, actual pinned SDK.
+An initialize wrapper injects LaminarSpanProcessor with an in-memory exporter.
+fetch, TCP connect, HTTP(S), HTTP/2, TLS are blocked before dynamic imports.
+Unsafe flags are confirmed present after the import, outside the fail-open loader catch.
+Unsafe cases: import=1, initialize=0, spans=0, tracing disabled, no .lmnr debug file.
+No-key case: synthetic key and metadata exist only in dotenv; import=0, initialize=0,
+spans=0 and dotenv values remain absent from process.env.
+Safe case: import=1, initialize=1 across concurrent boot callers, 4 spans in one trace,
+task.run -> tool.execute -> agent.child -> llm.call, 12 input/3 output tokens,
+estimated cost=0.15, business/provider callbacks and underlying result() each run once.
+Synthetic prompt/output/CoT/key/error sentinels never appear in the safe exported spans.
+All scenarios assert networkAttempts=0 before and after SDK shutdown.
+
+Final gate environment:
+cwd=/tmp/tlp-laminar-yuk1325
+NODE_ENV=test
+PATH prefix=/Users/yuqi/Library/pnpm/package-manager-store/v11/links/@pnpm/exe/11.13.1/7ed4c987d91254c958e70391e5855a23d5c67eb363ae7c283336ac9927a681a0/bin
+
+Final commands:
+pnpm vitest run --config vitest.unit.config.ts src/server/ai/laminar-tracing.test.ts src/server/ai/pi-agent-adapter.tracing.test.ts src/server/ai/pi-agent-adapter.test.ts src/server/ai/runner.stream-collect.test.ts src/server/ai/run-lifecycle.test.ts src/server/ai/pi-usage-evidence.test.ts src/server/ai/runner.seam.test.ts src/server/ai/runner.provider-admission.test.ts src/server/ai/run-lifecycle.admission.test.ts
+pnpm typecheck
+pnpm lint
+CODEX_FULL_GATE=1 pnpm build
+git diff --check
+
+Final results: scoped units 174 passed; typecheck passed; lint passed with 297 existing
+warnings and no errors; web/server/worker/migration build stages passed. No full pnpm test.
+An initial build stopped in nested pnpm version resolution. Fixed the command PATH to
+pinned pnpm, then completed the explicit final gate requested by the workflow hook.
+
+Raw log digests:
+RED (expected exit 1): /tmp/yuk1325-p1-red.log
+SHA256 c781eb45323863275b5c468d8003f07b8e288acec4f24cd6a0c7e4e050bc9d51
+First GREEN (exit 0): /tmp/yuk1325-p1-green-first.log
+SHA256 12620f72e78b54e24895296b17237bb46670778e96e563d1a804e6197f9257fa
+Final scoped units (exit 0): /tmp/yuk1325-p1-unit.log
+SHA256 4a5fc955cef04fe022738ea1fedd1a7159611a6afcceae2f97126653fe520469
+Real SDK offline scenarios (exit 0): /tmp/yuk1325-p1-sdk.log
+SHA256 0823d6cdb41d0ec0c6d20c6b50ed8fdf9af94d20cbaf141b7fdc8ad52bc3594b
+Typecheck (exit 0): /tmp/yuk1325-p1-typecheck.log
+SHA256 8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92
+Lint (exit 0): /tmp/yuk1325-p1-lint.log
+SHA256 649ad26d9a43d375564fc83248439564b41f6129331a87d853b728fa69bd2cf3
+Build (exit 0): /tmp/yuk1325-p1-build.log
+SHA256 6c3e2ee45e249497229ee8a1965ccf3e45b084041f73ae9f1ae59a77977bf8b3
+
+SDK/source digests:
+node_modules/@lmnr-ai/lmnr/dist/index.mjs
+SHA256 fef8c0c003316e1a288db45bd898f672a12f790a8b11ff01e92ff38540cca1b3
+node_modules/@lmnr-ai/lmnr/dist/utils-CbvnF9B9.mjs
+SHA256 8d3148c54d605ddcc25e65ad2e1064e89ee36f5d2dff33fb152a5d14dec59ac7
+node_modules/@lmnr-ai/lmnr/dist/index.cjs
+SHA256 ccf7bfacf54ca7b58a42170e62a19504405823f7456a58c2258a928ca9613ff3
+src/server/ai/laminar-tracing.ts
+SHA256 4ae51746d5b8444966516e4a26dcd453c2f7486230eb787bcb01b630c5a7d47b
+src/server/ai/laminar-tracing.test.ts
+SHA256 16ed34f11489abfd9d3b54e5b759aef44eff227839c49942b394d640fd6c7861
+src/server/ai/laminar-tracing.sdk.test-support.ts
+SHA256 77ab34bfe761157f79594917e5d4f0798a091bd18853610444edf674c78031b1
+
+Causal RED raw log:
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.shared" without a file extension (vitest.unit.config.ts:2:74). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.10 /private/tmp/tlp-laminar-yuk1325
+
+stdout | src/server/ai/laminar-tracing.test.ts > optional telemetry isolation > refuses global metadata loaded by the real SDK from isolated dotenv
+{"setting":"LMNR_TRACE_METADATA","enabled":true,"initializeCalls":1,"loadCalls":1,"exported":[{"name":"task.run","attributes":{"lmnr.span.type":"DEFAULT","lmnr.association.properties.tags":["tlp"],"lmnr.association.properties.metadata.private_context":"{\"text\":\"PRIVATE_CONTEXT_SENTINEL\"}","lmnr.span.ids_path":["00000000-0000-0000-8996-16880a6038b1"],"lmnr.span.path":["task.run"],"lmnr.span.instrumentation_source":"javascript","lmnr.span.sdk_version":"0.8.49","lmnr.span.language_version":"node@26.10.0","lmnr.association.properties.metadata.task_kind":"AttributionTask","lmnr.association.properties.metadata.execution_outcome":"success"}},{"name":"tool.execute","attributes":{"lmnr.span.type":"TOOL","lmnr.association.properties.tags":["tlp"],"lmnr.association.properties.metadata.private_context":"{\"text\":\"PRIVATE_CONTEXT_SENTINEL\"}","lmnr.span.ids_path":["00000000-0000-0000-e2b6-181dd4923453"],"lmnr.span.path":["tool.execute"],"lmnr.span.instrumentation_source":"javascript","lmnr.span.sdk_version":"0.8.49","lmnr.span.language_version":"node@26.10.0","lmnr.association.properties.metadata.execution_outcome":"error"}}],"networkAttempts":0}
+
+
+ ❯ src/server/ai/laminar-tracing.test.ts (15 tests | 1 failed | 14 skipped) 719ms
+     × refuses global metadata loaded by the real SDK from isolated dotenv 718ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/server/ai/laminar-tracing.test.ts > optional telemetry isolation > refuses global metadata loaded by the real SDK from isolated dotenv
+Error: Command failed: /opt/homebrew/Cellar/node/26.10.0_1/bin/node --import file:///private/tmp/tlp-laminar-yuk1325/node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs /private/tmp/tlp-laminar-yuk1325/src/server/ai/laminar-tracing.sdk.test-support.ts LMNR_TRACE_METADATA
+node:internal/modules/run_main:111
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+true !== false
+
+    at <anonymous> (/private/tmp/tlp-laminar-yuk1325/src/server/ai/laminar-tracing.sdk.test-support.ts:96:10) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: true,
+  expected: false,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v26.10.0
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 14 skipped (15)
+   Start at  22:32:39
+   Duration  1.13s (transform 32ms, setup 0ms, import 260ms, tests 719ms, environment 0ms)
+
+
+Real SDK offline raw reports:
+{"scenario":"LMNR_DEBUG","enabled":false,"initializeCalls":0,"loadCalls":1,"exported":[],"networkAttempts":0}
+[laminar] disabled: unsupported SDK debug/global-context settings
+LMNR_DEBUG: exit=0
+{"scenario":"LMNR_TRACE_METADATA","enabled":false,"initializeCalls":0,"loadCalls":1,"exported":[],"networkAttempts":0}
+[laminar] disabled: unsupported SDK debug/global-context settings
+LMNR_TRACE_METADATA: exit=0
+{"scenario":"LMNR_SPAN_CONTEXT","enabled":false,"initializeCalls":0,"loadCalls":1,"exported":[],"networkAttempts":0}
+[laminar] disabled: unsupported SDK debug/global-context settings
+LMNR_SPAN_CONTEXT: exit=0
+{"scenario":"baseline","enabled":true,"initializeCalls":1,"loadCalls":1,"exported":[{"name":"llm.call","id":"256a22868d6486a4","trace":"6d7360b7a0e420d80ce4bbd45855ebfa","parent":"e190229cca0c487f","attributes":{"lmnr.span.type":"LLM","lmnr.association.properties.tags":["tlp"],"lmnr.association.properties.tracing_level":"all","lmnr.span.parent_path":["task.run","tool.execute","agent.child"],"lmnr.span.parent_ids_path":["00000000-0000-0000-af2f-afc078a3a5a9","00000000-0000-0000-abc9-0bc05780d207","00000000-0000-0000-e190-229cca0c487f"],"lmnr.span.ids_path":["00000000-0000-0000-af2f-afc078a3a5a9","00000000-0000-0000-abc9-0bc05780d207","00000000-0000-0000-e190-229cca0c487f","00000000-0000-0000-256a-22868d6486a4"],"lmnr.span.path":["task.run","tool.execute","agent.child","llm.call"],"lmnr.span.instrumentation_source":"javascript","lmnr.span.sdk_version":"0.8.49","lmnr.span.language_version":"node@26.10.0","lmnr.association.properties.metadata.task_run_id":"synthetic-run","lmnr.association.properties.metadata.provider":"offline","lmnr.association.properties.metadata.model":"offline-model","lmnr.association.properties.metadata.usage_observed":true,"lmnr.association.properties.metadata.cost_basis":"estimated","lmnr.association.properties.metadata.cost_ref":"pi-catalog:offline/offline-model","lmnr.association.properties.metadata.additive_usage":true,"gen_ai.system":"offline","gen_ai.request.model":"offline-model","gen_ai.response.model":"offline-model","gen_ai.usage.input_tokens":12,"gen_ai.usage.output_tokens":3,"llm.usage.total_tokens":15,"gen_ai.usage.cache_read_input_tokens":0,"gen_ai.usage.cache_creation_input_tokens":0,"gen_ai.usage.cost":0.15,"lmnr.association.properties.metadata.execution_outcome":"success"},"events":[]},{"name":"agent.child","id":"e190229cca0c487f","trace":"6d7360b7a0e420d80ce4bbd45855ebfa","parent":"abc90bc05780d207","attributes":{"lmnr.span.type":"DEFAULT","lmnr.association.properties.tags":["tlp"],"lmnr.association.properties.tracing_level":"all","lmnr.span.parent_path":["task.run","tool.execute"],"lmnr.span.parent_ids_path":["00000000-0000-0000-af2f-afc078a3a5a9","00000000-0000-0000-abc9-0bc05780d207"],"lmnr.span.ids_path":["00000000-0000-0000-af2f-afc078a3a5a9","00000000-0000-0000-abc9-0bc05780d207","00000000-0000-0000-e190-229cca0c487f"],"lmnr.span.path":["task.run","tool.execute","agent.child"],"lmnr.span.instrumentation_source":"javascript","lmnr.span.sdk_version":"0.8.49","lmnr.span.language_version":"node@26.10.0","lmnr.association.properties.metadata.task_run_id":"synthetic-run","lmnr.association.properties.metadata.execution_outcome":"success"},"events":[]},{"name":"tool.execute","id":"abc90bc05780d207","trace":"6d7360b7a0e420d80ce4bbd45855ebfa","parent":"af2fafc078a3a5a9","attributes":{"lmnr.span.type":"TOOL","lmnr.association.properties.tags":["tlp"],"lmnr.association.properties.tracing_level":"all","lmnr.span.parent_path":["task.run"],"lmnr.span.parent_ids_path":["00000000-0000-0000-af2f-afc078a3a5a9"],"lmnr.span.ids_path":["00000000-0000-0000-af2f-afc078a3a5a9","00000000-0000-0000-abc9-0bc05780d207"],"lmnr.span.path":["task.run","tool.execute"],"lmnr.span.instrumentation_source":"javascript","lmnr.span.sdk_version":"0.8.49","lmnr.span.language_version":"node@26.10.0","lmnr.association.properties.metadata.task_run_id":"synthetic-run","lmnr.association.properties.metadata.tool_name":"Task","lmnr.association.properties.metadata.execution_outcome":"success"},"events":[]},{"name":"task.run","id":"af2fafc078a3a5a9","trace":"6d7360b7a0e420d80ce4bbd45855ebfa","attributes":{"lmnr.span.type":"DEFAULT","lmnr.association.properties.tags":["tlp"],"lmnr.span.ids_path":["00000000-0000-0000-af2f-afc078a3a5a9"],"lmnr.span.path":["task.run"],"lmnr.span.instrumentation_source":"javascript","lmnr.span.sdk_version":"0.8.49","lmnr.span.language_version":"node@26.10.0","lmnr.association.properties.metadata.task_run_id":"synthetic-run","lmnr.association.properties.metadata.execution_outcome":"success"},"events":[]}],"networkAttempts":0}
+baseline: exit=0
+{"scenario":"no-key","enabled":false,"initializeCalls":0,"loadCalls":0,"exported":[],"networkAttempts":0}
+no-key: exit=0
+
+Final unit excerpt:
+
+
+ Test Files  9 passed (9)
+      Tests  174 passed (174)
+   Start at  22:38:00
+   Duration  5.00s (transform 7.25s, setup 0ms, import 22.21s, tests 5.14s, environment 1ms)
+
+
+Final lint excerpt:
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 277.
+Checked 2882 files in 2s. No fixes applied.
+Found 297 warnings.
+
+Final build excerpt:
+web/dist/assets/MeshGraph-DZ_bCsrH.js                 569.50 kB │ gzip: 174.61 kB
+web/dist/assets/index-BaoiEBc5.js                     699.86 kB │ gzip: 207.11 kB
+
+✓ built in 1.19s
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+$ esbuild server/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/server.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --external:@hyzyla/pdfium --define:process.env.NODE_ENV=\"production\"
+
+  dist/server.cjs  40.7mb ⚠️
+
+⚡ Done in 2592ms
+$ esbuild scripts/worker.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/worker.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\"production\"
+
+  dist/worker.cjs  40.8mb ⚠️
+
+⚡ Done in 1340ms
+$ esbuild scripts/migrate.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/migrate.cjs --external:pg-native --external:bufferutil --external:utf-8-validate --external:@earendil-works/* --external:@modelcontextprotocol/sdk --external:@lmnr-ai/lmnr --define:process.env.NODE_ENV=\"production\"
+
+  dist/migrate.cjs  5.1mb ⚠️
+
+⚡ Done in 453ms

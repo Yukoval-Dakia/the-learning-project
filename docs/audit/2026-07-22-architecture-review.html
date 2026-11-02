@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review — loom</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 4 4; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .diagram-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <header class="space-y-4">
+        <h1 class="font-serif text-4xl">Architecture review — loom</h1>
+        <p class="text-sm text-slate-500">2026-07-22 · 范围：commit 热点（manifests / runner / proposals / agency）+ REV 2 迁移面（capabilities ↔ quarry）</p>
+        <div class="flex flex-wrap gap-4 text-xs text-slate-600 border-y border-slate-200 py-3">
+          <span class="flex items-center gap-2"><span class="inline-block w-4 h-4 border border-slate-400 bg-white"></span> module</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-8 border-t border-dashed border-slate-400"></span> seam</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-8 border-t-2 border-red-600"></span> leakage</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-4 h-4 deep"></span> deep module</span>
+          <span class="flex items-center gap-2"><span class="inline-block px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">Strong</span><span class="inline-block px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">Worth exploring</span><span class="inline-block px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">Speculative</span></span>
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-10">
+
+        <!-- ============ Card 1: Kernel facade ============ -->
+        <article id="c1" class="rounded-xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">1 · 让 kernel facade 成为真实 module：events + http errors</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs">Strong</span>
+              <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">in-process</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600 space-y-1">
+            <p>src/kernel/events.ts（5 行）· src/kernel/http.ts（113 行）</p>
+            <p>src/server/events/queries.ts · src/server/http/errors.ts（quarry 本体）</p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-6">
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">Before — facade 名存实亡</p>
+              <div class="rounded-lg border border-slate-200 p-4 space-y-3 h-72 flex flex-col justify-center">
+                <div class="space-y-1">
+                  <div class="flex items-center gap-2 text-xs"><span class="w-28 text-right text-slate-500">emitEvent facade</span><div class="h-5 bg-emerald-500 rounded-sm" style="width:2.4%"></div><span class="font-mono">2 文件</span></div>
+                  <div class="flex items-center gap-2 text-xs"><span class="w-28 text-right text-slate-500">直穿 quarry writeEvent</span><div class="h-5 bg-red-600 rounded-sm" style="width:100%"></div><span class="font-mono">82 文件</span></div>
+                </div>
+                <div class="space-y-1 pt-3">
+                  <div class="flex items-center gap-2 text-xs"><span class="w-28 text-right text-slate-500">kernel http facade</span><div class="h-5 bg-emerald-500 rounded-sm" style="width:44%"></div><span class="font-mono">55 文件</span></div>
+                  <div class="flex items-center gap-2 text-xs"><span class="w-28 text-right text-slate-500">直穿 quarry errors</span><div class="h-5 bg-red-600 rounded-sm" style="width:100%"></div><span class="font-mono">124 文件</span></div>
+                </div>
+                <p class="text-xs text-slate-400 pt-2">全仓 735 处 <code>@/server/**</code> import，最厚的两条 seam 无减压阀</p>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">After — 一个 interface，一个入口</p>
+              <div class="rounded-lg p-4 h-72 deep text-slate-100 flex flex-col justify-center items-center space-y-3">
+                <div class="border border-slate-500 rounded px-4 py-2 text-xs tracking-wider uppercase">@/kernel/events · @/kernel/http</div>
+                <div class="text-xs text-slate-400">本体迁入 kernel · quarry 只剩 re-export（过渡）</div>
+                <div class="flex gap-3 text-xs">
+                  <span class="border border-emerald-400 text-emerald-300 rounded px-2 py-1">读函数补齐（getFailureAttempts…）</span>
+                  <span class="border border-emerald-400 text-emerald-300 rounded px-2 py-1">Biome 禁直 import</span>
+                </div>
+                <div class="text-xs text-slate-400">capability 只依赖 <code>@/kernel/*</code> —— spec §2.2 规则 1 落地</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-6 text-sm">
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Problem</h3><p>kernel facade 是 5 行 re-export，82/124 个文件绕过它直穿 quarry——seam 存在但没人走，迁移没有减压阀。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Solution</h3><p>把 events/queries 与 http/errors 本体迁入 kernel（quarry 留 re-export 过渡），facade 补齐读函数，加 lint 规则禁直 import。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Wins</h3><ul class="list-disc pl-4 space-y-1"><li>leverage：一个 interface 供 9 包</li><li>locality：事件读写改动单点</li><li>quarry 依赖首次可度量下降</li><li>测试只打 kernel seam</li></ul></div>
+          </div>
+          <p class="text-xs text-slate-500">对齐 ARCHITECTURE.md「迁移期豁免：kernel facade 可包装遗留 src/server/**」——此卡是把豁免走完，不违背任何 ADR。</p>
+        </article>
+
+        <!-- ============ Card 2: Proposal lifecycle ============ -->
+        <article id="c2" class="rounded-xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">2 · 提议（proposal）生命周期：巨型 switch → manifest 挂 applier</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs">Strong</span>
+              <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">in-process</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600 space-y-1">
+            <p>src/server/proposals/actions.ts（1839 行，dispatchAccept 17-kind switch）· inbox.ts（954）· writer.ts</p>
+            <p>src/capabilities/*/manifest.ts → proposals.kinds（17 种，分布在 6 包，只声明归属不挂实现）</p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-6">
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">Before — 声明在包，实现在 quarry switch</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-4 h-72 overflow-hidden">
+                <pre class="mermaid">
+flowchart TB
+  M1[knowledge manifest<br/>4 kinds] --> SW
+  M2[agency manifest<br/>6 kinds] --> SW
+  M3[practice manifest<br/>3 kinds] --> SW
+  M4[ingestion/notes<br/>3 kinds] --> SW
+  SW["actions.ts dispatchAccept<br/>1839 行 · 17 case switch"]
+  SW --> A1[knowledge_node 逻辑]
+  SW --> A2[goal_scope 逻辑]
+  SW --> A3[question_edit 逻辑]
+  SW --> A4[…14 more]
+  classDef hot stroke:#dc2626,stroke-width:2px;
+  class SW hot
+                </pre>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">After — kind 声明自带 applier，kernel 只剩生命周期</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-4 h-72 overflow-hidden">
+                <pre class="mermaid">
+flowchart TB
+  K["kernel proposal lifecycle<br/>propose → accept → apply → event"]
+  P1["knowledge manifest<br/>kind + load applier"] --> K
+  P2["agency manifest<br/>kind + load applier"] --> K
+  P3["practice manifest<br/>kind + load applier"] --> K
+  K --> EV[(event 留痕)]
+  classDef deep fill:#1e293b,color:#fff;
+  class K deep
+                </pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-6 text-sm">
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Problem</h3><p>提议是本项目核心交互（破坏性 AI 动作只 propose），但 accept/dismiss 逻辑挤在 quarry 一个 17-case switch；改一种提议要动全局共享文件，包无法拥有自己的提议。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Solution</h3><p>ProposalKindDecl 增加 applier load thunk，applier 迁入属主 capability；kernel 立 P2「提议生命周期」契约：守卫（pending 断言）+ rate event + 分派。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Wins</h3><ul class="list-disc pl-4 space-y-1"><li>locality：edge 提议住在 knowledge 包</li><li>删 1839 行 god module</li><li>新提议 kind 只动一个包</li><li>interface 缩小到 4 个生命周期钩子</li></ul></div>
+          </div>
+          <p class="text-xs text-slate-500">正是 ARCHITECTURE.md kernel 契约表里的「提议生命周期 ⏳ P2」——此卡即立该契约，不违背 ADR-0006/0021。</p>
+        </article>
+
+        <!-- ============ Card 3: AI task 双表 ============ -->
+        <article id="c3" class="rounded-xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">3 · AI task 双表合一：registry × task-prompts</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs">Strong</span>
+              <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">in-process</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600 space-y-1">
+            <p>src/ai/registry.ts（919 行，32+ TaskDef）· src/ai/task-prompts.ts（1098 行，30+ builder + 30-case switch）</p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-6">
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">Before — 一个 task，三个触点</p>
+              <div class="rounded-lg border border-slate-200 p-4 h-72 flex flex-col justify-center space-y-3">
+                <div class="flex items-center gap-3">
+                  <div class="border border-slate-400 rounded px-3 py-2 text-xs bg-white">registry.ts<br/><span class="text-slate-400">tasks.X 元数据</span></div>
+                  <span class="text-red-600 font-bold">+</span>
+                  <div class="border border-slate-400 rounded px-3 py-2 text-xs bg-white">task-prompts.ts<br/><span class="text-slate-400">case 'X'</span></div>
+                  <span class="text-red-600 font-bold">+</span>
+                  <div class="border border-slate-400 rounded px-3 py-2 text-xs bg-white">task-prompts.ts<br/><span class="text-slate-400">buildXPrompt()</span></div>
+                </div>
+                <div class="border border-red-300 bg-red-50 rounded p-3 text-xs text-red-800">
+                  半数 TaskDef 的 systemPrompt 是哨兵字符串「(see getTaskSystemPrompt…)」——registry.test.ts 用 pin 测试把双写<strong>固化</strong>，不是过渡
+                </div>
+                <p class="text-xs text-slate-400">近 200 commit 内 task-prompts.ts 被改 10 次——每次都在给 switch 加 case</p>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">After — 单表，prompt 是字段</p>
+              <div class="rounded-lg p-4 h-72 deep text-slate-100 flex flex-col justify-center items-center space-y-3">
+                <div class="border border-slate-500 rounded px-4 py-3 text-xs font-mono text-left">
+                  tasks.X = {<br/>
+                  &nbsp;&nbsp;meta: { provider, budget, tools },<br/>
+                  &nbsp;&nbsp;prompt: inline | builder(profile) | free<br/>
+                  }
+                </div>
+                <div class="text-xs text-slate-400">getTaskSystemPrompt 退化为 5 行查表</div>
+                <div class="text-xs text-emerald-300">新 task = 改 1 处；编译器保证穷尽</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-6 text-sm">
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Problem</h3><p>同一概念两张并行表：新 task 必改 3 处 + 2 个 pin 测试文件，interface 与 implementation 同速增长——浅 module 教科书形态。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Solution</h3><p>收成单一 tasks 表，prompt 改为判别字段（inline / builder / 自由 loop），删 switch 与哨兵字符串及其 pin 测试。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Wins</h3><ul class="list-disc pl-4 space-y-1"><li>改 1 task 动 1 处而非 3 处</li><li>删 17 个 magic sentinel string</li><li>interface 缩小 ~60%</li><li>locality：prompt 与元数据同点</li></ul></div>
+          </div>
+        </article>
+
+        <!-- ============ Card 4: defaultRunTaskFn ============ -->
+        <article id="c4" class="rounded-xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">4 · 抽公共 runner-fn：消灭 22 份 DI boilerplate + type leak</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs">Strong</span>
+              <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">in-process</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600 space-y-1">
+            <p>22+ 文件复制同一段 6 行（tagging.ts · session_summary.ts · variant_gen.ts · quiz_verify.ts · note_generate.ts …）</p>
+            <p>新建：src/server/ai/runner-fn.ts（或随 Card 1 入 kernel）</p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-6">
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">Before — 22 份复制 + 强转</p>
+              <div class="rounded-lg border border-slate-200 p-4 h-72 flex flex-col justify-center space-y-2">
+                <div class="font-mono text-xs bg-red-50 border border-red-200 rounded p-3 text-red-900">
+                  const { runTask } = await import('@/server/ai/runner');<br/>
+                  const r = await runTask(kind, input,<br/>
+                  &nbsp;&nbsp;ctx <span class="bg-red-200 px-1">as Parameters&lt;typeof runTask&gt;[2]</span>);
+                </div>
+                <div class="grid grid-cols-6 gap-1">
+                  <div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div>
+                  <div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div>
+                  <div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div>
+                  <div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-300 rounded-sm"></div><div class="h-4 bg-slate-200 rounded-sm"></div><div class="h-4 bg-slate-200 rounded-sm"></div>
+                </div>
+                <p class="text-xs text-slate-400">每格 = 一个文件里的同一段 boilerplate；ctx 在调用方是 unknown，到 runner 边界才强转——危险开关（enableTransientRetry）手填无校验</p>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">After — 一个 typed factory</p>
+              <div class="rounded-lg p-4 h-72 deep text-slate-100 flex flex-col justify-center items-center space-y-3">
+                <div class="border border-slate-500 rounded px-4 py-3 text-xs font-mono text-left">
+                  makeRunTaskFn(db, opts?): RunTaskFn&lt;TIn&gt;<br/>
+                  <span class="text-slate-400">// factory 装配 ctx，调用方只传 db</span>
+                </div>
+                <div class="flex gap-2 text-xs">
+                  <span class="border border-emerald-400 text-emerald-300 rounded px-2 py-1">22 文件各删 6 行</span>
+                  <span class="border border-emerald-400 text-emerald-300 rounded px-2 py-1">~130 行净删</span>
+                </div>
+                <div class="text-xs text-slate-400">ctx 形状在 factory 单点校验，type leak 消失</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-6 text-sm">
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Problem</h3><p>DI seam 是好意图，但 22 个调用方各自重写同一段 lazy-import + 强转——seam 的形状泄漏给了每个 caller。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Solution</h3><p>单点 export 一个 typed factory：调用方注入或默认，都走同一构造；ctx 由 factory 装配并校验。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Wins</h3><ul class="list-disc pl-4 space-y-1"><li>净删 ~130 行重复</li><li>type guard 单点</li><li>leverage：22 callers 一处学</li><li>测试仍走同一 seam</li></ul></div>
+          </div>
+        </article>
+
+        <!-- ============ Card 5: 跨包耦合簇 ============ -->
+        <article id="c5" class="rounded-xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">5 · 跨包 seam：拆开 practice ↔ knowledge ↔ notes 耦合簇</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs">Strong</span>
+              <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">in-process</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600 space-y-1">
+            <p>~190 处跨包深层 import（非测试）：practice 44 · ingestion 40 · knowledge 32 · notes 30 · agency 20 · copilot 16 · shell 7</p>
+            <p>热点：knowledge/server/subject-profile（5 包消费）· notes/server/mastery-progress-signal · agency/server/goals/queries</p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-6">
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">Before — 双向深层 import</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-4 h-72 overflow-hidden">
+                <pre class="mermaid">
+flowchart LR
+  P[practice] <-->|subject-profile<br/>learnable-frontier · fsrs| K[knowledge]
+  P -->|mastery-progress-signal<br/>note-refine-triggers| N[notes]
+  K <-->|goals/queries| A[agency]
+  C[copilot] -->|solve-session<br/>subject-profile| P
+  C --> K
+  I[ingestion] -->|tag-knowledge<br/>paper-submit| K
+  I --> P
+  S[shell] -->|due-list<br/>probe-lifecycle| P
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class P,K leak
+                </pre>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">After — 共享 reader 上提，信号走 event</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-4 h-72 overflow-hidden">
+                <pre class="mermaid">
+flowchart TB
+  subgraph K2[kernel / 共享 read interface]
+    SP[subject-profile reader<br/>domain · tree snapshot]
+  end
+  P2[practice] --> SP
+  K3[knowledge] --> SP
+  A2[agency] --> SP
+  C2[copilot] --> SP
+  I2[ingestion] --> SP
+  P2 -.->|mastery 信号 = event| EV[(event)]
+  EV -.->|notes 订阅| N2[notes]
+  classDef deep fill:#1e293b,color:#fff;
+  class SP deep
+                </pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-6 text-sm">
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Problem</h3><p>spec 规则「包间走 manifest 公共接口，禁深层 import」被 ~190 处违反；practice↔knowledge、knowledge↔agency 存在双向依赖，包边界名存实亡。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Solution</h3><p>subject-profile / domain / tree snapshot 等纯读 reader 上提为 kernel 级共享接口；practice→notes 的 mastery 信号改为 event 订阅（项目已有事件核，ADR-0006 v2）。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Wins</h3><ul class="list-disc pl-4 space-y-1"><li>双向依赖环拆开</li><li>locality：profile 逻辑单点</li><li>reader seam 一处可测</li><li>包隔离从口号变强制</li></ul></div>
+          </div>
+          <p class="text-xs text-slate-500">「事实经事件，查询经接口」（spec §2.2 规则 2）——此卡正是把违反规则 2 的两类（查询型上提接口、信号型改走事件）分别归位。</p>
+        </article>
+
+        <!-- ============ Card 6: ui/*-api.ts typed client ============ -->
+        <article id="c6" class="rounded-xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">6 · ui/*-api.ts：手写 wire 类型 → manifest 生成 typed client</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs">Worth exploring</span>
+              <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">local-substitutable</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600 space-y-1">
+            <p>12 个 ui/*-api.ts 共 1947 行（practice-api 700 · inbox-api 341 · knowledge-api 259 · notes-api 176 …）</p>
+            <p>已有基础设施：manifest ApiRouteDecl 带 request/responses Zod schema + src/kernel/openapi.ts</p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-6">
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">Before — 契约双写，无编译时保证</p>
+              <div class="rounded-lg border border-slate-200 p-4 h-72 flex flex-col justify-center space-y-3">
+                <div class="flex items-stretch gap-3 text-xs">
+                  <div class="flex-1 border border-slate-400 rounded p-2 bg-white">server route<br/><span class="text-slate-400">responses: StreamViewSchema</span></div>
+                  <div class="flex items-center text-red-600 font-bold">≠?</div>
+                  <div class="flex-1 border border-red-400 rounded p-2 bg-red-50">practice-api.ts<br/><span class="text-red-700">手写 interface StreamView</span></div>
+                </div>
+                <div class="flex items-stretch gap-3 text-xs">
+                  <div class="flex-1 border border-slate-400 rounded p-2 bg-white">server route<br/><span class="text-slate-400">ProposalInboxRowSchema</span></div>
+                  <div class="flex items-center text-red-600 font-bold">≠?</div>
+                  <div class="flex-1 border border-red-400 rounded p-2 bg-red-50">inbox-api.ts<br/><span class="text-red-700">手写 type ProposalInboxRow</span></div>
+                </div>
+                <p class="text-xs text-slate-400">每端点 3-10 行 fetch 样板 × ~1947 行；server 改契约时 UI 类型静默漂移</p>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">After — schema 是唯一真相</p>
+              <div class="rounded-lg p-4 h-72 deep text-slate-100 flex flex-col justify-center items-center space-y-3">
+                <div class="border border-slate-500 rounded px-4 py-2 text-xs tracking-wider uppercase">manifest request/response Zod schema</div>
+                <div class="text-xs">↓ 代码生成（openapi.ts 已有雏形）</div>
+                <div class="border border-emerald-400 text-emerald-300 rounded px-4 py-2 text-xs">typed client：每个 operationId 一个函数</div>
+                <div class="text-xs text-slate-400">UI 类型 = z.infer，漂移在编译期爆炸</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-6 text-sm">
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Problem</h3><p>1947 行浅 wrapper：interface ≈ implementation，wire 类型与 server 契约双写无链接——deletion test 通过（删掉只移动复杂度），但漂移风险是真实的。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Solution</h3><p>从 manifest 的 Zod schema 生成 typed client（operationId → 函数 + z.infer 类型）；手写 api 文件退化为领域组合层。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Wins</h3><ul class="list-disc pl-4 space-y-1"><li>契约漂移编译期可见</li><li>删大部分手写 wire 类型</li><li>leverage：新路由零 UI 接线</li><li>openapi 文档同源</li></ul></div>
+          </div>
+        </article>
+
+        <!-- ============ Card 7: runner 主循环 ============ -->
+        <article id="c7" class="rounded-xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">7 · runner.ts：三份主循环 → withRunLifecycle</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs">Worth exploring</span>
+              <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">in-process</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600 space-y-1">
+            <p>src/server/ai/runner.ts（1395 行）：runTaskAttempt（203 行）· streamTask（264 行）· streamTaskCollecting（248 行）</p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-6">
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">Before — 同一段控制流写三遍</p>
+              <div class="rounded-lg border border-slate-200 p-4 h-72 flex flex-col justify-center space-y-1">
+                <div class="h-9 border-l-4 border-red-500 bg-red-50 rounded-r px-2 text-xs flex items-center">runTaskAttempt：try/finally + abort + 写库 + 计费</div>
+                <div class="h-9 border-l-4 border-red-500 bg-red-50 rounded-r px-2 text-xs flex items-center">streamTask：同上 80% 复制（注释自承 intentionally self-contained）</div>
+                <div class="h-9 border-l-4 border-red-500 bg-red-50 rounded-r px-2 text-xs flex items-center">streamTaskCollecting：同上 90% 复制（注释说「第二个 caller 出现就抽」）</div>
+                <div class="h-9 border-l-4 border-slate-300 bg-slate-50 rounded-r px-2 text-xs flex items-center text-slate-500">YUK-576 retry 兼容 = 3 处同步改</div>
+                <p class="text-xs text-slate-400 pt-1">RunTaskCtx 13 字段中 4 个 YUK-seam 字段只有 1 个调用方——interface 宽度 &gt; 使用宽度</p>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">After — 生命周期一次，消费形态各异</p>
+              <div class="rounded-lg border border-slate-200 p-4 h-72 flex flex-col justify-center space-y-1">
+                <div class="h-14 border-l-4 border-slate-800 deep rounded-r px-2 text-xs flex items-center text-slate-100">withRunLifecycle：写库 / 计费 / abort / retry —— 一次</div>
+                <div class="h-8 border-l-4 border-slate-400 bg-slate-50 rounded-r px-2 text-xs flex items-center">runTask = lifecycle(collect)</div>
+                <div class="h-8 border-l-4 border-slate-400 bg-slate-50 rounded-r px-2 text-xs flex items-center">streamTask = lifecycle(enqueue)</div>
+                <div class="h-8 border-l-4 border-slate-400 bg-slate-50 rounded-r px-2 text-xs flex items-center">streamTaskCollecting = lifecycle(onDelta)</div>
+                <p class="text-xs text-slate-400 pt-1">YukSeamOptions 抽 sub-interface，22 个普通调用方 type 变干净</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-6 text-sm">
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Problem</h3><p>三份 80-90% 相同的主循环：改 retry / signal / 写库行为要同步改 3 处（YUK-576 已是实例）；locality 失败。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Solution</h3><p>抽 withRunLifecycle 承载写库/计费/abort/retry 骨架，三个入口只保留消费形态差异；YUK-seam 字段收成 sub-interface。注释里预定的「第二个 collecting caller 出现就抽」条件已满足。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Wins</h3><ul class="list-disc pl-4 space-y-1"><li>retry 行为改 1 处</li><li>interface 减 4 字段</li><li>locality：生命周期单点</li><li>入口退化为 20 行 adapter</li></ul></div>
+          </div>
+          <p class="text-xs text-slate-500">风险：streamTask 的 enqueue/close 形态有既有测试（stream-cancel）锁定，需先跑合并 PoC 再动。</p>
+        </article>
+
+        <!-- ============ Card 8: TodayPage ============ -->
+        <article id="c8" class="rounded-xl border border-slate-200 bg-white p-8 space-y-6 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-2xl">8 · Today 聚合 read model</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 text-xs">Speculative</span>
+              <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">ports &amp; adapters</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600 space-y-1">
+            <p>src/capabilities/shell/ui/TodayPage.tsx（576 行，6+ 独立查询，8 个 block 组件，3 个 api 文件）</p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-6">
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">Before — 「Today」概念散在 15+ 文件</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-4 h-72 overflow-hidden">
+                <pre class="mermaid">
+flowchart TB
+  TP[TodayPage.tsx] --> Q1[workbench-summary]
+  TP --> Q2[agent-notes]
+  TP --> Q3[cost-today]
+  TP --> Q4[overnight-digest]
+  TP --> Q5[active-probes]
+  TP --> Q6[prep-desk-conjectures]
+  TP --> X1[agency UI]
+  TP --> X2[onboarding UI]
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class X1,X2 leak
+                </pre>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <p class="diagram-label text-slate-500">After — server 侧 join，一次查询</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-4 h-72 overflow-hidden">
+                <pre class="mermaid">
+flowchart TB
+  TP2[TodayPage.tsx] --> RM[/api/today read model/]
+  RM --> S1[workbench]
+  RM --> S2[notes]
+  RM --> S3[cost]
+  RM --> S4[digest]
+  RM --> S5[probes]
+  classDef deep fill:#1e293b,color:#fff;
+  class RM deep
+                </pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-6 text-sm">
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Problem</h3><p>理解「Today」要读 15+ 文件；shell 直接 import agency/onboarding 的 UI——locality 失败叠加跨包 UI 耦合。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Solution</h3><p>server 侧聚 Today read model（单端点 join 6 数据源），UI 块按 manifest 贡献制注册而非 shell 直接 import。</p></div>
+            <div><h3 class="text-xs uppercase tracking-wider text-slate-500 pb-1">Wins</h3><ul class="list-disc pl-4 space-y-1"><li>「Today」单文件可读</li><li>跨包 UI import 消除</li><li>6 次往返 → 1 次</li></ul></div>
+          </div>
+          <div class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs text-amber-900">
+            ⚠️ 方向已在移动：teaching brief read model + GET /api/prep-desk/brief（YUK-706，#909）刚落地——先观察该 read model 是否自然长成 Today 聚合，避免平行建第二套。
+          </div>
+        </article>
+
+      </section>
+
+      <!-- ============ Top recommendation ============ -->
+      <section id="top-recommendation" class="rounded-xl border-2 border-emerald-500 bg-emerald-50 p-8 space-y-3">
+        <h2 class="font-serif text-2xl">Top recommendation：<a href="#c1" class="underline decoration-emerald-400">Card 1 — 让 kernel facade 成为真实 module</a></h2>
+        <p class="text-sm max-w-3xl">其它每张卡都需要 kernel 有真实载体：proposal applier 入包要立在生命周期契约上、subject-profile 上提要有个「上提到哪」、typed client 生成要消费 kernel 契约。但 facade 现在 82/124 处被绕过——不先把它坐实，后面每张卡都在沙地上盖楼。改动机械、风险最低、立刻让 quarry 依赖首次可度量下降，同时为 Card 2（提议生命周期 P2）和 Card 5（共享 reader 上提）清出落点。</p>
+        <p class="text-xs text-slate-500">快速连击：Card 4（runner-fn）与 Card 1 同属「给 seam 一个真实 module」，可同批做。Card 2 是下一张大牌。</p>
+      </section>
+
+    </main>
+  </body>
+</html>

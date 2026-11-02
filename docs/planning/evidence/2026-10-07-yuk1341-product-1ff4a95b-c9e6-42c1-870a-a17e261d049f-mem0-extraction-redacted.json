@@ -1,0 +1,115 @@
+{
+  "code_revision": "14cb6b3263b6d78a4b3e142575f67e3f9727a88d",
+  "captured_at": "2026-10-06T23:24:00.974Z",
+  "capture_id": "1ff4a95b-c9e6-42c1-870a-a17e261d049f",
+  "case": "mem0-extraction",
+  "synthetic_only": true,
+  "reserved_usd": 0.75,
+  "max_total_reserve_usd": 3,
+  "provider": "opencode-go",
+  "model": "mimo-v2.6-pro",
+  "task_run_id": null,
+  "provider_attempt_id": null,
+  "cost": {
+    "basis": "unknown",
+    "amount_usd": null
+  },
+  "input": {
+    "id": "4046002e-cc04-49d4-8f83-955590f4db40",
+    "action": "reflect",
+    "actor_kind": "user",
+    "subject_kind": "synthetic",
+    "subject_id": "4046002e-cc04-49d4-8f83-955590f4db40",
+    "affected_scopes": ["synthetic"],
+    "created_at": "2026-10-07T00:00:00.000Z",
+    "kind": "preference",
+    "payload": {
+      "note": "学习椭圆时，我希望先画图并保留反例。一次答对不代表稳定掌握。不记住账户、密钥或猜测性诊断。"
+    }
+  },
+  "input_digest": "sha256:e68fbd617f00d19dba3721ef3d4ee22c1518ba5f81b81019dcef69bc6966e95b",
+  "add_started": true,
+  "output": {
+    "result": {
+      "results": [
+        {
+          "id": "a09d43f1-619d-43e0-98f0-2831c979de57",
+          "memory": "User's learning preference for studying ellipses (数学椭圆): draw diagrams first and keep counterexamples; user believes getting an answer right once does not indicate stable mastery. User also instructed not to remember accounts, keys, or speculative diagnoses."
+        }
+      ]
+    },
+    "resolution": "provider_result"
+  },
+  "output_digest": "sha256:5409f82b76f2af02cc76bda1ed42802776546ebe670eaf7a45533b1afff36180",
+  "wire": [
+    {
+      "input_digest": "sha256:8d3369d690d57a017137a5542408696c2513b68d3cf91591229d1a5f9efd3ae8",
+      "output_digest": "sha256:9d72df1ec9d3bdf3ec30bbec3094853019dca9b9c5bf7e8fae074f64878424d1",
+      "body": {
+        "id": "53f92644-928c-4457-a672-ff64c0a3e080_ec133db5bd4944fb84a775716199ae4b",
+        "model": "mimo-v2.6-pro",
+        "usage": {
+          "prompt_tokens": 8116,
+          "completion_tokens": 142,
+          "total_tokens": 8258,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 68
+          }
+        },
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "{\"memory\": [{\"id\": \"0\", \"text\": \"User's learning preference for studying ellipses (数学椭圆): draw diagrams first and keep counterexamples; user believes getting an answer right once does not indicate stable mastery. User also instructed not to remember accounts, keys, or speculative diagnoses.\", \"attributed_to\": \"user\"}]}"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "provider_attempt": [
+    {
+      "attempt_id": "0bc221fe-0e90-456d-ad37-301fbe4dd4b0",
+      "operation_id": "4046002e-cc04-49d4-8f83-955590f4db40",
+      "attempt_kind": "opaque_operation",
+      "provider": "mem0",
+      "model": null,
+      "lane_id": "mem0.event-memory",
+      "protocol": "mem0-oss-sdk",
+      "endpoint_class": "memory.add",
+      "caller": "worker",
+      "operation_kind": "add_inferred",
+      "external_request_id": null,
+      "terminal_status": "succeeded",
+      "terminal_reason": "provider_response_accepted",
+      "wire_count": null,
+      "usage_json": {
+        "unit": null,
+        "basis": "unknown",
+        "input": null,
+        "total": null,
+        "output": null,
+        "source": "mem0_sdk_usage_unavailable"
+      },
+      "cost_basis": "unknown",
+      "cost_amount": null,
+      "cost_currency": null,
+      "cost_source": "mem0_sdk_cost_unavailable",
+      "started_at": "2026-10-06T23:24:01.009Z",
+      "provider_start_reserved_at": "2026-10-06T23:24:01.025Z",
+      "finished_at": "2026-10-06T23:24:04.279Z"
+    }
+  ],
+  "boundary": "Real Mem0 extraction LLM; synthetic local vectors and in-memory store, no DashScope paid call",
+  "evidence_redaction": {
+    "reason": "Provider raw reasoning was captured by the task probe; retained evidence is now final-content/usage allowlisted. The task-owned uncommitted original was removed; no paid retry or business-result change.",
+    "original_artifact_sha256": "3a2aa41c301e23bfa5b17913d6637b228bc319540e3abba034e464941d65d5db",
+    "code_revision_of_call": "14cb6b3263b6d78a4b3e142575f67e3f9727a88d",
+    "raw_provider_response_digests_are_integrity_only": true
+  }
+}

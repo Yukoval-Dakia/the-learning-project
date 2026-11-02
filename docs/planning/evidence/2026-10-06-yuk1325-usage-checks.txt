@@ -1,0 +1,89 @@
+YUK-1325 trace-grounded token accounting correction, 2026-10-06
+Worktree: /tmp/tlp-laminar-yuk1325
+Branch: feat/yuk-1325-laminar
+Base HEAD: ec5de65911f93525103d2ba6a0b72bef6f0f9bad
+Node v26.10.0; pnpm 11.13.1; pi-ai 1.0.2; Laminar SDK 0.8.49; Vitest 4.1.10
+
+Production change: total input = Pi input + cacheRead + cacheWrite.
+Cache detail attributes, provider total, explicit cost and unknown/zero semantics unchanged.
+No backend normalization algorithm inferred. Parent review/runtime/tracker/delivery pending.
+No separate actionable follow-up discovered; this fixes the supplied existing defect.
+
+Formal RED before production edit:
+pnpm vitest run --config vitest.unit.config.ts src/server/ai/laminar-tracing.test.ts -t 'exports total input.*captured'
+Exit 1: two failed, 23 skipped. Actual/expected input: 62/2494 and 110/2542.
+pnpm vitest run --config vitest.unit.config.ts src/server/ai/laminar-tracing.test.ts -t 'isolates real SDK.*usage-accounting'
+Exit 1: one failed, 25 skipped. Real SDK input actual 62, expected 2494.
+
+Final validation environment:
+cwd=/tmp/tlp-laminar-yuk1325; NODE_ENV=test
+PATH prefix=/Users/yuqi/Library/pnpm/package-manager-store/v11/links/@pnpm/exe/11.13.1/7ed4c987d91254c958e70391e5855a23d5c67eb363ae7c283336ac9927a681a0/bin
+Initial host pnpm version check could not resolve registry identity; all checks used the existing pinned pnpm executable, no installation.
+
+Final commands and results:
+pnpm vitest run --config vitest.unit.config.ts src/server/ai/laminar-tracing.test.ts src/server/ai/pi-agent-adapter.tracing.test.ts src/server/ai/pi-usage-evidence.test.ts src/server/ai/run-lifecycle.test.ts
+Exit 0: 4 files, 43 tests passed, including 6 fresh-process real-SDK scenarios.
+pnpm typecheck: exit 0
+pnpm lint: exit 0, 297 warnings, no errors
+pnpm build: exit 0, web/server/worker/migration stages passed
+git diff --check: exit 0
+
+Offline SDK accounting scenario:
+Clean temporary cwd and child environment with only NODE_ENV=production.
+Actual SDK initialized once; LaminarSpanProcessor disableBatch=true and in-memory exporter.
+No auto-instrumentation. fetch/TCP/HTTP(S)/HTTP2/TLS denied before imports.
+Raw SDK exporter-boundary spans were inspected before any remote upload.
+18 spans across 6 task.run -> task.attempt -> llm.call trees; zero network attempts.
+Privacy sentinels absent; no .lmnr debug-session output.
+Parent aggregate counts/cost remain nonadditive metadata; unknown fields stay absent.
+Explicit zero input/output/cache/total/cost is exported only with observed provider usage.
+Captured cases use only frozen numeric usage; cache-write cases are synthetic.
+
+SDK report numeric excerpts:
+{"gen_ai.usage.cache_creation_input_tokens": 0, "gen_ai.usage.cache_read_input_tokens": 2432, "gen_ai.usage.cost": 0.000328106, "gen_ai.usage.input_tokens": 2494, "gen_ai.usage.output_tokens": 336, "llm.usage.total_tokens": 2830, "lmnr.association.properties.metadata.usage_observed": true}
+{"gen_ai.usage.cache_creation_input_tokens": 0, "gen_ai.usage.cache_read_input_tokens": 2432, "gen_ai.usage.cost": 0.00014714600000000002, "gen_ai.usage.input_tokens": 2542, "gen_ai.usage.output_tokens": 104, "llm.usage.total_tokens": 2646, "lmnr.association.properties.metadata.usage_observed": true}
+{"gen_ai.usage.cache_creation_input_tokens": 13, "gen_ai.usage.cache_read_input_tokens": 11, "gen_ai.usage.cost": 0.025, "gen_ai.usage.input_tokens": 31, "gen_ai.usage.output_tokens": 5, "llm.usage.total_tokens": 36, "lmnr.association.properties.metadata.usage_observed": true}
+{"gen_ai.usage.cache_creation_input_tokens": 13, "gen_ai.usage.cache_read_input_tokens": 0, "gen_ai.usage.cost": 0.001, "gen_ai.usage.input_tokens": 13, "gen_ai.usage.output_tokens": 0, "llm.usage.total_tokens": 13, "lmnr.association.properties.metadata.usage_observed": true}
+{"gen_ai.usage.cache_creation_input_tokens": 0, "gen_ai.usage.cache_read_input_tokens": 0, "gen_ai.usage.cost": 0, "gen_ai.usage.input_tokens": 0, "gen_ai.usage.output_tokens": 0, "llm.usage.total_tokens": 0, "lmnr.association.properties.metadata.usage_observed": true}
+{"lmnr.association.properties.metadata.usage_observed": false}
+
+Primary convention source, read 2026-10-06:
+https://raw.githubusercontent.com/open-telemetry/semantic-conventions-genai/main/model/gen-ai/registry.yaml
+Lines 270-302: total input includes cache tokens; cache read/write counts are subsets.
+Installed Pi dist/api/openai-completions.js:1163-1188 subtracts caches and sums all input/output categories in total.
+Installed Laminar dist/index.mjs:3349 maps provider prompt total; 5249-5259 preserves total and separate cache-read detail.
+
+Installed SDK source digests:
+fef8c0c003316e1a288db45bd898f672a12f790a8b11ff01e92ff38540cca1b3  node_modules/@lmnr-ai/lmnr/dist/index.mjs
+ccf7bfacf54ca7b58a42170e62a19504405823f7456a58c2258a928ca9613ff3  node_modules/@lmnr-ai/lmnr/dist/index.cjs
+5a79cc5aa41dee180692695e65771720d1ea556e9a978649dc2040278be51753  node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js
+
+Immutable supplied runtime artifact digests, checked unchanged after tests:
+1d94ad393e523e817849b1b6ae5c43845484efdcc7113cddf888fed3cad1822b  /tmp/yuk1325-runtime-evidence/report.md
+fb732e437f2bb8248dc02ce64d9f3c167c66708b172f625c94e79c096ccda40e  /tmp/yuk1325-runtime-evidence/summary.json
+7f355cecd76e0d66cee5654a2ce785b82bd741507186f950ade82cd975791676  /tmp/yuk1325-runtime-evidence/source-finding.txt
+99bdb2106ed163fd5e06b9f6c83236efd2542bb3cd36dee93852901b569be385  /tmp/yuk1325-runtime-evidence/sdk-preexport-synth-30.jsonl
+8d2b6a626f496e85f8279c7a8d454c9da776add2d70c35b68fd82634fa22a697  /tmp/yuk1325-runtime-evidence/sql-spans-synth-18.json
+63cd77ce34b4daa73d6680e7a181b5cdfdb2c878b00e2d811452fa35de870a47  /tmp/yuk1325-runtime-evidence/sql-spans-synth-30.json
+
+Dirty .serena/project.yml SHA256 before and after:
+922f74785b417d114a6ba0b8969f0de7f96306ea6ff1d485eef9f27a3648e913
+Preserved and excluded from staging/commit.
+
+Raw validation log digests:
+/tmp/yuk1325-usage-red.log
+SHA256 c00fe8466757f19c96d6b1e861e5986803960b2be2129664ceee48675d0bc32d
+/tmp/yuk1325-usage-sdk-red.log
+SHA256 901ff231887f3fe95aaa8309b6731e7270e37b2ab0a7b18fa621ea3872f65b47
+/tmp/yuk1325-usage-green-first.log
+SHA256 fcfd8e597c29dbee8620f976bf09c22a5c062db7f22d74e4ba12460e6fcd35bc
+/tmp/yuk1325-usage-sdk.log
+SHA256 f1b9249507395a1ecb83dce7c469d788e5a60dc2ee2fb8e1e501ac204efbb710
+/tmp/yuk1325-usage-unit.log
+SHA256 9514f7c397fa750a771926e33f81f271af48f26ad8c809d46c48562537b04581
+/tmp/yuk1325-usage-typecheck.log
+SHA256 8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92
+/tmp/yuk1325-usage-lint.log
+SHA256 233a9f1418e33612db1f4f7b73f291e4e33e4e277e4686565059c8af6a6f24fa
+/tmp/yuk1325-usage-build.log
+SHA256 e14395a2fe21630cb3af7998697eb7f9d5b6b9a59f4416131038fada49b95463

@@ -1,0 +1,160 @@
+YUK-1325 local repair/main integration verification, 2026-10-07
+Checked source merge: e484efa608bdf95bcd7ab3817dc2c5a58ac12950
+Merge parents: 3940d61f90840b88b695257330bc0980e4fab422, 8841ce68a69e30bacf20e8241f28cd1669b38a1f
+Workspace: /private/tmp/tlp-laminar-yuk1325, feat/yuk-1325-laminar
+Runtime: Node 26.10.0, pnpm 11.13.1; production bundles target Node 24.
+Environment: NODE_ENV=test, CI=true, CODEX_FULL_GATE=1; inherited provider/key/token/secret/database/LMNR variables removed.
+Local node_modules and /tmp/yuk1325-pnpm-store only. Frozen install passed after restoring main LangChain peer snapshots.
+Installed: @lmnr-ai/lmnr 0.8.49; @modelcontextprotocol/sdk 1.32.1; sharp 0.35.5; Laminar grpc-js 1.14.5.
+Lock semantic report: no package/snapshot keys outside either parent, no changed main package metadata; only old grpc-js 1.14.4 removed.
+Scenarios use synthetic credentials and local memory sinks. Real SDK subprocess tests require networkAttempts=0.
+359 tests in 20 selected unit suites passed. The supplied boss/shutdown DB file was excluded by the unit partition; no DB suite ran.
+All 19 CI audit commands and two additional provider/control-plane audits passed.
+Dependency audit: 3 low, 15 moderate, zero high/critical. Capability debt=437; no baseline/suppression changes.
+Typecheck, lint and build passed; lint 297 warnings, no errors. CI lint ratchet passed.
+All prior real/offline trace records are historical evidence at their recorded revisions.
+No full pnpm test, new model call, real telemetry export, production/HTTP-worker process, DB access, push, review round or deployment.
+Root owns push, exact-head CI, comment 4196957316 resolution, deferred P2/YUK-1339 handling, SQL/browser acceptance, Linear and delivery.
+No newly discovered actionable follow-up; existing YUK-1325 and YUK-1339 remain parent-owned.
+
+Executed commands and immutable log digests:
+
+node --import tsx .cache/yuk1325-babysit-20261007/prefixed-env-proof.mjs /private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/a529-laminar-transcript.ts
+exit=1; expected=1; seconds=0.57
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/privacy-original-red.log
+sha256=ccbb0cc23699eb563467df6c1de4fa78fe920ecc74c8454ae5cdae754902134e
+
+node --import tsx .cache/yuk1325-babysit-20261007/prefixed-env-proof.mjs /private/tmp/tlp-laminar-yuk1325/src/server/ai/laminar-transcript.ts
+exit=0; expected=0; seconds=0.24
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/privacy-current-green.log
+sha256=25a0864b46f5d5f691bdb7d16296f2fbb1afe8a6dcd9d797eb8e4bdd615450e9
+
+pnpm vitest run --config vitest.unit.config.ts --maxWorkers=2 scripts/audit-task-census.unit.test.ts scripts/audit-env-inventory.unit.test.ts tests/core/server-env-inventory.test.ts tests/core/server-env.test.ts server/shutdown.unit.test.ts src/server/ai/runner.seam.test.ts src/server/ai/laminar-transcript.test.ts src/server/ai/laminar-tracing.test.ts src/server/ai/pi-agent-adapter.tracing.test.ts src/server/ai/pi-agent-adapter.test.ts src/server/ai/pi-usage-evidence.test.ts src/server/ai/run-lifecycle.test.ts src/server/ai/runner.stream-collect.test.ts src/server/ai/runner.provider-admission.test.ts src/server/ai/run-lifecycle.admission.test.ts src/capabilities/copilot/server/copilot-execution.unit.test.ts src/capabilities/copilot/server/reply-finalization.unit.test.ts src/server/ai/providers.test.ts src/server/ai/execution-adapter.test.ts src/capabilities/practice/server/judge/pi-model-executor.trace.unit.test.ts src/server/boss/shutdown.test.ts
+exit=0; expected=0; seconds=26.62
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/scoped.log
+sha256=ced94eb4c7b88ff877488b840b7f0395672e64cd99f76c8ce043d6591bd2e5f3
+
+pnpm audit:schema
+exit=0; expected=0; seconds=7.18
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-schema.log
+sha256=05a3ab08a62f521bbf905b6a0df1a2e252b54bc05786ea4437e4fdd4c2d6d256
+
+pnpm audit:dependencies
+exit=0; expected=0; seconds=5.39
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-dependencies.log
+sha256=d293ad6ea23f357e3e1b42ab8ae6605c70003cd00afedc03e17b8b738a6b1f14
+
+pnpm audit:partition
+exit=0; expected=0; seconds=5.06
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-partition.log
+sha256=8d41f2d08e440ff37b7b2752c48ff4f82a78377eb5bc7e91c6c32336a43d4730
+
+pnpm audit:question-writers
+exit=0; expected=0; seconds=3.66
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-question-writers.log
+sha256=2b69f3f1c8991b2a5d4d1ebadce6123132d15d935c9556fd6573abd8f6e2831d
+
+pnpm audit:api-contracts
+exit=0; expected=0; seconds=4.27
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-api-contracts.log
+sha256=2fcb1d9cd8395bc3661f8e35135444ec73a34d0ca7a0320f1507c9429782ce2b
+
+pnpm audit:api-client
+exit=0; expected=0; seconds=10.97
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-api-client.log
+sha256=f26bc904f865f0cc5a1a1613ea5d4017d46fdab55aceaf8eb0a831aedd0cea7c
+
+pnpm audit:api-client-usage
+exit=0; expected=0; seconds=2.88
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-api-client-usage.log
+sha256=71c2c93dd9e51bd4fc368e7845a5a34d42b2b56cf97e4dcf94a8556a99f45b46
+
+pnpm audit:capability-boundaries
+exit=0; expected=0; seconds=8.21
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-capability-boundaries.log
+sha256=42a7d0cb9f8f9a7948bd6aeb552b2b64b70d98953edea22293a755a32000bba1
+
+pnpm audit:architecture-deepening
+exit=0; expected=0; seconds=30.0
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-architecture-deepening.log
+sha256=361cb02a14e4f98a5c149181f87f7777545b840fff2f5e822bb2c47c9e701937
+
+pnpm audit:profile
+exit=0; expected=0; seconds=3.27
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-profile.log
+sha256=f2f14ec06808ef23b857f78b1f54fd2fb25ba55e75776644d2a00aef10981db4
+
+pnpm audit:learner-copy
+exit=0; expected=0; seconds=4.2
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-learner-copy.log
+sha256=14f5fe0289d1c7daaa7f81e130611aa277ac49a678795f29c92fee09c645e1bc
+
+pnpm audit:no-learning-styles
+exit=0; expected=0; seconds=3.6
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-no-learning-styles.log
+sha256=68c74aea936296d2f9639bde04b35aef30fd3fef9d241c3bc3c15cc2a285f4cb
+
+pnpm audit:structured-judge
+exit=0; expected=0; seconds=5.69
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-structured-judge.log
+sha256=a6566456d1719bfb472831bc8f82413881c6129c6dc033f88baebad453e9722b
+
+pnpm audit:task-census
+exit=0; expected=0; seconds=10.49
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-task-census.log
+sha256=ddf8d63319f242b650617ac0e743a24966ea2eb10c9c446a74b9d24f8c58df6a
+
+pnpm audit:draft-status
+exit=0; expected=0; seconds=4.44
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-draft-status.log
+sha256=de3569839d7a890654a591c9c6b77334b1031fa56e3ecedef457f132dd24eb8d
+
+pnpm audit:draft-status-reads --strict
+exit=0; expected=0; seconds=4.81
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-draft-status-reads.log
+sha256=f1617e13dd126cbef773918924961701f68002f5e2cdb4bc38e1f5b0443dca40
+
+pnpm audit:flags --strict
+exit=0; expected=0; seconds=5.71
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-flags.log
+sha256=2b197dacfd53a8ee0382a9e942a7c901a36581ef3e5c241326390e4973061e0f
+
+pnpm audit:hub-sync-writers
+exit=0; expected=0; seconds=12.33
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-hub-sync-writers.log
+sha256=013f9280d55c6616d010b6164c0766d2285b22253e7b7c1664574d6b20aaf0c2
+
+pnpm audit:provider-attempt-truth
+exit=0; expected=0; seconds=8.53
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-provider-attempt-truth.log
+sha256=29bdbca513c3121fd6156e6dbabd3a720733d5e993340f0c32558835ec5cc81e
+
+pnpm audit:provider-lanes
+exit=0; expected=0; seconds=15.48
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-provider-lanes.log
+sha256=4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c
+
+pnpm audit:agent-control-plane
+exit=0; expected=0; seconds=3.36
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/audit-agent-control-plane.log
+sha256=1f81346486a3c2faf1abb93d683d02efd8e196f1af34605bc3756da0cdbe4b61
+
+pnpm typecheck
+exit=0; expected=0; seconds=7.66
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/typecheck.log
+sha256=8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92
+
+pnpm lint
+exit=0; expected=0; seconds=4.58
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/lint.log
+sha256=a311571692b4e009cd0bc75c92c4d7e759fa1cab6a2d31d9184165bd26210025
+
+pnpm build
+exit=0; expected=0; seconds=25.1
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/build.log
+sha256=245e12e962cf04057709da7a85dd538324b9bb0414cfc3500040d9c8897e5d25
+
+node scripts/ci/lint-ratchet.mjs
+exit=0; expected=0; seconds=2.42
+/private/tmp/tlp-laminar-yuk1325/.cache/yuk1325-babysit-20261007/lint-ratchet.log
+sha256=6d30d8f735a95fc9338abea25507d97616f1ce945663dc8a3e014028c4477910

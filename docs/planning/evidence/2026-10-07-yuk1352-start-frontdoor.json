@@ -1,0 +1,142 @@
+{
+  "issue": "YUK-1352",
+  "base_revision": "a6d89037b56f5b0c690137a1354186e0ea07e216",
+  "created_at": "2026-10-07T12:37:37.756391+00:00",
+  "source_state": "precommit task-owned files; validate hashes against delivered commit",
+  "source_files_sha256": {
+    "Dockerfile": "37ee0467a70501ff7a4e782e3cf03a7bf7cfa39bed6990d4fa8b8cd4ad1a97d9",
+    "package.json": "64cb72ef9b9c833374dc6f55f8c18db4ae99d2263861177209df0d6cc5edfecf",
+    "pnpm-lock.yaml": "7f53823be77d0a9708de4a6d5580910b42991ddd3eb09a19e11dce83fce1e2ac",
+    "biome.jsonc": "02895bfcdbe3b1f8268094548d56b60dcede5e26eeaf3193ae5b51474be0fbfe",
+    "tsconfig.json": "72adddf56c1d0f321462474aa97de5489cef308c7d786b58914ea0375d749102",
+    "server/app.ts": "53345b55fb8642ad7697fc5091c11580d6d931db6ed73186c37ca6ddff06927f",
+    "server/index.ts": "e5c465c5eee7da6371113fdc6b9e6f2c9bf03b4c56636dfd9f4cafcb8b0cb582",
+    "server/frontdoor.ts": "1396b2db1acc093538c70add2d4b42174861664da2986373a8d71473ad01b68c",
+    "server/frontdoor.unit.test.ts": "a3840f5de9f00f46fd6b25eb557a1ff2a5d48c849630da12d77610da2f52120b",
+    "server/start-artifact.d.ts": "b616f0eca8f447f16c3a34779f91dbdbef84863a368be3e1853ace05c68d16d9",
+    "tests/start-frontdoor/acceptance.ts": "233e2cbf037ef3ad571b2880460180e6f35a5a262f0a43ed4fd74035db057cf8",
+    "server/start/auth.unit.test.ts": "69318d1ce074b43787341a5b7a3fa943f16f411853833b94d63f0b52f279de6e",
+    "server/start/context.ts": "102e2e6007ce4878ef36bf55faff70d7efb5bf0dc0d0518b9016fbea9c2ace44",
+    "server/start/routeTree.gen.ts": "310e8c5e7597fee17e9b1983bf8922ee07470408ca6d757de2fec702a0180d7b",
+    "server/start/router.tsx": "20a690338c0755e6253c9e3c653d3730e4cf563368263cdd5abc8240a88415a1",
+    "server/start/routes/$.ts": "3b61fc6006eff69437f3822cb8d22357376292c9b73b7091dacc8126d69b2076",
+    "server/start/routes/[_]build.$.ts": "c87bc39614f7680b0dead6965a7925c3c30aa14c33c69e1d7932d239f44422db",
+    "server/start/routes/__root.tsx": "cd4535654aaeb4d658b74a01cd1ffb8e97dda442877dbad04c0538d6259133d0",
+    "server/start/routes/api.$.ts": "c3f56e921d7a447cf07598ed39bf73c6a5de1a0c006995b09b5bd020a735a010",
+    "server/start/start.ts": "576b950bb9f3c727415aec57666a414f5e7a184406236f2c86e4eb5b31f825a6",
+    "server/start/tsconfig.json": "ef74eae0fd824a15ac5b54fec261144f756128665db72cac8e5a316cf5e94853",
+    "server/start/vite.config.ts": "3eef3adfb13bf1982748aaaebfe5a15734d1bdadf0def82f83b2bfd670ad07ca"
+  },
+  "checks": {
+    "unit": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/unit.log",
+      "sha256": "4ccd122d8a6985272d02de957b5608d483d948339f5d7abd6d71f0ade78a7438"
+    },
+    "typecheck": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    "lint": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/final-lint.log",
+      "sha256": "171e95635481aa98ea6f44e682a02137e4c6b0b5d02d7cabfc4ac22bf88336b4"
+    },
+    "lint-ratchet": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/final-lint-ratchet.log",
+      "sha256": "058dfaa3ca09abec9e7800e4ed6b1c82faa62a66c3dbd606d108250acc6a6918"
+    },
+    "build": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/build.log",
+      "sha256": "a6d07d5f8dc7ff3eaf3f95b7c6cbecef3daf4414f0d9eb55aba72040700fa285"
+    },
+    "boundaries": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/boundaries.log",
+      "sha256": "42a7d0cb9f8f9a7948bd6aeb552b2b64b70d98953edea22293a755a32000bba1"
+    },
+    "api-contracts": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/api-contracts.log",
+      "sha256": "2fcb1d9cd8395bc3661f8e35135444ec73a34d0ca7a0320f1507c9429782ce2b"
+    },
+    "architecture": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/architecture.log",
+      "sha256": "361cb02a14e4f98a5c149181f87f7777545b840fff2f5e822bb2c47c9e701937"
+    },
+    "api-client-usage": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/api-client-usage.log",
+      "sha256": "71c2c93dd9e51bd4fc368e7845a5a34d42b2b56cf97e4dcf94a8556a99f45b46"
+    },
+    "partition": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/partition.log",
+      "sha256": "2e033eaace1167311d147a202cff2467addaeb222125acf562297547372b4e80"
+    },
+    "provider-lanes": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/provider-lanes.log",
+      "sha256": "4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c"
+    },
+    "provider-attempts": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/provider-attempts.log",
+      "sha256": "29bdbca513c3121fd6156e6dbabd3a720733d5e993340f0c32558835ec5cc81e"
+    },
+    "postman": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/postman.log",
+      "sha256": "3aaa19807ed6f0270b0c336b21a857618af66e696d351ca7ae870f0bd2f66a25"
+    },
+    "http-acceptance": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/http-acceptance.log",
+      "sha256": "66a8b53005767060062cbf106428684fe5224e63ab4922675daae84520de4af7"
+    },
+    "frozen-install": {
+      "result": "PASS",
+      "log": ".cache/yuk1352/frozen-install.log",
+      "sha256": "84545965ed528d5405f5a7a0c651619714638f9bb39e61ea9e28c322073ae304"
+    }
+  },
+  "http_acceptance": {
+    "status": "PASS",
+    "base": "http://127.0.0.1:18952",
+    "postmanAuthChecks": 92,
+    "spaSurfaces": 28,
+    "methods": 5,
+    "clientFilesScanned": 95,
+    "clientCanariesAbsent": 4,
+    "clientDigest": "9231a5132797746a5cea4dd4608015de228bb0d7b91416503691f8e5dda91a52",
+    "streamBeforeCompletion": true,
+    "serverFunctionUnauthenticated": 401,
+    "serverFunctionFenced": 503,
+    "scope": "built Start + original SPA + Hono manifests; controlled epoch, no business DB/runtime acceptance"
+  },
+  "browser": {
+    "tool": "T3 preview",
+    "paths": ["/today", "/practice", "/admin/config"],
+    "observed": "original SPA token gate rendered; invalid token returned 401 with original Chinese error text",
+    "scope": "unauthenticated page shell and auth interaction, not authenticated domain flow",
+    "diagnostic": "unchanged Google Fonts import blocked by existing Hono CSP"
+  },
+  "execution": {
+    "node": "26.10.0",
+    "pnpm": "11.13.1",
+    "db_connections": 0,
+    "provider_calls": 0,
+    "production_operations": 0,
+    "worker_operations": 0,
+    "isolated_listener": "127.0.0.1:18952, closed after acceptance"
+  },
+  "remaining": [
+    "parent independent review and exact-head CI",
+    "parent approved isolated DB/business acceptance and Node24 image/rollback drill; not executed by this writer",
+    "P7/YUK-1359 removes old SPA fallback and old Vite dev path after existing pages migrate and pass acceptance"
+  ]
+}

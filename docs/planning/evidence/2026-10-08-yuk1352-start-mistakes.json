@@ -1,0 +1,133 @@
+{
+  "task": "YUK-1352 authenticated Start /mistakes",
+  "baseline": "4a7f81541a5e5e07bbe73c07b5e56a7ddaca6090",
+  "merged_main": "7100dfae404449c7a5331c25548957da036021ad",
+  "normal_merge": "normal no-ff merge; final commit second parent is merged_main",
+  "environment": {
+    "node": "24.19.0",
+    "pnpm": "11.13.1",
+    "env": "env -i HOME PATH TMPDIR; CODEX_FULL_GATE for build"
+  },
+  "source_sha256": {
+    "server/frontdoor.ts": "ff41a26da0614d0d45747f8967443a8383b44725151c6b37ec60d6b59c5ab967",
+    "server/index.ts": "64cd82c8a01673c19d44077c9a333a3973ca9df2f85e3f4ec21c936f800c032e",
+    "server/start/acceptance-server.ts": "5fd19de21eb2be5c79545747c4e588f1ce0a6003c3cb64b51e0f93a81d07fae1",
+    "server/start/auth.unit.test.ts": "69318d1ce074b43787341a5b7a3fa943f16f411853833b94d63f0b52f279de6e",
+    "server/start/context.ts": "39e2896db617eea39ec074b143e94333152fadb8fca490401e0ebf4de333fad2",
+    "server/start/mistakes-client.ts": "ffc9dd051a49c4a01c82f7736126c3ce7257ce749f93eefbd9523c092f6fa376",
+    "server/start/mistakes-client.unit.test.ts": "44539be2c9e993b7514c6d30af3d81d43ba211dc869eff5c5d284c14a02f2b8f",
+    "server/start/mistakes-function.ts": "d94fb573f42e58b8272bb1f771fdd5d72922090df247568ba58eb187d8ff2e51",
+    "server/start/mistakes-read.ts": "86816bd6bbfa6ff1124774b77ca98cdaefcbfdbd2c0ee80b80dd0c1184815c1b",
+    "server/start/mistakes-read.unit.test.ts": "8fb286ee400ce687de71a64e1114cdcf10605511e4b43d1a287db9345ba9083f",
+    "server/start/mistakes-reader.ts": "6e6e9a90b0249bbd5d2a85a9fd59f510e6501dce6028d9beddab3a1e5c8f57eb",
+    "server/start/routeTree.gen.ts": "81b6ba4c1a4a6032a54720c7063501d367c46e107ce1da9a2b981c2f9ee9ca94",
+    "server/start/router.tsx": "20a690338c0755e6253c9e3c653d3730e4cf563368263cdd5abc8240a88415a1",
+    "server/start/routes/$.ts": "3b61fc6006eff69437f3822cb8d22357376292c9b73b7091dacc8126d69b2076",
+    "server/start/routes/[_]build.$.ts": "c87bc39614f7680b0dead6965a7925c3c30aa14c33c69e1d7932d239f44422db",
+    "server/start/routes/__root.tsx": "263aca7076b81d02b4d310aae4e4ce2ec8b51a06f3721c6f6e700670ca083d08",
+    "server/start/routes/api.$.ts": "c3f56e921d7a447cf07598ed39bf73c6a5de1a0c006995b09b5bd020a735a010",
+    "server/start/routes/mistakes.tsx": "ade152fb454f68a705b1af97927ab82dd3f0ee4c99e3c25a7cf656ed82191bc2",
+    "server/start/start.ts": "576b950bb9f3c727415aec57666a414f5e7a184406236f2c86e4eb5b31f825a6",
+    "server/start/tsconfig.json": "8174fb8c3b17a79fb3729931496c7911672b335fbaa6da9c54f867befd485dcf",
+    "server/start/vite.config.ts": "1fb3a1cfcc0806ca1c46e98ecb4ce646a0f9d2148d8f3cedc720728f32127192",
+    "web/src/RootShell.tsx": "094b56960e301d1a7627c9daba92b9d0b32678f62ee14fbb4f5fe9b077a37ef0",
+    "web/src/router.tsx": "d863352213bbbbb974da8242d1277a346785fdffeeaa043731818d0be8b9902c",
+    "web/src/routes/MistakesPage.start.unit.test.tsx": "ce2c47d333bad3119f8031debfa336704ab66bc2d957aa7f4952ee4862973805",
+    "web/src/routes/MistakesPage.tsx": "f7e0ceba429de6a8231a6aae121c1808b60de59b4c6905bda6fb307a9fad1802",
+    "web/src/routes/MistakesPage.unit.test.tsx": "7d450881fa943269f45bb4cd614cd66c4ad4011c077ba459f2df0182f7627ec1",
+    "web/src/surface-inventory.unit.test.ts": "89851aed909730c0425d2da5e28e4f81bb0e19e2156006db32a063b735925797"
+  },
+  "logs": {
+    "unit": {
+      "path": "/tmp/yuk1352-mistakes-unit.log",
+      "sha256": "9367d2384f0b4369b44fd7f0f033b53b3be97daa05971809886ce2c1c33a3a53",
+      "result": "PASS"
+    },
+    "typecheck": {
+      "path": "/tmp/yuk1352-mistakes-typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+      "result": "PASS"
+    },
+    "lint": {
+      "path": "/tmp/yuk1352-mistakes-lint.log",
+      "sha256": "c8422a209fd58ea625b45e846b1580c87594888b0d2fe176a30df648f94c887f",
+      "result": "PASS"
+    },
+    "lint-ratchet": {
+      "path": "/tmp/yuk1352-mistakes-lint-ratchet.log",
+      "sha256": "058dfaa3ca09abec9e7800e4ed6b1c82faa62a66c3dbd606d108250acc6a6918",
+      "result": "PASS"
+    },
+    "build": {
+      "path": "/tmp/yuk1352-mistakes-build.log",
+      "sha256": "b7ee59a24b5731f2e0f477f4ef051b389dacc2e9b2c195f95c9e7798aef5bf67",
+      "result": "PASS"
+    },
+    "capability-audit": {
+      "path": "/tmp/yuk1352-mistakes-capability-audit.log",
+      "sha256": "42a7d0cb9f8f9a7948bd6aeb552b2b64b70d98953edea22293a755a32000bba1",
+      "result": "PASS"
+    },
+    "built-check": {
+      "path": "/tmp/yuk1352-mistakes-built-check.log",
+      "sha256": "ce24f19202deb7b10bc532f953f03e4e479fa02bbd376d0cb14dedc7136208d5",
+      "result": "PASS"
+    },
+    "assets-check": {
+      "path": "/tmp/yuk1352-mistakes-assets-check.log",
+      "sha256": "3e0aac6f3b59a46778bc9dfe793b853da6b319ee5473f5e49cc2474ec229f3c5",
+      "result": "PASS"
+    }
+  },
+  "temporary_checks": {
+    ".cache/yuk1352-mistakes/built-check.mjs": "b429f42e989d9255a57bb2346e966c25275e7b6c2eb76d2d70b824e79de44b56",
+    ".cache/yuk1352-mistakes/assets-check.ts": "41a86372be4f81905c894836e3e6221e498305e46308b7956ba145792ea5ac74"
+  },
+  "scoped_tests": {
+    "files": 13,
+    "tests": 98
+  },
+  "lint": {
+    "errors": 0,
+    "warnings": 297,
+    "baseline_modified": false
+  },
+  "compiled_dispatch": "controlled epoch/reader; 401,503,query/cursor/envelope,400,Start document,unrelated fallback; no listener or DB",
+  "static_dispatch": {
+    "referenced_assets": 10,
+    "missing_status": 404,
+    "listener": false,
+    "database": false
+  },
+  "protected_paths_diff_from_main": [],
+  "new_browser_runtime_acceptance": false,
+  "remaining": [
+    "parent exact-head CI and existing review obligations",
+    "parent lock and T3 browser acceptance",
+    "owner7631 native/public material and attachment byte evidence",
+    "1359 full route/dev/build/image/fallback exit",
+    "canonical runtime boot/custom subject hydration/release/SSE acceptance"
+  ],
+  "operations": {
+    "push": false,
+    "host_merge": false,
+    "linear": false,
+    "delegation": false,
+    "persistent_server": false,
+    "shared_container": false,
+    "runtime_lock": false,
+    "private_data": false,
+    "provider_call": false,
+    "replay": false,
+    "deployment": false
+  },
+  "initial_main_merge": "d98d965aa",
+  "implementation_commit": "3819a695ccb4692871bb33749bf443f7eadf3106",
+  "public_materials": "PR1600 preserved as merged source; existing rendering unchanged; owner7631 retains acceptance",
+  "source_integration_commit": "7d26e2403610c1d5a7617557078fb6a17476ac46",
+  "acceptance_inputs": {
+    "/tmp/yuk1376-start-acceptance-matrix-20261008.md": "b6bef2eda5ac0663de0ee0e015892c40eaba50ae0dd5ab9ed428e76e8a787259",
+    "/tmp/yuk1359-w1-remaining-consumers-20261008.md": "2c26ecd8ebbdf5edd8cffaa9968d65fe732aacb32998388ce427ef1342c98483"
+  },
+  "acceptance_inputs_status": "reviewed; browser/runtime pending; W1 remaining inventory is future context only"
+}
