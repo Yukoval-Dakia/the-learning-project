@@ -209,7 +209,7 @@ finding 语义。配置面板经 `GET /api/admin/custom-providers` 读列表（�
 pg-boss worker 在服务端执行。
 
 API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，再由
-`src/server/env.ts` 用 @t3-oss/env-core + zod 校验 server schema。加载顺序、
+`src/server/config/env.ts` 用 @t3-oss/env-core + zod 校验 server schema。加载顺序、
 必填项、compose 与本机 dev 的取值、逐键默认值及 DB 配置层见
 [docs/configuration.md](./docs/configuration.md)。
 

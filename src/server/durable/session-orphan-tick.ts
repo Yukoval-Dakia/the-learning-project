@@ -7,12 +7,11 @@ import {
 } from '@/capabilities/copilot/public';
 import type { Db } from '@/db/client';
 import { session_orphan_receipt } from '@/db/schema';
+import { readContractEpoch, waitForRunnableEpoch } from '@/server/migration/contract-epoch/epoch';
 import {
   ContractEpochFenceError,
   gateContractEpoch,
-  readContractEpoch,
-  waitForRunnableEpoch,
-} from '@/server/contract-epoch';
+} from '@/server/migration/contract-epoch/rules';
 import {
   type Counts,
   type SessionOrphanBoundaryHook,

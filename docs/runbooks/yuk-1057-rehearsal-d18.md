@@ -31,7 +31,7 @@ Artifacts land in `.remember/rehearsal/<UTC-ts>/` (gitignored): `report.json`,
 Isolation guardrails are hard-coded, not by discipline: the runner overwrites
 `DATABASE_URL` with an unreachable placeholder before any app import, the only
 Postgres it ever touches is the container it started, and blobs go to a local
-filesystem store (`src/server/rehearsal/blob-store.ts`) — no R2 env, no provider
+filesystem store (`src/server/release/rehearsal/blob-store.ts`) — no R2 env, no provider
 key, no model egress.
 
 ## D18 eval readiness runner (removed)

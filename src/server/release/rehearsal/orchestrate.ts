@@ -21,12 +21,16 @@ import {
 } from '@/core/migration/apply';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
-import { checkContractEpoch, transitionContractEpoch } from '@/server/contract-epoch';
+import { tryHoldMigrationApplyFence } from '@/kernel/locks/migration-apply-fence';
 import {
   type MigrationApplyFence,
   applyReportFileName,
   runMigrationApply,
 } from '@/server/migration/apply';
+import {
+  checkContractEpoch,
+  transitionContractEpoch,
+} from '@/server/migration/contract-epoch/epoch';
 import { isolatedBlobStore } from './blob-store';
 import { buildRehearsalRegistry, seedContractCorpus } from './contract-corpus';
 import { seedRehearsalCorpus } from './corpus';
@@ -146,7 +150,7 @@ async function applyOnce(args: {
   batchSize?: number;
 }): Promise<ApplyOnceResult> {
   const { loadMigrationArtifacts, loadRevisionContracts, advisoryFence } = await import(
-    '../../../scripts/migration-apply'
+    '../../../../scripts/migration-apply'
   );
   const { capture, manifest } = loadMigrationArtifacts(args.artifactsDir);
 
@@ -313,7 +317,7 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
 
     const artifactsDir = join(opts.out, 'artifacts');
     await stepRun(steps, log, 'capture', async () => {
-      const { runMigrationCapture } = await import('../../../scripts/migration-capture');
+      const { runMigrationCapture } = await import('../../../../scripts/migration-capture');
       const first = await runMigrationCapture({
         out: artifactsDir,
         target: targetUrl,
@@ -375,7 +379,7 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
         // First apply has no registry, so the baseline stays pending.
         // Killing the connection is the database-side shape of a process crash or a power loss.
         // Rerun the same args until the ledger is completed.
-        const { loadMigrationArtifacts } = await import('../../../scripts/migration-apply');
+        const { loadMigrationArtifacts } = await import('../../../../scripts/migration-apply');
         const { manifest } = loadMigrationArtifacts(artifactsDir);
         const firstRunId = applyRunIdOf({
           checkpoint_hash: manifest.checkpoint_hash,
@@ -430,9 +434,7 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
         });
         let fenceRejection: { held: boolean; apply_rejected: boolean; error: string | null };
         try {
-          const acq =
-            await fenceClient`select pg_try_advisory_lock(hashtext('yuk1050:migration-apply')) as ok`;
-          const held = acq[0]?.ok === true;
+          const held = await tryHoldMigrationApplyFence(fenceClient);
           let rejected = false;
           let rejErr: string | null = null;
           if (held) {

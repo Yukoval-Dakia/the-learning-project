@@ -15,8 +15,8 @@ import {
   createJobQueue,
   createOrUpdateQueue,
 } from '@/server/boss/queue-config';
-import { fenceAwareJobHandler } from '@/server/contract-epoch';
 import { startDurableWorker } from '@/server/durable/prune-worker';
+import { fenceAwareJobHandler } from '@/server/migration/contract-epoch/boss-fence';
 import {
   eligibilitySkipOutput,
   loadNightlyContext,
@@ -67,7 +67,7 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
 
   const factory = await decl.load();
   // A worker that missed shutdown is refused on each delivery after the epoch flips.
-  // Disposition lives in src/server/contract-epoch/jobs.ts.
+  // Disposition lives in src/server/migration/contract-epoch/jobs.ts.
   // DAG members have no schedule. Their eligibility runs before orchestrator send.
   // This wrap covers only a bare cron.
   const handler = withScheduledEligibility(db, decl, factory(db));
@@ -164,6 +164,9 @@ export async function registerCapabilityJobs(
   db: Db,
   capabilities: CapabilityManifest[],
 ): Promise<void> {
+  // Copilot jobs call Practice-owned operations through kernel ports.
+  const { installPracticeHostOperations } = await import('@/capabilities/practice/public');
+  await installPracticeHostOperations();
   await installCoachDailyReviewPlan(capabilities);
   await installPrepareInterventionAuthor(capabilities);
   await installInterventionDiagnosticMaterializer(capabilities);

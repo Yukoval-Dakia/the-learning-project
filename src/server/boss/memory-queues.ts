@@ -29,7 +29,7 @@ import {
   createJobQueue,
   createOrUpdateQueue,
 } from '@/server/boss/queue-config';
-import { fenceAwareJobHandler } from '@/server/contract-epoch';
+import { fenceAwareJobHandler } from '@/server/migration/contract-epoch/boss-fence';
 import { loadNightlyContext, noteEligibilitySkip } from '@/server/orchestration/nightly-signals';
 
 async function reflectionBriefsOff(db: Db, now: Date): Promise<boolean> {

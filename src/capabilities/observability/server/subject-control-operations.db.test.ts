@@ -7,11 +7,11 @@ import { db as httpDb } from '@/db/client';
 import * as schema from '@/db/schema';
 import { subject, subject_control_journal, subject_trait_binding } from '@/db/schema';
 import * as hydration from '@/kernel/read-models/subject-hydration';
-import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
 import { SubjectRegistry } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { PATCH } from '../api/admin-subject-control';
 import { renameAdminSubject } from '../public';
+import { reconcileBuiltinTraits } from './builtin-trait-reconcile';
 import { thinCreateSubject } from './subject-create';
 
 const isolated = vi.hoisted(() => ({ getRegistry: vi.fn() }));

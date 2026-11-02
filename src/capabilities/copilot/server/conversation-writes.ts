@@ -8,10 +8,11 @@ import type { Db, Tx } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { ApiError } from '@/kernel/http';
+import { captureReviewAnswerBinding } from '@/kernel/records/review-answer-binding';
+import type { ReviewAnswerAttachment } from '@/kernel/tools/review-answer';
 import type { ConfirmationCommandT, ConfirmationOccurrenceT } from '../confirmation-contract';
 import type { CopilotPublicProse, CopilotPublicProseFailure } from '../public-prose-contract';
 import type { CopilotModeState, CopilotSkillContextT, CopilotSkillTurn } from './chat-contracts';
-import { type ReviewAnswerAttachment, captureReviewAnswerBinding } from './practice-port';
 import {
   publicProseFailureForReason,
   publicProseFailureMessage,

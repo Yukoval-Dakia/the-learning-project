@@ -10,18 +10,18 @@ import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { assessment_submission, migration_apply_run } from '@/db/schema';
 import {
-  checkContractEpoch,
-  gateContractEpoch,
-  transitionContractEpoch,
-} from '@/server/contract-epoch';
-import {
   type MigrationApplyFence,
   assertReconciliationClean,
   runMigrationApply,
 } from '@/server/migration/apply';
 import { captureMigrationCheckpoint } from '@/server/migration/capture';
-import { loadRevisionContracts } from '../../../scripts/migration-apply';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import {
+  checkContractEpoch,
+  transitionContractEpoch,
+} from '@/server/migration/contract-epoch/epoch';
+import { gateContractEpoch } from '@/server/migration/contract-epoch/rules';
+import { loadRevisionContracts } from '../../../../scripts/migration-apply';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { buildRehearsalRegistry, seedContractCorpus } from './contract-corpus';
 import { seedRehearsalCorpus } from './corpus';
 import { probeEpochFence, simulateStaleWriterLock } from './cutover';
