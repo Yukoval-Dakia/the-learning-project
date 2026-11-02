@@ -63,6 +63,4 @@ export {
 export { loadReviewDueSummary } from './server/review-due-summary';
 export type { RubricGate } from './server/rubric-validator';
 export { seedKnowledge } from './server/seed';
-export type { NameKcFn } from './server/tag-knowledge';
-export { isTagKnowledgeInvariantError, tagKnowledge } from './server/tag-knowledge';
 export { knowledgeTaskSpecs } from './task-public';

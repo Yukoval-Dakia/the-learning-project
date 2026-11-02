@@ -1,16 +1,52 @@
-// Structural write-through for knowledge nodes. History and anchor facts are shared
-// with parity and replay; embed_* remains derived maintenance state outside this write.
+// Structural write-through for knowledge nodes, plus the id preparation that every
+// node-creating owner runs before its creation event. History and anchor facts are
+// shared with parity and replay; embed_* remains derived maintenance state outside this write.
 
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
+import { newId } from '@/core/ids';
 import type { KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
+import { sanitizeProposedNodeDomain } from '@/subjects/profile';
 import {
   gatherAndFoldKnowledgeNode,
   hasKnowledgeNodeGenesisAnchor,
 } from './knowledge-node-history';
 
 type DbLike = Db | Tx;
+
+export async function assertKnowledgeParentExists(db: DbLike, parentId: string): Promise<void> {
+  const row = (
+    await db
+      .select({ id: knowledge.id })
+      .from(knowledge)
+      .where(and(eq(knowledge.id, parentId), isNull(knowledge.archived_at)))
+      .limit(1)
+  )[0];
+  if (!row) {
+    throw new Error(`parent knowledge node not found or archived: ${parentId}`);
+  }
+}
+
+// Shared preparation for explicit acceptance and automatic tagging. It does not
+// write a node: each owner records its creation contract before projection.
+export async function prepareProposedKnowledgeId(
+  db: DbLike,
+  payload: { parent_id: string | null; domain?: string },
+): Promise<string> {
+  // Root creation has no parent to assert; the projected row stamps payload.domain.
+  // Re-check defensively: 'general'/blank can never persist as a node domain.
+  if (payload.parent_id === null) {
+    if (!sanitizeProposedNodeDomain(payload.domain)) {
+      throw new Error(
+        "propose_new root creation requires a selectable payload.domain — 'general'/blank is a fallback identity, not a node domain",
+      );
+    }
+    return newId();
+  }
+  await assertKnowledgeParentExists(db, payload.parent_id);
+  return newId();
+}
 
 /**
  * Re-project one `knowledge` node. A fold of null deletes the row; otherwise upsert the
