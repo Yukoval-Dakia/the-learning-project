@@ -11523,6 +11523,26 @@
       "issue": "YUK-1570",
       "owns": "既有纯叶 limits 端口复导出同一 core COPILOT_REUSE_WINDOW_MS；仅依合法 capability 路径消费原复用窗口，不复制常量或改变 UI/服务端年龄语义。",
       "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/checkpoint-revert-operation.ts",
+      "module": "src/kernel/locks/copilot-session-selection-lock.ts",
+      "kind": "value",
+      "symbols": ["lockCopilotSessionSelection"],
+      "issue": "YUK-1570",
+      "owns": "Copilot conversation selection serialization: one registered hashtext key and the same pg_advisory_xact_lock SQL, now issued from the approved kernel lock home instead of a raw call in the capability.",
+      "date": "2026-11-03"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/conversation-lifecycle.ts",
+      "module": "src/kernel/locks/copilot-session-selection-lock.ts",
+      "kind": "value",
+      "symbols": ["lockCopilotSessionSelection"],
+      "issue": "YUK-1570",
+      "owns": "Copilot conversation selection serialization: one registered hashtext key and the same pg_advisory_xact_lock SQL, now issued from the approved kernel lock home instead of a raw call in the capability.",
+      "date": "2026-11-03"
     }
   ],
   "sourceSizeRecords": [

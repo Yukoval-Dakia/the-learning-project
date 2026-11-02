@@ -6,6 +6,7 @@ import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
 import { assertFromState } from '@/kernel/learning-session-guard';
 import { COPILOT_REUSE_WINDOW_MS } from '@/kernel/limits';
+import { lockCopilotSessionSelection } from '@/kernel/locks/copilot-session-selection-lock';
 
 // Conversation session lifecycle for Copilot and teaching.
 //
@@ -89,13 +90,6 @@ export async function startConversation(
  */
 // The reuse window lives in @/core/limits so the UI bootstrap auto-selection and
 // this lifecycle predicate use the same constant.
-export const COPILOT_SESSION_SELECTION_LOCK = 'copilot:session-selection';
-
-export async function lockCopilotSessionSelection(tx: Tx): Promise<void> {
-  // This lock is owned only here, so its single-arg hashtext key is local; it
-  // does not need to match the hashtextextended keys used by other lock sites.
-  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${COPILOT_SESSION_SELECTION_LOCK}))`);
-}
 
 /**
  * Resolve the single live Copilot session this surface would reuse right now,

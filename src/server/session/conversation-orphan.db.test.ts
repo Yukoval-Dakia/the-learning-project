@@ -1,7 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { COPILOT_SESSION_SELECTION_LOCK } from '@/capabilities/copilot/server/conversation-lifecycle';
 import { learning_session } from '@/db/schema';
+import { COPILOT_SESSION_SELECTION_LOCK } from '@/kernel/locks/copilot-session-selection-lock';
 import {
   families,
   native,

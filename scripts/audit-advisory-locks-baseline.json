@@ -300,10 +300,6 @@
     {
       "path": "src/server/rehearsal/orchestrate.ts",
       "count": 1
-    },
-    {
-      "path": "src/server/session/conversation.ts",
-      "count": 1
     }
   ]
 }
