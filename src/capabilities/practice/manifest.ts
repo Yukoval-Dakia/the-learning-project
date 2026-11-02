@@ -190,6 +190,17 @@ export const practiceCapability = defineCapability({
           import('./server/admission/enqueue').then((m) => m.buildQuestionAdmissionSubscriber),
       },
       {
+        // YUK-1664: a web demand advances on its question's real publication result, not on
+        // the nightly recovery sweep (which stays as the lost-delivery fallback).
+        id: 'practice.web-supply-observe',
+        version: 1,
+        actions: ['experimental:assessment_publish'],
+        load: () =>
+          import('./server/question-supply/web-supply').then(
+            (m) => m.buildWebSupplyObserveSubscriber,
+          ),
+      },
+      {
         id: 'practice.failure-learning-attempt',
         version: 3,
         actions: [
