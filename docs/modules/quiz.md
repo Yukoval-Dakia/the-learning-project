@@ -24,7 +24,7 @@
 | 复习 = standalone tool_quiz artifact | ❌ 仍未实现；当前是 review session + `/api/review/due` + `/api/attempts` |
 | 变式题生成 + lifecycle | ✅ pg-boss `variant_gen` 写 draft `question(source='mistake_variant')`，状态机走 `mistake_variant` 表（ADR-0018） |
 | 变式题双 pass verify | ✅ pg-boss `variant_verify` 已落，draft → active / broken 状态转换；三层防"错题繁殖"仍 Phase 2+ |
-| AttributionTask 写 cause | ✅ 落地 `src/capabilities/practice/tasks/attribution.ts`；输出走 `event(action='judge')`，payload 含 10 类 cause |
+| AttributionTask 写 cause | ✅ 落地 `src/capabilities/practice/failure-learning/tasks/attribution.ts`；输出走 `event(action='judge')`，payload 含 10 类 cause |
 
 **当前真"答题"路径**：手动录入（`POST /api/mistakes`）+ FSRS 复习（`POST /api/review-sessions` → `GET /api/review/due` → `POST /api/attempts` → `PATCH /api/review-sessions/[id]`）。`tool_quiz` backend 包装目前只用于 `quiz_gen`；完整 Judgment / appeal 仪式感和 review-session tool_quiz 仍是后续范围。
 

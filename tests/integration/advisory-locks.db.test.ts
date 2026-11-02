@@ -30,7 +30,7 @@ import {
 } from '@/capabilities/knowledge/server/proposals';
 import { POST as submitPOST } from '@/capabilities/practice/api/submit';
 import { mergeExactQuestionDuplicateKnowledgeIds } from '@/capabilities/practice/public';
-import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
+import { initialFsrsState } from '@/capabilities/practice/scheduling/server/fsrs';
 import { newId } from '@/core/ids';
 import {
   event,

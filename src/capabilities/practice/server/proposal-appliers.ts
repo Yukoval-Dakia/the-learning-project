@@ -41,6 +41,7 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
+import { CAUSE_OVERLAY_ID_PREFIX } from '@/kernel/read-models/cause-overlay';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 // W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
@@ -50,8 +51,6 @@ import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
 } from '@/kernel/records/mistake-variant-facts';
-
-import { CAUSE_OVERLAY_ID_PREFIX } from './cause-overlay';
 import { enrollPromotedQuestionScheduling } from './question-scheduling-enrollment';
 import { applyQuestionEdit } from './question-structure-edit';
 

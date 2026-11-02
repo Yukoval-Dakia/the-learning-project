@@ -1,0 +1,560 @@
+// softmax_mfi selection: candidate signals → L2 LLM weights → tempered-softmax sampler
+// with π_i. Due rows keep their deterministic presence and intra-day order.
+// Hard rules:
+// 1. never writes b/difficulty (item_calibration has a single writer);
+// 2. due rows are never sampled or reordered by the LLM;
+// 3. recall-locked items are never sampled, varied, or MFI-scored;
+// 4. capacity, draft exclusion, and dedup hold.
+// Never throws to the caller: the main path falls back to a statistical sampler and then
+// to deterministic composeDailyStream. composeDailyStream stays the pure legacy/fallback
+// core; this module owns the async signal/LLM/sampler path.
+
+import type { Db, Tx } from '@/db/client';
+import { type CollectedSignal, collectCandidateSignals } from '../../server/candidate-signals';
+import {
+  DEFAULT_TEMPERATURE,
+  MEM0_PRIOR_CAP,
+  type SelectionPolicyConfig,
+} from '../../server/selection-constants';
+import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from '../../server/task-runtime';
+import { planNonDueSelection } from './non-due-selection-plan';
+import { applyL3LearningMixGuard, learningMixContextFromInputs } from './post-filter';
+import {
+  buildMemoryPriorAdvisoryBlock,
+  buildSelectionOrchestratorTaskInputWithCandidates,
+  parseSelectionOrchestratorOutput,
+} from './selection-orchestrator';
+import { type WeightedCandidate, sampleByWeight } from './selection-sampler';
+import { reconcileSelectionAdvice, statisticalWeights } from './selection-weights';
+import { fitStreamToTimeBudget } from './stream-budget';
+import {
+  type ComposerInputs,
+  type StreamPlan,
+  type StreamPlanItem,
+  composeDailyStream,
+} from './stream-composer';
+import {
+  presentDueQuestion,
+  presentNonDueQuestion,
+  presentPracticePaper,
+} from './stream-item-presentation';
+import { readStreamSelectionCandidates } from './stream-selection-candidates';
+
+type DbLike = Db | Tx;
+
+// ───────────────────────────────────────────────────────────────────────────
+// 依赖注入（测试可 mock runTask / rng，**绝不命中 live endpoint**）。
+// ───────────────────────────────────────────────────────────────────────────
+
+/** runTask 投影（只取 .text）——DI 便于 mock（测试不命中 live endpoint）。 */
+export type RunTaskFn = PracticeTaskRunFn;
+
+/** Read-only learner-memory prior loader. One invocation per L2 orchestration at most. */
+export type LoadMemoryPriorFn = () => Promise<readonly string[]>;
+
+/** 哪一级 fallback 触发了（观测/测试断言用）。'none' = softmax 主路全程成功。 */
+export type FallbackLevel = 'none' | 'statistical' | 'legacy';
+
+export interface ComposeSoftmaxDeps {
+  /** L2 LLM 编排器。省略 → 默认动态 import runTask（production 路径）。 */
+  runTaskFn?: RunTaskFn;
+  /**
+   * mem0 learner-prior loader。省略 → production 动态 import server/ai/mem0 read seam；
+   * 构造/搜索失败一律退空 prior，不改变 LLM fallback level。
+   */
+  loadMemoryPrior?: LoadMemoryPriorFn;
+  providerInvocation?: {
+    db: Db;
+    caller: 'api' | 'worker';
+    deadlineAt: Date;
+    operationAnchor: string;
+  };
+  /** Poisson 抽样 rng（默认 Math.random）；测试传 seeded rng 确定化。 */
+  rng?: () => number;
+}
+
+export interface ComposeSoftmaxResult {
+  plan: StreamPlan;
+  /** 哪一级 fallback 触发（'none' = softmax 主路成功）。 */
+  fallback: FallbackLevel;
+  /**
+   * 被 sampler 抽中的**非到期**项的 π_i 快照（喂 active-PPI IPW）。
+   * 物化后由调用方据此 recordSelectionObservation（streamItemId=物化 id）。
+   * key = refId。recall-locked passthrough / 到期项 / paper 透传**不在**此 map
+   * （它们 π_i=1 确定性，非随机抽样——IPW 只关心被抽样的非到期项）。
+   */
+  sampledInclusion: Map<string, number>;
+  /** 每个**非到期** ref 的信号快照（物化进 StreamPlanItem.signals，已在 plan 里）。 */
+  signalByRef: Map<string, CollectedSignal>;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 容量常量（与 composeDailyStream DEFAULT_WARN/MAX 对齐——单一真相，不漂移）。
+// ───────────────────────────────────────────────────────────────────────────
+const DEFAULT_WARN = 12;
+const DEFAULT_MAX = 30;
+// L3 frontier quota: guarantee a protected FLOOR of frontier candidates
+// survive capacity truncation = floor(effectiveTarget × ratio). NO-OP when no frontier is
+// sampled (floor(0 × ratio)=0 → no extra protection → capacityGuard byte-identical).
+const FRONTIER_QUOTA_RATIO = 0.2;
+
+// ───────────────────────────────────────────────────────────────────────────
+// 非到期候选的编排角色与呈现标签；题目信号输入由共享只读 owner 读取。
+// ───────────────────────────────────────────────────────────────────────────
+
+interface NonDueRaw {
+  questionId: string;
+  role: SelectionOrchestratorCandidateRole;
+  knowledgeLabel?: string;
+}
+
+/** 非到期候选在本模块内部的编排角色。 */
+type SelectionOrchestratorCandidateRole = 'variant' | 'new_check' | 'frontier';
+
+// ───────────────────────────────────────────────────────────────────────────
+// 主入口。
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * composeSoftmaxStream — 档2 LLM-strong 选题编排（async）。
+ *
+ * **永不 throw**：两级 fallback 兜底（statistical → legacy）保证总返回合法 StreamPlan。
+ * 调用方（stream-store getStream/recompose）物化 plan 后，据 result.sampledInclusion
+ * 对每个被抽中的非到期项 recordSelectionObservation（π_i + policy='softmax_mfi'）。
+ */
+export async function composeSoftmaxStream(
+  db: DbLike,
+  inputs: ComposerInputs,
+  config: SelectionPolicyConfig,
+  deps: ComposeSoftmaxDeps = {},
+): Promise<ComposeSoftmaxResult> {
+  const warn = inputs.capacity?.warn ?? DEFAULT_WARN;
+  const max = inputs.capacity?.max ?? DEFAULT_MAX;
+  const temperature = config.temperature ?? DEFAULT_TEMPERATURE;
+
+  // ── dedup 真相源（铁律④）：到期项先到先得；非到期/卷不与已排 ref 重复（in-memory
+  // seen + materializeStream date+ref 唯一索引双保险）。
+  const seen = new Set<string>();
+
+  // ① 到期项（L1 确定性）——presence + due_at ASC 序原样透传，NEVER sampled/reordered。
+  const dueItems = inputs.dueItems.filter((d) => !seen.has(d.questionId) && seen.add(d.questionId));
+  const allDueDrafts: Omit<StreamPlanItem, 'position'>[] = dueItems.map((d) => ({
+    item_kind: 'question',
+    ref_id: d.questionId,
+    ...presentDueQuestion(d.knowledgeLabel, d.source),
+    // 到期项不带选题信号（它们不经 sampler/MFI）——signals 缺省 {}（materialize 兜底）。
+  }));
+  // 时间预算优先保留最早到期前缀，超预算到期题确定性延后。没有 budget 的显式
+  // DI/旧单测仍保留历史「全部 due presence」行为。
+  const dueDrafts = fitStreamToTimeBudget(
+    allDueDrafts,
+    inputs.dailyBudgetMinutes,
+    inputs.questionMinutes,
+  ).kept;
+
+  // 到期项的 L1 真相序（预算筛选后仍保持 due_at ASC）——assertL3Invariants 据此校验 plan 里
+  // due 子序列**顺序**与 L1 一致（铁律②不止 presence，还含 intra-day 序）。
+  const dueRefOrder = dueDrafts.map((d) => d.ref_id);
+  const dueRefSet = new Set(dueRefOrder);
+
+  // ② 非到期候选（variant + new_check）——去重后是 sampler 的池子。
+  const variantRaws: NonDueRaw[] = inputs.variantItems
+    .filter((v) => !seen.has(v.questionId) && seen.add(v.questionId))
+    .map((v) => ({ questionId: v.questionId, role: 'variant', knowledgeLabel: v.knowledgeLabel }));
+  const newCheckRaws: NonDueRaw[] = inputs.newCheckItems
+    .filter((n) => !seen.has(n.questionId) && seen.add(n.questionId))
+    .map((n) => ({
+      questionId: n.questionId,
+      role: 'new_check',
+      knowledgeLabel: n.knowledgeLabel,
+    }));
+  // B3 frontier（additive samplable 非到期候选）——dedup 在 due/variant/new_check 之后。
+  // frontierItems 缺省/[] → frontierRaws=[]（NO-OP：sampler 池不变，plan byte-identical）。
+  const frontierRaws: NonDueRaw[] = (inputs.frontierItems ?? [])
+    .filter((f) => !seen.has(f.questionId) && seen.add(f.questionId))
+    .map((f) => ({
+      questionId: f.questionId,
+      role: 'frontier',
+      knowledgeLabel: f.knowledgeLabel,
+    }));
+  const nonDueRaws = [...variantRaws, ...newCheckRaws, ...frontierRaws];
+  const labelByRef = new Map<string, string | undefined>(
+    nonDueRaws.map((r) => [r.questionId, r.knowledgeLabel]),
+  );
+  const roleByRef = new Map<string, SelectionOrchestratorCandidateRole>(
+    nonDueRaws.map((r) => [r.questionId, r.role]),
+  );
+
+  // ③ 卷（paper）——透传，不进 MFI/sampler（卷不可拆，组卷层已处理内部题）。容量内置后。
+  const paperDrafts: Omit<StreamPlanItem, 'position'>[] = inputs.pendingPapers
+    .filter((p) => !seen.has(p.paperId) && seen.add(p.paperId))
+    .map((p) => ({
+      item_kind: 'paper' as const,
+      ref_id: p.paperId,
+      ...presentPracticePaper(p.title, p.source),
+    }));
+
+  // ── L2 fallback 入口（候选收集本身挂 / catastrophic）：退确定性 composeDailyStream。
+  // 把整条 softmax 路径（含信号收集）包在 try 里——任何非 fallback-内部消化的异常
+  // 都退 legacy（日常工具不能 throw 出去）。
+  let signals: CollectedSignal[];
+  try {
+    const candidates = await readStreamSelectionCandidates(db, nonDueRaws);
+    signals = await collectCandidateSignals(db, candidates);
+  } catch (err) {
+    console.warn('[softmax-selection] candidate collection failed → legacy fallback', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return legacyFallback(inputs);
+  }
+
+  const { recallLocked, recallLockedRefs, samplable, effectiveTarget } = planNonDueSelection({
+    signals,
+    dueDrafts,
+    max,
+    dailyBudgetMinutes: inputs.dailyBudgetMinutes,
+    questionMinutes: inputs.questionMinutes,
+    targetCount: config.targetCount,
+  });
+
+  // signalByRef：所有非到期题的信号快照（含 recall-locked），物化进 StreamPlanItem.signals。
+  const signalByRef = new Map<string, CollectedSignal>(signals.map((s) => [s.refId, s]));
+
+  // ── softmax 主路 + L1 fallback：拿到 WeightedCandidate[]（LLM 权重 OR 统计权重）。
+  let fallback: FallbackLevel = 'none';
+  let weighted: WeightedCandidate[];
+  let arrangementByRef = new Map<string, number>();
+
+  if (samplable.length === 0) {
+    // 无可抽样非到期候选（全到期/全 recall/全卷）——无需调 LLM，直接空抽样。
+    weighted = [];
+  } else {
+    const llmResult = await tryLlmOrchestration(
+      db,
+      samplable,
+      deps.runTaskFn,
+      deps.loadMemoryPrior,
+      deps.providerInvocation,
+    );
+    if (llmResult) {
+      weighted = llmResult.weighted;
+      arrangementByRef = llmResult.arrangementByRef;
+    } else {
+      // L1 fallback：LLM/parse 挂或空 → 纯统计 sampler（MFI/诊断分当权重）。
+      fallback = 'statistical';
+      weighted = statisticalWeights(samplable);
+    }
+  }
+
+  // ── 抽样：sampleByWeight 出真 π_i（Poisson IPPS）。targetCount=effectiveTarget。
+  const sampled =
+    weighted.length === 0
+      ? []
+      : sampleByWeight(weighted, { temperature, targetCount: effectiveTarget, rng: deps.rng });
+  const sampledInclusion = new Map<string, number>(
+    sampled.map((s) => [s.refId, s.inclusionProbability]),
+  );
+
+  // ── 组装：到期（L1 序） + recall 透传 + 抽中非到期（LLM arrangement 序） + 卷 + 收尾。
+  const nonDueDrafts: Omit<StreamPlanItem, 'position'>[] = [];
+
+  // recall-locked 透传（确定性 same-question，不排序不换题——按 collect 顺序纳入）。
+  for (const s of recallLocked) {
+    const role = roleByRef.get(s.refId);
+    nonDueDrafts.push({
+      item_kind: 'question',
+      ref_id: s.refId,
+      ...presentNonDueQuestion(role, labelByRef.get(s.refId)),
+      signals: s as unknown as Record<string, unknown>,
+    });
+  }
+
+  // 抽中的非到期项——按 LLM arrangement（越小越靠前）排；无 arrangement 的排后、保抽样序。
+  const sampledOrdered = [...sampled].sort((a, b) => {
+    const aa = arrangementByRef.get(a.refId);
+    const bb = arrangementByRef.get(b.refId);
+    if (aa === undefined && bb === undefined) return 0;
+    if (aa === undefined) return 1;
+    if (bb === undefined) return -1;
+    return aa - bb;
+  });
+  for (const s of sampledOrdered) {
+    const role = roleByRef.get(s.refId);
+    nonDueDrafts.push({
+      item_kind: 'question',
+      ref_id: s.refId,
+      ...presentNonDueQuestion(role, labelByRef.get(s.refId)),
+      signals: signalByRef.get(s.refId) as unknown as Record<string, unknown>,
+    });
+  }
+
+  // 顺序：到期（L1 序，热身/优先） → 非到期散题（recall 透传 + 抽中） → 卷收口。
+  const assembled = [...dueDrafts, ...nonDueDrafts, ...paperDrafts];
+
+  // ── L3 容量守门（铁律④）：超 max 截断。**到期项 + 被抽中非到期项受保护**——截断只砍卷
+  // （paper，确定性、不记 π_i）尾部。到期项 presence（铁律②）优先于容量；被抽中非到期项
+  // 的 π_i 受 IPW 资产保护。
+  const sampledRefs = new Set(sampled.map((s) => s.refId));
+  // ── B3 L3 frontier quota（FRONTIER_QUOTA_RATIO）：保证 floor(effectiveTarget × ratio) 个
+  // 被抽中的 frontier 候选**不被容量截断**。实现为 capacityGuard 的**附加**受保护集——
+  // union 进 due/sampled 受保护集，**绝不替换/削弱**到期保护（铁律②优先）。
+  // NO-OP：无 frontier 被抽中 → floor(0 × ratio)=0 → frontierProtectedRefs 空 →
+  // capacityGuard 逐字等同（plan byte-identical）。注：被抽中的 frontier 本就已在
+  // sampledRefs 里受保护，故此集当前是 sampledRefs 的子集（受保护输出不变）；显式保留它
+  // 把「frontier 配额」做成一等保证，且对未来 sampled-保护模型变更稳健（defense-in-depth）。
+  const frontierQuota = Math.floor(effectiveTarget * FRONTIER_QUOTA_RATIO);
+  const frontierSampledRefs = sampled
+    .filter((s) => roleByRef.get(s.refId) === 'frontier')
+    .map((s) => s.refId);
+  const frontierProtectedRefs = new Set(frontierSampledRefs.slice(0, frontierQuota));
+  const budgeted = fitStreamToTimeBudget(
+    assembled,
+    inputs.dailyBudgetMinutes,
+    inputs.questionMinutes,
+  );
+  const budgetedRefs = new Set(budgeted.kept.map((item) => item.ref_id));
+  const droppedSampled = sampled.some((item) => !budgetedRefs.has(item.refId));
+  if (droppedSampled) {
+    // Poisson IPPS 的 realized count 可高于 target。硬时间预算必须裁切，但裁切后的真实边际
+    // inclusion probability 不再等于抽样前 pi。整轮不写 observation，比写错 IPW 资产诚实。
+    sampledInclusion.clear();
+    console.warn('[softmax-selection] time budget trimmed sampled items; skip pi observations', {
+      budgetMinutes: inputs.dailyBudgetMinutes,
+      sampled: sampled.length,
+      keptSampled: sampled.filter((item) => budgetedRefs.has(item.refId)).length,
+    });
+  }
+  const capacityResult = capacityGuard(
+    budgeted.kept,
+    dueRefSet,
+    sampledRefs,
+    frontierProtectedRefs,
+    max,
+  );
+
+  const plan = applyL3LearningMixGuard(
+    {
+      date: inputs.date,
+      items: capacityResult.kept.map((d, i) => ({ ...d, position: i + 1 })),
+      truncated: budgeted.truncated || capacityResult.truncated,
+      warned: assembled.length > warn || budgeted.truncated,
+    } satisfies StreamPlan,
+    learningMixContextFromInputs(
+      inputs,
+      assembled.filter((item) => item.source === 'frontier').length,
+    ),
+  );
+
+  // ── L3 守门断言（presence + due-ORDER / recall）——assemble 后校验，违例即 bug，
+  // throw 留痕（这是确定性逻辑 bug，不是 LLM/IO 失败——不该被 fallback 吞，要在
+  // 测试/CI 暴露）。due-ORDER 是 review 加的深防御：plan 里 due 子序列必须
+  // 与 inputs 的 L1 序逐一相等（不止 presence）。
+  assertL3Invariants(plan, dueRefOrder, dueRefSet, recallLockedRefs, sampledInclusion);
+
+  // 守恒不变量（depth defense，后）：sampledInclusion 只能含**真出现在最终
+  // plan 里**的 ref——记录的 π_i 必须 ⇔ 该项在流里。capacityGuard 现已保护被抽中项不被
+  // 截断（见 注释），故正常路径下此循环 no-op；保留它兜底任何「sampled 项最终
+  // 不在 plan」的将来路径，绝不让一条不在流里的 π_i 漏进 IPW 资产。
+  const keptRefs = new Set(plan.items.map((it) => it.ref_id));
+  for (const ref of [...sampledInclusion.keys()]) {
+    if (!keptRefs.has(ref)) sampledInclusion.delete(ref);
+  }
+
+  return { plan, fallback, sampledInclusion, signalByRef };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// L2 LLM 编排（softmax 主路）。失败/空 → null（调用方走 L1 统计 fallback）。
+// ───────────────────────────────────────────────────────────────────────────
+async function tryLlmOrchestration(
+  db: DbLike,
+  samplable: CollectedSignal[],
+  runTaskFn?: RunTaskFn,
+  loadMemoryPrior?: LoadMemoryPriorFn,
+  providerInvocation?: ComposeSoftmaxDeps['providerInvocation'],
+): Promise<{ weighted: WeightedCandidate[]; arrangementByRef: Map<string, number> } | null> {
+  try {
+    const { input: candidateBlock, selectedCandidates } =
+      buildSelectionOrchestratorTaskInputWithCandidates(samplable);
+    const candidateText = candidateBlock.candidates;
+    if (candidateText.trim().length === 0) {
+      // (register (a) /)：先前此处静默 return null → L1 统计 fallback 触发却无留痕。
+      // 补结构化 warn，让「LLM 编排输入为空」这条 fallback 路径可观测（与下方 catch 的 L2-failure
+      // warn 一道闭合两条 fallback 路径的可检测性——parse-empty 走 throw → catch，非独立分支）。
+      console.warn('[softmax-selection] L2 empty-input → statistical fallback');
+      return null;
+    }
+
+    // B3 mem0 prior is advisory-only. Its entire lifecycle is isolated from the LLM fallback
+    // decision: client construction, embedding/search, or an injected loader may fail, but that
+    // failure only removes the optional memoryPrior field. In particular, do not let it reach the
+    // outer catch (which correctly means the L2 orchestration itself failed).
+    const memories = await loadMemoryPriorFailSoft(loadMemoryPrior, providerInvocation);
+    const memoryPrior = buildMemoryPriorAdvisoryBlock(memories);
+    const taskInput = memoryPrior ? { ...candidateBlock, memoryPrior } : candidateBlock;
+    const fn = runTaskFn ?? (await defaultRunTaskFn(db as Db));
+    const result = await fn('SelectionOrchestratorTask', taskInput, {
+      ...(providerInvocation
+        ? { providerSessionDeadlineAt: providerInvocation.deadlineAt.getTime() }
+        : {}),
+    });
+    const refIds = selectedCandidates.map((s) => s.refId);
+    const parsed = parseSelectionOrchestratorOutput(result.text, refIds);
+    // parse barrier 保证 parsed 非空（空编排 = throw → 下方 catch 的 L2-failure warn 接管观测，
+    // throw message 如 'no valid candidates after refId ⊆ filter + dedup' 自带诊断上下文），
+    // bot 轮删死分支（旧 `parsed.length === 0` 不可达——见 selection-orchestrator.ts
+    // parseSelectionOrchestratorOutput ⊆-filter+dedup 空即 throw 的契约）。
+
+    return reconcileSelectionAdvice(samplable, parsed);
+  } catch (err) {
+    console.warn('[softmax-selection] L2 LLM orchestration failed → statistical fallback', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+const SELECTION_MEMORY_QUERY =
+  'learner practice preferences, recurring weaknesses, study habits, and helpful sequencing';
+
+async function loadMemoryPriorFailSoft(
+  loader?: LoadMemoryPriorFn,
+  providerInvocation?: ComposeSoftmaxDeps['providerInvocation'],
+): Promise<readonly string[]> {
+  try {
+    return await (loader ?? (() => defaultLoadMemoryPrior(providerInvocation)))();
+  } catch (err) {
+    console.warn('[softmax-selection] mem0 learner prior unavailable → continue without advisory', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+}
+
+/** Production-only lazy loader: no mem0/native dependency enters the module graph before L2 runs. */
+const defaultLoadMemoryPrior = async (
+  providerInvocation?: ComposeSoftmaxDeps['providerInvocation'],
+): Promise<readonly string[]> => {
+  if (!providerInvocation) {
+    throw new TypeError('Practice L2 memory prior requires provider invocation');
+  }
+  const { createMem0OpaqueOperationContext, readMemoryFacts } = await import(
+    '@/server/ai/mem0/read'
+  );
+  // Client construction may throw synchronously when env/config is unavailable. The caller's
+  // loadMemoryPriorFailSoft boundary intentionally covers this construction as well as search.
+  const result = await readMemoryFacts(
+    SELECTION_MEMORY_QUERY,
+    {
+      topK: MEM0_PRIOR_CAP,
+      // No subject:* filter: attempt/review facts are generally global+topic scoped and a subject
+      // filter would silently discard the learner facts this advisory is meant to surface.
+    },
+    createMem0OpaqueOperationContext(providerInvocation),
+  );
+  return (result.results ?? [])
+    .map((item) => item.memory)
+    .filter((memory): memory is string => typeof memory === 'string' && memory.trim().length > 0);
+};
+
+/** 默认 production runTask（动态 import 避免 server-only 模块进 unit graph）。 */
+async function defaultRunTaskFn(db: Db): Promise<RunTaskFn> {
+  return makePracticeTaskTextRunFn(db);
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// L2 fallback：退确定性 composeDailyStream（legacy）。π_i 不记（确定性无随机抽样）。
+// ───────────────────────────────────────────────────────────────────────────
+function legacyFallback(inputs: ComposerInputs): ComposeSoftmaxResult {
+  return {
+    plan: composeDailyStream(inputs),
+    fallback: 'legacy',
+    sampledInclusion: new Map(),
+    signalByRef: new Map(),
+  };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// L3：容量守门——超 max 截断，但**到期项 + 被抽中非到期项受保护**。
+// ───────────────────────────────────────────────────────────────────────────
+// 行为契约（review +）：两类受保护项**永不被容量截断**——
+// ① 到期项（presence 铁律②优先于容量硬顶）；
+// ② 被 sampler 抽中的非到期项（其 π_i 是 Phase-6 active-PPI IPW 的慢热资产）。
+// 可截断的只剩**确定性非到期尾部**（recall 透传 + 卷 paper，都不记 π_i）。
+// 为什么不截断被抽中项：sampler 记录的 π_i **必须**等于
+// 该项出现在最终流里的真实概率 P(item ∈ final stream)。Poisson IPPS 抽样的 realized
+// 子集大小是随机的（均值 = effectiveTarget = nonDueBudget）；若在抽样后再按容量截断
+// 被抽中项的尾部，这是一道**第二重条件过滤**——幸存项的真实入选概率被压低，但代码记的
+// 仍是**截断前**的 π_i → π_i **高估**真实入选概率 → IPW/Horvitz-Thompson 估计偏置。
+// 修复采纳 option (b)：**非到期容量经 sampler 的 targetCount 在期望意义上兜底，不做抽样后
+// 硬截断**。代价：Poisson 上溢时最终流长度可略超 max（与到期 over-emit 同款 soft-capacity
+// 取舍——presence/π_i 正确性 > 硬顶）。这样记录的 π_i 恒 = 真实最终入选概率，IPW 资产干净。
+// 调用方/下游不得假设 `truncated === true ⇒ length ≤ max`——到期 over-emit 或抽样上溢时
+// 两者可同真（与 legacy composeDailyStream 的「无条件 slice(0, max)」**有意不同**）。
+function capacityGuard(
+  assembled: Omit<StreamPlanItem, 'position'>[],
+  dueRefSet: Set<string>,
+  sampledRefs: Set<string>,
+  // frontier quota floor: ADDITIVE protected set (union with due ∪
+  // sampled, NEVER replaces/weakens them). Empty → byte-identical to pre-B3 behavior.
+  frontierProtectedRefs: Set<string>,
+  max: number,
+): { kept: Omit<StreamPlanItem, 'position'>[]; truncated: boolean } {
+  if (assembled.length <= max) return { kept: assembled, truncated: false };
+  // 受保护 = 到期项 ∪ 被抽中非到期项（π_i 资产）∪ frontier 配额（B3，附加，不削弱前两者）。永不截断。
+  const isProtected = (d: Omit<StreamPlanItem, 'position'>) =>
+    dueRefSet.has(d.ref_id) || sampledRefs.has(d.ref_id) || frontierProtectedRefs.has(d.ref_id);
+  // 可截断 = 确定性非到期尾部（recall 透传 + 卷）。按剩余容量从头保留。
+  const protectedItems = assembled.filter(isProtected);
+  const truncatable = assembled.filter((d) => !isProtected(d));
+  const remaining = Math.max(0, max - protectedItems.length);
+  const keptTruncatable = truncatable.slice(0, remaining);
+  // 维持原相对顺序（assembled 已是 [到期, recall, 抽中, 卷] 序）：受保护项 + 保留的可截断项
+  // 按原序拼回。protectedItems.length 可 > max（到期 over-emit 或抽样上溢）⇒ remaining=0
+  // ⇒ keptTruncatable=[] ⇒ kept 仅受保护项（length 可 > max，over-cap，有意）。
+  const keptTruncatableSet = new Set(keptTruncatable.map((d) => d.ref_id));
+  const kept = assembled.filter((d) => isProtected(d) || keptTruncatableSet.has(d.ref_id));
+  return { kept, truncated: true };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// L3：断言守门（presence 铁律② + recall 铁律③）。
+// ───────────────────────────────────────────────────────────────────────────
+function assertL3Invariants(
+  plan: StreamPlan,
+  dueRefOrder: readonly string[],
+  dueRefSet: Set<string>,
+  recallLockedRefs: Set<string>,
+  sampledInclusion: Map<string, number>,
+): void {
+  const planRefs = new Set(plan.items.map((it) => it.ref_id));
+  // 铁律②（presence）：每个到期项必须在最终流。容量守门已保护到期项——若仍缺，是 bug。
+  for (const dueRef of dueRefSet) {
+    if (!planRefs.has(dueRef)) {
+      throw new Error(
+        `[softmax-selection] L3 due-presence violated: due item ${dueRef} missing from final plan`,
+      );
+    }
+  }
+  // 铁律②（intra-day 序，review 深防御）：plan.items 里到期项的子序列必须与
+  // inputs 的 L1 序（due_at ASC，dedup 后）逐一相等——LLM/装配绝不能重排到期项。
+  const planDueSubsequence = plan.items.map((it) => it.ref_id).filter((r) => dueRefSet.has(r));
+  if (
+    planDueSubsequence.length !== dueRefOrder.length ||
+    planDueSubsequence.some((r, i) => r !== dueRefOrder[i])
+  ) {
+    throw new Error(
+      `[softmax-selection] L3 due-order violated: plan due subsequence [${planDueSubsequence.join(
+        ', ',
+      )}] != L1 order [${dueRefOrder.join(', ')}]`,
+    );
+  }
+  // 铁律③：recall-locked 项**不得**出现在 sampledInclusion（它们走确定性透传，从不抽样）。
+  for (const ref of recallLockedRefs) {
+    if (sampledInclusion.has(ref)) {
+      throw new Error(
+        `[softmax-selection] L3 recall-lock violated: recall item ${ref} was sampled (must be deterministic passthrough)`,
+      );
+    }
+  }
+}
