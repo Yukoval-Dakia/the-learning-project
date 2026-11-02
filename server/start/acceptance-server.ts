@@ -10,7 +10,7 @@ import { createFrontdoor } from '../frontdoor';
 const env = getServerEnv();
 requireApiInternalToken(env);
 const port = resolveApiPort(env.API_PORT);
-const fetch = await createFrontdoor(buildHonoApp(capabilities), 'web/dist');
+const fetch = await createFrontdoor(buildHonoApp(capabilities));
 const server = serve({ fetch, hostname: '127.0.0.1', port });
 
 async function stop() {

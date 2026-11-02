@@ -372,7 +372,6 @@ export { revealFrozenStudyReference } from './server/assessment/study-context';
 export { readPracticeDraftList } from './server/draft-list-read';
 export { readDraftReviewDetail } from './server/draft-review';
 export { getPaperDetail } from './server/paper-detail';
-export { readWorksheetExport } from './server/worksheet/export-store';
 export { createPracticePaperSubmission } from './server/paper-submission-operation';
 export {
   PlacementOrphanStateError,
@@ -384,3 +383,4 @@ export {
   transitionReviewSession,
 } from './server/session-operations/review-session';
 export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';
+export { readWorksheetExport } from './server/worksheet/export-store';

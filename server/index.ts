@@ -162,9 +162,9 @@ void (async () => {
   await injectAdminConfigWriterBeforeServe();
   const { startListenLoop, stopListenLoop } = await import('@/server/events/listen_loop');
   await startListenLoop();
-  // Start owns the Web front door whenever a built SPA is configured. Startup,
-  // DB hydration, tool recovery and shutdown keep their existing single owner.
-  const fetch = env.RW_STATIC_DIR ? await createFrontdoor(app, env.RW_STATIC_DIR) : app.fetch;
+  // Start owns the Web front door when RW_FRONTDOOR=1 (needs the dist/start build).
+  // Startup, DB hydration, tool recovery and shutdown keep their existing single owner.
+  const fetch = env.RW_FRONTDOOR === '1' ? await createFrontdoor(app) : app.fetch;
   const server = serve({ fetch, port }, (info) => {
     const mounted = capabilities.flatMap((c) =>
       (c.api?.routes ?? []).filter((r) => r.load).map((r) => `${r.method} ${r.path}`),

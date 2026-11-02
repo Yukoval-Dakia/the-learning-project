@@ -113,7 +113,7 @@ const server = {
   // restore-acceptance runs; parsing and construction live in resolveBossAutomationMode
   // and src/server/boss/client.ts.
   RW_BOSS_AUTOMATION: z.enum(['enabled', 'disabled']).optional(),
-  RW_STATIC_DIR: optionalString,
+  RW_FRONTDOOR: optionalString,
   RW_WORKER: optionalString,
   SEED_SYNTHETIC_OK: optionalString,
   SELECTION_POLICY: optionalString,

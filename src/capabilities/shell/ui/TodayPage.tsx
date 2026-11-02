@@ -41,7 +41,7 @@ import type { OvernightDigest, WorkbenchSummary } from './workbench-api';
 import { useWorkbenchClient } from './workbench-client';
 import './shell.css';
 
-// agency / onboarding 的读函数与组件由路由壳（SPA web/src/router.tsx、Start
+// agency / onboarding 的读函数与组件由路由壳（Start
 // server/start/routes/today.tsx）注入；shell 只编排页面，不 value-import 它们。
 export interface TodayPageProps {
   navigate: (to: string) => void;

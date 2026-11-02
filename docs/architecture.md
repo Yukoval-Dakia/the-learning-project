@@ -9,9 +9,9 @@
 - **app**：`server/index.ts`（`pnpm build:server` → `dist/server.cjs`），`@hono/node-server` 监听 `API_PORT`（默认 8787，`src/server/env.ts` 的 `resolveApiPort`）。启动关键步骤：`loadEnv` → 科目 / 配置 / 模型目录水合 → capability tools 注册 → `recoverToolOperationsOnBoot` → admin config 注入 → `startListenLoop` → serve。
 - **worker**：`scripts/worker.ts`（`pnpm build:worker` → `dist/worker.cjs`）。`bootWorker()`（`src/server/boss/worker-boot.ts`）先注册 tools，再调 `startBossWorker` 挂 pg-boss、capability jobs、夜间 orchestrator 与 DBOS。worker 不启动 HTTP，也不开 LISTEN loop（`scripts/worker.ts` 注释）。
 - **migrate**：`scripts/migrate.ts` → `dist/migrate.cjs`，以 `node dist/migrate.cjs` 在 app / worker 之前跑 Drizzle migration。
-- **dev**：`pnpm dev:local`（`scripts/dev-local.ts`）spawn 三进程：`rw:api`（`tsx watch server/index.ts`，脚本自带 `RW_WORKER=1`）、`rw:web`（`vite --config web/vite.config.ts`，:5173，`/api` 代理到 :8787）、`worker:dev`（`tsx scripts/worker.ts`）。因此 dev 里 app 进程与独立 worker 都会消费队列。
+- **dev**：`pnpm dev:local`（`scripts/dev-local.ts`）spawn 三进程：`rw:api`（`tsx watch server/index.ts`，脚本自带 `RW_WORKER=1`，dev-local 另设 `RW_FRONTDOOR=1`，页面同源在 :8787）、`rw:web`（`vite build --watch --config server/start/vite.config.ts`，重建 `dist/start`，API 随新产物重启；dev-local 启动前先跑一次 `pnpm build:start`）、`worker:dev`（`tsx scripts/worker.ts`）。因此 dev 里 app 进程与独立 worker 都会消费队列。
 - **prod**：`docker-compose.yml` 的 `migrate` / `app`（`node dist/server.cjs`，镜像 target `runner`）/ `worker`（`node dist/worker.cjs`，target `worker`，额外带 headless Chromium 供 `worksheet_render`）/ `postgres`（pgvector）/ `mem0-init` / `cloudflared`。app 与 worker 共用 `DATABASE_URL`；worker 是 mem0 SQLite history 的唯一写者。
-- **静态面**：未设 `RW_STATIC_DIR` 时 app 只服务 Hono API；设了（镜像内为 `/app/web/dist`）则走 `server/frontdoor.ts` 的 Start 前门，见下文。
+- **静态面**：未设 `RW_FRONTDOOR=1` 时 app 只服务 Hono API；设了（镜像内默认设）则走 `server/frontdoor.ts` 的 Start 前门（需要 `dist/start` 构建产物），见下文。
 
 ---
 
@@ -31,7 +31,7 @@
 
 ### HTTP 请求路径
 
-- 入口：`server/index.ts` 的 `serve({ fetch, port })`；`fetch` 是 `buildHonoApp(capabilities)`，设了 `RW_STATIC_DIR` 时外面再包 Start 前门。
+- 入口：`server/index.ts` 的 `serve({ fetch, port })`；`fetch` 是 `buildHonoApp(capabilities)`，设了 `RW_FRONTDOOR=1` 时外面再包 Start 前门。
 - `/api/*` 依次经过：`SECURITY_HEADERS` → `x-internal-token` 校验（`/api/health`、`/api/ready` 豁免；`INTERNAL_TOKEN` 未设时全拒）→ DB contract epoch gate（fenced 返回 503 `contract_epoch_fenced`）→ 90s request-scope provider deadline（`HTTP_PROVIDER_SESSION_BUDGET_MS`，`src/kernel/http.ts`）。
 - manifest 的 `api.routes[].load` 在首次请求时解析并缓存 handler；返回后由 `assertApiRouteSuccessStatus` 校验 status 契约。未命中的 `/api/*` 统一 404 JSON。
 - SSE：`src/server/events/writer.ts` 写 `job_events` 并 `pg_notify('job_status')`；app 进程的 `startListenLoop()` 独占一条 LISTEN 连接（`max:1`），广播给 `sse_router`。该连接不重连，断开需重启进程（`src/server/events/listen_loop.ts`）。
@@ -57,9 +57,9 @@
 ## Start 前门
 
 - 构建：`server/start/vite.config.ts`，`srcDirectory: 'server/start'`，`base: '/_build/'`，输出 `dist/start`（`pnpm build:start`）。
-- 挂载：`server/frontdoor.ts` 动态 import `dist/start/server/server.js`，把所有请求交给它的 `fetch`；客户端资产从 `dist/start/client` 提供在 `/_build/*`。
+- 挂载：`server/frontdoor.ts` 动态 import `dist/start/server/server.js`，把所有请求交给它的 `fetch`；客户端资产从 `dist/start/client` 提供在 `/_build/*`；站点根的 PWA 文件（`manifest.webmanifest`、图标、`favicon.svg`，源在 `public/`）由前门直接从同一目录提供。
 - 路由：`server/start/routes/*.tsx` 文件路由，`routeTree.gen.ts` 由 TanStack Router 生成。已迁页面在 route 里 `lazy()` 一个 capability 的 `ui-public.ts` loader（如 `notes.tsx` → `loadNotesPage`），再包进 `StartWorkbenchShell`。
-- `/api/$` 原样转发给 `context.api.fetch`（Hono 组合根）；`/$` catch-all 回退到旧 `web/dist` SPA（`buildLegacySpa`）。新页面按 route 逐个接管，未迁移页面保持旧 SPA。
+- `/api/$` 原样转发给 `context.api.fetch`（Hono 组合根）；没有旧 SPA 回落：未匹配的路径由 Start 返回 404。打印页 `/print/worksheet/$token` 也是 Start 路由（裸文档，不挂工作台壳），读取走 server function。
 - Start server function 统一先请求 `/api/auth/check`（`server/start/start.ts`），复用 Hono 的 token 与 epoch gate。
 
 ---

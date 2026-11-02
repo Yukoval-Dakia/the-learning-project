@@ -257,7 +257,6 @@ export type FrontdoorContext = {
   readWorksheetExport: (
     token: string,
   ) => Promise<NonNullable<Awaited<ReturnType<typeof readWorksheetExport>>>>;
-  legacySpa: Hono;
   startAssets: Hono;
 };
 

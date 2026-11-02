@@ -10,7 +10,6 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as SplatRouteImport } from './routes/$'
 import { Route as AgentNotesRouteImport } from './routes/agent-notes'
 import { Route as CoachRouteImport } from './routes/coach'
 import { Route as DraftsRouteImport } from './routes/drafts'
@@ -45,11 +44,6 @@ import { Route as PrintWorksheetTokenRouteImport } from './routes/print.workshee
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SplatRoute = SplatRouteImport.update({
-  id: '/$',
-  path: '/$',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AgentNotesRoute = AgentNotesRouteImport.update({
@@ -205,7 +199,6 @@ const PrintWorksheetTokenRoute = PrintWorksheetTokenRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/$': typeof SplatRoute
   '/agent-notes': typeof AgentNotesRoute
   '/coach': typeof CoachRoute
   '/drafts': typeof DraftsRoute
@@ -239,7 +232,6 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/$': typeof SplatRoute
   '/agent-notes': typeof AgentNotesRoute
   '/coach': typeof CoachRoute
   '/drafts': typeof DraftsRoute
@@ -274,7 +266,6 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/$': typeof SplatRoute
   '/agent-notes': typeof AgentNotesRoute
   '/coach': typeof CoachRoute
   '/drafts': typeof DraftsRoute
@@ -310,7 +301,6 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/$'
     | '/agent-notes'
     | '/coach'
     | '/drafts'
@@ -344,7 +334,6 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/$'
     | '/agent-notes'
     | '/coach'
     | '/drafts'
@@ -378,7 +367,6 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
-    | '/$'
     | '/agent-notes'
     | '/coach'
     | '/drafts'
@@ -413,7 +401,6 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  SplatRoute: typeof SplatRoute
   AgentNotesRoute: typeof AgentNotesRoute
   CoachRoute: typeof CoachRoute
   DraftsRoute: typeof DraftsRoute
@@ -449,13 +436,6 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/$': {
-      id: '/$'
-      path: '/$'
-      fullPath: '/$'
-      preLoaderRoute: typeof SplatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agent-notes': {
@@ -719,7 +699,6 @@ const AdminSubjectsRouteWithChildren = AdminSubjectsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  SplatRoute: SplatRoute,
   AgentNotesRoute: AgentNotesRoute,
   CoachRoute: CoachRoute,
   DraftsRoute: DraftsRoute,
