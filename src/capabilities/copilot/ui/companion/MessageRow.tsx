@@ -1,3 +1,4 @@
+import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import type { ConfirmationAssessmentRenderer } from '../confirmation';
 import { ConfirmationBlock } from './ConfirmationBlock';
 import type { ConfirmationAction } from './turn-sender';
@@ -20,6 +21,7 @@ import { StepList, stepsOf } from './ToolRow';
 
 export interface MessageRowProps {
   confirmationRenderer?: ConfirmationAssessmentRenderer;
+  readNotePage: NotePageClient;
   showConfirmation?: boolean;
   confirmationDisabled?: boolean;
   onConfirmation?: (action: ConfirmationAction) => Promise<void>;
@@ -100,7 +102,13 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
         chipAcked={props.chipAcked}
         onAcceptCorrective={props.onAcceptCorrective}
       />
-      {m.primary_view ? <HeroBlock view={m.primary_view} navigate={props.navigate} /> : null}
+      {m.primary_view ? (
+        <HeroBlock
+          view={m.primary_view}
+          navigate={props.navigate}
+          readNotePage={props.readNotePage}
+        />
+      ) : null}
       {settled ? <ProposalNotice pending={canonical.pending} navigate={props.navigate} /> : null}
       {canCorrect || checkpoint ? (
         <details className="un-st-message-operations">

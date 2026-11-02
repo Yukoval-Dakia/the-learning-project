@@ -1,3 +1,4 @@
+import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import type { ConfirmationAssessmentRenderer } from '../confirmation';
 // The companion's frame, in three layouts:
 //   side  — desktop: a column beside the content (the shell gives it its place), not glass (T3);
@@ -36,6 +37,7 @@ export type CompanionLayout = 'side' | 'float' | 'sheet';
 
 export interface CompanionPanelProps {
   confirmationRenderer?: ConfirmationAssessmentRenderer;
+  readNotePage: NotePageClient;
   controller: CompanionController;
   layout: CompanionLayout;
   onClose: () => void;
@@ -67,6 +69,7 @@ export function CompanionPanel({
   sessionId,
   presentation,
   confirmationRenderer,
+  readNotePage,
 }: CompanionPanelProps) {
   const [wide, setWide] = useState(false);
   const listId = useId();
@@ -138,6 +141,7 @@ export function CompanionPanel({
           messages={
             <MessageStream
               confirmationRenderer={confirmationRenderer}
+              readNotePage={readNotePage}
               controller={controller}
               stick={stick}
               navigate={navigate}
@@ -237,6 +241,7 @@ export function CompanionPanel({
         <div className="un-cp-body">
           <MessageStream
             confirmationRenderer={confirmationRenderer}
+            readNotePage={readNotePage}
             controller={controller}
             stick={stick}
             navigate={navigate}

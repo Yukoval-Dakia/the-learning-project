@@ -1,3 +1,4 @@
+import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import type { ConfirmationAssessmentRenderer } from '../confirmation';
 import { conversationReady } from './companion-state';
 // The scrolling conversation: today's summary on top (open while the conversation is empty), then
@@ -11,6 +12,7 @@ import { useCompanion } from './use-companion';
 
 export interface MessageStreamProps {
   confirmationRenderer?: ConfirmationAssessmentRenderer;
+  readNotePage: NotePageClient;
   controller: CompanionController;
   stick: StickToBottom;
   navigate: (to: string) => void;
@@ -21,6 +23,7 @@ export function MessageStream({
   stick,
   navigate,
   confirmationRenderer,
+  readNotePage,
 }: MessageStreamProps) {
   const messages = useCompanion(controller, (s) => s.messages);
   const correctionTurnId = useCompanion(controller, (s) => s.correctionTarget?.turnId ?? null);
@@ -65,6 +68,7 @@ export function MessageStream({
               key={message.id}
               message={message}
               confirmationRenderer={confirmationRenderer}
+              readNotePage={readNotePage}
               showConfirmation={
                 !!message.confirmation &&
                 firstOccurrence.get(message.confirmation.occurrence.occurrence_id) === message.id
