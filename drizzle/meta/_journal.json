@@ -946,6 +946,13 @@
       "when": 1793280387555,
       "tag": "0135_yuk1603_embed_source_revision",
       "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "7",
+      "when": 1793629250546,
+      "tag": "0136_yuk1448_bank_search_snapshot",
+      "breakpoints": true
     }
   ]
 }
