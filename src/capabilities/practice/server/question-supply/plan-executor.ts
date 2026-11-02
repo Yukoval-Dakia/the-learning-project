@@ -49,7 +49,7 @@ import { findSubjectRootKnowledgeId, matchJyeooKnowledgeHints } from './jyeoo-hi
 import type { PlacementWebDelivery } from './placement-starter-web-delivery';
 import type { DifficultyBand } from './target-discovery';
 import type { RunWebFetchCandidatesParams, RunWebFetchCandidatesResult } from './web-candidates';
-import { claimWebSupplyRouteFallback, runWebSupply } from './web-supply';
+import { dispatchWebSupplyRouteFallback, runWebSupply } from './web-supply';
 
 /** executor 可执行的获取路由（SupplyPlanV1.route_preference 的可执行子集）。 */
 export type SupplyRouteName = 'jyeoo_fetch' | 'sourcing_web' | 'quiz_gen';
@@ -331,7 +331,7 @@ function errorMessage(err: unknown): string {
  */
 function cloneSupplyTraceForRoute(
   trace: SupplyTraceV1T | undefined,
-  producerRoute: 'jyeoo_fetch' | 'sourcing_web',
+  producerRoute: 'jyeoo_fetch' | 'sourcing_web' | 'quiz_gen',
 ): SupplyTraceV1T | null | undefined {
   if (trace === undefined) return undefined;
   const parsed = SupplyTraceV1.safeParse({ ...trace, producer_route: producerRoute });
@@ -622,6 +622,12 @@ async function runQuizGenRoute(
   run: RouteRunContext,
   deps: ExecuteSupplyPlanDeps,
 ): Promise<RouteExecutionTally> {
+  // Same-demand provenance (YUK-1664 S3): a fallback-dispatched quiz_gen keeps
+  // the demand's supply_trace, exactly like the dispatcher's direct dispatch.
+  // null = revalidation failure after producer_route override — omit the trace
+  // rather than blind-cast (web route throws on the same failure; quiz_gen has
+  // no hard trace requirement).
+  const quizGenTrace = cloneSupplyTraceForRoute(run.supplyTrace, 'quiz_gen');
   const payload: QuizGenDispatchPayload = {
     trigger: 'knowledge',
     ref_id: run.item.knowledgeId,
@@ -632,6 +638,7 @@ async function runQuizGenRoute(
     ...(run.item.objectiveOnly ? { objective_only: true } : {}),
     ...(run.item.kindRequired ? { kind_required: true } : {}),
     ...(run.item.placementClaimId ? { placement_starter_claim_id: run.item.placementClaimId } : {}),
+    ...(quizGenTrace ? { supply_trace: quizGenTrace } : {}),
   };
   // enqueue 与逐 item 完成事件之间的崩溃窗口用 pg-boss 单例键封——同
   // (plan_event_id, demand_id) 重投不重复入队。scanner/手动（planEventId null）
@@ -802,20 +809,26 @@ export async function executeSupplyPlan(
       if (route === 'sourcing_web') {
         // A demand still in flight (acquiring/submitting/verifying) keeps owning
         // the item — its reconciliation continues asynchronously. Only a demand
-        // that ended BLOCKED in this run falls back: the failed source is the
-        // demand's unfinished work, so the remaining route plan is claimed for
-        // this run and walked next (YUK-1664 S3). The claim is written through
-        // the demand lock BEFORE any send, so a retried delivery cannot
-        // double-dispatch paid generation; routes tried are never re-acquired.
-        // Placement demands never fall back — their claim delivery owns retries.
+        // that ended BLOCKED in this run falls back, through the SAME shared
+        // fallback dispatcher the async drivers use: one supply_execute job for
+        // the demand's pending nextRoute under a per-(demand,route) singletonKey
+        // (YUK-1664 S3). The executor never dispatches the next route inline —
+        // the fallback job owns it. Placement demands never fall back.
         if (tally.status !== 'skipped' || run.item.placementClaimId || !run.webDemandId) break;
-        const claim = await claimWebSupplyRouteFallback(
-          run.db,
-          run.webDemandId,
-          item.routePreference.slice(routeIndex + 1),
-        );
-        if (!claim.claimed) break;
-        continue;
+        const fallback = await dispatchWebSupplyRouteFallback(run.db, run.webDemandId);
+        result.routes.push({
+          route: fallback.route ?? 'route_fallback',
+          status: fallback.dispatched ? 'dispatched' : 'skipped',
+          acquired: 0,
+          committed: 0,
+          opportunistic: 0,
+          rejections: {},
+          errors: 0,
+          ...(fallback.dispatched ? {} : { skipped: 'route_fallback_unavailable' }),
+          ...(fallback.jobId ? { job_id: fallback.jobId } : {}),
+        });
+        if (fallback.dispatched) dispatchedItems += 1;
+        break;
       }
       if (tally.status === 'dispatched') {
         dispatchedItems += 1;

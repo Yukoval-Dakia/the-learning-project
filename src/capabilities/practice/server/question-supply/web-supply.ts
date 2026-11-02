@@ -105,17 +105,18 @@ const State = z.object({
   // YUK-1664 S3 — route fallback bookkeeping. The demand's full route plan is
   // persisted so a blocked source falls back to the next route inside the SAME
   // demand instead of waiting out the scan fingerprint cooldown. routesTried
-  // (seeded 'sourcing_web') is the durable claim: each route is claimed before it
-  // is dispatched, so a retried delivery can never double-dispatch paid work.
+  // (seeded 'sourcing_web') records only routes whose send was confirmed; a
+  // claimed-but-unsent route stays pending (nextRoute set, fallbackJobId null)
+  // and is retriable under the same per-(demand,route) singletonKey.
   // Defaults keep pre-YUK-1664 payloads parsing; an empty routePlan simply reads
   // as exhausted, matching the old terminal-blocked behavior.
   routePlan: z.array(z.string()).default([]),
   routesTried: z.array(z.string()).default([]),
-  /** Head of the untried route plan while blocked; null once claimed or exhausted. */
+  /** The pending fallback route while blocked; null once dispatched or exhausted. */
   nextRoute: z.string().nullable().default(null),
-  /** Why no further route can be claimed: 'route_plan_exhausted' | 'route_plan_claimed'. */
+  /** Why no fallback is possible: 'route_plan_exhausted' | 'policy_blocked'. */
   routeExhausted: z.string().nullable().default(null),
-  /** pg-boss job id of the dispatched fallback supply_execute (best-effort record). */
+  /** pg-boss job id of the dispatched fallback supply_execute (set after the send). */
   fallbackJobId: z.string().nullable().default(null),
   serving: z.array(Binding),
   observations: z.array(
@@ -179,12 +180,33 @@ async function latestRequired(db: Db, demandId: string) {
 
 // ── Route fallback (YUK-1664 S3) ─────────────────────────────────────────────
 // A failed source is the supply agent's unfinished work inside the SAME demand:
-// when a demand lands on 'blocked', the next untried route of its persisted
-// route plan may be claimed and dispatched once. 'sourcing_web' is always tried
-// (this demand exists because it ran); routes are claimed in plan order, each
-// at most once, so route changes are bounded by the plan length and no loop is
-// possible. Placement demands never fall back — their claim delivery owns
-// retries and its 3 deliveries are transport only.
+// when a demand lands on 'blocked' for a source/acquisition failure, the next
+// executable untried route of its persisted plan may be dispatched once — the
+// SAME dispatch function from the in-run executor and the async drivers.
+// 'sourcing_web' is always tried (this demand exists because it ran); route
+// changes are bounded by the plan length and no loop is possible. Placement
+// demands never fall back — their claim delivery owns retries and its 3
+// deliveries are transport only.
+
+/** Reasons that are source/acquisition failures — the only blocked reasons the
+ * supply agent may route around. Policy/identity refusals (budget, deadline,
+ * placement authority, reused request id, anything else) stay terminal. */
+const FALLBACKABLE_BLOCK_REASONS: ReadonlySet<string> = new Set([
+  'candidate_not_servable',
+  'acquisition_outcome_unknown',
+  'producer_identity_missing',
+  'text_evidence_unavailable',
+  // WebFetchFailureClass — the fetch phase's failure vocabulary.
+  'anchor_not_found',
+  'web_search_unavailable',
+  'llm',
+  'parse',
+  'kind_gate',
+  'knowledge_unresolvable',
+]);
+
+/** Routes the executor can actually dispatch ('sourcing_web' is always tried). */
+const EXECUTABLE_FALLBACK_ROUTES: ReadonlySet<string> = new Set(['jyeoo_fetch', 'quiz_gen']);
 
 /** Routes of the persisted plan not yet tried for this demand (deduped, in order). */
 function remainingRoutePlan(state: WebSupplyState): string[] {
@@ -200,44 +222,20 @@ function remainingRoutePlan(state: WebSupplyState): string[] {
 }
 
 /**
- * Routing fields merged into every transition that lands on 'blocked': record
- * the next route the supply agent may still claim, or 'route_plan_exhausted'
- * when the plan is used up.
+ * Routing fields merged into every transition that lands on 'blocked': the next
+ * executable untried route the supply agent may dispatch once, or
+ * 'route_plan_exhausted' when none remains. A non-source-failure reason records
+ * 'policy_blocked' — those demands stay terminal, never paid again.
  */
-function blockedRouting(state: WebSupplyState) {
-  const remaining = remainingRoutePlan(state);
+function blockedRouting(state: WebSupplyState, reason: string | null) {
+  if (reason === null || !FALLBACKABLE_BLOCK_REASONS.has(reason)) {
+    return { nextRoute: null, routeExhausted: 'policy_blocked' };
+  }
+  const next = remainingRoutePlan(state).find((route) => EXECUTABLE_FALLBACK_ROUTES.has(route));
   return {
-    nextRoute: remaining[0] ?? null,
-    routeExhausted: remaining.length === 0 ? 'route_plan_exhausted' : null,
+    nextRoute: next ?? null,
+    routeExhausted: next === undefined ? 'route_plan_exhausted' : null,
   };
-}
-
-/**
- * Durably claim routes for this demand BEFORE the dispatching side effect. The
- * claim is written through the same demand lock + sequence CAS as every state
- * advance, so exactly one driver (in-run executor or an async observer) can own
- * the fallback: any non-'sourcing_web' route already in routesTried means the
- * fallback sequence was claimed and no further dispatch may start — that is the
- * one-in-flight-route-per-demand rule. Returns the freshly claimed routes.
- */
-export async function claimWebSupplyRouteFallback(
-  db: Db,
-  demandId: string,
-  routes: readonly string[],
-): Promise<{ claimed: boolean; routes: string[] }> {
-  const state = await latestRequired(db, demandId);
-  if (state.phase !== 'blocked' || placementClaimOf(state)) return { claimed: false, routes: [] };
-  if (state.routesTried.some((route) => route !== 'sourcing_web'))
-    return { claimed: false, routes: [] };
-  const tried = new Set(['sourcing_web', ...state.routesTried]);
-  const fresh = [...new Set(routes)].filter((route) => !tried.has(route));
-  if (fresh.length === 0) return { claimed: false, routes: [] };
-  await advance(db, state, {
-    routesTried: [...state.routesTried, ...fresh],
-    nextRoute: null,
-    routeExhausted: 'route_plan_claimed',
-  });
-  return { claimed: true, routes: fresh };
 }
 
 export interface WebSupplyFallbackDeps {
@@ -246,36 +244,37 @@ export interface WebSupplyFallbackDeps {
 }
 
 /**
- * Async route fallback: a web demand that became blocked outside its executor
- * run (publication observation, recovery sweep, a scan's resume) dispatches the
- * demand's remaining route plan once, through the ordinary supply_execute path
- * carrying the same demand id. Idempotent under redelivery:
- *   - the pg-boss singletonKey dedupes sends while a fallback job is in flight;
- *   - plan_event_id 'web_supply_fallback_<demandId>' gives the executor run
- *     durable once-semantics — a send that slipped past the singleton window
- *     completes as already_executed without paid work;
- *   - routesTried is then marked so later deliveries skip the dispatch entirely.
- * The send happens before the mark so a transient enqueue failure simply leaves
- * the routes unclaimed for the next delivery instead of stranding the demand.
+ * THE supply route fallback dispatch — the single path both the in-run executor
+ * and the async drivers (publication observe, recovery sweep) use to continue a
+ * blocked demand. It sends ONE supply_execute job for the demand's pending
+ * `nextRoute` under the deterministic singletonKey
+ * `web_supply_fallback_<demandId>_<route>`, which is also the job's
+ * plan_event_id (executor once-semantics durable past the singleton window).
+ * nextRoute + fallbackJobId=null is the pending claim: a claimed-but-unsent
+ * fallback (enqueue throw, or a crash between send and mark) stays retriable —
+ * every later delivery re-sends the same key and then records the job id.
+ * A route enters routesTried only after a confirmed send, so a retried delivery
+ * can never double-dispatch paid generation.
  */
 export async function dispatchWebSupplyRouteFallback(
   db: Db,
   demandId: string,
   deps: WebSupplyFallbackDeps = {},
-): Promise<{ dispatched: boolean; jobId: string | null }> {
+): Promise<{ dispatched: boolean; jobId: string | null; route: string | null }> {
   const state = await latestRequired(db, demandId);
+  const route = state.nextRoute;
   if (
     state.phase !== 'blocked' ||
+    route === null ||
     placementClaimOf(state) ||
-    state.routesTried.some((route) => route !== 'sourcing_web')
+    state.fallbackJobId !== null ||
+    state.routesTried.includes(route)
   )
-    return { dispatched: false, jobId: null };
-  const remaining = remainingRoutePlan(state);
-  if (remaining.length === 0) return { dispatched: false, jobId: null };
-  const singletonKey = `web_supply_fallback_${demandId}`;
+    return { dispatched: false, jobId: null, route };
+  const singletonKey = `web_supply_fallback_${demandId}_${route}`;
   const data: Record<string, unknown> = {
-    // Reusing the planner's idempotency slot with a deterministic per-demand key:
-    // the fallback executor run can only ever execute once per demand.
+    // The planner's idempotency slot carries the same deterministic key as the
+    // pg-boss singleton: the fallback executor run for this route happens once.
     plan_event_id: singletonKey,
     items: [
       {
@@ -284,41 +283,43 @@ export async function dispatchWebSupplyRouteFallback(
         kind: state.item.kind,
         difficulty_band: state.item.difficultyBand,
         count: state.item.count,
-        route_preference: remaining,
+        route_preference: [route],
         ...(state.item.objectiveOnly ? { objective_only: true } : {}),
         ...(state.item.kindRequired ? { kind_required: true } : {}),
       },
     ],
+    // Same-demand provenance, exactly like the dispatcher's direct dispatch:
+    // the quiz_gen the fallback reaches keeps the demand's supply_trace.
     ...(state.trace ? { supply_trace: state.trace } : {}),
   };
   const enqueue =
     deps.enqueueSupplyExecute ??
     ((payload: Record<string, unknown>) => enqueueSupplyExecuteJob(payload, singletonKey));
   const jobId = await enqueue(data);
-  // Mark the dispatch AFTER the send. A lost CAS here is harmless: the next
-  // delivery re-sends under the same singletonKey / plan_event_id and is fenced.
   try {
     const fresh = await latestRequired(db, demandId);
-    if (!fresh.routesTried.some((route) => route !== 'sourcing_web')) {
+    if (fresh.fallbackJobId === null && !fresh.routesTried.includes(route)) {
       await advance(db, fresh, {
-        routesTried: [...fresh.routesTried, ...remaining],
-        nextRoute: null,
-        routeExhausted: 'route_plan_claimed',
+        routesTried: [...fresh.routesTried, route],
         fallbackJobId: jobId,
       });
     }
   } catch (err) {
-    console.error(
-      `[web_supply] fallback dispatch mark failed for ${demandId}; the job is still fenced by singletonKey + plan_event_id:`,
-      err,
-    );
+    // The send already went out. If a concurrent driver marked this same
+    // dispatch (same singletonKey → same job), the outcome stands; otherwise
+    // surface the mark failure instead of hiding a possibly lost fallback —
+    // the unmarked route is re-sent under the same key by the next delivery.
+    const latest2 = await latest(db, demandId);
+    if (latest2 !== null && (latest2.fallbackJobId !== null || latest2.routesTried.includes(route)))
+      return { dispatched: true, jobId, route };
+    throw err;
   }
   // Observability: a demand-identified dispatch event. It keeps the scan
   // fingerprint suppressed while the demand's fallback works the gap.
   if (state.trace?.target_fingerprint) {
     try {
       await writeEvent(db, {
-        id: `${key(demandId)}_fallback_${jobId ?? 'nojob'}`,
+        id: `${key(demandId)}_fallback_${route}_${jobId ?? 'nojob'}`,
         action: 'experimental:question_supply',
         subject_kind: 'query',
         subject_id: state.trace.target_id,
@@ -340,11 +341,10 @@ export async function dispatchWebSupplyRouteFallback(
           difficulty_band: state.item.difficultyBand,
           desired_count: state.item.count,
           route_plan: state.routePlan,
-          chosen_route: remaining[0] ?? null,
-          remaining_routes: remaining,
+          chosen_route: route,
           status: 'dispatched',
           job_id: jobId,
-          stop_condition: `demand route fallback: remaining plan ${remaining.join(' -> ')} claimed for demand ${demandId}`,
+          stop_condition: `demand route fallback: next route '${route}' dispatched once for demand ${demandId}`,
           reason: 'web_supply_route_fallback',
           supply_trace: state.trace,
         },
@@ -353,7 +353,7 @@ export async function dispatchWebSupplyRouteFallback(
       console.error(`[web_supply] fallback dispatch event write failed for ${demandId}:`, err);
     }
   }
-  return { dispatched: true, jobId };
+  return { dispatched: true, jobId, route };
 }
 
 async function submissionBinding(db: Db, submission: z.infer<typeof Submission>) {
@@ -596,7 +596,7 @@ export async function resumeWebSupply(
         return advance(db, state, {
           phase: 'blocked',
           reason: 'request_id_reused',
-          ...blockedRouting(state),
+          ...blockedRouting(state, 'request_id_reused'),
         });
       if (prior.status === 'replay') submission = { ...submission, receipt: prior.receipt };
       else if (state.activeRequestId === submission.requestId) {
@@ -608,7 +608,7 @@ export async function resumeWebSupply(
           return advance(db, state, {
             phase: 'blocked',
             reason: 'deadline_exhausted',
-            ...blockedRouting(state),
+            ...blockedRouting(state, 'deadline_exhausted'),
           });
         const claimed = await advance(db, state, {
           phase: 'submitting',
@@ -668,7 +668,7 @@ export async function resumeWebSupply(
     phase,
     reason,
     ...observed,
-    ...(phase === 'blocked' ? blockedRouting(state) : {}),
+    ...(phase === 'blocked' ? blockedRouting(state, reason) : {}),
   });
 }
 
@@ -745,7 +745,7 @@ export async function runWebSupply(params: {
     observations: [],
   });
   if (state.phase === 'blocked') {
-    state = State.parse({ ...state, ...blockedRouting(state) });
+    state = State.parse({ ...state, ...blockedRouting(state, state.reason) });
   }
   // Fence BEFORE the acquisition fence is written: a stale delivery must neither spend nor
   // leave an 'acquiring' state that would read as an unknown paid outcome.
@@ -795,7 +795,7 @@ export async function runWebSupply(params: {
     return advance(db, state, {
       phase: 'blocked',
       reason: 'acquisition_outcome_unknown',
-      ...blockedRouting(state),
+      ...blockedRouting(state, 'acquisition_outcome_unknown'),
     });
   }
   if (fetched.status === 'failed') {
@@ -805,7 +805,7 @@ export async function runWebSupply(params: {
     return advance(db, state, {
       phase: 'blocked',
       reason: fetched.failureClass,
-      ...blockedRouting(state),
+      ...blockedRouting(state, fetched.failureClass),
     });
   }
   await recordAcquisition(fetched.taskRunId, fetched.costUsd);
@@ -813,13 +813,14 @@ export async function runWebSupply(params: {
   // produce a traceable supply commit; preserve its result and stop honestly.
   const candidates = fetched.candidates.slice(0, item.count);
   const nextPhase = fetched.taskRunId && candidates.length ? 'verifying' : 'blocked';
+  const nextReason = !fetched.taskRunId
+    ? 'producer_identity_missing'
+    : !candidates.length
+      ? 'text_evidence_unavailable'
+      : null;
   state = await advance(db, state, {
     phase: nextPhase,
-    reason: !fetched.taskRunId
-      ? 'producer_identity_missing'
-      : !candidates.length
-        ? 'text_evidence_unavailable'
-        : null,
+    reason: nextReason,
     producerTaskRunId: fetched.taskRunId ?? state.producerTaskRunId,
     submissions: candidates.map((c, index) => {
       const requestId = `${key(item.demandId)}_candidate_${index}_${c.extractionHash.slice(7, 23)}`;
@@ -858,7 +859,7 @@ export async function runWebSupply(params: {
     queryPlan: fetched.queryPlan,
     fetchedAt: fetched.fetchedAt,
     costUsd: fetched.costUsd,
-    ...(nextPhase === 'blocked' ? blockedRouting(state) : {}),
+    ...(nextPhase === 'blocked' ? blockedRouting(state, nextReason) : {}),
   });
   return resumeWebSupply(db, item.demandId, placementClaimId ? placement : undefined);
 }
