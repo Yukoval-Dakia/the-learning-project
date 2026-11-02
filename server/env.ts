@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { getServerEnv, requireApiInternalToken } from '@/server/env';
+import { getServerEnv, requireApiInternalToken } from '@/server/config/env';
 
 function parseLine(line: string): [string, string] | null {
   const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);

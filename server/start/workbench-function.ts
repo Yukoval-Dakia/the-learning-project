@@ -35,7 +35,7 @@ export const getStartAutoApplied = createServerFn({ method: 'GET' }).handler(({ 
   runAuthenticatedStartWorkbench(context, getRequest(), readStartAutoApplied),
 );
 export const getStartKnowledgeTree = createServerFn({ method: 'GET' })
-  .inputValidator((input: { subject?: string } | undefined) => input)
+  .validator((input: { subject?: string } | undefined) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), () => readStartKnowledgeTree(data)),
   );
@@ -55,7 +55,7 @@ export const getStartTeachingBrief = createServerFn({ method: 'GET' }).handler((
   runAuthenticatedStartWorkbench(context, getRequest(), readStartTeachingBrief),
 );
 export const acknowledgeStartTeachingBriefOutcome = createServerFn({ method: 'POST' })
-  .inputValidator((body: string) => body)
+  .validator((body: string) => body)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), () =>
       acknowledgeStartTeachingBrief(data),
@@ -65,21 +65,21 @@ export const getStartRecentAiChanges = createServerFn({ method: 'GET' }).handler
   runAuthenticatedStartWorkbench(context, getRequest(), readStartRecentAiChanges),
 );
 export const getStartProposalInbox = createServerFn({ method: 'GET' })
-  .inputValidator((input: ProposalInboxQuery) => input)
+  .validator((input: ProposalInboxQuery) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () =>
       JSON.stringify(await readStartProposalInbox(data)),
     ),
   );
 export const decideStartProposal = createServerFn({ method: 'POST' })
-  .inputValidator((input: StartProposalDecisionRequest) => input)
+  .validator((input: StartProposalDecisionRequest) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () =>
       JSON.stringify(await createStartProposalDecision(data)),
     ),
   );
 export const undoStartArtifactAiChange = createServerFn({ method: 'POST' })
-  .inputValidator((input: StartAiChangeUndoRequest) => input)
+  .validator((input: StartAiChangeUndoRequest) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), () => undoStartAiChange(data)),
   );

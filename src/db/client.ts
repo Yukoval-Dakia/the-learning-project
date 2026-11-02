@@ -1,6 +1,6 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { getServerEnv } from '@/server/env';
+import { getServerEnv } from '@/server/config/env';
 import { DB_POOL_MAX } from './pool';
 import * as schema from './schema';
 

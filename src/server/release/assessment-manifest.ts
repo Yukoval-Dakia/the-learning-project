@@ -16,13 +16,14 @@ import { sql } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';
 import {
+  type OutstandingJobDisposition,
+  reportOutstandingBossJobs,
+} from '@/server/migration/contract-epoch/boss-fence';
+import { isUndefinedTable, readContractEpoch } from '@/server/migration/contract-epoch/epoch';
+import {
   ASSESSMENT_CONTRACT_EPOCH,
   CODE_CONTRACT_EPOCH,
-  type OutstandingJobDisposition,
-  isUndefinedTable,
-  readContractEpoch,
-  reportOutstandingBossJobs,
-} from '@/server/contract-epoch';
+} from '@/server/migration/contract-epoch/rules';
 
 // ── lanes ────────────────────────────────────────────────────────────────────
 

@@ -3,7 +3,7 @@ import { getRequest, setResponseHeader } from '@tanstack/react-start/server';
 import { runAuthenticatedStartWorkbench } from './workbench-read';
 
 export const createStartIngestionSessionFunction = createServerFn({ method: 'POST' })
-  .inputValidator((body: string) => body)
+  .validator((body: string) => body)
   .handler(({ context, data }) => {
     const request = getRequest();
     return runAuthenticatedStartWorkbench(context, request, async () => {

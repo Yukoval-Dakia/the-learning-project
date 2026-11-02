@@ -4,6 +4,7 @@
 import type { PgBoss } from 'pg-boss';
 import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
+import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
 import { recoverToolOperationsOnBoot } from '@/kernel/tools/tool-operations';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
 import {
@@ -24,10 +25,10 @@ import {
   startCustomProvidersWatch,
 } from '@/server/config/custom-providers-hydrate';
 import { hydrateConfigFromDb, startConfigRefresh } from '@/server/config/hydrate';
-import { waitForRunnableEpoch } from '@/server/contract-epoch';
-import { mountSubscriptionDispatch } from '@/server/event-subscriptions/dispatch-mount';
+import { startSubjectRefresh } from '@/server/config/subject-refresh';
+import { mountSubscriptionDispatch } from '@/server/events/subscriptions/dispatch-mount';
+import { waitForRunnableEpoch } from '@/server/migration/contract-epoch/epoch';
 import { registerOrchestrator } from '@/server/orchestration/register';
-import { hydrateSubjectRegistryFromDb, startSubjectRefresh } from '@/server/subjects/hydrate';
 
 export type StartBossWorkerOptions = {
   /** Epoch-gate poll interval. Tests pass a short value. */

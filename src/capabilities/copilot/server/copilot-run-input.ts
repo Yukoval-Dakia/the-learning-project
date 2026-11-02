@@ -6,9 +6,9 @@
 import { type DerivationPolicyT, allowsDerivation } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
+import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 import type { DomainToolSurface } from '@/kernel/tools/allowlists';
 import { COPILOT_HISTORY_BUDGET, type CopilotHistoryBudget } from '@/kernel/tools/budgets';
-
 import type { CopilotCorrectionContract } from './correction-contract';
 import {
   type LearnerStateHeader,
@@ -155,11 +155,13 @@ export async function assembleCopilotRunInput(
 
   // Resolve the session-anchored header first (assembled once per validity window;
   // cached bytes when fresh). It carries both the pinned header and the scoped
-  // proposal_feedback digest. Any failure degrades to empty header + [] digest.
+  // proposal_feedback digest. Read failures degrade to empty header + [] digest; a
+  // port that was never installed is a host wiring defect and propagates.
   let learnerState: LearnerStateHeader = { header_md: '', proposal_feedback: [] };
   try {
     learnerState = await resolveLearnerState(db, sessionId, { now: () => now });
   } catch (err) {
+    if (err instanceof HostOperationNotInstalledError) throw err;
     learnerState = { header_md: '', proposal_feedback: [] };
     console.error('[assembleCopilotRunInput] resolveLearnerState failed; degrading to empty', {
       session_id: sessionId,

@@ -3,7 +3,7 @@ import { getRequest } from '@tanstack/react-start/server';
 import { runAuthenticatedStartWorkbench } from './workbench-read';
 
 export const getStartRecordSessionsFunction = createServerFn({ method: 'GET' })
-  .inputValidator((query: string) => query)
+  .validator((query: string) => query)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () =>
       JSON.stringify(await context.readRecordSessions(data)),

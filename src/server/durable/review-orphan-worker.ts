@@ -4,7 +4,7 @@ import type { PgBoss } from 'pg-boss';
 import type { Db } from '@/db/client';
 import type { JobDecl } from '@/kernel/manifest';
 import { buildPruneOrphanReviewSessionsHandler } from '@/server/boss/handlers/prune_orphan_review_sessions';
-import { fenceAwareJobHandler } from '@/server/contract-epoch';
+import { fenceAwareJobHandler } from '@/server/migration/contract-epoch/boss-fence';
 import {
   REVIEW_ORPHAN_FAMILY,
   type ReviewOrphanBoundaryHook,

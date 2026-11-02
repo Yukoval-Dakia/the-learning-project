@@ -152,16 +152,13 @@ interface SolveHintAttempt extends PlanSolveHintResult {
   cost_basis?: 'reported' | 'estimated' | 'unknown';
 }
 
-// AF S4 / U6 (OQ6, Cross-统合) — the pure, session-FREE seed body
-// extracted from planSolveHint (was solve.ts:189-206) so the Copilot solve-skill
-// reuses the SAME TeachingTurnTask input rather than the tutor-session-bound
-// entry. It takes a question face + reference + hintIndex — NOT a sessionId.
+// Session-free seed: a question face + reference + hintIndex, not a sessionId.
 // Seeds the worked solution as material + a synthetic message asking for ONLY the
 // next step (escalating with hintIndex). The TeachingTurnTask prompt forbids
 // dumping the full solution + caps ≤300 字/轮, so the returned text_md is a
 // minimal hint, not the answer. NO prior-attempt summary, NO memory content
 // (R4/R6: the hint turn is not memory-bearing).
-export function buildSolveHintInput(
+function buildSolveHintInput(
   q: { prompt_md: string; reference_md: string | null; practice_dto?: PracticeIssuanceDtoT },
   hintIndex: number,
 ) {
@@ -186,9 +183,7 @@ export function buildSolveHintInput(
   };
 }
 
-// AF S4 / U6 — exported (was private) so the Copilot solve-skill parses
-// the TeachingTurnTask hint output with the SAME defensive parser (single contract).
-export function parseHintTurn(text: string): PlanSolveHintResult {
+function parseHintTurn(text: string): PlanSolveHintResult {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) {

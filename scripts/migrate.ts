@@ -13,8 +13,8 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { seedKnowledge } from '@/capabilities/knowledge/public';
+import { reconcileBuiltinTraits } from '@/capabilities/observability/public';
 import * as schema from '@/db/schema';
-import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
 
 const url = process.env.DATABASE_URL;
 if (!url) {
@@ -73,7 +73,10 @@ async function main(): Promise<void> {
     // 读不出 = 未迁移到位 → fatal（init container 红）。注意 seed 行名与本代码
     // epoch 无关：fresh install 若需与 CODE_CONTRACT_EPOCH 对齐由运维 activate
     // 完成（scripts/contract-epoch.ts）。
-    const { readContractEpoch, CODE_CONTRACT_EPOCH } = await import('@/server/contract-epoch');
+    const [{ readContractEpoch }, { CODE_CONTRACT_EPOCH }] = await Promise.all([
+      import('@/server/migration/contract-epoch/epoch'),
+      import('@/server/migration/contract-epoch/rules'),
+    ]);
     const epochMarker = await readContractEpoch(db);
     if (!epochMarker) {
       throw new Error(

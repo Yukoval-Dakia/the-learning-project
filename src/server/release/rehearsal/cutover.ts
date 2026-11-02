@@ -7,8 +7,9 @@ import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import postgres from 'postgres';
 import type { Db } from '@/db/client';
-import { ContractEpochFenceError, assertContractEpochRunnable } from '@/server/contract-epoch';
-import { fenceAwareJobHandler } from '@/server/contract-epoch/boss-fence';
+import { fenceAwareJobHandler } from '@/server/migration/contract-epoch/boss-fence';
+import { assertContractEpochRunnable } from '@/server/migration/contract-epoch/epoch';
+import { ContractEpochFenceError } from '@/server/migration/contract-epoch/rules';
 
 export interface CutoverStep {
   name: string;
