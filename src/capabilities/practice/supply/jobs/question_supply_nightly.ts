@@ -31,20 +31,20 @@ import {
 import {
   buildCoverageEvidenceDemand,
   evidenceDemandToTargetContext,
-} from '@/capabilities/practice/server/question-supply/evidence-demand';
-import { runInventoryShadowDualRead } from '@/capabilities/practice/server/question-supply/inventory-projection';
+} from '@/kernel/supply-contracts';
+import { runInventoryShadowDualRead } from '@/capabilities/practice/supply/server/inventory-projection';
 import {
   type QuestionSupplyTarget,
   computePriority,
   discoverSupplyTargets,
   targetFingerprint,
-} from '@/capabilities/practice/server/question-supply/target-discovery';
+} from '@/capabilities/practice/supply/server/target-discovery';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { loadReturnStockGaps } from '@/kernel/read-models/return-stock';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { loadActivityTier } from '../server/activity-tier';
+import { loadActivityTier } from '../../server/activity-tier';
 
 type DispatchDeps = Parameters<typeof dispatchSupplyTargets>[2];
 

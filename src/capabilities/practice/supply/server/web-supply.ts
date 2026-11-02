@@ -34,9 +34,9 @@ import {
   submitPlacementSupplyCandidate,
   submitQuestionTool,
 } from '../tools/submit-question';
-import { type EnqueueVerifyFn, dispatchPendingVerifyIntents } from '../verify-dispatch-outbox';
+import { type EnqueueVerifyFn, dispatchPendingVerifyIntents } from '../../server/verify-dispatch-outbox';
 import { enqueueSupplyExecuteJob } from './dispatcher';
-import { SupplyTraceV1, type SupplyTraceV1T } from './evidence-demand';
+import { SupplyTraceV1, type SupplyTraceV1T } from '@/kernel/supply-contracts';
 import {
   PlacementStarterAdmissionError,
   assertPlacementAttemptFence,

@@ -171,6 +171,13 @@ export const advisoryLockRegistry = {
     salt: 0,
     key: 'conjecture:reconcile:all',
   },
+  placementSupplyScope: {
+    family: 'placement-supply-scope',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'placement-supply:v1:',
+    suffixFields: ['knowledgeId'],
+  },
 } as const satisfies Record<string, AdvisoryLockNamespace>;
 
 export function deriveHashtextLockKey<T extends string>(namespace: {

@@ -12,6 +12,7 @@ import {
 } from '@/db/schema';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
+import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import { placementStarterAttemptId } from './placement-starter-identity';
 import {
   type PlacementStarterFailure,
@@ -36,14 +37,6 @@ export type PlacementCostComponentKind =
   | 'web_acquisition'
   | 'source_grounding'
   | 'question_admission';
-
-export interface PlacementVerificationAuthority {
-  claim_id: string;
-  attempt_id: string;
-  question_id: string;
-  verification_authority_epoch: string;
-  fencing_token: string;
-}
 
 export class PlacementStarterAdmissionError extends Error {}
 // Budget exhaustion is a TERMINAL admission failure: no redelivery can make progress (known_cost

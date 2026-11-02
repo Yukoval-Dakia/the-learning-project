@@ -37,7 +37,7 @@ import {
   type StoreSourcedQuestionDeps,
   executeStoreSourcedQuestion,
 } from '../tools/store-sourced-question';
-import { SupplyTraceV1, type SupplyTraceV1T } from './evidence-demand';
+import { SupplyTraceV1, type SupplyTraceV1T } from '@/kernel/supply-contracts';
 import { jyeooBudgetRemaining } from './jyeoo-budget';
 import {
   type JyeooCandidate,

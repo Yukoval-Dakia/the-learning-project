@@ -13,8 +13,8 @@ import {
   placement_starter_cost_component,
 } from '@/db/schema';
 import { costUsdToMicroUsd } from '@/kernel/cost';
-import { writeVerifyDispatchIntent } from '../verify-dispatch-outbox';
-import type { SupplyTraceV1T } from './evidence-demand';
+import { writeVerifyDispatchIntent } from '../../server/verify-dispatch-outbox';
+import type { SupplyTraceV1T } from '@/kernel/supply-contracts';
 import {
   type PlacementAttemptAuthority,
   type PlacementCostComponentKind,

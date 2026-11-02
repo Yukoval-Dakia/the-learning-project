@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { event, knowledge, placement_starter_claim } from '@/db/schema';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { insertLegacyGoal as insertGoal } from '../../../../../tests/helpers/legacy-goal';
-import { SupplyTraceV1 } from './evidence-demand';
+import { SupplyTraceV1 } from '@/kernel/supply-contracts';
 import { dispatchPlacementStarterClaimTx } from './placement-starter';
 import { materializePlacementStartersForGoal } from './placement-starter-store';
 

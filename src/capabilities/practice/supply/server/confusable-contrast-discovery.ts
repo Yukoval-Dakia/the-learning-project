@@ -17,7 +17,7 @@ import type { Db } from '@/db/client';
 import { loadConfusablePairs } from '@/kernel/read-models/confusables';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { buildCoverageEvidenceDemand, evidenceDemandToTargetContext } from './evidence-demand';
+import { buildCoverageEvidenceDemand, evidenceDemandToTargetContext } from '@/kernel/supply-contracts';
 import {
   type DifficultyBand,
   type QuestionSupplyTarget,

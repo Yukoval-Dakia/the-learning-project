@@ -14,8 +14,8 @@ import { writeEvent } from '@/kernel/events';
 import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import { supplyDispatchWebSearchAvailable } from '@/kernel/supply-dispatch-web-search';
-import { getPracticeBoss } from '../queue-runtime';
-import { SupplyTraceV1, type SupplyTraceV1T, buildSupplyTrace } from './evidence-demand';
+import { getPracticeBoss } from '../../server/queue-runtime';
+import { SupplyTraceV1, type SupplyTraceV1T, buildSupplyTrace } from '@/kernel/supply-contracts';
 import { planSupplyRoutes } from './route-planner';
 import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
 

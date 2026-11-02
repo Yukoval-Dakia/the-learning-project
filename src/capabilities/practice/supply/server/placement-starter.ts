@@ -13,7 +13,7 @@ import {
 } from '@/kernel/placement-jobs';
 import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { dispatchSupplyTarget } from './dispatcher';
-import { EvidenceDemandV1, evidenceDemandToTargetContext } from './evidence-demand';
+import { EvidenceDemandV1, evidenceDemandToTargetContext } from '@/kernel/supply-contracts';
 import { PLACEMENT_QUEUE_EXPIRY_MS } from './placement-starter-attempts';
 import type { QuestionSupplyTarget } from './target-discovery';
 

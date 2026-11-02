@@ -53,7 +53,7 @@ import {
   type SupplyTargetContextV1T,
   buildCoverageEvidenceDemand,
   evidenceDemandToTargetContext,
-} from './evidence-demand';
+} from '@/kernel/supply-contracts';
 
 // ── Types（Task 13 Step 1，prompt 字面给定的形状即权威）────────────────────────
 

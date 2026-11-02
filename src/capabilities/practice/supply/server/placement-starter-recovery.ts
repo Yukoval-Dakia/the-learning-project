@@ -29,10 +29,10 @@ import {
   resolvePlacementStarterGoalAuthority,
   terminalizeLostPlacementDelivery,
 } from '@/kernel/placement';
-import { resolveGoalPlacementScope } from './placement-scope';
+import { resolveGoalPlacementScope } from '../../server/placement-scope';
 import { selectNextPlacementItem } from './placement-select';
 import { placementProbeEnabled } from './placement-session-lifecycle';
-import { placementClaimJobQueue } from './question-supply/placement-starter';
+import { placementClaimJobQueue } from './placement-starter';
 
 /**
  * How far forward the sweeper pushes `next_reconcile_at` when it acquires a claim. This is the

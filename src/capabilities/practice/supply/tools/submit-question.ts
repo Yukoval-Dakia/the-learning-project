@@ -59,7 +59,7 @@ import {
   submitDraftQuestion,
   writeSubmitReceiptEvent,
 } from '@/server/questions/submit-question';
-import { dispatchPendingVerifyIntents, writeVerifyDispatchIntent } from '../verify-dispatch-outbox';
+import { dispatchPendingVerifyIntents, writeVerifyDispatchIntent } from '../../server/verify-dispatch-outbox';
 
 export type {
   EditQuestionInputT,
@@ -78,31 +78,31 @@ export {
 } from '@/server/questions/submit-question';
 
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { embedQuestionTextForIngest, questionEmbedStamp } from '../../jobs/embed_backfill';
+import { embedQuestionTextForIngest, questionEmbedStamp } from '../../server/../jobs/embed_backfill';
 import {
   SupplyTraceV1,
   withSupplyTraceDifficultyEvidence,
-} from '../question-supply/evidence-demand';
+} from '@/kernel/supply-contracts';
 import {
   claimHttpSourceDuplicate,
   findVectorNearDuplicate,
   vectorNearHoldMetadata,
   visibleSourceNeighbor,
-} from '../question-supply/ingest-dedup';
-import { cleanupStagedAssets } from '../question-supply/jyeoo-candidates';
-import { JYEOO_SOURCE_HOST } from '../question-supply/jyeoo-supply-config';
+} from '../../server/server/ingest-dedup';
+import { cleanupStagedAssets } from '../../server/server/jyeoo-candidates';
+import { JYEOO_SOURCE_HOST } from '../../server/server/jyeoo-supply-config';
 import {
   type PlacementAttemptAuthority,
   type PlacementVerificationAuthority,
   assertPlacementAttemptFence,
-} from '../question-supply/placement-starter-attempts';
-import { authorizePlacementQuestion } from '../question-supply/placement-starter-paid-authority';
+} from '../../server/server/placement-starter-attempts';
+import { authorizePlacementQuestion } from '../../server/server/placement-starter-paid-authority';
 import {
   DEDUP_OVERLAP_THRESHOLD,
   matchesWhitelist,
   maxNgramOverlap,
-} from '../question-supply/sourced-dedup';
-import { mergeExactQuestionDuplicateKnowledgeIds } from '../quiz/content-fingerprint';
+} from '../../server/server/sourced-dedup';
+import { mergeExactQuestionDuplicateKnowledgeIds } from '../../server/quiz/content-fingerprint';
 
 const SOURCED_CREATED_BY_BY_ROUTE = {
   jyeoo_fetch: AgentRef.parse({ by: 'system', task_kind: 'JyeooFetch' }),

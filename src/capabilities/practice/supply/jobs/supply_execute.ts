@@ -17,19 +17,19 @@ import type { JobWithMetadata } from 'pg-boss';
 import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
-import type { SupplyTraceV1T } from '../server/question-supply/evidence-demand';
+import type { SupplyTraceV1T } from '@/kernel/supply-contracts';
 import {
   type PlacementWebDelivery,
   runPlacementWebDelivery,
-} from '../server/question-supply/placement-starter-web-delivery';
-import type { JyeooFetchConfig } from '../server/question-supply/plan-executor';
+} from '../server/placement-starter-web-delivery';
+import type { JyeooFetchConfig } from '../server/plan-executor';
 import {
   type ExecuteSupplyPlanDeps,
   type SupplyDemandItem,
   executeSupplyPlan,
-} from '../server/question-supply/plan-executor';
-import { runWebFetchCandidates } from '../server/question-supply/web-candidates';
-import { defaultWebSourcingDeps } from '../server/web-sourcing-operation';
+} from '../server/plan-executor';
+import { runWebFetchCandidates } from '../server/web-candidates';
+import { defaultWebSourcingDeps } from '../../server/web-sourcing-operation';
 
 /** scanner / planner 共用的默认 jyeoo 抓取参数（与 scripts/jyeoo-backfill.ts 缺省一致）。 */
 export const SUPPLY_EXECUTE_JYEOO_DEFAULTS: JyeooFetchConfig = {
