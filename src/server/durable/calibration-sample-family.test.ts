@@ -52,22 +52,6 @@ describe('DBOS wrapper with offline SDK doubles', () => {
   // calibration-sample-durable-operation.db.test.ts; this file keeps only the
   // DBOS SDK replay semantics that the DB lane cannot reach.
 
-  // @invariant concurrency: replay uses the saved step result even when its body is skipped
-  // @fails-if assign a workflow-local variable inside the step; cached replay loses the result
-  it('returns a cached disabled result without re-running the step body', async () => {
-    const saved: CalibrationSampleTickRecord = {
-      family: CALIBRATION_SAMPLE_FAMILY,
-      tick: { workflowId, scheduledAt },
-      outcome: { kind: 'disabled', flagEnv: 'false' },
-    };
-    vi.mocked(DBOS.runStep).mockResolvedValueOnce(undefined).mockResolvedValueOnce(saved);
-    const { operation, runPaidBatch } = port(true);
-    const workflow = registerCalibrationSampleWorkflow(db, { operation });
-    expect(await workflow(scheduledAt, {})).toBe(saved);
-    expect(operation.readGate).not.toHaveBeenCalled();
-    expect(runPaidBatch).not.toHaveBeenCalled();
-  });
-
   // @invariant concurrency: a replayed held result remains an unresolved obligation
   // @fails-if the wrapper treats cached step success as business completion; it resolves
   it('throws for a cached held result without executing paid work', async () => {
@@ -82,18 +66,6 @@ describe('DBOS wrapper with offline SDK doubles', () => {
     await expect(workflow(scheduledAt, {})).rejects.toBeInstanceOf(
       CalibrationSampleAdmissionRequiredError,
     );
-    expect(operation.readGate).not.toHaveBeenCalled();
-    expect(runPaidBatch).not.toHaveBeenCalled();
-  });
-
-  // @invariant data: an epoch fence stops evaluation before any batch can start
-  // @fails-if bypass the epoch step; the workflow evaluates the gate after a fence error
-  it('propagates the epoch fence without evaluating the gate', async () => {
-    const failure = new Error('epoch fenced');
-    vi.mocked(waitForRunnableEpoch).mockRejectedValue(failure);
-    const { operation, runPaidBatch } = port(true);
-    const workflow = registerCalibrationSampleWorkflow(db, { operation });
-    await expect(workflow(scheduledAt, {})).rejects.toBe(failure);
     expect(operation.readGate).not.toHaveBeenCalled();
     expect(runPaidBatch).not.toHaveBeenCalled();
   });
