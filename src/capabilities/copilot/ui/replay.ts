@@ -1,5 +1,6 @@
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { CopilotPrimaryView } from '../primary-view-contract';
+import type { ConfirmationProjection } from './confirmation';
 import { projectReplayMessage } from './message-projection';
 import type { PublicProse } from './public-prose';
 
@@ -39,6 +40,7 @@ export interface ReplaySkillContext {
 export type ReplayPrimaryView = CopilotPrimaryView;
 
 export interface ReplayTurn {
+  confirmation?: unknown;
   public_prose?: PublicProse;
   role: ReplayTurnRole;
   derivation_policy?: DerivationPolicyT;
@@ -63,6 +65,8 @@ export interface ReplayTurn {
 }
 
 export interface ReplayChatMessage {
+  confirmation?: ConfirmationProjection;
+  confirmationIncompatible?: boolean;
   public_prose?: PublicProse;
   id: string;
   derivation_policy?: DerivationPolicyT;

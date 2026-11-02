@@ -26,6 +26,10 @@ import {
   question_group_lifecycle,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import {
+  normalizeQuestionGroupToContract,
+  normalizeQuestionRowToContract,
+} from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
   CandidateReplayInputSchema,
@@ -40,10 +44,6 @@ import {
   initialSchedulingState,
   upsertFsrsState,
 } from '@/server/fsrs/state';
-import {
-  normalizeQuestionGroupToContract,
-  normalizeQuestionRowToContract,
-} from '@/server/questions/contract-normalizer';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { activateEvaluation, insertInitialEvaluationHead } from './activate';
 import {

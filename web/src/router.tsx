@@ -22,7 +22,7 @@ import {
 } from '@/capabilities/agency/ui-public';
 import { loadRecordPage } from '@/capabilities/ingestion/ui-public';
 import { loadKnowledgeDetailPage, loadKnowledgePage } from '@/capabilities/knowledge/ui-public';
-import { loadNoteReaderPage, loadNotesPage } from '@/capabilities/notes/ui-public';
+import { getNotePage, loadNoteReaderPage, loadNotesPage } from '@/capabilities/notes/ui-public';
 import {
   loadAdminConfigSurface,
   loadAdminConjectureScoresSurface,
@@ -59,7 +59,7 @@ function RootShell() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useCallback((to: string) => router.history.push(to), [router]);
   return (
-    <SharedRootShell pathname={pathname} navigate={navigate}>
+    <SharedRootShell pathname={pathname} navigate={navigate} readNotePage={getNotePage}>
       <Outlet />
     </SharedRootShell>
   );

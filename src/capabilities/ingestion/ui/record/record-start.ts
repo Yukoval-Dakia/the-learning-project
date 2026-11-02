@@ -8,9 +8,9 @@ import { ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
 import {
   type createSession as CreateSession,
+  type startLane as StartLane,
   type UsePolicy,
   createDocxSession,
-  startLane,
   uploadPages,
 } from './record-api';
 
@@ -140,7 +140,7 @@ function problemOf(err: unknown): StartProblem {
   return 'other';
 }
 
-async function run(sessionId: string, state: StartState) {
+async function run(sessionId: string, state: StartState, startLane: typeof StartLane) {
   starts.set(sessionId, { ...state, status: 'starting', problem: null, at: Date.now() });
   emit();
   try {
@@ -164,17 +164,21 @@ async function run(sessionId: string, state: StartState) {
 }
 
 /** First start, or a switch to another lane (a new key: it is a different request). */
-export function startRecording(sessionId: string, lane: Lane) {
-  return run(sessionId, { lane, key: randomId(), status: 'starting', problem: null, at: 0 });
+export function startRecording(sessionId: string, lane: Lane, startLane: typeof StartLane) {
+  return run(
+    sessionId,
+    { lane, key: randomId(), status: 'starting', problem: null, at: 0 },
+    startLane,
+  );
 }
 
 /**
  * A learner-pressed retry in the same lane. After a lost answer it keeps the key, so the server
  * returns the original handle; after a refusal the key was already renewed.
  */
-export function retryStart(sessionId: string) {
+export function retryStart(sessionId: string, startLane: typeof StartLane) {
   const prev = starts.get(sessionId);
-  if (prev) return run(sessionId, prev);
+  if (prev) return run(sessionId, prev, startLane);
 }
 
 function setDraft(next: DraftState | null) {
@@ -200,6 +204,7 @@ let sending = false;
 export async function recordMaterial(
   input: Omit<DraftState, 'done' | 'failed'>,
   createSession: typeof CreateSession,
+  startLane: typeof StartLane,
 ) {
   if (sending) return null;
   sending = true;
@@ -223,7 +228,7 @@ export async function recordMaterial(
       });
     }
     // A Word file is already being read when it comes back; other material needs a start.
-    if (material.kind !== 'docx') void startRecording(sessionId, lane);
+    if (material.kind !== 'docx') void startRecording(sessionId, lane, startLane);
     setDraft(null);
     return sessionId;
   } catch (err) {

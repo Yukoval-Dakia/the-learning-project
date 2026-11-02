@@ -1,3 +1,8 @@
+import {
+  ConfirmationCommand,
+  type ConfirmationCommandT,
+  type ConfirmationOccurrenceT,
+} from '../../confirmation-contract';
 // Sending a turn. POST /api/copilot/chat only accepts (202 + events Location); the server owns the
 // run. Until the 202 is known the exact key + body are kept in sessionStorage, and a recovery
 // replays that same tuple (same Idempotency-Key, same body, same message ids), so it can only ever
@@ -20,14 +25,30 @@ import {
 import { resolveTurnAmbientFocus } from '../nudge-focus';
 import { readAcceptance } from './acceptance';
 import { type CompanionCtx, nextMessageId } from './companion-context';
-import { type PendingTurn, selectionValidated, supportsAnswerOnly } from './companion-state';
+import {
+  type PendingTurn,
+  conversationReady,
+  selectionValidated,
+  supportsAnswerOnly,
+} from './companion-state';
 import {
   ACCEPTANCE_UNKNOWN_COPY,
   ANSWER_ONLY_UNAVAILABLE_COPY,
   plainSendError,
 } from './plain-errors';
 
+export type ConfirmationAction =
+  | { kind: 'accept' | 'decline' | 'defer' | 'request_again' }
+  | Pick<
+      Extract<ConfirmationCommandT, { kind: 'submit' }>,
+      'kind' | 'response_set' | 'group_evidence'
+    >;
+
 export interface TurnSender {
+  sendConfirmation: (
+    occurrence: ConfirmationOccurrenceT,
+    action: ConfirmationAction,
+  ) => Promise<void>;
   send: (raw: string, recovery?: PersistedPendingCopilotTurn) => Promise<void>;
   sendQuiz: (text: string, knowledgeId: string | null) => void;
   retryPendingTurn: (idempotencyKey: string) => void;
@@ -120,7 +141,15 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
     };
   }
 
-  async function send(raw: string, recovery?: PersistedPendingCopilotTurn) {
+  async function send(
+    raw: string,
+    recovery?: PersistedPendingCopilotTurn,
+    explicit?: {
+      occurrence: ConfirmationOccurrenceT;
+      command: ConfirmationCommandT;
+      onRefused(copy: string): void;
+    },
+  ) {
     const text = recovery?.userMessage ?? raw.trim();
     const sessionId = recovery?.requestBody.session_id ?? ctx.get().currentSessionId;
     if (!text || (!recovery && !selectionValidated(ctx.get()))) return;
@@ -131,7 +160,19 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
     const key = recovery?.idempotencyKey ?? randomId();
     const userMessageId = recovery?.userMessageId ?? nextMessageId();
     const aiMessageId = recovery?.aiMessageId ?? nextMessageId();
-    const requestBody = recovery?.requestBody ?? buildBody(sessionId, text);
+    const requestBody =
+      recovery?.requestBody ??
+      (explicit
+        ? {
+            ...buildBody(sessionId, text),
+            correction_target_turn_id: undefined,
+            skill_context: {
+              skill: 'teaching' as const,
+              ref: { kind: 'learning_item', id: explicit.occurrence.learning_item_id },
+            },
+            confirmation: explicit.command,
+          }
+        : buildBody(sessionId, text));
     if (requestBody.derivation_policy === 'answer_only') {
       if (!(await confirmAnswerOnly(key, Boolean(recovery)))) return;
     }
@@ -155,7 +196,7 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       error: null,
       refreshFailed: false,
       correctionTarget: null,
-      ...(!recovery && s.draft === raw ? { draft: '' } : {}),
+      ...(!recovery && !explicit && s.draft === raw ? { draft: '' } : {}),
     });
     ctx.updateMessages((previous) =>
       projectPendingCopilotMessagePair(previous, {
@@ -208,6 +249,7 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       }
       // A definite refusal: nothing was accepted, so the tuple is no longer needed.
       const copy = plainSendError(cause);
+      explicit?.onRefused(copy);
       dropPending(key);
       ctx.updateMessages((previous) =>
         previous.map((m) => {
@@ -220,10 +262,54 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       ctx.set({
         refreshFailed: false,
         error: copy,
-        ...(!recovery && ctx.get().draft === '' ? { draft: raw } : {}),
+        ...(!recovery && !explicit && ctx.get().draft === '' ? { draft: raw } : {}),
       });
       ctx.sessions.revalidateAutomaticSelection();
     }
+  }
+
+  async function sendConfirmation(occurrence: ConfirmationOccurrenceT, action: ConfirmationAction) {
+    const state = ctx.get();
+    if (
+      state.currentSessionId !== occurrence.session_id ||
+      state.derivationPolicy !== 'allow' ||
+      !conversationReady(state) ||
+      state.correctionTarget
+    ) {
+      throw new Error('当前对话不能执行确认题动作，请先刷新对话。');
+    }
+    if (
+      state.pendingTurns.some(
+        (t) => t.requestBody.confirmation?.occurrence_id === occurrence.occurrence_id,
+      ) ||
+      state.runs.some(
+        (r) =>
+          r.sessionId === occurrence.session_id && r.phase !== 'completed' && r.phase !== 'failed',
+      )
+    )
+      throw new Error('已有动作正在接纳或执行，请读取原记录。');
+    let refused: string | undefined;
+    const command = ConfirmationCommand.parse({
+      ...action,
+      version: 1,
+      occurrence_id: occurrence.occurrence_id,
+      command_id: randomId(),
+    });
+    const words = {
+      accept: '接受一道确认题',
+      decline: '这次不做确认题',
+      defer: '稍后再做确认题',
+      request_again: '请求再确认一次',
+      submit: '提交这道确认题的作答',
+    };
+    await send(words[action.kind], undefined, {
+      occurrence,
+      command,
+      onRefused: (copy) => {
+        refused = copy;
+      },
+    });
+    if (refused) throw new Error(refused);
   }
 
   function sendQuiz(text: string, knowledgeId: string | null) {
@@ -241,12 +327,21 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
   }
 
   function discardPendingRecovery(key: string) {
+    if (
+      ctx.get().pendingTurns.some((t) => t.idempotencyKey === key && t.requestBody.confirmation)
+    ) {
+      ctx.set({
+        error: '确认题的接纳仍未确认，保留原请求。请恢复原发送记录或读取原对话，不另建提交。',
+      });
+      return;
+    }
     dropPending(key);
     ctx.updateMessages((previous) => previous.filter((m) => m.idempotency_key !== key));
     ctx.sessions.revalidateAutomaticSelection();
   }
 
   return {
+    sendConfirmation,
     send,
     sendQuiz,
     retryPendingTurn,
