@@ -1,21 +1,21 @@
-import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // YUK-909 — deterministic lint warning ratchet over `biome check .`.
 //
-// The baseline file (scripts/lint-baseline.json) records the owner-approved Biome 2
-// warning/info totals plus per-rule counts. The gate passes only when every severity
-// total equals the baseline. Growth fails. A shortfall also fails until this same
-// change rewrites the baseline; a warning-only nudge is not accepted. Diagnostic
-// emission order from Biome's parallel scanner is not stable, so counting sorts by
-// rule before any comparison or serialization. Info diagnostics are counted (own
-// ratchet total and own per-rule rows), not silently dropped — the decision is
-// recorded in the baseline.
+// The baseline file (scripts/lint-baseline.json) records Biome 2 warning/info totals plus
+// per-rule counts. Growth fails; a shortfall passes, so parallel PRs that each remove a
+// warning do not have to rewrite the same file. With a comparison base (`--base <sha>` or
+// LINT_BASE_SHA, set by CI), the ceiling per severity is the lower of the file and the
+// count measured on the base commit, so the effective baseline is main's real count
+// without committing it back; a head file whose totals exceed the base file fails.
+// Diagnostic emission order from Biome's parallel scanner is not stable, so counting
+// sorts by rule before any comparison or serialization. Info diagnostics are counted.
 //
-// Rewrite the baseline in the same change that removes diagnostics:
-//   pnpm lint:ratchet:update
+// Lowering the file is optional housekeeping: pnpm lint:ratchet:update
 // (refuses to write a document that raises any severity total).
 
 const BASELINE_RELATIVE_PATH = 'scripts/lint-baseline.json';
@@ -53,9 +53,8 @@ function ratchetKind(regressions, staleBy) {
   return 'match';
 }
 
-// Exact match is the only passing gate. Growth is regression; a shortfall is stale
-// and must be rewritten in the same change. --update still accepts a shortfall and
-// refuses a regression.
+// Growth over the ceiling is the only failure; a shortfall (`stale`) passes and is
+// reported so the file can be lowered later.
 export function evaluateRatchet(current, baseline) {
   const regressions = [];
   const staleBy = {};
@@ -70,7 +69,7 @@ export function evaluateRatchet(current, baseline) {
     }
   }
   const kind = ratchetKind(regressions, staleBy);
-  return { ok: kind === 'match', kind, staleBy, regressions };
+  return { ok: kind !== 'regression', kind, staleBy, regressions };
 }
 
 // Per-rule delta rows (positive delta = growth) for human review of a regression.
@@ -123,7 +122,7 @@ export function buildBaselineDocument(summary) {
   };
 }
 
-function runBiomeJson(repoRoot) {
+function runBiomeJson(repoRoot, checkRoot = repoRoot) {
   const result = spawnSync(
     process.execPath,
     [
@@ -134,7 +133,7 @@ function runBiomeJson(repoRoot) {
       '--max-diagnostics=none',
     ],
     {
-      cwd: repoRoot,
+      cwd: checkRoot,
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
     },
@@ -177,8 +176,8 @@ function runBiomeJson(repoRoot) {
   return report;
 }
 
-function collectCurrent(repoRoot) {
-  const report = runBiomeJson(repoRoot);
+function collectCurrent(repoRoot, checkRoot = repoRoot) {
+  const report = runBiomeJson(repoRoot, checkRoot);
   const current = summarizeDiagnostics(report.diagnostics ?? []);
   for (const severity of SEVERITIES) {
     const counted = current[severityPlural(severity)];
@@ -219,15 +218,78 @@ function readBaselineOrNull(repoRoot) {
   return baseline;
 }
 
+function git(repoRoot, args) {
+  return execFileSync('git', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+function comparisonBase(args) {
+  const flag = args.indexOf('--base');
+  const value = flag >= 0 ? args[flag + 1] : process.env.LINT_BASE_SHA;
+  // A branch-creating push reports an all-zero `before`; there is no base to compare.
+  if (!value || /^0+$/.test(value)) return null;
+  if (!/^[a-f0-9]{40}$/.test(value)) {
+    throw new Error(`[lint-ratchet] comparison base must be a full, nonzero commit SHA: ${value}`);
+  }
+  return value;
+}
+
+function baselineAtBase(repoRoot, base) {
+  let raw;
+  try {
+    raw = git(repoRoot, ['show', `${base}:${BASELINE_RELATIVE_PATH}`]);
+  } catch {
+    return null;
+  }
+  return JSON.parse(raw);
+}
+
+// Measured on a detached worktree of the base commit with the head's Biome binary, so a
+// Biome bump counts the same rules on both sides. A base Biome cannot read (config drift
+// across a Biome upgrade) falls back to the file ceiling instead of blocking the change.
+function countAtBase(repoRoot, base) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'lint-ratchet-base-'));
+  try {
+    git(repoRoot, ['worktree', 'add', '--detach', dir, base]);
+    try {
+      return collectCurrent(repoRoot, dir);
+    } finally {
+      git(repoRoot, ['worktree', 'remove', dir]);
+    }
+  } catch (error) {
+    console.warn(
+      `[lint-ratchet] could not count diagnostics at base ${base.slice(0, 12)} (${error instanceof Error ? error.message : error}); using the baseline file as the ceiling.`,
+    );
+    return null;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function ceilingDocument(baseline, baseCount) {
+  if (!baseCount) return baseline;
+  const totals = { ...baseline.totals };
+  for (const severity of SEVERITIES) {
+    const plural = severityPlural(severity);
+    totals[plural] = Math.min(totals[plural] ?? 0, baseCount[plural] ?? 0);
+  }
+  return { ...baseline, totals };
+}
+
+function raisedTotals(headBaseline, baseBaseline) {
+  return SEVERITIES.map(severityPlural).filter(
+    (plural) => (headBaseline.totals?.[plural] ?? 0) > (baseBaseline.totals?.[plural] ?? 0),
+  );
+}
+
 function renderStale(staleBy) {
   const detail = Object.entries(staleBy)
     .map(([plural, by]) => `${by} fewer ${plural}`)
     .join(', ');
-  return [
-    `[lint-ratchet] FAIL: current counts are below the baseline (${detail}).`,
-    'Rewrite the baseline in this same change: pnpm lint:ratchet:update',
-    'The baseline may only decrease — raising it is not supported.',
-  ].join('\n');
+  return `[lint-ratchet] below the ceiling (${detail}); the file can be lowered any time with: pnpm lint:ratchet:update`;
 }
 
 function renderRegression(regression, deltas) {
@@ -298,23 +360,31 @@ function main() {
     process.exitCode = 1;
     return;
   }
-  const baseline = loaded;
+  const base = comparisonBase(args);
+  if (base) {
+    const baseBaseline = baselineAtBase(repoRoot, base);
+    const raised = baseBaseline ? raisedTotals(loaded, baseBaseline) : [];
+    if (raised.length > 0) {
+      console.error(
+        `[lint-ratchet] FAIL: ${BASELINE_RELATIVE_PATH} raises ${raised.join(', ')} above base ${base.slice(0, 12)}. The baseline may only decrease.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+  }
+  const baseline = ceilingDocument(loaded, base ? countAtBase(repoRoot, base) : null);
   const verdict = evaluateRatchet(current, baseline);
   if (verdict.kind === 'regression') {
-    const deltas = ruleDeltas(current, baseline);
+    const deltas = ruleDeltas(current, loaded);
     for (const regression of verdict.regressions) {
       console.error(renderRegression(regression, deltas));
     }
     process.exitCode = 1;
     return;
   }
-  if (verdict.kind === 'stale') {
-    console.error(renderStale(verdict.staleBy));
-    process.exitCode = 1;
-    return;
-  }
+  if (verdict.kind === 'stale') console.log(renderStale(verdict.staleBy));
   console.log(
-    `[lint-ratchet] OK: ${current.warnings} warnings / ${current.infos} infos match baseline ${baseline.totals.warnings} / ${baseline.totals.infos}.`,
+    `[lint-ratchet] OK: ${current.warnings} warnings / ${current.infos} infos within ceiling ${baseline.totals.warnings} / ${baseline.totals.infos}${base ? ` (file and base ${base.slice(0, 12)})` : ' (file)'}.`,
   );
 }
 
