@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installPracticeHostOperations } from '@/capabilities/practice/public';
 import { assessment_submission, event, job_events } from '@/db/schema';
 import * as runtimeEnv from '@/kernel/background-job-enqueue';
 import { writeJobEvent } from '@/kernel/job-events';
@@ -134,6 +135,7 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
   let boss: PgBoss;
 
   beforeAll(async () => {
+    await installPracticeHostOperations();
     _resetBossForTests();
     boss = await getStartedBoss();
     if (!(await boss.getQueue('copilot_run'))) {

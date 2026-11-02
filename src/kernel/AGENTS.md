@@ -6,6 +6,7 @@
 | 文件 | 职责 |
 |------|------|
 | `manifest.ts` | `CapabilityManifest` 接口、`defineCapability()`、`validateComposition()`；声明包名 / event actions / api routes / jobs / proposals / copilotTools / ui 的唯一归属 |
+| `host-operation.ts` + `records/conversation-confirmation-assessment.ts`、`records/review-answer-binding.ts`、`read-models/review-due.ts`、`tools/learning-content-validation.ts` | Practice 在启动时经 `installPracticeHostOperations()` 安装的宿主端口（Copilot 调用）；未安装即抛 `HostOperationNotInstalledError`，调用方不得把它当普通读失败降级 |
 | `events/` | event envelope 的完整读写 API、修正投影（corrections / effective-truth）和 deterministic scope tagging；唯一 event INSERT owner |
 | `tools/` | DomainTool 契约（types / allowlists / budgets / context-throttle），central registry 与 capability tool 共享 |
 | `read-models/` | 跨 capability 只读投影（failure attempts、failure-learning knowledge context、question activity、cause policy、knowledge tree/subject 解析、questions 列表、daily review plan inputs、intervention preparation stage、note section projection） |
