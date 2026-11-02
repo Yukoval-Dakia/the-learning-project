@@ -21,6 +21,7 @@ export type {
   RecordPromotionAcceptResult,
 } from './server/legacy-record-appliers';
 export { readMistakes } from './server/mistakes-read';
+export { requestIngestionOperation } from './server/operation-request';
 // The DOCX text-line session owner writes the same usage receipt as the OCR job;
 // exporting the writer and vocabulary avoids deep imports of capability internals.
 export type {

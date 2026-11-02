@@ -21,6 +21,7 @@ import type {
   readIngestionSessionHistory,
   readIngestionSessions,
   readMistakes,
+  requestIngestionOperation,
   revertIngestionBlock,
 } from '@/capabilities/ingestion/public';
 import type {
@@ -70,6 +71,11 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 
 export type FrontdoorContext = {
   api: Hono;
+  createIngestionOperation: (input: {
+    sessionId: string;
+    body: string;
+    key: string | null;
+  }) => Promise<Awaited<ReturnType<typeof requestIngestionOperation>>>;
   acceptTeachingChip: (input: {
     sessionId: string;
     body: string;
