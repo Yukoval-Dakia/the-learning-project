@@ -3,12 +3,12 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 144,
+      "total": 143,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
         "agency -> proposals": 1,
-        "copilot -> ai": 9,
+        "copilot -> ai": 8,
         "copilot -> boss": 6,
         "copilot -> memory": 1,
         "copilot -> proposals": 1,
@@ -41,9 +41,8 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 4,
+      "total": 3,
       "byOwnerPair": {
-        "copilot -> practice": 1,
         "observability -> agency": 1,
         "observability -> practice": 1,
         "shell -> practice": 1

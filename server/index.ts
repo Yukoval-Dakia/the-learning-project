@@ -97,6 +97,12 @@ async function registerToolsBeforeServe(): Promise<void> {
   console.log('[rw:api] capability tools registered');
 }
 
+// API routes and worker jobs both call Practice-owned operations through kernel ports.
+async function installPracticeOperationsBeforeServe(): Promise<void> {
+  const { installPracticeHostOperations } = await import('@/capabilities/practice/public');
+  await installPracticeHostOperations();
+}
+
 // YUK-1007 — admin config 读面的运行时事实注入（providers[] / infra schedules /
 // runtime 常量 / consumer-effective 值）。组合根（本进程）聚合一切真相源后经
 // observability/public setter 注入**工厂**：route 每请求重调，跟随 env/热加载
@@ -157,6 +163,7 @@ void (async () => {
   await hydrateConfigBeforeServe();
   await hydrateModelCatalogBeforeServe();
   await registerToolsBeforeServe();
+  await installPracticeOperationsBeforeServe();
   await recoverToolOperationsBeforeServe();
   await injectAdminConfigFactsBeforeServe();
   await injectAdminConfigWriterBeforeServe();

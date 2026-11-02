@@ -10,6 +10,8 @@ import { createFrontdoor } from '../frontdoor';
 const env = getServerEnv();
 requireApiInternalToken(env);
 const port = resolveApiPort(env.API_PORT);
+const { installPracticeHostOperations } = await import('@/capabilities/practice/public');
+await installPracticeHostOperations();
 const fetch = await createFrontdoor(buildHonoApp(capabilities), 'web/dist');
 const server = serve({ fetch, hostname: '127.0.0.1', port });
 

@@ -164,6 +164,9 @@ export async function registerCapabilityJobs(
   db: Db,
   capabilities: CapabilityManifest[],
 ): Promise<void> {
+  // Copilot jobs call Practice-owned operations through kernel ports.
+  const { installPracticeHostOperations } = await import('@/capabilities/practice/public');
+  await installPracticeHostOperations();
   await installCoachDailyReviewPlan(capabilities);
   await installPrepareInterventionAuthor(capabilities);
   await installInterventionDiagnosticMaterializer(capabilities);

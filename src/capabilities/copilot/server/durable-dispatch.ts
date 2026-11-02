@@ -13,12 +13,12 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import { writeJobEvent } from '@/kernel/job-events';
+import type { ReviewAnswerAttachment } from '@/kernel/tools/review-answer';
 import { ConfirmationCommand, type ConfirmationCommandT } from '../confirmation-contract';
 import { writeCopilotInputEvent } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
 import { type CrisisGuardEventInput, writeCrisisGuardEvent } from './crisis-guard';
-import type { ReviewAnswerAttachment } from './practice-port';
 
 export const COPILOT_IDEMPOTENCY_KEY_MAX_LENGTH = 200;
 export const COPILOT_SESSION_QUEUE_PROTOCOL_VERSION = 2;
