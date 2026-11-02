@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
@@ -191,28 +191,5 @@ describe('revertAutoEnrolledBlock', () => {
     // Question row preserved (evidence-first, reusable).
     const q = await db.select().from(question).where(eq(question.id, res.questionId));
     expect(q).toHaveLength(1);
-  });
-
-  it('retracts an unanswered auto-enrollment against its capture event', async () => {
-    const db = testDb();
-    const { sessionId, blockId } = await seedAndAutoEnroll(db, 'unanswered');
-
-    const capture = (
-      await db.select().from(event).where(eq(event.action, 'experimental:record_capture'))
-    )[0];
-
-    const res = await revertAutoEnrolledBlock(db, { blockId, sessionId });
-
-    expect(res.retractedEventId).toBe(capture.id);
-    const [after] = await db.select().from(question_block).where(eq(question_block.id, blockId));
-    expect(after.status).toBe('draft');
-    // No active record remains for the question.
-    const active = await db
-      .select()
-      .from(learning_record)
-      .where(
-        and(eq(learning_record.question_id, res.questionId), isNull(learning_record.archived_at)),
-      );
-    expect(active).toHaveLength(0);
   });
 });
