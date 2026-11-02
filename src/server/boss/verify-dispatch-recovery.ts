@@ -15,6 +15,8 @@ export function buildVerifyDispatchRecoveryHandler(
 ): (jobs: Job<object>[]) => Promise<void> {
   return async () => {
     await recoverOrphanVerifyDispatches(db, { enqueue });
+    // Lost-delivery fallback only: web demands normally advance on their question's publication
+    // (practice.web-supply-observe). This sweep also drains orphan verify intents.
     await recoverWebSupplies(db, { enqueue });
     // YUK-1664 — recovery pass for the system's serving recheck: bounded to 50
     // held groups, it picks up holds that predate the result-event

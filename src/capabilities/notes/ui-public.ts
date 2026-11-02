@@ -25,3 +25,7 @@ export type NoteAiChangesClient = typeof import('./ui/notes-api').getAiChanges;
 export type NoteReferenceSearchClient = typeof import('./ui/notes-api').searchArtifacts;
 
 export type NoteQuestionListClient = typeof import('./ui/notes-api').questionsForKnowledge;
+
+export type NoteEditingHeartbeatClient = typeof import('./ui/notes-api').editingHeartbeat;
+
+export type NoteEditingBlurClient = typeof import('./ui/notes-api').editingBlur;

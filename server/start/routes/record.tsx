@@ -7,7 +7,10 @@ import {
 } from '@/capabilities/ingestion/ui-public';
 import { startRecordAskAnswerClient } from '../record-ask-answer-client';
 import { startRecordBlocksClient } from '../record-blocks-client';
+import { startRecordLaneClient } from '../record-lane-start-client';
 import { startRecordManualMistakeClient } from '../record-manual-mistake-client';
+import { startRecordPurposeChangeClient } from '../record-purpose-change-client';
+import { startRecordPurposeImpactClient } from '../record-purpose-impact-client';
 import { startRecordRevertClient } from '../record-revert-client';
 import { startRecordSessionCreateClient } from '../record-session-create-client';
 import { startRecordSessionDetailClient } from '../record-session-detail-client';
@@ -26,6 +29,9 @@ const recordClient: RecordClient = {
   getSession: startRecordSessionDetailClient,
   createWrongAnswer: startRecordManualMistakeClient,
   revertBlock: startRecordRevertClient,
+  startLane: startRecordLaneClient,
+  getPurposeImpact: startRecordPurposeImpactClient,
+  changePurpose: startRecordPurposeChangeClient,
 };
 const Page = lazy(() => loadRecordPage().then((defaultPage) => ({ default: defaultPage })));
 export const Route = createFileRoute('/record')({

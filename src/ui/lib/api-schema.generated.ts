@@ -11153,6 +11153,159 @@ export interface operations {
                         route: string;
                     };
                     chip_kind?: string;
+                    confirmation?: {
+                        command_id: string;
+                        /** @enum {string} */
+                        kind: "accept";
+                        occurrence_id: string;
+                        /** @enum {number} */
+                        version: 1;
+                    } | {
+                        command_id: string;
+                        /** @enum {string} */
+                        kind: "decline";
+                        occurrence_id: string;
+                        /** @enum {number} */
+                        version: 1;
+                    } | {
+                        command_id: string;
+                        /** @enum {string} */
+                        kind: "defer";
+                        occurrence_id: string;
+                        /** @enum {number} */
+                        version: 1;
+                    } | {
+                        command_id: string;
+                        /** @enum {string} */
+                        kind: "request_again";
+                        occurrence_id: string;
+                        /** @enum {number} */
+                        version: 1;
+                    } | {
+                        command_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        /** @enum {string} */
+                        kind: "submit";
+                        occurrence_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "sentence_breaks";
+                                /** @default [] */
+                                positions?: number[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_ids?: string[];
+                                /** @enum {string} */
+                                kind: "select";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @enum {string} */
+                                state: "answered" | "blank" | "unknown";
+                            } | {
+                                /** @enum {string} */
+                                kind: "blank";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @enum {string} */
+                                state: "answered" | "blank" | "unknown";
+                                /** @default  */
+                                text?: string;
+                            })[];
+                        };
+                        /** @enum {number} */
+                        version: 1;
+                    };
                     correction_target_turn_id?: string;
                     /** @enum {string} */
                     derivation_policy?: "allow" | "answer_only" | "crisis";
@@ -12427,6 +12580,24 @@ export interface operations {
                             /** Format: date-time */
                             at: string;
                             checkpoint_event_id?: string;
+                            confirmation?: {
+                                assessment: unknown;
+                                occurrence: {
+                                    accept_ask_id: string | null;
+                                    blocked_reason: string | null;
+                                    issuance_id: string | null;
+                                    learning_item_id: string;
+                                    occurrence_id: string;
+                                    offer_reply_id: string;
+                                    sequence: number;
+                                    session_id: string;
+                                    /** @enum {string} */
+                                    state: "offered" | "declined" | "deferred" | "blocked" | "issued";
+                                    trigger_ask_id: string;
+                                    /** @enum {number} */
+                                    version: 1;
+                                };
+                            };
                             /** @enum {string} */
                             derivation_policy?: "allow" | "answer_only" | "crisis";
                             event_id: string;
