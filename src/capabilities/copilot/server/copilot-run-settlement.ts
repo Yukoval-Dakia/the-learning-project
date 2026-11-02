@@ -56,7 +56,7 @@ import {
   observeBossJob,
 } from '@/server/boss/job-observation';
 import type { CopilotPublicProse, CopilotPublicProseFailure } from '../public-prose-contract';
-import { publicProseFailureMessage } from './public-prose';
+import { publicProseFailureMessage } from '../public-prose-contract';
 
 export const COPILOT_RUN_QUEUE = 'copilot_run' as const;
 

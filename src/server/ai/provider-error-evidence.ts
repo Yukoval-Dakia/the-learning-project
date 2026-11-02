@@ -18,6 +18,11 @@ export const PROVIDER_ERROR_BODY_MAX_BYTES = 4096;
 
 export interface ProviderErrorEvidence {
   http_status: number;
+  /**
+   * The provider's own retry hint (`retry-after` seconds/HTTP-date, or
+   * `retry-after-ms`). Absent means the response carried none.
+   */
+  retry_after_ms?: number;
   /** Header-carried request id when the gateway emits one; body ids stay inside `body`. */
   request_id?: string;
   /** Sanitized body excerpt, ≤ PROVIDER_ERROR_BODY_MAX_BYTES of UTF-8. */
@@ -76,6 +81,25 @@ export function sanitizeProviderErrorText(
 }
 
 /**
+ * `retry-after-ms` wins when both headers exist; `retry-after` accepts the
+ * standard delta-seconds or HTTP-date forms. Unparseable values stay absent.
+ */
+function readRetryAfterMs(headers: Headers): number | undefined {
+  const rawMs = headers.get('retry-after-ms');
+  if (rawMs !== null) {
+    const ms = Number(rawMs);
+    if (Number.isFinite(ms) && ms >= 0) return ms;
+  }
+  const raw = headers.get('retry-after');
+  if (raw === null) return undefined;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+  const dateMs = Date.parse(raw);
+  if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
+  return undefined;
+}
+
+/**
  * Read a non-2xx body into bounded, sanitized evidence. Callers pass
  * `response.clone()` when the SDK still owns the original stream.
  */
@@ -94,8 +118,10 @@ export async function readProviderErrorEvidence(
         PROVIDER_ERROR_REQUEST_ID_MAX_BYTES,
       )
     : undefined;
+  const retryAfterMs = readRetryAfterMs(response.headers);
   return {
     http_status: response.status,
+    ...(retryAfterMs !== undefined ? { retry_after_ms: retryAfterMs } : {}),
     ...(requestId ? { request_id: requestId } : {}),
     body,
     body_sha256: sha256Hex(sanitized),

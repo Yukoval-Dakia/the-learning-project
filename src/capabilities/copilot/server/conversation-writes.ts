@@ -3,6 +3,7 @@
 
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
+import type { ProviderFailureInfo } from '@/ai/provider-failure';
 import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
@@ -11,11 +12,15 @@ import { ApiError } from '@/kernel/http';
 import { captureReviewAnswerBinding } from '@/kernel/records/review-answer-binding';
 import type { ReviewAnswerAttachment } from '@/kernel/tools/review-answer';
 import type { ConfirmationCommandT, ConfirmationOccurrenceT } from '../confirmation-contract';
-import type { CopilotPublicProse, CopilotPublicProseFailure } from '../public-prose-contract';
+import {
+  type CopilotPublicProse,
+  type CopilotPublicProseFailure,
+  providerFailureToPublicFailure,
+  publicProseFailureMessage,
+} from '../public-prose-contract';
 import type { CopilotModeState, CopilotSkillContextT, CopilotSkillTurn } from './chat-contracts';
 import {
   publicProseFailureForReason,
-  publicProseFailureMessage,
   publicProseStatus,
   readCopilotPublicProse,
 } from './public-prose';
@@ -169,6 +174,11 @@ export async function writeCopilotReply(
     /** Structured, whitelisted failure supplied by the execution owner; never raw errors. */
     publicProseFailure?: CopilotPublicProseFailure;
     /**
+     * Proven provider failure on a sealed-exit success (help_quota / bad_gateway):
+     * the reply stays completed while the wire still names the real category.
+     */
+    providerFailure?: ProviderFailureInfo;
+    /**
      * Optional terminal outcome for durable recovery. A durable success marker
      * lets a pg-boss redelivery repair missing job terminal events without
      * running the paid model/tools a second time; historical callers may omit it.
@@ -199,7 +209,9 @@ export async function writeCopilotReply(
                   publicProseFailureForReason(params.durableFailure?.reason)),
           ),
           ...(params.outcome === 'success'
-            ? {}
+            ? params.providerFailure !== undefined
+              ? { failure: providerFailureToPublicFailure(params.providerFailure) }
+              : {}
             : {
                 failure:
                   params.publicProseFailure ??
