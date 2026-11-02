@@ -46,12 +46,14 @@ const liveSubscriberIdentities = [
   ['agency.intervention-diagnostic-review-settlement', 4],
   ['agency.probe-evidence-intervention-prepare', 1],
   ['agency.probe-publication-serve', 1],
+  ['agency.probe-result-reconcile', 1],
   ['agency.question-pool-gap', 1],
   ['notes.dreaming-note-refresh', 1],
   ['notes.mastery-progress-note-refine', 1],
   ['practice.failure-learning-attempt', 3],
   ['practice.learner-return-wake', 1],
   ['practice.question-admission-enqueue', 1],
+  ['practice.web-supply-observe', 1],
 ];
 const subscriberCount = liveSubscriberIdentities.length;
 const deliveryCount = subscriberCount * statuses.length;
@@ -268,10 +270,13 @@ describe('YUK-766 subscription progress backup', () => {
     const counts = actionCounts(registry.subscriptions);
     const shared = registry.subscriptions.filter((sub) => (counts.get(sub.actions[0]) ?? 0) > 1);
     expect(shared.map((sub) => sub.id)).toEqual([
+      'agency.probe-evidence-intervention-prepare',
       'agency.probe-publication-serve',
+      'agency.probe-result-reconcile',
       'practice.failure-learning-attempt',
       'practice.learner-return-wake',
       'practice.question-admission-enqueue',
+      'practice.web-supply-observe',
     ]);
     const sourceIds = (id: string) =>
       data.event_subscription_delivery

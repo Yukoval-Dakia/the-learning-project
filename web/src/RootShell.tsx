@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { type CompanionLayout, CompanionMount } from '@/capabilities/copilot/ui-public';
+import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import {
   ConfirmationAssessment,
   type ConfirmationDraftClient,
@@ -102,6 +103,7 @@ export function RootShell(props: {
   pathname: string;
   navigate: (to: string) => void;
   readKnowledgeTree?: CommandPaletteProps['readTree'];
+  readNotePage: NotePageClient;
 }) {
   if (props.pathname.startsWith(BARE_PATH_PREFIX)) return <>{props.children}</>;
   return <AppFrame {...props} />;
@@ -117,12 +119,14 @@ function AppFrame({
   pathname,
   navigate,
   readKnowledgeTree,
+  readNotePage,
 }: {
   confirmationClient?: ConfirmationDraftClient;
   children: ReactNode;
   pathname: string;
   navigate: (to: string) => void;
   readKnowledgeTree?: CommandPaletteProps['readTree'];
+  readNotePage: NotePageClient;
 }) {
   // chrome state。paletteOpen 驱动 CommandPalette（S14）；⌘K toggle + searchbox
   // 点击都 set 它。
@@ -228,6 +232,7 @@ function AppFrame({
       <div className="un-st-companion-slot">
         <CompanionMount
           confirmationRenderer={ConfirmationRenderer}
+          readNotePage={readNotePage}
           open={companionOpen}
           presentation="workspace"
           onOpenChange={setCompanionOpen}

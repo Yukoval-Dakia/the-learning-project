@@ -237,7 +237,10 @@ export async function startLane(id: string, kind: 'extract' | 'agent', key: stri
     headers: { 'Idempotency-Key': key },
     body: JSON.stringify({ kind }),
   });
-  const op = (await res.json().catch(() => null)) as IngestionOperationResource | null;
+  assertLaneStarted((await res.json().catch(() => null)) as IngestionOperationResource | null);
+}
+
+export function assertLaneStarted(op: IngestionOperationResource | null) {
   if (op?.status === 'failed') {
     const e = op.error;
     throw new ApiError(e?.message ?? 'start refused', e?.status ?? 500, e?.code, { ...e });
@@ -348,20 +351,39 @@ function checkedPurposeLocation(id: string, requestId: string, location: string)
   return actual.pathname + actual.search;
 }
 
-export async function getPurposeImpact(id: string, requestId?: string, location?: string) {
-  const url =
-    requestId && location
-      ? checkedPurposeLocation(id, requestId, location)
-      : purposeLocation(id, requestId);
-  const impact = await apiOperationJson('getIngestionPurposeImpact', {
-    url,
-    method: 'GET',
-    init: { cache: 'no-store' },
-  });
+export function purposeImpactUrl(id: string, requestId?: string, location?: string): string {
+  return requestId && location
+    ? checkedPurposeLocation(id, requestId, location)
+    : purposeLocation(id, requestId);
+}
+
+export function projectPurposeImpact(id: string, impact: PurposeImpact) {
   if (impact.current.session_id !== id) {
     throw new ApiError('用途记录与这次录入不一致。', 0, 'purpose_session_mismatch');
   }
   return impact;
+}
+
+export async function getPurposeImpact(id: string, requestId?: string, location?: string) {
+  const impact = await apiOperationJson('getIngestionPurposeImpact', {
+    url: purposeImpactUrl(id, requestId, location),
+    method: 'GET',
+    init: { cache: 'no-store' },
+  });
+  return projectPurposeImpact(id, impact);
+}
+
+/** A receipt Location, bound to this session and request; the canonical one if the header is absent. */
+export function purposeReceiptLocation(
+  id: string,
+  body: PurposeInput,
+  location: string | null | undefined,
+): string {
+  return checkedPurposeLocation(
+    id,
+    body.request_id,
+    location ?? purposeLocation(id, body.request_id),
+  );
 }
 
 /** Generated wire types; raw response retained only to consume the canonical Location header. */
@@ -370,11 +392,7 @@ export async function changePurpose(id: string, body: PurposeInput) {
     method: 'POST',
     body: JSON.stringify(body),
   });
-  const location = checkedPurposeLocation(
-    id,
-    body.request_id,
-    response.headers.get('Location') ?? purposeLocation(id, body.request_id),
-  );
+  const location = purposeReceiptLocation(id, body, response.headers.get('Location'));
   const result = (await response.json()) as PurposeResult;
   return { ...result, location };
 }

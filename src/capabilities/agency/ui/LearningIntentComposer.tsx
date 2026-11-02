@@ -14,17 +14,19 @@ import './learning-intent.css';
 export interface LearningIntentComposerProps {
   initialTopic?: string;
   pendingCount?: number;
+  createProposal?: typeof createLearningIntentProposal;
   navigate: (to: string) => void;
 }
 
 export function LearningIntentComposer({
   initialTopic = '',
   pendingCount = 0,
+  createProposal = createLearningIntentProposal,
   navigate,
 }: LearningIntentComposerProps) {
   const [topic, setTopic] = useState(initialTopic);
   const mutation = useMutation({
-    mutationFn: (nextTopic: string) => createLearningIntentProposal(nextTopic),
+    mutationFn: (nextTopic: string) => createProposal(nextTopic),
   });
 
   const submit = (event: FormEvent<HTMLFormElement>) => {

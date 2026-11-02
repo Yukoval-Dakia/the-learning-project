@@ -73,7 +73,6 @@ const COACH_BRIEF_GUIDANCE =
 const COACH_WEAK_POINTS_GUIDANCE =
   ' When weak_points is present, each entry is a system-derived actionable weak point at sub-skill granularity with its evidence refs and a training_destination (concept_review / retrieval_practice → concept material or no-hint retrieval drills; procedural_practice / discrimination_probe → targeted step practice or a discriminating probe). Use them to bias knowledge_focus ranking and intent_tags toward the strongest cells, and phrase daily_focus around the named targets. Treat them as derived reads, not ground truth: never invent additional weak points, never attach percentages to them, and never let them suppress or replace the FSRS-due review backbone. When weak_points is empty, behave exactly as before.';
 export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
-export const COACH_WEEKLY_OBJECTIVE = `Produce a weekly TodayPlan draft with a \`weekly_reflection\` summary plus any plan adjustments / maintenance proposals via propose_* tools. Only write proposals; never mutate user data directly.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
 
 /** How many derived weak points ride the Coach input (bounded for prompt budget). */
 const COACH_MAX_WEAK_POINTS = 8;
@@ -108,8 +107,6 @@ type ReadAgentNotesFn = (db: Db, now: Date) => Promise<AgentNote[]>;
 type ResolvePlanInputsFn = (db: Db) => Promise<DailyReviewPlanInputs>;
 type DeriveWeakPointsFn = (db: Db, input: { now: Date }) => Promise<ActionableWeakPointDerivationT>;
 
-export type CoachRunKind = 'daily' | 'weekly';
-
 export interface CoachRunDeps {
   runAgentTaskFn?: AgencyScanRunFn;
   listProposalInboxRowsFn?: ListProposalInboxRowsFn;
@@ -125,7 +122,6 @@ export interface CoachRunDeps {
 }
 
 function buildCoachInput(
-  runKind: CoachRunKind,
   now: Date,
   beforeRows: ProposalSnapshotRow[],
   objective: string,
@@ -143,7 +139,7 @@ function buildCoachInput(
   },
 ) {
   return {
-    run_kind: runKind,
+    run_kind: 'daily',
     now: now.toISOString(),
     pending_proposals_before: beforeRows.filter((row) => row.status === 'pending').length,
     objective,
@@ -213,16 +209,12 @@ function buildCoachInput(
     },
     output_schema: {
       kind: 'TodayPlan',
-      hint: 'Return a JSON object with daily_focus, review_session_proposal, plan_adjustments[], maintenance_proposals[]. review_session_proposal contains only knowledge_focus[] (ranked knowledge_ids from due/weak + active_items pressure) and intent_tags[]; do NOT output count, estimated_minutes, time_box_minutes or subject_mix — the system computes those from review_plan and overwrites them. Weekly runs additionally set weekly_reflection. When active_goals are present, also set goal_ids[] and goal_strand[] (each item: serves_goal_id, knowledge_ids[], focus) — additive only, never replacing the review backbone (ND-5).',
+      hint: 'Return a JSON object with daily_focus, review_session_proposal, plan_adjustments[], maintenance_proposals[]. review_session_proposal contains only knowledge_focus[] (ranked knowledge_ids from due/weak + active_items pressure) and intent_tags[]; do NOT output count, estimated_minutes, time_box_minutes or subject_mix — the system computes those from review_plan and overwrites them. When active_goals are present, also set goal_ids[] and goal_strand[] (each item: serves_goal_id, knowledge_ids[], focus) — additive only, never replacing the review backbone (ND-5).',
     },
   };
 }
 
-export async function runCoach(
-  db: Db,
-  runKind: CoachRunKind,
-  deps: CoachRunDeps = {},
-): Promise<CoachRunResult> {
+export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRunResult> {
   // Resolved read: subject_live goals derive their scope from subject_id; the frozen
   // column is [] for them.
   const listGoals = deps.listActiveGoalsFn ?? listActiveGoalsWithResolvedScope;
@@ -236,8 +228,8 @@ export async function runCoach(
   const deriveWeakPoints =
     deps.deriveWeakPointsFn ??
     ((db: Db, input: { now: Date }) => deriveActionableWeakPoints(db, input));
-  const triggerActorRef = runKind === 'daily' ? 'nightly_coach' : 'weekly_coach';
-  const objective = runKind === 'daily' ? COACH_DAILY_OBJECTIVE : COACH_WEEKLY_OBJECTIVE;
+  const triggerActorRef = 'nightly_coach';
+  const objective = COACH_DAILY_OBJECTIVE;
 
   return runAgencyProposalScan(db, {
     surface: 'coach',
@@ -250,8 +242,8 @@ export async function runCoach(
       listProposalInboxRowsFn: deps.listProposalInboxRowsFn,
       runAgentTaskFn: deps.runAgentTaskFn,
     },
-    extraTriggerPayload: { run_kind: runKind },
-    extraScanFailurePayload: { run_kind: runKind },
+    extraTriggerPayload: { run_kind: 'daily' },
+    extraScanFailurePayload: { run_kind: 'daily' },
     buildScanSuccessPayloadExtras: (taskResult, input) => {
       // Persist the composed plan: `/api/today/copilot-summary` reads `payload.daily_focus`
       // (and `payload.today_plan.daily_focus`) off the latest `experimental:coach_scan`.
@@ -261,7 +253,7 @@ export async function runCoach(
       const todayPlanDraft = parseCoachOutputSafely(taskResult.text ?? '');
       const todayPlan = todayPlanDraft ? composeTodayPlan(todayPlanDraft, reviewPlan) : null;
       return {
-        run_kind: runKind,
+        run_kind: 'daily',
         // Why these numbers, so a replay can verify them.
         review_plan_basis: {
           due_count: reviewPlan.due_count,
@@ -312,7 +304,6 @@ export async function runCoach(
       };
       return () =>
         buildCoachInput(
-          runKind,
           now,
           beforeRows,
           objective,
@@ -357,7 +348,7 @@ export function buildCoachDailyHandler(
   deps: CoachDailyHandlerDeps = {},
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {
   return async () => {
-    const result = await runCoach(db, 'daily', deps);
+    const result = await runCoach(db, deps);
     console.log('[coach_daily] result', result);
   };
 }

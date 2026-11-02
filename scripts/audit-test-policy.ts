@@ -143,14 +143,31 @@ function main(): void {
     `${git(['diff', '--name-only', '-z', base, '--'])}${git(['ls-files', '--others', '--exclude-standard', '-z'])}`
       .split('\0')
       .filter((file) => testPath.test(file) && existsSync(resolve(root, file)));
+  // A moved test file keeps its cases: compare against the base copy git pairs it with.
+  // Only renames (original gone) qualify, so copying a file still counts its cases as new.
+  const renamedFrom = new Map<string, string>();
+  const status = git(['diff', '--name-status', '-M', '-z', base, '--']).split('\0');
+  for (let i = 0; i < status.length; ) {
+    const code = status[i];
+    if (!code) {
+      i++;
+      continue;
+    }
+    if (code.startsWith('R')) {
+      renamedFrom.set(status[i + 2], status[i + 1]);
+      i += 3;
+    } else i += 2;
+  }
   const errors: string[] = [];
   let checked = 0;
   let inherited = 0;
   for (const file of new Set(files)) {
     const source = readFileSync(resolve(root, file), 'utf8');
-    const old = baselineFiles.has(file)
-      ? registrations(file, git(['show', `${base}:${file}`]))
-      : [];
+    const basePath = baselineFiles.has(file) ? file : renamedFrom.get(file);
+    const old =
+      basePath && baselineFiles.has(basePath)
+        ? registrations(basePath, git(['show', `${base}:${basePath}`]))
+        : [];
     // Multiplicity matters: duplicating an inherited title/body is a new case.
     const remaining = new Map<string, number>();
     for (const item of old) {

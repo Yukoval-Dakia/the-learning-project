@@ -45,7 +45,6 @@
 ## CRON — 周批
 | Queue | cron | 注册点 | 说明 |
 |-------|------|--------|------|
-| `coach_weekly` | `30 4 * * 0`（周日）| agency/manifest | weekly_reflection |
 | `merge_attribution_sweep` | `0 4 * * 1`（周一）| knowledge/manifest | merge 残留竞态 census + bounded auto-repair（cap 50）|
 | `projection_oracle_sweep` | `30 4 * * 1`（周一）| knowledge/manifest | REPORT-ONLY projection 漂移 oracle |
 | `kg_borrow_shadow_sweep` | `0 5 * * 1`（周一）| knowledge/manifest | A5/A6 shadow 遥测（特意周批防 outbox 扇出）|

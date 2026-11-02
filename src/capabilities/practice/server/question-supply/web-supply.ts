@@ -20,6 +20,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { webSupplyDemandKey as key, lockWebSupplyDemand } from '@/kernel/locks/question-supply';
+import type { EventSubscriptionDelivery, EventSubscriptionOutcome } from '@/kernel/manifest';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import { answerClassCompatible } from '@/subjects/question-kind';
 import {
@@ -628,6 +629,46 @@ export async function runWebSupply(params: {
   });
   return resumeWebSupply(db, item.demandId, placementClaimId ? placement : undefined);
 }
+
+/**
+ * A question's publication (source verification promotion or scoring admission) is the real
+ * result a web demand waits on: re-observe every open demand that submitted it right away,
+ * instead of waiting for the nightly/startup recovery sweep. Observation only: a demand with
+ * any submission still lacking a receipt is left to its original owner (recovery), so this
+ * path never sends a submit. Placement demands are advanced only by their claim delivery.
+ * Concurrent advance loses the sequence CAS and throws, so the delivery is retried.
+ */
+export async function observeWebSuppliesForQuestion(db: Db, questionId: string) {
+  const rows = await db.execute<{ demand_id: string }>(sql`
+    select distinct subject_id as demand_id from ${event}
+    where action = ${ACTION}
+      and payload->'submissions' @> ${JSON.stringify([{ receipt: { question_id: questionId } }])}::jsonb`);
+  let observed = 0;
+  for (const row of rows) {
+    const state = await latestRequired(db, row.demand_id);
+    if (state.phase !== 'verifying' || placementClaimOf(state)) continue;
+    if (state.activeRequestId !== null || state.submissions.some((s) => !s.receipt)) continue;
+    await resumeWebSupply(db, row.demand_id);
+    observed += 1;
+  }
+  return { observed };
+}
+
+export const buildWebSupplyObserveSubscriber =
+  (db: Db) =>
+  async (delivery: EventSubscriptionDelivery): Promise<EventSubscriptionOutcome> => {
+    const [source] = await db
+      .select({ action: event.action, subjectId: event.subject_id })
+      .from(event)
+      .where(eq(event.id, delivery.sourceEventId))
+      .limit(1);
+    if (source?.action !== 'experimental:assessment_publish' || !source.subjectId)
+      return { status: 'skipped', reason: 'not a question publication' };
+    const { observed } = await observeWebSuppliesForQuestion(db, source.subjectId);
+    return observed
+      ? { status: 'succeeded', detail: { question_id: source.subjectId, observed } }
+      : { status: 'skipped', reason: 'no open web demand for this question' };
+  };
 
 export async function recoverWebSupplies(
   db: Db,

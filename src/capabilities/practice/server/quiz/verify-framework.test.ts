@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import interventionRegressionFixture from '@/server/grounding-gate/fixtures/intervention-review-regressions.v1.json' with {
+import { resolveSubjectProfile } from '@/subjects/profile';
+import interventionRegressionFixture from './fixtures/intervention-review-regressions.v1.json' with {
   type: 'json',
 };
-import { resolveSubjectProfile } from '@/subjects/profile';
 import { runIndependentSolution } from './verify-framework';
 
 // ---------- solve-check helpers ----------
