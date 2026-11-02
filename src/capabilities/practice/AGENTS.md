@@ -10,6 +10,7 @@
 | `api/*.ts` | review/submit/due/advice/weekly/appeal/sessions、placement、drafts、practice/paper、questions/solve、calibration anchors |
 | `server/placement-session-lifecycle.ts` | Placement 完整状态操作与运行时 flag；跨域 orphan 操作经 `public.ts` |
 | `server/verify-dispatch-outbox.ts` | 验证 intent、同事务派发与 orphan 恢复；基础设施 adapter 在 `src/server/boss/verify-dispatch-recovery.ts` |
+| `server/question-supply/coverage-lattice.ts` / `api/coverage-lattice.ts` | 供题覆盖细目只读读模型与 `/api/admin/coverage-lattice`：供题扫描器四规则的 KC 池级覆盖 + 缺口 targets + 供给活动聚合；Observability admin 页只展示 |
 | `server/failure-learning.ts` | 失败尝试 eligibility、归因、变式提议的 owner operation；durable subscriber 只调用该入口 |
 | `server/` | 判分路由、FSRS 投影、paper/流编排、stream-store、placement、mastery 交互 |
 | `jobs/` | `attribution_followup` → `variant_gen` durable 链及其它 Practice 后台任务 |

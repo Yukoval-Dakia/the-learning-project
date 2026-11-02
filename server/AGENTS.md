@@ -7,6 +7,7 @@
 |------|------|
 | `index.ts` | 入口：loadEnv → warnFlipOrder → `buildHonoApp(capabilities)` → `serve()`；prod 设 `RW_STATIC_DIR` 时托管 SPA；`RW_WORKER=1` 时同进程启 worker |
 | `app.ts` | 组合根工厂：`buildHonoApp()` 挂载 token gate、`/api/health`、所有 manifest route；`toHonoPath()` 把 `[id]` 转成 `:id` |
+| `composed-routes.ts` | 跨 capability 组装的路由 handler（manifest 声明了路由但不带 `load`）：按 operationId 匹配，缺 handler 时 `buildHonoApp` 抛错，孤儿 handler 由启动入口的 `assertComposedRoutesDeclared` 拦下 |
 | `frontdoor.ts` / `start/` | 固定 Start fetch 前门；通过 request context 调原 Hono app，未迁页面回落原 SPA；Start 独立 TS program 避免与 SPA 路由注册冲突 |
 | `env.ts` | `.env` / `.env.local` 加载（API / Vite / worker 三进程统一） |
 
