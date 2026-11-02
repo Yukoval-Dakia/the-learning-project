@@ -35,10 +35,8 @@
     align-items: baseline;
     gap: var(--un-sp-2);
     color: var(--un-text-1);
-    font-family: var(--un-font-serif);
-    font-size: var(--un-fs-4);
-    letter-spacing: var(--un-ls-tight);
-    line-height: var(--un-lh-tight);
+    font: 600 20px / 1.4 var(--un-font-sans);
+    letter-spacing: 0;
     text-wrap: pretty;
   }
 
