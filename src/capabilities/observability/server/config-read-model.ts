@@ -52,7 +52,6 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   QUESTION_SUPPLY_REFILL_ENABLED: 'src/capabilities/practice/server/question-supply/refill.ts',
   CONFUSABLE_CONTRAST_ENABLED:
     'src/capabilities/practice/server/question-supply/confusable-contrast-discovery.ts',
-  RESEARCH_MEETING_AGENT_ENABLED: 'src/capabilities/agency/jobs/research_meeting_agent_nightly.ts',
   JUDGE_CALIBRATION_SAMPLING_ENABLED: 'src/capabilities/practice/jobs/judge_calibration_sample.ts',
   WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: 'src/capabilities/ingestion/server/workflow-judge-config.ts',
   WORKFLOW_JUDGE_OBSERVE_ENABLED: 'src/capabilities/ingestion/server/workflow-judge-config.ts',
@@ -74,7 +73,7 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   COPILOT_NUDGE_EXPIRES_HOURS: 'src/capabilities/copilot/server/nudge-config.ts',
   COPILOT_NUDGE_STREAK_N: 'src/capabilities/copilot/server/nudge-config.ts',
   COPILOT_NUDGE_KC_COOLDOWN_HOURS: 'src/capabilities/copilot/server/nudge-config.ts',
-  SELECTION_POLICY: 'src/capabilities/practice/server/stream-store.ts',
+  SELECTION_POLICY: 'src/capabilities/practice/scheduling/server/stream-store.ts',
   HUB_SYNC_MODE: 'src/capabilities/notes/server/hub-sync-reconciliation.ts',
   MEMORY_RECONCILE_HANDOFF_MODE:
     'src/capabilities/agency/server/memory/memory-reconcile-handoff.ts',

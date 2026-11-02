@@ -17,11 +17,13 @@
  *   structured_submit  — task-registry kinds with structuredOutputMode:'tool'
  *                        → structuredOutputSchema through the same converter
  *                        (pi-agent-adapter mounts it via piCustomTool).
- *   custom_mount       — the hand-rolled piCustomTool inventories: agency
- *                        evidence server, meeting director server, and the
+ *   custom_mount       — the hand-rolled piCustomTool inventories: the
  *                        Task/Agent spawn tools. (YUK-1553 retired the private
  *                        knowledge write_proposal mount; the shared
- *                        propose_knowledge_* tools are scanned via domain_tool.)
+ *                        propose_knowledge_* tools are scanned via domain_tool.
+ *                        YUK-1664 retired the agency evidence server and
+ *                        meeting director server along with the shadow
+ *                        research-meeting lane.)
  *                        Checked on the REAL produced AgentTool.parameters.
  *   remote_mcp         — NOT enumerable without a live server; enforced at
  *                        mount composition in connectPiRemoteMcp (mount fails
@@ -151,42 +153,13 @@ async function main(): Promise<void> {
   //    AgentTool.parameters each builder produces. ──
   const customTools: { wire: string; parameters: unknown }[] = [];
   {
-    const { buildEvidenceServer } = await import('@/capabilities/agency/server/scout/evidence-mcp');
-    const { createFindingsCapture } = await import(
-      '@/capabilities/agency/server/scout/report-findings'
-    );
-    const { buildDirectorServer, createDirectorCaps } = await import(
-      '@/capabilities/agency/server/meeting/director-tools'
-    );
     const { buildPiSpawnAgentTools } = await import('@/server/ai/tools/pi-subagent');
 
-    const evidence = buildEvidenceServer({
-      db: {} as never,
-      now: new Date(),
-      selfSourceKind: 'audit:tool-params',
-      capture: createFindingsCapture(),
-    });
-    const director = buildDirectorServer({
-      db: {} as never,
-      now: new Date(),
-      meetingContext: {
-        pending_conjectures: [],
-        candidate_cells: [],
-        recent_failure_summary: { window_days: 0, total_failures: 0, distinct_kcs: 0 },
-      },
-      knownConjectureKeys: new Set(),
-      caps: createDirectorCaps(),
-      triggerEventId: 'audit',
-      toolContextTaskRunId: 'audit',
-      parentLifecycleSignal: new AbortController().signal,
-      failureAttempts: [],
-      runTaskFn: (() => Promise.reject(new Error('audit stub — never called'))) as never,
-    });
     const spawn = buildPiSpawnAgentTools(
       {},
       { runNested: () => Promise.reject(new Error('audit stub — never called')) },
     );
-    for (const tool of [...evidence.tools, ...director.tools, ...spawn]) {
+    for (const tool of [...spawn]) {
       customTools.push({ wire: tool.name, parameters: tool.parameters });
     }
   }

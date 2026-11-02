@@ -118,14 +118,6 @@
       "count": 1
     },
     {
-      "path": "src/capabilities/practice/server/failure-learning-attribution.ts",
-      "count": 1
-    },
-    {
-      "path": "src/capabilities/practice/server/failure-learning-variant.ts",
-      "count": 1
-    },
-    {
       "path": "src/capabilities/practice/server/judge-operational.ts",
       "count": 1
     },
@@ -152,10 +144,6 @@
     {
       "path": "src/capabilities/practice/server/serving-actions.ts",
       "count": 1
-    },
-    {
-      "path": "src/capabilities/practice/server/stream-store.ts",
-      "count": 5
     },
     {
       "path": "src/capabilities/practice/server/tools/submit-question.ts",

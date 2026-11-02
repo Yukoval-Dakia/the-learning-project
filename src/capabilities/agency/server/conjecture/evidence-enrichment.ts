@@ -24,7 +24,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
 import { resolveKnownSubjectId, resolveSubjectProfile } from '@/subjects/profile';
-import { UNTRUSTED_TEXT_CHAR_CAP, wrapTruncatedLearnerText } from '../scout/untrusted-text';
+import { UNTRUSTED_TEXT_CHAR_CAP, wrapTruncatedLearnerText } from './untrusted-text';
 
 type DbLike = Db | Tx;
 

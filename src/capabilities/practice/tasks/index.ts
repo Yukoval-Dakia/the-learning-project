@@ -1,13 +1,18 @@
 import { defineOwnedTaskSpecs } from '@/ai/owned-task-specs';
+import {
+  attributionRerankTaskSpec,
+  attributionTaskSpec,
+  causeCategoryProposeTaskSpec,
+  variantGenTaskSpec,
+} from '../failure-learning/public';
+import { selectionOrchestratorTaskSpec } from '../scheduling/tasks/selection-orchestrator';
 import { sessionSummaryTaskSpec } from '../session/tasks/session-summary';
 import { assessmentRubricTaskSpec } from './assessment-rubric';
 import { assessmentRuleTaskSpec } from './assessment-rule';
-import { attributionRerankTaskSpec, attributionTaskSpec } from './attribution';
 import {
   bankConditionVerifyTaskSpec,
   bankRequirementInterpretTaskSpec,
 } from './bank-search-semantic';
-import { causeCategoryProposeTaskSpec } from './cause-category-propose';
 import { itemPriorLlasaTaskSpec, itemPriorTaskSpec } from './item-prior';
 import { jevScoringDecisionTaskSpec } from './jev-typed';
 import {
@@ -21,13 +26,11 @@ import { questionAuthorTaskSpec } from './question-author';
 import { quizGenTaskSpec } from './quiz-generation';
 import { quizPlanTaskSpec } from './quiz-planning';
 import { quizVerifyTaskSpec } from './quiz-verify';
-import { selectionOrchestratorTaskSpec } from './selection-orchestrator';
 import { solutionGenerateTaskSpec, solutionGenerateVisionTaskSpec } from './solution-generation';
 import { sourceGroundingVerifyTaskSpec } from './source-grounding-verify';
 import { sourcingTaskSpec } from './sourcing';
 import { supplyPlanTaskSpec } from './supply-planning';
 import { teachingQualityTaskSpec } from './teaching-quality';
-import { variantGenTaskSpec } from './variant-gen';
 import { variantVerifyTaskSpec } from './variant-verify';
 
 export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {

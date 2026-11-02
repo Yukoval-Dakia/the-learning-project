@@ -46,7 +46,7 @@ import {
   resolveModelProfile,
 } from './model-profiles';
 import { piCatalogCostUsd } from './pi-catalog-cost';
-import type { TokenCounts } from './pricing';
+import { type TokenCounts, isJevModel } from './pricing';
 import { acquireProviderSession } from './provider-session-admission';
 import {
   ProviderSessionAdmissionError,
@@ -326,7 +326,12 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     const estimate = estimateAbortedUsage(input.promptText, input.output);
     const provider = this.resolved.provider;
     let catalogCost: number | undefined;
-    if (provider === 'opencode-go' || provider === 'openai' || provider === 'xiaomi-token-plan') {
+    if (
+      provider === 'opencode-go' ||
+      provider === 'openai' ||
+      provider === 'xiaomi-token-plan' ||
+      (provider === 'openrouter' && !isJevModel(this.resolved.model))
+    ) {
       const priced = await piCatalogCostUsd(provider, this.resolved.model, estimate).catch(
         () => null,
       );

@@ -1,5 +1,18 @@
 // Placement waits for native evaluation and settlement before the next adaptive selection.
-import { useCallback, useMemo, useRef, useState } from 'react';
+// M3E presentation (YUK-1473, docs/design/2026-11-03-placement-m3e.md): only the markup and
+// styles changed; session, autosave, pagehide, judge polling and submit logic are as before.
+import {
+  ArrowRight,
+  Check,
+  CircleAlert,
+  Clock,
+  LoaderCircle,
+  RefreshCw,
+  Target,
+  Upload,
+  X,
+} from 'lucide-react';
+import { type ReactNode, useCallback, useMemo, useRef, useState } from 'react';
 import type { GroupEvidenceT, ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
@@ -20,13 +33,10 @@ import { uploadAsset } from '@/ui/lib/assets';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { computeLatencyMs } from '@/ui/lib/response-latency';
 import { subjectDisplayName } from '@/ui/lib/subject';
-import { Btn } from '@/ui/primitives/Btn';
-import { EmptyState } from '@/ui/primitives/EmptyState';
-import { ErrorState } from '@/ui/primitives/ErrorState';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { SkLines } from '@/ui/primitives/SkLines';
-import { ObSteps } from './ObSteps';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button, Chip, UiNextRoot } from '@/ui-next/public';
+import { OnboardingSteps } from './OnboardingSteps';
 import type {
   PlacementHeldExit,
   PlacementNextResult,
@@ -38,7 +48,7 @@ import type {
 } from './placement-api';
 import { type PlacementClient, usePlacementClient } from './placement-client';
 import { type StarterOutcome, starterStatus } from './starter-supply-status';
-import './onboarding.css';
+import './onboarding-m3e.css';
 
 const CAP = 8;
 // YUK-1489 — a save waits at most this long for a pending chained (pagehide) save; past it the
@@ -73,6 +83,42 @@ interface ExitSave {
   hold: () => void;
   resume: () => void;
 }
+// A state with no question (no goal, ended, preparing, failed …): one heading, one sentence
+// and the ways out. Presentation only.
+function PlacementState({
+  icon,
+  title,
+  text,
+  action,
+}: {
+  icon: ReactNode;
+  title: string;
+  text: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="un-ob-state">
+      <span className="un-ob-state-icon" aria-hidden="true">
+        {icon}
+      </span>
+      <h2 className="un-ob-question">{title}</h2>
+      <p className="un-ob-state-text">{text}</p>
+      {action && <div className="un-ob-actions un-ob-actions-start">{action}</div>}
+    </div>
+  );
+}
+
+// An error line; with a retry it is the ui-next RetryLine.
+function PlacementError({ text, onRetry }: { text: string; onRetry?: () => void }) {
+  if (onRetry) return <RetryLine message={text} onRetry={onRetry} />;
+  return (
+    <p className="un-ob-error" role="alert">
+      <CircleAlert size={16} aria-hidden="true" />
+      {text}
+    </p>
+  );
+}
+
 export interface ScreenPlacementProps {
   navigate: (to: string) => void;
 }
@@ -332,47 +378,49 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
       rootRef={attachScreen}
     >
       {exitFailure && (
-        <LoomCard pad>
-          <ErrorState text={`退出前未能确认保存或结束：${exitFailure.message}`} />
-          <Btn variant="secondary" onClick={() => void leaveProbe(exitFailure.destination)}>
-            重试保存并退出
-          </Btn>
-          <Btn variant="ghost" onClick={() => void leaveProbe(exitFailure.destination, true)}>
-            放弃未保存修改并退出
-          </Btn>
-        </LoomCard>
+        <section className="un-ob-section un-ob-panel">
+          <PlacementError text={`退出前未能确认保存或结束：${exitFailure.message}`} />
+          <div className="un-ob-actions un-ob-actions-start">
+            <Button variant="secondary" onClick={() => void leaveProbe(exitFailure.destination)}>
+              重试保存并退出
+            </Button>
+            <Button variant="ghost" onClick={() => void leaveProbe(exitFailure.destination, true)}>
+              放弃未保存修改并退出
+            </Button>
+          </div>
+        </section>
       )}
       {phase === 'loading' && (
-        <LoomCard pad padLg>
-          <SkLines rows={3} />
-        </LoomCard>
+        <section className="un-ob-section un-ob-panel">
+          <SkeletonLines rows={3} label="正在打开定位练习" />
+        </section>
       )}
       {phase === 'nogoal' && (
-        <LoomCard pad padLg>
-          <EmptyState
-            icon="target"
+        <section className="un-ob-section un-ob-panel">
+          <PlacementState
+            icon={<Target size={24} />}
             title="还没设定目标"
             text="定位练习需要先有一个学习目标来圈定范围。"
             action={
-              <Btn variant="primary" onClick={() => navigate('/welcome')}>
+              <Button variant="primary" onClick={() => navigate('/welcome')}>
                 去设定
-              </Btn>
+              </Button>
             }
           />
-        </LoomCard>
+        </section>
       )}
       {phase === 'error' && (
-        <LoomCard pad padLg>
-          <ErrorState
+        <section className="un-ob-section un-ob-panel">
+          <PlacementError
             text={errMsg ?? '定位练习无法恢复。'}
             onRetry={() => window.location.reload()}
           />
-        </LoomCard>
+        </section>
       )}
       {phase === 'terminal' && (
-        <LoomCard pad padLg>
-          <EmptyState
-            icon="check"
+        <section className="un-ob-section un-ob-panel">
+          <PlacementState
+            icon={<Check size={24} />}
             title="这次定位练习已结束"
             text={
               unresolved.length > 0
@@ -380,31 +428,32 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
                 : '这次定位练习不会自动重新开始。'
             }
             action={
-              <Btn variant="primary" onClick={() => navigate(profileDest())}>
+              <Button variant="primary" onClick={() => navigate(profileDest())}>
                 看档案
-              </Btn>
+              </Button>
             }
           />
           <UnresolvedNote items={unresolved} />
-        </LoomCard>
+        </section>
       )}
       {phase === 'ended' && (
-        <LoomCard pad padLg>
-          <EmptyState
-            icon="check"
+        <section className="un-ob-section un-ob-panel">
+          <PlacementState
+            icon={<Check size={24} />}
             title="定位练习已结束"
             text={`有 ${unresolved.length} 题没有计入结果，下面是原因。它们不算答错。`}
             action={
-              <Btn variant="primary" iconEnd="arrow" onClick={() => navigate(profileDest())}>
+              <Button variant="primary" onClick={() => navigate(profileDest())}>
                 看档案
-              </Btn>
+                <ArrowRight size={18} aria-hidden="true" />
+              </Button>
             }
           />
           <UnresolvedNote items={unresolved} />
-        </LoomCard>
+        </section>
       )}
       {phase === 'noitem' && noItem && (
-        <LoomCard pad padLg>
+        <section className="un-ob-section un-ob-panel">
           <NoItemStatus
             noItem={noItem}
             checking={checking}
@@ -412,11 +461,11 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
             onEnd={finish}
             onUpload={() => void leaveProbe('/onboarding/upload')}
           />
-          {errMsg && <ErrorState text={errMsg} onRetry={recheck} />}
-        </LoomCard>
+          {errMsg && <PlacementError text={errMsg} onRetry={recheck} />}
+        </section>
       )}
       {phase === 'sourcing' && (
-        <LoomCard pad padLg>
+        <section className="un-ob-section un-ob-panel">
           <SupplyStatus
             outcomes={supply}
             checking={checking}
@@ -424,16 +473,16 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
             onUpload={() => void leaveProbe('/onboarding/upload')}
             onSetGoal={() => void leaveProbe('/welcome')}
           />
-          {errMsg && <ErrorState text={errMsg} />}
-        </LoomCard>
+          {errMsg && <PlacementError text={errMsg} />}
+        </section>
       )}
       {phase === 'settling' && (
-        <LoomCard pad padLg>
-          <div className="ob-settle">
-            <div className="ob-settle-ring" />
-            <div className="ob-settle-t serif">正在收紧你的画像…</div>
+        <section className="un-ob-section un-ob-panel">
+          <div className="un-ob-settle" role="status">
+            <LoaderCircle size={28} className="un-ob-spin" aria-hidden="true" />
+            <p>正在收紧你的画像…</p>
           </div>
-        </LoomCard>
+        </section>
       )}
       {phase === 'answer' && qRef && (
         <>
@@ -449,10 +498,10 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
             leaving={leaving}
             client={transport.current}
           />
-          <div className="ob-pl-reassure">
-            <LoomIcon name="clock" size={14} />
+          <p className="un-ob-hint un-ob-reassure">
+            <Clock size={16} aria-hidden="true" />
             最多 {CAP} 题。答完才统一给反馈，先别急着看对错。
-          </div>
+          </p>
         </>
       )}
     </PlacementShell>
@@ -476,9 +525,9 @@ function NoItemStatus({
 }) {
   const preparing = [...new Set(noItem.preparing_subjects.map((id) => subjectDisplayName(id)))];
   return (
-    <div role="status" aria-live="polite">
-      <EmptyState
-        icon="clock"
+    <div role="status" aria-live="polite" className="un-ob-status">
+      <PlacementState
+        icon={<Clock size={24} />}
         title="暂时没有能出的题"
         text={
           preparing.length > 0
@@ -486,24 +535,28 @@ function NoItemStatus({
             : '目前也没有题在准备。可以先结束定位，或者上传自己的材料，从里面出题。'
         }
         action={
-          <div className="ob-pl-foot ob-pl-actions">
+          <>
             {noItem.options.includes('recheck') && (
-              <Btn variant="primary" icon="refresh" disabled={checking} onClick={onRecheck}>
+              <Button variant="primary" disabled={checking} onClick={onRecheck}>
+                <RefreshCw size={18} aria-hidden="true" />
                 {checking ? '正在检查…' : '重新检查'}
-              </Btn>
+              </Button>
             )}
             {noItem.options.includes('end') && (
-              <Btn variant="secondary" disabled={checking} onClick={onEnd}>
+              <Button variant="secondary" disabled={checking} onClick={onEnd}>
                 结束定位
-              </Btn>
+              </Button>
             )}
-          </div>
+          </>
         }
       />
       {preparing.length === 0 && (
-        <Btn variant="ghost" icon="record" disabled={checking} onClick={onUpload}>
-          上传自己的材料
-        </Btn>
+        <div className="un-ob-actions un-ob-actions-start">
+          <Button variant="ghost" disabled={checking} onClick={onUpload}>
+            <Upload size={18} aria-hidden="true" />
+            上传自己的材料
+          </Button>
+        </div>
       )}
     </div>
   );
@@ -521,8 +574,8 @@ function UnresolvedNote({ items }: { items: readonly PlacementUnresolvedItem[] }
   const counts = new Map<PlacementUnresolvedItem['reason'], number>();
   for (const item of items) counts.set(item.reason, (counts.get(item.reason) ?? 0) + 1);
   return (
-    <div className="ob-pl-unresolved">
-      <div className="ob-pl-unresolved-h">这几题没有判定</div>
+    <div className="un-ob-unresolved">
+      <h3 className="un-ob-unresolved-title">这几题没有判定</h3>
       <ul>
         {[...counts].map(([reason, n]) => (
           <li key={reason}>
@@ -550,17 +603,20 @@ function SupplyStatus({
 }) {
   const status = starterStatus(outcomes);
   const upload = (variant: 'primary' | 'secondary') => (
-    <Btn variant={variant} icon="record" onClick={onUpload}>
+    <Button variant={variant} onClick={onUpload}>
+      <Upload size={18} aria-hidden="true" />
       上传自己的材料
-    </Btn>
+    </Button>
   );
   const recheck = (variant: 'primary' | 'secondary', label = '再查一次') => (
-    <Btn variant={variant} icon="refresh" disabled={checking} onClick={onRecheck}>
+    <Button variant={variant} disabled={checking} onClick={onRecheck}>
+      <RefreshCw size={18} aria-hidden="true" />
       {checking ? '正在查…' : label}
-    </Btn>
+    </Button>
   );
+  const more = (node: ReactNode) => <div className="un-ob-actions un-ob-actions-start">{node}</div>;
   return (
-    <div role="status" aria-live="polite">
+    <div role="status" aria-live="polite" className="un-ob-status">
       {supplyBody()}
     </div>
   );
@@ -568,29 +624,30 @@ function SupplyStatus({
     switch (status.kind) {
       case 'need_goal':
         return (
-          <EmptyState
-            icon="target"
+          <PlacementState
+            icon={<Target size={24} />}
             title="还缺学习目标"
             text="先说清这次要学什么，才能为你准备题目。"
             action={
-              <Btn variant="primary" icon="target" onClick={onSetGoal}>
+              <Button variant="primary" onClick={onSetGoal}>
+                <Target size={18} aria-hidden="true" />
                 去设定目标
-              </Btn>
+              </Button>
             }
           />
         );
       case 'preparing':
         return (
           <>
-            <EmptyState
-              icon="clock"
+            <PlacementState
+              icon={<Clock size={24} />}
               title="正在准备题目 · 还不能开始"
               text="准备好后这里会出现第一题。可以先离开，回来再查。"
               action={recheck('primary')}
             />
             {status.lastFailure && (
-              <p className="ob-pl-supply-note">
-                <span className="badge tone-hard">上次没成功</span>
+              <p className="un-ob-supply-note">
+                <Chip tone="critical">上次没成功</Chip>
                 {status.lastFailure}，稍后会自动重试。
               </p>
             )}
@@ -599,36 +656,36 @@ function SupplyStatus({
       case 'ready':
         return (
           <>
-            <EmptyState
-              icon="check"
+            <PlacementState
+              icon={<Check size={24} />}
               title="题目准备好了"
               text="加载第一题就可以开始。加载后仍然没有题的话，可以先上传自己的材料。"
               action={recheck('primary', '加载题目')}
             />
-            {upload('secondary')}
+            {more(upload('secondary'))}
           </>
         );
       case 'failed':
         return (
           <>
-            <EmptyState
-              icon="alert"
+            <PlacementState
+              icon={<CircleAlert size={24} />}
               title="没能准备好题目"
               text="可以上传自己的材料，从里面出题；也可以稍后再试一次。"
               action={upload('primary')}
             />
-            <p className="ob-pl-supply-note">
-              <span className="badge tone-hard">原因</span>
+            <p className="un-ob-supply-note">
+              <Chip tone="critical">原因</Chip>
               {status.reason}
             </p>
-            {recheck('secondary')}
+            {more(recheck('secondary'))}
           </>
         );
       case 'unknown':
         return (
           <>
-            <EmptyState
-              icon="alert"
+            <PlacementState
+              icon={<CircleAlert size={24} />}
               title="还不确定题目有没有准备好"
               text={
                 status.final
@@ -637,17 +694,17 @@ function SupplyStatus({
               }
               action={status.final ? upload('primary') : recheck('primary')}
             />
-            <p className="ob-pl-supply-note">
-              <span className="badge tone-hard">原因</span>
+            <p className="un-ob-supply-note">
+              <Chip tone="critical">原因</Chip>
               {status.reason}
             </p>
-            {!status.final && upload('secondary')}
+            {!status.final && more(upload('secondary'))}
           </>
         );
       default:
         return (
-          <EmptyState
-            icon="clock"
+          <PlacementState
+            icon={<Clock size={24} />}
             title="暂时没有可以继续的题"
             text="这个目标现有的题已经用完，目前没有新的题在准备。可以上传自己的材料，从里面出题。"
             action={upload('primary')}
@@ -672,41 +729,47 @@ function PlacementShell({
 }) {
   const shown = Math.min(done ? answeredCount : answeredCount + 1, CAP);
   return (
-    <div className="page ob-pl" ref={rootRef}>
-      <div className="page-head">
-        <div className="eyebrow">PLACEMENT · θ̂ · FSRS live</div>
-        <ObSteps active="placement" />
-        <div className="page-head-row">
-          <h1 className="page-title serif">定位练习</h1>
-          <Btn variant="ghost" icon="close" onClick={onExit}>
+    <UiNextRoot ref={rootRef} className="un-ob" data-un-m3e="practice-foundation">
+      <main className="un-ob-main un-m3e-bridge">
+        <OnboardingSteps active="placement" />
+        <header className="un-ob-heading">
+          <h1>定位练习</h1>
+          <Button variant="ghost" onClick={onExit}>
+            <X size={18} aria-hidden="true" />
             退出
-          </Btn>
-        </div>
-      </div>
-      <div className="ob-pl-bar">
-        <div className="ob-pl-prog">
-          <div className="ob-pl-prog-h">
-            <span className="ob-pl-prog-k">
-              第 <b>{shown}</b> / 最多 {CAP} 题
+          </Button>
+        </header>
+        <div className="un-ob-pl-progress">
+          <div className="un-ob-pl-progress-head">
+            <span>
+              第 <strong>{shown}</strong> / 最多 {CAP} 题
             </span>
-            <span className="ob-pl-prog-cap">{done ? '已答完' : '答到 cap 或收敛即止'}</span>
+            <span className="un-ob-pl-progress-cap">
+              {done ? '已答完' : '答满或已经足够判断时就停'}
+            </span>
           </div>
-          <div className="ob-pl-track">
+          <div className="un-ob-pl-track" aria-hidden="true">
             {Array.from({ length: CAP }).map((_, i) => (
               <span
                 // biome-ignore lint/suspicious/noArrayIndexKey: fixed-length cap track, index is the stable identity
                 key={i}
-                className={`ob-pl-seg${
-                  i < answeredCount ? ' is-done' : !done && i === answeredCount ? ' is-cur' : ''
-                }`}
+                className="un-ob-pl-seg"
+                data-state={segState(i, answeredCount, done)}
               />
             ))}
           </div>
         </div>
-      </div>
-      {children}
-    </div>
+        {children}
+      </main>
+    </UiNextRoot>
   );
+}
+
+// OCR #551: no nested ternaries — the segment state as a small function.
+function segState(i: number, answeredCount: number, done?: boolean): 'done' | 'current' | 'next' {
+  if (i < answeredCount) return 'done';
+  if (!done && i === answeredCount) return 'current';
+  return 'next';
 }
 
 // Uploaded attachments as the native group evidence the draft and submission carry.
@@ -1100,9 +1163,9 @@ function PlacementQuestionCard({
     }
   };
   return (
-    <LoomCard pad padLg className="fade-key" ref={attachCard}>
-      <div className="ob-pl-meta">
-        <span className="meta mono">{qRef.questionId.slice(0, 12)}</span>
+    <div ref={attachCard} className="un-ob-section un-ob-panel un-ob-pl-card">
+      <div className="un-ob-pl-meta">
+        <span className="un-ob-pl-qid">{qRef.questionId.slice(0, 12)}</span>
       </div>
       {frozen?.materials.map((material) => (
         <div key={material.material_id}>
@@ -1117,19 +1180,21 @@ function PlacementQuestionCard({
         </div>
       ))}
       {frozen?.faces.map((face) => (
-        <MathMarkdown key={face.part_id} className="ob-pl-stem">
+        <MathMarkdown key={face.part_id} className="un-ob-pl-stem">
           {face.prompt_md}
         </MathMarkdown>
       ))}
       {unavailable ? (
-        <ErrorState text="这道题需要当前页面尚不支持的作答控件。可以退出并保留这次定位练习的记录。" />
+        <PlacementError text="这道题需要当前页面尚不支持的作答控件。可以退出并保留这次定位练习的记录。" />
       ) : (
         <>
           <SaveStateChip state={conflict ? 'conflict' : autosave.state} onRetry={autosave.retry} />
           {conflict && (
-            <Btn variant="secondary" onClick={() => void recover()}>
-              重新加载服务端草稿 · 放弃本地修改
-            </Btn>
+            <div className="un-ob-actions un-ob-actions-start">
+              <Button variant="secondary" onClick={() => void recover()}>
+                重新加载服务端草稿 · 放弃本地修改
+              </Button>
+            </div>
           )}
           {frozen.response_spec.slots.map((slot) => {
             const spec = nativeSlotFieldSpec(slot);
@@ -1162,59 +1227,55 @@ function PlacementQuestionCard({
         </>
       )}
       {error && (
-        <ErrorState
+        <PlacementError
           text={error}
           onRetry={heldExit && !submitting ? () => void release() : undefined}
         />
       )}
       {heldExit && (
-        <p className="ob-pl-held-note" role="status">
+        <p className="un-ob-pl-held-note" role="status">
           这题的作答已经收到，但现在没法判分。可以先放过它继续下一题，它不会算作答错；也可以现在结束定位。
         </p>
       )}
-      <div className="ob-pl-foot">
+      <div className="un-ob-actions">
         {status === 'answering' && (
-          <Btn
-            variant="primary"
-            iconEnd="arrow"
-            disabled={!canSubmit}
-            onClick={() => void commit()}
-          >
+          <Button variant="primary" disabled={!canSubmit} onClick={() => void commit()}>
             {submitting ? '记录中…' : answeredCount + 1 >= CAP ? '完成定位 · 看档案' : '下一题'}
-          </Btn>
+            <ArrowRight size={18} aria-hidden="true" />
+          </Button>
         )}
         {status === 'retry' && (
-          <Btn variant="primary" disabled={submitting || leaving} onClick={() => void commit()}>
+          <Button variant="primary" disabled={submitting || leaving} onClick={() => void commit()}>
             继续处理已接收作答
-          </Btn>
+          </Button>
         )}
         {(status === 'pending' || status === 'waiting') && (
-          <span role="status">作答已接收 · 等待定位结果</span>
+          <span role="status" className="un-ob-pl-status">
+            作答已接收 · 等待定位结果
+          </span>
         )}
         {heldExit && (
           <>
-            <Btn
-              variant="primary"
-              iconEnd="arrow"
-              disabled={submitting}
-              onClick={() => void release()}
-            >
+            <Button variant="primary" disabled={submitting} onClick={() => void release()}>
               {submitting ? '正在继续…' : '继续'}
-            </Btn>
-            <Btn variant="secondary" disabled={submitting} onClick={onEnd}>
+              <ArrowRight size={18} aria-hidden="true" />
+            </Button>
+            <Button variant="secondary" disabled={submitting} onClick={onEnd}>
               结束定位
-            </Btn>
+            </Button>
           </>
         )}
         {!heldExit && (status === 'held' || status === 'uncertain') && (
           <>
-            <span role="status">等待确认作答状态</span>
-            <Btn variant="secondary" disabled={submitting} onClick={() => void recover()}>
+            <span role="status" className="un-ob-pl-status">
+              等待确认作答状态
+            </span>
+            <Button variant="secondary" disabled={submitting} onClick={() => void recover()}>
               重新查询状态
-            </Btn>
+            </Button>
           </>
         )}
       </div>
-    </LoomCard>
+    </div>
   );
 }

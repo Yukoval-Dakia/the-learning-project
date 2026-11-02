@@ -241,13 +241,6 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envParse: flagEnv,
     tier: 'A',
   },
-  RESEARCH_MEETING_AGENT_ENABLED: {
-    schema: z.boolean(),
-    codeDefault: false,
-    envName: 'RESEARCH_MEETING_AGENT_ENABLED',
-    envParse: flagEnv,
-    tier: 'A',
-  },
   JUDGE_CALIBRATION_SAMPLING_ENABLED: {
     schema: z.boolean(),
     codeDefault: false,

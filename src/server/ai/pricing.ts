@@ -74,12 +74,17 @@ export const JEV_PRICEBOOK_VERSION = '2026-09-24-openrouter-typesafe-jev-v1';
 export const JEV_REQUEST_MODEL = 'typesafe/jev-1.13';
 export const JEV_CANONICAL_MODEL = 'typesafe/jev-1.13-20260917';
 
+/** The OpenRouter typed decisions model; every other OpenRouter id is a pi chat model. */
+export function isJevModel(model: string): boolean {
+  return model.startsWith('typesafe/jev');
+}
+
 /**
  * Local USD estimate: input tokens × 4.2e-8, output free. Unknown model or
  * non-finite/negative counts ⇒ null (unknown, never zero).
  */
 export function jevLocalCostUsd(model: string, tokens: TokenCounts): number | null {
-  if (!model.startsWith('typesafe/jev')) return null;
+  if (!isJevModel(model)) return null;
   // A real paid call consumes input tokens; usage evidence with inputTokens<=0
   // (or a wholly absent usage block recorded as zeros) is no token evidence —
   // unknown cost, never a fabricated $0.

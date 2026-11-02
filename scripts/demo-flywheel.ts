@@ -26,7 +26,6 @@ import { loadSubjectBriefEvents } from '@/capabilities/agency/server/memory/acti
 import { regenerateMemoryBrief } from '@/capabilities/agency/server/memory/brief';
 import { buildBriefGenerator } from '@/capabilities/agency/server/memory/brief-writer';
 import { executeMemoryBrief } from '@/capabilities/copilot/public';
-import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/public';
 import { db } from '@/db/client';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { listActiveGoals } from '@/kernel/read-models/active-goal-scope';
@@ -135,15 +134,8 @@ async function main() {
     return r;
   });
 
-  // 8) Edge-propose (real LLM)
-  await step('8. edge-propose → runKnowledgeEdgeProposeNightly', async () => {
-    const r = await runKnowledgeEdgeProposeNightly(db, {});
-    show('result', r);
-    return r;
-  });
-
-  // 9) Final inbox snapshot
-  await step('9. proposal inbox snapshot', async () => {
+  // 8) Final inbox snapshot
+  await step('8. proposal inbox snapshot', async () => {
     const inbox = await listProposalInboxRows(db);
     show(
       'inbox by kind',

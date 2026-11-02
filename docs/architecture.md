@@ -42,7 +42,7 @@
 - 进程：独立 worker（prod `dist/worker.cjs`，dev `scripts/worker.ts`）；dev 的 app 进程因 `RW_WORKER=1` 也会挂一份。启动配方在 `src/server/boss/start-worker.ts`：基础设施队列 `registerHandlers` → capability jobs `registerCapabilityJobs` → verify 补发 → event subscription → orchestrator。
 - 每个 job 独立队列；manifest 的 `queue` 只是档位（`llm` / `agent` / `fast`）。llm / agent 有 `<name>_dlq`、`retryLimit=2`、30s 退避；fast 无 DLQ（`src/server/boss/queue-config.ts`）。
 - 调度有两种：带 `schedule` 的是裸 cron（`boss.schedule`，按 `tz`）；带 `dependsOn`（含 `[]`）的是夜间 DAG 成员，自身不注册 cron。DAG 只有一根锚点 `nightly_orchestrator`，`30 2 * * *` Asia/Shanghai，启动补跑窗口 5h，tick 60s 自续；硬边失败跳过下游，soft 边照跑并记 stale（`src/server/orchestration/constants.ts`、`src/kernel/job-dag.ts`）。
-- DAG 成员与根以各 capability `manifest.ts` 的 `dependsOn` 为准，例如 `dreaming_nightly`、`coach_daily`、`knowledge_edge_propose_nightly`、`knowledge_maintenance_nightly`、`item_prior_backfill`、`recalibration_nightly`、`embed_backfill`、`answer_class_backfill`。
+- DAG 成员与根以各 capability `manifest.ts` 的 `dependsOn` 为准，例如 `dreaming_nightly`、`coach_daily`、`knowledge_maintenance_nightly`、`item_prior_backfill`、`recalibration_nightly`、`embed_backfill`、`answer_class_backfill`。
 - 域 handler 在 `src/capabilities/<name>/jobs/*.ts`；中央 `src/server/boss/handlers.ts` 只留基础设施（`echo`、`promote_conversation_idle`、verify 补发、memory 队列）。
 
 ### DBOS durable 路径
@@ -312,7 +312,7 @@ DDL 唯一真相源是 `src/db/schema.ts`（单文件、按段注释）；本节
 - `answer` / `learning_session` / `event`。
 - 观测与费用：`ai_task_runs` / `tool_call_log` / `tool_operation` / `cost_ledger` / `provider_attempt` / `job_events`。
 
-**读模型 vs 投影表**：`QuestionActivitySummary` 与周报（`loadWeeklyReview` 按窗口聚合 event，`src/capabilities/practice/server/review-weekly.ts`）是即时读模型、不落表；p(L) 诊断在 `mastery_state`、FSRS 调度在 `material_fsrs_state`（随 `action='review'` 同事务写），都是物理投影表。
+**读模型 vs 投影表**：`QuestionActivitySummary` 与周报（`loadWeeklyReview` 按窗口聚合 event，`src/capabilities/practice/scheduling/server/review-weekly.ts`）是即时读模型、不落表；p(L) 诊断在 `mastery_state`、FSRS 调度在 `material_fsrs_state`（随 `action='review'` 同事务写），都是物理投影表。
 
 **已 DROP，只作迁移背景**：`mistake`（改由 attempt event 表达，`outcome='failure'` 即错题视图）、`judgment` + `user_appeal`（改由 judge event）、`dreaming_proposal`（改由 propose event）、`review_event`、`ingestion_session`。`MemoryItem` / `MaintenanceSuggestion` 从未建表；记忆 brief 落 `memory_brief_note`。
 

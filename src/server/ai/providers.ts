@@ -120,7 +120,11 @@ const PROVIDERS: Record<KnownProvider, BoundProviderConfig> = {
     authMode: 'key',
     apiKeyEnv: 'OPENROUTER_API_KEY',
     description:
-      'OpenRouter gateway — TYPED decisions lane only (native /api/v1/systemone, YUK-1049); no chat façade',
+      'OpenRouter gateway — pi OpenAI-compatible chat/agent lane plus the native typed decisions endpoint (/api/v1/systemone, YUK-1049)',
+    modelDefaults: {
+      // pi usage.cost is the catalog rate-card estimate, never a transport-enforced budget.
+      execution: { meteredUsd: false },
+    },
     models: {
       // Provider-reported cost is not a transport-enforced budget.
       'typesafe/jev-1.13': {
@@ -342,9 +346,9 @@ export function providerAuthSurface(): readonly ProviderAuthSurfaceRow[] {
   return [...known, ...custom];
 }
 
-// YUK-608 — the KEY-auth providers actually wired to a working endpoint. openrouter / gateway
-// are reserved-but-not-implemented (their wire shapes differ) and `resolveTaskProvider`
-// throws for them below. 'anthropic-sub' is the OAuth lane (handled before the key branch), so it
+// YUK-608 — the KEY-auth providers actually wired to a working endpoint. gateway
+// is reserved-but-not-implemented (its wire shape differs) and `resolveTaskProvider`
+// throws for it below. 'anthropic-sub' is the OAuth lane (handled before the key branch), so it
 // is NOT in this key-auth set; `isProviderImplemented` folds it back in via `isOauthProvider`.
 // YUK-921 P4 (YUK-1025) — post-SDK-retirement the pi adapter serves every
 // implemented provider: 'opencode-go' joined the key-auth set when Adapter A
@@ -356,6 +360,7 @@ const IMPLEMENTED_KEY_PROVIDERS: ReadonlySet<Provider> = new Set([
   'zhipuai-coding-plan',
   'opencode-go',
   'openai',
+  'openrouter',
 ]);
 
 /**
@@ -390,10 +395,14 @@ export function providerAuthProbeModel(provider: Provider): string | undefined {
   return AUTH_PROBE_PIN[provider];
 }
 
-/** Implemented lanes, stable order. OpenRouter stays out: it is typed-only. */
+/**
+ * Implemented lanes the catalog /models check and paid auth probe cover, stable
+ * order. OpenRouter is a chat lane but deliberately unprobed: no probe model is
+ * pinned, so enabling it adds no background provider traffic or spend.
+ */
 export function implementedProviderIds(): readonly Provider[] {
   const known = (Object.keys(PROVIDERS) as KnownProvider[])
-    .filter((provider) => isProviderImplemented(provider))
+    .filter((provider) => provider !== 'openrouter' && isProviderImplemented(provider))
     .sort();
   const custom = customProviderDefinitions().map((definition) => definition.id as Provider);
   return [...known, ...custom];
@@ -438,31 +447,15 @@ export function providerModelsRoot(
   }
 }
 
-// YUK-1049 — the openrouter lane is implemented ONLY for typed-execution
-// tasks (execution:'typed'): its wired surface is the native decisions
-// endpoint, not the chat façade pi drives. The lane is deliberately absent
-// from IMPLEMENTED_KEY_PROVIDERS/isProviderImplemented so generic routing and
-// override pre-flights still classify it as not-wired; resolveTaskProvider
-// consults this predicate instead, keyed on the resolved task's own
-// execution kind — a chat task can never resolve onto the typed lane, and a
-// typed task resolves here even though the generic predicate says unimplemented.
+// Custom providers are chat lanes only: their configured protocol has no typed
+// wire contract. Every other lane answers with the generic wired predicate.
 export function isProviderImplementedForTask(provider: Provider, kind: TaskKind): boolean {
-  // Custom providers are chat lanes only: their configured protocol has no
-  // typed wire contract.
   if (looksLikeCustomProviderId(provider)) {
     return (
       ((tasks[kind] as TaskDefinition).execution ?? 'chat') === 'chat' &&
       customProviderDefinition(provider) !== undefined
     );
   }
-  // The catalog map's value is the union of every spec's literal shape;
-  // `execution` is an optional declared field — read through the interface
-  // view (same pattern as TaskDefinition reads in run-lifecycle.ts).
-  if (
-    ((tasks[kind] as TaskDefinition).execution ?? 'chat') === 'typed' &&
-    provider === 'openrouter'
-  )
-    return true;
   return isProviderImplemented(provider);
 }
 
