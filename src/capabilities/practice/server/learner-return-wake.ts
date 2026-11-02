@@ -23,7 +23,7 @@ export const LEARNER_RETURN_WAKE_QUEUE = 'learner_return_wake';
 const WAKE_SINGLETON_SECONDS = 180;
 const WAKE_ACTIONS = new Set<string>(LEARNING_EVENT_ACTIONS);
 
-// enqueueBriefRegen 的队列契约。练习层不引用 server/memory。
+// enqueueBriefRegen 的队列契约。练习层不引用 Agency 记忆管线。
 const MEMORY_BRIEF_REGEN_QUEUE = 'memory_brief_regen';
 const REGEN_SINGLETON_SECONDS = 6 * 60;
 

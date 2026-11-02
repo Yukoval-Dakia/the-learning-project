@@ -60,6 +60,7 @@ import type {
   readPracticeDraftList,
   readPracticeQuestionList,
   readQuestionDetail,
+  readWorksheetExport,
   recomposePracticeStream,
   releaseHeldPlacement,
   restorePracticeQuestion,
@@ -270,7 +271,9 @@ export type FrontdoorContext = {
     >['payload']
   >;
   readPlacementProfile: (goalId: string) => Promise<PlacementProfileResponse>;
-  legacySpa: Hono;
+  readWorksheetExport: (
+    token: string,
+  ) => Promise<NonNullable<Awaited<ReturnType<typeof readWorksheetExport>>>>;
   startAssets: Hono;
 };
 

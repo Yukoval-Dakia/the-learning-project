@@ -5,7 +5,7 @@
 > Substrate decisions: [ADR-0015](../adr/0015-learning-record-memory-brief.md) (brief as
 > first-class entity) and [ADR-0017](../adr/0017-memory-mem0-plus-brief-layer.md) (Mem0 + brief
 > layer: scope taxonomy, write triggers, anti-storm, cost). Code:
-> `src/server/memory/{brief,triggers,active-subjects,client}.ts`；scope tagging 在
+> `src/capabilities/agency/server/memory/{brief,triggers,active-subjects}.ts`、`src/server/ai/mem0/client.ts`；scope tagging 在
 > `src/kernel/events/scope-tagger.ts`。
 
 ## What it is

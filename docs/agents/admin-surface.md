@@ -26,14 +26,14 @@ the workbench cost indicator and does not have a separate admin page.
 
 The manifest uses bracketed parameter segments such as `[id]`. At composition time,
 `server/app.ts::toHonoPath` converts them to Hono parameters such as `:id`. TanStack Router uses
-`$id` for the corresponding SPA page segment.
+`$id` for the corresponding Start page segment.
 
 ## Auth Boundary
 
-- Page routes are Vite SPA surfaces registered from `src/kernel/ui-surfaces.ts` and assembled by
-  `web/src/router.tsx`.
-- `web/src/main.tsx` wraps the entire router in `web/src/TokenGate.tsx`; authentication is not an
-  admin-only layout concern.
+- Page routes are TanStack Start routes under `server/start/routes/`; their paths come from
+  `src/kernel/ui-surfaces.ts`.
+- Every Start route wraps its page in `web/src/TokenGate.tsx` (via `StartWorkbenchShell`);
+  authentication is not an admin-only layout concern.
 - API contracts and lazy handlers live in `src/capabilities/observability/manifest.ts` and are
   mounted by `server/app.ts::buildHonoApp`.
 - `server/app.ts` applies a fail-closed `x-internal-token` check to every `/api/*` request. Missing

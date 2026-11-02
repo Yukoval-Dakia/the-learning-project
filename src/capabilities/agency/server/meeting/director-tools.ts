@@ -46,8 +46,7 @@ import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { type TaskTextRunFn, makeRunTaskFn } from '../ai-runtime';
 import { filterPrimaryEvidenceRefs, isPrimaryEvidenceRef } from '../scout/report-findings';
 import {
   DIRECTOR_SERVER_NAME,

@@ -1,7 +1,7 @@
 import {
   type MemoryIngestReplayRequest,
   MemoryIngestReplayRequestSchema,
-} from '../../src/server/memory/memory-ingest-recovery-contract';
+} from '../../src/capabilities/agency/server/memory/memory-ingest-recovery-contract';
 
 export const MEMORY_INGEST_RECOVERY_HELP = `Memory ingest recovery (single-event operator tool)
   list [--after ID] [--limit 1..100]       read-only stalled marker inventory
