@@ -175,7 +175,7 @@ Independently-registered tactical planner with a narrow surface (CO §6.1:668-67
 
 ## Cross-统合 Map 缺口（5 区之外 U4 还依赖、未勘察的角落）
 
-5 张 map（judge/memory/coach/runtime/tests）覆盖了主路径，但以下 U4 实依赖的角落**无 map 覆盖**，impl lane 须当场勘察，不得凭 map 推断：
+5 张 map（judge/memory/coach/runtime/tests）覆盖了主路径，但以下 U4 实依赖的角落**无 map 覆盖**，impl lane 须当场勘察：
 
 1. **`task-prompts.ts` `getTaskSystemPrompt` pass-through 分组（统合已勘察，确证）** —— `CoachTask`/`DreamingTask` 命中 `task-prompts.ts:765-774` 的 pass-through `case` 组（`return tasks[task].systemPrompt`，即直接用 registry 内联 systemPrompt）。`ReviewPlanTask` 用同样的 registry-inline systemPrompt 形态（§④），故**必须把 `'ReviewPlanTask'` 加进 `task-prompts.ts:765-774` 的 pass-through `case` 列表**，否则 `getTaskSystemPrompt('ReviewPlanTask')` 落到 default 分支取不到 prompt。这是 registry 注册之外的第二处必改点，原 plan §④ 漏列。**impl lane 在 §④ registry 改动同 commit 内加此 case。**
 2. **`mcp-bridge.ts` 的 `createSdkMcpServer` 工具数上限 / 命名碰撞** —— runtime map 只说 `buildMcpServerFromRegistry` 在 L138+ 按名解析。`review_plan` surface 新增 4 工具 + L-memtool 的 `search_memory_facts`，但 bridge 是否对 surface 工具数、或对 `read_*`/`write_*` 命名前缀有隐式约束未勘察。低风险但未证。
