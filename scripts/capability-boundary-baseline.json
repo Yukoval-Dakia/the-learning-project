@@ -7123,6 +7123,14 @@
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-6b1cd8b4-93b1-4f47-baf5-7721bb3218c7"
     },
     {
+      "debt": "capabilityToServer",
+      "pair": "practice -> proposals",
+      "date": "2026-11-01",
+      "from": 4,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
       "debt": "crossCapabilityValue",
       "pair": "shell -> knowledge",
       "date": "2026-11-01",
@@ -11227,6 +11235,56 @@
       "issue": "YUK-1571",
       "owns": "Generation success enqueues verification intent through the kernel handoff writer inside the same transaction boundary as today.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/cause-catalog.ts",
+      "module": "src/kernel/proposals/inbox.ts",
+      "kind": "value",
+      "symbols": ["pendingProposalWithCooldown"],
+      "issue": "YUK-1570",
+      "owns": "直接消费既有完整proposal inbox读取与冷却判定 canonical；原Practice caller的业务资格、调用顺序、事务/锁、幂等与恢复不变，退出无逻辑practice-runtime纯转出。",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "module": "src/kernel/proposals/inbox.ts",
+      "kind": "value",
+      "symbols": ["hasProposalWithCooldownKey"],
+      "issue": "YUK-1570",
+      "owns": "直接消费既有完整proposal inbox读取与冷却判定 canonical；原Practice caller的业务资格、调用顺序、事务/锁、幂等与恢复不变，退出无逻辑practice-runtime纯转出。",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "module": "src/kernel/proposals/producers.ts",
+      "kind": "value",
+      "symbols": ["writeVariantQuestionProposal"],
+      "issue": "YUK-1570",
+      "owns": "直接消费既有完整proposal variant提议写入 canonical；原Practice caller的业务资格、调用顺序、事务/锁、幂等与恢复不变，退出无逻辑practice-runtime纯转出。",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/proposal-accept-applier.ts",
+      "module": "src/kernel/proposals/signals.ts",
+      "kind": "value",
+      "symbols": ["recordProposalDecisionSignal"],
+      "issue": "YUK-1570",
+      "owns": "直接消费既有完整proposal 决定反馈与重建 canonical；原Practice caller的业务资格、调用顺序、事务/锁、幂等与恢复不变，退出无逻辑practice-runtime纯转出。",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/proposal-appliers.ts",
+      "module": "src/kernel/proposals/signals.ts",
+      "kind": "value",
+      "symbols": ["ensureProposalDecisionSignal", "recordProposalDecisionSignal"],
+      "issue": "YUK-1570",
+      "owns": "直接消费既有完整proposal 决定反馈与重建 canonical；原Practice caller的业务资格、调用顺序、事务/锁、幂等与恢复不变，退出无逻辑practice-runtime纯转出。",
+      "date": "2026-10-30"
     }
   ],
   "sourceSizeRecords": [
@@ -12389,7 +12447,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 159,
+      "total": 155,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -12421,7 +12479,6 @@
         "practice -> fsrs": 2,
         "practice -> mastery": 2,
         "practice -> memory": 1,
-        "practice -> proposals": 4,
         "practice -> questions": 1,
         "shell -> boss": 1,
         "shell -> proposals": 1,
