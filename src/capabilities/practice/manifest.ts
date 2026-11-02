@@ -803,6 +803,8 @@ export const practiceCapability = defineCapability({
       {
         name: 'supply_execute',
         queue: 'agent',
+        // Placement deliveries need job id/retryCount/startedOn/expiry/signal for attempt authority.
+        includeMetadata: true,
         load: () => import('./jobs/supply_execute').then((m) => m.buildSupplyExecuteHandler),
       },
       {
