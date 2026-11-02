@@ -91,8 +91,9 @@ function isMastered(
 }
 
 /**
- * Pending proposed prerequisite edges by the shared event-scan rule. This is the
- * rail's display set; the frontier writer dedups against the inbox gate instead.
+ * Pending proposed prerequisite edges by the kernel's inbox-pending predicate, so a
+ * corrected or decided proposal never shows as 待确认. The frontier writer dedups
+ * against the inbox gate itself.
  */
 async function loadPendingPrereqProposals(db: Db): Promise<PendingPrereqProposal[]> {
   const proposeRows = await db
