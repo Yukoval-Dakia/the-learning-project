@@ -1,7 +1,6 @@
 // Workbench aggregation read model: KPIs, active goal, and the seven-day activity heat.
 
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { queryReviewDue } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import {
   artifact,
@@ -55,8 +54,13 @@ export interface WorkbenchSummary {
   week_heat: WorkbenchHeatDay[];
 }
 
-async function countDue(db: Db): Promise<number> {
-  const { rows } = await queryReviewDue(db, { limit: KPI_SAMPLE_LIMIT });
+/** Practice owns the actionable review queue; the composition layer supplies its read. */
+export interface WorkbenchSummaryParts {
+  queryReviewDue: (db: Db, input: { limit: number }) => Promise<{ rows: readonly unknown[] }>;
+}
+
+async function countDue(db: Db, parts: WorkbenchSummaryParts): Promise<number> {
+  const { rows } = await parts.queryReviewDue(db, { limit: KPI_SAMPLE_LIMIT });
   return rows.length;
 }
 
@@ -191,7 +195,10 @@ async function loadWeekHeat(db: Db): Promise<WorkbenchHeatDay[]> {
   return [...rows].map((row) => ({ day: row.day, count: row.count }));
 }
 
-export async function loadWorkbenchSummary(db: Db): Promise<WorkbenchSummary> {
+export async function loadWorkbenchSummary(
+  db: Db,
+  parts: WorkbenchSummaryParts,
+): Promise<WorkbenchSummary> {
   const [
     proposals,
     dueCount,
@@ -203,7 +210,7 @@ export async function loadWorkbenchSummary(db: Db): Promise<WorkbenchSummary> {
     persistedPresence,
   ] = await Promise.all([
     loadTodayProposalKpi(db),
-    countDue(db),
+    countDue(db, parts),
     countPendingAttribution(db),
     countKnowledge(db),
     loadActiveGoalState(db),

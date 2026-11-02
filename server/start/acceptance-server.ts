@@ -5,11 +5,13 @@ import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
 import { getServerEnv, requireApiInternalToken, resolveApiPort } from '@/server/env';
 import { buildHonoApp } from '../app';
+import { assertComposedRoutesDeclared } from '../composed-routes';
 import { createFrontdoor } from '../frontdoor';
 
 const env = getServerEnv();
 requireApiInternalToken(env);
 const port = resolveApiPort(env.API_PORT);
+assertComposedRoutesDeclared(capabilities);
 const fetch = await createFrontdoor(buildHonoApp(capabilities));
 const server = serve({ fetch, hostname: '127.0.0.1', port });
 

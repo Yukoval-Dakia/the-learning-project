@@ -58,7 +58,10 @@ import {
   mistakeVariantsWithGenesisAnchor,
   projectMistakeVariantGuarded,
 } from '@/kernel/records/mistake-variant-facts';
-import { gatherAndFoldQuestionBlock } from '@/kernel/records/question-block-projection';
+import {
+  gatherAndFoldQuestionBlock,
+  projectQuestionBlockGuarded,
+} from '@/kernel/records/question-block-projection';
 import { gatherAndFoldItemCalibration } from './gather';
 import { projectItemCalibrationGuarded } from './item_calibration';
 import {
@@ -68,7 +71,6 @@ import {
   questionBlocksWithGenesisAnchor,
 } from './parity';
 import { PROJECTION_FOLDS, type PureFold } from './projection-folds';
-import { projectQuestionBlockGuarded } from './question_block';
 import { itemCalibrationRowToSnapshot, questionBlockRowToSnapshot } from './snapshot-mappers';
 
 type DbLike = Db | Tx;

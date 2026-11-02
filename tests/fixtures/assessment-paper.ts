@@ -36,12 +36,12 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { revisionRowToContract } from '@/kernel/records/assessment-issuance';
-import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
   normalizeQuestionRowToContract,
-} from '@/server/questions/contract-normalizer';
+} from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { seedHistoricalAssessmentIssuance } from './historical-assessment-issuance';
 
 /** Real publication/opening for migrated fixtures; never freezes lazily at submit time. */

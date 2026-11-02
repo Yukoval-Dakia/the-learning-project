@@ -3,11 +3,11 @@ import { eq } from 'drizzle-orm';
 import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
-import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
   normalizeQuestionGroupToContract,
   normalizeQuestionRowToContract,
-} from '@/server/questions/contract-normalizer';
+} from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 
 /** Real publisher and issuance, usable by service and HTTP tests. */
 export async function freezeSolveQuestion(db: Db, questionId: string, manual = false) {

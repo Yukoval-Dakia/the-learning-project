@@ -4,7 +4,8 @@
 // 逐作答比较**事前**预测——
 //   - incumbent（现行 main）：θ̂ Elo（updateThetaForAttempt 路径的镜像，读
 //     b_calib ?? b_anchor 链）+ 旧 active-PPI 机器按其真实节奏模拟（≥12 条 legacy 标签
-//     才 firm-up b_calib，Hájek AIPW——复用 recalibration.ts 的估计器，机器保留的对照用途）；
+//     才 firm-up b_calib，Hájek AIPW——复用 core/calibration/aipw 的估计器，机器保留的
+//     对照用途）；
 //   - joint（YUK-439）：θ̂ Elo 原样（读 b_post）+ 每批边界从证据账本全量重算 b_post
 //     （core/difficulty-posterior.ts，含信任域）。
 //
@@ -16,6 +17,12 @@
 // READ-ONLY / REPORT-ONLY：绝不翻 flag、绝不写库。DB 读取在
 // scripts/replay-joint-calibration.ts（thin seam，镜像 ops-calibration 的 loader 纪律）。
 
+import {
+  type LabeledSample,
+  RECALIBRATION_MIN_LABELS,
+  aipwMean,
+  impliedBLabel,
+} from '@/core/calibration/aipw';
 import { ece } from '@/core/calibration/ece';
 import {
   type DifficultyEvidencePoint,
@@ -34,12 +41,6 @@ import {
   resolveSrtTimeLimit,
   srtOutcome,
 } from '@/core/theta';
-import {
-  type LabeledSample,
-  RECALIBRATION_MIN_LABELS,
-  aipwMean,
-  impliedBLabel,
-} from '@/server/mastery/recalibration';
 
 /** 一条作答史记录（loader 产出；synthetic 模式由脚本生成）。 */
 export interface JointReplayAttempt {
