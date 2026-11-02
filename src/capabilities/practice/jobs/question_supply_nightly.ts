@@ -45,14 +45,6 @@ import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { loadReturnStockGaps } from '@/kernel/read-models/return-stock';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { loadActivityTier } from '../server/activity-tier';
-import type {
-  PlacementStarterRecoveryDeps,
-  PlacementStarterRecoveryResult,
-} from '../server/placement-starter-recovery';
-import {
-  emptyPlacementStarterRecoveryResult,
-  sweepStalePlacementStarterClaims,
-} from '../server/placement-starter-recovery';
 
 type DispatchDeps = Parameters<typeof dispatchSupplyTargets>[2];
 
@@ -68,8 +60,6 @@ type DepsOverride = {
    * 不走发现器的深度阈值，也不用 maxPerRun 截断。
    */
   returnStock?: boolean;
-  /** 尾部 placement starter 恢复清扫器的注入（DB 测试可注入 fake dispatch / now）。 */
-  placementRecovery?: PlacementStarterRecoveryDeps;
 };
 
 // ── 红线：per-run 派发硬顶 ───────────────────────────────────────────────────
@@ -98,17 +88,10 @@ export interface QuestionSupplyNightlyResult {
   skipped: number;
   /** 派发抛错的目标数（status='failed'）。 */
   failed: number;
-  /**
-   * 尾部 placement starter claim 恢复清扫结果（重驱 stranded pending_dispatch +
-   * 收割 zombie retry_scheduled）。见 server/placement-starter-recovery.ts。
-   */
-  placementStarterRecovery: PlacementStarterRecoveryResult;
 }
 
-type SupplyTally = Omit<QuestionSupplyNightlyResult, 'placementStarterRecovery'>;
-
-function tallyByStatus(results: DispatchResult[], discovered: number): SupplyTally {
-  const out: SupplyTally = {
+function tallyByStatus(results: DispatchResult[], discovered: number): QuestionSupplyNightlyResult {
+  const out: QuestionSupplyNightlyResult = {
     discovered,
     considered: results.length,
     deferred: Math.max(0, discovered - results.length),
@@ -136,7 +119,7 @@ function tallyByStatus(results: DispatchResult[], discovered: number): SupplyTal
   return out;
 }
 
-function emptyTally(discovered = 0): SupplyTally {
+function emptyTally(discovered = 0): QuestionSupplyNightlyResult {
   return {
     discovered,
     considered: 0,
@@ -229,7 +212,10 @@ async function returnStockCovered(
   return Math.min(requested, live);
 }
 
-async function dispatchReturnStock(db: Db, deps: DepsOverride): Promise<SupplyTally> {
+async function dispatchReturnStock(
+  db: Db,
+  deps: DepsOverride,
+): Promise<QuestionSupplyNightlyResult> {
   const gaps = await loadReturnStockGaps(db);
   if (gaps.length === 0) return emptyTally();
   const cooldownDays = deps.dispatchDeps?.cooldownDays ?? SUPPLY_DISPATCH_COOLDOWN_DAYS;
@@ -263,7 +249,10 @@ async function dispatchReturnStock(db: Db, deps: DepsOverride): Promise<SupplyTa
   return tallyByStatus(results, results.length);
 }
 
-async function runSupplyDiscoveryAndDispatch(db: Db, deps: DepsOverride): Promise<SupplyTally> {
+async function runSupplyDiscoveryAndDispatch(
+  db: Db,
+  deps: DepsOverride,
+): Promise<QuestionSupplyNightlyResult> {
   if (deps.returnStock) return dispatchReturnStock(db, deps);
   const targets = await discoverSupplyTargets(db, undefined, {
     observeInventory: async (input, currentTargets) => {
@@ -280,102 +269,16 @@ async function runSupplyDiscoveryAndDispatch(db: Db, deps: DepsOverride): Promis
 }
 
 /**
- * 端到端夜扫：发现供给目标 → 写 observe-only inventory dual-read → 派发到既有获取面 →
- * **收尾**跑 placement starter claim 恢复清扫。不新增 AI task；shadow 写入失败由
- * discovery seam 隔离，不改变 targets 或派发。空目标时供给腿零派发早返回（不触付费 job），
- * 但收尾清扫**照跑**——stranded claim 的存在与今夜有无供给缺口无关。
+ * 端到端夜扫：发现供给目标 → 写 observe-only inventory dual-read → 派发到既有获取面。
+ * 不新增 AI task；shadow 写入失败由 discovery seam 隔离，不改变 targets 或派发。空目标时
+ * 供给腿零派发早返回（不触付费 job）。placement starter claim 的到期清扫自 YUK-1664 起
+ * 由独立的 placement_starter_recovery job 负责，不再挂在本 job 尾部。
  */
 export async function runQuestionSupplyNightly(
   db: Db,
   deps: DepsOverride = {},
 ): Promise<QuestionSupplyNightlyResult> {
-  // 供给腿的失败**不得**吞掉收尾清扫。stranded claim 的存在与供给腿今夜是否成功完全无关——
-  // 若把清扫挂在供给腿的成功路径上，一个与 placement 毫不相干的持续故障（供给发现 DB 读失败
-  // 之类）就会让本清扫器**永远不运行**，而它要修的恰恰是「学习者不回来就没人重驱」的场景。
-  // 故：供给腿的错先接住，清扫照跑，最后再把原错抛出去（保住宿主的 DLQ 重试语义不变）。
-  let supply: SupplyTally | undefined;
-  let supplyError: unknown;
-  try {
-    supply = await runSupplyDiscoveryAndDispatch(db, deps);
-  } catch (err) {
-    supplyError = err;
-    // Log HERE, not only at the eventual re-throw. Deferring the throw so the sweep can run also
-    // defers the handler's catch — and the sweep in between is long (DB scans, pg-boss liveness
-    // probes, paid dispatches). If the worker is killed or the job times out during it, the supply
-    // failure would vanish without a trace. Emit immediately; the handler's own catch still logs
-    // the re-thrown error, and the two lines read as one story rather than two failures.
-    console.error(
-      '[question_supply_nightly] supply leg failed; running the placement starter recovery sweep before re-throwing',
-      err,
-    );
-  }
-
-  // 收尾步：消费 placement_starter_claim_recovery_idx / next_reconcile_at（基建早已建好但
-  // 一直无消费者）。挂在这只既有 nightly job 尾部而非新开 cron 面——它与供给腿同属「缺题
-  // 自愈」职责，且共享同一 DLQ 重试语义。清扫器自身分 leg / claim / 内层三环隔离失败，并对
-  // 每个 claim 做条件 UPDATE 领取（幂等、不双发）。
-  //
-  // **宿主隔离（必须）**：整轮清扫的 top-level 抛错在此就地吞掉 + loud log，绝不冒泡。理由有
-  // 二：① 供给腿此刻**可能已经派出付费 job**，让 job 失败 → pg-boss 重投 → 整轮供给发现 + 派发
-  // 重跑（只有 dispatcher 的 7d fingerprint cooldown 挡着，不是白挡但也不该主动去撞）；
-  // ② 本 job 是编排 DAG 成员，节点 failed 会让其**硬下游按 skipped 语义整片跳过**——
-  // 爆炸半径从「一只 job」变成「一条子树」。恢复清扫是尽力而为的
-  // 后台卫生工作，没有任何资格拿走那条子树。失败留在 errored 标里由日志/结果面暴露。
-  //
-  // 仍存在的、**故意不修**的缺口：本 job 作为 DAG 成员若被硬上游 failed/skipped 连带跳过，
-  // 整个节点（含本清扫）今夜不跑。这对清扫器无害——claim 持久、游标已过期，下一轮自然接上；
-  // 为它另开一条 cron 面只会再添一个需要守护的调度面。
-  let placementStarterRecovery: PlacementStarterRecoveryResult;
-  try {
-    placementStarterRecovery = await sweepStalePlacementStarterClaims(db, deps.placementRecovery);
-  } catch (err) {
-    console.error(
-      '[question_supply_nightly] placement starter recovery sweep failed; host job unaffected',
-      err,
-    );
-    placementStarterRecovery = emptyPlacementStarterRecoveryResult({ errored: true });
-  }
-
-  // 供给腿的原错在清扫跑完后照常冒泡 → pg-boss DLQ 重试语义保持不变。**但先把
-  // 清扫状态喊出来**：一旦从这里 throw，下面的 return 不会发生，handler 的消费检查也就永远看不到
-  // 这一轮的 placementStarterRecovery——恰恰在「供给腿也炸了」这种最该看清全貌的时刻信号最哑。
-  if (supplyError !== undefined) {
-    surfacePlacementStarterRecovery(placementStarterRecovery, 'supply leg also failed');
-    throw supplyError;
-  }
-  if (!supply) throw new Error('unreachable: supply tally missing without an error');
-  return { ...supply, placementStarterRecovery };
-}
-
-/**
- * emit the recovery sweep's failure/degradation signal at the job boundary.
- *
- * Isolating the sweep keeps it from taking the host (and, as a DAG member, the host's whole
- * hard-downstream subtree) down. But a flag nobody reads is the same as no signal at all: the
- * job would report success with its recovery step silently dead — precisely the wired-but-dead
- * shape this guard exists to prevent, one level up. Hence explicit, greppable lines. Deliberately
- * never throws: staying green on a sweep failure is the entire point of the isolation.
- *
- * Called from BOTH exits — the normal one and the supply-error one — so the signal does not
- * disappear exactly when the run is worst.
- */
-function surfacePlacementStarterRecovery(
-  recovery: PlacementStarterRecoveryResult,
-  context: string,
-): void {
-  if (recovery.errored) {
-    console.error(
-      `[question_supply_nightly] placement starter recovery sweep did not complete this run (${context}); claims stay overdue for the next run`,
-    );
-  }
-  // Per-claim / per-leg failures are contained inside the sweeper and never set `errored`; surface
-  // them too, or a fully-degraded sweep (every claim failing individually) still looks healthy.
-  const { claimErrors, legErrors } = recovery;
-  if (claimErrors > 0 || legErrors > 0) {
-    console.error(
-      `[question_supply_nightly] placement starter recovery sweep degraded (${context}): ${claimErrors} claim failure(s), ${legErrors} leg failure(s)`,
-    );
-  }
+  return runSupplyDiscoveryAndDispatch(db, deps);
 }
 
 export function buildQuestionSupplyNightlyHandler(
@@ -389,16 +292,9 @@ export function buildQuestionSupplyNightlyHandler(
         (deps.maxPerRun === undefined && (await loadActivityTier(db, new Date())) === 'idle');
       const result = await runQuestionSupplyNightly(
         db,
-        returnStock
-          ? {
-              dispatchDeps: deps.dispatchDeps,
-              placementRecovery: deps.placementRecovery,
-              returnStock: true,
-            }
-          : deps,
+        returnStock ? { dispatchDeps: deps.dispatchDeps, returnStock: true } : deps,
       );
       console.log('[question_supply_nightly] result', result);
-      surfacePlacementStarterRecovery(result.placementStarterRecovery, 'supply leg succeeded');
     } catch (err) {
       // PRE-discovery / dispatch 阶段的意外 throw（如 DB read 故障）冒泡 → pg-boss DLQ 重试。
       // 单个 target 的 dispatch 错已被 dispatchSupplyTargets 内部 per-target try/catch 兜住

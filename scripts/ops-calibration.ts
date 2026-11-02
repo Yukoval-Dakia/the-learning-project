@@ -39,7 +39,7 @@ interface LoadResult {
   // so θ_global accumulates correctly across all KCs of a domain, then buckets the forward-
   // scorable single-KC steps by scoredKnowledgeId. (Previously this was a per-KC partition,
   // which let each KC's θ_global see only its own attempts — missing sibling-KC domain drift.)
-  orderedAttempts: import('@/server/calibration/replay').ReplayAttempt[];
+  orderedAttempts: import('@/core/calibration/replay').ReplayAttempt[];
   nTotalScorable: number;
   familyDeltaApplied: number;
   familyDeltaTotal: number;
@@ -95,7 +95,7 @@ async function loadAttempts(): Promise<LoadResult> {
   const { batchResolveFamilyKeys } = await import('@/kernel/read-models/question-difficulty');
   const { getEffectiveDomain } = await import('@/kernel/read-models/knowledge-tree');
   const { item_family_calibration } = await import('@/db/schema');
-  type ReplayAttempt = import('@/server/calibration/replay').ReplayAttempt;
+  type ReplayAttempt = import('@/core/calibration/replay').ReplayAttempt;
 
   const DIFFICULTY_PROXY_WEIGHT = 0.3;
 
@@ -427,11 +427,11 @@ async function loadAttempts(): Promise<LoadResult> {
 
 export async function runCli(args: string[] = process.argv.slice(2)): Promise<number> {
   const { assembleForwardClustersDetailed, evaluateVA1Forward, formatReport } = await import(
-    '@/server/calibration/v-a1-fwd'
+    '@/core/calibration/v-a1-fwd'
   );
   // A4 (YUK-436) — grid-Bayes vs live-Elo forward retro-validation (ADVISORY, READ-ONLY).
   const { assembleGridForwardClusters, evaluateGridForward, formatGridReport } = await import(
-    '@/server/calibration/v-grid-fwd'
+    '@/core/calibration/v-grid-fwd'
   );
 
   // YUK-463 — opt-in multi-KC forward scoring. Default OFF (single-KC pool, Wave-0 baseline,
