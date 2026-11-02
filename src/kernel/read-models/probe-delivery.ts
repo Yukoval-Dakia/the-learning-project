@@ -11,6 +11,11 @@ export function probeIssuanceId(probeQuestionId: string): string {
   return `iss_probe_${probeQuestionId}`;
 }
 
+/** Container ref that issuance carries; the issuance gate admits a probe only under it. */
+export function probeContainerRef(probeQuestionId: string): string {
+  return `probe:${probeQuestionId}`;
+}
+
 /** SQL form of probeIssuanceId for joining issuance rows to probe questions. */
 export function probeIssuanceIdSql(probeQuestionId: SQLWrapper) {
   return sql<string>`'iss_probe_' || ${probeQuestionId}`;

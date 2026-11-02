@@ -4,7 +4,9 @@
 // accepts them in the inbox.
 //
 // Pre-model DB faults rethrow so pg-boss retries; model/key/parse faults are
-// swallowed and counted. Pending and live pairs are deduped, and writes are capped.
+// swallowed and counted. Pending, live and dismiss-cooling pairs are skipped at write
+// time (the model picks `from`, so a pair cannot be filtered before the call), and
+// writes are capped.
 
 import { and, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -62,6 +64,8 @@ export interface FrontierFillResult {
   skipped_no_candidate: number;
   /** Proposals dropped because an identical (from,to,prerequisite) pair is already pending. */
   skipped_duplicate_pending: number;
+  /** Proposals dropped because the owner dismissed the pair and its cooldown is still active. */
+  skipped_cooldown: number;
   /** Proposals dropped because a LIVE prerequisite edge already exists for the pair. */
   skipped_duplicate_edge: number;
   /** Proposals dropped for self-loop / unknown-node / non-candidate-target reasons. */
@@ -84,6 +88,7 @@ function emptyResult(): FrontierFillResult {
     skipped_overflow: 0,
     skipped_no_candidate: 0,
     skipped_duplicate_pending: 0,
+    skipped_cooldown: 0,
     skipped_duplicate_edge: 0,
     skipped_invalid: 0,
     skipped_tree_redundancy: 0,
@@ -203,7 +208,8 @@ export async function runFrontierFillAndWrite(
       }
 
       // Propose-only. Type and low weight are forced regardless of model output.
-      // Bootstrap edges carry no evidence, so they skip the rubric floor by design.
+      // Bootstrap edges carry no evidence, so they skip the rubric floor by design;
+      // the pending/cooldown gate is the same one the knowledge tools use.
       const written = await writeKnowledgeEdgeProposal(db, {
         validate: 'bootstrap',
         change: {
@@ -224,6 +230,8 @@ export async function runFrontierFillAndWrite(
         result.skipped_duplicate_edge += 1;
       } else if (written.status === 'skipped:duplicate_pending') {
         result.skipped_duplicate_pending += 1;
+      } else if (written.status === 'skipped:cooldown') {
+        result.skipped_cooldown += 1;
       } else {
         result.proposed += 1;
       }

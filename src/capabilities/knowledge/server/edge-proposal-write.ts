@@ -1,9 +1,9 @@
 // Sole writer of knowledge_edge propose events. Owns the cooldown-key identity
 // (the `(kind, cooldown_key)` slot of `proposal_signals`), the gate lock, the
-// live/pending dedup, the payload shape, and the validation mode. Dedup reads and
-// the write share one `withProposalGateLock` transaction.
+// live/pending/cooldown dedup, the payload shape, and the validation mode. Dedup
+// reads and the write share one `withProposalGateLock` transaction.
 
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, or } from 'drizzle-orm';
 import { isSymmetricKnowledgeRelation } from '@/core/schema/event/blocks';
 import type { SuggestionKindT } from '@/core/schema/event/known';
 import {
@@ -12,7 +12,7 @@ import {
   parseAiProposalPayload,
 } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import { event, knowledge_edge } from '@/db/schema';
+import { knowledge_edge } from '@/db/schema';
 import type { AdaptiveGateInput } from '@/kernel/proposals/adaptive-bias';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { findActiveProposalCooldown, withProposalGateLock } from '@/kernel/proposals/signals';
@@ -99,57 +99,6 @@ export async function checkProposalCooldownGate(
   return null;
 }
 
-/**
- * Pending propose event on the same edge identity, by the event scan the bootstrap
- * has always used: any chained rate ends pending, folded rejects are terminal, and
- * endpoints are read from the raw event so pre-cooldown-key events still dedup.
- * Symmetric relations match either orientation, as `knowledgeEdgeCooldownKeys` does.
- */
-async function findPendingEdgeProposeEvent(
-  db: DbLike,
-  fromId: string,
-  toId: string,
-  relationType: string,
-): Promise<string | null> {
-  const endpoints = (from: string, to: string) =>
-    and(
-      sql`(${event.payload}->>'from_knowledge_id') = ${from}`,
-      sql`(${event.payload}->>'to_knowledge_id') = ${to}`,
-    );
-  const rows = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'propose'),
-        eq(event.subject_kind, 'knowledge_edge'),
-        sql`(${event.payload}->>'relation_type') = ${relationType}`,
-        isSymmetricKnowledgeRelation(relationType)
-          ? or(endpoints(fromId, toId), endpoints(toId, fromId))
-          : endpoints(fromId, toId),
-        // A topology reject carries no rubric marker, so both predicates are required.
-        sql`(${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'`,
-        sql`(${event.payload}->'topology_verdict'->>'status') IS DISTINCT FROM 'reject'`,
-      ),
-    );
-  if (rows.length === 0) return null;
-  const rated = await db
-    .select({ caused_by_event_id: event.caused_by_event_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'rate'),
-        eq(event.subject_kind, 'knowledge_edge'),
-        inArray(
-          event.caused_by_event_id,
-          rows.map((row) => row.id),
-        ),
-      ),
-    );
-  const ratedIds = new Set(rated.map((row) => row.caused_by_event_id));
-  return rows.find((row) => !ratedIds.has(row.id))?.id ?? null;
-}
-
 async function findLiveDuplicateEdge(
   db: DbLike,
   fromId: string,
@@ -223,8 +172,9 @@ export interface RubricEdgeProposalInput extends EdgeProposalProvenance {
 }
 
 /**
- * `bootstrap`: cold-start placeholder edges with no evidence by design. No rubric
- * and no dismiss-cooldown read; dedup is the pending propose-event scan.
+ * `bootstrap`: cold-start placeholder edges with no evidence by design. No rubric;
+ * the same inbox-pending + dismiss-cooldown gate as `rubric`, so a dismissed pair
+ * is not re-proposed the next night.
  */
 export interface BootstrapEdgeProposalInput extends EdgeProposalProvenance {
   validate: 'bootstrap';
@@ -241,7 +191,7 @@ type LiveDuplicateResult = {
 export type BootstrapEdgeProposalResult =
   | ProposedResult
   | LiveDuplicateResult
-  | { status: 'skipped:duplicate_pending'; proposal_id: string; cooldown_key: string };
+  | ProposalCooldownSkip;
 
 export type RubricEdgeProposalResult =
   | ProposedResult
@@ -319,7 +269,7 @@ export async function writeKnowledgeEdgeProposal(
   const cooldownKey = cooldownKeys[0] as string;
   return await withProposalGateLock(db, EDGE_PROPOSAL_KIND, cooldownKeys, async (tx) => {
     if (input.validate === 'bootstrap') {
-      return await writeBootstrapCreate(tx, input, cooldownKey);
+      return await writeBootstrapCreate(tx, input, cooldownKey, cooldownKeys);
     }
     return input.change.edge_op === 'archive'
       ? await writeRubricArchive(tx, input, input.change, cooldownKey, cooldownKeys)
@@ -331,20 +281,15 @@ async function writeBootstrapCreate(
   tx: DbLike,
   input: BootstrapEdgeProposalInput,
   cooldownKey: string,
+  cooldownKeys: readonly string[],
 ): Promise<BootstrapEdgeProposalResult> {
   const { from_knowledge_id: from, to_knowledge_id: to, relation_type: rel } = input.change;
   const liveEdgeId = await findLiveDuplicateEdge(tx, from, to, rel);
   if (liveEdgeId) {
     return { status: 'skipped:duplicate_live_edge', edge_id: liveEdgeId, reason: liveEdgeId };
   }
-  const pendingId = await findPendingEdgeProposeEvent(tx, from, to, rel);
-  if (pendingId) {
-    return {
-      status: 'skipped:duplicate_pending',
-      proposal_id: pendingId,
-      cooldown_key: cooldownKey,
-    };
-  }
+  const skip = await checkProposalCooldownGate(tx, EDGE_PROPOSAL_KIND, cooldownKeys);
+  if (skip) return skip;
   const proposalId = await writeProposalEvent(
     tx,
     input,
