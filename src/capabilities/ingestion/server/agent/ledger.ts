@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { writeAgentRunSegment } from '../events/agent-progress';
-import { type SessionAskRow, readSessionAsks } from './asks';
+import { type SessionAskRow, readSessionAsks } from './ask-store';
 import { readAgentEventFloor } from './budget-state';
 import {
   AGENT_ITEM_STATE,

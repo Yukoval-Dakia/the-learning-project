@@ -36,14 +36,14 @@ import {
   attachAgentRedactionSink,
   detachAgentRedactionSink,
 } from '../tools/redaction-sink';
-import { listExpiredOpenAsks, readSessionAsks, resolveAskByTimeout } from './asks';
+import { readSessionAsks } from './ask-store';
+import { listExpiredOpenAsks, resolveAskByTimeout } from './asks';
 import {
   agentRunTaskRunId,
   agentToolRunId,
   recordAgentOperationRunning,
   settleAgentRunBudget,
 } from './budget';
-import { writeAgentBudgetPath } from './budget-state';
 import type { IngestionAgentErrorCodeT, IngestionAgentStageCountsT } from './contract';
 import { enqueueAgentContinuation } from './dispatch';
 import { persistAgentRunHistory } from './history';
@@ -56,6 +56,7 @@ import {
 } from './ledger';
 import {
   enterAgentExecution,
+  markAgentSegmentRunning,
   recordAgentExecutionIntent,
   requireAgentExecutionOwner,
   watchAgentPurpose,
@@ -211,11 +212,7 @@ export async function runIngestionAgentSegment(
     if (entered.status === 'queued') await Ingestion.markExtractionStarted(tx, sessionId);
     const claim = await claimRunSegment(tx, sessionId, trigger, MAX_SEGMENTS);
     if (claim.kind === 'ok' || claim.kind === 'over_cap')
-      await writeAgentBudgetPath(tx, sessionId, ['execution_owner'], {
-        ...entered.owner,
-        segment_state: 'running',
-        segment_claim: segmentClaim,
-      });
+      await markAgentSegmentRunning(tx, sessionId, entered.owner, segmentClaim);
     const sourceEventId = `ingestion-execution-source:${entered.owner.run_ref}`;
     await writeEvent(tx, {
       id: sourceEventId,
