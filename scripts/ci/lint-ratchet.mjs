@@ -116,7 +116,7 @@ export function buildBaselineDocument(summary) {
     channel:
       'biome check . --reporter=json --max-diagnostics=none (summary totals + per-diagnostic category)',
     infoPolicy:
-      'info diagnostics are counted: separate infos ratchet total and per-rule rows; each severity total must equal the baseline',
+      'info diagnostics are counted: separate infos ratchet total and per-rule rows; no severity total may exceed the ceiling',
     totals: { errors: summary.errors, warnings: summary.warnings, infos: summary.infos },
     byRule,
   };
@@ -226,25 +226,26 @@ function git(repoRoot, args) {
   });
 }
 
-function comparisonBase(args) {
+// `pull_request.base.sha` is the base branch tip, not where the PR forked; comparing
+// against the fork point keeps a later baseline cut on main from failing older PRs.
+function comparisonBase(repoRoot, args) {
   const flag = args.indexOf('--base');
+  if (flag >= 0 && !args[flag + 1]) throw new Error('[lint-ratchet] --base needs a commit SHA');
   const value = flag >= 0 ? args[flag + 1] : process.env.LINT_BASE_SHA;
   // A branch-creating push reports an all-zero `before`; there is no base to compare.
   if (!value || /^0+$/.test(value)) return null;
   if (!/^[a-f0-9]{40}$/.test(value)) {
     throw new Error(`[lint-ratchet] comparison base must be a full, nonzero commit SHA: ${value}`);
   }
-  return value;
+  return git(repoRoot, ['merge-base', value, 'HEAD']).trim();
 }
 
 function baselineAtBase(repoRoot, base) {
-  let raw;
   try {
-    raw = git(repoRoot, ['show', `${base}:${BASELINE_RELATIVE_PATH}`]);
+    return JSON.parse(git(repoRoot, ['show', `${base}:${BASELINE_RELATIVE_PATH}`]));
   } catch {
     return null;
   }
-  return JSON.parse(raw);
 }
 
 // Measured on a detached worktree of the base commit with the head's Biome binary, so a
@@ -257,7 +258,11 @@ function countAtBase(repoRoot, base) {
     try {
       return collectCurrent(repoRoot, dir);
     } finally {
-      git(repoRoot, ['worktree', 'remove', dir]);
+      try {
+        git(repoRoot, ['worktree', 'remove', dir]);
+      } catch {
+        git(repoRoot, ['worktree', 'prune']);
+      }
     }
   } catch (error) {
     console.warn(
@@ -360,7 +365,7 @@ function main() {
     process.exitCode = 1;
     return;
   }
-  const base = comparisonBase(args);
+  const base = comparisonBase(repoRoot, args);
   if (base) {
     const baseBaseline = baselineAtBase(repoRoot, base);
     const raised = baseBaseline ? raisedTotals(loaded, baseBaseline) : [];
