@@ -1,15 +1,11 @@
 // Learner-text handling: <untrusted_learner_text> delimiting + shared truncation cap.
 //
-// The evidence MCP returns learner-AUTHORED free text (answer_md / prompt_md /
-// reference_md / note body) to a tool-loop agent (director + scout). That text is
-// DATA, never instruction: a prompt-injection payload embedded in a learner's own
-// answer must never redirect the agent, so every learner-authored string is wrapped
-// in an explicit delimiter block.
+// Evidence enrichment hands learner-AUTHORED free text (answer_md / prompt_md /
+// reference_md / note body) to a model. That text is DATA, never instruction: a
+// prompt-injection payload embedded in a learner's own answer must never redirect the
+// model, so every learner-authored string is wrapped in an explicit delimiter block.
 //
-// This is a red-line backstop, NOT the only defence: the agent prompt also states the
-// framing, and propose_conjecture's primary-evidence check
-// (report-findings.ts filterPrimaryEvidenceRefs) is the structural stop that keeps a
-// poisoned finding from laundering agent_note ids into evidence.
+// This is a red-line backstop, NOT the only defence: the prompt also states the framing.
 
 export const UNTRUSTED_OPEN = '<untrusted_learner_text>';
 export const UNTRUSTED_CLOSE = '</untrusted_learner_text>';

@@ -17,16 +17,16 @@ import { goal } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { getMasteryState } from '@/kernel/read-models/mastery-state';
+import { resolveNearbyPlacementScope } from '../../server/placement-scope';
+import type { PlacementStarterOutcome } from '../../supply/public';
+import { readPlacementStarterOutcomes } from '../../supply/public';
 import type { PlacementNoItemSchema, PlacementUnresolvedItem } from '../api/placement-contracts';
-import type { PlacementStarterOutcome } from '../supply/public';
-import { readPlacementStarterOutcomes } from '../supply/public';
 import {
   ensurePlacementAssessment,
   placementAssessmentProgress,
   readPlacementSessionInfo,
   writePlacementHeldRelease,
 } from './placement-assessment';
-import { resolveNearbyPlacementScope } from './placement-scope';
 import { resolveLeaningPreferenceKcs } from './placement-select';
 import { loadPlacementSessionForUpdate } from './placement-session-lifecycle';
 import {

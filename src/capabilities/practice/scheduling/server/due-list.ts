@@ -13,15 +13,6 @@ import { resolveSchedulingProjection, selectedForgettingEngine } from '@/kernel/
 // knowledge_ids, cause, fsrs_state, created_at }] }.
 
 import { and, eq, inArray, lte } from 'drizzle-orm';
-// by-kind variant-rotation probe selection. Replaces the
-// inline single-question-avoidance ORDER BY (seam) with a routed pick:
-// recall kinds repeat the original question, application kinds rotate the
-// root_question_id variant family. Extracted to its own module so the
-// deterministic selection core is独立可测; due-list stays thin orchestration.
-import {
-  prefetchProbeSelection,
-  selectProbeFromPrefetch,
-} from '@/capabilities/practice/server/variant-rotation';
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
@@ -50,6 +41,12 @@ import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../../server/placement-scope';
+// by-kind variant-rotation probe selection. Replaces the
+// inline single-question-avoidance ORDER BY (seam) with a routed pick:
+// recall kinds repeat the original question, application kinds rotate the
+// root_question_id variant family. Extracted to its own module so the
+// deterministic selection core is独立可测; due-list stays thin orchestration.
+import { prefetchProbeSelection, selectProbeFromPrefetch } from './variant-rotation';
 
 // swappable active-goals reader so DB tests inject goal
 // fixtures (mirrors coach_daily.ts / dreaming_nightly.ts CoachRunDeps pattern).

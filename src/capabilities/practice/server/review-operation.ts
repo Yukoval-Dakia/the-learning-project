@@ -25,12 +25,12 @@ import {
   ReviewAnswerAttachmentSchema,
 } from '@/kernel/tools/review-answer';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from '../api/contracts';
+import { validatePlacementSubmission } from '../placement/public';
 import { normalizeReviewSubmitActivityRef } from './activity-ref';
 import { recordAssistanceExposure } from './assessment/assistance';
 import { commitFormalAttempt, prepareFormalAttemptSubmission } from './assessment/attempt';
 import type { NativeAttemptDispatchPort } from './assessment/native-attempt-dispatch-port';
 import { judgeDurableEnabled } from './judge-durable-config';
-import { validatePlacementSubmission } from './placement-assessment';
 import type { ReviewAnswerReceipt } from './tools/submit-review-answer';
 
 type QuestionRow = typeof question.$inferSelect;

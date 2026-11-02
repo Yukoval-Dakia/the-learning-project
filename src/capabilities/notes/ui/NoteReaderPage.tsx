@@ -4,24 +4,42 @@
 // 活动版本）+ topbar（返回入口感知 + /notes/{id} pill + 阅读/编辑 seg）。
 // 编辑保存 = PATCH body-blocks 乐观锁（409 → 提示刷新，pre-flight B 偏离②）；
 // AI refine 痕迹与 undo 接 ai-changes 链（T5 已验真）。
+// M3E presentation (YUK-1473, docs/design/2026-11-03-notes-m3e.md): only the markup and styles
+// changed (toasts now go through the ui-next toast host); queries, save/undo, the presence
+// lease, the draft snapshot, deep links and error handling are as before.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useRef, useState } from 'react';
+import {
+  ArrowLeft,
+  Check,
+  ChevronRight,
+  Eye,
+  FileText,
+  Link,
+  ListChecks,
+  PanelLeft,
+  Pencil,
+  Sparkles,
+  Undo2,
+} from 'lucide-react';
+import { type ReactNode, useCallback, useRef, useState } from 'react';
 import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
 import { ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
 import { undoAiChange } from '@/ui/lib/undo-ai-change';
-import { Btn } from '@/ui/primitives/Btn';
-import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
-import { EmptyState } from '@/ui/primitives/EmptyState';
-import { ErrorState } from '@/ui/primitives/ErrorState';
-import { IconBtn } from '@/ui/primitives/IconBtn';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { SkLines } from '@/ui/primitives/SkLines';
-import './note-reader.css';
+import { ToastHost } from '@/ui-next/feedback/ToastHost';
+import { showToast } from '@/ui-next/feedback/toast-store';
+import { ChipButton } from '@/ui-next/primitives/Chip';
+import { FoldList } from '@/ui-next/primitives/FoldList';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SectionHead } from '@/ui-next/primitives/SectionHead';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button, Chip, IconButton, UiNextRoot } from '@/ui-next/public';
+import './notes-m3e.css';
 
 import { NoteBlockView, blockOutlineLabel, questionDetailHref } from './NoteBlocks';
 import { NoteEditor } from './NoteEditor';
+import { NoteEmpty } from './NoteEmpty';
 import {
   type BodyBlock,
   SEMANTIC_KIND_LABEL,
@@ -41,6 +59,40 @@ const NOTE_TYPE_LABEL: Record<string, string> = {
   note_long: '长文笔记',
   interactive: '互动内容',
 };
+
+// The page frame shared by every state: M3E scope, the M3 role bridge and the toast host.
+function ReaderFrame({ children }: { children: ReactNode }) {
+  return (
+    <UiNextRoot className="nt-page">
+      <main className="nt-reader-main un-m3e-bridge">{children}</main>
+      <ToastHost />
+    </UiNextRoot>
+  );
+}
+
+function VerifyChip({ verified }: { verified: boolean }) {
+  if (verified) {
+    return (
+      <Chip tone="positive">
+        <Check size={12} aria-hidden="true" />
+        已校验
+      </Chip>
+    );
+  }
+  return (
+    <Chip>
+      <Sparkles size={12} aria-hidden="true" />
+      草稿
+    </Chip>
+  );
+}
+
+// Outline glyph: @ for a cross link, ? for a question reference, a dot for prose.
+function outlineGlyph(b: BodyBlock): string {
+  if (b.type === 'crossLinkBlock') return '@';
+  if (b.type === 'questionRefBlock') return '?';
+  return '·';
+}
 
 function changeActorLabel(actorRef: string): string {
   return actorRef === 'user' || actorRef.startsWith('user:') ? '你' : 'AI';
@@ -62,8 +114,8 @@ function isVersionConflict(e: unknown): boolean {
 
 // YUK-339 — 块锚点深链（设计源 NoteReaderBody anchor()，screen-note-reader.jsx:36-40）。
 // hash-only pushState：地址栏变为可分享的 #nb-<blockId>（保留 ?entry= 入口上下文），
-// 不触发 router 导航也不引发原生锚点瞬跳；滚动交给 scrollIntoView + globals
-// .nrb-block 的 scroll-margin-top(84px)（与设计源 scrollTop-84 同源，无 JS 硬编码）。
+// 不触发 router 导航也不引发原生锚点瞬跳；滚动交给 scrollIntoView + notes-m3e.css
+// .nt-blk 的 scroll-margin-top(84px)（与设计源 scrollTop-84 同源，无 JS 硬编码）。
 function jumpToBlockAnchor(anchorId: string) {
   window.history.pushState(null, '', `#${anchorId}`);
   document.getElementById(anchorId)?.scrollIntoView({ behavior: 'smooth' });
@@ -148,13 +200,12 @@ function createEditingPresence(
   };
 }
 
-// 设计源每块发 nrb-{type} 类；生产非 section 块型映射到同语义短类（无 CSS 钩子，
-// 供测试/后续样式使用）。section 块固定 .nrb-h-block（globals 的 gutter 常亮规则
-// .nrb-h-block .nrb-gutter 锚定它）。
-const NRB_PLAIN_CLASS: Record<string, string> = {
-  semanticBlock: 'nrb-plain',
-  crossLinkBlock: 'nrb-cross',
-  questionRefBlock: 'nrb-qref',
+// 每块发 nt-blk-{type} 类；非 section 块型映射到同语义短类。section 块固定
+// .nt-blk-section（notes-m3e.css 的 gutter 常亮规则锚定它）。
+const BLOCK_KIND_CLASS: Record<string, string> = {
+  semanticBlock: 'nt-blk-plain',
+  crossLinkBlock: 'nt-blk-cross',
+  questionRefBlock: 'nt-blk-qref',
 };
 
 // 小节标题：semanticBlock 的 kind 标签（五段式解剖与 bodyBlocksToNoteSections
@@ -199,7 +250,6 @@ export default function NoteReaderPage({
   const [mode, setMode] = useState<'read' | 'edit'>('read');
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [draft, setDraft] = useState<BodyBlock[] | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
 
   // S12 (YUK-335)：入口上下文——同一篇笔记从多个 knowledge 节点可达（设计「一篇
   // 笔记多扇门」）。read 态从 ?entry=<knowledge_id> 读当前入口。惰性初始化读一次，
@@ -258,8 +308,7 @@ export default function NoteReaderPage({
   );
 
   const say = (text: string) => {
-    setToast(text);
-    setTimeout(() => setToast(null), 5000);
+    showToast({ message: text });
   };
 
   // One conflict-detection rule for both mutations (see isVersionConflict) — the version
@@ -302,49 +351,55 @@ export default function NoteReaderPage({
       conflictToast(e, '版本冲突：这篇笔记在别处被改过——刷新后再试还原。', '还原失败'),
   });
 
-  // S4 (YUK-335)：空/载态从裸 .quiet-empty 一行字升级为 SkLines/EmptyState
-  // primitives——原样式读作「故障」（14px 灰字悬空，无图形锚点/标题层级）。
+  // S4 (YUK-335)：载态用与正文同形的骨架，空态带图形锚点与出路。
   if (noteQ.isLoading)
     return (
-      <main className="page wide note-reader-page">
-        <SkLines rows={6} />
-      </main>
+      <ReaderFrame>
+        <div className="nt-reader-state">
+          <SkeletonLines rows={6} label="正在打开笔记" />
+        </div>
+      </ReaderFrame>
     );
   // S4-fix (YUK-335)：error 态独立分支（设计源用 Stateful 三态）——否则瞬时 fetch
-  // 失败会落进下面的 !note 分支，被误读成永久「笔记不存在」、且无重试入口。消化
-  // ported-but-idle 的 ErrorState（audit P4）。但 404（笔记不存在/已删）语义上
-  // 是「空」非「加载失败」——让它落到下面的 EmptyState，只有瞬时错误（网络/5xx）
-  // 才示 ErrorState + 重试（视觉环实测：404 误显「加载失败」会反向坏了 not-found 态）。
+  // 失败会落进下面的 !note 分支，被误读成永久「笔记不存在」、且无重试入口。
+  // 但 404（笔记不存在/已删）语义上是「空」非「加载失败」——让它落到下面
+  // 的空态，只有瞬时错误（网络/5xx）才示重试行（视觉环实测：404 误显「加载失败」会
+  // 反向坏了 not-found 态）。
   // 用 isLoadingError（= 出错且无缓存 data）而非 isError：笔记已加载后窗口聚焦/重连
   // 触发的后台 refetch 若失败，TanStack v5 保留旧 data 同时把 isError 置真
   // （isRefetchError）——只判 isError 会把仍可用的阅读/编辑界面（含未保存草稿）整页
-  // 替换成 ErrorState。isLoadingError 只在「无缓存的首次加载失败」时为真，refetch
+  // 替换成重试行。isLoadingError 只在「无缓存的首次加载失败」时为真，refetch
   // 失败时为假 → 落到下面 !note=false 继续用缓存渲染，仅丢一次刷新（Codex #399 F1）。
   const isNotFound = noteQ.error instanceof ApiError && noteQ.error.status === 404;
   if (noteQ.isLoadingError && !isNotFound)
     return (
-      <main className="page wide note-reader-page">
-        <ErrorState text="笔记加载失败。" onRetry={() => void noteQ.refetch()} />
-      </main>
+      <ReaderFrame>
+        <div className="nt-reader-state">
+          <RetryLine message="笔记加载失败。" onRetry={() => void noteQ.refetch()} />
+        </div>
+      </ReaderFrame>
     );
   if (!note)
     return (
-      <main className="page wide note-reader-page">
-        <EmptyState
-          icon="doc"
-          title="笔记不存在"
-          text="这篇笔记不存在或已被归档。"
-          action={
-            <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => navigate('/knowledge')}>
-              返回知识
-            </Btn>
-          }
-        />
-      </main>
+      <ReaderFrame>
+        <div className="nt-reader-state">
+          <NoteEmpty
+            icon={<FileText size={22} />}
+            title="笔记不存在"
+            text="这篇笔记不存在或已被归档。"
+            action={
+              <Button size="sm" variant="ghost" onClick={() => navigate('/knowledge')}>
+                <ArrowLeft size={16} aria-hidden="true" />
+                返回知识
+              </Button>
+            }
+          />
+        </div>
+      </ReaderFrame>
     );
 
   // S12 (YUK-335)：entryMatch = ?entry 严格命中的 label（有入口上下文时才 truthy，
-  // 用于 banner 文案 + strip .is-here coral 反白）；entryLabel = 返回链/右栏入口
+  // 用于 banner 文案 + strip 当前入口反白）；entryLabel = 返回链/右栏入口
   // tag 的派生来源，命中则用命中 label，否则回退 labels[0]（无入口上下文也保返回链
   // 不空——返回链是导航兜底，不是入口断言）。
   const entryMatch = entryKid ? (note.labels.find((l) => l.id === entryKid) ?? null) : null;
@@ -353,101 +408,98 @@ export default function NoteReaderPage({
   const shown = mode === 'edit' ? (draft ?? []) : blocks;
 
   return (
-    <main className="page wide note-reader-page">
-      <div className="note-topbar">
+    <ReaderFrame>
+      <div className="nt-topbar">
         <button
           type="button"
-          className="back-link"
-          style={{ margin: 0 }}
+          className="nt-back"
           onClick={() => navigate(entryLabel ? `/knowledge/${entryLabel.id}` : '/knowledge')}
         >
-          <LoomIcon name="arrowL" size={14} />
+          <ArrowLeft size={16} aria-hidden="true" />
           {entryLabel ? '返回知识点' : '知识'}
         </button>
-        <span className="topbar-spacer" />
-        <IconBtn
-          icon="panelLeft"
-          size={16}
-          title="大纲"
+        <span className="nt-topbar-spacer" />
+        <IconButton
+          className="nt-outline-toggle"
+          label="大纲"
+          icon={<PanelLeft size={16} />}
+          aria-pressed={outlineOpen}
           onClick={() => setOutlineOpen((o) => !o)}
         />
-        <div className="seg seg-sm note-mode" role="tablist" aria-label="阅读模式">
+        {/* Two plain buttons, not a radio group: arrow keys on a radio group would switch to
+            阅读 and silently drop the unsaved draft. Click-only, as before. */}
+        <fieldset className="nt-mode">
+          <legend className="un-sr-only">阅读模式</legend>
           <button
             type="button"
-            role="tab"
-            aria-selected={mode === 'read'}
-            className={mode === 'read' ? 'on' : ''}
+            className="nt-mode-btn"
+            aria-pressed={mode === 'read'}
             onClick={() => {
               // 切回阅读丢弃未保存改动（与保存成功路径一致）。
               setMode('read');
               setDraft(null);
             }}
           >
-            <LoomIcon name="eye" size={14} />
+            <Eye size={14} aria-hidden="true" />
             阅读
           </button>
           <button
             type="button"
-            role="tab"
-            aria-selected={mode === 'edit'}
-            className={mode === 'edit' ? 'on' : ''}
+            className="nt-mode-btn"
+            aria-pressed={mode === 'edit'}
             onClick={() => {
               // 进入编辑态时一次性快照服务端块；已在编辑中则保持现有草稿。
               setDraft((d) => d ?? note.body_blocks?.content ?? []);
               setMode('edit');
             }}
           >
-            <LoomIcon name="pencil" size={14} />
+            <Pencil size={14} aria-hidden="true" />
             编辑
           </button>
-        </div>
+        </fieldset>
         {mode === 'edit' && (
-          <Btn
+          <Button
             size="sm"
             variant="primary"
-            icon="check"
             disabled={saveM.isPending}
             onClick={() => saveM.mutate()}
           >
+            <Check size={16} aria-hidden="true" />
             {saveM.isPending ? '保存中…' : '保存'}
-          </Btn>
+          </Button>
         )}
       </div>
 
-      <div className={`note-reader-grid${outlineOpen ? '' : ' no-outline'}`}>
+      <div className="nt-grid" data-outline={outlineOpen ? 'open' : 'closed'}>
         {outlineOpen && (
-          <nav className="note-outline">
-            <div className="note-rail-h">
-              <LoomIcon name="panelLeft" size={14} />
-              大纲
-            </div>
+          <nav className="nt-outline" aria-label="大纲">
+            <div className="nt-rail-head">大纲</div>
             {shown.map((b, i) => (
               <button
                 type="button"
                 key={b.attrs?.id ?? i}
-                className="nol-item"
+                className="nt-ol-item"
                 onClick={() => {
                   document
                     .getElementById(`nb-${b.attrs?.id ?? i}`)
                     ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }}
               >
-                <span className="nol-glyph mono">
-                  {b.type === 'crossLinkBlock' ? '@' : b.type === 'questionRefBlock' ? '?' : '·'}
+                <span className="nt-ol-glyph" aria-hidden="true">
+                  {outlineGlyph(b)}
                 </span>
-                <span className="nol-label">{blockOutlineLabel(b)}</span>
+                <span className="nt-ol-label">{blockOutlineLabel(b)}</span>
               </button>
             ))}
           </nav>
         )}
 
-        <article ref={docColumnRef} className="note-doc-col">
-          {/* S12 (YUK-335)：入口 banner（设计 screen-note-reader.jsx:201，.note-entry-banner
-              coral，CSS 已移植 globals:6819）——仅当 ?entry 命中某 label 时渲，无入口
-              上下文不占版面。文案点明「从哪扇门进来」+ 同篇笔记另有几个入口。 */}
+        <article ref={docColumnRef} className="nt-doc-col">
+          {/* S12 (YUK-335)：入口 banner——仅当 ?entry 命中某 label 时渲，无入口上下文
+              不占版面。文案点明「从哪扇门进来」+ 同篇笔记另有几个入口。 */}
           {entryMatch && (
-            <div className="note-entry-banner">
-              <LoomIcon name="link" size={15} />
+            <div className="nt-entry-banner">
+              <Link size={16} aria-hidden="true" />
               <span>
                 你从「<b>{entryMatch.name}</b>」进入这篇笔记
                 {note.labels.length > 1 && (
@@ -459,37 +511,28 @@ export default function NoteReaderPage({
               </span>
             </div>
           )}
-          <h1 className="page-title serif" style={{ marginBottom: 'var(--s-2)' }}>
-            {note.title}
-          </h1>
-          <div className="nowrap-meta" style={{ marginBottom: 'var(--s-5)' }}>
-            <span className="note-kind-tag note-kind-atomic">
-              {NOTE_TYPE_LABEL[note.type] ?? '笔记'}
-            </span>
-            <span className={`verify-badge ${verified ? 'verified' : 'draft'}`}>
-              <LoomIcon name={verified ? 'check' : 'sparkle'} size={11} />
-              {verified ? '已校验' : '草稿'}
-            </span>
-            <span className="meta">第 {note.version} 版</span>
+          <h1 className="nt-doc-title">{note.title}</h1>
+          <div className="nt-doc-meta">
+            <Chip>{NOTE_TYPE_LABEL[note.type] ?? '笔记'}</Chip>
+            <VerifyChip verified={verified} />
+            <span className="nt-doc-version">第 {note.version} 版</span>
           </div>
 
-          {/* S12 (YUK-335)：入口 strip（设计 :221，.note-entries-strip + .entry-pill，
-              CSS 已移植 globals:6855）——「同一篇笔记多扇门」的主表达。遍历 note.labels
-              每个 knowledge 标签出一个 pill（点击 navigate 到该知识点）；?entry 命中的
-              当前入口加 .is-here（coral 反白）。仅 read 态渲（编辑态不占版面）。 */}
+          {/* S12 (YUK-335)：入口 strip——「同一篇笔记多扇门」的主表达。遍历 note.labels
+              每个 knowledge 标签出一个入口（点击 navigate 到该知识点）；?entry 命中的
+              当前入口反白。仅 read 态渲（编辑态不占版面）。 */}
           {mode === 'read' && note.labels.length > 0 && (
-            <div className="note-entries-strip">
-              <span className="meta">入口 · {note.labels.length}</span>
+            <div className="nt-entries">
+              <span className="nt-entries-label">入口 · {note.labels.length}</span>
               {note.labels.map((l) => (
-                <button
-                  type="button"
+                <ChipButton
                   key={l.id}
-                  className={`entry-pill${entryMatch?.id === l.id ? ' is-here' : ''}`}
+                  tone={entryMatch?.id === l.id ? 'accent' : 'neutral'}
                   onClick={() => navigate(`/knowledge/${l.id}`)}
                 >
-                  <LoomIcon name="link" size={12} />
+                  <Link size={12} aria-hidden="true" />
                   {l.name}
-                </button>
+                </ChipButton>
               ))}
             </div>
           )}
@@ -516,99 +559,98 @@ export default function NoteReaderPage({
           )}
         </article>
 
-        <aside className="note-context">
-          <div className="drawer-sec">
-            <div className="drawer-sec-h">
-              <LoomIcon name="doc" size={13} />
-              属性
-            </div>
-            <div className="note-prop-row">
-              <span className="meta">状态</span>
-              <span className={`verify-badge ${verified ? 'verified' : 'draft'}`}>
-                <LoomIcon name={verified ? 'check' : 'sparkle'} size={11} />
-                {verified ? '已校验' : '草稿'}
-              </span>
-            </div>
-            <div className="note-prop-row">
-              <span className="meta">版本</span>
-              <span className="tnum">第 {note.version} 版</span>
-            </div>
-            <div className="note-prop-row">
-              <span className="meta">内容段</span>
-              <span className="mono tnum">{blocks.length}</span>
-            </div>
-          </div>
+        <aside className="nt-context" aria-label="笔记信息">
+          <section className="nt-ctx-sec" aria-labelledby="nt-ctx-props">
+            <SectionHead id="nt-ctx-props" title="属性" />
+            <dl className="nt-props">
+              <div className="nt-prop">
+                <dt>状态</dt>
+                <dd>
+                  <VerifyChip verified={verified} />
+                </dd>
+              </div>
+              <div className="nt-prop">
+                <dt>版本</dt>
+                <dd className="un-num">第 {note.version} 版</dd>
+              </div>
+              <div className="nt-prop">
+                <dt>内容段</dt>
+                <dd className="un-num">{blocks.length}</dd>
+              </div>
+            </dl>
+          </section>
 
-          <div className="drawer-sec">
-            <div className="drawer-sec-h">
-              <LoomIcon name="link" size={13} />
-              关联知识点 · {note.labels.length}
-            </div>
-            <div className="note-label-list">
+          <section className="nt-ctx-sec" aria-labelledby="nt-ctx-labels">
+            <SectionHead
+              id="nt-ctx-labels"
+              title="关联知识点"
+              aside={<span className="un-num">{note.labels.length}</span>}
+            />
+            <ul className="nt-ctx-list">
               {note.labels.map((l) => (
-                <button
-                  type="button"
-                  key={l.id}
-                  className={`note-label-row${entryMatch?.id === l.id ? ' is-entry' : ''}`}
-                  onClick={() => navigate(`/knowledge/${l.id}`)}
-                >
-                  {/* de-wenyan: label rows carry no domain on the wire → neutral
-                      default font (subject-driven is a follow-up). */}
-                  <span>{l.name}</span>
-                  {/* S12 (YUK-335)：右栏「入口」tag 只在真有入口上下文（?entry 命中）
-                      时显示——与顶部 strip 的 .is-here 同源 entryMatch，无 param 不误标。 */}
-                  {entryMatch?.id === l.id && <span className="entry-tag mono">入口</span>}
-                  <LoomIcon name="arrow" size={13} className="thread-arrow" />
-                </button>
+                <li key={l.id}>
+                  <button
+                    type="button"
+                    className="nt-ctx-row"
+                    data-entry={entryMatch?.id === l.id || undefined}
+                    onClick={() => navigate(`/knowledge/${l.id}`)}
+                  >
+                    {/* de-wenyan: label rows carry no domain on the wire → neutral
+                        default font (subject-driven is a follow-up). */}
+                    <span className="nt-ctx-name">{l.name}</span>
+                    {/* S12 (YUK-335)：右栏「入口」tag 只在真有入口上下文（?entry 命中）
+                        时显示——与顶部 strip 的当前入口同源 entryMatch，无 param 不误标。 */}
+                    {entryMatch?.id === l.id && <Chip tone="accent">入口</Chip>}
+                    <ChevronRight className="nt-ctx-arrow" size={14} aria-hidden="true" />
+                  </button>
+                </li>
               ))}
-            </div>
-          </div>
+            </ul>
+          </section>
 
-          <div className="drawer-sec">
-            <div className="drawer-sec-h">
-              <LoomIcon name="items" size={13} />
-              相关学习项 · {note.related_learning_items.length}
-            </div>
+          <section className="nt-ctx-sec" aria-labelledby="nt-ctx-items">
+            <SectionHead
+              id="nt-ctx-items"
+              title="相关学习项"
+              aside={<span className="un-num">{note.related_learning_items.length}</span>}
+            />
             {note.related_learning_items.length === 0 ? (
-              <div className="meta">暂无关联相同知识点的学习项</div>
+              <p className="nt-ctx-empty">暂无关联相同知识点的学习项</p>
             ) : (
-              <CollapsibleList
-                as="div"
-                className="note-label-list"
+              <FoldList
+                as="ul"
+                className="nt-ctx-list"
                 items={note.related_learning_items}
                 renderItem={(it) => (
-                  <div key={it.id} className="note-label-row">
-                    <LoomIcon name="items" size={13} />
+                  <li key={it.id} className="nt-ctx-item">
+                    <ListChecks size={14} aria-hidden="true" />
                     {/* de-wenyan: related-item rows carry no domain → neutral default. */}
-                    <span>{it.title}</span>
-                    <span className="meta">暂不提供详情页</span>
-                  </div>
+                    <span className="nt-ctx-name">{it.title}</span>
+                    <span className="nt-ctx-note">暂不提供详情页</span>
+                  </li>
                 )}
               />
             )}
-          </div>
+          </section>
 
-          <div className="drawer-sec">
-            <div className="drawer-sec-h">
-              <LoomIcon name="history" size={13} />
-              活动 · AI 修订
-            </div>
+          <section className="nt-ctx-sec" aria-labelledby="nt-ctx-changes">
+            <SectionHead id="nt-ctx-changes" title="活动 · AI 修订" />
             {/* 最近 3 版在前，其余收进「全部 N 条」（owner 2026-10-18 折叠决定，设计 L5）。 */}
-            <CollapsibleList
-              as="div"
-              className="note-versions"
+            <FoldList
+              as="ol"
+              className="nt-versions"
               items={changesQ.data?.rows ?? []}
               renderItem={(c) => (
-                <div key={c.event_id} className={`note-ver${c.undone ? '' : ' is-current'}`}>
-                  <span className="note-ver-dot" />
-                  <div className="note-ver-body">
-                    <div className="note-ver-top">
-                      <span className="note-ver-v">第 {c.next_artifact_version} 版</span>
-                      <span className="adm-actor">
-                        <LoomIcon name="sparkle" size={11} />
+                <li key={c.event_id} className="nt-ver" data-current={!c.undone || undefined}>
+                  <span className="nt-ver-dot" aria-hidden="true" />
+                  <div className="nt-ver-body">
+                    <div className="nt-ver-top">
+                      <span className="nt-ver-v">第 {c.next_artifact_version} 版</span>
+                      <span className="nt-ver-actor">
+                        <Sparkles size={12} aria-hidden="true" />
                         {changeActorLabel(c.actor_ref)}
                       </span>
-                      <span className="meta" style={{ marginLeft: 'auto' }}>
+                      <span className="nt-ver-time">
                         {new Date(c.created_at).toLocaleString('zh-CN', {
                           month: 'numeric',
                           day: 'numeric',
@@ -617,45 +659,36 @@ export default function NoteReaderPage({
                         })}
                       </span>
                     </div>
-                    <div className="note-ver-note meta">
-                      更新 {c.ops_count} 处 · 新增 {c.new_blocks} 段
+                    <div className="nt-ver-note">
+                      <span>
+                        更新 {c.ops_count} 处 · 新增 {c.new_blocks} 段
+                      </span>
                       {c.undone ? (
-                        <span className="badge tone-neutral" style={{ marginLeft: 8 }}>
-                          已还原
-                        </span>
+                        <Chip>已还原</Chip>
                       ) : (
-                        <button
-                          type="button"
-                          className="xlink mono"
-                          style={{ marginLeft: 8 }}
+                        <Button
+                          size="sm"
+                          variant="quiet"
+                          className="nt-ver-undo"
                           disabled={undoM.isPending}
                           onClick={() => undoM.mutate(c.event_id)}
                         >
-                          <LoomIcon name="undo" size={10} />
+                          <Undo2 size={14} aria-hidden="true" />
                           还原
-                        </button>
+                        </Button>
                       )}
                     </div>
                   </div>
-                </div>
+                </li>
               )}
             />
             {(changesQ.data?.rows ?? []).length === 0 && (
-              <div className="meta">暂无 AI 修订记录</div>
+              <p className="nt-ctx-empty">暂无 AI 修订记录</p>
             )}
-          </div>
+          </section>
         </aside>
       </div>
-
-      {toast && (
-        <div className="pf-toasts" aria-live="polite">
-          <div className="pf-toast t-info">
-            <LoomIcon name="sparkle" size={15} className="ico" />
-            <span>{toast}</span>
-          </div>
-        </div>
-      )}
-    </main>
+    </ReaderFrame>
   );
 }
 
@@ -700,34 +733,30 @@ export function NoteDocBody({
   if (type === 'interactive') {
     if (interactive) {
       return (
-        <div className="note-doc">
+        <div className="nt-doc">
           <InteractiveArtifactRenderer html={interactive.html} title={title} />
         </div>
       );
     }
     return (
-      <div className="note-doc">
-        <p className="quiet-empty">
-          互动内容暂时无法渲染——这篇产物的内容未通过校验，已记录待修复。
-        </p>
+      <div className="nt-doc">
+        <p className="nt-quiet">互动内容暂时无法渲染——这篇产物的内容未通过校验，已记录待修复。</p>
       </div>
     );
   }
 
-  // S12 (YUK-335)：read 态正文用 .note-reader-body（prose fs-body-lg 17px）+
-  // NoteBlockView variant="read"（crossLink 渲整宽 BlockLinkCard）。批次乙合并
-  // #397 的 NoteDocBody（interactive 渲染）时，把 S12 的读态 prose 改进并入此
-  // note-types 分支——两特性共存（interactive 分支仍 .note-doc）。
-  // YUK-339：note-types 分支进一步 Notion 化（设计源 NoteReaderBody，
-  // screen-note-reader.jsx:46-69）——每块 .nrb-block（28px gutter 网格）+
-  // .nrb-gutter 手柄（section 折叠 / 非 section 锚点）+ .nrb-content；section =
-  // semanticBlock 小节（标题 h2.nrb-h serif，折叠隐体留标题）。已如下偏离设计源
+  // S12 (YUK-335)：read 态正文用 .nt-body（17px 阅读字号）+
+  // NoteBlockView variant="read"（crossLink 渲整宽链接卡）。interactive 分支走 .nt-doc。
+  // YUK-339：note-types 分支 Notion 化（设计源 NoteReaderBody，
+  // screen-note-reader.jsx:46-69）——每块 .nt-blk（28px gutter 网格）+
+  // .nt-blk-gutter 手柄（section 折叠 / 非 section 锚点）+ .nt-blk-content；section =
+  // semanticBlock 小节（标题 h2.nt-blk-h，折叠隐体留标题）。已如下偏离设计源
   // 并在 PR 记录：锚点 id 沿用既有 nb-<blockId|index> 方案（outline 同源，非设计
   // 的 nb-anchor- 前缀）；锚点按钮做深链（hash + 滚动），不做剪贴板复制；生产无
-  // b.link 链接行语义（crossLink 整块即 BlockLinkCard，YUK-541），.nrb-linkrow 不引。
+  // b.link 链接行语义（crossLink 整块即链接卡，YUK-541），不引链接行。
   return (
-    <div className="note-reader-body">
-      {blocks.length === 0 && <p className="quiet-empty">空笔记——切到编辑写第一块。</p>}
+    <div className="nt-body">
+      {blocks.length === 0 && <p className="nt-quiet">空笔记——切到编辑写第一块。</p>}
       {blocks.map((b, i) => {
         const anchorId = `nb-${b.attrs?.id ?? i}`;
         const blockKey = b.attrs?.id ?? String(i);
@@ -740,44 +769,37 @@ export function NoteDocBody({
             id={anchorId}
             className={
               isSection
-                ? 'nrb-block nrb-h-block'
-                : `nrb-block ${NRB_PLAIN_CLASS[b.type] ?? 'nrb-plain'}`
+                ? 'nt-blk nt-blk-section'
+                : `nt-blk ${BLOCK_KIND_CLASS[b.type] ?? 'nt-blk-plain'}`
             }
           >
-            <div className="nrb-gutter">
+            <div className="nt-blk-gutter">
               {isSection ? (
                 <button
                   type="button"
-                  className="nrb-collapse"
+                  className="nt-blk-btn nt-blk-collapse"
                   aria-expanded={!isCollapsed}
                   aria-label={
                     isCollapsed ? `展开「${sectionLabel}」小节` : `折叠「${sectionLabel}」小节`
                   }
                   onClick={() => toggleSection(blockKey)}
                 >
-                  <LoomIcon
-                    name="arrow"
-                    size={13}
-                    style={{
-                      transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)',
-                      transition: 'transform var(--dur-fast)',
-                    }}
-                  />
+                  <ChevronRight size={14} aria-hidden="true" />
                 </button>
               ) : (
                 <button
                   type="button"
-                  className="nrb-anchor-btn"
+                  className="nt-blk-btn"
                   title="锚点链接"
                   aria-label="锚点链接：更新地址栏并直达此块"
                   onClick={() => jumpToBlockAnchor(anchorId)}
                 >
-                  <LoomIcon name="link" size={12} />
+                  <Link size={13} aria-hidden="true" />
                 </button>
               )}
             </div>
-            <div className="nrb-content">
-              {isSection && <h2 className="nrb-h">{sectionLabel}</h2>}
+            <div className="nt-blk-content">
+              {isSection && <h2 className="nt-blk-h">{sectionLabel}</h2>}
               {(!isSection || !isCollapsed) && (
                 <NoteBlockView
                   block={b}

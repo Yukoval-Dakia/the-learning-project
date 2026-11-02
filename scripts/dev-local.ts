@@ -109,6 +109,12 @@ if (allowTestDb) {
       where not exists (select 1 from contract_epoch where epoch = '${CODE_CONTRACT_EPOCH}')`,
   ]);
   if (epoch.status !== 0) process.exit(epoch.status ?? 1);
+  // The API (RW_WORKER=1) and the worker both launch DBOS against tlp_dbos. DBOS's migration
+  // runner takes no cross-process lock, so on an empty database the two deadlock. Migrate once
+  // here; both launches then find the schema current and skip migration. Production already
+  // has a single DBOS launcher (separate worker, app without RW_WORKER).
+  const dbosSchema = run('pnpm', ['exec', 'dbos', 'schema', databaseUrl, '--schema', 'tlp_dbos']);
+  if (dbosSchema.status !== 0) process.exit(dbosSchema.status ?? 1);
   // A few admitted questions so the pages have something to serve without a model provider.
   // Runs only on this dev-DB path (never DEV_ALLOW_TEST_DB); the script re-checks the database
   // name itself and skips questions that already exist.

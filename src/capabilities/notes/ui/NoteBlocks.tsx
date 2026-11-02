@@ -4,9 +4,22 @@
 // - check kind 保留自解释正文，不提供内嵌作答/判分；
 // - questionRefBlock（pre-flight B 用户增量）= 题面预览 + 类型徽章的纯引用块，
 //   无作答判分；点击进入现有题目详情页。
+// M3E presentation (YUK-1473, docs/design/2026-11-03-notes-m3e.md): markup and classes only.
 
 import { useQuery } from '@tanstack/react-query';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import {
+  Check,
+  ChevronRight,
+  CircleQuestionMark,
+  FileText,
+  Link,
+  List,
+  type LucideIcon,
+  Sigma,
+  TriangleAlert,
+  X,
+} from 'lucide-react';
+import { Chip } from '@/ui-next/public';
 
 import {
   type BodyBlock,
@@ -15,13 +28,22 @@ import {
   questionsForKnowledge,
 } from './notes-api';
 
-const KIND_ICON: Record<SemanticKind, string> = {
-  definition: 'doc',
-  mechanism: 'fx',
-  example: 'list',
-  pitfall: 'alert',
-  check: 'doc',
+const KIND_ICON: Record<SemanticKind, LucideIcon> = {
+  definition: FileText,
+  mechanism: Sigma,
+  example: List,
+  pitfall: TriangleAlert,
+  check: FileText,
 };
+
+function VerifiedChip() {
+  return (
+    <Chip tone="positive">
+      <Check size={12} aria-hidden="true" />
+      已校验
+    </Chip>
+  );
+}
 
 export function questionDetailHref(questionId: string): string {
   return `/questions/${encodeURIComponent(questionId)}`;
@@ -47,16 +69,16 @@ export function QuestionRefBlock({
 }) {
   const questionId = block.attrs?.question_id;
   return (
-    <div className="nb-qref">
-      <div className="nb-qref-head">
-        <LoomIcon name="quiz" size={14} />
-        <span className="nb-qref-tag">题目引用</span>
+    <div className="nt-qref">
+      <div className="nt-qref-head">
+        <CircleQuestionMark size={14} aria-hidden="true" />
+        <span className="nt-qref-tag">题目引用</span>
       </div>
       {/* de-wenyan: BodyBlock carries no subject domain → neutral default font
           (subject-driven question-ref preview is a follow-up). */}
       <button
         type="button"
-        className="nb-qref-body"
+        className="nt-qref-body"
         disabled={!questionId}
         onClick={() => questionId && onOpen?.(questionId)}
       >
@@ -85,30 +107,29 @@ export function NoteBlockView({
     //（服务端 block-refs 索引器同源）——勿读嵌套 target。
     const targetId = block.attrs?.artifact_id;
     if (variant === 'read') {
-      // 整宽链接卡（设计 .nb-linkcard，已移植 globals）。kind/mastery 在 mock 里
-      // 取自 DATA.knowledge——真实 crossLinkBlock 是 artifact 引用，无 mastery，
+      // 整宽链接卡。真实 crossLinkBlock 是 artifact 引用，无 mastery，
       // kind 固定「交叉链」（flat attrs 无类型字段，不 fabricate）；目标名取 title，
       // 缺则回退 artifact_id（block-refs 索引器同源字段）。
       return (
         <button
           type="button"
-          className="nb-linkcard"
+          className="nt-linkcard"
           onClick={() => targetId && onLink?.(targetId)}
         >
-          <span className="nb-linkcard-ic">
-            <LoomIcon name="link" size={16} />
+          <span className="nt-linkcard-icon" aria-hidden="true">
+            <Link size={16} />
           </span>
-          <span className="nb-linkcard-body">
-            <span className="nb-linkcard-t">{block.attrs?.title ?? targetId ?? '交叉链'}</span>
-            <span className="nb-linkcard-s mono">交叉链 · {targetId ?? '—'}</span>
+          <span className="nt-linkcard-body">
+            <span className="nt-linkcard-title">{block.attrs?.title ?? targetId ?? '交叉链'}</span>
+            <span className="nt-linkcard-sub">交叉链 · {targetId ?? '—'}</span>
           </span>
-          <LoomIcon name="arrow" size={15} className="thread-arrow" />
+          <ChevronRight className="nt-linkcard-arrow" size={16} aria-hidden="true" />
         </button>
       );
     }
     return (
-      <button type="button" className="xlink mono" onClick={() => targetId && onLink?.(targetId)}>
-        <LoomIcon name="link" size={11} />
+      <button type="button" className="nt-xlink" onClick={() => targetId && onLink?.(targetId)}>
+        <Link size={12} aria-hidden="true" />
         {block.attrs?.title ?? targetId ?? '交叉链'}
       </button>
     );
@@ -118,36 +139,26 @@ export function NoteBlockView({
   }
   const kind = block.attrs?.semantic_kind;
   const label = kind ? SEMANTIC_KIND_LABEL[kind] : null;
-  // YUK-339：read 态的 kind 标签由 .nrb-h 小节标题（NoteDocBody，设计源
-  // screen-note-reader.jsx:63）承载，块内不再重复渲染 chip——只保留 user_verified
-  // 徽章；edit 态（NoteEditor）保持原 chip 不变。
+  // YUK-339：read 态的 kind 标签由小节标题（NoteDocBody）承载，块内不再重复渲染
+  // chip——只保留 user_verified 徽章；edit 态（NoteEditor）保持原 chip 不变。
   const showTagChip = variant === 'edit' && label;
   const showVerifiedAlone = variant === 'read' && block.attrs?.user_verified;
+  const KindIcon = KIND_ICON[kind as SemanticKind] ?? FileText;
   return (
-    <div className={`nb-sem nb-sem-${kind ?? 'plain'}`}>
+    <div className={`nt-sem nt-sem-${kind ?? 'plain'}`}>
       {showTagChip && (
-        <span className="nb-sem-tag mono">
-          <LoomIcon name={(KIND_ICON[kind as SemanticKind] ?? 'doc') as never} size={11} />
+        <span className="nt-sem-tag">
+          <KindIcon size={12} aria-hidden="true" />
           {label}
-          {block.attrs?.user_verified && (
-            <span className="verify-badge verified">
-              <LoomIcon name="check" size={10} />
-              已校验
-            </span>
-          )}
+          {block.attrs?.user_verified && <VerifiedChip />}
         </span>
       )}
       {showVerifiedAlone && (
-        <span className="nb-sem-tag mono">
-          <span className="verify-badge verified">
-            <LoomIcon name="check" size={10} />
-            已校验
-          </span>
+        <span className="nt-sem-tag">
+          <VerifiedChip />
         </span>
       )}
-      <div className="nb-sem-body" style={{ whiteSpace: 'pre-wrap' }}>
-        {blockText(block)}
-      </div>
+      <div className="nt-sem-body">{blockText(block)}</div>
     </div>
   );
 }
@@ -170,28 +181,26 @@ export function QuestionPicker({
     enabled: knowledgeIds.length > 0,
   });
   return (
-    <div className="slash-menu fade-key" style={{ maxHeight: 280, overflowY: 'auto' }}>
-      <div className="slash-head meta">引用题目 · 按本笔记标签知识点</div>
-      {qQ.isLoading && <div className="quiet-empty">取题…</div>}
+    <div className="nt-menu un-glass">
+      <div className="nt-menu-head">引用题目 · 按本笔记标签知识点</div>
+      {qQ.isLoading && <div className="nt-menu-note">取题…</div>}
       {(qQ.data?.items ?? []).map((q) => (
         <button
           type="button"
           key={q.id}
-          className="slash-item"
+          className="nt-menu-item"
           onClick={() => onPick({ id: q.id, prompt_md: q.prompt_md })}
         >
-          <LoomIcon name="quiz" size={14} />
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {q.prompt_md.slice(0, 32)}
-          </span>
-          <span className="mono slash-key">{q.kind}</span>
+          <CircleQuestionMark size={15} aria-hidden="true" />
+          <span className="nt-menu-label">{q.prompt_md.slice(0, 32)}</span>
+          <span className="nt-menu-key">{q.kind}</span>
         </button>
       ))}
       {qQ.data && qQ.data.items.length === 0 && (
-        <div className="quiet-empty">本笔记标签下暂无题目。</div>
+        <div className="nt-menu-note">本笔记标签下暂无题目。</div>
       )}
-      <button type="button" className="slash-item" onClick={onClose}>
-        <LoomIcon name="close" size={13} />
+      <button type="button" className="nt-menu-item" onClick={onClose}>
+        <X size={15} aria-hidden="true" />
         <span>取消</span>
       </button>
     </div>
