@@ -1,15 +1,13 @@
 // Nightly 教研例会 (research-meeting) propose handler.
 //
-// Thin candidate-picker + dedup gate + a bounded parallel producer batch (NOT an MCP
-// tool-agent loop). The job is the SINGLE proposer of conjectures: it calls
-// induceConjecture (the Opus self-consistency orchestrator) + writeAiProposal directly.
+// Bounded parallel producer batch (NOT an MCP tool-agent loop). The job is the SINGLE
+// proposer of conjectures: it calls induceConjecture (the Opus self-consistency
+// orchestrator) + writeAiProposal directly.
 //
-// Per run: PRE-LLM reads (recent failures with reasoning traces, per-KC mastery, pending
-// cause×KC keys) → deterministic evidence gathering + owner-decision/terminal history gate
-// (30-day dismiss cooldown; terminal reopen needs two fresh failures) → prediction-
-// accountability re-rank → salience-order grounding (KC name, subject identity, first-hand
-// attempt evidence) → per grounded top-K cell induceConjecture → probe package →
-// writeAiProposal.
+// Per run: PRE-LLM reads (recent failures with reasoning traces, per-KC mastery) →
+// candidate selection, owned by conjecture `selectConjectureCandidates` (evidence
+// gathering, history gate, accountability re-rank, grounding, evidence images) → per
+// selected top-K cell induceConjecture → probe package → writeAiProposal.
 //
 // Failure asymmetry: shared PRE-LLM reads run OUTSIDE the per-cell swallow, so a throw is a
 // retryable DB fault that propagates. Candidate-local grounding/image failures refill from
