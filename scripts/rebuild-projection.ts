@@ -26,8 +26,8 @@
 import './load-env';
 
 import { type Db, type Tx, db } from '@/db/client';
-import { assertKnowledgeOperationsDecodable } from '@/kernel/records/knowledge-operation';
 import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
+import { assertKnowledgeOperationsDecodable } from '@/kernel/records/knowledge-operation';
 import {
   PROJECTION_ENTITIES,
   PROJECTION_FK_CLUSTERS,
