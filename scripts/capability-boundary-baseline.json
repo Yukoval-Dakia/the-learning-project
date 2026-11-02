@@ -7133,10 +7133,10 @@
       "consumers": [
         {
           "file": "src/capabilities/copilot/server/teaching/confirmation.ts",
-          "line": 20
+          "line": 23
         }
       ],
-      "evidence": "Fixed B02778 / repaired attempt_1: src/capabilities/copilot/server/teaching/confirmation.ts:20 is the real named value import/re-export of issueConversationConfirmation; Copilot confirmation invokes it in its existing issue/submit/read lifecycle. The existing port forwards the original symbol, without wrappers or moved logic. Exact H and call lines are sealed in the external handoff.",
+      "evidence": "Fixed B02778 / repaired attempt_1: src/capabilities/copilot/server/teaching/confirmation.ts:23 is the real named value import/re-export of issueConversationConfirmation; Copilot confirmation invokes it in its existing issue/submit/read lifecycle. The existing port forwards the original symbol, without wrappers or moved logic. Exact H and call lines are sealed in the external handoff.",
       "rationale": "Changing candidate eligibility changes only the Practice selection/issuance owner; Copilot keeps explicit accept and typed blocked. A lifecycle change such as explicit request_again instead changes only the Copilot owner and versioned command; the Practice operation remains unchanged. These are complete Practice-owned operations, not helper forwarding. Reusing the one established port keeps the physical Copilot-to-Practice edge at one while preserving the logical dependency.",
       "issue": "YUK-1465",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1465#comment-06ae13f2-6477-4a4b-9432-b67c4273b5ed",
@@ -7173,10 +7173,10 @@
       "consumers": [
         {
           "file": "src/capabilities/copilot/server/teaching/confirmation.ts",
-          "line": 20
+          "line": 23
         }
       ],
-      "evidence": "Fixed B02778 / repaired attempt_1: src/capabilities/copilot/server/teaching/confirmation.ts:20 is the real named value import/re-export of submitConversationConfirmation; Copilot confirmation invokes it in its existing issue/submit/read lifecycle. The existing port forwards the original symbol, without wrappers or moved logic. Exact H and call lines are sealed in the external handoff.",
+      "evidence": "Fixed B02778 / repaired attempt_1: src/capabilities/copilot/server/teaching/confirmation.ts:23 is the real named value import/re-export of submitConversationConfirmation; Copilot confirmation invokes it in its existing issue/submit/read lifecycle. The existing port forwards the original symbol, without wrappers or moved logic. Exact H and call lines are sealed in the external handoff.",
       "rationale": "Changing immutable original or correction authorization stays in Practice; Copilot retains the lifecycle/Stop callback without grading or settling. A lifecycle change such as explicit request_again instead changes only the Copilot owner and versioned command; the Practice operation remains unchanged. These are complete Practice-owned operations, not helper forwarding. Reusing the one established port keeps the physical Copilot-to-Practice edge at one while preserving the logical dependency.",
       "issue": "YUK-1465",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1465#comment-06ae13f2-6477-4a4b-9432-b67c4273b5ed",
@@ -7213,10 +7213,10 @@
       "consumers": [
         {
           "file": "src/capabilities/copilot/server/teaching/confirmation.ts",
-          "line": 20
+          "line": 23
         }
       ],
-      "evidence": "Fixed B02778 / repaired attempt_1: src/capabilities/copilot/server/teaching/confirmation.ts:20 is the real named value import/re-export of readConversationConfirmation; Copilot confirmation invokes it in its existing issue/submit/read lifecycle. The existing port forwards the original symbol, without wrappers or moved logic. Exact H and call lines are sealed in the external handoff.",
+      "evidence": "Fixed B02778 / repaired attempt_1: src/capabilities/copilot/server/teaching/confirmation.ts:23 is the real named value import/re-export of readConversationConfirmation; Copilot confirmation invokes it in its existing issue/submit/read lifecycle. The existing port forwards the original symbol, without wrappers or moved logic. Exact H and call lines are sealed in the external handoff.",
       "rationale": "Changing receipt recovery remains a Practice read; Copilot projects authoritative IDs and effects without issuing or rejudging. A lifecycle change such as explicit request_again instead changes only the Copilot owner and versioned command; the Practice operation remains unchanged. These are complete Practice-owned operations, not helper forwarding. Reusing the one established port keeps the physical Copilot-to-Practice edge at one while preserving the logical dependency.",
       "issue": "YUK-1465",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1465#comment-06ae13f2-6477-4a4b-9432-b67c4273b5ed",
@@ -11345,7 +11345,7 @@
       "file": "src/capabilities/copilot/server/teaching/confirmation.ts",
       "module": "src/kernel/events/correction-lock.ts",
       "kind": "value",
-      "symbols": ["lockEventCorrectionSource"],
+      "symbols": ["lockEventCorrectionSource", "lockEventCorrectionsAll"],
       "issue": "YUK-1465",
       "owns": "Serialize confirmation permission with the existing source correction writer.",
       "date": "2026-11-02"

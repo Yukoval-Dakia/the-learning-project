@@ -6,7 +6,10 @@ import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events, learning_session } from '@/db/schema';
 import { getCorrectionStatus, writeEvent } from '@/kernel/events';
-import { lockEventCorrectionSource } from '@/kernel/events/correction-lock';
+import {
+  lockEventCorrectionSource,
+  lockEventCorrectionsAll,
+} from '@/kernel/events/correction-lock';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { ApiError } from '@/kernel/http';
 import {
@@ -82,10 +85,24 @@ async function save(tx: Tx, state: ConfirmationOccurrenceT) {
 }
 
 /** Same lock order as Stop/retraction; called again immediately before activation. */
-async function authorize(tx: Tx, sessionId: string, sources: string[], signal?: AbortSignal) {
-  for (const id of [...new Set(sources)].sort()) {
+async function authorize(
+  tx: Tx,
+  sessionId: string,
+  sources: string[],
+  signal?: AbortSignal,
+  offerReplyId?: string,
+) {
+  const askIds = [...new Set(sources)].sort();
+  for (const id of askIds) {
     await acquireCopilotExecutionSettlementLock(tx, id);
+  }
+  // Correction writers take all before source; keep every authority anchor
+  // locked until the caller's issuance or activation transaction commits.
+  await lockEventCorrectionsAll(tx);
+  for (const id of [...new Set([...askIds, ...(offerReplyId ? [offerReplyId] : [])])].sort()) {
     await lockEventCorrectionSource(tx, id);
+  }
+  for (const id of askIds) {
     const [ask] = await tx.select().from(event).where(eq(event.id, id));
     if (
       !ask ||
@@ -108,6 +125,8 @@ async function authorize(tx: Tx, sessionId: string, sources: string[], signal?: 
     if (hasCancelRequest(statuses))
       throw new ApiError('confirmation_revoked', 'confirmation was stopped', 409);
   }
+  if (offerReplyId && (await getCorrectionStatus(tx, offerReplyId)).state !== 'active')
+    throw new ApiError('confirmation_revoked', 'confirmation offer was withdrawn', 409);
   await lockSession(tx, sessionId);
   signal?.throwIfAborted();
 }
@@ -214,12 +233,10 @@ export async function runConversationConfirmation(
       input.sessionId,
       [state.trigger_ask_id, ...(state.accept_ask_id ? [state.accept_ask_id] : []), input.askId],
       input.signal,
+      state.offer_reply_id,
     );
     const [source] = await tx.select().from(event).where(eq(event.id, input.askId));
-    if (
-      canonicalHash(source?.payload.confirmation) !== canonicalHash(command) ||
-      (await getCorrectionStatus(tx, state.offer_reply_id)).state !== 'active'
-    )
+    if (canonicalHash(source?.payload.confirmation) !== canonicalHash(command))
       throw new ApiError('confirmation_revoked', 'confirmation command or offer changed', 409);
     const resultId = `${commandEventId(input.sessionId, command.command_id)}:result`;
     const [prior] = await tx.select().from(event).where(eq(event.id, resultId));
@@ -329,10 +346,9 @@ export async function runConversationConfirmation(
             input.askId,
           ],
           input.signal,
+          selected.offer_reply_id,
         );
         const current = await readOccurrence(tx, selected.occurrence_id);
-        if ((await getCorrectionStatus(tx, selected.offer_reply_id)).state !== 'active')
-          throw new ApiError('confirmation_revoked', 'confirmation offer was withdrawn', 409);
         if (current?.state !== 'issued')
           throw new ApiError('confirmation_closed', 'confirmation is no longer issued', 409);
       },

@@ -8,6 +8,7 @@ import { ApiError } from '@/kernel/http';
 import {
   COPILOT_REPLY_ACTION,
   COPILOT_USER_ASK_ACTION,
+  copilotAskRevertAllows,
   orchestrateCascadeRevert,
 } from '@/server/revert/cascade-revert';
 import {
@@ -41,7 +42,7 @@ export async function revertCopilotCheckpoint(db: Db, checkpointEventId: string)
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`copilot_revert:${checkpointEventId}`}, 0))`,
     );
     const roots = await tx
-      .select({ id: event.id })
+      .select()
       .from(event)
       .where(
         and(
@@ -52,6 +53,18 @@ export async function revertCopilotCheckpoint(db: Db, checkpointEventId: string)
       )
       .limit(1);
     if (roots.length === 0) throw new ApiError('not_found', 'checkpoint not found', 404);
+
+    if (!copilotAskRevertAllows(roots[0], true)) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          refusal: 'irreversible',
+          reason: '正式作答和结算不属于本轮对话的可撤回更改；原作答与回执保留。',
+          irreversible_event_ids: [checkpointEventId],
+        },
+      } as const;
+    }
 
     const correction = await getCorrectionStatus(tx, checkpointEventId);
     if (correction.state === 'retracted') {
