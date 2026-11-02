@@ -260,3 +260,12 @@ export function readVectorNearHold(metadata: Record<string, unknown>): VectorNea
   if (similarity + 1e-9 < VECTOR_NEAR_DUP_MIN_SIMILARITY) return null;
   return { neighbor_question_id: neighbor, similarity };
 }
+
+/** One hold decision for source verification and ordinary draft admission. */
+export async function readVisibleVectorNearHold(
+  db: Db | Tx,
+  metadata: Record<string, unknown>,
+): Promise<VectorNearHold | null> {
+  const hold = readVectorNearHold(metadata);
+  return hold != null && (await visibleSourceNeighbor(db, hold.neighbor_question_id)) ? hold : null;
+}

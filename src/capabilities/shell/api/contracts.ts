@@ -154,6 +154,7 @@ export const WorkbenchSummaryResponseSchema = z.object({
   }),
   kpi: z.object({
     due_count: z.number().int().nonnegative(),
+    due_count_scope: z.literal('actionable_queue_sample').optional(),
     pending_attribution_count: z.number().int().nonnegative(),
     knowledge_count: z.number().int().nonnegative(),
     goal_count: z.number().int().nonnegative(),
