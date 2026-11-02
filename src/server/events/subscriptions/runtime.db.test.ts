@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { event, event_subscription_checkpoint, event_subscription_delivery } from '@/db/schema';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   bootstrapSubscription,
   claimNextSubscriptionDelivery,

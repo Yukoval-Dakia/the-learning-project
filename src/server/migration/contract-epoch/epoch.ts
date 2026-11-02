@@ -17,6 +17,7 @@
 import { sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { contract_epoch } from '@/db/schema';
+import { lockContractEpochTransition } from '@/kernel/locks/contract-epoch-transition-lock';
 import {
   CODE_CONTRACT_EPOCH,
   CONTRACT_EPOCH_LOG_TAG,
@@ -27,20 +28,6 @@ import {
   logContractEpochFence,
   validateEpochTransition,
 } from './rules';
-
-export type { EpochGateVerdict, EpochMarker, EpochTransitionKind } from './rules';
-export {
-  ASSESSMENT_CONTRACT_EPOCH,
-  CODE_CONTRACT_EPOCH,
-  CONTRACT_EPOCH_LOG_TAG,
-  CONTRACT_EPOCH_STATES,
-  ContractEpochFenceError,
-  gateContractEpoch,
-  logContractEpochFence,
-} from './rules';
-
-/** 单写者串行化 namespace（advisory-locks.ts 的 hashtext 惯例）。 */
-const EPOCH_TRANSITION_LOCK = 'contract-epoch:transition';
 
 // db.execute<T> 要求 T extends Record<string, unknown> —— interface 不自带隐式
 // index signature，type literal 自带（testDb().execute<{…}> 同型先例）。
@@ -182,7 +169,7 @@ export async function transitionContractEpoch(
     throw new Error('contract epoch transition requires a non-empty actor');
   }
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${EPOCH_TRANSITION_LOCK}))`);
+    await lockContractEpochTransition(tx);
     const rows = await tx.execute<EpochRow>(sql`
       select seq, epoch, state, entered_at, entered_by, note
       from contract_epoch

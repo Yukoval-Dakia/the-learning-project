@@ -12,9 +12,9 @@ import {
 } from '@/capabilities/observability/server/subject-control-write';
 import { thinCreateSubject } from '@/capabilities/observability/server/subject-create';
 import { event, subject, subject_control_journal } from '@/db/schema';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { hydrateSubjectRegistryFromDb } from './hydrate';
-import { reconcileBuiltinTraits } from './reconcile-builtin-traits';
+import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { reconcileBuiltinTraits } from './builtin-trait-reconcile';
 
 const db = testDb();
 

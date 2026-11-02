@@ -90,7 +90,7 @@ export const migration_apply_phase = pgTable(
 //
 // 设计：append-only history —— 一行 = 一次 epoch 状态迁移（全序 seq），「当前
 // epoch」= seq 最大行。不用单行 UPDATE：迁移窗口的历史本身就是审计证据。
-// 真相语义（src/server/contract-epoch/rules.ts 是唯一裁决者，本表只是存储）：
+// 真相语义（src/server/migration/contract-epoch/rules.ts 是唯一裁决者，本表只是存储）：
 //   - 缺表/空表 = 隐式 (CODE_CONTRACT_EPOCH,'active') —— 无 marker 的 DB 对本代码
 //     天然 runnable（pre-cutover 时期该隐式值是 'legacy'，翻转后随代码 epoch）。
 //   - 'preparing'：维护窗口，全部 runtime 路径 fenced（含旧 epoch）。

@@ -230,10 +230,6 @@
       "count": 1
     },
     {
-      "path": "src/server/contract-epoch/epoch.ts",
-      "count": 1
-    },
-    {
       "path": "src/server/durable/judge-family.ts",
       "count": 3
     },
@@ -288,10 +284,6 @@
     {
       "path": "src/server/questions/shared-submit.ts",
       "count": 3
-    },
-    {
-      "path": "src/server/rehearsal/orchestrate.ts",
-      "count": 1
     }
   ]
 }

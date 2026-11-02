@@ -52,8 +52,8 @@ import {
 } from '@/server/ai/vision-judge-config';
 import { INFRA_HOUSEKEEPING_SCHEDULES } from '@/server/boss/handlers';
 import { EXPIRE_AGENT, EXPIRE_FAST, EXPIRE_LLM, RETENTION_7D } from '@/server/boss/queue-config';
-import { resolveApiPort } from '@/server/env';
-import { EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE } from '@/server/event-subscriptions/dispatch-mount';
+import { resolveApiPort } from '@/server/config/env';
+import { EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE } from '@/server/events/subscriptions/dispatch-mount';
 import { memoryReconcileHandoffMode } from '@/server/memory/memory-reconcile-handoff';
 import { MEMORY_INFRA_SCHEDULES } from '@/server/memory/triggers';
 import {

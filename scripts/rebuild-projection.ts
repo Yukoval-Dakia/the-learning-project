@@ -26,7 +26,7 @@
 import './load-env';
 
 import { type Db, type Tx, db } from '@/db/client';
-import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
+import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
 import {
   PROJECTION_ENTITIES,
   PROJECTION_FK_CLUSTERS,

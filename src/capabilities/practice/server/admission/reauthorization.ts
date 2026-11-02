@@ -79,7 +79,7 @@ async function buildSuccessorInput(
     '@/kernel/records/assessment-normalization'
   );
   // Strictly-live subject resolution lives in the kernel read-model (shared
-  // hydration engine; capability files may not deep-import server/subjects):
+  // hydration engine):
   // hydrates a private registry inside this transaction context and requires
   // every bound trait to be a live DB payload — a paid input must never bind
   // code-floor / journal_fallback / code_seed / general-fallback content.

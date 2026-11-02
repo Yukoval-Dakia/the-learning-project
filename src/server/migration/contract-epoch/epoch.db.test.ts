@@ -4,8 +4,8 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { contract_epoch } from '@/db/schema';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { assertContractEpochRunnable } from './index';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { assertContractEpochRunnable } from './epoch';
 
 beforeEach(() => resetDb());
 

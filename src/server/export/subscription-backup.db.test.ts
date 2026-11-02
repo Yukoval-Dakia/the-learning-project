@@ -14,7 +14,7 @@ import {
   event,
   knowledge,
 } from '@/db/schema';
-import { loadEventSubscriptionRegistry } from '@/server/event-subscriptions/registry';
+import { loadEventSubscriptionRegistry } from '@/server/events/subscriptions/registry';
 import {
   bootstrapSubscription,
   claimNextSubscriptionDelivery,
@@ -22,7 +22,7 @@ import {
   completeSubscriptionDelivery,
   discoverSubscriptionDeliveries,
   renewSubscriptionLease,
-} from '@/server/event-subscriptions/runtime';
+} from '@/server/events/subscriptions/runtime';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { createMem0Collection, seedMem0Row } from '../../../tests/helpers/mem0-collection';
 import { memR2 } from '../../../tests/helpers/r2';
