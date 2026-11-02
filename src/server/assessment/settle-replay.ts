@@ -12,7 +12,7 @@ import {
   mastery_state,
   material_fsrs_state,
 } from '@/db/schema';
-import { resetPosteriorToPriorIfNoEvidence } from '@/server/mastery/item-calibration';
+import { resetPosteriorToPriorIfNoEvidence } from '@/kernel/records/item-calibration';
 import { unfoldFamilyCalibration } from '@/server/mastery/personalized-difficulty';
 import { clearCalibrationBelowThreshold } from '@/server/mastery/recalibration';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';

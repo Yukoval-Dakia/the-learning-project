@@ -348,7 +348,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'item_calibration',
-    file: 'src/server/mastery/item-calibration.ts',
+    file: 'src/kernel/records/item-calibration.ts',
     marker: '.insert(item_calibration)',
     role: 'off-path-writer',
     note: 'applyItemPrior hard-track INSERT (the B1 cold-start applier the ticket names; OFF-path sole writer — 方案 A keeps it imperative, no flip planned).',
