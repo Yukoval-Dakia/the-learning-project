@@ -565,14 +565,10 @@ export async function restoreFromArchive({
 
   const data = rawData as Record<string, Array<Record<string, unknown>> | undefined>;
 
-  // `event.ingest_at` is an internal dispatch cursor, not restored memory
-  // state. A backup restore starts from an empty memory backend, so restored
-  // events must be considered pending for the outbox poller.
-  for (const row of data.event ?? []) {
-    if (Object.hasOwn(row, 'ingest_at')) {
-      row.ingest_at = null;
-    }
-  }
+  // `event.ingest_at` is restored verbatim: the archive also restores the mem0 collection
+  // and the ingest ledger, and writer-stamped opt-outs (internal ledgers, user-actor rows
+  // kept out of mem0) must not re-enter paid extraction. pg-boss is not archived, so a row
+  // dispatched but not yet ingested at export is not re-driven, as with any lost job.
   const archivedInterventionPreparationJobIds = [
     ...new Set(
       (data.intervention ?? [])

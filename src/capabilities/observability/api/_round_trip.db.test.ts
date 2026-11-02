@@ -122,7 +122,7 @@ describe('round-trip: export → import → DB state mirrored', () => {
     expect(rowsAfterImport[0].name).toBe('虚词');
     const eventsAfterImport = await db.select().from(event).where(eq(event.id, 'e1'));
     expect(eventsAfterImport).toHaveLength(1);
-    expect(eventsAfterImport[0].ingest_at).toBeNull();
+    expect(eventsAfterImport[0].ingest_at?.toISOString()).toBe(now.toISOString());
   });
 
   // YUK-356: the round-trip above only proves the knowledge single-table path. The
