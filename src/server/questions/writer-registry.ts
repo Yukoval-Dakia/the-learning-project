@@ -92,6 +92,11 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043'],
     note: 'reference/rubric backfill UPDATE 与统一发布同事务（§2 矩阵行 19）：新参考答案改变评分依据 ⇒ 新 revision + preserve 折叠 withheld（P1-5：旧 admission evidence 不越代适用）；ai_generated 来源标识已在 rubric.reference_solution_source 留痕。',
   },
+  'scripts/seed-dev-questions.ts': {
+    status: 'publisher-converged',
+    tickets: ['YUK-1696'],
+    note: 'dev 库种子：每题 INSERT 后同事务经 publishQuestionGroupFromRow 铸首版 revision 并 admitted（manual provenance、固定答案键）；仅 dev 库，幂等（确定性 id）。',
+  },
   'scripts/seed-synthetic.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],

@@ -426,6 +426,8 @@ export function piTerminalResultFrame(args: {
   providerError?: ProviderErrorEvidence;
   /** Safe rejection bound to the same final root assistant, never query.latest. */
   providerRequestRejection?: { http_status: 400 };
+  /** Any non-2xx status bound to the same final root assistant response. */
+  providerHttpStatus?: number;
   /** Same binding for 429/502. Parse is set only from invalid structured JSON. */
   helpProviderFault?: HelpProviderFault;
   /** YUK-1559 (C6) — the capture's shared sanitize+bound for retained provider
@@ -480,6 +482,21 @@ export function piTerminalResultFrame(args: {
       ? `provider_http_error=${JSON.stringify(args.providerError)}`
       : undefined;
   const errorEntry = args.sanitizeErrorMessage ?? ((text: string) => text);
+  // Structured provider-side evidence for the failure wire: only a status bound
+  // to the request that failed at termination (strict root binding or the
+  // transport snapshot's last request, resolved by the adapter). The query-wide
+  // capture's earlier non-2xx never qualifies; its Retry-After pairs only with
+  // that same status.
+  const providerStatusEvidence =
+    args.providerHttpStatus !== undefined
+      ? {
+          http_status: args.providerHttpStatus,
+          ...(args.providerError?.http_status === args.providerHttpStatus &&
+          args.providerError.retry_after_ms !== undefined
+            ? { retry_after_ms: args.providerError.retry_after_ms }
+            : {}),
+        }
+      : undefined;
   if (child && (child.input > 0 || child.output > 0)) {
     usageParts.usage.input_tokens += child.input;
     usageParts.usage.output_tokens += child.output;
@@ -513,6 +530,7 @@ export function piTerminalResultFrame(args: {
         errorEntry(final?.errorMessage ?? 'pi agent aborted by provider'),
         ...(providerErrorEntry ? [providerErrorEntry] : []),
       ],
+      ...(providerStatusEvidence ? { provider_failure: providerStatusEvidence } : {}),
       ...usageParts,
     } as SDKResultMessage & { source: 'pi' };
   }
@@ -527,6 +545,7 @@ export function piTerminalResultFrame(args: {
         errorEntry('pi agent_loop ended without an assistant message'),
         ...(providerErrorEntry ? [providerErrorEntry] : []),
       ],
+      ...(providerStatusEvidence ? { provider_failure: providerStatusEvidence } : {}),
       ...usageParts,
     } as SDKResultMessage & { source: 'pi' };
   }
@@ -556,6 +575,9 @@ export function piTerminalResultFrame(args: {
         errorEntry(final.errorMessage ?? 'pi stream error'),
         ...(providerErrorEntry ? [providerErrorEntry] : []),
       ],
+      // Always emitted on the stream-error terminal: its presence is the
+      // positive provider-side evidence even when no status was bound.
+      provider_failure: { stream_error: true, ...(providerStatusEvidence ?? {}) },
       ...usageParts,
     } as SDKResultMessage & { source: 'pi' };
   }

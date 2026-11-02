@@ -15,9 +15,9 @@
 //     不足 / 低置信」。**不假造 CDM/IRT 数字**（无后端 follow-up）。
 //   - MisconceptionList（S4 误区）本片完全不碰。
 
+import { ChevronDown, CircleAlert, Eye, Network } from 'lucide-react';
 import { useState } from 'react';
 import { A5_BANDS, UNKNOWN_BAND_LABEL } from '@/core/mastery-band';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { BandChipView } from './BandChip';
 import { type NodeThreeDimInput, buildNodeThreeDim } from './node-dims';
 
@@ -33,46 +33,44 @@ export function NodeComposite({ input }: NodeCompositeProps) {
   const compBand = comp.unknown ? UNKNOWN_BAND_LABEL : A5_BANDS[comp.band];
 
   return (
-    <div className="kd-composite">
-      <div className="kd-composite-main">
-        <div className="kd-composite-head">
-          <span className="kd-composite-band">{compBand}</span>
-          <span className="kd-composite-cap">综合掌握状态 · 记忆保持 / 理解程度 / 题目难度</span>
-        </div>
-        <BandChipView view={comp} />
-
-        {three.coldNote && (
-          <div className="kd-cold-note">
-            <LoomIcon name="alert" size={14} />
-            {three.coldNote}
-          </div>
-        )}
-
-        <button
-          type="button"
-          className={`kd-dim-toggle${open ? ' open' : ''}`}
-          aria-expanded={open}
-          onClick={() => setOpen((o) => !o)}
-        >
-          <LoomIcon name="chevronDown" size={14} />
-          {open ? '收起判断依据' : '展开判断依据'}
-        </button>
-
-        {open && (
-          <div className="kd-dims">
-            {three.dims.map((d) => (
-              <div key={d.key} className="kd-dim">
-                <div className="kd-dim-row">
-                  <span className="kd-dim-label">{d.label}</span>
-                  <BandChipView view={d.view} labels={d.labels} unknownLabel={d.unknownLabel} />
-                </div>
-                {d.note && <div className="kd-dim-note">{d.note}</div>}
-              </div>
-            ))}
-          </div>
-        )}
+    <section className="kn-composite" aria-label="综合掌握状态">
+      <div className="kn-composite-head">
+        <span className="kn-composite-band">{compBand}</span>
+        <span className="kn-composite-cap">综合掌握状态 · 记忆保持 / 理解程度 / 题目难度</span>
       </div>
-    </div>
+      <BandChipView view={comp} />
+
+      {three.coldNote && (
+        <p className="kn-cold-note">
+          <CircleAlert size={15} aria-hidden="true" />
+          <span>{three.coldNote}</span>
+        </p>
+      )}
+
+      <button
+        type="button"
+        className="kn-disclose un-hit"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <ChevronDown size={15} aria-hidden="true" className="kn-disclose-chev" />
+        {open ? '收起判断依据' : '展开判断依据'}
+      </button>
+
+      {open && (
+        <ul className="kn-dims">
+          {three.dims.map((d) => (
+            <li key={d.key} className="kn-dim">
+              <div className="kn-dim-row">
+                <span className="kn-dim-label">{d.label}</span>
+                <BandChipView view={d.view} labels={d.labels} unknownLabel={d.unknownLabel} />
+              </div>
+              {d.note && <p className="kn-dim-note">{d.note}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -80,7 +78,7 @@ export function NodeComposite({ input }: NodeCompositeProps) {
 // borrowed-θ 软层 dark-ship（flag 默认 OFF）→ 当前无 transfer 项可识别。接 borrowed-θ
 // 是 flag-gated future（后续片 / flag 翻转后），本片不假造迁移来源。
 export function TransferList() {
-  return <div className="quiet-empty">目前还没有足够证据判断它受哪些知识点带动。</div>;
+  return <p className="kn-quiet">目前还没有足够证据判断它受哪些知识点带动。</p>;
 }
 
 // ── diagnostic drill-down (CDM 属性画像 / IRT 区分度) — 诚实空态 ──
@@ -89,29 +87,29 @@ export function TransferList() {
 export function DiagnosticDrill() {
   const [open, setOpen] = useState(false);
   return (
-    <div className={`kd-diag${open ? ' open' : ''}`}>
+    <div className="kn-diag" data-open={open}>
       <button
         type="button"
-        className="kd-diag-bar"
+        className="kn-diag-bar"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        <span className="kd-diag-ic">
-          <LoomIcon name="graph" size={17} />
+        <span className="kn-diag-ic" aria-hidden="true">
+          <Network size={16} />
         </span>
-        <span>
-          <span className="kd-diag-t">进一步诊断</span>
-          <span className="kd-diag-s">作答证据还少，暂不作更细判断</span>
+        <span className="kn-diag-text">
+          <span className="kn-diag-t">进一步诊断</span>
+          <span className="kn-diag-s">作答证据还少，暂不作更细判断</span>
         </span>
-        <LoomIcon name="chevronDown" size={18} className="kd-diag-chev" />
+        <ChevronDown size={18} aria-hidden="true" className="kn-diag-chev" />
       </button>
       {open && (
-        <div className="kd-diag-body">
-          <div className="kd-diag-empty">
-            <LoomIcon name="eye" size={16} />
+        <p className="kn-diag-body">
+          <Eye size={16} aria-hidden="true" />
+          <span>
             目前没有足够作答证据支持更细的判断。继续练习后，这里会逐步补充；现在不显示看似精确的猜测。
-          </div>
-        </div>
+          </span>
+        </p>
       )}
     </div>
   );

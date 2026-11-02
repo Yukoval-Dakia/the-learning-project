@@ -12,6 +12,11 @@
       "reason": "One-off maintenance script normalizing knowledge_edge.created_by (non-topology column); inventoried for table-level completeness."
     },
     {
+      "path": "scripts/seed-dev-questions.ts",
+      "tables": ["knowledge"],
+      "reason": "Dev-database seed tooling (not runtime); inserts approved subject nodes whose seed-time writes fire the trigger."
+    },
+    {
       "path": "scripts/seed-synthetic.ts",
       "tables": ["knowledge", "knowledge_edge"],
       "reason": "Synthetic dataset seed tooling (not runtime); seed-time writes fire the trigger."

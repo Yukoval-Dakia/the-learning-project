@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "tsx scripts/dev-local.ts",
     "dev:local": "tsx scripts/dev-local.ts",
+    "dev:reset": "tsx scripts/dev-reset.ts",
     "build": "node scripts/local-heavy.mjs 'pnpm build:start && pnpm build:server && pnpm build:worker && pnpm build:migrate'",
     "build:worker": "node scripts/local-heavy.mjs 'esbuild scripts/worker.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/worker.cjs --external:winston --external:winston-transport --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\\\"production\\\"'",
     "build:migrate": "node scripts/local-heavy.mjs 'esbuild scripts/migrate.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/migrate.cjs --external:pg-native --external:bufferutil --external:utf-8-validate --external:@earendil-works/* --external:@modelcontextprotocol/sdk --external:@lmnr-ai/lmnr --external:winston --external:winston-transport --define:process.env.NODE_ENV=\\\"production\\\"'",
@@ -43,6 +44,7 @@
     "db:migrate:local": "tsx scripts/migrate-local-db.ts",
     "worker:dev": "tsx scripts/worker.ts",
     "seed:synthetic": "tsx scripts/seed-synthetic.ts",
+    "seed:dev-questions": "tsx scripts/seed-dev-questions.ts",
     "audit:schema": "tsx scripts/audit-schema-writes.ts",
     "audit:question-writers": "tsx scripts/audit-question-content-writers.ts",
     "audit:dependencies": "pnpm audit --prod --audit-level=high",
