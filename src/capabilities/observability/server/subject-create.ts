@@ -1,8 +1,8 @@
 // 自定义科目创建唯一入口。不 clone trait：六条绑定直指 general 的种子；general 被
 // owner 编辑过时绑定的是编辑后的活 trait（DB wins）。
 //
-// 单事务：控制行 → canonical claim → 六绑定 → ensureSubjectRoot（genesis 与
-// anchor 同事务）→ control journal 'create'；提交后全量 re-hydrate，回滚不留
+// 单事务：控制行 + control journal 'create' → canonical claim → 六绑定 →
+// ensureSubjectRoot（genesis 与 anchor 同事务）；提交后全量 re-hydrate，回滚不留
 // 内存幻影。
 //
 // 幂等/撞名：已存在 live custom → 200 回放（重试安全）；custom↔builtin 撞名 →
@@ -11,19 +11,14 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import {
-  subject,
-  subject_control_journal,
-  subject_name_claim,
-  subject_trait_binding,
-} from '@/db/schema';
+import { subject, subject_name_claim, subject_trait_binding } from '@/db/schema';
 import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
 import { isGeneralFallbackFor } from '@/kernel/read-models/subject-trait-resolutions';
 import { ensureSubjectRoot, subjectRootId } from '@/kernel/records/knowledge-node-birth';
-import { acquireControlPlaneLockSql } from '@/kernel/records/subject-control-lock';
 import { seedTraitId } from '@/subjects/builtin-trait-seeds';
 import { normalizeSubjectKey } from '@/subjects/profile';
 import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
+import { insertSubjectRow, withControlPlane } from './subject-control/commit';
 
 export interface ThinCreatePayload {
   id: string;
@@ -98,9 +93,7 @@ export async function thinCreateSubject(db: Db, rawDisplayName: string): Promise
   const id = `subj_${createId()}`;
   const now = new Date();
   try {
-    const outcome = await db.transaction(async (tx): Promise<ThinCreateResult | null> => {
-      await tx.execute(acquireControlPlaneLockSql);
-
+    const outcome = await withControlPlane(db, async (tx): Promise<ThinCreateResult | null> => {
       // 锁内权威撞名判定：claim 已被非 live custom 占用 → 422 而非回放。
       const claimRows = await tx
         .select({ subject_id: subject_name_claim.subject_id })
@@ -144,16 +137,18 @@ export async function thinCreateSubject(db: Db, rawDisplayName: string): Promise
         };
       }
 
-      await tx.insert(subject).values({
-        id,
-        display_name: displayName,
-        display_name_norm: norm,
-        origin: 'custom',
-        is_selectable: true,
-        retired_at: null,
-        revision: 0,
-        created_at: now,
-        updated_at: now,
+      // thin-create 是 owner 面，journal actor='owner'。
+      await insertSubjectRow(tx, {
+        row: {
+          id,
+          display_name: displayName,
+          display_name_norm: norm,
+          origin: 'custom',
+          is_selectable: true,
+          retired_at: null,
+        },
+        actor: 'owner',
+        now,
       });
       // canonical claim 用 id：claim 表是 id/alias 命名空间，保护 opaque id 不被
       // 他科抢作 alias；显示名唯一性由 custom 部分唯一索引 + 上面的写门承担。
@@ -173,15 +168,6 @@ export async function thinCreateSubject(db: Db, rawDisplayName: string): Promise
       }
       // 建根与 genesis/anchor 同事务，从出生起就是 event-sourced。
       await ensureSubjectRoot(tx, id, displayName);
-      // thin-create 是 owner 面，journal actor='owner'。
-      await tx.insert(subject_control_journal).values({
-        subject_id: id,
-        revision: 0,
-        action: 'create',
-        detail: {},
-        actor: 'owner',
-        created_at: now,
-      });
       return null;
     });
     if (outcome) return outcome;
