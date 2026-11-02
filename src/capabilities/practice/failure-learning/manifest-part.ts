@@ -14,7 +14,7 @@ export const failureLearningManifestPart: Omit<CapabilityManifest, 'name' | 'des
           'experimental:assessment_feedback_released',
         ],
         load: () =>
-          import('../server/failure-learning-subscription').then(
+          import('./server/failure-learning-subscription').then(
             (m) => m.buildFailureLearningAttemptSubscriber,
           ),
       },
@@ -28,13 +28,13 @@ export const failureLearningManifestPart: Omit<CapabilityManifest, 'name' | 'des
         name: 'attribution_followup',
         queue: 'llm',
         load: () =>
-          import('../jobs/attribution_followup').then((m) => m.buildAttributionFollowupHandler),
+          import('./jobs/attribution_followup').then((m) => m.buildAttributionFollowupHandler),
       },
       {
         // Durable stage 2: propose-only cause-targeted variant generation.
         name: 'variant_gen',
         queue: 'llm',
-        load: () => import('../jobs/variant_gen').then((m) => m.buildVariantGenHandler),
+        load: () => import('./jobs/variant_gen').then((m) => m.buildVariantGenHandler),
       },
     ],
   },
@@ -47,13 +47,13 @@ export const failureLearningManifestPart: Omit<CapabilityManifest, 'name' | 'des
         kind: 'cause_category',
         accept: {
           load: () =>
-            import('../server/proposal-accept-applier').then(
+            import('./server/cause-category-appliers').then(
               (module) => module.causeCategoryProposalAcceptApplier,
             ),
         },
         retract: {
           load: () =>
-            import('../server/proposal-accept-applier').then(
+            import('./server/cause-category-appliers').then(
               (module) => module.causeCategoryProposalRetractApplier,
             ),
         },
@@ -64,20 +64,19 @@ export const failureLearningManifestPart: Omit<CapabilityManifest, 'name' | 'des
     tools: [
       {
         name: 'get_attempt_context',
-        load: () =>
-          import('../server/tools/get-attempt-context').then((m) => m.getAttemptContextTool),
+        load: () => import('./tools/get-attempt-context').then((m) => m.getAttemptContextTool),
       },
       {
         name: 'query_mistakes',
-        load: () => import('../server/tools/query-mistakes').then((m) => m.queryMistakesTool),
+        load: () => import('./tools/query-mistakes').then((m) => m.queryMistakesTool),
       },
       {
         name: 'attribute_mistake',
-        load: () => import('../tools/attribute-mistake').then((m) => m.attributeMistakeTool),
+        load: () => import('./tools/attribute-mistake').then((m) => m.attributeMistakeTool),
       },
       {
         name: 'propose_variant',
-        load: () => import('../tools/propose-variant').then((m) => m.proposeVariantTool),
+        load: () => import('./tools/propose-variant').then((m) => m.proposeVariantTool),
       },
     ],
   },

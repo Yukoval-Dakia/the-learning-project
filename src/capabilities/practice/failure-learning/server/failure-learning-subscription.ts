@@ -6,12 +6,12 @@ import type {
   EventSubscriptionHandlerFactory,
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
+import { getPracticeBoss } from '../../server/queue-runtime';
 import {
   type FailureLearningBossSend,
   enqueueAttributionFollowup,
 } from '../jobs/failure-learning-jobs';
 import { requestFailureLearning } from './failure-learning';
-import { getPracticeBoss } from './queue-runtime';
 
 interface FailureLearningSubscriptionDeps {
   bossSend?: FailureLearningBossSend;

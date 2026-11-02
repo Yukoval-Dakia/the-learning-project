@@ -27,13 +27,13 @@
 // `parseLimit` — stays importable in the unit test without a DATABASE_URL.
 import './load-env';
 
-import type { FailureLearningBossSend } from '@/capabilities/practice/public';
 // YUK-1064 CLI exception: this one-off backfill keeps its pure limit parser
 // importable without a DB URL. A value import from practice/public pulls app runtime.
 import {
   type EnqueueAttributionFollowupFn,
   runLostAttributionBackfill,
-} from '@/capabilities/practice/server/lost-attribution-backfill';
+} from '@/capabilities/practice/failure-learning/server/lost-attribution-backfill';
+import type { FailureLearningBossSend } from '@/capabilities/practice/public';
 
 export const DEFAULT_LIMIT = 25;
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
@@ -101,7 +101,7 @@ async function main(): Promise<number> {
     // YUK-1064 CLI exception: load the concrete queue sender only after explicit
     // non-dry-run selection, preserving the backfill's lazy DB/boss startup.
     const { enqueueAttributionFollowup } = await import(
-      '@/capabilities/practice/jobs/failure-learning-jobs'
+      '@/capabilities/practice/failure-learning/jobs/failure-learning-jobs'
     );
     const { getStartedBoss } = await import('@/server/boss/client');
     const boss = await getStartedBoss();

@@ -14,7 +14,6 @@
     "question-bank -> kernel-bound",
     "question-bank -> grading",
     "question-bank -> settlement",
-    "question-bank -> failure-learning",
     "question-bank -> scheduling",
     "question-bank -> supply",
     "question-bank -> face",

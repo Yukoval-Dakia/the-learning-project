@@ -9,8 +9,8 @@
 // latest row, so an older labelled failure is not masked by a label-less retry.
 
 import { eq } from 'drizzle-orm';
+import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/failure-learning/public';
 import { normalizeReviewSubmitActivityRef } from '@/capabilities/practice/server/activity-ref';
-import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/server/cause-context';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/server/rating-advisor';

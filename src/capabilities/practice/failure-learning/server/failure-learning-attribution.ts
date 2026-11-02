@@ -3,18 +3,20 @@
 // updates mistake.cause directly. If a judge event already chains from the attempt, skip
 // and warn. This is the single write path.
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event as eventTable } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 import { listActiveMisconceptionsForKcs } from '@/kernel/read-models/failure-learning-context';
 import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
 // stale-const 收口（v2①）：defaultSubjectProfile 冻结常量 → 活 registry
 // resolveSubjectProfile（每次调用求值，owner 编辑 general 即跟随）。
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+import { type PracticeTaskRunFn, practiceCostUsdToMicroUsd } from '../../server/task-runtime';
 import {
   type MisconceptionCauseSource,
   misconceptionToCandidate,
@@ -34,7 +36,6 @@ import {
   recordAttributionRetryable,
 } from './failure-learning-ledger';
 import { loadNativeFailureContext } from './failure-learning-native';
-import { type PracticeTaskRunFn, practiceCostUsdToMicroUsd } from './task-runtime';
 
 export interface RunAttributionAndWriteJudgeEventParams {
   db: Db;
@@ -272,9 +273,7 @@ export async function runAttributionAndWriteJudgeEvent(
     const persisted = await params.db.transaction(async (tx) => {
       if (params.nativeExpectation) {
         await acquireLearningStateWriteLock(tx);
-        await tx.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${params.nativeExpectation.evaluationGroupId}))`,
-        );
+        await lockAssessmentEvaluationGroup(tx, params.nativeExpectation.evaluationGroupId);
         const current = await loadNativeFailureContext(tx, params.attemptEventId);
         if (!current || current.evaluationId !== params.nativeExpectation.evaluationId)
           return false;

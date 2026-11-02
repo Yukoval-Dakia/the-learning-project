@@ -701,17 +701,19 @@ export function diffPassThroughSites(
   headSites: readonly PassThroughSite[],
   renames: ReadonlyMap<string, string>,
 ): { added: PassThroughSite[]; removed: PassThroughSite[] } {
+  // A forward whose file and target moved together is the same site, not a new one.
+  const renamed = (site: PassThroughSite): PassThroughSite => ({
+    ...site,
+    file: renames.get(site.file) ?? site.file,
+    targetModule: renames.get(site.targetModule) ?? site.targetModule,
+  });
   const normalizedBase = new Map<string, PassThroughSite>();
-  for (const site of baseSites) {
-    const file = renames.get(site.file) ?? site.file;
-    normalizedBase.set(siteKey({ ...site, file }), site);
-  }
+  for (const site of baseSites) normalizedBase.set(siteKey(renamed(site)), site);
   const headKeys = new Map(headSites.map((site) => [siteKey(site), site]));
   const added = headSites.filter((site) => !normalizedBase.has(siteKey(site)));
-  const removed = [...normalizedBase.values()].filter((site) => {
-    const normalized = siteKey({ ...site, file: renames.get(site.file) ?? site.file });
-    return !headKeys.has(normalized);
-  });
+  const removed = [...normalizedBase.values()].filter(
+    (site) => !headKeys.has(siteKey(renamed(site))),
+  );
   return { added, removed };
 }
 
