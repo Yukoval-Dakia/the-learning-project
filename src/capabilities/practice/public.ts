@@ -70,6 +70,7 @@ export {
   mergeExactQuestionDuplicateKnowledgeIds,
 } from './server/quiz/content-fingerprint';
 export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
+
 export { captureReviewAnswerBinding, consumeReviewAnswerBinding } from './server/review-operation';
 export {
   SolveError,
