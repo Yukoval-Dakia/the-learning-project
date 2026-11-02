@@ -34,7 +34,7 @@ import { FoldList } from '@/ui-next/primitives/FoldList';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SectionHead } from '@/ui-next/primitives/SectionHead';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
-import { Button, Chip, IconButton, Segmented, UiNextRoot } from '@/ui-next/public';
+import { Button, Chip, IconButton, UiNextRoot } from '@/ui-next/public';
 import './notes-m3e.css';
 
 import { NoteBlockView, blockOutlineLabel, questionDetailHref } from './NoteBlocks';
@@ -426,41 +426,37 @@ export default function NoteReaderPage({
           aria-pressed={outlineOpen}
           onClick={() => setOutlineOpen((o) => !o)}
         />
-        <Segmented
-          label="阅读模式"
-          value={mode}
-          onChange={(next) => {
-            if (next === 'read') {
+        {/* Two plain buttons, not a radio group: arrow keys on a radio group would switch to
+            阅读 and silently drop the unsaved draft. Click-only, as before. */}
+        <fieldset className="nt-mode">
+          <legend className="un-sr-only">阅读模式</legend>
+          <button
+            type="button"
+            className="nt-mode-btn"
+            aria-pressed={mode === 'read'}
+            onClick={() => {
               // 切回阅读丢弃未保存改动（与保存成功路径一致）。
               setMode('read');
               setDraft(null);
-              return;
-            }
-            // 进入编辑态时一次性快照服务端块；已在编辑中则保持现有草稿。
-            setDraft((d) => d ?? note.body_blocks?.content ?? []);
-            setMode('edit');
-          }}
-          options={[
-            {
-              value: 'read',
-              label: (
-                <>
-                  <Eye size={14} aria-hidden="true" />
-                  阅读
-                </>
-              ),
-            },
-            {
-              value: 'edit',
-              label: (
-                <>
-                  <Pencil size={14} aria-hidden="true" />
-                  编辑
-                </>
-              ),
-            },
-          ]}
-        />
+            }}
+          >
+            <Eye size={14} aria-hidden="true" />
+            阅读
+          </button>
+          <button
+            type="button"
+            className="nt-mode-btn"
+            aria-pressed={mode === 'edit'}
+            onClick={() => {
+              // 进入编辑态时一次性快照服务端块；已在编辑中则保持现有草稿。
+              setDraft((d) => d ?? note.body_blocks?.content ?? []);
+              setMode('edit');
+            }}
+          >
+            <Pencil size={14} aria-hidden="true" />
+            编辑
+          </button>
+        </fieldset>
         {mode === 'edit' && (
           <Button
             size="sm"

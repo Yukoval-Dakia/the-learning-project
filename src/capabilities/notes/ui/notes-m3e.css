@@ -277,6 +277,55 @@
     color: var(--un-text-1);
   }
 
+  /* 阅读 / 编辑: two click-only buttons (a radio group would switch on arrow keys and drop the
+     draft). Same look as the ui-next segmented control. */
+  & .nt-mode {
+    min-width: 0;
+    margin: 0;
+    border: 0;
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+  }
+
+  & .nt-mode-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--un-sp-1);
+    min-width: 72px;
+    height: var(--un-h-control-sm);
+    padding: 0 var(--un-sp-3);
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--un-text-3);
+    font: inherit;
+    font-size: var(--un-fs-1);
+    cursor: pointer;
+    transition:
+      color var(--un-t-feedback) var(--un-ease-glide),
+      background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .nt-mode-btn:hover {
+    color: var(--un-text-1);
+  }
+
+  & .nt-mode-btn[aria-pressed="true"] {
+    background: var(--un-bg-raised);
+    box-shadow: 0 1px 2px rgb(40 32 24 / 0.08);
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .nt-mode-btn:focus-visible {
+    outline: 2px solid var(--un-focus);
+    outline-offset: -2px;
+  }
+
   & .nt-grid {
     display: grid;
     grid-template-columns: 220px minmax(0, 1fr) 280px;
