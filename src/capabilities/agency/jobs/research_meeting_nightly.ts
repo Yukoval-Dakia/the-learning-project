@@ -712,6 +712,9 @@ async function runResearchMeetingNightlyClaimed(
   if (completedResult) return completedResult;
 
   // ── Reconcile: project PRIOR probe outcomes into the typed ledger.
+  // Catch-up sweep: the probe-result subscription already reconciles each answer at
+  // delivery time (YUK-1664); this pass picks up whatever it left behind. Both
+  // callers serialize on the shared conjecture-reconcile lock, so nothing scores twice.
   // Sequence 1 appends a prediction_score consumed by the accountability ranker; recurrence
   // results append a score-free projection anchor. Runs BEFORE the propose half:
   // deterministic, idempotent (already-scored probes are excluded by the reader), and a

@@ -10,7 +10,7 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
-
+import { canonicalHash } from '@/core/migration/canonical';
 import {
   type AssessmentIssuanceT,
   type EvaluationGroupIdT,
@@ -39,10 +39,12 @@ import {
   evaluation,
   evaluation_effective_head,
   evaluation_group,
+  event,
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import { readAutomaticIssuanceServingDecisions } from '@/kernel/records/assessment-issuance';
 import { snapshotAssessmentLearningScope } from '../judge/evaluate-submission';
 import { snapshotIssuanceAssistance } from './assistance';
@@ -331,6 +333,39 @@ export async function saveSubmission(
       .for('update')
       .limit(1);
     if (issuance == null) return { status: 'issuance_not_found' };
+    if (issuance.container_occurrence_ref?.startsWith('conversation-confirmation:')) {
+      const occurrenceId = issuance.container_occurrence_ref.slice(
+        'conversation-confirmation:'.length,
+      );
+      const [binding] = await tx
+        .select()
+        .from(event)
+        .where(eq(event.id, `confirmation-assessment:${occurrenceId}`));
+      const [original] = await tx
+        .select()
+        .from(event)
+        .where(eq(event.id, `confirmation-original:${occurrenceId}`));
+      if (
+        binding?.action !== 'experimental:confirmation_assessment' ||
+        original?.action !== 'experimental:confirmation_original' ||
+        binding.payload.issuance_id !== request.issuance_id ||
+        binding.payload.revision_id !== issuance.revision_id ||
+        binding.payload.evaluation_group_id !== request.evaluation_group_id ||
+        binding.payload.idempotency_key !== request.idempotency_key ||
+        binding.payload.submission_id !== request.submission_id ||
+        original.payload.original_digest !==
+          canonicalHash({
+            response_set: request.response_set,
+            group_evidence: request.group_evidence ?? [],
+          })
+      ) {
+        throw new ApiError(
+          'confirmation_unbound',
+          'use the accepted confirmation command and its original bytes',
+          409,
+        );
+      }
+    }
     const revisionId = issuance.revision_id;
 
     const [revRow] = await tx

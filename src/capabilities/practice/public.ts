@@ -373,6 +373,11 @@ export { CreateReviewSessionBody } from './api/contracts';
 export { previewReviewAdvice } from './server/advice-operation';
 export { createPracticeAppeal } from './server/appeal-operation';
 export { revealFrozenStudyReference } from './server/assessment/study-context';
+export {
+  issueConversationConfirmation,
+  readConversationConfirmation,
+  submitConversationConfirmation,
+} from './server/conversation-confirmation';
 export { readPracticeDraftList } from './server/draft-list-read';
 export { readDraftReviewDetail } from './server/draft-review';
 export { getPaperDetail } from './server/paper-detail';

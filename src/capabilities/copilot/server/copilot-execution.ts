@@ -629,8 +629,8 @@ export function createCopilotExecutionOwner(
         finalization,
         partial,
         ...(executionError ? { error: executionError } : {}),
-        ...(result.failure ? { failure: result.failure } : {}),
         ...(finalization.accepted && planned?.filing ? { correctionFiling: planned.filing } : {}),
+        ...(result.failure ? { failure: result.failure } : {}),
         ...(observedSdkSessionId && retainSdkSession ? { sdkSessionId: observedSdkSessionId } : {}),
         contextDigest,
       };

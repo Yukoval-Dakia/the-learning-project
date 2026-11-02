@@ -935,3 +935,13 @@
     scroll-behavior: auto;
   }
 }
+
+[data-ui-next] .un-st-heading-companion {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: none;
+}
+[data-ui-next] .un-st-heading-companion .un-mascot {
+  background: none;
+}

@@ -198,9 +198,9 @@ export async function startPlacementProbe(
         // failed. It stays 'pending_dispatch'. Two recovery paths now exist: (a) a SUBSEQUENT
         // placement/start for the same goal — materialize is idempotent on the deterministic
         // claim id and dispatchPlacementStarterClaimTx re-dispatches a still-'pending_dispatch'
-        // claim; and (b) 's background sweeper, which consumes
-        // placement_starter_claim_recovery_idx / next_reconcile_at from the tail of
-        // question_supply_nightly and re-drives the claim even if the learner never returns
+        // claim; and (b) the placement_starter_recovery job's background sweeper, which consumes
+        // placement_starter_claim_recovery_idx / next_reconcile_at on a short cron and
+        // re-drives the claim even if the learner never returns
         // (src/capabilities/practice/server/placement-starter-recovery.ts). A stranded pending
         // claim is HARMLESS in the meantime: it is exempt from
         // the placement_starter_claim_nonterminal_uq single-flight guard (round-2), so it blocks no

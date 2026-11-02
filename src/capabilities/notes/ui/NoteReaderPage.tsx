@@ -82,7 +82,10 @@ function jumpToBlockAnchor(anchorId: string) {
 // deferred one tick: a detach immediately followed by a re-attach for the same
 // artifact (StrictMode's simulated remount, or React re-running the ref callback)
 // keeps the same session instead of blurring and minting a second one.
-function createEditingPresence() {
+function createEditingPresence(
+  sendHeartbeat: typeof editingHeartbeat,
+  sendBlur: typeof editingBlur,
+) {
   type Lease = { artifactId: string; sessionId: string; heartbeat: number };
   let lease: Lease | null = null;
   let attachedArtifact: string | null = null;
@@ -96,7 +99,7 @@ function createEditingPresence() {
     window.clearInterval(ended.heartbeat);
     // Document navigation need not unmount React. Keep the authenticated blur
     // eligible to finish after pagehide; server expiry remains the fallback.
-    void editingBlur(ended.artifactId, ended.sessionId).catch(() => {});
+    void sendBlur(ended.artifactId, ended.sessionId).catch(() => {});
   };
 
   const begin = (artifactId: string) => {
@@ -104,7 +107,7 @@ function createEditingPresence() {
     end();
     const sessionId = randomId();
     const beat = () => {
-      void editingHeartbeat(artifactId, sessionId).catch(() => {});
+      void sendHeartbeat(artifactId, sessionId).catch(() => {});
     };
     lease = { artifactId, sessionId, heartbeat: window.setInterval(beat, 5000) };
     beat();
@@ -172,6 +175,8 @@ export default function NoteReaderPage({
   undo = undoAiChange,
   searchReferences = searchArtifacts,
   readQuestions = questionsForKnowledge,
+  sendHeartbeat = editingHeartbeat,
+  sendBlur = editingBlur,
 }: {
   id: string;
   navigate: (to: string) => void;
@@ -181,6 +186,8 @@ export default function NoteReaderPage({
   undo?: typeof undoAiChange;
   searchReferences?: typeof searchArtifacts;
   readQuestions?: typeof questionsForKnowledge;
+  sendHeartbeat?: typeof editingHeartbeat;
+  sendBlur?: typeof editingBlur;
 }) {
   const qc = useQueryClient();
   const noteQ = useQuery({ queryKey: ['note-page', id], queryFn: () => read(id) });
@@ -223,7 +230,7 @@ export default function NoteReaderPage({
   // Editing presence (see createEditingPresence). The lease is held while the NoteEditor node is attached (edit mode only):
   // attach acquires for this artifact, detach releases. See createEditingPresence
   // for why release is deferred by one tick.
-  const [presence] = useState(createEditingPresence);
+  const [presence] = useState(() => createEditingPresence(sendHeartbeat, sendBlur));
   const editSessionRef = useCallback(
     (node: HTMLDivElement | null) => {
       if (!node) return;

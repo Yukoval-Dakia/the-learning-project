@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm';
 import type { Tx } from '@/db/client';
 import {
   advisoryLockRegistry,
+  deriveHashtextExtendedExactLockKey,
   deriveHashtextExtendedIdentityLock,
   deriveIntLiteralLockKey,
 } from '@/kernel/locks/registry';
@@ -36,4 +37,14 @@ export async function lockConjectureFold(tx: Tx, conjectureEventId: string): Pro
     conjectureEventId,
   );
   await lockHashtextExtendedIdentity[lock.salt](tx, lock.key);
+}
+
+/**
+ * One key for the whole reconcile pass, so the probe-result subscription and the
+ * nightly meeting serialize on whichever runs first. Taken on a transaction that
+ * owns only this lock; the reconcile's own reads/writes stay on `db`.
+ */
+export async function lockConjectureReconcile(tx: Tx): Promise<void> {
+  const key = deriveHashtextExtendedExactLockKey(advisoryLockRegistry.conjectureReconcile);
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 }

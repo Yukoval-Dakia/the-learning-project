@@ -137,6 +137,8 @@ export const practiceCapability = defineCapability({
   // 每次 run 一行（mass-skip 自曝面）。写者只有 judge_calibration_sample job。
   events: {
     actions: [
+      'experimental:confirmation_assessment',
+      'experimental:confirmation_original',
       // Canonical learner response fact. Failure Learning subscribes to this
       // owner event instead of coupling every producer to a queue name.
       'attempt',
@@ -188,6 +190,17 @@ export const practiceCapability = defineCapability({
         actions: ['experimental:assessment_publish'],
         load: () =>
           import('./server/admission/enqueue').then((m) => m.buildQuestionAdmissionSubscriber),
+      },
+      {
+        // YUK-1664: a web demand advances on its question's real publication result, not on
+        // the nightly recovery sweep (which stays as the lost-delivery fallback).
+        id: 'practice.web-supply-observe',
+        version: 1,
+        actions: ['experimental:assessment_publish'],
+        load: () =>
+          import('./server/question-supply/web-supply').then(
+            (m) => m.buildWebSupplyObserveSubscriber,
+          ),
       },
       {
         id: 'practice.failure-learning-attempt',
@@ -997,6 +1010,22 @@ export const practiceCapability = defineCapability({
         queue: 'llm',
         load: () =>
           import('./jobs/question_supply_nightly').then((m) => m.buildQuestionSupplyNightlyHandler),
+      },
+      // YUK-1664 — placement starter claim 到期清扫。原挂 question_supply_nightly 尾部：
+      // dormant 档整夜不跑、DAG 上游 skipped 连带不跑。改独立高频 job 照
+      // intervention_prepare_recovery 范式：按 `next_reconcile_at <= now` 的真实到期义务
+      // 轮询，与学习活跃度无关（无 eligibility 门），卡死供给几分钟内恢复。无到期 claim 时
+      // 一次索引 LIMIT 1 读即退，不触 pg-boss / provider。queue=fast：本 job 自身零 LLM
+      // （付费发生在它重派的 quiz_gen / supply_execute），无 DLQ——漏一拍下轮 cron 接上；
+      // 多 worker 并发靠 claim 的条件 UPDATE CAS 领取，单飞语义不变。
+      {
+        name: 'placement_starter_recovery',
+        schedule: { cron: '*/5 * * * *', tz: 'Asia/Shanghai' },
+        queue: 'fast',
+        load: () =>
+          import('./server/placement-starter-recovery').then(
+            (m) => m.buildPlacementStarterRecoveryHandler,
+          ),
       },
       // YUK-987 (985/E2) — 供给需求层 planner agent。LLM 产出 SupplyPlanV1 需求计划，机器门
       // （schema/活KC/词表/去重/预算声明，supply-plan-gate.ts）校验后逐项 emit manual 需求

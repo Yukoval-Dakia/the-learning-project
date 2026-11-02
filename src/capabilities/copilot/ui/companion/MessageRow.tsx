@@ -1,3 +1,7 @@
+import type { NotePageClient } from '@/capabilities/notes/ui-public';
+import type { ConfirmationAssessmentRenderer } from '../confirmation';
+import { ConfirmationBlock } from './ConfirmationBlock';
+import type { ConfirmationAction } from './turn-sender';
 // One turn in the conversation. The learner's line sits right in a quiet bubble; the companion's
 // reply is plain prose with its steps above it and what it produced below it. A reply is one
 // element from the first word to settled. The caret describes reply generation only;
@@ -5,10 +9,10 @@
 // Memoized: a streaming delta rebuilds only the growing message, so settled rows skip re-rendering.
 
 import { memo } from 'react';
-import { DeferredMarkdownRenderer } from '@/ui/lib/deferred-markdown-renderer';
 import { Chip } from '@/ui-next/public';
 import type { ChatMessage } from '../message-projection';
 import { publicProseStatusText } from '../public-prose';
+import { ConversationMarkdown } from './ConversationMarkdown';
 import { HeroBlock } from './HeroBlock';
 import { ProposalNotice } from './ProposalNotice';
 import { splitProposalDisclosure } from './proposal-disclosure';
@@ -16,6 +20,12 @@ import { SkillTurnBlock } from './SkillTurnBlock';
 import { StepList, stepsOf } from './ToolRow';
 
 export interface MessageRowProps {
+  confirmationRenderer?: ConfirmationAssessmentRenderer;
+  readNotePage: NotePageClient;
+  showConfirmation?: boolean;
+  confirmationDisabled?: boolean;
+  onConfirmation?: (action: ConfirmationAction) => Promise<void>;
+  onRefreshConfirmation?: () => void;
   message: ChatMessage;
   /** 1-based number of this reply among the companion's replies (for 「更正第 N 轮」). */
   turnNumber?: number;
@@ -61,7 +71,7 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   return (
     <div className="un-cp-row un-cp-row-ai" data-streaming={generating ? '' : undefined}>
       <StepList steps={stepsOf(m)} />
-      <DeferredMarkdownRenderer className="un-cp-md un-cp-reply">{body}</DeferredMarkdownRenderer>
+      <ConversationMarkdown className="un-cp-md un-cp-reply">{body}</ConversationMarkdown>
       {incomplete ? (
         <p className="un-cp-reply-status" role="status">
           {generationStatus}
@@ -72,13 +82,33 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
           正在回复
         </p>
       ) : null}
+      {m.confirmationIncompatible && <p role="alert">确认题版本或状态不兼容，暂不能操作。</p>}
+      {props.showConfirmation &&
+        m.confirmation &&
+        props.onConfirmation &&
+        props.onRefreshConfirmation && (
+          <ConfirmationBlock
+            key={`${m.confirmation.occurrence.occurrence_id}:${m.confirmation.occurrence.state}:${m.confirmation.assessment && typeof m.confirmation.assessment === 'object' && 'submission' in m.confirmation.assessment && m.confirmation.assessment.submission ? 'recorded' : 'unsubmitted'}`}
+            confirmation={m.confirmation}
+            renderer={props.confirmationRenderer}
+            disabled={props.confirmationDisabled ?? true}
+            onCommand={props.onConfirmation}
+            onRefresh={props.onRefreshConfirmation}
+          />
+        )}
       <SkillTurnBlock
         message={m}
         chipPending={props.chipPending}
         chipAcked={props.chipAcked}
         onAcceptCorrective={props.onAcceptCorrective}
       />
-      {m.primary_view ? <HeroBlock view={m.primary_view} navigate={props.navigate} /> : null}
+      {m.primary_view ? (
+        <HeroBlock
+          view={m.primary_view}
+          navigate={props.navigate}
+          readNotePage={props.readNotePage}
+        />
+      ) : null}
       {settled ? <ProposalNotice pending={canonical.pending} navigate={props.navigate} /> : null}
       {canCorrect || checkpoint ? (
         <details className="un-st-message-operations">
