@@ -52,6 +52,11 @@ export type AdvisoryLockNamespace =
   | HashtextExtendedIdentityLockNamespace;
 
 export const advisoryLockRegistry = {
+  copilotSessionSelection: {
+    family: 'copilot:session-selection',
+    encoding: 'hashtext',
+    key: 'copilot:session-selection',
+  },
   learningStateWrite: {
     family: 'learning-state:write',
     encoding: 'hashtext',

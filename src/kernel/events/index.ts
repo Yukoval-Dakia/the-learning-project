@@ -4,7 +4,7 @@ export {
   newerEventRow,
   takeActiveRows,
 } from './active-rows';
-export { eventCorrectionLockKey, eventCorrectionsGlobalLockKey } from './correction-lock';
+export { eventCorrectionsGlobalLockKey } from './correction-lock';
 export type { CorrectionStatus } from './corrections';
 export {
   activeCorrectionStatus,
