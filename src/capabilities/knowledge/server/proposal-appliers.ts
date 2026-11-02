@@ -1,9 +1,4 @@
-import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull } from 'drizzle-orm';
-
 import type { Db, Tx } from '@/db/client';
-import { knowledge } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import type {
   ProposalAcceptApplier,
@@ -12,14 +7,12 @@ import type {
   ProposalAcceptResult,
   ProposalDismissApplier,
   ProposalRetractApplier,
-  ProposalRetractInput,
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
-import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
-import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 import * as ownerRuntime from '@/server/proposals/owner-runtime';
 import { decideKnowledgeEdgeProposal } from './edge-proposal-accept';
-import { acceptProposal, dismissProposal, prepareKnowledgeArchive } from './proposals';
+import { retractKnowledgeCreate } from './knowledge-archive-operation';
+import { acceptProposal, dismissProposal } from './proposals';
 
 function signalProposal(proposal: ProposalAcceptProposal) {
   return {
@@ -110,62 +103,8 @@ export const knowledgeEdgeProposalDismissApplier: ProposalDismissApplier = async
   ),
 });
 
-async function retractKnowledgeNode(tx: Tx, input: ProposalRetractInput): Promise<void> {
-  const rate = await findExistingRateEvent(tx, input.proposalId);
-  if (rate?.decision !== 'accept') return;
-
-  const mintedIds = (rate.payload as { materialized_ids?: { knowledge?: unknown } })
-    .materialized_ids?.knowledge;
-  const nodeId = Array.isArray(mintedIds) && typeof mintedIds[0] === 'string' ? mintedIds[0] : null;
-  if (!nodeId) return;
-
-  const node = (
-    await tx
-      .select({ id: knowledge.id, version: knowledge.version })
-      .from(knowledge)
-      .where(and(eq(knowledge.id, nodeId), isNull(knowledge.archived_at)))
-      .limit(1)
-  )[0];
-  if (!node) return;
-
-  const archiveEventId = createId();
-  const now = new Date();
-  await prepareKnowledgeArchive(
-    tx,
-    { mutation: 'archive', node_id: nodeId, expected_version: node.version },
-    now,
-  );
-  await writeEvent(tx, {
-    id: archiveEventId,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'experimental:knowledge_archive',
-    subject_kind: 'knowledge',
-    subject_id: nodeId,
-    outcome: 'success',
-    payload: {
-      node_id: nodeId,
-      expected_version: node.version,
-      reasoning: input.reason_md ?? 'knowledge_node proposal retracted',
-    },
-    caused_by_event_id: input.proposalId,
-    created_at: now,
-  });
-  await writeEvent(tx, {
-    id: createId(),
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'rate',
-    subject_kind: 'event',
-    subject_id: archiveEventId,
-    outcome: 'success',
-    payload: { rating: 'accept' },
-    caused_by_event_id: archiveEventId,
-    created_at: now,
-  });
-  await projectKnowledgeNodeGuarded(tx, nodeId);
-  await ownerRuntime.assertCurrentKnowledgeNodeParity(tx, nodeId);
-}
-
-export const knowledgeNodeProposalRetractApplier: ProposalRetractApplier = (db, input) =>
-  retractKnowledgeNode(db as Tx, input);
+export const knowledgeNodeProposalRetractApplier: ProposalRetractApplier = async (db, input) => {
+  const tx = db as Tx;
+  const archived = await retractKnowledgeCreate(tx, input);
+  if (archived) await ownerRuntime.assertCurrentKnowledgeNodeParity(tx, archived.node_id);
+};

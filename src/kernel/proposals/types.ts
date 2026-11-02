@@ -108,6 +108,8 @@ export interface ProposalRetractInput {
   proposalId: string;
   proposal: ProposalAcceptProposal;
   correction_at: Date;
+  /** The `correct` event already written for this retraction; appliers that cite it require it. */
+  correction_event_id?: string;
   reason_md?: string;
   affected_refs?: ActivityRefT[];
 }
