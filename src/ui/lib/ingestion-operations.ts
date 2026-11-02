@@ -3,6 +3,7 @@ import { randomId } from './random-id';
 
 export type IngestionOperationRequest =
   | { kind: 'extract' }
+  | { kind: 'agent' }
   | { kind: 'import'; input: unknown }
   | { kind: 'review'; input: { checked_blocks: { block_id: string; version: number }[] } }
   | { kind: 'make_paper'; input?: { question_ids?: string[] } }

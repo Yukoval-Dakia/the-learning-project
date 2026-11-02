@@ -1,6 +1,10 @@
 // Stable server contract for consumers outside the agency capability.
 
 export { AgentNotesQuerySchema } from './api/contracts';
+export {
+  learningIntentErrorResponse,
+  requestLearningIntent,
+} from './api/learning-intent-create';
 export { submitConjectureProbeAnswer } from './api/probe-answer';
 export {
   type PredictionAccountability,

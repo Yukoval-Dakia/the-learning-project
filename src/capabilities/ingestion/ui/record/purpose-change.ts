@@ -6,11 +6,9 @@ import {
   type PurposeImpact,
   type PurposeInput,
   type PurposeResult,
-  changePurpose,
-  getPurposeImpact,
   purposeLocation,
 } from './record-api';
-
+import { useRecordClient } from './record-client';
 import { recordKeys } from './recording-read';
 
 type Receipt = PurposeResult['receipt'];
@@ -110,6 +108,7 @@ function usable(current: Current | undefined): current is Current {
 /** Owns only this consumer's immutable request and recovery, never downstream stop/repair policy. */
 export function usePurposeChange(sessionId: string) {
   const qc = useQueryClient();
+  const { getPurposeImpact, changePurpose } = useRecordClient();
   const rereadRecording = () => {
     void qc.invalidateQueries({ queryKey: recordKeys.session(sessionId) });
     void qc.invalidateQueries({ queryKey: recordKeys.history(sessionId) });

@@ -1,6 +1,18 @@
 import { useQuery } from '@tanstack/react-query';
-import { type ReactNode, useCallback, useState, useSyncExternalStore } from 'react';
+import {
+  type ComponentProps,
+  type ReactNode,
+  useCallback,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { type CompanionLayout, CompanionMount } from '@/capabilities/copilot/ui-public';
+import type { NotePageClient } from '@/capabilities/notes/ui-public';
+import {
+  ConfirmationAssessment,
+  type ConfirmationDraftClient,
+} from '@/capabilities/practice/ui-public';
 import { useWorkbenchClient } from '@/capabilities/shell/ui-public';
 import { CommandPalette, type CommandPaletteProps } from '@/ui/shell/CommandPalette';
 import { NAV, type NavItem, activeFromPath, isSection } from '@/ui/shell/nav-config';
@@ -86,10 +98,12 @@ const COPILOT_NUDGES_KEY = ['copilot', 'nudges'] as const;
 const BARE_PATH_PREFIX = '/print/';
 
 export function RootShell(props: {
+  confirmationClient?: ConfirmationDraftClient;
   children: ReactNode;
   pathname: string;
   navigate: (to: string) => void;
   readKnowledgeTree?: CommandPaletteProps['readTree'];
+  readNotePage: NotePageClient;
 }) {
   if (props.pathname.startsWith(BARE_PATH_PREFIX)) return <>{props.children}</>;
   return <AppFrame {...props} />;
@@ -100,18 +114,29 @@ export function RootShell(props: {
 //
 // RootShell owns navigation, theme and the single Companion lifetime; presenters only arrange them.
 function AppFrame({
+  confirmationClient,
   children,
   pathname,
   navigate,
   readKnowledgeTree,
+  readNotePage,
 }: {
+  confirmationClient?: ConfirmationDraftClient;
   children: ReactNode;
   pathname: string;
   navigate: (to: string) => void;
   readKnowledgeTree?: CommandPaletteProps['readTree'];
+  readNotePage: NotePageClient;
 }) {
   // chrome state。paletteOpen 驱动 CommandPalette（S14）；⌘K toggle + searchbox
   // 点击都 set 它。
+  const ConfirmationRenderer = useMemo(
+    () =>
+      function ConfirmationRenderer(props: ComponentProps<typeof ConfirmationAssessment>) {
+        return <ConfirmationAssessment {...props} client={confirmationClient} />;
+      },
+    [confirmationClient],
+  );
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [companionOpen, setCompanionOpen] = useState(false);
@@ -206,6 +231,8 @@ function AppFrame({
       <ShellMain blockedByModal={navOpen || companionModal}>{children}</ShellMain>
       <div className="un-st-companion-slot">
         <CompanionMount
+          confirmationRenderer={ConfirmationRenderer}
+          readNotePage={readNotePage}
           open={companionOpen}
           presentation="workspace"
           onOpenChange={setCompanionOpen}

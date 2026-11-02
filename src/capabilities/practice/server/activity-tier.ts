@@ -23,7 +23,6 @@ export async function loadActivityTier(db: Db, now: Date, before?: Date): Promis
   return classifyActivityTier({
     now,
     lastLearnerEventAt: asDate(row?.at),
-    examWindow: false,
   });
 }
 
