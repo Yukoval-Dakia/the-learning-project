@@ -637,6 +637,9 @@ function registeredManifestPaths(root: string): Set<string> {
   return new Set(paths);
 }
 
+const API_ENTRY = 'server/index.ts';
+const IN_PROCESS_WORKER = 'src/server/boss/start-worker.ts';
+
 type ManifestComposition = {
   readonly roots: CompositionRoot[];
   /**
@@ -681,14 +684,24 @@ function manifestComposition(root: string): ManifestComposition {
     }
     visit(sourceFile, []);
   }
+  // server/index.ts starts the same worker in-process only under RW_WORKER=1 (dev); that import is
+  // a worker composition root, not part of the api closure. Every other dynamic import there
+  // (admin config facts, hydrate, tools) loads in the api process.
+  if (existsSync(resolve(root, API_ENTRY)) && existsSync(resolve(root, IN_PROCESS_WORKER))) {
+    jobThunkEdges.add(`${API_ENTRY}=>${IN_PROCESS_WORKER}`);
+  }
   return { roots, jobThunkEdges };
 }
 
 function compositionRoots(root: string): CompositionRoot[] {
   const roots = manifestComposition(root).roots;
-  const app = resolve(root, 'server/app.ts');
-  if (existsSync(app)) {
-    roots.push({ path: 'server/app.ts', role: 'api', blocksCapabilityIndex: true });
+  for (const path of ['server/app.ts', API_ENTRY]) {
+    if (existsSync(resolve(root, path))) {
+      roots.push({ path, role: 'api', blocksCapabilityIndex: true });
+    }
+  }
+  if (existsSync(resolve(root, IN_PROCESS_WORKER))) {
+    roots.push({ path: IN_PROCESS_WORKER, role: 'worker', blocksCapabilityIndex: false });
   }
   const handlers = resolve(root, 'src/server/boss/handlers.ts');
   if (existsSync(handlers)) {
