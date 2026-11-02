@@ -526,6 +526,129 @@ function historicalRetention(
   };
 }
 
+// YUK-1113: retire only the unimplemented timestamp producer, never the stored column.
+// This is a fixed column contract in an otherwise live table, not a dated exemption.
+function pausedCheckpointRetention(
+  schema: string,
+  productionIndex: ReadonlyMap<string, WriteStatement[]>,
+): HistoricalRetention {
+  const table = 'event_subscription_checkpoint';
+  const field = 'paused_at';
+  const issues: HistoricalRetentionIssue[] = [];
+  const file = ts.createSourceFile('schema.ts', schema, ts.ScriptTarget.Latest, true);
+  const tables: ts.CallExpression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'pgTable' &&
+      node.arguments[0] &&
+      ts.isStringLiteral(node.arguments[0]) &&
+      node.arguments[0].text === table
+    )
+      tables.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  const columns = tables[0]?.arguments[1];
+  const properties = columns && ts.isObjectLiteralExpression(columns) ? columns.properties : [];
+  const retained = properties.filter(
+    (property) =>
+      ts.isPropertyAssignment(property) &&
+      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+      property.name.text === field,
+  );
+  const sqlColumns = properties.filter((property) => {
+    if (!ts.isPropertyAssignment(property)) return false;
+    let builder = property.initializer;
+    while (ts.isCallExpression(builder) && ts.isPropertyAccessExpression(builder.expression))
+      builder = builder.expression.expression;
+    const name = ts.isCallExpression(builder) ? builder.arguments[0] : undefined;
+    return name && ts.isStringLiteral(name) && name.text === field;
+  });
+  const declaration = retained[0];
+  const initializer =
+    declaration && ts.isPropertyAssignment(declaration) ? declaration.initializer : undefined;
+  // An unchained constructor pins nullable/no-default behavior as well as the SQL name/type.
+  const args = initializer && ts.isCallExpression(initializer) ? initializer.arguments : [];
+  const options = args[1];
+  const timezone =
+    options && ts.isObjectLiteralExpression(options) ? options.properties[0] : undefined;
+  if (
+    tables.length !== 1 ||
+    !columns ||
+    !ts.isObjectLiteralExpression(columns) ||
+    !properties.every(ts.isPropertyAssignment) ||
+    retained.length !== 1 ||
+    sqlColumns.length !== 1 ||
+    !initializer ||
+    !ts.isCallExpression(initializer) ||
+    !ts.isIdentifier(initializer.expression) ||
+    initializer.expression.text !== 'timestamp' ||
+    args.length !== 2 ||
+    !ts.isStringLiteral(args[0]) ||
+    args[0].text !== field ||
+    !options ||
+    !ts.isObjectLiteralExpression(options) ||
+    options.properties.length !== 1 ||
+    !timezone ||
+    !ts.isPropertyAssignment(timezone) ||
+    !ts.isIdentifier(timezone.name) ||
+    timezone.name.text !== 'withTimezone' ||
+    timezone.initializer.kind !== ts.SyntaxKind.TrueKeyword
+  )
+    issues.push({
+      code: 'changed_column_type',
+      message: `${table}.${field} must remain an explicit nullable timestamp with timezone and no default`,
+    });
+  for (const [path, statements] of productionIndex) {
+    for (const statement of statements) {
+      if (statement.table !== table) continue;
+      const columns = payloadColumns(statement.payload);
+      const payloadFile = ts.createSourceFile(
+        'payload.ts',
+        `const payload = ${statement.payload}`,
+        ts.ScriptTarget.Latest,
+        true,
+      );
+      const first = payloadFile.statements[0];
+      const payload =
+        first && ts.isVariableStatement(first)
+          ? first.declarationList.declarations[0]?.initializer
+          : undefined;
+      const inspectable =
+        payload &&
+        ts.isObjectLiteralExpression(payload) &&
+        payload.properties.every(
+          (property) =>
+            (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
+            (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)),
+        );
+      // No source path (including archive.ts) exempts an explicit write to this field.
+      // Opaque Drizzle payloads or column-less SQL cannot prove they preserve it.
+      if (
+        !inspectable ||
+        statement.explicitPayload === false ||
+        columns.size === 0 ||
+        columns.has(field)
+      )
+        issues.push({
+          code: 'production_write',
+          kind: statement.kind,
+          path,
+          message: `${path}: ${statement.kind.toUpperCase()} must preserve historical ${table}.${field}`,
+        });
+    }
+  }
+  return {
+    table,
+    reason:
+      'YUK-1113 retains paused_at for historical SQL and archive compatibility only; no business timestamp producer. Other checkpoint columns remain live and normally audited.',
+    fields: [{ table, field, type: 'timestamp with time zone' }],
+    issues,
+  };
+}
+
 export function formatHistoricalRetention(retention: HistoricalRetention): string {
   return [
     `Historical retention: ${retention.table} (${retention.fields.length} columns)`,
@@ -892,16 +1015,101 @@ export function extractWriteStatements(source: string): WriteStatement[] {
   return extractDrizzleWriteIndex(new Map([['runtime.ts', source]])).get('runtime.ts') ?? [];
 }
 
+/** Keep quoted checkpoint writes visible without broadening the general producer scanner. */
+function quotedCheckpointWrites(source: string): WriteStatement[] {
+  const file = ts.createSourceFile(
+    'source.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  const writes: WriteStatement[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === 'execute'
+    ) {
+      const arg = node.arguments[0];
+      if (
+        arg &&
+        ts.isTaggedTemplateExpression(arg) &&
+        ts.isIdentifier(arg.tag) &&
+        arg.tag.text === 'sql'
+      ) {
+        const template = arg.template;
+        const raw = ts.isNoSubstitutionTemplateLiteral(template)
+          ? template.text
+          : template.head.text +
+            template.templateSpans.map((span) => ` ? ${span.literal.text}`).join('');
+        // Single-quoted values/comments stay inert. Double-quoted SQL identifiers are syntax.
+        const sql = raw
+          .replace(
+            /--[^\n]*|\/\*[\s\S]*?\*\/|'(?:''|[^'])*'|\$([a-z_][\w]*|)\$[\s\S]*?\$\1\$/gi,
+            ' ',
+          )
+          .replace(/"([a-z_][\w]*)"/gi, '$1');
+        if (
+          /\b(?:insert\s+into|update)\s+(?:public\.)?event_subscription_checkpoint\b/i.test(sql)
+        ) {
+          // Parse through the existing executed-SQL scanner after identifier normalization.
+          // JSON stringification is not used: a template literal must preserve SQL backticks safely.
+          const normalized = sql
+            .replace(/`/g, ' ')
+            .replace(/\$\{/g, ' ')
+            .replace(
+              /\bpublic\.event_subscription_checkpoint\b/gi,
+              'event_subscription_checkpoint',
+            );
+          // The producer scanner erases tuple LHS columns. Its remaining scalar
+          // columns cannot prove that this statement preserves the retained field.
+          if (/(?:\bset|,)\s*\([^()]*\)\s*=/i.test(normalized)) {
+            writes.push({
+              kind: 'update',
+              table: 'event_subscription_checkpoint',
+              payload: '{}',
+              explicitPayload: false,
+            });
+          }
+          writes.push(
+            ...extractExecutedSqlWrites(`db.execute(sql\`${normalized}\`);`).filter(
+              (write) => write.table === 'event_subscription_checkpoint',
+            ),
+          );
+          // INSERT's column list does not describe its ON CONFLICT update branch.
+          // Keep that branch visible, including null/default writes and opaque assignments.
+          for (const conflict of normalized.matchAll(
+            /\bon\s+conflict\b[^;]*?\bdo\s+update\s+set\s+([^;]*)/gi,
+          )) {
+            const updates = extractExecutedSqlWrites(
+              `db.execute(sql\`update event_subscription_checkpoint set ${conflict[1]}\`);`,
+            );
+            writes.push(...updates);
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return writes;
+}
+
 export function buildProductionWriteIndex(
   sources: ReadonlyMap<string, string>,
 ): Map<string, WriteStatement[]> {
   const production = new Map([...sources].filter(([path]) => isProductionSource(path)));
   const index = extractDrizzleWriteIndex(
     production,
-    new Set(['subagent_run', 'judge_run_control']),
+    new Set(['subagent_run', 'judge_run_control', 'event_subscription_checkpoint']),
   );
   for (const [path, source] of production) {
-    index.set(path, [...(index.get(path) ?? []), ...extractExecutedSqlWrites(source)]);
+    index.set(path, [
+      ...(index.get(path) ?? []),
+      ...extractExecutedSqlWrites(source),
+      ...quotedCheckpointWrites(source),
+    ]);
   }
   return index;
 }
@@ -956,6 +1164,7 @@ export function auditSchemaWrites(
   const retention = historicalRetention(schema, index);
   const retainedSchemas = [
     retention,
+    pausedCheckpointRetention(schema, index),
     historicalRetention(
       schema,
       index,
@@ -984,6 +1193,7 @@ export function auditSchemaWrites(
   const results: WriteHit[] = [];
   for (const f of parseSchema(schema)) {
     if (
+      (f.table === 'event_subscription_checkpoint' && f.field === 'paused_at') ||
       f.table === HISTORICAL_TABLE ||
       f.table === 'copilot_continuation' ||
       (f.table === 'subagent_run' && RETIRED_SUBAGENT_COLUMNS.has(f.field)) ||
