@@ -37,6 +37,7 @@ import {
 } from '@/capabilities/practice/supply/server/target-discovery';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
+import { loadActivityTier } from '@/kernel/read-models/activity-tier';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { loadReturnStockGaps } from '@/kernel/read-models/return-stock';
 import {
@@ -44,7 +45,6 @@ import {
   evidenceDemandToTargetContext,
 } from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { loadActivityTier } from '../../server/activity-tier';
 
 type DispatchDeps = Parameters<typeof dispatchSupplyTargets>[2];
 

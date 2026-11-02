@@ -156,7 +156,6 @@ export type {
   NativeAttemptDispatchOptions,
   NativeAttemptDispatchPort,
 } from './server/assessment/native-attempt-dispatch-port';
-export type { CollectedSignal } from './server/candidate-signals';
 export {
   authorInterventionPackage,
   reviewInterventionPackageCandidate,
@@ -296,7 +295,13 @@ export async function executeJudgeWorkflow(
 export const reserveJudgeOperationalDelivery: typeof import('./server/judge-operational').reserveJudgeDelivery =
   async (...args) => (await import('./server/judge-operational')).reserveJudgeDelivery(...args);
 
-export type { PlacementProfileResponse } from './api/placement-contracts';
+export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
+export { CreateReviewSessionBody } from './api/contracts';
+export { createPracticeAppeal } from './server/appeal-operation';
+export { revealFrozenStudyReference } from './server/assessment/study-context';
+export { readPracticeDraftList } from './server/draft-list-read';
+export { enablePracticeDraft, forceEnablePracticeDraft } from './server/draft-promotion-operations';
+export { readDraftReviewDetail } from './server/draft-review';
 // Judge engine identity and census belong to practice; the shared host consumes this seam.
 export {
   JUDGE_DBOS_QUEUE,
@@ -308,25 +313,6 @@ export {
   sealJudgeEngineInventory,
   validateJudgeEngineInventory,
 } from './server/judge-engine-client';
-export { readPlacementProfile } from './server/placement-profile';
-
-// Resolve the existing session operation in the initialized host graph after auth.
-export const readPlacementSession: typeof import('./server/session-operations/placement-session').readPlacementSession =
-  async (...args) =>
-    (await import('./server/session-operations/placement-session')).readPlacementSession(...args);
-
-export { UpdatePlacementSessionBodySchema } from './api/placement-contracts';
-export const transitionPlacementSession: typeof import('./server/session-operations/placement-session').transitionPlacementSession =
-  async (...args) =>
-    (await import('./server/session-operations/placement-session')).transitionPlacementSession(
-      ...args,
-    );
-
-export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
-export { CreatePlacementSessionBodySchema } from './api/placement-contracts';
-export { enablePracticeDraft, forceEnablePracticeDraft } from './server/draft-promotion-operations';
-export { selectNextPlacementItem } from './server/placement-select';
-export { placementProbeEnabled } from './server/placement-session-lifecycle';
 export { readQuestionDetail } from './server/question-detail-read';
 export { readPracticeQuestionList } from './server/question-list-read';
 export {
@@ -335,21 +321,6 @@ export {
   updatePracticeQuestion,
 } from './server/question-write-operations';
 export { runPracticeServingAction } from './server/serving-action-operation';
-export { releaseHeldPlacement } from './server/session-operations/placement-held-release';
-export { selectNextPlacementQuestion } from './server/session-operations/placement-next';
-export const startPlacementProbe: typeof import('./server/session-operations/placement-session').startPlacementProbe =
-  async (...args) =>
-    (await import('./server/session-operations/placement-session')).startPlacementProbe(...args);
-
-export { CreateReviewSessionBody } from './api/contracts';
-export { createPracticeAppeal } from './server/appeal-operation';
-export { revealFrozenStudyReference } from './server/assessment/study-context';
-export { readPracticeDraftList } from './server/draft-list-read';
-export { readDraftReviewDetail } from './server/draft-review';
-export {
-  PlacementOrphanStateError,
-  abandonOrphanPlacementTx,
-} from './server/placement-session-lifecycle';
 export const recoverWebSupplies: typeof import('./supply/public').recoverWebSupplies = async (
   ...args
 ) => (await import('./supply/public')).recoverWebSupplies(...args);
@@ -362,6 +333,21 @@ export const runQuestionSupplyNightly: typeof import('./supply/public').runQuest
   async (...args) => (await import('./supply/public')).runQuestionSupplyNightly(...args);
 export const recoverHeldServingRechecks: typeof import('./server/serving-actions').recoverHeldServingRechecks =
   async (...args) => (await import('./server/serving-actions')).recoverHeldServingRechecks(...args);
+export {
+  CreatePlacementSessionBodySchema,
+  PlacementOrphanStateError,
+  type PlacementProfileResponse,
+  UpdatePlacementSessionBodySchema,
+  abandonOrphanPlacementTx,
+  placementProbeEnabled,
+  readPlacementProfile,
+  readPlacementSession,
+  releaseHeldPlacement,
+  selectNextPlacementItem,
+  selectNextPlacementQuestion,
+  startPlacementProbe,
+  transitionPlacementSession,
+} from './placement/public';
 export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';
 export {
   abandonOrphanReviewSession,

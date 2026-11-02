@@ -37,7 +37,7 @@ import {
   type CandidateDifficultyRead,
   prepareCandidateDifficultyRead,
 } from '@/kernel/read-models/question-difficulty';
-import { MISCONCEPTION_RECURRENCE_ENABLED } from './selection-constants';
+import { MISCONCEPTION_RECURRENCE_ENABLED } from '../../server/selection-constants';
 import { rotationClassForKind } from './variant-rotation';
 
 type DbLike = Db | Tx;
