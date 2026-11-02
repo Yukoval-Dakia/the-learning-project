@@ -6,7 +6,7 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 
 ## 边界
 
-- **共享契约** (`src/ai/`)：TaskSpec 类型、不可变 catalog composer、接收 catalog 的 registry / budget / prompt reader。没有 capability import、API key 或通用 `runTask()` client helper。
+- **共享契约** (`src/ai/`)：TaskSpec 类型、不可变 catalog composer、接收 catalog 的 registry / budget / prompt reader。没有 capability import、API key 或通用 `runTask()` client helper。求助讲解的盲核在 `help-reply-grounding.ts`：只在题干对上并集、单调区间或合法替代写法时核对，讲对的原文保留，不把封存说明送进讲解输入。
 - **工具挂载契约与构造** (`src/ai/pi-tool-mount.ts`)：服务端共享的 mount/options 声明、wire 命名与 custom AgentTool 构造；不拥有 registry 执行、远程 MCP 连接、工具留痕或 session 生命周期，不将整个目录承诺为 browser-safe。
 - **任务组合** (`src/capabilities/task-catalog.ts` + `task-registry.ts`)：通过六个 `task-public.ts` 入口静态装配，再注入共享 reader。具体 TaskSpecs 包含 Node helper，不能将完整目录承诺为浏览器 bundle。
 - **Server 端** (`server/` + `src/server/ai/`)：generic `/api/ai/[task]` route 已退场。所有 task 都走 capability 领域 route / worker，由该入口解析 profile、注入工具或补齐 ingestion context。

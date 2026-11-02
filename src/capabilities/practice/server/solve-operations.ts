@@ -1,5 +1,6 @@
 import type { ZodType } from 'zod';
 import { readHelpLatency } from '@/ai/help-latency';
+import { readReplyGrounding } from '@/ai/help-reply-grounding';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
@@ -99,8 +100,10 @@ export async function requestPracticeSolveHint(
       issuanceId: parsed.data?.issuance_id,
     });
     const hintRequestId = newId();
+    const replyGrounding = outcome.status === 'ok' ? outcome.reply_grounding : undefined;
     const { help_latency: helpLatency, ...publicOutcome } = outcome;
     const denominator = helpLatency ? readHelpLatency([helpLatency]).denominator : undefined;
+    const reply_grounding = readReplyGrounding(replyGrounding);
     await writeEvent(db, {
       id: hintRequestId,
       session_id: sessionId,
@@ -113,6 +116,7 @@ export async function requestPracticeSolveHint(
       payload: {
         hint_index: hintIndex,
         ...(helpLatency && denominator ? { help_latency: helpLatency, denominator } : {}),
+        ...(reply_grounding ? { reply_grounding } : {}),
         ...(publicOutcome.status === 'ok'
           ? {}
           : {
