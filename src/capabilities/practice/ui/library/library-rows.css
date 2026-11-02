@@ -186,7 +186,7 @@
     font-size: var(--un-fs-1);
   }
 
-  & .ql-group .cl-toggle {
+  & .ql-group .un-fold-toggle {
     justify-self: start;
     margin-top: var(--un-sp-3);
   }

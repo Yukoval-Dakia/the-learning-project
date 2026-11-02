@@ -19,7 +19,7 @@ import { db } from '@/db/client';
 import { event, kc_typed_state } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { resetDb } from '../../../tests/helpers/db';
+import { resetDb } from '../../../../../tests/helpers/db';
 
 interface SeedOpts {
   knowledgeId?: string;

@@ -31,6 +31,7 @@ import {
   ReviewSessionTransitionSchema,
   UpdateReviewSessionBody,
 } from './api/contracts';
+import { CoverageLatticeResponseSchema } from './api/coverage-lattice-contracts';
 import {
   DraftForceEnableBodySchema,
   DraftModerationParamsSchema,
@@ -799,6 +800,17 @@ export const practiceCapability = defineCapability({
         responses: { 200: WorksheetPageResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/worksheet-export-route').then((m) => m.getWorksheetPageRoute),
+      },
+      // Coverage facts are computed by Practice's supply scanner, so Practice owns their read:
+      // scanCoverageGaps pool rules plus supply-event activity. Read-only, no LLM.
+      {
+        method: 'GET',
+        path: '/api/admin/coverage-lattice',
+        operationId: 'getCoverageLattice',
+        responses: { 200: CoverageLatticeResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/coverage-lattice').then((m) => m.GET),
       },
     ],
   },
