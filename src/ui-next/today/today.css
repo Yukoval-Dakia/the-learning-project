@@ -1,0 +1,172 @@
+[data-ui-next].un-today-page {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1240px;
+  margin-inline: auto;
+  padding: 32px clamp(16px, 4vw, 48px) 48px;
+  color: var(--un-md-sys-color-on-surface);
+  background: var(--un-md-sys-color-surface);
+  font: 400 16px / 1.6 var(--un-font-sans);
+}
+[data-ui-next] .un-today-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+[data-ui-next] .un-today-heading h1 {
+  font: 600 32px / 1.25 var(--un-font-sans);
+  margin: 0 0 12px;
+}
+[data-ui-next] .un-today-heading p {
+  color: var(--un-md-sys-color-on-surface-variant);
+  margin: 0 0 20px;
+}
+[data-ui-next] .un-today-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+[data-ui-next] .un-today-meta {
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+[data-ui-next] .un-today-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-block: 24px;
+}
+[data-ui-next] .un-today-metric {
+  position: relative;
+  text-align: start;
+  display: grid;
+  gap: 8px;
+  border: 0;
+  border-radius: 20px;
+  padding: 20px;
+  color: inherit;
+  background: var(--un-md-sys-color-surface-container-low);
+  cursor: pointer;
+  font: inherit;
+}
+[data-ui-next] .un-today-metric strong {
+  font-size: 28px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+[data-ui-next] .un-today-metric > svg {
+  position: absolute;
+  right: 16px;
+  top: 24px;
+}
+[data-ui-next] .un-today-metric > span:first-child {
+  padding-right: 20px;
+}
+[data-ui-next] .un-today-section-title {
+  margin: 32px 0 16px;
+  font: 600 22px / 1.4 var(--un-font-sans);
+}
+[data-ui-next] .un-today-tasks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 16px;
+}
+[data-ui-next] .un-today-task {
+  display: grid;
+  gap: 12px;
+  text-align: start;
+  padding: 24px;
+  border: 0;
+  border-radius: 24px;
+  background: var(--un-md-sys-color-secondary-container);
+  color: var(--un-md-sys-color-on-secondary-container);
+  font: inherit;
+  cursor: pointer;
+}
+[data-ui-next] .un-today-task strong {
+  font-size: 22px;
+}
+[data-ui-next] .un-today-task-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+[data-ui-next] .un-today-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  align-items: start;
+}
+[data-ui-next] .un-today-column {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+[data-ui-next] .un-today-panel {
+  background: var(--un-md-sys-color-surface-container-lowest);
+  padding: 24px;
+  border-radius: 24px;
+  margin-block: 24px;
+}
+[data-ui-next] .un-today-panel h2 {
+  margin: 0;
+  font: 600 22px / 1.4 var(--un-font-sans);
+}
+[data-ui-next] .un-today-evidence-list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+[data-ui-next] .un-today-evidence-list li {
+  background: var(--un-md-sys-color-surface-container-low);
+  border-radius: 16px;
+  overflow-wrap: anywhere;
+}
+[data-ui-next] .un-today-evidence-list summary {
+  cursor: pointer;
+  min-height: 48px;
+  padding: 16px 20px;
+}
+[data-ui-next] .un-today-evidence-list summary > span {
+  margin-right: 16px;
+}
+[data-ui-next] .un-today-evidence-detail {
+  padding: 0 20px 20px;
+}
+[data-ui-next].un-today-page .un-btn {
+  min-height: 48px;
+  border-radius: var(--un-md-sys-shape-full);
+  box-shadow: none;
+  color: var(--un-md-sys-color-primary);
+}
+[data-ui-next].un-today-page .un-btn-primary {
+  background: var(--un-md-sys-color-primary);
+  color: var(--un-md-sys-color-on-primary);
+  border-color: transparent;
+}
+[data-ui-next].un-today-page :is(.un-today-task, .un-today-metric, .un-btn, summary):focus-visible {
+  outline: 3px solid var(--un-md-sys-color-primary);
+  outline-offset: 3px;
+}
+[data-ui-next].un-today-page :is(.un-today-task, .un-today-metric):hover {
+  filter: brightness(0.97);
+}
+@media (max-width: 760px) {
+  [data-ui-next] .un-today-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  [data-ui-next] .un-today-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  [data-ui-next] .un-today-panel {
+    padding: 20px;
+  }
+  [data-ui-next] .un-today-heading {
+    gap: 12px;
+  }
+}

@@ -1,8 +1,3 @@
-// M4-T6 (YUK-319)：KPI 三卡（设计稿 screen-today.jsx KpiCard + DATA.kpis）。
-// 真数据源 /api/workbench/summary kpi：due_count → 练习页；knowledge_count →
-// 知识图；pending_attribution_count 的错题本未迁 SPA（M5），点击走宿主占位。
-
-import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import type { WorkbenchSummary } from '../workbench-api';
 
@@ -17,32 +12,12 @@ interface Kpi {
 
 function KpiCard({ kpi }: { kpi: Kpi }) {
   return (
-    <LoomCard
-      pad
-      hover
-      className="kpi"
-      onClick={kpi.onGo}
-      // biome-ignore lint/a11y/useSemanticElements: 设计稿 KPI 整卡可点（LoomCard
-      // 渲染 div）；role=button + tabIndex + Enter 是卡片化入口的正确 ARIA（PfStream 同例）
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        // YUK-718 — role=button 须同时响应 Space（原生 button 语义）；preventDefault
-        // 拦住 Space 的页面滚动。沿用 QuestionsPage / DraftReviewPage 同例。
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          kpi.onGo();
-        }
-      }}
-    >
-      <div className="kpi-label">
-        <LoomIcon name={kpi.icon} size={14} />
-        {kpi.label}
-      </div>
-      <div className="kpi-val tnum">{kpi.value}</div>
-      <div className="kpi-foot kpi-sub">{kpi.sub}</div>
-      <LoomIcon name="arrow" size={15} className="kpi-go" />
-    </LoomCard>
+    <button type="button" className="un-today-metric" onClick={kpi.onGo}>
+      <span>{kpi.label}</span>
+      <strong>{kpi.value}</strong>
+      <span className="un-today-meta">{kpi.sub}</span>
+      <LoomIcon name="arrow" size={18} />
+    </button>
   );
 }
 
@@ -102,10 +77,10 @@ export function KpiRow({
     },
   ];
   return (
-    <div className="kpi-row stagger" style={{ marginTop: 'var(--s-5)' }}>
+    <section className="un-today-metrics" aria-label="工作台计数与入口">
       {cards.map((k) => (
         <KpiCard key={k.key} kpi={k} />
       ))}
-    </div>
+    </section>
   );
 }

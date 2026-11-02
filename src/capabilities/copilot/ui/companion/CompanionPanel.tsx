@@ -1,3 +1,4 @@
+import type { ConfirmationAssessmentRenderer } from '../confirmation';
 // The companion's frame, in three layouts:
 //   side  — desktop: a column beside the content (the shell gives it its place), not glass (T3);
 //   float — iPad: a glass layer floating over the page, the page stays usable;
@@ -34,6 +35,7 @@ import './companion.css';
 export type CompanionLayout = 'side' | 'float' | 'sheet';
 
 export interface CompanionPanelProps {
+  confirmationRenderer?: ConfirmationAssessmentRenderer;
   controller: CompanionController;
   layout: CompanionLayout;
   onClose: () => void;
@@ -64,6 +66,7 @@ export function CompanionPanel({
   nudges,
   sessionId,
   presentation,
+  confirmationRenderer,
 }: CompanionPanelProps) {
   const [wide, setWide] = useState(false);
   const listId = useId();
@@ -132,7 +135,14 @@ export function CompanionPanel({
           requestedSession={sessionId ? <span hidden key={sessionId} ref={showRequested} /> : null}
           context={<ContextBar />}
           nudges={<NudgeBar nudges={nudges} />}
-          messages={<MessageStream controller={controller} stick={stick} navigate={navigate} />}
+          messages={
+            <MessageStream
+              confirmationRenderer={confirmationRenderer}
+              controller={controller}
+              stick={stick}
+              navigate={navigate}
+            />
+          }
           history={listOpen ? <ConversationList controller={controller} id={listId} /> : null}
           runStatus={<RunFooter controller={controller} />}
           composer={<Composer controller={controller} stick={stick} presentation="workspace" />}
@@ -225,7 +235,12 @@ export function CompanionPanel({
         <ContextBar />
         <NudgeBar nudges={nudges} />
         <div className="un-cp-body">
-          <MessageStream controller={controller} stick={stick} navigate={navigate} />
+          <MessageStream
+            confirmationRenderer={confirmationRenderer}
+            controller={controller}
+            stick={stick}
+            navigate={navigate}
+          />
           {listOpen ? <ConversationList controller={controller} id={listId} /> : null}
         </div>
         <footer className="un-cp-foot">

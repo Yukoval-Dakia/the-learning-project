@@ -52,6 +52,7 @@ const liveSubscriberIdentities = [
   ['practice.failure-learning-attempt', 3],
   ['practice.learner-return-wake', 1],
   ['practice.question-admission-enqueue', 1],
+  ['practice.web-supply-observe', 1],
 ];
 const subscriberCount = liveSubscriberIdentities.length;
 const deliveryCount = subscriberCount * statuses.length;
@@ -272,6 +273,7 @@ describe('YUK-766 subscription progress backup', () => {
       'practice.failure-learning-attempt',
       'practice.learner-return-wake',
       'practice.question-admission-enqueue',
+      'practice.web-supply-observe',
     ]);
     const sourceIds = (id: string) =>
       data.event_subscription_delivery
