@@ -1,7 +1,7 @@
 import type { MouseEvent } from 'react';
 import { useState } from 'react';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
+import { FoldList } from '@/ui-next/primitives/FoldList';
 import { Expand } from '@/ui-next/public';
 import type { QuestionFullDetail } from './library-api';
 import { kindWord } from './library-copy';
@@ -112,7 +112,7 @@ export function QuestionPaper({
       {variants.length > 0 && (
         <div className="qd-variants">
           <h3 className="qd-label">同一道题的其他版本</h3>
-          <CollapsibleList
+          <FoldList
             as="ul"
             className="qd-variant-list"
             items={variants}
