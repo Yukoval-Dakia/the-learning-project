@@ -56,6 +56,7 @@ import { readStartPracticeQuestionDetail } from './start/practice-question-detai
 import { updateStartPracticeStreamItem } from './start/practice-stream-item-operation';
 import { getStartPracticeStream } from './start/practice-stream-operation';
 import { recomposeStartPracticeStream } from './start/practice-stream-recompose-operation';
+import { answerStartConjectureProbe } from './start/probe-answer-operation';
 import { readStartPlacementProfile } from './start/profile-reader';
 import { answerStartRecordAsk } from './start/record-ask-answer-operation';
 import { readStartRecordBlocks } from './start/record-blocks-reader';
@@ -170,6 +171,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     submitPlacementAnswer: submitStartPlacementAnswer,
     createSubject: createStartSubject,
     createGoal: createStartGoal,
+    submitConjectureProbeAnswer: answerStartConjectureProbe,
     legacySpa: buildLegacySpa(spaRoot),
     startAssets,
   };
