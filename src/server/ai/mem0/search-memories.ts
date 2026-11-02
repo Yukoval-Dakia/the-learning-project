@@ -1,5 +1,5 @@
 import type { SearchResult } from 'mem0ai/oss';
-import type { Mem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
+import type { Mem0OpaqueOperationContext } from '../provider-attempt-runtime';
 import type { MemoryClient } from './client';
 
 // The single mem0 read path: overfetch, drop soft-superseded rows, apply a

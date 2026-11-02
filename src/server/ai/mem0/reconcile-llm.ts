@@ -1,41 +1,23 @@
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
+import { executeDirectProviderAttempt, glmChatCostCny } from '../direct-provider-attempt';
+import { memoryLlmHeaders, resolveMemoryLlmConfig } from './llm-config';
 import {
-  type DirectProviderOperationContext,
-  executeDirectProviderAttempt,
-} from '@/server/ai/direct-provider-attempt';
-import { glmChatCostCny } from '@/server/ai/pricing';
-import { type Env, memoryLlmHeaders, resolveMemoryLlmConfig } from './client';
-import type {
-  CandidatesByNew,
-  NewMemoryEntry,
-  ReconcileAction,
-  ReconcileDecision,
-} from './reconcile-decisions';
+  type CandidatesByNew,
+  type NewMemoryEntry,
+  type ReconcileAction,
+  type ReconcileDecision,
+  type ReconcileJudgeOptions,
+  ReconcileParseError,
+} from './reconcile-contract';
 
 // Reconciliation shares Mem0's extraction LLM config and direct request lifecycle;
-// decisions stay advisory until the deterministic gates in reconcile-decisions run.
+// decisions stay advisory until the Agency pipeline's deterministic decision gates run.
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const VALID_ACTIONS = new Set(['KEEP_BOTH', 'SUPERSEDE', 'MERGE', 'RETRACT_NEW']);
 const CONFIDENCE_THRESHOLD = 0.6;
 
-export type {
-  CandidateEntry,
-  CandidatesByNew,
-  NewMemoryEntry,
-  ReconcileAction,
-  ReconcileDecision,
-} from './reconcile-decisions';
-
-export class ReconcileParseError extends Error {
-  constructor(
-    message: string,
-    readonly raw: string,
-  ) {
-    super(message);
-    this.name = 'ReconcileParseError';
-  }
-}
+export type { CandidateEntry, NewMemoryEntry } from './reconcile-contract';
 
 type GlmChatBody = {
   model: string;
@@ -215,14 +197,6 @@ export function parseReconcileResponse(raw: string): ReconcileDecision[] {
   return decisions;
 }
 
-export {
-  MERGE_RETRACT_SCORE_FLOOR,
-  isHardDelete,
-  kindForbidsMerge,
-  needsOldTarget,
-  passesStructuralCorroboration,
-} from './reconcile-decisions';
-
 /**
  * Downgrade low-confidence destructive decisions to KEEP_BOTH. This is only the
  * threshold disclosed in the prompt; two deterministic gates run after parsing.
@@ -254,13 +228,7 @@ function isAbortError(error: unknown): error is Error {
 export async function judgeReconciliation(
   newMems: NewMemoryEntry[],
   candidatesByNew: CandidatesByNew,
-  opts: {
-    env?: Env;
-    timeoutMs?: number;
-    fetchImpl?: typeof fetch;
-    providerAttempt?: DirectProviderOperationContext;
-    beforeRequest?: () => Promise<void>;
-  } = {},
+  opts: ReconcileJudgeOptions = {},
 ): Promise<ReconcileDecision[]> {
   const env = opts.env ?? process.env;
   const glmConfig = resolveMemoryLlmConfig(env);

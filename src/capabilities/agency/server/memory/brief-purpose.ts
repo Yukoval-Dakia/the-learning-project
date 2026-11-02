@@ -1,8 +1,9 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { memory_brief_note } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { lockPurposeBriefScope } from '@/kernel/locks/memory-locks';
 import {
   BRIEF_PURPOSE_ACTION,
   briefPurposeCurrent,
@@ -56,9 +57,7 @@ export async function executePurposeBrief(
   const taskRunId = operationId ? `memory-purpose-brief:${jobId}` : undefined;
   const run = await db.transaction(async (tx) => {
     if (!operationId) return scopeBriefPurposeCurrent(tx, scopeKey);
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`purpose-brief:${operationId}:${scopeKey}`}, 0))`,
-    );
+    await lockPurposeBriefScope(tx, operationId, scopeKey);
     const receipt = await readPurposeReceipt(tx, operationId);
     if (
       !receipt?.cleanup_required ||

@@ -3,7 +3,7 @@ import { eq, isNull, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { memory_reconciliation_log } from '@/db/schema';
-import type { MemoryClient } from './client';
+import type { MemoryClient } from './mem0-runtime';
 
 // Write-ahead reconcile log for mem0. Self-built: the reconciliation log is
 // drizzle-managed, while the mem0 pgvector collection is addressed by raw SQL.

@@ -10,26 +10,9 @@ import {
   lockEventDerivationSources,
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
-import {
-  MEMORY_BRIEF_SWEEP_JOB,
-  REFLECTION_BRIEF_SCOPE_KEYS,
-  eligibilityFor,
-} from '@/kernel/nightly-eligibility';
+import { REFLECTION_BRIEF_SCOPE_KEYS } from '@/kernel/nightly-eligibility';
 import { latestPurposeWithdrawal } from '@/kernel/read-models/purpose-change';
 import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
-import {
-  createDirectProviderOperationContext,
-  isDirectProviderAttemptInvariantError,
-} from '@/server/ai/direct-provider-attempt';
-import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
-import {
-  EXPIRE_LLM,
-  FAST_QUEUE_OPTS,
-  createJobQueue,
-  createOrUpdateQueue,
-} from '@/server/boss/queue-config';
-import { fenceAwareJobHandler } from '@/server/contract-epoch';
-import { loadNightlyContext, noteEligibilitySkip } from '@/server/orchestration/nightly-signals';
 import {
   QUALIFYING_ACTIONS,
   listActiveSubjectsSinceRefresh,
@@ -45,8 +28,20 @@ import {
   scopeHasNewEvidence,
 } from './brief';
 import { executePurposeBrief } from './brief-purpose';
-import { type MemoryClient, type MemoryEventInput, createMemoryClient } from './client';
 import { isLearnerEvidenceAction } from './learner-evidence';
+import {
+  type CandidateEntry,
+  type MemoryClient,
+  type MemoryEventInput,
+  type NewMemoryEntry,
+  type ReconcileJudge,
+  ReconcileParseError,
+  createDirectProviderOperationContext,
+  createMem0OpaqueOperationContext,
+  createMemoryClient,
+  isDirectProviderAttemptInvariantError,
+  searchMemories,
+} from './mem0-runtime';
 import type { MemoryIngestReplayGrant } from './memory-ingest-recovery-contract';
 import {
   assertMemoryIngestReplayGrant,
@@ -54,7 +49,6 @@ import {
   memoryIngestReplayAnchor,
 } from './memory-ingest-recovery-store';
 import {
-  MEMORY_RECONCILE_QUEUE,
   type MemoryReconcileHandoffMode,
   dispatchMemoryReconcile,
   memoryReconcileHandoffMode,
@@ -71,19 +65,12 @@ import {
 import { recoverPurposeChanges } from './purpose-repair';
 import { applyDecisionGates, deduplicateDecisions } from './reconcile-decisions';
 import {
-  type CandidateEntry,
-  type NewMemoryEntry,
-  ReconcileParseError,
-  judgeReconciliation,
-} from './reconcile-llm';
-import {
   type PlannedRow,
   insertPlannedRows,
   loadUnappliedLog,
   makePlannedRow,
   markApplied,
 } from './reconcile-store';
-import { searchMemories } from './search-memories';
 
 // Per-subject brief refresh lookback, also the bounded initial build for never-built
 // subjects.
@@ -97,9 +84,6 @@ export const MEMORY_BRIEF_SWEEP_QUEUE = 'memory_brief_sweep';
 // sweep catches whatever a restart or an oversized burst leaves behind.
 export const MEMORY_INGEST_OUTBOX_POLL_QUEUE = 'memory_ingest_outbox_poll';
 export const MEMORY_INGEST_OUTBOX_RECOVER_QUEUE = 'memory_ingest_outbox_recover';
-// Reconcile is event-driven; recovery shares the hourly ingest floor rather than
-// registering another queue or cron.
-export { MEMORY_RECONCILE_QUEUE } from './memory-reconcile-handoff';
 
 /**
  * Static cron declarations: the same table drives boss.schedule registration and
@@ -629,8 +613,8 @@ async function judgeBatch(
   userId: string,
   newMems: NewMemoryEntry[],
   candidatesByNew: Map<number, CandidateEntry[]>,
-  judge: typeof judgeReconciliation,
-): Promise<Awaited<ReturnType<typeof judgeReconciliation>> | null> {
+  judge: ReconcileJudge,
+): Promise<Awaited<ReturnType<ReconcileJudge>> | null> {
   try {
     return await judge(newMems, candidatesByNew, {
       beforeRequest: async () => {
@@ -683,7 +667,7 @@ function buildReconcilePlannedRows(
   userId: string,
   newMems: NewMemoryEntry[],
   candidatesByNew: Map<number, CandidateEntry[]>,
-  uniqueDecisions: Awaited<ReturnType<typeof judgeReconciliation>>,
+  uniqueDecisions: Awaited<ReturnType<ReconcileJudge>>,
 ): PlannedRow[] {
   // Write-ahead rows are inserted before apply for crash safety. Every field reads
   // the same final action, and each downgrade rewrites reason too, so action and
@@ -733,14 +717,14 @@ export function buildMemoryReconcileHandler(
   db: Db,
   deps: {
     memoryClient?: MemoryClient;
-    /** Test seam; defaults to judgeReconciliation. */
-    judge?: typeof judgeReconciliation;
+    /** The paid judge; the worker composition injects it so this module never loads the wire. */
+    judge: ReconcileJudge;
     /**
      * Test seam for the client factory. A throwing factory makes the unavailable
      * branch deterministic instead of depending on ambient Mem0 keys.
      */
     createClient?: () => MemoryClient;
-  } = {},
+  },
 ): (
   jobs: Pick<
     Job<{ memories: ReconcileMemInput[]; user_id: string; source_event_id?: string }>,
@@ -748,7 +732,7 @@ export function buildMemoryReconcileHandler(
   >[],
 ) => Promise<void> {
   let memoryClient = deps.memoryClient;
-  const judge = deps.judge ?? judgeReconciliation;
+  const judge = deps.judge;
   const createClient = deps.createClient ?? createMemoryClient;
   return async (jobs) => {
     for (const job of jobs) {
@@ -848,29 +832,13 @@ async function applyPlannedRows(db: Db, userId: string): Promise<void> {
   }
 }
 
-async function reflectionBriefsOff(db: Db, now: Date): Promise<boolean> {
-  try {
-    const signals = (await loadNightlyContext(db, now, [MEMORY_BRIEF_SWEEP_JOB])).forJob(
-      MEMORY_BRIEF_SWEEP_JOB,
-    );
-    const decision = eligibilityFor('reflection', signals);
-    if (!decision.run) {
-      noteEligibilitySkip(MEMORY_BRIEF_SWEEP_JOB, decision);
-      return true;
-    }
-    return false;
-  } catch (err) {
-    console.error(
-      '[eligibility] memory brief signal load failed; skipping global/meta this sweep',
-      err,
-    );
-    return true;
-  }
-}
+/** Whether nightly eligibility turns the reflection brief scopes off for this sweep. */
+export type ReflectionBriefsOff = (db: Db, now: Date) => Promise<boolean>;
 
 export function buildMemoryBriefSweepHandler(
   db: Db,
   boss: Pick<BossLike, 'send'>,
+  reflectionBriefsOff: ReflectionBriefsOff,
   // One now per sweep, shared with the regen jobs it enqueues, so detection and
   // reload use the same lookback floor. Also keeps fixed-now tests deterministic.
   opts?: { now?: Date },
@@ -998,92 +966,4 @@ async function countPendingIngest(db: Db): Promise<number> {
     .from(event)
     .where(isNull(event.ingest_at));
   return rows[0]?.count ?? 0;
-}
-
-async function defaultGenerateBrief(): Promise<never> {
-  throw new Error('memory brief LLM generator is not configured');
-}
-
-export async function registerMemoryHandlers(
-  boss: BossLike,
-  db: Db,
-  deps: {
-    memoryClient?: MemoryClient;
-    generateBrief?: GenerateBrief;
-  } = {},
-): Promise<void> {
-  const generateBrief = deps.generateBrief ?? defaultGenerateBrief;
-
-  // Ingest runs mem0's extraction + embedding, so give it the shared LLM expiry
-  // policy and a DLQ instead of pg-boss defaults.
-  await createJobQueue(boss, MEMORY_EVENT_INGEST_QUEUE, EXPIRE_LLM);
-  await boss.work(
-    MEMORY_EVENT_INGEST_QUEUE,
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    // Epoch-agnostic per-delivery fence (drain disposition).
-    fenceAwareJobHandler<Job<{ event_id: string }>>(
-      db,
-      MEMORY_EVENT_INGEST_QUEUE,
-      buildMemoryEventIngestHandler(db, boss, { memoryClient: deps.memoryClient }),
-    ),
-  );
-
-  await createJobQueue(boss, MEMORY_BRIEF_REGEN_QUEUE, EXPIRE_LLM);
-  await boss.work(
-    MEMORY_BRIEF_REGEN_QUEUE,
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    fenceAwareJobHandler(
-      db,
-      MEMORY_BRIEF_REGEN_QUEUE,
-      buildMemoryBriefRegenHandler(db, { memoryClient: deps.memoryClient, generateBrief }),
-    ),
-  );
-
-  await createOrUpdateQueue(boss, MEMORY_BRIEF_SWEEP_QUEUE, FAST_QUEUE_OPTS);
-  await boss.work(
-    MEMORY_BRIEF_SWEEP_QUEUE,
-    fenceAwareJobHandler(db, MEMORY_BRIEF_SWEEP_QUEUE, buildMemoryBriefSweepHandler(db, boss)),
-  );
-  await createOrUpdateQueue(boss, MEMORY_INGEST_OUTBOX_POLL_QUEUE, FAST_QUEUE_OPTS);
-  await boss.work(
-    MEMORY_INGEST_OUTBOX_POLL_QUEUE,
-    fenceAwareJobHandler(
-      db,
-      MEMORY_INGEST_OUTBOX_POLL_QUEUE,
-      buildMemoryIngestOutboxPollHandler(db, boss),
-    ),
-  );
-  await createOrUpdateQueue(boss, MEMORY_INGEST_OUTBOX_RECOVER_QUEUE, FAST_QUEUE_OPTS);
-  await boss.work(
-    MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
-    fenceAwareJobHandler(
-      db,
-      MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
-      buildMemoryIngestOutboxRecoverHandler(db, boss),
-    ),
-  );
-
-  // Register the static cron table; registration and admin reads share it.
-  for (const decl of MEMORY_INFRA_SCHEDULES) {
-    await boss.schedule(decl.name, decl.cron, {}, { tz: decl.tz });
-  }
-
-  // Reconcile is event-driven and shares the hourly recovery floor. It is a paid
-  // LLM queue, so it gets the same expiry policy as the other memory queues.
-  await createJobQueue(boss, MEMORY_RECONCILE_QUEUE, EXPIRE_LLM);
-  await boss.work(
-    MEMORY_RECONCILE_QUEUE,
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    fenceAwareJobHandler<
-      Job<{
-        memories: ReconcileMemInput[];
-        user_id: string;
-        source_event_id?: string;
-      }>
-    >(
-      db,
-      MEMORY_RECONCILE_QUEUE,
-      buildMemoryReconcileHandler(db, { memoryClient: deps.memoryClient }),
-    ),
-  );
 }

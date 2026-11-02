@@ -1,7 +1,9 @@
-# Memory server module
+# Agency memory pipeline
 
-- `client.ts` owns the supported Mem0 boundary. Event recovery must use exact
-  `getAll({filters:{user_id:'self', event_id}})` parsing and must fail closed on incomplete results.
+- The platform adapter `src/server/ai/mem0/client.ts` owns the supported Mem0 boundary; the paid
+  reconcile judge (`src/server/ai/mem0/reconcile-llm.ts`) is injected by the worker registration
+  (`src/server/boss/memory-queues.ts`), never imported here. Event recovery must use the adapter's
+  exact `getAll({filters:{user_id:'self', event_id}})` parsing and fail closed on incomplete results.
 - `memory-reconcile-handoff*.ts` owns Memory's append-only event v1 handoff. Keep external Mem0 and
   pg-boss calls outside DB transactions; DB transactions own only markers/intents/completions.
 - No table, generic handoff core, or new cron: recovery is the second isolated leg of the hourly
