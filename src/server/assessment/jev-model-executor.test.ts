@@ -84,20 +84,6 @@ function responseJson(body: unknown, status = 200): Response {
   } as Response;
 }
 
-function _jevOk(
-  noul: number,
-  usage?: { input_tokens?: number; output_tokens?: number; cost?: number },
-) {
-  return {
-    model: 'typesafe/jev-1.13-20260917',
-    provider: 'TypeSafe',
-    answers: { u1: { type: 'noul', noul } },
-    ...(usage === undefined
-      ? { usage: { input_tokens: 100, output_tokens: 8, cost: 4.2e-6 } }
-      : { usage }),
-  };
-}
-
 function executorOptions(overrides: Record<string, unknown> = {}) {
   return {
     db: {} as never,

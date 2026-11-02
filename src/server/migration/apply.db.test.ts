@@ -32,10 +32,8 @@ import { captureMigrationCheckpoint } from './capture';
 
 // YUK-1050（review 修订版）— apply 执行器 DB 测试：真表 seed（corpus
 // question_revision + legacy attempt/judge/review/pending/draft/asset）→
-// 真实 capture reader → 分类 → 规划 → 分阶段执行。钉住：幂等重跑零重复、
-// crash 中断后续跑收敛、pending→resolved supersession 续跑、divergence
-// fail-visible、fence 纪律、guarded 表 INSERT-only（DB trigger）、head 为
-// non-effective 初态且迁移后激活被识别为合法演进、学习状态表零触碰。
+// 真实 capture reader → 分类 → 规划 → 分阶段执行。钉住：crash 中断后续跑
+// 收敛且无重复行、无 fence / fence 被占时拒绝写库。
 
 const NOW = new Date('2026-09-20T00:00:00.000Z');
 

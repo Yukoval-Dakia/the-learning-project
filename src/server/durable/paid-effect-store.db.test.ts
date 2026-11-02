@@ -1,27 +1,8 @@
-// Prepared but NOT RUN in this lane (no DB): these cases pin the shared
-// paid-effect store/transition contract against the real paid_effect /
-// paid_effect_control tables. Parent runs them in the scoped DB loop when
-// integrating the protocol (they need the parent-owned migration SQL from
-// docs/planning/2026-10-11-yuk1355-paid-effect-protocol.md §6 applied first).
-//
-// Required proofs (parent plan + P1 R1): one physical-send admission under a
-// CAS race, unequal receipt rejection, unresolved claim visible across
-// different deliveries/ticks, opposite backend fenced INSIDE the claim,
-// failed application never resends, fixed entity-gate predicate (sibling rep
-// units parallel; same-unit input change and cross-revision unknown blocked),
-// mandatory winner-fence completion, switch blocked on every unfinished
-// obligation (including the note_verify claim probe), and the supporting
-// contracts (intent idempotence, history preservation, generation fencing).
-import { sql } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { z } from 'zod';
 
 import {
   type PaidEffectIdentity,
   computePaidEffectIdentity,
-  paidEffectControlLockKey,
 } from '@/core/migration/paid-effect-protocol';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -31,7 +12,6 @@ import {
   readPaidEffect,
   settleExpiredPaidEffectSends,
 } from '@/db/paid-effect-store';
-import * as schema from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const INPUT = { artifact_id: 'a1', sections: [{ kind: 'definition', md: 'x' }] };
@@ -90,99 +70,7 @@ async function claimFence(
   return result.fence;
 }
 
-function _settled<T>(run: Promise<T>) {
-  return run.then(
-    (value) => ({ status: 'fulfilled' as const, value }),
-    (reason: unknown) => ({ status: 'rejected' as const, reason }),
-  );
-}
-
-async function _reachBarrier(barrier: Promise<void>, run: Promise<unknown>): Promise<void> {
-  await Promise.race([
-    barrier,
-    run.then((result) => {
-      throw new Error(`transaction finished before its barrier: ${JSON.stringify(result)}`);
-    }),
-  ]);
-}
-
 /** Dedicated real connection, with latches around real SQL/COMMIT only. */
-async function _isolatedConnection(
-  hooks: { afterFamilyLock?: () => Promise<void>; beforeCommit?: () => Promise<void> } = {},
-) {
-  const url = new URL(z.url().parse(process.env.TEST_DATABASE_URL));
-  if (
-    !/^\/test_fork_\d+$/.test(url.pathname) ||
-    !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
-  ) {
-    throw new Error('Concurrency tests require the disposable Vitest fork');
-  }
-  const client = postgres(url.toString(), { max: 1 });
-  const db: Db = drizzle(client, { schema });
-  const [backend] = await db.execute<{ pid: number; name: string }>(
-    sql`select pg_backend_pid() as pid, current_database() as name`,
-  );
-  expect(backend.name).toBe(url.pathname.slice(1));
-  const transaction = db.transaction.bind(db);
-  db.transaction = (body, config) =>
-    transaction(async (tx) => {
-      await tx.execute(sql`set local lock_timeout = '8s'`);
-      await tx.execute(sql`set local statement_timeout = '10s'`);
-      if (hooks.afterFamilyLock) {
-        const execute = tx.execute.bind(tx);
-        let paused = false;
-        tx.execute = <TRow extends Record<string, unknown> = Record<string, unknown>>(
-          query: Parameters<Tx['execute']>[0],
-        ) => {
-          const pending = execute<TRow>(query);
-          const run = pending.execute.bind(pending);
-          pending.execute = async () => {
-            const result = await run();
-            if (!paused && pending.getQuery().sql.includes('pg_advisory_xact_lock')) {
-              paused = true;
-              await hooks.afterFamilyLock?.();
-            }
-            return result;
-          };
-          return pending;
-        };
-      }
-      const result = await body(tx);
-      await hooks.beforeCommit?.();
-      return result;
-    }, config);
-  return { db, pid: backend.pid, close: () => client.end({ timeout: 5 }) };
-}
-
-async function _expectFamilyWait(holderPid: number, waiterPid: number, family: string) {
-  expect(holderPid).not.toBe(waiterPid);
-  const key = paidEffectControlLockKey(family);
-  await expect
-    .poll(
-      async () => {
-        const [state] = await testDb().execute<{
-          holder: boolean;
-          waiter: boolean;
-          blocked: boolean;
-        }>(sql`
-      select exists (
-        select 1 from pg_locks where locktype = 'advisory' and pid = ${holderPid}
-        and classid = ((hashtextextended(${key}, 0) >> 32) & 4294967295)::oid
-        and objid = (hashtextextended(${key}, 0) & 4294967295)::oid
-        and objsubid = 1 and mode = 'ExclusiveLock' and granted
-      ) as holder, exists (
-        select 1 from pg_locks where locktype = 'advisory' and pid = ${waiterPid}
-        and classid = ((hashtextextended(${key}, 0) >> 32) & 4294967295)::oid
-        and objid = (hashtextextended(${key}, 0) & 4294967295)::oid
-        and objsubid = 1 and mode = 'ExclusiveLock' and not granted
-      ) as waiter, ${holderPid} = any(pg_blocking_pids(${waiterPid})) as blocked
-    `);
-        return state;
-      },
-      { timeout: 5_000, interval: 20 },
-    )
-    .toEqual({ holder: true, waiter: true, blocked: true });
-}
 
 describe('paid-effect store transitions', () => {
   beforeEach(async () => {

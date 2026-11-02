@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { completion_evidence, event, knowledge, learning_item } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
@@ -19,14 +19,6 @@ const KNOWLEDGE_BASE = {
   approval_status: 'approved' as const,
   version: 0,
 };
-
-function _paragraphBlock(id: string, text: string) {
-  return {
-    type: 'paragraph',
-    attrs: { id },
-    content: [{ type: 'text', text }],
-  };
-}
 
 function acceptedKnowledgeNodeId(result: ProposalLifecycleResult): string {
   const ownerResult = result.result;
@@ -57,32 +49,6 @@ async function seedKnowledge(ids: string[]): Promise<void> {
       ...KNOWLEDGE_BASE,
     });
   }
-}
-
-function _deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve: () => void = () => {};
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
-async function _observesBlockedDatabaseSession(): Promise<boolean> {
-  const db = testDb();
-  for (let attempt = 0; attempt < 300; attempt += 1) {
-    const rows = await db.execute(
-      sql.raw(`SELECT EXISTS (
-        SELECT 1
-        FROM pg_stat_activity
-        WHERE datname = current_database()
-          AND pid <> pg_backend_pid()
-          AND wait_event_type = 'Lock'
-      ) AS blocked`),
-    );
-    if (rows[0]?.blocked === true) return true;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  return false;
 }
 
 // =============================================================================

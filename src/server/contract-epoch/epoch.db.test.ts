@@ -2,13 +2,10 @@
 // per-delivery fence 与 outstanding 报告。pgboss schema 在测试容器内缺席 →
 // 报告/出生 epoch 的降级路径 + 用临时表补的 born-epoch 用例都覆盖。
 
-import type { Job } from 'pg-boss';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { contract_epoch } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { assertContractEpochRunnable } from './index';
-
-const _fakeJob = (id: string): Job => ({ id }) as unknown as Job;
 
 beforeEach(() => resetDb());
 

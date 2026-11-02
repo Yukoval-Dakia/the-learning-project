@@ -2,7 +2,6 @@ import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { classifyMigrationCapture } from '@/core/migration/classify';
-import type { ManifestOptions } from '@/core/migration/manifest';
 import type { RecordClassification } from '@/core/migration/types';
 
 import {
@@ -60,15 +59,6 @@ const FROZEN_DURABLE = {
   version: 0,
   updated_at: '2026-09-01T00:00:00.000Z',
 } as const;
-
-const _PROVENANCE: ManifestOptions = {
-  tool_version: 'test',
-  git_sha: null,
-  app_image: null,
-  worker_image: null,
-  migration_files: null,
-  redaction: { applied: false, fields: [] },
-};
 
 async function seedAttempt(input: {
   id: string;

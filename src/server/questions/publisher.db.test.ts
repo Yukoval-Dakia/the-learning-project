@@ -7,23 +7,9 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { AdmissionEvidenceT } from '@/core/schema/assessment';
 import { question, question_revision } from '@/db/schema';
-import {
-  type publishQuestionGroup,
-  publishQuestionGroupFromRow,
-} from '@/kernel/records/assessment-publication';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import {
-  type NormalizableQuestionRow,
-  normalizeQuestionRowToContract,
-} from './contract-normalizer';
-
-const _ADMITTED_EVIDENCE: AdmissionEvidenceT = {
-  marking_provenance: 'official',
-  verification: { structural_check_passed: true, independent_verification: null },
-  model_slice: null,
-};
 
 async function seedQuestion(id: string, overrides: Partial<typeof question.$inferInsert> = {}) {
   const db = testDb();
@@ -46,36 +32,6 @@ async function seedQuestion(id: string, overrides: Partial<typeof question.$infe
 }
 
 // 直接构造 publisher 输入（契约由 normalizer 产出，测试里组装）。
-function _publishInput(
-  row: NormalizableQuestionRow,
-  over: Record<string, unknown> = {},
-): Parameters<typeof publishQuestionGroup>[1] {
-  const n = normalizeQuestionRowToContract(row);
-  return {
-    group_id: n.group_id,
-    contract: {
-      structure: n.structure,
-      response_spec: n.response_spec,
-      scoring_basis: n.scoring_basis,
-      execution_plan: n.execution_plan,
-      integrity_digest: n.integrity_digest,
-    },
-    expectedCurrentRevision: null,
-    expectedAdmissionGeneration: null,
-    availability: 'general_pool',
-    admission: { state: 'withheld', reason: 'unverified_rules' },
-    actorRef: 'test:publisher',
-    now: new Date(),
-    ...over,
-  } as Parameters<typeof publishQuestionGroup>[1];
-}
-
-async function _readRow(id: string): Promise<NormalizableQuestionRow> {
-  const db = testDb();
-  const [row] = await db.select().from(question).where(eq(question.id, id)).limit(1);
-  if (!row) throw new Error(`row ${id} missing`);
-  return row as NormalizableQuestionRow;
-}
 
 describe('publishQuestionGroupFromRow — 锁序/组语义/未决转换（复审 P1）', () => {
   beforeEach(resetDb);

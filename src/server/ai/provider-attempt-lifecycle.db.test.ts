@@ -40,29 +40,6 @@ const identity = (attemptId: string, caller: 'api' | 'worker' = 'api') =>
     operationKind: 'QuestionGenerateTask',
   });
 
-const _identityForOperation = (attemptId: string, operationId: string) =>
-  ProviderRequestIdentity.parse({ ...identity(attemptId), operationId });
-
-const _unknownEvidence = {
-  terminal: 'unknown' as const,
-  reason: 'provider did not expose terminal accounting',
-  wireCount: null,
-  usage: {
-    basis: 'unknown' as const,
-    unit: null,
-    input: null,
-    output: null,
-    total: null,
-    source: 'provider:no-usage',
-  },
-  cost: {
-    basis: 'unknown' as const,
-    amount: null,
-    currency: null,
-    source: 'pricebook:no-entry',
-  },
-};
-
 beforeEach(async () => {
   await resetDb();
 });

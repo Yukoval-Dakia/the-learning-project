@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { and, eq, inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,13 +9,6 @@ import {
 import { db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { resetDb } from '../../../tests/helpers/db';
-
-// The un-versioned id the outbox used before intent ids were version-scoped. A stale intent left by
-// a different schema version lands here — the same id the synthesizer would reuse if it were not
-// version-scoped — so seeding at this id proves the valid replacement does not collide with it.
-function _legacyUnscopedIntentId(questionId: string, verifier: 'quiz_verify' | 'source_verify') {
-  return `verify-dispatch-intent-${createHash('sha256').update(`${verifier}\0${questionId}`).digest('hex')}`;
-}
 
 async function seedQuestion(
   id: string,

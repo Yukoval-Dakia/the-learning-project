@@ -1,51 +1,15 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, expect, it } from 'vitest';
 import type { Tx } from '@/db/client';
-import { artifact, event, goal, learning_item, mistake_variant } from '@/db/schema';
-import { writeLearningItemProposal } from '@/kernel/proposals/producers';
+import { event, goal, learning_item, mistake_variant } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { updateGoalStatus } from '@/kernel/records/goal-commands';
 import { gatherAndFoldGoal } from '@/server/projections/gather';
 import { goalLiveRowToSnapshot } from '@/server/projections/parity';
-import { backfillArtifactGenesis } from '../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { acceptAiProposal, retractAiProposal } from './actions';
 
 beforeEach(resetDb);
-
-async function _seedProposalNotes() {
-  const db = testDb();
-  const proposalId = await writeLearningItemProposal(db, {
-    topic: '条件概率',
-    knowledge_node: { id: 'kc-a', name: '条件概率', domain: 'yuwen' },
-    hub: { title: '概率与反例', summary_md: '保留编辑后的笔记及撤回时间。'.repeat(20) },
-    atomics: [],
-    reason_md: '撤销学习材料',
-    evidence_refs: [],
-  });
-  const baseAt = new Date(Date.now() - 1000);
-  for (const id of ['archive-note-a', 'archive-note-b']) {
-    await db.insert(artifact).values({
-      id,
-      type: 'note_atomic',
-      title: id,
-      source: 'ai_generated',
-      source_ref: proposalId,
-      intent_source: 'learning_intent',
-      knowledge_ids: ['kc-a'],
-      body_blocks: { type: 'doc', content: [] },
-      attrs: {},
-      history: [],
-      generation_status: 'ready',
-      verification_status: 'unverified',
-      created_at: baseAt,
-      updated_at: baseAt,
-      version: 0,
-    });
-  }
-  await backfillArtifactGenesis(db, baseAt);
-  return proposalId;
-}
 
 async function interleaveWithRetract(
   kind: 'goal' | 'mistake_variant' | 'learning_item',

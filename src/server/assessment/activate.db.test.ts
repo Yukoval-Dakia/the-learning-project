@@ -1,13 +1,7 @@
 // YUK-1045 — activateEvaluation 编排 DB 测试（db 分区；testcontainer + resetDb）。
-// 覆盖 §11 activation 契约的可执行部分：
-//   - 锁序下 CAS：null CAS（首次）/ ABA（generation_mismatch）/ racing supersede
-//     （stale_head）/ 同版幂等重放（already_effective，不重复学习结算 ——
-//     commit-before-DONE 重试安全）；
-//   - admission 重核：组 suspended/withdrawn 或 observed generation 漂移 ⇒
-//     stale_admission，head 不前移、无 receipt；
-//   - receipt = `experimental:assessment_activation` 事件（effect 处置不吞）；
-//   - 结算端口未接 ⇒ fail-closed 抛错回滚（YUK-1047 blockedBy 接缝）；
-//   - releaseIssuanceClaim 只释放 claim 列，不复活 verify 挂起的题。
+// 钉住两条不变量：锁序下 racing supersede CAS（stale_head 拒绝 vs 正确 expected
+// 成功替换）；结算端口返回 ineligible/failed_pending 时 head 前移且 receipt
+// 如实记处置（不吞）。
 
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -289,9 +283,4 @@ describe('activateEvaluation（YUK-1045 §11 activation 编排骨架）', () => 
     const effects = receipts.map((e) => (e.payload as Record<string, unknown>).effect).sort();
     expect(effects).toEqual(['failed_pending', 'ineligible']);
   });
-
-  // YUK-1095 — DB 层 CAS 兜底必须实际校验行数：哪怕锁内快照判定通过，
-  // 一旦谓词在写入时命中 0 行（锁外写者/谓词漂移）也绝不写 receipt、
-  // 绝不返回 activated。这里用结算端口模拟一个忽略锁序、在同一事务内
-  // 推进 head generation 的写者。
 });

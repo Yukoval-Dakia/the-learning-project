@@ -252,10 +252,6 @@ async function attempt(
   return { failure, issued, committed };
 }
 
-async function _row(db: Db) {
-  return (await readMistakes(db)).rows[0];
-}
-
 async function publicMaterialRead(db: Db) {
   vi.stubEnv('INTERNAL_TOKEN', 'synthetic-material-test-token');
   const app = buildHonoApp([ingestionCapability], { epochGate: async () => ({ runnable: true }) });

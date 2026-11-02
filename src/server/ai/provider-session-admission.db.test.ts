@@ -23,7 +23,7 @@ const BASE_POLICY = {
 
 type ActivePlan = Exclude<ProviderSessionAdmissionPlan, { mode: 'off' }>;
 
-const ASYNC_EVENT_TIMEOUT_MS = PROVIDER_SESSION_HEARTBEAT_MS * 2 + 2_000;
+const _ASYNC_EVENT_TIMEOUT_MS = PROVIDER_SESSION_HEARTBEAT_MS * 2 + 2_000;
 
 interface IndependentDb {
   db: Db;
@@ -101,7 +101,7 @@ interface LeaseSnapshot {
   hardReclaimAt: Date;
 }
 
-async function readLeaseSnapshot(taskRunId: string): Promise<LeaseSnapshot> {
+async function _readLeaseSnapshot(taskRunId: string): Promise<LeaseSnapshot> {
   const rows = await testDb()
     .select({
       mode: provider_session_admission.mode,
@@ -123,25 +123,6 @@ async function readLeaseSnapshot(taskRunId: string): Promise<LeaseSnapshot> {
     leaseExpiresAt: row.leaseExpiresAt,
     hardReclaimAt: row.hardReclaimAt,
   };
-}
-
-async function _waitForHeartbeatAfter(taskRunId: string, prior: Date): Promise<LeaseSnapshot> {
-  const deadline = Date.now() + ASYNC_EVENT_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    const snapshot = await readLeaseSnapshot(taskRunId);
-    if (snapshot.heartbeatAt.getTime() > prior.getTime()) return snapshot;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error(`admission ${taskRunId} heartbeat did not advance`);
-}
-
-async function _waitForAbort(signal: AbortSignal): Promise<void> {
-  const deadline = Date.now() + ASYNC_EVENT_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (signal.aborted) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error('provider session heartbeat did not fence the lost owner');
 }
 
 beforeEach(async () => {

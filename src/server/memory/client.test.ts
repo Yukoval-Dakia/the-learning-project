@@ -1,4 +1,4 @@
-import { type Mock, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createMem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
 import { createMemoryClient } from './client';
 
@@ -27,19 +27,6 @@ vi.mock('mem0ai/oss', () => {
 // from MemoryClient, so this stays file-local (NOT tests/helpers/memoryClientMock,
 // which mocks the OUTER project surface). Every method is a no-op default with a
 // spread override for whichever one a given test drives.
-function _mem0LikeMock(
-  overrides: Partial<Record<'add' | 'search' | 'delete' | 'history' | 'get' | 'getAll', Mock>> = {},
-) {
-  return {
-    add: vi.fn(async () => ({ results: [] })),
-    search: vi.fn(async () => ({ results: [] })),
-    delete: vi.fn(async () => ({ message: 'ok' })),
-    history: vi.fn(async () => []),
-    get: vi.fn(async () => null),
-    getAll: vi.fn(async () => ({ results: [] })),
-    ...overrides,
-  };
-}
 
 // P1 (YUK-341)：LLM/embedder 全走 openai-compat（智谱 GLM + 阿里百炼），凭据经 config
 // 传入，无 process.env 改写（旧 withXiaomiBaseUrl env-dance + YUK-232 mutex 已删）。
