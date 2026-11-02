@@ -1,17 +1,66 @@
+// 笔记 (/notes). M3E presentation (YUK-1473, docs/design/2026-11-03-notes-m3e.md): only the
+// markup and styles changed; the list query, its key and the search debounce are as before.
 import { useQuery } from '@tanstack/react-query';
+import { ChevronRight, FileText, List, Network, Search, X } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
-import { SubjectFilterTabs } from '@/ui/components/SubjectFilterTabs';
 import { useSubjects } from '@/ui/hooks/useSubjects';
-import { Btn } from '@/ui/primitives/Btn';
-import { EmptyState } from '@/ui/primitives/EmptyState';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { type SubjectRowLike, listSubjectChoices } from '@/ui/lib/subject';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button, ChipToggle, IconButton, UiNextRoot } from '@/ui-next/public';
+import { NoteEmpty } from './NoteEmpty';
 import { listNotes } from './notes-api';
+import './notes-m3e.css';
 
 const NOTE_TYPE_LABEL: Record<string, string> = {
   note_atomic: '短笔记',
   note_hub: '汇总笔记',
   note_long: '长文笔记',
 };
+
+// One sentence of state under the title; blank until the first answer arrives.
+function countSentence(count: number | undefined, filtered: boolean): string {
+  if (count === undefined) return ' ';
+  if (filtered) return `找到 ${count} 篇。`;
+  return `共 ${count} 篇。`;
+}
+
+function emptyCopy(searching: boolean, subject: string): { title: string; text: string } {
+  if (searching) {
+    return { title: '没有找到匹配的笔记', text: '换个关键词，或清除搜索看看全部笔记。' };
+  }
+  if (subject === 'all') {
+    return { title: '还没有匹配的笔记', text: '关联知识点的笔记会显示在这里。' };
+  }
+  return { title: '还没有匹配的笔记', text: '换一个科目筛选试试。' };
+}
+
+// Subject filter: one chip per subject plus 全部; a single choice, announced with aria-pressed.
+function SubjectChips({
+  value,
+  rows,
+  onChange,
+}: {
+  value: string;
+  rows?: readonly SubjectRowLike[];
+  onChange: (value: string) => void;
+}) {
+  const options = [{ id: 'all', label: '全部' }, ...listSubjectChoices(rows)];
+  return (
+    <fieldset className="nt-subjects">
+      <legend className="nt-subjects-legend">科目</legend>
+      {options.map((option) => (
+        <ChipToggle
+          key={option.id}
+          pressed={value === option.id}
+          onPressedChange={() => onChange(option.id)}
+        >
+          {option.label}
+        </ChipToggle>
+      ))}
+    </fieldset>
+  );
+}
 
 export default function NotesPage({
   navigate,
@@ -57,97 +106,81 @@ export default function NotesPage({
   const rows = notesQ.data?.rows ?? [];
   const searching = debouncedQuery.length > 0;
 
-  return (
-    <main className="page wide notes-loom">
-      <header className="page-head">
-        <div className="eyebrow">NOTES · 笔记 · {rows.length} 篇</div>
-        <div className="page-head-row">
-          <h1 className="page-title serif">笔记</h1>
-          <Btn variant="ghost" size="sm" icon="knowledge" onClick={() => navigate('/knowledge')}>
-            从知识点浏览
-          </Btn>
-        </div>
-        <p className="page-lead">按科目查看已关联知识点的笔记；打开后可继续阅读或编辑。</p>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--s-2)',
-            marginTop: 'var(--s-4)',
-          }}
-        >
-          <LoomIcon name="search" size={15} />
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={query}
-            onChange={(e) => changeQuery(e.target.value)}
-            placeholder="搜索笔记标题或正文…"
-            aria-label="搜索笔记"
-            style={{ flex: 1 }}
-          />
-          {query && (
-            <Btn
-              variant="ghost"
-              size="sm"
-              icon="close"
-              aria-label="清除搜索"
-              onClick={() => changeQuery('')}
-            />
-          )}
-        </div>
-        <SubjectFilterTabs value={subject} rows={subjects} onChange={setSubject} />
-      </header>
-
-      {notesQ.isLoading ? (
-        <p className="quiet-empty">取笔记…</p>
-      ) : notesQ.isError ? (
-        <div className="card card-pad">
-          <p className="quiet-empty">笔记加载失败。</p>
-          <Btn size="sm" variant="secondary" onClick={() => void notesQ.refetch()}>
-            重试
-          </Btn>
-        </div>
-      ) : rows.length === 0 ? (
-        <EmptyState
-          icon="doc"
-          title={searching ? '没有找到匹配的笔记' : '还没有匹配的笔记'}
-          text={
-            searching
-              ? '换个关键词，或清除搜索看看全部笔记。'
-              : subject === 'all'
-                ? '关联知识点的笔记会显示在这里。'
-                : '换一个科目筛选试试。'
-          }
-        />
-      ) : (
-        <div className="grid" style={{ gap: 'var(--s-3)' }}>
-          {rows.map((note) => (
-            <button
-              type="button"
-              key={note.id}
-              className="card card-pad"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--s-3)',
-                textAlign: 'left',
-              }}
-              onClick={() => navigate(`/notes/${note.id}`)}
-            >
-              <LoomIcon name={note.type === 'note_long' ? 'doc' : 'list'} size={17} />
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: 'block', fontWeight: 500 }}>{note.title}</span>
-                <span className="meta">
+  // Loading, failed, empty, rows: one at a time, in the same order as before.
+  const listBody = () => {
+    if (notesQ.isLoading) return <SkeletonLines rows={4} label="正在取笔记" />;
+    if (notesQ.isError)
+      return <RetryLine message="笔记加载失败。" onRetry={() => void notesQ.refetch()} />;
+    if (rows.length === 0)
+      return <NoteEmpty icon={<FileText size={22} />} {...emptyCopy(searching, subject)} />;
+    return (
+      <ul className="nt-rows">
+        {rows.map((note) => (
+          <li key={note.id}>
+            <button type="button" className="nt-row" onClick={() => navigate(`/notes/${note.id}`)}>
+              <span className="nt-row-icon" aria-hidden="true">
+                {note.type === 'note_long' ? <FileText size={17} /> : <List size={17} />}
+              </span>
+              <span className="nt-row-text">
+                <span className="nt-row-title">{note.title}</span>
+                <span className="nt-row-meta">
                   {NOTE_TYPE_LABEL[note.type] ?? '笔记'} · 第 {note.version} 版 ·{' '}
                   {new Date(note.updated_at).toLocaleDateString('zh-CN')}
                 </span>
               </span>
-              <LoomIcon name="arrow" size={14} className="thread-arrow" />
+              <ChevronRight className="nt-row-arrow" size={16} aria-hidden="true" />
             </button>
-          ))}
+          </li>
+        ))}
+      </ul>
+    );
+  };
+
+  return (
+    <UiNextRoot className="nt-page">
+      <main className="nt-list-main un-m3e-bridge">
+        <header className="nt-head">
+          <div className="nt-head-row">
+            <h1 className="nt-title">笔记</h1>
+            <Button variant="ghost" size="sm" onClick={() => navigate('/knowledge')}>
+              <Network size={16} aria-hidden="true" />
+              从知识点浏览
+            </Button>
+          </div>
+          <p className="nt-sentence">
+            {countSentence(notesQ.data?.rows.length, searching || subject !== 'all')}
+          </p>
+          <p className="nt-lead">按科目查看已关联知识点的笔记；打开后可继续阅读或编辑。</p>
+        </header>
+
+        <div className="nt-controls">
+          <div className="nt-search">
+            <Search className="nt-search-icon" aria-hidden="true" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              className="nt-search-input"
+              value={query}
+              onChange={(e) => changeQuery(e.target.value)}
+              placeholder="搜索笔记标题或正文…"
+              aria-label="搜索笔记"
+            />
+            {query && (
+              <IconButton
+                className="nt-search-clear"
+                label="清除搜索"
+                icon={<X size={16} />}
+                onClick={() => changeQuery('')}
+              />
+            )}
+          </div>
+          <SubjectChips value={subject} rows={subjects} onChange={setSubject} />
         </div>
-      )}
-    </main>
+
+        <section className="nt-list" aria-label="笔记列表">
+          {listBody()}
+        </section>
+      </main>
+    </UiNextRoot>
   );
 }
