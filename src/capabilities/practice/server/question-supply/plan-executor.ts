@@ -49,7 +49,7 @@ import { findSubjectRootKnowledgeId, matchJyeooKnowledgeHints } from './jyeoo-hi
 import type { PlacementWebDelivery } from './placement-starter-web-delivery';
 import type { DifficultyBand } from './target-discovery';
 import type { RunWebFetchCandidatesParams, RunWebFetchCandidatesResult } from './web-candidates';
-import { runWebSupply } from './web-supply';
+import { dispatchWebSupplyRouteFallback, runWebSupply } from './web-supply';
 
 /** executor 可执行的获取路由（SupplyPlanV1.route_preference 的可执行子集）。 */
 export type SupplyRouteName = 'jyeoo_fetch' | 'sourcing_web' | 'quiz_gen';
@@ -331,7 +331,7 @@ function errorMessage(err: unknown): string {
  */
 function cloneSupplyTraceForRoute(
   trace: SupplyTraceV1T | undefined,
-  producerRoute: 'jyeoo_fetch' | 'sourcing_web',
+  producerRoute: 'jyeoo_fetch' | 'sourcing_web' | 'quiz_gen',
 ): SupplyTraceV1T | null | undefined {
   if (trace === undefined) return undefined;
   const parsed = SupplyTraceV1.safeParse({ ...trace, producer_route: producerRoute });
@@ -423,6 +423,13 @@ interface RouteRunContext {
   /** 还需获取的数量（执行中递减）。 */
   remaining: number;
   placementDelivery?: PlacementWebDelivery;
+  /**
+   * The web-supply demand id produced by runWebRoute (trace.demand_id when a
+   * supply trace is carried — the demand's canonical identity, NOT the item's
+   * minted dispatch id). Set after the sourcing_web route runs so a blocked
+   * demand's remaining route plan can be claimed for this same run.
+   */
+  webDemandId?: string;
 }
 
 /**
@@ -572,6 +579,7 @@ async function runJyeooRoute(
 async function runWebRoute(
   run: RouteRunContext,
   deps: ExecuteSupplyPlanDeps,
+  routesExecuted: string[],
 ): Promise<RouteExecutionTally> {
   const routeTrace = cloneSupplyTraceForRoute(run.supplyTrace, 'sourcing_web');
   if (routeTrace === null) throw new Error('web supply requires a valid supply_trace');
@@ -582,8 +590,10 @@ async function runWebRoute(
     causeId: run.planEventId ?? run.causedByEventId,
     subjectProfile: run.subjectProfile,
     fetch: deps.runWebFetchCandidates,
+    routesExecuted,
     ...(run.placementDelivery ? { placement: run.placementDelivery } : {}),
   });
+  run.webDemandId = state.demandId;
   const committed = state.submissions.filter((s) => s.receipt?.question_id).length;
   const rejections: Record<string, number> = {};
   for (const s of state.submissions) {
@@ -614,6 +624,12 @@ async function runQuizGenRoute(
   run: RouteRunContext,
   deps: ExecuteSupplyPlanDeps,
 ): Promise<RouteExecutionTally> {
+  // Same-demand provenance (YUK-1664 S3): a fallback-dispatched quiz_gen keeps
+  // the demand's supply_trace, exactly like the dispatcher's direct dispatch.
+  // null = revalidation failure after producer_route override — omit the trace
+  // rather than blind-cast (web route throws on the same failure; quiz_gen has
+  // no hard trace requirement).
+  const quizGenTrace = cloneSupplyTraceForRoute(run.supplyTrace, 'quiz_gen');
   const payload: QuizGenDispatchPayload = {
     trigger: 'knowledge',
     ref_id: run.item.knowledgeId,
@@ -624,14 +640,15 @@ async function runQuizGenRoute(
     ...(run.item.objectiveOnly ? { objective_only: true } : {}),
     ...(run.item.kindRequired ? { kind_required: true } : {}),
     ...(run.item.placementClaimId ? { placement_starter_claim_id: run.item.placementClaimId } : {}),
+    ...(quizGenTrace ? { supply_trace: quizGenTrace } : {}),
   };
   // enqueue 与逐 item 完成事件之间的崩溃窗口用 pg-boss 单例键封——同
   // (plan_event_id, demand_id) 重投不重复入队。scanner/手动（planEventId null）
-  // 无键，沿用裸 enqueue 语义。
-  const singletonKey =
-    run.planEventId !== null && run.item.demandId
-      ? `supply_exec_${run.planEventId}_${run.item.demandId}`
-      : undefined;
+  // 用 demand_id 维度键：配合 web 需求 routesTried 的 durable claim，一条 demand
+  // 的 quiz_gen 在途至多一次。
+  const singletonKey = run.item.demandId
+    ? `supply_exec_${run.planEventId ?? 'scan'}_${run.item.demandId}`
+    : undefined;
   const jobId = await deps.enqueueQuizGen(payload, singletonKey ? { singletonKey } : undefined);
   return {
     route: 'quiz_gen',
@@ -763,13 +780,17 @@ export async function executeSupplyPlan(
       continue;
     }
 
-    for (const route of item.routePreference as readonly string[]) {
+    for (let routeIndex = 0; routeIndex < item.routePreference.length; routeIndex++) {
+      const route = item.routePreference[routeIndex] as string;
       if (run.remaining <= 0) break;
       let tally: RouteExecutionTally;
       if (route === 'jyeoo_fetch') {
         tally = await runJyeooRoute(run, deps, params.jyeooFetch);
       } else if (route === 'sourcing_web') {
-        tally = await runWebRoute(run, deps);
+        // Plan routes already run for this item in this executor pass are
+        // recorded on the demand as tried, so a later fallback never re-pays
+        // for a route this demand already executed.
+        tally = await runWebRoute(run, deps, item.routePreference.slice(0, routeIndex));
       } else if (route === 'quiz_gen') {
         tally = await runQuizGenRoute(run, deps);
       } else {
@@ -790,9 +811,30 @@ export async function executeSupplyPlan(
       result.acquired += tally.acquired;
       result.committed += tally.committed;
       result.opportunistic += tally.opportunistic;
-      // Web owns this demand through terminal reconciliation. A failed source
-      // must not be concealed by falling into a new quiz_gen paid operation.
-      if (route === 'sourcing_web') break;
+      if (route === 'sourcing_web') {
+        // A demand still in flight (acquiring/submitting/verifying) keeps owning
+        // the item — its reconciliation continues asynchronously. Only a demand
+        // that ended BLOCKED in this run falls back, through the SAME shared
+        // fallback dispatcher the async drivers use: one supply_execute job for
+        // the demand's pending nextRoute under a per-(demand,route) singletonKey
+        // (YUK-1664 S3). The executor never dispatches the next route inline —
+        // the fallback job owns it. Placement demands never fall back.
+        if (tally.status !== 'skipped' || run.item.placementClaimId || !run.webDemandId) break;
+        const fallback = await dispatchWebSupplyRouteFallback(run.db, run.webDemandId);
+        result.routes.push({
+          route: fallback.route ?? 'route_fallback',
+          status: fallback.dispatched ? 'dispatched' : 'skipped',
+          acquired: 0,
+          committed: 0,
+          opportunistic: 0,
+          rejections: {},
+          errors: 0,
+          ...(fallback.dispatched ? {} : { skipped: 'route_fallback_unavailable' }),
+          ...(fallback.jobId ? { job_id: fallback.jobId } : {}),
+        });
+        if (fallback.dispatched) dispatchedItems += 1;
+        break;
+      }
       if (tally.status === 'dispatched') {
         dispatchedItems += 1;
         break; // 已异步派发：生成经自身 job + verify 链闭环，不再走后续路由
