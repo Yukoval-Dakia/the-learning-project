@@ -126,7 +126,6 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `MISCONCEPTION_HARD_CONFIRM_ENABLED` | app、worker | `false` | `registry` |
 | `QUESTION_SUPPLY_REFILL_ENABLED` | app、worker | `false` | `registry` |
 | `CONFUSABLE_CONTRAST_ENABLED` | worker（夜间发现） | `false` | `registry`；`src/capabilities/practice/jobs/confusable_contrast_nightly.ts` |
-| `RESEARCH_MEETING_AGENT_ENABLED` | worker（夜间任务） | `false` | `registry`；`src/capabilities/agency/jobs/research_meeting_agent_nightly.ts` |
 | `JUDGE_CALIBRATION_SAMPLING_ENABLED` | worker | `false` | `registry` |
 | `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` | worker | `false`；compose 强制项，DB 写入返回 409 | `registry`；`src/server/config/write.ts` |
 | `WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD` | worker | `0.85` | `registry` |

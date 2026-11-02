@@ -3,9 +3,9 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 136,
+      "total": 135,
       "byOwnerPair": {
-        "agency -> ai": 14,
+        "agency -> ai": 13,
         "agency -> boss": 7,
         "agency -> proposals": 1,
         "copilot -> ai": 8,

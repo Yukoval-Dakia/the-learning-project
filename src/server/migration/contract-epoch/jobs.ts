@@ -98,7 +98,6 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   dreaming_nightly: 'translate',
   goal_scope_propose_nightly: 'translate',
   research_meeting_nightly: 'translate',
-  research_meeting_agent_nightly: 'translate',
   frontier_fill_nightly: 'translate',
   knowledge_edge_propose_nightly: 'translate',
   knowledge_maintenance_nightly: 'translate',

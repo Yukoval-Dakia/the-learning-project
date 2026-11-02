@@ -104,7 +104,6 @@ const server = {
   PROFILE_CRITIC_OK: optionalString,
   PROJECTION_IS_WRITER_ITEM_CALIBRATION: optionalString,
   QUESTION_SUPPLY_REFILL_ENABLED: optionalString,
-  RESEARCH_MEETING_AGENT_ENABLED: optionalString,
   R2_ACCESS_KEY_ID: optionalString,
   R2_BUCKET: optionalString,
   R2_ENDPOINT: z.string().url().optional(),
