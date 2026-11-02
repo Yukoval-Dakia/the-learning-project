@@ -62,6 +62,7 @@ export async function createLoomPiModels() {
     'zhipuai-coding-plan',
     'opencode-go',
     'openai',
+    'openrouter',
   ];
   for (const lane of lanes) {
     const id = piProviderId(lane);
