@@ -1,7 +1,7 @@
 # 录入声明贯通 compose 与统一发布
 
 Refs YUK-1568、YUK-1522。交付阶段：第一天能用。只交现役 ingestion agent 的源码候选，
-不代表四类生产端全部完成。独立 QuizGen 按 ADR-0069 §5 的已定退役方向保留旧对照链；
+四类生产端分开核销。独立 QuizGen 按 ADR-0069 §5 的已定退役方向保留旧对照链；
 统一候选生成的收口仍属 YUK-1594 的后续。已接受的 #1949/#1956 不在本片复核范围。
 
 ## 范围与基线
@@ -24,7 +24,7 @@ Refs YUK-1568、YUK-1522。交付阶段：第一天能用。只交现役 ingesti
 方法、unit 私有 key/rule、材料引用以及稳定身份。interval_set、finite_set、number/unit、
 point、affine_line 与 blank_order 的字段来自当前 question-draft、blank-answer-shape、
 blank-answer-compare、scoring-rule 源码。finite_set 当前只实现 roster，point 当前至多
-8 轴；合法 schema 不代表 notation 已有 executor 支持。
+8 轴；executor 支持另行核对。
 
 只凭题文/材料声明对象、单位、顺序与对应；不从学科/format=math 推断，不能猜分隔符、
 裸数政策、容差、分值/部分分或 item 对应。不把印刷参考答案/学生手写当 key；独立求解
@@ -128,7 +128,7 @@ Node heap 上限 3072 MiB。实际结果：
 
 初次 typecheck exit 2 发现本片 issue union 与 narrowed return 类型错误，已在本片修正。
 
-NOT_RUN：任何测试/断言或 fixture、DB/TEST/Docker、模型/provider/付费/真实 compose、
+
 浏览器/部署/daemon；没有生成可冒充真实输出的样本。独立 R1/必要 R2、exact-head CI、
 后续真实模型/DB/browser acceptance 由父统一安排。本片不 watch/poll/merge。
 Linear capture 归父统一；本片没有另发现可执行的范围外跟进，已知验收欠账不另建重复票。

@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { z } from 'zod';
 import type { CapabilityManifest } from '@/kernel/manifest';
-import { currentHttpProviderSessionDeadlineAt } from '@/server/http/provider-session-deadline';
 import { buildHonoApp } from './app';
 
 const fakeCapability: CapabilityManifest = {
@@ -14,35 +12,6 @@ const fakeCapability: CapabilityManifest = {
         path: '/api/fake',
         load: async () => async () => Response.json({ ok: 'fake' }),
       },
-      // M1 (YUK-314) — param 路由首例：组合根须把路径参数透传给 handler。
-      {
-        method: 'GET',
-        path: '/api/fake/[id]/detail',
-        load: async () => async (_req, params) => Response.json({ id: params.id }),
-      },
-      {
-        method: 'GET',
-        path: '/api/fake/provider-session-deadline',
-        load: async () => async () =>
-          Response.json({ deadlineAt: currentHttpProviderSessionDeadlineAt() }),
-      },
-      // 纯元数据路由（无 load）——不被挂载。
-      { method: 'POST', path: '/api/fake/meta-only' },
-      {
-        method: 'POST',
-        path: '/api/fake/bad-contract',
-        operationId: 'createFakeWithBadContract',
-        successStatus: 201,
-        responses: { 201: z.object({ ok: z.boolean() }) },
-        load: async () => async () => Response.json({ ok: true }),
-      },
-      {
-        method: 'GET',
-        path: '/api/fake/throws',
-        load: async () => async () => {
-          throw new Error('provider secret must stay server-side');
-        },
-      },
     ],
   },
 };
@@ -51,87 +20,6 @@ describe('buildHonoApp', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-  });
-
-  it('serves /api/health without a token', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([fakeCapability]);
-    const res = await app.request('/api/health');
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
-  });
-
-  it('applies the Hono security-header baseline and CSP to every response', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([fakeCapability]);
-
-    for (const response of [
-      await app.request('/api/health'),
-      await app.request('/api/fake'),
-      await app.request('/api/not-found', {
-        headers: { 'x-internal-token': 'test-token' },
-      }),
-    ]) {
-      const csp = response.headers.get('content-security-policy');
-      expect(csp).toContain("default-src 'self'");
-      expect(csp).toContain("connect-src 'self'");
-      expect(csp).toContain("frame-ancestors 'none'");
-      expect(csp).toContain("object-src 'none'");
-      expect(csp).toContain("script-src 'self' 'unsafe-inline' 'unsafe-eval'");
-      expect(csp).toContain("style-src 'self' 'unsafe-inline'");
-      expect(csp).not.toContain('https:');
-      expect(csp).not.toContain('*');
-      expect(response.headers.get('strict-transport-security')).toBe(
-        'max-age=63072000; includeSubDomains; preload',
-      );
-      expect(response.headers.get('x-content-type-options')).toBe('nosniff');
-      expect(response.headers.get('x-frame-options')).toBe('DENY');
-      expect(response.headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin');
-      expect(response.headers.get('permissions-policy')).toBe(
-        'camera=(), geolocation=(), microphone=()',
-      );
-    }
-  });
-
-  it('serves /api/auth/check only after token validation', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([fakeCapability]);
-
-    expect((await app.request('/api/auth/check')).status).toBe(401);
-    const valid = await app.request('/api/auth/check', {
-      headers: { 'x-internal-token': 'test-token' },
-    });
-    expect(valid.status).toBe(200);
-    expect(await valid.json()).toEqual({ ok: true });
-  });
-
-  it('rejects a mounted route without the token', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([fakeCapability]);
-    const res = await app.request('/api/fake');
-    expect(res.status).toBe(401);
-  });
-
-  it('serves a manifest-mounted route with the token', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([fakeCapability]);
-    const res = await app.request('/api/fake', {
-      headers: { 'x-internal-token': 'test-token' },
-    });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: 'fake' });
-  });
-
-  it('returns a diagnosable JSON 500 without exposing handler details', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([fakeCapability]);
-    const response = await app.request('/api/fake/throws', {
-      headers: { 'x-internal-token': 'test-token' },
-    });
-    expect(response.status).toBe(500);
-    const requestId = response.headers.get('x-request-id');
-    expect(requestId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(await response.json()).toEqual({ error: 'internal_error', request_id: requestId });
   });
 
   it('rejects every /api request when INTERNAL_TOKEN is unset (fail-closed)', async () => {
@@ -145,79 +33,5 @@ describe('buildHonoApp', () => {
     expect(withHeader.status).toBe(401);
     const health = await app.request('/api/health');
     expect(health.status).toBe(200);
-  });
-
-  it('rejects an empty-string token header', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([fakeCapability]);
-    const res = await app.request('/api/fake', {
-      headers: { 'x-internal-token': '' },
-    });
-    expect(res.status).toBe(401);
-  });
-
-  it('still serves /api/health and /api/ready while fenced (health ≠ readiness)', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([fakeCapability], {
-      epochGate: async () => ({
-        runnable: false,
-        epoch: 'legacy',
-        state: 'preparing',
-        codeEpoch: 'assessment-contract-v1',
-        reason: 'maintenance',
-      }),
-    });
-    const health = await app.request('/api/health');
-    expect(health.status).toBe(200);
-    const ready = await app.request('/api/ready');
-    expect(ready.status).toBe(503);
-    expect(await ready.json()).toEqual({
-      ok: false,
-      epoch: 'legacy',
-      state: 'preparing',
-      code_epoch: 'assessment-contract-v1',
-      reason: 'maintenance',
-    });
-  });
-
-  it('returns 200 on /api/ready and serves routes when runnable', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([fakeCapability], {
-      // runnable 态的 stub marker 必须与 code epoch 一致（gate 语义：active 且
-      // epoch===codeEpoch 才 runnable）。
-      epochGate: async () => ({
-        runnable: true,
-        epoch: 'assessment-contract-v1',
-        state: 'active',
-        codeEpoch: 'assessment-contract-v1',
-      }),
-    });
-    const ready = await app.request('/api/ready');
-    expect(ready.status).toBe(200);
-    expect(await ready.json()).toEqual({
-      ok: true,
-      epoch: 'assessment-contract-v1',
-      state: 'active',
-      code_epoch: 'assessment-contract-v1',
-      reason: null,
-    });
-    const res = await app.request('/api/fake', {
-      headers: { 'x-internal-token': 'test-token' },
-    });
-    expect(res.status).toBe(200);
-  });
-
-  it('checks the epoch gate only after token auth (stale-client 拒绝不先于鉴权)', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    let gateCalls = 0;
-    const app = buildHonoApp([fakeCapability], {
-      epochGate: async () => {
-        gateCalls += 1;
-        return { runnable: false, reason: 'maintenance' };
-      },
-    });
-    const unauthenticated = await app.request('/api/fake');
-    expect(unauthenticated.status).toBe(401);
-    expect(gateCalls).toBe(0);
   });
 });

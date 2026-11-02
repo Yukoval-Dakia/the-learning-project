@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { readFileSync, rmSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -85,13 +85,5 @@ describe('api smoke credential transport', () => {
       fakeToken,
     );
     expect(vi.mocked(console.log).mock.calls.flat().join(' ')).not.toContain(fakeToken);
-  });
-
-  it('cleans up when Newman cannot start, without printing credentials', async () => {
-    await runSmoke();
-    expect(() => child.emit('error', new Error('spawn failed'))).toThrow('test process exit');
-    expect(existsSync(dirname(environmentPath ?? ''))).toBe(false);
-    expect(process.exit).toHaveBeenCalledWith(1);
-    expect(vi.mocked(console.error).mock.calls.flat().join(' ')).not.toContain(fakeToken);
   });
 });

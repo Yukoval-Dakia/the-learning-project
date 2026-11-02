@@ -3,14 +3,18 @@ import type { Job } from 'pg-boss';
 // provenance events, budget tracker + propose-cap gate, piDomainMount wiring,
 // hard+1 budgetOverride, runAgentTask call, failure event + rethrow) is owned by
 // runAgencyProposalScan. This job keeps only the Dreaming signal reads, the
-// input build, and the note_update → note-refine fan-out.
+// input build, and the note_update → note-refresh signal. Notes subscribes.
 import {
   type AgencyScanInboxRow,
   type AgencyScanRunFn,
   runAgencyProposalScan,
 } from '@/capabilities/agency/server/agent-run';
 import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
-import { enqueueDreamingNoteRefine } from '@/capabilities/notes/public';
+import {
+  DREAMING_NOTE_REFRESH_ACTION,
+  DreamingNoteRefreshPayload,
+  dreamingNoteRefreshArtifactIds,
+} from '@/core/schema/event/dreaming-note-refresh';
 import type { Db } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
 import {
@@ -270,7 +274,8 @@ export async function runDreamingNightly(
     deps.readAgentNotesFn ??
     ((db: Db, now: Date) => readAgentNotes(db, { for_agent: 'dreaming', now }));
 
-  let noteRefineDispatch = { requested: 0, enqueued: 0, skipped: 0, failed: 0 };
+  let noteRefreshRequested = 0;
+  let noteRefreshFailed = 0;
 
   return runAgencyProposalScan(db, {
     surface: 'dreaming',
@@ -297,32 +302,43 @@ export async function runDreamingNightly(
       const agentNotes = await readNotes(db, now);
       return () => buildDreamingInput(now, beforeRows, activeGoals, feedbackDigest, agentNotes);
     },
-    buildScanSuccessPayloadExtras: () => ({ note_refine_dispatch: noteRefineDispatch }),
-    onNewProposalRows: async ({ db, newRows, triggerEventId }) => {
-      const newDreamingNoteTargets = [
-        ...new Set(
-          newRows
-            .filter(
-              (row) =>
-                row.kind === 'note_update' &&
-                row.target?.subject_kind === 'artifact' &&
-                typeof row.target.subject_id === 'string',
-            )
-            .map((row) => row.target?.subject_id)
-            .filter((artifactId): artifactId is string => Boolean(artifactId)),
-        ),
-      ];
-      const results = await Promise.all(
-        newDreamingNoteTargets.map((artifactId) =>
-          enqueueDreamingNoteRefine({ db, artifactId, triggerEventId }),
-        ),
+    buildScanSuccessPayloadExtras: () => ({
+      note_refresh_requested: noteRefreshRequested,
+      note_refresh_failed: noteRefreshFailed,
+    }),
+    onNewProposalRows: async ({ newRows, triggerEventId, writeEventFn }) => {
+      const artifactIds = dreamingNoteRefreshArtifactIds(newRows);
+      noteRefreshRequested = artifactIds.length;
+      const now = deps.now?.() ?? new Date();
+      // A signal write must not fail the scan. The retry's inbox diff no longer
+      // treats this attempt's proposals as new, so the signal would be dropped.
+      const outcomes = await Promise.all(
+        artifactIds.map(async (artifactId) => {
+          try {
+            await writeEventFn(db, {
+              id: `dreaming_note_refresh_${triggerEventId}_${artifactId}`,
+              actor_kind: 'agent',
+              actor_ref: 'dreaming',
+              action: DREAMING_NOTE_REFRESH_ACTION,
+              subject_kind: 'artifact',
+              subject_id: artifactId,
+              outcome: null,
+              payload: DreamingNoteRefreshPayload.parse({
+                artifact_id: artifactId,
+                trigger_event_id: triggerEventId,
+              }),
+              caused_by_event_id: triggerEventId,
+              created_at: now,
+              ingest_at: now,
+            });
+            return true;
+          } catch (err) {
+            console.warn(`[dreaming_nightly] note refresh signal failed for ${artifactId}:`, err);
+            return false;
+          }
+        }),
       );
-      noteRefineDispatch = {
-        requested: results.length,
-        enqueued: results.filter((result) => result.status === 'enqueued').length,
-        skipped: results.filter((result) => result.status.startsWith('skipped:')).length,
-        failed: results.filter((result) => result.status === 'failed').length,
-      };
+      noteRefreshFailed = outcomes.filter((wrote) => !wrote).length;
     },
   });
 }

@@ -50,21 +50,7 @@ export {
   listKnowledgeEdgesPage,
 } from './server/edges';
 export { readKnowledgeEdges } from './server/edges-list';
-export type {
-  FailureLearningKnowledgeNode,
-  FailureLearningMisconceptionNode,
-} from './server/failure-learning-context';
-export {
-  getMisconceptionsByIds,
-  listActiveMisconceptionsForKcs,
-  loadFailureLearningKnowledgeContext,
-} from './server/failure-learning-context';
 export { loadFrontierRail } from './server/frontier-read';
-export type {
-  CreateLearningIntentKnowledgeNodeFn,
-  CreateLearningIntentKnowledgeNodeInput,
-} from './server/learning-intent-knowledge';
-export { createLearningIntentKnowledgeNode } from './server/learning-intent-knowledge';
 export { loadMisconceptionsForKc } from './server/misconception-read';
 export { loadKnowledgeNodePage } from './server/node-page';
 export type { AcceptResult as KnowledgeAcceptResult } from './server/proposals';

@@ -14,10 +14,14 @@ import {
   validateComposition,
 } from '@/kernel/manifest';
 import { generateOpenApiDocument } from '@/kernel/openapi';
+import { registerNoteHandoffBossResolver } from '@/kernel/records/note-handoff-protocol';
+import { getStartedBoss } from '@/server/boss/client';
 import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
+
+registerNoteHandoffBossResolver(() => getStartedBoss());
 
 // YUK-233 — the old Next shell carried baseline headers but deliberately omitted CSP.
 // M5 removed that shell, so Hono is now the single response boundary for both the API and

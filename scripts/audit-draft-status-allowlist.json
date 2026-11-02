@@ -1,35 +1,41 @@
 {
-  "_comment": "question-insert sites that do NOT set draft_status. Each entry MUST have reason + resolves_when {kind,ref,expected_by}. NULL≡active is the legal semantics for these writers (the question IS an active pool item). teaching-check also sets draft_status explicitly post-YUK-350-L2 — kept here as harmless-redundant (chain-merge guard); the audit silently passes an allowlisted-AND-explicit file. (YUK-358 决定3: the embedded_check_generate writer was deleted with the orphan chain.) See docs/design/2026-05-15-data-assumptions.md.",
-  "src/capabilities/ingestion/server/auto-enroll.ts": {
-    "reason": "Auto-enrolled questions are active pool items by design — NULL≡active is correct; they enter the review pool immediately. YUK-482 Lane A: the cold-start bridge row now sets draft_status='active' EXPLICITLY (placement-visibility contract line-of-sight); the normal auto path stays undefined≡NULL. Allowlisted-AND-explicit — the gate silently passes it (same harmless-redundant case as materialize-ask-check.ts).",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "permanent: auto-enroll questions are intentionally active (NULL≡active, or explicit 'active' for the cold-start row); revisit only if a draft-then-promote flow is introduced for auto-enroll",
-      "expected_by": "2027-06-30"
+  "_comment": "question.draft_status gate. `writes` exempts an INSERT that omits the key (NULL≡active is legal for that writer). `reads` exempts a hand-rolled family-1 pool predicate or a consciously triaged UNKNOWN-SHAPE raw read. An entry on one side does not exempt the other. Helper-definition sentinel failures are not allowlistable.",
+  "writes": {
+    "_comment": "question-insert sites that do NOT set draft_status. Each entry MUST have reason + resolves_when {kind,ref,expected_by}. NULL≡active is the legal semantics for these writers (the question IS an active pool item). teaching-check also sets draft_status explicitly post-YUK-350-L2 — kept here as harmless-redundant (chain-merge guard); the audit silently passes an allowlisted-AND-explicit file. (YUK-358 决定3: the embedded_check_generate writer was deleted with the orphan chain.) See docs/design/2026-05-15-data-assumptions.md.",
+    "src/capabilities/ingestion/server/auto-enroll.ts": {
+      "reason": "Auto-enrolled questions are active pool items by design — NULL≡active is correct; they enter the review pool immediately. YUK-482 Lane A: the cold-start bridge row now sets draft_status='active' EXPLICITLY (placement-visibility contract line-of-sight); the normal auto path stays undefined≡NULL. Allowlisted-AND-explicit — the gate silently passes it (same harmless-redundant case as materialize-ask-check.ts).",
+      "resolves_when": {
+        "kind": "manual",
+        "ref": "permanent: auto-enroll questions are intentionally active (NULL≡active, or explicit 'active' for the cold-start row); revisit only if a draft-then-promote flow is introduced for auto-enroll",
+        "expected_by": "2027-06-30"
+      }
+    },
+    "src/capabilities/ingestion/server/create-manual-mistake.ts": {
+      "reason": "Mistake-recorded questions are active pool items (the user got them wrong; they belong in review) — NULL≡active is correct.",
+      "resolves_when": {
+        "kind": "manual",
+        "ref": "permanent: mistake questions are intentionally active (NULL≡active)",
+        "expected_by": "2027-06-30"
+      }
+    },
+    "src/server/questions/parts.ts": {
+      "reason": "question_part owner. YUK-1011: createQuestionPart now writes draft_status when a caller passes draftStatus (quiz_gen composite children insert draft); callers that omit it still get NULL≡active — the paper/import convention this entry originally covered. Allowlist stays as harmless-redundant cover for the NULL default.",
+      "resolves_when": {
+        "kind": "manual",
+        "ref": "permanent: NULL≡active remains the default for part callers that omit draftStatus",
+        "expected_by": "2027-06-30"
+      }
+    },
+    "src/capabilities/copilot/server/teaching/materialize-ask-check.ts": {
+      "reason": "Container-only teaching checks now set draft_status='draft' explicitly (YUK-350 L2). Kept here as a harmless-redundant chain-merge guard; the audit silently passes an allowlisted-AND-explicit file.",
+      "resolves_when": {
+        "kind": "manual",
+        "ref": "redundant post-L2 (file sets draft_status explicitly); remove this entry once W0 is merged — kept only so the L2->L4 chain never hard-fails on merge order",
+        "expected_by": "2026-12-31"
+      }
     }
   },
-  "src/capabilities/ingestion/server/create-manual-mistake.ts": {
-    "reason": "Mistake-recorded questions are active pool items (the user got them wrong; they belong in review) — NULL≡active is correct.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "permanent: mistake questions are intentionally active (NULL≡active)",
-      "expected_by": "2027-06-30"
-    }
-  },
-  "src/server/questions/parts.ts": {
-    "reason": "question_part owner. YUK-1011: createQuestionPart now writes draft_status when a caller passes draftStatus (quiz_gen composite children insert draft); callers that omit it still get NULL≡active — the paper/import convention this entry originally covered. Allowlist stays as harmless-redundant cover for the NULL default.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "permanent: NULL≡active remains the default for part callers that omit draftStatus",
-      "expected_by": "2027-06-30"
-    }
-  },
-  "src/capabilities/copilot/server/teaching/materialize-ask-check.ts": {
-    "reason": "Container-only teaching checks now set draft_status='draft' explicitly (YUK-350 L2). Kept here as a harmless-redundant chain-merge guard; the audit silently passes an allowlisted-AND-explicit file.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "redundant post-L2 (file sets draft_status explicitly); remove this entry once W0 is merged — kept only so the L2->L4 chain never hard-fails on merge order",
-      "expected_by": "2026-12-31"
-    }
+  "reads": {
+    "_comment": "READ-side pool-visibility allowlist (YUK-569). File-level exceptions for a file that intentionally keeps a hand-rolled family-1 pool-visibility predicate (draft_status IS NULL OR <> 'draft') inline instead of routing through notDraftPredicate/isPoolVisible (src/db/predicates.ts) — e.g. mid-migration — or a consciously triaged benign UNKNOWN-SHAPE raw read of the column (e.g. COUNT(draft_status) / GROUP BY draft_status). Each entry MUST carry reason + resolves_when {kind,ref,expected_by} (same contract as audit-draft-status-allowlist.json). SEEDED EMPTY: post-YUK-569 every family-1 read routes through the shared helper, so the baseline is clean (spec §5). Helper-def sentinel issues are NOT allowlistable — triage them. See docs/design/2026-07-05-draft-status-pool-predicate-dedup-spec.md §6.5."
   }
 }

@@ -7,7 +7,6 @@ import {
   type BacklinksByArtifactType,
   groupBacklinksByArtifactType,
 } from '@/capabilities/notes/server/block-refs';
-import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import {
   type NoteGenerationFailure,
   readNoteGenerationFailure,
@@ -20,6 +19,7 @@ import type {
 import { InteractiveArtifactAttrs } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
+import { bodyBlocksToNoteSections } from '@/kernel/read-models/note-sections';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 import { readVisibleArtifactBacklinks } from './visible-artifact-backlinks';

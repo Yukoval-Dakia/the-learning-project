@@ -17,6 +17,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+import type { SealedHelpLatency } from '@/ai/help-latency';
 import type { ProviderTransportEvidence } from '@/ai/task-result';
 import type { ProviderAttemptUsageTruth } from '../../core/schema/provider-attempt';
 
@@ -75,6 +76,8 @@ export const ai_task_runs = pgTable(
         d18_latency_ms?: number;
         /** YUK-1630 — per-attempt provider transport evidence; metadata only. */
         transport?: ProviderTransportEvidence;
+        /** Help attempts only. Unknown cost inside the seal stays null. */
+        help_latency?: SealedHelpLatency;
       }>()
       .notNull()
       .default({ inputTokens: 0, outputTokens: 0 }),

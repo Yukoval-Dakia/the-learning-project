@@ -13,12 +13,10 @@
 // IMPERATIVE write (no event/fold): misconception has no projection, so this is a direct
 // upsert; provenance lives in the row (evidence event-ptr array + seen + source).
 
-import { createHash } from 'node:crypto';
-
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
 
 import { getConfigFlag } from '@/core/config/store';
-import { MisconceptionInsert } from '@/core/schema/misconception';
+import { MisconceptionInsert, misconceptionIdForConjecture } from '@/core/schema/misconception';
 import type { Tx } from '@/db/client';
 import { misconception, misconception_edge } from '@/db/schema';
 import {
@@ -76,17 +74,7 @@ export function misconceptionHardConfirmEnabled(): boolean {
   return getConfigFlag('MISCONCEPTION_HARD_CONFIRM_ENABLED');
 }
 
-/**
- * Deterministic misconception id keyed on the conjecture IDENTITY (cause_category ×
- * knowledge_id), NOT the proposal id: a later re-induction of the same cause×KC UPSERTs the
- * same misconception (bump seen / refresh evidence) instead of minting a duplicate identity.
- * Re-accept of the SAME proposal never reaches this hop (rate-event idempotency guard).
- */
-export function misconceptionIdForConjecture(causeCategory: string, knowledgeId: string): string {
-  const key = `${causeCategory}::${knowledgeId}`;
-  const hash = createHash('sha256').update(key).digest('hex').slice(0, 24);
-  return `misc_${hash}`;
-}
+// misconceptionIdForConjecture 身份约定已上移到 core/schema/misconception.ts（kernel 读面共享）。
 
 export interface ArchiveSoftMisconceptionResult {
   misconceptionId: string;

@@ -9,7 +9,7 @@
 - 代码基线：`03a4dd8a9947b685540a712b5419a8bf7d788b24`，已通过 GitHub connector 核实当时的 main。最初盘点的 `8c14cedf4` 到该 revision 仅涉及 UI/CI 文件，本文 AI 路径未变。
 - 原工作树 main 有未合并冲突，保留原状；本文在独立工作树 `codex/yuk-1027-astra-migration-plan` 编写。
 - YUK-921 / YUK-1025 已 Done，PiAgentAdapter 是主线唯一执行引擎。旧记忆中“SDK 退役尚未完成”已被本次源码和 Linear 状态更新。
-- PLAN 记录最近生产镜像为 `c89079b68`、P4 尚未部署；这是版本化交付记录，**本轮未读取生产容器或验证当前生产版本**。
+- PLAN 记录最近生产镜像为 `c89079b68`、P4 待部署；这是版本化交付记录。
 - 本轮只读检查源码、已安装依赖与官方资料，编写计划、登记 Backlog；未调用付费模型、运行应用、改 credential、修改产品代码或部署。
 - GitHub CLI auth pre-flight 失败，改用已认证 connector 读取主线；不修改用户认证配置。计划只做本地 commit，不创建 PR 或 push。
 
@@ -25,7 +25,7 @@
 | `src/server/ai/pi-agent-adapter.ts:878` | root/child 共用 baseLoopConfig；effort 仅在 options.effort 存在时传入 | 核实有效 effort 与实际 wire；profile.defaultEffort 只是元数据，不能当执行接线 |
 | `src/server/ai/attempt-cost.ts:62` | 非 Xiaomi 的正 reportedCostUsd 可能被标 reported | Astra 的 pi 估算需要单独归因，不能伪称 provider 账单 |
 | `src/server/ai/pi-agent-adapter.ts:1153` | 每个 completed turn 达上限都会 capped，包括自然终止 | 已有 YUK-1026；属于迁移前置修复，不归咎于 Astra |
-| `src/capabilities/copilot/jobs/copilot_run.ts:113`、`server/durable-dispatch.ts:33` | modelBinding 是 test/ops seam，生产 job_data 没有 durable model binding | 上线前补非敏感绑定快照；不能声称当前已经支持安全重投递/百分比灰度 |
+| `src/capabilities/copilot/jobs/copilot_run.ts:113`、`server/durable-dispatch.ts:33` | modelBinding 是 test/ops seam，生产 job_data 没有 durable model binding | 上线前补非敏感绑定快照；安全重投递/百分比灰度待绑定快照落地 |
 
 已安装 `@earendil-works/pi-ai@0.85.1` 与锁定依赖一致，`dist/providers/data/openai.json` **已包含 Astra**：Responses 驱动、image input、low/medium/high/xhigh/max、cache-write 价格和 >272K 分层价格。`openai-responses-shared.js` 已处理 cached_tokens/cache_write_tokens，并从 input_tokens 中扣除二者。因此不预设升级 pi，也不重写传输栈；P1 用锁定安装复核这些事实。
 
@@ -39,7 +39,7 @@
 - 缓存配置使用 prompt_cache_options；迁移旧 retention 时采用 ttl="30m"。响应 input_tokens 包含 cached_tokens 与 cache_write_tokens；归一化后不得再次扣除或重复收费。[缓存文档](https://developers.openai.com/api/docs/guides/prompt-caching)
 - Astra 更容易提出澄清问题且更敏感于 skill 指令；只调整实际注入的产品 prompt/skill，明确教学终态、可直接执行的 read、必须经过 proposal 的 write，保留简中与结构化输出契约。[提示指导](https://developers.openai.com/api/docs/guides/latest-model#prompting-best-practices)
 
-账户是否能调用 Astra、额度、限流、当前 API key 是否已配置均未验证；Codex 可选 Astra 不能代替项目 API 访问证明。
+账户是否能调用 Astra、额度、限流、当前 API key 是否已配置均待验证；项目 API 访问以凭证实测为准。
 
 ## 4. 迁移范围决策
 
@@ -112,7 +112,7 @@
 
 1. 冻结 LIGHT/FULL 明确任务清单、日预算和生产目标；核对实际 app/worker image、env、队列与恢复点。新的部署授权不得由本次计划请求推断。
 2. 先补最小 durable binding：以 Copilot 的 `server/durable-dispatch.ts` / `jobs/copilot_run.ts` 为首个 owner，在接受/入队时保存 resolved provider/model/effort（不存 key），worker 与重投递读同一快照；inherit 子代理沿用，显式子模型保持独立约束。其它选中 job owner 同样盘点。通过原模型→Astra→原模型及重投递 DB 测试后才能切生产。切换前先排空无快照的旧 job；无法排空或判明意图时停止切换，不猜绑定或重烧。
-3. 隔离 canary 用既有 modelBinding/per-call override；此入口目前是 test/ops seam，不能宣称已经用于生产分流。正式切换只改选中 TaskSpec 的 defaultProvider/defaultModel，会切换该族的全部新请求；本计划不要求百分比路由平台。全局 AI_PROVIDER_OVERRIDE/AI_PROVIDER_MODEL 会覆盖全部任务，仅用于隔离进程，不能冒充按 task 灰度。P4 已删 AI_ADAPTER_PI_KINDS，禁止复活。
+3. 隔离 canary 用既有 modelBinding/per-call override；此入口目前是 test/ops seam，生产分流未启用。正式切换只改选中 TaskSpec 的 defaultProvider/defaultModel，会切换该族的全部新请求；本计划不要求百分比路由平台。全局 AI_PROVIDER_OVERRIDE/AI_PROVIDER_MODEL 会覆盖全部任务，仅用于隔离进程，不能冒充按 task 灰度。P4 已删 AI_ADAPTER_PI_KINDS，禁止复活。
 4. 先迁一个低流量任务族，再扩 Copilot/规划/解题；API 与 worker 同 revision/配置。每族至少观察 24 小时且完成 30 个样本，未达到则继续观察，不按日历自动通过。
 5. 持续看实际失败率、schema/tool 错误、预算、费用/成功任务、p95 与原超时要求。任何权限/重复写/错误晋级/账务丢失立即停止新 Astra run；质量或预算不达标则回退该族。
 6. 在同一 Pi runtime 上先回退该族到迁移前 provider/model（或撤销隔离 override）；不把回退模型绑定与跨版本回滚旧 Claude SDK 混为一谈。第2步快照使已启动/重投递 run 保留原 binding，原 receipts/attempt 继续结算；未知副作用不自动重试，历史 failed/DLQ 不批量重烧。

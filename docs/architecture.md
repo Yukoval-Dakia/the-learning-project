@@ -223,7 +223,7 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
 
 - **Skill**（提示词包）：`src/subjects/<subject>/skills/<name>/SKILL.md`，跨科包放 `src/subjects/_shared/skills/`；调用方读正文后经 `piSkillDocs` 拼进 systemPrompt，缺包不注入、回落到 prompt 正文（`src/subjects/copilot-skills.ts`、`quiz-gen-skills.ts`、`note-skills.ts`）。
 - **in-process tool bridge**（现役）：领域 route / job 注入 `piToolMounts`（pi `AgentTool`，wire name `mcp__<server>__<tool>`），不对外暴露 endpoint。
-- **外部 MCP 消费**（现役）：Exa 托管 MCP，工具名 `mcp__exa__web_search_exa` / `mcp__exa__web_fetch_exa`（`src/server/ai/mcp/exa.ts`）；其余来源按需接。
+- **外部 MCP 消费**（现役）：Exa 托管 MCP，工具名 `mcp__exa__web_search_exa` / `mcp__exa__web_fetch_exa`（`src/ai/exa-mcp.ts`）；其余来源按需接。
 - **Standalone MCP Server**（对外暴露 resources + tools）：未实现；未来复用 DomainTool registry，不重写工具定义。
 - **Plugin**（学科 bundle）：学科专属逻辑放 `src/subjects/<subject>/`，跨科逻辑放 `core/`。
 
@@ -235,7 +235,7 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
 
 - generic `/api/ai/[task]` 已退场（YUK-321 M5），旧的 400 dispatch 分支随之作废；同类 task 由 capability 领域 route / worker 承接。
 - AI 执行在领域 route 的调用链或 pg-boss job 里调 `runTask()` / `runAgentTask()` / `streamTask()`（copilot：`/api/copilot/chat` 入队 → `copilot_run`；knowledge：`knowledge_maintenance_nightly` → `streamReviewTask`）。
-- pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`。
+- pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`。Copilot 的轮数保持不封顶；同一工具调用没有新证据时，执行层停止后续工具，保留已写出的正文并附上证据与可执行入口，不另设轮数或费用上限。只有失败、没有新证据的读取也在硬超时前走这条收口，不因没有成功读就空转到时限。模型额度（429）、502，或无法按约定读出的模型输出，会停住后续工具并封存原因、停止重试说明和确定性练习；提示接口同样返回这三项，有封存参考时用参考而不是再试一次。每次求助尝试分别封存首 token、首个已验证可执行帮助、完整物、以及全部调用 settled 的时延。失败、超时和取消留在分母里；未知费用保持 null。提示的计时预算在尝试行和提示事件上都记为超时，不记成取消。CF-19 只作为初始假设，读数带模态分层和样本量，不宣称 p95 达标。
 - 工具执行在各自的唯一 owner 写 `tool_call_log`（DomainTool bridge / remote MCP mount / custom mount），runner 只为 spawn 工具补行。
 - 终态写 `cost_ledger`（每次 attempt 一行，带 `task_kind` / `provider` / `model` / `currency`）。
 - 浏览器侧没有 `src/ai/client.ts` 通用 helper；UI 调具体领域 route，避免绕开 profile / tool / ingestion context。

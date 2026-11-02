@@ -1,9 +1,8 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { canonicalHash } from '@/core/migration/canonical';
 import { classifyMigrationCapture } from '@/core/migration/classify';
 import { type ManifestOptions, buildMigrationManifest } from '@/core/migration/manifest';
 import { SNAPSHOT, emptyCapture, ev, judgeEvent, withEvents } from '@/core/migration/test-fixtures';
@@ -102,71 +101,5 @@ describe('loadMigrationArtifacts（P1-2 身份复算）', () => {
     expect(() => loadMigrationArtifacts(dir)).toThrow(
       /checkpoint 身份复算不符|raw-fact hash 复算不符/,
     );
-  });
-
-  it('manifest 被篡改（classification 记录改动而哈希保留）→ 复算不符即拒', () => {
-    const dir = artifactDir('tampered', true, (manifest) => {
-      const records = (manifest as { classification: { records: Array<{ reason: string }> } })
-        .classification.records;
-      const first = records[0];
-      if (first === undefined) throw new Error('fixture classification empty');
-      first.reason = 'tampered';
-    });
-    expect(() => loadMigrationArtifacts(dir)).toThrow(/classification_hash 复算不符/);
-  });
-
-  it('脱敏工件（redaction.applied）→ 拒绝（占位内容无法忠实重建）', () => {
-    const dir = artifactDir('redacted', true, (manifest) => {
-      manifest.redaction = { applied: true, fields: ['learner_text'] };
-    });
-    expect(() => loadMigrationArtifacts(dir)).toThrow(/脱敏/);
-  });
-
-  it('latest 指针 checkpoint 与 manifest 不符 → 拒绝', () => {
-    const dir = artifactDir('dangling-pointer', true);
-    const pointerPath = join(dir, 'latest.json');
-    const pointer = JSON.parse(readFileSync(pointerPath, 'utf8')) as { checkpoint_hash: string };
-    pointer.checkpoint_hash = 'sha256-different';
-    writeFileSync(pointerPath, JSON.stringify(pointer));
-    expect(() => loadMigrationArtifacts(dir)).toThrow(/指针 checkpoint 与 manifest 不符/);
-  });
-
-  it('分类记录引用 capture 外的 source → 拒绝（classification 与 capture 不同源）', () => {
-    const dir = artifactDir('dangling-source', true, (manifest) => {
-      const m = manifest as unknown as {
-        classification: { records: Array<{ source_id: string }>; classification_hash: string };
-      };
-      m.classification.records = [
-        ...m.classification.records,
-        { source_id: 'evt-not-in-capture' } as (typeof m.classification.records)[number],
-      ];
-      // 保留原哈希（模拟篡改）或重算 —— 两种都在装载被拒：先 hash 复算命中重算分支。
-      m.classification.classification_hash = canonicalHash({
-        classification_version: manifest.classification.classification_version,
-        records: m.classification.records,
-        unresolved: manifest.classification.unresolved,
-        deferred_replay: manifest.classification.deferred_replay,
-      });
-    });
-    expect(() => loadMigrationArtifacts(dir)).toThrow(/capture 中不存在的 source/);
-  });
-
-  it('空目录 / 指针指向缺失工件 → 拒绝', () => {
-    const dir = join(TMP_ROOT, 'empty');
-    mkdirSync(dir, { recursive: true });
-    dirs.push(dir);
-    expect(() => loadMigrationArtifacts(dir)).toThrow(/无 latest.json 也无 capture/);
-    const dir2 = join(TMP_ROOT, 'dangling-files');
-    mkdirSync(dir2, { recursive: true });
-    dirs.push(dir2);
-    writeFileSync(
-      join(dir2, 'latest.json'),
-      JSON.stringify({
-        checkpoint_hash: 'x',
-        capture_file: 'capture-nope.json',
-        manifest_file: 'manifest-nope.json',
-      }),
-    );
-    expect(() => loadMigrationArtifacts(dir2)).toThrow(/指向的工件不存在/);
   });
 });

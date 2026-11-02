@@ -5,7 +5,6 @@
 // 域旧栈，proxy catch-all，M5 收编）。
 
 import {
-  ApiError,
   type ApiOperationJsonResponse,
   type ApiOperationRequestBody,
   apiOperationJson,
@@ -144,26 +143,3 @@ export const getAiChanges = (artifactId: string) =>
     url: `/api/artifacts/${encodeURIComponent(artifactId)}/ai-changes`,
     method: 'GET',
   });
-
-// The undo endpoint mirrors the apply-path optimistic lock: it answers HTTP 200 even
-// when it did NOT restore the note. A concurrent version bump comes back as
-// 'skipped:version_conflict' (the note is unchanged), while 'skipped:already_undone' is a
-// real no-op success (the change is already reverted).
-export type UndoAiChangeResult = ApiOperationJsonResponse<'undoArtifactAiChange'>;
-
-export const undoAiChange = async (
-  artifactId: string,
-  eventId: string,
-): Promise<UndoAiChangeResult> => {
-  const result = await apiOperationJson('undoArtifactAiChange', {
-    url: `/api/artifacts/${encodeURIComponent(artifactId)}/ai-changes/${encodeURIComponent(eventId)}/undo`,
-    method: 'POST',
-  });
-  // Reject the false-success case so every caller (note reader + Today changes strip)
-  // sees a failure instead of a 200. Status 409 lets conflict-aware callers show the
-  // version-conflict copy; 'already_undone' resolves — the change is reverted either way.
-  if (result.status === 'skipped:version_conflict') {
-    throw new ApiError('undo skipped: version_conflict', 409, 'version_conflict');
-  }
-  return result;
-};

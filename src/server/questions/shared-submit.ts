@@ -34,11 +34,8 @@ import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import {
-  DEDUP_OVERLAP_THRESHOLD,
   canonicalQuestionContentHash,
-  claimHttpSourceDuplicate,
   dispatchPendingVerifyIntents,
-  mergeExactQuestionDuplicateKnowledgeIds,
   writeVerifyDispatchIntent,
 } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
@@ -79,8 +76,6 @@ import {
   contractBarrierIssues,
   conversionWithheld,
   deriveKind,
-  draftCarriesFigure,
-  nearDuplicateInKnowledge,
   presentationForDraft,
   runAdmissionChecks,
 } from '@/server/questions/submit-decision';
@@ -92,6 +87,7 @@ import {
   bindDeclaredGroupIds,
   typedChildChoicesMd,
 } from '@/server/questions/typed-group';
+import { type DraftSubmitVector, deduplicateNewDraftInTx } from './draft-submit-dedup';
 
 export const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
 
@@ -122,6 +118,10 @@ export interface TrustedNewGroupProjection {
 }
 
 export interface SharedSubmitOptions {
+  /** The public draft-submit boundary owns the outside-transaction vector preparation. */
+  checkDraftVector?: boolean;
+  /** Derived from a validated draft outside the transaction; never a model input. */
+  draftVector?: DraftSubmitVector;
   producer?: TrustedNewGroupProjection;
   /**
    * 绑定器产出的 declared→bound 映射（仅给子行投影写 declared_part_id
@@ -562,96 +562,32 @@ export async function submitDraftQuestionInTx(
   }).canonical;
   const producer = opts?.producer;
   if (isNew) {
-    // Claim the source URL in this transaction so concurrent candidates serialize;
-    // a hit becomes duplicate_source with a receipt rather than a dropped claim.
-    if (input.sourced?.source_claim != null) {
-      const claimedSource = await claimHttpSourceDuplicate(tx, {
-        sourceUrl: input.sourced.source_claim.source_url,
-        knowledgeIds: doc.knowledge_ids,
-        actorRef: input.sourced.source_claim.actor_ref,
-        taskRunId: ctx.taskRunId,
-        now,
-        onTerminal: 'release',
-      });
-      if (claimedSource != null) {
-        const conflict: SubmitResult = {
-          status: 'conflict',
-          reason: 'duplicate_source',
-          detail: `同一来源网址命中既有题 ${claimedSource.existingQuestionId}；目标 KC 已并入`,
-          question_id: claimedSource.existingQuestionId,
-          existing_question_id: claimedSource.existingQuestionId,
-          request_id: requestId,
-        };
-        await writeSubmitReceiptEvent(
-          tx,
-          { kind: 'question_block', id: block.id },
-          requestId,
-          fingerprint,
-          conflict,
-          ctx,
-          now,
-        );
-        return conflict;
-      }
-    }
-    // The injected flat fingerprint wins so exact dedup matches legacy flat rows.
-    const hashForDedup = input.sourced?.canonical_content_hash ?? canonicalHash;
-    // Live dedup claim: merge into the canonical-hash holder, else insert.
-    const merged = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
-      canonicalContentHash: hashForDedup,
-      knowledgeIds: doc.knowledge_ids,
-      actorRef: 'sourcing',
+    const dedup = await deduplicateNewDraftInTx(tx, {
+      input,
+      document: doc,
+      groupId,
+      blockId: block.id,
+      draftVersion: block.version,
+      canonicalHash,
+      text: { prompt_md: promptMd, reference_md: referenceMd, choices_md: choicesMd },
       taskRunId: ctx.taskRunId,
       now,
+      checkDraftVector: opts?.checkDraftVector === true,
+      draftVector: opts?.draftVector,
     });
-    if (merged?.disposition === 'merged') {
-      const conflict: SubmitResult = {
-        status: 'conflict',
-        reason: 'duplicate_exact',
-        detail: `canonical hash 命中既有题 ${merged.id}；目标 KC 已并入`,
-        question_id: merged.id,
-        existing_question_id: merged.id,
-        request_id: requestId,
-      };
+    if ('conflict' in dedup) {
       await writeSubmitReceiptEvent(
         tx,
         { kind: 'question_block', id: block.id },
         requestId,
         fingerprint,
-        conflict,
+        dedup.conflict,
         ctx,
         now,
       );
-      return conflict;
+      return dedup.conflict;
     }
-    if (!draftCarriesFigure(doc)) {
-      const near = await nearDuplicateInKnowledge(
-        tx,
-        doc.knowledge_ids,
-        promptMd,
-        referenceMd,
-        choicesMd,
-        groupId,
-      );
-      if (near != null) {
-        const conflict: SubmitResult = {
-          status: 'conflict',
-          reason: 'near_dup',
-          detail: `n-gram overlap ${near.overlap.toFixed(3)} ≥ ${DEDUP_OVERLAP_THRESHOLD}（KC 池 ${near.poolSize} 题）`,
-          request_id: requestId,
-        };
-        await writeSubmitReceiptEvent(
-          tx,
-          { kind: 'question_block', id: block.id },
-          requestId,
-          fingerprint,
-          conflict,
-          ctx,
-          now,
-        );
-        return conflict;
-      }
-    }
+    const hashForDedup = dedup.canonicalHash;
     await tx.insert(question).values({
       id: groupId,
       kind: deriveKind(doc),
@@ -672,6 +608,7 @@ export async function submitDraftQuestionInTx(
         schema_version: 2,
         // System provenance/supply metadata; source_verify depends on it.
         ...(input.sourced?.metadata ?? {}),
+        ...dedup.metadata,
       },
       created_at: now,
       updated_at: now,

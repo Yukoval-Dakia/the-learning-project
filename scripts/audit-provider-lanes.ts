@@ -65,6 +65,67 @@ export type ProviderLaneAuditResult = {
   readonly violations: readonly ProviderLaneViolation[];
 };
 
+export type ProviderAttemptTruthSource = {
+  readonly path: string;
+  readonly content: string;
+};
+
+export type ProviderAttemptTruthRule =
+  | 'legacy-cost-write'
+  | 'missing-attempt-wrapper'
+  | 'provider-lane-drift'
+  | 'zero-cost-accounting';
+
+export type ProviderAttemptTruthViolation = {
+  readonly path: string;
+  readonly rule: ProviderAttemptTruthRule;
+  readonly detail: string;
+};
+
+const ATTEMPT_WRAPPER_SURFACES = [
+  {
+    path: 'src/server/ai/embed.ts',
+    requiredTokens: ['executeDirectProviderAttempt', 'dashscope.embedding'],
+  },
+  {
+    path: 'src/server/memory/reconcile-llm.ts',
+    requiredTokens: ['executeDirectProviderAttempt', 'glm.memory-reconcile'],
+  },
+  {
+    path: 'src/capabilities/knowledge/server/edge-reconcile.ts',
+    requiredTokens: ['executeDirectProviderAttempt', 'glm.knowledge-edge-reconcile'],
+  },
+  {
+    path: 'src/capabilities/ingestion/server/provider-attempts.ts',
+    requiredTokens: [
+      'executeDirectProviderAttempt',
+      'glm.ocr-layout-parsing',
+      'tencent.question-mark-agent',
+    ],
+  },
+  {
+    path: 'src/server/ai/opaque-provider-operation.ts',
+    requiredTokens: ['createProviderAttemptLifecycle', 'mem0.event-memory'],
+  },
+] as const satisfies readonly { path: string; requiredTokens: readonly string[] }[];
+
+const MIGRATED_COST_SURFACES = [
+  'src/server/memory/triggers.ts',
+  'src/capabilities/knowledge/server/propose_edge.ts',
+  'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts',
+  'src/capabilities/ingestion/server/provider-attempts.ts',
+  'src/server/ai/provider-attempt-runtime.ts',
+] as const;
+
+const FORBIDDEN_LEGACY_COST_SYMBOLS = ['writeCostLedger', 'writeLegacyOcrCostLedger'] as const;
+
+export const PROVIDER_ATTEMPT_TRUTH_PATHS = [
+  ...new Set<string>([
+    ...ATTEMPT_WRAPPER_SURFACES.map((surface) => surface.path),
+    ...MIGRATED_COST_SURFACES,
+  ]),
+];
+
 type SourceFacts = {
   readonly imports: readonly string[];
   readonly calls: readonly string[];
@@ -1036,7 +1097,7 @@ function laneForFinding(kind: ProviderWireFinding['kind']): string | undefined {
   return kind === 'unclassified-provider-fetch' ? undefined : ids[kind];
 }
 
-export function auditProviderLanes(
+function auditProviderLaneWiring(
   projectRoot: string,
   lanes: readonly ProviderLane[] = PROVIDER_LANES,
 ): ProviderLaneAuditResult {
@@ -1151,6 +1212,92 @@ export function auditProviderLanes(
     (left, right) => left.path.localeCompare(right.path) || left.reason.localeCompare(right.reason),
   );
   return { ok: sortedViolations.length === 0, findings, violations: sortedViolations };
+}
+
+function compareAttemptTruth(
+  left: ProviderAttemptTruthViolation,
+  right: ProviderAttemptTruthViolation,
+): number {
+  return (
+    left.path.localeCompare(right.path) ||
+    left.rule.localeCompare(right.rule) ||
+    left.detail.localeCompare(right.detail)
+  );
+}
+
+export function collectProviderAttemptTruthViolations(
+  sources: readonly ProviderAttemptTruthSource[],
+): ProviderAttemptTruthViolation[] {
+  const byPath = new Map(sources.map((source) => [source.path, source.content]));
+  const violations: ProviderAttemptTruthViolation[] = [];
+  for (const surface of ATTEMPT_WRAPPER_SURFACES) {
+    const content = byPath.get(surface.path) ?? '';
+    for (const token of surface.requiredTokens) {
+      if (!content.includes(token)) {
+        violations.push({
+          path: surface.path,
+          rule: 'missing-attempt-wrapper',
+          detail: `missing ${token}`,
+        });
+      }
+    }
+  }
+  for (const path of MIGRATED_COST_SURFACES) {
+    const content = byPath.get(path) ?? '';
+    for (const symbol of FORBIDDEN_LEGACY_COST_SYMBOLS) {
+      if (content.includes(symbol)) {
+        violations.push({ path, rule: 'legacy-cost-write', detail: `references ${symbol}` });
+      }
+    }
+    if (/\bcost\s*:\s*0(?:\D|$)/u.test(content)) {
+      violations.push({ path, rule: 'zero-cost-accounting', detail: 'contains direct cost: 0' });
+    }
+  }
+  return violations.sort(compareAttemptTruth);
+}
+
+function readAttemptTruthSources(root: string): ProviderAttemptTruthSource[] {
+  return PROVIDER_ATTEMPT_TRUTH_PATHS.map((path) => ({
+    path,
+    content: readFileSync(resolve(root, path), 'utf8'),
+  }));
+}
+
+export function auditProviderLanes(
+  projectRoot: string,
+  lanes: readonly ProviderLane[] = PROVIDER_LANES,
+): ProviderLaneAuditResult {
+  const wiring = auditProviderLaneWiring(projectRoot, lanes);
+  const attemptTruth = collectProviderAttemptTruthViolations(
+    readAttemptTruthSources(resolve(projectRoot)),
+  );
+  const violations = [
+    ...wiring.violations,
+    ...attemptTruth.map((violation) => ({
+      path: violation.path,
+      reason: `${violation.rule}: ${violation.detail}`,
+    })),
+  ].sort(
+    (left, right) => left.path.localeCompare(right.path) || left.reason.localeCompare(right.reason),
+  );
+  return { ok: violations.length === 0, findings: wiring.findings, violations };
+}
+
+export function runProviderAttemptTruthAudit(root: string): ProviderAttemptTruthViolation[] {
+  const projectRoot = resolve(root);
+  const migratedTruthViolations = collectProviderAttemptTruthViolations(
+    readAttemptTruthSources(projectRoot),
+  );
+  // Wiring rows only. The exported lane audit already folds attempt-truth into its
+  // violation list; labeling those rows provider-lane-drift would hide the rule.
+  const laneViolations = auditProviderLaneWiring(projectRoot).violations.map(
+    (violation): ProviderAttemptTruthViolation => ({
+      path: violation.path,
+      rule: 'provider-lane-drift',
+      detail: violation.reason,
+    }),
+  );
+  return [...migratedTruthViolations, ...laneViolations].sort(compareAttemptTruth);
 }
 
 function readProjectRoot(args: readonly string[]): string {

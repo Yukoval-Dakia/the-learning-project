@@ -11,6 +11,11 @@
 import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { AgentRunError, RETRY_ELAPSED_CAP_MS } from '@/ai/agent-run-error';
+import {
+  helpFinishReason,
+  helpProviderFaultFromSdkResult,
+  renderHelpExitMarkdown,
+} from '@/ai/help-provider-fault';
 import type { PiToolMount } from '@/ai/pi-tool-mount';
 import { installTaskOperationObserver } from '@/ai/task-observation';
 import type { RunTaskResult } from '@/ai/task-result';
@@ -41,7 +46,7 @@ import {
 import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
 import { logMissingToolMountsWarning } from './log';
 import { providerHttpTimeoutMs } from './provider-http-timeout';
-import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission';
+import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission-policy';
 import type { ProviderTransportCollector } from './provider-transport';
 import type { ResolvedProvider } from './providers';
 import {
@@ -536,6 +541,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   let stepStartTime = Date.now();
   const modelStarted = Date.now();
   let firstTokenAt: number | undefined;
+  let completeArtifact = false;
   const outputStats = emptyStreamTextStats();
   const settleUnobservedUsage = async () => {
     // YUK-1557 — a cut stream with no usage frame still submitted a prompt:
@@ -634,14 +640,19 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
       if (args.notifySessionId) await notifySdkSessionId(args.ctx, msg);
       args.lifecycle.recordTerminalResult(terminal.fromResult(msg));
       if (msg.subtype === 'success') {
+        if (!isApiErrorSuccessResult(msg) && (msg.result ?? '').trim().length > 0) {
+          completeArtifact = true;
+        }
         if (isApiErrorSuccessResult(msg)) {
           args.onApiError?.(msg);
+          const helpProviderFault = helpProviderFaultFromSdkResult(msg);
           throw new AgentRunError({
             kind: args.kind,
             taskRunId: args.lifecycle.taskRunId,
             subtype: 'api_error_result',
             apiErrorStatus: msg.api_error_status ?? null,
             errors: args.apiErrorMessages?.(msg) ?? [msg.result ?? ''],
+            ...(helpProviderFault ? { helpProviderFault } : {}),
           });
         }
         await args.onSuccess?.(msg);
@@ -663,11 +674,13 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
           });
         }
         args.onResultError?.(msg);
+        const helpProviderFault = helpProviderFaultFromSdkResult(msg);
         throw new AgentRunError({
           kind: args.kind,
           taskRunId: args.lifecycle.taskRunId,
           subtype: msg.subtype,
           errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
+          ...(helpProviderFault ? { helpProviderFault } : {}),
         });
       }
       break;
@@ -677,6 +690,11 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
     throw error;
   } finally {
     const endedAt = Date.now();
+    args.lifecycle.noteHelpProviderClock({
+      endedAt,
+      ...(firstTokenAt !== undefined ? { firstTokenAt } : {}),
+      completeArtifact,
+    });
     args.lifecycle.recordNotePhases({
       model_total_ms: endedAt - modelStarted,
       model_ttft_ms: firstTokenAt === undefined ? null : firstTokenAt - modelStarted,
@@ -787,16 +805,18 @@ async function runTaskAttempt(args: {
 
   // The provider permit is released before attempt settlement / afterRun. A DB
   // observation write must never occupy scarce upstream session capacity.
+  const helpLatency = lifecycle.sealHelpLatency('success');
   const result: RunTaskResult = {
     task_run_id: lifecycle.taskRunId,
     text: resultText,
     finishReason: lifecycle.finishReason,
-    usage: lifecycle.usage,
+    usage: helpLatency ? { ...lifecycle.usage, help_latency: helpLatency } : lifecycle.usage,
     cost_usd: lifecycle.costUsd,
     cost_basis: lifecycle.costBasis,
     cost_ref: lifecycle.costRef,
     structured_output: lifecycle.structuredOutput,
     ...(lifecycle.usage.phases ? { phases: lifecycle.usage.phases } : {}),
+    ...(helpLatency ? { help_latency: helpLatency } : {}),
   };
   await lifecycle.finishSuccess(result);
   return result;
@@ -919,6 +939,7 @@ async function runTaskImpl(kind: string, input: unknown, ctx: RunTaskCtx): Promi
         taskRunId: lifecycle.taskRunId,
         aborted: lifecycle.aborted,
         costUsd: lifecycle.costUsd,
+        helpLatency: lifecycle.sealHelpLatency('failure'),
       });
       lastErr = boundError;
       const retry = classifyLifecycleRetry({
@@ -1322,12 +1343,31 @@ async function streamTaskCollectingImpl(
         aborted: lifecycle.aborted,
         costUsd: lifecycle.costUsd,
       });
+      const helpFault = !lifecycle.aborted && !failure ? boundError.helpProviderFault : undefined;
+      if (helpFault) lifecycle.noteExecutableHelp('deterministic_step');
       const settled = await lifecycle.finishFailure(boundError);
       // A provider-success payload whose projection failed must never be returned
       // as graceful partial text; admission fencing is likewise a fail-closed
       // verdict, not a stream failure Copilot may present as a partial reply.
       if (!settled || successSettlementFailed || boundError.subtype === 'provider_admission') {
         throw boundError;
+      }
+      // 400 stays the existing rejection. Quota / 502 / parse seal an exit the
+      // caller can publish without another model turn. Cancellation is not one.
+      if (helpFault) {
+        const exit = renderHelpExitMarkdown(helpFault);
+        const prose = resultText.trim();
+        return {
+          task_run_id: lifecycle.taskRunId,
+          text: resultText,
+          terminalText: prose.length > 0 ? `${prose}\n\n${exit}` : exit,
+          finishReason: helpFinishReason(helpFault),
+          usage: lifecycle.usage,
+          cost_usd: lifecycle.costUsd,
+          cost_basis: lifecycle.costBasis,
+          cost_ref: lifecycle.costRef,
+          partial: false,
+        };
       }
       return {
         task_run_id: lifecycle.taskRunId,

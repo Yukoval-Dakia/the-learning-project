@@ -25,7 +25,7 @@ src/capabilities/
 | 路由 handler | 该包 `api/*.ts` |
 | pg-boss job handler | 该包 `jobs/*.ts`（部分仍过渡在 `src/server/boss/handlers/`） |
 | UI 页面 | 该包 `ui/*.tsx` |
-| proposal accept applier | 该包 `server/proposal-appliers.ts`（或等效文件） |
+| proposal accept applier | 该包 `server/proposal-appliers.ts`；`judge_retraction` 在 `server/judge-retraction-applier.ts` |
 
 ## CONVENTIONS
 - 包只依赖 `@/kernel/*` + 自身 + 共享 UI 件（`@/ui/primitives`、`@/ui/lib`）。
@@ -33,11 +33,11 @@ src/capabilities/
 - 共享对象 I/O 直达 server-only `@/kernel/object-storage` 的 `R2Client`、`createR2Client`、`getR2`；该模块仅拥有 SDK 适配与 lazy client。资产 ref、授权、锁、readback、补偿/恢复与 provider/付费策略仍归原 owner，不经 capability 转出。
 - 任务声明由各包 `task-public.ts` 公开且由 `public.ts` 复导出；仅 `task-catalog.ts` 静态组合根消费窄入口，`task-registry.ts` 向共享 ai/ 工厂注入冻结目录。不要通过应用 public barrel 装配任务而触发 DB 初始化/循环。
 - 迁移期豁免：kernel facade 可包装遗留 `src/server/**`；capability 暂可 import `@/db/client`/`@/db/schema`。
-- 共享学习写入事务锁的唯一 canonical 是 `@/db/learning-state-lock`，capability 可直接消费其既有四项 API：`LEARNING_STATE_WRITE_LOCK`、`acquireLearningStateWriteLock`、`withLearningStateLock`、`acquireSortedAdvisoryLocks`；各业务 owner 仍负责原取锁时机、顺序与事务范围。此例外仅限该锁机制，不扩展为任意 db 内部模块的消费许可。
-- pg-boss 与 Drizzle 的事务执行结果适配唯一 canonical 是 `@/db/pg-boss-drizzle`，capability 仅可直接消费 `fromPgBossDrizzleTx`；真实事务/保存点、接入时点及 send/cancel/readback、锁序、幂等、恢复和付费策略仍归各既有 owner。此例外不扩展为任意 db 内部模块的消费许可。
-- 工具挂载契约与构造的唯一 canonical 是 `@/ai/pi-tool-mount`，capability 仅可直接消费其既有 API：`RemoteMcpHttpConfig`、`PiToolMount`、`BuildMcpServerOptions`、`ToolInputInterceptResult`、`piToolWireName`、`piDomainMount`、`piRemoteMcpMount`、`piCustomTool`；domain 执行、registry、remote MCP 连接/关闭、日志/成本、取消与业务 gate 仍归既有 owner。此例外不扩展为任意 `@/ai/*` 消费许可。
-- Exa 远程 MCP 配置唯一 canonical 是 server-only `@/ai/exa-mcp`；Copilot 的 `server/copilot-execution.ts`、`server/subagents.ts` 与 Practice 的 `jobs/quiz_gen.ts`、`server/web-sourcing-operation.ts`、`server/quiz/sourcing-sequence.ts` 仅可消费其既有 `EXA_MCP_SERVER_NAME`、`EXA_SCOPED_TOOL_NAMES`、`EXA_MCP_ALLOWED_TOOLS`、`buildExaMcpServer`。该模块只拥有配置、精确工具名与缺凭据降级；连接/关闭、执行授权、取消、预算与付费策略仍归原 owner。禁止浏览器消费，不扩展为其它 `@/ai/*` 许可。
-- 工具镜像可见性策略的唯一 canonical 是 server-only `@/server/ai/tools/tool-mirror-policy`；仅 `src/capabilities/copilot/server/copilot-execution.ts` 可直接消费其 `shouldEmitToolUseForCaller`，用于现有实时 `onToolUse` 可见性判断。该模块拥有完整 actor/effect/mirrorPolicy 规则、wire 前缀判断和现有 registry 的按调用查询；registry Map、注册校验与启动注册时点仍归 `src/server/ai/tools/registry.ts` 及既有组合根，工具执行、取消、日志/event 写入、锁、恢复与付费策略仍归原 owner。禁止浏览器消费、兼容转发、复制规则或缓存查询；此许可仅限该文件和该符号，不扩展为任意 `@/server/*` 或 `@/ai/*` 消费许可。
+- 共享学习写入事务锁的唯一 canonical 是 `@/db/learning-state-lock`，capability 可直接消费其既有四项 API：`LEARNING_STATE_WRITE_LOCK`、`acquireLearningStateWriteLock`、`withLearningStateLock`、`acquireSortedAdvisoryLocks`；各业务 owner 仍负责原取锁时机、顺序与事务范围。
+- pg-boss 与 Drizzle 的事务执行结果适配唯一 canonical 是 `@/db/pg-boss-drizzle`，capability 仅可直接消费 `fromPgBossDrizzleTx`；真实事务/保存点、接入时点及 send/cancel/readback、锁序、幂等、恢复和付费策略仍归各既有 owner。
+- 工具挂载契约与构造的唯一 canonical 是 `@/ai/pi-tool-mount`，capability 仅可直接消费其既有 API：`RemoteMcpHttpConfig`、`PiToolMount`、`BuildMcpServerOptions`、`ToolInputInterceptResult`、`piToolWireName`、`piDomainMount`、`piRemoteMcpMount`、`piCustomTool`；domain 执行、registry、remote MCP 连接/关闭、日志/成本、取消与业务 gate 仍归既有 owner。
+- Exa 远程 MCP 配置唯一 canonical 是 server-only `@/ai/exa-mcp`；Copilot 的 `server/copilot-execution.ts`、`server/subagents.ts` 与 Practice 的 `jobs/quiz_gen.ts`、`server/web-sourcing-operation.ts`、`server/quiz/sourcing-sequence.ts` 仅可消费其既有 `EXA_MCP_SERVER_NAME`、`EXA_SCOPED_TOOL_NAMES`、`EXA_MCP_ALLOWED_TOOLS`、`buildExaMcpServer`。该模块只拥有配置、精确工具名与缺凭据降级；连接/关闭、执行授权、取消、预算与付费策略仍归原 owner。禁止浏览器消费。
+- 工具镜像可见性策略的唯一 canonical 是 server-only `@/server/ai/tools/tool-mirror-policy`；仅 `src/capabilities/copilot/server/copilot-execution.ts` 可直接消费其 `shouldEmitToolUseForCaller`，用于现有实时 `onToolUse` 可见性判断。该模块拥有完整 actor/effect/mirrorPolicy 规则、wire 前缀判断和现有 registry 的按调用查询；registry Map、注册校验与启动注册时点仍归 `src/server/ai/tools/registry.ts` 及既有组合根，工具执行、取消、日志/event 写入、锁、恢复与付费策略仍归原 owner。此许可仅限该文件和该符号。
 - 测试命名：`src/kernel/**` 与 `src/capabilities/**` 的 `*.unit.test.ts` 自动进无 DB 车道，`*.db.test.ts` 自动进 testcontainer 车道。
 
 ## ANTI-PATTERNS

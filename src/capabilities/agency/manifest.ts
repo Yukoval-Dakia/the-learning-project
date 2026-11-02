@@ -1,4 +1,5 @@
 import { PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
+import { DREAMING_NOTE_REFRESH_ACTION } from '@/core/schema/event/dreaming-note-refresh';
 import {
   INTERVENTION_ACTIVATED_ACTION,
   INTERVENTION_PREPARATION_FAILED_ACTION,
@@ -27,6 +28,7 @@ export const agencyCapability = defineCapability({
   events: {
     actions: [
       'experimental:agent_note',
+      DREAMING_NOTE_REFRESH_ACTION,
       PROBE_RESULT_ACTION,
       INTERVENTION_ACTIVATED_ACTION,
       INTERVENTION_PREPARATION_FAILED_ACTION,
@@ -62,6 +64,17 @@ export const agencyCapability = defineCapability({
         load: () =>
           import('./server/intervention/settlement-subscription').then(
             (m) => m.buildInterventionDiagnosticJudgeSubscriber,
+          ),
+      },
+      {
+        // Practice commits the verification; Agency owns the coach hint. Delivery
+        // is after commit, so a note failure cannot retry the verify job.
+        id: 'agency.question-pool-gap',
+        version: 1,
+        actions: ['experimental:quiz_verify'],
+        load: () =>
+          import('./server/question-pool-gap-subscription').then(
+            (m) => m.buildQuestionPoolGapSubscriber,
           ),
       },
     ],

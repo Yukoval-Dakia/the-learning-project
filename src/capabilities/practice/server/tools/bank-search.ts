@@ -37,8 +37,11 @@ import { EvidenceDemandV1 } from '../question-supply/evidence-demand';
 import { encodeBankRef, readBankServableParts, resolveBankRefs } from './bank-ref';
 import {
   BANK_VECTOR_RETRIEVAL_MAX_DISTANCE,
+  BANK_VECTOR_RETRIEVAL_PARAMS,
+  bankVectorBaselineLimit,
   bankVectorBaselinePredicates,
-  bankVectorCountedRank,
+  compileSameTopic,
+  countedRankV2,
 } from './bank-vector-retrieval';
 
 /** 每个召回通道的截断上限（OOM 保护；命中即 retrieval_truncated=true）。 */
@@ -837,9 +840,9 @@ async function runSearchBankInSnapshot(
   let fused: RrfFused[];
   let unavailable: BankSearchCoverage['unavailable_channels'];
   let retrievalTruncated: boolean;
-  // YUK-1516 — 向量命中逐题携带检索时的 cosine 距离与计入规则判定，供
-  // match_evidence / counted_pool_size / 续页游标还原使用（新检索由通道 B 填，
-  // 续页由 cursor.pool 还原——续页不 embed，无查询向量可重算）。
+  // 向量命中逐题携带检索时的 cosine 距离与计入判定，供 match_evidence /
+  // counted_pool_size / 续页游标还原。新检索由通道 B 填写。续页不 embed，也不
+  // 重算规则：v3 游标在 15 分钟 TTL 内还原签发时写入的 vd/vc（含规则 v1 签发的）。
   let vectorMeta = new Map<string, { distance: number; counted: boolean }>();
   if (cursor) {
     // Resume the original bounded pool. New rows/ranks never replace earlier results,
@@ -938,13 +941,14 @@ async function runSearchBankInSnapshot(
     let vectorRows: Array<{ id: string; distance: number }> = [];
     if (vectorResult.vector != null) {
       const distanceExpr = sql<number>`(${question.embedding} <=> ${toSqlVector(vectorResult.vector)}::vector)`;
-      // 两个查询分工（YUK-1516，R1 review P1 修正）：
+      // 两个查询分工：
       //   - scoped pool（下）：召回/池成员资格/逐题距离——scope 过滤全部生效；
-      //   - baseline margin（并行）：只在「合格库面」（bankVectorBaselinePredicates，
-      //     无 scope 过滤）上取 rank-1/rank-2 判 decisive。margin 绝不能算在 scoped
-      //     pool 上：scope 滤掉全局 rank-2 竞争者会凭空制造 decisive margin，把缺题
-      //     科目顶成 sparse/enough 并吞掉 gap_request（false-enough 方向）。
-      // 计入条件 = 该题既是 scoped 池内命中，又恰是 baseline rank-1 且全局 margin ≥ δ。
+      //   - baseline（并行）：只在「合格库面」（bankVectorBaselinePredicates，
+      //     无 scope 过滤）上取计入窗口。margin 绝不能算在 scoped pool 上：scope
+      //     滤掉全局 rank-2 竞争者会凭空制造 decisive margin，把缺题科目顶成
+      //     sparse/enough 并吞掉 gap_request（false-enough 方向）。
+      // 计入条件 = 该题是 scoped 池内命中，且 countedRankV2 计为 baseline rank-1。
+      // 簇分支关闭时，这仍是「全局 rank-1 且 margin ≥ δ」。
       const [vecAll, baselineTop] = await Promise.all([
         // 召回取最近 CAP+1 行、不在 SQL 里加距离天花板：逐题距离与天花板筛选在应用层
         // 执行（bank-vector-retrieval.ts）。截断只影响池尾；rank-1/rank-2 判定走
@@ -962,14 +966,39 @@ async function runSearchBankInSnapshot(
           .orderBy(sql`${distanceExpr} ASC`)
           .limit(BANK_SEARCH_CHANNEL_CAP + 1),
         db
-          .select({ id: question.id, distance: distanceExpr })
+          .select({
+            id: question.id,
+            distance: distanceExpr,
+            rootQuestionId: question.root_question_id,
+            parentVariantId: question.parent_variant_id,
+            parentQuestionId: question.parent_question_id,
+            canonicalContentHash: question.canonical_content_hash,
+            knowledgeIds: question.knowledge_ids,
+          })
           .from(question)
           .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
           .where(and(...bankVectorBaselinePredicates()))
           .orderBy(sql`${distanceExpr} ASC`)
-          .limit(2),
+          .limit(bankVectorBaselineLimit(BANK_VECTOR_RETRIEVAL_PARAMS)),
       ]);
-      const countedRank = bankVectorCountedRank(baselineTop.map((row) => row.distance));
+      const sameTopic = compileSameTopic(
+        baselineTop.map((row) => ({
+          id: row.id,
+          rootQuestionId: row.rootQuestionId,
+          parentVariantId: row.parentVariantId,
+          parentQuestionId: row.parentQuestionId,
+          canonicalContentHash: row.canonicalContentHash,
+          leafKnowledgeIds: row.knowledgeIds ?? [],
+        })),
+        BANK_VECTOR_RETRIEVAL_PARAMS.cluster.status === 'open'
+          ? BANK_VECTOR_RETRIEVAL_PARAMS.cluster.arm
+          : { kind: 'closed' },
+      );
+      const countedRank = countedRankV2(
+        baselineTop.map((row) => ({ id: row.id, distance: row.distance })),
+        sameTopic,
+        BANK_VECTOR_RETRIEVAL_PARAMS,
+      );
       const countedId =
         countedRank === 0 && baselineTop.length > 0 ? (baselineTop[0]?.id ?? null) : null;
       const qualified = vecAll.filter((row) => row.distance <= BANK_VECTOR_RETRIEVAL_MAX_DISTANCE);

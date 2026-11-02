@@ -10,6 +10,7 @@
 
 import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages/messages';
+import type { HelpProviderFault } from '@/ai/help-provider-fault';
 import type { EffortLevel } from '@/ai/task-spec';
 import type { ProviderTransportCollector } from './provider-transport';
 
@@ -138,6 +139,8 @@ export interface SDKResultError {
   usage_observed?: boolean;
   /** Observed HTTP rejection bound to this root assistant response. */
   provider_request_rejection?: { http_status: 400 };
+  /** Quota, 502, or a typed parse failure. HTTP 400 stays on provider_request_rejection. */
+  help_provider_fault?: HelpProviderFault;
   subtype:
     | 'error_during_execution'
     | 'error_max_turns'

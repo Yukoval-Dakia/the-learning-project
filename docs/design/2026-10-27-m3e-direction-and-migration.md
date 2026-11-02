@@ -24,7 +24,7 @@ M3E 改变视觉语言与交互呈现，不重新决定选题、判分、建议�
 ## 2. 固定主线事实与未完义务
 
 本次源码核查基线：`93ab3f790ae78652b787b66743d8ae66453921d6`（fresh `origin/main`）。
-下表「已合」仅指该基线包含相应提交与真实 consumer；不等于当前 TEST 已部署该 revision，也不等于全链路运行通过。
+下表「已合」仅指该基线包含相应提交与真实 consumer。
 动态进度继续以原 Linear 票为准，不复制成另一个全局看板。
 
 | 面 | 主线已交事实与可复核路径 | 尚未交 / 运行缺口 | 原归属 |
@@ -68,7 +68,7 @@ M3E 改变视觉语言与交互呈现，不重新决定选题、判分、建议�
 
 ## 4. 规范到现役实现的映射
 
-下面右侧是本项目的实施/验收约束，不冒充 Google 已发布的 React 实现或本轮实测。所有数值在实施片由官方 Specs 核实后落 token；
+下面右侧是本项目的实施/验收约束。所有数值在实施片由官方 Specs 核实后落 token；
 不沿用旧「六级字号、三档圆角、珊瑚强调色、固定毫秒曲线」作为 M3E 默认。
 
 | 维度 | Google 依据 → 项目实现位置 | 后续验收输出 |
@@ -77,10 +77,10 @@ M3E 改变视觉语言与交互呈现，不重新决定选题、判分、建议�
 | Color roles / 明暗 | primary/on-primary、container/on-container 等配对；surface 与分层 container 支撑内容/伙伴/浮层；outline 用于必要边界，outline-variant 用于弱分隔。`tokens.css`、`components.css`、页 CSS 逐组件映射；判分语义不硬套 error，现有正确/部分/未知文字保持 | 亮/暗分别覆盖实际嵌套背景；继承现有 theme override → app → system 行为，不建第二套 theme store；普通文字 ≥4.5:1，大字/必要图标 ≥3:1（Google Web 对比度页），逐状态实测，颜色不是唯一信号 |
 | Type scale | display/headline/title/body/label 按内容职责映射到 `SectionHead`、题干、答案、`MessageRow`、按钮；emphasized 只用于确需强调的层级，参数需官方规格。中文 fallback、数学内容继续用现有链路，字体同源，不放宽 CSP | 长中文/公式/数字/多行标签可读，缩放与窄屏不截断关键动作；完整记录 size/weight/line-height/tracking 角色，不能只换一款大标题字体 |
 | Shape / containment | 使用官方组件 shape、容器分组与强调层级；落 `Card`、`Button`、`Chip`、伙伴面板及页 CSS。取消玻璃高光作为全局视觉依据；不把所有题目、消息和列表都包成同一种大圆角卡 | 关键动作与内容分组可识别，形状变化不裁掉文本、焦点或触达区域；未获取的 corner/pressed 形状规格标待核，不编造 |
-| Primitives / 状态 | `Button.tsx`、`IconButton.tsx`、`Chip.tsx`、`Segmented.tsx`、`RetryLine.tsx`、`SkeletonLines.tsx` 按真实用途选官方组件/variant，不机械一一改名。`components.css` 管统一视觉，保留原生元素语义与 props | 每片列 enabled、hover、focus-visible、pressed、disabled、selected 等适用状态（不适用写原因），再列产品 loading/empty/error/partial/stale/retry；禁止把业务 pending 当已提交或自动变成 disabled。Specs 未读到的组件不得声称完整 M3E |
+| Primitives / 状态 | `Button.tsx`、`IconButton.tsx`、`Chip.tsx`、`Segmented.tsx`、`RetryLine.tsx`、`SkeletonLines.tsx` 按真实用途选官方组件/variant，不机械一一改名。`components.css` 管统一视觉，保留原生元素语义与 props | 每片列 enabled、hover、focus-visible、pressed、disabled、selected 等适用状态（不适用写原因），再列产品 loading/empty/error/partial/stale/retry；业务 pending、已提交与 disabled 分别呈现；Specs 未读到的组件标未评估 |
 | Motion / reduced-motion | 由 §3 physics 区分 spatial 与 effects，落 `tokens.css`、`motion/` 与组件；expressive scheme 服务主交互，避免正文与输入持续运动。Web spring 转换参数必须有来源；不把旧 cubic-bezier 名称改成 spring 就算迁完 | 动画可中断，大小/位置与 opacity/color 分开；`prefers-reduced-motion: reduce` 取消非必要飞行、弹跳、形变，状态即时或最小淡变到位；CSS 与 JS 共用现有 reduced-motion 判断。关闭动画不改变提交、取消、焦点或完成时机 |
 | Adaptive layout | 按可用窗口宽高与内容容量组织，落做题/伙伴 CSS，再外壳/今日。紧凑空间单主 pane；宽屏可容纳支持 pane，但保留伙伴原开合状态与会话，不凭屏宽重置。Web 断点由官方原则与实际内容验证，不把 Android dp 数值机械贴成 px | 桌面、约 390px 窄屏、连续缩放及短高窗口下可完成同一动作；软键盘不遮住输入/主要操作；视觉顺序与 DOM/焦点顺序一致；不新增业务导航或多套查询 |
-| Keyboard / focus / accessibility | 原生 button/input/link、明确 label、focus-visible、逻辑 Tab/Shift+Tab；`IconButton` 必有可访问名称。模态层复用现有 focus trap，隐藏区 inert；非模态伙伴不误设全页 trap | 真实键盘、读屏与焦点返回检查；关闭浮层回到触发处；不抢输入法按键，不改快捷键合同；按组件官方 Accessibility 核触达与间距，不能把现有 24/44px 当通用 M3E 合格值；错误/选中/保存均有非颜色说明 |
+| Keyboard / focus / accessibility | 原生 button/input/link、明确 label、focus-visible、逻辑 Tab/Shift+Tab；`IconButton` 必有可访问名称。模态层复用现有 focus trap，隐藏区 inert；非模态伙伴不误设全页 trap | 真实键盘、读屏与焦点返回检查；关闭浮层回到触发处；不抢输入法按键，不改快捷键合同；按组件官方 Accessibility 核触达与间距，24/44px 合格值以官方核对为准；错误/选中/保存均有非颜色说明 |
 
 ## 5. 渐进顺序、文件责任与共享接缝
 
@@ -89,8 +89,8 @@ M3E 改变视觉语言与交互呈现，不重新决定选题、判分、建议�
 
 | 顺序 / 交付 | Astra UI 允许准备的修改面 | 现有线保有的部分 / 本片不能顺带改 | 完成证据 |
 | --- | --- | --- | --- |
-| 基础在做题页落地（最小下一片） | `src/ui-next/tokens.css`、`components.css`、`shell/Root.tsx` 的可选作用域标记；`primitives/Button.tsx`、`IconButton.tsx`、`Chip.tsx` 的有消费状态；`src/capabilities/practice/ui/solo/PracticeSolo.tsx` 仅根标记、标题/主操作语义及 class，`practice-solo.css`。首片不改 public API 导出、不加依赖 | `PracticeSolo` 的 `usePracticeSubmit` 调用、props/callback、草稿/判分/提交/申诉/下一题；`practice-client.tsx`、`practice-api.ts`、`server/start/routes/practice.tsx` 及其已批 client 注入由 YUK-1358 保持 | 官方规格→角色/状态映射，现役做题页真实亮暗/键盘/缩放证据；首片只称“基础/指定控件已迁”，不称整页 M3E 已验 |
-| 完成代表页面：做题 + 学习伙伴 | 后续按真实需求扩到 `Segmented`、`Expand` 等已消费 primitives、做题 CSS 与 `src/capabilities/copilot/ui/companion/CompanionPanel.tsx`、`Composer.tsx`、`MessageRow.tsx`、`ContextBar.tsx`、`companion.css` 的呈现；每片列具体文件，非目录授权 | `CompanionMount` 的唯一 controller/常驻挂载、`companion-controller.ts`、`turn-sender.ts`、`run-tracker.ts`、`acceptance.ts`、`turn-actions.ts`、`visit-sessions.ts` 及 server/domain 合同归现 owner。领域缺陷不夹带成视觉重构 | 做题内容/状态+伙伴开关/引用上下文的真实布局；发送/恢复/停止另列实际权限与验收结果；不得借换样式宣布旧失败已修 |
+| 基础在做题页落地（最小下一片） | `src/ui-next/tokens.css`、`components.css`、`shell/Root.tsx` 的可选作用域标记；`primitives/Button.tsx`、`IconButton.tsx`、`Chip.tsx` 的有消费状态；`src/capabilities/practice/ui/solo/PracticeSolo.tsx` 仅根标记、标题/主操作语义及 class，`practice-solo.css`。首片不改 public API 导出、不加依赖 | `PracticeSolo` 的 `usePracticeSubmit` 调用、props/callback、草稿/判分/提交/申诉/下一题；`practice-client.tsx`、`practice-api.ts`、`server/start/routes/practice.tsx` 及其已批 client 注入由 YUK-1358 保持 | 官方规格→角色/状态映射，现役做题页真实亮暗/键盘/缩放证据；首片只称“基础/指定控件已迁” |
+| 完成代表页面：做题 + 学习伙伴 | 后续按真实需求扩到 `Segmented`、`Expand` 等已消费 primitives、做题 CSS 与 `src/capabilities/copilot/ui/companion/CompanionPanel.tsx`、`Composer.tsx`、`MessageRow.tsx`、`ContextBar.tsx`、`companion.css` 的呈现；每片列具体文件，非目录授权 | `CompanionMount` 的唯一 controller/常驻挂载、`companion-controller.ts`、`turn-sender.ts`、`run-tracker.ts`、`acceptance.ts`、`turn-actions.ts`、`visit-sessions.ts` 及 server/domain 合同归现 owner。领域缺陷不夹带成视觉重构 | 做题内容/状态+伙伴开关/引用上下文的真实布局；发送/恢复/停止另列实际权限与验收结果 |
 | 外壳 / 今日 | `web/src/RootShell.tsx` 的展示 hunk、`src/ui/shell/AppSidebar.tsx` 及 shell 当前样式的必要 hunk、`src/capabilities/shell/ui/TodayPage.tsx` 与 `shell.css` 的展示；先由协调线明确共享 hunk，再修改 | `server/start/workbench-shell.tsx`、`workbench-client.ts`、`routes/today.tsx`、TokenGate、QueryClient、navigation/epoch/reader 装配归 Start；摘要、费用、排序与下一步决策归领域。不复制 V3 样稿为已完成产品 | 实际入口、摘要/准备/未知费用、断点与焦点证据；导航语义保持；不能为新外壳恢复旧 SPA 或添第二个应用 |
 | 其余真实页面 | 先统一题库 `practice/ui/library/` 的行/详情/编辑呈现，再录入 `ingestion/ui/record/` 的列表/详情/复核呈现；其后 notes/knowledge/coach/profile/admin 等按原功能票、真实修改面逐页圈定 | 题库 `library-client.tsx`、`use-library.ts`、`use-question-writes.ts`、`library-api.ts` 的读取/写/失效；录入 `record-api.ts`、`record-start.ts`、`recording-read.ts`、`recording-live.ts`、`recording-model.ts` 的状态/恢复归各线。不以目录独占阻断 transport | 每页都有实际 consumer、完整状态表与旧行为对照；写入/恢复/paid 缺口留原票，不能用静态页面替代 |
 
@@ -113,11 +113,11 @@ M3E 改变视觉语言与交互呈现，不重新决定选题、判分、建议�
 
 | 层次 | 能证明什么 | 不能代替什么 |
 | --- | --- | --- |
-| 本次文档静态 | 五路径范围、固定 base/diff、历史保留、链接与交接一致；Google 获取范围如 §3 | 文档检查不证明 UI、测试、浏览器、接口或 provider 的实际行为 |
-| 后续产品源码静态 | token/组件角色、调用方接缝、状态映射、无新增 `useEffect`、不引入业务/恢复重复 owner | 不能证明视觉、交互、可访问性或真实写入成功 |
-| 后续本机检查 / CI | 按当片范围记录 typecheck/lint/build、独立 review、exact-head CI 的实际结果；测试代码先获 owner 批准，测试不作开发前置 | build/CI 不等于已部署，不等于真实页面/写恢复/provider 通过；当片执行情况以其 PR 的真实记录为准 |
-| 真实页面 | 在真实现役入口展示实际输入/输出、选择依据、桌面/窄屏、亮暗、键盘/focus、reduced-motion、读屏与全部可达状态，保留 screenshot/录屏/对照 | 不新建演示入口；fixture、设计稿或未发生的状态不能标成真实业务验收 |
-| 写入 / 恢复 / provider | 逐真实样本记录初始状态、命令/回执、重开后的已提交状态、明确停止阶段、错误与未知结果；模型输出另记 exact revision、task-run、provider/model/cost 与输入输出 digest | 不用发送成功、只读重开、模拟流或旧 CI 证明持久性、停止效果或学习质量 |
+| 本次文档静态 | 五路径范围、固定 base/diff、历史保留、链接与交接一致；Google 获取范围如 §3 | 实际行为验收见「真实页面」「写入 / 恢复 / provider」行 |
+| 后续产品源码静态 | token/组件角色、调用方接缝、状态映射、无新增 `useEffect`、不引入业务/恢复重复 owner | 视觉、交互、可访问性与真实写入验收见「真实页面」「写入 / 恢复 / provider」行 |
+| 后续本机检查 / CI | 按当片范围记录 typecheck/lint/build、独立 review、exact-head CI 的实际结果；测试代码先获 owner 批准，测试不作开发前置 | 当片执行情况以其 PR 的真实记录为准 |
+| 真实页面 | 在真实现役入口展示实际输入/输出、选择依据、桌面/窄屏、亮暗、键盘/focus、reduced-motion、读屏与全部可达状态，保留 screenshot/录屏/对照 | 不新建演示入口；验收限实际发生的页面状态 |
+| 写入 / 恢复 / provider | 逐真实样本记录初始状态、命令/回执、重开后的已提交状态、明确停止阶段、错误与未知结果；模型输出另记 exact revision、task-run、provider/model/cost 与输入输出 digest | 持久性、停止效果与学习质量以逐样本真实记录为准 |
 
 后续运行沿用原票已经授予的环境、操作与预算，不增加例行确认。只有缺少实际环境/样本/预算或范围发生变化时，才集中提出精确缺项；**本轮无任何运行权限扩张**：
 
@@ -130,7 +130,7 @@ M3E 改变视觉语言与交互呈现，不重新决定选题、判分、建议�
 ## 7. 本次交接与未决项
 
 本次只改当前入口、旧方向顶部、迁移顺序、准备计划当前入口/模型及 charter 的 UI 覆盖，由协调线按文档 PR 流程收口。
-计划合入仅代表方向与排期生效，不代表 UI 实现、部署或运行验收完成；产品与测试代码均不在本次变更内。
+计划合入仅代表方向与排期生效；产品与测试代码均不在本次变更内。
 
 **无新的风格或产品决定待 owner 重选。** 尚需补齐的是组件具体 Specs（含数值、状态、Web availability）的可获取证据、各实施片真实修改 hunk 与原票运行许可条件，
 不是本方向待批准。若未来官方规范与现存业务功能发生实质冲突，先给协调线精确冲突和最小保功能方案，不静默降级确定性能力。
@@ -169,9 +169,8 @@ Web 尺寸采用 CSS px 作为组件逻辑尺寸，字阶以 16px 基准换算 r
 
 ### 明确未验与保留范围
 
-本片 browser / inspector / screenshot / 真实作答、provider、测试、部署均 **NOT_RUN**；不宣称 skill gate、视觉、可访问性或业务运行通过。
 完整组件规范页、Web spring/ripple、跨控件 motion、缩放/软键盘/读屏/实际命中区与亮暗嵌套背景仍待有权限的现役页验收。
-外壳、伙伴、题干/数学/资产、输入、静态 Chip 状态标签、Judgment、Segmented、抽屉、原玻璃操作栏容器及页面过渡均未迁；不把局部控件候选称全页 M3E。
+外壳、伙伴、题干/数学/资产、输入、静态 Chip 状态标签、Judgment、Segmented、抽屉、原玻璃操作栏容器及页面过渡均未迁。
 所有业务表达式、props/callback、挂载/key、快捷键/输入法、8 秒 race 与恢复路径保持；不扩大原 paid/B/LIGHT 边界。
 静态检查与完整 diff 的实际记录外置于 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1473/m3e-practice-foundation-20261027/`；
 父线负责原 YUK-1351/YUK-1473 的全局状态、待分类机器项、独立 R1 与 PR/CI，不新建同义票。

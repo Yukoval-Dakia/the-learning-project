@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { type ReactNode, useCallback, useState, useSyncExternalStore } from 'react';
 import { type CompanionLayout, CompanionMount } from '@/capabilities/copilot/ui-public';
 import { useWorkbenchClient } from '@/capabilities/shell/ui-public';
-import { CommandPalette } from '@/ui/shell/CommandPalette';
+import { CommandPalette, type CommandPaletteProps } from '@/ui/shell/CommandPalette';
 import { NAV, type NavItem, activeFromPath, isSection } from '@/ui/shell/nav-config';
 import { ShellMain } from '@/ui/shell/ShellMain';
 import { StudioNavigation } from '@/ui-next/practice-studio/StudioShell';
@@ -89,6 +89,7 @@ export function RootShell(props: {
   children: ReactNode;
   pathname: string;
   navigate: (to: string) => void;
+  readKnowledgeTree?: CommandPaletteProps['readTree'];
 }) {
   if (props.pathname.startsWith(BARE_PATH_PREFIX)) return <>{props.children}</>;
   return <AppFrame {...props} />;
@@ -102,10 +103,12 @@ function AppFrame({
   children,
   pathname,
   navigate,
+  readKnowledgeTree,
 }: {
   children: ReactNode;
   pathname: string;
   navigate: (to: string) => void;
+  readKnowledgeTree?: CommandPaletteProps['readTree'];
 }) {
   // chrome state。paletteOpen 驱动 CommandPalette（S14）；⌘K toggle + searchbox
   // 点击都 set 它。
@@ -211,6 +214,7 @@ function AppFrame({
         />
       </div>
       <CommandPalette
+        readTree={readKnowledgeTree}
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         navigate={navigate}

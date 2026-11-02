@@ -37,7 +37,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 
 ### AI provider 与模型选择
 
-全局 pin（`AI_PROVIDER_OVERRIDE` + `AI_PROVIDER_MODEL`）作用于非 typed 任务和 Mem0 提取/调和，但若某任务在 `system_config` 设了 `task.<kind>.override_global_pin=true` 且 provider/model 成对合法，则该任务走 task pair、压过全局 pin（`src/server/ai/providers.ts`）。模型端点 `base_url` 受 models.dev 目录端点 host allowlist 约束：内置 lane 的显式端点覆盖与 `custom_provider.base_url` 只能指向目录声明过的 host（另含代码声明的 anthropic/openai 直连根、Xiaomi Token Plan 三区与 DashScope embedding 双端点），在保存与执行解析边界报错；非默认端口必须由目录端点自身声明，否则拒绝；运维 env 端点（`MEM0_LLM_BASE_URL`、`MEM0_EMBEDDING_BASE_URL`、`MIMO_VISION_BASE_URL`、`XIAOMI_TOKEN_PLAN_BASE_URL`）同过该校验，不在白名单即拒绝发送；`custom_provider.api_key_env` 还与 provider 绑定——内置 provider 的凭据 env 只能发给自家端点，内置端点也只收自家凭据 env（跨 provider 配置被拒，YUK-1654）。Mem0 全局 pin 的端点同过该校验；该约束只作用于模型端点，不影响 agent 的网页浏览 / fetch 工具（`src/core/config/model-endpoint-allowlist.ts`；`src/server/ai/model-catalog.ts`）。`MEM0_LLM_*` 只在没有全局 pin 时生效（`src/server/memory/llm-config.ts`）。`.env.example` 当前把这对值写成 `opencode-go` / `mimo-v2.6-pro`（`.env.example`）。Mem0 在 app（读）与 worker（写）进程内运行，compose 没有独立 mem0 服务；embedding 维度必须与 pgvector 列一致（`docker-compose.yml`；`src/server/memory/client.ts`）。typed 判分有专用 `openrouter` lane（只对 typed 任务开放）；OCR 由 `EXTRACT_OCR_ENGINE` 在 `glm`/`tencent` 两套实现间选择（`src/server/ai/providers.ts`；`registry`；`src/capabilities/ingestion/server/tencent_mark.ts`）。
+全局 pin（`AI_PROVIDER_OVERRIDE` + `AI_PROVIDER_MODEL`）作用于非 typed 任务和 Mem0 提取/调和，但若某任务在 `system_config` 设了 `task.<kind>.override_global_pin=true` 且 provider/model 成对合法，则该任务走 task pair、压过全局 pin（`src/server/ai/providers.ts`）。模型端点 `base_url` 受 models.dev 目录端点 host allowlist 约束：内置 lane 的显式端点覆盖与 `custom_provider.base_url` 只能指向目录声明过的 host（另含代码声明的 anthropic/openai 直连根、Xiaomi Token Plan 三区、DashScope embedding 双端点与北京 workspace MaaS host `ws-tcvd1h9009b55vr0.cn-beijing.maas.aliyuncs.com`），在保存与执行解析边界报错；非默认端口必须由目录端点自身声明，否则拒绝；运维 env 端点（`MEM0_LLM_BASE_URL`、`MEM0_EMBEDDING_BASE_URL`、`MIMO_VISION_BASE_URL`、`XIAOMI_TOKEN_PLAN_BASE_URL`）同过该校验，不在白名单即拒绝发送；`custom_provider.api_key_env` 还与 provider 绑定——内置 provider 的凭据 env 只能发给自家端点，内置端点也只收自家凭据 env（跨 provider 配置被拒，YUK-1654）。Mem0 全局 pin 的端点同过该校验；该约束只作用于模型端点，不影响 agent 的网页浏览 / fetch 工具（`src/core/config/model-endpoint-allowlist.ts`；`src/server/ai/model-catalog.ts`）。`MEM0_LLM_*` 只在没有全局 pin 时生效（`src/server/memory/llm-config.ts`）。`.env.example` 当前把这对值写成 `opencode-go` / `mimo-v2.6-pro`（`.env.example`）。Mem0 在 app（读）与 worker（写）进程内运行，compose 没有独立 mem0 服务；embedding 维度必须与 pgvector 列一致（`docker-compose.yml`；`src/server/memory/client.ts`）。typed 判分有专用 `openrouter` lane（只对 typed 任务开放）；OCR 由 `EXTRACT_OCR_ENGINE` 在 `glm`/`tencent` 两套实现间选择（`src/server/ai/providers.ts`；`registry`；`src/capabilities/ingestion/server/tencent_mark.ts`）。
 
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
@@ -78,7 +78,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | --- | --- | --- | --- |
 | `DASHSCOPE_API_KEY` | app、worker | 记忆写入与 embedding 必需，缺失抛错；`memory_event_ingest` 在 worker 内跑 | `src/server/memory/client.ts`；`src/server/ai/embed.ts`；`src/server/memory/triggers.ts` |
 | `MEM0_EMBEDDING_MODEL` | app、worker | `text-embedding-v4` | `src/server/memory/client.ts`；`src/server/ai/providers.ts` |
-| `MEM0_EMBEDDING_BASE_URL` | app、worker | `https://dashscope.aliyuncs.com/compatible-mode/v1`；`embed.ts` 也读同一个键；host 须过模型端点 allowlist（含代码声明的 DashScope 双端点） | `src/server/memory/client.ts`；`src/server/ai/embed.ts` |
+| `MEM0_EMBEDDING_BASE_URL` | app、worker | `https://dashscope.aliyuncs.com/compatible-mode/v1`；`embed.ts` 也读同一个键；host 须过模型端点 allowlist（含代码声明的 DashScope 双端点，以及北京 workspace MaaS `ws-tcvd1h9009b55vr0.cn-beijing.maas.aliyuncs.com`） | `src/server/memory/client.ts`；`src/server/ai/embed.ts` |
 | `MEM0_EMBEDDING_DIMS` | app、worker | `1024`；非正整数抛错 | `src/server/memory/client.ts` |
 | `MEM0_PGVECTOR_COLLECTION` | app、worker | `learning_project_memories` | `src/server/export/constants.ts` |
 | `MEM0_PGVECTOR_HNSW` | app、worker | `false`；只有字面 `true` 开启 | `src/server/memory/client.ts` |
@@ -102,7 +102,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `R2_ACCESS_KEY_ID` | app、worker | 同上 | `src/kernel/object-storage.ts` |
 | `R2_SECRET_ACCESS_KEY` | app、worker | 同上 | `src/kernel/object-storage.ts` |
 | `R2_BUCKET` | app、worker | 同上 | `src/kernel/object-storage.ts` |
-| `EXA_API_KEY` | app、worker | 空或未设时 Exa MCP 返回 `null`，不注册 | `src/server/ai/mcp/exa.ts` |
+| `EXA_API_KEY` | app、worker | 空或未设时 Exa MCP 返回 `null`，不注册 | `src/ai/exa-mcp.ts` |
 | `JYEOO_RS_BINARY` | app、worker | `~/yukoval-projects/jyeoo-rs/target/release/jyeoo-rs` | `src/capabilities/practice/server/question-supply/jyeoo-supply-config.ts` |
 | `JYEOO_SPAWN_TIMEOUT_MS` | app、worker | `120000` | `registry` |
 | `JYEOO_BACKFILL_TIMEOUT_MS` | 脚本（`jyeoo:backfill`） | `session_max × 90000` ms | `src/capabilities/practice/server/question-supply/jyeoo-supply-config.ts` |
@@ -179,7 +179,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
 | `API_SMOKE_BASE_URL` | 脚本（`api:smoke`） | `http://localhost:3001` | `scripts/api-smoke.ts` |
-| `AUDIT_READ_DATABASE_URL` | 脚本（audit） | 回落到 `DATABASE_URL`；session 固定只读 | `scripts/audit-threshold-calibration.ts`；`src/server/env.ts` |
+| `AUDIT_READ_DATABASE_URL` | 脚本（`ops:threshold-calibration`） | 回落到 `DATABASE_URL`；session 固定只读 | `scripts/ops-threshold-calibration.ts`；`src/server/env.ts` |
 | `B3_GATE_CONFIRM_CLONE` | 脚本（`b3:gate`） | 不等于 `1` 时拒绝运行 | `scripts/b3-gate.ts` |
 | `DELIVERY_API_PORT` | 脚本（`delivery:evidence`） | `8787` | `scripts/delivery-evidence.ts` |
 | `DELIVERY_API_BASE` | 脚本（`delivery:evidence`） | `http://127.0.0.1:<DELIVERY_API_PORT>` | `scripts/delivery-evidence.ts` |

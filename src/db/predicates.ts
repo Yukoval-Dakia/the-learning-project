@@ -1,7 +1,7 @@
 // Shared `question.draft_status` pool-visibility predicate.
 //
 // AUDIT-DRAFT-READS: canonical-definition
-//   ^ sentinel marker — scripts/audit-draft-status-reads.ts excludes this file from the
+//   ^ sentinel marker — scripts/audit-draft-status.ts excludes this file from the
 //   read-side F1 scan by HELPER_DEF_FILES and reverse-checks THIS marker still exists, so a
 //   rename that forgets to update the audit's constant fails loud. Do NOT remove this line.
 //

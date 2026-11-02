@@ -36,13 +36,7 @@ export {
 export type { ConjectureAcceptResult } from './server/conjecture-accept';
 export type { GoalScopeAcceptResult } from './server/goals/accept';
 export { createGoal } from './server/goals/create';
-export type { InterventionAuthoringContextT } from './server/intervention/contracts';
 export { retireInterventionPreparationJobs } from './server/intervention/retire-jobs';
-export type { InterventionPreparationStageGuard } from './server/intervention/store';
-export {
-  guardInterventionPreparationStage,
-  loadInterventionAuthoringContext,
-} from './server/intervention/store';
 export type {
   AcceptLearningIntentParams,
   LearningIntentMaterializeResult,

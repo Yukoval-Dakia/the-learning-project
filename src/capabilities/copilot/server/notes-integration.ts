@@ -1,8 +1,5 @@
-import { bodyBlocksToNoteSections } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import { getLiveArtifactType } from '@/kernel/read-models/live-artifact-reference';
-
-export { bodyBlocksToNoteSections };
 
 function artifactKindMatchesType(kind: string, artifactType: string): boolean {
   const normalized = kind.trim().toLowerCase();
