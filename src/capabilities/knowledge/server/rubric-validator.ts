@@ -1,7 +1,8 @@
 // P5.4 / YUK-143 — deterministic proposal-quality rubric (Layer 1).
 //
-// Single shared validator (RB-1) for agent edge proposals, called before
-// writeAiProposal so no caller bypasses the floor. Gates and evidence levels are
+// Single shared validator (RB-1) for agent edge proposals, run by
+// edge-proposal-write.ts before the write; only its explicit 'bootstrap' mode
+// (evidence-free cold-start edges) skips the floor. Gates and evidence levels are
 // documented in docs/modules/knowledge.md §4.2–§4.3. The adaptive accept-learned
 // bias is Layer 2 / YUK-174, intentionally elsewhere. Verdict shape is stable:
 // { ok:true } | { ok:false; gate; reason }.
