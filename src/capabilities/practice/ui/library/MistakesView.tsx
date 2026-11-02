@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { Card } from '@/ui-next/primitives/Card';
+import { FoldList } from '@/ui-next/primitives/FoldList';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button } from '@/ui-next/public';
@@ -114,7 +114,7 @@ function FoldedGroup({
         </h2>
         <p className="ql-group-why">{why}</p>
       </header>
-      <CollapsibleList items={groups} renderItem={render} className="ql-list" />
+      <FoldList items={groups} renderItem={render} className="ql-list" />
     </section>
   );
 }

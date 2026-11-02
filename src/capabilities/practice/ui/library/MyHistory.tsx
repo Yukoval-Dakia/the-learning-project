@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import type { MouseEvent } from 'react';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
+import { FoldList } from '@/ui-next/primitives/FoldList';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import type { QuestionFullDetail } from './library-api';
@@ -172,7 +172,7 @@ export function MyHistory({
             causeLabel={causeLabel}
           />
           <h3 className="qd-label">做错过的记录</h3>
-          <CollapsibleList
+          <FoldList
             className="qd-wrongs"
             items={group.records}
             renderItem={(record) => (
@@ -196,7 +196,7 @@ export function MyHistory({
       {attempts.length > 0 && (
         <div className="qd-attempts">
           <h3 className="qd-label">每次作答</h3>
-          <CollapsibleList
+          <FoldList
             className="qd-attempt-list"
             items={attempts}
             renderItem={(a) => (
