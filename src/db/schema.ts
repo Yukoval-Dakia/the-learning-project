@@ -14,6 +14,7 @@
 
 export {
   ai_task_runs,
+  bank_search_snapshot,
   copilot_continuation,
   copilot_evidence_checkpoint,
   cost_ledger,

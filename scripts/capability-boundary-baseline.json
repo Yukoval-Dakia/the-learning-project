@@ -7277,6 +7277,26 @@
       "direction": "decrease"
     },
     {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "bank_search_snapshot",
+      "targetModule": "src/db/schema/ai.ts",
+      "targetSymbol": "bank_search_snapshot",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/tools/bank-search-snapshot.ts",
+          "line": 6
+        }
+      ],
+      "evidence": "Real value import of bank_search_snapshot from @/db/schema at src/capabilities/practice/server/tools/bank-search-snapshot.ts:6; the drizzle table definition is owned verbatim by src/db/schema/ai.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1448",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1448",
+      "date": "2026-11-02"
+    },
+    {
       "debt": "crossCapabilityValue",
       "pair": "ingestion -> knowledge",
       "date": "2026-11-02",
@@ -11502,6 +11522,16 @@
       "issue": "YUK-1413",
       "owns": "Kernel owns append-only event persistence. Copilot keeps the explanation-replay identity, actor, verdict, digests, task-run, provider, model and cost.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/tools/bank-search-scope.ts",
+      "module": "src/kernel/read-models/knowledge-tree.ts",
+      "kind": "value",
+      "symbols": ["resolveSubjectKnowledgeIds"],
+      "issue": "YUK-1448",
+      "owns": "The existing subject→live KC scope resolver stays kernel-owned. The complete hard-scope resolution/SQL responsibility moved from bank-search.ts to bank-search-scope.ts; its former import is removed, so this is a path relocation with zero new kernel dependency count.",
+      "date": "2026-10-22"
     },
     {
       "debt": "capabilityToKernel",
