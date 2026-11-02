@@ -1,12 +1,11 @@
 // YUK-523 (复盘中枢 ② 校准诊断) — Coach 复盘中枢的「校准诊断」视图。
 //
 // 横截面 θ̂/p(L) 点估计 + 置信，答「我现在这块会不会、多可信」。成效趋势（纵向「涨没涨」）的姊妹面、
-// 与之正交。**复用既有读模型** getCalibrationMaturity（GET /api/observability/calibration-maturity，
-// calibration-maturity-api.ts）—— 读模型/逻辑不动，本面只读不写。**双挂**：onboarding ScreenProfile 也
-// 渲一份成熟度对账，二者共享同一读模型，互不影响（ScreenProfile 保留不动）。
+// 与之正交。读模型是 GET /api/observability/calibration-maturity，本面只读不写。onboarding
+// ScreenProfile 也渲一份成熟度对账，二者共享同一读模型，互不影响。
 //
-// 既有 RcMaturityBadge（onboarding/recompute/RecomputeComponents.tsx）原样复用为顶部「本设备重导对账」
-// 徽章，gate 同 ScreenProfile（RECOMPUTE_BADGE_ENABLED）。
+// 读函数与顶部「本设备重导对账」徽章（onboarding CalibrationMaturityBadge，gate 同 ScreenProfile）
+// 由 /coach 路由注入；shell 不 value-import onboarding。
 //
 // ⑥红线（ADR-0035）：tier 只表「可信 / 不可信 + 相对次序」，绝不当精确掌握分；θ̂ SE 是置信量（标准误，
 // 越小越可信），不是掌握度 %；证据不足显示「— 数据不足」，绝不补一个看起来精确的分数。
@@ -16,12 +15,10 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import {
-  type CalibrationMaturityResponse,
-  RECOMPUTE_BADGE_ENABLED,
-  RcMaturityBadge,
-  getCalibrationMaturity,
-  summarizeMaturity,
+import type {
+  CalibrationMaturityBadge,
+  CalibrationMaturityResponse,
+  PlacementProfileClient,
 } from '@/capabilities/onboarding/ui-public';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -43,7 +40,6 @@ import {
   sortCaret,
   toCalRows,
 } from './calibration-view';
-import '@/capabilities/onboarding/ui-public';
 
 // tier → 徽章色调 + 文案（badge tone-* 复用全局 badge 体系）。
 const TIER_META: Record<CalTier, { label: string; tone: string }> = {
@@ -52,14 +48,17 @@ const TIER_META: Record<CalTier, { label: string; tone: string }> = {
   blind: { label: '冷启', tone: 'neutral' },
 };
 
-export type CoachCalibrationReader = typeof getCalibrationMaturity;
+export type CoachCalibrationReader = PlacementProfileClient['getCalibrationMaturity'];
+export type CoachCalibrationBadge = typeof CalibrationMaturityBadge;
 
 export function CoachCalibrationView({
   navigate,
-  readCalibration = getCalibrationMaturity,
+  readCalibration,
+  MaturityBadge,
 }: {
   navigate: (to: string) => void;
-  readCalibration?: CoachCalibrationReader;
+  readCalibration: CoachCalibrationReader;
+  MaturityBadge: CoachCalibrationBadge;
 }) {
   const q = useQuery({ queryKey: ['calibration-maturity'], queryFn: readCalibration });
 
@@ -88,15 +87,17 @@ export function CoachCalibrationView({
     );
   }
 
-  return <CalibrationBody data={q.data} navigate={navigate} />;
+  return <CalibrationBody data={q.data} navigate={navigate} MaturityBadge={MaturityBadge} />;
 }
 
 function CalibrationBody({
   data,
   navigate,
+  MaturityBadge,
 }: {
   data: CalibrationMaturityResponse;
   navigate: (to: string) => void;
+  MaturityBadge: CoachCalibrationBadge;
 }) {
   const [sort, setSort] = useState<CalSort>({ key: 'se', dir: 1 }); // 默认按 θ̂ SE 升序 → 最可信在上
   const [showAllBlind, setShowAllBlind] = useState(false);
@@ -118,12 +119,11 @@ function CalibrationBody({
   const pct = Math.round(agg.pct_firm * 100);
   const median = agg.median_theta_se;
   const total = Math.max(agg.total_kcs, 1); // 防 /0（rows.length>0 已保 total≥1，留作护栏）
-  const maturity = summarizeMaturity(data);
 
   return (
     <div className="cal">
       {/* #41 profile 级重算徽章 · 本设备核对概览算术（gate 同 ScreenProfile） */}
-      {RECOMPUTE_BADGE_ENABLED && <RcMaturityBadge summary={maturity} />}
+      <MaturityBadge data={data} />
 
       {/* A · firm-up 概览 */}
       <div className="cal-overview">

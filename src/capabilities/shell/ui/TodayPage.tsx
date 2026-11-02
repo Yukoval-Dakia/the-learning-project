@@ -2,7 +2,7 @@
 // 设计基准 docs/design/loom-refresh/project/screen-today.jsx（ScreenToday
 // L203-241 布局序列）：hero → kpi-row → 今日之线 → 进行中·待裁决 dash-grid
 // 双列 → AgentNotesBoard → 本周编织。数据源 /api/workbench/summary 聚合 +
-// agency 包 agent-notes（limit=20 紧凑档）+ notes 包 AI 改动近 24h。
+// 路由注入的 agent-notes（limit=20 紧凑档）+ notes 包 AI 改动近 24h。
 // 偏差（today 重生设计自由）：①「今日之线」真数据无 threads 源，从 summary
 // 派生（due>0 复习缕 / proposals>0 裁决缕），全零不渲染该 section；②成本面
 // （设计稿 CostRibbon）已于 M5-T4b (YUK-321) 接通 /api/cost/today
@@ -11,12 +11,12 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import {
+import type {
+  AgentNoteClient,
   AgentNotesBoard,
   LearningIntentComposer,
-  useAgentNoteClient,
 } from '@/capabilities/agency/ui-public';
-import { ColdStart } from '@/capabilities/onboarding/ui-public';
+import type { ColdStart } from '@/capabilities/onboarding/ui-public';
 import { describeCosts } from '@/ui/lib/cost-presentation';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
@@ -29,7 +29,7 @@ import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 import { AiChangesStrip } from './blocks/AiChangesStrip';
 import { KpiRow } from './blocks/KpiRow';
 import { LoomHero } from './blocks/LoomHero';
-import { ProfileBand } from './blocks/ProfileBand';
+import { type PlacementProfileReader, ProfileBand } from './blocks/ProfileBand';
 import { ProposalStrip } from './blocks/ProposalStrip';
 import { SessionsStrip } from './blocks/SessionsStrip';
 import { WeekHeat } from './blocks/WeekHeat';
@@ -41,8 +41,15 @@ import type { OvernightDigest, WorkbenchSummary } from './workbench-api';
 import { useWorkbenchClient } from './workbench-client';
 import './shell.css';
 
+// agency / onboarding 的读函数与组件由路由壳（SPA web/src/router.tsx、Start
+// server/start/routes/today.tsx）注入；shell 只编排页面，不 value-import 它们。
 export interface TodayPageProps {
   navigate: (to: string) => void;
+  getAgentNoteBoard: AgentNoteClient['getAgentNoteBoard'];
+  getPlacementProfile: PlacementProfileReader;
+  AgentNotesBoard: typeof AgentNotesBoard;
+  LearningIntentComposer: typeof LearningIntentComposer;
+  ColdStart: typeof ColdStart;
 }
 
 interface Thread {
@@ -477,8 +484,14 @@ function ThreadCard({ th, navigate }: { th: Thread; navigate: (to: string) => vo
   );
 }
 
-export default function TodayPage({ navigate }: TodayPageProps) {
-  const { getAgentNoteBoard } = useAgentNoteClient();
+export default function TodayPage({
+  navigate,
+  getAgentNoteBoard,
+  getPlacementProfile,
+  AgentNotesBoard,
+  LearningIntentComposer,
+  ColdStart,
+}: TodayPageProps) {
   const { getWorkbenchSummary } = useWorkbenchClient();
   const now = new Date();
 
@@ -541,7 +554,13 @@ export default function TodayPage({ navigate }: TodayPageProps) {
 
             {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。
                 无 active goal 时只省略画像，不影响其余工作台。 */}
-            {s.active_goal && <ProfileBand goal={s.active_goal} navigate={navigate} />}
+            {s.active_goal && (
+              <ProfileBand
+                goal={s.active_goal}
+                navigate={navigate}
+                getPlacementProfile={getPlacementProfile}
+              />
+            )}
 
             <LearningIntentComposer
               initialTopic={s.active_goal?.title ?? ''}
