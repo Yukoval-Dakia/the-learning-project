@@ -301,6 +301,11 @@ export interface RestoreFromArchiveOpts {
    */
   retireInterventionPreparationJobs?: (tx: Tx, jobIds: string[]) => Promise<void>;
   /**
+   * Memory-ingest owner's reopen of outbox rows whose job was lost with pg-boss. Without
+   * it those rows stay stamped and are never extracted.
+   */
+  reopenUnstartedMemoryIngests?: (tx: Tx) => Promise<unknown>;
+  /**
    * Explicit escape hatch for a newly-created disposable DB whose pg-boss
    * schema cannot contain jobs from the archived runtime.
    */
@@ -428,6 +433,7 @@ export async function restoreFromArchive({
   r2,
   bytes,
   retireInterventionPreparationJobs,
+  reopenUnstartedMemoryIngests,
   operationalRestoreTarget = 'live',
   hydrateConfig,
 }: RestoreFromArchiveOpts): Promise<{ status: number; body: RestoreResult }> {
@@ -566,9 +572,9 @@ export async function restoreFromArchive({
   const data = rawData as Record<string, Array<Record<string, unknown>> | undefined>;
 
   // `event.ingest_at` is restored verbatim: the archive also restores the mem0 collection
-  // and the ingest ledger, and writer-stamped opt-outs (internal ledgers, user-actor rows
-  // kept out of mem0) must not re-enter paid extraction. pg-boss is not archived, so a row
-  // dispatched but not yet ingested at export is not re-driven, as with any lost job.
+  // and the ingest ledger, and write-time opt-outs (internal ledgers, user rows kept out of
+  // mem0) must not re-enter paid extraction. Rows dispatched but not yet ingested at export
+  // lost their pg-boss job; the memory owner reopens them inside the restore transaction.
   const archivedInterventionPreparationJobIds = [
     ...new Set(
       (data.intervention ?? [])
@@ -870,6 +876,7 @@ export async function restoreFromArchive({
           `select setval('event_dispatch_seq', (select greatest(coalesce((select max(dispatch_seq) from "event"), 0), 0) + 1), false)`,
         ),
       );
+      await reopenUnstartedMemoryIngests?.(tx);
 
       // mem0 collection wipe + restore (not in FK_ORDER). Two separate questions:
       //   (i) process the collection when the archive HAS the key, even as [] — an empty

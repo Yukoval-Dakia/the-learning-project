@@ -264,3 +264,25 @@ export async function listStalledMemoryIngests(db: Db, afterId = '', limit = 50)
   }
   return { candidates, nextAfterId: rows.length === limit ? (rows.at(-1)?.id ?? null) : null };
 }
+
+/**
+ * Restore keeps `ingest_at` but not pg-boss: reopen poller-stamped rows whose job never
+ * reached the ledger. Only user rows with insert-time scopes were born pending (writeEvent
+ * empties scopes on opt-outs); every ledger-era Mem0 add commits `add_started` first, and
+ * stamps older than the first archived marker predate that guarantee, so they stay.
+ */
+export async function reopenUnstartedMemoryIngests(tx: Tx): Promise<number> {
+  const marker = sql`m."action" = ${MEMORY_RECONCILE_HANDOFF_ACTION}
+    AND m."payload" ->> 'handoff_kind' IN ('add_started', 'ingest_completed')`;
+  const rows = await tx.execute<{ id: string }>(sql`
+    UPDATE "event" AS e SET "ingest_at" = NULL
+    WHERE e."actor_kind" = 'user'
+      AND cardinality(e."affected_scopes") > 0
+      AND e."ingest_at" >= (SELECT min(m."created_at") FROM "event" AS m WHERE ${marker})
+      AND NOT EXISTS (
+        SELECT 1 FROM "event" AS m
+        WHERE ${marker} AND m."subject_kind" = 'event' AND m."subject_id" = e."id"
+      )
+    RETURNING e."id"`);
+  return rows.length;
+}
