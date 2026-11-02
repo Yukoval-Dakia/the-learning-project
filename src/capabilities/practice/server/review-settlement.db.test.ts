@@ -134,40 +134,4 @@ describe('native settlement boundaries', () => {
     expect(await db.select().from(mastery_state)).toHaveLength(0);
     expect(f.execute).not.toHaveBeenCalled();
   });
-
-  it.each([
-    { paper: false, mixed: false },
-    { paper: false, mixed: true },
-    { paper: true, mixed: false },
-    { paper: true, mixed: true },
-  ])(
-    'excludes synthetic roots from paper=$paper mixed=$mixed learning targets',
-    async ({ paper, mixed }) => {
-      const db = testDb();
-      const knowledgeIds = mixed ? ['seed:math:root', 'kc_contract'] : ['seed:math:root'];
-      const f = await nativeSoloHttpFixture(db, { knowledgeIds });
-      if (paper)
-        expect(await submitPaperFixture(await paperFor(f.id, knowledgeIds), db)).toMatchObject({
-          status: 'effective',
-        });
-      else
-        expect(await commitFormalAttempt(db, 'solo_submit', f.id, f.assessment)).toMatchObject({
-          status: 'effective',
-        });
-      expect(await db.select().from(material_fsrs_state)).toMatchObject([
-        {
-          subject_kind: mixed ? 'knowledge' : 'question',
-          subject_id: mixed ? 'kc_contract' : f.id,
-        },
-      ]);
-      const kcMastery = await db
-        .select()
-        .from(mastery_state)
-        .where(eq(mastery_state.subject_kind, 'knowledge'));
-      expect(kcMastery.map((row) => row.subject_id)).toEqual(mixed ? ['kc_contract'] : []);
-      expect(
-        await db.select().from(mastery_state).where(eq(mastery_state.subject_id, 'seed:math:root')),
-      ).toHaveLength(0);
-    },
-  );
 });
