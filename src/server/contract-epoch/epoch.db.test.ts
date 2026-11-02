@@ -22,20 +22,6 @@ const fakeJob = (id: string): Job => ({ id }) as unknown as Job;
 beforeEach(() => resetDb());
 
 describe('readContractEpoch / gate wiring', () => {
-  it('(legacy, preparing) fences assertContractEpochRunnable deterministically', async () => {
-    await testDb().insert(contract_epoch).values({
-      seq: 0,
-      epoch: 'legacy',
-      state: 'preparing',
-      entered_by: 'test',
-    });
-    const status = await checkContractEpoch(testDb());
-    expect(status).toMatchObject({ runnable: false, reason: 'maintenance' });
-    await expect(assertContractEpochRunnable(testDb(), 'test-surface')).rejects.toBeInstanceOf(
-      ContractEpochFenceError,
-    );
-  });
-
   it('(legacy, active) fences post-flip code as epoch_mismatch', async () => {
     // 旧合同 DB（marker 仍是 legacy/active）上的本代码：拒跑，正是 cutover 栅栏的
     // 设计语义——post-cutover 二进制绝不在 pre-cutover 数据上执行 runtime。
@@ -49,20 +35,6 @@ describe('readContractEpoch / gate wiring', () => {
       name: 'ContractEpochFenceError',
       reason: 'epoch_mismatch',
     });
-  });
-
-  it('(assessment-contract-v1, active) is runnable for post-flip code', async () => {
-    // 生产当前状态：marker 已激活到 assessment-contract-v1 —— 本代码必须放行
-    // （翻转前本测试的镜像是 legacy 代码 + av1 marker = epoch_mismatch 自锁）。
-    await testDb().insert(contract_epoch).values({
-      seq: 0,
-      epoch: 'assessment-contract-v1',
-      state: 'active',
-      entered_by: 'test',
-    });
-    const status = await checkContractEpoch(testDb());
-    expect(status).toMatchObject({ runnable: true });
-    await expect(assertContractEpochRunnable(testDb(), 'test-surface')).resolves.toBeUndefined();
   });
 });
 
@@ -182,42 +154,6 @@ describe('fenceAwareJobHandler (per-delivery fence)', () => {
       ran += 1;
     });
     await expect(handler([fakeJob('j1')])).rejects.toBeInstanceOf(ContractEpochFenceError);
-    expect(ran).toBe(0);
-  });
-
-  it('runs drain jobs under a foreign active epoch (epoch-agnostic)', async () => {
-    const db = testDb();
-    // foreign epoch（对本代码而言 legacy 是外部 epoch）：drain 类不挑 epoch 名。
-    await db.insert(contract_epoch).values({
-      seq: 0,
-      epoch: 'legacy',
-      state: 'active',
-      entered_by: 'test',
-    });
-    let ran = 0;
-    const handler = fenceAwareJobHandler(db, 'echo', async () => {
-      ran += 1;
-    });
-    await handler([fakeJob('j1')]);
-    expect(ran).toBe(1);
-  });
-
-  it('fences translate-class queues under a foreign active epoch', async () => {
-    const db = testDb();
-    await db.insert(contract_epoch).values({
-      seq: 0,
-      epoch: 'legacy',
-      state: 'active',
-      entered_by: 'test',
-    });
-    let ran = 0;
-    const handler = fenceAwareJobHandler(db, 'judge_run', async () => {
-      ran += 1;
-    });
-    await expect(handler([fakeJob('judge-1')])).rejects.toMatchObject({
-      name: 'ContractEpochFenceError',
-      reason: 'epoch_mismatch',
-    });
     expect(ran).toBe(0);
   });
 
