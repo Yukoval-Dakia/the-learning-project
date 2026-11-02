@@ -1,8 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import {
-  type PlacementProfile,
-  usePlacementProfileClient,
-} from '@/capabilities/onboarding/ui-public';
+import type { PlacementProfile, PlacementProfileClient } from '@/capabilities/onboarding/ui-public';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
@@ -106,14 +103,17 @@ function ProfileBandBody({
   );
 }
 
+export type PlacementProfileReader = PlacementProfileClient['getPlacementProfile'];
+
 export function ProfileBand({
   goal,
   navigate,
+  getPlacementProfile,
 }: {
   goal: { id: string; title: string };
   navigate: (to: string) => void;
+  getPlacementProfile: PlacementProfileReader;
 }) {
-  const { getPlacementProfile } = usePlacementProfileClient();
   const q = useQuery({
     queryKey: ['placement-profile', goal.id],
     queryFn: () => getPlacementProfile(goal.id),
