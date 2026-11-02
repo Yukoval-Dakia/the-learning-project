@@ -14,10 +14,10 @@
         "copilot -> proposals": 1,
         "copilot -> revert": 1,
         "copilot -> session": 5,
-        "ingestion -> ai": 12,
+        "ingestion -> ai": 13,
         "ingestion -> boss": 6,
         "ingestion -> projections": 2,
-        "knowledge -> ai": 7,
+        "knowledge -> ai": 6,
         "knowledge -> boss": 3,
         "knowledge -> fsrs": 1,
         "knowledge -> memory": 2,
@@ -42,16 +42,13 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 13,
+      "total": 7,
       "byOwnerPair": {
         "agency -> practice": 2,
         "copilot -> notes": 1,
         "copilot -> practice": 1,
-        "ingestion -> knowledge": 2,
         "observability -> agency": 1,
         "observability -> practice": 1,
-        "shell -> agency": 1,
-        "shell -> onboarding": 3,
         "shell -> practice": 1
       },
       "nontrivialSccs": []

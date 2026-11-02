@@ -21,6 +21,7 @@ import {
   getCopilotConversation,
 } from '@/server/session/conversation';
 import { type CopilotPrimaryView, parseCopilotPrimaryView } from '../primary-view-contract';
+import { type CopilotPublicProse, parseCopilotPublicProse } from '../public-prose-contract';
 import { type CopilotSkillTurn, readCopilotSkillTurn as replySkillTurn } from './chat-contracts';
 import {
   COPILOT_RUN_EVENTS,
@@ -30,6 +31,11 @@ import {
 } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
+import {
+  publicProseFailureForReason,
+  publicProseStatus,
+  readCopilotPublicProse,
+} from './public-prose';
 
 export type CopilotTurnRole = 'user' | 'ai' | 'tombstone';
 
@@ -64,6 +70,7 @@ export interface CopilotTurn {
   skill_context?: CopilotTurnSkillContext;
   /** Present for AI turns whose reply nominated a hero deliverable. */
   primary_view?: CopilotPrimaryView;
+  public_prose?: CopilotPublicProse;
   /** Per-call tool-use mirrors chained to this turn's ask/chip parent. */
   tool_calls?: CopilotTurnToolCall[];
   tool_operations?: CopilotTurnToolOperation[];
@@ -348,7 +355,7 @@ async function selectSubagentRunsForReplay(
 type CopilotTurnRow = Pick<
   typeof event.$inferSelect,
   'id' | 'action' | 'payload' | 'created_at' | 'caused_by_event_id' | 'task_run_id'
->;
+> & { outcome?: string | null };
 
 /**
  * Project newest-first event rows into the replay surface shared by the live-session
@@ -360,6 +367,7 @@ async function projectCopilotTurnRows(
   sessionId: string,
   rows: CopilotTurnRow[],
   limit: number,
+  forModel = false,
 ): Promise<CopilotTurn[]> {
   // Also probe each reply's parent retraction status, even when the parent fell outside this
   // window; otherwise a reply under an out-of-window retracted parent renders stale content.
@@ -369,14 +377,24 @@ async function projectCopilotTurnRows(
     .map((row) => row.caused_by_event_id as string);
   // All typed user-ask ids in the window — the only valid revert roots.
   const askIds = new Set(rows.filter((row) => row.action === USER_ASK_ACTION).map((row) => row.id));
-  const toolCallParentIds = [...new Set([...askIds, ...replyParentIds])];
+  const toolCallParentIds = [
+    ...new Set([
+      ...rows
+        .filter((row) => USER_ACTIONS.includes(row.action as (typeof USER_ACTIONS)[number]))
+        .map((row) => row.id),
+      ...replyParentIds,
+    ]),
+  ];
   const taskRunIds = [
-    ...new Set(
-      rows
+    ...new Set([
+      ...rows
+        .filter((row) => USER_ACTIONS.includes(row.action as (typeof USER_ACTIONS)[number]))
+        .map((row) => `copilot_run_tool_${row.id}`),
+      ...rows
         .filter((row) => row.action === REPLY_ACTION)
         .map((row) => row.task_run_id)
         .filter((taskRunId): taskRunId is string => taskRunId !== null),
-    ),
+    ]),
   ];
   const [
     statuses,
@@ -405,6 +423,18 @@ async function projectCopilotTurnRows(
       : Promise.resolve([]),
   ]);
   const replyRunIds = new Set(replyRoots.map((root) => root.id));
+  const publicByRun = forModel
+    ? new Map<string, CopilotPublicProse>()
+    : await readCopilotPublicProse(dbArg, [
+        ...new Set([
+          ...rows
+            .filter((row) => USER_ACTIONS.includes(row.action as (typeof USER_ACTIONS)[number]))
+            .map((row) => row.id),
+          ...replyRunIds,
+        ]),
+      ]);
+  const repliedRunIds = new Set(replyParentIds);
+
   // 受限根策略投影到回复 turn：answer_only 根回 answer_only，crisis 根回 crisis。
   const restrictedRootPolicies = new Map(
     replyRoots
@@ -471,7 +501,45 @@ async function projectCopilotTurnRows(
     if (statuses.get(row.id)?.state === 'retracted') continue;
     const payload = (row.payload ?? {}) as Record<string, unknown>;
     if (row.action === REPLY_ACTION) {
-      const text = replyText(payload);
+      const storedProse = parseCopilotPublicProse(payload.public_prose);
+      let publicProse =
+        storedProse ??
+        (row.caused_by_event_id && replyRunIds.has(row.caused_by_event_id)
+          ? publicByRun.get(row.caused_by_event_id)
+          : undefined);
+      if (!storedProse && publicProse) {
+        // Legacy fallback requires real retained deltas; never infer prose from reply strings.
+        if (publicProse.last_event_id === 0) publicProse = undefined;
+        else {
+          if (row.outcome === 'success') publicProse = { ...publicProse, status: 'completed' };
+          const failure = payload.durable_failure;
+          if (
+            row.outcome === 'failure' ||
+            (failure && typeof failure === 'object' && !Array.isArray(failure))
+          ) {
+            const reason =
+              failure && typeof failure === 'object' && !Array.isArray(failure)
+                ? (failure as Record<string, unknown>).reason
+                : undefined;
+            const safeFailure = publicProseFailureForReason(reason);
+            publicProse = {
+              ...publicProse,
+              status: publicProseStatus(safeFailure),
+              failure: safeFailure,
+            };
+          }
+        }
+      }
+      const text =
+        !forModel &&
+        publicProse &&
+        ['failed', 'interrupted'].includes(publicProse.status) &&
+        publicProse.text.length > 0
+          ? publicProse.text
+          : (replyText(payload) ??
+            (publicProse?.status === 'completed'
+              ? '成功回复正文缺失，暂时无法恢复完整回答。'
+              : null));
       if (text === null) continue;
       const skillTurn = replySkillTurn(payload);
       const skillContext = replySkillContext(payload);
@@ -499,6 +567,7 @@ async function projectCopilotTurnRows(
           ? { checkpoint_event_id: checkpointEventId }
           : {}),
       };
+      if (!forModel && publicProse) turn.public_prose = publicProse;
       if (skillTurn) turn.skill_turn = skillTurn;
       if (skillContext) turn.skill_context = skillContext;
       if (primaryView) turn.primary_view = primaryView;
@@ -517,6 +586,38 @@ async function projectCopilotTurnRows(
     } else {
       const text = userText(payload);
       if (text === null) continue;
+      // No reply marker yet: expose only committed public progress under the
+      // accepted root identity. Never synthesize a completed answer from deltas.
+      const progress = publicByRun.get(row.id);
+      if (
+        !forModel &&
+        !repliedRunIds.has(row.id) &&
+        progress &&
+        (progress.last_event_id > 0 || progress.status === 'completed')
+      ) {
+        turns.push({
+          role: 'ai',
+          text:
+            progress.status === 'completed'
+              ? '成功回复正文缺失，暂时无法恢复完整回答。'
+              : progress.text,
+          public_prose: progress,
+          derivation_policy: readDerivationPolicy(payload),
+          at: row.created_at.toISOString(),
+          event_id: `copilot_public_prose_${row.id}`,
+          run_id: row.id,
+          session_id: sessionId,
+          ...(toolCallsByParent.get(row.id)?.length
+            ? { tool_calls: toolCallsByParent.get(row.id) }
+            : {}),
+          ...(toolOperationsByTaskRun.get(`copilot_run_tool_${row.id}`)?.length
+            ? { tool_operations: toolOperationsByTaskRun.get(`copilot_run_tool_${row.id}`) }
+            : {}),
+          ...(subagentRunsByParent.get(row.id)?.length
+            ? { subagent_runs: subagentRunsByParent.get(row.id) }
+            : {}),
+        });
+      }
       turns.push({
         role: 'user',
         derivation_policy: readDerivationPolicy(payload),
@@ -559,6 +660,7 @@ export async function getRecentCopilotTurns(
     .select({
       id: event.id,
       action: event.action,
+      outcome: event.outcome,
       payload: event.payload,
       created_at: event.created_at,
       caused_by_event_id: event.caused_by_event_id,
@@ -575,7 +677,7 @@ export async function getRecentCopilotTurns(
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(limit * 2);
 
-  return projectCopilotTurnRows(dbArg, session.id, rows, limit);
+  return projectCopilotTurnRows(dbArg, session.id, rows, limit, opts.forModel);
 }
 
 export interface CopilotActiveRun {
@@ -705,6 +807,7 @@ export async function getCopilotTurnsBeforeAnchor(
     .select({
       id: event.id,
       action: event.action,
+      outcome: event.outcome,
       payload: event.payload,
       created_at: event.created_at,
       caused_by_event_id: event.caused_by_event_id,
@@ -746,7 +849,7 @@ export async function getCopilotTurnsBeforeAnchor(
     .orderBy(desc(causalDispatchSeq), desc(replyWithinRoot), desc(event.dispatch_seq))
     .limit(limit * 2);
 
-  return projectCopilotTurnRows(dbArg, opts.sessionId, rows, limit);
+  return projectCopilotTurnRows(dbArg, opts.sessionId, rows, limit, opts.forModel);
 }
 
 /** Positions only, never reply text. Correction references cannot hydrate a restricted turn. */

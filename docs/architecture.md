@@ -169,7 +169,7 @@ TaskSpec 由 capability 拥有：`src/capabilities/<name>/tasks/index.ts` 用 `d
 - TaskSpec 字段（`defaultProvider` / `defaultModel` / budget / prompt / `invocation` / `execution`）见 `src/ai/task-spec.ts`；某个 task 用哪个模型、由谁触发，看 owner map 与调用方代码。
 - 分类（compatibility-only、无静态 caller）以 `scripts/audit-task-census.ts` 的 `LIVE_NON_CALLER_CLASSIFICATIONS` 为准；`pnpm audit:task-census` 校验 manifest/job 注册可达性与 run-log 契约。
 
-**仍成立的历史结论**：`EnrichMistakeTask` 已拆成 `AttributionTask`（归因）；`KnowledgeProposeTask` 已移除，答错不再提议新 KC——KC 创建走 content-driven 的 `tagKnowledge`（`src/capabilities/knowledge/server/tag-knowledge.ts`），近重复由 `kc_dedup_nightly`（propose-only）兜底；冷启 reference 生成解耦为 `reference_answer_backfill`；VisionExtract* 只走 ingestion manual rescue。详见 ADR-0045 与 `docs/design/2026-06-22-unified-tagging-axis.md`。
+**仍成立的历史结论**：`EnrichMistakeTask` 已拆成 `AttributionTask`（归因）；`KnowledgeProposeTask` 已移除，答错不再提议新 KC——KC 创建走 content-driven 的 `tagKnowledge`（`src/kernel/records/knowledge-tag.ts`；embedder 由调用方 ingestion 绑定），近重复由 `kc_dedup_nightly`（propose-only）兜底；冷启 reference 生成解耦为 `reference_answer_backfill`；VisionExtract* 只走 ingestion manual rescue。详见 ADR-0045 与 `docs/design/2026-06-22-unified-tagging-axis.md`。
 
 **命名约定**：Task 一律 `PascalCase + 'Task'` 后缀；破坏性操作（删题、合并节点）走 Proposal/Suggestion 流程而非直接 tool（per ADR-0004）。
 
@@ -235,7 +235,7 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
 
 - generic `/api/ai/[task]` 已退场（YUK-321 M5），旧的 400 dispatch 分支随之作废；同类 task 由 capability 领域 route / worker 承接。
 - AI 执行在领域 route 的调用链或 pg-boss job 里调 `runTask()` / `runAgentTask()` / `streamTask()`（copilot：`/api/copilot/chat` 入队 → `copilot_run`；knowledge：`knowledge_maintenance_nightly` → `streamReviewTask`）。
-- pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`。Copilot 的轮数保持不封顶；同一工具调用没有新证据时，执行层停止后续工具，保留已写出的正文并附上证据与可执行入口，不另设轮数或费用上限。只有失败、没有新证据的读取也在硬超时前走这条收口，不因没有成功读就空转到时限。模型额度（429）、502，或无法按约定读出的模型输出，会停住后续工具并封存原因、停止重试说明和确定性练习；提示接口同样返回这三项，有封存参考时用参考而不是再试一次。每次求助尝试分别封存首 token、首个已验证可执行帮助、完整物、以及全部调用 settled 的时延。失败、超时和取消留在分母里；未知费用保持 null。提示的计时预算在尝试行和提示事件上都记为超时，不记成取消。CF-19 只作为初始假设，读数带模态分层和样本量，不宣称 p95 达标。
+- pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`。Copilot 的轮数保持不封顶；同一工具调用没有新证据时，执行层停止后续工具，保留已写出的正文并附上证据与可执行入口，不另设轮数或费用上限。只有失败、没有新证据的读取也在硬超时前走这条收口，不因没有成功读就空转到时限。模型额度（429）、502，或无法按约定读出的模型输出，会停住后续工具并封存原因、停止重试说明和确定性练习；提示接口同样返回这三项，有封存参考时用参考而不是再试一次。每次求助尝试分别封存首 token、首个已验证可执行帮助、完整物、以及全部调用 settled 的时延。失败、超时和取消留在分母里；未知费用保持 null。提示的计时预算在尝试行和提示事件上都记为超时，不记成取消。CF-19 只作为初始假设，读数带模态分层和样本量，不宣称 p95 达标。并集、单调区间和其它复杂合法替代写法只在题干对上该题时盲核：讲对的原文保留，讲反了才改发封存说明。否定只管辖紧挨着的主张；写在区间前的「不是」撤回这一分句里的区间，区间内部的逗号不算分句。被否定的「增/减」会跳过，不给后面分句的区间标增减，也不把外侧、中间或开区间 a 的范围读成讲对；跳过之后明文写错的外侧或中间仍判失败。未受管辖的「同时属于」仍判失败。输入输出 digest、task-run、provider/model 与费用写在提示事件和教学讲解记录上，未知费用保持 null。教学检查题的题面用核过的正文；讲反时参考和选项也改成这份正文。
 - 工具执行在各自的唯一 owner 写 `tool_call_log`（DomainTool bridge / remote MCP mount / custom mount），runner 只为 spawn 工具补行。
 - 终态写 `cost_ledger`（每次 attempt 一行，带 `task_kind` / `provider` / `model` / `currency`）。
 - 浏览器侧没有 `src/ai/client.ts` 通用 helper；UI 调具体领域 route，避免绕开 profile / tool / ingestion context。

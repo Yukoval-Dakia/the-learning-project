@@ -404,20 +404,20 @@ export const PROVIDER_LANES = [
         imports: ['@/server/ai/embed'],
       },
       {
-        path: 'src/capabilities/knowledge/server/tag-knowledge.ts',
+        path: 'src/capabilities/ingestion/server/knowledge-namer.ts',
         imports: ['@/server/ai/embed'],
       },
       {
         path: 'src/capabilities/ingestion/server/auto-enroll.ts',
-        imports: ['@/capabilities/knowledge/public'],
+        imports: ['@/capabilities/ingestion/server/knowledge-namer'],
       },
       {
         path: 'src/capabilities/ingestion/server/image-candidate-accept.ts',
-        imports: ['@/capabilities/knowledge/public'],
+        imports: ['@/capabilities/ingestion/server/knowledge-namer'],
       },
     ],
     directImporters: [
-      { path: 'src/capabilities/knowledge/server/tag-knowledge.ts', kind: 'runtime' },
+      { path: 'src/capabilities/ingestion/server/knowledge-namer.ts', kind: 'runtime' },
       { path: 'src/capabilities/practice/jobs/embed_backfill.ts', kind: 'runtime' },
       { path: 'src/capabilities/practice/server/quiz/matcher.ts', kind: 'runtime' },
       // ADR-0072 LIGHT — search_bank 向量通道的查询嵌入（默认 embedFn）。

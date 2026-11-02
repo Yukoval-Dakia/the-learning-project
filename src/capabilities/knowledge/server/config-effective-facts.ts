@@ -1,7 +1,7 @@
 // Effective values from the real readers, exposed to the config facts seam.
 import type { ConfigEffectiveFacts } from '@/core/config/effective';
+import { matchThreshold } from '@/kernel/read-models/knowledge-similarity';
 import { dedupDistanceMax, dedupMaxPairs, dedupWindowDays } from './dedup-flags';
-import { matchThreshold } from './tagging-flags';
 
 export function knowledgeConfigEffectiveFacts(): ConfigEffectiveFacts {
   return {

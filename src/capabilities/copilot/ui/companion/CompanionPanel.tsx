@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useId, useState } from 'react';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
+import { CompanionStudio } from '@/ui-next/practice-studio/CompanionStudio';
 import { IconButton, UiNextRoot } from '@/ui-next/public';
 import type { UseCopilotNudgesResult } from '../useCopilotNudges';
 import { Composer } from './Composer';
@@ -40,6 +41,7 @@ export interface CompanionPanelProps {
   nudges: UseCopilotNudgesResult;
   /** Show this conversation when the panel opens (or when this value changes while open). */
   sessionId?: string | null;
+  presentation?: 'workspace';
 }
 
 const TEACH_PROMPT = '我想进入教学模式，请带我一步步学习当前内容';
@@ -61,6 +63,7 @@ export function CompanionPanel({
   navigate,
   nudges,
   sessionId,
+  presentation,
 }: CompanionPanelProps) {
   const [wide, setWide] = useState(false);
   const listId = useId();
@@ -96,6 +99,46 @@ export function CompanionPanel({
     },
     [layout],
   );
+
+  if (presentation === 'workspace')
+    return (
+      <UiNextRoot ref={attachVisit} className="un-st un-st-companion-root" data-layout={layout}>
+        {layout === 'sheet' && (
+          <button
+            type="button"
+            ref={lockBodyScroll}
+            tabIndex={-1}
+            aria-label="收起学习伙伴"
+            className="un-st-scrim"
+            onClick={onClose}
+          />
+        )}
+        <CompanionStudio
+          layout={layout}
+          wide={wide}
+          historyOpen={listOpen}
+          historyId={listId}
+          ready={ready}
+          thinking={thinking}
+          surfaceRef={layout === 'sheet' ? trapRef : focusOnOpen}
+          onClose={onClose}
+          onHistory={() => actions.setListOpen(!listOpen)}
+          onNew={() => void sessions.createConversation()}
+          onTeach={() => {
+            stick.stick();
+            void sender.send(TEACH_PROMPT);
+          }}
+          onWide={() => setWide((value) => !value)}
+          requestedSession={sessionId ? <span hidden key={sessionId} ref={showRequested} /> : null}
+          context={<ContextBar />}
+          nudges={<NudgeBar nudges={nudges} />}
+          messages={<MessageStream controller={controller} stick={stick} navigate={navigate} />}
+          history={listOpen ? <ConversationList controller={controller} id={listId} /> : null}
+          runStatus={<RunFooter controller={controller} />}
+          composer={<Composer controller={controller} stick={stick} presentation="workspace" />}
+        />
+      </UiNextRoot>
+    );
 
   const CloseIcon = layout === 'side' ? PanelRightClose : X;
   return (

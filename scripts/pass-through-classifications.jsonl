@@ -25,6 +25,7 @@
 {"file":"src/capabilities/ingestion/public.ts","kind":"module","symbol":"readIngestionSessionDetail","targetModule":"src/capabilities/ingestion/server/session-detail.ts","targetSymbol":"readIngestionSessionDetail","class":"stable_contract"}
 {"file":"src/capabilities/ingestion/public.ts","kind":"module","symbol":"readIngestionSessionHistory","targetModule":"src/capabilities/ingestion/server/session-history-read.ts","targetSymbol":"readIngestionSessionHistory","class":"stable_contract"}
 {"file":"src/capabilities/ingestion/public.ts","kind":"module","symbol":"readIngestionSessions","targetModule":"src/capabilities/ingestion/server/session-list-read.ts","targetSymbol":"readIngestionSessions","class":"stable_contract"}
+{"file":"src/capabilities/ingestion/public.ts","kind":"module","symbol":"requestIngestionOperation","targetModule":"src/capabilities/ingestion/server/operation-request.ts","targetSymbol":"requestIngestionOperation","class":"stable_contract"}
 {"file":"src/capabilities/ingestion/public.ts","kind":"module","symbol":"revertIngestionBlock","targetModule":"src/capabilities/ingestion/server/revert-auto-enroll.ts","targetSymbol":"revertIngestionBlock","class":"stable_contract"}
 {"file":"src/capabilities/ingestion/ui-public.ts","kind":"site","symbol":"RecordClientProvider","targetModule":"src/capabilities/ingestion/ui/record/record-client.tsx","targetSymbol":"RecordClientProvider","class":"stable_contract"}
 {"file":"src/capabilities/ingestion/ui-public.ts","kind":"site","symbol":"buildRecordManualMistakeBody","targetModule":"src/capabilities/ingestion/ui/record/record-api.ts","targetSymbol":"buildRecordManualMistakeBody","class":"stable_contract"}
@@ -149,6 +150,7 @@
 {"file":"src/db/schema.ts","kind":"module","symbol":"assessment_issuance","targetModule":"src/db/schema/assessment.ts","targetSymbol":"assessment_issuance","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"assessment_response_draft","targetModule":"src/db/schema/assessment.ts","targetSymbol":"assessment_response_draft","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"assessment_submission","targetModule":"src/db/schema/assessment.ts","targetSymbol":"assessment_submission","class":"stable_contract"}
+{"file":"src/db/schema.ts","kind":"module","symbol":"bank_search_snapshot","targetModule":"src/db/schema/ai.ts","targetSymbol":"bank_search_snapshot","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"cause_category_overlay","targetModule":"src/db/schema/knowledge.ts","targetSymbol":"cause_category_overlay","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"completion_evidence","targetModule":"src/db/schema/learning.ts","targetSymbol":"completion_evidence","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"contract_epoch","targetModule":"src/db/schema/platform.ts","targetSymbol":"contract_epoch","class":"stable_contract"}
