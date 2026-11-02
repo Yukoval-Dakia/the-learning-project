@@ -22,12 +22,12 @@ import { goal, knowledge } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { readLearnerAxisStates } from '@/kernel/records/learner-axis-state';
-import { loadDayOnePriors } from '@/server/coldstart/propagate-priors';
 import type {
   PlacementProfileKc,
   PlacementProfileResponse,
   TestedPlacementProfileKc,
 } from '../api/placement-contracts';
+import { loadDayOnePriors } from './day-one-priors';
 import { resolveGoalPlacementScope } from './placement-scope';
 
 /** How many in-scope KCs the profile surfaces (tested first). A broad goal can scope many

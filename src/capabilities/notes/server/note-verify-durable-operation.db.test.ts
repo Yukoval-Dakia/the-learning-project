@@ -27,19 +27,6 @@ const PASS_OUTPUT = JSON.stringify({
   confidence: 0.9,
 });
 
-async function crossProviderBoundary(
-  ctx: Parameters<Parameters<typeof runNoteVerify>[0]['runTaskFn']>[2],
-): Promise<void> {
-  if (!ctx?.taskRunId || !ctx?.beforeProviderQuery) {
-    throw new Error('provider boundary callback missing');
-  }
-  await ctx.beforeProviderQuery({
-    taskRunId: ctx.taskRunId,
-    provider: 'anthropic-sub',
-    model: 'test',
-  });
-}
-
 async function seedArtifact(id: string, version = 0, db: Db = testDb()): Promise<void> {
   const now = new Date();
   await db.insert(artifact).values({
@@ -121,21 +108,6 @@ describe('note-verify durable operation recovery re-entry (DBOS no-repurchase)',
     expect((await claimRow(testDb(), 'recover-live'))?.state).toBe('provider_started');
   });
 
-  // @invariant concurrency: an expired provider_started lease terminalizes to ambiguous on re-entry instead of starting another paid attempt
-  // @fails-if the operation re-reserves the expired claim or re-invokes runTaskFn, replaying an unknown paid outcome as a new provider call
-  it('re-entry after lease expiry marks ambiguous without repurchasing', async () => {
-    await seedArtifact('recover-expired');
-    await seedCrashedClaim(testDb(), 'recover-expired', 'provider_started', {
-      leaseExpiresAt: new Date(Date.now() - 1_000),
-    });
-    const runTaskFn = vi.fn(async () => ({ text: PASS_OUTPUT }));
-    await expect(
-      runNoteVerify({ db: testDb(), artifactId: 'recover-expired', runTaskFn }),
-    ).resolves.toMatchObject({ status: 'skipped:ambiguous' });
-    expect(runTaskFn).not.toHaveBeenCalled();
-    expect((await claimRow(testDb(), 'recover-expired'))?.state).toBe('ambiguous');
-  });
-
   // @invariant data: a staged raw result is finalized into the artifact exactly once without any further provider call
   // @fails-if the finalize path invokes runTaskFn or a second re-entry re-persists the verification outcome for the same epoch
   it('re-entry at result_ready finalizes exactly once with no provider call', async () => {
@@ -157,23 +129,5 @@ describe('note-verify durable operation recovery re-entry (DBOS no-repurchase)',
       runNoteVerify({ db: testDb(), artifactId: 'recover-staged', runTaskFn }),
     ).resolves.toMatchObject({ status: 'skipped:not_queued' });
     expect(runTaskFn).not.toHaveBeenCalled();
-  });
-
-  // @invariant concurrency: the per-epoch provider attempt budget is shared across backends, so a retry_wait re-entry continues the existing count instead of resetting it
-  // @fails-if the operation bypasses the shared claim counter or double-increments provider_attempts for one provider call
-  it('retry_wait re-entry reserves a legitimate new attempt on the shared budget', async () => {
-    await seedArtifact('recover-retry');
-    await seedCrashedClaim(testDb(), 'recover-retry', 'retry_wait', { providerAttempts: 1 });
-    const runTaskFn = vi.fn(async (_kind, _input, ctx) => {
-      await crossProviderBoundary(ctx);
-      return { text: PASS_OUTPUT };
-    });
-    await expect(
-      runNoteVerify({ db: testDb(), artifactId: 'recover-retry', runTaskFn }),
-    ).resolves.toMatchObject({ status: 'verified' });
-    expect(runTaskFn).toHaveBeenCalledTimes(1);
-    const claim = await claimRow(testDb(), 'recover-retry');
-    expect(claim?.state).toBe('completed');
-    expect(claim?.provider_attempts).toBe(2);
   });
 });

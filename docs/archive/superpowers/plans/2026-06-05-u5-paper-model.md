@@ -390,7 +390,7 @@ This PR has DDL → migration smoke required; it builds a UI page → visual rin
 
 ## 11. Cross-统合修订记录 (2026-06-05)
 
-> 全局视角统合 + 否决权 pass，兼任 completeness critic。基于独立 opus critic 报告（`/tmp/u5-critic.md`，PASS-with-nits + 6 条升级条件）。本 agent **未盲信 critic**——抽查复核了 critic 全部 6 处 load-bearing 裁定的源代码（cause.ts:13-50 / review.ts:259-291 / events/queries.ts:276-288 / schema.ts:594-597 / wenyan profile.ts:105 / index.ts:130-135 / review-plan-tools.ts:710-760），**无一处 critic 错判**。另独立验证了 critic 未覆盖的全局一致性维度（U4 数据 / U6+U7 排队工作 / 全库 judge-event 惯例 / gate 时序 / migration 编号），发现并补入若干 planner 未明示的实施细节。
+> 全局视角统合 + 否决权 pass，兼任 completeness critic。基于独立 opus critic 报告（`/tmp/u5-critic.md`，PASS-with-nits + 6 条升级条件）。本 agent 抽查复核了 critic 全部 6 处 load-bearing 裁定的源代码（cause.ts:13-50 / review.ts:259-291 / events/queries.ts:276-288 / schema.ts:594-597 / wenyan profile.ts:105 / index.ts:130-135 / review-plan-tools.ts:710-760），6 处裁定全部与源码一致。另独立验证了 critic 未覆盖的全局一致性维度（U4 数据 / U6+U7 排队工作 / 全库 judge-event 惯例 / gate 时序 / migration 编号），发现并补入若干 planner 未明示的实施细节。
 
 ### 6 条升级条件落实（逐条）
 
@@ -406,7 +406,7 @@ This PR has DDL → migration smoke required; it builds a UI page → visual rin
 | B | 视觉环 finding：practice list chips 与答题页 section 标签渲染 knowledge id 原始值而非人类可读名 | **L-paper-core addendum**：单次 IN 查询 `knowledge.name`，additive 字段，不破坏既有契约。 | `GET /api/practice` → `PracticePaperItem.knowledge: Array<{id,name}>`；`GET /api/practice/[id]` → `PaperDetailSection.knowledge_focus_names: string[]`（均 fallback to id when node missing）。`resolveKnowledgeNames()` 共享 helper 导出自 `practice-read.ts`。archived_at 不过滤（历史卷仍需显示名）。 |
 | C | 视觉环 finding：答题页"你的作答"恒显示（未作答）、"参考答案"恒蒙板 | **L-paper-core addendum**：additive 字段，不破坏既有契约；reference_md 不放进 face（防答前泄题）。 | `slot_state.submission` 两个变体均加 `answer_md: string` + `answer_image_refs: string[]`（取该 slot newest frozen answer 行）。visible 变体加 `reference_md: string \| null`（来自 `question.reference_md`，同 outcome/score 同一可见性 gate）；buffered 变体结构上不含（与 outcome 同纪律，§4.9）。`referenceMap` 与 `questionMap` 并列在 step 4（同一 SELECT），无额外查询。4 条 DB 测试更新（tests 3/4/5 + 新增 test 9 face 无 reference_md 断言）。 |
 
-### 全局一致性检查（本 agent 独有职责，Planner/Critic 均未做）
+### 全局一致性检查（本 agent 独有职责）
 
 1. **与 U4 已落形态（兼容，自洽）**：抽查 `review-plan-tools.ts:710-760` 实证 `write_review_plan` 把 `sections` 写在 `tool_state.session_meta.sections`(line 747)、平铺 `question_ids`(741)，artifact insert 起于 724。plan §4.8 的 ToolStateT v2 promote = "top-level `sections?` optional + `session_meta` 副本保留 + `readPaperSections` 读时降级 shim" 与实际 blob 形态吻合；U4 旧数据前向兼容在修订后仍自洽（U4 行 `sections` 仅在 session_meta，top-level undefined 仍 parse）。**修正了 plan §4.8 的行号 drift**（740-757→740-751，sections 在 747）——cosmetic，避免误导 impl。
 2. **与 U6 排队工作（零路由冲突）**：抽查 AF spec `2026-06-04-agent-framework-design.md:450-540` Slice 4 = 三 chat surface（Active Teaching + SolveTutor + Copilot）**合并进 Copilot drawer surface**（mounted on app shell，`TodayCopilotDrawer.tsx`），"legacy routes run in parallel during the migration window"，**不新增一级页面路由、不改 practice nav 项**。U5 的 `/practice` 新一级路由 + 4-place nav sync 与 U6 drawer 收编**零路由冲突**。唯一弱耦合：若 U6 也编辑 nav-config.ts（收编 teaching 入口），两者同文件不同条目；U5 先行（YUK-203 序列），U6 rebase on U5 即可，属常规 chain-merge，非阻塞。
