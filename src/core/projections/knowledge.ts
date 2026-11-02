@@ -12,9 +12,9 @@ import {
 import { KnowledgeMutationProposalChange } from '../schema/proposal';
 import type { FoldEvent } from './fold-event';
 import {
+  UndecodableKnowledgeOperationError,
   createdTargetIds,
   decodeKnowledgeOperation,
-  UndecodableKnowledgeOperationError,
 } from './knowledge-operation';
 
 // Archive is its own propose path, outside the mutation union; validate its payload.
