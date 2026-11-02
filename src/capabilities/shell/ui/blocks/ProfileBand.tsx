@@ -10,14 +10,14 @@
 //  ④ 覆盖表述用「N/M 个知识点有证据」，不把聚合 evidenceCount 说成「N 题」。
 //
 // active goal id 由 /api/workbench/summary 的 active_goal 提供（TodayPage 传入）；卡片只在
-// active_goal 非 null 时挂载，故这里 goal 必非空。数据源 getPlacementProfile 是 live 端点，
+// active_goal 非 null 时挂载，故这里 goal 必非空。数据源 getPlacementProfile（路由经 TodayPage 注入）是 live 端点，
 // 与 placement probe 是否启用无关（PLACEMENT_PROBE_ENABLED dark-ship 不影响本读路径）。
 
 import { useQuery } from '@tanstack/react-query';
-import {
-  type PlacementProfile,
-  type ProfileKc,
-  usePlacementProfileClient,
+import type {
+  PlacementProfile,
+  PlacementProfileClient,
+  ProfileKc,
 } from '@/capabilities/onboarding/ui-public';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -139,14 +139,17 @@ function ProfileBandBody({
   );
 }
 
+export type PlacementProfileReader = PlacementProfileClient['getPlacementProfile'];
+
 export function ProfileBand({
   goal,
   navigate,
+  getPlacementProfile,
 }: {
   goal: { id: string; title: string };
   navigate: (to: string) => void;
+  getPlacementProfile: PlacementProfileReader;
 }) {
-  const { getPlacementProfile } = usePlacementProfileClient();
   const q = useQuery({
     queryKey: ['placement-profile', goal.id],
     queryFn: () => getPlacementProfile(goal.id),

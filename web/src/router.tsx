@@ -14,7 +14,12 @@ import {
 } from '@tanstack/react-router';
 import type { ComponentType } from 'react';
 import { useCallback } from 'react';
-import { loadAgentNotesPage } from '@/capabilities/agency/ui-public';
+import {
+  AgentNotesBoard,
+  LearningIntentComposer,
+  httpAgentNoteClient,
+  loadAgentNotesPage,
+} from '@/capabilities/agency/ui-public';
 import { loadRecordPage } from '@/capabilities/ingestion/ui-public';
 import { loadKnowledgeDetailPage, loadKnowledgePage } from '@/capabilities/knowledge/ui-public';
 import { loadNoteReaderPage, loadNotesPage } from '@/capabilities/notes/ui-public';
@@ -30,6 +35,10 @@ import {
   loadEventDetailPage,
 } from '@/capabilities/observability/ui-public';
 import {
+  CalibrationMaturityBadge,
+  ColdStart,
+  getCalibrationMaturity,
+  getPlacementProfile,
   loadOnboardRecordPage,
   loadPlacementPage,
   loadPlacementProfilePage,
@@ -76,6 +85,23 @@ function lazyNavigableRoute(loadPage: () => Promise<NavigablePage>) {
   });
 }
 
+/** Same as lazyNavigableRoute for pages whose other-capability parts the route supplies. */
+function lazyComposedRoute<P extends object>(
+  loadPage: () => Promise<ComponentType<P & { navigate: Navigate }>>,
+  parts: P,
+) {
+  return lazyRouteComponent(async () => {
+    const Page = await loadPage();
+
+    function ComposedRoute() {
+      const router = useRouter();
+      return <Page {...parts} navigate={(to) => router.history.push(to)} />;
+    }
+
+    return { default: ComposedRoute };
+  });
+}
+
 function RoutePending() {
   return (
     <main className="page route-pending" aria-busy="true">
@@ -117,7 +143,15 @@ const indexRoute = createRoute({
 });
 
 // M4-T6 (YUK-319/YUK-318) — 工作台 + 提议收件箱。
-const TodayRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadTodayPage);
+const TodayRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyComposedRoute(loadTodayPage, {
+      getAgentNoteBoard: httpAgentNoteClient.getAgentNoteBoard,
+      getPlacementProfile,
+      AgentNotesBoard,
+      LearningIntentComposer,
+      ColdStart,
+    });
 
 const todayRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -472,7 +506,12 @@ const noteReaderRoute = createRoute({
 // S13 (YUK-335)：owner override 设计 app.jsx:106「admin separate shell」——admin
 // 路由现照常套主 chrome（RootShell .app 壳），不为 admin 特判跳过 chrome
 //（见 docs/audit/2026-06-13-visual-gap.md §5 决策点③，owner 已拍板收编）。
-const CoachRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadCoachHub);
+const CoachRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyComposedRoute(loadCoachHub, {
+      readCalibration: getCalibrationMaturity,
+      CalibrationMaturityBadge,
+    });
 
 const coachRoute = createRoute({
   getParentRoute: () => rootRoute,
