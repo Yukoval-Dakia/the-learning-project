@@ -4,7 +4,7 @@ import {
   type SelectionOrchestratorDraftT,
 } from '@/core/schema/selection-orchestrator';
 import type { SubjectProfile } from '@/subjects/profile';
-import { parseTaskOutput } from './parse-output';
+import { parseTaskOutput } from '../../tasks/parse-output';
 
 // SelectionOrchestratorTask (ADR-0042 编排档2) — the LLM 主脑 over non-due
 // candidates: emits { weight≥0, role, arrangement?, reason } per candidate.

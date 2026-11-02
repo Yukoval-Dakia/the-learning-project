@@ -10,14 +10,15 @@
 // core; this module owns the async signal/LLM/sampler path.
 
 import type { Db, Tx } from '@/db/client';
-import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
-import { planNonDueSelection } from './non-due-selection-plan';
-import { applyL3LearningMixGuard, learningMixContextFromInputs } from './post-filter';
+import { type CollectedSignal, collectCandidateSignals } from '../../server/candidate-signals';
 import {
   DEFAULT_TEMPERATURE,
   MEM0_PRIOR_CAP,
   type SelectionPolicyConfig,
-} from './selection-constants';
+} from '../../server/selection-constants';
+import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from '../../server/task-runtime';
+import { planNonDueSelection } from './non-due-selection-plan';
+import { applyL3LearningMixGuard, learningMixContextFromInputs } from './post-filter';
 import {
   buildMemoryPriorAdvisoryBlock,
   buildSelectionOrchestratorTaskInputWithCandidates,
@@ -38,7 +39,6 @@ import {
   presentPracticePaper,
 } from './stream-item-presentation';
 import { readStreamSelectionCandidates } from './stream-selection-candidates';
-import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from './task-runtime';
 
 type DbLike = Db | Tx;
 
