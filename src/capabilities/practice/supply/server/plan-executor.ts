@@ -31,13 +31,13 @@ import type { Db } from '@/db/client';
 import { event, goal, knowledge, placement_starter_claim } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
+import { SupplyTraceV1, type SupplyTraceV1T } from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import {
   type StoreSourcedQuestionDeps,
   executeStoreSourcedQuestion,
 } from '../tools/store-sourced-question';
-import { SupplyTraceV1, type SupplyTraceV1T } from './evidence-demand';
 import { jyeooBudgetRemaining } from './jyeoo-budget';
 import {
   type JyeooCandidate,

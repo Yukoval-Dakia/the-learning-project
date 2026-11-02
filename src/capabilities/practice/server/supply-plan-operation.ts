@@ -33,7 +33,7 @@ import {
   checkSupplyPlanKnowledgeIds,
   checkSupplyPlanStructure,
   parseSupplyPlanOutput,
-} from './question-supply/supply-plan-gate';
+} from '../supply/public';
 
 // planner 只挂只读知识图谱面（下钻核实节点）；与 QUIZ_GEN_READ_TOOLS 同集但独立
 // 声明——共享 allowlist 矩阵扩张需显式决策（quiz_gen.ts 同款注释）。

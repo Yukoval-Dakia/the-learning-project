@@ -27,16 +27,19 @@ import { writeEvent } from '@/kernel/events';
 import { webSupplyDemandKey as key, lockWebSupplyDemand } from '@/kernel/locks/question-supply';
 import type { EventSubscriptionDelivery, EventSubscriptionOutcome } from '@/kernel/manifest';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
+import { SupplyTraceV1, type SupplyTraceV1T } from '@/kernel/supply-contracts';
 import { answerClassCompatible } from '@/subjects/question-kind';
+import {
+  type EnqueueVerifyFn,
+  dispatchPendingVerifyIntents,
+} from '../../server/verify-dispatch-outbox';
 import {
   dispatchSourceVerifyIntents,
   readCandidateSubmitReceipt,
   submitPlacementSupplyCandidate,
   submitQuestionTool,
 } from '../tools/submit-question';
-import { type EnqueueVerifyFn, dispatchPendingVerifyIntents } from '../verify-dispatch-outbox';
 import { enqueueSupplyExecuteJob } from './dispatcher';
-import { SupplyTraceV1, type SupplyTraceV1T } from './evidence-demand';
 import {
   PlacementStarterAdmissionError,
   assertPlacementAttemptFence,

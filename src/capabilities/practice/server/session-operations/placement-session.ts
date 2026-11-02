@@ -14,6 +14,12 @@ import { and, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { goal, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
+import {
+  dispatchPlacementStarterClaim,
+  materializePlacementStartersForGoal,
+  readPlacementStarterOutcomes,
+} from '../../supply/public';
 import {
   noItemField,
   placementNoItem,
@@ -29,10 +35,6 @@ import {
 import { resolveGoalPlacementScope, resolveNearbyPlacementScope } from '../placement-scope';
 import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../placement-select';
 import * as Placement from '../placement-session-lifecycle';
-import { dispatchPlacementStarterClaim } from '../question-supply/placement-starter';
-import { readPlacementStarterOutcomes } from '../question-supply/placement-starter-outcome-reader';
-import { materializePlacementStartersForGoal } from '../question-supply/placement-starter-store';
-import { lockPlacementSupplyScopes } from '../question-supply/placement-supply-lock';
 
 // ---------- start probe (POST /api/placement/start + /api/placement-sessions) ----------
 
@@ -201,7 +203,7 @@ export async function startPlacementProbe(
         // claim; and (b) the placement_starter_recovery job's background sweeper, which consumes
         // placement_starter_claim_recovery_idx / next_reconcile_at on a short cron and
         // re-drives the claim even if the learner never returns
-        // (src/capabilities/practice/server/placement-starter-recovery.ts). A stranded pending
+        // (src/capabilities/practice/supply/server/placement-starter-recovery.ts). A stranded pending
         // claim is HARMLESS in the meantime: it is exempt from
         // the placement_starter_claim_nonterminal_uq single-flight guard (round-2), so it blocks no
         // later revision. If re-dispatch collides with another revision's live paid flight, its

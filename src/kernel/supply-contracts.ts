@@ -1,6 +1,18 @@
 import { z } from 'zod';
 import { DifficultyEvidence, type DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
 
+/** Kernel-owned supply contracts (YUK-1686): question-bank/admission and supply both consume
+ * these shapes; neither owner may import the other's internals for them. */
+
+/** Bind of a published question to a live placement delivery attempt + its verification epoch. */
+export interface PlacementVerificationAuthority {
+  claim_id: string;
+  attempt_id: string;
+  question_id: string;
+  verification_authority_epoch: string;
+  fencing_token: string;
+}
+
 export const EVIDENCE_DEMAND_VERSION = 1 as const;
 export const SUPPLY_TRACE_VERSION = 1 as const;
 export const DEFAULT_SUPPLY_POLICY_VERSION = 'supply-v2-phase-a';

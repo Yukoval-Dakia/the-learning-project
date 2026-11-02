@@ -18,6 +18,8 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { getMasteryState } from '@/kernel/read-models/mastery-state';
 import type { PlacementNoItemSchema, PlacementUnresolvedItem } from '../api/placement-contracts';
+import type { PlacementStarterOutcome } from '../supply/public';
+import { readPlacementStarterOutcomes } from '../supply/public';
 import {
   ensurePlacementAssessment,
   placementAssessmentProgress,
@@ -32,8 +34,6 @@ import {
   capForPace,
   evaluatePlacementTermination,
 } from './placement-termination';
-import type { PlacementStarterOutcome } from './question-supply/placement-starter-outcome';
-import { readPlacementStarterOutcomes } from './question-supply/placement-starter-outcome-reader';
 
 /** Once-per-session marker for the first "no servable item" outcome. */
 export const PLACEMENT_NO_ITEM_ACTION = 'experimental:assessment_placement_no_item';

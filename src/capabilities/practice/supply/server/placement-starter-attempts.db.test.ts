@@ -8,6 +8,7 @@ import {
   placement_starter_cost_component,
   question,
 } from '@/db/schema';
+import { placementSchemaFailure } from '@/kernel/placement-starter-outcome';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import {
   PLACEMENT_ATTEMPT_LEASE_MS,
@@ -20,7 +21,6 @@ import {
   settleAuthorizedPaidCall,
   terminalizePlacementUnknownCost,
 } from './placement-starter-attempts';
-import { placementSchemaFailure } from './placement-starter-outcome';
 
 const CLAIM_ID = 'placement-starter-claim-test';
 const JOB_ID = 'job-test';

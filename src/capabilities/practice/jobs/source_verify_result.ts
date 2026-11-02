@@ -2,8 +2,8 @@
 // checks after the job has decided promotion.
 
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
-import type { VectorNearHold } from '../server/question-supply/ingest-dedup';
 import type { SolveCheckResult } from '../server/quiz/verify-framework';
+import type { VectorNearHold } from '../supply/public';
 import type { CheckOutcome } from './source_verify_prechecks';
 
 export function solveCheckToOutcome(result: SolveCheckResult): CheckOutcome {

@@ -222,23 +222,6 @@ export const agencyCapability = defineCapability({
             (m) => m.buildResearchMeetingNightlyHandler,
           ),
       },
-      // Agent-led 教研例会 director (shadow lane, dark-ship). The app-level pending-dedup
-      // TOCTOU must stay closed: the deterministic lane commits its proposals before the
-      // agent lane reads the pending inbox as its dedup base. That is a DAG hard edge, not
-      // a clock offset. queue:'agent' because ResearchMeetingDirectorTask is a multi-turn
-      // tool loop (EXPIRE_AGENT=7200s exceeds its own 300s wall-clock abort). Kill switch
-      // RESEARCH_MEETING_AGENT_ENABLED (default OFF) makes the handler a no-op while the
-      // node still succeeds.
-      {
-        name: 'research_meeting_agent_nightly',
-        dependsOn: ['research_meeting_nightly'],
-        eligibility: nightlyEligibility('reflection'),
-        queue: 'agent',
-        load: () =>
-          import('./jobs/research_meeting_agent_nightly').then(
-            (m) => m.buildResearchMeetingAgentNightlyHandler,
-          ),
-      },
     ],
   },
   // proposal kind 归属声明。learning_item / completion / relearn 的 accept applier 真身在

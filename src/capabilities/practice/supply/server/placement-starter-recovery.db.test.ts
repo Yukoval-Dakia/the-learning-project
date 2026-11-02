@@ -23,7 +23,7 @@ import {
   resolvePlacementStarterGoalAuthority,
   terminalizeLostPlacementDelivery,
 } from '@/kernel/placement';
-import { resetDb } from '../../../../tests/helpers/db';
+import { resetDb } from '../../../../../tests/helpers/db';
 import {
   PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,
   PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS,

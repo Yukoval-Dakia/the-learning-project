@@ -24,7 +24,7 @@ import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { answerClassCompatible } from '@/subjects/question-kind';
-import { canonicalQuestionContentHash } from '../quiz/content-fingerprint';
+import { canonicalQuestionContentHash } from '../../server/quiz/content-fingerprint';
 
 // 旧 sourcing.ts:109 同款常量；source_route / difficulty_evidence 的路由身份。
 export const SOURCING_WEB_ROUTE = 'sourcing_web' as const;

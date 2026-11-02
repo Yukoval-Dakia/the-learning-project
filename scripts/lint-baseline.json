@@ -12,7 +12,7 @@
       "warning": 2
     },
     "lint/a11y/useAriaPropsSupportedByRole": {
-      "warning": 10
+      "warning": 9
     },
     "lint/a11y/useSemanticElements": {
       "warning": 7
@@ -21,7 +21,7 @@
       "warning": 5
     },
     "lint/complexity/useOptionalChain": {
-      "warning": 26
+      "warning": 25
     },
     "lint/correctness/noUnsafeOptionalChaining": {
       "warning": 3

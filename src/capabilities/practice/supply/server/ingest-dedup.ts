@@ -8,6 +8,7 @@ import type { Db, Tx } from '@/db/client';
 import { embedCurrencyPredicate } from '@/db/embed-currency';
 import { question } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
+import { lockIngestSource } from '@/kernel/locks/question-supply';
 import { JYEOO_SOURCE_HOST } from './jyeoo-supply-config';
 
 declare const HttpSourceRefBrand: unique symbol;
@@ -203,7 +204,7 @@ export async function findVectorNearDuplicate(
 }
 
 async function lockHttpSourceRef(tx: Tx, source: HttpSourceRef): Promise<void> {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`ingest-source:${source}`}))`);
+  await lockIngestSource(tx, source);
 }
 
 /**

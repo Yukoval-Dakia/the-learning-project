@@ -2,11 +2,11 @@ import { and, eq, inArray } from 'drizzle-orm';
 import type { Tx } from '@/db/client';
 import { learning_session, placement_starter_claim } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { placementStarterIdentity } from './placement-starter-identity';
 import {
   type PlacementStarterOutcome,
   readPlacementStarterFailure,
-} from './placement-starter-outcome';
+} from '@/kernel/placement-starter-outcome';
+import { placementStarterIdentity } from './placement-starter-identity';
 import { resolvePlacementStarterGoalAuthority } from './placement-starter-store';
 
 /** Call in a read-only repeatable-read transaction so goal and claim binding share a snapshot. */

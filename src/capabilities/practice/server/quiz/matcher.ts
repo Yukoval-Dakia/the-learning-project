@@ -13,27 +13,28 @@ import { knowledge } from '@/db/schema';
 // ORDER BY; a query vector excludes NULL embeddings, while scalar ordering keeps them.
 // Truncation happens here, so poolFetch receives no limit.
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
-import { type EmbedProviderAttemptOptions, embedText } from '@/server/ai/embed';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { resolveSubjectProfile } from '@/subjects/profile';
-import { answerClassCompatible } from '@/subjects/question-kind';
-import { type DispatchResult, dispatchSupplyTarget } from '../question-supply/dispatcher';
 import {
   type EvidenceDemandV1T,
   buildCoverageEvidenceDemand,
   evidenceDemandToTargetContext,
   parseEvidenceDemand,
-} from '../question-supply/evidence-demand';
+} from '@/kernel/supply-contracts';
+import { type EmbedProviderAttemptOptions, embedText } from '@/server/ai/embed';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { resolveSubjectProfile } from '@/subjects/profile';
+import { answerClassCompatible } from '@/subjects/question-kind';
 import {
   type DifficultyBand,
+  type DispatchResult,
   type QuestionSupplyTarget,
   type SupplyGapKind,
   type SupplyRoute,
   acquisitionTierForQuestion,
+  dispatchSupplyTarget,
   seedGenerationMethod,
   seedRoutePreference,
   targetFingerprint,
-} from '../question-supply/target-discovery';
+} from '../../supply/public';
 
 import { MATCHER_ANSWER_CLASS_FILTER } from './matcher-flags';
 import { type PoolRow, poolFetch } from './pool-fetch';

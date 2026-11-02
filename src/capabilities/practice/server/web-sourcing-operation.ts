@@ -35,10 +35,7 @@ import {
   toMcpAllowedToolName,
 } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
-import type {
-  RunWebFetchCandidatesDeps,
-  RunWebSourcingAgentFn,
-} from './question-supply/web-candidates';
+import type { RunWebFetchCandidatesDeps, RunWebSourcingAgentFn } from '../supply/public';
 
 // SourcingTask 挂载的 read-only domain-tool 面——从 jobs/sourcing.ts SOURCING_READ_TOOLS
 // 逐字拷贝（退役 monolith 不许从 tool 层 import）；与 planner 读面同集但独立
