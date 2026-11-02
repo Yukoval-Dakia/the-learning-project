@@ -351,6 +351,15 @@ export async function dispatchSupplyTarget(
         reason: target.reason,
       };
     } else if (
+      // YUK-1664 S3 — the 7-day fingerprint cooldown throttles only dispatches
+      // without a demand identity. A demand-identified dispatch (the target's
+      // evidence demand_id reaches the supply_execute executor, which re-reads
+      // the demand ledger and lets its claimed routes decide) follows DEMAND
+      // STATE, not the window: a blocked demand falls back to its next route,
+      // an exhausted one cheaply no-ops on resume. quiz_gen is NOT demand-governed
+      // (its job payload is the whole contract), so it keeps the window, and so do
+      // context-less/legacy callers and pre-#2216 dispatch evidence.
+      !(autoRoute === 'sourcing_web' && target.context?.demand_id != null) &&
       cooldownDays > 0 &&
       (await recentDispatchExists(db, target.fingerprint, cooldownDays))
     ) {
