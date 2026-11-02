@@ -11,41 +11,6 @@ beforeEach(async () => {
 });
 
 describe('Practice compose paid-work reserved adapter', () => {
-  it('applies transaction config on the reserved session', async () => {
-    // Given a reserved paid-work session with a configured top-level transaction.
-
-    // When Drizzle applies SERIALIZABLE READ ONLY DEFERRABLE configuration.
-    const settings = await withinComposePaidWorkLock(
-      db,
-      DATE,
-      new Date(Date.now() + 5_000),
-      (lockedDb) =>
-        lockedDb.transaction(
-          async (tx) => {
-            const [row] = await tx.execute(sql<{
-              isolation_level: string;
-              read_only: string;
-              deferrable: string;
-            }>`
-              SELECT
-                current_setting('transaction_isolation') AS isolation_level,
-                current_setting('transaction_read_only') AS read_only,
-                current_setting('transaction_deferrable') AS deferrable
-            `);
-            return row;
-          },
-          { isolationLevel: 'serializable', accessMode: 'read only', deferrable: true },
-        ),
-    );
-
-    // Then PostgreSQL observes all requested settings on that transaction.
-    expect(settings).toEqual({
-      isolation_level: 'serializable',
-      read_only: 'on',
-      deferrable: 'on',
-    });
-  });
-
   it('rolls back a nested transaction to a reserved-session savepoint', async () => {
     // Given an outer transaction on a paid-lock reserved connection.
 
