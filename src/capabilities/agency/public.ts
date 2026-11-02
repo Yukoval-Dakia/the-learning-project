@@ -1,6 +1,7 @@
 // Stable server contract for consumers outside the agency capability.
 
 export { AgentNotesQuerySchema } from './api/contracts';
+export { submitConjectureProbeAnswer } from './api/probe-answer';
 export {
   type PredictionAccountability,
   loadPredictionAccountabilityByKey,
@@ -27,7 +28,6 @@ export type {
   InduceConjectureResult,
 } from './server/conjecture/induce';
 export { induceConjecture } from './server/conjecture/induce';
-export { submitConjectureProbeAnswer } from './server/conjecture/probe-answer-operation';
 // Shared probe lifecycle exercised by shell integration consumers.
 export {
   answerProbe,

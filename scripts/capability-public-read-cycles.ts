@@ -36,7 +36,6 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     files: [
       'src/capabilities/agency/server/intervention/reconcile.ts',
       'src/capabilities/agency/server/intervention/store.ts',
-      'src/capabilities/agency/server/conjecture/probe-answer-operation.ts',
     ],
     symbols: ['materializeInterventionDiagnostics', 'retireInterventionDiagnosticQuestion'],
     dto: 'intervention diagnostic materialization commands',
@@ -46,7 +45,6 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     commandFiles: [
       'src/capabilities/agency/server/intervention/reconcile.ts',
       'src/capabilities/agency/server/intervention/store.ts',
-      'src/capabilities/agency/server/conjecture/probe-answer-operation.ts',
     ],
   },
   {
