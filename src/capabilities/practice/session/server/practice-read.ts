@@ -1,0 +1,449 @@
+// practice read layer.
+// Two concerns:
+// 1. Derived judgement visibility : 可见 = visible_to_user !== false ||
+// session completed. NEVER mutated, no reveal event — visibility is purely
+// derived at read time. The Coach read NEVER gates on visible_to_user.
+// 2. The GET /api/papers aggregation (one query per concern): paper artifact + its
+// linked review session + derived pos / right-wrong / gen / source.
+
+import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
+import { PAPER_INTENT_SOURCES } from '@/capabilities/practice/session/server/paper-intent-sources';
+import {
+  countPaperSlots,
+  readPaperSections,
+} from '@/capabilities/practice/session/server/paper-sections';
+import { Artifact } from '@/core/schema/index';
+import type { Db, Tx } from '@/db/client';
+import { artifact, event, knowledge, learning_session } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
+import {
+  resolveVerdictsForAttempts,
+  resolveVerdictsForNativeAttempts,
+} from '@/kernel/read-models/assessment-verdict';
+import { PaperAssessmentBinding, paperBindingId } from './assessment/paper-issuance';
+
+// ────────────────────────────────────────────────────────────────────────────
+// Shared knowledge name resolver (used by practice-read + paper-detail)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve human-readable names for a set of knowledge ids with one IN query.
+ * archived_at is intentionally NOT filtered — historical papers may reference
+ * archived nodes; the name should still display rather than falling back to id.
+ * Returns a Map<id, name>; ids not found in the table map to themselves (id as
+ * fallback) so callers never surface raw unknown ids to the UI.
+ */
+export async function resolveKnowledgeNames(
+  db: Db | Tx,
+  ids: string[],
+): Promise<Map<string, string>> {
+  const nameMap = new Map<string, string>();
+  if (ids.length === 0) return nameMap;
+  const rows = await db
+    .select({ id: knowledge.id, name: knowledge.name })
+    .from(knowledge)
+    .where(inArray(knowledge.id, ids));
+  for (const r of rows) nameMap.set(r.id, r.name);
+  // Fallback: ids missing from the table resolve to themselves.
+  for (const id of ids) {
+    if (!nameMap.has(id)) nameMap.set(id, id);
+  }
+  return nameMap;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Derived visibility
+// ────────────────────────────────────────────────────────────────────────────
+
+export type JudgeVisibilityInput = {
+  /** the judge event payload's visible_to_user (undefined = visible default) */
+  visibleToUser: boolean | undefined;
+  /** the running session's status */
+  sessionStatus: string | null | undefined;
+};
+
+/**
+ * USER-facing visibility. A buffered judgement (visible_to_user:false)
+ * stays hidden until the session is `completed`. Abandoned does NOT reveal
+ * (the user walked away — only `completed` is in the reveal disjunct). A
+ * reopened paper is `started` (abandoned→started only,), so the disjunct is
+ * false and hidden stays hidden.
+ */
+export function isJudgementVisibleToUser(input: JudgeVisibilityInput): boolean {
+  return input.visibleToUser !== false || input.sessionStatus === 'completed';
+}
+
+// The Coach read never gates on visible_to_user — it always sees every
+// judgement (the gate is user-facing only). Exposed as a named no-op predicate
+// for call-site clarity / symmetry with isJudgementVisibleToUser.
+export function isJudgementVisibleToCoach(): boolean {
+  return true;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// GET /api/papers aggregation
+// ────────────────────────────────────────────────────────────────────────────
+
+// 往日 source-filter provenance mapping (critic #4). The UI tab filter is a pure
+// client-side predicate over `source` (review_plan → Coach 排期, etc.).
+export type PracticeSource = 'coach' | 'custom' | 'note' | 'other';
+
+// (Strategy D · S1): exported so the source-mapping is unit-testable
+// without a DB round-trip (Cross-统合 F-11). Internal callers (getPracticeList)
+// use it unchanged.
+export function intentSourceToPracticeSource(intentSource: string): PracticeSource {
+  switch (intentSource) {
+    case 'review_plan':
+      return 'coach';
+    case 'quiz_gen':
+      return 'custom';
+    case 'embedded_check':
+      return 'note';
+    // an imported paper (ingest→practice bridge) maps to the existing
+    // 'other' bucket — it still appears in the 今日/往日 main list (list inclusion
+    // is decided ONLY by the inArray whitelist below, not by this source value;
+    // Cross-统合 §C1). A dedicated 'ingested' PracticeSource + source tab is
+    // phase-deferred to the OC/UI wave (§Step 1; not built here — no tab UI yet).
+    case 'ingestion_paper':
+      return 'other';
+    default:
+      return 'other';
+  }
+}
+
+export interface PracticePaperItem {
+  artifact_id: string;
+  title: string;
+  /** the paper provenance, mapped for the 往日 source-filter tabs */
+  source: PracticeSource;
+  intent_source: string;
+  /** artifact generation_status — drives the 生成中 pill (NOT a pg-boss poll) */
+  generation_status: string;
+  knowledge_ids: string[];
+  /**
+   * Human-readable knowledge node name pairs for the practice list chips.
+   * One entry per id in knowledge_ids; name falls back to id when the node
+   * is missing or archived (archived_at not filtered — historical papers
+   * should still display the name).
+   */
+  knowledge: Array<{ id: string; name: string }>;
+  /** total answerable slots in the paper (DISTINCT assignment slots) */
+  total_slots: number;
+  /** the linked review session, if one has been started */
+  session: {
+    id: string;
+    status: string;
+    /** answered-so-far = COUNT(DISTINCT slot) WHERE submitted (no double-count on re-submit) */
+    pos: number;
+    /** right/wrong distribution from the latest judge per slot */
+    right: number;
+    wrong: number;
+  } | null;
+  created_at: Date;
+}
+
+export interface PracticeListResult {
+  papers: PracticePaperItem[];
+  next_cursor: string | null;
+}
+
+interface PracticeListOptions {
+  limit?: number;
+  cursor?: string;
+}
+
+interface PaperCursor {
+  createdAt: Date;
+  id: string;
+}
+
+function encodePaperCursor(row: typeof artifact.$inferSelect): string {
+  return Buffer.from(
+    JSON.stringify({ created_at: row.created_at.toISOString(), id: row.id }),
+  ).toString('base64url');
+}
+
+function decodePaperCursor(cursor: string): PaperCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      created_at?: unknown;
+      id?: unknown;
+    };
+    if (typeof parsed.created_at !== 'string' || typeof parsed.id !== 'string') {
+      throw new Error('missing created_at or id');
+    }
+    const createdAt = new Date(parsed.created_at);
+    if (Number.isNaN(createdAt.getTime())) throw new Error('invalid created_at');
+    return { createdAt, id: parsed.id };
+  } catch (err) {
+    throw new ApiError('invalid_cursor', `invalid paper cursor: ${(err as Error).message}`, 400);
+  }
+}
+
+/**
+ * Aggregate the practice list: every paper artifact (tool_quiz with a paper
+ * intent_source) + its linked review session + derived pos / right-wrong / gen.
+ * One round-trip per concern (papers, sessions, answered-slot counts, judge
+ * outcomes) — no N+1 per-paper fetch leaked to the browser (Q8).
+ *
+ * The UI splits 今日 / 往日 and applies the source-tab filter client-side over
+ * the returned `source` field (Map §C2 / critic #4).
+ */
+export async function getPracticeList(
+  db: Db | Tx,
+  options: PracticeListOptions = {},
+): Promise<PracticeListResult> {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+  const cursor = options.cursor ? decodePaperCursor(options.cursor) : null;
+  // 1) Paper artifacts (the widened intent_source provenances).
+  // (Strategy D · S1) — `ingestion_paper` is the fourth source
+  // (ingest→practice bridge); must stay in lock-step with the start-session
+  // whitelist in paper-intent-sources.ts (§Step 1).
+  const paperWhere = and(
+    eq(artifact.type, 'tool_quiz'),
+    inArray(artifact.intent_source, [...PAPER_INTENT_SOURCES]),
+    cursor
+      ? (or(
+          lt(artifact.created_at, cursor.createdAt),
+          and(eq(artifact.created_at, cursor.createdAt), lt(artifact.id, cursor.id)),
+        ) as NonNullable<ReturnType<typeof or>>)
+      : undefined,
+  );
+  const fetchedPaperRows = await db
+    .select()
+    .from(artifact)
+    .where(paperWhere)
+    .orderBy(desc(artifact.created_at), desc(artifact.id))
+    .limit(limit + 1);
+
+  const hasMore = fetchedPaperRows.length > limit;
+  const paperRows = hasMore ? fetchedPaperRows.slice(0, limit) : fetchedPaperRows;
+  const lastPaper = paperRows.at(-1);
+  const nextCursor = hasMore && lastPaper ? encodePaperCursor(lastPaper) : null;
+  if (paperRows.length === 0) return { papers: [], next_cursor: null };
+  const paperIds = paperRows.map((r) => r.id);
+
+  // 2) Linked review sessions (learning_session.artifact_id → paper). Take the
+  // newest session per paper (a paper can be reopened / restarted).
+  const sessionRows = await db
+    .select({
+      id: learning_session.id,
+      status: learning_session.status,
+      artifact_id: learning_session.artifact_id,
+      created_at: learning_session.created_at,
+      started_at: learning_session.started_at,
+    })
+    .from(learning_session)
+    .where(
+      and(eq(learning_session.type, 'review'), inArray(learning_session.artifact_id, paperIds)),
+    )
+    .orderBy(desc(learning_session.created_at));
+
+  const sessionByPaper = new Map<string, { id: string; status: string }>();
+  // Keyed by session_id for the right/wrong visibility gate lookup (r.session_id
+  // from the rwRows query is a session id, not an artifact id).
+  const sessionStatusById = new Map<string, string>();
+  for (const s of sessionRows) {
+    if (!s.artifact_id) continue;
+    if (!sessionByPaper.has(s.artifact_id)) {
+      sessionByPaper.set(s.artifact_id, { id: s.id, status: s.status });
+      sessionStatusById.set(s.id, s.status);
+    }
+  }
+  const sessionIds = [...sessionByPaper.values()].map((s) => s.id);
+
+  const bindingIds = sessionRows
+    .filter((row) => sessionIds.includes(row.id))
+    .map((row) => paperBindingId(row.id, row.started_at));
+  const bindingRows = bindingIds.length
+    ? await db.select().from(event).where(inArray(event.id, bindingIds))
+    : [];
+  const nativeBindings = new Map(
+    bindingRows.map((row) => {
+      const binding = PaperAssessmentBinding.parse(row.payload);
+      return [binding.session_id, binding] as const;
+    }),
+  );
+  const nativeAnchors = sessionIds.length
+    ? await db
+        .select()
+        .from(event)
+        .where(
+          and(
+            inArray(event.session_id, sessionIds),
+            eq(event.action, 'experimental:assessment_attempt'),
+          ),
+        )
+    : [];
+  const currentNativeAnchors = nativeAnchors.filter((row) =>
+    nativeBindings
+      .get(row.session_id ?? '')
+      ?.slots.some((slot) => slot.issuance_id === row.payload.issuance_id),
+  );
+  const currentNativeIds = new Set(currentNativeAnchors.map((row) => row.id));
+  const nativeIds = new Set(nativeAnchors.map((row) => row.id));
+  const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, currentNativeAnchors);
+
+  // 3) Answered-slot counts per session: COUNT(DISTINCT slot) WHERE submitted
+  // DISTINCT so append-only re-submits don't double-count.
+  const posBySession = new Map<string, number>();
+  if (sessionIds.length > 0) {
+    const posRows = await db.execute<{ session_id: string; pos: number }>(sql`
+      SELECT session_id, COUNT(DISTINCT (question_id, COALESCE(part_ref, '')))::int AS pos
+      FROM answer
+      WHERE session_id IN (${sql.join(sessionIds, sql`, `)}) AND submitted_at IS NOT NULL
+      GROUP BY session_id
+    `);
+    for (const r of posRows) {
+      posBySession.set(r.session_id, r.pos);
+    }
+  }
+
+  for (const sessionId of nativeBindings.keys()) {
+    posBySession.set(
+      sessionId,
+      currentNativeAnchors.filter((row) => row.session_id === sessionId).length,
+    );
+  }
+
+  // 4) Right/wrong per session, distinct by slot. We use the answer table as the
+  // single truth source — same (session_id, question_id, COALESCE(part_ref,''))
+  // slot key used by pos (step 3), so composite question parts are never
+  // collapsed (Option B fix — the event.payload has no part_ref field; the
+  // answer table's part_ref column is the canonical per-slot identifier).
+  // Take the NEWEST frozen row per slot (MAX(submitted_at)).
+  // Round-4 fix #2: use the JUDGE event's coarse_outcome instead of the
+  // attempt event's outcome. ：verdict 走 effective 轨（链解析后仍
+  // live 的最新 judge）——rejudge/attritube 新判 + supersede 后旧判不再回魂，
+  // 被 retract/mark_wrong 的判不计入右错桶（回落 attempt outcome 语义）。
+  // Q9: correct/partial → right, anything else → wrong (deliberate —
+  // partial counts as right, see comment in previous rounds).
+  const rightWrongBySession = new Map<string, { right: number; wrong: number }>();
+  if (sessionIds.length > 0) {
+    // Round-6 fix #2 (CR 3359820526): also fetch visible_to_user from the
+    // effective judge. For sessions not yet 'completed', slots with
+    // visible_to_user:false are excluded from the right/wrong count — the summary
+    // must not let the caller infer the buffered verdict. For completed sessions
+    // all slots are counted (the visibility gate opens on completion per).
+    const rwRows = await db.execute<{
+      session_id: string;
+      attempt_event_id: string;
+      attempt_outcome: string | null;
+      unsupported_judge: string | null;
+    }>(sql`
+      SELECT
+        a.session_id,
+        a.event_id AS attempt_event_id,
+        e.outcome AS attempt_outcome,
+        e.payload->>'unsupported_judge' AS unsupported_judge
+      FROM answer a
+      JOIN event e ON e.id = a.event_id
+      WHERE a.session_id IN (${sql.join(sessionIds, sql`, `)})
+        AND a.submitted_at IS NOT NULL
+        AND a.submitted_at = (
+          SELECT MAX(a2.submitted_at)
+          FROM answer a2
+          WHERE a2.session_id = a.session_id
+            AND a2.question_id = a.question_id
+            AND COALESCE(a2.part_ref, '') = COALESCE(a.part_ref, '')
+            AND a2.submitted_at IS NOT NULL
+        )
+    `);
+    // 一次性批量解析本页全部 slot 的 effective 裁决（固定 3 个 round-trip）。
+    const verdicts = await resolveVerdictsForAttempts(
+      db,
+      rwRows.map((r) => r.attempt_event_id).filter((id): id is string => typeof id === 'string'),
+    );
+    for (const r of rwRows) {
+      if (!r.session_id) continue;
+      if (nativeBindings.has(r.session_id) && !currentNativeIds.has(r.attempt_event_id)) continue;
+      if (nativeIds.has(r.attempt_event_id)) {
+        if (!currentNativeIds.has(r.attempt_event_id)) continue;
+        const capture = currentNativeAnchors.find((row) => row.id === r.attempt_event_id);
+        const slot = nativeBindings
+          .get(r.session_id)
+          ?.slots.find((slot) => slot.issuance_id === capture?.payload.issuance_id);
+        if (
+          !slot ||
+          (slot.feedback_policy === 'judge_now_show_later' &&
+            sessionStatusById.get(r.session_id) !== 'completed')
+        )
+          continue;
+        const outcome = nativeVerdicts.get(r.attempt_event_id)?.effective?.verdict.verdict;
+        const bucket = rightWrongBySession.get(r.session_id) ?? { right: 0, wrong: 0 };
+        if (outcome === 'correct' || outcome === 'partial') bucket.right++;
+        else if (outcome === 'incorrect') bucket.wrong++;
+        rightWrongBySession.set(r.session_id, bucket);
+        continue;
+      }
+      // an UN-JUDGED attempt (photo-only on a
+      // text-only route — `unsupported_judge='true'`, no judge event) is neither
+      // right nor wrong; it is "未判分". Skip it entirely so it never pollutes the
+      // right/wrong summary. Round-3 wrote this attempt with outcome='failure' and
+      // no judge event, so the coarse_outcome fallback below counted it as wrong.
+      if (r.unsupported_judge === 'true') continue;
+      const effective = r.attempt_event_id
+        ? verdicts.get(r.attempt_event_id)?.effective
+        : undefined;
+      // Visibility gate: if the effective judge is buffered (visible_to_user=false)
+      // and the session is not yet completed, skip this slot entirely — do not
+      // count it as right or wrong. The summary must not leak the verdict.
+      const sessionStatus = sessionStatusById.get(r.session_id);
+      const judgeBuffered = effective?.verdict.visible_to_user === false;
+      if (judgeBuffered && sessionStatus !== 'completed') continue;
+      const bucket = rightWrongBySession.get(r.session_id) ?? { right: 0, wrong: 0 };
+      // Prefer effective judge coarse_outcome; fall back to attempt outcome mapping.
+      // attempt 'success' → treated as 'correct'; 'partial' → right; else wrong.
+      const verdict =
+        effective?.verdict.coarse_outcome ??
+        (r.attempt_outcome === 'success' ? 'correct' : (r.attempt_outcome ?? 'incorrect'));
+      if (verdict === 'correct' || verdict === 'partial') {
+        // Partial counts as right (deliberate: meaningful progress).
+        bucket.right += 1;
+      } else {
+        bucket.wrong += 1;
+      }
+      rightWrongBySession.set(r.session_id, bucket);
+    }
+  }
+
+  // 5) Knowledge name resolution — one IN query across all paper knowledge_ids.
+  // archived_at intentionally not filtered (historical papers still need names).
+  const allKnowledgeIds = [...new Set(paperRows.flatMap((r) => r.knowledge_ids ?? []))];
+  const knowledgeNameMap = await resolveKnowledgeNames(db, allKnowledgeIds);
+
+  // 6) Assemble. Total slots = the paper's distinct assignment slots (parsed via
+  // readPaperSections, covering both U4 session_meta + U5 top-level plans).
+  const papers: PracticePaperItem[] = paperRows.map((row) => {
+    const parsed = Artifact.safeParse(row);
+    const toolState = parsed.success ? parsed.data.tool_state : null;
+    const totalSlots =
+      nativeBindings.get(sessionByPaper.get(row.id)?.id ?? '')?.slots.length ??
+      countPaperSlots(toolState);
+
+    const session = sessionByPaper.get(row.id) ?? null;
+    const kIds = row.knowledge_ids ?? [];
+    return {
+      artifact_id: row.id,
+      title: row.title,
+      source: intentSourceToPracticeSource(row.intent_source),
+      intent_source: row.intent_source,
+      generation_status: row.generation_status,
+      knowledge_ids: kIds,
+      knowledge: kIds.map((id) => ({ id, name: knowledgeNameMap.get(id) ?? id })),
+      total_slots: totalSlots,
+      session: session
+        ? {
+            id: session.id,
+            status: session.status,
+            pos: posBySession.get(session.id) ?? 0,
+            right: rightWrongBySession.get(session.id)?.right ?? 0,
+            wrong: rightWrongBySession.get(session.id)?.wrong ?? 0,
+          }
+        : null,
+      created_at: row.created_at,
+    };
+  });
+
+  return { papers, next_cursor: nextCursor };
+}

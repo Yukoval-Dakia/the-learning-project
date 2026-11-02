@@ -204,7 +204,6 @@ export {
 } from './server/judge';
 export { withdrawCapturedOccurrence } from './server/judge/evaluate-submission';
 export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
-export { submitPaperSlot } from './server/paper-submit';
 
 export type {
   EnqueueVariantVerifyFn,
@@ -352,7 +351,6 @@ export const transitionPlacementSession: typeof import('./server/session-operati
 export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
 export { CreatePlacementSessionBodySchema } from './api/placement-contracts';
 export { enablePracticeDraft, forceEnablePracticeDraft } from './server/draft-promotion-operations';
-export { readPaperList } from './server/papers-list';
 export { readQuestionDetail } from './server/question-detail-read';
 export { readPracticeQuestionList } from './server/question-list-read';
 export {
@@ -372,8 +370,6 @@ export { createPracticeAppeal } from './server/appeal-operation';
 export { revealFrozenStudyReference } from './server/assessment/study-context';
 export { readPracticeDraftList } from './server/draft-list-read';
 export { readDraftReviewDetail } from './server/draft-review';
-export { getPaperDetail } from './server/paper-detail';
-export { createPracticePaperSubmission } from './server/paper-submission-operation';
 export {
   PlacementOrphanStateError,
   abandonOrphanPlacementTx,
@@ -390,10 +386,16 @@ export const refillActiveLearningPools: typeof import('./server/question-supply/
 export const runQuestionSupplyNightly: typeof import('./jobs/question_supply_nightly').runQuestionSupplyNightly =
   async (...args) =>
     (await import('./jobs/question_supply_nightly')).runQuestionSupplyNightly(...args);
-export { abandonOrphanReviewSession } from './server/review-session-lifecycle';
-export {
-  createReviewSession,
-  transitionReviewSession,
-} from './server/session-operations/review-session';
+export const recoverHeldServingRechecks: typeof import('./server/serving-actions').recoverHeldServingRechecks =
+  async (...args) => (await import('./server/serving-actions')).recoverHeldServingRechecks(...args);
 export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';
-export { readWorksheetExport } from './server/worksheet/export-store';
+export {
+  abandonOrphanReviewSession,
+  createPracticePaperSubmission,
+  createReviewSession,
+  getPaperDetail,
+  readPaperList,
+  readWorksheetExport,
+  submitPaperSlot,
+  transitionReviewSession,
+} from './session/public';

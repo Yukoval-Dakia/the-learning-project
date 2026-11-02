@@ -25,7 +25,7 @@ import {
   readAutomaticIssuanceServingDecisions,
   readAutomaticallyServableQuestionIds,
 } from '@/kernel/records/assessment-issuance';
-import { countPaperSlots } from '../../server/paper-sections';
+import { countPaperSlots } from '../../session/public';
 import { knowledgeLabels } from './knowledge-labels';
 import { readQuestionPace } from './question-pace';
 import { type DailyPracticePace, estimateStreamItemMinutes } from './stream-budget';

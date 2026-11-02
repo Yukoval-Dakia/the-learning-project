@@ -4,7 +4,7 @@
 
 API（`server/index.ts`）与独立 worker（`scripts/worker.ts`）都先调用 `server/env.ts` 的 `loadEnv()`：按 `.env.local` → `.env` 顺序逐行读取，只填 `process.env` 中尚未设置的键，真实环境/compose 注入的值优先，引号值与行尾注释会被剥离（`server/env.ts`）。之后 `src/server/config/env.ts` 用 `@t3-oss/env-core` + `zod` 校验 server schema，`runtimeEnv` 即 `process.env`，空串按未设置处理；`DATABASE_URL` 是 schema 唯一必填项，`INTERNAL_TOKEN` 由 API 在监听前单独校验（`src/server/config/env.ts`）。
 
-compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared` 只接收 `TUNNEL_TOKEN`（`docker-compose.yml`）。本机 `pnpm dev:local` 也先加载 `.env.local` / `.env` 再传给三个子进程，并用 `POSTGRES_*`（缺省 `loom`）拼出 `postgres://…@127.0.0.1:5433/…`（`scripts/dev-local.ts`；`scripts/local-db-env.ts`）。`.env.example` 只覆盖 schema 130 个键中的 41 个；仓库里唯一的 `VITE_*` 是 `src/vite-env.d.ts` 的 `VITE_API_BASE` 类型声明、没有消费点，因此不设 client schema；Vitest 下 `skipValidation` 跳过启动校验（`src/vite-env.d.ts`；`src/server/config/env.ts`）。
+compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared` 只接收 `TUNNEL_TOKEN`（`docker-compose.yml`）。本机 `pnpm dev:local` 也先加载 `.env.local` / `.env` 再传给两个子进程，但 `DATABASE_URL` 固定指向 dev 专用 Postgres（`postgres://loom_dev:…@127.0.0.1:5434/loom_dev`，忽略 `.env` 的 `DATABASE_URL` / `POSTGRES_*`；`scripts/dev-local.ts`；`docker-compose.dev.yml`）。`.env.example` 只覆盖 schema 130 个键中的 41 个；仓库里唯一的 `VITE_*` 是 `src/vite-env.d.ts` 的 `VITE_API_BASE` 类型声明、没有消费点，因此不设 client schema；Vitest 下 `skipValidation` 跳过启动校验（`src/vite-env.d.ts`；`src/server/config/env.ts`）。
 
 ## 环境变量
 
@@ -16,14 +16,16 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | --- | --- | --- | --- |
 | `DATABASE_URL` | app、worker、脚本 | 必填；缺失时 `src/db/client.ts` 启动即抛错 | `src/server/config/env.ts`；`src/db/client.ts` |
 | `API_PORT` | app | `8787`；非正整数抛错 | `src/server/config/env.ts` |
+| `DEV_PORT` | `pnpm dev:local` | `8788`；作为 `API_PORT` 传给 dev 的 API 进程，并把 dev worker 的 `WORKSHEET_RENDER_APP_ORIGIN` 指到同一端口。避开 TEST app 容器占用的 :8787 | `scripts/dev-local.ts` |
 | `RW_WORKER` | app | `1` 时同进程启动 pg-boss worker | `server/index.ts` |
-| `RW_FRONTDOOR` | app | `1` 时启用 Start 前门（需要 `dist/start`）；未设时 app 只服务 Hono API | `server/index.ts` |
+| `RW_FRONTDOOR` | app | `1` 时启用 Start 前门（需要 `dist/start`）；`dev` 仅 `dev:local` 使用，经 API 进程内的 Vite dev server 提供同一前门（HMR，不需要 `dist/start`）；未设时 app 只服务 Hono API | `server/index.ts`；`server/dev-frontdoor.ts` |
 | `RW_BOSS_AUTOMATION` | app、worker | `enabled`；`disabled` 关闭 pg-boss 自带 automation | `src/server/config/env.ts`；`src/server/boss/client.ts` |
 | `POSTGRES_USER` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
 | `POSTGRES_PASSWORD` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
 | `POSTGRES_DB` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
-| `LOCAL_POSTGRES_HOST` | 脚本（`dev:local`） | `127.0.0.1` | `scripts/local-db-env.ts` |
-| `LOCAL_POSTGRES_PORT` | 脚本（`dev:local`） | `5433` | `scripts/local-db-env.ts` |
+| `LOCAL_POSTGRES_HOST` | 脚本（`dev:local`） | `127.0.0.1` | `scripts/local-db-env.ts`；`scripts/dev-local.ts` |
+| `LOCAL_POSTGRES_PORT` | 脚本（`dev:local`） | dev 库 `5434`（`docker-compose.dev.yml`，用户/库 `loom_dev`，卷 `loom-dev_loom-dev-pgdata`）；设为 `5433`/`5544`（TEST）会被 dev:local 拒绝；其余脚本（`db:migrate:local` 等）缺省仍是 `5433` | `scripts/dev-local.ts`；`scripts/local-db-env.ts` |
+| `DEV_ALLOW_TEST_DB` | 脚本（`dev:local`） | 未设；`1` 才允许 dev:local 连 TEST 库（沿用 `.env` 的 `POSTGRES_*`），启动打印警告横幅；dev API/worker 会写 TEST 数据并消费其 job | `scripts/dev-local.ts` |
 | `LOCAL_NEXT_PORT` | 脚本（`dev:local`） | `3001`，仅用于拼 `NEXT_PUBLIC_BASE_URL` | `scripts/local-db-env.ts` |
 | `LOOM_PG_IMAGE` | 脚本（cutover 备份） | `pgvector/pgvector:0.8.2-pg16-bookworm` | `scripts/cutover-backup.ts` |
 
@@ -112,7 +114,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `HOME` | app、worker（jyeoo 子进程） | 原样透传 | `src/capabilities/practice/server/question-supply/jyeoo-spawn.ts` |
 | `PATH` | app、worker（jyeoo 子进程） | 原样透传 | 同上 |
 | `TMPDIR` | app、worker（jyeoo 子进程） | 原样透传 | 同上 |
-| `WORKSHEET_RENDER_APP_ORIGIN` | worker（`worksheet_render`） | 仅完全未设置时缺省 `http://localhost:8787`；设为空串时报 `worksheet_render: WORKSHEET_RENDER_APP_ORIGIN is empty`；compose worker 设为 `http://app:8787` | `src/capabilities/practice/jobs/worksheet_render.ts`；`docker-compose.yml` |
+| `WORKSHEET_RENDER_APP_ORIGIN` | worker（`worksheet_render`） | 仅完全未设置时缺省 `http://localhost:8787`；设为空串时报 `worksheet_render: WORKSHEET_RENDER_APP_ORIGIN is empty`；compose worker 设为 `http://app:8787` | `src/capabilities/practice/session/jobs/worksheet_render.ts`；`docker-compose.yml` |
 
 ### 功能开关
 

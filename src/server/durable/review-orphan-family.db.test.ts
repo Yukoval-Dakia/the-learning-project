@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
+import * as Review from '@/capabilities/practice/session/server/review-session-lifecycle';
 import {
   job_events,
   learning_session,

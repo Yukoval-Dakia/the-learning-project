@@ -1,5 +1,6 @@
 import { defineOwnedTaskSpecs } from '@/ai/owned-task-specs';
 import { selectionOrchestratorTaskSpec } from '../scheduling/tasks/selection-orchestrator';
+import { sessionSummaryTaskSpec } from '../session/tasks/session-summary';
 import { assessmentRubricTaskSpec } from './assessment-rubric';
 import { assessmentRuleTaskSpec } from './assessment-rule';
 import { attributionRerankTaskSpec, attributionTaskSpec } from './attribution';
@@ -21,7 +22,6 @@ import { questionAuthorTaskSpec } from './question-author';
 import { quizGenTaskSpec } from './quiz-generation';
 import { quizPlanTaskSpec } from './quiz-planning';
 import { quizVerifyTaskSpec } from './quiz-verify';
-import { sessionSummaryTaskSpec } from './session-summary';
 import { solutionGenerateTaskSpec, solutionGenerateVisionTaskSpec } from './solution-generation';
 import { sourceGroundingVerifyTaskSpec } from './source-grounding-verify';
 import { sourcingTaskSpec } from './sourcing';

@@ -694,8 +694,7 @@ function siteKey(site: PassThroughSite): string {
 
 /**
  * Set difference head vs base. `renames` maps a base path to its head path so a
- * moved file — or a file whose forward target moved with it — keeps its identity
- * instead of laundering a stock site as new.
+ * moved file or moved target keeps its identity instead of laundering a stock site as new.
  */
 export function diffPassThroughSites(
   baseSites: readonly PassThroughSite[],

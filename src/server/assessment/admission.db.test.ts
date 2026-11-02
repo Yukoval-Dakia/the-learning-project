@@ -1,9 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getStream } from '@/capabilities/practice/scheduling/server/stream-store';
-import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
-import { getFrozenPaperDetail } from '@/capabilities/practice/server/assessment/paper-detail';
-import { PaperAssessmentBinding } from '@/capabilities/practice/server/assessment/paper-issuance';
 import {
   getIssuanceState,
   saveResponseDraft,
@@ -13,6 +10,8 @@ import {
   type EvaluateSubmissionRequest,
   evaluateSubmission,
 } from '@/capabilities/practice/server/judge/evaluate-submission';
+import { getFrozenPaperDetail } from '@/capabilities/practice/session/server/assessment/paper-detail';
+import { PaperAssessmentBinding } from '@/capabilities/practice/session/server/assessment/paper-issuance';
 import type { ModelUnitOutcomeT } from '@/core/schema/assessment';
 import {
   artifact,
@@ -27,7 +26,10 @@ import {
   question,
   question_group_lifecycle,
 } from '@/db/schema';
-import { readAutomaticIssuanceServingDecisions } from '@/kernel/records/assessment-issuance';
+import {
+  issueAssessment,
+  readAutomaticIssuanceServingDecisions,
+} from '@/kernel/records/assessment-issuance';
 import {
   type NormalizableQuestionRow,
   contractIntegrityDigest,

@@ -3,7 +3,6 @@
 // projections in stream-view.ts.
 
 import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
-import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
 import { getConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
@@ -23,6 +22,7 @@ import {
   DEFAULT_TEMPERATURE,
   type SelectionPolicyConfig,
 } from '../../server/selection-constants';
+import { startReviewSession, transitionReviewSessionState } from '../../session/public';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
 import { readQuestionPace } from './question-pace';
 import {
@@ -468,7 +468,7 @@ async function materializeKnowledgeScopedSession(
 
     let session = await findKnowledgeScopedSession(tx, date, knowledgeId);
     if (!session) {
-      const created = await Review.startReviewSession(tx, {
+      const created = await startReviewSession(tx, {
         scopeKnowledgeIds: [knowledgeId],
       });
       session = { id: created.sessionId, status: 'started' };
@@ -765,7 +765,7 @@ async function completeScopedSessionIfDone(db: Db, row: StreamItemRow): Promise<
         ),
       );
     if (remaining === 0) {
-      await Review.transitionReviewSession(db, row.session_id, 'completed');
+      await transitionReviewSessionState(db, row.session_id, 'completed');
     }
   } catch (err) {
     // The stream-item transition is already committed. Session-envelope closeout is important

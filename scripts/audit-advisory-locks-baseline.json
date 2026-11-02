@@ -114,10 +114,6 @@
       "count": 1
     },
     {
-      "path": "src/capabilities/practice/server/assessment/paper-attempt.ts",
-      "count": 1
-    },
-    {
       "path": "src/capabilities/practice/server/assessment/submit.ts",
       "count": 1
     },
@@ -158,16 +154,8 @@
       "count": 1
     },
     {
-      "path": "src/capabilities/practice/server/session-operations/review-session.ts",
-      "count": 1
-    },
-    {
       "path": "src/capabilities/practice/server/tools/submit-question.ts",
       "count": 2
-    },
-    {
-      "path": "src/capabilities/practice/server/tools/write-quiz.ts",
-      "count": 1
     },
     {
       "path": "src/capabilities/shell/server/teaching-brief-ack.ts",

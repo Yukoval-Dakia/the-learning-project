@@ -57,7 +57,8 @@ export const SERVING_SOURCE_VERIFY_JOB = 'source_verify' as const;
 const PAID_EFFECT_ADMISSION_FAMILY = 'question_admission_run' as const;
 const PAID_EFFECT_ADMISSION_UNITS = QUESTION_ADMISSION_PAID_UNITS;
 
-/** UI contract: awaiting_admission offers no action for the first N hours. */
+/** An awaiting_admission hold younger than this is still given time to finish
+ * before a reverify may re-dispatch admission (serving-actions guard). */
 export const AWAITING_ADMISSION_REVERIFY_AFTER_MS = 6 * 60 * 60 * 1000;
 
 export interface QuestionServingActionRef {
@@ -283,9 +284,8 @@ export async function countQuestionServing(db: Db | Tx, servingSet: SQL): Promis
 export async function readQuestionServing(
   db: Db | Tx,
   questionIds: readonly string[],
-  options: { now?: Date } = {},
+  _options: { now?: Date } = {},
 ): Promise<QuestionServingRead> {
-  const now = options.now ?? new Date();
   const result = new Map<string, QuestionServing>();
   const legacyUnpublished = new Set<string>();
   const ids = [...new Set(questionIds)];
@@ -486,23 +486,12 @@ export async function readQuestionServing(
 
     let nextAction: QuestionServing['next_action'] = null;
     if (!servable && pendingAction == null) {
-      // reverify only when a claim could still produce a new verdict: never run,
-      // stuck pending, or a resumable error. An applied verdict for the current
-      // digest is terminal and never re-paid.
-      const mayReverify = fact.may_reverify;
+      // YUK-1664 — reverify and recheck_source are no longer user actions: the
+      // system retries them itself under the same may_reverify gate (an applied
+      // verdict for the current digest is terminal and never re-paid). Only the
+      // owner's verify_hold release stays a button; retraction_hold never clears.
       const command: ServingActionCommand | null =
-        holdReason === 'admission_failed' && mayReverify
-          ? 'reverify'
-          : holdReason === 'awaiting_admission' &&
-              mayReverify &&
-              heldSince != null &&
-              now.getTime() - heldSince.getTime() >= AWAITING_ADMISSION_REVERIFY_AFTER_MS
-            ? 'reverify'
-            : holdReason === 'source_check_failed'
-              ? 'recheck_source'
-              : holdReason === 'verify_hold'
-                ? 'release_verify_hold'
-                : null;
+        holdReason === 'verify_hold' ? 'release_verify_hold' : null;
       if (command != null) {
         nextAction = { command, method: 'POST', path: servingActionPath(groupId, command) };
       }
