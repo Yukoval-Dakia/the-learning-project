@@ -13,7 +13,7 @@ import { listSubjectChoices } from '@/ui/lib/subject';
 import { Button, ChipToggle, Mascot, Segmented, UiNextRoot } from '@/ui-next/public';
 import { OnboardingSteps } from './OnboardingSteps';
 import { useGoalClient } from './placement-client';
-import './welcome.css';
+import './onboarding-m3e.css';
 
 // YUK-249 → YUK-598：subject chips 曾是模块级 const（import 期快照，provider 水合
 // 后不更新——v2 §9① WelcomePage:23-24 点名的冻结 bug）。现移入组件体、行驱动
@@ -133,7 +133,7 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
         </header>
 
         {/* 自述 · §6 Q1 轻 */}
-        <section className="un-ob-section" aria-labelledby={`${ids}-q1`}>
+        <section className="un-ob-section un-ob-panel" aria-labelledby={`${ids}-q1`}>
           <h2 id={`${ids}-q1`} className="un-ob-question">
             <span className="un-ob-no" aria-hidden="true">
               01
@@ -201,7 +201,7 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
         </section>
 
         {/* 目标 · 核心 */}
-        <section className="un-ob-section" aria-labelledby={`${ids}-q2`}>
+        <section className="un-ob-section un-ob-panel" aria-labelledby={`${ids}-q2`}>
           <h2 id={`${ids}-q2`} className="un-ob-question">
             <span className="un-ob-no" aria-hidden="true">
               02
