@@ -1,21 +1,19 @@
-// Onboarding ① · welcome / setup (YUK-473 Slice 1).
-// Ported from docs/design/loom-refresh/project/screen-onboarding.jsx
-// (ScreenWelcome). Self-report (stage / leanings / pace) is local-only and NOT
+// Onboarding ① · welcome / setup (YUK-473 Slice 1; M3E presentation YUK-1473,
+// docs/design/2026-11-03-welcome-m3e.md). Self-report (stage / leanings / pace) is local-only and NOT
 // persisted — it only hints later placement ordering (design §6). The goal
 // textarea + subject chips drive the real POST /api/goals on fork click; the
 // authoritative scopeKnowledgeIds come from that response, so the inline scope
 // hint here is a static "已圈定范围" reassurance (we do NOT fabricate a count).
 
-import { useMemo, useRef, useState } from 'react';
+import { ArrowRight, Check, CircleAlert, Layers, Upload } from 'lucide-react';
+import { useId, useMemo, useRef, useState } from 'react';
 import { createSubjectErrorText, useCreateSubject } from '@/ui/hooks/useCreateSubject';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { listSubjectChoices } from '@/ui/lib/subject';
-import { BrandMark } from '@/ui/primitives/BrandMark';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { ObSteps } from './ObSteps';
+import { Button, ChipToggle, Mascot, Segmented, UiNextRoot } from '@/ui-next/public';
+import { OnboardingSteps } from './OnboardingSteps';
 import { useGoalClient } from './placement-client';
-import './onboarding.css';
+import './welcome.css';
 
 // YUK-249 → YUK-598：subject chips 曾是模块级 const（import 期快照，provider 水合
 // 后不更新——v2 §9① WelcomePage:23-24 点名的冻结 bug）。现移入组件体、行驱动
@@ -45,6 +43,7 @@ export interface WelcomePageProps {
 
 export default function WelcomePage({ navigate }: WelcomePageProps) {
   const { createGoal } = useGoalClient();
+  const ids = useId();
   // YUK-598 — 组件体内取行（模块级冻结修复）；SUBJECTS/LEANINGS 同源。
   const { subjects: subjectRows } = useSubjects();
   const SUBJECTS = listSubjectChoices(subjectRows);
@@ -120,228 +119,200 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
   };
 
   return (
-    <div className="page ob-welcome">
-      <ObSteps active="welcome" />
-      <div className="ob-hero ob-rise">
-        <div className="ob-hero-mark">
-          <BrandMark size={36} />
-        </div>
-        <div>
-          <h1 className="ob-hero-title serif">先认识一下你</h1>
-          <p className="ob-hero-sub">
-            带上你的材料，我为你备一套个人化的练习。 只问两件事——你大概在什么阶段，和你想学什么。
-          </p>
-        </div>
-      </div>
-
-      <LoomCard pad padLg className="ob-rise">
-        {/* 自述 · §6 Q1 轻 */}
-        <div className="ob-field">
-          <div className="ob-field-head">
-            <span className="ob-field-q">
-              <span className="ob-q-no">01</span>你大概在哪个阶段？
-            </span>
-            <span className="ob-field-opt">· 轻引导，可跳过</span>
-          </div>
-          <fieldset
-            className="ob-pick"
-            aria-label="学习阶段"
-            style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
-          >
-            {STAGES.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                className={`ob-pick-btn${stage === s.id ? ' is-on' : ''}`}
-                aria-pressed={stage === s.id}
-                onClick={() => setStage(s.id)}
-              >
-                <div className="ob-pick-l">{s.label}</div>
-              </button>
-            ))}
-          </fieldset>
-          <div className="ob-field-hint">学科倾向（可多选 · 仅用于排序起始题，不限制目标）：</div>
-          <fieldset
-            className="ob-subjects"
-            aria-label="学科倾向"
-            style={{ border: 0, padding: 0, margin: '8px 0 0', minWidth: 0 }}
-          >
-            {LEANINGS.map((l) => (
-              <button
-                key={l.id}
-                type="button"
-                className={`chip${leanings.includes(l.id) ? ' is-on' : ''}`}
-                aria-pressed={leanings.includes(l.id)}
-                disabled={l.configurationStatus === 'unconfigured'}
-                aria-describedby={
-                  l.configurationStatus === 'unconfigured'
-                    ? 'onboarding-leanings-unconfigured-help'
-                    : undefined
-                }
-                onClick={() => togLean(l.id)}
-              >
-                {leanings.includes(l.id) && <LoomIcon name="check" size={12} />}
-                {l.label}
-              </button>
-            ))}
-          </fieldset>
-          {hasUnconfiguredSubjects ? (
-            <p id="onboarding-leanings-unconfigured-help" className="ob-field-hint">
-              {UNCONFIGURED_SUBJECT_HELP}
+    <UiNextRoot className="un-ob" data-un-m3e="practice-foundation">
+      <main className="un-ob-main un-m3e-bridge">
+        <OnboardingSteps active="welcome" />
+        <header className="un-ob-heading">
+          <div>
+            <h1>先认识一下你</h1>
+            <p>
+              带上你的材料，我为你备一套个人化的练习。只问两件事：你大概在什么阶段，和你想学什么。
             </p>
-          ) : null}
-          <div className="ob-field-hint">每天大概投入：</div>
-          <fieldset
-            className="ob-pick"
-            aria-label="每日投入"
-            style={{
-              border: 0,
-              padding: 0,
-              margin: '8px 0 0',
-              minWidth: 0,
-              gridTemplateColumns: 'repeat(3, 1fr)',
-            }}
-          >
-            {PACES.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className={`ob-pick-btn${pace === p.id ? ' is-on' : ''}`}
-                aria-pressed={pace === p.id}
-                onClick={() => setPace(p.id)}
-              >
-                <div className="ob-pick-l">{p.label}</div>
-                <div className="ob-pick-s">{p.sub}</div>
-              </button>
-            ))}
+          </div>
+          <Mascot />
+        </header>
+
+        {/* 自述 · §6 Q1 轻 */}
+        <section className="un-ob-section" aria-labelledby={`${ids}-q1`}>
+          <h2 id={`${ids}-q1`} className="un-ob-question">
+            <span className="un-ob-no" aria-hidden="true">
+              01
+            </span>
+            你大概在哪个阶段？<span className="un-ob-optional">可跳过</span>
+          </h2>
+          <fieldset className="un-ob-field">
+            <legend className="un-sr-only">学习阶段</legend>
+            <div className="un-ob-chips">
+              {STAGES.map((s) => (
+                <ChipToggle
+                  key={s.id}
+                  pressed={stage === s.id}
+                  onPressedChange={() => setStage(s.id)}
+                >
+                  {stage === s.id && <Check size={16} aria-hidden="true" />}
+                  {s.label}
+                </ChipToggle>
+              ))}
+            </div>
           </fieldset>
-        </div>
+          <fieldset className="un-ob-field">
+            <legend className="un-ob-hint">
+              学科倾向（可多选，只用来排起始题的顺序，不限制目标）
+            </legend>
+            <div className="un-ob-chips">
+              {LEANINGS.map((l) => (
+                <ChipToggle
+                  key={l.id}
+                  pressed={leanings.includes(l.id)}
+                  onPressedChange={() => togLean(l.id)}
+                  disabled={l.configurationStatus === 'unconfigured'}
+                  aria-describedby={
+                    l.configurationStatus === 'unconfigured' ? `${ids}-leanings-help` : undefined
+                  }
+                >
+                  {leanings.includes(l.id) && <Check size={16} aria-hidden="true" />}
+                  {l.label}
+                </ChipToggle>
+              ))}
+            </div>
+            {hasUnconfiguredSubjects ? (
+              <p id={`${ids}-leanings-help`} className="un-ob-hint">
+                {UNCONFIGURED_SUBJECT_HELP}
+              </p>
+            ) : null}
+          </fieldset>
+          <div className="un-ob-field">
+            <p className="un-ob-hint">每天大概投入</p>
+            <Segmented
+              label="每日投入"
+              value={pace}
+              onChange={setPace}
+              options={PACES.map((p) => ({
+                value: p.id,
+                label: (
+                  <>
+                    {p.label}
+                    <span className="un-ob-pace-sub">{p.sub}</span>
+                  </>
+                ),
+              }))}
+            />
+          </div>
+        </section>
 
         {/* 目标 · 核心 */}
-        <div className="ob-field" style={{ marginBottom: 0 }}>
-          <div className="ob-field-head">
-            <span className="ob-field-q">
-              <span className="ob-q-no">02</span>你想学什么？
+        <section className="un-ob-section" aria-labelledby={`${ids}-q2`}>
+          <h2 id={`${ids}-q2`} className="un-ob-question">
+            <span className="un-ob-no" aria-hidden="true">
+              02
             </span>
-          </div>
-          <div className="ob-goal-box">
-            <div className="composer">
-              <textarea
-                rows={2}
-                value={goal}
-                placeholder="用一句话说说目标——比如「把高中文言文虚词和句式啃下来」"
-                onChange={(e) => {
-                  setGoal(e.target.value);
-                  setErr(false);
-                }}
-                aria-label="学习目标"
-              />
+            你想学什么？
+          </h2>
+          <textarea
+            className="un-ob-goal"
+            rows={2}
+            value={goal}
+            placeholder="用一句话说说目标，比如「把高中文言文虚词和句式啃下来」"
+            onChange={(e) => {
+              setGoal(e.target.value);
+              setErr(false);
+            }}
+            aria-label="学习目标"
+            aria-invalid={err === 'empty' || undefined}
+            aria-describedby={err ? `${ids}-goal-error` : undefined}
+          />
+          <fieldset className="un-ob-field">
+            <legend className="un-ob-hint">学科视角（可选）</legend>
+            <div className="un-ob-chips">
+              {SUBJECTS.map((s) => (
+                <ChipToggle
+                  key={s.id}
+                  pressed={subject === s.id}
+                  onPressedChange={() => setSubject(subject === s.id ? null : s.id)}
+                  disabled={s.configurationStatus === 'unconfigured'}
+                  aria-describedby={
+                    s.configurationStatus === 'unconfigured' ? `${ids}-subjects-help` : undefined
+                  }
+                >
+                  {subject === s.id && <Check size={16} aria-hidden="true" />}
+                  {s.label}
+                  {generalFallbackIds.has(s.id) && (
+                    <span
+                      className="un-ob-badge"
+                      title="AI 以通用人格教此科目——编辑该科目任一配置后自动消失"
+                      aria-label="通用模式：AI 以通用人格教此科目——编辑该科目任一配置后自动消失"
+                    >
+                      通用
+                    </span>
+                  )}
+                </ChipToggle>
+              ))}
+              <CreateSubjectChip onCreated={(id) => setSubject(id)} />
             </div>
-          </div>
-          <fieldset
-            className="ob-subjects"
-            aria-label="目标学科视角"
-            style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
-          >
-            <span className="ob-subjects-lbl">学科视角（可选）：</span>
-            {SUBJECTS.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                className={`chip${subject === s.id ? ' is-on' : ''}`}
-                aria-pressed={subject === s.id}
-                disabled={s.configurationStatus === 'unconfigured'}
-                aria-describedby={
-                  s.configurationStatus === 'unconfigured'
-                    ? 'onboarding-subjects-unconfigured-help'
-                    : undefined
-                }
-                onClick={() => setSubject(subject === s.id ? null : s.id)}
-              >
-                {subject === s.id && <LoomIcon name="check" size={12} />}
-                {s.label}
-                {generalFallbackIds.has(s.id) && (
-                  <span
-                    className="ob-chip-badge"
-                    title="AI 以通用人格教此科目——编辑该科目任一配置后自动消失"
-                    aria-label="通用模式：AI 以通用人格教此科目——编辑该科目任一配置后自动消失"
-                  >
-                    通用
-                  </span>
-                )}
-              </button>
-            ))}
-            <CreateSubjectChip onCreated={(id) => setSubject(id)} />
+            {hasUnconfiguredSubjects ? (
+              <p id={`${ids}-subjects-help`} className="un-ob-hint">
+                {UNCONFIGURED_SUBJECT_HELP}
+              </p>
+            ) : null}
           </fieldset>
-          {hasUnconfiguredSubjects ? (
-            <p id="onboarding-subjects-unconfigured-help" className="ob-field-hint">
-              {UNCONFIGURED_SUBJECT_HELP}
-            </p>
-          ) : null}
           {goalReady && err === false && (
-            <div className="ob-scope-note">
-              <LoomIcon name="knowledge" size={13} />
-              已圈定范围 · 提交后由 scopeKnowledgeIds 定位
-            </div>
+            <p className="un-ob-note">提交后按这个目标圈定知识范围。</p>
           )}
           {err === 'empty' && (
-            <div className="ob-inline-err">
-              <LoomIcon name="alert" size={14} />
+            <p id={`${ids}-goal-error`} className="un-ob-error" role="alert">
+              <CircleAlert size={16} aria-hidden="true" />
               先写一句你想学什么，我才好圈定范围。
-            </div>
+            </p>
           )}
           {err === 'generic' && (
-            <div className="ob-inline-err">
-              <LoomIcon name="alert" size={14} />
+            <p id={`${ids}-goal-error`} className="un-ob-error" role="alert">
+              <CircleAlert size={16} aria-hidden="true" />
               出了点问题，没能保存目标。稍后再试，或直接上传材料。
-            </div>
+            </p>
           )}
-        </div>
-      </LoomCard>
+        </section>
 
-      {/* 分叉 */}
-      <div style={{ marginTop: 'var(--s-5)' }} className="ob-rise">
-        <div className="ob-field-head">
-          <span className="ob-field-q">怎么开始？</span>
-        </div>
-        <div className="ob-fork">
-          <button
-            type="button"
-            className="ob-fork-card is-primary"
-            disabled={!goalReady || submitting}
-            onClick={() => void proceed('/onboarding/upload')}
-          >
-            <div className="ob-fork-ic">
-              <LoomIcon name="record" size={20} />
-            </div>
-            <div className="ob-fork-t">上传我的材料</div>
-            <div className="ob-fork-d">
-              错题本 / 卷子 / 课本题——拍照或拖入，AI 抽题入池。这是最贴合你的一条路。
-            </div>
-            <span className="ob-fork-go">
-              去上传 <LoomIcon name="arrow" size={14} />
-            </span>
-          </button>
-          <button
-            type="button"
-            className="ob-fork-card"
-            disabled={!goalReady || submitting}
-            onClick={() => void proceed('/placement')}
-          >
-            <div className="ob-fork-ic">
-              <LoomIcon name="layers" size={20} />
-            </div>
-            <div className="ob-fork-t">从起始集开始</div>
-            <div className="ob-fork-d">
-              手头没有材料？用该学科的起始题直接进定位练习，之后随时再补自己的材料。
-            </div>
-            <span className="ob-fork-go">
-              用起始集 <LoomIcon name="arrow" size={14} />
-            </span>
-          </button>
-        </div>
-      </div>
-    </div>
+        {/* 分叉 */}
+        <section className="un-ob-section" aria-labelledby={`${ids}-start`}>
+          <h2 id={`${ids}-start`} className="un-ob-question">
+            怎么开始？
+          </h2>
+          <div className="un-ob-fork">
+            <button
+              type="button"
+              className="un-ob-fork-card"
+              data-primary=""
+              disabled={!goalReady || submitting}
+              onClick={() => void proceed('/onboarding/upload')}
+            >
+              <Upload size={24} aria-hidden="true" />
+              <span className="un-ob-fork-title">上传我的材料</span>
+              <span className="un-ob-fork-text">
+                错题本、卷子、课本题，拍照或拖进来，AI 抽题入池。这是最贴合你的一条路。
+              </span>
+              <span className="un-ob-fork-go">
+                去上传 <ArrowRight size={16} aria-hidden="true" />
+              </span>
+            </button>
+            <button
+              type="button"
+              className="un-ob-fork-card"
+              disabled={!goalReady || submitting}
+              onClick={() => void proceed('/placement')}
+            >
+              <Layers size={24} aria-hidden="true" />
+              <span className="un-ob-fork-title">从起始集开始</span>
+              <span className="un-ob-fork-text">
+                手头没有材料？用该学科的起始题直接进定位练习，之后随时再补自己的材料。
+              </span>
+              <span className="un-ob-fork-go">
+                用起始集 <ArrowRight size={16} aria-hidden="true" />
+              </span>
+            </button>
+          </div>
+        </section>
+      </main>
+    </UiNextRoot>
   );
 }
 
@@ -370,7 +341,7 @@ export function CreateSubjectForm({
   return (
     <>
       <input
-        className="ob-new-subject-input"
+        className="un-ob-new-input"
         value={name}
         placeholder="科目名，如：化学"
         maxLength={32}
@@ -383,17 +354,17 @@ export function CreateSubjectForm({
           if (e.key === 'Enter') onSubmit();
         }}
       />
-      <button
-        type="button"
-        className="chip is-on"
+      <Button
+        size="sm"
+        variant="secondary"
         disabled={isPending || name.trim().length === 0}
         onClick={onSubmit}
       >
         {isPending ? '创建中…' : '创建'}
-      </button>
+      </Button>
       {error !== null && (
-        <span className="ob-inline-err ob-new-subject-err">
-          <LoomIcon name="alert" size={13} />
+        <span className="un-ob-error" role="alert">
+          <CircleAlert size={16} aria-hidden="true" />
           {error}
         </span>
       )}
@@ -426,15 +397,15 @@ export function CreateSubjectChip({ onCreated }: { onCreated: (id: string) => vo
 
   if (!open) {
     return (
-      <button type="button" className="chip ob-new-subject" onClick={() => setOpen(true)}>
+      <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
         + 新科目
-      </button>
+      </Button>
     );
   }
   return (
     <span
       ref={boxRef}
-      className="ob-new-subject-form"
+      className="un-ob-new-subject"
       onBlur={(e) => {
         if (mutation.isPending) return;
         const next = e.relatedTarget;
