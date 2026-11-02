@@ -25,18 +25,8 @@ export const placementAuthority = {
   lockPlacementSupplyScopes,
 } as const;
 
-export {
-  claimHttpSourceDuplicate,
-  findVectorNearDuplicate,
-  readVisibleVectorNearHold,
-  type VectorNearHold,
-  vectorNearHoldMetadata,
-} from './server/ingest-dedup';
-export {
-  DEDUP_OVERLAP_THRESHOLD,
-  matchesWhitelist,
-  maxNgramOverlap,
-} from './server/sourced-dedup';
+export { loadCoverageLattice } from './server/coverage-lattice';
+export type { CoverageLatticeRead } from './server/coverage-lattice-core';
 export type { DispatchResult } from './server/dispatcher';
 export {
   SUPPLY_DISPATCH_COOLDOWN_DAYS,
@@ -45,17 +35,12 @@ export {
   inFlightSupplyCount,
 } from './server/dispatcher';
 export {
-  type DifficultyBand,
-  type QuestionSupplyTarget,
-  type SupplyGapKind,
-  type SupplyRoute,
-  acquisitionTierForQuestion,
-  discoverSupplyTargets,
-  seedGenerationMethod,
-  seedRoutePreference,
-  targetFingerprint,
-} from './server/target-discovery';
-export { type RefillDeps, refillActiveLearningPools } from './server/refill';
+  type VectorNearHold,
+  claimHttpSourceDuplicate,
+  findVectorNearDuplicate,
+  readVisibleVectorNearHold,
+  vectorNearHoldMetadata,
+} from './server/ingest-dedup';
 export { jyeooBudgetRemaining, jyeooDailyFetchBudget } from './server/jyeoo-budget';
 export {
   type JyeooFetchCandidatesResult,
@@ -76,13 +61,28 @@ export {
   jyeooSpawnMaxStdoutBytes,
   jyeooSpawnTimeoutMs,
 } from './server/jyeoo-supply-config';
-export { loadCoverageLattice } from './server/coverage-lattice';
-export type { CoverageLatticeRead } from './server/coverage-lattice-core';
+export { type RefillDeps, refillActiveLearningPools } from './server/refill';
 export {
-  type ParseLooseFn,
-  type RunWebFetchCandidatesDeps,
-  type RunWebFetchCandidatesResult,
-  type RunWebSourcingAgentFn,
+  DEDUP_OVERLAP_THRESHOLD,
+  matchesWhitelist,
+  maxNgramOverlap,
+} from './server/sourced-dedup';
+export {
+  type DifficultyBand,
+  type QuestionSupplyTarget,
+  type SupplyGapKind,
+  type SupplyRoute,
+  acquisitionTierForQuestion,
+  discoverSupplyTargets,
+  seedGenerationMethod,
+  seedRoutePreference,
+  targetFingerprint,
+} from './server/target-discovery';
+export type {
+  ParseLooseFn,
+  RunWebFetchCandidatesDeps,
+  RunWebFetchCandidatesResult,
+  RunWebSourcingAgentFn,
 } from './server/web-candidates';
 // runWebFetchCandidates 的调用链（web-candidates → SourcingTask → pi agent runtime）
 // 不进 eager barrel：懒转出与根 public 既有的 plan-executor 注释同款原因。
@@ -91,31 +91,13 @@ export const runWebFetchCandidates: typeof import('./server/web-candidates').run
 export const recoverWebSupplies: typeof import('./server/web-supply').recoverWebSupplies = async (
   ...args
 ) => (await import('./server/web-supply')).recoverWebSupplies(...args);
+export { runQuestionSupplyNightly } from './jobs/question_supply_nightly';
 export { discoverConfusableContrastTargets } from './server/confusable-contrast-discovery';
-export {
-  checkSupplyPlanKnowledgeIds,
-  checkSupplyPlanStructure,
-  parseSupplyPlanOutput,
-} from './server/supply-plan-gate';
 export {
   dispatchPlacementStarterClaim,
   isPlacementStarterJobLive,
   placementClaimJobQueue,
 } from './server/placement-starter';
-export {
-  addPlacementStarterCostComponent,
-  markPlacementStarterClaimTerminal,
-  materializePlacementStartersForGoal,
-  resolvePlacementStarterGoalAuthority,
-} from './server/placement-starter-store';
-export {
-  type PlacementStarterFailure,
-  type PlacementStarterOutcome,
-  PlacementStarterOutcomeSchema,
-  placementSchemaFailure,
-} from './server/placement-starter-outcome';
-export { readPlacementStarterOutcomes } from './server/placement-starter-outcome-reader';
-export { placementStarterIdentity } from './server/placement-starter-identity';
 export {
   PLACEMENT_ATTEMPT_HEARTBEAT_MS,
   PLACEMENT_GENERATION_RESERVATION_MICRO_USD,
@@ -146,26 +128,42 @@ export {
   terminalizeLostPlacementDelivery,
   terminalizePlacementUnknownCost,
 } from './server/placement-starter-attempts';
+export { placementStarterIdentity } from './server/placement-starter-identity';
+export {
+  type PlacementStarterFailure,
+  type PlacementStarterOutcome,
+  PlacementStarterOutcomeSchema,
+  placementSchemaFailure,
+} from './server/placement-starter-outcome';
+export { readPlacementStarterOutcomes } from './server/placement-starter-outcome-reader';
 export {
   type PlacementPaidEffectAuthority,
   authorizePlacementQuestion,
 } from './server/placement-starter-paid-authority';
-export { runQuestionSupplyNightly } from './jobs/question_supply_nightly';
+export {
+  addPlacementStarterCostComponent,
+  markPlacementStarterClaimTerminal,
+  materializePlacementStartersForGoal,
+  resolvePlacementStarterGoalAuthority,
+} from './server/placement-starter-store';
+export {
+  checkSupplyPlanKnowledgeIds,
+  checkSupplyPlanStructure,
+  parseSupplyPlanOutput,
+} from './server/supply-plan-gate';
 export {
   EditQuestionInput,
   type EditQuestionInputT,
-  deriveKind,
-  probeDraftEdit,
-  saveDraftEdit,
-  submitDraftQuestion,
-  validateDraftEdit,
-} from './tools/submit-question';
-export {
   type StoreSourcedQuestionDeps,
   type SubmitQuestionDeps,
+  deriveKind,
   dispatchSourceVerifyIntents,
   executeStoreSourcedQuestion,
+  probeDraftEdit,
   readCandidateSubmitReceipt,
+  saveDraftEdit,
+  submitDraftQuestion,
   submitPlacementSupplyCandidate,
   submitQuestionTool,
+  validateDraftEdit,
 } from './tools/submit-question';

@@ -78,7 +78,6 @@ import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import { SupplyTraceV1 } from '@/kernel/supply-contracts';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { deriveKind } from '../supply/public';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
 import { enrollPromotedQuestionScheduling } from '../server/question-scheduling-enrollment';
@@ -92,6 +91,7 @@ import {
   DEDUP_OVERLAP_THRESHOLD,
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
+  deriveKind,
   placementAuthority,
   readVisibleVectorNearHold,
 } from '../supply/public';
