@@ -84,6 +84,7 @@ export async function retractAiProposal(
             proposalId,
             proposal: ownerInput(proposal),
             correction_at: correctionAt,
+            correction_event_id: correctionEventId,
             reason_md: opts.reason_md,
             affected_refs: opts.affected_refs,
           });

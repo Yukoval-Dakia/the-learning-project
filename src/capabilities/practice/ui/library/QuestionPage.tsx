@@ -47,7 +47,7 @@ function Loaded({
   const deleted = isDeleted(detail);
 
   return (
-    <main className="qd-main" ref={publishFocus}>
+    <main className="qd-main un-m3e-bridge" ref={publishFocus}>
       <QuestionBanner detail={detail} navigate={navigate} />
       <QuestionNotice detail={detail} />
       {editing ? (
@@ -89,7 +89,7 @@ export default function QuestionPage({
         // Re-key per question so local state (editing, open regions) never leaks between questions.
         <Loaded key={q.data.id} detail={q.data} navigate={navigate} />
       ) : (
-        <main className="qd-main">
+        <main className="qd-main un-m3e-bridge">
           {q.isLoading && <SkeletonLines rows={8} label="正在载入这道题" />}
           {missing && (
             <Card tone="sunk" className="ql-empty">

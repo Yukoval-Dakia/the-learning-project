@@ -7,7 +7,7 @@
 // local "已读" toggle (shared localStorage with the Today block).
 //
 // M0 (YUK-313, REV 2)：去旧路由库 import——capability ui 不 import 路由库，
-// 导航以 `navigate` prop 由 web 壳（web/src/router.tsx）注入，页面保持框架无关。
+// 导航以 `navigate` prop 由 Start 路由壳（server/start/routes/）注入，页面保持框架无关。
 
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';

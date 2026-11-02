@@ -8,8 +8,9 @@ import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
 import { warnFlipOrder } from '@/kernel/projection-writer-policy';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
-import { resolveApiPort } from '@/server/env';
+import { resolveApiPort } from '@/server/config/env';
 import { buildHonoApp } from './app';
+import { assertComposedRoutesDeclared } from './composed-routes';
 import { loadApiEnv } from './env';
 import { createFrontdoor } from './frontdoor';
 import { installApiShutdown } from './shutdown';
@@ -18,9 +19,10 @@ const env = loadApiEnv();
 // YUK-548: boot-time SoT-flip flag vector + flip-order WARN (never throws — see warnFlipOrder).
 warnFlipOrder();
 
-// YUK-345 / YUK-1007：API_PORT 解析单一真源在 src/server/env.ts resolveApiPort
+// YUK-345 / YUK-1007：API_PORT 解析单一真源在 src/server/config/env.ts resolveApiPort
 // （trim → 空→默认 8787 → 非正整数 throw；admin config 读面 runtime 分区同源）。
 const port = resolveApiPort(env.API_PORT);
+assertComposedRoutesDeclared(capabilities);
 const app = buildHonoApp(capabilities);
 
 // YUK-599（v2 §4 / v3 §2.2）— hydrate-before-serve：serve 前把 DB 六表装配水合进
@@ -28,13 +30,18 @@ const app = buildHonoApp(capabilities);
 // never-throws：表未建（42P01）/ DB down → hydrate 内部 WARN + 四代码种子地板，
 // 本函数恒 resolve——启动失败矩阵（v2 §4.4）不允许水合拖死 API 面。
 // db client 必须 loadEnv() 之后才 import（模块顶层读 DATABASE_URL）→ 动态 import。
+let subjectRefresh: { stop: () => void } | undefined;
 async function hydrateSubjectsBeforeServe(): Promise<void> {
   try {
-    const [{ db }, { hydrateSubjectRegistryFromDb }] = await Promise.all([
+    const [{ db }, { hydrateSubjectRegistryFromDb }, { startSubjectRefresh }] = await Promise.all([
       import('@/db/client'),
-      import('@/server/subjects/hydrate'),
+      import('@/kernel/read-models/subject-hydration'),
+      import('@/server/config/subject-refresh'),
     ]);
     const report = await hydrateSubjectRegistryFromDb(db);
+    // 60s level-triggered reconcile, same as the worker: subject edits made by another
+    // process reach this API within one period. Stopped on shutdown.
+    subjectRefresh = startSubjectRefresh(db, 60_000);
     const skippedNote = report.skipped.length > 0 ? ` (skipped ${report.skipped.length})` : '';
     console.log(`[rw:api] subjects hydrated: +${report.hydrated.length}${skippedNote}`);
   } catch (err) {
@@ -97,6 +104,12 @@ async function registerToolsBeforeServe(): Promise<void> {
   console.log('[rw:api] capability tools registered');
 }
 
+// API routes and worker jobs both call Practice-owned operations through kernel ports.
+async function installPracticeOperationsBeforeServe(): Promise<void> {
+  const { installPracticeHostOperations } = await import('@/capabilities/practice/public');
+  await installPracticeHostOperations();
+}
+
 // YUK-1007 — admin config 读面的运行时事实注入（providers[] / infra schedules /
 // runtime 常量 / consumer-effective 值）。组合根（本进程）聚合一切真相源后经
 // observability/public setter 注入**工厂**：route 每请求重调，跟随 env/热加载
@@ -128,6 +141,18 @@ async function injectAdminConfigWriterBeforeServe(): Promise<void> {
   }
 }
 
+async function injectBackupConfigHydratorBeforeServe(): Promise<void> {
+  try {
+    const [{ hydrateConfigFromDb }, { setBackupConfigHydrator }] = await Promise.all([
+      import('@/server/config/hydrate'),
+      import('@/capabilities/observability/public'),
+    ]);
+    setBackupConfigHydrator(hydrateConfigFromDb);
+  } catch (error) {
+    console.warn('[rw:api] backup config hydrator unavailable — restores return 503', error);
+  }
+}
+
 async function recoverToolOperationsBeforeServe(): Promise<void> {
   const [{ db }, { recoverToolOperationsOnBoot }] = await Promise.all([
     import('@/db/client'),
@@ -143,7 +168,9 @@ async function startInProcessWorker(): Promise<void> {
     import('@/db/client'),
     import('@/server/boss/start-worker'),
   ]);
-  await startBossWorker(db);
+  // This process already started the config, custom-provider and model-catalog pollers
+  // before serve, so the worker must not start a second set.
+  await startBossWorker(db, { apiPollersRunning: true });
   console.log('[rw:api] in-process pg-boss worker running (RW_WORKER=1)');
 }
 
@@ -157,21 +184,33 @@ void (async () => {
   await hydrateConfigBeforeServe();
   await hydrateModelCatalogBeforeServe();
   await registerToolsBeforeServe();
+  await installPracticeOperationsBeforeServe();
   await recoverToolOperationsBeforeServe();
   await injectAdminConfigFactsBeforeServe();
   await injectAdminConfigWriterBeforeServe();
+  await injectBackupConfigHydratorBeforeServe();
   const { startListenLoop, stopListenLoop } = await import('@/server/events/listen_loop');
   await startListenLoop();
-  // Start owns the Web front door whenever a built SPA is configured. Startup,
-  // DB hydration, tool recovery and shutdown keep their existing single owner.
-  const fetch = env.RW_STATIC_DIR ? await createFrontdoor(app, env.RW_STATIC_DIR) : app.fetch;
-  const server = serve({ fetch, port }, (info) => {
-    const mounted = capabilities.flatMap((c) =>
-      (c.api?.routes ?? []).filter((r) => r.load).map((r) => `${r.method} ${r.path}`),
-    );
-    console.log(`[rw:api] hono listening on :${info.port}`);
-    console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
-  });
+  // Start owns the Web front door when RW_FRONTDOOR=1 (needs the dist/start build).
+  // Startup, DB hydration, tool recovery and shutdown keep their existing single owner.
+  // RW_FRONTDOOR=dev serves the same front door through the Vite dev server (HMR); dev-local only.
+  // build:server marks ./dev-frontdoor external so the production bundle never pulls in Vite.
+  const devFrontdoor =
+    env.RW_FRONTDOOR === 'dev'
+      ? await (await import('./dev-frontdoor')).createViteFrontdoor(app)
+      : undefined;
+  const fetch =
+    devFrontdoor?.fetch ?? (env.RW_FRONTDOOR === '1' ? await createFrontdoor(app) : app.fetch);
+  const server = serve(
+    { fetch, port, hostname: devFrontdoor?.hostname, createServer: devFrontdoor?.createServer },
+    (info) => {
+      const mounted = capabilities.flatMap((c) =>
+        (c.api?.routes ?? []).map((r) => `${r.method} ${r.path}`),
+      );
+      console.log(`[rw:api] hono listening on :${info.port}`);
+      console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
+    },
+  );
 
   let workerStartup: Promise<void> | undefined;
   installApiShutdown(server, async () => {
@@ -187,6 +226,7 @@ void (async () => {
       const boss = getRunningBoss();
       if (boss) await stopBossGracefully(boss, 'API shutdown');
     } finally {
+      subjectRefresh?.stop();
       configRefresh?.stop();
       catalogWatch?.stop();
       customProvidersWatch?.stop();

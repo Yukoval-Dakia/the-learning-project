@@ -438,7 +438,7 @@ export async function runWorksheetRender(
 ): Promise<WorksheetRenderResult> {
   try {
     const appOrigin =
-      deps.appOrigin ?? process.env.WORKSHEET_RENDER_APP_ORIGIN?.trim() ?? 'http://localhost:5173';
+      deps.appOrigin ?? process.env.WORKSHEET_RENDER_APP_ORIGIN?.trim() ?? 'http://localhost:8787';
     if (appOrigin === '') {
       throw new WorksheetRenderPermanentError(
         'worksheet_render: WORKSHEET_RENDER_APP_ORIGIN is empty',

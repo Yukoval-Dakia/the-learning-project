@@ -5,7 +5,7 @@
 This runbook covers two different recovery layers in the current self-hosted stack:
 
 - The application archive API (`GET /api/_/export` and `POST /api/_/import`) exports the
-  tables curated by `src/server/export/archive.ts` and can optionally include R2 bytes. It
+  tables curated by `src/capabilities/observability/server/backup/archive.ts` and can optionally include R2 bytes. It
   requires the Hono API to be running.
 - A compose-level Postgres dump is the disaster-recovery path for the complete database and
   does not depend on the application process. R2 still needs its own backup.

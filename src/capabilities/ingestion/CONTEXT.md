@@ -15,7 +15,6 @@
 - api/ — 13 个 route 文件 / 14 条 method+path（M1-T4 迁入；manifest load thunk 经
   server/app.ts 挂 Hono；旧 Next 壳 shim 双栈期保留至 T7）
 - ui/ — RecordPage（M1-T6；学习记录 mode 按 D11 不迁；路由 props 注入，
-  web/src/router.tsx 挂 /record；/api/mistakes、/api/knowledge 等未迁路由
-  dev 下经 vite proxy 兜底旧栈）
+  server/start/routes/record.tsx 挂 /record）
 - 迁移期豁免：仍 import 遗留 @/server/ai/*、@/server/boss、@/server/projections、@/server/proposals、@/server/session、@/db/*。
 - AGENTS.md 为采伐前历史文档随簇保留。

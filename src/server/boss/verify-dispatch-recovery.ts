@@ -6,8 +6,7 @@ import {
   recoverWebSupplies,
 } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
-
-export const VERIFY_DISPATCH_RECOVERY_QUEUE = 'verify_dispatch_recover';
+import { VERIFY_DISPATCH_RECOVERY_QUEUE } from './queue-names';
 
 export function buildVerifyDispatchRecoveryHandler(
   db: Db,

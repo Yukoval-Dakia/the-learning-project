@@ -20,7 +20,7 @@ import type { WorksheetExportStateT } from '@/capabilities/practice/api/workshee
 import { useAssetUrl } from '@/ui/lib/assets';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 
-import { getWorksheetExport, isExportNotFound } from './worksheet-api';
+import { isExportNotFound } from './worksheet-api';
 import { COLUMN_MM, PANEL_INSET_MM, SHEET_MM, type SheetOrientation } from './worksheet-geometry';
 import { type WorksheetRegionMapDraft, measureRegionMap } from './worksheet-measure';
 import {
@@ -751,16 +751,20 @@ function PlannedSheets({ state, overlay }: { state: WorksheetExportStateT; overl
   return <Sheets key={state.export_token} plan={result.plan} overlay={overlay} />;
 }
 
+export type WorksheetExportReader = (token: string) => Promise<WorksheetExportStateT>;
+
 export default function WorksheetPrintPage({
   token,
   overlay = false,
+  readExport,
 }: {
   token: string;
   overlay?: boolean;
+  readExport: WorksheetExportReader;
 }) {
   const query = useQuery({
     queryKey: ['worksheet-export', token],
-    queryFn: () => getWorksheetExport(token),
+    queryFn: () => readExport(token),
     // One render pass per page load: no background refetch may re-lay out a ready sheet.
     retry: false,
     staleTime: Number.POSITIVE_INFINITY,

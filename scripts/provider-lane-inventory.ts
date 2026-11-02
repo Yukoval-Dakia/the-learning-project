@@ -184,7 +184,7 @@ export const IMPORTED_FETCH_EXCEPTIONS = [
 // import is now always an unlisted violation (the dep is gone).
 export const PROVIDER_RUNTIME_SDK_IMPORTS = [
   {
-    path: 'src/server/memory/client.ts',
+    path: 'src/server/ai/mem0/client.ts',
     source: 'mem0ai/oss',
     disposition: 'lane',
     laneId: 'mem0.event-memory',
@@ -523,7 +523,7 @@ export const PROVIDER_LANES = [
         summary:
           'Runtime catalog supplies completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback remains explicit',
         source: {
-          path: 'src/server/memory/llm-config.ts',
+          path: 'src/server/ai/mem0/llm-config.ts',
           contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
           calls: ['resolveGlobalProviderSwitch', 'executablePiModel', 'resolveModelProfile'],
         },
@@ -531,7 +531,7 @@ export const PROVIDER_LANES = [
       credential: {
         summary: 'Global provider credential env; ZHIPU_API_KEY only for unpinned GLM rollback',
         source: {
-          path: 'src/server/memory/llm-config.ts',
+          path: 'src/server/ai/mem0/llm-config.ts',
           contains: ['env.ZHIPU_API_KEY', 'env[credentialEnv]'],
           calls: ['providerCredentialEnvName'],
         },
@@ -540,7 +540,7 @@ export const PROVIDER_LANES = [
         summary:
           'Global provider model; unpinned MEM0_LLM_MODEL env overrides the provider-catalog lane default (LEGACY_GLM_MODEL_ID, YUK-1559)',
         source: {
-          path: 'src/server/memory/llm-config.ts',
+          path: 'src/server/ai/mem0/llm-config.ts',
           contains: ['env.MEM0_LLM_MODEL', 'LEGACY_GLM_MODEL_ID', 'model: pin.model'],
         },
       },
@@ -653,20 +653,20 @@ export const PROVIDER_LANES = [
   },
   {
     id: 'glm.memory-reconcile',
-    owner: 'server/memory',
+    owner: 'server/ai/mem0',
     disposition: 'migrate',
     wire: {
-      path: 'src/server/memory/reconcile-llm.ts',
+      path: 'src/server/ai/mem0/reconcile-llm.ts',
       calls: ['fetchImpl'],
       contains: ['judgeReconciliation', '/chat/completions'],
     },
     callers: [
       {
-        path: 'src/server/memory/triggers.ts',
-        imports: ['./reconcile-llm'],
+        path: 'src/server/boss/memory-queues.ts',
+        imports: ['@/server/ai/mem0/reconcile-llm'],
       },
     ],
-    directImporters: [{ path: 'src/server/memory/triggers.ts', kind: 'runtime' }],
+    directImporters: [{ path: 'src/server/boss/memory-queues.ts', kind: 'runtime' }],
     roles: ['worker'],
     provider: 'Product-pinned OpenAI completions endpoint via shared memory LLM configuration',
     model: 'env-resolved MEM0_LLM_MODEL; hardcoded ledger text is not model truth',
@@ -676,7 +676,7 @@ export const PROVIDER_LANES = [
         summary:
           'Runtime catalog supplies completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback remains explicit',
         source: {
-          path: 'src/server/memory/llm-config.ts',
+          path: 'src/server/ai/mem0/llm-config.ts',
           contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
           calls: ['resolveGlobalProviderSwitch', 'executablePiModel', 'resolveModelProfile'],
         },
@@ -684,7 +684,7 @@ export const PROVIDER_LANES = [
       credential: {
         summary: 'Global provider credential env; ZHIPU_API_KEY only for unpinned GLM rollback',
         source: {
-          path: 'src/server/memory/llm-config.ts',
+          path: 'src/server/ai/mem0/llm-config.ts',
           contains: ['env.ZHIPU_API_KEY', 'env[credentialEnv]'],
           calls: ['providerCredentialEnvName'],
         },
@@ -693,13 +693,13 @@ export const PROVIDER_LANES = [
         summary:
           'Global provider model; unpinned MEM0_LLM_MODEL env overrides the provider-catalog lane default (LEGACY_GLM_MODEL_ID, YUK-1559)',
         source: {
-          path: 'src/server/memory/llm-config.ts',
+          path: 'src/server/ai/mem0/llm-config.ts',
           contains: ['env.MEM0_LLM_MODEL', 'LEGACY_GLM_MODEL_ID', 'model: pin.model'],
         },
       },
     },
     evidence: {
-      path: 'src/server/memory/reconcile-llm.ts',
+      path: 'src/server/ai/mem0/reconcile-llm.ts',
       calls: ['executeDirectProviderAttempt', 'attempt.estimateCost'],
     },
     attemptSemantics: {
@@ -721,17 +721,17 @@ export const PROVIDER_LANES = [
         'one GLM judgment after bounded sequential Mem0 searches for the memories in the job batch',
       evidence: [
         {
-          path: 'src/server/memory/reconcile-llm.ts',
+          path: 'src/server/ai/mem0/reconcile-llm.ts',
           calls: ['executeDirectProviderAttempt', 'setTimeout'],
           contains: ['DEFAULT_TIMEOUT_MS'],
         },
         {
-          path: 'src/server/memory/triggers.ts',
-          imports: ['./reconcile-llm'],
+          path: 'src/capabilities/agency/server/memory/triggers.ts',
+          imports: ['./mem0-runtime'],
           contains: ['operationAnchor: job.id', 'new Date(Date.now() + 65_000)'],
         },
         {
-          path: 'src/server/memory/memory-reconcile-handoff.ts',
+          path: 'src/capabilities/agency/server/memory/memory-reconcile-handoff.ts',
           imports: ['@/db/client'],
           contains: ['retryLimit: 3', 'id: jobId'],
         },
@@ -842,35 +842,31 @@ export const PROVIDER_LANES = [
   },
   {
     id: 'mem0.event-memory',
-    owner: 'server/memory',
+    owner: 'server/ai/mem0',
     disposition: 'opaque',
     wire: {
-      path: 'src/server/memory/client.ts',
+      path: 'src/server/ai/mem0/client.ts',
       calls: ['memory.add', 'memory.add', 'memory.add', 'memory.search'],
     },
     callers: [
       {
-        path: 'src/server/memory/triggers.ts',
+        path: 'src/capabilities/agency/server/memory/triggers.ts',
         calls: ['client.addEventMemoryOnce', 'client.addVerbatimOnce'],
       },
       {
-        path: 'src/server/memory/triggers.ts',
-        imports: ['./search-memories'],
+        path: 'src/capabilities/agency/server/memory/triggers.ts',
+        imports: ['./mem0-runtime'],
       },
       {
-        path: 'src/server/memory/read.ts',
+        path: 'src/server/ai/mem0/read.ts',
         imports: ['./client', './search-memories'],
       },
     ],
     directImporters: [
-      { path: 'src/capabilities/knowledge/server/edge-reconcile.ts', kind: 'runtime' },
-      { path: 'src/capabilities/knowledge/server/propose_edge.ts', kind: 'type' },
-      { path: 'src/server/memory/read.ts', kind: 'runtime' },
-      { path: 'src/server/memory/reconcile-llm.ts', kind: 'runtime' },
-      { path: 'src/server/memory/reconcile-store.ts', kind: 'type' },
-      { path: 'src/server/memory/search-memories.ts', kind: 'type' },
-      { path: 'src/server/memory/triggers.ts', kind: 'runtime' },
-      { path: 'src/server/memory/purpose-repair.ts', kind: 'runtime' },
+      { path: 'src/capabilities/agency/server/memory/mem0-runtime.ts', kind: 're-export' },
+      { path: 'src/server/ai/mem0/read.ts', kind: 'runtime' },
+      { path: 'src/server/ai/mem0/search-memories.ts', kind: 'type' },
+      { path: 'src/server/boss/memory-queues.ts', kind: 'type' },
     ],
     roles: ['api', 'worker'],
     provider: 'Mem0 OSS with product-pinned completions LLM and dedicated DashScope embeddings',
@@ -881,7 +877,7 @@ export const PROVIDER_LANES = [
         summary:
           'Mem0 LLM uses resolveMemoryLlmConfig; embedding baseURL remains independently configured',
         source: {
-          path: 'src/server/memory/client.ts',
+          path: 'src/server/ai/mem0/client.ts',
           envReads: ['MEM0_EMBEDDING_BASE_URL'],
           literals: ['https://dashscope.aliyuncs.com/compatible-mode/v1'],
         },
@@ -890,7 +886,7 @@ export const PROVIDER_LANES = [
         summary:
           'Mem0 LLM credential uses resolveMemoryLlmConfig; dedicated embedding uses DASHSCOPE_API_KEY',
         source: {
-          path: 'src/server/memory/client.ts',
+          path: 'src/server/ai/mem0/client.ts',
           envReads: ['DASHSCOPE_API_KEY'],
         },
       },
@@ -898,7 +894,7 @@ export const PROVIDER_LANES = [
         summary:
           'Mem0 LLM uses global product model; dedicated embedding uses MEM0_EMBEDDING_MODEL env over the provider-catalog default (DASHSCOPE_EMBED_MODEL_ID)',
         source: {
-          path: 'src/server/memory/client.ts',
+          path: 'src/server/ai/mem0/client.ts',
           envReads: ['MEM0_EMBEDDING_MODEL'],
           contains: ['DASHSCOPE_EMBED_MODEL_ID'],
           imports: ['@/server/ai/providers'],
@@ -906,7 +902,7 @@ export const PROVIDER_LANES = [
       },
     },
     evidence: {
-      path: 'src/server/memory/client.ts',
+      path: 'src/server/ai/mem0/client.ts',
       calls: ['memory.add', 'memory.search'],
       contains: ['infer: false'],
     },
@@ -930,7 +926,7 @@ export const PROVIDER_LANES = [
         'one opaque search is recorded per new memory before one GLM batch judgment; Mem0 internal GLM/DashScope fan-out stays explicitly unknown rather than guessed',
       evidence: [
         {
-          path: 'src/server/memory/client.ts',
+          path: 'src/server/ai/mem0/client.ts',
           calls: ['memory.add', 'memory.search'],
         },
         {
@@ -939,7 +935,7 @@ export const PROVIDER_LANES = [
           contains: ['wireCount: null'],
         },
         {
-          path: 'src/server/memory/memory-reconcile-handoff.ts',
+          path: 'src/capabilities/agency/server/memory/memory-reconcile-handoff.ts',
           imports: ['@/db/client'],
           contains: ['retryLimit: 3', 'id: jobId'],
         },

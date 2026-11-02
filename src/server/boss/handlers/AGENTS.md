@@ -1,6 +1,6 @@
 # boss/handlers — pg-boss job & cron catalog
 
-> 每个 `*.ts` = 一个 pg-boss queue handler（`buildXxxHandler(db)`）。housekeeping 的注册 + 调度集中在 [`../handlers.ts`](../handlers.ts)（worker 启动时 `registerHandlers()` 调一次）；capability 域 cron 经各自 `manifest.ts` → `register-capability-jobs.ts` 注册；memory 3 条经 `src/server/memory/triggers.ts` `registerMemoryHandlers` 注册。tz 默认 `Asia/Shanghai`，**例外：memory outbox 两条走 UTC**。本表是全仓**调度**权威目录——自 YUK-758 起分两类：**裸 cron**（下表）与 **DAG 成员**（无自身 cron，由夜间 orchestrator 单锚点按依赖触发）。
+> 每个 `*.ts` = 一个 pg-boss queue handler（`buildXxxHandler(db)`）。housekeeping 的注册 + 调度集中在 [`../handlers.ts`](../handlers.ts)（worker 启动时 `registerHandlers()` 调一次）；capability 域 cron 经各自 `manifest.ts` → `register-capability-jobs.ts` 注册；memory 3 条经 `src/capabilities/agency/server/memory/triggers.ts` `registerMemoryHandlers` 注册。tz 默认 `Asia/Shanghai`，**例外：memory outbox 两条走 UTC**。本表是全仓**调度**权威目录——自 YUK-758 起分两类：**裸 cron**（下表）与 **DAG 成员**（无自身 cron，由夜间 orchestrator 单锚点按依赖触发）。
 
 ## DAG 编排（YUK-758）—— 这些 job **没有自己的 cron**
 > 单锚点 `nightly_orchestrator` cron `30 2` Asia/Shanghai（`src/server/orchestration/constants.ts`）开闸建当夜 run + enqueue 根节点，此后每 60s 一 tick 轮询 pg-boss job 态、上游成功才 enqueue 下游。依赖在各 `manifest.ts` 的 `JobDecl.dependsOn` 上声明，`validateComposition` 启动期强制「成员不得同时带 cron」。**改这些 job 的时序 = 改 `dependsOn` 边，不是改 cron 时刻**；orchestrator 启动时还会对每个成员跑一次 `boss.unschedule`（清升级前残留的旧 schedule 行）。
@@ -33,7 +33,7 @@
 |-------|------|--------|------|
 | `nightly_orchestrator` | `30 2` | orchestration/register.ts | **DAG 单锚点**（见上节）——建当夜 run + enqueue 根节点，随后 60s 自调度 tick。整夜单点，故按 `createJobQueue` 配方建队（retryDelay 30s + backoff + `nightly_orchestrator_dlq`），不再继承 pg-boss 的 retry_delay 0 / 无 DLQ 默认（YUK-778）|
 | `hub_auto_sync_nightly` | `45 2` | notes/manifest | hub auto-zone 重算。**与 `knowledge_edge_propose_nightly` 无运行期依赖**——两者各自独立 sweep，不编边。YUK-1560 资格门：dormant 只跳过 coverage repair；abandoned edit-session presence sweep 在 `beforeEligibility` 先跑 |
-| `memory_brief_sweep` | `0 3` | memory/triggers.ts | stale brief 扫描 → enqueueBriefRegen（6min singleton；subject 腿事件化 = YUK-581）|
+| `memory_brief_sweep` | `0 3` | agency/server/memory/triggers.ts（挂载在 boss/memory-queues.ts） | stale brief 扫描 → enqueueBriefRegen（6min singleton；subject 腿事件化 = YUK-581）|
 | `prune_job_events` | `0 4` | observability/manifest.ts → shared durable host | 默认 pg-boss；独立 phase、原 prune-v1 recovery 合同保持 |
 | `verify_dispatch_recover` | `10 4` | ../handlers.ts | `../verify-dispatch-recovery.ts` 适配 Practice 验证 intent 恢复；只补发 source/quiz verify（另在 worker startup 单次触发）|
 | `prune_orphan_review_sessions` | `15 4` | observability/manifest.ts → shared durable host | 默认 pg-boss；固定 cutoff、冻结 candidates、锁内 Review writer + 同事务 receipt；started/paused 严格 started_at < tick cutoff 安全网 |
@@ -54,8 +54,8 @@
 |-------|------|--------|------|
 | `hub_sync_recovery` | `* * * * *` | notes/manifest | 唯一 Notes recovery floor：hub reconcile 与 handoff/claim 隔离执行；补发缺 completion 的 current-v1 intent、合成 legacy intent、无 AI 收敛 staged result，expired pre-wire/epoch claim 只投递 fenced `note_verify`，expired provider-start 转 ambiguous；任一分支失败最终仍抛出 |
 | `promote_conversation_idle` | `* * * * *` | ../handlers.ts | 每分钟 active→idle（5min 无输入；idle=事件缺席，只能 poll）|
-| `memory_ingest_outbox_poll` | `* * * * *`（**UTC**）| memory/triggers.ts | ADR-0021 transactional outbox dispatch 心跳（**不可降频**——写点直投已回滚，见 PR #163）|
-| `memory_ingest_outbox_recover` | `0 * * * *`（**UTC**）| memory/triggers.ts | outbox 排空 recovery drain（cap 1000 cycles）|
+| `memory_ingest_outbox_poll` | `* * * * *`（**UTC**）| agency/server/memory/triggers.ts（挂载在 boss/memory-queues.ts） | ADR-0021 transactional outbox dispatch 心跳（**不可降频**——写点直投已回滚，见 PR #163）|
+| `memory_ingest_outbox_recover` | `0 * * * *`（**UTC**）| agency/server/memory/triggers.ts（挂载在 boss/memory-queues.ts） | outbox 排空 recovery drain（cap 1000 cycles）|
 | `copilot_run_reconcile` | `0-58/2 * * * *` | copilot/manifest | YUK-596/YUK-832 — durable Copilot 收敛底线：偶数分钟执行（最多等两分钟），每轮只扫 20 个 outstanding run、reconcile 自身零 LLM/tool；先修持久化 outcome marker，再以 pg-boss 权威状态区分 live / dead / lookup unknown。只对 QUEUED-only、无任何 worker-touch 的 queue-proven dead run 写 `pre_execution_lost`；explicit fence 或 legacy STARTED/DELTA/STEP/REPLY/FAILED(error) 都视为可能执行过，须等主任务 45min + 30s settlement grace 后才写无 checkpoint 的 `ambiguous_execution`。created/retry/active 与 lookup error 均不终态化。|
 | `judge_pending_reconcile` | `50 * * * *` | practice/manifest | YUK-777 A3 — durable judge 的 domain-state-scan sweeper：扫「作答已录、判词未落」的 `experimental:judge_pending_attempt`（无 `event.id = run_id` 的 review），经**同一 rate-limited 入队面**重投 `judge_run`。**每小时而非夜批**：这是学习者面前悬着的判词，等一夜等于丢一天；stall 门槛 15min + pg-boss liveness 权威判定，故不会抢在飞的 run。自身零 LLM（付费发生在 `judge_run`）→ fast 层。恢复次数封顶（`judge_run.requeued` 计数）+ 7d 年龄封顶后转人工（D6 manual-only，YUK-800 A4）|
 | `placement_starter_recovery` | `*/5 * * * *` | practice/manifest | YUK-1664 — placement starter claim 到期清扫（原 `question_supply_nightly` 收尾步，照 `intervention_prepare_recovery` 范式独立成 job）：按 `next_reconcile_at <= now` 的真实到期义务轮询，无 eligibility 门——dormant 学习者照样恢复。无到期 claim 时一次索引 LIMIT 1 读即退，不触 pg-boss/provider。重驱 stranded `pending_dispatch`（placement probe flag 门）、收割 6h+ 死 `retry_scheduled` 与 lost in-flight；条件 UPDATE CAS 领取，多 worker 安全。自身零 LLM（付费发生在重派的 `quiz_gen`/`supply_execute`）→ fast 层 |

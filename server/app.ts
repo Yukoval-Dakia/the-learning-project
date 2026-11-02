@@ -20,6 +20,7 @@ import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
+import { routeLoaderFor } from './composed-routes';
 
 registerNoteHandoffBossResolver(() => getStartedBoss());
 
@@ -68,7 +69,7 @@ export function toHonoPath(path: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // YUK-1055 — DB contract epoch gate（grounding §15：stale client 请求拒绝）。
 //
-// 裁决逻辑在 src/server/contract-epoch（本文件保持零 DB import —— db client 在
+// 裁决逻辑在 src/server/migration/contract-epoch（本文件保持零 DB import —— db client 在
 // 模块顶层读 DATABASE_URL，测试进程未设时必须惰性）。`/api/health` 与
 // `/api/ready` 豁免（health ≠ readiness）；其余 /api/* 在 token 验证之后再过
 // epoch 门：fenced → 503 contract_epoch_fenced，读面也拒（迁移中读旧数据误导）。
@@ -89,9 +90,10 @@ const DEFAULT_EPOCH_GATE: EpochGate = async () => {
   // 无 DATABASE_URL（纯静态/单测面）→ gate inert：没有 DB 可护。
   if (!process.env.DATABASE_URL) return { runnable: true };
   try {
-    const [{ db }, { CODE_CONTRACT_EPOCH, checkContractEpoch }] = await Promise.all([
+    const [{ db }, { checkContractEpoch }, { CODE_CONTRACT_EPOCH }] = await Promise.all([
       import('@/db/client'),
-      import('@/server/contract-epoch'),
+      import('@/server/migration/contract-epoch/epoch'),
+      import('@/server/migration/contract-epoch/rules'),
     ]);
     const status = await checkContractEpoch(db);
     return {
@@ -209,8 +211,7 @@ export function buildHonoApp(
 
   for (const cap of capabilities) {
     for (const route of cap.api?.routes ?? []) {
-      if (!route.load) continue;
-      const load = route.load;
+      const load = routeLoaderFor(cap, route);
       // handler 缓存：首次请求解析一次，之后复用（避免每请求重复 dynamic import 开销）。
       let cached: Promise<RouteHandler> | undefined;
       app.on(route.method, toHonoPath(route.path), async (c) => {

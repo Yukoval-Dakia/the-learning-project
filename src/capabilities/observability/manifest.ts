@@ -36,7 +36,6 @@ import {
 import {
   CalibrationMaturityResponseSchema,
   ConjectureScoresResponseSchema,
-  CoverageLatticeResponseSchema,
   EffectivenessTrendResponseSchema,
   JudgeCalibrationResponseSchema,
 } from './api/diagnostic-contracts';
@@ -209,7 +208,7 @@ export const observabilityCapability = defineCapability({
         load: () => import('./api/admin-trait-journal').then((m) => m.GET),
       },
       // YUK-601 (v3.2 §3.1-§3.4) — trait/控制行写面（全部写事务开头控制面
-      // advisory lock；业务在 src/server/subjects/{trait-write,subject-control-write}.ts）。
+      // advisory lock；业务在 ./server/{trait-write,subject-control-write}.ts）。
       {
         method: 'PUT',
         path: '/api/admin/subjects/[id]/traits/[kind]',
@@ -414,6 +413,7 @@ export const observabilityCapability = defineCapability({
           400: ApiErrorResponseSchema,
           401: ApiErrorResponseSchema,
           500: ApiErrorResponseSchema,
+          503: ApiErrorResponseSchema,
         },
         successStatus: 200,
         load: () => import('./api/backup-import').then((m) => m.POST),
@@ -464,19 +464,6 @@ export const observabilityCapability = defineCapability({
         responseMediaTypes: { 200: 'text/event-stream' },
         successStatus: 200,
         load: () => import('./api/job-events').then((m) => m.GET),
-      },
-      // YUK-579 — 供题治理覆盖细目表（coverage lattice）只读观测面。读模型
-      // server/coverage-lattice.ts：assembleScanInput + scanCoverageGaps（纯，复用发现引擎，
-      // 零新查询子系统）+ 单条 experimental:question_supply 活动聚合。READ-ONLY 零写零 LLM。
-      // /api/* token 校验由组合根中间件统一施加。
-      {
-        method: 'GET',
-        path: '/api/admin/coverage-lattice',
-        operationId: 'getCoverageLattice',
-        responses: { 200: CoverageLatticeResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        pagination: 'none',
-        load: () => import('./api/coverage-lattice').then((m) => m.GET),
       },
       // YUK-1007 — 热加载配置读面（view-only）。装配在 server/config-read-model.ts
       // （复用 src/core/config 快照，零 DB 读路径）；诚实性契约：registry key 带分层

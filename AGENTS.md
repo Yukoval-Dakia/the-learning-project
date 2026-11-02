@@ -29,7 +29,7 @@
 
 ## Architecture boundaries（必须保持）
 
-- Hono API（`server/index.ts` + `server/app.ts`，含 TanStack Start 前门 `server/start/`）+ Vite SPA（`web/`）+ 独立 worker（`scripts/worker.ts`，同进程 pg-boss 队列 + DBOS durable 层 `src/server/durable/`）。
+- Hono API（`server/index.ts` + `server/app.ts`，含 TanStack Start 前门 `server/start/`）+ 共享壳层资源（`web/src/`）+ 独立 worker（`scripts/worker.ts`，同进程 pg-boss 队列 + DBOS durable 层 `src/server/durable/`）。
 - Postgres + Drizzle 是真相源；editing presence 走 PG，无 Redis；blob storage 走 R2/S3-compatible client。
 - 后端 route/job/copilotTool 只经 `src/capabilities/<name>/manifest.ts` 贡献到组合根；`server/app.ts` 对 `/api/*` 校验 `x-internal-token`（仅 `/api/health`、`/api/ready` 豁免）。
 - 浏览器不持 provider key，AI 调用只经 Hono route 或 worker；AI 动作可追踪、可逆，保留 run logging。

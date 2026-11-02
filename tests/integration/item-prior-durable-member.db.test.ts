@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { PgBoss } from 'pg-boss';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { itemPriorDispatchedRequestSchema } from '@/capabilities/practice/public';
 import {
   type ItemPriorPreparedWork,
   executeItemPriorRep,
@@ -16,12 +17,9 @@ import {
 } from '@/capabilities/practice/server/item-prior-paid-effect-adapter';
 import { readPaidEffect } from '@/db/paid-effect-store';
 import { paid_effect, question } from '@/db/schema';
-import {
-  ITEM_PRIOR_MEMBER,
-  itemPriorDispatchedRequestSchema,
-} from '@/server/durable/item-prior-family';
 import { resetDb, testDb } from '../helpers/db';
 
+const ITEM_PRIOR_MEMBER = 'item_prior_backfill';
 const db = testDb();
 const request = {
   member: ITEM_PRIOR_MEMBER,

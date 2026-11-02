@@ -13,6 +13,7 @@ import type {
   markCopilotNudgeOpened,
   readCopilotSessions,
   readCopilotTurns,
+  requestCopilotChat,
   requestCopilotCheckpointRevert,
   requestTeachingChipAcceptance,
 } from '@/capabilities/copilot/public';
@@ -60,6 +61,7 @@ import type {
   readPracticeDraftList,
   readPracticeQuestionList,
   readQuestionDetail,
+  readWorksheetExport,
   recomposePracticeStream,
   releaseHeldPlacement,
   restorePracticeQuestion,
@@ -86,6 +88,10 @@ export type FrontdoorContext = {
     sessionId: string;
     body: string;
   }) => Promise<Awaited<ReturnType<typeof requestTeachingChipAcceptance>>>;
+  sendCopilotChat: (
+    input: { body: string; key: string | null },
+    signal: AbortSignal,
+  ) => Promise<Awaited<ReturnType<typeof requestCopilotChat>>>;
   revertCopilotCheckpoint: (
     checkpointEventId: string,
   ) => Promise<Awaited<ReturnType<typeof requestCopilotCheckpointRevert>>>;
@@ -270,7 +276,9 @@ export type FrontdoorContext = {
     >['payload']
   >;
   readPlacementProfile: (goalId: string) => Promise<PlacementProfileResponse>;
-  legacySpa: Hono;
+  readWorksheetExport: (
+    token: string,
+  ) => Promise<NonNullable<Awaited<ReturnType<typeof readWorksheetExport>>>>;
   startAssets: Hono;
 };
 

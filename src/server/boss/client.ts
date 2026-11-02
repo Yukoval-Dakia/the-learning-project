@@ -1,6 +1,6 @@
 import { PgBoss } from 'pg-boss';
 
-import { getServerEnv, resolveBossAutomationMode } from '@/server/env';
+import { getServerEnv, resolveBossAutomationMode } from '@/server/config/env';
 
 // Callers that own a queue import the singleton and the transaction adapter from here.
 export { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';

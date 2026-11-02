@@ -5,26 +5,32 @@
 ## WHERE TO LOOK
 | 子模块 | 职责 |
 |--------|------|
-| `ai/` | Pi agent runner（唯一执行引擎，YUK-1025 后无 SDK 子进程）+ domain tool registry + tool bridge（见本目录 AGENTS.md）|
+| `ai/` | Pi agent runner（唯一执行引擎）+ domain tool registry + tool bridge（见本目录 AGENTS.md）|
+| `assessment/` | 评估激活、结算（settle 全族）与判分模型执行器 |
 | `boss/` | pg-boss client + handler 注册；`handlers/` 是 job/cron 目录（见 AGENTS.md）|
-| `../capabilities/ingestion/server/` | 录入状态操作、OCR / Vision rescue 与 DOCX 文本初始化（见该域 AGENTS.md）|
-| `knowledge/` | 知识树 + mesh edge + propose/attribute/review（见 AGENTS.md）|
-| `events/` | event 写入 + 查询（事件驱动核的 IO 层）|
-| `../capabilities/agency/server/conjecture/` | 预测问责排序、硬确认事实读取与判定、probe 记账及纠错回放；typed ledger 与共享单探针评分归 `@/kernel/records/` |
-| `session/` | 仅剩会话相关 DB 测试与录入测试 support；Conversation 归 `../capabilities/copilot/server/conversation-lifecycle.ts`，Placement 归 `../capabilities/practice/server/placement-session-lifecycle.ts`，录入归 ingestion capability，共享守卫归 `../kernel/learning-session-guard.ts` |
+| `calibration/` | 校准数学、回放与前向门（纯计算，不 import DB client）|
+| `config/` | 运行时配置水合与管理面配置读写 |
+| `contract-epoch/` | 契约 epoch 规则与 pg-boss 生产者 fence |
+| `durable/` | DBOS durable 层：判分、孤儿会话回收、付费副作用控制等 workflow family |
+| `event-subscriptions/` | capability 事件订阅的注册与派发挂载 |
+| `events/` | 事件因果级联遍历 + 进程级 LISTEN 连接 |
+| `fsrs/` | FSRS 调度状态与引擎选择 |
+| `grounding-gate/` | grounding 门的候选、预检与评测工件 |
+| `http/` | HTTP 错误与 provider 会话截止时间 helper |
+| `mastery/` | 难度重校准与个性化难度 |
+| `memory/` | Mem0 fact layer ingest + per-scope brief（见本目录 AGENTS.md）|
+| `migration/` | 迁移捕获与应用 |
+| `orchestration/` | 夜间 DAG 编排器（anchor + tick 推进）|
+| `projections/` | 投影 gather/fold、parity 与漂移审计 |
 | `proposals/` | propose event 的 accept/dismiss/retract actions（破坏性动作落地点）|
-| `artifacts/` | Living Note body-blocks / sections / editing-session / hub-dismiss |
-| `review/` + `fsrs/` | FSRS 调度（ts-fsrs）+ review event → `material_fsrs_state` 投影 |
-| `judge/` | 判分 service（写 judge event）|
-| `questions/` | StructuredQuestion CRUD + timeline |
-| `memory/` | Mem0 fact layer ingest + per-scope brief（ADR-0017）|
-| `copilot/` | conversation/tutor session runtime |
-| `teaching/` | Active Teaching turn 物化（ask_check → question(source='teaching_check')）|
-| `quiz/` | QuizGen / Sourcing few-shot 检索 + verify framework |
-| `agents/` | `leave_agent_note` 软提示 channel（→ Dreaming / Maintenance）|
-| `learning-items/` | active learning-item reader（Coach brief 的 attention pressure）|
-| `goals/` · `today/` · `records/` · `admin/` | learning intent / today plan / learning record / 管理面 |
-| `export/` · `http/` · `redis/` | 导入导出 / HTTP helper / redis |
+| `questions/` | 题目草稿、编辑与提交写路径 |
+| `rehearsal/` | 发布前在临时 PG 容器内的迁移演练 |
+| `release/` | 发布证据 manifest 生成 |
+| `revert/` | 级联撤销与 state_snapshot 恢复 |
+| `simulator/` | 合成学习者答题序列的确定性前向采样 |
+| `subjects/` | 科目装配水合与内建 trait 对账 |
+| `../capabilities/ingestion/server/` | 录入状态操作、OCR / Vision rescue 与 DOCX 文本初始化（见该域 AGENTS.md）|
+| `../capabilities/agency/server/conjecture/` | 预测问责排序、硬确认事实读取与判定、probe 记账及纠错回放；typed ledger 与共享单探针评分归 `@/kernel/records/` |
 | `../kernel/object-storage.ts` | 共享 R2/S3 对象 I/O 与首次调用时构造的 client；资产引用、锁、恢复及付费策略归业务 owner |
 
 ## CONVENTIONS
