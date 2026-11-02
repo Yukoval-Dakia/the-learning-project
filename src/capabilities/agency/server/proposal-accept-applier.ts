@@ -12,9 +12,12 @@ import {
   findExistingRateEvent,
   writeProposalRateEvent,
 } from '@/kernel/proposals/applier-helpers';
+import {
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/kernel/proposals/signals';
 import { createLearningIntentNote } from '@/kernel/records/learning-intent-note-birth';
 import { type BossDispatch, dispatchNoteGeneration } from '@/kernel/records/note-handoff-protocol';
-import * as ownerRuntime from '@/server/proposals/owner-runtime';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
 import { acceptGoalScopeProposal } from './goals/accept';
 import { createLearningIntentKnowledgeNode } from './learning-intent';
@@ -39,12 +42,11 @@ export const {
   learningItemProposalRetractApplier,
   relearnProposalRetractApplier,
 } = createAgencyProposalLifecycle({
-  ...ownerRuntime,
   acquireProposalDecisionLock,
   findExistingRateEvent,
   writeProposalRateEvent,
   recordDismissSignal: (db, input: ProposalDismissInput) =>
-    ownerRuntime.recordProposalDecisionSignal(
+    recordProposalDecisionSignal(
       db,
       {
         ...input.proposal,
@@ -132,9 +134,9 @@ export const goalScopeProposalAcceptApplier: ProposalAcceptApplier = async (db, 
     user_note: input.user_note,
   });
   if (result.idempotent) {
-    await ownerRuntime.ensureProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
+    await ensureProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
   } else {
-    await ownerRuntime.recordProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
+    await recordProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
   }
   return wrap(result);
 };
