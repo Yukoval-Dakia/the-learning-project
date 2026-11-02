@@ -77,6 +77,9 @@ export async function runPlacementWebDelivery(input: {
   });
   const heartbeat = startPlacementAttemptHeartbeat(db, attempt, job.signal);
   try {
+    // Submit dispatches verification inside execute; the question authority requires the
+    // attempt to be 'verifying', so enter it before any question can be bound.
+    await markAttemptVerifying(db, attempt);
     await input.execute({ attempt, heartbeat, signal: job.signal });
     await heartbeat.assertHealthy();
     await assertPlacementAttemptFence(db, attempt);
@@ -97,7 +100,6 @@ export async function runPlacementWebDelivery(input: {
       await finishPlacementAttempt(db, attempt, 'underfilled');
       throw new PlacementStarterUnderfillError('placement web delivery bound no questions');
     }
-    await markAttemptVerifying(db, attempt);
     await reconcilePlacementDelivery(db, attempt, job.signal);
   } catch (err) {
     // Same terminalization rule as the quiz_gen consumer: a failure before reconcile finalized

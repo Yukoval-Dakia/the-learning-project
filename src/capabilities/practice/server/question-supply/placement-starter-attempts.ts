@@ -1248,15 +1248,18 @@ export async function finishPlacementAttempt(
         status: placement_starter_claim.status,
         jobId: placement_starter_claim.pg_boss_job_id,
         knownCost: placement_starter_claim.known_cost_micro_usd,
+        budgetLimit: placement_starter_claim.budget_limit_micro_usd,
       })
       .from(placement_starter_claim)
       .where(eq(placement_starter_claim.id, attempt.claimId))
       .for('update');
+    // Unknown cost only revokes authority under a money cap; an uncapped sourcing_web claim
+    // records unknown spend and still settles its delivery.
     if (
       !claimRow ||
       !['running', 'verifying'].includes(claimRow.status) ||
       claimRow.jobId !== attempt.pgBossJobId ||
-      claimRow.knownCost === null
+      (claimRow.knownCost === null && claimRow.budgetLimit !== null)
     ) {
       throw new PlacementStarterStaleAuthorityError('placement claim authority lost');
     }
