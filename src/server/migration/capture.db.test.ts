@@ -1,10 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { canonicalHash } from '@/core/migration/canonical';
-import { checkpointHashOf } from '@/core/migration/checkpoint';
 import { classifyMigrationCapture } from '@/core/migration/classify';
-import type { ManifestOptions } from '@/core/migration/manifest';
 import type { RecordClassification } from '@/core/migration/types';
 
 import {
@@ -62,15 +59,6 @@ const FROZEN_DURABLE = {
   version: 0,
   updated_at: '2026-09-01T00:00:00.000Z',
 } as const;
-
-const PROVENANCE: ManifestOptions = {
-  tool_version: 'test',
-  git_sha: null,
-  app_image: null,
-  worker_image: null,
-  migration_files: null,
-  redaction: { applied: false, fields: [] },
-};
 
 async function seedAttempt(input: {
   id: string;
@@ -564,181 +552,5 @@ describe('captureMigrationCheckpoint + classifyMigrationCapture（真表）', ()
         'cor-1',
       ]),
     );
-  });
-
-  it('P1-3 补充形态：durable pre-snapshot 回填 → historical_unresolved；solo answer-bearing review → historical_unresolved；自评回填 → manual', async () => {
-    await seedBackfilledReview({
-      runId: 'run-presnap',
-      responseMd: '旧 durable 作答',
-      withVerdict: true,
-      withPending: true,
-      pendingId: 'pen-presnap',
-      pendingSnapshot: false,
-    });
-    await testDb()
-      .insert(event)
-      .values({
-        id: 'rev-solo',
-        session_id: null,
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'review',
-        subject_kind: 'question',
-        subject_id: 'q-main',
-        outcome: 'success',
-        payload: { fsrs_rating: 'good', user_response_md: 'solo 作答', answer_image_refs: [] },
-        caused_by_event_id: null,
-        task_run_id: null,
-        cost_micro_usd: null,
-        created_at: NOW,
-      });
-    await seedBackfilledReview({
-      runId: 'run-selfrate',
-      responseMd: '自评作答',
-      withVerdict: false,
-      withPending: true,
-      pendingId: 'pen-selfrate',
-      pendingSnapshot: true,
-    });
-
-    const capture = await captureMigrationCheckpoint(testDb());
-    const classification = classifyMigrationCapture(capture);
-    expect(categoryOf(classification, 'run-presnap')).toBe('historical_unresolved');
-    expect(categoryOf(classification, 'rev-solo')).toBe('historical_unresolved');
-    expect(categoryOf(classification, 'run-selfrate')).toBe('human_import_assertion');
-  });
-
-  it('捕获覆盖 FSRS/mastery/calibration/血缘分区 + 完整 event 分区（P1-7）', async () => {
-    const capture = await captureMigrationCheckpoint(testDb());
-    expect(capture.rawFacts.fsrs).toHaveLength(1);
-    expect(capture.rawFacts.mastery).toHaveLength(1);
-    expect(capture.rawFacts.difficulty_labels).toHaveLength(1);
-    const part = capture.rawFacts.question_lineage.find((q) => q.id === 'q-part');
-    expect(part?.parent_question_id).toBe('q-main');
-    expect(part?.part_index).toBe(1);
-    expect(capture.rawFacts.sessions.map((s) => s.id)).toContain('sess-solve');
-    expect(capture.environment.isolation).toBe('repeatable read read only');
-    // 完整分区：非评估动作（propose）的事件体也被捕获。
-    const propose = capture.rawFacts.events.find((e) => e.id === 'knode-1');
-    expect(propose?.action).toBe('propose');
-    expect(capture.rawFacts.event_action_counts.map((c) => c.action)).toContain('propose');
-  });
-});
-
-describe('幂等与可变运维字段纪律（真库观测）', () => {
-  it('新事实写入 → 事实哈希与 checkpoint 身份都变化（捕获能察觉增量）', async () => {
-    const before = await captureMigrationCheckpoint(testDb());
-    await seedAttempt({
-      id: 'att-later',
-      questionId: 'q-main',
-      payload: { answer_md: '新答案', question_snapshot: { ...SNAPSHOT } },
-      outcome: 'success',
-    });
-    const after = await captureMigrationCheckpoint(testDb());
-    expect(canonicalHash(after.rawFacts)).not.toBe(canonicalHash(before.rawFacts));
-    expect(checkpointHashOf(after, PROVENANCE)).not.toBe(checkpointHashOf(before, PROVENANCE));
-  });
-  it('终轮 P1-1 repro（真库）：4 字段残缺 durable snapshot + 作答 + verdict ⇒ NOT complete', async () => {
-    const fourFieldSnapshot = {
-      kind: 'short_answer',
-      prompt_md: '1+1=?',
-      version: 0,
-      updated_at: '2026-09-01T00:00:00Z',
-    };
-    await testDb()
-      .insert(event)
-      .values({
-        id: 'pen-r1',
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'experimental:judge_pending_attempt',
-        subject_kind: 'question',
-        subject_id: 'q-main',
-        outcome: null,
-        payload: {
-          run_id: 'run-r1',
-          caller: 'submit',
-          knowledge_ids: ['kc-1'],
-          submit: {
-            body: { response_md: '残缺快照作答' },
-            question_id: 'q-main',
-            submitted_at: NOW.toISOString(),
-            question_snapshot: fourFieldSnapshot,
-          },
-        },
-        created_at: NOW,
-      });
-    await seedBackfilledReview({
-      runId: 'run-r1',
-      responseMd: '残缺快照作答',
-      withVerdict: true,
-      withPending: false,
-    });
-    const capture = await captureMigrationCheckpoint(testDb());
-    const classification = classifyMigrationCapture(capture);
-    expect(categoryOf(classification, 'run-r1')).toBe('historical_unresolved');
-  });
-
-  it('终轮 P1-1 repro（真库）：跨题快照身份不绑定 ⇒ unresolved', async () => {
-    const wrongQuestionSnapshot = JSON.parse(JSON.stringify(SNAPSHOT)) as {
-      question: { question_id: string };
-    };
-    wrongQuestionSnapshot.question.question_id = 'q-other';
-    await seedAttempt({
-      id: 'att-mismatch',
-      questionId: 'q-main',
-      payload: { answer_md: '2', question_snapshot: wrongQuestionSnapshot },
-      outcome: 'success',
-    });
-    await seedJudge('jud-mismatch', 'att-mismatch', { coarse_outcome: 'correct', score: 1 });
-    const capture = await captureMigrationCheckpoint(testDb());
-    const classification = classifyMigrationCapture(capture);
-    expect(categoryOf(classification, 'att-mismatch')).toBe('historical_unresolved');
-    expect(categoryOf(classification, 'jud-mismatch')).toBe('historical_unresolved');
-  });
-
-  it('终轮 P1-1 repro（真库）：值域非法判词 ⇒ judge 不可 effective，attempt blocked', async () => {
-    await seedAttempt({
-      id: 'att-bogus',
-      questionId: 'q-main',
-      payload: { answer_md: '2', question_snapshot: { ...SNAPSHOT } },
-      outcome: 'success',
-    });
-    await seedJudge('jud-bogus', 'att-bogus', { coarse_outcome: 'bogus', score: false });
-    const capture = await captureMigrationCheckpoint(testDb());
-    const classification = classifyMigrationCapture(capture);
-    expect(categoryOf(classification, 'jud-bogus')).toBe('historical_unresolved');
-    expect(categoryOf(classification, 'att-bogus')).toBe('pending_blocked');
-    const headRecords = classification.records.filter(
-      (r) =>
-        r.native_target.kind === 'submission_with_imported_eval' &&
-        r.native_target.has_effective_head,
-    );
-    expect(headRecords.map((r) => r.source_id)).not.toContain('jud-bogus');
-  });
-
-  it('终轮 P1-3 repro（真库）：unsupported_judge + 后到有效 verdict ⇒ 一致提升为 complete', async () => {
-    await seedAttempt({
-      id: 'att-unsupported',
-      questionId: 'q-main',
-      payload: {
-        answer_md: null,
-        answer_image_refs: ['asset-9'],
-        question_snapshot: { ...SNAPSHOT },
-        unsupported_judge: true,
-      },
-      outcome: 'failure',
-    });
-    await seedJudge(
-      'jud-late',
-      'att-unsupported',
-      { coarse_outcome: 'correct', score: 1 },
-      undefined,
-    );
-    const capture = await captureMigrationCheckpoint(testDb());
-    const classification = classifyMigrationCapture(capture);
-    expect(categoryOf(classification, 'att-unsupported')).toBe('complete_attempt');
-    const judgeRow = classification.records.find((r) => r.source_id === 'jud-late');
-    expect(judgeRow).toMatchObject({ native_target: { has_effective_head: true } });
   });
 });

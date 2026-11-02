@@ -26,5 +26,5 @@
 
 ## ANTI-PATTERNS
 - 别在客户端直接改 note body；所有持久化走 `/api/artifacts/[id]/body-blocks` 或 refine 链。
-- 别把 embedded_check 孤儿链当可用路径（YUK-358 决定3 已真删）。
-- editing-session heartbeat 现在纯 presence 写，不做 dwell refine。
+- `embedded_check` 孤儿链已删除（YUK-358 决定3）。
+- editing-session heartbeat 只做 presence 写，不做 dwell refine。

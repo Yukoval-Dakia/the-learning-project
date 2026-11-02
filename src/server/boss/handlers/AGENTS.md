@@ -5,7 +5,7 @@
 ## DAG 编排（YUK-758）—— 这些 job **没有自己的 cron**
 > 单锚点 `nightly_orchestrator` cron `30 2` Asia/Shanghai（`src/server/orchestration/constants.ts`）开闸建当夜 run + enqueue 根节点，此后每 60s 一 tick 轮询 pg-boss job 态、上游成功才 enqueue 下游。依赖在各 `manifest.ts` 的 `JobDecl.dependsOn` 上声明，`validateComposition` 启动期强制「成员不得同时带 cron」。**改这些 job 的时序 = 改 `dependsOn` 边，不是改 cron 时刻**；orchestrator 启动时还会对每个成员跑一次 `boss.unschedule`（清升级前残留的旧 schedule 行）。
 >
-> 逐边失败语义：硬边（默认）上游 failed/skipped → 下游 skipped 留痕；`soft` 边上游未成功时下游**照跑**，事实只记在 `dag_orchestration_node.stale` 上——**handler 收不到任何 stale 信号**（YUK-778 删掉了那条从来没有消费者的 `{ stale: true }` job payload；成员 job 的 payload 恒为 `{}`）。软边的全部含义就是「不阻塞」。YUK-1560：`not_needed` / `degraded` 也是软终态（不连坐），原因写在 `dag_orchestration_node.detail`。
+> 逐边失败语义：硬边（默认）上游 failed/skipped → 下游 skipped 留痕；`soft` 边上游未成功时下游**照跑**，事实只记在 `dag_orchestration_node.stale` 上——**handler 收不到任何 stale 信号**（成员 job 的 payload 恒为 `{}`）。软边的全部含义就是「不阻塞」。YUK-1560：`not_needed` / `degraded` 也是软终态（不连坐），原因写在 `dag_orchestration_node.detail`。
 >
 > 可观测（YUK-778）：run 起步 / 收尾（带节点总账，含 stale 计数）、每个 failed（error）/ skipped（warn）节点、跨日 run 被 abandon（error + 放弃前总账）都会打进程日志——两张调度态表是 `BACKUP_EXCLUDED` 且读面（YUK-774）未建，日志是当前唯一诊断出口。`nightly_orchestrator` 队列另有 `nightly_orchestrator_dlq`：tick 抛到 pg-boss 并耗尽重试预算后残骸落 DLQ 保留 7d。重试退避是**带抖动的指数**（`plans.js:1653-1656`，`retry_delay_max` 为 NULL 故无上限钳）：retryDelay 30s ⇒ 第一次重投递 30–60s、第二次 60–120s。
 >
@@ -18,13 +18,12 @@
 | `practice_stream_compose_nightly` | ← `recalibration_nightly` **硬** | practice/manifest | 预产今日练习流；选题实读 `item_calibration.b_calib`（单飞锁幂等；lazy 首读即恢复路径）|
 | `question_supply_nightly` | ← `recalibration_nightly` **硬** | practice/manifest | 缺口扫描 → sourcing/quiz_gen；R3 近-θ̂ 判定实读 `b_calib`→`effectiveB`（7d 指纹 cooldown 是唯一成本闸）|
 | `embed_backfill` | 根 | practice/manifest | `embedding IS NULL` 扫描（question+knowledge，limit 100）|
-| `kc_dedup_nightly` | ← `embed_backfill` **硬**（跨包）| knowledge/manifest | pgvector 近重 KC → merge 提议。硬 gate `embedding IS NOT NULL`——**旧 02:00 恒滞后一天**的时钟 bug 现由边根治（YUK-377 复审 §3.3）|
-| `answer_class_backfill` | 根（**无下游**）| practice/manifest | 纯派生 NULL 尾兜底（on-write `withAnswerClass` 已全量上线）。曾被当作 supply 上游，YUK-758 考据证伪 |
-| ~~`kind_cleanup_backfill`~~ | — | — | **YUK-386 已删**：question.kind 改为自由文本展示标签，canonical 收敛不变量退役 |
+| `kc_dedup_nightly` | ← `embed_backfill` **硬**（跨包）| knowledge/manifest | pgvector 近重 KC → merge 提议。硬 gate `embedding IS NOT NULL`|
+| `answer_class_backfill` | 根（**无下游**）| practice/manifest | 纯派生 NULL 尾兜底（on-write `withAnswerClass` 已全量上线）|
 | `knowledge_edge_propose_nightly` | 根 | knowledge/manifest | 24h 失败窗提边（空窗早退；watermark 续扫 = YUK-377 轻量档待做）|
 | `knowledge_maintenance_nightly` | ← `knowledge_edge_propose_nightly` **软** | knowledge/manifest | KnowledgeReviewTask 维护流。软边：读 proposal inbox 当去重基线，上游挂了照样正确产出 |
 | `dreaming_nightly` | ← `edge_propose` **软** + `knowledge_maintenance_nightly` **软** | agency/manifest | Dreaming producer（DomainTool MCP bridge）|
-| `coach_daily` | 根 | agency/manifest | TodayPlan/brief（旧 review_plan 链投已 retire）。读在线 mastery/session 态，旧 03:45 错峰=时钟巧合 |
+| `coach_daily` | 根 | agency/manifest | TodayPlan/brief；读在线 mastery/session 态 |
 | `goal_scope_propose_nightly` | 根 | agency/manifest | mastery tree-snapshot 提议 goal_scope（cap=1）|
 | `research_meeting_nightly` | 根 | agency/manifest | reconcile-before-propose 教研例会（空夜早退，不写空 anchor/scan 事件）|
 | `frontier_fill_nightly` | 根 | knowledge/manifest | frontier 空时 propose prereq 边（skipped_dense 零 LLM gate）。PROPOSE-ONLY，产物需人 accept |
@@ -33,15 +32,14 @@
 | Queue | cron | 注册点 | 说明 |
 |-------|------|--------|------|
 | `nightly_orchestrator` | `30 2` | orchestration/register.ts | **DAG 单锚点**（见上节）——建当夜 run + enqueue 根节点，随后 60s 自调度 tick。整夜单点，故按 `createJobQueue` 配方建队（retryDelay 30s + backoff + `nightly_orchestrator_dlq`），不再继承 pg-boss 的 retry_delay 0 / 无 DLQ 默认（YUK-778）|
-| `hub_auto_sync_nightly` | `45 2` | notes/manifest | hub auto-zone 重算。**与 `knowledge_edge_propose_nightly` 无运行期依赖**——旧表曾写「真 barrier：edge_propose 夜批 SUPERSEDE 自主写 live 边，此处是唯一消费路径」，该说法**已被代码证伪**（YUK-758 review ToTt717）：`runEdgeProposeAndWrite` 的 SUPERSEDE 分支只 `writeAiProposal` 落**待接受提议**，`propose_edge.ts:614-616` 自述「leaves both live accumulators unchanged **until the user accepts it**」，夜批从不自主改 live 边；本 job 侧也只是推进自己的 reconciliation cursor。故二者是各自独立的 sweep，02:45 与锚点 02:30 的先后是**时钟巧合**，不需要编边。YUK-1560 资格门：dormant 只跳过 coverage repair；abandoned edit-session presence sweep 在 `beforeEligibility` 先跑 |
+| `hub_auto_sync_nightly` | `45 2` | notes/manifest | hub auto-zone 重算。**与 `knowledge_edge_propose_nightly` 无运行期依赖**——两者各自独立 sweep，不编边。YUK-1560 资格门：dormant 只跳过 coverage repair；abandoned edit-session presence sweep 在 `beforeEligibility` 先跑 |
 | `memory_brief_sweep` | `0 3` | memory/triggers.ts | stale brief 扫描 → enqueueBriefRegen（6min singleton；subject 腿事件化 = YUK-581）|
 | `prune_job_events` | `0 4` | observability/manifest.ts → shared durable host | 默认 pg-boss；独立 phase、原 prune-v1 recovery 合同保持 |
 | `verify_dispatch_recover` | `10 4` | ../handlers.ts | `../verify-dispatch-recovery.ts` 适配 Practice 验证 intent 恢复；只补发 source/quiz verify（另在 worker startup 单次触发）|
 | `prune_orphan_review_sessions` | `15 4` | observability/manifest.ts → shared durable host | 默认 pg-boss；固定 cutoff、冻结 candidates、锁内 Review writer + 同事务 receipt；started/paused 严格 started_at < tick cutoff 安全网 |
 | `prune_orphan_conversation_sessions` | `25 4` | ../handlers.ts | 弃置 stuck conversation（错峰避 learning_session 锁）|
 | `prune_orphan_placement_sessions` | `35 4` | ../handlers.ts | 弃置 stuck placement；dark-ship（placement flag off）|
-| `reference_answer_backfill` | `20 5` | practice/manifest | `reference_md IS NULL` → 参考答案。**不入 compose 选题路径**（走判分/UI），故 YUK-758 未编边、留裸 cron。YUK-1560 起入队前做资格判定 |
-| ~~`axis_state_nightly`~~ | — | — | **YUK-1560 摘掉夜写 cron**。placement-profile 仍读 `learner_axis_state` 的最后一次写入 |
+| `reference_answer_backfill` | `20 5` | practice/manifest | `reference_md IS NULL` → 参考答案。**不入 compose 选题路径**（走判分/UI）。入队前做资格判定（YUK-1560）|
 | `confusable_contrast_nightly` | `20 6` | practice/manifest | DARK（flag off = discovery 返 [] NO-OP；owner 拍 2026-07-06 保留空转）|
 
 ## CRON — 周批
@@ -57,7 +55,7 @@
 |-------|------|--------|------|
 | `hub_sync_recovery` | `* * * * *` | notes/manifest | 唯一 Notes recovery floor：hub reconcile 与 handoff/claim 隔离执行；补发缺 completion 的 current-v1 intent、合成 legacy intent、无 AI 收敛 staged result，expired pre-wire/epoch claim 只投递 fenced `note_verify`，expired provider-start 转 ambiguous；任一分支失败最终仍抛出 |
 | `promote_conversation_idle` | `* * * * *` | ../handlers.ts | 每分钟 active→idle（5min 无输入；idle=事件缺席，只能 poll）|
-| `memory_ingest_outbox_poll` | `* * * * *`（**UTC**）| memory/triggers.ts | ADR-0021 transactional outbox dispatch 心跳（**不可降频**——写点直投=复刻已回滚 PR #163）|
+| `memory_ingest_outbox_poll` | `* * * * *`（**UTC**）| memory/triggers.ts | ADR-0021 transactional outbox dispatch 心跳（**不可降频**——写点直投已回滚，见 PR #163）|
 | `memory_ingest_outbox_recover` | `0 * * * *`（**UTC**）| memory/triggers.ts | outbox 排空 recovery drain（cap 1000 cycles）|
 | `copilot_run_reconcile` | `0-58/2 * * * *` | copilot/manifest | YUK-596/YUK-832 — durable Copilot 收敛底线：偶数分钟执行（最多等两分钟），每轮只扫 20 个 outstanding run、reconcile 自身零 LLM/tool；先修持久化 outcome marker，再以 pg-boss 权威状态区分 live / dead / lookup unknown。只对 QUEUED-only、无任何 worker-touch 的 queue-proven dead run 写 `pre_execution_lost`；explicit fence 或 legacy STARTED/DELTA/STEP/REPLY/FAILED(error) 都视为可能执行过，须等主任务 45min + 30s settlement grace 后才写无 checkpoint 的 `ambiguous_execution`。created/retry/active 与 lookup error 均不终态化。|
 | `judge_pending_reconcile` | `50 * * * *` | practice/manifest | YUK-777 A3 — durable judge 的 domain-state-scan sweeper：扫「作答已录、判词未落」的 `experimental:judge_pending_attempt`（无 `event.id = run_id` 的 review），经**同一 rate-limited 入队面**重投 `judge_run`。**每小时而非夜批**：这是学习者面前悬着的判词，等一夜等于丢一天；stall 门槛 15min + pg-boss liveness 权威判定，故不会抢在飞的 run。自身零 LLM（付费发生在 `judge_run`）→ fast 层。恢复次数封顶（`judge_run.requeued` 计数）+ 7d 年龄封顶后转人工（D6 manual-only，YUK-800 A4）|

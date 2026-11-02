@@ -25,7 +25,7 @@
 | `ui/subjects.tsx` / `ui/coverage-lattice.tsx` | subject 与覆盖细目 admin React 面 |
 
 ## CONVENTIONS
-- admin 路由照常套主 chrome（`web/src/router.tsx` RootShell）；不另设 admin 独立壳。决策记录见 `docs/design/2026-07-07-yuk579-coverage-lattice.md` §6（loom app.jsx 的「separate shell」原型已被 SPA 单一 RootShell 取代，owner 已收编；`docs/audit/2026-06-13-visual-gap.md` §5 决策点③ 收口）。
+- admin 路由照常套主 chrome（`web/src/router.tsx` RootShell）；不另设 admin 独立壳。决策记录见 `docs/design/2026-07-07-yuk579-coverage-lattice.md` §6 与 `docs/audit/2026-06-13-visual-gap.md` §5。
 - `/api/jobs/[kind]/[id]/events` 是通用异步 job SSE tracker（copilot_run 首个消费者）。
 - `/api/events/[id]/correct` 是统一事件流撤回面（correction 内核不变量）。
 - cost 按 task / provider / model 聚合；R2/S3 成本按 currency 分组不能直接相加。
