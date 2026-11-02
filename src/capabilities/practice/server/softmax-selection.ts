@@ -59,7 +59,7 @@ export interface ComposeSoftmaxDeps {
   /** L2 LLM 编排器。省略 → 默认动态 import runTask（production 路径）。 */
   runTaskFn?: RunTaskFn;
   /**
-   * mem0 learner-prior loader。省略 → production 动态 import server/memory read seam；
+   * mem0 learner-prior loader。省略 → production 动态 import server/ai/mem0 read seam；
    * 构造/搜索失败一律退空 prior，不改变 LLM fallback level。
    */
   loadMemoryPrior?: LoadMemoryPriorFn;
@@ -439,7 +439,7 @@ const defaultLoadMemoryPrior = async (
     throw new TypeError('Practice L2 memory prior requires provider invocation');
   }
   const { createMem0OpaqueOperationContext, readMemoryFacts } = await import(
-    '@/server/memory/read'
+    '@/server/ai/mem0/read'
   );
   // Client construction may throw synchronously when env/config is unavailable. The caller's
   // loadMemoryPriorFailSoft boundary intentionally covers this construction as well as search.

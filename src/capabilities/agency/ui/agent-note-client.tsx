@@ -5,7 +5,7 @@ import type { AgentNotesResponse } from './types';
 export type AgentNoteClient = {
   getAgentNoteBoard: (limit: number) => Promise<AgentNotesResponse>;
 };
-export const httpAgentNoteClient: AgentNoteClient = {
+const httpAgentNoteClient: AgentNoteClient = {
   getAgentNoteBoard: (limit) => apiJson<AgentNotesResponse>(`/api/agents/notes?limit=${limit}`),
 };
 const AgentNoteClientContext = createContext<AgentNoteClient | undefined>(undefined);

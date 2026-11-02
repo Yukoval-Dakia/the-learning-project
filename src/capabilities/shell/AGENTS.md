@@ -20,7 +20,7 @@
 - workbench summary 是读模型，不拥有业务事实；数据源来自各 capability 的聚合端点。
 - shipped 页面声明统一投影自 `src/kernel/ui-surfaces.ts`，禁止在 manifest 另写一份路径表。
 - 收件箱 count 与 TodayPage 复用同一 `workbench-summary` query key，React Query 自动去重。
-- `/today`、`/coach` 用到的 agency / onboarding 组件与读函数由路由壳注入（Start `server/start/routes/`、SPA `web/src/router.tsx`）；shell 只 type-import 它们。
+- `/today`、`/coach` 用到的 agency / onboarding 组件与读函数由路由壳注入（Start `server/start/routes/`）；shell 只 type-import 它们。
 - 工作台 due KPI 采样 Practice 的 `queryReviewDue`，由组合层传入：Start 读者 `server/start/workbench-reader.ts`、Hono handler `server/composed-routes.ts`（manifest 只声明 `/api/workbench/summary` 归属，不带 loader）；shell 不 import practice。
 
 ## ANTI-PATTERNS

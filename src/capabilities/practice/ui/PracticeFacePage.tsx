@@ -1,7 +1,7 @@
 // M2 练习面 host（YUK-316）— 视图状态机 + toast。
 // 设计基准：docs/design/loom-refresh/project/screen-pface.jsx（视图：流(默认)/
 // 卷架(?view=shelf)/散题作答/卷模式/结果/复盘；机制不暴露——页面只见 AI 的一句话
-// 理由与判定）。路由耦合走 props 注入（壳层规则，web/src/router.tsx）。
+// 理由与判定）。路由耦合走 props 注入（壳层规则，server/start/routes/）。
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';

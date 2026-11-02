@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# M5-T5c (YUK-321) — Hono + Vite 形态，双进程（gate 选项 b 已裁决）：
+# M5-T5c (YUK-321) — Hono + TanStack Start 前门形态，双进程（gate 选项 b 已裁决）：
 # app 容器跑 dist/server.cjs，worker 容器同镜像跑 dist/worker.cjs（compose 层
 # command 覆盖），presence 走 PG 表（PgPresenceStore），不设 RW_WORKER。
 # Production and the supported runtime contract use Node 24 (YUK-686).
@@ -38,7 +38,7 @@ RUN npm install --omit=dev --no-audit --no-fund \
     @modelcontextprotocol/sdk@1.29.0
 
 # Stage 2.7: install better-sqlite3 into its own clean flat node_modules.
-# YUK-341 — mem0 history (disableHistory:false, src/server/memory/client.ts) uses
+# YUK-341 — mem0 history (disableHistory:false, src/server/ai/mem0/client.ts) uses
 # SQLiteManager → loads the native better_sqlite3.node. esbuild
 # --external:better-sqlite3 (build:server + build:worker) keeps the .node out of
 # the bundle, so the runner needs it as a flat overlay (like sharp above).
@@ -74,7 +74,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libvips42 pandoc libreoffice-core libreoffice-writer fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/web/dist ./web/dist
 COPY --from=builder /app/drizzle ./drizzle
 # Agent Skill assets — the pi skill-doc resolvers read
 # src/subjects/<id>/skills/ at runtime via readFile/readdirSync (not imported),
@@ -102,7 +101,7 @@ RUN test -s node_modules/@hyzyla/pdfium/dist/pdfium.wasm
 # matching owner; docker-compose's mem0-init also repairs existing root-owned
 # volumes during upgrades.
 RUN mkdir -p /var/lib/mem0 && chown node:node /var/lib/mem0
-ENV API_PORT=8787 RW_STATIC_DIR=/app/web/dist
+ENV API_PORT=8787 RW_FRONTDOOR=1
 # gate 选项 b：不设 RW_WORKER（worker 独立进程，compose worker 服务 command 覆盖跑 dist/worker.cjs）。
 EXPOSE 8787
 USER node

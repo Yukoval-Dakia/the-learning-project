@@ -21,6 +21,8 @@ import {
   createProviderAttemptLifecycle,
 } from './provider-attempt-lifecycle';
 
+// Direct (non-runner) callers share the memory LLM pin, its GLM cost table and headers.
+export { type Env, memoryLlmHeaders, resolveMemoryLlmConfig } from './mem0/llm-config';
 export { glmChatCostCny } from './pricing';
 
 export type DirectProviderLifecycleFactory = (input: {

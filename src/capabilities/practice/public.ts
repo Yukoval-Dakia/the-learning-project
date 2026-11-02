@@ -385,3 +385,4 @@ export {
   transitionReviewSession,
 } from './server/session-operations/review-session';
 export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';
+export { readWorksheetExport } from './server/worksheet/export-store';

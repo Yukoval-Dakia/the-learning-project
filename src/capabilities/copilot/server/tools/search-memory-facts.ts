@@ -9,8 +9,11 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
-import { type MemoryReadClientFactory, readMemoryFacts } from '@/server/memory/read';
+import {
+  type MemoryReadClientFactory,
+  createMem0OpaqueOperationContext,
+  readMemoryFacts,
+} from '@/server/ai/mem0/read';
 
 // Concrete default topK so the recency-rerank wrapper can overfetch + truncate;
 // never pass undefined into the math.

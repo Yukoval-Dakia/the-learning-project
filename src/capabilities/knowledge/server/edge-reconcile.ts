@@ -12,12 +12,16 @@
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import {
   type DirectProviderOperationOptions,
+  type Env,
   createDirectProviderOperationContext,
   executeDirectProviderAttempt,
   glmChatCostCny,
   isDirectProviderAttemptInvariantError,
+  memoryLlmHeaders,
+  resolveMemoryLlmConfig,
 } from '@/server/ai/direct-provider-attempt';
-import { type Env, memoryLlmHeaders, resolveMemoryLlmConfig } from '@/server/memory/client';
+
+export type { Env };
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 

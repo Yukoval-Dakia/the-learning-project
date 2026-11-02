@@ -3,6 +3,7 @@ export {
   type DirectProviderOperationContext,
   createDirectProviderOperationContext,
   executeDirectProviderAttempt,
+  isDirectProviderAttemptInvariantError,
   providerOperationIdForInvocation,
 } from './direct-provider-attempt';
 export {
