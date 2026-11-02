@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetTestConfig } from '@/core/config/store';
 import { canonicalHash } from '@/core/migration/canonical';
 import { ai_task_runs, event, material_fsrs_state, question, source_asset } from '@/db/schema';
+import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import {
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
@@ -11,7 +12,6 @@ import {
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { type RunnerMessage, __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { issueAssessment } from './assessment/issue';
 import { type RunTaskFn, planSolveHint, startSolveSession } from './solve-session';
 
 const r2 = vi.hoisted(() => ({ get: vi.fn() }));

@@ -10,7 +10,8 @@
  *   merge-base）：同一套映射在基提交的树上重算 owner 对，HEAD 出现基上没有的对即失败，
  *   手改基线也放不进新边。
  * - 已建子 owner 目录只能经 `<owner>/public.ts` 被目录外引用；根 `manifest.ts` 另可引用
- *   `<owner>/manifest-part.ts`。
+ *   `<owner>/manifest-part.ts`，根 `tasks/index.ts` 另可引用 `<owner>/tasks/*`（任务目录组合
+ *   不得加载应用 public，见 `task-public.ts`）。
  */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { posix, relative, resolve, sep } from 'node:path';
@@ -195,7 +196,8 @@ function scanSources(sources: readonly PracticeSource[]): PracticeSubownerScan {
       if (toDir && toDir !== fromDir) {
         const allowed =
           to === `${toDir}/public.ts` ||
-          (from === 'manifest.ts' && to === `${toDir}/manifest-part.ts`);
+          (from === 'manifest.ts' && to === `${toDir}/manifest-part.ts`) ||
+          (from === 'tasks/index.ts' && to.startsWith(`${toDir}/tasks/`));
         if (!allowed) publicOnlyViolations.push(`${from} -> ${to}`);
       }
       if (COMPOSITION_FILES.has(from) || TEST_RE.test(to)) continue;

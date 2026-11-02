@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { assessment_issuance, question, question_revision } from '@/db/schema';
+import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import {
   type NormalizableQuestionRow,
   contractIntegrityDigest,
@@ -9,7 +10,6 @@ import {
 } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { issueAssessment } from './issue';
 import { getIssuanceState } from './submit';
 
 const NOW = new Date('2026-10-04T00:00:00.000Z');

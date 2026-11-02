@@ -62,6 +62,7 @@ const liveSubscriberIdentities = [
   ['practice.failure-learning-attempt', 3],
   ['practice.learner-return-wake', 1],
   ['practice.question-admission-enqueue', 1],
+  ['practice.serving-recheck', 1],
   ['practice.web-supply-observe', 1],
 ];
 const subscriberCount = liveSubscriberIdentities.length;
@@ -255,9 +256,9 @@ describe('YUK-766 subscription progress backup', () => {
     await testDb().execute(sql`DROP TABLE IF EXISTS test_subscription_snapshot_memory`);
   });
 
-  // @invariant data: archive keeps nine subscribers, seven states, and one shared publish event
+  // @invariant data: archive keeps ten subscribers, seven states, and one shared publish event
   // @fails-if omit admission enqueue or the return wake, or split the publish source
-  it('archives all nine live subscriber identities, seven delivery states and effect provenance', async () => {
+  it('archives all ten live subscriber identities, seven delivery states and effect provenance', async () => {
     const { registry } = await seedProgress();
     const data = decode(await archive());
     expect(data.event_subscription_checkpoint).toHaveLength(subscriberCount);
@@ -285,14 +286,21 @@ describe('YUK-766 subscription progress backup', () => {
       'practice.failure-learning-attempt',
       'practice.learner-return-wake',
       'practice.question-admission-enqueue',
+      'practice.serving-recheck',
       'practice.web-supply-observe',
     ]);
     const sourceIds = (id: string) =>
       data.event_subscription_delivery
         .filter((row) => row.subscriber_id === id)
         .map((row) => row.source_event_id);
-    const publish = ['agency.probe-publication-serve', 'practice.question-admission-enqueue'];
-    expect([...sourceIds(publish[0])].sort()).toEqual([...sourceIds(publish[1])].sort());
+    const publish = [
+      'agency.probe-publication-serve',
+      'practice.question-admission-enqueue',
+      'practice.serving-recheck',
+    ];
+    for (const id of publish.slice(1)) {
+      expect([...sourceIds(publish[0])].sort()).toEqual([...sourceIds(id)].sort());
+    }
     expect(new Set(sourceIds(publish[0])).size).toBe(statuses.length);
     expect(data.event_subscription_effect).toHaveLength(3);
     expect(data.event_subscription_effect.find((r) => r.status === 'enqueued')).toMatchObject({

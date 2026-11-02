@@ -193,14 +193,24 @@ void (async () => {
   await startListenLoop();
   // Start owns the Web front door when RW_FRONTDOOR=1 (needs the dist/start build).
   // Startup, DB hydration, tool recovery and shutdown keep their existing single owner.
-  const fetch = env.RW_FRONTDOOR === '1' ? await createFrontdoor(app) : app.fetch;
-  const server = serve({ fetch, port }, (info) => {
-    const mounted = capabilities.flatMap((c) =>
-      (c.api?.routes ?? []).map((r) => `${r.method} ${r.path}`),
-    );
-    console.log(`[rw:api] hono listening on :${info.port}`);
-    console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
-  });
+  // RW_FRONTDOOR=dev serves the same front door through the Vite dev server (HMR); dev-local only.
+  // build:server marks ./dev-frontdoor external so the production bundle never pulls in Vite.
+  const devFrontdoor =
+    env.RW_FRONTDOOR === 'dev'
+      ? await (await import('./dev-frontdoor')).createViteFrontdoor(app)
+      : undefined;
+  const fetch =
+    devFrontdoor?.fetch ?? (env.RW_FRONTDOOR === '1' ? await createFrontdoor(app) : app.fetch);
+  const server = serve(
+    { fetch, port, hostname: devFrontdoor?.hostname, createServer: devFrontdoor?.createServer },
+    (info) => {
+      const mounted = capabilities.flatMap((c) =>
+        (c.api?.routes ?? []).map((r) => `${r.method} ${r.path}`),
+      );
+      console.log(`[rw:api] hono listening on :${info.port}`);
+      console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
+    },
+  );
 
   let workerStartup: Promise<void> | undefined;
   installApiShutdown(server, async () => {

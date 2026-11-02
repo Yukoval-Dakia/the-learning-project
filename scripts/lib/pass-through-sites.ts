@@ -694,14 +694,13 @@ function siteKey(site: PassThroughSite): string {
 
 /**
  * Set difference head vs base. `renames` maps a base path to its head path so a
- * moved file keeps its identity instead of laundering a stock site as new.
+ * moved file or moved target keeps its identity instead of laundering a stock site as new.
  */
 export function diffPassThroughSites(
   baseSites: readonly PassThroughSite[],
   headSites: readonly PassThroughSite[],
   renames: ReadonlyMap<string, string>,
 ): { added: PassThroughSite[]; removed: PassThroughSite[] } {
-  // A forward whose file and target moved together is the same site, not a new one.
   const renamed = (site: PassThroughSite): PassThroughSite => ({
     ...site,
     file: renames.get(site.file) ?? site.file,

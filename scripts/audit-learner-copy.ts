@@ -9,7 +9,7 @@ const ALLOWLIST_PATH = 'scripts/audit-learner-copy-allowlist.json';
 // comments, and identifiers are out of scope. Add new learner surfaces explicitly here.
 export const LEARNER_COPY_FILES = [
   'src/ui/shell/AppTopbar.tsx',
-  'src/ui/components/UsageReceiptLine.tsx',
+  'src/capabilities/onboarding/ui/usage-receipt.tsx',
   'src/ui/primitives/CollapsibleList.tsx',
   'src/capabilities/ingestion/ui/record/AgentLines.tsx',
   'src/capabilities/ingestion/ui/record/AskReply.tsx',
