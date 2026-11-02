@@ -11,6 +11,7 @@ import { RootShell } from '../../web/src/RootShell';
 import { TokenGate } from '../../web/src/TokenGate';
 import { startAgentNoteClient } from './agent-note-client';
 import { startCopilotClient } from './copilot-summary-client';
+import { startNotePageClient } from './note-page-client';
 import { startSubjectClient } from './subject-client';
 import { startKnowledgeTreeClient, startWorkbenchClient } from './workbench-client';
 
@@ -39,6 +40,7 @@ export function StartWorkbenchShell({
                   pathname={pathname}
                   navigate={startNavigate}
                   readKnowledgeTree={startKnowledgeTreeClient}
+                  readNotePage={startNotePageClient}
                 >
                   {children}
                 </RootShell>

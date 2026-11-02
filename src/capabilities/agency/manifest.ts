@@ -165,13 +165,6 @@ export const agencyCapability = defineCapability({
         load: () => import('./jobs/coach_daily').then((m) => m.buildCoachDailyHandler),
       },
       {
-        name: 'coach_weekly',
-        schedule: { cron: '30 4 * * 0', tz: 'Asia/Shanghai' },
-        eligibility: nightlyEligibility('reflection'),
-        queue: 'llm',
-        load: () => import('./jobs/coach_weekly').then((m) => m.buildCoachWeeklyHandler),
-      },
-      {
         // On-demand, intervention-scoped preparation wave. One recommendation is
         // immediately consumed by QuestionAuthor, then a separate same-model review gates
         // atomic activation. No cron and no ordinary KC fallback.

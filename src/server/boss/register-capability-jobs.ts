@@ -107,7 +107,7 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   }
 }
 
-const COACH_JOBS = new Set(['coach_daily', 'coach_weekly']);
+const COACH_JOBS = new Set(['coach_daily']);
 
 // Coach reads the kernel plan projection. Practice owns the due/budget/pace
 // facts and binds them here, before any coach handler is mounted. Kernel

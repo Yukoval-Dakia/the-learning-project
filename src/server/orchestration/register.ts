@@ -138,7 +138,7 @@ export async function registerOrchestrator(
 }
 
 // Removed from the manifest, but old databases may still have their schedules.
-const RETIRED_BARE_CRONS = ['kt_estimate_nightly', 'axis_state_nightly'] as const;
+const RETIRED_BARE_CRONS = ['kt_estimate_nightly', 'axis_state_nightly', 'coach_weekly'] as const;
 
 async function unscheduleRetiredCrons(boss: PgBoss): Promise<void> {
   for (const name of RETIRED_BARE_CRONS) {

@@ -130,7 +130,7 @@ async function main() {
   await step('7. coach → runCoach(daily) (real agent loop, goal_strand)', async () => {
     const { installDailyReviewPlanFacts } = await import('@/capabilities/practice/public');
     await installDailyReviewPlanFacts();
-    const r = await runCoach(db, 'daily');
+    const r = await runCoach(db);
     show('result', r);
     return r;
   });
