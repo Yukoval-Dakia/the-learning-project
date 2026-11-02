@@ -41,9 +41,8 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 7,
+      "total": 5,
       "byOwnerPair": {
-        "agency -> practice": 2,
         "copilot -> notes": 1,
         "copilot -> practice": 1,
         "observability -> agency": 1,

@@ -10,6 +10,7 @@
 | `tools/` | DomainTool 契约（types / allowlists / budgets / context-throttle），central registry 与 capability tool 共享 |
 | `read-models/` | 跨 capability 只读投影（failure attempts、failure-learning knowledge context、question activity、cause policy、knowledge tree/subject 解析、questions 列表、daily review plan inputs、intervention preparation stage、note section projection） |
 | `records/mastery-state.ts` | 在线 mastery 诊断的完整 attempt 更新、显式 upsert 与单 KC merge retirement；跨面结算、恢复和 merge 编排仍归调用方 |
+| `records/intervention-diagnostic-materialize.ts` | 干预诊断题物料化与退役：题行谱系、草稿/准入门、一次性发布、当日流安置（锁在 `locks/intervention-diagnostic-delivery.ts`）。Agency 在干预事务内调用；Practice 在 worker 启动时绑定当日流日期、判分活动与题目排程入学/退役 |
 | `records/intervention-package-author.ts` | 干预题目包的一次准备尝试：准备态守卫、科目档案、付费作者阶段、再次守卫、付费复检阶段、确定性校验。Practice 只提供两个付费阶段 |
 | `records/knowledge-tag.ts` | match-or-propose KC 标注：相似度匹配或建 pending 子 KC 及审计事件；embedder 与命名由调用方注入，kernel 不调 provider。检索与阈值在 `read-models/knowledge-similarity.ts` |
 | `records/` | 共享 learning-record 读/迁移模型（queries / record-processing / types）、typed-state 存取与 `conjecture-prediction-scoring.ts` 单探针评分规则 |

@@ -108,6 +108,15 @@ export async function installInterventionAuthorStages(): Promise<void> {
   install(interventionAuthorStages);
 }
 
+export async function installInterventionDiagnosticLeaves(): Promise<void> {
+  const [{ installInterventionDiagnosticLeaves: install }, { interventionDiagnosticLeaves }] =
+    await Promise.all([
+      import('@/kernel/records/intervention-diagnostic-materialize'),
+      import('./server/intervention-diagnostics'),
+    ]);
+  install(interventionDiagnosticLeaves);
+}
+
 type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;
 export const handleReviewDue: HandleReviewDue = async (...args) => {
   const dueList = await import('./server/due-list');
@@ -139,11 +148,6 @@ export {
   reviewInterventionPackageCandidate,
 } from './server/intervention-author';
 
-export {
-  INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
-  materializeInterventionDiagnostics,
-  retireInterventionDiagnosticQuestion,
-} from './server/intervention-diagnostics';
 // explicit judging contract consumed by the stable kernel facade.
 export type { AnswerInput, JudgeResult } from './server/judge';
 export {
