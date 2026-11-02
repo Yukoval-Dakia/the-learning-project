@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // dev-throws / prod-logs switch (onParityMismatch) instead of letting it propagate raw. In
 // prod a propagated throw would roll back a successful live accept (contract violation); in
 // dev/test the switch RETHROWS, so the throw must surface as a `<fold-threw>` parity error,
-// NOT as the original bare error escaping the assert. We mock the gather layer to force the
+// NOT as the original bare error escaping the assert. We mock the kernel gather-and-fold functions to force the
 // throw deterministically (the node reducer is throw-free with real data, so a real-data test
 // can't reach this defensive path — hence the mock).
 vi.mock('@/kernel/records/knowledge-node-history', async (importOriginal) => ({
