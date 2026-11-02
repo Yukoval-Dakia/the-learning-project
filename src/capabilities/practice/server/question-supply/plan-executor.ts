@@ -579,6 +579,7 @@ async function runJyeooRoute(
 async function runWebRoute(
   run: RouteRunContext,
   deps: ExecuteSupplyPlanDeps,
+  routesExecuted: string[],
 ): Promise<RouteExecutionTally> {
   const routeTrace = cloneSupplyTraceForRoute(run.supplyTrace, 'sourcing_web');
   if (routeTrace === null) throw new Error('web supply requires a valid supply_trace');
@@ -589,6 +590,7 @@ async function runWebRoute(
     causeId: run.planEventId ?? run.causedByEventId,
     subjectProfile: run.subjectProfile,
     fetch: deps.runWebFetchCandidates,
+    routesExecuted,
     ...(run.placementDelivery ? { placement: run.placementDelivery } : {}),
   });
   run.webDemandId = state.demandId;
@@ -785,7 +787,10 @@ export async function executeSupplyPlan(
       if (route === 'jyeoo_fetch') {
         tally = await runJyeooRoute(run, deps, params.jyeooFetch);
       } else if (route === 'sourcing_web') {
-        tally = await runWebRoute(run, deps);
+        // Plan routes already run for this item in this executor pass are
+        // recorded on the demand as tried, so a later fallback never re-pays
+        // for a route this demand already executed.
+        tally = await runWebRoute(run, deps, item.routePreference.slice(0, routeIndex));
       } else if (route === 'quiz_gen') {
         tally = await runQuizGenRoute(run, deps);
       } else {

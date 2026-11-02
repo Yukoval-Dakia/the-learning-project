@@ -85,10 +85,13 @@ export function buildSupplyExecutorDeps(_db: Db): ExecuteSupplyPlanDeps {
         deps: defaultWebSourcingDeps(),
       }),
     enqueueQuizGen: async (payload, opts) =>
+      // The key doubles as the deterministic pg-boss job key: a retried send
+      // of the same key dedups on the job primary key, so a crash between the
+      // send and the item-completion event cannot pay for a second quiz_gen.
       (await enqueueSupplyDispatchJob(
         'quiz_gen',
         payload as unknown as Record<string, unknown>,
-        ...(opts?.singletonKey ? [{ singletonKey: opts.singletonKey }] : []),
+        ...(opts?.singletonKey ? [{ jobKey: opts.singletonKey }] : []),
       )) ?? undefined,
   };
 }

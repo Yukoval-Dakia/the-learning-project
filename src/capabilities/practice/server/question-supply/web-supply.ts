@@ -105,14 +105,15 @@ const State = z.object({
   // YUK-1664 S3 — route fallback bookkeeping. The demand's full route plan is
   // persisted so a blocked source falls back to the next route inside the SAME
   // demand instead of waiting out the scan fingerprint cooldown. routesTried
-  // (seeded 'sourcing_web') records only routes whose send was confirmed; a
-  // claimed-but-unsent route stays pending (nextRoute set, fallbackJobId null)
-  // and is retriable under the same per-(demand,route) singletonKey.
+  // (seeded with the routes this run already executed + 'sourcing_web') records
+  // only routes whose send was confirmed; a claimed-but-unsent route stays
+  // pending (nextRoute pointing at an untried route) and is retriable under the
+  // same deterministic per-(demand,route) pg-boss job id.
   // Defaults keep pre-YUK-1664 payloads parsing; an empty routePlan simply reads
   // as exhausted, matching the old terminal-blocked behavior.
   routePlan: z.array(z.string()).default([]),
   routesTried: z.array(z.string()).default([]),
-  /** The pending fallback route while blocked; null once dispatched or exhausted. */
+  /** The next untried fallback route while blocked; null when exhausted or terminal. */
   nextRoute: z.string().nullable().default(null),
   /** Why no fallback is possible: 'route_plan_exhausted' | 'policy_blocked'. */
   routeExhausted: z.string().nullable().default(null),
@@ -239,7 +240,7 @@ function blockedRouting(state: WebSupplyState, reason: string | null) {
 }
 
 export interface WebSupplyFallbackDeps {
-  /** supply_execute enqueue seam (production default = pg-boss send with singleton key). */
+  /** supply_execute enqueue seam (production default = pg-boss send with deterministic job id). */
   enqueueSupplyExecute?: (data: Record<string, unknown>) => Promise<string | null>;
 }
 
@@ -247,14 +248,16 @@ export interface WebSupplyFallbackDeps {
  * THE supply route fallback dispatch — the single path both the in-run executor
  * and the async drivers (publication observe, recovery sweep) use to continue a
  * blocked demand. It sends ONE supply_execute job for the demand's pending
- * `nextRoute` under the deterministic singletonKey
+ * `nextRoute` under the deterministic pg-boss job id derived from
  * `web_supply_fallback_<demandId>_<route>`, which is also the job's
- * plan_event_id (executor once-semantics durable past the singleton window).
- * nextRoute + fallbackJobId=null is the pending claim: a claimed-but-unsent
- * fallback (enqueue throw, or a crash between send and mark) stays retriable —
- * every later delivery re-sends the same key and then records the job id.
- * A route enters routesTried only after a confirmed send, so a retried delivery
- * can never double-dispatch paid generation.
+ * plan_event_id (executor once-semantics on top of the job-id dedup).
+ * nextRoute pointing at an untried route is the pending claim: a
+ * claimed-but-unsent fallback (enqueue throw, or a crash between send and mark)
+ * stays retriable — every later delivery re-sends the same job id and then
+ * records the outcome. A route enters routesTried only after a confirmed send,
+ * and nextRoute advances to the next untried route (or clears with
+ * routeExhausted), so successive blocks walk the plan once per route — bounded
+ * by plan length, never re-sending an already-tried route.
  */
 export async function dispatchWebSupplyRouteFallback(
   db: Db,
@@ -267,15 +270,14 @@ export async function dispatchWebSupplyRouteFallback(
     state.phase !== 'blocked' ||
     route === null ||
     placementClaimOf(state) ||
-    state.fallbackJobId !== null ||
     state.routesTried.includes(route)
   )
     return { dispatched: false, jobId: null, route };
-  const singletonKey = `web_supply_fallback_${demandId}_${route}`;
+  const fallbackKey = `web_supply_fallback_${demandId}_${route}`;
   const data: Record<string, unknown> = {
     // The planner's idempotency slot carries the same deterministic key as the
-    // pg-boss singleton: the fallback executor run for this route happens once.
-    plan_event_id: singletonKey,
+    // pg-boss job id: the fallback executor run for this route happens once.
+    plan_event_id: fallbackKey,
     items: [
       {
         demand_id: demandId,
@@ -294,24 +296,29 @@ export async function dispatchWebSupplyRouteFallback(
   };
   const enqueue =
     deps.enqueueSupplyExecute ??
-    ((payload: Record<string, unknown>) => enqueueSupplyExecuteJob(payload, singletonKey));
+    ((payload: Record<string, unknown>) => enqueueSupplyExecuteJob(payload, fallbackKey));
   const jobId = await enqueue(data);
   try {
     const fresh = await latestRequired(db, demandId);
-    if (fresh.fallbackJobId === null && !fresh.routesTried.includes(route)) {
+    if (!fresh.routesTried.includes(route)) {
+      const routesTried = [...fresh.routesTried, route];
+      const next = remainingRoutePlan({ ...fresh, routesTried }).find((r) =>
+        EXECUTABLE_FALLBACK_ROUTES.has(r),
+      );
       await advance(db, fresh, {
-        routesTried: [...fresh.routesTried, route],
-        fallbackJobId: jobId,
+        routesTried,
+        fallbackJobId: jobId ?? fallbackKey,
+        nextRoute: next ?? null,
+        routeExhausted: next === undefined ? 'route_plan_exhausted' : fresh.routeExhausted,
       });
     }
   } catch (err) {
     // The send already went out. If a concurrent driver marked this same
-    // dispatch (same singletonKey → same job), the outcome stands; otherwise
+    // dispatch (same job id → same job), the outcome stands; otherwise
     // surface the mark failure instead of hiding a possibly lost fallback —
-    // the unmarked route is re-sent under the same key by the next delivery.
+    // the unmarked route is re-sent under the same job id by the next delivery.
     const latest2 = await latest(db, demandId);
-    if (latest2 !== null && (latest2.fallbackJobId !== null || latest2.routesTried.includes(route)))
-      return { dispatched: true, jobId, route };
+    if (latest2?.routesTried.includes(route)) return { dispatched: true, jobId, route };
     throw err;
   }
   // Observability: a demand-identified dispatch event. It keeps the scan
@@ -683,6 +690,10 @@ export async function runWebSupply(params: {
   subjectProfile: RunWebFetchCandidatesParams['input']['subjectProfile'];
   /** Claim delivery authority; required for (and only meaningful on) a placement demand. */
   placement?: PlacementWebDelivery;
+  /** Plan routes the executor already ran for this item before web (e.g.
+   * jyeoo_fetch): seeded into routesTried so fallback never re-pays for a
+   * route this demand already executed. */
+  routesExecuted?: string[];
 }): Promise<WebSupplyState> {
   const { db, placement } = params;
   const trace = params.trace === undefined ? undefined : SupplyTraceV1.parse(params.trace);
@@ -737,7 +748,7 @@ export async function runWebSupply(params: {
     // The demand owns the item's full route plan so a blocked source can fall
     // back to the next route inside this demand (YUK-1664 S3).
     routePlan: [...item.routePreference],
-    routesTried: ['sourcing_web'],
+    routesTried: [...new Set([...(params.routesExecuted ?? []), 'sourcing_web'])],
     nextRoute: null,
     routeExhausted: null,
     fallbackJobId: null,

@@ -111,15 +111,16 @@ async function defaultEnqueue(
 }
 
 /**
- * supply_execute send carrying a pg-boss singleton key — used by the web-supply
- * route fallback so a retried delivery cannot double-enqueue the same demand's
- * fallback executor run (kernel seam stays the single pg-boss send site).
+ * supply_execute send carrying a deterministic pg-boss job id — used by the
+ * web-supply route fallback so a retried delivery cannot double-enqueue the
+ * same demand's fallback executor run (kernel seam stays the single pg-boss
+ * send site).
  */
 export function enqueueSupplyExecuteJob(
   data: Record<string, unknown>,
-  singletonKey: string,
+  jobKey: string,
 ): Promise<string | null> {
-  return enqueueSupplyDispatchJob('supply_execute', data, { singletonKey });
+  return enqueueSupplyDispatchJob('supply_execute', data, { jobKey });
 }
 
 /**
