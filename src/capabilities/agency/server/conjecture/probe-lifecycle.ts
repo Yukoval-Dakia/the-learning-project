@@ -43,7 +43,11 @@ import {
   acquireProposalDecisionLock,
   findExistingRateEvent,
 } from '@/kernel/proposals/applier-helpers';
-import { activeProbePredicate, probeIssuanceId } from '@/kernel/read-models/probe-delivery';
+import {
+  activeProbePredicate,
+  probeContainerRef,
+  probeIssuanceId,
+} from '@/kernel/read-models/probe-delivery';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
@@ -214,7 +218,7 @@ export async function servePublishedProbe(db: DbOrTx, probeQuestionId: string) {
       group_id: probeQuestionId,
       revision_id: original?.revision_id,
       issuance_id: probeIssuanceId(probeQuestionId),
-      container_occurrence_ref: `probe:${probeQuestionId}`,
+      container_occurrence_ref: probeContainerRef(probeQuestionId),
       actorRef: 'conjecture:probe-serve',
     });
   });

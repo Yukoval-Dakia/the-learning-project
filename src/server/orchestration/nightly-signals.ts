@@ -22,6 +22,7 @@ import {
   REFLECTION_BRIEF_SCOPE_KEYS,
   classifyActivityTier,
 } from '@/kernel/nightly-eligibility';
+import { pendingEdgeProposeEventPredicate } from '@/kernel/read-models/pending-edge-proposals';
 import { loadReturnStockGaps } from '@/kernel/read-models/return-stock';
 
 /** Hard upstream of kc_dedup; its success means freshly embedded nodes to pair. */
@@ -188,32 +189,24 @@ function asDate(value: unknown): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+// Counts only frontier-produced pairs: the pending cap gates that producer alone.
 async function loadPendingEdgeProposalCount(db: Db): Promise<number> {
   const [row] = rowsOf<{ n: number | string }>(
     await db.execute(sql`
       SELECT count(*)::int AS n
       FROM (
         SELECT DISTINCT
-          propose_event.payload->>'from_knowledge_id',
-          propose_event.payload->>'to_knowledge_id',
-          propose_event.payload->>'relation_type'
-        FROM event propose_event
-        WHERE propose_event.action = 'propose'
-          AND propose_event.subject_kind = 'knowledge_edge'
-          AND jsonb_typeof(propose_event.payload->'from_knowledge_id') = 'string'
-          AND jsonb_typeof(propose_event.payload->'to_knowledge_id') = 'string'
-          AND jsonb_typeof(propose_event.payload->'relation_type') = 'string'
-          AND (propose_event.payload->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'
-          AND (propose_event.payload->'topology_verdict'->>'status') IS DISTINCT FROM 'reject'
-          AND NOT EXISTS (
-            SELECT 1 FROM event rate_event
-            WHERE rate_event.action = 'rate'
-              AND rate_event.subject_kind = 'knowledge_edge'
-              AND rate_event.caused_by_event_id = propose_event.id
-          )
+          ${event.payload}->>'from_knowledge_id',
+          ${event.payload}->>'to_knowledge_id',
+          ${event.payload}->>'relation_type'
+        FROM ${event}
+        WHERE ${pendingEdgeProposeEventPredicate()}
+          AND jsonb_typeof(${event.payload}->'from_knowledge_id') = 'string'
+          AND jsonb_typeof(${event.payload}->'to_knowledge_id') = 'string'
+          AND jsonb_typeof(${event.payload}->'relation_type') = 'string'
           AND EXISTS (
             SELECT 1 FROM ai_task_runs
-            WHERE ai_task_runs.id = propose_event.task_run_id
+            WHERE ai_task_runs.id = ${event.task_run_id}
               AND ai_task_runs.task_kind = 'FrontierPrerequisiteTask'
           )
       ) pending_keys
