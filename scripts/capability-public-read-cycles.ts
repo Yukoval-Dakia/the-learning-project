@@ -33,27 +33,9 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   // YUK-1571 — intervention diagnostic materialize/retire is the kernel record
   // src/kernel/records/intervention-diagnostic-materialize.ts; practice binds its
   // leaves at worker start. No practice -> agency command edge remains.
-  {
-    owner: 'knowledge',
-    consumer: 'ingestion',
-    files: [
-      'src/capabilities/ingestion/server/auto-enroll.ts',
-      'src/capabilities/ingestion/server/image-candidate-accept.ts',
-    ],
-    symbols: ['NameKcFn', 'isTagKnowledgeInvariantError', 'tagKnowledge'],
-    dto: 'tagging commands',
-    justification:
-      'ingestion enroll/import accept paths tag drafts onto the knowledge tree; subject-profile + failure reads moved to kernel read models (YUK-892).',
-    reviewIssue: 'YUK-885',
-    commandFiles: [
-      'src/capabilities/ingestion/server/auto-enroll.ts',
-      'src/capabilities/ingestion/server/image-candidate-accept.ts',
-    ],
-  },
   // YUK-1571 — the knowledge -> notes read edge is retired: node-page now
   // consumes @/kernel/read-models/{notes-read,artifact-backlinks,artifact-corrections}
   // directly; notes/public keeps the same symbols via compat re-exports.
-
   // YUK-1571 — the practice -> agency query edge is retired: the preparation
   // stage read lives in src/kernel/read-models/intervention-preparation.ts.
   // Practice imports that kernel read. Agency keeps intervention writes.

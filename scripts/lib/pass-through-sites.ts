@@ -21,10 +21,8 @@
  * surface and are excluded by per-specifier kind checks, not by file name.
  */
 import { createHash } from 'node:crypto';
-import { posix } from 'node:path';
 import { parse } from '@babel/parser';
-import type { CompatShim, StableContractRuling } from './source-size';
-import { shimIsLive, validateCompatShimFields, validateStableRulingFields } from './source-size';
+import { z } from 'zod';
 import { analyzeSource } from './ts-tokenize';
 
 export const PASS_THROUGH_SCANNER_VERSION = 2;
@@ -718,205 +716,67 @@ export function diffPassThroughSites(
 }
 
 // ---------------------------------------------------------------------------
-// Compat-shim validation (proposal §2.4): new sites default-fail unless a
-// coordinator-approved entry covers them; every live approved shim must carry
-// real consumer evidence, an exit condition, an issue and a ≤14-day window.
+// Site classifications: a new site fails unless a current-state entry binds it
+// exactly. compat_shim is a temporary hand-off that must retire within 14 days;
+// stable_contract is a deliberate per-symbol public port. Who approved it and
+// why lives in the PR, not here. One entry per line, sorted, so parallel
+// changes only collide when they touch neighbouring sites.
 // ---------------------------------------------------------------------------
 
-export interface ConsumerReference {
-  source: string;
-  kind: 'value' | 'type';
-  symbols: string[];
-  line: number;
-}
+export const PASS_THROUGH_CLASSIFICATIONS_PATH = 'scripts/pass-through-classifications.jsonl';
+const MAX_SHIM_DAYS = 14;
 
-function declarationIsValue(node: Record<string, unknown>): boolean {
-  if (node.importKind === 'type' || node.exportKind === 'type') return false;
-  if (!Array.isArray(node.specifiers) || node.specifiers.length === 0) return true;
-  return node.specifiers.some(
-    (specifier) =>
-      isRecord(specifier) && specifier.importKind !== 'type' && specifier.exportKind !== 'type',
-  );
-}
+const siteIdentityFields = {
+  file: z.string().trim().min(1),
+  kind: z.enum(['module', 'function', 'alias', 'site']),
+  symbol: z.string().trim().min(1),
+  targetModule: z.string().trim().min(1),
+  targetSymbol: z.string().trim().min(1),
+};
 
-function statementSymbols(node: Record<string, unknown>): string[] {
-  if (node.type === 'ExportAllDeclaration') return ['*'];
-  if (!Array.isArray(node.specifiers) || node.specifiers.length === 0) return ['*'];
-  const names: string[] = [];
-  for (const specifier of node.specifiers) {
-    if (!isRecord(specifier)) continue;
-    if (specifier.importKind === 'type' || specifier.exportKind === 'type') continue;
-    if (specifier.type === 'ImportSpecifier' || specifier.type === 'ExportSpecifier') {
-      const consumed = specifier.type === 'ImportSpecifier' ? specifier.imported : specifier.local;
-      names.push(nodeName(consumed) ?? literalString(consumed) ?? '*');
-    } else if (
-      specifier.type === 'ImportDefaultSpecifier' ||
-      specifier.type === 'ExportDefaultSpecifier'
-    ) {
-      names.push('default');
-    } else {
-      names.push('*');
+export const siteClassificationSchema = z.discriminatedUnion('class', [
+  z.strictObject({ ...siteIdentityFields, class: z.literal('stable_contract') }),
+  z.strictObject({
+    ...siteIdentityFields,
+    class: z.literal('compat_shim'),
+    deadline: z.iso.date(),
+  }),
+]);
+export type SiteClassification = z.infer<typeof siteClassificationSchema>;
+
+export function parseSiteClassifications(text: string, source: string): SiteClassification[] {
+  return text.split('\n').flatMap((line, index) => {
+    if (line.trim() === '') return [];
+    try {
+      return [siteClassificationSchema.parse(JSON.parse(line))];
+    } catch (error) {
+      const detail =
+        error instanceof z.ZodError
+          ? error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      throw new Error(`${source}:${index + 1}: ${detail}`);
     }
-  }
-  return names.length > 0 ? names : ['*'];
-}
-
-/** All module references a consumer file makes, with their statement line. */
-export function consumerImports(code: string, file: string): ConsumerReference[] {
-  const ast = parse(code, {
-    sourceType: 'module',
-    sourceFilename: file,
-    plugins: file.endsWith('.tsx') ? ['typescript', 'jsx'] : ['typescript'],
   });
-  const references: ConsumerReference[] = [];
-  const lineOf = (node: Record<string, unknown>) =>
-    isRecord(node.loc) && typeof node.loc.start === 'object' && node.loc.start !== null
-      ? ((node.loc.start as Record<string, unknown>).line as number)
-      : 0;
+}
 
-  function visit(value: unknown): void {
-    if (Array.isArray(value)) {
-      for (const child of value) visit(child);
-      return;
-    }
-    if (!isRecord(value)) return;
-    if (
-      value.type === 'ImportDeclaration' ||
-      value.type === 'ExportNamedDeclaration' ||
-      value.type === 'ExportAllDeclaration'
-    ) {
-      const source = literalString(value.source);
-      if (source) {
-        references.push({
-          source,
-          kind: declarationIsValue(value) ? 'value' : 'type',
-          symbols: statementSymbols(value),
-          line: lineOf(value),
-        });
-      }
-    } else if (value.type === 'ImportExpression') {
-      const source = literalString(value.source);
-      if (source) {
-        references.push({ source, kind: 'value', symbols: ['*'], line: lineOf(value) });
-      }
-    } else if (value.type === 'TSImportType') {
-      const source = literalString(value.argument);
-      if (source) {
-        references.push({ source, kind: 'type', symbols: ['*'], line: lineOf(value) });
-      }
-    } else if (value.type === 'CallExpression' && isRecord(value.callee)) {
-      const isDynamicImport = value.callee.type === 'Import';
-      const isRequire = value.callee.type === 'Identifier' && value.callee.name === 'require';
-      if ((isDynamicImport || isRequire) && Array.isArray(value.arguments)) {
-        const source = literalString(value.arguments[0]);
-        if (source) {
-          references.push({ source, kind: 'value', symbols: ['*'], line: lineOf(value) });
-        }
-      }
-    }
-    for (const [key, child] of Object.entries(value)) {
-      if (!['loc', 'start', 'end', 'extra'].includes(key)) visit(child);
-    }
-  }
-  visit(ast.program);
-  return references;
+function identityKey(entry: {
+  file: string;
+  kind: string;
+  symbol: string;
+  targetModule: string;
+  targetSymbol?: string;
+}): string {
+  return `${entry.file}|${entry.kind}|${entry.symbol}|${entry.targetModule}|${entry.targetSymbol ?? ''}`;
 }
 
 export function describeSite(site: PassThroughSite): string {
   return `${site.kind} ${site.symbol} -> ${site.targetModule} (${site.detail})`;
 }
 
-/** Whether a compatShims entry covers this pass-through site. */
-export function shimCoversSite(shim: CompatShim, site: PassThroughSite): boolean {
-  if (site.file !== shim.path || site.kind !== shim.kind) return false;
-  if (shim.kind === 'module') return true;
-  if (shim.kind === 'site') {
-    if (site.targetModule !== shim.targetModule) return false;
-    return shim.symbol === undefined || site.symbol === shim.symbol;
-  }
-  return site.symbol === shim.symbol;
-}
-
-/** Whether a stable_contract ruling covers this site — exact five-way
- *  binding; a renamed alias, moved target or different owner never inherits
- *  an old ruling (no module-wide exemption). */
-export function stableCoversSite(ruling: StableContractRuling, site: PassThroughSite): boolean {
-  return (
-    site.file === ruling.file &&
-    site.kind === ruling.siteKind &&
-    site.symbol === ruling.symbol &&
-    site.targetModule === ruling.targetModule &&
-    site.targetSymbol === ruling.targetSymbol
-  );
-}
-
-/** Repo path normalization for evidence comparison — posix.normalize after
- *  unifying separators, so `./x`, `x`, `x/./x`, backslashes AND `a/../x`
- *  spellings all resolve to the same actual file identity. */
-function normalizeEvidencePath(path: string): string {
-  return posix.normalize(path.replace(/\\/g, '/'));
-}
-
-/** Verify declared consumer evidence: the file exists, parses, is not the
- *  record file itself, and really imports recordPath (value, declared line,
- *  required symbol or namespace). */
-function checkConsumerEvidence(input: {
-  recordPath: string;
-  recordSymbol: string | undefined;
-  moduleWide: boolean;
-  consumers: readonly { file: string; line: number }[];
-  readSource: (path: string) => string | undefined;
-  resolveTarget: (consumerFile: string, source: string) => string | undefined;
-  fail: (path: string, source: string, reason: string) => void;
-}): void {
-  for (const consumer of input.consumers) {
-    const consumerPath = normalizeEvidencePath(consumer.file);
-    if (consumerPath.startsWith('/') || consumerPath === '..' || consumerPath.startsWith('../')) {
-      input.fail(
-        consumer.file,
-        `line ${consumer.line}`,
-        'declared consumer path is absolute or escapes the repo root — only repo-relative paths are evidence',
-      );
-      continue;
-    }
-    if (consumerPath === normalizeEvidencePath(input.recordPath)) {
-      input.fail(
-        consumer.file,
-        `line ${consumer.line}`,
-        'declared consumer is the record file itself — self-reference cannot evidence a real consumer',
-      );
-      continue;
-    }
-    const code = input.readSource(consumer.file);
-    if (code === undefined) {
-      input.fail(consumer.file, `line ${consumer.line}`, 'declared consumer file does not exist');
-      continue;
-    }
-    let references: ConsumerReference[];
-    try {
-      references = consumerImports(code, consumer.file);
-    } catch {
-      input.fail(consumer.file, `line ${consumer.line}`, 'declared consumer file does not parse');
-      continue;
-    }
-    const hit = references.find(
-      (reference) =>
-        reference.line === consumer.line &&
-        reference.kind === 'value' &&
-        input.resolveTarget(consumer.file, reference.source) === input.recordPath &&
-        (input.moduleWide ||
-          input.recordSymbol === undefined ||
-          reference.symbols.includes(input.recordSymbol) ||
-          reference.symbols.includes('*')),
-    );
-    if (!hit) {
-      input.fail(
-        consumer.file,
-        `line ${consumer.line}`,
-        `no value import of record ${input.recordPath} at the declared line — consumer evidence must be real`,
-      );
-    }
-  }
+function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }
 
 export interface ShimViolation {
@@ -925,92 +785,97 @@ export interface ShimViolation {
   reason: string;
 }
 
-export function auditCompatShims(input: {
+export function auditPassThroughClassifications(input: {
   headSites: readonly PassThroughSite[];
   newSites: readonly PassThroughSite[];
-  records: readonly CompatShim[];
-  /** Number of records that already existed at base (append-only tail is new). */
-  previousRecords: number;
-  /** stable_contract rulings appended in this change (tail only). */
-  stableRulings: readonly StableContractRuling[];
-  readSource: (path: string) => string | undefined;
-  resolveTarget: (consumerFile: string, source: string) => string | undefined;
+  classifications: readonly SiteClassification[];
+  /** Entries at the audit base; undefined when the base predates the classification file. */
+  baseClassifications: readonly SiteClassification[] | undefined;
+  renames: ReadonlyMap<string, string>;
   today: string;
 }): ShimViolation[] {
   const violations: ShimViolation[] = [];
   const fail = (path: string, source: string, reason: string) =>
     violations.push({ path, source, reason });
 
+  const keys = input.classifications.map(identityKey);
+  keys.forEach((key, i) => {
+    if (i > 0 && !(keys[i - 1] < key)) {
+      fail(
+        PASS_THROUGH_CLASSIFICATIONS_PATH,
+        key,
+        'entries must be unique and sorted by file|kind|symbol|targetModule|targetSymbol',
+      );
+    }
+  });
+  const classified = new Set(keys);
+  const headKeys = new Set(input.headSites.map(identityKey));
+  const byKey = new Map(input.classifications.map((entry, i) => [keys[i], entry]));
+
+  // Shims only drain: a new temporary hand-off must retire an old one first.
+  const compatCount = (entries: readonly SiteClassification[]) =>
+    entries.filter((entry) => entry.class === 'compat_shim').length;
+  const headCompat = compatCount(input.classifications);
+  const baseCompat = input.baseClassifications && compatCount(input.baseClassifications);
+  if (baseCompat !== undefined && headCompat > baseCompat) {
+    fail(
+      PASS_THROUGH_CLASSIFICATIONS_PATH,
+      'compat_shim',
+      `compat_shim entries grew: ${headCompat} at head > ${baseCompat} at base — retire a shim instead of adding one`,
+    );
+  }
+
+  for (const base of input.baseClassifications ?? []) {
+    if (base.class !== 'compat_shim') continue;
+    const key = identityKey({ ...base, file: input.renames.get(base.file) ?? base.file });
+    if (!headKeys.has(key)) continue;
+    const head = byKey.get(key);
+    if (head?.class !== 'compat_shim' || head.deadline !== base.deadline) {
+      fail(
+        base.file,
+        'compat_shim',
+        `${base.symbol}: a live compat shim's entry cannot be dropped, reclassified or extended (deadline ${base.deadline}) — retire the site`,
+      );
+    }
+  }
+
   for (const site of input.newSites) {
-    if (
-      !input.records.some((record) => shimCoversSite(record, site)) &&
-      !input.stableRulings.some((ruling) => stableCoversSite(ruling, site))
-    ) {
+    if (!classified.has(identityKey(site))) {
       fail(
         site.file,
         describeSite(site),
-        'new pass-through shell — remove it, record a coordinator-approved compatShims entry {consumers file:line, exitCondition, issue, approval, deadline <= date+14d}, or a coordinator-ruled stable_contract {owner, targetSymbol, consumers, evidence, rationale}',
+        `new pass-through shell — remove it, or classify it in ${PASS_THROUGH_CLASSIFICATIONS_PATH} as compat_shim (deadline <= today+${MAX_SHIM_DAYS}d) or stable_contract`,
       );
     }
   }
 
-  for (const record of input.records) {
-    const live = input.headSites.some((site) => shimCoversSite(record, site));
-    if (!live) continue;
-    if (!shimIsLive(record, input.today)) {
+  input.classifications.forEach((entry, i) => {
+    if (!headKeys.has(keys[i])) {
       fail(
-        record.path,
-        'compatShims',
-        `approved shim window expired at ${record.deadline} while the site still exists — retire it`,
+        entry.file,
+        entry.class,
+        `${entry.symbol} -> ${entry.targetModule}#${entry.targetSymbol} matches no current pass-through site — delete the entry with the site`,
       );
     }
-  }
-
-  for (const record of input.records.slice(input.previousRecords)) {
-    for (const problem of validateCompatShimFields(record, input.today)) {
-      fail(record.path, 'compatShims', problem);
+    if (entry.class === 'stable_contract') {
+      if (entry.symbol === '*' || entry.targetSymbol === '*') {
+        fail(entry.file, entry.class, 'stable_contract binds one named symbol, not a namespace');
+      }
+      return;
     }
-    if (!input.newSites.some((site) => shimCoversSite(record, site))) {
+    if (daysBetween(input.today, entry.deadline) < 0) {
       fail(
-        record.path,
-        'compatShims',
-        'shim record does not cover a newly added pass-through site',
+        entry.file,
+        entry.class,
+        `${entry.symbol}: compat shim window expired at ${entry.deadline} while the site still exists — retire it`,
+      );
+    } else if (daysBetween(input.today, entry.deadline) > MAX_SHIM_DAYS) {
+      fail(
+        entry.file,
+        entry.class,
+        `${entry.symbol}: deadline ${entry.deadline} exceeds the ${MAX_SHIM_DAYS}-day compat window`,
       );
     }
-    checkConsumerEvidence({
-      recordPath: record.path,
-      recordSymbol: record.symbol,
-      moduleWide: record.kind === 'module',
-      consumers: record.consumers,
-      readSource: input.readSource,
-      resolveTarget: input.resolveTarget,
-      fail,
-    });
-  }
-
-  for (const ruling of input.stableRulings) {
-    for (const problem of validateStableRulingFields(ruling, input.today)) {
-      fail(ruling.file, 'stable_contract', problem);
-    }
-    // A ruling must bind a site that still exists at head — exact
-    // file/kind/symbol/target identity. It may lawfully classify existing
-    // base stock; it must never pretend to cover a site that is not there.
-    if (!input.headSites.some((site) => stableCoversSite(ruling, site))) {
-      fail(
-        ruling.file,
-        'stable_contract',
-        'stable_contract ruling matches no current pass-through site — the exact file/kind/symbol/target binding must still exist',
-      );
-    }
-    checkConsumerEvidence({
-      recordPath: ruling.file,
-      recordSymbol: ruling.symbol,
-      moduleWide: false,
-      consumers: ruling.consumers,
-      readSource: input.readSource,
-      resolveTarget: input.resolveTarget,
-      fail,
-    });
-  }
+  });
   return violations;
 }

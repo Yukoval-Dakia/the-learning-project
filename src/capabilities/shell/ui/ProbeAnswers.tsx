@@ -27,11 +27,7 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 
-import {
-  type PrepDeskProbeWire,
-  type ProbeAnswerVerdict,
-  submitProbeAnswer,
-} from './probe-answer-api';
+import type { PrepDeskProbeWire, ProbeAnswerVerdict } from './probe-answer-api';
 import { useWorkbenchClient } from './workbench-client';
 
 function statefulStatus(loading: boolean, error: boolean): StatefulStatus {
@@ -113,6 +109,7 @@ export function ProbeAnswerCard({
   // brief needs a local failure state). Mirrors onAnswered's symmetry hook.
   onFailed?: () => void;
 }) {
+  const { submitProbeAnswer } = useWorkbenchClient();
   const qc = useQueryClient();
   const [answerMd, setAnswerMd] = useState('');
   const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);

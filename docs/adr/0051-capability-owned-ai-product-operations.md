@@ -107,8 +107,9 @@ tool adapter；如果新接口落地后旧实现仍并行存在，则不是完�
 2. server → capability deep；
 3. cross-capability value edge 与非平凡 SCC。
 
-baseline 使用 owner → target module 的语义边计数，不使用逐 import allowlist。当前快照与 baseline
-必须精确一致：增长是 regression，下降则要求同一变更收紧 baseline，不能留下以后回涨的额度。
+baseline 使用 owner → target module 的语义边计数，不使用逐 import allowlist。当前快照不得高于
+baseline，也不得高于同一变更 base commit 的实测值：增长是 regression；下降由 `--tighten` 收紧
+baseline，base commit 比较保证未收紧的余量不能被以后回涨用掉。
 同一 owner-pair 内一删一增是此经济型 ratchet 的已知盲点，必须由真实 diff 的独立 review 补足。
 
 ## Consequences

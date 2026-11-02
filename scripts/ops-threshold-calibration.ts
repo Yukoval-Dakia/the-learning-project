@@ -612,7 +612,7 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
   // Dynamic imports after loadEnv, so env overrides resolve as they would at runtime. The live
   // RETRIEVAL_TOP_K keeps axis A aligned with production's window.
   const { RETRIEVAL_TOP_K, matchThreshold } = await import(
-    '@/capabilities/knowledge/server/tagging-flags'
+    '@/kernel/read-models/knowledge-similarity'
   );
   const { dedupDistanceMax } = await import('@/capabilities/knowledge/server/dedup-flags');
   const MATCH_THRESHOLD = matchThreshold();
@@ -648,7 +648,7 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
           axis: 'Axis A — tagging match-or-propose',
           name: 'MATCH_THRESHOLD',
           current: MATCH_THRESHOLD,
-          source: 'tagging-flags.ts / TAGGING_MATCH_THRESHOLD',
+          source: 'knowledge-similarity.ts / TAGGING_MATCH_THRESHOLD',
         },
         analyzeTaggingAxis(corpus, MATCH_THRESHOLD, RETRIEVAL_TOP_K),
       ],
