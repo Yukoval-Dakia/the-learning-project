@@ -148,14 +148,25 @@ async function main() {
       ) {
         fail('Merged PR does not identify this exact main merge');
       }
-      if (!Array.isArray(commit.parents) || commit.parents.length !== 2) {
-        fail('Main has no before and HEAD is not a two-parent merge; squash/rebase is unsupported');
+      if (!Array.isArray(commit.parents)) fail('GitHub commit has no parent list');
+      if (commit.parents.length === 2) {
+        if (
+          sha(commit.parents[1]?.sha, 'Second parent') !== sha(pull.head?.sha, 'Merged PR head')
+        ) {
+          fail('Merge second parent differs from merged PR head');
+        }
+        base = sha(commit.parents[0]?.sha, 'Verified merge first parent');
+        basis = 'verified-two-parent-merge';
+      } else if (commit.parents.length === 1) {
+        // A squash merge is the PR's merge_commit_sha itself (checked above), so its
+        // only parent is the main tip the PR landed on.
+        base = sha(commit.parents[0]?.sha, 'Verified squash parent');
+        basis = 'verified-squash-merge';
+      } else {
+        fail(
+          `Main has no before and HEAD has ${commit.parents.length} parents; no baseline guessed`,
+        );
       }
-      if (sha(commit.parents[1]?.sha, 'Second parent') !== sha(pull.head?.sha, 'Merged PR head')) {
-        fail('Merge second parent differs from merged PR head');
-      }
-      base = sha(commit.parents[0]?.sha, 'Verified merge first parent');
-      basis = 'verified-two-parent-merge';
       pullNumber = pull.number;
     }
   } else {
