@@ -80,8 +80,6 @@ export const fastTestInclude = [
   'src/core/calibration/native-parity.unit.test.ts',
   'src/core/calibration/replay.unit.test.ts',
   'src/core/calibration/wasm-parity.unit.test.ts',
-  'src/server/durable/calibration-sample-family.test.ts',
-  'src/server/durable/note-verify-family.test.ts',
   'src/server/durable/paid-effect-protocol.test.ts',
   'src/server/http/errors.test.ts',
   'src/server/ai/mem0/client.test.ts',
