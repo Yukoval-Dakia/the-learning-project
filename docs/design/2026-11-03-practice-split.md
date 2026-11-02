@@ -413,13 +413,14 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
 - **每片的验证：**
   - 本地：`pnpm typecheck`、`pnpm lint`、`pnpm build`、`pnpm audit:capability-boundaries`、`audit:architecture-deepening`、`audit:test-policy`。
   - 组合根的路由、job、工具清单在迁移前后逐项一致（manifest 快照对照，作为 PR 证据，不另建测试）。
-  - 按文件路径登记的审计台账必须与搬迁同片同步：只改路径，不改条目语义、计数或分类。漏改的话，对应审计或 CI 会失败。`1bea01753` 上登记了 practice 路径的台账有 5 份：
+  - 按文件路径登记的审计台账必须与搬迁同片同步：只改路径，不改条目语义、计数或分类。漏改的话，对应审计或 CI 会失败。`1bea01753` 上登记了 practice 路径的台账有 5 份 JSON，另有 3 处在审计脚本源码内联登记：
     - `scripts/pass-through-classifications.jsonl`：55 条，转发点分类，由 `audit:architecture-deepening` 的 pass-through ratchet 读取。
     - `scripts/audit-advisory-locks-baseline.json`：20 条，按调用点计数，`audit:advisory-locks`。
     - `scripts/audit-flags-ledger.json`：7 条，flag 的 reader 文件，`audit:flags`。
     - `scripts/audit-hub-sync-writers-allowlist.json`：2 条，`audit:hub-sync-writers`。
     - `scripts/audit-mastery-provenance-allowlist.json`：1 条，`audit:mastery-provenance`。
-  - 每片 PR 列出本片涉及的台账条目（旧路径 → 新路径），并在本地跑 `audit:advisory-locks`、`audit:flags`、`audit:hub-sync-writers`、`audit:mastery-provenance`。
+    - 源码内联：`scripts/audit-fold-writes.ts` 4 条（`audit:fold-writes`）、`scripts/audit-learner-copy.ts` 32 条（`audit:learner-copy`）、`scripts/audit-mastery-provenance.ts` 的 `TRACKED_CONSUMERS` 3 条。
+  - 每片 PR 列出本片涉及的台账条目（旧路径 → 新路径），并在本地跑 `audit:advisory-locks`、`audit:flags`、`audit:hub-sync-writers`、`audit:mastery-provenance`、`audit:fold-writes`、`audit:learner-copy`。
   - CI：exact-head CI Gate。
 - **审查：** 涉及 grading、question-bank 和 worker job 的切片属于 Tier A（多 lane 独立审），其余是 Tier B。
 
@@ -431,7 +432,7 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
 |---|---|---|---:|---|---|---|
 | **S0 壳拆分与边界规则** | 根 `manifest.ts`、`public.ts`、`tasks/index.ts`。把错因学习、session、scheduling 三个 owner 的条目机械抽成各自的片段（文件暂不移动）；供题、判分、题库条目原地不动，避免与功能线、#2303 冲突；扩展审计规则并登记台账 | 组合根 | ~10 | #2303 合并后再做，以免 rebase 冲突 | manifest 组合前后路由、job、工具、订阅、事件 action 集合逐项一致；`public.ts` 懒加载不得退化成急加载（迁移 bundle） | 架构线 |
 | **S1 错因学习** | 错因职责区 30 个文件（24 个产品文件，6 个测试）；`proposal-appliers.ts` 只改 1 个 import（cause-overlay 改为 `kernel/read-models/cause-overlay`）；`proposal-accept-applier.ts` 中 `cause_category` 两个 applier 移出；`scripts/backfill-lost-attribution.ts` 路径更新 | failure-learning | ~36 | S0 | 订阅从已提交 attempt 同事务投递（ADR-0051），id/version 不变；`attribution_followup` → `variant_gen` 链的幂等；只做提议 | 架构线 |
-| **S2 整卷与做题会话** | session 映射的 49 个文件减去 3 个暂留契约（§4.2）；删除 `assessment/issue.ts` 转发壳：session 内 3 个消费方（`paper-issuance.ts:24`、`paper-detail.ts:23`、`worksheet/export-store.ts:45`）随片改为直接 import kernel。非 session 的 5 个产品消费方同片改为直接 import kernel，各文件的目标 owner 不变、不随本片移动：`public.ts:18` 归根组合（`issueAssessment` 改为从 kernel 转导出）；`placement-assessment.ts:19` 归 placement；`assessment/submit.ts:53`、`assessment/study-context.ts:16`、`api/assessment-route.ts:8` 归 grading。测试消费方做机械路径更新：`solve-session-media.db.test.ts` 归 face；`assessment/material-recovery.db.test.ts`、`assessment/submission-persistence.db.test.ts`、`api/submit-durable-resource.db.test.ts` 归 grading；`src/server/assessment/{joint-input,admission}.db.test.ts` 在 practice 之外。另外还要更新 `src/server/assessment/admission.db.test.ts` 等深层测试的路径 | session | ~62 | S0；可与 S1、S3 并行 | `learning_session(type=review)` 状态机；冻结卷重开事务 `withFrozenPaperReopen`；答题卡草稿唯一索引与 save epoch；交卷逐槽幂等；`worksheet_render` 队列身份；`session_summary` best-effort 入队；孤儿清理 cron（经 public，不变） | 架构线 |
+| **S2 整卷与做题会话** | session 映射的 49 个文件减去 3 个暂留契约（§4.2）；删除 `assessment/issue.ts` 转发壳：session 内 3 个消费方（`paper-issuance.ts:24`、`paper-detail.ts:23`、`worksheet/export-store.ts:45`）随片改为直接 import kernel。非 session 的 5 个产品消费方同片改为直接 import kernel，各文件的目标 owner 不变、不随本片移动：`public.ts:18` 归根组合（`issueAssessment` 改为从 kernel 转导出）；`placement-assessment.ts:19` 归 placement；`assessment/submit.ts:53`、`assessment/study-context.ts:16`、`api/assessment-route.ts:8` 归 grading；另有 `issue-response.ts:2` 的 type-only import，同片改为直接 import kernel 类型。测试消费方做机械路径更新：`solve-session-media.db.test.ts` 归 face；`assessment/material-recovery.db.test.ts`、`assessment/submission-persistence.db.test.ts`、`api/submit-durable-resource.db.test.ts` 归 grading；`src/server/assessment/{joint-input,admission}.db.test.ts` 在 practice 之外。另外还要更新 `src/server/assessment/admission.db.test.ts` 等深层测试的路径 | session | ~62 | S0；可与 S1、S3 并行 | `learning_session(type=review)` 状态机；冻结卷重开事务 `withFrozenPaperReopen`；答题卡草稿唯一索引与 save epoch；交卷逐槽幂等；`worksheet_render` 队列身份；`session_summary` best-effort 入队；孤儿清理 cron（经 public，不变） | 架构线 |
 | **S3 学习安排** | 排程 + 练习流 52 个文件，减去暂留核心的 `variant-rotation`、`candidate-signals`、`activity-tier`、`day-one-priors`；`stream-date` 下沉 kernel；`api/review-planning-contracts.ts` 中的校准锚 schema 归还题库侧；深层测试路径更新（`settle-forgetting`、`recalibration`、`advisory-locks`、`admission` 四个 db test） | scheduling | ~55 | S0；可与 S1、S2 并行 | `practice_stream_item` 单写者；`compose-paid-work-lock` advisory lock；夜间组流与回来唤醒 singleton（180s）；AI 不可用回落确定性 due；refill 与夜间供题先经根 `public.ts` 下行调用（台账项），功能线落位后改 kernel 端口 | 架构线 |
 | **S4 判分** | grading 映射约 89 个文件（判分、作答、校准采样、`model_slice_admission_run`、干预诊断余项），落点是 `practice/grading/server/`（§3.1）。`model-slice-registry` 与 Jev/Rubric/Pi 执行器由迁移线 YUK-1683 先落到这里，不在 S4 范围；S4 只把 practice 内的判分文件并入同一目录。`runtime.ts` 拆成 grading 侧与 settlement 侧 | grading | ~100 | #2303 合并；迁移线 kernel 端口票先落（否则 kernel 会 value import capability）；与迁移线约定 §3.1 第 1、2 条的过渡形态 | DBOS judge 身份与旧 pg-boss 义务排空（ADR-0066）；evaluation-group 锁顺序（激活：learning-state G → group advisory → FOR UPDATE）；提交幂等；pending 对账；付费重试不重复付费 | 架构线（Tier A），迁移线审结算接缝 |
 | **R1 结算与撤回重放** | §3.1 清单 | settlement | 由迁移线定 | S4 或与 S4 同步 | 撤回闭包、重放、快照括号、FSRS 写入只经单一机制（§6.4） | 迁移线 YUK-1665 |
@@ -469,7 +470,7 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
 2. **准入执行 job 的归属**（§3.2 第 6 条）：建议归 question-bank，最终由功能线决定。
 3. **`question-scheduling-enrollment`（题目发布时登记排程）归 question-bank。** 它是发布的副作用，写在发布同一事务内。若改成 scheduling 订阅发布事件，就会从同事务变成异步，时序会变化，本设计不做这个改动。
 4. **`material_fsrs_state` 的写入：机制只有一个，调用点分属各 owner，scheduling 只读。**
-   - ADR-0037 的「单写者」指写入机制：所有写入都经 `src/server/fsrs/state.ts` 的 `upsertFsrsState`、`enrollFsrsStateIfAbsent`、`retireQuestionFsrsState`、`retireFsrsStateOnMerge`，并在全局 learning-state G 锁之后取行锁。迁移线 YUK-1683 之后，这个机制会改到 `kernel/records/scheduling-state`。
+   - ADR-0037 的「单写者」指写入机制：产品写入都经 `src/server/fsrs/state.ts` 的 `upsertFsrsState`、`enrollFsrsStateIfAbsent`、`retireQuestionFsrsState`、`retireFsrsStateOnMerge`，并在全局 learning-state G 锁之后取行锁。迁移线 YUK-1683 之后，这个机制会改到 `kernel/records/scheduling-state`。 例外是两处非经机制的原始写：`revert/restore-snapshot.ts:82` 的 `tx.delete`（撤回快照恢复，YUK-1665）与 `corpus.ts:815` 的 `db.insert`（种子数据，非产品路径）；搬迁时随各自 owner 处理，不新增此类写点。
    - 在 `1bea01753` 上，产品写入调用点及其归属如下：
      - settlement：`src/server/assessment/settle-apply.ts:190` `upsertFsrsState`。这是作答结算的复习效果。
      - question-bank：`server/question-scheduling-enrollment.ts:65` `upsertFsrsState`、`:82` `enrollFsrsStateIfAbsent`。这是发布时登记排程，与发布同事务（§6.3）。
