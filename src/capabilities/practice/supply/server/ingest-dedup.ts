@@ -7,8 +7,8 @@ import { settleOneQuestionPageHit } from '@/capabilities/practice/server/quiz/co
 import type { Db, Tx } from '@/db/client';
 import { embedCurrencyPredicate } from '@/db/embed-currency';
 import { question } from '@/db/schema';
-import { lockIngestSource } from '@/kernel/locks/question-supply';
 import { toSqlVector } from '@/db/vector';
+import { lockIngestSource } from '@/kernel/locks/question-supply';
 import { JYEOO_SOURCE_HOST } from './jyeoo-supply-config';
 
 declare const HttpSourceRefBrand: unique symbol;

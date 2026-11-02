@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PlacementStarterOutcomeSchema } from '../supply/public';
+import { PlacementStarterOutcomeSchema } from '@/kernel/placement-starter-outcome';
 import { IssuanceStateSchema } from './assessment-contracts';
 
 export const PlacementSessionParamsSchema = z.object({ id: z.string().min(1) });

@@ -16,8 +16,9 @@
 import type { JobWithMetadata } from 'pg-boss';
 import { z } from 'zod';
 import type { Db } from '@/db/client';
-import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import type { SupplyTraceV1T } from '@/kernel/supply-contracts';
+import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
+import { defaultWebSourcingDeps } from '../../server/web-sourcing-operation';
 import {
   type PlacementWebDelivery,
   runPlacementWebDelivery,
@@ -29,7 +30,6 @@ import {
   executeSupplyPlan,
 } from '../server/plan-executor';
 import { runWebFetchCandidates } from '../server/web-candidates';
-import { defaultWebSourcingDeps } from '../../server/web-sourcing-operation';
 
 /** scanner / planner 共用的默认 jyeoo 抓取参数（与 scripts/jyeoo-backfill.ts 缺省一致）。 */
 export const SUPPLY_EXECUTE_JYEOO_DEFAULTS: JyeooFetchConfig = {

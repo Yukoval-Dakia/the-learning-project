@@ -10,14 +10,14 @@ import {
   placement_starter_cost_component,
   question,
 } from '@/db/schema';
+import {
+  type PlacementStarterFailure,
+  PlacementStarterFailureSchema,
+} from '@/kernel/placement-starter-outcome';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import { placementStarterAttemptId } from './placement-starter-identity';
-import {
-  type PlacementStarterFailure,
-  PlacementStarterFailureSchema,
-} from './placement-starter-outcome';
 import { markPlacementStarterClaimTerminal } from './placement-starter-store';
 
 export const PLACEMENT_VERIFY_POLL_MS = 2_000;

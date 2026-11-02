@@ -91,6 +91,12 @@ export const runWebFetchCandidates: typeof import('./server/web-candidates').run
 export const recoverWebSupplies: typeof import('./server/web-supply').recoverWebSupplies = async (
   ...args
 ) => (await import('./server/web-supply')).recoverWebSupplies(...args);
+export {
+  type PlacementStarterFailure,
+  type PlacementStarterOutcome,
+  PlacementStarterOutcomeSchema,
+  placementSchemaFailure,
+} from '@/kernel/placement-starter-outcome';
 export { runQuestionSupplyNightly } from './jobs/question_supply_nightly';
 export { discoverConfusableContrastTargets } from './server/confusable-contrast-discovery';
 export {
@@ -129,12 +135,6 @@ export {
   terminalizePlacementUnknownCost,
 } from './server/placement-starter-attempts';
 export { placementStarterIdentity } from './server/placement-starter-identity';
-export {
-  type PlacementStarterFailure,
-  type PlacementStarterOutcome,
-  PlacementStarterOutcomeSchema,
-  placementSchemaFailure,
-} from './server/placement-starter-outcome';
 export { readPlacementStarterOutcomes } from './server/placement-starter-outcome-reader';
 export {
   type PlacementPaidEffectAuthority,

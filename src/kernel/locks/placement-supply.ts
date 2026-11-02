@@ -1,9 +1,6 @@
 import { sql } from 'drizzle-orm';
 import type { Tx } from '@/db/client';
-import {
-  advisoryLockRegistry,
-  deriveHashtextExtendedLockKey,
-} from '@/kernel/locks/registry';
+import { advisoryLockRegistry, deriveHashtextExtendedLockKey } from '@/kernel/locks/registry';
 
 /** Serialize pool-visible promotion and paid cold admission for the same KC scope. */
 export async function lockPlacementSupplyScopes(

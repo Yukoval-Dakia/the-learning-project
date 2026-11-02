@@ -28,10 +28,6 @@ import {
   dispatchPracticeSupplyTargets as dispatchSupplyTargets,
   inFlightSupplyCount,
 } from '@/capabilities/practice/public';
-import {
-  buildCoverageEvidenceDemand,
-  evidenceDemandToTargetContext,
-} from '@/kernel/supply-contracts';
 import { runInventoryShadowDualRead } from '@/capabilities/practice/supply/server/inventory-projection';
 import {
   type QuestionSupplyTarget,
@@ -43,6 +39,10 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { loadReturnStockGaps } from '@/kernel/read-models/return-stock';
+import {
+  buildCoverageEvidenceDemand,
+  evidenceDemandToTargetContext,
+} from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { loadActivityTier } from '../../server/activity-tier';
 
