@@ -11259,6 +11259,26 @@
       "issue": "YUK-1468",
       "owns": "Same raw request identity/hashtext/xact lock at the flat actual-write transaction before ingestion/source/root locks. Existing request preflight/settlement and paid/admission remain with the submit owner.",
       "date": "2026-11-01"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-supply/placement-starter-attempts.ts",
+      "module": "src/kernel/read-models/question-serving.ts",
+      "kind": "value",
+      "symbols": ["readQuestionServing"],
+      "issue": "YUK-1468",
+      "owns": "Placement completion owner reads the same serving projection the web demand owner uses to decide when a sourcing_web delivery's bound questions have settled (servable or terminal hold). Read only; serving rules stay in the kernel read model.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-supply/placement-starter-paid-authority.ts",
+      "module": "src/kernel/cost.ts",
+      "kind": "value",
+      "symbols": ["costUsdToMicroUsd"],
+      "issue": "YUK-1468",
+      "owns": "Single conversion of a runner-reported USD cost into the placement claim ledger; unknown stays null. No cost policy or ledger moves into the kernel.",
+      "date": "2026-11-02"
     }
   ],
   "sourceSizeRecords": [
@@ -11834,9 +11854,36 @@
       "date": "2026-10-30",
       "baseBlob": "ccfd6d08ab323db094cd15d4325e714aec053a80",
       "from": 1314,
-      "to": 1383,
+      "to": 1455,
       "issue": "YUK-1468",
-      "responsibilityReason": "Owner-approved flat submit crash closure: request-first claim recheck in the actual write transaction, atomic original pending receipt with publication and verify intent, and matching-fingerprint recovery through the original parser/receipt codec. No verifier, admission or paid algorithm change; preflight exact/source merges remain outside the transaction. Measured by the native audit, not an exemption."
+      "responsibilityReason": "Owner-approved flat submit crash closure: request-first claim recheck in the actual write transaction, atomic original pending receipt with publication and verify intent, and matching-fingerprint recovery through the original parser/receipt codec. No verifier, admission or paid algorithm change; preflight exact/source merges remain outside the transaction. Measured by the native audit, not an exemption. 2026-11-02 owner FULL placement policy: a server-only placement candidate submit binds question, epoch and the authority-carrying source_verify intent in the same flat transaction after the attempt fence; declared-parts candidates are refused for placement; non-placement submit unchanged."
+    },
+    {
+      "path": "src/capabilities/practice/jobs/source_verify.ts",
+      "date": "2026-11-02",
+      "baseBlob": "09f8a525ee2ab94ede36fe8e6be7783228bd3771",
+      "from": 1374,
+      "to": 1427,
+      "issue": "YUK-1468",
+      "responsibilityReason": "Owner FULL placement policy (2026-11-02): source_verify consumes the server-written placement authority. Paid solve/grounding calls are fenced and recorded through the shared paid-authority owner, writeback asserts at the quiz_verify position, and a stale authority skips without a verify error. No verifier algorithm change."
+    },
+    {
+      "path": "src/capabilities/practice/manifest.ts",
+      "date": "2026-11-02",
+      "baseBlob": "4a298d9c932ea16ba07a029a00030c189577f394",
+      "from": 1350,
+      "to": 1352,
+      "issue": "YUK-1468",
+      "responsibilityReason": "supply_execute registration asks pg-boss for job metadata so a placement web delivery binds job id/retryCount/startedOn/expiry/signal to its attempt. No queue or handler change."
+    },
+    {
+      "path": "src/capabilities/practice/server/question-supply/placement-starter-attempts.ts",
+      "date": "2026-11-02",
+      "baseBlob": "df3e4c9510caa33d75c42473bff623bb155b13c9",
+      "from": 1326,
+      "to": 1428,
+      "issue": "YUK-1468",
+      "responsibilityReason": "Owner FULL placement policy (2026-11-02): uncapped sourcing_web claims skip budget/unknown refusals, new cost kinds, allowed-uses eligibility, web settlement via serving, and the shared delivery completion owner moved here from quiz_gen. New authority/paid-effect writers were split into placement-starter-paid-authority instead of growing this file."
     }
   ],
   "compatShims": [

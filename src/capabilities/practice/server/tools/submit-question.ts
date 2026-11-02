@@ -92,6 +92,12 @@ import {
 import { cleanupStagedAssets } from '../question-supply/jyeoo-candidates';
 import { JYEOO_SOURCE_HOST } from '../question-supply/jyeoo-supply-config';
 import {
+  type PlacementAttemptAuthority,
+  type PlacementVerificationAuthority,
+  assertPlacementAttemptFence,
+} from '../question-supply/placement-starter-attempts';
+import { authorizePlacementQuestion } from '../question-supply/placement-starter-paid-authority';
+import {
   DEDUP_OVERLAP_THRESHOLD,
   matchesWhitelist,
   maxNgramOverlap,
@@ -218,15 +224,44 @@ type ParsedInput = z.infer<typeof parsedInputSchema>;
 type ExecInput = z.input<typeof parsedInputSchema>;
 type Output = z.infer<typeof outputSchema>;
 
-type EnqueueSourceVerifyFn = (questionIds: string[], options?: SendOptions) => Promise<void>;
+type EnqueueSourceVerifyFn = (
+  questionIds: string[],
+  options?: SendOptions,
+  placementAuthorities?: PlacementVerificationAuthority[],
+) => Promise<void>;
 
 async function defaultEnqueueSourceVerify(
   questionIds: string[],
   options?: SendOptions,
+  placementAuthorities?: PlacementVerificationAuthority[],
 ): Promise<void> {
   const { getStartedBoss } = await import('@/server/boss/client');
   const boss = await getStartedBoss();
-  await boss.send('source_verify', { question_ids: questionIds }, options);
+  await boss.send(
+    'source_verify',
+    {
+      question_ids: questionIds,
+      ...(placementAuthorities?.length ? { placement_authorities: placementAuthorities } : {}),
+    },
+    options,
+  );
+}
+
+/** Drain the durable source_verify intents of submitted questions, authorities included. */
+export async function dispatchSourceVerifyIntents(
+  db: Db,
+  questionIds: string[],
+  enqueueSourceVerify: EnqueueSourceVerifyFn = defaultEnqueueSourceVerify,
+) {
+  return dispatchPendingVerifyIntents(db, {
+    questionIds,
+    enqueue: async (verifier, ids, options, placementAuthorities) => {
+      if (verifier !== 'source_verify') {
+        throw new Error(`submit_question outbox received unexpected verifier '${verifier}'`);
+      }
+      await enqueueSourceVerify(ids, options, placementAuthorities);
+    },
+  });
 }
 
 export interface SubmitQuestionDeps {
@@ -266,6 +301,8 @@ type CandidateSubmitContext = Pick<
   'db' | 'sessionId' | 'taskRunId' | 'logTaskRunId' | 'causedByEventId' | 'beforeIngestionWrite'
 > & {
   callerActor?: ToolContext['callerActor'];
+  /** Server-held placement delivery authority; never accepted from agent/tool input. */
+  placementAttempt?: PlacementAttemptAuthority;
 };
 
 function candidateSubmitFingerprint(input: ParsedInput): string {
@@ -515,6 +552,20 @@ async function runCandidateSubmit(
     console.error('[submit_question] vector near-dup abstained:', err);
   }
 
+  if (
+    ctx.placementAttempt &&
+    candidate.question.parts != null &&
+    candidate.question.parts.length > 0
+  ) {
+    // The typed declaration chain has no placement question-authority writer; refuse rather
+    // than publish a placement question that verification could never be bound to.
+    return {
+      status: 'withheld',
+      reason: 'placement_declared_parts_unsupported',
+      detail: 'placement delivery submits flat candidates only',
+      request_id: input.request_id,
+    };
+  }
   // YUK-1568 S3 — 携带 typed 声明（parts/units）的候选走统一草稿链
   // （saveDraftEdit → submitDraftQuestion），不再 flat insert + row publish；
   // 上面的 KC 活体/host/exact/source-URL/near/vector 判重原样先跑。
@@ -563,6 +614,8 @@ async function runCandidateSubmit(
       if (claim.status === 'replay')
         return { status: 'request_replay' as const, receipt: outputSchema.parse(claim.receipt) };
       if (claim.status === 'reused') return { status: 'request_reused' as const };
+      // A lost delivery cannot publish into the claim: fence first, inside the commit.
+      if (ctx.placementAttempt) await assertPlacementAttemptFence(tx, ctx.placementAttempt);
       await ctx.beforeIngestionWrite?.(tx);
       const racedSource = await claimHttpSourceDuplicate(tx, {
         ...sourceClaim,
@@ -650,12 +703,27 @@ async function runCandidateSubmit(
         actorRef: `submit-question:${input.source_route}:enrich`,
         now,
       });
-      await writeVerifyDispatchIntent(tx, {
-        questionId,
-        verifier: 'source_verify',
-        supplyTrace: inserted.supplyTrace,
-        createdAt: now,
-      });
+      if (ctx.placementAttempt) {
+        // Same commit as question/publication/receipt: bind the question to the live attempt
+        // with its epoch and write the source_verify intent carrying that full authority.
+        const authority = await authorizePlacementQuestion(tx, {
+          attempt: ctx.placementAttempt,
+          questionId,
+          canonicalHash,
+          verifier: 'source_verify',
+          supplyTrace: inserted.supplyTrace,
+          allowPersistedReplay: false,
+          now,
+        });
+        if (!authority) throw new Error(`placement question authority not created: ${questionId}`);
+      } else {
+        await writeVerifyDispatchIntent(tx, {
+          questionId,
+          verifier: 'source_verify',
+          supplyTrace: inserted.supplyTrace,
+          createdAt: now,
+        });
+      }
       // The flat candidate's receipt belongs to the same commit as its question,
       // publication and verify intent. Recovery must not lose the original id
       // and treat an already committed submission as a new duplicate candidate.
@@ -720,15 +788,7 @@ async function runCandidateSubmit(
     };
   }
 
-  const dispatchResult = await dispatchPendingVerifyIntents(db, {
-    questionIds: [questionId],
-    enqueue: async (verifier, ids, options) => {
-      if (verifier !== 'source_verify') {
-        throw new Error(`submit_question outbox received unexpected verifier '${verifier}'`);
-      }
-      await enqueueSourceVerify(ids, options);
-    },
-  });
+  const dispatchResult = await dispatchSourceVerifyIntents(db, [questionId], enqueueSourceVerify);
   const verifyEnqueued = dispatchResult.failed === 0;
   if (!verifyEnqueued) {
     console.error(
@@ -1363,6 +1423,18 @@ async function execute(ctx: ToolContext, raw: ExecInput): Promise<Output> {
   }
   const candidate = input.candidate;
   return executeCandidateSubmit(ctx, { ...input, candidate }, {});
+}
+
+/** Server-only flat candidate submit for one placement web delivery (YUK-1468). */
+export async function submitPlacementSupplyCandidate(
+  ctx: Omit<CandidateSubmitContext, 'placementAttempt'>,
+  raw: ExecInput,
+  placementAttempt: PlacementAttemptAuthority,
+): Promise<Output> {
+  const input = parsedInputSchema.parse(raw);
+  if (input.candidate == null || input.draft != null) throw new Error('candidate request required');
+  const candidate = input.candidate;
+  return executeCandidateSubmit({ ...ctx, placementAttempt }, { ...input, candidate }, {});
 }
 
 export const submitQuestionTool: DomainTool<ExecInput, Output> = {

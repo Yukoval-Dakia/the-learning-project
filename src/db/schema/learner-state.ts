@@ -411,8 +411,15 @@ export const placement_starter_claim = pgTable(
       .notNull()
       .default('pending_dispatch'),
     pg_boss_job_id: text('pg_boss_job_id'),
+    // Supply policy fixed at claim creation (YUK-1468, owner 2026-11-02). 'quiz_gen' rows keep
+    // the original closed-book generation, its pg-boss queue and the 1_000_000 budget until
+    // terminal. 'sourcing_web' rows are owned by the source agent under the approved background
+    // policy: no money cap (budget NULL), every real paid effect still recorded with identity.
+    supply_route: text('supply_route', { enum: ['quiz_gen', 'sourcing_web'] })
+      .notNull()
+      .default('quiz_gen'),
     max_paid_attempts: integer('max_paid_attempts').notNull().default(3),
-    budget_limit_micro_usd: integer('budget_limit_micro_usd').notNull().default(1_000_000),
+    budget_limit_micro_usd: integer('budget_limit_micro_usd').default(1_000_000),
     known_cost_micro_usd: integer('known_cost_micro_usd').default(0),
     next_reconcile_at: timestamp('next_reconcile_at', { withTimezone: true })
       .notNull()
@@ -475,8 +482,16 @@ export const placement_starter_claim = pgTable(
     ),
     check('placement_starter_claim_max_attempts_v1', sql`${t.max_paid_attempts} = 3`),
     check(
+      'placement_starter_claim_supply_route_check',
+      sql`${t.supply_route} IN ('quiz_gen','sourcing_web')`,
+    ),
+    check(
+      'placement_starter_claim_route_budget_check',
+      sql`(${t.supply_route} = 'quiz_gen') = (${t.budget_limit_micro_usd} IS NOT NULL)`,
+    ),
+    check(
       'placement_starter_claim_nonnegative_cost',
-      sql`${t.budget_limit_micro_usd} >= 0 AND (${t.known_cost_micro_usd} IS NULL OR ${t.known_cost_micro_usd} >= 0)`,
+      sql`(${t.budget_limit_micro_usd} IS NULL OR ${t.budget_limit_micro_usd} >= 0) AND (${t.known_cost_micro_usd} IS NULL OR ${t.known_cost_micro_usd} >= 0)`,
     ),
     check(
       'placement_starter_claim_terminal_timestamps',
@@ -585,7 +600,15 @@ export const placement_starter_cost_component = pgTable(
       .notNull()
       .references(() => placement_starter_attempt.id),
     component_kind: text('component_kind', {
-      enum: ['quiz_gen', 'quiz_verify', 'solution_check', 'teaching_quality'],
+      enum: [
+        'quiz_gen',
+        'quiz_verify',
+        'solution_check',
+        'teaching_quality',
+        'web_acquisition',
+        'source_grounding',
+        'question_admission',
+      ],
     }).notNull(),
     question_id: text('question_id').references(() => question.id),
     provider_task_run_id: text('provider_task_run_id').notNull(),
@@ -610,7 +633,7 @@ export const placement_starter_cost_component = pgTable(
     index('placement_starter_cost_component_claim_idx').on(t.claim_id),
     check(
       'placement_starter_cost_component_kind_check',
-      sql`${t.component_kind} IN ('quiz_gen','quiz_verify','solution_check','teaching_quality')`,
+      sql`${t.component_kind} IN ('quiz_gen','quiz_verify','solution_check','teaching_quality','web_acquisition','source_grounding','question_admission')`,
     ),
     check(
       'placement_starter_cost_component_nonnegative',

@@ -10,6 +10,7 @@ import {
   placement_starter_cost_component,
   question,
 } from '@/db/schema';
+import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { placementStarterAttemptId } from './placement-starter-identity';
 import {
@@ -31,7 +32,10 @@ export type PlacementCostComponentKind =
   | 'quiz_gen'
   | 'quiz_verify'
   | 'solution_check'
-  | 'teaching_quality';
+  | 'teaching_quality'
+  | 'web_acquisition'
+  | 'source_grounding'
+  | 'question_admission';
 
 export interface PlacementVerificationAuthority {
   claim_id: string;
@@ -280,11 +284,15 @@ export async function acquirePlacementAttempt(
     if (claim.max_paid_attempts !== 3 || input.deliveryNo > claim.max_paid_attempts) {
       throw new PlacementStarterAdmissionError('placement paid delivery exceeds claim policy');
     }
-    if (claim.known_cost_micro_usd === null) {
-      throw new PlacementStarterUnknownCostError('placement starter cost is unknown');
-    }
-    if (claim.known_cost_micro_usd >= claim.budget_limit_micro_usd) {
-      throw new PlacementStarterBudgetExhaustedError('placement starter budget exhausted');
+    // Only the original quiz_gen policy has a money cap. A sourcing_web claim records unknown
+    // cost honestly but has no budget for it to protect, so unknown/limit never refuse delivery.
+    if (claim.budget_limit_micro_usd !== null) {
+      if (claim.known_cost_micro_usd === null) {
+        throw new PlacementStarterUnknownCostError('placement starter cost is unknown');
+      }
+      if (claim.known_cost_micro_usd >= claim.budget_limit_micro_usd) {
+        throw new PlacementStarterBudgetExhaustedError('placement starter budget exhausted');
+      }
     }
 
     const [existing] = await tx
@@ -597,6 +605,11 @@ export async function reservePlacementGenerationCall(
     if (!claim || claim.knownCost === null) {
       throw new PlacementStarterUnknownCostError('placement starter cost is unknown');
     }
+    if (claim.budgetLimit === null) {
+      throw new PlacementStarterAdmissionError(
+        'uncapped placement claim has no reservation policy',
+      );
+    }
     if (existing) return;
     if (claim.knownCost + reserved > claim.budgetLimit) {
       throw new PlacementStarterAdmissionError('placement generation exceeds claim budget');
@@ -823,6 +836,9 @@ export async function reserveAuthorizedPaidCall(
   if (!claim || claim.knownCost === null) {
     throw new PlacementStarterUnknownCostError('placement starter cost is unknown');
   }
+  if (claim.budgetLimit === null) {
+    throw new PlacementStarterAdmissionError('uncapped placement claim has no reservation policy');
+  }
   if (existing) return;
   if (claim.knownCost + costMicroUsd > claim.budgetLimit) {
     throw new PlacementStarterAdmissionError('placement paid call exceeds claim budget');
@@ -970,7 +986,7 @@ export async function addAuthorizedCostComponent(
   if (!claim) {
     throw new PlacementStarterAdmissionError('placement claim is missing');
   }
-  if (claim.knownCost === null) {
+  if (claim.knownCost === null && claim.budgetLimit !== null) {
     throw new PlacementStarterUnknownCostError('placement starter cost is unknown');
   }
   if (input.costMicroUsd !== null && input.costMicroUsd < 0) {
@@ -979,6 +995,8 @@ export async function addAuthorizedCostComponent(
   if (
     !existingComponent &&
     input.costMicroUsd !== null &&
+    claim.knownCost !== null &&
+    claim.budgetLimit !== null &&
     claim.knownCost + input.costMicroUsd > claim.budgetLimit
   ) {
     throw new PlacementStarterAdmissionError('placement cost component exceeds claim budget');
@@ -1005,6 +1023,14 @@ export async function addAuthorizedCostComponent(
       created_at: now,
     })
     .onConflictDoNothing();
+  await recomputePlacementKnownCost(tx, input.authority.claimId, now);
+}
+
+export async function recomputePlacementKnownCost(
+  tx: Tx,
+  claimId: string,
+  now: Date,
+): Promise<void> {
   await tx
     .update(placement_starter_claim)
     .set({
@@ -1015,11 +1041,11 @@ export async function addAuthorizedCostComponent(
           ELSE COALESCE(SUM(${placement_starter_cost_component.cost_micro_usd}), 0)::int
         END
         FROM ${placement_starter_cost_component}
-        WHERE ${placement_starter_cost_component.claim_id} = ${input.authority.claimId}
+        WHERE ${placement_starter_cost_component.claim_id} = ${claimId}
       )`,
       updated_at: now,
     })
-    .where(eq(placement_starter_claim.id, input.authority.claimId));
+    .where(eq(placement_starter_claim.id, claimId));
 }
 
 export async function countEligiblePlacementQuestions(
@@ -1051,6 +1077,12 @@ export async function countEligiblePlacementQuestions(
         questionSuspendedPredicate(question),
         isNull(sql`${question.metadata}->>'archived_at'`),
         sql`${question.knowledge_ids} @> jsonb_build_array(${placement_starter_claim.knowledge_id})`,
+        // Same allowed-uses rule as web serving: unrestricted, or restricted to include both.
+        sql`(
+          jsonb_typeof(${question.metadata}->'allowed_uses') IS DISTINCT FROM 'array'
+          OR jsonb_array_length(${question.metadata}->'allowed_uses') = 0
+          OR (${question.metadata}->'allowed_uses') ?& array['placement','diagnostic']
+        )`,
       ),
     );
   return (
@@ -1065,6 +1097,34 @@ export async function placementAttemptVerificationSettled(
   db: Db | Tx,
   attemptId: string,
 ): Promise<boolean> {
+  const [route] = await db
+    .select({ route: placement_starter_claim.supply_route })
+    .from(placement_starter_attempt)
+    .innerJoin(
+      placement_starter_claim,
+      eq(placement_starter_claim.id, placement_starter_attempt.claim_id),
+    )
+    .where(eq(placement_starter_attempt.id, attemptId));
+  if (route?.route === 'sourcing_web') {
+    // Web supply settles only through source verification AND scoring admission. A question is
+    // settled when it serves, or when serving reports a terminal hold; awaiting admission (or no
+    // decision yet) keeps the delivery waiting for the decision deadline.
+    const ids = (
+      await db
+        .select({ questionId: placement_starter_attempt_question.question_id })
+        .from(placement_starter_attempt_question)
+        .where(eq(placement_starter_attempt_question.attempt_id, attemptId))
+    ).map((row) => row.questionId);
+    if (ids.length === 0) return false;
+    const serving = (await readQuestionServing(db, ids)).byId;
+    return ids.every((id) => {
+      const item = serving.get(id);
+      return (
+        item !== undefined &&
+        (item.servable || (item.hold_reason !== null && item.hold_reason !== 'awaiting_admission'))
+      );
+    });
+  }
   // A question's verification is SETTLED when it is already pool-visible (active — verified by
   // definition; an active DUPLICATE the outbox terminal_skips never gets a fresh quiz_verify event)
   // OR it carries a terminal quiz_verify verdict (any non-error outcome — pass/needs_review/fail all
@@ -1323,4 +1383,46 @@ export async function terminalizePlacementUnknownCost(
       message: 'provider cost is unknown; placement paid work is fail-closed',
     });
   });
+}
+
+/**
+ * The single placement completion owner for both supply routes: after the delivery's questions
+ * are bound, poll until exactly the required count is eligible (satisfied), every bound
+ * question has settled short of it (underfilled), the job aborts (interrupted) or the decision
+ * deadline passes (timed_out). Only this owner turns a delivery into a claim outcome.
+ */
+export async function reconcilePlacementDelivery(
+  db: Db,
+  attempt: PlacementAttemptAuthority,
+  signal: AbortSignal,
+  deps: { now?: () => Date; sleep?: (ms: number, signal: AbortSignal) => Promise<void> } = {},
+): Promise<void> {
+  const now = deps.now ?? (() => new Date());
+  const sleep = deps.sleep ?? heartbeatSleep;
+  const deadline = attempt.startedOn.getTime() + PLACEMENT_DECISION_DEADLINE_MS;
+  while (true) {
+    if (signal.aborted) {
+      await finishPlacementAttempt(db, attempt, 'interrupted', now());
+      throw signal.reason ?? new Error('placement delivery aborted');
+    }
+    const current = now();
+    if (current.getTime() >= deadline) {
+      await finishPlacementAttempt(db, attempt, 'timed_out', current);
+      throw new PlacementStarterDeadlineError('placement verification decision deadline reached');
+    }
+    const eligibleCount = await countEligiblePlacementQuestions(
+      db,
+      attempt.claimId,
+      attempt.attemptId,
+    );
+    if (placementFulfillmentDisposition(eligibleCount) === 'satisfied') {
+      await finishPlacementAttempt(db, attempt, 'succeeded', current);
+      return;
+    }
+    if (await placementAttemptVerificationSettled(db, attempt.attemptId)) {
+      await finishPlacementAttempt(db, attempt, 'underfilled', current);
+      throw new PlacementStarterUnderfillError('placement delivery verification underfilled');
+    }
+    await sleep(PLACEMENT_VERIFY_POLL_MS, signal);
+  }
 }

@@ -46,6 +46,7 @@ import {
   runJyeooFetchCandidates,
 } from './jyeoo-candidates';
 import { findSubjectRootKnowledgeId, matchJyeooKnowledgeHints } from './jyeoo-hint-match';
+import type { PlacementWebDelivery } from './placement-starter-web-delivery';
 import type { DifficultyBand } from './target-discovery';
 import type { RunWebFetchCandidatesParams, RunWebFetchCandidatesResult } from './web-candidates';
 import { runWebSupply } from './web-supply';
@@ -192,6 +193,8 @@ export interface ExecuteSupplyPlanParams {
   subjectProfileByDomain?: Map<string, SubjectProfile>;
   /** 供应链路（scanner 派发面携带）——透传进 sourced 路由的每个 store commit，保 placement/缺口溯源。 */
   supplyTrace?: SupplyTraceV1T;
+  /** Placement claim delivery authority, held by the supply_execute worker (never job text). */
+  placementDelivery?: PlacementWebDelivery;
 }
 
 export interface RouteExecutionTally {
@@ -419,6 +422,7 @@ interface RouteRunContext {
   supplyTrace?: SupplyTraceV1T;
   /** 还需获取的数量（执行中递减）。 */
   remaining: number;
+  placementDelivery?: PlacementWebDelivery;
 }
 
 /**
@@ -578,6 +582,7 @@ async function runWebRoute(
     causeId: run.planEventId ?? run.causedByEventId,
     subjectProfile: run.subjectProfile,
     fetch: deps.runWebFetchCandidates,
+    ...(run.placementDelivery ? { placement: run.placementDelivery } : {}),
   });
   const committed = state.submissions.filter((s) => s.receipt?.question_id).length;
   const rejections: Record<string, number> = {};
@@ -744,6 +749,7 @@ export async function executeSupplyPlan(
       domain,
       subjectProfile,
       ...(params.supplyTrace ? { supplyTrace: params.supplyTrace } : {}),
+      ...(params.placementDelivery ? { placementDelivery: params.placementDelivery } : {}),
       taskRunId,
       causedByEventId,
       planEventId: params.planEventId,

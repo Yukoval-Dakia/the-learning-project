@@ -81,6 +81,13 @@ import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admiss
 import { enrollPromotedQuestionScheduling } from '../server/question-scheduling-enrollment';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import { readVectorNearHold, visibleSourceNeighbor } from '../server/question-supply/ingest-dedup';
+import {
+  PlacementStarterAdmissionError,
+  PlacementStarterStaleAuthorityError,
+  type PlacementVerificationAuthority,
+  assertPlacementAuthority,
+} from '../server/question-supply/placement-starter-attempts';
+import { buildPlacementQuestionPaidCalls } from '../server/question-supply/placement-starter-paid-authority';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
 import { DEDUP_OVERLAP_THRESHOLD } from '../server/question-supply/sourced-dedup';
 import {
@@ -109,6 +116,8 @@ export interface SourceVerifyJobData {
    * recheck_command_event_id.
    */
   recheck?: { command_event_id: string };
+  /** Server-written placement authorities (verify outbox), one per bound question. */
+  placement_authorities?: PlacementVerificationAuthority[];
 }
 
 // Loose run seam (mirrors quiz_verify): the handler + solve-check only consume
@@ -162,6 +171,8 @@ export interface RunSourceVerifyParams {
    * under ANY job id is refused — one paid attempt per command event, never two.
    */
   recheckDeliveryId?: string;
+  /** Placement claim authority for this question (sourcing_web delivery); fences paid calls. */
+  placementAuthority?: PlacementVerificationAuthority;
 }
 
 export interface RunSourceVerifyResult {
@@ -230,6 +241,9 @@ export async function runSourceVerify(
   params: RunSourceVerifyParams,
 ): Promise<RunSourceVerifyResult> {
   const { db, questionId, runTaskFn } = params;
+  const placementPaid = params.placementAuthority
+    ? buildPlacementQuestionPaidCalls(db, questionId, params.placementAuthority)
+    : undefined;
 
   // 核验输入与身份必须同一快照：
   // 行内容 + 组 current revision/generation + 对应冻结 revision 行在【同一
@@ -610,6 +624,9 @@ export async function runSourceVerify(
           profile: { id: subjectProfile.id, full: subjectProfile },
           db,
           imageFetchFn: params.imageFetchFn,
+          ...(placementPaid
+            ? { placementAuthority: params.placementAuthority, ...placementPaid.solve }
+            : {}),
         });
         unresolvedAnchoredExactMismatch =
           solveResult.verdict === 'unsupported' && solveResult.normalized_exact_mismatch === true;
@@ -669,6 +686,8 @@ export async function runSourceVerify(
     if (singleSourceGrounding && groundingSourceAssetId && otherwisePromotable) {
       const groundingFn = params.sourceGroundingFn;
       let outcome: SourceGroundingVerifyResult;
+      // Outside the transient-fold below: a stale placement authority is not a grounding verdict.
+      await placementPaid?.assertBefore();
       try {
         const groundingParams: SourceGroundingParams = {
           db,
@@ -679,7 +698,12 @@ export async function runSourceVerify(
         };
         outcome = groundingFn
           ? await groundingFn(groundingParams)
-          : await runSourceGroundingVerify({ ...groundingParams, runTaskFn });
+          : await runSourceGroundingVerify({
+              ...groundingParams,
+              runTaskFn: placementPaid
+                ? placementPaid.wrapRunTask('source_grounding', runTaskFn)
+                : runTaskFn,
+            });
       } catch (err) {
         // a BARE throw from the grounding fn (a bug, or a future
         // change that stops returning the discriminated result) must NOT bypass fail-closed.
@@ -823,6 +847,10 @@ export async function runSourceVerify(
       // race. Locking row.knowledge_ids (pre-tx snapshot) is safe: on attribution drift the version
       // guard below throws and pg-boss reruns against the fresh scope.
       await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
+      // Same position as quiz_verify: a superseded delivery's verdict never writes back.
+      if (params.placementAuthority) {
+        await assertPlacementAuthority(tx, params.placementAuthority, now);
+      }
       // Match editing/archive/publisher order even when this delivery targets a child.
       // Keep the global learning-write and placement-supply locks ahead of all row locks.
       if (row.parent_question_id != null) {
@@ -1275,6 +1303,13 @@ export async function runSourceVerify(
 
     return { status: promote ? 'verified' : 'failed', checks };
   } catch (err) {
+    // A placement stale-authority/admission refusal concerns the claim delivery, not the
+    // content: write no verify error and let the handler decide.
+    if (
+      err instanceof PlacementStarterStaleAuthorityError ||
+      err instanceof PlacementStarterAdmissionError
+    )
+      throw err;
     // failure-bottom: write a TRANSIENT-error event so pg-boss redelivery re-runs the
     // verify (idempotency guard treats outcome='error' as retriable). A failed write
     // transaction preserves its prior state; the catch path never promotes.
@@ -1358,16 +1393,34 @@ export function buildSourceVerifyHandler(
         continue;
       }
       const recheckCommandEventId = job.data?.recheck?.command_event_id;
+      const placementAuthorities = new Map(
+        (job.data.placement_authorities ?? []).map((authority) => [
+          authority.question_id,
+          authority,
+        ]),
+      );
       for (const questionId of questionIds) {
-        const result = await runSourceVerify({
-          db,
-          questionId,
-          runTaskFn,
-          ...(recheckCommandEventId != null
-            ? { recheckCommandEventId, recheckDeliveryId: job.id }
-            : {}),
-        });
-        console.log(`[source_verify] ${questionId} -> ${result.status}`);
+        const placementAuthority = placementAuthorities.get(questionId);
+        try {
+          const result = await runSourceVerify({
+            db,
+            questionId,
+            runTaskFn,
+            ...(recheckCommandEventId != null
+              ? { recheckCommandEventId, recheckDeliveryId: job.id }
+              : {}),
+            ...(placementAuthority ? { placementAuthority } : {}),
+          });
+          console.log(`[source_verify] ${questionId} -> ${result.status}`);
+        } catch (error) {
+          // A superseded delivery's authority: the current delivery re-binds the question with
+          // a new epoch and its own intent. Nothing to retry under this one.
+          if (placementAuthority && error instanceof PlacementStarterStaleAuthorityError) {
+            console.warn(`[source_verify] ${questionId} placement authority is stale; skipped`);
+            continue;
+          }
+          throw error;
+        }
       }
     }
   };

@@ -30,6 +30,7 @@ import {
 import { resolveGoalPlacementScope } from './placement-scope';
 import { selectNextPlacementItem } from './placement-select';
 import { placementProbeEnabled } from './placement-session-lifecycle';
+import { placementClaimJobQueue } from './question-supply/placement-starter';
 
 /**
  * How far forward the sweeper pushes `next_reconcile_at` when it acquires a claim. This is the
@@ -487,7 +488,7 @@ async function sweepInflightClaim(
 
   let jobLive: boolean;
   try {
-    jobLive = await isJobLive(claim.pg_boss_job_id);
+    jobLive = await isJobLive(claim.pg_boss_job_id, placementClaimJobQueue(claim));
   } catch (err) {
     jobLive = true;
     console.error(
@@ -782,7 +783,7 @@ async function sweepRetryScheduled(
   // while a false skip merely defers the reap by one window.
   let jobLive: boolean;
   try {
-    jobLive = await isJobLive(claim.pg_boss_job_id);
+    jobLive = await isJobLive(claim.pg_boss_job_id, placementClaimJobQueue(claim));
   } catch (err) {
     jobLive = true;
     console.error(
@@ -793,7 +794,7 @@ async function sweepRetryScheduled(
   if (jobLive) {
     result.retryJobLive += 1;
     console.warn(
-      `[placement-starter-recovery] claim ${claim.id} is past the retry grace window but its quiz_gen job ${claim.pg_boss_job_id} is still live; reap deferred`,
+      `[placement-starter-recovery] claim ${claim.id} is past the retry grace window but its delivery job ${claim.pg_boss_job_id} is still live; reap deferred`,
     );
     return;
   }
@@ -814,7 +815,7 @@ async function sweepRetryScheduled(
       class: 'stalled',
       code: 'retry_never_redelivered',
       message:
-        'placement starter claim sat in retry_scheduled past the redelivery grace window and its quiz_gen job can no longer redeliver',
+        'placement starter claim sat in retry_scheduled past the redelivery grace window and its delivery job can no longer redeliver',
     });
     return true;
   });

@@ -68,6 +68,12 @@ import {
   applyCustomPreviewDecision,
   prepareAdmissionCustomPreview,
 } from '../server/custom-block-preview/admission-preview';
+import { assertPlacementAuthority } from '../server/question-supply/placement-starter-attempts';
+import {
+  assertPlacementPaidEffectAuthority,
+  readPlacementQuestionAuthority,
+  recordPlacementPaidEffect,
+} from '../server/question-supply/placement-starter-paid-authority';
 import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from '../server/task-runtime';
 
 export type QuestionAdmissionRunData = AdmissionJobData;
@@ -235,6 +241,17 @@ export async function runAdmissionForQuestion(
     per_unit: [],
   });
   await settleExpiredPaidEffectSends(db, { family: ADMISSION_FAMILY });
+  // A question bound to a live sourcing_web placement delivery is admitted under that claim:
+  // the delivery's authority must hold before this paid batch is claimed (the batch is one
+  // paid effect), each solve call is recorded on the claim, and the application re-checks the
+  // current binding. A stale binding stops here, before any paid send is claimed.
+  const placementAuthority = await readPlacementQuestionAuthority(db, rootId);
+  if (placementAuthority) {
+    await assertPlacementPaidEffectAuthority(db, {
+      scope: 'question',
+      authority: placementAuthority,
+    });
+  }
 
   const batch = await db.transaction(async (tx) => {
     // Same family -> delivery -> root -> lifecycle -> effect lock order on every entry.
@@ -394,6 +411,16 @@ export async function runAdmissionForQuestion(
         });
     }, 1000);
     timer.unref();
+    const recordPlacementAdmissionCall = async (runId: string | null, costUsd: number | null) => {
+      if (!placementAuthority) return;
+      await recordPlacementPaidEffect(db, {
+        authority: { scope: 'question', authority: placementAuthority },
+        kind: 'question_admission',
+        invocationKey: `${placementAuthority.attempt_id}:${rootId}:question_admission:${randomUUID()}`,
+        providerTaskRunId: runId,
+        costUsd,
+      });
+    };
     try {
       const executeTask =
         deps.runTask ??
@@ -416,17 +443,20 @@ export async function runAdmissionForQuestion(
             },
           });
           if (result.task_run_id) attemptedTaskRunIds.add(result.task_run_id);
+          await recordPlacementAdmissionCall(result.task_run_id ?? null, result.cost_usd ?? null);
           return result;
         } catch (error) {
           // Central runner binds the durable id even to structured terminal /
           // timeout failures. Keep it on paid_effect, not only in task logs.
-          if (
+          const failedRunId =
             error != null &&
             typeof error === 'object' &&
             'taskRunId' in error &&
             typeof error.taskRunId === 'string'
-          )
-            attemptedTaskRunIds.add(error.taskRunId);
+              ? error.taskRunId
+              : null;
+          if (failedRunId) attemptedTaskRunIds.add(failedRunId);
+          if (!purposeStopped) await recordPlacementAdmissionCall(failedRunId, null);
           throw error;
         }
       };
@@ -523,6 +553,9 @@ export async function runAdmissionForQuestion(
       const snapshot = await readPaidEffect(tx, batch.identity);
       if (snapshot?.state === 'applied')
         return simple(completedAdmissionStatus(snapshot.application));
+      // Placement rows before group rows, the same order as the verifier writebacks.
+      const currentPlacement = await readPlacementQuestionAuthority(tx, rootId);
+      if (currentPlacement) await assertPlacementAuthority(tx, currentPlacement);
       const { root, lifecycle } = await lockAdmissionGroup(tx, rootId);
       const purpose = await checkPurpose(tx);
       if (purpose.state !== 'allow') {
