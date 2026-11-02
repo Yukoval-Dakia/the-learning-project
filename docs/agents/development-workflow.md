@@ -20,7 +20,7 @@ ignored local files after the merge. Do not reintroduce another lane's task stat
 ## Local processes
 
 ```bash
-pnpm dev:local        # 唯一入口：起 dev Postgres(:5434，与 TEST 隔离)+迁移+API/Start 前门 :8788(Vite HMR)+worker；打开 http://127.0.0.1:8788/
+pnpm dev:local        # 唯一入口：起 dev Postgres(:5434，与 TEST 隔离)+迁移+API/Start 前门 :8788(Vite HMR)+worker；打开 http://127.0.0.1:8788/；全新 dev 库自带 7 道已准入的种子题（`devseed:q:*`，固定答案、无需模型即可判分，仅 dev 库），重置：`docker compose -f docker-compose.dev.yml --profile dev down -v`
 pnpm dev              # alias for dev:local
 pnpm rw:api           # Hono API（设 RW_FRONTDOOR=dev 才带 Vite 前门；dev:local 已设）
 pnpm worker:dev       # standalone pg-boss worker
@@ -174,12 +174,13 @@ main push 缺少 before 时，双父 merge 取第一父；单父提交只有在�
 
 ### Lint warning ratchet（YUK-909）
 
-`pnpm lint:ratchet` 对 `biome check .` 的 warning/info 总数要求与基线逐项相等。
-高于基线或低于基线都失败；低于基线时必须在同一改动里用 `pnpm lint:ratchet:update`
-重写基线。CI static lane 用同一次 Biome 扫描检查 errors 与
-warning/info。基线在 `scripts/lint-baseline.json`：总数 + 逐 rule 计数（信息诊断
-单独计数，不静默丢弃；决策已记录在文件内）。`lint:ratchet:update` 拒绝任何上调——
-基线只可能下降。
+`pnpm lint:ratchet` 对 `biome check .` 的 warning/info 总数只拦增长：每项不得高于上限，
+低于不失败，并行 PR 不必各自改基线文件。CI static lane 传入比较基（`LINT_BASE_SHA`），
+脚本取它与 HEAD 的分叉点，在该提交的临时 worktree 上实测一次，上限取「基线文件」与
+「分叉点实测数」的较小值，所以实际基线始终是 main 的真实数字；本地不传比较基时只用文件。
+基线在 `scripts/lint-baseline.json`：总数 + 逐 rule 计数（信息诊断单独计数）。基线文件
+只降不升：PR 把任一总数调得高于分叉点的文件即失败，`lint:ratchet:update` 也拒绝上调；
+收紧文件是可选的整理，随时可做。
 
 Before a PR, run:
 

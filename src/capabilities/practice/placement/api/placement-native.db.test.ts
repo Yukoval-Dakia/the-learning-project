@@ -27,25 +27,32 @@ import {
   question,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
-import { publishPlacementFixture } from '../../../../tests/fixtures/assessment-placement';
-import { seedHistoricalAssessmentIssuance } from '../../../../tests/fixtures/historical-assessment-issuance';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { insertLegacyGoal } from '../../../../tests/helpers/legacy-goal';
-import { RECONCILE_STALL_MS, reconcileStalledJudgeAttempts } from '../jobs/judge_pending_reconcile';
-import { runJudgeRun } from '../jobs/judge_run';
-import { dispatchNativeAttempt, executeNativeAttempt } from '../server/assessment/durable-attempt';
-import type { SaveSubmissionRequest } from '../server/assessment/submit';
-import { getIssuanceState, saveSubmission } from '../server/assessment/submit';
-import * as evaluationService from '../server/judge/evaluate-submission';
-import { createRecordedModelExecutor } from '../server/judge/recorded-model-executor';
-import { fenceJudgeUnitClaim } from '../server/judge-operational';
-import { readJudgeRunPermanent } from '../server/judge-run-observation';
-import type { NativeJudgeRunJobData } from '../server/judge-run-payload';
+import { publishPaperModelFixture } from '../../../../../tests/fixtures/assessment-paper';
+import { publishPlacementFixture } from '../../../../../tests/fixtures/assessment-placement';
+import { seedHistoricalAssessmentIssuance } from '../../../../../tests/fixtures/historical-assessment-issuance';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { insertLegacyGoal } from '../../../../../tests/helpers/legacy-goal';
+import { createAttemptResource as submit } from '../../api/submit';
+import {
+  RECONCILE_STALL_MS,
+  reconcileStalledJudgeAttempts,
+} from '../../jobs/judge_pending_reconcile';
+import { runJudgeRun } from '../../jobs/judge_run';
+import {
+  dispatchNativeAttempt,
+  executeNativeAttempt,
+} from '../../server/assessment/durable-attempt';
+import type { SaveSubmissionRequest } from '../../server/assessment/submit';
+import { getIssuanceState, saveSubmission } from '../../server/assessment/submit';
+import * as evaluationService from '../../server/judge/evaluate-submission';
+import { createRecordedModelExecutor } from '../../server/judge/recorded-model-executor';
+import { fenceJudgeUnitClaim } from '../../server/judge-operational';
+import { readJudgeRunPermanent } from '../../server/judge-run-observation';
+import type { NativeJudgeRunJobData } from '../../server/judge-run-payload';
+import { placementStarterIdentity } from '../../supply/server/placement-starter-identity';
+import { readPlacementStarterOutcomes } from '../../supply/server/placement-starter-outcome-reader';
+import { materializePlacementStartersForGoal } from '../../supply/server/placement-starter-store';
 import * as Placement from '../server/placement-session-lifecycle';
-import { placementStarterIdentity } from '../supply/server/placement-starter-identity';
-import { readPlacementStarterOutcomes } from '../supply/server/placement-starter-outcome-reader';
-import { materializePlacementStartersForGoal } from '../supply/server/placement-starter-store';
 import {
   PlacementQuestionSelectionResponseSchema,
   PlacementSessionCreatedSchema,
@@ -53,7 +60,6 @@ import {
 import { createPlacementQuestionSelection as next } from './placement-next';
 import { GET as detail } from './placement-session-detail';
 import { createPlacementSession as start } from './placement-start';
-import { createAttemptResource as submit } from './submit';
 
 const db = testDb();
 const request = (body: unknown) =>

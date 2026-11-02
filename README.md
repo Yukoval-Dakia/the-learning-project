@@ -144,8 +144,9 @@ Re-running reuses the volume and only applies new migrations. Docker/OrbStack mu
 - **Guard:** `dev:local` refuses to start if the database target is TEST's (port 5433/5544 or
   database `loom`). The only override is `DEV_ALLOW_TEST_DB=1`, which prints a warning banner and
   runs the dev API and worker against TEST's data and jobs — do not use it casually.
+- **Seed questions:** a fresh dev DB starts with 7 admitted math questions (ids `devseed:q:*`, fixed answer keys graded without any model call) so the question bank, practice and today pages have content; re-running adds nothing. Dev DB only — never with `DEV_ALLOW_TEST_DB=1`.
 - **Reset the dev DB:** `docker compose -f docker-compose.dev.yml --profile dev down -v`
-  (deletes the dev volume; the next `pnpm dev:local` recreates and migrates it).
+  (deletes the dev volume; the next `pnpm dev:local` recreates, migrates and re-seeds it).
 
 `pnpm dev:local`（= `tsx scripts/dev-local.ts`）spawn **两进程**，启动后打印要打开的地址（默认 <http://127.0.0.1:8788/>，可用 `DEV_PORT` 改；8787 留给 TEST 的 app 容器，避免抢端口或误开到 TEST）：
 
@@ -227,7 +228,7 @@ API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，�
 ```bash
 pnpm typecheck        # tsrs --noEmit（root + server/start/tsconfig.json）
 pnpm lint             # biome check .
-pnpm lint:ratchet     # warning/info 总数必须等于 scripts/lint-baseline.json；高于或低于都失败，低于时同一次改动里 pnpm lint:ratchet:update 收紧基线（拒绝上调）
+pnpm lint:ratchet     # warning/info 总数不得高于上限（scripts/lint-baseline.json 与 PR 分叉点实测数取低）；低于不失败，基线文件只降不升（pnpm lint:ratchet:update 可随时收紧）
 pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI Gate 不调用它，而是跑 .github/workflows/ci-gate.yml 的矩阵（见 docs/agents/development-workflow.md）；本机按 AGENTS.md 只跑 scoped tests
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
