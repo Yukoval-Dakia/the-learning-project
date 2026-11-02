@@ -1,14 +1,17 @@
 import { createContext, useContext } from 'react';
 import {
   answerAsk,
+  changePurpose,
   createSession,
   createWrongAnswer,
   getHistory,
+  getPurposeImpact,
   getSession,
   listBlocks,
   listKnowledge,
   listSessions,
   revertBlock,
+  startLane,
 } from './record-api';
 
 export type RecordClient = {
@@ -21,6 +24,9 @@ export type RecordClient = {
   getSession: typeof getSession;
   createWrongAnswer: typeof createWrongAnswer;
   revertBlock: typeof revertBlock;
+  startLane: typeof startLane;
+  getPurposeImpact: typeof getPurposeImpact;
+  changePurpose: typeof changePurpose;
 };
 const httpRecordClient: RecordClient = {
   getHistory,
@@ -32,6 +38,9 @@ const httpRecordClient: RecordClient = {
   getSession,
   createWrongAnswer,
   revertBlock,
+  startLane,
+  getPurposeImpact,
+  changePurpose,
 };
 const RecordClientContext = createContext<RecordClient | undefined>(undefined);
 export const RecordClientProvider = RecordClientContext.Provider;

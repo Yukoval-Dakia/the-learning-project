@@ -90,8 +90,6 @@ export const TodayPlan = z.object({
   daily_focus: z.string().min(1).max(280),
   review_session_proposal: ReviewSessionProposal,
   at_most_one_new_item: AtMostOneNewItem.optional(),
-  // Only set when the plan is produced by `coach_weekly`.
-  weekly_reflection: z.string().min(1).max(1200).optional(),
   plan_adjustments: z.array(PlanAdjustment).max(8),
   maintenance_proposals: z.array(MaintenanceProposal).max(8),
   // ADR-0025 — active goals this plan addresses + the goal-oriented

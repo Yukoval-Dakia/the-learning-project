@@ -9,12 +9,9 @@ import { parseTaskOutput } from './parse-output';
 //
 // Unlike QuizGen (searches SOURCE MATERIAL and writes ORIGINAL questions), this
 // lifts real questions. HTML/TEXT sources are extracted inline as `questions`.
-// Image-type sources — pages whose stem lives in an image that text extraction
-// cannot lift — are reported as `image_candidates`, never auto-extracted (VLM
-// extraction is a user-authorized paid action, ADR-0002). The handler turns each
-// into an `image_candidate` proposal; extraction runs only on explicit accept.
-// The prompt must therefore teach when to report a candidate, its output contract,
-// and never to double-report a source as both a question and a candidate.
+// Missing text is not proof of an image URL. The legacy image_candidates wire
+// field carries unresolved PAGE evidence only; background supply keeps it internal,
+// chooses another text source or records blocked. It never asks the learner to fetch.
 //
 // The handler mounts the Exa MCP + an in-process domain-tool MCP at run time, so
 // the prompt refers to tools by capability, not by mcp__* identifier. Domain
@@ -36,7 +33,7 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 2. 抽取：用 web_fetch_exa 拉网页正文，从中**逐题**抽出题面、参考答案、选项（若有）。忠实抽取，不要自己改写题意或编造答案。
 3. 结构化：把每道题映射成 SourcedQuestion，标注 kind / 难度 / 它考查的 knowledge_ids（用 knowledge_context 里真实存在的 id）。题意有明确结构时（多问、多空、确定的作答对象），可另填可选字段 parts 作 typed 声明；结构说不清就只填 flat 字段、不写 parts。
 4. 记录来源（**强制**）：每道题写它来自的 source_url（具体网页 URL）+ source_title（页面标题）。运行时无法从日志恢复你访问了哪些页面——只有写进 source_url 的来源才被记录。漏报 = 该题不可追溯、会被拒收。
-5. 图片型题源（**不要自己抽图**）：当 web_fetch_exa **拿不到题干文本**（返回空/近空正文），但 web_search_exa 的搜索结果表明该 URL 确实含真题（标题/摘要指向练习题/真题/试卷）——说明题干在**图片**里（扫描卷 PNG、图表题等）。这种源**不要**编造文本题、**不要**塞进 questions，改为报进 image_candidates。抽图是用户授权的付费动作，由用户在收件箱里 accept 后才发生，不是你的职责。
+5. 正文不足的来源：网页 URL 不是图片直链。空/近空正文只证明本次没有取得完整证据，不能断言题干一定在图片里。继续在本次工具轮次/时间限额内换别的来源，优先取得完整题面、参考答案与原文 extract。仍无法完成时将该页面及具体缺口记入兼容字段 image_candidates，作为**内部 blocked 来源记录**；不下载、不抽图、不要求用户操作、不编造媒体地址或答案。
 
 每题输出形状（SourcedQuestion）：
 {
@@ -63,11 +60,11 @@ typed 声明（可选字段 parts，统一草稿结构）：
 - method 对应：select→"set-compare"；blank 文本精确判→"exact"；free 或需要模型判→"ai-rubric"；只能人工评→"human_review"。
 - answer_shape（可选，只给 blank）：{"version":"k1-math-v1","value":{...},"notation":["允许的输入写法"]}。value 五种：{"kind":"number","unit":{"unit":"cm","accepts_bare_number":false}(可选)} / {"kind":"interval_set","binding":"被讨论的变量或量，如 x 或 M-m"} / {"kind":"point","axes":["x","y"]} / {"kind":"affine_line","variables":["x","y"]} / {"kind":"finite_set","item":"number|point|affine_line","order":"unordered","duplicates":"forbidden","axes"|"variables":按 item 必填}。notation 按 kind 选：number→["fraction","decimal"]，interval_set→["interval","inequality","set_builder"]，point→["tuple"]，affine_line→["equation"]，finite_set→["roster","set_builder"]。只声明题意有根据的对象；拿不准就不写 answer_shape。
 
-图片型题源输出形状（SourcingImageCandidate，**可选数组**，没有就省略）：
+正文不足的来源记录（兼容字段 SourcingImageCandidate，**可选数组**，没有就省略）：
 {
-  "source_url": "题干为图片的具体网页 URL（accept 时会从这里下载图片）",
+  "source_url": "未取得完整正文的具体网页 URL（仅来源页，不能当图片直链）",
   "source_title": "该网页标题",
-  "summary_md": "为什么判定为图片型源（如 web_fetch_exa 返回空文本但搜索结果指向真题）+ 该页大致含什么内容（给用户在收件箱里决定要不要花一次抽图）"
+  "summary_md": "本次获取的证据事实与缺口（如正文为空、答案缺失或仅能看到图片）；不推断媒体类型，不要求用户处理"
 }
 
 整体严格 JSON 输出（不带 markdown 代码块包裹），shape 名 SourcingTaskOutput：
@@ -85,8 +82,8 @@ typed 声明（可选字段 parts，统一草稿结构）：
 约束（强约束）：
 - 每道题必须有有效的 source_url（具体网页 URL）+ source_title，否则会被拒收。
 - **必填** extract（从 source_url 逐字抽取的原始题面片段）：质检会用它对题面做确定性 grounding 比对，证明来源真实。缺 extract 或 extract 与题面毫无重叠 → 该题被判为来源不可锚定/伪造、拒收。
-- 图片型题源报进 image_candidates，**不要**自己抽图、**不要**为图片源编造文本题。
-- **同一个源不要既报成 question 又报成 image_candidate**：能抽出文本就只放 questions；抽不出文本（图片型）就只放 image_candidates。二选一。
+- 正文不足的页面报进 image_candidates，仅作为内部来源受阻记录；**不要**自己抽图、**不要**编造文本题或参考答案。
+- **同一个源不要既报成 question 又报成 image_candidate**：能抽出文本就只放 questions；抽不出完整文本就只放 image_candidates。二选一。
 - typed 声明（parts）只写**题面有根据**的语义：每个小问一个 part、每个作答位一个 unit，题图/分步证明等小问也要如实成 part，不许吞掉。缺分值写 null、缺槽位/答案对象就留缺项——宁可显式缺项（提交时按未决暂扣）也**禁止**猜分隔符拆小问、推分值、盲删选项字母、把多空的作答顺序张冠李戴。flat 字段（prompt_md/reference_md/choices_md）照常必填且与 parts 描述同一道题。
 - 一道题都没找到、且也没有图片型源时，宁可返回空 questions（运行会失败）也不要编题；但只要有图片型源，至少报进 image_candidates。
 - 禁止：emoji、营销话、套话、JSON 之外的文字、用 markdown 代码块包裹整段 JSON。`;

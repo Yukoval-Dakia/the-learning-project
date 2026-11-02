@@ -5,13 +5,16 @@ import { placement_starter_claim } from '@/db/schema';
 import {
   JOB_RETRY_DELAY_SECONDS,
   JOB_RETRY_LIMIT,
+  type PlacementJobQueue,
   enqueuePlacementJob,
+  enqueuePlacementSupplyExecuteJob,
   fromPgBossDrizzleTx,
   placementJobState,
 } from '@/kernel/placement-jobs';
 import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { dispatchSupplyTarget } from './dispatcher';
 import { EvidenceDemandV1, evidenceDemandToTargetContext } from './evidence-demand';
+import { PLACEMENT_QUEUE_EXPIRY_MS } from './placement-starter-attempts';
 import type { QuestionSupplyTarget } from './target-discovery';
 
 const PLACEMENT_STARTER_COUNT = 8;
@@ -42,6 +45,11 @@ function isNonterminalSingleFlightViolation(err: unknown): boolean {
 
 type ClaimRow = typeof placement_starter_claim.$inferSelect;
 
+/** The pg-boss queue that owns a claim's deliveries, fixed by the claim's stored route. */
+export function placementClaimJobQueue(claim: Pick<ClaimRow, 'supply_route'>): PlacementJobQueue {
+  return claim.supply_route === 'sourcing_web' ? 'supply_execute' : 'quiz_gen';
+}
+
 export function buildPlacementStarterDemand(claim: ClaimRow) {
   return EvidenceDemandV1.parse({
     version: 1,
@@ -62,6 +70,7 @@ export function buildPlacementStarterDemand(claim: ClaimRow) {
     inventory_goal: { eligible_count: PLACEMENT_STARTER_COUNT, horizon_days: 1 },
     control: {
       needed_by: null,
+      // null for sourcing_web claims: no money cap under the approved background policy.
       max_budget_micro_usd: claim.budget_limit_micro_usd,
       max_attempts: claim.max_paid_attempts,
     },
@@ -81,8 +90,14 @@ export function buildPlacementStarterTarget(claim: ClaimRow): QuestionSupplyTarg
     difficultyBand: 'near',
     desiredCount: PLACEMENT_STARTER_COUNT,
     minSourceTier: 3,
-    routePreference: ['quiz_gen'],
-    preferredGenerationMethod: 'closed_book',
+    // In-flight claims created before the 2026-11-02 policy keep closed-book quiz_gen; new
+    // claims are the source agent's (web search, source verification, independent admission).
+    ...(claim.supply_route === 'sourcing_web'
+      ? { routePreference: ['sourcing_web' as const] }
+      : {
+          routePreference: ['quiz_gen' as const],
+          preferredGenerationMethod: 'closed_book' as const,
+        }),
     priority: 1,
     reason: `placement starter for semantic goal revision ${claim.semantic_goal_revision_id}`,
     constraints: { exactCount: PLACEMENT_STARTER_COUNT },
@@ -95,12 +110,17 @@ export function buildPlacementStarterTarget(claim: ClaimRow): QuestionSupplyTarg
 }
 
 type PlacementStarterAdmission = (tx: Tx, claim: ClaimRow) => Promise<boolean>;
+type SendSupplyExecute = (
+  data: Record<string, unknown>,
+  options: SendOptions,
+) => Promise<string | null>;
 
 export async function dispatchPlacementStarterClaimTx(
   tx: Tx,
   claimId: string,
   send: (queue: 'quiz_gen', data: QuizGenJobData, options: SendOptions) => Promise<string | null>,
   admit: PlacementStarterAdmission = async () => true,
+  sendSupplyExecute: SendSupplyExecute = enqueuePlacementSupplyExecuteJob,
 ): Promise<string | null> {
   const [claim] = await tx
     .select()
@@ -129,6 +149,16 @@ export async function dispatchPlacementStarterClaimTx(
             retryLimit: JOB_RETRY_LIMIT,
             retryDelay: JOB_RETRY_DELAY_SECONDS,
             retryBackoff: true,
+          }),
+        // The supply_execute delivery carries the same transport contract the placement
+        // consumer verifies: 3 deliveries, the original backoff, and the 120-minute expiry.
+        enqueueSupplyExecute: (data) =>
+          sendSupplyExecute(data, {
+            db: fromPgBossDrizzleTx(sp),
+            retryLimit: JOB_RETRY_LIMIT,
+            retryDelay: JOB_RETRY_DELAY_SECONDS,
+            retryBackoff: true,
+            expireInSeconds: PLACEMENT_QUEUE_EXPIRY_MS / 1_000,
           }),
       });
       const jobId = result.jobId;
@@ -192,7 +222,8 @@ export async function dispatchPlacementStarterClaim(
 const LIVE_PLACEMENT_JOB_STATES: ReadonlySet<string> = new Set(['created', 'retry', 'active']);
 
 /**
- * True when the quiz_gen job backing a placement starter claim may still redeliver.
+ * True when the job backing a placement starter claim (on the claim's own queue) may still
+ * redeliver.
  *
  * The recovery sweeper MUST consult this before terminalizing a long-stale 'retry_scheduled'
  * claim: elapsed time alone is not proof that the retry is dead. If the quiz_gen queue is paused,
@@ -204,8 +235,11 @@ const LIVE_PLACEMENT_JOB_STATES: ReadonlySet<string> = new Set(['created', 'retr
  * A null jobId or a job pg-boss can no longer find (deleted past `retentionSeconds`) means no
  * redelivery source exists — not live.
  */
-export async function isPlacementStarterJobLive(jobId: string | null): Promise<boolean> {
+export async function isPlacementStarterJobLive(
+  jobId: string | null,
+  queue: PlacementJobQueue = 'quiz_gen',
+): Promise<boolean> {
   if (!jobId) return false;
-  const state = await placementJobState(jobId);
+  const state = await placementJobState(jobId, queue);
   return state != null && LIVE_PLACEMENT_JOB_STATES.has(state);
 }

@@ -44,6 +44,7 @@ import { FigureRef, StructuredQuestion } from '@/core/schema/structured_question
 import type { Db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { lockQuestionSubmitRequest } from '@/kernel/locks/question-supply';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
@@ -51,6 +52,7 @@ import {
   type SubmitResult,
   canonicalJson,
   claimSubmitRequestId,
+  findSubmitReceipt,
   insertSourcedDraft,
   persistDeclaredQuestionGroup,
   sanitizeSourcedMarkup,
@@ -89,6 +91,12 @@ import {
 } from '../question-supply/ingest-dedup';
 import { cleanupStagedAssets } from '../question-supply/jyeoo-candidates';
 import { JYEOO_SOURCE_HOST } from '../question-supply/jyeoo-supply-config';
+import {
+  type PlacementAttemptAuthority,
+  type PlacementVerificationAuthority,
+  assertPlacementAttemptFence,
+} from '../question-supply/placement-starter-attempts';
+import { authorizePlacementQuestion } from '../question-supply/placement-starter-paid-authority';
 import {
   DEDUP_OVERLAP_THRESHOLD,
   matchesWhitelist,
@@ -216,15 +224,44 @@ type ParsedInput = z.infer<typeof parsedInputSchema>;
 type ExecInput = z.input<typeof parsedInputSchema>;
 type Output = z.infer<typeof outputSchema>;
 
-type EnqueueSourceVerifyFn = (questionIds: string[], options?: SendOptions) => Promise<void>;
+type EnqueueSourceVerifyFn = (
+  questionIds: string[],
+  options?: SendOptions,
+  placementAuthorities?: PlacementVerificationAuthority[],
+) => Promise<void>;
 
 async function defaultEnqueueSourceVerify(
   questionIds: string[],
   options?: SendOptions,
+  placementAuthorities?: PlacementVerificationAuthority[],
 ): Promise<void> {
   const { getStartedBoss } = await import('@/server/boss/client');
   const boss = await getStartedBoss();
-  await boss.send('source_verify', { question_ids: questionIds }, options);
+  await boss.send(
+    'source_verify',
+    {
+      question_ids: questionIds,
+      ...(placementAuthorities?.length ? { placement_authorities: placementAuthorities } : {}),
+    },
+    options,
+  );
+}
+
+/** Drain the durable source_verify intents of submitted questions, authorities included. */
+export async function dispatchSourceVerifyIntents(
+  db: Db,
+  questionIds: string[],
+  enqueueSourceVerify: EnqueueSourceVerifyFn = defaultEnqueueSourceVerify,
+) {
+  return dispatchPendingVerifyIntents(db, {
+    questionIds,
+    enqueue: async (verifier, ids, options, placementAuthorities) => {
+      if (verifier !== 'source_verify') {
+        throw new Error(`submit_question outbox received unexpected verifier '${verifier}'`);
+      }
+      await enqueueSourceVerify(ids, options, placementAuthorities);
+    },
+  });
 }
 
 export interface SubmitQuestionDeps {
@@ -264,6 +301,8 @@ type CandidateSubmitContext = Pick<
   'db' | 'sessionId' | 'taskRunId' | 'logTaskRunId' | 'causedByEventId' | 'beforeIngestionWrite'
 > & {
   callerActor?: ToolContext['callerActor'];
+  /** Server-held placement delivery authority; never accepted from agent/tool input. */
+  placementAttempt?: PlacementAttemptAuthority;
 };
 
 function candidateSubmitFingerprint(input: ParsedInput): string {
@@ -278,6 +317,20 @@ function candidateSubmitFingerprint(input: ParsedInput): string {
       }),
     )
     .digest('hex')}`;
+}
+
+/** Restore only a receipt matching the original parsed candidate fingerprint.
+ * Parsing, fingerprint fields and receipt codec remain owned by this submit gate. */
+export async function readCandidateSubmitReceipt(
+  db: Db,
+  raw: ExecInput,
+): Promise<{ status: 'missing' } | { status: 'reused' } | { status: 'replay'; receipt: Output }> {
+  const input = parsedInputSchema.parse(raw);
+  if (input.candidate == null || input.draft != null) throw new Error('candidate request required');
+  const prior = await findSubmitReceipt(db, input.request_id);
+  if (prior == null) return { status: 'missing' };
+  if (prior.fingerprint !== candidateSubmitFingerprint(input)) return { status: 'reused' };
+  return { status: 'replay', receipt: outputSchema.parse(prior.receipt) };
 }
 
 /** B) 供给候选路径（原 store_sourced_question 语义逐字保留）。
@@ -312,7 +365,12 @@ async function executeCandidateSubmit(
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${requestId}))`);
     const settled = await claimSubmitRequestId(tx, requestId, fingerprint);
-    if (settled.status === 'replay') return settled.receipt as Output;
+    if (settled.status === 'replay') {
+      const receipt = settled.receipt as Output;
+      return receipt.question_id === result.question_id && result.verify_enqueued !== undefined
+        ? { ...receipt, verify_enqueued: result.verify_enqueued }
+        : receipt;
+    }
     if (settled.status === 'reused') {
       return {
         status: 'conflict',
@@ -494,6 +552,20 @@ async function runCandidateSubmit(
     console.error('[submit_question] vector near-dup abstained:', err);
   }
 
+  if (
+    ctx.placementAttempt &&
+    candidate.question.parts != null &&
+    candidate.question.parts.length > 0
+  ) {
+    // The typed declaration chain has no placement question-authority writer; refuse rather
+    // than publish a placement question that verification could never be bound to.
+    return {
+      status: 'withheld',
+      reason: 'placement_declared_parts_unsupported',
+      detail: 'placement delivery submits flat candidates only',
+      request_id: input.request_id,
+    };
+  }
   // YUK-1568 S3 — 携带 typed 声明（parts/units）的候选走统一草稿链
   // （saveDraftEdit → submitDraftQuestion），不再 flat insert + row publish；
   // 上面的 KC 活体/host/exact/source-URL/near/vector 判重原样先跑。
@@ -526,9 +598,24 @@ async function runCandidateSubmit(
 
   let persisted:
     | Awaited<ReturnType<typeof insertSourcedDraft>>
-    | { status: 'source_duplicate'; existingId: string };
+    | { status: 'source_duplicate'; existingId: string }
+    | { status: 'request_replay'; receipt: Output }
+    | { status: 'request_reused' };
   try {
     persisted = await db.transaction(async (tx) => {
+      // Request first, before ingestion/source/canonical/root locks: same order
+      // as the typed submit owner. The short preflight claim is not this fence.
+      await lockQuestionSubmitRequest(tx, input.request_id);
+      const claim = await claimSubmitRequestId(
+        tx,
+        input.request_id,
+        candidateSubmitFingerprint(input),
+      );
+      if (claim.status === 'replay')
+        return { status: 'request_replay' as const, receipt: outputSchema.parse(claim.receipt) };
+      if (claim.status === 'reused') return { status: 'request_reused' as const };
+      // A lost delivery cannot publish into the claim: fence first, inside the commit.
+      if (ctx.placementAttempt) await assertPlacementAttemptFence(tx, ctx.placementAttempt);
       await ctx.beforeIngestionWrite?.(tx);
       const racedSource = await claimHttpSourceDuplicate(tx, {
         ...sourceClaim,
@@ -616,18 +703,68 @@ async function runCandidateSubmit(
         actorRef: `submit-question:${input.source_route}:enrich`,
         now,
       });
-      await writeVerifyDispatchIntent(tx, {
-        questionId,
-        verifier: 'source_verify',
-        supplyTrace: inserted.supplyTrace,
-        createdAt: now,
-      });
+      if (ctx.placementAttempt) {
+        // Same commit as question/publication/receipt: bind the question to the live attempt
+        // with its epoch and write the source_verify intent carrying that full authority.
+        const authority = await authorizePlacementQuestion(tx, {
+          attempt: ctx.placementAttempt,
+          questionId,
+          canonicalHash,
+          verifier: 'source_verify',
+          supplyTrace: inserted.supplyTrace,
+          allowPersistedReplay: false,
+          now,
+        });
+        if (!authority) throw new Error(`placement question authority not created: ${questionId}`);
+      } else {
+        await writeVerifyDispatchIntent(tx, {
+          questionId,
+          verifier: 'source_verify',
+          supplyTrace: inserted.supplyTrace,
+          createdAt: now,
+        });
+      }
+      // The flat candidate's receipt belongs to the same commit as its question,
+      // publication and verify intent. Recovery must not lose the original id
+      // and treat an already committed submission as a new duplicate candidate.
+      const receipt: Output = {
+        status: 'pending',
+        question_id: questionId,
+        request_id: input.request_id,
+        difficulty_evidence: inserted.difficultyEvidence,
+      };
+      await writeSubmitReceiptEvent(
+        tx,
+        { kind: 'question', id: questionId },
+        input.request_id,
+        candidateSubmitFingerprint(input),
+        receipt as SubmitResult,
+        {
+          actorRef: ctx.callerActor?.ref ?? 'agent:submit_question',
+          actorKind: 'agent',
+          sessionId: ctx.sessionId ?? null,
+          taskRunId: ctx.taskRunId,
+          causedByEventId: ctx.causedByEventId ?? null,
+        },
+        now,
+      );
       return inserted;
     });
   } catch (err) {
     await cleanupStagedForRejected(db, candidate.staged_asset_ids);
     throw err;
   }
+
+  // Neither branch inserted a question, owns staged cleanup, or dispatches a
+  // new verifier. The durable original intent is drained by its existing owner.
+  if (persisted.status === 'request_replay') return { ...persisted.receipt, replayed: true };
+  if (persisted.status === 'request_reused')
+    return {
+      status: 'conflict',
+      reason: 'request_id_reused',
+      detail: `request_id '${input.request_id}' was used with different content`,
+      request_id: input.request_id,
+    };
 
   if (persisted.status === 'source_duplicate') {
     await cleanupStagedForRejected(db, candidate.staged_asset_ids);
@@ -651,15 +788,7 @@ async function runCandidateSubmit(
     };
   }
 
-  const dispatchResult = await dispatchPendingVerifyIntents(db, {
-    questionIds: [questionId],
-    enqueue: async (verifier, ids, options) => {
-      if (verifier !== 'source_verify') {
-        throw new Error(`submit_question outbox received unexpected verifier '${verifier}'`);
-      }
-      await enqueueSourceVerify(ids, options);
-    },
-  });
+  const dispatchResult = await dispatchSourceVerifyIntents(db, [questionId], enqueueSourceVerify);
   const verifyEnqueued = dispatchResult.failed === 0;
   if (!verifyEnqueued) {
     console.error(
@@ -1295,6 +1424,18 @@ async function execute(ctx: ToolContext, raw: ExecInput): Promise<Output> {
   }
   const candidate = input.candidate;
   return executeCandidateSubmit(ctx, { ...input, candidate }, {});
+}
+
+/** Server-only flat candidate submit for one placement web delivery (YUK-1468). */
+export async function submitPlacementSupplyCandidate(
+  ctx: Omit<CandidateSubmitContext, 'placementAttempt'>,
+  raw: ExecInput,
+  placementAttempt: PlacementAttemptAuthority,
+): Promise<Output> {
+  const input = parsedInputSchema.parse(raw);
+  if (input.candidate == null || input.draft != null) throw new Error('candidate request required');
+  const candidate = input.candidate;
+  return executeCandidateSubmit({ ...ctx, placementAttempt }, { ...input, candidate }, {});
 }
 
 export const submitQuestionTool: DomainTool<ExecInput, Output> = {

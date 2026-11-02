@@ -13,6 +13,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import { writeJobEvent } from '@/kernel/job-events';
+import { ConfirmationCommand, type ConfirmationCommandT } from '../confirmation-contract';
 import { writeCopilotInputEvent } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
@@ -25,6 +26,7 @@ export const COPILOT_SESSION_QUEUE_PROTOCOL_VERSION = 2;
 /** The exact worker input persisted while a later turn waits behind its session head. */
 export interface CopilotAcceptedJobData {
   user_message: string;
+  confirmation?: ConfirmationCommandT;
   derivation_policy?: DerivationPolicyT;
   triggered_by: 'chat' | 'chip';
   chip_kind?: string;
@@ -107,6 +109,7 @@ function parsePersistedJobData(
     return undefined;
   }
   if (!DerivationPolicy.optional().safeParse(value.derivation_policy).success) return undefined;
+  if (value.confirmation !== undefined) ConfirmationCommand.parse(value.confirmation);
   return value as unknown as CopilotRunJobData;
 }
 
@@ -233,6 +236,7 @@ export async function reserveCopilotDurableAcceptance(
     sessionId: string;
     userMessage: string;
     reviewAnswer?: ReviewAnswerAttachment;
+    confirmation?: ConfirmationCommandT;
     inputHash: string;
     idempotencyKey?: string;
     queuedPayload: Record<string, unknown>;
@@ -283,6 +287,7 @@ export async function reserveCopilotDurableAcceptance(
       chipKind: input.jobData?.chip_kind,
       derivationPolicy: readDerivationPolicy(input.jobData ?? input.queuedPayload),
       reviewAnswer: input.reviewAnswer,
+      confirmation: input.confirmation,
       now: new Date(),
       ...(deterministicRunId ? { eventId: deterministicRunId } : {}),
     });

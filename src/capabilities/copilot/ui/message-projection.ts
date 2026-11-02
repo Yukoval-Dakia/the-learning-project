@@ -1,5 +1,6 @@
 import { DerivationPolicy, type DerivationPolicyT } from '@/core/schema/derivation-policy';
 import { parseCopilotPrimaryView } from '../primary-view-contract';
+import { parseConfirmation } from './confirmation';
 import { mergePublicProse, parsePublicProse } from './public-prose';
 import type { ReplayChatMessage, ReplaySkillContext, ReplayTurn } from './replay';
 import { parseSkillContext, parseSkillTurn } from './skill-lifecycle';
@@ -53,6 +54,12 @@ export function projectCopilotReply(
   return {
     ...previous,
     text: reply.reply,
+    confirmation:
+      reply.confirmation === undefined
+        ? previous.confirmation
+        : parseConfirmation(reply.confirmation),
+    confirmationIncompatible:
+      reply.confirmation !== undefined && !parseConfirmation(reply.confirmation),
     public_prose: publicProse,
     derivation_policy:
       DerivationPolicy.safeParse(reply.derivation_policy).data ?? previous.derivation_policy,
@@ -357,7 +364,7 @@ export function projectReplayMessage(turn: ReplayTurn): ReplayChatMessage | null
       id: turn.event_id,
       role: 'tombstone',
       text: turn.text || '本轮更改已撤回',
-      checkpoint_event_id: turn.checkpoint_event_id ?? turn.event_id,
+      checkpoint_event_id: turn.checkpoint_event_id,
     };
   if (typeof turn.text !== 'string') return null;
   const publicProse = parsePublicProse(turn.public_prose);

@@ -1,0 +1,8 @@
+ALTER TABLE "placement_starter_claim" DROP CONSTRAINT "placement_starter_claim_nonnegative_cost";--> statement-breakpoint
+ALTER TABLE "placement_starter_cost_component" DROP CONSTRAINT "placement_starter_cost_component_kind_check";--> statement-breakpoint
+ALTER TABLE "placement_starter_claim" ALTER COLUMN "budget_limit_micro_usd" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "placement_starter_claim" ADD COLUMN "supply_route" text DEFAULT 'quiz_gen' NOT NULL;--> statement-breakpoint
+ALTER TABLE "placement_starter_claim" ADD CONSTRAINT "placement_starter_claim_supply_route_check" CHECK ("placement_starter_claim"."supply_route" IN ('quiz_gen','sourcing_web'));--> statement-breakpoint
+ALTER TABLE "placement_starter_claim" ADD CONSTRAINT "placement_starter_claim_route_budget_check" CHECK (("placement_starter_claim"."supply_route" = 'quiz_gen') = ("placement_starter_claim"."budget_limit_micro_usd" IS NOT NULL));--> statement-breakpoint
+ALTER TABLE "placement_starter_claim" ADD CONSTRAINT "placement_starter_claim_nonnegative_cost" CHECK (("placement_starter_claim"."budget_limit_micro_usd" IS NULL OR "placement_starter_claim"."budget_limit_micro_usd" >= 0) AND ("placement_starter_claim"."known_cost_micro_usd" IS NULL OR "placement_starter_claim"."known_cost_micro_usd" >= 0));--> statement-breakpoint
+ALTER TABLE "placement_starter_cost_component" ADD CONSTRAINT "placement_starter_cost_component_kind_check" CHECK ("placement_starter_cost_component"."component_kind" IN ('quiz_gen','quiz_verify','solution_check','teaching_quality','web_acquisition','source_grounding','question_admission'));

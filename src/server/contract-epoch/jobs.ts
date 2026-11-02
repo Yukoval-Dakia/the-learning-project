@@ -95,7 +95,6 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   copilot_run: 'translate',
   session_summary: 'translate',
   coach_daily: 'translate',
-  coach_weekly: 'translate',
   dreaming_nightly: 'translate',
   goal_scope_propose_nightly: 'translate',
   research_meeting_nightly: 'translate',

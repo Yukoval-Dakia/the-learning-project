@@ -373,6 +373,11 @@ export { CreateReviewSessionBody } from './api/contracts';
 export { previewReviewAdvice } from './server/advice-operation';
 export { createPracticeAppeal } from './server/appeal-operation';
 export { revealFrozenStudyReference } from './server/assessment/study-context';
+export {
+  issueConversationConfirmation,
+  readConversationConfirmation,
+  submitConversationConfirmation,
+} from './server/conversation-confirmation';
 export { readPracticeDraftList } from './server/draft-list-read';
 export { readDraftReviewDetail } from './server/draft-review';
 export { getPaperDetail } from './server/paper-detail';
@@ -381,6 +386,9 @@ export {
   PlacementOrphanStateError,
   abandonOrphanPlacementTx,
 } from './server/placement-session-lifecycle';
+export const recoverWebSupplies: typeof import('./server/question-supply/web-supply').recoverWebSupplies =
+  async (...args) =>
+    (await import('./server/question-supply/web-supply')).recoverWebSupplies(...args);
 export { abandonOrphanReviewSession } from './server/review-session-lifecycle';
 export {
   createReviewSession,

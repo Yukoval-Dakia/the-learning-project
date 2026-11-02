@@ -1,3 +1,4 @@
+import { ConfirmationOccurrence } from '../confirmation-contract';
 import {
   type CopilotModeState,
   CopilotSkillContext,
@@ -47,5 +48,11 @@ export function parseCopilotModeState(
   if (!context.success || context.data.skill !== 'teaching')
     return parseCopilotModeCompletion(payload);
   const turn = readCopilotSkillTurn(payload);
-  return turn ? { skill_turn: turn, skill_context: context.data } : undefined;
+  const confirmation =
+    payload.confirmation === undefined
+      ? undefined
+      : ConfirmationOccurrence.parse(payload.confirmation);
+  return turn
+    ? { skill_turn: turn, skill_context: context.data, ...(confirmation ? { confirmation } : {}) }
+    : undefined;
 }

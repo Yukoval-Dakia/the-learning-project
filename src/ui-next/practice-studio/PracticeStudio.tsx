@@ -1,4 +1,5 @@
 import { MessageSquareQuote, Paperclip } from 'lucide-react';
+import { Mascot } from '@/ui-next/public';
 import type { ReadingProps, Submission } from './contracts';
 import { IntentButton, NoticeBlock } from './controls';
 import { PracticeFeedback } from './PracticeFeedback';
@@ -101,10 +102,17 @@ export function PracticeStudio(p: ReadingProps) {
             {[q.subject, q.attemptLabel, q.estimatedTime, q.reason].filter(Boolean).join(' · ')}
           </p>
         </div>
-        <div className="un-st-task-stage">
-          <span data-current={!afterFeedback || undefined}>作答</span>
-          <span aria-hidden="true">→</span>
-          <span data-current={afterFeedback || undefined}>反馈</span>
+        <div className="un-st-heading-companion">
+          <div className="un-st-task-stage">
+            <span data-current={!afterFeedback || undefined}>作答</span>
+            <span aria-hidden="true">→</span>
+            <span data-current={afterFeedback || undefined}>反馈</span>
+          </div>
+          <Mascot
+            thinking={
+              q.submission.grading.kind === 'grading' || q.submission.recording.kind === 'saving'
+            }
+          />
         </div>
       </header>
       {page.kind === 'partial' && page.missing && (
