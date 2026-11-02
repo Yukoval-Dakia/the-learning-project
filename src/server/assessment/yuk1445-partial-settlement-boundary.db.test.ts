@@ -26,9 +26,11 @@ import {
   question,
 } from '@/db/schema';
 import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
-import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+import {
+  contractIntegrityDigest,
+  normalizeQuestionRowToContract,
+} from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
-import { normalizeQuestionRowToContract } from '@/server/questions/contract-normalizer';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { activateEvaluation, insertInitialEvaluationHead } from './activate';
 import { ASSESSMENT_SETTLEMENT_ACTION, learningSettlement } from './settle';

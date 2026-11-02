@@ -13,12 +13,12 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
-import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
   type NormalizableQuestionRow,
   contractIntegrityDigest,
   normalizeQuestionRowToContract,
-} from '@/server/questions/contract-normalizer';
+} from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { createSolveSubmissionResource } from '../../api/resource-routes';
 import { startSolveSession } from '../solve-session';
