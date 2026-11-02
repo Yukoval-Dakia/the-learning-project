@@ -1,0 +1,1783 @@
+/* 知识 (/knowledge, /knowledge/$id; YUK-1473), M3E presentation. Design record:
+   docs/design/2026-11-03-knowledge-m3e.md. Design language: docs/design/2026-10-07-ui-visual-direction.md
+   (T1 semantic tokens, T3 glass only on floating layers, M1 motion only on change, A2 hit areas).
+   The main column carries .un-m3e-bridge, so every --un-* role below reads the Google M3 roles.
+   Mastery tones keep their mapping: good / hard / again → positive / caution / critical. */
+
+[data-ui-next].kn-page {
+  background: var(--un-md-sys-color-surface);
+  color: var(--un-md-sys-color-on-surface);
+}
+
+[data-ui-next].kn-page {
+  /* ═══ Shared pieces ═══ */
+  & .kn-quiet {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    line-height: var(--un-lh-ui);
+  }
+
+  & .kn-glyph {
+    font-family: var(--un-font-mono);
+  }
+
+  & .kn-card {
+    padding: var(--un-sp-4) var(--un-sp-5);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  & .kn-row-arrow {
+    flex: none;
+    color: var(--un-text-4);
+    transition:
+      transform var(--un-t-small) var(--un-ease-glide),
+      color var(--un-t-small) var(--un-ease-glide);
+  }
+
+  & .kn-error-line {
+    color: var(--un-critical);
+    font-size: var(--un-fs-1);
+  }
+
+  /* Tags: one quiet shape; tone only where it carries meaning. */
+  & .kn-tag {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 5px;
+    height: 22px;
+    padding: 0 var(--un-sp-2);
+    border-radius: 6px;
+    background: var(--un-bg-sunk);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  & .kn-tag-accent {
+    background: var(--un-accent-soft);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .kn-tag-positive,
+  & .kn-decay.tone-good {
+    background: var(--un-positive-soft);
+    color: var(--un-positive);
+  }
+
+  & .kn-decay.tone-hard {
+    background: var(--un-caution-soft);
+    color: var(--un-caution);
+  }
+
+  & .kn-tag-critical,
+  & .kn-decay.tone-again {
+    background: var(--un-critical-soft);
+    color: var(--un-critical);
+  }
+
+  & .kn-tag-dashed {
+    background: transparent;
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+    color: var(--un-text-3);
+  }
+
+  /* Typed relations: glyph + words always; colour follows the relation. */
+  & .kn-rel-tag-prerequisite {
+    background: var(--un-accent-soft);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .kn-rel-tag-contrasts_with {
+    background: color-mix(in srgb, var(--un-md-sys-color-secondary) 14%, transparent);
+    color: var(--un-md-sys-color-secondary);
+  }
+
+  & .kn-rel-tag-applied_in {
+    background: var(--un-positive-soft);
+    color: var(--un-positive);
+  }
+
+  & .kn-rel-tag-derived_from {
+    background: var(--un-caution-soft);
+    color: var(--un-caution);
+  }
+
+  /* Band chip: band + range + source (solid dot = answer-calibrated, dashed = provisional). */
+  & .kn-band {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    height: 22px;
+    padding: 0 var(--un-sp-2);
+    border: var(--un-hairline) solid var(--un-line);
+    border-radius: 6px;
+    background: var(--un-bg-raised);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  & .kn-band-dot {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+
+  & .kn-band.src-hard .kn-band-dot {
+    background: var(--un-positive);
+  }
+
+  & .kn-band.src-soft .kn-band-dot {
+    border: 1.5px dashed var(--un-text-4);
+  }
+
+  & .kn-band.is-low {
+    border-style: dashed;
+    color: var(--un-text-3);
+  }
+
+  & .kn-band-range {
+    color: var(--un-text-3);
+    font-weight: var(--un-fw-regular);
+  }
+
+  & .kn-band-low {
+    color: var(--un-caution);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  /* Mastery dial: hairline track + tone arc. */
+  & .kn-dial {
+    flex: none;
+  }
+
+  & .kn-dial-track {
+    stroke: var(--un-line);
+  }
+
+  & .kn-dial.tone-good .kn-dial-arc {
+    stroke: var(--un-positive);
+  }
+
+  & .kn-dial.tone-hard .kn-dial-arc {
+    stroke: var(--un-caution);
+  }
+
+  & .kn-dial.tone-again .kn-dial-arc {
+    stroke: var(--un-critical);
+  }
+
+  & .kn-container-ic {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-2);
+  }
+
+  /* Empty area (tree, notes, missing node) */
+  & .kn-empty {
+    display: grid;
+    justify-items: center;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-7) var(--un-sp-4);
+    text-align: center;
+  }
+
+  & .kn-empty-icon {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    margin-bottom: var(--un-sp-1);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-3);
+  }
+
+  & .kn-empty-title {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .kn-empty-text {
+    max-width: 36em;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-2);
+  }
+
+  /* ═══ /knowledge ═══ */
+  & .kn-main {
+    display: grid;
+    align-content: start;
+    gap: var(--un-sp-5);
+    width: min(1120px, 100%);
+    margin: 0 auto;
+    padding: var(--un-sp-7) var(--un-sp-6) calc(var(--un-sp-8) + var(--un-sp-7));
+  }
+
+  & .kn-head {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .kn-head-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-3);
+  }
+
+  & .kn-title {
+    color: var(--un-text-1);
+    font: 600 32px / 1.25 var(--un-font-sans);
+  }
+
+  & .kn-head .un-seg-option {
+    gap: 6px;
+  }
+
+  & .kn-sentence {
+    min-height: 1.5em;
+    color: var(--un-text-2);
+    font-size: var(--un-fs-3);
+  }
+
+  & .kn-lead {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-2);
+  }
+
+  /* Subject filter: a row of chips with a quiet 科目 label (the floated legend joins the row). */
+  & .kn-subjects {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+    min-width: 0;
+    margin: var(--un-sp-2) 0 0;
+    padding: 0;
+    border: 0;
+  }
+
+  & .kn-subjects-legend {
+    float: left;
+    margin-right: var(--un-sp-1);
+    padding: 0;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  /* ── Next steps (frontier) ── */
+  & .kn-frontier {
+    padding: var(--un-sp-5);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-sunk);
+  }
+
+  & .kn-frontier-head {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-3);
+    margin-bottom: var(--un-sp-4);
+  }
+
+  & .kn-frontier-ic {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--un-r-1);
+    background: var(--un-accent-soft);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .kn-frontier-title {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    font-weight: var(--un-fw-semibold);
+    line-height: var(--un-lh-tight);
+  }
+
+  & .kn-frontier-sub {
+    margin-top: 2px;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-frontier-sub b {
+    color: var(--un-text-2);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .kn-frontier-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: var(--un-sp-3);
+  }
+
+  & .kn-frontier-card {
+    display: grid;
+    align-content: start;
+    gap: var(--un-sp-2);
+    width: 100%;
+    height: 100%;
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+    text-align: left;
+    transition: box-shadow var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .kn-frontier-card:hover {
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+  }
+
+  & .kn-frontier-top {
+    display: flex;
+    align-items: baseline;
+    gap: var(--un-sp-2);
+  }
+
+  & .kn-frontier-name {
+    flex: 1;
+    min-width: 0;
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    font-weight: var(--un-fw-medium);
+    line-height: var(--un-lh-tight);
+  }
+
+  & .kn-frontier-reason {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    line-height: var(--un-lh-ui);
+    text-wrap: pretty;
+  }
+
+  & .kn-frontier-note {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: var(--un-sp-1);
+  }
+
+  /* ── AI proposals notice ── */
+  & .kn-proposals {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-3) var(--un-sp-4);
+    padding: var(--un-sp-4) var(--un-sp-5);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  & .kn-proposals-ic {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--un-r-1);
+    background: var(--un-accent-soft);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .kn-proposals-text {
+    flex: 1;
+    min-width: 180px;
+  }
+
+  & .kn-proposals-title {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .kn-proposals-sub {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  /* ── Tree ── */
+  & .kn-tree {
+    overflow: hidden;
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  & .kn-tree > li + li {
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .kn-tree-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2) var(--un-sp-3);
+    width: 100%;
+    min-height: 54px;
+    padding: var(--un-sp-3) var(--un-sp-4) var(--un-sp-3)
+      calc(var(--un-sp-4) + var(--kn-depth, 0) * 22px);
+    text-align: left;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .kn-tree-row:hover {
+    background: var(--un-bg-hover);
+  }
+
+  & .kn-tree-row:focus-visible {
+    outline-offset: -2px;
+  }
+
+  & .kn-tree-row:hover .kn-row-arrow {
+    transform: translateX(2px);
+    color: var(--un-text-2);
+  }
+
+  /* Weak node (decaying): a faint critical wash plus the 衰减中 tag; never colour alone. */
+  & .kn-tree-row[data-hot] {
+    background: color-mix(in srgb, var(--un-critical-soft) 45%, transparent);
+  }
+
+  & .kn-tree-row[data-hot]:hover {
+    background: color-mix(in srgb, var(--un-critical-soft) 75%, transparent);
+  }
+
+  & .kn-tree-row[data-container] {
+    background: var(--un-bg-sunk);
+  }
+
+  & .kn-tree-row[data-container] .kn-container-ic {
+    background: var(--un-bg-raised);
+  }
+
+  & .kn-twig {
+    margin-right: calc(-1 * var(--un-sp-1));
+    color: var(--un-text-4);
+    font-family: var(--un-font-mono);
+  }
+
+  & .kn-tree-title {
+    min-width: 0;
+    color: var(--un-text-1);
+    font-size: var(--un-fs-2);
+    font-weight: var(--un-fw-medium);
+    line-height: var(--un-lh-tight);
+    letter-spacing: 0;
+    overflow-wrap: anywhere;
+  }
+
+  & .kn-tree-end {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--un-sp-2);
+    margin-left: auto;
+  }
+
+  & .kn-tree-meta {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    white-space: nowrap;
+  }
+
+  /* ── Graph ── */
+  & .kn-graph-loading {
+    display: grid;
+    place-items: center;
+    height: 560px;
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-graph-empty {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--un-sp-2) var(--un-sp-3);
+    margin-bottom: var(--un-sp-3);
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    text-align: center;
+  }
+
+  & .kn-graph-empty strong {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .kn-graph-stage {
+    position: relative;
+    height: 560px;
+    overflow: hidden;
+    border-radius: var(--un-r-2);
+    background:
+      radial-gradient(
+        circle at 1px 1px,
+        color-mix(in srgb, var(--un-line-strong) 60%, transparent) 1px,
+        transparent 0
+      )
+      0 0 / 24px 24px,
+      var(--un-bg-sunk);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+    user-select: none;
+  }
+
+  & .kn-graph-svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    user-select: none;
+  }
+
+  /* Zoom controls float over the graph: the one glass layer on this page besides the drawer. */
+  & .kn-graph-controls {
+    position: absolute;
+    top: var(--un-sp-3);
+    right: var(--un-sp-3);
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border-radius: var(--un-r-1);
+  }
+
+  & .kn-graph-zoom {
+    min-width: 44px;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    text-align: center;
+  }
+
+  & .kn-graph-ctrl-div {
+    align-self: stretch;
+    width: 1px;
+    margin: 6px 2px;
+    background: var(--un-line);
+  }
+
+  /* Edges: colour per relation (M3 roles); dash + arrow stay as the non-colour cue. */
+  & .kn-edge-path {
+    fill: none;
+    stroke-width: 1.75;
+  }
+
+  & .kn-rel-prerequisite {
+    stroke: var(--un-accent);
+  }
+
+  & .kn-rel-related_to {
+    stroke: var(--un-text-4);
+  }
+
+  & .kn-rel-contrasts_with {
+    stroke: var(--un-md-sys-color-secondary);
+  }
+
+  & .kn-rel-applied_in {
+    stroke: var(--un-positive);
+  }
+
+  & .kn-rel-derived_from {
+    stroke: var(--un-caution);
+  }
+
+  & .kn-edge-path.is-cross {
+    stroke: var(--un-md-sys-color-secondary);
+    stroke-width: 2.25;
+  }
+
+  & .kn-edge-label {
+    fill: var(--un-text-3);
+    font-size: 12px;
+    paint-order: stroke;
+    stroke: var(--un-bg-sunk);
+    stroke-width: 3px;
+    stroke-linejoin: round;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  /* Nodes: fill disc + track + mastery arc; a larger transparent circle is the hit area. */
+  & .kn-node {
+    cursor: pointer;
+  }
+
+  & .kn-node:focus-visible {
+    outline: none;
+  }
+
+  & .kn-node-hit {
+    fill: transparent;
+    stroke: none;
+  }
+
+  & .kn-node:focus-visible .kn-node-hit {
+    stroke: var(--un-focus);
+    stroke-width: 2;
+  }
+
+  & .kn-disc {
+    stroke: var(--un-line-strong);
+    stroke-width: 1.5;
+    transition: transform var(--un-t-small) var(--un-ease-glide);
+  }
+
+  & .kn-disc.tone-good {
+    fill: var(--un-positive-soft);
+    stroke: color-mix(in srgb, var(--un-positive) 45%, transparent);
+  }
+
+  & .kn-disc.tone-hard {
+    fill: var(--un-caution-soft);
+    stroke: color-mix(in srgb, var(--un-caution) 45%, transparent);
+  }
+
+  & .kn-disc.tone-again {
+    fill: var(--un-critical-soft);
+    stroke: color-mix(in srgb, var(--un-critical) 45%, transparent);
+  }
+
+  & .kn-disc.tone-none {
+    fill: var(--un-bg-raised);
+  }
+
+  & .kn-node:hover .kn-disc {
+    transform: scale(1.08);
+  }
+
+  /* Selected node (drawer open): the accent ring wins over the tone stroke. */
+  & .kn-node.is-active .kn-disc {
+    stroke: var(--un-accent);
+    stroke-width: 2.5px;
+  }
+
+  & .kn-node:focus-visible .kn-disc {
+    stroke: var(--un-focus);
+    stroke-width: 2.5px;
+  }
+
+  & .kn-node.is-ghost .kn-disc {
+    opacity: 0.82;
+    fill: var(--un-bg-raised);
+    stroke: var(--un-md-sys-color-secondary);
+    stroke-dasharray: 4 3;
+  }
+
+  & .kn-track {
+    opacity: 0.9;
+    stroke: var(--un-bg-raised);
+    stroke-width: 3.5;
+  }
+
+  & .kn-arc {
+    transition: stroke-dashoffset var(--un-t-panel) var(--un-ease-glide);
+  }
+
+  & .kn-arc.tone-good {
+    stroke: var(--un-positive);
+  }
+
+  & .kn-arc.tone-hard {
+    stroke: var(--un-caution);
+  }
+
+  & .kn-arc.tone-again {
+    stroke: var(--un-critical);
+  }
+
+  & .kn-node-pct {
+    fill: var(--un-text-1);
+    font-family: var(--un-font-sans);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--un-fw-semibold);
+    pointer-events: none;
+    user-select: none;
+  }
+
+  & .kn-node-label-bg {
+    fill: var(--un-bg-raised);
+    stroke: var(--un-line);
+    stroke-width: 1;
+    pointer-events: none;
+  }
+
+  & .kn-node-label {
+    fill: var(--un-text-2);
+    font-size: 13px;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  & .kn-node.is-active .kn-node-label {
+    fill: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .kn-node.is-ghost .kn-node-label {
+    fill: var(--un-text-3);
+    font-style: italic;
+  }
+
+  /* Legend: the key to the typed edges. */
+  & .kn-graph-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2) var(--un-sp-4);
+    margin-top: var(--un-sp-3);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  & .kn-legend-item svg line {
+    stroke-width: 2;
+  }
+
+  & .kn-legend-cross {
+    color: var(--un-md-sys-color-secondary);
+  }
+
+  & .kn-legend-cross-mark {
+    width: 26px;
+    border-top: 2px dashed var(--un-md-sys-color-secondary);
+  }
+
+  /* ═══ Node drawer: the floating layer, so it is glass (T3) ═══ */
+  & .kn-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    background: var(--un-scrim);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  & .kn-scrim.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  & .kn-drawer {
+    position: fixed;
+    top: var(--un-sp-3);
+    right: var(--un-sp-3);
+    bottom: var(--un-sp-3);
+    z-index: 90;
+    display: flex;
+    flex-direction: column;
+    width: min(440px, calc(100vw - 2 * var(--un-sp-3)));
+    overflow: hidden;
+    border-radius: var(--un-r-2);
+    color: var(--un-text-1);
+  }
+
+  & .kn-drawer:not(.open) {
+    visibility: hidden;
+  }
+
+  & .kn-drawer-head {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-4) var(--un-sp-4) var(--un-sp-4) var(--un-sp-5);
+    border-bottom: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .kn-drawer-title {
+    flex: 1;
+    min-width: 0;
+    color: var(--un-text-1);
+    font-size: var(--un-fs-4);
+    font-weight: var(--un-fw-semibold);
+    line-height: var(--un-lh-tight);
+    overflow-wrap: anywhere;
+  }
+
+  & .kn-drawer-body {
+    display: grid;
+    flex: 1;
+    align-content: start;
+    gap: var(--un-sp-5);
+    overflow-y: auto;
+    padding: var(--un-sp-5);
+    overscroll-behavior: contain;
+  }
+
+  & .kn-drawer-foot {
+    padding: var(--un-sp-4) var(--un-sp-5);
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .kn-btn-block {
+    width: 100%;
+  }
+
+  & .kn-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+    gap: var(--un-sp-2);
+  }
+
+  & .kn-metric {
+    display: grid;
+    align-content: start;
+    gap: var(--un-sp-1);
+    padding: var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: color-mix(in srgb, var(--un-bg-sunk) 80%, transparent);
+  }
+
+  & .kn-metric dt {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-metric dd {
+    margin: 0;
+  }
+
+  & .kn-metric-n {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-4);
+    font-weight: var(--un-fw-semibold);
+    line-height: 1.1;
+  }
+
+  & .kn-dsec {
+    display: grid;
+    gap: 2px;
+  }
+
+  & .kn-dsec-h {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    margin-bottom: var(--un-sp-1);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .kn-rel-row {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-3);
+    width: 100%;
+    min-height: 40px;
+    padding: var(--un-sp-2);
+    border-radius: var(--un-r-1);
+    text-align: left;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .kn-rel-row:hover {
+    background: var(--un-bg-hover);
+  }
+
+  & .kn-rel-row:hover .kn-row-arrow {
+    transform: translateX(2px);
+    color: var(--un-text-2);
+  }
+
+  & .kn-rel-row.is-indent {
+    padding-left: var(--un-sp-6);
+  }
+
+  & .kn-rel-kind {
+    flex: none;
+    color: var(--un-text-4);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-rel-name {
+    flex: 1;
+    min-width: 0;
+    color: var(--un-text-1);
+    font-size: var(--un-fs-2);
+    line-height: var(--un-lh-tight);
+    letter-spacing: 0;
+    overflow-wrap: anywhere;
+  }
+
+  & .kn-rel-dir {
+    flex: none;
+    color: var(--un-text-3);
+  }
+
+  & .kn-props {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .kn-prop {
+    display: grid;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: color-mix(in srgb, var(--un-bg-sunk) 80%, transparent);
+  }
+
+  & .kn-prop[data-resolved] {
+    padding: var(--un-sp-2) var(--un-sp-3);
+  }
+
+  & .kn-prop-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+  }
+
+  & .kn-prop-names {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    overflow-wrap: anywhere;
+  }
+
+  & .kn-prop-acts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-1);
+  }
+
+  /* On touch, .un-hit grows each small button/chip to a 44px tap area. When these rows wrap,
+     a tight row gap lets a lower control's tap area cover the one above (e.g. 忽略 over
+     建立关系, a write). Keep wrapped rows far enough apart that tap areas never overlap. */
+  @media (pointer: coarse) {
+    & .kn-prop-acts {
+      row-gap: var(--un-sp-4);
+    }
+  }
+
+  & .kn-btn-critical {
+    color: var(--un-critical);
+  }
+
+  & .kn-rel-pick {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-1);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  /* Same reason as .kn-prop-acts above: wrapped relation-type chips must not share tap areas. */
+  @media (pointer: coarse) {
+    & .kn-rel-pick {
+      row-gap: var(--un-sp-5);
+    }
+  }
+
+  & .kn-rel-pick .un-chip-toggle {
+    gap: 5px;
+  }
+
+  & .kn-select {
+    width: 100%;
+    height: var(--un-h-control);
+    margin-top: var(--un-sp-2);
+    padding: 0 var(--un-sp-3);
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+    color: var(--un-text-1);
+    font-size: var(--un-fs-2);
+  }
+
+  & .kn-select:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 1.5px var(--un-focus);
+  }
+
+  & .kn-create-acts {
+    margin-top: var(--un-sp-3);
+  }
+
+  /* ═══ /knowledge/$id ═══ */
+  & .kn-detail-main {
+    display: grid;
+    align-content: start;
+    gap: var(--un-sp-5);
+    width: min(1180px, 100%);
+    margin: 0 auto;
+    padding: var(--un-sp-5) var(--un-sp-6) calc(var(--un-sp-8) + var(--un-sp-7));
+  }
+
+  & .kn-back {
+    display: inline-flex;
+    align-items: center;
+    justify-self: start;
+    gap: 6px;
+    height: var(--un-h-control);
+    margin-left: calc(-1 * var(--un-sp-2));
+    padding: 0 var(--un-sp-2);
+    border-radius: var(--un-r-1);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-2);
+    transition:
+      background-color var(--un-t-feedback) var(--un-ease-glide),
+      color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .kn-back:hover {
+    background: var(--un-bg-hover);
+    color: var(--un-text-1);
+  }
+
+  & .kn-hero {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-4);
+  }
+
+  & .kn-hero-text {
+    flex: 1;
+    min-width: 240px;
+  }
+
+  & .kn-hero-title {
+    color: var(--un-text-1);
+    font: 600 30px / 1.25 var(--un-font-sans);
+    overflow-wrap: anywhere;
+  }
+
+  & .kn-hero-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+    margin-top: var(--un-sp-2);
+  }
+
+  & .kn-hero-evidence {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-hero-cta {
+    margin-left: auto;
+  }
+
+  /* Composite mastery (R · p(L) · difficulty) */
+  & .kn-composite {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-5);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  & .kn-composite-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--un-sp-2) var(--un-sp-3);
+  }
+
+  & .kn-composite-band {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-5);
+    font-weight: var(--un-fw-semibold);
+    line-height: 1;
+  }
+
+  & .kn-composite-cap {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-cold-note {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--un-sp-2);
+    width: 100%;
+    padding: var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: var(--un-caution-soft);
+    color: var(--un-caution);
+    font-size: var(--un-fs-1);
+    line-height: 1.55;
+    text-wrap: pretty;
+  }
+
+  & .kn-cold-note svg {
+    flex: none;
+    margin-top: 2px;
+  }
+
+  & .kn-disclose {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: calc(-1 * var(--un-sp-1));
+    padding: var(--un-sp-1);
+    border-radius: 6px;
+    color: var(--un-accent-ink);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .kn-disclose:hover {
+    background: var(--un-bg-hover);
+  }
+
+  & .kn-disclose-chev {
+    transform: rotate(-90deg);
+    transition: transform var(--un-t-small) var(--un-ease-glide);
+  }
+
+  & .kn-disclose[aria-expanded="true"] .kn-disclose-chev {
+    transform: rotate(0deg);
+  }
+
+  & .kn-dims {
+    display: grid;
+    gap: var(--un-sp-2);
+    width: 100%;
+  }
+
+  & .kn-dim {
+    padding: var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+  }
+
+  & .kn-dim-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-3);
+  }
+
+  & .kn-dim-label {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .kn-dim-note {
+    margin-top: 6px;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  /* Two columns: the node's own material, then what points at it. */
+  & .kn-detail-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    align-items: start;
+    gap: var(--un-sp-7);
+    margin-top: var(--un-sp-2);
+  }
+
+  & .kn-detail-col,
+  & .kn-detail-side {
+    display: grid;
+    align-content: start;
+    gap: var(--un-sp-6);
+    min-width: 0;
+  }
+
+  & .kn-sec {
+    min-width: 0;
+  }
+
+  /* Misconceptions */
+  & .kn-misc-list {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+
+  & .kn-misc {
+    padding: var(--un-sp-4);
+    border: var(--un-hairline) solid var(--un-line);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+  }
+
+  /* Confirmed and recurring: the one caution-washed card; candidates and fading ones stay neutral
+     and dashed so a guess never reads as settled. */
+  & .kn-misc[data-tone="active"] {
+    border-color: color-mix(in srgb, var(--un-caution) 30%, transparent);
+    background: var(--un-caution-soft);
+  }
+
+  & .kn-misc[data-tone="fading"],
+  & .kn-misc[data-tone="candidate"],
+  & .kn-misc[data-tone="settled"] {
+    border-style: dashed;
+    border-color: var(--un-line-strong);
+    background: var(--un-bg-sunk);
+  }
+
+  & .kn-misc-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+    margin-bottom: var(--un-sp-2);
+  }
+
+  & .kn-misc-ic {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-raised);
+    color: var(--un-text-3);
+  }
+
+  & .kn-misc[data-tone="active"] .kn-misc-ic {
+    background: color-mix(in srgb, var(--un-caution) 14%, transparent);
+    color: var(--un-caution);
+  }
+
+  & .kn-misc-label {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-2);
+    font-weight: var(--un-fw-semibold);
+    line-height: var(--un-lh-tight);
+  }
+
+  & .kn-misc-status {
+    margin-left: auto;
+  }
+
+  & .kn-misc-status[data-status="active"] {
+    background: var(--un-bg-raised);
+    color: var(--un-caution);
+  }
+
+  & .kn-misc-belief {
+    margin-bottom: var(--un-sp-2);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-2);
+    line-height: 1.65;
+    text-wrap: pretty;
+  }
+
+  & .kn-misc-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-misc-trace {
+    margin-top: var(--un-sp-2);
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border: var(--un-hairline) dashed var(--un-line-strong);
+    border-radius: var(--un-r-1);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-misc-acts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+    margin-top: var(--un-sp-3);
+    padding-top: var(--un-sp-3);
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .kn-misc[data-tone="active"] .kn-misc-acts {
+    border-top-color: color-mix(in srgb, var(--un-caution) 25%, transparent);
+  }
+
+  & .kn-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: var(--un-sp-1) 6px;
+    border-radius: 6px;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+    transition:
+      background-color var(--un-t-feedback) var(--un-ease-glide),
+      color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .kn-link:not(:disabled):hover {
+    background: var(--un-bg-hover);
+    color: var(--un-text-1);
+  }
+
+  & .kn-link:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+
+  & .kn-misc-veto-deferred {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-1);
+  }
+
+  & .kn-misc-veto-note {
+    color: var(--un-text-4);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-misc-error {
+    margin-top: var(--un-sp-2);
+    color: var(--un-critical);
+    font-size: var(--un-fs-1);
+  }
+
+  /* Further diagnosis (folded, honest empty) */
+  & .kn-diag {
+    margin-top: var(--un-sp-3);
+    overflow: hidden;
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  & .kn-diag-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-3);
+    width: 100%;
+    padding: var(--un-sp-3) var(--un-sp-4);
+    text-align: left;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .kn-diag-bar:hover {
+    background: var(--un-bg-hover);
+  }
+
+  /* .kn-diag clips an outside ring, so the bar draws its ring inside. */
+  & .kn-diag-bar:focus-visible {
+    outline-offset: -2px;
+    border-radius: var(--un-r-2);
+  }
+
+  & .kn-diag-ic {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--un-r-1);
+    background: var(--un-accent-soft);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .kn-diag-text {
+    display: grid;
+    gap: 2px;
+  }
+
+  & .kn-diag-t {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .kn-diag-s {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-diag-chev {
+    margin-left: auto;
+    color: var(--un-text-4);
+    transition: transform var(--un-t-small) var(--un-ease-glide);
+  }
+
+  & .kn-diag[data-open="true"] .kn-diag-chev {
+    transform: rotate(180deg);
+  }
+
+  & .kn-diag-body {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-4);
+    border-top: var(--un-hairline) solid var(--un-line);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-2);
+    line-height: var(--un-lh-ui);
+  }
+
+  & .kn-diag-body svg {
+    flex: none;
+    margin-top: 3px;
+  }
+
+  /* Notes */
+  & .kn-note-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--un-sp-2);
+    margin-bottom: var(--un-sp-3);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-note-hint svg {
+    flex: none;
+    margin-top: 3px;
+  }
+
+  & .kn-primary-note {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+
+  & .kn-primary-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+  }
+
+  & .kn-primary-title {
+    flex: 1;
+    min-width: 0;
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    font-weight: var(--un-fw-semibold);
+    line-height: var(--un-lh-tight);
+  }
+
+  & .kn-primary-body {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .kn-primary-p {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-2);
+    line-height: var(--un-lh-prose);
+    white-space: pre-wrap;
+  }
+
+  & .kn-primary-acts {
+    padding-top: var(--un-sp-3);
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .kn-note-group {
+    display: grid;
+    margin-top: var(--un-sp-4);
+  }
+
+  & .kn-note-group-h {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    margin-bottom: var(--un-sp-1);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .kn-link-row {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-3);
+    width: 100%;
+    min-height: 44px;
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    text-align: left;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .kn-link-row:hover {
+    background: var(--un-bg-hover);
+  }
+
+  & .kn-link-row:hover .kn-row-arrow {
+    transform: translateX(2px);
+    color: var(--un-text-2);
+  }
+
+  & .kn-link-row-ic {
+    display: grid;
+    flex: none;
+    color: var(--un-text-3);
+  }
+
+  & .kn-link-row-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--un-text-1);
+    font-size: var(--un-fs-2);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  & .kn-link-row-date {
+    flex: none;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  /* Neighbours */
+  & .kn-neighbors {
+    display: grid;
+    gap: var(--un-sp-4);
+    padding: var(--un-sp-3) var(--un-sp-3) var(--un-sp-4);
+  }
+
+  & .kn-rel-block {
+    display: grid;
+    gap: 2px;
+  }
+
+  & .kn-rel-block:not(:first-child) {
+    padding-top: var(--un-sp-3);
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .kn-rel-h {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    margin: 0 var(--un-sp-2) var(--un-sp-1);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .kn-quiet.kn-rel-empty {
+    padding: 0 var(--un-sp-2);
+  }
+
+  /* Backlinks */
+  & .kn-bl-group + .kn-bl-group {
+    margin-top: var(--un-sp-4);
+  }
+
+  & .kn-bl-kind {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: var(--un-sp-1);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .kn-bl-list {
+    display: grid;
+    margin-inline: calc(-1 * var(--un-sp-2));
+  }
+
+  & .kn-bl-row {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    width: 100%;
+    padding: var(--un-sp-2);
+    border-radius: var(--un-r-1);
+    text-align: left;
+  }
+
+  & button.kn-bl-row {
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & button.kn-bl-row:hover {
+    background: var(--un-bg-hover);
+  }
+
+  & .kn-bl-main {
+    display: grid;
+    flex: 1;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  & .kn-bl-title {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-2);
+    line-height: var(--un-lh-tight);
+    overflow-wrap: anywhere;
+  }
+
+  & .kn-bl-sub {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  /* Activity timeline */
+  & .kn-events {
+    display: grid;
+  }
+
+  & .kn-event {
+    display: grid;
+    grid-template-columns: 12px minmax(0, 1fr);
+    gap: var(--un-sp-3);
+  }
+
+  & .kn-event-rail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  & .kn-event-dot {
+    flex: none;
+    width: 9px;
+    height: 9px;
+    margin-top: 6px;
+    border-radius: 50%;
+    background: var(--un-md-sys-color-secondary);
+  }
+
+  & .kn-event-dot.tone-critical {
+    background: var(--un-critical);
+  }
+
+  & .kn-event-dot.tone-positive {
+    background: var(--un-positive);
+  }
+
+  & .kn-event-line {
+    flex: 1;
+    width: 1px;
+    min-height: 12px;
+    margin-top: 4px;
+    background: var(--un-line);
+  }
+
+  & .kn-event-body {
+    padding-bottom: var(--un-sp-3);
+  }
+
+  & .kn-event-lead {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-1);
+    line-height: var(--un-lh-ui);
+  }
+
+  & .kn-event-time {
+    color: var(--un-text-4);
+    font-size: var(--un-fs-1);
+  }
+
+  /* ═══ Breakpoints ═══ */
+  @media (max-width: 1080px) {
+    & .kn-detail-grid {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--un-sp-6);
+    }
+  }
+
+  @media (max-width: 720px) {
+    & .kn-main,
+    & .kn-detail-main {
+      padding-inline: var(--un-sp-4);
+    }
+
+    & .kn-frontier {
+      padding: var(--un-sp-4);
+    }
+
+    & .kn-frontier-list {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    & .kn-tree-end {
+      justify-content: flex-start;
+      width: 100%;
+      margin-left: calc(30px + var(--un-sp-3));
+    }
+
+    & .kn-graph-stage,
+    & .kn-graph-loading {
+      height: 440px;
+    }
+
+    & .kn-hero-cta {
+      margin-left: 0;
+    }
+  }
+}
+
+/* Motion only on change (M1/M3): the drawer and its scrim arrive once; the folded dimensions fade
+   in when opened. Keyframes exist only when the user has not asked for reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next].kn-page {
+    & .kn-scrim.open {
+      animation: kn-fade-in var(--un-t-ui) var(--un-ease-glide);
+    }
+
+    & .kn-drawer.open {
+      animation: kn-drawer-in var(--un-t-ui) var(--un-ease-glide);
+    }
+
+    & .kn-dims,
+    & .kn-diag-body {
+      animation: kn-fade-in var(--un-t-small) var(--un-ease-glide);
+    }
+  }
+}
+
+@keyframes kn-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes kn-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}

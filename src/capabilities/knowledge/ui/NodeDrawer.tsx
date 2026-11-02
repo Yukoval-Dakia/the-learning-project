@@ -1,19 +1,30 @@
 // M3 知识面 — 节点详情抽屉（YUK-317）。
 // 设计基准 docs/design/loom-refresh/project/screen-knowledge.jsx（NodeDrawer）：
-// 头部 MasteryRing + 三指标（掌握度/evidence/decay）、「层级 hierarchy」与
+// 头部 MasteryDial + 三指标（掌握度/evidence/decay）、「层级 hierarchy」与
 // 「关系 typed edges」视觉分离、AI 边提议四动作（接受/反向/改类型/忽略）、
 // EdgeCreateForm、foot 打开节点详情页。decay 用非颜色 cue（icon+label）。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  Archive,
+  ArrowLeftRight,
+  ArrowRight,
+  Check,
+  ChevronRight,
+  Layers,
+  Link2,
+  ListTree,
+  PencilLine,
+  Sparkles,
+  X,
+} from 'lucide-react';
 import { useState } from 'react';
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
-import { Btn } from '@/ui/primitives/Btn';
-import { IconBtn } from '@/ui/primitives/IconBtn';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { MasteryRing } from '@/ui/primitives/MasteryRing';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
+import { Button, ChipToggle, IconButton } from '@/ui-next/public';
 
 import { BandChip } from './BandChip';
+import { DecayChip, RelTag } from './KnowledgeChips';
 import { InteractiveArtifactDiscovery } from './KnowledgeDetailPage';
 import {
   type EdgeProposalInboxRow,
@@ -24,6 +35,7 @@ import {
 import { useKnowledgeClient } from './knowledge-client';
 import { isKnowledgeContainer } from './knowledge-node-kind';
 import { knowledgeNodeDrawerQueryOptions } from './knowledge-node-query';
+import { MasteryDial } from './MasteryDial';
 import { REL_CUE } from './relation-cue';
 
 // decay → 非颜色 cue（设计稿 DECAY_META；bucket 与 server 的
@@ -75,69 +87,74 @@ function EdgeProposalRow({
   };
   if (done)
     return (
-      <div className="edge-prop resolved">
-        <span className="badge tone-good">
-          <LoomIcon name="check" size={12} />
+      <li className="kn-prop" data-resolved="">
+        <span className="kn-tag kn-tag-positive">
+          <Check size={13} aria-hidden="true" />
           {done}
         </span>
-      </div>
+      </li>
     );
   return (
-    <div className="edge-prop">
-      <div className="edge-prop-head">
-        <span className={`badge ${isArchive ? 'tone-again' : 'tone-info'}`}>
-          <LoomIcon name={isArchive ? 'archive' : 'link'} size={12} />
+    <li className="kn-prop">
+      <div className="kn-prop-head">
+        <span className={`kn-tag ${isArchive ? 'kn-tag-critical' : 'kn-tag-accent'}`}>
+          {isArchive ? (
+            <Archive size={13} aria-hidden="true" />
+          ) : (
+            <Link2 size={13} aria-hidden="true" />
+          )}
           {operationLabel}
         </span>
-        <span className={`rel-tag rel-tag-${rel}`}>
-          <span className="mono">{cue.glyph}</span>
-          {cue.label}
-        </span>
+        <RelTag rel={rel} cue={cue} />
         {/* de-wenyan: a from→to edge proposal spans two (possibly different)
             subjects and EdgeProposalRow only has names, not domains — no single
             subject to drive from, so fall to the neutral default font. */}
-        <span>
+        <span className="kn-prop-names">
           {nameOf(e.payload.proposed_change.from_knowledge_id)} →{' '}
           {nameOf(e.payload.proposed_change.to_knowledge_id)}
         </span>
       </div>
-      <div className="edge-prop-acts">
-        <Btn
+      <div className="kn-prop-acts">
+        <Button
           size="sm"
-          variant={isArchive ? 'again' : 'good'}
-          icon={isArchive ? 'archive' : 'check'}
+          className={isArchive ? 'kn-btn-critical' : undefined}
           disabled={busy || archiveTargetMissing}
           onClick={() => act('accept', isArchive ? '已归档' : '已建立')}
         >
+          {isArchive ? (
+            <Archive size={14} aria-hidden="true" />
+          ) : (
+            <Check size={14} aria-hidden="true" />
+          )}
           {isArchive ? '确认归档' : '建立关系'}
-        </Btn>
+        </Button>
         {!isArchive && (
-          <Btn
+          <Button
             size="sm"
             variant="ghost"
-            icon="reverse"
             disabled={busy}
             onClick={() => act('reverse', '已反向接受')}
           >
+            <ArrowLeftRight size={14} aria-hidden="true" />
             反向
-          </Btn>
+          </Button>
         )}
-        <Btn
+        <Button
           size="sm"
           variant="ghost"
-          icon="close"
           disabled={busy}
           onClick={() => act('dismiss', isArchive ? '已保留' : '已忽略')}
         >
+          <X size={14} aria-hidden="true" />
           {isArchive ? '保留关系' : '忽略'}
-        </Btn>
+        </Button>
       </div>
       {failed && (
-        <div className="meta" role="alert" style={{ color: 'var(--again-ink)', marginTop: 4 }}>
+        <p className="kn-error-line" role="alert">
           操作失败，请重试。
-        </div>
+        </p>
       )}
-    </div>
+    </li>
   );
 }
 
@@ -210,14 +227,14 @@ export function NodeDrawer({
     <>
       {/* scrim 点击关闭；键盘路径走 focus trap 的 Esc（M2 PfCoach 同形态） */}
       <div
-        className={`scrim${open ? ' open' : ''}`}
+        className={`kn-scrim${open ? ' open' : ''}`}
         onClick={onClose}
         onKeyDown={() => {}}
         role="presentation"
       />
       <aside
         ref={trapRef}
-        className={`drawer${open ? ' open' : ''}`}
+        className={`kn-drawer un-glass${open ? ' open' : ''}`}
         // biome-ignore lint/a11y/useSemanticElements: CSS-class 驱动的 .open 抽屉与
         // native <dialog> imperative API 不兼容（同 CopilotDrawer/PfCoach 先例）
         role="dialog"
@@ -225,102 +242,109 @@ export function NodeDrawer({
         aria-label={node.name}
         aria-hidden={!open}
       >
-        <div className="drawer-head">
-          {/* ⑥治理：头环去裸 pct，档由下方 node-metrics 的 BandChip 给。 */}
+        <div className="kn-drawer-head">
+          {/* ⑥治理：头环去裸 pct，档由下方指标区的 BandChip 给。 */}
           {isContainer ? (
-            <LoomIcon name="layers" size={22} />
+            <span className="kn-container-ic" aria-hidden="true">
+              <Layers size={20} />
+            </span>
           ) : (
-            <MasteryRing mastery={node.mastery} size={40} showNumber={false} />
+            <MasteryDial mastery={node.mastery} size={40} />
           )}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="drawer-title serif">{node.name}</div>
-          </div>
-          <IconBtn icon="close" size={16} title="关闭" onClick={onClose} />
+          <h2 className="kn-drawer-title">{node.name}</h2>
+          <IconButton label="关闭" icon={<X size={18} />} onClick={onClose} />
         </div>
 
-        <div className="drawer-body">
-          <div className="node-metrics">
+        <div className="kn-drawer-body">
+          <dl className="kn-metrics">
             {isContainer ? (
-              <div className="nm">
-                <div className="nm-n">
-                  <span className="badge tone-info">学科容器</span>
-                </div>
-                <div className="nm-l meta">节点类型</div>
+              <div className="kn-metric">
+                <dt>节点类型</dt>
+                <dd>
+                  <span className="kn-tag">学科容器</span>
+                </dd>
               </div>
             ) : null}
             {!isContainer && (
-              <div className="nm">
+              <div className="kn-metric">
                 {/* A5 S1 (YUK-354) — 离散档 BandChip 替代裸 {pct}%（⑥治理：绝不裸概率）。 */}
-                <div className="nm-n">
+                <dt>掌握度</dt>
+                <dd>
                   <BandChip input={node} />
-                </div>
-                <div className="nm-l meta">掌握度</div>
+                </dd>
               </div>
             )}
             {!isContainer && (
-              <div className="nm">
-                <div className="nm-n serif">{node.evidence_count}</div>
-                <div className="nm-l meta">学习依据</div>
+              <div className="kn-metric">
+                <dt>学习依据</dt>
+                <dd className="kn-metric-n un-num">{node.evidence_count}</dd>
               </div>
             )}
             {!isContainer && (
-              <div className="nm">
-                <div className="nm-n">
-                  <span className={`badge tone-${cue.tone}`}>
-                    <LoomIcon name={cue.icon as never} size={12} />
-                    {cue.label}
-                  </span>
-                </div>
-                <div className="nm-l meta">记忆状态</div>
+              <div className="kn-metric">
+                <dt>记忆状态</dt>
+                <dd>
+                  <DecayChip cue={cue} />
+                </dd>
               </div>
             )}
-          </div>
+          </dl>
 
           {/* 层级块——与 typed 关系视觉分离（设计稿 L187 注释） */}
-          <div className="drawer-sec">
-            <div className="drawer-sec-h">
-              <LoomIcon name="tree" size={14} />
+          <section className="kn-dsec" aria-labelledby="kn-dsec-tree">
+            <h3 id="kn-dsec-tree" className="kn-dsec-h">
+              <ListTree size={14} aria-hidden="true" />
               层级
-            </div>
+            </h3>
             {parent ? (
               <button
                 type="button"
-                className="rel-row"
+                className="kn-rel-row"
                 onClick={() => go(`/knowledge/${parent.id}`)}
               >
-                <span className="rel-kind">上级</span>
+                <span className="kn-rel-kind">上级</span>
                 {/* subject-driven from the neighbour's own effective_domain */}
-                <span {...subjectContentPropsForDomain(parent.effective_domain)}>
+                <span
+                  {...subjectContentPropsForDomain(parent.effective_domain, {
+                    className: 'kn-rel-name',
+                  })}
+                >
                   {parent.name}
                 </span>
-                <LoomIcon name="arrow" size={13} />
+                <ChevronRight size={15} aria-hidden="true" className="kn-row-arrow" />
               </button>
             ) : (
-              <div className="quiet-empty">这是顶层知识点</div>
+              <p className="kn-quiet">这是顶层知识点</p>
             )}
             {children.map((c) => (
               <button
                 type="button"
                 key={c.id}
-                className="rel-row indent"
+                className="kn-rel-row is-indent"
                 onClick={() => go(`/knowledge/${c.id}`)}
               >
-                <span className="rel-kind">下级</span>
-                <span {...subjectContentPropsForDomain(c.effective_domain)}>{c.name}</span>
+                <span className="kn-rel-kind">下级</span>
+                <span
+                  {...subjectContentPropsForDomain(c.effective_domain, {
+                    className: 'kn-rel-name',
+                  })}
+                >
+                  {c.name}
+                </span>
                 {/* ⑥治理：抽屉子节点是 KnowledgeTreeNode（已带 band 字段）→ 直接 BandChip 给离散档
                     （设计源 screen-knowledge.jsx:250 子行即 BandChip）。详情页子行是 NodePageChild
                     仅 {id,name,mastery}，那里才需扩字段 follow-up（reviewer minor #2）。 */}
                 <BandChip input={c} />
               </button>
             ))}
-          </div>
+          </section>
 
-          <div className="drawer-sec">
-            <div className="drawer-sec-h">
-              <LoomIcon name="link" size={14} />
+          <section className="kn-dsec" aria-labelledby="kn-dsec-rels">
+            <h3 id="kn-dsec-rels" className="kn-dsec-h">
+              <Link2 size={14} aria-hidden="true" />
               其他关系
-            </div>
-            {rels.length === 0 && <div className="quiet-empty">暂无其他关系。</div>}
+            </h3>
+            {rels.length === 0 && <p className="kn-quiet">暂无其他关系。</p>}
             {rels.map((e) => {
               const o = other(e);
               const c = REL_CUE[e.relation_type] ?? REL_CUE.related_to;
@@ -329,83 +353,84 @@ export function NodeDrawer({
                 <button
                   type="button"
                   key={e.id}
-                  className="rel-row"
+                  className="kn-rel-row"
                   onClick={() => go(`/knowledge/${o.id}`)}
                 >
-                  <span className={`rel-tag rel-tag-${e.relation_type}`}>
-                    <span className="mono">{c.glyph}</span>
-                    {c.label}
+                  <RelTag rel={e.relation_type} cue={c} />
+                  <span
+                    {...subjectContentPropsForDomain(o.effective_domain, {
+                      className: 'kn-rel-name',
+                    })}
+                  >
+                    {o.name}
                   </span>
-                  <span {...subjectContentPropsForDomain(o.effective_domain)}>{o.name}</span>
-                  <LoomIcon name="arrow" size={13} />
+                  <ChevronRight size={15} aria-hidden="true" className="kn-row-arrow" />
                 </button>
               );
             })}
-          </div>
+          </section>
 
           {/* ADR-0033 D5 — 互动产物 discovery（best-effort node-page 取数；空/失败
               整块不渲染）。行链到 /notes/{id}（互动产物复用 NoteReader 阅读壳）。 */}
           {interactiveArtifacts.length > 0 && (
-            <div className="drawer-sec">
-              <div className="drawer-sec-h">
-                <LoomIcon name="sparkle" size={14} />
+            <section className="kn-dsec" aria-labelledby="kn-dsec-interactive">
+              <h3 id="kn-dsec-interactive" className="kn-dsec-h">
+                <Sparkles size={14} aria-hidden="true" />
                 互动产物 · {interactiveArtifacts.length}
-              </div>
+              </h3>
               <InteractiveArtifactDiscovery
                 artifacts={interactiveArtifacts}
                 go={go}
                 entryId={node.id}
               />
-            </div>
+            </section>
           )}
 
           {props.length > 0 && (
-            <div className="drawer-sec">
-              <div className="drawer-sec-h">
-                <LoomIcon name="sparkle" size={14} />
+            <section className="kn-dsec" aria-labelledby="kn-dsec-props">
+              <h3 id="kn-dsec-props" className="kn-dsec-h">
+                <Sparkles size={14} aria-hidden="true" />
                 AI 提议的关系变更 · {props.length}
-              </div>
-              {props.map((p) => (
-                <EdgeProposalRow
-                  key={p.id}
-                  e={p}
-                  nameOf={(kid) => nodes.find((n) => n.id === kid)?.name ?? '未命名知识点'}
-                  onDecide={async (decision) => {
-                    await decideEdgeProposal(p.id, decision);
-                    // M4-T5 (YUK-318)：服务端 pending 过滤生效——invalidate 后
-                    // 已决行自然退出，无需向宿主上报 decided 集合。
-                    void qc.invalidateQueries({ queryKey: ['knowledge-edges'] });
-                    void qc.invalidateQueries({ queryKey: ['knowledge-edge-proposals'] });
-                  }}
-                />
-              ))}
-            </div>
+              </h3>
+              <ul className="kn-props">
+                {props.map((p) => (
+                  <EdgeProposalRow
+                    key={p.id}
+                    e={p}
+                    nameOf={(kid) => nodes.find((n) => n.id === kid)?.name ?? '未命名知识点'}
+                    onDecide={async (decision) => {
+                      await decideEdgeProposal(p.id, decision);
+                      // M4-T5 (YUK-318)：服务端 pending 过滤生效——invalidate 后
+                      // 已决行自然退出，无需向宿主上报 decided 集合。
+                      void qc.invalidateQueries({ queryKey: ['knowledge-edges'] });
+                      void qc.invalidateQueries({ queryKey: ['knowledge-edge-proposals'] });
+                    }}
+                  />
+                ))}
+              </ul>
+            </section>
           )}
 
-          {/* 手动建边（设计稿 EdgeCreateForm 精简版：关系类型 + 目标节点） */}
-          <div className="drawer-sec">
-            <div className="drawer-sec-h">
-              <LoomIcon name="pencil" size={14} />
+          {/* 手动建边（设计稿 EdgeCreateForm 精简版：关系类型 + 目标节点）。关系类型是一排
+              只响应点击的芯片（aria-pressed），不是单选组：方向键不会悄悄改掉要建的类型。 */}
+          <section className="kn-dsec" aria-labelledby="kn-dsec-create">
+            <h3 id="kn-dsec-create" className="kn-dsec-h">
+              <PencilLine size={14} aria-hidden="true" />
               建立关系
-            </div>
-            <div className="seg seg-sm" role="tablist" aria-label="关系类型">
+            </h3>
+            <fieldset className="kn-rel-pick">
+              <legend className="un-sr-only">关系类型</legend>
               {Object.entries(REL_CUE).map(([k, c]) => (
-                <button
-                  type="button"
-                  key={k}
-                  role="tab"
-                  aria-selected={rel === k}
-                  className={rel === k ? 'on' : ''}
-                  onClick={() => setRel(k)}
-                >
-                  <span className="mono">{c.glyph}</span>
+                <ChipToggle key={k} pressed={rel === k} onPressedChange={() => setRel(k)}>
+                  <span className="kn-glyph" aria-hidden="true">
+                    {c.glyph}
+                  </span>
                   {c.label}
-                </button>
+                </ChipToggle>
               ))}
-            </div>
+            </fieldset>
             <select
-              className="input"
-              style={{ marginTop: 'var(--s-2)', width: '100%' }}
+              className="kn-select"
               value={target}
               onChange={(e) => setTarget(e.target.value)}
               aria-label="目标节点"
@@ -419,28 +444,29 @@ export function NodeDrawer({
                   </option>
                 ))}
             </select>
-            <Btn
-              variant="primary"
-              size="sm"
-              icon="pencil"
-              disabled={!target || createM.isPending}
-              style={{ marginTop: 'var(--s-3)' }}
-              onClick={() => createM.mutate()}
-            >
-              建立「{REL_CUE[rel]?.label}」关系
-            </Btn>
-            {createM.isError && (
-              <div className="meta" style={{ color: 'var(--again-ink)', marginTop: 4 }}>
-                关系建立失败，请重试。
-              </div>
-            )}
-          </div>
+            <div className="kn-create-acts">
+              <Button
+                size="sm"
+                disabled={!target || createM.isPending}
+                onClick={() => createM.mutate()}
+              >
+                <PencilLine size={14} aria-hidden="true" />
+                建立「{REL_CUE[rel]?.label}」关系
+              </Button>
+            </div>
+            {createM.isError && <p className="kn-error-line">关系建立失败，请重试。</p>}
+          </section>
         </div>
 
-        <div className="drawer-foot">
-          <Btn variant="primary" block iconEnd="arrow" onClick={() => go(`/knowledge/${node.id}`)}>
+        <div className="kn-drawer-foot">
+          <Button
+            variant="primary"
+            className="kn-btn-block"
+            onClick={() => go(`/knowledge/${node.id}`)}
+          >
             打开知识点详情
-          </Btn>
+            <ArrowRight size={16} aria-hidden="true" />
+          </Button>
         </div>
       </aside>
     </>
