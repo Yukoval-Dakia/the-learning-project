@@ -6,7 +6,8 @@
 //      shared per-artifact advisory lock, serializing with hub-sync finalize.
 //      Active = last heartbeat ≤ 30s (exactly 30s still active). There is no
 //      10-minute forced apply: an abandoned session expires after 30s, making its
-//      queued work eligible for a later flush.
+//      queued work eligible for a later flush. This module is the table's only
+//      reader/writer; hub-sync finalize reads it via listActiveEditorSessions.
 //   2. `editing_presence.pending` — note-refine defer queue. Patches queue while
 //      editing and flush FIFO once no session remains; whether to defer is driven
 //      by session presence above. Stale entries (> 10min) are dropped at load with
@@ -23,11 +24,12 @@ import {
   persistNoteRefineApply,
 } from '@/capabilities/notes/server/note-refine-apply';
 import { NoteRefineApplyError } from '@/core/blocks/apply-note-patch';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { artifact_edit_session, editing_presence } from '@/db/schema';
 
 import {
   EDITING_FORCE_APPLY_TIMEOUT_MS,
+  EDITING_HEARTBEAT_TIMEOUT_MS,
   type EditingSessionSnapshot,
   type EnqueueOrApplyInput,
   type EnqueueOrApplyResult,
@@ -41,7 +43,47 @@ import {
   type SerializedQueuedPatch,
 } from './types';
 
-const ACTIVE_SESSION_INTERVAL = sql`interval '30 seconds'`;
+// SQL form of EDITING_HEARTBEAT_TIMEOUT_MS; renders exactly `interval '30 seconds'`.
+export const ACTIVE_SESSION_INTERVAL = sql.raw(
+  `interval '${EDITING_HEARTBEAT_TIMEOUT_MS / 1000} seconds'`,
+);
+
+// Far above the active window, so only truly abandoned sessions are reaped.
+const ABANDONED_EDIT_SESSION_TTL = sql`interval '1 hour'`;
+
+/**
+ * Session ids active on the artifact at database time. Runs on the caller's
+ * transaction, which must already hold the per-artifact advisory lock (hub-sync
+ * finalize): this never takes a lock or opens a transaction.
+ */
+export async function listActiveEditorSessions(tx: Tx, artifactId: string): Promise<string[]> {
+  const rows = await tx.execute<{ session_id: string }>(sql`
+    select session_id from artifact_edit_session
+    where artifact_id = ${artifactId}
+      and clock_timestamp() - last_heartbeat_at <= ${ACTIVE_SESSION_INTERVAL}
+  `);
+  return rows.map((row) => row.session_id);
+}
+
+/**
+ * Best-effort cleanup of abandoned edit sessions, run from the nightly job ahead of
+ * its mode/eligibility gates. A failure is logged, never thrown.
+ */
+export async function reapAbandonedEditSessions(db: Db): Promise<void> {
+  try {
+    await db.execute(sql`
+      delete from artifact_edit_session
+      where last_heartbeat_at < clock_timestamp() - ${ABANDONED_EDIT_SESSION_TTL}
+    `);
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: 'hub_sync_abandoned_session_sweep_failed',
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+}
 
 export class PgPresenceStore implements PresenceStore {
   private readonly db: Db;
