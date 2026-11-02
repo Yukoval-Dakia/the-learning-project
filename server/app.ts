@@ -20,7 +20,7 @@ import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
-import { composedRouteLoaders } from './composed-routes';
+import { routeLoaderFor } from './composed-routes';
 
 registerNoteHandoffBossResolver(() => getStartedBoss());
 
@@ -210,9 +210,7 @@ export function buildHonoApp(
 
   for (const cap of capabilities) {
     for (const route of cap.api?.routes ?? []) {
-      const load =
-        route.load ?? (route.operationId ? composedRouteLoaders[route.operationId] : undefined);
-      if (!load) continue;
+      const load = routeLoaderFor(cap, route);
       // handler 缓存：首次请求解析一次，之后复用（避免每请求重复 dynamic import 开销）。
       let cached: Promise<RouteHandler> | undefined;
       app.on(route.method, toHonoPath(route.path), async (c) => {
