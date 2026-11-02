@@ -7103,6 +7103,26 @@
       "issue": "YUK-1571"
     },
     {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "requestTeachingChipAcceptance",
+      "targetModule": "src/capabilities/copilot/server/accept-teaching-chip.ts",
+      "targetSymbol": "requestTeachingChipAcceptance",
+      "owner": "copilot",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/copilot-teaching-chip-operation.ts",
+          "line": 14
+        }
+      ],
+      "evidence": "The authenticated Start teaching-chip host imports this complete request at await-import AST and module path line 14 and invokes it at line 16 with db, the original id params and an async JSON reader. The context reference is type-only; the retained HTTP POST also consumes this request. The existing stable Copilot client reaches MessageStream's corrective-chip callback and TurnActions.acceptCorrectiveChip without changing its pending, acknowledgement or silent failure behavior.",
+      "rationale": "Copilot owns the complete teaching-chip request: original ID parsing before deferred JSON decoding, malformed JSON to null, the existing body schema and message-only validation_error/400, invocation of the unchanged acceptance owner and the full ok/event_id response. HTTP and Start preserve the original generic ID error, anchor rules, proposal acceptance before fire-and-forget wake and chip-event write, and partial-commit/unknown boundaries; no parsing, eligibility or transaction policy is duplicated in the UI or host.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-6b1cd8b4-93b1-4f47-baf5-7721bb3218c7"
+    },
+    {
       "debt": "capabilityToServer",
       "pair": "copilot -> today",
       "date": "2026-11-01",
