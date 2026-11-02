@@ -41,6 +41,8 @@ export interface NightlySignals {
   newLearnerEvidence: boolean;
   treeChanged: boolean;
   embedPending: boolean;
+  /** embed_backfill succeeded after this job's last success: new vectors to pair. */
+  embedRefreshed: boolean;
   pendingEdgeProposals: number;
   returnStockShort: boolean;
   /** 该 job 最近终态里、从最新一夜往前连续 degraded 的夜数。 */
@@ -138,9 +140,11 @@ export function eligibilityFor(
   }
   switch (jobClass) {
     case 'hygiene_dedup':
-      return signals.treeChanged || signals.embedPending
+      // embed_backfill is dedup's hard upstream and drains embedPending before dedup is
+      // judged; a backlog finished on a later night is still new material to pair.
+      return signals.treeChanged || signals.embedPending || signals.embedRefreshed
         ? { run: true }
-        : skip(signals, 'tree unchanged and no pending embeddings');
+        : skip(signals, 'tree unchanged and no new or pending embeddings');
     case 'hygiene_embed':
       return signals.embedPending ? { run: true } : skip(signals, 'no null embeddings');
     case 'reflection':
