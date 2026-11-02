@@ -23,4 +23,5 @@ export const loadWorksheetPrintPage = () =>
   import('./ui/worksheet/WorksheetPrintPage').then((module) => module.default);
 
 export { CoverageLatticeResponseSchema } from './api/coverage-lattice-contracts';
+export { ConfirmationAssessment, type ConfirmationDraftClient } from './ui/ConfirmationAssessment';
 export { type LibraryClient, LibraryClientProvider } from './ui/library/library-client';

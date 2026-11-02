@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 
@@ -19,7 +19,7 @@ export const MATERIALIZING_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   'write_quiz',
 ]);
 
-// Keyed on the persisted tool_use mirror rows so the live response and replay agree.
+// Persisted tool mirrors and explicit originals keep live and replay policy aligned.
 export async function selectAsksWithMaterializingToolCall(
   db: Db | Tx,
   askEventIds: readonly string[],
@@ -39,7 +39,7 @@ export async function selectAsksWithMaterializingToolCall(
         sql`${event.payload}->>'tool_name' in (${toolNameList})`,
       ),
     );
-  // Authenticated answer attachments already materialize an immutable original at acceptance.
+  // Explicit answer submissions can materialize originals outside the ask cascade.
   const attachments = await db
     .select({ id: event.id })
     .from(event)
@@ -47,7 +47,10 @@ export async function selectAsksWithMaterializingToolCall(
       and(
         inArray(event.id, [...askEventIds]),
         eq(event.action, 'experimental:copilot_user_ask'),
-        sql`${event.payload} ? 'review_answer'`,
+        or(
+          sql`${event.payload} ? 'review_answer'`,
+          sql`${event.payload}->'confirmation'->>'kind' = 'submit'`,
+        ),
       ),
     );
   return new Set([

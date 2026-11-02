@@ -82,7 +82,7 @@ export const LEARNER_COPY_FILES = [
   'src/capabilities/shell/ui/inbox-tier.ts',
   'src/capabilities/shell/ui/blocks/SessionsStrip.tsx',
   'src/capabilities/shell/ui/blocks/KpiRow.tsx',
-  'src/capabilities/shell/ui/blocks/LoomHero.tsx',
+  'src/ui-next/today/TodayHeader.tsx',
   'src/capabilities/shell/ui/coach-hub-view.ts',
   'src/capabilities/shell/ui/CoachHub.tsx',
   'src/capabilities/shell/ui/CoachCalibrationView.tsx',

@@ -138,6 +138,8 @@ export const practiceCapability = defineCapability({
   // 每次 run 一行（mass-skip 自曝面）。写者只有 judge_calibration_sample job。
   events: {
     actions: [
+      'experimental:confirmation_assessment',
+      'experimental:confirmation_original',
       // Canonical learner response fact. Failure Learning subscribes to this
       // owner event instead of coupling every producer to a queue name.
       'attempt',
