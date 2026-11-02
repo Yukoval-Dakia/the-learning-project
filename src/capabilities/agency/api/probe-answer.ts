@@ -17,6 +17,7 @@ import {
 import { ApiError, errorResponse } from '@/kernel/http';
 import { previewFormalAttempt } from '@/kernel/judge';
 import { validateIssuedProbeProvenance } from '@/kernel/read-models/completed-probe-provenance';
+import { probeIssuanceId } from '@/kernel/read-models/probe-delivery';
 import { freezeImageEvidence } from '@/kernel/records/assessment-evidence';
 import {
   type AnswerProbeResult,
@@ -147,7 +148,7 @@ export async function submitConjectureProbeAnswer(
   const [issuance] = await db
     .select()
     .from(assessment_issuance)
-    .where(eq(assessment_issuance.issuance_id, `iss_probe_${probeQuestionId}`));
+    .where(eq(assessment_issuance.issuance_id, probeIssuanceId(probeQuestionId)));
   if (!issuance)
     throw new ApiError('probe_not_issued', 'probe has no admitted frozen serve record', 409);
   const [revision] = await db

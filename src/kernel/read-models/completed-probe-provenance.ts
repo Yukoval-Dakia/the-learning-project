@@ -15,6 +15,7 @@ import {
 } from '@/db/schema';
 import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
 import { createProbeV2Criterion } from '@/kernel/records/assessment-probe-criterion';
+import { probeIssuanceId } from './probe-delivery';
 
 export interface CompletedProbeProposal {
   id: string;
@@ -134,7 +135,7 @@ export function validateIssuedProbeProvenance({
   if (
     !revision ||
     revision.group_id !== probe.id ||
-    issuance.issuance_id !== `iss_probe_${probe.id}` ||
+    issuance.issuance_id !== probeIssuanceId(probe.id) ||
     issuance.container_occurrence_ref !== `probe:${probe.id}`
   ) {
     return { reason: 'probe_issuance_unprojectable' };

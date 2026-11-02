@@ -8,6 +8,7 @@ export { eventCorrectionsGlobalLockKey } from './correction-lock';
 export type { CorrectionStatus } from './corrections';
 export {
   activeCorrectionStatus,
+  eventCorrectionActiveSql,
   getCorrectionStatus,
   getCorrectionStatuses,
 } from './corrections';
