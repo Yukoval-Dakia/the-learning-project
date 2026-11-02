@@ -52,7 +52,6 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   QUESTION_SUPPLY_REFILL_ENABLED: 'src/capabilities/practice/supply/server/refill.ts',
   CONFUSABLE_CONTRAST_ENABLED:
     'src/capabilities/practice/supply/server/confusable-contrast-discovery.ts',
-  RESEARCH_MEETING_AGENT_ENABLED: 'src/capabilities/agency/jobs/research_meeting_agent_nightly.ts',
   JUDGE_CALIBRATION_SAMPLING_ENABLED: 'src/capabilities/practice/jobs/judge_calibration_sample.ts',
   WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: 'src/capabilities/ingestion/server/workflow-judge-config.ts',
   WORKFLOW_JUDGE_OBSERVE_ENABLED: 'src/capabilities/ingestion/server/workflow-judge-config.ts',

@@ -11,7 +11,8 @@
  *   - the catalog providers our internal provider map consumes
  *     (see CATALOG_PROVIDER_BY_INTERNAL in src/server/ai/model-profiles.ts):
  *     anthropic, xiaomi, zhipuai-coding-plan, opencode-go, openai, openrouter
- *     (OpenRouter keeps only the typed lane's model, not its unused chat catalog)
+ *     (OpenRouter's offline snapshot keeps only the typed lane's model; its chat
+ *     catalog arrives through the runtime refresh into model_catalog_cache)
  *   - per model, only the fields the narrow parse layer consumes:
  *     id, name, last_updated, limit.{context,input,output}, tool_call,
  *     structured_output, attachment, reasoning, reasoning_options,

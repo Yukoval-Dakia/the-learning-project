@@ -31,5 +31,6 @@ export const taskCatalog = composeTaskCatalog(
   // YUK-1522: +IngestionAgentTask（R8 录入 agent 本体）→ 58.
   // YUK-1448: +BankRequirementInterpretTask +BankConditionVerifyTask → 60.
   // YUK-1664: −KnowledgeEdgeProposeTask（夜间边提议并入 KnowledgeReviewTask）→ 59.
-  59,
+  // YUK-1664: -ResearchMeetingDirectorTask（影子例会线退役，ADR-0067 D4）→ 58.
+  58,
 );
