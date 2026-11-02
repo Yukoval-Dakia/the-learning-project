@@ -8,7 +8,6 @@ the central Claude Agent SDK session gate.
 Only these lane keys are accepted:
 
 - `dashscope.embedding`
-- `glm.knowledge-edge-reconcile`
 - `glm.memory-reconcile`
 - `glm.ocr-layout-parsing`
 - `mem0.event-memory`
