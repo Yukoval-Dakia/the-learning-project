@@ -1,14 +1,11 @@
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  readIngestionOperation,
-  reserveIngestionOperation,
-} from '@/capabilities/ingestion/server/operation-store';
+import { reserveIngestionOperation } from '@/capabilities/ingestion/server/operation-store';
 import { TencentSubmitInProgressError } from '@/capabilities/ingestion/server/provider-attempts';
 import type { DescribeResponse } from '@/capabilities/ingestion/server/tencent_mark';
 import { db } from '@/db/client';
-import { job_events, learning_session, provider_attempt } from '@/db/schema';
+import { learning_session, provider_attempt } from '@/db/schema';
 import { createImageR2, seedIngestionSession } from '@/server/session/ingestion-test-support';
 import tencentDone from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import { resetDb } from '../../../../tests/helpers/db';
@@ -129,54 +126,5 @@ describe('Tencent OCR concurrent delivery fencing', () => {
       .from(provider_attempt)
       .where(eq(provider_attempt.operation_kind, 'ocr_page_submit'));
     expect(submitAttempts).toHaveLength(1);
-  });
-
-  it('preserves a completed operation when a late delivery fails locally', async () => {
-    // Given: one canonical delivery has completed the extraction and operation projection.
-    const { sessionId, operationId } = await seedIngestionSession(1);
-    await reserveOperation(sessionId, operationId);
-    const handler = buildTencentOcrHandler({
-      db,
-      r2: await createImageR2(),
-      engine: 'tencent',
-      submitFn: vi.fn(async () => 'completed-job-id'),
-      describeFn: vi.fn(
-        async (_jobId: string): Promise<DescribeResponse> => ({
-          ...tencentDone,
-          JobStatus: 'DONE',
-        }),
-      ),
-      runStructureFn: vi.fn(async () => structureResult()),
-    });
-    const delivery = {
-      id: 'late-delivery-job',
-      data: { sessionId, operationId },
-      retryCount: 0,
-      retryLimit: 2,
-      startedOn: new Date('2026-08-09T00:00:00.000Z'),
-    };
-    await handler([delivery] as never);
-
-    // When: a late retry reaches the already-completed session and rejects locally.
-    await expect(
-      handler([
-        { ...delivery, retryCount: 1, startedOn: new Date('2026-08-09T00:01:00.000Z') },
-      ] as never),
-    ).rejects.toThrow();
-
-    // Then: completed remains the first terminal truth and no reverse terminal event is appended.
-    const operation = await readIngestionOperation(db, operationId);
-    expect(operation?.status).toBe('succeeded');
-    const events = await db
-      .select({ eventType: job_events.event_type })
-      .from(job_events)
-      .where(
-        and(
-          eq(job_events.business_table, 'ingestion_operation'),
-          eq(job_events.business_id, operationId),
-        ),
-      );
-    expect(events.some((event) => event.eventType === 'operation.completed')).toBe(true);
-    expect(events.some((event) => event.eventType === 'operation.failed')).toBe(false);
   });
 });

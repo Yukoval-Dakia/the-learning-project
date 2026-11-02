@@ -18,7 +18,6 @@
 - 主题持久化 key = `loom-theme`，mount 时应用到 `<html data-theme>`。
 
 ## ANTI-PATTERNS
-- 浏览器代码**不持** provider key——所有 AI 调用走 `/api/*`。
 - 别在客户端直接 import `src/server/*`（server-only）。
 - 别在 capability 包里写 `<Link>` 或 `useNavigate`；这是壳层特权。
 - 别把路由查询状态管理做得过度复杂；简单 query 用 `window.location` + `router.history.replace` 即可。

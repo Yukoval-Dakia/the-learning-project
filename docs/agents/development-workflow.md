@@ -29,7 +29,7 @@ pnpm build            # Vite + server/worker/migrate bundles
 ```
 
 Development requires the API, web app, and standalone worker. `RW_WORKER=1`
-is a fallback and does not replace the standalone worker.
+is only a fallback; run the standalone worker.
 
 ## Local validation commands
 
@@ -88,8 +88,7 @@ constraints, and transactions remain enabled. This suite does not establish
 durability across a host reboot or container replacement.
 Migration smoke also uses bounded tmpfs for each of its independently owned
 containers. It runs the unchanged migration/backfill matrix and checks that
-PostgreSQL `fsync` and `synchronous_commit` remain on; it is not a host-reboot
-durability test.
+PostgreSQL `fsync` and `synchronous_commit` remain on.
 Files importing DB clients, `postgres`, Drizzle, or live `PgBoss` belong in the
 DB config, not the unit config. DB files run in isolated fork databases. The default
 remains `resetDb()` in `beforeEach`; transaction rollback is opt-in only when every
@@ -158,6 +157,7 @@ ratchet（capability→server、server→capability deep、cross-capability valu
 - `stable_contract`：经裁定的单符号公开端口，`symbol`/`targetSymbol` 不能是 `*`；
 - `compat_shim`：带 `deadline` 的临时转接，`deadline` 不得晚于当天 +14 天；过期而站点仍在即失败；
   base 中仍存活站点的 compat 行不得删除、改分类或延期，只能随站点一起删除。
+  `compat_shim` 行数只减不增：不得多于 base 版分类文件中的行数。
 
 文件每行一个 JSON 对象，按 `file|kind|symbol|targetModule|targetSymbol` 排序且唯一；
 站点消失时同一 PR 删除对应行（不匹配任何现存站点的行会失败）。
@@ -176,7 +176,7 @@ main push 缺少 before 时，双父 merge 取第一父；单父提交只有在�
 
 `pnpm lint:ratchet` 对 `biome check .` 的 warning/info 总数要求与基线逐项相等。
 高于基线或低于基线都失败；低于基线时必须在同一改动里用 `pnpm lint:ratchet:update`
-重写基线，只报告不算通过。CI static lane 用同一次 Biome 扫描检查 errors 与
+重写基线。CI static lane 用同一次 Biome 扫描检查 errors 与
 warning/info。基线在 `scripts/lint-baseline.json`：总数 + 逐 rule 计数（信息诊断
 单独计数，不静默丢弃；决策已记录在文件内）。`lint:ratchet:update` 拒绝任何上调——
 基线只可能下降。
@@ -221,8 +221,8 @@ parity suites with `REQUIRE_RUST_PARITY=1` for every code change, main push,
 manual full invocation and unknown/invalid base. Only an explicit successful docs-only
 plan may skip work. Missing planner output selects work, and planner failure fails the
 lane. The
-plan lives in `scripts/ci/gate-plan.mjs`. The explicit local audit commands
-remain useful for clear attribution, but they do not replace the GitHub gate.
+plan lives in `scripts/ci/gate-plan.mjs`. Local audit commands help with clear
+attribution; the GitHub gate is authoritative.
 
 ### Test admission
 
@@ -237,13 +237,14 @@ it('rejects a stale answer write', async () => { /* real write and rejection ass
 
 Categories are `data`, `grading`, `concurrency`, `security`, and `crisis`, matching
 the five classes in AGENTS.md. Formatting-only changes and deletions do not require new
-declarations. Existing cases are inherited, not retroactively certified.
+declarations. Existing cases are inherited without retroactive certification.
 
-The check enforces explicit admission and reports the exact registration. It cannot decide
-whether the claim is true. Independent review must trace the named defect to the assertion;
-use a scoped mutation or known failure when that relationship is uncertain. Delete a case
-whose only outcome is a UI shape, config/DTO shape, helper call, or implementation mirror.
-Do not label one of those cases as an invariant to satisfy the check.
+The check enforces explicit admission and reports the exact registration; whether the
+claim is true is for review to judge. Independent review must trace the named defect to
+the assertion; use a scoped mutation or known failure when that relationship is
+uncertain. Delete a case whose only outcome is a UI shape, config/DTO shape, helper
+call, or implementation mirror. Do not label one of those cases as an invariant to
+satisfy the check.
 
 No fine-grained tests (owner 2026-10-11). The five invariants decide *whether* a test is
 needed; this rule decides *where it enters*. An invariant carried by a helper is tested through

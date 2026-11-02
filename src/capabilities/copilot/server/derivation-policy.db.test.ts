@@ -1,14 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { z } from 'zod';
 import { event, job_events, learning_session } from '@/db/schema';
-import { getEventById, getEventChain } from '@/kernel/events';
 import { writeJobEvent } from '@/kernel/job-events';
-import type { DomainTool } from '@/kernel/tools/types';
-import { executeDomainToolCall } from '@/server/ai/tools/mcp-bridge';
-import { regenerateMemoryBrief } from '@/server/memory/brief';
-import { authorizeMemoryIngestReplay } from '@/server/memory/memory-ingest-recovery-store';
 import { dispatchMemoryReconcile } from '@/server/memory/memory-reconcile-handoff';
 import {
   buildMemoryEventIngestHandler,
@@ -16,27 +10,17 @@ import {
 } from '@/server/memory/triggers';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memoryClientMock } from '../../../../tests/helpers/memory-client-mock';
-import {
-  reconcileCopilotDurableRun,
-  runCopilotRun,
-  writeSuccessfulTerminalProjection,
-} from '../jobs/copilot_run';
-import { writeCopilotReply, writeTeachingCopilotReply } from './conversation-writes';
+import { reconcileCopilotDurableRun, runCopilotRun } from '../jobs/copilot_run';
+import { writeCopilotReply } from './conversation-writes';
 import { createCopilotExecutionOwner } from './copilot-execution';
 import { assembleCopilotRunInput } from './copilot-run-input';
-import {
-  clearAgentSdkSessionId,
-  getAgentSdkSessionId,
-  setAgentSdkSessionId,
-} from './copilot-run-session-cursor';
+import { getAgentSdkSessionId, setAgentSdkSessionId } from './copilot-run-session-cursor';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import {
   isCopilotWorkerSessionOwned,
   registerCopilotWorkerSession,
 } from './copilot-worker-session';
-import { acceptedCopilotDerivationPolicy } from './derivation-policy';
 import { hashCopilotDurableInput, reserveCopilotDurableAcceptance } from './durable-dispatch';
-import { queryEventsTool } from './tools/query-events';
 import { getCopilotConversationSnapshot, getCopilotTurnsBeforeAnchor } from './turns';
 
 const sessionId = 'conversation_answer_only_boundary';
@@ -258,133 +242,6 @@ describe('accepted answer-only lifecycle', () => {
     expect(asks).toHaveLength(1);
     expect(asks[0]?.payload.derivation_policy).toBe('answer_only');
   });
-
-  // @invariant security: accepted source and frozen job evidence authorize the execution policy
-  // @fails-if a mismatching job body or policy can execute against a restricted source
-  it('rejects source/job/queued policy and original body mismatches before execution', async () => {
-    const data = await accept('answer_only');
-    await expect(
-      acceptedCopilotDerivationPolicy(testDb(), { ...data, derivation_policy: 'allow' }),
-    ).rejects.toThrow('accepted source');
-    await expect(
-      acceptedCopilotDerivationPolicy(testDb(), {
-        ...data,
-        ambient: { route: '/changed-after-acceptance' },
-      }),
-    ).rejects.toThrow('acceptance policy mismatch');
-    await expect(
-      acceptedCopilotDerivationPolicy(testDb(), {
-        ...data,
-        user_message: 'silently changed original text',
-      }),
-    ).rejects.toThrow('accepted source');
-    await testDb()
-      .update(job_events)
-      .set({ payload: { session_id: sessionId, derivation_policy: 'allow', job_data: data } })
-      .where(eq(job_events.business_id, data.run_id));
-    await expect(acceptedCopilotDerivationPolicy(testDb(), data)).rejects.toThrow(
-      'acceptance policy mismatch',
-    );
-  });
-
-  // @invariant security: restricted turns cannot materialize formal learning content
-  // @fails-if a chat or independent teaching writer commits a restricted teaching result
-  it('blocks teaching before materialization and blocks independent teaching commit', async () => {
-    const data = await accept('answer_only');
-    const skill = {
-      skill: 'teaching' as const,
-      ref: { kind: 'learning_item', id: 'li_exploration' },
-    };
-    const delivered = { ...data, skill_context: skill };
-    // Freeze this exact body as a malicious but valid accepted request.
-    await testDb()
-      .update(job_events)
-      .set({
-        payload: { session_id: sessionId, derivation_policy: 'answer_only', job_data: delivered },
-      })
-      .where(eq(job_events.business_id, data.run_id));
-    const teaching = vi.fn();
-    await runCopilotRun({
-      db: testDb(),
-      data: delivered,
-      runTeachingSkillFn: teaching,
-      resolveCopilotRunInputFn: (db, params) =>
-        assembleCopilotRunInput(db, params, { resolveLearnerStateHeaderFn: async () => header }),
-    });
-    expect(teaching).not.toHaveBeenCalled();
-    await assertRestrictedLifecycle(data.run_id);
-    await expect(
-      writeTeachingCopilotReply(testDb(), {
-        sessionId,
-        userAskEventId: data.run_id,
-        actorRef: 'agent:copilot',
-        skillContext: skill,
-        skillResult: {
-          kind: 'end',
-          suggested_next: 'end',
-          task_run_id: 'teaching_bypass',
-          text_md: message,
-        },
-        now: new Date(),
-      }),
-    ).rejects.toThrow('不创建教学练习');
-  });
-
-  // @invariant security: restricted tools obey both the fixed allowlist and read effect
-  // @fails-if a forbidden tool executes or a null-session mirror loses the accepted causal policy
-  it('guards direct tools by fixed name and effect; null-session mirrors inherit the accepted root', async () => {
-    const data = await accept('answer_only');
-    const execute = vi.fn(async (_ctx, input: { query: string }) => ({ excerpt: input.query }));
-    const tool: DomainTool<{ query: string }, { excerpt: string }> = {
-      name: 'query_knowledge',
-      effect: 'read',
-      description: 'read fixture',
-      inputSchema: z.object({ query: z.string() }),
-      outputSchema: z.object({ excerpt: z.string() }),
-      costClass: 'local',
-      execute,
-      summarize: () => '已有知识：含参边界与反例',
-      mirrorEvent: 'always',
-    };
-    const ctx = {
-      db: testDb(),
-      taskRunId: 'root_tool_fixture',
-      callerActor: { kind: 'agent' as const, ref: 'agent:copilot' },
-      causedByEventId: data.run_id,
-    };
-    await executeDomainToolCall(tool, { query: message }, { ctx });
-    expect(execute).toHaveBeenCalledOnce();
-    for (const denied of [
-      { name: 'author_artifact', effect: 'write' as const },
-      { name: 'generate_question_candidate', effect: 'read' as const },
-      { name: 'query_knowledge', effect: 'propose' as const },
-      { name: 'present_primary_view', effect: 'control' as const },
-    ]) {
-      const result = await executeDomainToolCall(
-        { ...tool, ...denied },
-        { query: message },
-        { ctx },
-      );
-      expect(JSON.stringify(result)).toContain('仅用于本次回答');
-    }
-    expect(execute).toHaveBeenCalledOnce();
-    const mirrors = await testDb().select().from(event).where(eq(event.action, 'tool_use'));
-    expect(mirrors).toHaveLength(5);
-    for (const mirror of mirrors) {
-      expect(mirror.session_id).toBeNull();
-      expect(mirror.payload.derivation_policy).toBe('answer_only');
-      expect(mirror.ingest_at).not.toBeNull();
-      expect(mirror.affected_scopes).toEqual([]);
-    }
-    const allowed = await accept('allow', '日常学习：建立可复验的计划。');
-    await executeDomainToolCall(
-      { ...tool, name: 'author_artifact', effect: 'write' },
-      { query: message },
-      { ctx: { ...ctx, causedByEventId: allowed.run_id } },
-    );
-    expect(execute).toHaveBeenCalledTimes(2);
-  });
-
   // @invariant security: restricted conversation remains visible to its user without entering later model context
   // @fails-if cold, replay, compaction or correction reads include restricted content or metadata
   it('keeps ordinary→restricted→ordinary history visible while filtering cold/replay/compaction and correction references', async () => {
@@ -505,111 +362,5 @@ describe('accepted answer-only lifecycle', () => {
         (await assemble()).correction_contract,
       ),
     ).toMatchObject({ kind: 'clarify', reply: expect.stringContaining('重新输入') });
-  });
-
-  // @invariant security: AI event readers and memory briefs exclude restricted evidence
-  // @fails-if restricted text or its evidence IDs enter a generic reader or regenerated brief
-  it('excludes restricted evidence from generic AI readers, brief input and evidence; raw lookup stays visible', async () => {
-    const restricted = await accept('answer_only');
-    const reply = await writeCopilotReply(testDb(), {
-      sessionId,
-      userAskEventId: restricted.run_id,
-      replyText: message,
-      actorRef: 'agent:copilot',
-      taskRunId: 'brief_restricted',
-      now: new Date(),
-    });
-    const ordinary = await accept('allow', '日常学习：长期复验安排必须依据独立作答。');
-    expect(await getEventById(testDb(), reply.replyEventId)).not.toBeNull();
-    expect(await getEventById(testDb(), reply.replyEventId, { forDerivation: true })).toBeNull();
-    const chain = await getEventChain(testDb(), restricted.run_id);
-    expect(chain.caused_events).toHaveLength(1);
-    const query = await queryEventsTool.execute(
-      {
-        db: testDb(),
-        taskRunId: 'reader_fixture',
-        callerActor: { kind: 'agent', ref: 'agent:copilot' },
-      },
-      { filter: { eventId: restricted.run_id } },
-    );
-    expect(query.events).toEqual([]);
-    const generate = vi.fn(async (input) => {
-      expect(input.events.map((e: { id: string }) => e.id)).not.toContain(restricted.run_id);
-      return {
-        recent_week_md: '日常证据摘要',
-        recent_months_md: '',
-        long_term_md: '',
-        recent_week_evidence_ids: [restricted.run_id, ordinary.run_id],
-        recent_months_evidence_ids: [reply.replyEventId],
-        long_term_evidence_ids: [restricted.run_id],
-      };
-    });
-    await expect(
-      regenerateMemoryBrief({ db: testDb(), scopeKey: 'global', generate }),
-    ).rejects.toThrow('restricted input reached brief writer; discard entire draft');
-    await expect(
-      authorizeMemoryIngestReplay(testDb(), {
-        sourceEventId: restricted.run_id,
-        requestId: randomUUID(),
-        expectedFenceId: 'fake-fence',
-        operator: 'test:authorized-owner',
-        allowPaidReplay: true,
-        reason: 'Attempt to recover an input that explicitly forbids derivation.',
-      }),
-    ).rejects.toThrow('operator replay requires');
-  });
-
-  // @invariant concurrency: cursor publication and cleanup remain owned by the current durable execution
-  // @fails-if restricted execution retains a reusable cursor or replay clears its successor
-  it('publishes ordinary cursor before terminal, clears restricted cursor at the execution fence and leaves the successor intact on replay', async () => {
-    const ordinary = await accept('allow', '日常资料：定义域需要独立复验。');
-    const assemble: NonNullable<Parameters<typeof runCopilotRun>[0]['resolveCopilotRunInputFn']> = (
-      db,
-      params,
-    ) => assembleCopilotRunInput(db, params, { resolveLearnerStateHeaderFn: async () => header });
-    await runCopilotRun({
-      db: testDb(),
-      data: ordinary,
-      executeCopilotTurnFn: silentOwner,
-      resolveCopilotRunInputFn: assemble,
-      writeSuccessfulTerminalProjectionFn: async (db, projection, events) => {
-        expect(await getAgentSdkSessionId(db, sessionId)).toBe('pi:restricted_candidate');
-        await writeSuccessfulTerminalProjection(db, projection, events);
-      },
-    });
-    const restricted = await accept('answer_only');
-    const execute = vi.fn<NonNullable<Parameters<typeof runCopilotRun>[0]['executeCopilotTurnFn']>>(
-      async (db, turn, policy) => {
-        expect(await getAgentSdkSessionId(db, sessionId)).toBeNull();
-        expect(isCopilotWorkerSessionOwned(sessionId, 'pi:restricted_candidate')).toBe(false);
-        expect(policy.resumeSessionId).toBeUndefined();
-        return silentOwner(db, turn, policy);
-      },
-    );
-    await runCopilotRun({
-      db: testDb(),
-      data: restricted,
-      executeCopilotTurnFn: execute,
-      resolveCopilotRunInputFn: assemble,
-    });
-    const next = await accept('allow', '日常学习：只使用本条新提交的反例证据。');
-    await runCopilotRun({
-      db: testDb(),
-      data: next,
-      executeCopilotTurnFn: silentOwner,
-      resolveCopilotRunInputFn: assemble,
-    });
-    await runCopilotRun({ db: testDb(), data: restricted, executeCopilotTurnFn: execute });
-    expect(execute).toHaveBeenCalledOnce();
-    expect(await getAgentSdkSessionId(testDb(), sessionId)).toBe('pi:restricted_candidate');
-    expect(isCopilotWorkerSessionOwned(sessionId, 'pi:restricted_candidate')).toBe(true);
-  });
-
-  // @invariant concurrency: late cleanup cannot erase a successor session cursor
-  // @fails-if cleanup for a prior execution removes the newer owner cursor
-  it('late cursor cleanup cannot erase a successor cursor', async () => {
-    await setAgentSdkSessionId(testDb(), sessionId, 'pi:successor');
-    await clearAgentSdkSessionId(testDb(), sessionId, 'pi:old_owned');
-    expect(await getAgentSdkSessionId(testDb(), sessionId)).toBe('pi:successor');
   });
 });

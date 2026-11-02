@@ -13,7 +13,7 @@ import type { ItemPriorDraftT } from '@/core/schema/item_prior';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, knowledge, question } from '@/db/schema';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import { applyItemPrior } from '@/server/mastery/item-calibration';
+import { applyItemPrior } from '@/kernel/records/item-calibration';
 import type { SubjectProfile } from '@/subjects/profile';
 import { MAX_REPS } from './item-prior-limits';
 import {

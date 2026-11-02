@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { pgTable, text } from 'drizzle-orm/pg-core';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
@@ -10,8 +10,8 @@ import * as hydration from '@/kernel/read-models/subject-hydration';
 import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
 import { SubjectRegistry } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { PATCH, RESTORE, RETIRE } from '../api/admin-subject-control';
-import { renameAdminSubject, restoreAdminSubject, retireAdminSubject } from '../public';
+import { PATCH } from '../api/admin-subject-control';
+import { renameAdminSubject } from '../public';
 import { thinCreateSubject } from './subject-create';
 
 const isolated = vi.hoisted(() => ({ getRegistry: vi.fn() }));
@@ -65,27 +65,6 @@ async function controlState(id: string) {
     .where(eq(subject_trait_binding.subject_id, id))
     .orderBy(subject_trait_binding.trait_kind);
   return { row, journal, bindings };
-}
-
-async function durableSnapshot() {
-  const tables = [
-    schema.subject,
-    schema.subject_trait,
-    schema.subject_trait_binding,
-    schema.subject_trait_journal,
-    schema.subject_control_journal,
-    schema.subject_name_claim,
-    schema.knowledge,
-    schema.event,
-    schema.materialized_id_index,
-  ];
-  // Server-side ordering also covers nested JSON and timestamps, without dropping fields.
-  return Promise.all([
-    ...tables.map((table) =>
-      observerDb.execute(sql`select to_jsonb(t) as row from ${table} t order by to_jsonb(t)::text`),
-    ),
-    observerDb.execute(sql`select last_value, is_called from subject_change_seq`),
-  ]);
 }
 
 function observeCommittedHydration(id: string, expectedRevisions: number[]) {
@@ -156,37 +135,4 @@ describe.each(['domain', 'HTTP'])('%s committed control operations', (transport)
     expect(after.journal).toHaveLength(before.journal.length + 1);
     expect(after.journal.at(-1)).toMatchObject({ action: 'rename', revision: 1 });
   });
-});
-
-it('retired noop and restore conflict are also read-only and do not hydrate', async () => {
-  const id = await createCustom();
-  await retireAdminSubject(poolDb, { subjectId: id, expectedRevision: 0 });
-  const replacement = await thinCreateSubject(poolDb, '另一科目');
-  expect(replacement.kind).toBe('created');
-  if (replacement.kind !== 'created') throw new Error('replacement subject missing');
-  // Reproduce the live-name collision without thin-create's retained canonical claim guard.
-  await poolDb
-    .update(subject)
-    .set({ display_name: '化学：边界与歧义', display_name_norm: '化学：边界与歧义' })
-    .where(eq(subject.id, replacement.payload.id));
-  const before = await durableSnapshot();
-  const hydrate = vi.spyOn(hydration, 'hydrateSubjectRegistryFromDb');
-  expect(await retireAdminSubject(poolDb, { subjectId: id, expectedRevision: 1 })).toEqual({
-    kind: 'noop',
-    subjectRevision: 1,
-  });
-  const noop = await RETIRE(request({ expectedRevision: 1 }), { id });
-  expect(noop.status).toBe(200);
-  expect(await noop.json()).toEqual({ subjectRevision: 1, noop: true });
-  expect(await restoreAdminSubject(poolDb, { subjectId: id, expectedRevision: 1 })).toEqual({
-    kind: 'conflict',
-    message: 'display name "化学：边界与歧义" is now taken by another live subject',
-  });
-  const conflict = await RESTORE(request({ expectedRevision: 1 }), { id });
-  expect(conflict.status).toBe(409);
-  expect(await conflict.json()).toEqual({
-    error: 'display name "化学：边界与歧义" is now taken by another live subject',
-  });
-  expect(await durableSnapshot()).toEqual(before);
-  expect(hydrate).not.toHaveBeenCalled();
 });

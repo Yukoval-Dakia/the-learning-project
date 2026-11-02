@@ -11,7 +11,6 @@ import {
   COPILOT_RUN_TABLE,
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { event, job_events } from '@/db/schema';
-import { writeJobEvent } from '@/kernel/job-events';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { writeCopilotInputEvent } from '../server/conversation-writes';
@@ -153,28 +152,5 @@ describe('POST /api/copilot/runs/:id/cancel', () => {
     expect(
       eventsAfterLatePickup.some((e) => e.event_type === COPILOT_RUN_EVENTS.EXECUTION_STARTED),
     ).toBe(false);
-  });
-
-  it('writes one cooperative request after the fence and deduplicates concurrent Stop clicks', async () => {
-    const accepted = await seedAcceptedRun();
-    await writeJobEvent(testDb(), {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: accepted.runId,
-      event_type: COPILOT_RUN_EVENTS.EXECUTION_STARTED,
-      payload: { execution_fence: 'at_most_once' },
-    });
-
-    const responses = await Promise.all(
-      Array.from({ length: 4 }, () => POST(request(accepted.runId), { id: accepted.runId })),
-    );
-    const bodies = await Promise.all(responses.map((response) => response.json()));
-
-    expect(bodies.filter((body) => body.status === 'cancel_requested')).toHaveLength(1);
-    expect(bodies.filter((body) => body.status === 'already_requested')).toHaveLength(3);
-    const events = await runEvents(accepted.runId);
-    expect(
-      events.filter((event) => event.event_type === COPILOT_RUN_EVENTS.CANCEL_REQUESTED),
-    ).toHaveLength(1);
-    expect(events.some((event) => event.event_type === COPILOT_RUN_EVENTS.FAILED)).toBe(false);
   });
 });

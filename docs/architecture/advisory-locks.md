@@ -50,7 +50,7 @@
 > （exec/comment 分类）、`family-table.md`（旧 79 行族表）、`edge-evidence.md`
 > （旧逐边调用链）、`registry-snapshot.ts`（被撤下的机器清单稿）。
 
-## 1. 覆盖口径（不冒称全覆盖）
+## 1. 覆盖口径
 
 文本扫描 `pg_advisory_xact_lock|pg_try_advisory_lock|pg_try_advisory_xact_lock|
 pg_advisory_unlock|pg_advisory_lock`（`-g '*.ts'`，排除 `*.test.ts`/`*.spec.ts`/`tests/`）：
@@ -70,7 +70,7 @@ pg_advisory_unlock|pg_advisory_lock`（`-g '*.ts'`，排除 `*.test.ts`/`*.spec.
 `acquireProposalDecisionLock` / `lockPaidEffectControlFamily` / `lockEntityGate` /
 `lockProducerFenceInstaller` / `acquireControlPlaneLockSql` 各若干。
 归并后得到 **81 个 family**（§3 表）——分母是"本次扫描归并出的 distinct key
-模板/命名空间数"，不承诺覆盖运行时动态 key 的全部实例域（见 §5 unknown）。
+模板/命名空间数"，运行时动态 key 的实例域以 §5 unknown 为准。
 
 编码面（键派生记号，**不是**锁空间）：`hashtext(key)`(int4 结果)、
 `hashtext(ns),hashtext(key)`(int4 pair)、`hashtextextended(key,salt)`(int8；
@@ -271,7 +271,7 @@ edge-evidence 版 SHA-256
   serving → admission 行锁；durable 各 runtime tx `control 表行锁 →
   session/review-orphan/judge tick`（行锁介导边，非 advisory 边）。
 
-## 5. 已知边界与未决（不冒称证明）
+## 5. 已知边界与未决
 
 1. **session(group) 与 xact(group) 同键跨模式**：`evaluate-submission.ts`
    的 session wrapper (:783–790) 包裹 `run`；load tx :407 首先获取 group :411，

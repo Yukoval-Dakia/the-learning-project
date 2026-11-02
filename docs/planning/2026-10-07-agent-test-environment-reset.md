@@ -24,7 +24,7 @@ Owner 明确要求清空当前本地部署数据库并重新部署，仅供 Agen
 
 Brief 为 `null`，probes 和 sessions 为空。question、assessment_submission、ai_task_runs、provider_attempt 均为零。event 中只有迁移生成的三条系统 knowledge genesis。数据库还包含内置科目、traits、迁移和运行时初始化记录，因此“清空”不表示迁移后每张表都为零。
 
-Mem0 新卷没有历史文件。没有发起模型请求。此次验证覆盖重置、恢复、空库迁移和运行接口，不代表评分质量、迁移项目、UI 重写或个人日用验收完成。
+Mem0 新卷没有历史文件。没有发起模型请求。此次验证覆盖重置、恢复、空库迁移和运行接口。
 
 独立只读核验于 11:13Z 完成，复查实际容器、SQL、五个接口、运行记录及用途文档，未发现 consequential discrepancy。备份恢复由主线程执行，独立核验只检查其证据，没有重复恢复。部署锁已在核验后释放。
 
@@ -36,6 +36,6 @@ Mem0 新卷没有历史文件。没有发起模型请求。此次验证覆盖重
 
 重置完成时，独立测试附件存储尚未配置，附件上传不可用。尝试取得独立 S3 测试服务镜像时，镜像源返回访问或传输错误，未回退到私人 R2。后续 [YUK-1363](https://linear.app/yukoval-studios/issue/YUK-1363) 已配置独立本地测试存储并完成真实 CRUD、负向及重建持久化验证，见[测试存储记录](2026-10-07-agent-test-storage.md)。
 
-操作期间 OrbStack 因系统盘 ENOSPC 停止。系统空闲空间回升后恢复 OrbStack，随后重新停止主 writer 进行备份。未执行磁盘清理，也未主动恢复其他线程的候选容器。
+操作期间 OrbStack 因系统盘 ENOSPC 停止。系统空闲空间回升后恢复 OrbStack，随后重新停止主 writer 进行备份。
 
 原 TeachingBrief 故障已定位为展示层没有过滤无正式 issuance 的旧 canary 题。重置移除了这批旧数据，但后续仍需对齐 TeachingBrief 与正式判题准入条件，由 [YUK-1364](https://linear.app/yukoval-studios/issue/YUK-1364) 跟踪。

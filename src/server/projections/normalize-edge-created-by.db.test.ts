@@ -10,7 +10,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { diffSnapshots } from '@/core/projections/snapshot-diff';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
-import { edgeRowToSnapshot, gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
+import {
+  edgeRowToSnapshot,
+  gatherAndFoldKnowledgeEdge,
+} from '@/kernel/records/knowledge-edge-facts';
 import { backfillKnowledgeEdgeGenesis } from '../../../scripts/backfill-genesis-events';
 import { normalizeEdgeCreatedBy } from '../../../scripts/normalize-edge-created-by';
 import { resetDb, testDb } from '../../../tests/helpers/db';

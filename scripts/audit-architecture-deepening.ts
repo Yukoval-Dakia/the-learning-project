@@ -1423,12 +1423,16 @@ async function runCli(): Promise<void> {
     readFileSync(resolve(projectRoot, PASS_THROUGH_CLASSIFICATIONS_PATH), 'utf8'),
     PASS_THROUGH_CLASSIFICATIONS_PATH,
   );
-  const baseClassifications = parseSiteClassifications(
-    readBlobs(projectRoot, baseSha, [PASS_THROUGH_CLASSIFICATIONS_PATH]).get(
-      PASS_THROUGH_CLASSIFICATIONS_PATH,
-    ) ?? '',
-    `${baseSha}:${PASS_THROUGH_CLASSIFICATIONS_PATH}`,
-  );
+  const baseClassificationText = readBlobs(projectRoot, baseSha, [
+    PASS_THROUGH_CLASSIFICATIONS_PATH,
+  ]).get(PASS_THROUGH_CLASSIFICATIONS_PATH);
+  const baseClassifications =
+    baseClassificationText === undefined
+      ? undefined
+      : parseSiteClassifications(
+          baseClassificationText,
+          `${baseSha}:${PASS_THROUGH_CLASSIFICATIONS_PATH}`,
+        );
   const passThroughViolations: OwnershipViolation[] = auditPassThroughClassifications({
     headSites,
     newSites: siteDiff.added,

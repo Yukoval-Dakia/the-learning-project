@@ -789,8 +789,8 @@ export function auditPassThroughClassifications(input: {
   headSites: readonly PassThroughSite[];
   newSites: readonly PassThroughSite[];
   classifications: readonly SiteClassification[];
-  /** Entries at the audit base; a live compat shim's entry is frozen until its site goes. */
-  baseClassifications: readonly SiteClassification[];
+  /** Entries at the audit base; undefined when the base predates the classification file. */
+  baseClassifications: readonly SiteClassification[] | undefined;
   renames: ReadonlyMap<string, string>;
   today: string;
 }): ShimViolation[] {
@@ -812,7 +812,20 @@ export function auditPassThroughClassifications(input: {
   const headKeys = new Set(input.headSites.map(identityKey));
   const byKey = new Map(input.classifications.map((entry, i) => [keys[i], entry]));
 
-  for (const base of input.baseClassifications) {
+  // Shims only drain: a new temporary hand-off must retire an old one first.
+  const compatCount = (entries: readonly SiteClassification[]) =>
+    entries.filter((entry) => entry.class === 'compat_shim').length;
+  const headCompat = compatCount(input.classifications);
+  const baseCompat = input.baseClassifications && compatCount(input.baseClassifications);
+  if (baseCompat !== undefined && headCompat > baseCompat) {
+    fail(
+      PASS_THROUGH_CLASSIFICATIONS_PATH,
+      'compat_shim',
+      `compat_shim entries grew: ${headCompat} at head > ${baseCompat} at base — retire a shim instead of adding one`,
+    );
+  }
+
+  for (const base of input.baseClassifications ?? []) {
     if (base.class !== 'compat_shim') continue;
     const key = identityKey({ ...base, file: input.renames.get(base.file) ?? base.file });
     if (!headKeys.has(key)) continue;
