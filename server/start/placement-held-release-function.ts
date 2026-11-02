@@ -4,7 +4,7 @@ import type { FrontdoorContext } from './context';
 import { runAuthenticatedStartWorkbench } from './workbench-read';
 
 export const releaseStartHeldPlacementFunction = createServerFn({ method: 'POST' })
-  .inputValidator((input: Parameters<FrontdoorContext['releaseHeldPlacement']>[0]) => input)
+  .validator((input: Parameters<FrontdoorContext['releaseHeldPlacement']>[0]) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () =>
       JSON.stringify(await context.releaseHeldPlacement(data)),
