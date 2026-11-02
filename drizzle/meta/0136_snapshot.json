@@ -1,5 +1,5 @@
 {
-  "id": "e069b4a2-dca6-4df6-9918-641665ecc929",
+  "id": "bf2adb96-b885-435b-a017-86b4412bd1bf",
   "prevId": "563de54d-98ea-47e6-ba39-d7f7ac6e8d20",
   "version": "7",
   "dialect": "postgresql",
@@ -1265,6 +1265,96 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.bank_search_snapshot": {
+      "name": "bank_search_snapshot",
+      "schema": "",
+      "columns": {
+        "search_id": {
+          "name": "search_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "actor_key": {
+          "name": "actor_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "read_role": {
+          "name": "read_role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_digest": {
+          "name": "request_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "result_digest": {
+          "name": "result_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "as_of": {
+          "name": "as_of",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "bank_search_snapshot_expiry_idx": {
+          "name": "bank_search_snapshot_expiry_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "bank_search_snapshot_role_ck": {
+          "name": "bank_search_snapshot_role_ck",
+          "value": "\"bank_search_snapshot\".\"read_role\" IN ('owner','private','restricted')"
+        },
+        "bank_search_snapshot_digest_ck": {
+          "name": "bank_search_snapshot_digest_ck",
+          "value": "\"bank_search_snapshot\".\"request_digest\" ~ '^[a-f0-9]{64}$' AND \"bank_search_snapshot\".\"result_digest\" ~ '^[a-f0-9]{64}$'"
+        },
+        "bank_search_snapshot_ttl_ck": {
+          "name": "bank_search_snapshot_ttl_ck",
+          "value": "\"bank_search_snapshot\".\"expires_at\" > \"bank_search_snapshot\".\"as_of\" AND \"bank_search_snapshot\".\"expires_at\" <= \"bank_search_snapshot\".\"as_of\" + interval '15 minutes'"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.cause_category_overlay": {
@@ -9235,13 +9325,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "supply_route": {
-          "name": "supply_route",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'quiz_gen'"
-        },
         "max_paid_attempts": {
           "name": "max_paid_attempts",
           "type": "integer",
@@ -9253,7 +9336,7 @@
           "name": "budget_limit_micro_usd",
           "type": "integer",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": 1000000
         },
         "known_cost_micro_usd": {
@@ -9431,17 +9514,9 @@
           "name": "placement_starter_claim_max_attempts_v1",
           "value": "\"placement_starter_claim\".\"max_paid_attempts\" = 3"
         },
-        "placement_starter_claim_supply_route_check": {
-          "name": "placement_starter_claim_supply_route_check",
-          "value": "\"placement_starter_claim\".\"supply_route\" IN ('quiz_gen','sourcing_web')"
-        },
-        "placement_starter_claim_route_budget_check": {
-          "name": "placement_starter_claim_route_budget_check",
-          "value": "(\"placement_starter_claim\".\"supply_route\" = 'quiz_gen') = (\"placement_starter_claim\".\"budget_limit_micro_usd\" IS NOT NULL)"
-        },
         "placement_starter_claim_nonnegative_cost": {
           "name": "placement_starter_claim_nonnegative_cost",
-          "value": "(\"placement_starter_claim\".\"budget_limit_micro_usd\" IS NULL OR \"placement_starter_claim\".\"budget_limit_micro_usd\" >= 0) AND (\"placement_starter_claim\".\"known_cost_micro_usd\" IS NULL OR \"placement_starter_claim\".\"known_cost_micro_usd\" >= 0)"
+          "value": "\"placement_starter_claim\".\"budget_limit_micro_usd\" >= 0 AND (\"placement_starter_claim\".\"known_cost_micro_usd\" IS NULL OR \"placement_starter_claim\".\"known_cost_micro_usd\" >= 0)"
         },
         "placement_starter_claim_terminal_timestamps": {
           "name": "placement_starter_claim_terminal_timestamps",
@@ -9615,7 +9690,7 @@
       "checkConstraints": {
         "placement_starter_cost_component_kind_check": {
           "name": "placement_starter_cost_component_kind_check",
-          "value": "\"placement_starter_cost_component\".\"component_kind\" IN ('quiz_gen','quiz_verify','solution_check','teaching_quality','web_acquisition','source_grounding','question_admission')"
+          "value": "\"placement_starter_cost_component\".\"component_kind\" IN ('quiz_gen','quiz_verify','solution_check','teaching_quality')"
         },
         "placement_starter_cost_component_nonnegative": {
           "name": "placement_starter_cost_component_nonnegative",
