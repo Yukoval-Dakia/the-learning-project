@@ -37,7 +37,7 @@ import { writeQuestionBlockLifecycleEvent } from '@/kernel/records/question-bloc
 import { projectQuestionBlockGuarded } from '@/kernel/records/question-block-projection';
 import { draftDocumentToContract } from '@/kernel/records/question-draft-contract';
 import { hasQuestionBlockGenesisAnchor } from '@/server/projections/parity';
-import { capturedQuestionShape } from './captured-question-shape';
+import { capturedQuestionShape } from './capture/captured-question';
 
 // ---------------------------------------------------------------------------
 // Shared tree helpers

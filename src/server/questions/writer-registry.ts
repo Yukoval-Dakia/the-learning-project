@@ -107,20 +107,10 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
   // 注：quiz_verify / source_verify / verify-and-promote 的 promote 分支虽非内容列
   // 写者（只写 draft_status/metadata），但作为 §2 矩阵的 admission 时刻已在
   // YUK-1043 同事务接 publisher（见各文件 YUK-1043 注释），无需内容列登记。
-  'src/capabilities/ingestion/server/assessment-capture.ts': {
+  'src/capabilities/ingestion/server/capture/captured-question.ts': {
     status: 'publisher-converged',
-    tickets: ['YUK-1047'],
-    note: 'Captured originals publish and bind a frozen revision before evaluation; withheld originals stay draft without learning effects.',
-  },
-  'src/capabilities/ingestion/server/auto-enroll.ts': {
-    status: 'publisher-converged',
-    tickets: ['YUK-1043'],
-    note: 'OCR/VLM 收录 INSERT ⇒ 同事务首版 revision（reference 缺失 ⇒ conversion_issue ⇒ withheld；学生作答走 attempt 事件，不进答案键 —— 复审裁决的先行落位）。',
-  },
-  'src/capabilities/ingestion/server/import-completion.ts': {
-    status: 'publisher-converged',
-    tickets: ['YUK-1043'],
-    note: '上传确认导入 INSERT ⇒ 同事务首版 revision（withheld —— 判分输入可契约化，无需等 cutover；复审裁决即刻收敛）。',
+    tickets: ['YUK-1043', 'YUK-1047'],
+    note: '块捕获三路（native capture / auto-enroll / 上传确认导入）共用的 INSERT ⇒ 同事务首版 revision。Captured originals publish and bind a frozen revision before evaluation; withheld originals stay draft without learning effects. OCR/VLM 收录：reference 缺失 ⇒ conversion_issue ⇒ withheld；学生作答走 attempt 事件，不进答案键。上传确认导入：withheld —— 判分输入可契约化，无需等 cutover。',
   },
   'src/capabilities/ingestion/server/image-candidate-accept.ts': {
     status: 'publisher-converged',

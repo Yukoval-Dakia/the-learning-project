@@ -322,14 +322,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     file: 'src/kernel/records/question-block-transitions.ts',
     marker: '.update(question_block)',
     role: 'event-native-by-caller',
-    note: 'Accepted import, ignore and revert transitions pair status/links/version with the lifecycle event in the caller transaction; submitted keeps event then guarded projection.',
-  },
-  {
-    table: 'question_block',
-    file: 'src/capabilities/ingestion/server/assessment-capture.ts',
-    marker: '.update(question_block)',
-    role: 'event-native-by-caller',
-    note: 'Native activation pairs imported block links/status/version with the matching lifecycle event in its settlement transaction; parity is covered by parity-writers-c3.db.test.ts.',
+    note: 'Accepted import, auto/native enrollment (optional version CAS), ignore and revert transitions pair status/links/version with the lifecycle event in the caller transaction; submitted keeps event then guarded projection.',
   },
   {
     table: 'question_block',
