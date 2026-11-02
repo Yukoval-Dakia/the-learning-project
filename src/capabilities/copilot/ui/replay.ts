@@ -1,6 +1,7 @@
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { CopilotPrimaryView } from '../primary-view-contract';
 import { projectReplayMessage } from './message-projection';
+import type { PublicProse } from './public-prose';
 
 // Replay owns stable ordering/deduplication of persisted turns. The shared
 // message projection validates their presentation metadata just like live replies.
@@ -38,6 +39,7 @@ export interface ReplaySkillContext {
 export type ReplayPrimaryView = CopilotPrimaryView;
 
 export interface ReplayTurn {
+  public_prose?: PublicProse;
   role: ReplayTurnRole;
   derivation_policy?: DerivationPolicyT;
   text: string;
@@ -61,6 +63,7 @@ export interface ReplayTurn {
 }
 
 export interface ReplayChatMessage {
+  public_prose?: PublicProse;
   id: string;
   derivation_policy?: DerivationPolicyT;
   role: 'user' | 'ai' | 'tombstone';
