@@ -81,7 +81,8 @@ export const HELP_EXPLANATION_GOLD: readonly HelpExplanationGold[] = [
     prompt_md: '把 (0,1)∪[0,2) 收成一个区间，并说明 0 在不在里面。',
     learner_form: '(0,1)∪[0,2)',
     sealed_gloss: '(0,1)∪[0,2) 的并集是 [0,2)。0 属于第二段，所以并集含 0，不能收成 (0,2)。',
-    hint_gloss: '(0,1)∪[0,2) 的并集是 [0,2)。0 属于第二段，所以并集含 0，不能收成 (0,2)。',
+    hint_gloss:
+      '并集包含任何一段里出现的点。逐段看端点是开还是闭，再决定合并后左端点该用哪种括号。',
   },
 ];
 
