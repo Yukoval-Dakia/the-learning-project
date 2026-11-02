@@ -41,20 +41,20 @@ export function BandChipView({
     title = `${bandLabel} · 区间 ${labels[view.loBand]}–${labels[view.hiBand]} · ${sourceLabel}${lowSuffix}`;
   }
 
-  const className = `band-chip src-${view.source}${view.lowConf ? ' is-low' : ''}`;
+  const className = `kn-band src-${view.source}${view.lowConf ? ' is-low' : ''}`;
   return (
     <span className={className} title={title}>
-      <span className="bc-dot" />
+      <span className="kn-band-dot" />
       {bandLabel}
       {!view.unknown && (
         <span
-          className="bc-range"
+          className="kn-band-range"
           aria-label={`区间 ${labels[view.loBand]} 至 ${labels[view.hiBand]}`}
         >
           {rangeLabel}
         </span>
       )}
-      {view.lowConf && <span className="bc-low">低置信</span>}
+      {view.lowConf && <span className="kn-band-low">低置信</span>}
     </span>
   );
 }

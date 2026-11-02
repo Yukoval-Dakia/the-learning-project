@@ -3450,29 +3450,6 @@ ol {
   overflow: hidden;
 }
 
-/* YUK-297 — the graph is now a hand-owned SVG layer (cytoscape is a headless
-   layout solver only). The stage is the pan/zoom surface: a dot-grid paper field
-   the <svg> draws into, grab/grabbing cursor, clipped + non-selectable. */
-.kg-svg-stage {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: 560px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-3);
-  overflow: hidden;
-  cursor: grab;
-  user-select: none;
-  background:
-    radial-gradient(circle at 1px 1px, var(--line-soft) 1px, transparent 0) 0 0 / 26px 26px,
-    var(--paper-sunk);
-}
-.kg-svg-stage:active {
-  cursor: grabbing;
-}
-.kg-svg {
-  display: block;
-}
 /* Focus-mode camera: the pan/zoom <g> animates ONLY for focus-fit / unfocus /
    reset moves (.is-animating, mirrors production's cy.animate({ fit }, 280ms)).
    Direct manipulation (drag-pan, wheel/button zoom) leaves the class off so the
@@ -4045,69 +4022,6 @@ ol {
   font-size: 13px;
 }
 
-.relation .rel-arrow {
-  font-family: var(--font-mono);
-  font-size: 16px;
-  color: var(--ink-3);
-  line-height: 1;
-  width: 18px;
-  text-align: center;
-}
-
-.relation.tone-coral .rel-arrow {
-  color: var(--coral);
-}
-
-.relation.tone-info .rel-arrow {
-  color: var(--info);
-}
-
-.relation.tone-good .rel-arrow {
-  color: var(--good);
-}
-
-.relation.tone-hard .rel-arrow {
-  color: var(--hard);
-}
-
-.relation.tone-contrasts .rel-arrow {
-  color: var(--contrasts);
-}
-
-.relation .rel-type {
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-  letter-spacing: var(--ls-wide);
-  white-space: nowrap;
-}
-
-.relation .rel-target {
-  color: var(--ink);
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  flex: 1;
-}
-
-.relation .rel-weight {
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-}
-
-.relation .rel-info {
-  color: var(--ink-4);
-  cursor: help;
-  display: flex;
-}
-
-.relation .rel-info:hover {
-  color: var(--coral);
-}
-
 .relations-group {
   display: flex;
   flex-direction: column;
@@ -4332,48 +4246,6 @@ ol {
   flex-direction: column;
 }
 
-.teach-drawer .drawer-head {
-  padding: 12px 18px;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.teach-drawer .drawer-head .title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--ink);
-}
-
-.teach-drawer .drawer-head .title h3 {
-  margin: 0;
-  font-family: var(--font-serif);
-  font-size: 17px;
-  font-weight: 500;
-}
-
-.teach-drawer .drawer-head .brand-mark {
-  color: var(--coral);
-  font-size: 18px;
-}
-
-.teach-drawer .drawer-head .context-chip {
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--coral-ink);
-  background: var(--coral-soft);
-  padding: 3px 8px;
-  border-radius: var(--r-pill);
-  border: 1px solid var(--coral-line);
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .teach-drawer .drawer-close {
   border: none;
   background: transparent;
@@ -4394,15 +4266,6 @@ ol {
   flex: 1;
   overflow-y: auto;
   padding: 16px 18px;
-}
-
-.teach-drawer .drawer-foot {
-  border-top: 1px solid var(--line);
-  padding: 12px 14px;
-  background: var(--paper-raised);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 @media (max-width: 760px) {
@@ -6464,15 +6327,6 @@ button.chip.is-on:hover {
   color: var(--coral-ink);
 }
 
-/* segmented control — loom .seg collides with the legacy .seg; only
-   the loom .seg-sm size modifier (referenced by note-reader
-   .note-mode.seg-sm) is added, scoped so it does not touch legacy. */
-.seg-sm button,
-button.seg-sm {
-  padding: 5px 10px;
-  font-size: var(--fs-caption);
-}
-
 /* ============================================================
    Cards (loom.css L226-238)
    ============================================================ */
@@ -6595,33 +6449,6 @@ button.seg-sm {
 }
 .drawer.open {
   transform: translateX(0);
-}
-.drawer-head {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  padding: var(--s-4) var(--s-5);
-  border-bottom: 1px solid var(--line);
-}
-.drawer-title {
-  font-family: var(--font-serif);
-  font-size: var(--fs-h4);
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-}
-.drawer-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--s-5);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-4);
-}
-.drawer-foot {
-  border-top: 1px solid var(--line);
-  padding: var(--s-4);
 }
 
 /* ============================================================
@@ -6896,7 +6723,7 @@ button.seg-sm {
 /* ============================================================
    Note pieces still shared after the notes pages moved to M3E
    (YUK-1473, src/capabilities/notes/ui/notes-m3e.css): the interactive
-   artifact frame and the knowledge pages' drawer sections.
+   artifact frame.
    ============================================================ */
 
 /* ── interactive artifact sandbox frame (ADR-0033 D4) ──────────
@@ -6921,40 +6748,13 @@ button.seg-sm {
   border: 0;
 }
 
-/* drawer section header (knowledge detail and node drawer sections);
-   named .drawer-sec to match the spec class list. */
-.drawer-sec {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-}
-.drawer-sec + .drawer-sec {
-  margin-top: var(--s-6);
-}
-.drawer-sec > h4 {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  letter-spacing: var(--ls-wide);
-  color: var(--ink-4);
-}
-
 /* ============================================================
-   LOOM KD-DETAIL LAYER — Redraw Slice 2 (YUK-169)
-   Knowledge-detail (/knowledge/[id]) screen classes ported
-   additively from loom-prototype @ f85aca6d
-   (screens.css / screens-2b.css / p5.css / loom.css).
-   Tokens-only; no new hues. Does NOT redefine slice-1 classes.
-   Skipped (already present in globals): .chip / .chip-k.
-   Skipped per task: annotations (.anno-*) and .note-ref*.
+   Small loom pieces left from the old knowledge-detail layers (YUK-169).
+   The knowledge pages moved to M3E (YUK-1473,
+   src/capabilities/knowledge/ui/knowledge-m3e.css); these rules stay only
+   because other surfaces still use them.
    ============================================================ */
 
-/* ---- hero / page-head meta (screens.css L34, round-2a) ---- */
-.hero-cta {
-  display: flex;
-  gap: var(--s-3);
-  margin-top: var(--s-6);
-  flex-wrap: wrap;
-}
 .nowrap-meta {
   display: flex;
   align-items: center;
@@ -7000,699 +6800,6 @@ button.seg-sm {
     color var(--dur-base) var(--ease-out);
 }
 
-/* ---- KD layout (screens-2b.css L89-100) ---- */
-.kd-head {
-  display: flex;
-  align-items: center;
-  gap: var(--s-4);
-  flex-wrap: wrap;
-}
-.kd-metrics {
-  margin-top: var(--s-2);
-}
-.kd-grid {
-  display: grid;
-  grid-template-columns: 1fr 340px;
-  gap: var(--s-5);
-  align-items: start;
-}
-.kd-side {
-  position: sticky;
-  top: 84px;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-/* ---- neighbors-by-relation (screens-2b.css L74-100) ---- */
-.kd-rel-block {
-  padding: var(--s-3) 0;
-  border-top: 1px dashed var(--line);
-}
-.kd-rel-block:first-child {
-  border-top: 0;
-  padding-top: 0;
-}
-.kd-rel-h {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  margin-bottom: var(--s-2);
-  font-family: var(--font-mono);
-}
-.rel-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  width: 100%;
-  text-align: left;
-  border: 0;
-  background: transparent;
-  padding: var(--s-2) var(--s-3);
-  border-radius: var(--r-2);
-  cursor: pointer;
-  color: var(--ink);
-}
-.rel-row:hover {
-  background: var(--paper-sunk);
-}
-.rel-row.indent {
-  padding-left: var(--s-6);
-}
-.rel-row .wenyan {
-  flex: 1;
-  min-width: 0;
-}
-.rel-kind {
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-  background: var(--paper-sunk);
-  border: 1px solid var(--line);
-  border-radius: var(--r-1);
-  padding: 1px 6px;
-  flex: none;
-}
-
-/* ---- relation tag (screens-2b.css L27-33) ---- */
-.rel-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--fs-meta);
-  padding: 2px 8px;
-  border-radius: var(--r-1);
-  border: 1px solid var(--line);
-  background: var(--paper-sunk);
-  color: var(--ink-2);
-  flex: none;
-}
-.rel-tag .mono {
-  font-size: 13px;
-}
-.rel-tag-prerequisite {
-  border-color: var(--coral-line);
-  background: var(--coral-soft);
-  color: var(--coral-ink);
-}
-.rel-tag-related_to {
-  border-color: var(--line-strong);
-}
-.rel-tag-contrasts_with {
-  border-color: var(--info-line);
-  background: var(--info-soft);
-  color: var(--info-ink);
-}
-.rel-tag-applied_in {
-  border-color: var(--good-line);
-  background: var(--good-soft);
-  color: var(--good-ink);
-}
-.rel-tag-derived_from {
-  border-color: var(--hard-line);
-  background: var(--hard-soft);
-  color: var(--hard-ink);
-}
-
-/* ---- artifact-typed backlinks (screens-2b.css L96-100 + p5.css) ---- */
-.bl-group {
-  margin-bottom: var(--s-3);
-}
-.bl-kind {
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-  margin-bottom: 4px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-.bl-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  width: 100%;
-  text-align: left;
-  border: 0;
-  background: transparent;
-  padding: 6px var(--s-2);
-  border-radius: var(--r-1);
-  cursor: pointer;
-  color: var(--ink-2);
-  font-size: var(--fs-caption);
-}
-.bl-row:hover {
-  background: var(--paper-sunk);
-  color: var(--ink);
-}
-.bl-row span {
-  flex: 1;
-  min-width: 0;
-}
-.bl-row-main {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  flex: 1;
-}
-.bl-row-t {
-  font-size: var(--fs-caption);
-  color: var(--ink-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.bl-row-m {
-  font-size: var(--fs-caption);
-}
-
-/* ---- verify badge (screens-2b.css L122-124) ---- */
-.verify-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--fs-caption);
-  font-family: var(--font-mono);
-  padding: 2px 7px;
-  border-radius: var(--r-pill);
-  border: 1px solid;
-}
-.verify-badge.verified {
-  background: var(--good-soft);
-  border-color: var(--good-line);
-  color: var(--good-ink);
-}
-.verify-badge.draft {
-  background: var(--hard-soft);
-  border-color: var(--hard-line);
-  color: var(--hard-ink);
-}
-
-/* ---- KD note-hint (screens-2b.css L295-296) ---- */
-.kd-note-hint {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  color: var(--ink-4);
-  margin: -4px 0 var(--s-3);
-  line-height: var(--lh-snug);
-}
-.kd-note-hint > svg {
-  flex: none;
-  margin-top: 2px;
-}
-
-/* ---- note kinds (p5.css L65-69) ---- */
-.note-kind-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  letter-spacing: var(--ls-wide);
-  padding: 2px 8px;
-  border-radius: var(--r-1);
-  border: 1px solid;
-  flex: none;
-}
-.note-kind-atomic {
-  background: var(--coral-soft);
-  color: var(--coral-ink);
-  border-color: var(--coral-line);
-}
-.note-kind-hub {
-  background: var(--info-soft);
-  color: var(--info-ink);
-  border-color: var(--info-line);
-}
-.note-kind-long {
-  background: var(--paper-sunk);
-  color: var(--ink-3);
-  border-color: var(--line-strong);
-}
-/* interactive artifact tag (ADR-0033 D5) — good family: coral/info/paper-sunk
-   are taken by atomic/hub/long above. */
-.note-kind-interactive {
-  background: var(--good-soft);
-  color: var(--good-ink);
-  border-color: var(--good-line);
-}
-
-/* ---- primary note (p5.css L71-76) ---- */
-.kd-primary-note {
-  margin-bottom: var(--s-4);
-}
-.kd-primary-head {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  flex-wrap: wrap;
-  margin-bottom: var(--s-4);
-  padding-bottom: var(--s-3);
-  border-bottom: 1px solid var(--line);
-}
-.kd-primary-title {
-  font-size: var(--fs-h4);
-  font-weight: 500;
-  flex: 1;
-  min-width: 0;
-}
-.kd-primary-body {
-  font-size: var(--fs-body-lg);
-}
-
-/* ---- note groups + link rows (p5.css L78-85) ---- */
-.kd-note-group {
-  margin-top: var(--s-3);
-}
-.kd-note-group-h {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  margin-bottom: 6px;
-}
-.note-link-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  width: 100%;
-  text-align: left;
-  border: 1px solid var(--line);
-  background: var(--paper-raised);
-  border-radius: var(--r-2);
-  padding: var(--s-2) var(--s-3);
-  cursor: pointer;
-  color: var(--ink-2);
-  margin-bottom: 6px;
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out);
-}
-.note-link-row:hover {
-  border-color: var(--line-strong);
-  background: var(--paper-sunk);
-}
-.note-link-title {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--font-wenyan);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ---- decay bucket pill (p5.css L99-103) ---- */
-.decay-bucket {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--fs-meta);
-  padding: 3px 8px;
-  border-radius: var(--r-pill);
-  border: 1px solid;
-}
-.decay-bucket.tone-good {
-  background: var(--good-soft);
-  color: var(--good-ink);
-  border-color: var(--good-line);
-}
-.decay-bucket.tone-hard {
-  background: var(--hard-soft);
-  color: var(--hard-ink);
-  border-color: var(--hard-line);
-}
-.decay-bucket.tone-again {
-  background: var(--again-soft);
-  color: var(--again-ink);
-  border-color: var(--again-line);
-}
-.decay-retr {
-  font-weight: 600;
-  padding-left: 5px;
-  border-left: 1px solid currentColor;
-  opacity: 0.9;
-}
-
-/* ---- activity event chain (screens.css L325-332) ---- */
-.event-chain {
-  padding: var(--s-2) 0 0;
-}
-.event-row {
-  display: flex;
-  gap: var(--s-3);
-}
-.event-rail {
-  position: relative;
-  width: 12px;
-  flex: none;
-  display: flex;
-  justify-content: center;
-  padding-top: 5px;
-}
-.event-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--coral);
-  border: 2px solid var(--paper-raised);
-  z-index: 1;
-}
-.event-line {
-  position: absolute;
-  top: 12px;
-  bottom: -8px;
-  width: 2px;
-  background: var(--line);
-}
-.event-body {
-  padding-bottom: var(--s-4);
-  min-width: 0;
-  flex: 1;
-}
-.event-head {
-  gap: var(--s-2);
-}
-.event-label {
-  color: var(--ink-2);
-  font-size: var(--fs-meta);
-}
-.event-note {
-  font-size: var(--fs-caption);
-  color: var(--ink-3);
-  margin-top: 2px;
-}
-
-/* ---- KD responsive (screens-2b.css L308-310) ---- */
-@media (max-width: 1100px) {
-  .kd-grid {
-    grid-template-columns: 1fr;
-  }
-  .kd-side {
-    position: static;
-  }
-}
-
-/* ============================================================
-   LOOM KD-LIST LAYER — Redraw Slice 3 (YUK-169)
-   Knowledge-list (/knowledge) chrome + tree classes ported
-   additively from loom-prototype @ f85aca6d
-   (screens.css / screens-2b.css / loom.css).
-   Tokens-only; no new hues.
-
-   COLLISION SCOPING (the whole point of this layer):
-   .seg / .page-head / .page-head-row / .eyebrow / .page-title /
-   .page-lead all ALREADY EXIST as legacy globals consumed by ~40
-   surfaces. The loom values are therefore ported SCOPED under the
-   .knowledge-loom page wrapper so they never touch the legacy
-   globals. The NEW tree classes (.know-node / .know-twig /
-   .know-title / .know-end) are grep-confirmed absent globally, but
-   are still scoped under .knowledge-loom for safety.
-
-   REUSED from slice-1/2 (NOT re-ported here — relied upon):
-   .hero-cta, .card-icon(.accent), .chip / .chip-k, .thread-arrow,
-   .badge(+tones), .quiet-empty, and the Stateful / EmptyState /
-   SkLines layers (.empty* / .sk*).
-
-   PORTED 2026-06-08: .mastery-ring / .mastery-ring-t (loom screens-2b.css
-   L16-17, L66). The tree row now uses the design MasteryRing primitive
-   (src/ui/primitives/MasteryRing) so its mastery dial matches the graph
-   node's disc/arc + 3-tone, replacing the old transform-scaled 84px Ring.
-   ============================================================ */
-.mastery-ring {
-  flex: none;
-}
-.mastery-ring-t {
-  font-size: var(--fs-caption);
-  fill: var(--ink-2);
-  font-weight: 600;
-}
-.know-node .mastery-ring {
-  margin-right: 2px;
-}
-
-/* ---- page-head chrome (loom.css §App shell L167-172) ----
-   Scoped under .knowledge-loom to avoid colliding with the legacy
-   .page-head / .eyebrow / .page-title / .page-head-row / .page-lead
-   globals. */
-.knowledge-loom .page-head {
-  margin-bottom: var(--s-6);
-}
-.knowledge-loom .eyebrow {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  letter-spacing: var(--ls-wide);
-  margin-bottom: var(--s-2);
-  display: block;
-}
-.knowledge-loom .page-title {
-  font-family: var(--font-serif);
-  font-size: var(--fs-h1);
-  font-weight: 500;
-  letter-spacing: var(--ls-tight);
-  line-height: var(--lh-tight);
-}
-.knowledge-loom .page-head-row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--s-4);
-  flex-wrap: wrap;
-}
-.knowledge-loom .page-lead {
-  color: var(--ink-3);
-  font-size: var(--fs-body-lg);
-  max-width: 58ch;
-  margin-top: var(--s-3);
-  line-height: var(--lh-prose);
-}
-
-/* ---- segmented control (screens.css L144-146) ----
-   Scoped under .knowledge-loom; the legacy .seg is a different model
-   (loop is a button group with .is-on), so do NOT touch it. */
-.knowledge-loom .seg {
-  display: inline-flex;
-  background: var(--paper-sunk);
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  padding: 2px;
-}
-.knowledge-loom .seg button {
-  border: 0;
-  background: transparent;
-  color: var(--ink-3);
-  font-size: var(--fs-caption);
-  padding: 6px 14px;
-  border-radius: var(--r-1);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  transition: all var(--dur-fast) var(--ease-out);
-}
-.knowledge-loom .seg button.on {
-  background: var(--paper-raised);
-  color: var(--ink);
-  box-shadow: var(--shadow-1);
-}
-
-/* ---- tree rows (screens.css L147-153; .hot drop per pre-flight §4) ----
-   New classes, grep-confirmed absent globally; scoped for safety. */
-.knowledge-loom .know-node {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  padding: var(--s-4) var(--s-5);
-  border-bottom: 1px solid var(--line-soft);
-  transition: background var(--dur-fast) var(--ease-out);
-  cursor: pointer;
-}
-.knowledge-loom .know-node:hover {
-  background: var(--paper-sunk);
-}
-.knowledge-loom .know-node:last-child {
-  border-bottom: 0;
-}
-.knowledge-loom .know-node.hot {
-  background: color-mix(in srgb, var(--coral-soft) 50%, var(--paper-raised));
-}
-.knowledge-loom .know-node.is-container {
-  background: var(--paper-sunk) !important;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-}
-.knowledge-loom .know-container-icon {
-  display: inline-flex;
-  width: 30px;
-  height: 30px;
-  align-items: center;
-  justify-content: center;
-  color: var(--ink-3);
-}
-.mesh-empty-state {
-  margin-bottom: var(--s-3);
-  border: 1px solid var(--line);
-  border-radius: var(--r-3);
-  background: var(--paper-sunk);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--s-2);
-  padding: var(--s-3) var(--s-4);
-  color: var(--ink-3);
-  text-align: center;
-}
-.mesh-empty-state strong {
-  color: var(--ink-2);
-}
-.mesh-empty-state span {
-  font-size: var(--fs-meta);
-}
-.mesh-node-label-bg {
-  fill: var(--paper-raised);
-  stroke: var(--line);
-  stroke-width: 1;
-  pointer-events: none;
-}
-.mesh-node-label {
-  pointer-events: none;
-  fill: var(--ink-2);
-  font-size: 13px;
-  paint-order: stroke;
-  stroke: var(--paper-raised);
-  stroke-width: 3px;
-}
-.knowledge-loom .know-twig {
-  color: var(--ink-5);
-  font-family: var(--font-mono);
-}
-.knowledge-loom .know-title {
-  /* MiSans sans-serif (owner 2026-06-08 「用 misans」, NOT the design wenyan serif).
-     MiSans first then the sans stack; note MiSans is not yet bundled as a webfont, so
-     it only renders where installed — falls back to Noto Sans SC / PingFang SC
-     otherwise (still sans-serif). Bundle a MiSans woff2 to guarantee it in prod. */
-  font-family: MiSans, var(--font-sans);
-  font-weight: 500;
-}
-.knowledge-loom .know-end {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-}
-
-/* ============================================================
-   LOOM KD-DRAWER LAYER — Redraw Slice 3b (YUK-169)
-   NodeDrawer (node detail drawer) + AI edge-proposal card classes
-   ported additively from loom-prototype @ f85aca6d
-   (screens-2b.css L71-83 + responsive L325). Tokens-only; no new hues.
-
-   Reuses (NOT re-ported here — present from slice-1 shell / slice-2):
-   .drawer / .scrim / .drawer-head / .drawer-body / .drawer-foot /
-   .drawer-sec / .rel-row / .rel-tag(+5 variants) / .quiet-empty /
-   .badge(+tones) / .chip.
-
-   NOTE: slice-2 styles ".drawer-sec > h4"; this slice ADDS a sibling
-   ".drawer-sec-h" (a div mono header row) — the h4 rule is untouched.
-   The legacy ".edge-proposal" / ".ep-*" classes (different names) are
-   left in place for a later cleanup pass; this is the loom ".edge-prop".
-   ============================================================ */
-
-/* loom mono section header row (div header, alongside slice-2 h4) */
-.drawer-sec-h {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  letter-spacing: var(--ls-wide);
-  color: var(--ink-4);
-  margin-bottom: var(--s-3);
-}
-
-/* node metrics — 3-up grid of stat cells */
-.node-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--s-2);
-  padding-bottom: var(--s-4);
-  border-bottom: 1px solid var(--line);
-}
-.nm {
-  text-align: center;
-}
-.nm-n {
-  font-size: var(--fs-h4);
-}
-.nm-l {
-  display: block;
-  margin-top: 2px;
-}
-
-/* AI edge-proposal card (accept / reverse / change-type / dismiss) */
-.edge-prop {
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  padding: var(--s-3);
-  margin-bottom: var(--s-2);
-  background: var(--paper-sunk);
-}
-.edge-prop.resolved {
-  opacity: 0.6;
-  display: flex;
-  gap: var(--s-2);
-  align-items: center;
-}
-.edge-prop-head {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  margin-bottom: var(--s-2);
-  flex-wrap: wrap;
-}
-.edge-prop-head .wenyan {
-  font-size: var(--fs-caption);
-}
-.edge-prop-acts {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-@media (max-width: 640px) {
-  .node-metrics {
-    grid-template-columns: 1fr;
-    gap: var(--s-2);
-  }
-}
-
-/* ============================================================
-   LOOM KD-EDGEFORM LAYER — Redraw Slice 3c (YUK-169)
-   NodeDrawer per-node edge-create form (relation chip-set + target
-   select + directional dir-row) ported additively from loom-prototype
-   @ f85aca6d. Tokens-only; no new hues. User chose option B (loom
-   per-node form moved into the slice-3b NodeDrawer).
-
-   Reuses (NOT re-ported here — present from slice-1 shell / slice-2/3b):
-   .chip / .chip.is-on / .drawer-sec / .drawer-sec-h / .badge / .btn.
-
-   Sources: screens.css L237 (.field-label), L271-273 (.chip-set /
-   .field-input / .field-input:focus); screens-2b.css L84-86
-   (.edge-form .field-input / .dir-row / .dir-row .chip). The loom has
-   no standalone ".edge-form" rule — it is a vertical form container
-   inside a .drawer-sec; defined minimally here.
-   ============================================================ */
-
-/* per-node edge-create form container (lives inside a .drawer-sec) */
-.edge-form {
-  display: flex;
-  flex-direction: column;
-}
-
 /* mono field label (port: screens.css L237) */
 .field-label {
   display: block;
@@ -7701,25 +6808,6 @@ button.seg-sm {
   color: var(--ink-3);
   letter-spacing: var(--ls-wide);
   margin-bottom: var(--s-2);
-}
-
-/* relation chip row (port: screens.css L271) */
-.chip-set {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-2);
-}
-
-/* directional from→to toggle row (port: screens-2b.css L85-86) */
-.dir-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  margin-top: var(--s-2);
-  flex-wrap: wrap;
-}
-.dir-row .chip {
-  gap: 6px;
 }
 
 /* ============================================================
@@ -8346,30 +7434,6 @@ button.seg-sm {
   }
 }
 
-.subject-filter-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  flex-wrap: wrap;
-  margin-top: var(--s-3);
-  padding-top: var(--s-3);
-  border-top: 1px dashed var(--line);
-  border-right: 0;
-  border-bottom: 0;
-  border-left: 0;
-}
-.subject-filter-row .chip {
-  white-space: nowrap;
-}
-.subject-filter-row .filter-row-l {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  letter-spacing: var(--ls-wide);
-  color: var(--ink-4);
-  min-width: 32px;
-  padding: 0;
-}
-
 /* ============================================================
    LOOM COACH LAYER — Wave 2 (YUK-169)
    /coach read-only weekly report. Ported additively from
@@ -8914,9 +7978,6 @@ button.seg-sm {
 .sessions-loom .event-link:hover {
   background: var(--paper-sunk);
   border-radius: var(--r-2);
-}
-.sessions-loom .event-label {
-  font-family: var(--font-mono);
 }
 
 /* ── list responsive (screens-2b.css J media) ── */
@@ -9491,19 +8552,7 @@ button.seg-sm {
 }
 
 /* ---- detail: kd-grid + side props (screens-2b.css L91-92, L173-183) ---- */
-.items-loom .kd-grid {
-  display: grid;
-  grid-template-columns: 1fr 340px;
-  gap: var(--s-5);
-  align-items: start;
-}
-.items-loom .kd-side {
-  position: sticky;
-  top: 84px;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
+
 .items-loom .field-label {
   display: block;
   font-family: var(--font-mono);
@@ -9512,11 +8561,7 @@ button.seg-sm {
   letter-spacing: var(--ls-wide);
   margin-bottom: var(--s-2);
 }
-.items-loom .chip-set {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-2);
-}
+
 .items-loom .prop-field {
   padding: var(--s-3) 0;
   border-top: 1px solid var(--line);
@@ -9613,14 +8658,7 @@ button.seg-sm {
 }
 
 /* ---- responsive (screens.css L333-336, screens-2b.css L308-310) ---- */
-@media (max-width: 1180px) {
-  .items-loom .kd-grid {
-    grid-template-columns: 1fr;
-  }
-  .items-loom .kd-side {
-    position: static;
-  }
-}
+
 @media (max-width: 900px) {
   .items-loom .items-grid {
     grid-template-columns: 1fr;

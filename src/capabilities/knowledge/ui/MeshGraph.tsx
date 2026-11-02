@@ -4,11 +4,11 @@
 // data-2b.jsx）。布局 = 移植的 cytoscape+fcose headless（layout.ts，#363 形态
 // 裁决产物）；渲染层按设计稿重写为轻量 SVG。
 
+import { ArrowRight, Inbox, Link2, Minus, Plus, RotateCcw } from 'lucide-react';
 import { memo, useMemo, useRef, useState } from 'react';
 
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
-import { Btn } from '@/ui/primitives/Btn';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { Button, IconButton } from '@/ui-next/public';
 import type { MeshGraphNode } from './ghost-endpoints';
 import type { KnowledgeEdgeRow, KnowledgeTreeNode } from './knowledge-api';
 import { isKnowledgeContainer } from './knowledge-node-kind';
@@ -23,6 +23,18 @@ import { REL_CUE } from './relation-cue';
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 2.4;
 const clampZoom = (k: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, k));
+
+// Dash pattern of one edge: cross-subject edges share one dash; otherwise the relation's own cue.
+function edgeDash(isCrossSubject: boolean, dash: string): string | undefined {
+  if (isCrossSubject) return '6 4';
+  return dash === '0' ? undefined : dash;
+}
+
+// Text in the middle of a node: containers say so, unpracticed nodes show a dash.
+function nodeCenterText(isContainer: boolean, pct: number | null): string | number {
+  if (isContainer) return '容器';
+  return pct == null ? '—' : pct;
+}
 
 // YUK-717 — pan/zoom 每帧 setView(~60/s)，但边/节点元素只依赖 pos/nodes/edges/
 // activeId（与 view 无关）。把边/节点抽成 memo 化子组件，父层 useMemo 元素数组
@@ -45,24 +57,24 @@ const MeshEdge = memo(function MeshEdge({
   isCrossSubject: boolean;
 }) {
   // F2 (Codex #400)：未知/experimental:* 关系类型 cue 回退 related_to，
-  // class 必须同源折回——否则 className 拼出无 CSS 匹配的 rel-experimental:*，
-  // 而 .mesh-edge2 无默认 stroke → 边描边 none 不可见（cue 已折回但颜色没折，
+  // class 必须同源折回——否则 className 拼出无 CSS 匹配的 kn-rel-experimental:*，
+  // 而 .kn-edge-path 无默认 stroke → 边描边 none 不可见（cue 已折回但颜色没折，
   // 用户看到悬空「— 相关」标签却没连线）。relKey 让 cue 与 class 共用一个键。
   const relKey = REL_CUE[relationType] ? relationType : 'related_to';
   const cue = REL_CUE[relKey];
   const mx = (ax + bx) / 2;
   const my = (ay + by) / 2 - 18;
   return (
-    <g className="mesh-edge-g">
-      {/* 颜色由 .rel-{type} 类驱动（screens-2b.css L20-26）；dash + 箭头
+    <g className="kn-edge">
+      {/* 颜色由 .kn-rel-{type} 类驱动（knowledge-m3e.css，M3 角色）；dash + 箭头
           仍是非颜色 cue，typed 边即便色盲也能解码。 */}
       <path
         d={`M ${ax} ${ay} Q ${mx} ${my} ${bx} ${by}`}
-        className={`mesh-edge2 rel-${relKey}${isCrossSubject ? ' is-cross' : ''}`}
-        strokeDasharray={isCrossSubject ? '6 4' : cue.dash === '0' ? undefined : cue.dash}
+        className={`kn-edge-path kn-rel-${relKey}${isCrossSubject ? ' is-cross' : ''}`}
+        strokeDasharray={edgeDash(isCrossSubject, cue.dash)}
         markerEnd={cue.arrow ? 'url(#mesh-arrow)' : undefined}
       />
-      <text x={mx} y={my + 6} textAnchor="middle" className="mesh-edge-label mono">
+      <text x={mx} y={my + 6} textAnchor="middle" className="kn-edge-label">
         {cue.glyph} {cue.label}
       </text>
     </g>
@@ -94,13 +106,12 @@ const MeshNode = memo(function MeshNode({
   const label = layoutMeshLabel(node.name);
   return (
     <g
-      className={`mesh-node${isActive ? ' is-active' : ''}${node.isGhost ? ' is-ghost' : ''}`}
+      className={`kn-node${isActive ? ' is-active' : ''}${node.isGhost ? ' is-ghost' : ''}`}
       transform={`translate(${x} ${y})`}
       aria-label={`${label.fullName}${node.isGhost ? '（其他科目）' : ''}`}
       // biome-ignore lint/a11y/useSemanticElements: SVG <g> 不能是 <button>；role=button + tabIndex 是可聚焦图节点的正确 ARIA（旧 KnowledgeGraph 同例）
       role="button"
       tabIndex={0}
-      style={{ cursor: 'pointer' }}
       onClick={() => onPick(node)}
       onKeyDown={(e) => {
         // YUK-718 — role=button 图节点须同时响应 Space；preventDefault
@@ -112,22 +123,18 @@ const MeshNode = memo(function MeshNode({
       }}
     >
       <title>{label.fullName}</title>
-      {/* 三层节点：填充 disc（+shadow）→ 满轨底环 → 掌握度弧。
-          S5 (YUK-335): stroke/选中态全交给 CSS——.mesh-node.is-active
-          .mesh-disc 的 coral stroke 胜过 .mesh-disc.tone-* 规则。 */}
-      <circle
-        className={`mesh-disc tone-${pct == null ? 'none' : tone}`}
-        r={r}
-        filter="url(#nodeShadow)"
-      />
-      <circle r={r} fill="none" className="mesh-track" />
+      {/* 透明命中圈：比可见 disc 大一圈，保证小节点也好点（A2）。 */}
+      <circle className="kn-node-hit" r={r + 6} />
+      {/* 三层节点：填充 disc → 满轨底环 → 掌握度弧。选中 / 聚焦 / 他科 的描边全交给 CSS
+          （.kn-node.is-active .kn-disc 胜过 .kn-disc.tone-*），颜色走 M3 角色。 */}
+      <circle className={`kn-disc tone-${pct == null ? 'none' : tone}`} r={r} />
+      <circle r={r} fill="none" className="kn-track" />
       {/* mastery=null（从未练）只渲 track，不渲 arc——无掌握度可绘。 */}
       {m != null && (
         <circle
           r={r}
           fill="none"
-          className="mesh-arc"
-          stroke={`var(--${tone})`}
+          className={`kn-arc tone-${tone}`}
           strokeWidth="3.5"
           strokeLinecap="round"
           strokeDasharray={circ}
@@ -135,8 +142,8 @@ const MeshNode = memo(function MeshNode({
           transform="rotate(-90)"
         />
       )}
-      <text y={4} textAnchor="middle" className="mesh-node-pct mono">
-        {isContainer ? '容器' : pct == null ? '—' : pct}
+      <text y={4} textAnchor="middle" className="kn-node-pct">
+        {nodeCenterText(isContainer, pct)}
       </text>
       <rect
         x={-label.width / 2}
@@ -144,14 +151,14 @@ const MeshNode = memo(function MeshNode({
         width={label.width}
         height={label.height}
         rx={8}
-        className="mesh-node-label-bg"
+        className="kn-node-label-bg"
       />
       {/* subject-driven: serif-CJK only for genuine yuwen nodes */}
       <text
         y={r + 21}
         textAnchor="middle"
         {...subjectContentPropsForDomain(node.effective_domain, {
-          className: 'mesh-node-label',
+          className: 'kn-node-label',
         })}
       >
         {label.lines.map((line, index) => (
@@ -258,64 +265,47 @@ export function MeshGraph({
   );
 
   return (
-    <div className="mesh-wrap" role="group" aria-label="知识关系图">
-      {/* 缩放 controls（screen-knowledge.jsx L62-68）：缩小 / 百分比 / 放大 / 复位。 */}
-      <div className="mesh-controls">
-        <button
-          type="button"
-          className="mesh-zoom-btn"
-          title="缩小"
-          aria-label="缩小"
-          onClick={() => setView((v) => ({ ...v, k: clampZoom(v.k - 0.1) }))}
-        >
-          <LoomIcon name="minus" size={15} />
-        </button>
-        <span className="mono mesh-zoom">{Math.round(view.k * 100)}%</span>
-        <button
-          type="button"
-          className="mesh-zoom-btn"
-          title="放大"
-          aria-label="放大"
-          onClick={() => setView((v) => ({ ...v, k: clampZoom(v.k + 0.1) }))}
-        >
-          <LoomIcon name="plus" size={15} />
-        </button>
-        <span className="mesh-ctrl-div" />
-        <button
-          type="button"
-          className="mesh-zoom-btn"
-          title="复位"
-          aria-label="复位"
-          onClick={() => setView({ x: 0, y: 0, k: 1 })}
-        >
-          <LoomIcon name="refresh" size={15} />
-        </button>
-      </div>
+    <div className="kn-graph" role="group" aria-label="知识关系图">
       {edges.length === 0 && (
-        <div className="mesh-empty-state" role="status">
-          <LoomIcon name="link" size={16} />
+        <div className="kn-graph-empty" role="status">
+          <Link2 size={16} aria-hidden="true" />
           <strong>关系图还没有连接</strong>
           <span>先从树视图打开一个知识点，或在详情里建立关系。</span>
           {navigate && (
-            <Btn
-              size="sm"
-              variant="secondary"
-              icon="inbox"
-              iconEnd="arrow"
-              onClick={() => navigate('/inbox')}
-            >
+            <Button size="sm" onClick={() => navigate('/inbox')}>
+              <Inbox size={14} aria-hidden="true" />
               查看 AI 关系提议
-            </Btn>
+              <ArrowRight size={14} aria-hidden="true" />
+            </Button>
           )}
         </div>
       )}
 
-      {/* 点阵底 stage：复用 globals .kg-svg-stage（radial-gradient 点阵 + paper-sunk
-          + grab），消除旧 .mesh-canvas 的「纯白双框」。pan/zoom 指针手势挂在内层
-          <svg> 上（与旧渲染层同例，键盘交互由各节点 <g> 提供）。 */}
-      <div className="kg-svg-stage">
+      {/* 点阵底 stage（M3 surface-container-low + outline-variant 点阵）。pan/zoom 指针手势
+          挂在内层 <svg> 上，键盘交互由各节点 <g> 提供。 */}
+      <div className="kn-graph-stage">
+        {/* 缩放 controls：缩小 / 百分比 / 放大 / 复位。浮在图上，所以用玻璃（T3）。 */}
+        <div className="kn-graph-controls un-glass">
+          <IconButton
+            label="缩小"
+            icon={<Minus size={16} />}
+            onClick={() => setView((v) => ({ ...v, k: clampZoom(v.k - 0.1) }))}
+          />
+          <span className="kn-graph-zoom un-num">{Math.round(view.k * 100)}%</span>
+          <IconButton
+            label="放大"
+            icon={<Plus size={16} />}
+            onClick={() => setView((v) => ({ ...v, k: clampZoom(v.k + 0.1) }))}
+          />
+          <span className="kn-graph-ctrl-div" aria-hidden="true" />
+          <IconButton
+            label="复位"
+            icon={<RotateCcw size={16} />}
+            onClick={() => setView({ x: 0, y: 0, k: 1 })}
+          />
+        </div>
         <svg
-          className="kg-svg"
+          className="kn-graph-svg"
           viewBox={`0 0 ${LAYOUT_WIDTH} ${LAYOUT_HEIGHT}`}
           style={{ cursor: drag.current ? 'grabbing' : 'grab', touchAction: 'none' }}
           onPointerDown={(e) => {
@@ -354,10 +344,6 @@ export function MeshGraph({
             >
               <path d="M0 0 L10 5 L0 10 z" fill="context-stroke" />
             </marker>
-            {/* feDropShadow：填充 disc 与点阵纸面分离（screen-knowledge.jsx L75-77）。 */}
-            <filter id="nodeShadow" x="-40%" y="-40%" width="180%" height="180%">
-              <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="rgba(60,50,30,0.18)" />
-            </filter>
           </defs>
           <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
             {edgeEls}
@@ -366,14 +352,13 @@ export function MeshGraph({
         </svg>
       </div>
 
-      {/* 关系图例：typed 边的解码钥匙（screen-knowledge.jsx L108-115）。
-          替换旧的「一行 key-hints 文字」。 */}
-      <div className="mesh-legend">
+      {/* 关系图例：typed 边的解码钥匙。 */}
+      <ul className="kn-graph-legend" aria-label="关系图例">
         {Object.entries(REL_CUE).map(([type, cue]) => (
-          <span key={type} className="rel-legend">
+          <li key={type} className="kn-legend-item">
             <svg width="26" height="10" aria-hidden="true">
               <line
-                className={`rel-${type}`}
+                className={`kn-rel-${type}`}
                 x1="1"
                 y1="5"
                 x2="25"
@@ -382,18 +367,20 @@ export function MeshGraph({
                 markerEnd={cue.arrow ? 'url(#mesh-arrow)' : undefined}
               />
             </svg>
-            <span className="mono">
-              {cue.glyph} {cue.label}
+            <span>
+              <span className="kn-glyph">{cue.glyph}</span> {cue.label}
             </span>
-          </span>
+          </li>
         ))}
-      </div>
-      {crossEdgeCount > 0 && (
-        <div className="mesh-cross-legend" role="status" aria-label={`跨科连接 ${crossEdgeCount}`}>
-          <span className="mesh-cross-legend-mark" aria-hidden="true" />
-          <span>跨科连接 {crossEdgeCount}</span>
-        </div>
-      )}
+        {crossEdgeCount > 0 && (
+          <li className="kn-legend-item kn-legend-cross">
+            <span className="kn-legend-cross-mark" aria-hidden="true" />
+            <span role="status" aria-label={`跨科连接 ${crossEdgeCount}`}>
+              跨科连接 {crossEdgeCount}
+            </span>
+          </li>
+        )}
+      </ul>
     </div>
   );
 }

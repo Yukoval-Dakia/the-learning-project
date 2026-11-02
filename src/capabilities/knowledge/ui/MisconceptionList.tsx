@@ -1,16 +1,16 @@
 // A5 S4 (YUK-531 PR-5) — MisconceptionList:「指向此点的误区」per-KC funnel（RT1 误区
-// 一等异构 + 猜想/候选）。挂在 KnowledgeDetailPage 的 .kd-main 首子（TransferList 上）。
+// 一等异构 + 猜想/候选）。挂在 KnowledgeDetailPage 主栏首段（TransferList 上）。
 //
 // PORT 自设计源 docs/design/loom-refresh/project/screen-knowledge-a5.jsx 的 MisconceptionList /
 // MisconceptionCard（line 125-172）。三处 wire↔design 偏离（map FLAG）：
 //   ① DROP `{mc.note}` —— 节点页 wire 的 MisconceptionRow 无 note 字段；trace 只渲 evidence
 //      event 回链 chips，绝不编造 note。
-//   ② `segment` 驱动两段区分（mock 无 segment 处理）：confirmed 用 `.kd-misc-card.<status>` +
-//      复发中/消退中 status badge；candidate 用 `.kd-misc-card.candidate` + 「猜想 · 候选」tag
-//      （dashed/muted，mirror frontier-tag-propose）。诚实标候选「猜想」，绝不暗示已证（⑥）。
+//   ② `segment` 驱动两段区分（mock 无 segment 处理）：confirmed 用 `data-tone=<status>` +
+//      复发中/消退中 status badge；candidate 用 `data-tone="candidate"` + 「猜想 · 候选」tag
+//      （dashed/muted，同 frontier 的「建议」tag）。诚实标候选「猜想」，绝不暗示已证（⑥）。
 //   ③ `mc.targets` 客户端 filter 去掉 —— wire 已 server-filter per-KC，直接渲 items。
 //
-// 形态：presentational（page-owns-query，mirror S2 FrontierRail）。body-state split 早返
+// 形态：presentational（page-owns-query，mirror S2 FrontierRail）。样式在 knowledge-m3e.css。body-state split 早返
 // （error→retry / loading→quiet / empty→honest-empty / else map），loading/error 绝不折进
 // 业务空态（S2 CodeRabbit 教训）。MisconceptionCard 持本地 trace+verdict 态；纯渲染体抽成
 // MisconceptionCardView（renderToString + element-tree onClick 可测，node 环境无 jsdom）。
@@ -20,10 +20,12 @@
 // 态（card 自管 verdict），onVeto(id,'confirmed') 在页面侧是 no-op（confirmed-archive 是延后
 // soft-track 后端 slice + PR-3 promote flag OFF → confirmed 段 day-one 空）。
 
+import { Check, CircleAlert, History, RotateCcw, Sparkles, X } from 'lucide-react';
 import { useState } from 'react';
 import { scopedPracticeHref } from '@/ui/lib/routes';
-import { Btn } from '@/ui/primitives/Btn';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button } from '@/ui-next/public';
 import type { MisconceptionRow } from './knowledge-api';
 
 export interface MisconceptionListProps {
@@ -106,111 +108,108 @@ export function MisconceptionCardView({
 }) {
   if (verdict === 'wrong') {
     return (
-      <div className="kd-misc-card fading">
-        <div className="kd-misc-top">
-          <span className="kd-misc-ic">
-            <LoomIcon name="check" size={15} />
+      <article className="kn-misc" data-tone="settled">
+        <div className="kn-misc-top">
+          <span className="kn-misc-ic" aria-hidden="true">
+            <Check size={15} />
           </span>
           {/* 单文本节点（模板串）—— 避 React SSR 在文本/插值间插 `<!-- -->` 注释标记，DOM 更干净。 */}
-          <span className="kd-misc-label">{`已纠偏：「${mc.label}」`}</span>
+          <span className="kn-misc-label">{`已纠偏：「${mc.label}」`}</span>
         </div>
-        <p className="kd-misc-belief">谢谢，编排者会把这条误区降权 —— 下次不再据此排题。</p>
-      </div>
+        <p className="kn-misc-belief">谢谢，编排者会把这条误区降权 —— 下次不再据此排题。</p>
+      </article>
     );
   }
 
   const isConfirmed = mc.segment === 'confirmed';
-  const cardClass = `kd-misc-card ${isConfirmed ? mc.status : 'candidate'}`;
+  const cardTone = isConfirmed ? mc.status : 'candidate';
   // D (PR-5): `?? []` 防御（schema 上 evidence 是 notNull default []，纯防御冗余但 cheap，
   // 防 API 漂移传 null 时崩）。E (PR-5): Set 去重——读模型不去重 evidence ids，重复 event ref
   // 会同时产生重复 React key（警告 + 不稳定 reconciliation）与重复显示 chip；去重一并消除两者。
   const evidence = [...new Set(mc.evidence ?? [])];
 
   return (
-    <div className={cardClass}>
-      <div className="kd-misc-top">
-        <span className="kd-misc-ic">
+    <article className="kn-misc" data-tone={cardTone}>
+      <div className="kn-misc-top">
+        <span className="kn-misc-ic" aria-hidden="true">
           {/* confirmed = 确认误区（alert）；candidate = AI 猜想（sparkle，不拉警报）。 */}
-          <LoomIcon name={isConfirmed ? 'alert' : 'sparkle'} size={15} />
+          {isConfirmed ? <CircleAlert size={15} /> : <Sparkles size={15} />}
         </span>
-        <span className="kd-misc-label">{mc.label}</span>
+        <span className="kn-misc-label">{mc.label}</span>
         {isConfirmed ? (
-          <span className={`kd-misc-status ${mc.status}`}>{STATUS_LABEL[mc.status]}</span>
+          <span className="kn-tag kn-misc-status" data-status={mc.status}>
+            {STATUS_LABEL[mc.status]}
+          </span>
         ) : (
           // 诚实标候选——非已证误区（⑥ red line：绝不暗示已证）。
-          <span className="kd-misc-tag-candidate">猜想 · 候选</span>
+          <span className="kn-tag kn-tag-dashed kn-misc-status">猜想 · 候选</span>
         )}
       </div>
-      <p className="kd-misc-belief">{mc.belief}</p>
-      <div className="kd-misc-meta">
-        <span className={`band-chip src-${mc.source}`}>
-          <span className="bc-dot" />
+      <p className="kn-misc-belief">{mc.belief}</p>
+      <div className="kn-misc-meta">
+        <span className={`kn-band src-${mc.source}`}>
+          <span className="kn-band-dot" />
           {SOURCE_LABEL[mc.source]}
         </span>
         {/* 模板串单文本节点 —— conf 定性档 / seen 计数；避 SSR 注释标记，且绝不裸概率（⑥）。 */}
         <span>{`置信 ${mc.conf}`}</span>
-        <span>·</span>
+        <span aria-hidden="true">·</span>
         <span>{`复现 ${mc.seen} 次`}</span>
       </div>
       {trace && (
-        <div className="kd-misc-trace">
+        <p className="kn-misc-trace">
           {evidence.length > 0 ? (
             <span>来自 {evidence.length} 条学习记录。</span>
           ) : (
             // wire 偏离①：无 mc.note；evidence 为空时诚实标，绝不编造依据。
             <span>目前还没有可回看的学习记录。</span>
           )}
-        </div>
+        </p>
       )}
-      <div className="kd-misc-acts">
-        <Btn
-          size="sm"
-          variant="secondary"
-          icon="review"
-          onClick={() => navigate(scopedPracticeHref(knowledgeId))}
-        >
+      <div className="kn-misc-acts">
+        <Button size="sm" onClick={() => navigate(scopedPracticeHref(knowledgeId))}>
+          <RotateCcw size={14} aria-hidden="true" />
           针对性练习
-        </Btn>
-        <button type="button" className="kd-misc-link" onClick={onToggleTrace}>
-          <LoomIcon name="history" size={14} />
+        </Button>
+        <button type="button" className="kn-link un-hit" onClick={onToggleTrace}>
+          <History size={14} aria-hidden="true" />
           追溯
         </button>
         {isConfirmed ? (
           // C (PR-5 review) — 诚实化：confirmed(RT1 误区) 的否决无 live 写路径（confirmed-archive
           // 是延后 soft-track 后端 slice，YUK 待建，flag 翻前补）。没有服务端写就别给会假「已纠偏」的
           // 可点钮（⑥）——disabled 钮 + 旁注；candidate 段才有 live 否决。
-          <span className="kd-misc-veto-deferred">
+          <span className="kn-misc-veto-deferred">
             <button
               type="button"
-              className="kd-misc-link"
+              className="kn-link"
               disabled
               title="确认误区的否决需编排者复核——暂不能在此直接否决"
             >
-              <LoomIcon name="close" size={14} />
+              <X size={14} aria-hidden="true" />
               判错了
             </button>
-            <span className="meta">暂不可否决 · 待编排者复核</span>
+            <span className="kn-misc-veto-note">暂不可否决 · 待编排者复核</span>
           </span>
         ) : (
           <button
             type="button"
-            className="kd-misc-link"
+            className="kn-link un-hit"
             title="若 AI 判错了这个候选误区，纠正它"
             onClick={onVerdictWrong}
           >
-            <LoomIcon name="close" size={14} />
+            <X size={14} aria-hidden="true" />
             判错了
           </button>
         )}
       </div>
       {error && (
-        // B (PR-5 review) — 乐观 verdict 回滚后的内联诚实错误（mirror FrontierRail 的 error
-        // body-state .quiet-empty 风格；不引第三方 toast）。⑥：失败绝不滞留假「已纠偏」。
-        <p className="kd-misc-error quiet-empty" role="alert">
+        // B (PR-5 review) — 乐观 verdict 回滚后的内联诚实错误（不引第三方 toast）。⑥：失败绝不滞留假「已纠偏」。
+        <p className="kn-misc-error" role="alert">
           {error}
         </p>
       )}
-    </div>
+    </article>
   );
 }
 
@@ -261,30 +260,19 @@ export function MisconceptionList({
   // body-state split（早返，避把 loading/error 折进业务空态——S2 CodeRabbit）。本组件无
   // 持续 head（head 由页面 SectionLabel 承担），故 split 直接是组件体。
   if (isError) {
-    return (
-      <p className="quiet-empty">
-        指向此点的误区暂不可用。
-        {onRetry && (
-          <button type="button" className="kd-misc-retry" onClick={onRetry}>
-            <LoomIcon name="refresh" size={13} />
-            重试
-          </button>
-        )}
-      </p>
-    );
+    if (onRetry) return <RetryLine message="指向此点的误区暂不可用。" onRetry={onRetry} />;
+    return <p className="kn-quiet">指向此点的误区暂不可用。</p>;
   }
   if (isLoading) {
-    return <p className="quiet-empty">正在看有没有指向此点的误区…</p>;
+    return <SkeletonLines rows={2} label="正在看有没有指向此点的误区" />;
   }
   if (items.length === 0) {
     return (
-      <p className="quiet-empty">
-        目前没有已记录的相关误区；这不代表已经排除，只是证据还没有形成。
-      </p>
+      <p className="kn-quiet">目前没有已记录的相关误区；这不代表已经排除，只是证据还没有形成。</p>
     );
   }
   return (
-    <>
+    <div className="kn-misc-list">
       {items.map((mc) => (
         <MisconceptionCard
           key={mc.id}
@@ -294,6 +282,6 @@ export function MisconceptionList({
           onVeto={onVeto}
         />
       ))}
-    </>
+    </div>
   );
 }
