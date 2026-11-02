@@ -4,14 +4,10 @@ import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, job_events } from '@/db/schema';
 import { getCorrectionStatus } from '@/kernel/events';
+import { COPILOT_REPLY_ACTION, COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
 import { ApiError } from '@/kernel/http';
 import { lockCopilotSessionSelection } from '@/kernel/locks/copilot-session-selection-lock';
-import {
-  COPILOT_REPLY_ACTION,
-  COPILOT_USER_ASK_ACTION,
-  copilotAskRevertAllows,
-  orchestrateCascadeRevert,
-} from '@/server/revert/cascade-revert';
+import { copilotAskRevertAllows, orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import {
   CopilotCheckpointParamsSchema,
   type CopilotCheckpointRevertRefusalT,

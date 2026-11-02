@@ -15,6 +15,11 @@ import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/deri
 import type { Db, Tx } from '@/db/client';
 import { event, tool_operation } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
+import {
+  COPILOT_ASK_ACTIONS,
+  COPILOT_REPLY_ACTION,
+  COPILOT_USER_ASK_ACTION,
+} from '@/kernel/events/copilot-actions';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import { type CopilotPrimaryView, parseCopilotPrimaryView } from '../primary-view-contract';
 import { type CopilotPublicProse, parseCopilotPublicProse } from '../public-prose-contract';
@@ -95,13 +100,6 @@ export interface CopilotTurnSubagentRun {
   id: string;
   status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'lost';
 }
-
-// The ONLY revert root the endpoint accepts. A copilot_chip_trigger is a user-role
-// turn but NOT a revert root, so its reply must not surface a checkpoint_event_id
-// (that would render a revert button that 404s).
-const USER_ASK_ACTION = 'experimental:copilot_user_ask';
-const USER_ACTIONS = [USER_ASK_ACTION, 'experimental:copilot_chip_trigger'] as const;
-const REPLY_ACTION = 'experimental:copilot_reply';
 
 const DEFAULT_TURN_LIMIT = 20;
 const MAX_TURN_LIMIT = 100;
@@ -372,14 +370,18 @@ async function projectCopilotTurnRows(
   // window; otherwise a reply under an out-of-window retracted parent renders stale content.
   // The parent is a user_ask OR a chip_trigger, so this set is not ask-only.
   const replyParentIds = rows
-    .filter((row) => row.action === REPLY_ACTION && row.caused_by_event_id)
+    .filter((row) => row.action === COPILOT_REPLY_ACTION && row.caused_by_event_id)
     .map((row) => row.caused_by_event_id as string);
   // All typed user-ask ids in the window — the only valid revert roots.
-  const askIds = new Set(rows.filter((row) => row.action === USER_ASK_ACTION).map((row) => row.id));
+  const askIds = new Set(
+    rows.filter((row) => row.action === COPILOT_USER_ASK_ACTION).map((row) => row.id),
+  );
   const toolCallParentIds = [
     ...new Set([
       ...rows
-        .filter((row) => USER_ACTIONS.includes(row.action as (typeof USER_ACTIONS)[number]))
+        .filter((row) =>
+          COPILOT_ASK_ACTIONS.includes(row.action as (typeof COPILOT_ASK_ACTIONS)[number]),
+        )
         .map((row) => row.id),
       ...replyParentIds,
     ]),
@@ -387,10 +389,12 @@ async function projectCopilotTurnRows(
   const taskRunIds = [
     ...new Set([
       ...rows
-        .filter((row) => USER_ACTIONS.includes(row.action as (typeof USER_ACTIONS)[number]))
+        .filter((row) =>
+          COPILOT_ASK_ACTIONS.includes(row.action as (typeof COPILOT_ASK_ACTIONS)[number]),
+        )
         .map((row) => `copilot_run_tool_${row.id}`),
       ...rows
-        .filter((row) => row.action === REPLY_ACTION)
+        .filter((row) => row.action === COPILOT_REPLY_ACTION)
         .map((row) => row.task_run_id)
         .filter((taskRunId): taskRunId is string => taskRunId !== null),
     ]),
@@ -416,7 +420,7 @@ async function projectCopilotTurnRows(
             and(
               inArray(event.id, replyParentIds),
               eq(event.session_id, sessionId),
-              inArray(event.action, [...USER_ACTIONS]),
+              inArray(event.action, [...COPILOT_ASK_ACTIONS]),
             ),
           )
       : Promise.resolve([]),
@@ -427,7 +431,9 @@ async function projectCopilotTurnRows(
     : await readCopilotPublicProse(dbArg, [
         ...new Set([
           ...rows
-            .filter((row) => USER_ACTIONS.includes(row.action as (typeof USER_ACTIONS)[number]))
+            .filter((row) =>
+              COPILOT_ASK_ACTIONS.includes(row.action as (typeof COPILOT_ASK_ACTIONS)[number]),
+            )
             .map((row) => row.id),
           ...replyRunIds,
         ]),
@@ -448,7 +454,7 @@ async function projectCopilotTurnRows(
   // ask id so the ask and reply rows suppress consistently.
   const structuredQuestionAskIds = new Set(
     rows
-      .filter((row) => row.action === REPLY_ACTION && row.caused_by_event_id)
+      .filter((row) => row.action === COPILOT_REPLY_ACTION && row.caused_by_event_id)
       .filter(
         (row) =>
           replySkillTurn((row.payload ?? {}) as Record<string, unknown>)?.structured_question,
@@ -459,7 +465,7 @@ async function projectCopilotTurnRows(
   // outranks an absent mirror: after refresh no side may resurrect an unsafe anchor.
   const checkpointUnsafeAskIds = new Set(
     rows
-      .filter((row) => row.action === REPLY_ACTION && row.caused_by_event_id)
+      .filter((row) => row.action === COPILOT_REPLY_ACTION && row.caused_by_event_id)
       .filter((row) => {
         const payload = (row.payload ?? {}) as Record<string, unknown>;
         const durableFailure = payload.durable_failure;
@@ -484,7 +490,8 @@ async function projectCopilotTurnRows(
 
   const turns: CopilotTurn[] = [];
   for (const row of rows) {
-    const checkpointEventId = row.action === USER_ASK_ACTION ? row.id : row.caused_by_event_id;
+    const checkpointEventId =
+      row.action === COPILOT_USER_ASK_ACTION ? row.id : row.caused_by_event_id;
     if (checkpointEventId && retractedParentIds.has(checkpointEventId)) {
       if (row.id === checkpointEventId) {
         const isConfirmationSubmission =
@@ -504,7 +511,7 @@ async function projectCopilotTurnRows(
     }
     if (statuses.get(row.id)?.state === 'retracted') continue;
     const payload = (row.payload ?? {}) as Record<string, unknown>;
-    if (row.action === REPLY_ACTION) {
+    if (row.action === COPILOT_REPLY_ACTION) {
       const storedProse = parseCopilotPublicProse(payload.public_prose);
       let publicProse =
         storedProse ??
@@ -631,7 +638,7 @@ async function projectCopilotTurnRows(
         at: row.created_at.toISOString(),
         event_id: row.id,
         // The ask row anchors the same checkpoint and must honour the same suppression.
-        ...(row.action === USER_ASK_ACTION && !anchorSuppressed(row.id)
+        ...(row.action === COPILOT_USER_ASK_ACTION && !anchorSuppressed(row.id)
           ? { checkpoint_event_id: row.id }
           : {}),
       });
@@ -677,7 +684,7 @@ export async function getRecentCopilotTurns(
       and(
         eq(event.session_id, session.id),
         ...(opts.forModel ? [eventAllowsDerivationSql()] : []),
-        or(inArray(event.action, [...USER_ACTIONS]), eq(event.action, REPLY_ACTION)),
+        or(inArray(event.action, [...COPILOT_ASK_ACTIONS]), eq(event.action, COPILOT_REPLY_ACTION)),
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))
@@ -788,7 +795,7 @@ export async function getCopilotTurnsBeforeAnchor(
   if (!anchor) {
     throw new CopilotHistoryAnchorError('missing_anchor', opts.anchorEventId);
   }
-  if (!USER_ACTIONS.includes(anchor.action as (typeof USER_ACTIONS)[number])) {
+  if (!COPILOT_ASK_ACTIONS.includes(anchor.action as (typeof COPILOT_ASK_ACTIONS)[number])) {
     throw new CopilotHistoryAnchorError('invalid_anchor_action', opts.anchorEventId);
   }
   if (anchor.session_id !== opts.sessionId) {
@@ -804,11 +811,11 @@ export async function getCopilotTurnsBeforeAnchor(
   // order; the projector reverses this to root→reply pairs. Ordering before LIMIT
   // prevents a backlog from producing orphan replies or blocks of users then AIs.
   const causalDispatchSeq = sql<number>`case
-    when ${event.action} = ${REPLY_ACTION}
+    when ${event.action} = ${COPILOT_REPLY_ACTION}
       then coalesce(${historyParent.dispatch_seq}, ${event.dispatch_seq})
     else ${event.dispatch_seq}
   end`;
-  const replyWithinRoot = sql<number>`case when ${event.action} = ${REPLY_ACTION} then 1 else 0 end`;
+  const replyWithinRoot = sql<number>`case when ${event.action} = ${COPILOT_REPLY_ACTION} then 1 else 0 end`;
   const rows = await dbArg
     .select({
       id: event.id,
@@ -829,11 +836,11 @@ export async function getCopilotTurnsBeforeAnchor(
         or(
           // Root user turns use the anchor's stable insertion-order boundary.
           and(
-            inArray(event.action, [...USER_ACTIONS]),
+            inArray(event.action, [...COPILOT_ASK_ACTIONS]),
             lt(event.dispatch_seq, historyAnchor.dispatch_seq),
           ),
           and(
-            eq(event.action, REPLY_ACTION),
+            eq(event.action, COPILOT_REPLY_ACTION),
             or(
               // Legacy replies may predate caused_by_event_id attribution.
               and(
@@ -844,7 +851,7 @@ export async function getCopilotTurnsBeforeAnchor(
               // reply itself was inserted after the anchor.
               and(
                 eq(historyParent.session_id, opts.sessionId),
-                inArray(historyParent.action, [...USER_ACTIONS]),
+                inArray(historyParent.action, [...COPILOT_ASK_ACTIONS]),
                 lt(historyParent.dispatch_seq, historyAnchor.dispatch_seq),
               ),
             ),
@@ -877,7 +884,7 @@ export async function getCopilotReplyPoliciesBeforeAnchor(
     .where(
       and(
         eq(event.session_id, opts.sessionId),
-        eq(event.action, REPLY_ACTION),
+        eq(event.action, COPILOT_REPLY_ACTION),
         opts.anchorEventId
           ? lt(sql`coalesce(${parent.dispatch_seq}, ${event.dispatch_seq})`, anchor.dispatch_seq)
           : lte(event.created_at, opts.now ?? new Date()),
