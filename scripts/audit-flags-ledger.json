@@ -239,7 +239,7 @@
     "kind": "config",
     "value_type": "enum",
     "reader_marker": "getConfig('SELECTION_POLICY')",
-    "file": "src/capabilities/practice/server/stream-store.ts",
+    "file": "src/capabilities/practice/scheduling/server/stream-store.ts",
     "notes": "Default softmax_mfi; exact env literals (no trim). Unknown values fall back to default; legacy selects deterministic composition.",
     "values": ["legacy", "softmax_mfi"]
   },

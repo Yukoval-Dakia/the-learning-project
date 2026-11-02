@@ -73,7 +73,7 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   COPILOT_NUDGE_EXPIRES_HOURS: 'src/capabilities/copilot/server/nudge-config.ts',
   COPILOT_NUDGE_STREAK_N: 'src/capabilities/copilot/server/nudge-config.ts',
   COPILOT_NUDGE_KC_COOLDOWN_HOURS: 'src/capabilities/copilot/server/nudge-config.ts',
-  SELECTION_POLICY: 'src/capabilities/practice/server/stream-store.ts',
+  SELECTION_POLICY: 'src/capabilities/practice/scheduling/server/stream-store.ts',
   HUB_SYNC_MODE: 'src/capabilities/notes/server/hub-sync-reconciliation.ts',
   MEMORY_RECONCILE_HANDOFF_MODE:
     'src/capabilities/agency/server/memory/memory-reconcile-handoff.ts',
