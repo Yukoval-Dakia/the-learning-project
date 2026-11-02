@@ -97,7 +97,11 @@ export {
   PlacementStarterOutcomeSchema,
   placementSchemaFailure,
 } from '@/kernel/placement-starter-outcome';
-export { runQuestionSupplyNightly } from './jobs/question_supply_nightly';
+// Lazy: the nightly job imports the practice root public surface, which statically imports
+// this module; an eager re-export would form a cycle and load the job at manifest time.
+export const runQuestionSupplyNightly: typeof import('./jobs/question_supply_nightly').runQuestionSupplyNightly =
+  async (...args) =>
+    (await import('./jobs/question_supply_nightly')).runQuestionSupplyNightly(...args);
 export { discoverConfusableContrastTargets } from './server/confusable-contrast-discovery';
 export {
   dispatchPlacementStarterClaim,

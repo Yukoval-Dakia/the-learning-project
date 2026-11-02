@@ -2,8 +2,11 @@
 import { parseJsonObjectLoose } from '@/core/json-extract';
 import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 import { QuizGenOutput, type QuizGenOutputT } from '@/core/schema/quiz_gen';
+import {
+  type PlacementStarterFailure,
+  placementSchemaFailure,
+} from '@/kernel/placement-starter-outcome';
 import type { SubjectProfile } from '@/subjects/profile';
-import { type PlacementStarterFailure, placementSchemaFailure } from '../../supply/public';
 import { assertGeneratedQuestionHasJudgeContract } from '../judge/question-contract';
 
 // output JSON parse + judge-contract assertion. The gate itself is
