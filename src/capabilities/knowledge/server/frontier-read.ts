@@ -91,7 +91,7 @@ function isMastered(
 
 /**
  * Pending proposed prerequisite edges: propose events with no rate event and no
- * rejected fold. Mirrors loadPendingEdgeProposalKeys but returns full payloads.
+ * rejected fold. Same pending rule as the bootstrap dedup in edge-proposal-write.ts.
  */
 async function loadPendingPrereqProposals(db: Db): Promise<PendingPrereqProposal[]> {
   const proposeRows = await db
@@ -102,7 +102,7 @@ async function loadPendingPrereqProposals(db: Db): Promise<PendingPrereqProposal
         eq(event.action, 'propose'),
         eq(event.subject_kind, 'knowledge_edge'),
         // Filter in SQL: only prerequisite proposals, and no terminal rejected fold.
-        // Mirrors loadPendingEdgeProposalKeys — keep in sync.
+        // Same predicates as edge-proposal-write.ts findPendingEdgeProposeEvent.
         sql`(${event.payload}->>'relation_type') = ${RELATION_PREREQUISITE}`,
         sql`(${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'`,
         sql`(${event.payload}->'topology_verdict'->>'status') IS DISTINCT FROM 'reject'`,

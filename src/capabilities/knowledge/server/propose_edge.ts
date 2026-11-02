@@ -1,18 +1,15 @@
-// Knowledge-edge proposal helpers shared by the accept path and frontier_fill.
+// Knowledge-edge supersede apply for the accept path.
 // The nightly edge proposer was folded into knowledge maintenance (YUK-1664);
 // agents now propose edges through the shared propose_knowledge_edge tool. Pending
 // supersede proposals written by the old proposer still apply here on accept.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { EdgeProposalSchemaT } from '@/capabilities/knowledge/tasks/knowledge-tasks';
 import type { ActivityRefT } from '@/core/schema/activity';
-import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
+import type { Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import {
   type EdgeReconcileDecision,
-  edgeReconcileKey,
   insertEdgePlannedRows,
   makeEdgePlannedRow,
   markEdgeReconcileApplied,
@@ -97,60 +94,4 @@ export async function applyApprovedEdgeSupersede(
   await markEdgeReconcileApplied(db, logRow.id);
 
   return { edgeId: newEdgeId, generateEventId: newGenerateEventId };
-}
-
-/**
- * Keys of pending edge proposals: propose events with no rate event and no
- * terminal fold, so frontier_fill does not re-propose the same edge nightly.
- */
-export async function loadPendingEdgeProposalKeys(db: Db): Promise<Set<string>> {
-  const proposeRows = await db
-    .select({ id: event.id, payload: event.payload })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'propose'),
-        eq(event.subject_kind, 'knowledge_edge'),
-        // Folded proposals are terminal. A topology reject carries no rubric
-        // marker, so both predicates are required.
-        sql`(${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'`,
-        sql`(${event.payload}->'topology_verdict'->>'status') IS DISTINCT FROM 'reject'`,
-      ),
-    )
-    .orderBy(desc(event.created_at));
-
-  if (proposeRows.length === 0) return new Set();
-
-  const proposeIds = proposeRows.map((r) => r.id);
-  const rateRows = await db
-    .select({ caused_by_event_id: event.caused_by_event_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'rate'),
-        eq(event.subject_kind, 'knowledge_edge'),
-        inArray(event.caused_by_event_id, proposeIds),
-      ),
-    );
-  const ratedProposeIds = new Set(
-    rateRows.map((r) => r.caused_by_event_id).filter((id): id is string => id !== null),
-  );
-
-  const out = new Set<string>();
-  for (const row of proposeRows) {
-    if (ratedProposeIds.has(row.id)) continue;
-    const p = row.payload as {
-      from_knowledge_id?: unknown;
-      to_knowledge_id?: unknown;
-      relation_type?: unknown;
-    };
-    if (
-      typeof p.from_knowledge_id === 'string' &&
-      typeof p.to_knowledge_id === 'string' &&
-      typeof p.relation_type === 'string'
-    ) {
-      out.add(edgeReconcileKey(p.from_knowledge_id, p.to_knowledge_id, p.relation_type));
-    }
-  }
-  return out;
 }

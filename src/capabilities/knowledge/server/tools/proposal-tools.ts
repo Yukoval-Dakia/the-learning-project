@@ -1,35 +1,26 @@
 // YUK-876 — knowledge proposal DomainTools. Proposal-only: they write
 // inbox-visible events and never apply destructive graph mutations.
 
-import { and, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
-// ADR-0032 D4-E1 — archive-op proposals target a live edge by id; edges.ts is
-// the read authority.
-import { getKnowledgeEdgeById } from '@/capabilities/knowledge/server/edges';
+import {
+  checkProposalCooldownGate,
+  writeKnowledgeEdgeProposal,
+} from '@/capabilities/knowledge/server/edge-proposal-write';
 import {
   knowledgeMutationCooldown,
   writeKnowledgeProposeEvent,
 } from '@/capabilities/knowledge/server/proposals';
-import {
-  type RubricVerdict,
-  validateProposalQuality,
-} from '@/capabilities/knowledge/server/rubric-validator';
-import { RelationTypeSchema, isSymmetricKnowledgeRelation } from '@/core/schema/event/blocks';
+import { RelationTypeSchema } from '@/core/schema/event/blocks';
 // P5.6 / YUK-178 — model-labeled proactive/corrective discriminator.
 import { SuggestionKind } from '@/core/schema/event/known';
-import {
-  type AiProposalPayloadInputT,
-  type ProposalEvidenceRefT,
-  parseAiProposalPayload,
-} from '@/core/schema/proposal';
+import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import { knowledge, knowledge_edge } from '@/db/schema';
+import { knowledge } from '@/db/schema';
 // P5.4-L2 / YUK-174 — per-(kind, relation) gate bump passed to the L1 validator;
 // cold start is a no-op.
-import { resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
-import { listProposalInboxRows } from '@/kernel/proposals/inbox';
-import { findActiveProposalCooldown, withProposalGateLock } from '@/kernel/proposals/signals';
-import { writeAiProposal } from '@/kernel/proposals/writer';
+import { type AdaptiveGateInput, resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
+import { withProposalGateLock } from '@/kernel/proposals/signals';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 // P5.4-L2 / YUK-174 — adaptive gate-bump budget + bias config.
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
@@ -44,68 +35,6 @@ const EvidenceEventIdsSchema = z.array(z.string().min(1)).max(20);
 
 function evidenceRefsFromEventIds(ids: string[]): ProposalEvidenceRefT[] {
   return [...new Set(ids)].map((id) => ({ kind: 'event', id }));
-}
-
-// YUK-1553 — propose-side dedup/cooldown gate shared by both proposal tools.
-// Runs inside withProposalGateLock so reads and write serialize per (kind, cooldown_key).
-interface ProposalCooldownSkip {
-  status: 'skipped:duplicate_pending' | 'skipped:cooldown';
-  /** Existing proposal row id: the pending twin, or the latest proposal on the key. */
-  proposal_id?: string;
-  cooldown_key: string;
-  cooldown_until?: string;
-}
-
-async function checkProposalCooldownGate(
-  db: DbLike,
-  kind: string,
-  cooldownKeys: readonly string[],
-): Promise<ProposalCooldownSkip | null> {
-  const keys = new Set(cooldownKeys);
-  const rows = await listProposalInboxRows(db);
-  const onKey = rows.filter(
-    (row) =>
-      row.kind === kind &&
-      row.payload.cooldown_key !== undefined &&
-      keys.has(row.payload.cooldown_key),
-  );
-  const pending = onKey.find((row) => row.status === 'pending');
-  if (pending) {
-    return {
-      status: 'skipped:duplicate_pending',
-      proposal_id: pending.id,
-      cooldown_key: cooldownKeys[0] ?? (pending.payload.cooldown_key as string),
-    };
-  }
-  const cooling = await findActiveProposalCooldown(db, kind, cooldownKeys);
-  if (cooling) {
-    // Point at the dismissed proposal that started the cooldown (fallback: latest row).
-    const latest = (rows: typeof onKey) =>
-      rows.reduce<(typeof onKey)[number] | undefined>(
-        (best, row) => (best === undefined || row.proposed_at > best.proposed_at ? row : best),
-        undefined,
-      );
-    const dismissed = onKey.filter((row) => row.status === 'dismissed');
-    const source = latest(dismissed) ?? latest(onKey);
-    return {
-      status: 'skipped:cooldown',
-      proposal_id: source?.id,
-      cooldown_key: cooling.cooldown_key,
-      cooldown_until: cooling.cooldown_until.toISOString(),
-    };
-  }
-  return null;
-}
-
-function edgeCooldownKeys(fromId: string, toId: string, relationType: string): string[] {
-  const directional = `knowledge_edge:${fromId}|${toId}|${relationType}`;
-  if (!isSymmetricKnowledgeRelation(relationType)) return [directional];
-  const normalized = [fromId, toId].sort().join('|');
-  return [
-    `knowledge_edge:${normalized}|${relationType}`,
-    directional,
-    `knowledge_edge:${toId}|${fromId}|${relationType}`,
-  ];
 }
 
 async function getKnowledgeNode(
@@ -250,205 +179,72 @@ async function proposeKnowledgeEdgeCreate(
     };
   }
 
-  const cooldownKeys = edgeCooldownKeys(fromKnowledgeId, toKnowledgeId, relationType);
-  const cooldownKey = cooldownKeys[0];
-
-  // YUK-1553 — duplicate/pending/cooldown reads and the write share one
-  // advisory-locked txn; rubric/adaptive stay inside so both see the serialized world.
-  return await withProposalGateLock(ctx.db, 'knowledge_edge', cooldownKeys, async (tx) => {
-    const duplicateLiveEdge = (
-      await tx
-        .select({ id: knowledge_edge.id })
-        .from(knowledge_edge)
-        .where(
-          and(
-            isSymmetricKnowledgeRelation(relationType)
-              ? or(
-                  and(
-                    eq(knowledge_edge.from_knowledge_id, fromKnowledgeId),
-                    eq(knowledge_edge.to_knowledge_id, toKnowledgeId),
-                  ),
-                  and(
-                    eq(knowledge_edge.from_knowledge_id, toKnowledgeId),
-                    eq(knowledge_edge.to_knowledge_id, fromKnowledgeId),
-                  ),
-                )
-              : and(
-                  eq(knowledge_edge.from_knowledge_id, fromKnowledgeId),
-                  eq(knowledge_edge.to_knowledge_id, toKnowledgeId),
-                ),
-            eq(knowledge_edge.relation_type, relationType),
-            isNull(knowledge_edge.archived_at),
-          ),
-        )
-        .limit(1)
-    )[0];
-    if (duplicateLiveEdge) {
-      return {
-        status: 'skipped:duplicate_live_edge',
-        edge_id: duplicateLiveEdge.id,
-        reason: duplicateLiveEdge.id,
-      };
-    }
-
-    const skip = await checkProposalCooldownGate(tx, 'knowledge_edge', cooldownKeys);
-    if (skip) {
-      return {
-        status: skip.status,
-        proposal_id: skip.proposal_id,
-        cooldown_key: skip.cooldown_key,
-        cooldown_until: skip.cooldown_until,
-      };
-    }
-
-    const proposalPayload = {
-      kind: 'knowledge_edge' as const,
-      target: { subject_kind: 'knowledge_edge' as const, subject_id: null },
-      reason_md: input.reasoning,
-      evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
-      proposed_change: {
-        // Explicit create marker keeps the payload self-describing.
-        edge_op: 'create' as const,
-        from_knowledge_id: fromKnowledgeId,
-        to_knowledge_id: toKnowledgeId,
-        relation_type: relationType,
-        weight: input.weight ?? 1,
-      },
-      cooldown_key: cooldownKey,
-      // P5.6 — explicit model label; survives parseAiProposalPayload into the rubric.
-      suggestion_kind: input.suggestion_kind ?? 'proactive',
-    };
-
-    // P5.4-L2 — resolve the adaptive bump for this (knowledge_edge, relation).
-    // Only agents use it. A digest error must not block pure L1, so downgrade to
-    // undefined (same as cold start).
-    let adaptive: Awaited<ReturnType<typeof resolveEdgeGateBump>> | undefined;
-    if (ctx.callerActor.kind === 'agent') {
-      try {
-        adaptive = await resolveEdgeGateBump(
-          tx,
-          relationType,
-          PROPOSAL_FEEDBACK_BUDGET,
-          PROPOSAL_GATE_BIAS_CONFIG,
-        );
-      } catch (bumpErr) {
-        adaptive = undefined;
-        // Evidence-first: log the soft-layer downgrade via ctx.db (an independent
-        // side-record that survives a gate rollback). Logging must never break the
-        // tool path; fall back to console.
-        const errorReason = bumpErr instanceof Error ? bumpErr.message : String(bumpErr);
-        try {
-          await writeToolCallLog(ctx.db, {
-            task_run_id: ctx.taskRunId,
-            task_kind: ctx.callerActor.ref,
-            tool_name: 'propose_knowledge_edge:resolveEdgeGateBump',
-            effect: 'read',
-            input_json: { relation_type: relationType },
-            output_json: { adaptive_downgraded: true },
-            error_reason: errorReason,
-            iteration: 0,
-            latency_ms: 0,
-            cost: 0,
-          });
-        } catch (logErr) {
-          console.error('[propose_knowledge_edge] adaptive-bump downgrade log failed', {
-            task_run_id: ctx.taskRunId,
-            bump_error: errorReason,
-            err: logErr,
-          });
-        }
-      }
-    }
-
-    // P5.4 — shared rubric floor before the write; agents strict, users structural-only.
-    const verdict = await validateProposalQuality(
-      parseAiProposalPayload(proposalPayload),
-      tx,
-      {
-        isAgent: ctx.callerActor.kind === 'agent',
-        actorRef: ctx.callerActor.ref,
-      },
-      adaptive,
-    );
-    if (!verdict.ok) {
-      return await foldRubricRejectedEdge(ctx, tx, proposalPayload, cooldownKey, verdict, {
-        from_knowledge_id: fromKnowledgeId,
-        to_knowledge_id: toKnowledgeId,
-        relation_type: relationType,
-        weight: input.weight ?? 1,
-        reasoning: input.reasoning,
-      });
-    }
-
-    const proposalId = await writeAiProposal(tx, {
-      actor_ref: ctx.callerActor.ref,
-      outcome: 'success',
-      payload: proposalPayload,
-      task_run_id: ctx.taskRunId,
-      caused_by_event_id: ctx.causedByEventId ?? null,
-    });
-
-    return { status: 'proposed', proposal_id: proposalId, cooldown_key: cooldownKey };
-  });
-}
-
-// P5.4 — on rejection, write the propose event anyway, marked rubric-rejected.
-// Folded as an audit/L2 signal and excluded from live-pending dedup because the
-// inbox derives a terminal status.
-//
-// Do not log here: the mcp-bridge DomainTool wrapper already logs exactly one
-// tool_call_log from the return value; a second log would double-count and
-// mis-flag a soft reject as a hard failure.
-async function foldRubricRejectedEdge(
-  ctx: ToolContext,
-  db: DbLike,
-  proposalPayload: AiProposalPayloadInputT,
-  cooldownKey: string,
-  verdict: Extract<RubricVerdict, { ok: false }>,
-  // Narrowed create-edge fields (fold is only reachable from create).
-  edge: {
-    from_knowledge_id: string;
-    to_knowledge_id: string;
-    relation_type: string;
-    weight: number;
-    reasoning: string;
-  },
-): Promise<ProposeKnowledgeEdgeOutput> {
-  const proposalId = await writeAiProposal(db, {
-    actor_ref: ctx.callerActor.ref,
-    outcome: 'success',
-    payload: proposalPayload,
-    event_override: {
-      action: 'propose',
-      subject_kind: 'knowledge_edge',
-      payload: {
-        // Folded rejection is always create-op; archive never reaches the rubric.
-        edge_op: 'create',
-        from_knowledge_id: edge.from_knowledge_id,
-        to_knowledge_id: edge.to_knowledge_id,
-        relation_type: edge.relation_type,
-        weight: edge.weight,
-        reasoning: edge.reasoning,
-        rubric_verdict: { ok: false, gate: verdict.gate, reason: verdict.reason },
-      },
+  return await writeKnowledgeEdgeProposal(ctx.db, {
+    validate: 'rubric',
+    change: {
+      edge_op: 'create',
+      from_knowledge_id: fromKnowledgeId,
+      to_knowledge_id: toKnowledgeId,
+      relation_type: relationType,
+      weight: input.weight ?? 1,
     },
+    reason_md: input.reasoning,
+    evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
+    // P5.6 — explicit model label; survives parseAiProposalPayload into the rubric.
+    suggestion_kind: input.suggestion_kind ?? 'proactive',
+    actor_ref: ctx.callerActor.ref,
     task_run_id: ctx.taskRunId,
     caused_by_event_id: ctx.causedByEventId ?? null,
+    // P5.4 — agents strict, users structural-only.
+    rubric: { isAgent: ctx.callerActor.kind === 'agent', actorRef: ctx.callerActor.ref },
+    resolveAdaptive:
+      ctx.callerActor.kind === 'agent'
+        ? (tx) => resolveAdaptiveEdgeGateBump(ctx, tx, relationType)
+        : undefined,
   });
-
-  return {
-    status: 'skipped:rubric_rejected',
-    proposal_id: proposalId,
-    cooldown_key: cooldownKey,
-    gate: verdict.gate,
-    reason: verdict.reason,
-  };
 }
 
-// ADR-0032 — one pending archive per edge id; a second call dedups instead of
-// stacking inbox rows.
-function edgeArchiveCooldownKey(edgeId: string): string {
-  return `knowledge_edge_archive:${edgeId}`;
+// P5.4-L2 — adaptive bump for this (knowledge_edge, relation). A digest error must
+// not block pure L1, so it downgrades to undefined (same as cold start).
+async function resolveAdaptiveEdgeGateBump(
+  ctx: ToolContext,
+  tx: DbLike,
+  relationType: string,
+): Promise<AdaptiveGateInput | undefined> {
+  try {
+    return await resolveEdgeGateBump(
+      tx,
+      relationType,
+      PROPOSAL_FEEDBACK_BUDGET,
+      PROPOSAL_GATE_BIAS_CONFIG,
+    );
+  } catch (bumpErr) {
+    // Evidence-first: log the soft-layer downgrade via ctx.db (an independent
+    // side-record that survives a gate rollback). Logging must never break the
+    // tool path; fall back to console.
+    const errorReason = bumpErr instanceof Error ? bumpErr.message : String(bumpErr);
+    try {
+      await writeToolCallLog(ctx.db, {
+        task_run_id: ctx.taskRunId,
+        task_kind: ctx.callerActor.ref,
+        tool_name: 'propose_knowledge_edge:resolveEdgeGateBump',
+        effect: 'read',
+        input_json: { relation_type: relationType },
+        output_json: { adaptive_downgraded: true },
+        error_reason: errorReason,
+        iteration: 0,
+        latency_ms: 0,
+        cost: 0,
+      });
+    } catch (logErr) {
+      console.error('[propose_knowledge_edge] adaptive-bump downgrade log failed', {
+        task_run_id: ctx.taskRunId,
+        bump_error: errorReason,
+        err: logErr,
+      });
+    }
+    return undefined;
+  }
 }
 
 // ADR-0032 — archive executor: proposes soft-deleting a live edge through the
@@ -460,70 +256,16 @@ async function proposeKnowledgeEdgeArchive(
   if (!input.edge_id) {
     return { status: 'skipped:edge_not_found', reason: "op 'archive' requires edge_id" };
   }
-  const edgeId = input.edge_id;
-  const cooldownKey = edgeArchiveCooldownKey(edgeId);
-  // YUK-1553 — dedup + write inside one (kind, cooldown_key) advisory-locked txn.
-  return await withProposalGateLock(ctx.db, 'knowledge_edge', [cooldownKey], async (tx) => {
-    const edge = await getKnowledgeEdgeById(tx, edgeId);
-    // Target must be a live edge; missing/already-archived is a no-op.
-    if (!edge || edge.archived_at !== null) {
-      return { status: 'skipped:edge_not_found', edge_id: edgeId, reason: edgeId };
-    }
-
-    const skip = await checkProposalCooldownGate(tx, 'knowledge_edge', [cooldownKey]);
-    if (skip) {
-      return {
-        status: skip.status,
-        proposal_id: skip.proposal_id,
-        cooldown_key: skip.cooldown_key,
-        cooldown_until: skip.cooldown_until,
-      };
-    }
-
-    const proposalPayload = {
-      kind: 'knowledge_edge' as const,
-      target: { subject_kind: 'knowledge_edge' as const, subject_id: edgeId },
-      reason_md: input.reasoning,
-      evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
-      proposed_change: {
-        edge_op: 'archive' as const,
-        // Endpoints/relation describe the archived edge; archive_edge_id is the
-        // authoritative target the accept applier flips.
-        from_knowledge_id: edge.from_knowledge_id,
-        to_knowledge_id: edge.to_knowledge_id,
-        relation_type: edge.relation_type,
-        weight: edge.weight,
-        archive_edge_id: edgeId,
-      },
-      cooldown_key: cooldownKey,
-      suggestion_kind: input.suggestion_kind ?? 'proactive',
-    };
-
-    // Shape uniformity only; archive short-circuits {ok:true} and is never folded.
-    const verdict = await validateProposalQuality(parseAiProposalPayload(proposalPayload), tx, {
-      isAgent: ctx.callerActor.kind === 'agent',
-      actorRef: ctx.callerActor.ref,
-    });
-    if (!verdict.ok) {
-      // Defensive: a future structural gate could reject an archive. Surface it,
-      // but do not fold a create-shaped event for an archive.
-      return {
-        status: 'skipped:rubric_rejected',
-        cooldown_key: cooldownKey,
-        gate: verdict.gate,
-        reason: verdict.reason,
-      };
-    }
-
-    const proposalId = await writeAiProposal(tx, {
-      actor_ref: ctx.callerActor.ref,
-      outcome: 'success',
-      payload: proposalPayload,
-      task_run_id: ctx.taskRunId,
-      caused_by_event_id: ctx.causedByEventId ?? null,
-    });
-
-    return { status: 'proposed', proposal_id: proposalId, cooldown_key: cooldownKey };
+  return await writeKnowledgeEdgeProposal(ctx.db, {
+    validate: 'rubric',
+    change: { edge_op: 'archive', edge_id: input.edge_id },
+    reason_md: input.reasoning,
+    evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
+    suggestion_kind: input.suggestion_kind ?? 'proactive',
+    actor_ref: ctx.callerActor.ref,
+    task_run_id: ctx.taskRunId,
+    caused_by_event_id: ctx.causedByEventId ?? null,
+    rubric: { isAgent: ctx.callerActor.kind === 'agent', actorRef: ctx.callerActor.ref },
   });
 }
 
