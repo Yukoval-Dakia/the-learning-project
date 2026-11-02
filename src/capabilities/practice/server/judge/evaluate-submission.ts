@@ -57,22 +57,20 @@ import { ApiError } from '@/kernel/http';
 import { checkRateLimit } from '@/kernel/request-rate-limit';
 import {
   type ActivateEvaluationRequestT,
-  ModelSliceRegistrationError,
   type SettlementObservers,
   activateEvaluation,
-  assertModelAdmissionSliceRegistrable,
-  createJevModelExecutor,
-  createPiModelExecutor,
-  createRubricModelExecutor,
-  currentModelPins,
-  gradingSliceMatchesLivePin,
   learningSettlement,
-  lookupGroupSubjects,
-  modelSliceIdFor,
-  registerModelAdmissionSlice,
   snapshotAssessmentLearningScope,
   withdrawCapturedOccurrence,
 } from '@/server/assessment/runtime';
+import { lookupGroupSubjects } from '@/kernel/read-models/model-admission';
+import { createJevModelExecutor } from '../../grading/server/jev-model-executor';
+import {
+  currentModelPins,
+  gradingSliceMatchesLivePin,
+} from '../../grading/server/model-slice-registry';
+import { createPiModelExecutor } from '../../grading/server/pi-model-executor';
+import { createRubricModelExecutor } from '../../grading/server/rubric-model-executor';
 import {
   authorizeConfirmationCorrection,
   bindAppealExecution,
@@ -87,17 +85,7 @@ import {
 import { createRecordedModelExecutor } from './recorded-model-executor';
 
 // Native assessment runtime ports are assembled at this existing capability boundary.
-// C2 — 留出题准入 job 经同一边界读取登记处（不新增跨层边）。
-export {
-  ModelSliceRegistrationError,
-  assertModelAdmissionSliceRegistrable,
-  currentModelPins,
-  lookupGroupSubjects,
-  modelSliceIdFor,
-  registerModelAdmissionSlice,
-  snapshotAssessmentLearningScope,
-  withdrawCapturedOccurrence,
-};
+export { snapshotAssessmentLearningScope, withdrawCapturedOccurrence };
 
 /**
  * 装配描述符：在本模块组合点按 descriptor 铸

@@ -3,21 +3,19 @@
 // A slice is pinned to the model and contract version that will actually run.
 // A drifted pin stops serving. The holdout has to be run again.
 
-import { and, eq, inArray, or } from 'drizzle-orm';
+import { and, eq, or } from 'drizzle-orm';
 import { type TaskKind, tasks } from '@/capabilities/task-registry';
 import { canonicalHash } from '@/core/migration/canonical';
 import { ASSESSMENT_RUBRIC_PROMPT_REVISION } from '@/core/schema/assessment/model-decision';
 import type {
   AdmittedModelSliceT,
-  ModelAdmissionContext,
   ModelResponseClass,
 } from '@/core/schema/assessment/serving-admission';
 import type { Db, Tx } from '@/db/client';
-import { model_admission_slice, question } from '@/db/schema';
-import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
+import { model_admission_slice } from '@/db/schema';
+import { admittedSliceFromRow } from '@/kernel/read-models/model-admission';
 import { JEV_CANONICAL_MODEL } from '@/server/ai/pricing';
 import { resolveConfiguredTaskModel } from '@/server/ai/providers';
-import { resolveSubjectProfile } from '@/subjects/profile';
 
 type SliceRow = typeof model_admission_slice.$inferSelect;
 
@@ -85,32 +83,6 @@ export function currentModelPins(): ReadonlyMap<string, { model: string; model_v
   return pins;
 }
 
-function rowToSlice(row: SliceRow): AdmittedModelSliceT {
-  return {
-    slice_id: row.slice_id,
-    subject: row.subject,
-    response_class: row.response_class,
-    task_kind: row.task_kind,
-    model: row.model,
-    model_version: row.model_version,
-    holdout_evidence_ref: row.holdout_evidence_ref,
-    admitted_at: row.admitted_at.toISOString(),
-    admitted_by: row.admitted_by,
-  };
-}
-
-/** Active slices plus the current pins. Read only. */
-export async function resolveModelAdmissionContext(db: Db | Tx): Promise<ModelAdmissionContext> {
-  const rows = await db
-    .select()
-    .from(model_admission_slice)
-    .where(eq(model_admission_slice.status, 'active'));
-  return {
-    slices: new Map(rows.map((row) => [row.slice_id, rowToSlice(row)])),
-    current_models: currentModelPins(),
-  };
-}
-
 /**
  * Identity is the hash of the five natural-key fields.
  * Evidence, actor, and time stay out. Including them would make the stored id
@@ -131,48 +103,6 @@ export function modelSliceIdFor(input: {
     model_version: input.model_version,
   };
   return `slice_${canonicalHash(identity).slice(0, 32)}`;
-}
-
-/** Same bridge as the holdout job: first knowledge id, then effective domain, then subject. */
-export type GroupSubjectLookup =
-  | { readonly kind: 'subject'; readonly subject: string }
-  | { readonly kind: 'missing_group' }
-  | { readonly kind: 'unlabeled' }
-  | { readonly kind: 'no_domain'; readonly knowledge_id: string };
-
-export async function lookupGroupSubjects(
-  db: Db | Tx,
-  groupIds: readonly string[],
-): Promise<Map<string, GroupSubjectLookup>> {
-  const unique = [...new Set(groupIds)];
-  const out = new Map<string, GroupSubjectLookup>();
-  if (unique.length === 0) return out;
-  const rows = await db
-    .select({ id: question.id, knowledge_ids: question.knowledge_ids })
-    .from(question)
-    .where(inArray(question.id, unique));
-  const knowledgeByGroup = new Map(rows.map((row) => [row.id, row.knowledge_ids[0] ?? null]));
-  const domains = await batchResolveEffectiveDomains(db, [
-    ...new Set([...knowledgeByGroup.values()].filter((id): id is string => id !== null)),
-  ]);
-  for (const groupId of unique) {
-    if (!knowledgeByGroup.has(groupId)) {
-      out.set(groupId, { kind: 'missing_group' });
-      continue;
-    }
-    const knowledgeId = knowledgeByGroup.get(groupId) ?? null;
-    if (knowledgeId === null) {
-      out.set(groupId, { kind: 'unlabeled' });
-      continue;
-    }
-    const domain = domains.get(knowledgeId) ?? null;
-    if (domain === null) {
-      out.set(groupId, { kind: 'no_domain', knowledge_id: knowledgeId });
-      continue;
-    }
-    out.set(groupId, { kind: 'subject', subject: resolveSubjectProfile(domain).id });
-  }
-  return out;
 }
 
 const RETIRED_SLICE_DETAIL = (sliceId: string) =>
@@ -302,7 +232,7 @@ export async function registerModelAdmissionSlice(
       existing.holdout_evidence_ref === input.holdout_evidence_ref &&
       existing.admitted_by === input.admitted_by
     ) {
-      return rowToSlice(existing);
+      return admittedSliceFromRow(existing);
     }
     throw new ModelSliceRegistrationError(
       'slice_conflict',
@@ -332,7 +262,7 @@ export async function registerModelAdmissionSlice(
     }
     throw error;
   }
-  return rowToSlice({
+  return admittedSliceFromRow({
     slice_id: sliceId,
     subject: input.subject,
     response_class: input.response_class,

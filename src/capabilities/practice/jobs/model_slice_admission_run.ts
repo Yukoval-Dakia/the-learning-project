@@ -35,14 +35,14 @@ import {
 import type { Db } from '@/db/client';
 import { event, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { lookupGroupSubjects } from '@/kernel/read-models/model-admission';
 import {
   assertModelAdmissionSliceRegistrable,
-  createAdmissionRunExecutor,
   currentModelPins,
-  lookupGroupSubjects,
   modelSliceIdFor,
   registerModelAdmissionSlice,
-} from '../server/judge/evaluate-submission';
+} from '../grading/server/model-slice-registry';
+import { createAdmissionRunExecutor } from '../server/judge/evaluate-submission';
 
 /**
  * 准入阈值（config value）。min_items = 每科至少 30 道留出题；

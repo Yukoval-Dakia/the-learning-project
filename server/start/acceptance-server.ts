@@ -11,8 +11,11 @@ import { createFrontdoor } from '../frontdoor';
 const env = getServerEnv();
 requireApiInternalToken(env);
 const port = resolveApiPort(env.API_PORT);
-const { installPracticeHostOperations } = await import('@/capabilities/practice/public');
+const { installModelAdmissionPins, installPracticeHostOperations } = await import(
+  '@/capabilities/practice/public'
+);
 await installPracticeHostOperations();
+await installModelAdmissionPins();
 assertComposedRoutesDeclared(capabilities);
 const fetch = await createFrontdoor(buildHonoApp(capabilities));
 const server = serve({ fetch, hostname: '127.0.0.1', port });

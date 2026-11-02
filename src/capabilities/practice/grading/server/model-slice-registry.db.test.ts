@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { canonicalHash } from '@/core/migration/canonical';
 import { model_admission_slice } from '@/db/schema';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import {
   ModelSliceRegistrationError,
   assertModelAdmissionSliceRegistrable,

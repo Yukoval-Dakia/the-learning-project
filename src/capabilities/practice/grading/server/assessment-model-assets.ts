@@ -14,7 +14,7 @@ import {
 import {
   containsRenderedImage,
   hasInlineQuestionImage,
-} from '@/server/assessment/jev-model-executor';
+} from './jev-model-executor';
 
 export {
   type AssessmentAssetBytes,

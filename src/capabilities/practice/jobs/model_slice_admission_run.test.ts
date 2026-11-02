@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ModelUnitOutcomeT } from '@/core/schema/assessment';
-import { currentModelPins } from '@/server/assessment/model-slice-registry';
+import { currentModelPins } from '../grading/server/model-slice-registry';
 import {
   admissionCallWindowMs,
   holdoutItemFromOutcome,

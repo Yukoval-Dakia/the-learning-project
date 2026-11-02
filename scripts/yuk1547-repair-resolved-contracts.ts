@@ -131,10 +131,12 @@ async function servableCount(db: Db, groupIds: string[]) {
 async function main() {
   const cli = parseArgs(process.argv.slice(2));
   const { entries } = await loadEntries(cli.manifestPath);
-  const [{ db }, repair] = await Promise.all([
+  const [{ db }, repair, { installModelAdmissionPins }] = await Promise.all([
     import('@/db/client'),
     import('@/capabilities/practice/server/admission/resolved-repair'),
+    import('@/capabilities/practice/public'),
   ]);
+  await installModelAdmissionPins();
   const groupIds = entries.map((entry) => entry.group_id);
   try {
     if (cli.command === 'plan') {

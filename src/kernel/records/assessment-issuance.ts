@@ -49,7 +49,7 @@ import {
   type GroupSubjectLookup,
   lookupGroupSubjects,
   resolveModelAdmissionContext,
-} from '@/server/assessment/model-slice-registry';
+} from '@/kernel/read-models/model-admission';
 
 function subjectIdFromLookup(lookup: GroupSubjectLookup | undefined): string | null {
   return lookup?.kind === 'subject' ? lookup.subject : null;

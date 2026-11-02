@@ -21,7 +21,7 @@ import {
   modelSliceIdFor,
   registerModelAdmissionSlice,
   retireModelAdmissionSlice,
-} from '@/server/assessment/model-slice-registry';
+} from '../grading/server/model-slice-registry';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   buildModelSliceAdmissionRunHandler,
