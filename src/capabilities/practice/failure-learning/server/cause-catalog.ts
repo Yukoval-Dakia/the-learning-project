@@ -19,12 +19,12 @@ import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-poli
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-context';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+import type { PracticeTaskRunFn } from '../../server/task-runtime';
 import {
   type CauseCategoryProposeInput,
   parseCauseCategoryProposeOutput,
 } from '../tasks/cause-category-propose';
 import { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './cause-overlay';
-import type { PracticeTaskRunFn } from './task-runtime';
 
 /** other 复发触发提议的阈值（ticket「复发 ≥k」的 k——粗粒度，owner 仍会 vet）。 */
 const OTHER_RECURRENCE_FLOOR = 3;

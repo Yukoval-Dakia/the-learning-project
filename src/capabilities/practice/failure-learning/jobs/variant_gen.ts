@@ -1,12 +1,11 @@
 import type { Job } from 'pg-boss';
-
-import { createFailureLearning } from '@/capabilities/practice/server/failure-learning';
 import {
   type PracticeTaskRunFn,
   makePracticeTaskRunFn,
 } from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
+import { createFailureLearning } from '../server/failure-learning';
 import { type FailureLearningJobData, failureLearningAttemptId } from './failure-learning-jobs';
 
 export type VariantGenJobData = FailureLearningJobData;

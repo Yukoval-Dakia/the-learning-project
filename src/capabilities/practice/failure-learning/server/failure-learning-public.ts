@@ -1,6 +1,6 @@
 import type { Db } from '@/db/client';
+import type { PracticeTaskRunFn } from '../../server/task-runtime';
 import { type VariantProposalResult, createFailureLearning } from './failure-learning';
-import type { PracticeTaskRunFn } from './task-runtime';
 
 export interface ProposeFailureVariantInput {
   db: Db;

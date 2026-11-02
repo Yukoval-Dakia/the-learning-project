@@ -5,16 +5,25 @@
  *   映射到迁移目标，未命中的归练习面 face（根目录的最终形态）。
  * - 边集合只减不增：非测试、非组合文件发出的跨 owner import 记为 owner 对。出现基线之外的
  *   对即失败；基线里已消失的对只提示，不要求同 PR 删除——并行切片不必争改同一个基线文件，
- *   `--write-baseline` 只收紧（删除消失的对），新增对只能在 PR 里手改基线并说明。
+ *   `--write-baseline` 只收紧（删除消失的对）。
+ * - 第二道上限是不可变的比较基（`--base <sha>` / `CAPABILITY_BASE_SHA`，否则与 origin/main 的
+ *   merge-base）：同一套映射在基提交的树上重算 owner 对，HEAD 出现基上没有的对即失败，
+ *   手改基线也放不进新边。
  * - 已建子 owner 目录只能经 `<owner>/public.ts` 被目录外引用；根 `manifest.ts` 另可引用
  *   `<owner>/manifest-part.ts`，根 `tasks/index.ts` 另可引用 `<owner>/tasks/*`（任务目录组合
  *   不得加载应用 public，见 `task-public.ts`）。
  */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { relative, resolve, sep } from 'node:path';
+import { posix, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { importedReferences, resolveImportTarget } from './audit-capability-boundaries';
+import {
+  listTreeFiles,
+  readBlobs,
+  resolveAuditBaseSha,
+  resolveSpecifierInTree,
+} from './lib/git-base-scan';
 
 const PRACTICE = 'src/capabilities/practice/';
 const BASELINE_PATH = 'scripts/practice-subowner-baseline.json';
@@ -166,20 +175,23 @@ export interface PracticeSubownerScan {
   publicOnlyViolations: string[];
 }
 
-export function scanPracticeSubowners(projectRoot: string): PracticeSubownerScan {
-  const root = resolve(projectRoot, PRACTICE);
-  const files: string[] = [];
-  walk(root, files);
+interface PracticeSource {
+  /** Path relative to practice/, posix. */
+  path: string;
+  code: string;
+  /** Resolves an import specifier to a practice-relative path, or undefined. */
+  resolve(source: string): string | undefined;
+}
+
+function scanSources(sources: readonly PracticeSource[]): PracticeSubownerScan {
   const edges = new Map<string, string[]>();
   const publicOnlyViolations: string[] = [];
-  for (const file of files.sort()) {
-    const from = relative(root, file).split(sep).join('/');
+  for (const source of [...sources].sort((a, b) => a.path.localeCompare(b.path))) {
+    const from = source.path;
     const fromDir = subownerDir(from);
-    for (const reference of importedReferences(readFileSync(file, 'utf8'), file)) {
-      const target = resolveImportTarget(projectRoot, file, reference.source);
-      if (!target || !existsSync(target)) continue;
-      const to = relative(root, target).split(sep).join('/');
-      if (to.startsWith('..')) continue;
+    for (const reference of importedReferences(source.code, from)) {
+      const to = source.resolve(reference.source);
+      if (!to) continue;
       const toDir = subownerDir(to);
       if (toDir && toDir !== fromDir) {
         const allowed =
@@ -197,6 +209,49 @@ export function scanPracticeSubowners(projectRoot: string): PracticeSubownerScan
     }
   }
   return { edges, publicOnlyViolations };
+}
+
+export function scanPracticeSubowners(projectRoot: string): PracticeSubownerScan {
+  const root = resolve(projectRoot, PRACTICE);
+  const files: string[] = [];
+  walk(root, files);
+  return scanSources(
+    files.map((file) => ({
+      path: relative(root, file).split(sep).join('/'),
+      code: readFileSync(file, 'utf8'),
+      resolve(source: string) {
+        const target = resolveImportTarget(projectRoot, file, source);
+        if (!target || !existsSync(target)) return undefined;
+        const to = relative(root, target).split(sep).join('/');
+        return to.startsWith('..') ? undefined : to;
+      },
+    })),
+  );
+}
+
+/** Same scan over the committed tree at `ref` (blobs, not the worktree). */
+export function scanPracticeSubownersAtRef(projectRoot: string, ref: string): PracticeSubownerScan {
+  const tree = listTreeFiles(projectRoot, ref, []);
+  const pathSet = new Set(tree.map((entry) => entry.path));
+  const paths = tree
+    .map((entry) => entry.path)
+    .filter((path) => path.startsWith(PRACTICE) && SOURCE_RE.test(path) && !TEST_RE.test(path))
+    .filter((path) => !path.split('/').some((segment) => segment.startsWith('.')));
+  const blobs = readBlobs(projectRoot, ref, paths);
+  if (blobs.size !== paths.length) {
+    throw new Error(`cannot read every practice source at ${ref}`);
+  }
+  return scanSources(
+    paths.map((path) => ({
+      path: path.slice(PRACTICE.length),
+      code: blobs.get(path) ?? '',
+      resolve(source: string) {
+        const target = resolveSpecifierInTree(pathSet, posix.dirname(path), source);
+        if (!target || !pathSet.has(target) || !target.startsWith(PRACTICE)) return undefined;
+        return target.slice(PRACTICE.length);
+      },
+    })),
+  );
 }
 
 const baselineSchema = z.strictObject({
@@ -226,13 +281,20 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     : undefined;
   const current = sortPairs(edges.keys());
   const added = baseline ? current.filter((pair) => !baseline.includes(pair)) : [];
+  const baseIndex = argv.indexOf('--base');
+  if (baseIndex !== -1 && !argv[baseIndex + 1]) throw new Error('--base requires a commit SHA.');
+  const baseSha = resolveAuditBaseSha(
+    projectRoot,
+    baseIndex === -1 ? process.env.CAPABILITY_BASE_SHA : argv[baseIndex + 1],
+  );
+  const baseEdges = scanPracticeSubownersAtRef(projectRoot, baseSha).edges;
+  const addedSinceBase = current.filter((pair) => !baseEdges.has(pair));
   const stale = baseline ? baseline.filter((pair) => !edges.has(pair)) : [];
 
   if (argv.includes('--write-baseline')) {
-    if (baseline && added.length > 0) {
-      throw new Error(
-        `--write-baseline only tightens; new owner pairs need a reviewed baseline edit: ${added.join(', ')}`,
-      );
+    const widened = [...new Set([...added, ...addedSinceBase])];
+    if (widened.length > 0) {
+      throw new Error(`--write-baseline only tightens; new owner pairs: ${widened.join(', ')}`);
     }
     const body = { schemaVersion: 1, edgeUnit: 'owner-pair', edges: current };
     writeFileSync(baselineFile, `${JSON.stringify(body, null, 2)}\n`);
@@ -244,6 +306,11 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
   const failures: string[] = [];
   for (const pair of added) {
     failures.push(`new owner edge ${pair}:\n    ${(edges.get(pair) ?? []).join('\n    ')}`);
+  }
+  for (const pair of addedSinceBase) {
+    failures.push(
+      `owner edge ${pair} is absent at base ${baseSha.slice(0, 12)}:\n    ${(edges.get(pair) ?? []).join('\n    ')}`,
+    );
   }
   for (const violation of publicOnlyViolations) {
     failures.push(`sub-owner entered outside its public.ts: ${violation}`);
@@ -264,7 +331,7 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     return;
   }
   console.log(
-    `audit:practice-subowners OK — ${current.length} owner pairs (${upward} against the design order, ${fileEdges} file edges) within the ${baseline.length}-pair baseline; sub-owner directories entered only through public.ts.`,
+    `audit:practice-subowners OK — ${current.length} owner pairs (${upward} against the design order, ${fileEdges} file edges) within the ${baseline.length}-pair baseline and the ${baseEdges.size} pairs at base ${baseSha.slice(0, 12)}; sub-owner directories entered only through public.ts.`,
   );
   if (argv.includes('--list')) {
     for (const pair of current) console.log(`  ${pair}  ${edges.get(pair)?.length ?? 0}`);

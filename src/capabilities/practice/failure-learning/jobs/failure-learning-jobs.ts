@@ -1,11 +1,11 @@
 import type { Tx } from '@/db/client';
+import { practiceBossTransaction } from '../../server/queue-runtime';
 import {
   ATTRIBUTION_FOLLOWUP_QUEUE,
   type FailureLearningQueue,
   VARIANT_GEN_QUEUE,
   failureLearningJobId,
 } from '../server/failure-learning-identity';
-import { practiceBossTransaction } from '../server/queue-runtime';
 
 export {
   ATTRIBUTION_FOLLOWUP_QUEUE,

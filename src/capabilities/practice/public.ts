@@ -6,6 +6,12 @@ import { loadReviewDueReader } from './scheduling/public';
 // directly so initialization does not re-enter the practice runtime barrel.
 export type { EffectiveTruth } from '@/kernel/events';
 export { IssueAssessmentBodySchema } from './api/assessment-contracts';
+export {
+  type FailureLearningBossSend,
+  type ProposeFailureVariantInput,
+  type VariantProposalResult,
+  proposeFailureVariant,
+} from './failure-learning/public';
 export { embedQuestionTextForIngest } from './jobs/embed_backfill';
 export type { QuizGenJobData } from './jobs/quiz_gen';
 export {
@@ -141,7 +147,6 @@ export async function installInterventionDiagnosticLeaves(): Promise<void> {
 
 export { type CreateAttemptBody, CreateAttemptBodySchema } from './api/contracts';
 // explicit operations used by scripts and integration consumers.
-export type { FailureLearningBossSend } from './jobs/failure-learning-jobs';
 export {
   commitFormalAttempt,
   previewFormalAttempt,
@@ -152,12 +157,6 @@ export type {
   NativeAttemptDispatchPort,
 } from './server/assessment/native-attempt-dispatch-port';
 export type { CollectedSignal } from './server/candidate-signals';
-export { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './server/cause-overlay';
-export type {
-  ProposeFailureVariantInput,
-  VariantProposalResult,
-} from './server/failure-learning-public';
-export { proposeFailureVariant } from './server/failure-learning-public';
 
 export {
   authorInterventionPackage,

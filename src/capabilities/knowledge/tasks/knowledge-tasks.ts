@@ -15,62 +15,6 @@ export const EdgeProposalSchema = z.object({
 
 export type EdgeProposalSchemaT = z.infer<typeof EdgeProposalSchema>;
 
-export const KnowledgeEdgeProposeOutputSchema = z.object({
-  proposals: z.array(EdgeProposalSchema).max(5),
-});
-
-export type EdgeProposeOutput = z.infer<typeof KnowledgeEdgeProposeOutputSchema>;
-
-export function parseEdgeProposeOutput(text: string): EdgeProposeOutput {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseEdgeProposeOutput: no JSON object found in text');
-  }
-  const slice = text.slice(start, end + 1);
-  let json: unknown;
-  try {
-    json = JSON.parse(slice);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`parseEdgeProposeOutput: JSON.parse failed: ${message}`);
-  }
-  return KnowledgeEdgeProposeOutputSchema.parse(json);
-}
-
-function buildKnowledgeEdgeProposePrompt(profile: SubjectProfile): string {
-  return `你是知识图谱 mesh 编辑助手。输入 { tree_snapshot, existing_edges, recent_failures } —— recent_failures 是过去 24h 的 attempt event (outcome='failure')，每条含 referenced_knowledge_ids + cause（来自 chained judge / user_cause）。
-科目上下文：${profile.displayName}。${profile.languageStyle}
-当前 SubjectProfile cause taxonomy：
-${causeTaxonomyList(profile)}
-看 recent_failures 找跨 attempt 的模式：哪些 knowledge 总是同时被引用？哪些是 prerequisite？哪些是易混淆 contrasts_with？哪些是应用关系？基于此提议 0-5 条新 knowledge_edge。
-证据要求：${profile.grounding.requirement}
-不确定性策略：${profile.grounding.uncertaintyPolicy}
-每条返回 { from_knowledge_id, to_knowledge_id, relation_type, weight, reasoning }。
-relation_type 5 选 1：prerequisite（A 是学 B 的先决）/ related_to（弱关联）/ contrasts_with（易混淆对比）/ applied_in（A 应用于 B）/ derived_from（A 派生自 B：A 是 B 的变式/拆分，方向必须 from=派生节点、to=基础节点）。新型关系用 experimental:* 命名空间。
-weight 0-1：模式有几次 attempt 支持就给多高（1 次→0.3 / 2-3 次→0.6 / 4+ 次→0.9）。
-reasoning 必须具体：引用 attempt event id 或指出 cause pattern。
-禁止：from === to；relation_type 不在合法集合；已存在于 existing_edges 的同向同型 (from, to, relation_type) 三元组。
-严格 JSON 输出（不带 markdown 代码块包裹）：{"proposals":[{"from_knowledge_id":"...","to_knowledge_id":"...","relation_type":"...","weight":0.6,"reasoning":"..."}]}。0 条也行，不必凑数。`;
-}
-
-export const knowledgeEdgeProposeTaskSpec = {
-  ownership: 'owned',
-  definition: {
-    kind: 'KnowledgeEdgeProposeTask',
-    description: '看 tree + 最近 failure attempts + 已有 edge，提议 0-5 条新 knowledge_edge',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 2 },
-    needsToolCall: false,
-    isMultimodal: false,
-    allowedTools: [],
-    prompt: { kind: 'profile', build: buildKnowledgeEdgeProposePrompt },
-  },
-  outputSchema: KnowledgeEdgeProposeOutputSchema,
-  parseText: parseEdgeProposeOutput,
-} satisfies TaskSpec<unknown, EdgeProposeOutput>;
-
 export const FrontierPrerequisiteOutputSchema = z.object({
   proposals: z.array(EdgeProposalSchema),
 });

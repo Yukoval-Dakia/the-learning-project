@@ -3,7 +3,6 @@ import { type ConfigValue, getConfig } from '@/core/config/store';
 
 export const PROVIDER_ATTEMPT_ADMISSION_LANES = [
   'dashscope.embedding',
-  'glm.knowledge-edge-reconcile',
   'glm.memory-reconcile',
   'glm.ocr-layout-parsing',
   'mem0.event-memory',
@@ -34,7 +33,6 @@ const PolicySchema = z
 const PoliciesSchema = z
   .object({
     'dashscope.embedding': PolicySchema.optional(),
-    'glm.knowledge-edge-reconcile': PolicySchema.optional(),
     'glm.memory-reconcile': PolicySchema.optional(),
     'glm.ocr-layout-parsing': PolicySchema.optional(),
     'mem0.event-memory': PolicySchema.optional(),
