@@ -138,15 +138,14 @@ pnpm db:migrate:local
 pnpm dev:local
 ```
 
-`pnpm dev:local`（= `tsx scripts/dev-local.ts`）spawn **三进程**：
+`pnpm dev:local`（= `tsx scripts/dev-local.ts`）spawn **两进程**，启动后打印要打开的地址（默认 <http://127.0.0.1:8787/>）：
 
 | 进程 | 端口 | 命令 | 角色 |
 | --- | --- | --- | --- |
-| API + Start 前门 | :8787 | `pnpm rw:api`（`tsx watch server/index.ts`，`RW_WORKER=1` 同进程启 pg-boss worker；dev-local 另设 `RW_FRONTDOOR=1`） | Hono 组合根 + in-process worker；页面由 Start 前门同源提供 |
-| Web 构建 | — | `pnpm rw:web`（`vite build --watch --config server/start/vite.config.ts`） | 重建 `dist/start`；API 进程随新产物重启（`dev:local` 启动前先跑一次 `pnpm build:start`） |
+| API + Start 前门 | :8787 | `pnpm rw:api`（`tsx watch server/index.ts`，`RW_WORKER=1` 同进程启 pg-boss worker；dev-local 另设 `RW_FRONTDOOR=dev`） | Hono 组合根 + in-process worker；Vite dev server 以 middleware 模式跑在同一进程、同一端口（`server/dev-frontdoor.ts`），页面与 `/api/*` 同源，**页面改动热更新（HMR），不需要构建**；改 `server/`、`src/server/` 等服务端文件由 tsx watch 重启 API |
 | Worker | — | `pnpm worker:dev`（`tsx scripts/worker.ts`） | 独立 pg-boss worker 进程 |
 
-dev 拓扑必须 api + web + worker 三进程齐活（YUK-321 M5 双进程拓扑）：`LISTEN loop 不消费 boss job`，dev 也必须有独立 worker 进程；同进程 worker 是 RW_WORKER=1 的兜底，不替代独立 worker。
+dev 拓扑必须 api（含 Vite 前门）+ worker 两进程齐活（YUK-321 M5 双进程拓扑）：`LISTEN loop 不消费 boss job`，dev 也必须有独立 worker 进程；同进程 worker 是 RW_WORKER=1 的兜底，不替代独立 worker。
 
 `pnpm dev` 是 `pnpm dev:local` 的别名。不要使用 stale `.env.local` remote `DATABASE_URL` 做 UI smoke。
 

@@ -4,7 +4,7 @@
 
 API（`server/index.ts`）与独立 worker（`scripts/worker.ts`）都先调用 `server/env.ts` 的 `loadEnv()`：按 `.env.local` → `.env` 顺序逐行读取，只填 `process.env` 中尚未设置的键，真实环境/compose 注入的值优先，引号值与行尾注释会被剥离（`server/env.ts`）。之后 `src/server/env.ts` 用 `@t3-oss/env-core` + `zod` 校验 server schema，`runtimeEnv` 即 `process.env`，空串按未设置处理；`DATABASE_URL` 是 schema 唯一必填项，`INTERNAL_TOKEN` 由 API 在监听前单独校验（`src/server/env.ts`）。
 
-compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared` 只接收 `TUNNEL_TOKEN`（`docker-compose.yml`）。本机 `pnpm dev:local` 也先加载 `.env.local` / `.env` 再传给三个子进程，并用 `POSTGRES_*`（缺省 `loom`）拼出 `postgres://…@127.0.0.1:5433/…`（`scripts/dev-local.ts`；`scripts/local-db-env.ts`）。`.env.example` 只覆盖 schema 130 个键中的 41 个；仓库里唯一的 `VITE_*` 是 `src/vite-env.d.ts` 的 `VITE_API_BASE` 类型声明、没有消费点，因此不设 client schema；Vitest 下 `skipValidation` 跳过启动校验（`src/vite-env.d.ts`；`src/server/env.ts`）。
+compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared` 只接收 `TUNNEL_TOKEN`（`docker-compose.yml`）。本机 `pnpm dev:local` 也先加载 `.env.local` / `.env` 再传给两个子进程，并用 `POSTGRES_*`（缺省 `loom`）拼出 `postgres://…@127.0.0.1:5433/…`（`scripts/dev-local.ts`；`scripts/local-db-env.ts`）。`.env.example` 只覆盖 schema 130 个键中的 41 个；仓库里唯一的 `VITE_*` 是 `src/vite-env.d.ts` 的 `VITE_API_BASE` 类型声明、没有消费点，因此不设 client schema；Vitest 下 `skipValidation` 跳过启动校验（`src/vite-env.d.ts`；`src/server/env.ts`）。
 
 ## 环境变量
 
@@ -17,7 +17,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `DATABASE_URL` | app、worker、脚本 | 必填；缺失时 `src/db/client.ts` 启动即抛错 | `src/server/env.ts`；`src/db/client.ts` |
 | `API_PORT` | app | `8787`；非正整数抛错 | `src/server/env.ts` |
 | `RW_WORKER` | app | `1` 时同进程启动 pg-boss worker | `server/index.ts` |
-| `RW_FRONTDOOR` | app | `1` 时启用 Start 前门（需要 `dist/start`）；未设时 app 只服务 Hono API | `server/index.ts` |
+| `RW_FRONTDOOR` | app | `1` 时启用 Start 前门（需要 `dist/start`）；`dev` 仅 `dev:local` 使用，经 API 进程内的 Vite dev server 提供同一前门（HMR，不需要 `dist/start`）；未设时 app 只服务 Hono API | `server/index.ts`；`server/dev-frontdoor.ts` |
 | `RW_BOSS_AUTOMATION` | app、worker | `enabled`；`disabled` 关闭 pg-boss 自带 automation | `src/server/env.ts`；`src/server/boss/client.ts` |
 | `POSTGRES_USER` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
 | `POSTGRES_PASSWORD` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |

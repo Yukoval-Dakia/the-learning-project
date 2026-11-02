@@ -20,15 +20,14 @@ ignored local files after the merge. Do not reintroduce another lane's task stat
 ## Local processes
 
 ```bash
-pnpm dev:local        # Postgres + API/Start 前门 :8787 + Start 重建 watcher + worker
+pnpm dev:local        # API + Start 前门 :8787（Vite dev server，页面 HMR）+ worker；Postgres 需先起
 pnpm dev              # alias for dev:local
-pnpm rw:api           # Hono API
-pnpm rw:web           # Start 构建 watcher（重建 dist/start）
+pnpm rw:api           # Hono API（设 RW_FRONTDOOR=dev 才带 Vite 前门；dev:local 已设）
 pnpm worker:dev       # standalone pg-boss worker
 pnpm build            # Start + server/worker/migrate bundles
 ```
 
-Development requires the API, web app, and standalone worker. `RW_WORKER=1`
+Development requires the API (which hosts the Vite front door) and the standalone worker. `RW_WORKER=1`
 is only a fallback; run the standalone worker.
 
 ## Local validation commands

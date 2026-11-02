@@ -22,12 +22,11 @@
 - Dockerfile 最后一个 stage 是 `worker`；`app` / `migrate` / `mem0-init` 必须显式钉 `target: runner`，否则会构建到带 Chromium 的 worker 镜像。
 - 没有 Redis：editing presence 走 Postgres 表 `editing_presence`。
 
-本地开发的三进程与 compose 的对应关系（`scripts/dev-local.ts` 依次 spawn `pnpm rw:api` / `rw:web` / `worker:dev`）：
+本地开发的两进程与 compose 的对应关系（`scripts/dev-local.ts` 依次 spawn `pnpm rw:api` / `worker:dev`）：
 
 | dev 子进程 | 端口 | 对应 compose |
 | --- | --- | --- |
-| `rw:api`（`RW_WORKER=1 tsx watch server/index.ts`） | :8787 | `app`；同进程 pg-boss 只是兜底，不替代独立 worker |
-| `rw:web`（`vite build --watch --config server/start/vite.config.ts`） | — | 无独立服务；生产由 `app` 直接提供 `dist/start` |
+| `rw:api`（`RW_WORKER=1 tsx watch server/index.ts`，dev-local 设 `RW_FRONTDOOR=dev`） | :8787 | `app`；页面由同进程的 Vite dev server（middleware 模式）提供，HMR 热更新；生产 `app` 仍直接提供 `dist/start`（`RW_FRONTDOOR=1`）；同进程 pg-boss 只是兜底，不替代独立 worker |
 | `worker:dev`（`tsx scripts/worker.ts`） | — | `worker` |
 
 `dev:local` 从 `POSTGRES_*` 派生 `DATABASE_URL`（默认 `127.0.0.1:5433`），数据库仍是 compose 的 `postgres`：

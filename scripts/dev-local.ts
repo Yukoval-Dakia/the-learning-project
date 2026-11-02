@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { config } from 'dotenv';
 import { buildLocalDevEnv } from './local-db-env';
 
@@ -24,15 +24,14 @@ const env: NodeJS.ProcessEnv = {
   NEXT_PUBLIC_BASE_URL: localEnv.NEXT_PUBLIC_BASE_URL,
 };
 
-// The Start front door serves the built client/server bundle, so build it once before the
-// API boots; `rw:web` then rebuilds on change and tsx watch restarts the API on new output.
-const firstBuild = spawnSync('pnpm', ['build:start'], { stdio: 'inherit', env });
-if (firstBuild.status !== 0) process.exit(firstBuild.status ?? 1);
-
-const api = spawn('pnpm', ['rw:api'], { stdio: 'inherit', env: { ...env, RW_FRONTDOOR: '1' } });
-const web = spawn('pnpm', ['rw:web'], { stdio: 'inherit', env });
+// RW_FRONTDOOR=dev serves the Start front door through the Vite dev server inside the API
+// process (server/dev-frontdoor.ts): HMR for pages, no build step, no second watcher.
+const api = spawn('pnpm', ['rw:api'], { stdio: 'inherit', env: { ...env, RW_FRONTDOOR: 'dev' } });
 const worker = spawn('pnpm', ['worker:dev'], { stdio: 'inherit', env });
-const children = [api, web, worker];
+const children = [api, worker];
+console.log(
+  `[dev-local] open http://127.0.0.1:${process.env.API_PORT || '8787'}/ (Vite HMR; /api/* on the same origin)`,
+);
 
 const stop = (code: number | null) => {
   for (const c of children) c.kill('SIGINT');
