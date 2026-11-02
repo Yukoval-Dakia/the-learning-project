@@ -20,12 +20,12 @@ ignored local files after the merge. Do not reintroduce another lane's task stat
 ## Local processes
 
 ```bash
-pnpm dev:local        # Postgres + API :8787 + Vite :5173 + worker
+pnpm dev:local        # Postgres + API/Start 前门 :8787 + Start 重建 watcher + worker
 pnpm dev              # alias for dev:local
 pnpm rw:api           # Hono API
-pnpm rw:web           # Vite SPA
+pnpm rw:web           # Start 构建 watcher（重建 dist/start）
 pnpm worker:dev       # standalone pg-boss worker
-pnpm build            # Vite + server/worker/migrate bundles
+pnpm build            # Start + server/worker/migrate bundles
 ```
 
 Development requires the API, web app, and standalone worker. `RW_WORKER=1`

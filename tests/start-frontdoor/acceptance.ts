@@ -55,14 +55,12 @@ async function scanClient(directory: string): Promise<number> {
   }
   return javascriptFiles;
 }
-const spaFiles = await scanClient('web/dist');
 const startFiles = await scanClient('dist/start/client');
-assert.ok(spaFiles > 0, 'SPA browser JavaScript must be scanned');
 assert.ok(startFiles > 0, 'Start browser JavaScript must be scanned');
 
 // Isolated real frontdoor listener; no worker, business DB or provider calls.
 const api = buildHonoApp([], { epochGate: async () => ({ runnable: true }) });
-const fetchFrontdoor = await createFrontdoor(api, 'web/dist');
+const fetchFrontdoor = await createFrontdoor(api);
 const listener = serve({ fetch: fetchFrontdoor, hostname: '127.0.0.1', port: 0 });
 await new Promise<void>((resolve, reject) => {
   listener.once('listening', resolve);
@@ -93,7 +91,7 @@ try {
   const fenced = buildHonoApp([], {
     epochGate: async () => ({ runnable: false, reason: 'unavailable' }),
   });
-  const fencedFrontdoor = await createFrontdoor(fenced, 'web/dist');
+  const fencedFrontdoor = await createFrontdoor(fenced);
   assert.equal(
     (
       await fencedFrontdoor(
@@ -105,7 +103,6 @@ try {
   console.log(
     JSON.stringify({
       status: 'PASS',
-      spaFiles,
       startFiles,
       injectedCanaries: canaries.length,
       tokenAndExemptions: 'PASS',

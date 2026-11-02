@@ -24,7 +24,7 @@
 | `ui/subjects.tsx` / `ui/coverage-lattice.tsx` | subject 与覆盖细目 admin React 面（覆盖细目读模型与 `/api/admin/coverage-lattice` 归 Practice，本包只展示） |
 
 ## CONVENTIONS
-- admin 路由照常套主 chrome（`web/src/router.tsx` RootShell）；不另设 admin 独立壳。决策记录见 `docs/design/2026-07-07-yuk579-coverage-lattice.md` §6 与 `docs/audit/2026-06-13-visual-gap.md` §5。
+- admin 路由照常套主 chrome（`web/src/RootShell.tsx`）；不另设 admin 独立壳。决策记录见 `docs/design/2026-07-07-yuk579-coverage-lattice.md` §6 与 `docs/audit/2026-06-13-visual-gap.md` §5。
 - `/api/jobs/[kind]/[id]/events` 是通用异步 job SSE tracker（copilot_run 首个消费者）。
 - `/api/events/[id]/correct` 是统一事件流撤回面（correction 内核不变量）。
 - cost 按 task / provider / model 聚合；R2/S3 成本按 currency 分组不能直接相加。

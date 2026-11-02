@@ -17,7 +17,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `DATABASE_URL` | app、worker、脚本 | 必填；缺失时 `src/db/client.ts` 启动即抛错 | `src/server/env.ts`；`src/db/client.ts` |
 | `API_PORT` | app | `8787`；非正整数抛错 | `src/server/env.ts` |
 | `RW_WORKER` | app | `1` 时同进程启动 pg-boss worker | `server/index.ts` |
-| `RW_STATIC_DIR` | app | 未设时不启用 Start 前门 | `server/index.ts` |
+| `RW_FRONTDOOR` | app | `1` 时启用 Start 前门（需要 `dist/start`）；未设时 app 只服务 Hono API | `server/index.ts` |
 | `RW_BOSS_AUTOMATION` | app、worker | `enabled`；`disabled` 关闭 pg-boss 自带 automation | `src/server/env.ts`；`src/server/boss/client.ts` |
 | `POSTGRES_USER` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
 | `POSTGRES_PASSWORD` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
@@ -112,7 +112,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `HOME` | app、worker（jyeoo 子进程） | 原样透传 | `src/capabilities/practice/server/question-supply/jyeoo-spawn.ts` |
 | `PATH` | app、worker（jyeoo 子进程） | 原样透传 | 同上 |
 | `TMPDIR` | app、worker（jyeoo 子进程） | 原样透传 | 同上 |
-| `WORKSHEET_RENDER_APP_ORIGIN` | worker（`worksheet_render`） | 仅完全未设置时缺省 `http://localhost:5173`；设为空串时报 `worksheet_render: WORKSHEET_RENDER_APP_ORIGIN is empty`；compose worker 设为 `http://app:8787` | `src/capabilities/practice/jobs/worksheet_render.ts`；`docker-compose.yml` |
+| `WORKSHEET_RENDER_APP_ORIGIN` | worker（`worksheet_render`） | 仅完全未设置时缺省 `http://localhost:8787`；设为空串时报 `worksheet_render: WORKSHEET_RENDER_APP_ORIGIN is empty`；compose worker 设为 `http://app:8787` | `src/capabilities/practice/jobs/worksheet_render.ts`；`docker-compose.yml` |
 
 ### 功能开关
 

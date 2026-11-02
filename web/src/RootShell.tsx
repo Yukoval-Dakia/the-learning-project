@@ -93,27 +93,11 @@ function subscribeCompanionLayout(notify: () => void): () => void {
 // 这里不另起第二个轮询。
 const COPILOT_NUDGES_KEY = ['copilot', 'nudges'] as const;
 
-// YUK-1528 — 印刷页（/print/…）由渲染任务直接出 PDF：不要侧栏、Copilot、topbar，
-// 也不发壳层自己的请求（workbench summary 等），所以在挂任何壳层 hook 之前就分流。
-const BARE_PATH_PREFIX = '/print/';
-
-export function RootShell(props: {
-  confirmationClient?: ConfirmationDraftClient;
-  children: ReactNode;
-  pathname: string;
-  navigate: (to: string) => void;
-  readKnowledgeTree?: CommandPaletteProps['readTree'];
-  readNotePage: NotePageClient;
-}) {
-  if (props.pathname.startsWith(BARE_PATH_PREFIX)) return <>{props.children}</>;
-  return <AppFrame {...props} />;
-}
-
 // M5-T3 (YUK-321) — 根壳：全路由共享一个学习伙伴实例（裁决 c：组件归
 // copilot 包，路由耦合只存在于本壳层）。
 //
 // RootShell owns navigation, theme and the single Companion lifetime; presenters only arrange them.
-function AppFrame({
+export function RootShell({
   confirmationClient,
   children,
   pathname,

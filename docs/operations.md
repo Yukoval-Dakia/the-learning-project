@@ -16,7 +16,7 @@
 | `cloudflared` | `cloudflare/cloudflared:2026.5.2` | `tunnel --no-autoupdate --metrics 0.0.0.0:2000 … run` | 可选公网入口，读 `TUNNEL_TOKEN` |
 
 - `migrate` 幂等，靠 drizzle 的 `__drizzle_migrations` 记录已应用版本；`docker compose up` 每次都会先跑它。
-- `app` 用 `RW_STATIC_DIR=/app/web/dist` 提供 SPA 静态文件。健康检查只请求 `/api/health`，任意 HTTP 响应算存活；`/api/health` 是进程活性（永远 200），readiness 由 `/api/ready` 的 200/503 表达。
+- `app` 用 `RW_FRONTDOOR=1` 启用 Start 前门，页面与静态资产来自镜像内的 `dist/start`。健康检查只请求 `/api/health`，任意 HTTP 响应算存活；`/api/health` 是进程活性（永远 200），readiness 由 `/api/ready` 的 200/503 表达。
 - `worker` 是唯一执行 `worksheet_render` 的进程，所以单独用 `target: worker`：在 runner 上叠 `playwright-core@1.64.0` 和 `chromium-headless-shell`（`PLAYWRIGHT_BROWSERS_PATH=/ms-playwright`），并通过 `WORKSHEET_RENDER_APP_ORIGIN=http://app:8787` 打开 app 容器。它的健康检查读 `/proc/1/cmdline`，确认 PID 1 仍是 `worker.cjs`。
 - 运行期只有 `worker` 写 `mem0data` 卷；`mem0-init` 在 worker 启动前修好属主。
 - Dockerfile 最后一个 stage 是 `worker`；`app` / `migrate` / `mem0-init` 必须显式钉 `target: runner`，否则会构建到带 Chromium 的 worker 镜像。
@@ -27,7 +27,7 @@
 | dev 子进程 | 端口 | 对应 compose |
 | --- | --- | --- |
 | `rw:api`（`RW_WORKER=1 tsx watch server/index.ts`） | :8787 | `app`；同进程 pg-boss 只是兜底，不替代独立 worker |
-| `rw:web`（`vite --config web/vite.config.ts`） | :5173 | 无独立服务；生产由 `app` 直接提供 `web/dist` |
+| `rw:web`（`vite build --watch --config server/start/vite.config.ts`） | — | 无独立服务；生产由 `app` 直接提供 `dist/start` |
 | `worker:dev`（`tsx scripts/worker.ts`） | — | `worker` |
 
 `dev:local` 从 `POSTGRES_*` 派生 `DATABASE_URL`（默认 `127.0.0.1:5433`），数据库仍是 compose 的 `postgres`：
