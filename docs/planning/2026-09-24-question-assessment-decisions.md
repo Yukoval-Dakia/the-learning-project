@@ -7,8 +7,8 @@
 ## 说明
 
 - 本文件只记录 owner 通过 question tool 给出的**已批准**决定（APPROVED）。
-- **工程推演（elaboration）不等于批准**；待定项即使有合理默认，也标为 PENDING 未批准。
-- 批准的是**产品/契约方向**，不是实现；本文件不代表任何能力已上线或已验收。
+- **工程推演（elaboration）与批准分开记录**；待定项即使有合理默认，也标为 PENDING。
+- 批准的是**产品/契约方向**。
 
 ## 已批准决定（APPROVED）
 
@@ -18,7 +18,7 @@
 - 必须**显式标注为 system authored**，**不是 official**。
 - 未解决/未通过核验的规则**保持 withheld**，不自动准入。
 
-工程细化（未批准）：第二模型“同意”本身**不构成证明**；**准入验收标准仍需 finalize**。
+工程细化（未批准）：**准入验收标准仍需 finalize**。
 
 ### D2 — 联合组内同知识点聚合
 
@@ -83,7 +83,7 @@
 ### D12 — 批准两次调用，合计 ≤ $0.01
 
 - 批准**两次**调用，**合计 ≤ $0.01**：synthetic 非敏感 **Noul 一次、Choice 一次**；**不自动重试、不走 advanced**；**仅首次 smoke，不是 accuracy**。
-- **执行已完成（FINAL）**：**2/2 paid calls、无 retries、总计 $0.00003024**；仅 wire/auth/cost，**无 accuracy 结论**（详见上文 smoke 证据段）。
+- **执行已完成（FINAL）**：**2/2 paid calls、无 retries、总计 $0.00003024**；仅 wire/auth/cost（详见上文 smoke 证据段）。
 - **不从前预算池挪额度**。
 
 ### D13 — 采用有依据的局部证据
@@ -162,8 +162,8 @@ Owner 原句（verbatim）：
 > 我已写入openrouter apikey到.env，你可以透过or调用jev模型。
 
 - 记录：provider 偏好 **OpenRouter**；owner 称已提供凭证并授权调用。
-- 边界：本文件**不记录任何 secret**；**不假设 key 已验证或可用**。
-- **key presence 已检查，不等于 auth 成功**：parent 用 node dev26.8.1 `process.loadEnvFile` 只回显布尔 `env exists/loaded/key_present=true`，**未回显 secret**；这只证明 env 存在与 key 字段在场，**不证明鉴权成功**。
+- 边界：本文件**不记录任何 secret**；**key 有效性以实际调用为准**。
+- **key presence 已检查**：parent 用 node dev26.8.1 `process.loadEnvFile` 只回显布尔 `env exists/loaded/key_present=true`（不回显 secret）；鉴权成功以实际调用为准。
 
 ### OpenRouter 公开文档核验（librarian 返回）
 
@@ -172,7 +172,7 @@ Owner 原句（verbatim）：
 - **输出** `decisions`；**text-only 输入，32k context**。
 - **provider 约束**：only TypeSafe provider；only/order TypeSafe；`allow_fallbacks=false`；`max_price` prompt 0.042 / completion 0（USD/M）；API unit input 4.2e-8 / output 0。
 - **state+questions typed**，原生 **Noul / Choice / Score**。
-- **`probabilities`/`confidence`/`usage.cost` schema 为 OPTIONAL**；缺失时**不得补造**。
+- **`probabilities`/`confidence`/`usage.cost` schema 为 OPTIONAL**；缺失时**保持缺失**。
 - **`confidence` 是分布形状，不是 accuracy；Score 是 expectation，不是 student points**。
 - **application 层 Jev→advanced 是独立 invocation**，**不是** model fallback array。
 - 公开来源：OpenRouter docs/guides/community `jev.md`、`jev-tutorial.md`、`typesafe-sdk.md`；`/api/v1/models?output_modalities=decisions`；model/endpoints；`docs.typesafe.ai/sdk/python`。
@@ -191,8 +191,8 @@ Owner 原句（verbatim）：
 ### 设计影响
 
 - **OpenRouter 偏好取代“仅直连 TypeSafe”设计**；但**保留 typed sibling `AiRunLifecycle` seam（非 chat）**；**精确集成包/接缝以后定**。
-- 原“直接 TypeSafe typed transport 提案”为 **provisional**，不得据此宣称 OpenRouter 不支持。
-- **付费 smoke 范围与 ceiling 已由 D12 限定**（2 次、≤$0.01）；除此之外**不调用**。
+- 原“直接 TypeSafe typed transport 提案”为 **provisional**。
+- **付费 smoke 范围与 ceiling 已由 D12 限定**（2 次、≤$0.01）；调用范围限于该 smoke。
 
 ## 只读生产 census（D19 第一部分）— FINAL（只读，无写入）
 
@@ -210,7 +210,7 @@ Owner 原句（verbatim）：
 - deterministic-key readiness：20/40 pool choice rows headline-ready；0 numeric contracts；answer_class exact 45。
 - **历史 served-snapshot 可重建性 ≈ nil**。
 - Artifacts：`/private/var/folders/bt/rcf5s7tx3s93g3dz0046y96w0000gn/T/opencode/yuk1038-census-20260924-223104/`。
-- Restore 预备：容器内 pg_dump/pg_restore 16.14（host 无），磁盘 491Gi free；**daily backup STALE**（`loom-daily-20260913.dump`，last success 09-13，launchd 疑似已停）——记为 operational finding；**未执行 restore 演练**（owner-gated，待 migration code 存在）。
+- Restore 预备：容器内 pg_dump/pg_restore 16.14（host 无），磁盘 491Gi free；**daily backup STALE**（`loom-daily-20260913.dump`，last success 09-13，launchd 疑似已停）——记为 operational finding；**restore 演练待 migration code 存在**（owner-gated）。
 - **风险画像收缩**：0 physical parts、0 answers rows、9 judge events 显著缩小历史迁移风险，但**契约仍按 general case 构建**（不为当前沙盒规模削能力）。
 
 ## 待 owner 决策（PENDING — 未批准，即使有合理默认）
@@ -229,8 +229,8 @@ SQL/locks 等工程细节**不是** owner 决策项。
 
 - 初始 grounding（Round 1）证据任务**已完成**（lane A/B/C/D source-only），**当时零模型调用**。
 - 轮二裁决（D6–D12）、轮三（D13–D16）、轮四（D17–D19）**已完成**并落盘。
-- **D12 OR smoke 已 FINAL**（2/2 calls、$0.00003024，见上）；仅 wire/auth/cost，**无 accuracy 结论**。
+- **D12 OR smoke 已 FINAL**（2/2 calls、$0.00003024，见上）；仅 wire/auth/cost。
 - **D19 只读生产 census 已完成**（见上）；**restore 演练仍待**（owner-gated，待 migration code 存在）。
-- **D18 独立评测预算已批准（≤$5），但 actual-output 评测仍待运行**（harness + budget gate 就绪后；不授权实施启动）。
+- **D18 独立评测预算已批准（≤$5），但 actual-output 评测仍待运行**（harness + budget gate 就绪后运行）。
 - **UI preflight 已起草**（`docs/design/2026-09-24-assessment-ui-preflight.md`，source-check only，**待 owner 正式批准 Q20**）；designer 报告曾误标决策 ID，已纠正为 **D9 manual / D10 media / D11 autosave**。
-- **无全产品浏览器证据**；**暂无新 ADR**：待 parent reconcile；本文件仅作决策记录。
+- 全产品浏览器证据待补；新 ADR 待 parent reconcile。

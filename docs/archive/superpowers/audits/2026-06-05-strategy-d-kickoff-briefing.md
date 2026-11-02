@@ -69,7 +69,7 @@
 ### 候选 D：answer-grading EnrollTask（YUK-164 #5）
 
 - **状态**：**已 DONE，无剩余工作**。`auto-enroll.ts:328` 已从 MistakeEnroll draft 取真实 `failure/partial/success/unanswered`，commit `0717fb55` 在 main 上。
-- **唯一附带说明**：此真实 outcome 路径仅在 **enroll flag ON** 时执行；observe 模式仍只挂审计事件。所以「让 #5 的真实判分生效」= 翻 flag = 依赖候选 A 先上。**不构成独立候选 slice，列此仅为闭合 owner 的指定核查项。**
+- **唯一附带说明**：此真实 outcome 路径仅在 **enroll flag ON** 时执行；observe 模式仍只挂审计事件。所以「让 #5 的真实判分生效」= 翻 flag = 依赖候选 A 先上。列此仅为闭合 owner 的指定核查项。
 
 ### 候选 E（附加，报告 3 浮现）：judge 手写照片穿透（修 (c) 半通）
 

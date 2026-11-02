@@ -11,7 +11,7 @@
    + Postgres FTS 与暴力 pgvector 向量召回并行，RRF 融合；返回版本化 ref + 显式
    scope（含 within_refs）+ cursor；候选卡片 + 覆盖诚实声明。无 result_ref。
 2. `read_bank`：按 ref 批量取版本化内容；ref 无法解析 / digest 不符 / 已撤回 →
-   显式错误，绝不偷换 latest；缺图缺材料如实上报。
+   显式错误，latest 替换显式报错；缺图缺材料如实上报。
 3. `check_bank`：仅确定性检查（D5）：记录关系读取 + 已有纯校验器的确定性复算。
    无语义（模型）检查。
 4. 面替换：删除 `query_questions`（与 search_bank 同职责）；`get_question_context`
@@ -50,12 +50,12 @@
   attempt 记账）嵌入；cosine `<=>` 暴力扫描。embed 失败 → 该通道记
   `unavailable_channels`，FTS 结果照常返回（诚实降级，不假装全库）。
 - 融合：RRF（k=60），通道截断上限各 200；候选池 = 通道命中并集 ∩ 硬过滤，
-  `candidate_pool_size` 只声明这个有限池，不冒充语义匹配总数。
+  `candidate_pool_size` 只声明这个有限池。
 - cursor：v2 自包含本次有限候选池顺序/通道、query/scope/limit、卡片 digest 与 15 分钟有效期。
   续页不重跑召回或 embedding；重新校验原池的硬过滤、版本与自动可判范围。原池卡片变化/撤回
   或到期明确报错要求新搜索，不把新题/新版填入旧页。无新表、结果句柄或缓存 registry。
 - within_refs 只接受明确列出的当前版本；空数组为空范围。存量索引针对可变
-  工作副本，不冒充历史索引：旧版本返回 superseded 错误，历史内容仍可经
+  工作副本与历史索引分开：旧版本返回 superseded 错误，历史内容仍可经
   read_bank 精确读取；不替换为新 ref。最终卡片查询重施全部硬过滤。
 
 ## 取代面（LIGHT 只切 Copilot）
@@ -111,7 +111,7 @@
    空范围与精确范围、非法 cursor 拒绝；缺库 coverage.verdict=none，完整回显
    query/scope/count，零放宽、零填充。
 2. ref 不偷换：编辑后仍读旧版，新版另列；错 digest/无法解析/撤回明确错误；
-   within_refs 的历史版本明确拒绝，不偷换 current。
+   within_refs 的历史版本明确拒绝。
 3. 材料覆盖诚实：缺图 incomplete；存在且 bare SHA 匹配 prefixed digest 的图完整。
    保留正反两支是为了分别捕获隐藏缺图与前缀导致的虚假缺图。
 4. 学习者隔离：真实 PostgreSQL role 只允许 SELECT 四个 bank 表，不能读 learner
@@ -132,8 +132,8 @@ TS/TSX/JS/JSX/JSON/SQL 文件；文档与 vitest 分区配置不计产品。
   在最新修复后通过；lint 有 172 条既存 warnings，无 errors。
 - 相关 scoped unit：tool-result-snapshot 与 tool-activity，2 files/2 cases PASS。
 - Sol xhigh read-only 检查仅算同模型 self-check，发现上述 CAS 与 SHA prefix 两个 P1，
-  均已修复。独立 review 由 Coordinator 固定 head 后安排 Claude Opus，不冒称独立审查通过。
-- DB 6 cases 尚未运行；只在 Coordinator 明确 start + baseline 的窗口执行，不 prune，
+  均已修复。独立 review 由 Coordinator 固定 head 后安排 Claude Opus，审查待安排。
+- DB 6 cases 待执行；只在 Coordinator 明确 start + baseline 的窗口执行，不 prune，
   不操作他人容器。固定 head/命令/6 cases 单条请求由 t3_thread_send 发送。
 - migration ref 映射确认、跨模型独立审查、协调 DB 验证与 exact-head CI 尚未完成；
   无真实 provider/浏览器/部署/学习效果证据。不开 PR。
@@ -149,11 +149,11 @@ TS/TSX/JS/JSX/JSON/SQL 文件；文档与 vitest 分区配置不计产品。
   draft/admission/within_refs 的组合与 requested_count/retrieved_count；不声称每个
   约束单独无解。无放宽 SQL 过滤、无填充候选；向量召回也施既有 matcher 的
   MATCHER_COSINE_MAX_DISTANCE=0.35 防远距离向量填数。该阈值尚无本产品实际输出
-  校准证据，不冒称相关性验收通过。
+  校准证据待验收。
 - gap_request 目标为 EvidenceDemandV1，直接复用其 schema 片段：
   claim.kind=content_coverage、claim.statement=query、inventory_goal.eligible_count=limit、
   causes=[coverage_gap]，保留完整 unsatisfied_constraints。
-  它明确是需要 agent 补充上下文的 seed，不伪装成已立单/已派发。
+  它明确是需要 agent 补充上下文的 seed。
 - 映射还需 agent 补齐 demand_id/policy_version/subject_id/claim.knowledge_ids/
   evidence/task/difficulty/inventory_goal.horizon_days/control；这些不是检索工具应替
   agent 决定的教学、时限或费用。version=1，补齐后用 EvidenceDemandV1.parse 校验。
@@ -210,7 +210,7 @@ Coordinator 排期为验收 prerequisite；没有此链接不能称端到端缺�
 `src/core/migration/apply.ts:RevisionRegistryEntry` 的 v2 occurrence/snapshot 绑定先解析
 `revision_id + part_ids + slot_id + scoring_unit_id`，再从已存在目标行编码 bank ref。
 其 `snapshot_verified` / `question_asserted` 证据级别保持原样；缺 registry 或目标行仍 unresolved。
-这只是当前源码映射核对，不代表跑过真实语料迁移，也不代表未来存储重键已完成。
+这只是当前源码映射核对。
 
 ### 权威设计、实现、证据逐项对应
 
@@ -219,18 +219,18 @@ Coordinator 排期为验收 prerequisite；没有此链接不能称端到端缺�
 | ADR-0072 D1/D6 找本地题库候选 | practice manifest 注册 search_bank；SQL 硬过滤、FTS + pgvector RRF、有限池 | 6 个 DB case 中硬过滤/版本/CAS 通过；向量 provider 用 fake，相关性未验收 |
 | D2 不可变 ref 与搜索续页 | qrev1 → 当前目标 revision；within_refs 仅当前版；v2 原池续页 | 修改后旧 ref 仍读旧内容，未知/digest/撤回明确错误；续页重放稳定，新题不插队，池变化报错 |
 | D1 read 完整契约的 LIGHT 子集 | read_bank 只接受已发布 revision refs + include；读取冻结文本/评分层与已有资产记录 | 材料缺失/digest 不符诚实返回；**未实现原始材料获取、未发布草稿正文、图像解码、长内容分页/focus**。search 可列无 ref 的草稿卡片，不能据此声称 read 可读草稿 |
-| D5 确定性检查 | check_bank 四类记录/纯校验器检查，无模型语义检查 | unknown 不偷换 claim；可判范围按选定小题复用正式 gate。资产记录存在不等于已下载/解码字节 |
+| D5 确定性检查 | check_bank 四类记录/纯校验器检查，无模型语义检查 | unknown 如实标注 claim；可判范围按选定小题复用正式 gate。资产记录存在与字节落地分开 |
 | D4 learner 隔离 | 三工具只读 bank 数据；学习者读取保留 get_question_context | 真实 PG 受限角色与 event/FSRS 完整行前后比较通过 |
 | D1 注册与取代 | 既有 capability manifest 被现有 Copilot 组合根消费；query_questions 删除 | Copilot 接线已在源码中；**备题员独立任务、Start/DBOS 新注册及学习者 UI 同 ref 展示未交付** |
 | 缺口进入供题链 | sparse/none → 完整 constraints + EvidenceDemandV1 seed | **未立单/未派发**。现有 target/dispatcher 不能完整承载 query/source/within_refs 等约束；供题 owner 须先确定受理契约，再接真实幂等写入口，不能丢约束报成功 |
 | 本地与外部找题准确度 | 本分支只做本地 bank；既有外部路径为 supply_execute → jyeoo/web candidates → store_sourced_question → source_verify | 本轮未调用付费 provider/外部找题，未访问真实 DB。旧来源抓取/去重证据不能代替当前相关性、难度或自动判分验收 |
-| 提案 §12 与 owner 23:01 比较 | 同快照、同任务比较旧工具 / search+read / search+read+check；42 种子 + 真实需求；盲评相关性、难度、可判性及工具次数/重复读取/耗时费用 | **未跑**；本轮 DB 不变量通过不能宣布找题准确度或整体 LIGHT 产品验收通过。Coordinator 继续沿原预注册口径组织，未新增评估体系 |
+| 提案 §12 与 owner 23:01 比较 | 同快照、同任务比较旧工具 / search+read / search+read+check；42 种子 + 真实需求；盲评相关性、难度、可判性及工具次数/重复读取/耗时费用 | **待评估**；本轮 DB 不变量与找题准确度、整体 LIGHT 产品验收分开核销。Coordinator 继续沿原预注册口径组织，未新增评估体系 |
 
 本轮沿原 6 cases，未增加测试矩阵；选定小题与续页边界补在原有准入/版本 case。
 本地 typecheck、lint（172 既存 warnings）、build 及本分支相关 audits 通过。
 能力边界为 429/0/48：相对 main 的 +1 embed owner edge 是恢复分支已有变更，本轮未再增 baseline。
 独立只读初审固定合成提交 755919dd，确认 serving P1；修复后的验证审与 exact-head CI
-见本轮最终交付回执。历史 Sol self-check 不冒称跨模型审查；本环境未提供 Claude Opus，
+见本轮最终交付回执。历史 Sol self-check 仅自检；Claude Opus 审查待安排，
 本轮独立审查为独立 agent，不能称旧计划要求的 Claude Opus 跨模型审查已完成。
 
 PR 保持 draft，不 merge/deploy。共享 PLAN/.remember/Linear 由 Coordinator 更新；

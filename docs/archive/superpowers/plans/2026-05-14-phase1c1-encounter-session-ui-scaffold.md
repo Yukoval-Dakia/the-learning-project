@@ -444,7 +444,7 @@ Commit：`feat(1c.1): Step 2 — Event Zod discriminated union (12 known + exper
 - 每行映射：`type='ingestion'`、`status` 平移、其他 ingestion-specific 列对齐 → INSERT 进 `learning_session`
 - session_id 保留作 event.session_id 外键候选（attempt event 若来自 ingestion 期间的复习记录，链 caused_by 上去）
 
-**未做**：DROP 旧表（留给 Step 9）。脚本幂等：每个写都加 ON CONFLICT DO NOTHING 或先 SELECT 检查。
+DROP 旧表留给 Step 9。脚本幂等：每个写都加 ON CONFLICT DO NOTHING 或先 SELECT 检查。
 
 测试 `scripts/migrate-phase1c1.test.ts`：建 fixture（mistake + review_event + ingestion_session）→ 跑 migration → 验证：
 - event 表行数 = mistake 数 + 有 cause 的 mistake 数 + review_event 数 + dreaming_proposal 数
