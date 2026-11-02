@@ -550,8 +550,6 @@
 {"file":"src/server/projections/parity.ts","kind":"site","symbol":"artifactsWithGenesisAnchor","targetModule":"src/kernel/records/artifact-history.ts","targetSymbol":"artifactsWithGenesisAnchor","class":"stable_contract"}
 {"file":"src/server/projections/parity.ts","kind":"site","symbol":"questionBlocksWithGenesisAnchor","targetModule":"src/kernel/records/question-block-projection.ts","targetSymbol":"questionBlocksWithGenesisAnchor","class":"stable_contract"}
 {"file":"src/server/projections/snapshot-mappers.ts","kind":"site","symbol":"artifactRowToSnapshot","targetModule":"src/kernel/records/artifact-history.ts","targetSymbol":"artifactRowToSnapshot","class":"stable_contract"}
-{"file":"src/server/proposals/owner-runtime.ts","kind":"site","symbol":"hasLearningItemGenesisAnchor","targetModule":"src/kernel/records/learning-items.ts","targetSymbol":"hasLearningItemGenesisAnchor","class":"stable_contract"}
-{"file":"src/server/proposals/owner-runtime.ts","kind":"site","symbol":"projectLearningItemGuarded","targetModule":"src/kernel/records/learning-items.ts","targetSymbol":"projectLearningItemGuarded","class":"stable_contract"}
 {"file":"src/server/questions/submit-question.ts","kind":"site","symbol":"canonicalJson","targetModule":"src/server/questions/submit-decision.ts","targetSymbol":"canonicalJson","class":"stable_contract"}
 {"file":"src/server/questions/submit-question.ts","kind":"site","symbol":"claimSubmitRequestId","targetModule":"src/server/questions/shared-submit.ts","targetSymbol":"claimSubmitRequestId","class":"stable_contract"}
 {"file":"src/server/questions/submit-question.ts","kind":"site","symbol":"deriveKind","targetModule":"src/server/questions/submit-decision.ts","targetSymbol":"deriveKind","class":"stable_contract"}
