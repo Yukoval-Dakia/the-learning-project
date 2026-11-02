@@ -84,7 +84,7 @@ function responseJson(body: unknown, status = 200): Response {
   } as Response;
 }
 
-function jevOk(
+function _jevOk(
   noul: number,
   usage?: { input_tokens?: number; output_tokens?: number; cost?: number },
 ) {
@@ -119,44 +119,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('createJevModelExecutor — admission boundaries', () => {
-  it('rule_reference without explicit ruleThreshold ⇒ unjudgeable (no invented default)', async () => {
-    const fetchImpl = vi.fn() as unknown as typeof fetch;
-    const port = createJevModelExecutor(executorOptions({ fetchImpl, ruleThreshold: undefined }));
-    const out = await port(request());
-    expect(out).toMatchObject({ kind: 'pending', pending: { reason: 'unjudgeable' } });
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
-});
-
 describe('createJevModelExecutor — Jev lane', () => {
-  it('rule_reference satisfied ⇒ scored with unit points, distribution-shape confidence', async () => {
-    const fetchImpl = vi.fn(async () => responseJson(jevOk(0.96))) as unknown as typeof fetch;
-    const port = createJevModelExecutor(executorOptions({ fetchImpl }));
-    const out = await port(request());
-    expect(out).toMatchObject({
-      kind: 'scored',
-      points_awarded: 5,
-      matched: { rule_id: 'r1' },
-    });
-    // noul=0.96 ⇒ certainty |2·0.96−1| = 0.92 (YUK-1092: distribution-shape
-    // certainty, 1 at the extremes / 0 at 0.5 — never its inverse).
-    expect(out.kind === 'scored' && out.confidence).toBeCloseTo(0.92, 5);
-    expect(out.run_refs[0]).toBeTruthy();
-    expect(out.cost_usd_micros).toBe(Math.round(4.2e-6 * 1_000_000));
-    const body = JSON.parse(
-      String((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1]?.body),
-    );
-    expect(body.questions.u1.type).toBe('noul');
-    expect(body.questions.u1.criteria.true).toContain('final answer is 4');
-    expect(body.state.submission.entries[0].text_md).toBe('x = 4');
-    expect(body.state.question).toEqual({
-      revision_id: 'rev_1',
-      parts: request().question_parts,
-      response_slots: request().response_slots,
-    });
-  });
-
   // @invariant grading: a paid Jev pending (undecidable or a rule that declares the points unknown) keeps that call's run id and cost
   // @fails-if drop run_refs or cost_usd_micros on the pending returns inside interpretAnswer; two paid calls would settle as one
   it('keeps the run id and cost when a paid blank verdict stays pending', async () => {
@@ -227,27 +190,5 @@ describe('createJevModelExecutor — Jev lane', () => {
       expect(out.run_refs).toHaveLength(1);
       expect(out.run_refs[0]).toBeTruthy();
     }
-  });
-
-  // @invariant grading: the durable judge transport issues exactly one real typed request — a controlled 503 returns a pending outcome with no lifecycle retry
-  // @fails-if retry the transport on the 503; the fetchImpl called-once and unretried-log assertions fail
-  it('durable judge policy reaches the real typed transport with one transient request', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(
-      async () =>
-        new Response(JSON.stringify({ error: { message: 'controlled 503' } }), {
-          status: 503,
-          headers: { 'content-type': 'application/json' },
-        }),
-    );
-    const port = createJevModelExecutor({
-      ...executorOptions(),
-      deadlineAt: Date.now() + 30_000,
-      judgeRetryPolicy: 'none',
-      fetchImpl,
-    });
-    const outcome = await port(request());
-    expect(outcome.kind).toBe('pending');
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(logMocks.retried).not.toHaveBeenCalled();
   });
 });

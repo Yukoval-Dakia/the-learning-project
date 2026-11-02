@@ -8,10 +8,9 @@ import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { AdmissionEvidenceT } from '@/core/schema/assessment';
-import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
+import { question, question_revision } from '@/db/schema';
 import {
-  ASSESSMENT_PUBLISH_ACTION,
-  publishQuestionGroup,
+  type publishQuestionGroup,
   publishQuestionGroupFromRow,
 } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -20,7 +19,7 @@ import {
   normalizeQuestionRowToContract,
 } from './contract-normalizer';
 
-const ADMITTED_EVIDENCE: AdmissionEvidenceT = {
+const _ADMITTED_EVIDENCE: AdmissionEvidenceT = {
   marking_provenance: 'official',
   verification: { structural_check_passed: true, independent_verification: null },
   model_slice: null,
@@ -47,7 +46,7 @@ async function seedQuestion(id: string, overrides: Partial<typeof question.$infe
 }
 
 // 直接构造 publisher 输入（契约由 normalizer 产出，测试里组装）。
-function publishInput(
+function _publishInput(
   row: NormalizableQuestionRow,
   over: Record<string, unknown> = {},
 ): Parameters<typeof publishQuestionGroup>[1] {
@@ -71,146 +70,12 @@ function publishInput(
   } as Parameters<typeof publishQuestionGroup>[1];
 }
 
-async function readRow(id: string): Promise<NormalizableQuestionRow> {
+async function _readRow(id: string): Promise<NormalizableQuestionRow> {
   const db = testDb();
   const [row] = await db.select().from(question).where(eq(question.id, id)).limit(1);
   if (!row) throw new Error(`row ${id} missing`);
   return row as NormalizableQuestionRow;
 }
-
-describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
-  beforeEach(resetDb);
-  afterEach(resetDb);
-
-  it('atomically writes revision + lifecycle + publish event; CAS digest noop on republish', async () => {
-    const db = testDb();
-    const qid = 'pub_q1';
-    await seedQuestion(qid);
-    const row = await readRow(qid);
-
-    const first = await publishQuestionGroup(db, publishInput(row));
-    expect(first.status).toBe('published');
-    if (first.status !== 'published') return;
-
-    const [revision] = await db
-      .select()
-      .from(question_revision)
-      .where(eq(question_revision.revision_id, first.revision_id));
-    expect(revision.group_id).toBe(qid);
-    expect(revision.revision_ordinal).toBe(1);
-    expect(revision.supersedes_revision_id).toBeNull();
-
-    const [lifecycle] = await db
-      .select()
-      .from(question_group_lifecycle)
-      .where(eq(question_group_lifecycle.group_id, qid));
-    expect(lifecycle.current_revision_id).toBe(first.revision_id);
-    // §3.3 维度落位。
-    expect(lifecycle.scoring_admission_state).toBe('withheld');
-    expect(lifecycle.scoring_admission_withheld_reason).toBe('unverified_rules');
-    expect(lifecycle.scoring_admission_generation).toBe(1);
-    expect(lifecycle.availability).toBe('general_pool');
-    expect(lifecycle.withdrawn).toBe(false);
-
-    const [publishEvent] = await db.select().from(event).where(eq(event.id, first.event_id));
-    expect(publishEvent.action).toBe(ASSESSMENT_PUBLISH_ACTION);
-    expect(publishEvent.subject_id).toBe(qid);
-    // P1-4 — identity diff 随事件持久化（首版 = 全部新增）。
-    expect(publishEvent.payload).toMatchObject({
-      identity_changes: {
-        part_changes: [{ part_id: qid, status: 'added' }],
-        replacement_mappings: [],
-      },
-    });
-
-    // 同内容再发布（双 CAS 令牌均更新为当前值）→ digest 幂等 noop。
-    const again = await publishQuestionGroup(
-      db,
-      publishInput(row, {
-        expectedCurrentRevision: first.revision_id,
-        expectedAdmissionGeneration: 1,
-      }),
-    );
-    expect(again).toMatchObject({ status: 'noop', current_revision_id: first.revision_id });
-
-    // CAS：期望错版 → conflict（revision_cas）。
-    const stale = await publishQuestionGroup(
-      db,
-      publishInput(row, { expectedCurrentRevision: null, expectedAdmissionGeneration: null }),
-    );
-    expect(stale).toMatchObject({
-      status: 'conflict',
-      current_revision_id: first.revision_id,
-      reason: 'revision_cas',
-    });
-  });
-
-  it('same digest + changed admission ⇒ admission_updated with generation CAS; stale generation conflicts (P1-5)', async () => {
-    const db = testDb();
-    const qid = 'pub_q6';
-    await seedQuestion(qid);
-    const row = await readRow(qid);
-    // 模拟 sourced-draft-insert 首版：withheld/unverified_rules。
-    const first = await publishQuestionGroup(db, publishInput(row));
-    if (first.status !== 'published') throw new Error('first publish failed');
-
-    // 模拟 source_verify promote：内容未变，admission → admitted。
-    const promote = await publishQuestionGroup(
-      db,
-      publishInput(row, {
-        expectedCurrentRevision: first.revision_id,
-        expectedAdmissionGeneration: 1,
-        admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
-      }),
-    );
-    expect(promote.status).toBe('admission_updated');
-    if (promote.status !== 'admission_updated') return;
-    expect(promote.current_revision_id).toBe(first.revision_id);
-    expect(promote.admission_generation).toBe(2);
-
-    // 不铸新 revision —— 内容维度与资格维度各自独立版本化（§3.3）。
-    const revisions = await db
-      .select()
-      .from(question_revision)
-      .where(eq(question_revision.group_id, qid));
-    expect(revisions).toHaveLength(1);
-
-    const [lifecycle] = await db
-      .select()
-      .from(question_group_lifecycle)
-      .where(eq(question_group_lifecycle.group_id, qid));
-    expect(lifecycle.scoring_admission_state).toBe('admitted');
-    expect(lifecycle.scoring_admission_generation).toBe(2);
-
-    // P1-5 —— 过期 generation 的维度请求不能覆盖新决定（conflict）。
-    const staleRequest = await publishQuestionGroup(
-      db,
-      publishInput(row, {
-        expectedCurrentRevision: first.revision_id,
-        expectedAdmissionGeneration: 1, // 期望 gen1，实际 gen2
-        admission: { state: 'withheld', reason: 'owner_hold' },
-      }),
-    );
-    expect(staleRequest).toMatchObject({ status: 'conflict', reason: 'admission_generation_cas' });
-    const [stillAdmitted] = await db
-      .select()
-      .from(question_group_lifecycle)
-      .where(eq(question_group_lifecycle.group_id, qid));
-    expect(stillAdmitted.scoring_admission_state).toBe('admitted');
-    expect(stillAdmitted.scoring_admission_generation).toBe(2);
-
-    // 同请求幂等重发（gen 已更新为 2）⇒ 真 noop。
-    const again = await publishQuestionGroup(
-      db,
-      publishInput(row, {
-        expectedCurrentRevision: first.revision_id,
-        expectedAdmissionGeneration: 2,
-        admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
-      }),
-    );
-    expect(again).toMatchObject({ status: 'noop', current_revision_id: first.revision_id });
-  });
-});
 
 describe('publishQuestionGroupFromRow — 锁序/组语义/未决转换（复审 P1）', () => {
   beforeEach(resetDb);

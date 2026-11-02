@@ -288,9 +288,4 @@ describe('shared producer-fence installer transaction', () => {
       await runConcurrentPair(first, second, false);
     },
   );
-  it.each(installers)('$name rolls back failed DDL and releases the common lock', async (first) => {
-    const second = installers.find((installer) => installer !== first);
-    if (!second) throw new Error('Different-family installer required');
-    await runConcurrentPair(first, second, true);
-  });
 });

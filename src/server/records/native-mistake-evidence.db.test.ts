@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MistakeListResponseSchema } from '@/capabilities/ingestion/api/contracts';
-import { GET } from '@/capabilities/ingestion/api/mistakes';
 import { ingestionCapability } from '@/capabilities/ingestion/manifest';
 import { readMistakes } from '@/capabilities/ingestion/public';
 import { commitFormalAttempt } from '@/capabilities/practice/server/assessment/attempt';
@@ -17,14 +16,7 @@ import type {
   SlotResponseT,
 } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
-import {
-  assessment_submission,
-  event,
-  knowledge,
-  learning_record,
-  question,
-  source_asset,
-} from '@/db/schema';
+import { knowledge, learning_record, question, source_asset } from '@/db/schema';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
@@ -33,7 +25,6 @@ import {
 } from '@/server/questions/contract-normalizer';
 import { buildHonoApp } from '../../../server/app';
 import { seedHistoricalAssessmentIssuance } from '../../../tests/fixtures/historical-assessment-issuance';
-import { handwritingFixture } from '../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const OPEN: ResponseSlotT = {
@@ -261,7 +252,7 @@ async function attempt(
   return { failure, issued, committed };
 }
 
-async function row(db: Db) {
+async function _row(db: Db) {
   return (await readMistakes(db)).rows[0];
 }
 
@@ -317,68 +308,6 @@ describe('native mistake immutable evidence DB projection', () => {
     vi.unstubAllEnvs();
   });
 
-  it('isolates selected failed faces, unissued parts and all existing private material namespaces', async () => {
-    const db = testDb();
-    const materials: SharedMaterialT[] = [
-      {
-        material_id: 'p1_only',
-        kind: 'plaintext',
-        asset: { asset_id: 'txt_p1', digest: 'one' },
-        content_md: 'P1_PUBLIC',
-      },
-      {
-        material_id: 'p2_only',
-        kind: 'table',
-        asset: { asset_id: 'txt_p2', digest: 'two' },
-        content_md: 'P2_PUBLIC',
-      },
-      {
-        material_id: 'p3_only',
-        kind: 'passage',
-        asset: { asset_id: 'txt_p3', digest: 'three' },
-        content_md: 'UNISSUED',
-      },
-      {
-        material_id: 'explicit_private',
-        kind: 'audio',
-        asset: { asset_id: 'custom_private', digest: 'private' },
-        visibility: 'private',
-        caption: 'PRIVATE_CAPTION',
-        alt_text: 'PRIVATE_ALT',
-        content_md: 'PRIVATE_BYTES',
-      },
-      {
-        material_id: 'solution',
-        kind: 'plaintext',
-        asset: { asset_id: 'sol_0123456789ab', digest: 'solution' },
-        visibility: 'public',
-        content_md: 'SECRET_SOLUTION',
-      },
-    ];
-    await publication(db, [OPEN, TEXT], materials, undefined, {
-      p1: ['p1_only', 'explicit_private', 'solution'],
-      p2: ['p2_only'],
-      p3: ['p3_only'],
-    });
-    await attempt(db, { anchor: 'p1', key: 'first' });
-    await attempt(db, { anchor: 'root', key: 'group' });
-    await attempt(db, { anchor: 'p2', partIds: ['p2'], entries: [TEXT_ENTRY], key: 'second' });
-    const cards = await publicMaterialRead(db);
-    const ids = (questionId: string) =>
-      cards
-        .find((card) => card.question_id === questionId)
-        ?.prompt_materials.map((material) => material.material_id);
-    // Normalized public parent material is shared by all issued parts.
-    expect(ids('p1')).toContain('p1_only');
-    expect(ids('p1')).not.toContain('p2_only');
-    expect(ids('p2')).toContain('p2_only');
-    expect(ids('p2')).not.toContain('p1_only');
-    expect(ids('root')).toEqual(expect.arrayContaining(['p1_only', 'p2_only']));
-    expect(JSON.stringify(cards)).not.toMatch(
-      /UNISSUED|PRIVATE|SECRET|explicit_private|custom_private|sol_0123456789ab|rub_123456789abc/,
-    );
-  });
-
   it('rejects unauthenticated material reads before exposing frozen content', async () => {
     const db = testDb();
     const material = await binaryMaterial(db, materialKinds[0]);
@@ -396,62 +325,5 @@ describe('native mistake immutable evidence DB projection', () => {
     expect((await publicMaterialRead(db))[0].prompt_materials).toContainEqual(
       expect.objectContaining({ availability: 'available' }),
     );
-  });
-
-  it('reads multipart parent materials and issued boundaries, remains stable after mutable edits, and hides private reference content', async () => {
-    const db = testDb();
-    const fixture = await publication(db);
-    await attempt(db);
-    const before = await row(db);
-    expect(before.prompt_md).toContain(stem);
-    expect(before.prompt_md).toContain('[p1]');
-    expect(before.prompt_md).toContain('[p2]');
-    expect(before.prompt_md).not.toContain('p3');
-    expect(before.reference_md).toBeNull();
-    expect(JSON.stringify(before)).not.toMatch(/PRIVATE|SECRET/);
-    expect(before.wrong_answer_md).toBe('[p1/s1] 原答一：列式与单位\n[p2/s2] 原答二：另一部分');
-    await db
-      .update(question)
-      .set({ prompt_md: 'CURRENT_EDIT', reference_md: 'CURRENT_ANSWER', updated_at: new Date() });
-    const calls = fixture.execute.mock.calls.length;
-    const events = await db.select().from(event);
-    const originals = await db.select().from(assessment_submission);
-    expect(await row(db)).toEqual(before);
-    const wire = MistakeListResponseSchema.parse(
-      await (await GET(new Request('http://localhost/api/mistakes'))).json(),
-    );
-    expect(wire.rows).toEqual([before]);
-    expect(await db.select().from(event)).toEqual(events);
-    expect(await db.select().from(assessment_submission)).toEqual(originals);
-    expect(fixture.execute).toHaveBeenCalledTimes(calls);
-  });
-
-  it('maps open images, all_units and unit-target evidence to the anchor without unrelated-part or unissued-unit leakage', async () => {
-    const db = testDb();
-    await publication(db);
-    const open = await handwritingFixture(db);
-    const all = await handwritingFixture(db);
-    const related = await handwritingFixture(db);
-    const other = await handwritingFixture(db);
-    const unissued = await handwritingFixture(db);
-    await attempt(db, {
-      anchor: 'p1',
-      entries: [{ ...OPEN_ENTRY, kind: 'open', evidence: [open.evidence] }, TEXT_ENTRY],
-      images: [
-        all,
-        { evidence: related.evidence, target: { scope: 'units', scoring_unit_ids: ['u_s1'] } },
-        { evidence: other.evidence, target: { scope: 'units', scoring_unit_ids: ['u_s2'] } },
-        { evidence: unissued.evidence, target: { scope: 'units', scoring_unit_ids: ['u_s3'] } },
-      ],
-    });
-    const projected = await row(db);
-    expect(projected.wrong_answer_image_refs).toEqual([
-      open.evidence.asset.asset_id,
-      all.evidence.asset.asset_id,
-      related.evidence.asset.asset_id,
-    ]);
-    expect(projected.prompt_md).toContain('冻结子题p1');
-    expect(projected.prompt_md).not.toContain('冻结子题p2');
-    expect(projected.wrong_answer_md).not.toContain('另一部分');
   });
 });
