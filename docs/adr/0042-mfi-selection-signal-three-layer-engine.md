@@ -64,9 +64,7 @@ per-(KC,context) 或可等价证明跨情境差异的 reader。此前 runtime �
 `transfer_gap=n/a` 并写进 LLM prompt；这不是证据，只是一个无消费者/无生产者的占位。
 
 本修订删除 runtime type、候选投影与 prompt 中的 `transfer_gap`。YUK-792 的
-intervention transfer diagnostic 会形成逐次、可审计的 settlement 事实，但在有跨
-intervention 聚合定义、真实 reader 和 red-capable tests 前，不把单次结果冒充通用选题
-信号。未来恢复该字段时，producer、reader、分桶测试和 prompt 必须同一 change 落地。
+intervention transfer diagnostic 会形成逐次、可审计的 settlement 事实，但在跨 intervention 聚合定义、真实 reader 和 red-capable tests 齐备前，单次结果按单例证据记录。未来恢复该字段时，producer、reader、分桶测试和 prompt 必须同一 change 落地。
 方向未取消；无数据时不向 LLM 暗示存在该维度。
 
 ### 2026-07-18 Reconciliation — 反舒适 floor 与 fatigue 的 L3 归属（YUK-673）
