@@ -46,8 +46,8 @@ v1 检查类别限于：记录关系读取（两题材料引用是否相同、�
 1. **§9 八项承重不动**：bank 工具是 agent 读取面，不是练习流选题路径；按 kind 确定性选题 seam（ADR-0030）、pedagogy 确定性 shortlist 与 today 兜底（rewrite-prep §9-1/§9-6）原样运行，工具结果不直接进入练习流主选择。
 2. **题库工具永不读写 learner state**：个性化数字只经 ADR-0070 契约批量读面（D4），工具内不拉取、不改写、不缓存学习者事实。
 3. **ref 永不偷换 latest**：内容变更产生新版本引用；无法解析、已撤回或过期的引用返回明确错误，不静默降级。
-4. **派生画像标注推断、带版本可重建**：推断特征不冒充记录事实；未准入证据保持 unverified；画像可整批重建撤销。
-5. **check_bank 不放大 claim**：interpretation 忠实于原 claim，较窄事实只对较窄结论 supported；不能把难问题改写后仍报 supported；不为任意 claim 临时生成执行程序。
+4. **派生画像标注推断、带版本可重建**：推断特征与记录事实分标；未准入证据保持 unverified；画像可整批重建撤销。
+5. **check_bank 不放大 claim**：interpretation 忠实于原 claim，较窄事实只对较窄结论 supported；改写后的难问题按新 claim 重新评估；不为任意 claim 临时生成执行程序。
 6. **工具响应不自动进学习者界面**：学习者可见内容与 agent 可见内容是独立投影，由 UI 线设计。
 7. **范围之外**：覆盖率地图与缺口单留在供题/白板侧（ADR-0067/0069）；provider fallback chain 归 YUK-1474；`store_sourced_question` 仍是唯一入库闸，题库工具全部是 read 面。
 
