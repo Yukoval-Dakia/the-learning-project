@@ -1,0 +1,88 @@
+{
+  "captured_at": "2026-10-06T18:05:00.128Z",
+  "code_revision": "5d738dbc012913f294f7b471027314c933996ddb",
+  "working_tree": "dirty",
+  "patch_digest": "sha256:b506ca57dc7ffa571b5196bbe0bd94ecadea41c85f03811ea066e5ceef31d327",
+  "patch_paths": [
+    "docs/planning/evidence/2026-09-21-pi-tool-loop-mimo-v2.6-pro-actual.json",
+    "docs/planning/evidence/2026-10-07-yuk1341-synthetic-tool-mimo-v2.6-pro-actual.json",
+    "docs/planning/evidence/2026-10-07-yuk1341-synthetic-vision-mimo-v2.6-pro-actual.json",
+    "src/capabilities/copilot/jobs/copilot-pi-actual.db.test.ts",
+    "src/server/ai/AGENTS.md",
+    "src/server/ai/model-profiles.test.ts",
+    "src/server/ai/pi-synthetic-tool-actual.db.test.ts",
+    "src/server/ai/pi-tool-loop-actual.db.test.ts",
+    "src/server/ai/providers.ts",
+    "tests/helpers/git-evidence.ts"
+  ],
+  "ticket": "YUK-1022",
+  "lane": {
+    "adapter": "pi",
+    "provider": "opencode-go",
+    "model": "mimo-v2.6-pro",
+    "task_kind": "CopilotTask",
+    "pin": "explicit modelBinding (post-P4: the env rollout pin is gone)",
+    "worker_path": "runCopilotRun → executeCopilotTurn (no seam mocks)"
+  },
+  "session": {
+    "session_id": "sess_p3_actual_sbg0qtdti3j1heus5q7icfvj",
+    "cursor_after_turn1": "pi:b28a3628-7d71-4655-b20c-91e3bea1e58d",
+    "cursor_after_turn2": "pi:b28a3628-7d71-4655-b20c-91e3bea1e58d",
+    "cursor_reused_verbatim": true
+  },
+  "turns": [
+    {
+      "run_id": "run_p3_t1_t7n2u887logmv4p49h2x0xk1",
+      "status": "done",
+      "conversation_history_turns": 1,
+      "input_digest": "sha256:c98dbaad4e37cf7e0940874f8ea5e1d96eea32520f2b9597aa56961d55c97e62"
+    },
+    {
+      "run_id": "run_p3_t2_imy3tguyg519ol8rvai8bay6",
+      "status": "done",
+      "conversation_history_turns": 3,
+      "input_digest": "sha256:643fc76676c18157736b32bddd1d9f5cfb4d31a761ec33544ee230774cedef0d"
+    }
+  ],
+  "reply_digests": [
+    {
+      "event_id": "copilot_reply_qqarc3ogfcrzzm8r6d0toxmr",
+      "task_run_id": "copilot_run_tool_run_p3_t1_t7n2u887logmv4p49h2x0xk1",
+      "output_digest": "sha256:4238735750d6e87c2d1e388ba94d8ae97f610c29920e200c446c43ed9fe27a28",
+      "output_excerpt": "水的化学式是 H₂O。"
+    },
+    {
+      "event_id": "copilot_reply_k7u3zh90y4i98dkht0dm60f1",
+      "task_run_id": "copilot_run_tool_run_p3_t2_imy3tguyg519ol8rvai8bay6",
+      "output_digest": "sha256:34dea25c0c45a74b6fa19b5c73e21378b33252f611196aa8e4e06fbff54a3936",
+      "output_excerpt": "氧气的化学式是 O₂。"
+    }
+  ],
+  "ai_task_runs": [
+    {
+      "id": "copilot_run_tool_run_p3_t2_imy3tguyg519ol8rvai8bay6",
+      "provider": "opencode-go",
+      "model": "mimo-v2.6-pro",
+      "status": "success",
+      "finish_reason": "end_turn",
+      "error_message": null,
+      "cost_basis": "estimated",
+      "cost_usd": 0.001075552,
+      "cost_ref": "pi-catalog:opencode-go/mimo-v2.6-pro",
+      "usage_digest": "sha256:70ae86bcb51003fc36ea757f8abadadb63bc40a3864c8d03d355c7232dfaa047"
+    },
+    {
+      "id": "copilot_run_tool_run_p3_t1_t7n2u887logmv4p49h2x0xk1",
+      "provider": "opencode-go",
+      "model": "mimo-v2.6-pro",
+      "status": "success",
+      "finish_reason": "end_turn",
+      "error_message": null,
+      "cost_basis": "estimated",
+      "cost_usd": 0.00813798,
+      "cost_ref": "pi-catalog:opencode-go/mimo-v2.6-pro",
+      "usage_digest": "sha256:0935b55864da1a97acb8fe14d871c59f190afd54c97a50894dc7e39b573db7e0"
+    }
+  ],
+  "provenance": "Turn 1 mints a pi:<uuid> cursor through notifySdkSessionId; copilot_run persists it and registers the worker-owned session. Turn 2 passes the piLanePinnedForKind fold (same id resumes verbatim instead of folding to cold), seeds piSessionReplay from the real assembleCopilotRunInput conversation_history projection, and the adapter replays it as user messages. piHooks/piSkillDocs/piAgents/nativeCompaction all ride the same ctx as the SDK descriptors."
+}

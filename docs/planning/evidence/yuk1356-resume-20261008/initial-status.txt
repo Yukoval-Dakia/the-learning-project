@@ -1,0 +1,26 @@
+ M postman/api-endpoints.json
+ M postman/learning-api.postman_collection.json
+ M src/capabilities/copilot/api/chat.ts
+ M src/capabilities/copilot/server/chat-contracts.ts
+ M src/capabilities/copilot/server/conversation-writes.ts
+ M src/capabilities/copilot/server/copilot-execution.ts
+ M src/capabilities/copilot/server/copilot-execution.unit.test.ts
+ M src/capabilities/copilot/server/copilot-run-input.ts
+ M src/capabilities/copilot/server/copilot-tools.unit.test.ts
+ M src/capabilities/copilot/server/durable-dispatch.ts
+ M src/capabilities/copilot/server/live-turn-context.ts
+ M src/capabilities/copilot/server/materializing-tools.ts
+ M src/capabilities/copilot/server/practice-port.ts
+ M src/capabilities/copilot/server/tool-result-snapshot.ts
+ M src/capabilities/practice/manifest.ts
+ M src/capabilities/practice/public.ts
+ M src/capabilities/practice/server/assessment/assistance.ts
+ M src/capabilities/practice/server/review-operation.ts
+ M src/kernel/tools/allowlists.ts
+ M src/kernel/tools/allowlists.unit.test.ts
+ M src/kernel/tools/types.ts
+?? docs/planning/2026-10-07-yuk1356-review-operation.api-client.patch
+?? src/capabilities/copilot/api/review-answer.db.test.ts
+?? src/capabilities/copilot/server/review-answer-consumer.ts
+?? src/capabilities/practice/server/tools/submit-review-answer.ts
+?? src/kernel/tools/review-answer.ts
