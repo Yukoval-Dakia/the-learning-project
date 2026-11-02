@@ -4,13 +4,16 @@ import {
   type ApiOperationRequestBody,
   apiOperationJson,
 } from '@/ui/lib/api';
+import { startIngestionOperation } from '@/ui/lib/ingestion-operations';
 
 export type IngestionSessionCreateClient = {
+  startIngestionOperation: typeof startIngestionOperation;
   createIngestionSession: (
     body: ApiOperationRequestBody<'createLegacyIngestionSession'>,
   ) => Promise<ApiOperationJsonResponse<'createLegacyIngestionSession'>>;
 };
 const httpIngestionSessionCreateClient: IngestionSessionCreateClient = {
+  startIngestionOperation,
   createIngestionSession: (body) =>
     apiOperationJson('createLegacyIngestionSession', {
       url: '/api/ingestion',

@@ -55,6 +55,8 @@ import {
   type BossJobObserver,
   observeBossJob,
 } from '@/server/boss/job-observation';
+import type { CopilotPublicProse, CopilotPublicProseFailure } from '../public-prose-contract';
+import { publicProseFailureMessage } from './public-prose';
 
 export const COPILOT_RUN_QUEUE = 'copilot_run' as const;
 
@@ -74,6 +76,7 @@ interface SuccessfulTerminalProjection {
   replyMd: string;
   taskRunId: string;
   finishReason: string;
+  publicProse?: CopilotPublicProse;
   modeState?: CopilotModeState;
   primaryView?: CopilotPrimaryView;
 }
@@ -93,6 +96,7 @@ interface FailedTerminalProjection {
   checkpointSafe?: boolean;
   /** User-facing terminal copy for the live job-events consumer. */
   replyMd?: string;
+  publicProse?: CopilotPublicProse;
 }
 
 type WriteJobEventFn = (tx: Db | Tx, input: Parameters<typeof writeJobEvent>[1]) => Promise<number>;
@@ -144,6 +148,7 @@ export async function markCopilotRunStarted(
         payload: {
           reason: 'cancelled',
           cancelled_before_start: true,
+          ...(await cancellationPublicPayload(tx, runId)),
           ...(await durableCheckpointPayload(tx, runId)),
         },
       });
@@ -199,6 +204,7 @@ export async function claimCopilotExecutionFence(
         payload: {
           reason: 'cancelled',
           cancelled_before_start: true,
+          ...(await cancellationPublicPayload(tx, runId)),
           ...(await durableCheckpointPayload(tx, runId)),
         },
       });
@@ -213,6 +219,11 @@ export async function claimCopilotExecutionFence(
     });
     return { outcome: 'claimed' };
   });
+}
+
+async function cancellationPublicPayload(tx: Tx, runId: string): Promise<Record<string, unknown>> {
+  const marker = await findPersistedDurableReply(tx, runId);
+  return marker?.publicProse ? { public_prose: marker.publicProse, reply_md: marker.replyMd } : {};
 }
 
 async function persistPreExecutionCancellation(tx: Tx, runId: string): Promise<void> {
@@ -325,6 +336,7 @@ export async function writeSuccessfulTerminalProjection(
         event_type: COPILOT_RUN_EVENTS.REPLY,
         payload: {
           reply_md: projection.replyMd,
+          ...(projection.publicProse ? { public_prose: projection.publicProse } : {}),
           task_run_id: projection.taskRunId,
           ...(projection.primaryView ? { primary_view: projection.primaryView } : {}),
           ...(projection.modeState ?? {}),
@@ -339,6 +351,7 @@ export async function writeSuccessfulTerminalProjection(
       payload: {
         task_run_id: projection.taskRunId,
         finish_reason: projection.finishReason,
+        ...(projection.publicProse ? { public_prose: projection.publicProse } : {}),
         ...(projection.modeState ?? {}),
         ...checkpointPayload,
       },
@@ -377,7 +390,10 @@ export async function writeFailedTerminalProjection(
       event_type: COPILOT_RUN_EVENTS.FAILED,
       payload: {
         reason: projection.reason,
-        error: projection.error,
+        error: projection.publicProse
+          ? publicProseFailureMessage(projection.publicProse.failure)
+          : projection.error,
+        ...(projection.publicProse ? { public_prose: projection.publicProse } : {}),
         ...(projection.replyMd ? { reply_md: projection.replyMd } : {}),
         ...checkpointPayload,
       },
@@ -406,8 +422,8 @@ export type CopilotRunProgressEvent =
  * Publish live progress under the settlement lock. A queued delta/step is
  * dropped once a cancel request or a committed outcome marker exists, so
  * progress can never cross either boundary even when persistence lags the
- * provider. `onDeltaAccepted` fires inside the lock between the boundary check
- * and the event write, so streamed-prose accumulation keeps the write ordering.
+ * provider. `onDeltaAccepted` fires only after the locked transaction commits.
+ * Recovery always folds durable ids rather than trusting this process cache.
  */
 export async function publishCopilotRunProgressEvent(
   db: Db,
@@ -415,16 +431,18 @@ export async function publishCopilotRunProgressEvent(
   progress: CopilotRunProgressEvent,
   onDeltaAccepted?: (text: string) => void,
 ): Promise<void> {
-  await withCopilotExecutionSettlementLock(db, runId, async (tx, events) => {
-    if (hasCancelRequest(events) || (await findPersistedDurableReply(tx, runId))) return;
-    if (progress.kind === 'delta') onDeltaAccepted?.(progress.text);
+  const publication = await withCopilotExecutionSettlementLock(db, runId, async (tx, events) => {
+    if (hasCancelRequest(events) || (await findPersistedDurableReply(tx, runId))) return false;
     await writeJobEvent(tx, {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
       event_type: progress.kind === 'delta' ? COPILOT_RUN_EVENTS.DELTA : COPILOT_RUN_EVENTS.STEP,
       payload: progress.kind === 'delta' ? { text: progress.text } : progress.payload,
     });
+    return true;
   });
+  if (publication.outcome === 'settled' && publication.value && progress.kind === 'delta')
+    onDeltaAccepted?.(progress.text);
 }
 
 /**
@@ -562,6 +580,7 @@ export async function projectCopilotOutcomeMarker(
           error: marker.error,
           replyMd: marker.replyMd,
           checkpointSafe: marker.checkpointSafe,
+          publicProse: marker.publicProse,
         },
         lockedEvents,
       );
@@ -614,6 +633,7 @@ export async function handleDurableFailure(
   db: Db,
   args: {
     err: unknown;
+    publicProseFailure?: CopilotPublicProseFailure;
     runId: string;
     sessionId: string;
     actorRef: string;
@@ -669,6 +689,7 @@ export async function handleDurableFailure(
           ...(replyFinalization ? { replyFinalization } : {}),
           outcome: 'failure',
           durableFailure: { reason: 'exhausted', error: message },
+          publicProseFailure: args.publicProseFailure ?? { kind: 'execution_failed' },
           now: new Date(),
         });
         return {
@@ -904,7 +925,7 @@ export async function reconcileCopilotDurableRun(
       const replyText =
         '这次后台运行在开始执行前失去了队列投递，没有调用模型或工具。请重新发送这个请求。';
       const taskRunId = `copilot_run_pre_execution_lost_${runId}`;
-      await writeCopilotReplyFn(tx, {
+      const committed = await writeCopilotReplyFn(tx, {
         sessionId,
         userAskEventId: runId,
         replyText,
@@ -916,7 +937,13 @@ export async function reconcileCopilotDurableRun(
       });
       await writeFailedTerminalProjectionFn(
         tx,
-        { runId, reason: 'pre_execution_lost', error, replyMd: replyText },
+        {
+          runId,
+          reason: 'pre_execution_lost',
+          error,
+          replyMd: committed.cleanedReply,
+          publicProse: committed.publicProse,
+        },
         events,
       );
       return { observation: 'pre_execution_lost' };
