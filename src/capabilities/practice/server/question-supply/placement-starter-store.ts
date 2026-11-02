@@ -246,8 +246,12 @@ export async function ensurePlacementStarterAnchorAndClaim(
       demand_id: identity.demandId,
       target_id: identity.targetId,
       status: 'pending_dispatch',
+      // Owner 2026-11-02 (YUK-1468): new placement requests belong to the source agent under the
+      // approved background supply policy. 8 is the delivery target, 3 deliveries are transport
+      // recovery only, and there is no money cap; existing claims keep their stored policy.
+      supply_route: 'sourcing_web',
       max_paid_attempts: 3,
-      budget_limit_micro_usd: 1_000_000,
+      budget_limit_micro_usd: null,
       known_cost_micro_usd: 0,
       next_reconcile_at: now,
       created_at: now,

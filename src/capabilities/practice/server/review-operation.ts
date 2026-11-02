@@ -230,6 +230,8 @@ export async function sessionAdmitsDurableDivert(
 const DURABLE_DIVERT_SESSION_TYPES: ReadonlySet<string> = new Set(['review']);
 
 export interface ReviewAnswerContext {
+  /** Set only by the server-owned conversation confirmation operation. */
+  confirmationOccurrenceId?: string;
   signal?: AbortSignal;
   now?: Date;
   /** Runtime dispatch policy only; session admission remains a domain decision. */
@@ -258,6 +260,23 @@ export async function submitReviewAnswer(
   let retainDiagnosticClaim = false;
   try {
     context.signal?.throwIfAborted();
+    if (body.assessment) {
+      const [issued] = await database
+        .select()
+        .from(assessment_issuance)
+        .where(eq(assessment_issuance.issuance_id, body.assessment.issuance_id));
+      if (
+        issued?.container_occurrence_ref?.startsWith('conversation-confirmation:') &&
+        (issued.container_occurrence_ref !==
+          `conversation-confirmation:${context.confirmationOccurrenceId}` ||
+          !context.authorize)
+      )
+        throw new ApiError(
+          'confirmation_unbound',
+          'confirmation requires its conversation authorization',
+          409,
+        );
+    }
     const validated = await validateSubmit(database, body, context.now ?? new Date());
     const assessment = body.assessment;
     if (!assessment) {

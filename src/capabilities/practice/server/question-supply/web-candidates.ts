@@ -41,7 +41,7 @@ export interface WebCandidate {
   /** web 无 producer 内部 id（source_url 即身份）→ 恒 null。 */
   sourceId: null;
   knowledgeHints: string[];
-  /** web 候选不暂存资产：图片题走 image_candidate proposal 通道，不入 draft。 */
+  /** web 候选不暂存资产；缺文本的来源由需求 owner 内部 blocked，不冒充图片直链。 */
   stagedAssetIds: string[];
 }
 
@@ -57,7 +57,7 @@ export type RunWebFetchCandidatesResult =
   | {
       status: 'ok';
       candidates: WebCandidate[];
-      /** 图片型候选——调用方（executor/job）决定写 proposal；本模块只返回。 */
+      /** 未取得正文的页面线索，不证明媒体类型；后台需求内部记录，不写用户 proposal。 */
       imageCandidates: SourcingImageCandidateT[];
       queryPlan: SourcingTaskOutputT['query_plan'];
       fetchedAt: string;
@@ -97,6 +97,8 @@ export type RunWebSourcingAgentFn = (params: {
   ctx: {
     taskRunId: string;
     causedByEventId: string;
+    deadlineAt?: number;
+    producerTaskRunId?: string;
     modelBinding?: {
       provider?: 'xiaomi' | 'anthropic-sub' | 'anthropic' | 'zhipuai-coding-plan' | 'opencode-go';
       model?: string;
@@ -121,7 +123,13 @@ export interface RunWebFetchCandidatesParams {
     subjectProfile: SubjectProfile;
   };
   /** 运行归因（canary 事件的 session/task/causal 字段来源；agent 工具透传，executor 传 task 侧）。 */
-  ctx?: { taskRunId?: string; sessionId?: string; causedByEventId?: string };
+  ctx?: {
+    taskRunId?: string;
+    sessionId?: string;
+    causedByEventId?: string;
+    deadlineAt?: number;
+    producerTaskRunId?: string;
+  };
   deps: RunWebFetchCandidatesDeps;
   now?: Date;
 }
@@ -269,6 +277,8 @@ async function runWebFetchCandidatesCore(
   const runCtx = {
     taskRunId: params.ctx?.taskRunId ?? `web_fetch_${anchor.id}`,
     causedByEventId: params.ctx?.causedByEventId ?? `web_fetch_trigger_${anchor.id}`,
+    ...(params.ctx?.producerTaskRunId ? { producerTaskRunId: params.ctx.producerTaskRunId } : {}),
+    ...(params.ctx?.deadlineAt !== undefined ? { deadlineAt: params.ctx.deadlineAt } : {}),
   };
   const taskResult = await deps.runSourcingAgent({
     db,

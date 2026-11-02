@@ -6,6 +6,7 @@ export interface MarkdownRendererProps extends Omit<HTMLAttributes<HTMLDivElemen
   remarkPlugins?: ComponentProps<typeof ReactMarkdown>['remarkPlugins'];
   rehypePlugins?: ComponentProps<typeof ReactMarkdown>['rehypePlugins'];
   components?: ComponentProps<typeof ReactMarkdown>['components'];
+  remarkRehypeOptions?: ComponentProps<typeof ReactMarkdown>['remarkRehypeOptions'];
 }
 
 /**
@@ -18,6 +19,7 @@ export function MarkdownRenderer({
   remarkPlugins,
   rehypePlugins,
   components,
+  remarkRehypeOptions,
   ...divProps
 }: MarkdownRendererProps): ReactElement {
   return (
@@ -26,6 +28,7 @@ export function MarkdownRenderer({
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}
         components={components}
+        remarkRehypeOptions={remarkRehypeOptions}
       >
         {children}
       </ReactMarkdown>

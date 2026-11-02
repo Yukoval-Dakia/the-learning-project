@@ -64,27 +64,21 @@ import {
 import { SupplyTraceV1, type SupplyTraceV1T } from '../server/question-supply/evidence-demand';
 import {
   PLACEMENT_ATTEMPT_HEARTBEAT_MS,
-  PLACEMENT_DECISION_DEADLINE_MS,
   PLACEMENT_QUEUE_EXPIRY_MS,
   PLACEMENT_STARTER_REQUIRED_COUNT,
-  PLACEMENT_VERIFY_POLL_MS,
   type PlacementAttemptAuthority,
   type PlacementAttemptHeartbeat,
   PlacementStarterAdmissionError,
   PlacementStarterBudgetExhaustedError,
-  PlacementStarterDeadlineError,
   PlacementStarterStaleAuthorityError,
-  PlacementStarterUnderfillError,
   PlacementStarterUnknownCostError,
   type PlacementVerificationAuthority,
   acquirePlacementAttempt,
   assertPlacementAttemptFence,
-  countEligiblePlacementQuestions,
   finishPlacementAttempt,
   markAttemptVerifying,
-  placementAttemptVerificationSettled,
   placementDeliveryMetadata,
-  placementFulfillmentDisposition,
+  reconcilePlacementDelivery,
   recordPlacementAttemptOutput,
   releaseAuthorizedPaidCall,
   renewPlacementAttempt,
@@ -1122,42 +1116,6 @@ export function defaultPlacementSleep(ms: number, signal: AbortSignal): Promise<
   });
 }
 
-async function reconcilePlacementDelivery(
-  db: Db,
-  attempt: PlacementAttemptAuthority,
-  signal: AbortSignal,
-  deps: DepsOverride,
-): Promise<void> {
-  const now = deps.now ?? (() => new Date());
-  const sleep = deps.sleep ?? defaultPlacementSleep;
-  const deadline = attempt.startedOn.getTime() + PLACEMENT_DECISION_DEADLINE_MS;
-  while (true) {
-    if (signal.aborted) {
-      await finishPlacementAttempt(db, attempt, 'interrupted', now());
-      throw signal.reason ?? new Error('quiz_gen aborted');
-    }
-    const current = now();
-    if (current.getTime() >= deadline) {
-      await finishPlacementAttempt(db, attempt, 'timed_out', current);
-      throw new PlacementStarterDeadlineError('placement verification decision deadline reached');
-    }
-    const eligibleCount = await countEligiblePlacementQuestions(
-      db,
-      attempt.claimId,
-      attempt.attemptId,
-    );
-    if (placementFulfillmentDisposition(eligibleCount) === 'satisfied') {
-      await finishPlacementAttempt(db, attempt, 'succeeded', current);
-      return;
-    }
-    if (await placementAttemptVerificationSettled(db, attempt.attemptId)) {
-      await finishPlacementAttempt(db, attempt, 'underfilled', current);
-      throw new PlacementStarterUnderfillError('placement delivery verification underfilled');
-    }
-    await sleep(PLACEMENT_VERIFY_POLL_MS, signal);
-  }
-}
-
 export function buildQuizGenHandler(
   db: Db,
   deps: DepsOverride = {},
@@ -1236,7 +1194,10 @@ export function buildQuizGenHandler(
           await placementHeartbeat?.assertHealthy();
           await assertPlacementAttemptFence(db, placementAttempt);
           await markAttemptVerifying(db, placementAttempt);
-          await reconcilePlacementDelivery(db, placementAttempt, job.signal, deps);
+          await reconcilePlacementDelivery(db, placementAttempt, job.signal, {
+            ...(deps.now ? { now: deps.now } : {}),
+            sleep: deps.sleep ?? defaultPlacementSleep,
+          });
         }
         console.log(`[quiz_gen] ${data.trigger}:${data.ref_id} -> ${result.status}`);
       } catch (err) {

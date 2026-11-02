@@ -73,9 +73,12 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       const rawBody = raw as Record<string, unknown>;
       if (typeof rawBody.user_message === 'string') {
         crisisPreClassified = classifyCopilotTurn(rawBody.user_message);
-        if (crisisPreClassified.forcedPolicy && rawBody.review_answer !== undefined) {
-          droppedReviewAnswer = true;
-          raw = { ...rawBody, review_answer: undefined };
+        if (
+          crisisPreClassified.forcedPolicy &&
+          (rawBody.review_answer !== undefined || rawBody.confirmation !== undefined)
+        ) {
+          droppedReviewAnswer = rawBody.review_answer !== undefined;
+          raw = { ...rawBody, review_answer: undefined, confirmation: undefined };
         }
       }
     }
