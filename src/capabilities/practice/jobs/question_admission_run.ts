@@ -68,14 +68,11 @@ import {
   applyCustomPreviewDecision,
   prepareAdmissionCustomPreview,
 } from '../server/custom-block-preview/admission-preview';
-import { readVisibleVectorNearHold } from '../server/question-supply/ingest-dedup';
-import { assertPlacementAuthority } from '../server/question-supply/placement-starter-attempts';
-import {
-  assertPlacementPaidEffectAuthority,
-  readPlacementQuestionAuthority,
-  recordPlacementPaidEffect,
-} from '../server/question-supply/placement-starter-paid-authority';
 import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from '../server/task-runtime';
+import {
+  placementAuthority as placementAuthorityPort,
+  readVisibleVectorNearHold,
+} from '../supply/public';
 
 export type QuestionAdmissionRunData = AdmissionJobData;
 export interface QuestionAdmissionRunResult {
@@ -246,9 +243,12 @@ export async function runAdmissionForQuestion(
   // the delivery's authority must hold before this paid batch is claimed (the batch is one
   // paid effect), each solve call is recorded on the claim, and the application re-checks the
   // current binding. A stale binding stops here, before any paid send is claimed.
-  const placementAuthority = await readPlacementQuestionAuthority(db, rootId);
+  const placementAuthority = await placementAuthorityPort.readPlacementQuestionAuthority(
+    db,
+    rootId,
+  );
   if (placementAuthority) {
-    await assertPlacementPaidEffectAuthority(db, {
+    await placementAuthorityPort.assertPlacementPaidEffectAuthority(db, {
       scope: 'question',
       authority: placementAuthority,
     });
@@ -421,7 +421,7 @@ export async function runAdmissionForQuestion(
     timer.unref();
     const recordPlacementAdmissionCall = async (runId: string | null, costUsd: number | null) => {
       if (!placementAuthority) return;
-      await recordPlacementPaidEffect(db, {
+      await placementAuthorityPort.recordPlacementPaidEffect(db, {
         authority: { scope: 'question', authority: placementAuthority },
         kind: 'question_admission',
         invocationKey: `${placementAuthority.attempt_id}:${rootId}:question_admission:${randomUUID()}`,
@@ -562,8 +562,12 @@ export async function runAdmissionForQuestion(
       if (snapshot?.state === 'applied')
         return simple(completedAdmissionStatus(snapshot.application));
       // Placement rows before group rows, the same order as the verifier writebacks.
-      const currentPlacement = await readPlacementQuestionAuthority(tx, rootId);
-      if (currentPlacement) await assertPlacementAuthority(tx, currentPlacement);
+      const currentPlacement = await placementAuthorityPort.readPlacementQuestionAuthority(
+        tx,
+        rootId,
+      );
+      if (currentPlacement)
+        await placementAuthorityPort.assertPlacementAuthority(tx, currentPlacement);
       const { root, lifecycle } = await lockAdmissionGroup(tx, rootId);
       const purpose = await checkPurpose(tx);
       if (purpose.state !== 'allow') {

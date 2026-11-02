@@ -13,8 +13,6 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
-
-import { lockPlacementSupplyScopes } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
 import {
   LEGACY_DRAFT_STATUS,
@@ -27,6 +25,7 @@ import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { cause_category_overlay, event, mistake_variant, question } from '@/db/schema';
 import { getCorrectionStatus, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
 import {
   acquireProposalDecisionLock,
   asPlainRecord,
@@ -1168,8 +1167,8 @@ async function acceptUnifiedQuestionEditRequest(
     };
   }
 
-  const { saveDraftEdit, EditQuestionInput } = await import('./tools/submit-question');
-  const { submitDraftQuestion } = await import('./tools/submit-question');
+  const { saveDraftEdit, EditQuestionInput } = await import('../supply/public');
+  const { submitDraftQuestion } = await import('../supply/public');
   const now = new Date();
   const saveRequestId = `proposal-accept:${proposalId}`;
   const parsedSave = EditQuestionInput.safeParse({

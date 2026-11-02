@@ -20,13 +20,8 @@ import { artifact, question, source_document } from '@/db/schema';
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
+import { type SupplyTraceV1T, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
 import { materializeGeneratedQuestionParts } from '../server/question-parts';
-import {
-  type SupplyTraceV1T,
-  withSupplyTraceDifficultyEvidence,
-} from '../server/question-supply/evidence-demand';
-import { assertPlacementAttemptFence } from '../server/question-supply/placement-starter-attempts';
-import { authorizePlacementQuestion as authorizePlacementQuestionTx } from '../server/question-supply/placement-starter-paid-authority';
 import {
   type ExactQuestionDuplicateKnowledgeMerge,
   canonicalQuestionContentHash,
@@ -38,6 +33,10 @@ import {
   synthesizeMaterialSourceRefs,
 } from '../server/quiz/quiz-gen-material';
 import { writeVerifyDispatchIntent } from '../server/verify-dispatch-outbox';
+import {
+  assertPlacementAttemptFence,
+  authorizePlacementQuestion as authorizePlacementQuestionTx,
+} from '../supply/public';
 import type {
   GeneratedQuizDrafts,
   QuizGenerationContext,

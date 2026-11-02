@@ -12,8 +12,8 @@ import {
   placementJobState,
 } from '@/kernel/placement-jobs';
 import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
+import { EvidenceDemandV1, evidenceDemandToTargetContext } from '@/kernel/supply-contracts';
 import { dispatchSupplyTarget } from './dispatcher';
-import { EvidenceDemandV1, evidenceDemandToTargetContext } from './evidence-demand';
 import { PLACEMENT_QUEUE_EXPIRY_MS } from './placement-starter-attempts';
 import type { QuestionSupplyTarget } from './target-discovery';
 

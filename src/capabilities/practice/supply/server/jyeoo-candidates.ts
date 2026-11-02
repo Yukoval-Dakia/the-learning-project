@@ -44,7 +44,7 @@ import {
 } from '@/kernel/records/asset-store';
 
 import { answerClassCompatible } from '@/subjects/question-kind';
-import { canonicalQuestionContentHash } from '../quiz/content-fingerprint';
+import { canonicalQuestionContentHash } from '../../server/quiz/content-fingerprint';
 import {
   JYEOO_FETCH_CANARY_ACTION,
   jyeooBudgetRemaining,

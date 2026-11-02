@@ -64,7 +64,7 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
   },
   // store-sourced-question.ts 已降为 shim（YUK-1468），content 写迁往
   // submit-question.ts（同收敛纪律）。
-  'src/capabilities/practice/server/tools/submit-question.ts': {
+  'src/capabilities/practice/supply/tools/submit-question.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043', 'YUK-1468'],
     note: 'INSERT 走 sourced-draft-insert（converged）；图题事后富集 UPDATE（structured/figures/judge_override/multimodal —— 改变判分输入）之后同事务重发组 revision（复审 P1-6 补齐；纯 metadata 富集 digest 不变 ⇒ 幂等 noop）。',

@@ -1,9 +1,9 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { event, knowledge, placement_starter_claim } from '@/db/schema';
+import { SupplyTraceV1 } from '@/kernel/supply-contracts';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { insertLegacyGoal as insertGoal } from '../../../../../tests/helpers/legacy-goal';
-import { SupplyTraceV1 } from './evidence-demand';
 import { dispatchPlacementStarterClaimTx } from './placement-starter';
 import { materializePlacementStartersForGoal } from './placement-starter-store';
 

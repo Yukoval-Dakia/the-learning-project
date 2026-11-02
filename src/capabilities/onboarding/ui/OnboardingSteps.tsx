@@ -1,8 +1,8 @@
-// The first-run step rail in the M3E presentation: 设定 → 备料 → 定位 → 档案. Pages move here from
-// the legacy ObSteps as they migrate; ObSteps goes when the last one has (YUK-1473).
+// The first-run step rail in the M3E presentation: 设定 → 备料 → 定位 → 档案 (YUK-1473).
 
 import { Check } from 'lucide-react';
-import type { ObStepId } from './ObSteps';
+
+export type ObStepId = 'welcome' | 'source' | 'placement' | 'profile';
 
 const STEPS: ReadonlyArray<{ id: ObStepId; label: string }> = [
   { id: 'welcome', label: '设定' },
