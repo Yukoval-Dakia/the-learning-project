@@ -495,95 +495,70 @@ export const PROVIDER_LANES = [
   {
     id: 'glm.knowledge-edge-reconcile',
     owner: 'capabilities/knowledge',
-    disposition: 'migrate',
+    disposition: 'prune',
     wire: {
       path: 'src/capabilities/knowledge/server/edge-reconcile.ts',
       calls: ['fetchImpl'],
       contains: ['judgeEdgeReconcile', '/chat/completions'],
     },
-    callers: [
-      {
-        path: 'src/capabilities/knowledge/server/propose_edge.ts',
-        imports: ['./edge-reconcile'],
-      },
-      {
-        path: 'src/capabilities/knowledge/jobs/knowledge_edge_propose_nightly.ts',
-        imports: ['@/capabilities/knowledge/server/propose_edge'],
-      },
-    ],
-    directImporters: [
-      { path: 'src/capabilities/knowledge/server/propose_edge.ts', kind: 'runtime' },
-    ],
-    roles: ['api', 'worker'],
-    provider: 'Product-pinned OpenAI completions endpoint via shared memory LLM configuration',
-    model: 'env-resolved MEM0_LLM_MODEL through resolveGlmConfig',
-    endpointClass: 'OpenAI-compatible chat completions POST /chat/completions',
+    callers: [],
+    directImporters: [],
+    roles: [],
+    provider: 'historical shared memory LLM endpoint',
+    model: 'historical only; not runtime truth',
+    endpointClass: 'historical OpenAI-compatible chat completions',
     configuration: {
       endpoint: {
-        summary:
-          'Runtime catalog supplies completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback remains explicit',
+        summary: 'historical endpoint configuration; no live runtime',
         source: {
-          path: 'src/server/ai/mem0/llm-config.ts',
-          contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
-          calls: ['resolveGlobalProviderSwitch', 'executablePiModel', 'resolveModelProfile'],
+          path: 'src/capabilities/knowledge/server/edge-reconcile.ts',
+          calls: ['fetchImpl'],
         },
       },
       credential: {
-        summary: 'Global provider credential env; ZHIPU_API_KEY only for unpinned GLM rollback',
+        summary: 'historical credential configuration; no live runtime',
         source: {
-          path: 'src/server/ai/mem0/llm-config.ts',
-          contains: ['env.ZHIPU_API_KEY', 'env[credentialEnv]'],
-          calls: ['providerCredentialEnvName'],
+          path: 'src/capabilities/knowledge/server/edge-reconcile.ts',
+          contains: ['apiKey'],
         },
       },
       model: {
-        summary:
-          'Global provider model; unpinned MEM0_LLM_MODEL env overrides the provider-catalog lane default (LEGACY_GLM_MODEL_ID, YUK-1559)',
+        summary: 'historical model configuration; no live runtime',
         source: {
-          path: 'src/server/ai/mem0/llm-config.ts',
-          contains: ['env.MEM0_LLM_MODEL', 'LEGACY_GLM_MODEL_ID', 'model: pin.model'],
+          path: 'src/capabilities/knowledge/server/edge-reconcile.ts',
+          contains: ['model'],
         },
       },
     },
     evidence: {
-      path: 'src/capabilities/knowledge/server/edge-reconcile.ts',
-      calls: ['executeDirectProviderAttempt', 'attempt.estimateCost'],
+      path: 'src/db/schema/artifacts.ts',
+      contains: ['edge_reconciliation_log'],
     },
     attemptSemantics: {
-      admittedUnit: 'one HTTP chat-completions request for one edge reconciliation judgment',
+      admittedUnit:
+        'none; the only caller (knowledge_edge_propose_nightly) was folded into maintenance by YUK-1664',
       transportRetryCount: 0,
       attemptsPerInvocation: {
-        kind: 'dynamic',
-        multiplierRationale:
-          'a proposal with no neighbors emits zero requests; up to five proposed edges can each emit one reconciliation request',
+        kind: 'exact',
+        value: 0,
+        fixedRequestCount: 0,
+        fixedFanOutMultiplier: 1,
       },
       durableIdentity:
-        'one provider_attempt per judgment fetch under the caller-provided operation identity',
-      timeout: '60 seconds by default with AbortController cancellation',
-      clientRetry: 'none inside the HTTP client; retryable responses are surfaced to the owner',
-      redelivery:
-        'the llm worker queue has retryLimit 2, composing one request per delivery to at most three wire attempts; API callers have no redelivery',
-      fanOut:
-        'zero requests when a proposal has no neighbors; otherwise one request per proposal, with at most five proposals in the owning operation',
+        'none; pending supersede proposals still apply through edge_reconciliation_log on accept',
+      timeout: 'not applicable after pruning',
+      clientRetry: 'not applicable after pruning',
+      redelivery: 'not applicable after pruning',
+      fanOut: 'zero live attempts',
       evidence: [
         {
-          path: 'src/capabilities/knowledge/server/edge-reconcile.ts',
-          calls: ['executeDirectProviderAttempt', 'setTimeout'],
-          contains: ['DEFAULT_TIMEOUT_MS'],
-        },
-        {
-          path: 'src/capabilities/knowledge/server/propose_edge.ts',
-          imports: ['./edge-reconcile'],
-          contains: ["caller: 'worker'"],
-        },
-        {
-          path: 'src/server/boss/queue-config.ts',
-          imports: ['@/server/boss/client'],
-          contains: ['JOB_RETRY_LIMIT = 2'],
+          path: 'src/db/schema/artifacts.ts',
+          calls: ['pgTable'],
+          contains: ['edge_reconciliation_log'],
         },
       ],
     },
-    costSupport: 'provider_attempt records reported usage and estimated CNY cost per wire attempt',
+    costSupport: 'not applicable after pruning; schema and migrations remain historical record',
   },
   {
     id: 'glm.knowledge-misconception-reconcile',

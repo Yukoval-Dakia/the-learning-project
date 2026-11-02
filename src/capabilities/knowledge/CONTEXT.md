@@ -12,7 +12,7 @@ accept/dismiss 带 FOR UPDATE 防并发）、错因归因（attribute → JudgeO
 - **跨包读**：node-page 的笔记 section / backlinks 经 notes 包导出
   （notes-read / body-blocks / block-refs），方向单一（knowledge → notes）。
 - server/ — 16 模块本体（测试同居，命名即分区）；jobs/ — 主依赖为 knowledge 的
-  boss handlers（propose / edge-propose / attribution 类，实施时按依赖核对归位）；
+  boss handlers（maintenance / frontier / dedup / attribution 类，实施时按依赖核对归位）；
   api/ — 8 条 route body（T4 填，kernel v2 签名）。
 - 包外主要消费方：practice / ingestion 包（getEffectiveDomain /
   resolveSubjectProfileForKnowledgeIds / assertKnowledgeIdsExist / batchResolveSubjectIds）、

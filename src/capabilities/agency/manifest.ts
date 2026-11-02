@@ -161,10 +161,7 @@ export const agencyCapability = defineCapability({
         // （上游失败 dreaming 照跑，只是少看几条 pending）。cron 移除，改由 orchestrator 触发。
         name: 'dreaming_nightly',
         eligibility: nightlyEligibility('reflection'),
-        dependsOn: [
-          { job: 'knowledge_edge_propose_nightly', soft: true },
-          { job: 'knowledge_maintenance_nightly', soft: true },
-        ],
+        dependsOn: [{ job: 'knowledge_maintenance_nightly', soft: true }],
         queue: 'agent',
         load: () => import('./jobs/dreaming_nightly').then((m) => m.buildDreamingNightlyHandler),
       },

@@ -16,7 +16,6 @@ import './load-env';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { listActiveSubjectsSinceRefresh } from '@/capabilities/agency/server/memory/active-subjects';
 import type { RubricGate } from '@/capabilities/knowledge/public';
-import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/public';
 import { scheduleReview } from '@/capabilities/practice/public';
 import { CauseSchema } from '@/core/schema/cause';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
@@ -77,8 +76,8 @@ export function assertProdFence(env: NodeJS.ProcessEnv = process.env): void {
 // scenario DSL, no RNG framework.
 const SEED_PROFILE = {
   timeSpanDays: 28,
-  // recent failure cluster sits inside the last 24h (so the nightly's 24h scan
-  // discovers it — D2's "two windows" rule).
+  // recent failure cluster sits inside the last 24h (D2's "two windows" rule), so
+  // maintenance's recent-failure input sees it.
   recentClusterHoursAgo: [2, 6, 12], // each < 24h
   overdueReviewedQuestions: 4, // questions reviewed to a due_at <= now
   futureReviewedQuestions: 2, // questions reviewed to a due_at in the future
@@ -135,7 +134,7 @@ const MATERIALIZED_EDGES: Array<{ from: NodeId; to: NodeId; relation: string }> 
   { from: NODES.jushi, to: NODES.fanyi, relation: 'applied_in' },
 ];
 
-// The PASS edge (driven by the stubbed nightly) uses 'prerequisite' (asymmetric
+// The PASS edge uses 'prerequisite' (asymmetric
 // → directional cooldownKeys[0]).
 export const PASS_RELATION = 'prerequisite';
 export const PASS_FROM = NODES.xuci;
@@ -370,7 +369,7 @@ async function seedAttemptsAndReviews(
   await seedReviewTimeline(dbh, overdue, now, /* makeDue */ true);
   await seedReviewTimeline(dbh, future, now, /* makeDue */ false);
 
-  // 4c. The RECENT failure cluster (drives the PASS edge propose). ≥2 failure
+  // 4c. The RECENT failure cluster (evidence for the PASS edge). ≥2 failure
   // attempts INSIDE the last 24h, same registry-valid primary_category,
   // judge-backed, each referencing BOTH edge endpoints (GAP4 — satisfies the
   // strongest gate so any relation passes).
@@ -381,7 +380,7 @@ async function seedAttemptsAndReviews(
 
   // FIX F (reseed freshness): the recent-cluster events use deterministic ids and
   // writeEvent is conflict-do-nothing, so a re-run would NOT refresh their
-  // created_at — and the cluster must stay inside the nightly's 24h scan window.
+  // created_at — and the cluster must stay inside the 24h recent window.
   // Delete ONLY the recent-cluster deterministic ids (attempt + chained judge)
   // before re-writing them, so each seed run re-anchors them to `now - hoursAgo`.
   // Scoped to these ids only — the 28d history (4a/4b) is fine to keep stable.
@@ -686,8 +685,8 @@ async function seedL2DismissCluster(dbh: DbLike, now: Date): Promise<void> {
 }
 
 // ── Step 5a — the PASS relation signal ──────────────────────────────────────
-// The nightly produces the PASS propose event itself (--observe). For the plain
-// `seed` path we still want a proposal_signals row for the PASS relation so
+// No seeded PASS propose event (edge proposals come from a real maintenance run).
+// We still want a proposal_signals row for the PASS relation so
 // getProposalAcceptanceRates has a non-zero row — record a user accept directly
 // from the deterministic cooldown_key.
 async function seedPassRelationSignal(dbh: DbLike, cluster: ClusterRefs): Promise<void> {
@@ -751,12 +750,10 @@ export async function runReset(dbh: DbLike): Promise<ResetCounts> {
 async function runResetTx(dbh: DbLike): Promise<ResetCounts> {
   // postgres-js `db.execute(sql\`… RETURNING …\`)` returns the rows array, so
   // `.length` is the deleted-row count.
-  // Most synthetic events carry payload.__synthetic. EXCEPTION: the stubbed
-  // nightly's PASS propose is written through the real writeAiProposal path,
-  // whose event payload is built from the canned EdgeProposeOutput and CANNOT
-  // carry __synthetic (EdgeProposalSchema forbids extra keys). So also delete
-  // any knowledge_edge propose event whose endpoints are synthetic — that
-  // catches the un-markered nightly PASS propose (PR review, major).
+  // Most synthetic events carry payload.__synthetic. EXCEPTION: an agent edge
+  // proposal on synthetic nodes (e.g. maintenance run against this seed) is
+  // written through the real proposal path and CANNOT carry __synthetic. So also
+  // delete any knowledge_edge propose event whose endpoints are synthetic.
   //
   // FIX D(2): broaden the second arm to also catch `generate` events on
   // synthetic edges. A dev who accepts a seeded proposal via the real UI writes
@@ -816,42 +813,12 @@ function arrayLen(result: unknown): number {
   return Array.isArray(result) ? result.length : 0;
 }
 
-// ── --observe: drive the REAL nightly with a STUBBED runTaskFn + report ─────
+// ── --observe: seed (idempotent) + report ───────────────────────────────────
+// The stubbed edge nightly this used to drive was retired (YUK-1664); nightly
+// edge proposals now come from knowledge maintenance, which needs a real agent run.
 export async function runObserve(dbh: DbLike, now: Date = new Date()): Promise<void> {
-  // Ensure seeded (idempotent) before observing.
   await runSeed(dbh, now);
-  await runStubbedNightly(dbh);
   await printReport(dbh, now);
-}
-
-// The stub returns a canned EdgeProposeOutput JSON (the PASS propose). The
-// nightly's REAL body runs: getFailureAttempts(now-24h) discovers the cluster,
-// runEdgeProposeAndWrite applies real dedup/self-loop/unknown-node/duplicate
-// checks, then writeAiProposal → writeEvent writes a PLAIN PASS propose event.
-// Zero token, deterministic. The reasoning names a concrete signal (G7a) and the
-// relation is the asymmetric PASS_RELATION.
-export async function runStubbedNightly(dbh: DbLike): Promise<void> {
-  const cannedReasoning =
-    '「虚词」与「句式」概念边界混淆：合成 judge cause concept，错题失败 attempt 触发 prerequisite';
-  const cannedOutput = JSON.stringify({
-    proposals: [
-      {
-        from_knowledge_id: PASS_FROM,
-        to_knowledge_id: PASS_TO,
-        relation_type: PASS_RELATION,
-        weight: 0.6,
-        reasoning: cannedReasoning,
-      },
-    ],
-  });
-  // runKnowledgeEdgeProposeNightly is typed for a `Db`; a Tx is structurally
-  // compatible for the reads/writes it performs.
-  const result = await runKnowledgeEdgeProposeNightly(dbh as Db, {
-    // STUBBED runTaskFn — zero token, deterministic. TaskTextResult shape
-    // ({ text, task_run_id?, cost_usd? }); task_run_id is optional (omit).
-    runTaskFn: async () => ({ text: cannedOutput, cost_usd: 0 }),
-  });
-  console.log('[seed-synthetic] nightly result', result);
 }
 
 export interface ObserveReport {
