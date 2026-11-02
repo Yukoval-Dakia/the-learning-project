@@ -214,8 +214,8 @@ export const notesCapability = defineCapability({
         schedule: { cron: '45 2 * * *', tz: 'Asia/Shanghai' },
         eligibility: nightlyEligibility('deterministic'),
         beforeEligibility: async (db) => {
-          const { sweepAbandonedEditSessions } = await import('./server/hub-sync-reconciliation');
-          await sweepAbandonedEditSessions(db);
+          const { reapAbandonedEditSessions } = await import('./server/artifacts/presence/pg');
+          await reapAbandonedEditSessions(db);
         },
         queue: 'llm',
         load: () =>
