@@ -237,7 +237,7 @@ edge-evidence 版 SHA-256
   settlement-subscription 经顶层 Db 独立 tx `G → instance`；reconcile:212 /
   probe-result-subscription:110 / writeEvents:284 三处 `corrections:all → source`
   不持 G；failInterventionPreparation:757 独取 instance（无 G）；
-  review-answer-consumer:45→46 `copilot-execution-settlement → source`。
+  review-answer-consumer:46→47 `copilot-execution-settlement → source`。
   **guard**：所有“同 tx 同取 instance 与 corrections”的已见路径全程持 G
   （单一 xact 键 `hashtext('learning-state:write')`，xact 互斥使两路径不能
   并发互等）；不持 G 的 corrections 站点均不取 instance，不持 G 的
