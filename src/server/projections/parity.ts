@@ -7,6 +7,7 @@
 // The diff helper is shared with the offline audit so both agree on what "fold == row" means.
 
 import { and, eq, inArray } from 'drizzle-orm';
+import { UndecodableKnowledgeOperationError } from '@/core/projections/knowledge-operation';
 import { diffSnapshots } from '@/core/projections/snapshot-diff';
 import type {
   ArtifactRowSnapshotT,
@@ -23,6 +24,7 @@ import { gatherAndFoldArtifact } from '@/kernel/records/artifact-history';
 import { gatherAndFoldGoal } from '@/kernel/records/goal-history';
 import { gatherAndFoldKnowledgeEdge } from '@/kernel/records/knowledge-edge-facts';
 import { gatherAndFoldKnowledgeNode } from '@/kernel/records/knowledge-node-history';
+import { entityKey, prefetchKnowledgeOperations } from '@/kernel/records/knowledge-operation';
 import { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
 import { gatherAndFoldMistakeVariant } from '@/kernel/records/mistake-variant-facts';
 import { gatherAndFoldQuestionBlock } from '@/kernel/records/question-block-projection';
@@ -106,6 +108,23 @@ export async function knowledgeEdgesWithGenesisAnchor(
       ),
     );
   for (const r of idxRows) out.add(r.materialized_id);
+
+  // v1 create targets are genesis claims; archive targets never birth an edge.
+  const ops = await prefetchKnowledgeOperations(db);
+  const remaining = edgeIds.filter((id) => !out.has(id));
+  for (const edgeId of remaining) {
+    for (const rateId of ops.scan.targetsByEntity.get(entityKey('knowledge_edge', edgeId)) ?? []) {
+      const entry = ops.scan.byRateId.get(rateId);
+      if (
+        entry?.op.targets.some(
+          (t) => t.kind === 'knowledge_edge' && t.id === edgeId && t.effect === 'create',
+        )
+      ) {
+        out.add(edgeId);
+        break;
+      }
+    }
+  }
   return out;
 }
 
@@ -123,6 +142,8 @@ export async function assertKnowledgeNodeParity(
   try {
     folded = await gatherAndFoldKnowledgeNode(db, nodeId);
   } catch (err) {
+    // An undecodable knowledge_operation fact fails closed — never a diff or a warn.
+    if (err instanceof UndecodableKnowledgeOperationError) throw err;
     // Route reducer/gather throws through the same switch as a mismatch.
     onParityMismatch('knowledge', nodeId, [
       `<fold-threw>: ${err instanceof Error ? err.message : String(err)}`,
