@@ -37,7 +37,7 @@ export interface QuestionContentWriterEntry {
 
 export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWriterEntry> = {
   // ─── 已收敛（YUK-1043：同事务 publishQuestionGroup*，per-site 验证） ───
-  'src/capabilities/practice/server/question-bank-write.ts': {
+  'src/capabilities/practice/question-bank/server/question-bank-write.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],
     note: 'editQuestion：判分输入字段（题面/答案/选项/题型）变更 ⇒ 先锁组根再改子行、同事务统一发布（part 编辑锁序 question 根→子行）；archiveQuestion ⇒ 组根 archive 落 withdrawn，单 part archive ⇒ 重发组 revision（tombstone part 退出组契约）。',
@@ -47,12 +47,12 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043'],
     note: 'web_sourced/jyeoo 新草稿 ⇒ 同事务铸首版 revision（admission withheld/unverified_rules；source_verify 通过后由 promote 重新发布为准入态）。',
   },
-  'src/capabilities/practice/server/question-parts.ts': {
+  'src/capabilities/practice/question-bank/server/question-parts.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],
     note: 'createQuestionPart ⇒ 同事务重发父组 revision（组契约含全部子 part）。',
   },
-  'src/capabilities/practice/server/proposal-appliers.ts': {
+  'src/capabilities/practice/question-bank/server/proposal-appliers.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],
     note: '三处内容写全部同事务发布：mistake_variant 接受 INSERT ⇒ 首版 admitted（manual+human，D9）；question_draft 接受 promote ⇒ admission 维度翻 admitted（manual+human）；acceptQuestionEditProposal 的 structured 编辑 ⇒ 新 revision（内容变更 ⇒ preserve 折叠 withheld，P1-5）。拒绝路径不发布（tombstone 语义不变）。',
@@ -77,17 +77,17 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1468', 'YUK-1568'],
     note: '草稿提交闸内核：question 行 INSERT/UPDATE（prompt_md/reference_md/choices_md/structured —— v2 文档的 legacy 投影）与 publishQuestionGroup 同事务铸 revision（未决转换 withheld、CAS/dedup 冲突拒绝、admission 维度如实入契约）；typed 声明多 part 组的 question_part 子行 INSERT 同闭包（per-site：写点所在函数即 seam 调用方，锁/查重在 typed-group）。',
   },
-  'src/capabilities/practice/jobs/question_admission_run.ts': {
+  'src/capabilities/practice/question-bank/jobs/question_admission_run.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1468', 'YUK-1547'],
     note: '准入通过后，同一事务里 publishQuestionGroup 铸 admitted revision（YUK-1547：发布付费 resolved 契约而非冻结输入），再把 prompt_md/reference_md/choices_md 投影成该 revision。withheld 不改内容列。',
   },
-  'src/capabilities/practice/server/admission/resolved-repair.ts': {
+  'src/capabilities/practice/question-bank/server/admission/resolved-repair.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1547'],
     note: '免费补发 lane：同事务内 publishQuestionGroup 铸 resolved 契约的新 revision（publisher seam 前置），随后根行投影 prompt_md/reference_md/choices_md 自同一契约。仅经显式 ops manifest + CAS + 回执绑定幂等门；paid_effect 不写。',
   },
-  'src/capabilities/practice/server/reference-solution.ts': {
+  'src/capabilities/practice/question-bank/server/reference-solution.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],
     note: 'reference/rubric backfill UPDATE 与统一发布同事务（§2 矩阵行 19）：新参考答案改变评分依据 ⇒ 新 revision + preserve 折叠 withheld（P1-5：旧 admission evidence 不越代适用）；ai_generated 来源标识已在 rubric.reference_solution_source 留痕。',

@@ -11,7 +11,7 @@ import {
   type AnchorBucket,
   setFixedAnchor,
   setFixedAnchors,
-} from '@/capabilities/practice/server/fixed-anchor';
+} from '@/capabilities/practice/question-bank/server/fixed-anchor';
 import { db } from '@/db/client';
 import { item_calibration } from '@/db/schema';
 import { resetDb } from '../../../tests/helpers/db';

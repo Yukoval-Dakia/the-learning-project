@@ -3,7 +3,7 @@
 // 多题页面只走精确哈希和向量近重。向量近重不拒收，记一笔交给现有草稿待裁决。
 
 import { and, asc, eq, isNull, ne, sql } from 'drizzle-orm';
-import { settleOneQuestionPageHit } from '@/capabilities/practice/server/quiz/content-fingerprint';
+import { settleOneQuestionPageHit } from '@/capabilities/practice/question-bank/public';
 import type { Db, Tx } from '@/db/client';
 import { embedCurrencyPredicate } from '@/db/embed-currency';
 import { question } from '@/db/schema';

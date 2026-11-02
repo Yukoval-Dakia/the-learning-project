@@ -45,7 +45,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { RepairOutcome } from '@/capabilities/practice/server/admission/resolved-repair';
+import type { RepairOutcome } from '@/capabilities/practice/question-bank/server/admission/resolved-repair';
 import type { Db } from '@/db/client';
 
 const usage =
@@ -107,7 +107,7 @@ function parseArgs(argv: string[]): Cli {
 
 async function loadEntries(manifestPath: string) {
   const { RepairManifestEntry } = await import(
-    '@/capabilities/practice/server/admission/resolved-repair'
+    '@/capabilities/practice/question-bank/server/admission/resolved-repair'
   );
   const raw = manifestSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
   const entries = raw.entries.map((entry) => RepairManifestEntry.parse(entry));
@@ -133,7 +133,7 @@ async function main() {
   const { entries } = await loadEntries(cli.manifestPath);
   const [{ db }, repair] = await Promise.all([
     import('@/db/client'),
-    import('@/capabilities/practice/server/admission/resolved-repair'),
+    import('@/capabilities/practice/question-bank/server/admission/resolved-repair'),
   ]);
   const groupIds = entries.map((entry) => entry.group_id);
   try {

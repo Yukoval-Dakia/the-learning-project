@@ -66,11 +66,13 @@ import {
   resolveQuizGenSkills,
   skillKindToQuestionKind,
 } from '@/subjects/quiz-gen-skills';
-import { EXACT_DUPLICATE_EVENT_SAMPLE_CAP } from '../server/quiz/content-fingerprint';
+import {
+  EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
+  dispatchPendingVerifyIntents,
+} from '../question-bank/public';
 import { type FewShotExample, renderFewShotBlock } from '../server/quiz/fewshot-retrieve';
 import { embedMaterialInPrompt } from '../server/quiz/quiz-gen-material';
 import { QuizGenOutputFailure, parseOutput } from '../server/quiz/quiz-gen-output';
-import { dispatchPendingVerifyIntents } from '../server/verify-dispatch-outbox';
 import type { DifficultyBand } from '../supply/public';
 import {
   PLACEMENT_ATTEMPT_HEARTBEAT_MS,

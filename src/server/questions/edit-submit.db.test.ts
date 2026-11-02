@@ -4,7 +4,7 @@
 
 import { asc, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { poolFetch } from '@/capabilities/practice/server/quiz/pool-fetch';
+import { poolFetch } from '@/capabilities/practice/question-bank/server/quiz/pool-fetch';
 import { gradeBlankExactUnit } from '@/core/schema/assessment/grade';
 import { defaultPresentation } from '@/core/schema/assessment/presentation';
 import type { AdmissionEvidenceT } from '@/core/schema/assessment/publish';

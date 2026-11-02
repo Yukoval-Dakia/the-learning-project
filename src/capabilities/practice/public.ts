@@ -1,5 +1,6 @@
 // Stable server contract for consumers outside the practice capability.
 
+import { loadLearningContentValidator } from './question-bank/public';
 import { loadReviewDueReader } from './scheduling/public';
 
 // Compatibility export; shared read models consume their owner, kernel/events,
@@ -12,8 +13,58 @@ export {
   type VariantProposalResult,
   proposeFailureVariant,
 } from './failure-learning/public';
-export { embedQuestionTextForIngest } from './jobs/embed_backfill';
 export type { QuizGenJobData } from './jobs/quiz_gen';
+export {
+  DEFAULT_MAX_PER_RUN,
+  type EnqueueVariantVerifyFn,
+  type EnqueueVerifyFn,
+  type ItemPriorCandidateFrozen,
+  type ItemPriorDispatch,
+  type ItemPriorDispatchedRequest,
+  type ItemPriorExecutionParams,
+  ItemPriorMemberIdentityError,
+  type ItemPriorMemberRequest,
+  ItemPriorPaidEffectAdapter,
+  type ItemPriorPreparedWork,
+  type ItemPriorStagedItem,
+  type QuestionDraftAcceptResult,
+  type QuestionEditAcceptResult,
+  VERIFY_DISPATCH_COMPLETE_ACTION,
+  VERIFY_DISPATCH_INTENT_ACTION,
+  VERIFY_DISPATCH_VERSION,
+  type VariantQuestionAcceptResult,
+  archivePracticeQuestion,
+  authorInterventionPackage,
+  canonicalQuestionContentHash,
+  dispatchPendingVerifyIntents,
+  embedQuestionTextForIngest,
+  enablePracticeDraft,
+  forceEnablePracticeDraft,
+  installInterventionAuthorStages,
+  itemPriorDispatchSchema,
+  itemPriorDispatchedRequestSchema,
+  itemPriorMemberRequestSchema,
+  mergeExactQuestionDuplicateKnowledgeIds,
+  normalizeMethod,
+  normalizeReps,
+  prepareItemPriorWork,
+  readDraftReviewDetail,
+  readItemPriorPgBossDelivery,
+  readPracticeDraftList,
+  readPracticeQuestionList,
+  readQuestionDetail,
+  recoverOrphanVerifyDispatches,
+  resolveItemPriorKnowledgeNames,
+  resolveSolveOverrideFromEnv,
+  restorePracticeQuestion,
+  reviewInterventionPackageCandidate,
+  runItemPriorItemRepStages,
+  runPracticeServingAction,
+  runQuestionAdmissionChecks,
+  selectItemPriorCandidates,
+  updatePracticeQuestion,
+  writeVerifyDispatchIntent,
+} from './question-bank/public';
 export {
   type WeeklyReportQuery,
   getPracticeStream,
@@ -26,7 +77,6 @@ export {
   scheduleReview,
   updatePracticeStreamItem,
 } from './scheduling/public';
-export { runQuestionAdmissionChecks } from './server/admission/checks';
 // Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
 // bundle on the @kernel + @db chain with no SDK import.
 export { issueAssessment } from './server/assessment/issue';
@@ -40,48 +90,10 @@ export {
 // practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
-export {
-  DEFAULT_MAX_PER_RUN,
-  type ItemPriorCandidateFrozen,
-  type ItemPriorExecutionParams,
-  type ItemPriorPreparedWork,
-  type ItemPriorStagedItem,
-  normalizeMethod,
-  normalizeReps,
-  prepareItemPriorWork,
-  resolveItemPriorKnowledgeNames,
-  runItemPriorItemRepStages,
-  selectItemPriorCandidates,
-} from './server/item-prior-durable-operation';
-export {
-  type ItemPriorDispatch,
-  type ItemPriorDispatchedRequest,
-  ItemPriorMemberIdentityError,
-  type ItemPriorMemberRequest,
-  ItemPriorPaidEffectAdapter,
-  itemPriorDispatchSchema,
-  itemPriorDispatchedRequestSchema,
-  itemPriorMemberRequestSchema,
-  readItemPriorPgBossDelivery,
-} from './server/item-prior-paid-effect-adapter';
 // The seed-root anchor regex is owned by placement-scope but consumed from server/*;
 // re-export it here so consumers stay on the public seam.
 export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
-export {
-  canonicalQuestionContentHash,
-  mergeExactQuestionDuplicateKnowledgeIds,
-} from './server/quiz/content-fingerprint';
-export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
 export type { PracticeTaskRunFn } from './server/task-runtime';
-export {
-  type EnqueueVerifyFn,
-  VERIFY_DISPATCH_COMPLETE_ACTION,
-  VERIFY_DISPATCH_INTENT_ACTION,
-  VERIFY_DISPATCH_VERSION,
-  dispatchPendingVerifyIntents,
-  recoverOrphanVerifyDispatches,
-  writeVerifyDispatchIntent,
-} from './server/verify-dispatch-outbox';
 export {
   DEDUP_OVERLAP_THRESHOLD,
   claimHttpSourceDuplicate,
@@ -99,7 +111,7 @@ export async function installPracticeHostOperations(): Promise<void> {
     { installConversationConfirmationAssessment },
     { captureReviewAnswerBinding, consumeReviewAnswerBinding },
     executeGetReviewDue,
-    { validateLearningContent },
+    validateLearningContent,
     { issueConversationConfirmation, readConversationConfirmation, submitConversationConfirmation },
   ] = await Promise.all([
     import('@/kernel/records/review-answer-binding'),
@@ -108,7 +120,7 @@ export async function installPracticeHostOperations(): Promise<void> {
     import('@/kernel/records/conversation-confirmation-assessment'),
     import('./server/review-operation'),
     loadReviewDueReader(),
-    import('./server/learning-content-validation'),
+    loadLearningContentValidator(),
     import('./server/conversation-confirmation'),
   ]);
   installReviewAnswerBindingOperations({
@@ -122,15 +134,6 @@ export async function installPracticeHostOperations(): Promise<void> {
     submit: submitConversationConfirmation,
     read: readConversationConfirmation,
   });
-}
-
-export async function installInterventionAuthorStages(): Promise<void> {
-  const [{ installInterventionAuthorStages: install }, { interventionAuthorStages }] =
-    await Promise.all([
-      import('@/kernel/records/intervention-package-author'),
-      import('./server/intervention-author'),
-    ]);
-  install(interventionAuthorStages);
 }
 
 export async function installInterventionDiagnosticLeaves(): Promise<void> {
@@ -156,10 +159,6 @@ export type {
   NativeAttemptDispatchOptions,
   NativeAttemptDispatchPort,
 } from './server/assessment/native-attempt-dispatch-port';
-export {
-  authorInterventionPackage,
-  reviewInterventionPackageCandidate,
-} from './server/intervention-author';
 // explicit judging contract consumed by the stable kernel facade.
 export type { AnswerInput, JudgeResult } from './server/judge';
 export {
@@ -200,12 +199,6 @@ export {
 } from './server/judge';
 export { withdrawCapturedOccurrence } from './server/judge/evaluate-submission';
 export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
-export type {
-  EnqueueVariantVerifyFn,
-  QuestionDraftAcceptResult,
-  QuestionEditAcceptResult,
-  VariantQuestionAcceptResult,
-} from './server/proposal-appliers';
 // public ports repointed from central deep imports.
 export type { DispatchResult, PlacementCostComponentKind } from './supply/public';
 // Jyeoo agent-tool public surface: candidate fetch shared with the CLI and deterministic
@@ -299,9 +292,6 @@ export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
 export { CreateReviewSessionBody } from './api/contracts';
 export { createPracticeAppeal } from './server/appeal-operation';
 export { revealFrozenStudyReference } from './server/assessment/study-context';
-export { readPracticeDraftList } from './server/draft-list-read';
-export { enablePracticeDraft, forceEnablePracticeDraft } from './server/draft-promotion-operations';
-export { readDraftReviewDetail } from './server/draft-review';
 // Judge engine identity and census belong to practice; the shared host consumes this seam.
 export {
   JUDGE_DBOS_QUEUE,
@@ -313,14 +303,6 @@ export {
   sealJudgeEngineInventory,
   validateJudgeEngineInventory,
 } from './server/judge-engine-client';
-export { readQuestionDetail } from './server/question-detail-read';
-export { readPracticeQuestionList } from './server/question-list-read';
-export {
-  archivePracticeQuestion,
-  restorePracticeQuestion,
-  updatePracticeQuestion,
-} from './server/question-write-operations';
-export { runPracticeServingAction } from './server/serving-action-operation';
 export const recoverWebSupplies: typeof import('./supply/public').recoverWebSupplies = async (
   ...args
 ) => (await import('./supply/public')).recoverWebSupplies(...args);
@@ -331,8 +313,8 @@ export const refillActiveLearningPools: typeof import('./supply/public').refillA
   async (...args) => (await import('./supply/public')).refillActiveLearningPools(...args);
 export const runQuestionSupplyNightly: typeof import('./supply/public').runQuestionSupplyNightly =
   async (...args) => (await import('./supply/public')).runQuestionSupplyNightly(...args);
-export const recoverHeldServingRechecks: typeof import('./server/serving-actions').recoverHeldServingRechecks =
-  async (...args) => (await import('./server/serving-actions')).recoverHeldServingRechecks(...args);
+export const recoverHeldServingRechecks: typeof import('./question-bank/public').recoverHeldServingRechecks =
+  async (...args) => (await import('./question-bank/public')).recoverHeldServingRechecks(...args);
 export {
   CreatePlacementSessionBodySchema,
   PlacementOrphanStateError,

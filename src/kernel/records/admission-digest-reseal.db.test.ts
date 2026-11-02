@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { runAdmissionForQuestion as run } from '@/capabilities/practice/jobs/question_admission_run';
+import { runAdmissionForQuestion as run } from '@/capabilities/practice/question-bank/jobs/question_admission_run';
 import { resealAdmissionDigests as reseal } from '@/kernel/records/admission-digest-reseal';
 import * as norm from '@/kernel/records/assessment-normalization';
 import { resetDb, testDb } from '../../../tests/helpers/db';

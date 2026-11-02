@@ -39,7 +39,7 @@ async function main(): Promise<number> {
   const { EMBED_DIMS, EMBED_MODEL } = await import('@/server/ai/embed');
   const { EMBED_VERSION, embedHash, questionEmbedText } = await import('@/core/embed-source');
   const { questionVectorInvalidReason } = await import(
-    '@/capabilities/practice/jobs/embed_backfill'
+    '@/capabilities/practice/question-bank/jobs/embed_backfill'
   );
 
   const rows = await db

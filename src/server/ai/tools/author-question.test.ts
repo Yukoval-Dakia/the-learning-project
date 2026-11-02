@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { authorQuestion } from '@/capabilities/practice/server/tools/proposal-tools';
+import { authorQuestion } from '@/capabilities/practice/question-bank/tools/proposal-tools';
 // ADR-0032 D8 — author_question unified question-authoring core + DomainTool.
 //
 // Proves the front door delegates to the EXISTING code paths without regressing

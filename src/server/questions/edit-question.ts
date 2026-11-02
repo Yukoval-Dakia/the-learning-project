@@ -85,7 +85,7 @@ const DRAFT_EDIT_ACTION = 'experimental:edit_question_block_structured';
 
 /**
  * expected_revision 输入：`qrev1:<id>:<digest12>` bank ref 或裸 revision id。
- * （与 capabilities/practice/server/tools/bank-ref.ts 的 qrev1 线格式一致；
+ * （与 capabilities/practice/question-bank/tools/bank-ref.ts 的 qrev1 线格式一致；
  * 本地解析避免 server → capability 深层 import —— bank-ref.ts 本身是
  * practice 工具面，本侧只解析引用不执行完整 bank-ref 解析。）
  */

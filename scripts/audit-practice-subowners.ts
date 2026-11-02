@@ -67,7 +67,7 @@ const OWNER_RULES: ReadonlyArray<readonly [Owner, RegExp]> = [
     /^api\/(paper-contracts|worksheet-contracts)\.ts$|^server\/worksheet\/region-map-validate\.ts$/,
   ],
   ['session', /^worksheet-render-queue\.ts$/],
-  ['supply', /^jobs\/(source_verify|question_admission_run)/],
+  ['question-bank', /^jobs\/(source_verify|question_admission_run)/],
   ['kernel-bound', /^server\/placement-scope\.ts$|^ui\/blocks\/custom-sandbox\.ts$/],
   ['face', /^ui\//],
   [

@@ -41,7 +41,7 @@ import {
   type BankVectorRetrievalParams,
   bankVectorBaselinePredicates,
   countedRankV2,
-} from '@/capabilities/practice/server/tools/bank-vector-retrieval';
+} from '@/capabilities/practice/question-bank/tools/bank-vector-retrieval';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { toSqlVector } from '@/db/vector';

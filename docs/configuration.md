@@ -36,7 +36,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | --- | --- | --- | --- |
 | `INTERNAL_TOKEN` | app（`/api/*`） | 必填非空，否则 API 启动失败；`/api/health`、`/api/ready` 豁免 | `src/server/config/env.ts`；`server/app.ts` |
 | `JUDGE_PROVENANCE_SECRET` | app | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时 provenance 签发/校验关闭；worker 不读 | `src/capabilities/practice/server/judge/preview-provenance-token.ts`；`.env.example` |
-| `BANK_GAP_EVIDENCE_SECRET` | app、worker | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时一律视为未设：`search_bank` 不签 MAC，`file_bank_gap` 拒绝 filing | `src/capabilities/practice/server/tools/bank-search.ts`；`src/capabilities/practice/server/tools/file-bank-gap.ts` |
+| `BANK_GAP_EVIDENCE_SECRET` | app、worker | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时一律视为未设：`search_bank` 不签 MAC，`file_bank_gap` 拒绝 filing | `src/capabilities/practice/question-bank/tools/bank-search.ts`；`src/capabilities/practice/server/tools/file-bank-gap.ts` |
 
 ### AI provider 与模型选择
 
@@ -59,8 +59,8 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `ZAI_CODING_CN_API_KEY` | app、worker | 选中 `zhipuai-coding-plan` 时必需 | `src/server/ai/providers.ts` |
 | `ZHIPU_API_KEY` | worker（默认 OCR）；app、worker（Mem0） | 默认 OCR 引擎 `glm` 与无全局 pin 时的 Mem0 提取都必需，缺失时抛错 | `src/capabilities/ingestion/server/glm_ocr.ts`；`src/server/ai/mem0/llm-config.ts` |
 | `VERCEL_AI_GATEWAY_TOKEN` | app、worker | `gateway` lane 目前未使用，仅显式选择才读 | `src/server/ai/providers.ts` |
-| `VERIFY_SOLVE_PROVIDER_OVERRIDE` | app、worker | 不启用 solve lane override，走常规解析链 | `registry`；`src/capabilities/practice/server/quiz/solve-lane.ts` |
-| `VERIFY_SOLVE_MODEL_OVERRIDE` | app、worker | 用 provider 默认 model | `registry`；`src/capabilities/practice/server/quiz/solve-lane.ts` |
+| `VERIFY_SOLVE_PROVIDER_OVERRIDE` | app、worker | 不启用 solve lane override，走常规解析链 | `registry`；`src/capabilities/practice/question-bank/server/quiz/solve-lane.ts` |
+| `VERIFY_SOLVE_MODEL_OVERRIDE` | app、worker | 用 provider 默认 model | `registry`；`src/capabilities/practice/question-bank/server/quiz/solve-lane.ts` |
 | `VISION_JUDGE_PROVIDER` | app、worker | 不启用 vision lane override，走常规解析链 | `registry`；`src/server/ai/vision-judge-config.ts` |
 | `VISION_JUDGE_MODEL` | app、worker | 用 provider/lane 默认 model | `registry`；`src/server/ai/vision-judge-config.ts` |
 | `MIMO_VISION_BASE_URL` | 脚本（vision/ingestion preflight） | `https://api.xiaomimimo.com/anthropic`（host 须过模型端点 allowlist）；Token Plan pin 下由 lane URL 推导，显式值只接受 `token-plan-<region>.xiaomimimo.com` | `scripts/preflight-vision.ts`；`src/server/ai/xiaomi-token-plan.ts` |

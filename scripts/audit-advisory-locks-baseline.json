@@ -134,10 +134,6 @@
       "count": 2
     },
     {
-      "path": "src/capabilities/practice/server/serving-actions.ts",
-      "count": 1
-    },
-    {
       "path": "src/capabilities/shell/server/teaching-brief-ack.ts",
       "count": 1
     },
