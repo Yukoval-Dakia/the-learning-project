@@ -37,14 +37,9 @@ import {
   publishQuestionGroup,
   publishQuestionGroupFromRow,
 } from '@/kernel/records/assessment-publication';
+import type { PlacementVerificationAuthority, SupplyTraceV1T } from '@/kernel/supply-contracts';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
 import { enrollPromotedQuestionScheduling } from '../server/question-scheduling-enrollment';
-import type { SupplyTraceV1T } from '../server/question-supply/evidence-demand';
-import {
-  type PlacementVerificationAuthority,
-  assertPlacementAuthority,
-} from '../server/question-supply/placement-starter-attempts';
-import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
 import type {
   ChoiceSurfacePrecheckRecord,
   ChoiceSurfaceRuleCheck,
@@ -54,6 +49,7 @@ import type {
   TeachingQualityResult,
   VerifyCheck,
 } from '../server/quiz/verify-framework';
+import { placementAuthority as placementAuthorityPort } from '../supply/public';
 
 async function promoteCompositeChildren(
   tx: Tx,
@@ -294,7 +290,7 @@ export async function finalizeDeterministicPrecheckFailure(input: {
 
   await db.transaction(async (tx) => {
     await acquireLearningStateWriteLock(tx);
-    await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
+    await placementAuthorityPort.lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
     const [current] = await tx
       .select({
         version: question.version,
@@ -461,9 +457,9 @@ export async function persistQuizVerifyVerdict(
     // while this tx waited on the advisory lock, then promote after it enqueued paid work — a
     // double-supply race. Locking row.knowledge_ids (pre-tx snapshot) is safe: if attribution
     // drifted, the version guard below throws and pg-boss reruns against the fresh scope.
-    await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
+    await placementAuthorityPort.lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
     if (placementAuthority) {
-      await assertPlacementAuthority(tx, placementAuthority, now);
+      await placementAuthorityPort.assertPlacementAuthority(tx, placementAuthority, now);
     }
     // Serialize the terminal verdict against cross-KC duplicate reconciliation. The model and
     // deterministic checks above ran against `row.version`; if attribution changed meanwhile,
@@ -748,7 +744,7 @@ export async function persistQuizVerifyVerdict(
     }
 
     if (placementAuthority) {
-      await assertPlacementAuthority(tx, placementAuthority, now);
+      await placementAuthorityPort.assertPlacementAuthority(tx, placementAuthority, now);
     }
 
     await writeEvent(tx, {

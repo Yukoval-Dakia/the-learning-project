@@ -59,24 +59,13 @@ import {
 } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { event, knowledge, question, question_group_lifecycle, source_document } from '@/db/schema';
+import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
+import { SupplyTraceV1 } from '@/kernel/supply-contracts';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
 import { resolveQuizGenSkillDocs } from '@/subjects/quiz-gen-skills';
-import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
-import {
-  PlacementStarterAdmissionError,
-  PlacementStarterStaleAuthorityError,
-  PlacementStarterUnknownCostError,
-  type PlacementVerificationAuthority,
-  assertPlacementAuthority,
-  releaseAuthorizedPaidCall,
-  reserveAuthorizedPaidCall,
-  settleAuthorizedPaidCall,
-  terminalizePlacementUnknownCost,
-} from '../server/question-supply/placement-starter-attempts';
-import { maxNgramOverlap } from '../server/question-supply/sourced-dedup';
 import { choiceSurfacePrecheckRecord, evaluateChoiceSurface } from '../server/quiz/choice-surface';
 import { resolveSolveOverrideFromEnv } from '../server/quiz/solve-lane';
 import {
@@ -89,6 +78,17 @@ import {
   solveCheckBlocks,
   teachingQualityBlocks,
 } from '../server/quiz/verify-framework';
+import {
+  PlacementStarterAdmissionError,
+  PlacementStarterStaleAuthorityError,
+  PlacementStarterUnknownCostError,
+  maxNgramOverlap,
+  placementAuthority as placementAuthorityPort,
+  releaseAuthorizedPaidCall,
+  reserveAuthorizedPaidCall,
+  settleAuthorizedPaidCall,
+  terminalizePlacementUnknownCost,
+} from '../supply/public';
 import {
   finalizeDeterministicPrecheckFailure,
   persistQuizVerifyVerdict,
@@ -122,7 +122,7 @@ function requirePlacementProviderTaskRunId(
   );
 }
 // shingle 机制与 maxNgramOverlap 下沉到
-// server/question-supply/sourced-dedup.ts（避免 question-supply → jobs 反向环）。
+// supply/server/sourced-dedup.ts（避免 supply → jobs 反向环）。
 // COPY_SAFETY_TOO_CLOSE_THRESHOLD 是本模块 copy_safety 判分的业务阈值，留在原地。
 // re-export 保 quiz_verify.test.ts 等既有 import 路径不变。
 export const COPY_SAFETY_TOO_CLOSE_THRESHOLD = 0.5;
@@ -234,7 +234,9 @@ function readMaterialUrl(
 export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQuizVerifyResult> {
   const { db, questionId, runTaskFn, placementAuthority } = params;
   if (placementAuthority) {
-    await db.transaction(async (tx) => assertPlacementAuthority(tx, placementAuthority));
+    await db.transaction(async (tx) =>
+      placementAuthorityPort.assertPlacementAuthority(tx, placementAuthority),
+    );
   }
 
   const rows = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
@@ -587,7 +589,9 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // deterministically re-throw a leg's blocking error (solver first). Concurrency (wall-clock = max,
     // not sum) is preserved.
     if (placementAuthority && freeChecksPass) {
-      await db.transaction(async (tx) => assertPlacementAuthority(tx, placementAuthority));
+      await db.transaction(async (tx) =>
+        placementAuthorityPort.assertPlacementAuthority(tx, placementAuthority),
+      );
     }
     // the solve_check leg (solver + semantic judge) runs on a
     // provider that MAY differ from the generator/verifier so a shared model blind spot can't

@@ -26,12 +26,12 @@ import {
   isPlacementStarterJobLive,
   lockPlacementSupplyScopes,
   markPlacementStarterClaimTerminal,
+  placementProbeEnabled,
   resolvePlacementStarterGoalAuthority,
+  selectNextPlacementItem,
   terminalizeLostPlacementDelivery,
 } from '@/kernel/placement';
 import { resolveGoalPlacementScope } from '../../server/placement-scope';
-import { selectNextPlacementItem } from './placement-select';
-import { placementProbeEnabled } from './placement-session-lifecycle';
 import { placementClaimJobQueue } from './placement-starter';
 
 /**

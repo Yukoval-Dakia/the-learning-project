@@ -2,7 +2,7 @@
 //
 // 照 ADR-0038 quiz_gen_plan 范式：LLM 只做规划（要什么题、补哪个知识点、多少道、
 // 偏好哪条获取路线），产出机器可检的 typed JSON；确定性机器门
-// （src/capabilities/practice/server/question-supply/supply-plan-gate.ts）先验证
+// （src/capabilities/practice/supply/server/supply-plan-gate.ts）先验证
 // （schema + 活 knowledge_id + 词表 + 去重 + 预算声明），通过后计划才生效，
 // 拒绝则 ≤2 轮有界重生成，仍不过则 fail closed（当晚零派发）。
 //

@@ -11,8 +11,7 @@ export const supplyManifestPart: Omit<CapabilityManifest, 'name' | 'description'
         id: 'practice.web-supply-observe',
         version: 1,
         actions: ['experimental:assessment_publish'],
-        load: () =>
-          import('./server/web-supply').then((m) => m.buildWebSupplyObserveSubscriber),
+        load: () => import('./server/web-supply').then((m) => m.buildWebSupplyObserveSubscriber),
       },
     ],
   },
@@ -30,6 +29,19 @@ export const supplyManifestPart: Omit<CapabilityManifest, 'name' | 'description'
         load: () => import('./jobs/supply_execute').then((m) => m.buildSupplyExecuteHandler),
       },
       {
+        // YUK-758 DAG 成员。**边考据修订（review To-Iq + ToTas，两位 reviewer 各对一半）**：
+        //  · 原声明的 `answer_class_backfill` 硬边**不成立，已移除**：supply 的
+        //    discoverSupplyTargets → assembleScanInput → loadQuestionPool 是
+        //    target-discovery.ts 内的**私有** loader（:664），并非 Practice quiz/pool-fetch；
+        //    它只 select id/kind/source/metadata/difficulty/knowledge_ids(+draft_status 谓词)，
+        //    全 src/server/question-supply/ 目录 grep 不到 answer_class。且 pool-fetch 那条
+        //    answer_class 谓词本身是 NULL-宽容（`= X OR IS NULL`）且当前无活 caller（唯一
+        //    would-be caller matcher 被 MATCHER_ANSWER_CLASS_FILTER=false 关着）——即便走到
+        //    也不会因未 backfill 而漏题。故原「answer_class 新鲜 → 缺口判定准」是伪依赖。
+        //  · 改声明 `recalibration_nightly` 硬边（**真读后写**）：同一个私有 loadQuestionPool
+        //    在 target-discovery.ts:684-699 批量读 item_calibration(track='hard') 的
+        //    b/b_anchor/b_post → effectiveB(= b_post ?? b_anchor ?? b，YUK-439)，该值喂 R3 的
+        //    「无近-θ̂ 锚」判定（:490-511）并直接决定是否派**付费** diagnostic 供给目标。
         //    这与 compose 对 recalibration 的既有硬边是**同一列同一 resolver**。上游未 firm-up
         //    就扫 → 拿陈旧 b 误判 mis-banded → 派本不需要的付费 job。经 item_prior_backfill
         //    传递依赖（recalibration ← item_prior），整条标定链齐了才扫。cron 移除。

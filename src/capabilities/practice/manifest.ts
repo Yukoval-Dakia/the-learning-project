@@ -178,17 +178,6 @@ export const practiceCapability = defineCapability({
           import('./server/admission/enqueue').then((m) => m.buildQuestionAdmissionSubscriber),
       },
       {
-        // YUK-1664: a web demand advances on its question's real publication result, not on
-        // the nightly recovery sweep (which stays as the lost-delivery fallback).
-        id: 'practice.web-supply-observe',
-        version: 1,
-        actions: ['experimental:assessment_publish'],
-        load: () =>
-          import('./server/question-supply/web-supply').then(
-            (m) => m.buildWebSupplyObserveSubscriber,
-          ),
-      },
-      {
         // YUK-1664 — admission verdicts and source_verify suspends both land on
         // the declared assessment_publish action; the handler re-checks the
         // hold through the same paid-effect command path (auto ledger key).
@@ -576,17 +565,6 @@ export const practiceCapability = defineCapability({
     // job 已随 B3 退役。YUK-870 F3.5b：rejudge / judge_run / session_summary
     // 三条注册自 handlers.ts 渐缩簿收编，practice 域自此无留簿注册。）
     handlers: [
-      // YUK-988 E3 — sourcing 单体 job 退役（找+判+存一体）：找题核下沉
-      // web_fetch_candidates（SourcingTask 在工具内部），存由 store_sourced_question
-      // commit seam 唯一负责。本入口换为确定性供给执行 job（plan-executor 的
-      // pg-boss 面三入口共用：planner phase-2 / dispatcher 安全网 / 手动 caller）。
-      {
-        name: 'supply_execute',
-        queue: 'agent',
-        // Placement deliveries need job id/retryCount/startedOn/expiry/signal for attempt authority.
-        includeMetadata: true,
-        load: () => import('./jobs/supply_execute').then((m) => m.buildSupplyExecuteHandler),
-      },
       {
         name: 'quiz_gen',
         queue: 'agent',
@@ -691,54 +669,6 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/model_slice_admission_run').then(
             (m) => m.buildModelSliceAdmissionRunHandler,
-          ),
-      },
-      // YUK-372 L5 (YUK-361 Phase 8 wire-up) — 供给目标发现 + 派发夜扫。确定性缺口扫描
-      // （discoverSupplyTargets，零写零 LLM）→ dispatchSupplyTargets 派到既有 sourcing /
-      // quiz_gen 队列或标 manual。排在数据预产链之后跑，让前沿/题池信号已新鲜、缺口判定准
-      // ——YUK-758 起该次序由下面的 dependsOn 硬边保证，不再靠 cron 错峰。（旧注「mastery
-      // 夜链」已删——该 job 从不存在。）
-      // queue=llm：派出的 sourcing / quiz_gen 本身是 LLM 重型 job，本 job 与其同档 DLQ 重试。
-      // **成本护栏**：dispatcher 的 7d fingerprint cooldown 是唯一防 job-spam 闸（同未满足缺口
-      // 7 天内只真派一次）；本 job 依赖它，绝不绕过 dispatcher 直发付费队列。
-      {
-        // YUK-758 DAG 成员。**边考据修订（review To-Iq + ToTas，两位 reviewer 各对一半）**：
-        //  · 原声明的 `answer_class_backfill` 硬边**不成立，已移除**：supply 的
-        //    discoverSupplyTargets → assembleScanInput → loadQuestionPool 是
-        //    target-discovery.ts 内的**私有** loader（:664），并非 Practice quiz/pool-fetch；
-        //    它只 select id/kind/source/metadata/difficulty/knowledge_ids(+draft_status 谓词)，
-        //    全 src/server/question-supply/ 目录 grep 不到 answer_class。且 pool-fetch 那条
-        //    answer_class 谓词本身是 NULL-宽容（`= X OR IS NULL`）且当前无活 caller（唯一
-        //    would-be caller matcher 被 MATCHER_ANSWER_CLASS_FILTER=false 关着）——即便走到
-        //    也不会因未 backfill 而漏题。故原「answer_class 新鲜 → 缺口判定准」是伪依赖。
-        //  · 改声明 `recalibration_nightly` 硬边（**真读后写**）：同一个私有 loadQuestionPool
-        //    在 target-discovery.ts:684-699 批量读 item_calibration(track='hard') 的
-        //    b/b_anchor/b_post → effectiveB(= b_post ?? b_anchor ?? b，YUK-439)，该值喂 R3 的
-        //    「无近-θ̂ 锚」判定（:490-511）并直接决定是否派**付费** diagnostic 供给目标。
-        //    这与 compose 对 recalibration 的既有硬边是**同一列同一 resolver**。上游未 firm-up
-        //    就扫 → 拿陈旧 b 误判 mis-banded → 派本不需要的付费 job。经 item_prior_backfill
-        //    传递依赖（recalibration ← item_prior），整条标定链齐了才扫。cron 移除。
-        name: 'question_supply_nightly',
-        dependsOn: ['recalibration_nightly'],
-        eligibility: nightlyEligibility('supply'),
-        queue: 'llm',
-        load: () =>
-          import('./jobs/question_supply_nightly').then((m) => m.buildQuestionSupplyNightlyHandler),
-      },
-      // YUK-1664 — placement starter claim 到期清扫。原挂 question_supply_nightly 尾部：
-      // dormant 档整夜不跑、DAG 上游 skipped 连带不跑。改独立高频 job 照
-      // intervention_prepare_recovery 范式：按 `next_reconcile_at <= now` 的真实到期义务
-      // 轮询，与学习活跃度无关（无 eligibility 门），卡死供给几分钟内恢复。无到期 claim 时
-      // 一次索引 LIMIT 1 读即退，不触 pg-boss / provider。queue=fast：本 job 自身零 LLM
-      // （付费发生在它重派的 quiz_gen / supply_execute），无 DLQ——漏一拍下轮 cron 接上；
-      // 多 worker 并发靠 claim 的条件 UPDATE CAS 领取，单飞语义不变。
-      {
-        name: 'placement_starter_recovery',
-        schedule: { cron: '*/5 * * * *', tz: 'Asia/Shanghai' },
-        queue: 'fast',
-        load: () =>
-          import('./server/placement-starter-recovery').then(
-            (m) => m.buildPlacementStarterRecoveryHandler,
           ),
       },
       // YUK-987 (985/E2) — 供给需求层 planner agent。LLM 产出 SupplyPlanV1 需求计划，机器门
@@ -984,10 +914,6 @@ export const practiceCapability = defineCapability({
         name: 'jyeoo_fetch_candidates',
         load: () =>
           import('./server/tools/jyeoo-fetch-candidates').then((m) => m.jyeooFetchCandidatesTool),
-      },
-      {
-        name: 'submit_question',
-        load: () => import('./server/tools/submit-question').then((m) => m.submitQuestionTool),
       },
       // YUK-1468 — 统一题目编辑面（v2 草稿文档 ops/CAS/幂等/validate/probe）。
       {

@@ -21,8 +21,8 @@
 
 import { WebSourcedProvenance, deriveSourceTier } from '@/core/schema/provenance';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
-import { maxNgramOverlap } from '../server/question-supply/sourced-dedup';
 import type { VerifyCheck } from '../server/quiz/verify-framework';
+import { maxNgramOverlap } from '../supply/public';
 
 export interface CheckOutcome {
   check: VerifyCheck;

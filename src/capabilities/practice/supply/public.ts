@@ -152,6 +152,15 @@ export {
 } from './server/placement-starter-paid-authority';
 export { runQuestionSupplyNightly } from './jobs/question_supply_nightly';
 export {
+  EditQuestionInput,
+  type EditQuestionInputT,
+  deriveKind,
+  probeDraftEdit,
+  saveDraftEdit,
+  submitDraftQuestion,
+  validateDraftEdit,
+} from './tools/submit-question';
+export {
   type StoreSourcedQuestionDeps,
   type SubmitQuestionDeps,
   dispatchSourceVerifyIntents,

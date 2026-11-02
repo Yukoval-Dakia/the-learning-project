@@ -74,29 +74,27 @@ import {
   draftCanonicalIdentity,
   revisionToDraftDocument,
 } from '@/kernel/records/question-draft-contract';
+import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
+import { SupplyTraceV1 } from '@/kernel/supply-contracts';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { deriveKind } from '../supply/public';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
 import { enrollPromotedQuestionScheduling } from '../server/question-scheduling-enrollment';
-import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
-import { readVisibleVectorNearHold } from '../server/question-supply/ingest-dedup';
-import {
-  PlacementStarterAdmissionError,
-  PlacementStarterStaleAuthorityError,
-  type PlacementVerificationAuthority,
-  assertPlacementAuthority,
-} from '../server/question-supply/placement-starter-attempts';
-import { buildPlacementQuestionPaidCalls } from '../server/question-supply/placement-starter-paid-authority';
-import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
-import { DEDUP_OVERLAP_THRESHOLD } from '../server/question-supply/sourced-dedup';
 import {
   type SolveCheckImageFetchFn,
   type SolveCheckQuestion,
   checksForTier,
   runSolveCheck,
 } from '../server/quiz/verify-framework';
-import { deriveKind } from '../server/tools/submit-question';
+import {
+  DEDUP_OVERLAP_THRESHOLD,
+  PlacementStarterAdmissionError,
+  PlacementStarterStaleAuthorityError,
+  placementAuthority,
+  readVisibleVectorNearHold,
+} from '../supply/public';
 import { checkDedup } from './source_verify_dedup';
 import { publishVerifyLifecycleUpdate } from './source_verify_lifecycle';
 import {
@@ -129,7 +127,7 @@ type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
 
-// 阈值本体下沉到 server/question-supply/sourced-dedup.ts；此处 re-export
+// 阈值本体在 supply/server/sourced-dedup.ts；此处 re-export
 // 保既有 import 路径。near-duplicate 判定仍用同一 maxNgramOverlap（word-shingle
 // Jaccard, CJK-aware）。
 export { DEDUP_OVERLAP_THRESHOLD };
@@ -242,7 +240,7 @@ export async function runSourceVerify(
 ): Promise<RunSourceVerifyResult> {
   const { db, questionId, runTaskFn } = params;
   const placementPaid = params.placementAuthority
-    ? buildPlacementQuestionPaidCalls(db, questionId, params.placementAuthority)
+    ? placementAuthority.buildPlacementQuestionPaidCalls(db, questionId, params.placementAuthority)
     : undefined;
 
   // 核验输入与身份必须同一快照：
@@ -842,10 +840,10 @@ export async function runSourceVerify(
       // waited on the advisory lock, then promote after paid work was enqueued — a double-supply
       // race. Locking row.knowledge_ids (pre-tx snapshot) is safe: on attribution drift the version
       // guard below throws and pg-boss reruns against the fresh scope.
-      await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
+      await placementAuthority.lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
       // Same position as quiz_verify: a superseded delivery's verdict never writes back.
       if (params.placementAuthority) {
-        await assertPlacementAuthority(tx, params.placementAuthority, now);
+        await placementAuthority.assertPlacementAuthority(tx, params.placementAuthority, now);
       }
       // Match editing/archive/publisher order even when this delivery targets a child.
       // Keep the global learning-write and placement-supply locks ahead of all row locks.

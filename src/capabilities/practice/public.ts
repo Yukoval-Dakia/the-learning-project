@@ -68,20 +68,10 @@ export {
 // re-export it here so consumers stay on the public seam.
 export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
 export {
-  claimHttpSourceDuplicate,
-  findVectorNearDuplicate,
-  vectorNearHoldMetadata,
-} from './server/question-supply/ingest-dedup';
-export {
-  DEDUP_OVERLAP_THRESHOLD,
-  maxNgramOverlap,
-} from './server/question-supply/sourced-dedup';
-export {
   canonicalQuestionContentHash,
   mergeExactQuestionDuplicateKnowledgeIds,
 } from './server/quiz/content-fingerprint';
 export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
-
 export type { PracticeTaskRunFn } from './server/task-runtime';
 export {
   type EnqueueVerifyFn,
@@ -92,6 +82,13 @@ export {
   recoverOrphanVerifyDispatches,
   writeVerifyDispatchIntent,
 } from './server/verify-dispatch-outbox';
+export {
+  DEDUP_OVERLAP_THRESHOLD,
+  claimHttpSourceDuplicate,
+  findVectorNearDuplicate,
+  maxNgramOverlap,
+  vectorNearHoldMetadata,
+} from './supply/public';
 // Binds the operations Practice owns behind kernel ports that API routes and worker
 // jobs both call. Hosts call this before serving or mounting handlers.
 export async function installPracticeHostOperations(): Promise<void> {
@@ -145,6 +142,9 @@ export async function installInterventionDiagnosticLeaves(): Promise<void> {
   install(interventionDiagnosticLeaves);
 }
 
+export { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
+export type { PlacementVerificationAuthority, SupplyTraceV1T } from '@/kernel/supply-contracts';
+export { withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
 export { type CreateAttemptBody, CreateAttemptBodySchema } from './api/contracts';
 // explicit operations used by scripts and integration consumers.
 export {
@@ -157,12 +157,10 @@ export type {
   NativeAttemptDispatchPort,
 } from './server/assessment/native-attempt-dispatch-port';
 export type { CollectedSignal } from './server/candidate-signals';
-
 export {
   authorInterventionPackage,
   reviewInterventionPackageCandidate,
 } from './server/intervention-author';
-
 // explicit judging contract consumed by the stable kernel facade.
 export type { AnswerInput, JudgeResult } from './server/judge';
 export {
@@ -203,7 +201,6 @@ export {
 } from './server/judge';
 export { withdrawCapturedOccurrence } from './server/judge/evaluate-submission';
 export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
-
 export type {
   EnqueueVariantVerifyFn,
   QuestionDraftAcceptResult,
@@ -211,59 +208,39 @@ export type {
   VariantQuestionAcceptResult,
 } from './server/proposal-appliers';
 // public ports repointed from central deep imports.
-export type { DispatchResult } from './server/question-supply/dispatcher';
-export {
-  SUPPLY_DISPATCH_COOLDOWN_DAYS,
-  dispatchSupplyTarget as dispatchPracticeSupplyTarget,
-  dispatchSupplyTargets as dispatchPracticeSupplyTargets,
-  inFlightSupplyCount,
-} from './server/question-supply/dispatcher';
-export type { SupplyTraceV1T } from './server/question-supply/evidence-demand';
-export { withSupplyTraceDifficultyEvidence } from './server/question-supply/evidence-demand';
-
+export type { DispatchResult, PlacementCostComponentKind } from './supply/public';
 // Jyeoo agent-tool public surface: candidate fetch shared with the CLI and deterministic
 // hint matching. DomainTool registration loads deep paths from the manifest; the CLI calls
 // execute directly.
-export { runJyeooFetchCandidates } from './server/question-supply/jyeoo-candidates';
-export {
-  findSubjectRootKnowledgeId,
-  matchJyeooKnowledgeHints,
-} from './server/question-supply/jyeoo-hint-match';
-
 export {
   JYEOO_BACKFILL_PER_QUESTION_MS,
-  jyeooBackfillSpawnTimeoutMs,
-} from './server/question-supply/jyeoo-supply-config';
-export {
-  dispatchPlacementStarterClaim,
-  isPlacementStarterJobLive,
-} from './server/question-supply/placement-starter';
-export type {
-  PlacementCostComponentKind,
-  PlacementVerificationAuthority,
-} from './server/question-supply/placement-starter-attempts';
-export {
   PLACEMENT_GENERATION_RESERVATION_MICRO_USD,
   PLACEMENT_PAID_CALL_RESERVATION_MICRO_USD,
   PLACEMENT_QUEUE_EXPIRY_MS,
   PlacementStarterBudgetExhaustedError,
   PlacementStarterUnknownCostError,
+  SUPPLY_DISPATCH_COOLDOWN_DAYS,
   acquirePlacementAttempt,
   addAuthorizedCostComponent,
+  addPlacementStarterCostComponent,
+  dispatchPlacementStarterClaim,
+  dispatchSupplyTarget as dispatchPracticeSupplyTarget,
+  dispatchSupplyTargets as dispatchPracticeSupplyTargets,
+  findSubjectRootKnowledgeId,
+  inFlightSupplyCount,
+  isPlacementStarterJobLive,
+  jyeooBackfillSpawnTimeoutMs,
+  markPlacementStarterClaimTerminal,
+  matchJyeooKnowledgeHints,
   releaseAuthorizedPaidCall,
   reserveAuthorizedPaidCall,
   reservePlacementGenerationCall,
+  resolvePlacementStarterGoalAuthority,
+  runJyeooFetchCandidates,
   settleAuthorizedPaidCall,
   terminalizeLostPlacementDelivery,
   terminalizePlacementUnknownCost,
-} from './server/question-supply/placement-starter-attempts';
-
-export {
-  addPlacementStarterCostComponent,
-  markPlacementStarterClaimTerminal,
-  resolvePlacementStarterGoalAuthority,
-} from './server/question-supply/placement-starter-store';
-export { lockPlacementSupplyScopes } from './server/question-supply/placement-supply-lock';
+} from './supply/public';
 
 // Keep executeSupplyPlan/buildSupplyExecutorDeps out of this barrel: that chain
 // (plan-executor → web-candidates → SourcingTask → pi agent runtime) pulls the SDK into the
@@ -271,8 +248,6 @@ export { lockPlacementSupplyScopes } from './server/question-supply/placement-su
 // server/worker mark it external, so only migrate is affected. scripts/supply-execute.ts
 // imports the deep path directly.
 
-export { loadCoverageLattice } from './server/question-supply/coverage-lattice';
-export type { CoverageLatticeRead } from './server/question-supply/coverage-lattice-core';
 export { projectReviewAnswerResponse } from './server/review-answer-response';
 export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-operation';
 export {
@@ -281,8 +256,8 @@ export {
   MEM0_PRIOR_ITEM_CHAR_CAP,
   SELECTION_ORCHESTRATOR_CANDIDATE_CAP,
 } from './server/selection-constants';
-
-export { submitQuestionTool } from './server/tools/submit-question';
+export type { CoverageLatticeRead } from './supply/public';
+export { loadCoverageLattice, submitQuestionTool } from './supply/public';
 // store_sourced_question is folded into submit_question (the old tool is no longer
 // registered or granted); the function-level compat export remains.
 
@@ -350,6 +325,8 @@ export const transitionPlacementSession: typeof import('./server/session-operati
 export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
 export { CreatePlacementSessionBodySchema } from './api/placement-contracts';
 export { enablePracticeDraft, forceEnablePracticeDraft } from './server/draft-promotion-operations';
+export { selectNextPlacementItem } from './server/placement-select';
+export { placementProbeEnabled } from './server/placement-session-lifecycle';
 export { readQuestionDetail } from './server/question-detail-read';
 export { readPracticeQuestionList } from './server/question-list-read';
 export {
@@ -373,18 +350,16 @@ export {
   PlacementOrphanStateError,
   abandonOrphanPlacementTx,
 } from './server/placement-session-lifecycle';
-export const recoverWebSupplies: typeof import('./server/question-supply/web-supply').recoverWebSupplies =
-  async (...args) =>
-    (await import('./server/question-supply/web-supply')).recoverWebSupplies(...args);
+export const recoverWebSupplies: typeof import('./supply/public').recoverWebSupplies = async (
+  ...args
+) => (await import('./supply/public')).recoverWebSupplies(...args);
 // Scheduling triggers supply (post-compose refill, return-wake nightly supply) only through
 // these lazy entries until the supply owner lands a kernel port.
-export type { RefillDeps } from './server/question-supply/refill';
-export const refillActiveLearningPools: typeof import('./server/question-supply/refill').refillActiveLearningPools =
-  async (...args) =>
-    (await import('./server/question-supply/refill')).refillActiveLearningPools(...args);
-export const runQuestionSupplyNightly: typeof import('./jobs/question_supply_nightly').runQuestionSupplyNightly =
-  async (...args) =>
-    (await import('./jobs/question_supply_nightly')).runQuestionSupplyNightly(...args);
+export type { RefillDeps } from './supply/public';
+export const refillActiveLearningPools: typeof import('./supply/public').refillActiveLearningPools =
+  async (...args) => (await import('./supply/public')).refillActiveLearningPools(...args);
+export const runQuestionSupplyNightly: typeof import('./supply/public').runQuestionSupplyNightly =
+  async (...args) => (await import('./supply/public')).runQuestionSupplyNightly(...args);
 export const recoverHeldServingRechecks: typeof import('./server/serving-actions').recoverHeldServingRechecks =
   async (...args) => (await import('./server/serving-actions')).recoverHeldServingRechecks(...args);
 export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';

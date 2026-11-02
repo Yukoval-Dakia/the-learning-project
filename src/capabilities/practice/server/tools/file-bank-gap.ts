@@ -36,19 +36,20 @@ import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
-import { type DispatchResult, dispatchSupplyTarget } from '../question-supply/dispatcher';
 import {
   EvidenceDemandV1,
   type EvidenceDemandV1T,
   evidenceDemandToTargetContext,
-} from '../question-supply/evidence-demand';
+} from '@/kernel/supply-contracts';
+import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 import {
   type DifficultyBand,
+  type DispatchResult,
   type QuestionSupplyTarget,
+  dispatchSupplyTarget,
   targetFingerprint,
-} from '../question-supply/target-discovery';
+} from '../../supply/public';
 import {
   BankGapRequestSchema,
   type BankSearchScope,

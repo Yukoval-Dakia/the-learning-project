@@ -3,11 +3,8 @@ import { parseJsonObjectLoose } from '@/core/json-extract';
 import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 import { QuizGenOutput, type QuizGenOutputT } from '@/core/schema/quiz_gen';
 import type { SubjectProfile } from '@/subjects/profile';
+import { type PlacementStarterFailure, placementSchemaFailure } from '../../supply/public';
 import { assertGeneratedQuestionHasJudgeContract } from '../judge/question-contract';
-import {
-  type PlacementStarterFailure,
-  placementSchemaFailure,
-} from '../question-supply/placement-starter-outcome';
 
 // output JSON parse + judge-contract assertion. The gate itself is
 // the SHARED assertGeneratedQuestionHasJudgeContract (question-contract.ts) —

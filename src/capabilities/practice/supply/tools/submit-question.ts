@@ -46,6 +46,7 @@ import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { lockQuestionSubmitRequest } from '@/kernel/locks/question-supply';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
+import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
   type DeclaredGroupDomainOutcome,
@@ -59,7 +60,10 @@ import {
   submitDraftQuestion,
   writeSubmitReceiptEvent,
 } from '@/server/questions/submit-question';
-import { dispatchPendingVerifyIntents, writeVerifyDispatchIntent } from '../../server/verify-dispatch-outbox';
+import {
+  dispatchPendingVerifyIntents,
+  writeVerifyDispatchIntent,
+} from '../../server/verify-dispatch-outbox';
 
 export type {
   EditQuestionInputT,
@@ -77,32 +81,28 @@ export {
   validateDraftEdit,
 } from '@/server/questions/submit-question';
 
+import { SupplyTraceV1, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { embedQuestionTextForIngest, questionEmbedStamp } from '../../server/../jobs/embed_backfill';
-import {
-  SupplyTraceV1,
-  withSupplyTraceDifficultyEvidence,
-} from '@/kernel/supply-contracts';
+import { embedQuestionTextForIngest, questionEmbedStamp } from '../../jobs/embed_backfill';
+import { mergeExactQuestionDuplicateKnowledgeIds } from '../../server/quiz/content-fingerprint';
 import {
   claimHttpSourceDuplicate,
   findVectorNearDuplicate,
   vectorNearHoldMetadata,
   visibleSourceNeighbor,
-} from '../../server/server/ingest-dedup';
-import { cleanupStagedAssets } from '../../server/server/jyeoo-candidates';
-import { JYEOO_SOURCE_HOST } from '../../server/server/jyeoo-supply-config';
+} from '../server/ingest-dedup';
+import { cleanupStagedAssets } from '../server/jyeoo-candidates';
+import { JYEOO_SOURCE_HOST } from '../server/jyeoo-supply-config';
 import {
   type PlacementAttemptAuthority,
-  type PlacementVerificationAuthority,
   assertPlacementAttemptFence,
-} from '../../server/server/placement-starter-attempts';
-import { authorizePlacementQuestion } from '../../server/server/placement-starter-paid-authority';
+} from '../server/placement-starter-attempts';
+import { authorizePlacementQuestion } from '../server/placement-starter-paid-authority';
 import {
   DEDUP_OVERLAP_THRESHOLD,
   matchesWhitelist,
   maxNgramOverlap,
-} from '../../server/server/sourced-dedup';
-import { mergeExactQuestionDuplicateKnowledgeIds } from '../../server/quiz/content-fingerprint';
+} from '../server/sourced-dedup';
 
 const SOURCED_CREATED_BY_BY_ROUTE = {
   jyeoo_fetch: AgentRef.parse({ by: 'system', task_kind: 'JyeooFetch' }),
@@ -345,7 +345,7 @@ async function executeCandidateSubmit(
   const requestId = input.request_id;
   const fingerprint = candidateSubmitFingerprint(input);
   const claim = await db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${requestId}))`);
+    await lockQuestionSubmitRequest(tx, requestId);
     return claimSubmitRequestId(tx, requestId, fingerprint);
   });
   if (claim.status === 'replay') {
@@ -363,7 +363,7 @@ async function executeCandidateSubmit(
   // Declared first publication already committed this receipt atomically. Recheck
   // under the same request lock so a concurrent preflight failure cannot overwrite it.
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${requestId}))`);
+    await lockQuestionSubmitRequest(tx, requestId);
     const settled = await claimSubmitRequestId(tx, requestId, fingerprint);
     if (settled.status === 'replay') {
       const receipt = settled.receipt as Output;

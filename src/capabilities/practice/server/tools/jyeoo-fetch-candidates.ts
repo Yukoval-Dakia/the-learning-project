@@ -17,10 +17,7 @@ import { z } from 'zod';
 import { SourcedQuestion } from '@/core/schema/sourcing';
 import { FigureRef, StructuredQuestion } from '@/core/schema/structured_question';
 import type { DomainTool } from '@/kernel/tools/types';
-import {
-  type JyeooFetchCandidatesResult,
-  runJyeooFetchCandidates,
-} from '../question-supply/jyeoo-candidates';
+import { type JyeooFetchCandidatesResult, runJyeooFetchCandidates } from '../../supply/public';
 
 const inputSchema = z.object({
   /** 年级：10 高一 / 11 高二 / 12 高三（producer --grade）。 */

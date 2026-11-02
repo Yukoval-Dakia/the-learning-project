@@ -22,7 +22,7 @@ import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
-import type { SupplyTraceV1T } from './question-supply/evidence-demand';
+import type { SupplyTraceV1T } from '@/kernel/supply-contracts';
 
 /** Matches the `question.metadata` jsonb column shape (Record<string, unknown>). */
 type JsonObject = Record<string, unknown>;

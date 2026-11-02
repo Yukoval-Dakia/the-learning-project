@@ -30,12 +30,12 @@ import type { SubjectProfile } from '@/subjects/profile';
 // admission lane 经本模块复导出 Provider；TaskTextResult 直接取共享结果契约。
 export type { Provider } from '@/server/ai/providers';
 
+import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import {
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
-  type PlacementVerificationAuthority,
-  assertPlacementAuthority,
-} from '../question-supply/placement-starter-attempts';
+  placementAuthority,
+} from '../../supply/public';
 import { answerCandidates, normalizeAnswer, referenceAnswerCandidates } from './choice-surface';
 
 // ---------- check identifiers ----------
@@ -353,7 +353,7 @@ export interface IndependentSolutionOptions {
   /** Test seam; production lazily resolves source_asset rows and R2 bytes. */
   imageFetchFn?: SolveCheckImageFetchFn;
   placementAuthority?: PlacementVerificationAuthority;
-  assertPlacementAuthorityFn?: typeof assertPlacementAuthority;
+  assertPlacementAuthorityFn?: typeof placementAuthority.assertPlacementAuthority;
   beforePaidCall?: (
     kind: 'solution_check' | 'semantic_judge',
     invocationId: string,
@@ -572,7 +572,7 @@ function normalizeStrictSolutionOutput(value: unknown): {
 async function assertIndependentSolutionAuthority(opts: IndependentSolutionOptions): Promise<void> {
   if (!opts.placementAuthority || !opts.db) return;
   await opts.db.transaction(async (tx: Tx) =>
-    (opts.assertPlacementAuthorityFn ?? assertPlacementAuthority)(
+    (opts.assertPlacementAuthorityFn ?? placementAuthority.assertPlacementAuthority)(
       tx,
       opts.placementAuthority as PlacementVerificationAuthority,
     ),
@@ -1150,7 +1150,7 @@ export interface TeachingQualityOptions {
     full: SubjectProfile;
   };
   placementAuthority?: PlacementVerificationAuthority;
-  assertPlacementAuthorityFn?: typeof assertPlacementAuthority;
+  assertPlacementAuthorityFn?: typeof placementAuthority.assertPlacementAuthority;
   beforePaidCall?: (invocationId: string) => Promise<void>;
   settlePaidCall?: (
     invocationId: string,
@@ -1293,7 +1293,7 @@ export async function runTeachingQualityCheck(
     const ctx = { db: opts.db, subjectProfile: opts.profile.full };
     if (opts.placementAuthority) {
       await opts.db.transaction(async (tx: Tx) =>
-        (opts.assertPlacementAuthorityFn ?? assertPlacementAuthority)(
+        (opts.assertPlacementAuthorityFn ?? placementAuthority.assertPlacementAuthority)(
           tx,
           opts.placementAuthority as PlacementVerificationAuthority,
         ),
