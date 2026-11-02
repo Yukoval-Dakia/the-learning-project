@@ -43,6 +43,7 @@
     "db:migrate:local": "tsx scripts/migrate-local-db.ts",
     "worker:dev": "tsx scripts/worker.ts",
     "seed:synthetic": "tsx scripts/seed-synthetic.ts",
+    "seed:dev-questions": "tsx scripts/seed-dev-questions.ts",
     "audit:schema": "tsx scripts/audit-schema-writes.ts",
     "audit:question-writers": "tsx scripts/audit-question-content-writers.ts",
     "audit:dependencies": "pnpm audit --prod --audit-level=high",

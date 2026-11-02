@@ -144,8 +144,9 @@ Re-running reuses the volume and only applies new migrations. Docker/OrbStack mu
 - **Guard:** `dev:local` refuses to start if the database target is TEST's (port 5433/5544 or
   database `loom`). The only override is `DEV_ALLOW_TEST_DB=1`, which prints a warning banner and
   runs the dev API and worker against TEST's data and jobs — do not use it casually.
+- **Seed questions:** a fresh dev DB starts with 7 admitted math questions (ids `devseed:q:*`, fixed answer keys graded without any model call) so the question bank, practice and today pages have content; re-running adds nothing. Dev DB only — never with `DEV_ALLOW_TEST_DB=1`.
 - **Reset the dev DB:** `docker compose -f docker-compose.dev.yml --profile dev down -v`
-  (deletes the dev volume; the next `pnpm dev:local` recreates and migrates it).
+  (deletes the dev volume; the next `pnpm dev:local` recreates, migrates and re-seeds it).
 
 `pnpm dev:local`（= `tsx scripts/dev-local.ts`）spawn **两进程**，启动后打印要打开的地址（默认 <http://127.0.0.1:8788/>，可用 `DEV_PORT` 改；8787 留给 TEST 的 app 容器，避免抢端口或误开到 TEST）：
 
