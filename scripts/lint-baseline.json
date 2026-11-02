@@ -4,7 +4,7 @@
   "infoPolicy": "info diagnostics are counted: separate infos ratchet total and per-rule rows; each severity total must equal the baseline",
   "totals": {
     "errors": 0,
-    "warnings": 154,
+    "warnings": 152,
     "infos": 0
   },
   "byRule": {
