@@ -1044,10 +1044,14 @@ function quotedCheckpointWrites(source: string): WriteStatement[] {
           : template.head.text +
             template.templateSpans.map((span) => ` ? ${span.literal.text}`).join('');
         // Single-quoted values/comments stay inert. Double-quoted SQL identifiers are syntax.
+        // PostgreSQL folds unquoted identifiers to lowercase; quoted ones keep their case.
         const sql = raw
           .replace(
             /--[^\n]*|\/\*[\s\S]*?\*\/|'(?:''|[^'])*'|\$([a-z_][\w]*|)\$[\s\S]*?\$\1\$/gi,
             ' ',
+          )
+          .replace(/"(?:""|[^"])*"|[^"]+/g, (part) =>
+            part.startsWith('"') ? part : part.toLowerCase(),
           )
           .replace(/"([a-z_][\w]*)"/gi, '$1');
         if (

@@ -6,7 +6,7 @@
 
 ## 0. 状态与边界
 
-- 本文件是 **source-check only**：给出设计原文引用、组件类型、交互与文件清单；**不构成质量、运行时或可达性证明**。
+- 本文件是 **source-check only**：给出设计原文引用、组件类型、交互与文件清单。
 - **决策 ID 纠正**：designer 报告曾误标决策 ID；本文件统一为 **D9 manual / D10 media / D11 autosave**。
 - 全部策略 **D1–D16 已批准**（不再是旧 pending 项）。**UI preflight 本身仍待 owner 正式批准**；actual eval plan/budget 与 final implementation-ready confirmation 仍待。
 - **不创建 ADR / ticket**，待 parent reconcile。
