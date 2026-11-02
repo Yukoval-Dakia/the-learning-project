@@ -15,7 +15,7 @@
 //                                                         # 再从 DB 读回跑——端到端验证
 //                                                         # migration + loader + 引擎
 //
-// ─── 两侧定义（见 scripts/calibration/joint-replay.ts）────────────────────
+// ─── 两侧定义（见 src/core/calibration/joint-replay.ts）────────────────────
 // incumbent = 现行 main（θ̂ Elo + b_calib ?? b_anchor 读链 + ≥12 标签 AIPW firm-up 夜跑
 // 模拟）；joint = YUK-439（θ̂ Elo + b_post 批量后验）。同一作答史、各自 θ̂ 轨迹、
 // 事前预测配对比较（log loss 分数伯努利 + 二元子集 ECE + 按题配对 cluster bootstrap）。
@@ -45,7 +45,7 @@ loadEnv();
 
 // 引擎/类型经动态 import 载入：上面的占位 URL 必须先就位（ESM 静态 import 会整体
 // 提升，占位逻辑会晚于 db/client 的顶层校验执行）。
-type JointReplayAttempt = import('./calibration/joint-replay').JointReplayAttempt;
+type JointReplayAttempt = import('@/core/calibration/joint-replay').JointReplayAttempt;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 合成史生成器（mulberry32 确定性）：已知真值（true_b、真 θ 漂移），让「joint 收敛
@@ -530,7 +530,7 @@ async function seedLegacyDb(world: SyntheticWorld): Promise<void> {
 // CLI。
 // ─────────────────────────────────────────────────────────────────────────────
 function formatReport(
-  r: import('./calibration/joint-replay').JointReplayResult,
+  r: import('@/core/calibration/joint-replay').JointReplayResult,
   mode: string,
 ): string {
   const lines: string[] = [];
@@ -557,7 +557,7 @@ function formatReport(
 }
 
 export async function runCli(args: string[]): Promise<number> {
-  const { replayJointComparison } = await import('./calibration/joint-replay');
+  const { replayJointComparison } = await import('@/core/calibration/joint-replay');
   const wantJson = args.includes('--json');
   const syntheticArg = args.find((a) => a.startsWith('--synthetic'));
   const seedDb = args.includes('--seed-legacy-db');

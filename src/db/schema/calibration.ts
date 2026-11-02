@@ -211,7 +211,7 @@ export const difficulty_calibration_label = pgTable(
     // 存档供审计/重算；喂 AIPW 的 Y 是下面 b_label 而非它（§6 红线）。
     outcome: integer('outcome').notNull(),
     // **难度标签**（§6）：由 (outcome, theta_snapshot) 单次 fixed-anchor IRT 反推的隐含 b。
-    // 公式见 recalibration.ts impliedBLabel。单条噪声大（CI 宽），AIPW 池上聚合去噪。
+    // 公式见 src/core/calibration/aipw.ts impliedBLabel。单条噪声大（CI 宽），AIPW 池上聚合去噪。
     b_label: real('b_label').notNull(),
     // 纳入概率 π_i ∈ (0,1]（真随机抽样，positivity）。AIPW rectifier 的 IPW 权重分母。
     // 来自 selection_observation（softmax_mfi sampler）；hook 拒 ≤0（合法概率护栏）。

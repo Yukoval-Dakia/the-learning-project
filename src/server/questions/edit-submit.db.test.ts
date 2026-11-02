@@ -23,13 +23,16 @@ import {
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import {
+  contractIntegrityDigest,
+  normalizeQuestionRowToContract,
+} from '@/kernel/records/assessment-normalization';
+import {
   publishQuestionGroup,
   publishQuestionGroupFromRow,
 } from '@/kernel/records/assessment-publication';
 import { draftDocumentToContract } from '@/kernel/records/question-draft-contract';
 import { acceptAiProposal } from '@/server/proposals/actions';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { contractIntegrityDigest, normalizeQuestionRowToContract } from './contract-normalizer';
 import { saveDraftEdit, validateDraftEdit } from './edit-question';
 import { submitDraftQuestion } from './submit-question';
 

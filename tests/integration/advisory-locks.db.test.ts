@@ -48,9 +48,9 @@ import {
 import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
 import { retireFsrsStateOnMerge, upsertFsrsState } from '@/server/fsrs/state';
 import { backfillKnowledgeGenesis } from '../../scripts/backfill-genesis-events';
-import { issueSoloFixture } from '../../tests/fixtures/assessment-solo';
-import { nativeSoloHttpFixture } from '../../tests/fixtures/native-solo-http';
-import { resetDb, testDb } from '../../tests/helpers/db';
+import { issueSoloFixture } from '../fixtures/assessment-solo';
+import { nativeSoloHttpFixture } from '../fixtures/native-solo-http';
+import { resetDb, testDb } from '../helpers/db';
 
 // The contended production writer must stay blocked at least this long. Unobstructed,
 // each writer here completes in well under 100ms, so 600ms is a comfortable margin
