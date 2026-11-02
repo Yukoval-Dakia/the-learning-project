@@ -70,6 +70,7 @@ import { createStartHintRequest, createStartSolveSession } from './start/solve-o
 import { revealStartStudyReference } from './start/study-reference-operation';
 import { createStartSubject } from './start/subject-create-operation';
 import { readStartSubjects } from './start/subject-reader';
+import { readStartWorksheetExport } from './start/worksheet-export-reader';
 
 export function buildLegacySpa(root: string): Hono {
   const spa = new Hono();
@@ -162,6 +163,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     releaseHeldPlacement: releaseStartHeldPlacement,
     transitionPlacementSession: transitionStartPlacementSession,
     readPlacementProfile: readStartPlacementProfile,
+    readWorksheetExport: readStartWorksheetExport,
     readSubjects: readStartSubjects,
     revealStudyReference: revealStartStudyReference,
     createSolveSession: createStartSolveSession,

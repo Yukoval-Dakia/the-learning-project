@@ -40,6 +40,7 @@ import { Route as NotesIdRouteImport } from './routes/notes.$id'
 import { Route as OnboardingUploadRouteImport } from './routes/onboarding.upload'
 import { Route as QuestionsIdRouteImport } from './routes/questions.$id'
 import { Route as AdminSubjectsIdRouteImport } from './routes/admin.subjects.$id'
+import { Route as PrintWorksheetTokenRouteImport } from './routes/print.worksheet.$token'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -196,6 +197,11 @@ const AdminSubjectsIdRoute = AdminSubjectsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AdminSubjectsRoute,
 } as any)
+const PrintWorksheetTokenRoute = PrintWorksheetTokenRouteImport.update({
+  id: '/print/worksheet/$token',
+  path: '/print/worksheet/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -229,6 +235,7 @@ export interface FileRoutesByFullPath {
   '/onboarding/upload': typeof OnboardingUploadRoute
   '/questions/$id': typeof QuestionsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
+  '/print/worksheet/$token': typeof PrintWorksheetTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -262,6 +269,7 @@ export interface FileRoutesByTo {
   '/onboarding/upload': typeof OnboardingUploadRoute
   '/questions/$id': typeof QuestionsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
+  '/print/worksheet/$token': typeof PrintWorksheetTokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -296,6 +304,7 @@ export interface FileRoutesById {
   '/onboarding/upload': typeof OnboardingUploadRoute
   '/questions/$id': typeof QuestionsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
+  '/print/worksheet/$token': typeof PrintWorksheetTokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -331,6 +340,7 @@ export interface FileRouteTypes {
     | '/onboarding/upload'
     | '/questions/$id'
     | '/admin/subjects/$id'
+    | '/print/worksheet/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -364,6 +374,7 @@ export interface FileRouteTypes {
     | '/onboarding/upload'
     | '/questions/$id'
     | '/admin/subjects/$id'
+    | '/print/worksheet/$token'
   id:
     | '__root__'
     | '/'
@@ -397,6 +408,7 @@ export interface FileRouteTypes {
     | '/onboarding/upload'
     | '/questions/$id'
     | '/admin/subjects/$id'
+    | '/print/worksheet/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -427,6 +439,7 @@ export interface RootRouteChildren {
   ApiSplatRoute: typeof ApiSplatRoute
   EventsIdRoute: typeof EventsIdRoute
   OnboardingUploadRoute: typeof OnboardingUploadRoute
+  PrintWorksheetTokenRoute: typeof PrintWorksheetTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -648,6 +661,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminSubjectsIdRouteImport
       parentRoute: typeof AdminSubjectsRoute
     }
+    '/print/worksheet/$token': {
+      id: '/print/worksheet/$token'
+      path: '/print/worksheet/$token'
+      fullPath: '/print/worksheet/$token'
+      preLoaderRoute: typeof PrintWorksheetTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -725,6 +745,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiSplatRoute: ApiSplatRoute,
   EventsIdRoute: EventsIdRoute,
   OnboardingUploadRoute: OnboardingUploadRoute,
+  PrintWorksheetTokenRoute: PrintWorksheetTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
