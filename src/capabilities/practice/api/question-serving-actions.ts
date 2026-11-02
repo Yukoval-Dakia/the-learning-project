@@ -1,14 +1,13 @@
 // POST /api/questions/[id]/serving-actions/[command]:
 // command surface for releasing a held question (serving-holds UI contract v2).
 //
-//   reverify            async — re-enqueue the admission run through the
-//                        paid-effect-claim mechanism (never re-pays an
-//                        identical already-paid base)
-//   recheck_source      async — re-dispatch source_verify onto the queue the
-//                        verify-dispatch outbox drains to
 //   release_verify_hold sync  — clear verify_hold via the publisher's
 //                        dimension-only path; never touches retraction_hold,
 //                        never mints a revision
+//
+// YUK-1664 — reverify and recheck_source are system duties driven by result
+// events and the recovery pass (auto:<group>:<digest>:<n> ledger keys); old
+// clients posting them get the params-schema 400.
 //
 // Every command requires an Idempotency-Key header and returns
 // {accepted, serving} where serving is the same projection the list/detail

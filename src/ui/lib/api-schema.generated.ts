@@ -32999,7 +32999,7 @@ export interface operations {
                 "Idempotency-Key": string;
             };
             path: {
-                command: "reverify" | "recheck_source" | "release_verify_hold";
+                command: "release_verify_hold";
                 id: string;
             };
             cookie?: never;

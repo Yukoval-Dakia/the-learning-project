@@ -1,6 +1,7 @@
 import type { Job, PgBoss } from 'pg-boss';
 import {
   type EnqueueVerifyFn,
+  recoverHeldServingRechecks,
   recoverOrphanVerifyDispatches,
   recoverWebSupplies,
 } from '@/capabilities/practice/public';
@@ -15,6 +16,10 @@ export function buildVerifyDispatchRecoveryHandler(
   return async () => {
     await recoverOrphanVerifyDispatches(db, { enqueue });
     await recoverWebSupplies(db, { enqueue });
+    // YUK-1664 — recovery pass for the system's serving recheck: bounded to 50
+    // held groups, it picks up holds that predate the result-event
+    // subscription and any delivery the bus lost.
+    await recoverHeldServingRechecks(db);
   };
 }
 

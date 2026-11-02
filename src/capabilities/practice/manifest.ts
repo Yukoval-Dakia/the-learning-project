@@ -169,8 +169,9 @@ export const practiceCapability = defineCapability({
       // 面的 enqueueDurableJudge；消费者是 judge_pending_reconcile sweeper 与 submit 的
       // late-arrival guard（server/judge-run-dispatch.ts）。
       'experimental:judge_pending_attempt',
-      // YUK-1514 — serving-hold command ledger (reverify / recheck_source /
-      // release_verify_hold); the per-key idempotency + pending_action anchor.
+      // YUK-1514 — serving-hold command ledger (system reverify /
+      // recheck_source, user release_verify_hold); the per-key idempotency +
+      // pending_action anchor.
       'experimental:question_serving_action',
       // Quiz draft verification ledger. Agency subscribes and turns a committed
       // non-promotion into a coach pool-gap hint; the verify job does not call Agency.
@@ -209,6 +210,18 @@ export const practiceCapability = defineCapability({
         actions: [...LEARNING_EVENT_ACTIONS],
         load: () =>
           import('./server/learner-return-wake').then((m) => m.buildLearnerReturnWakeSubscriber),
+      },
+      {
+        // YUK-1664 — admission verdicts and source_verify suspends both land on
+        // the declared assessment_publish action; the handler re-checks the
+        // hold through the same paid-effect command path (auto ledger key).
+        id: 'practice.serving-recheck',
+        version: 1,
+        actions: ['experimental:assessment_publish'],
+        load: () =>
+          import('./server/serving-recheck-subscription').then(
+            (m) => m.buildServingRecheckSubscriber,
+          ),
       },
     ],
   },
@@ -611,8 +624,10 @@ export const practiceCapability = defineCapability({
         load: () => import('./api/question-restore').then((m) => m.POST),
       },
       {
-        // YUK-1514 — serving-hold release commands (reverify / recheck_source /
-        // release_verify_hold). Idempotency-Key required; {accepted, serving}.
+        // YUK-1514 — serving-hold release commands. YUK-1664: only
+        // release_verify_hold stays a user command; reverify / recheck_source
+        // run through the system ledger and now parse-fail here (4xx).
+        // Idempotency-Key required; {accepted, serving}.
         method: 'POST',
         path: '/api/questions/[id]/serving-actions/[command]',
         operationId: 'runQuestionServingAction',
