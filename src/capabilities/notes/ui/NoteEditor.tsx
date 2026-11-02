@@ -6,10 +6,21 @@
 // 引用（用户增量）——**quiz 内嵌测验已剔除（D6）**。atom 块（crossLink/
 // questionRef）不可嵌套编辑，整块删除/移动。check 复用正文编辑，不提供判分。
 // 保存由宿主（NoteReaderPage）发 PATCH body-blocks 乐观锁。
+// M3E presentation (YUK-1473, docs/design/2026-11-03-notes-m3e.md): markup and classes only;
+// block edits, reorder, the pickers' search sequencing and the presence ref are as before.
 
+import {
+  CircleQuestionMark,
+  FileText,
+  GripVertical,
+  Link,
+  Plus,
+  RefreshCw,
+  Trash,
+  X,
+} from 'lucide-react';
 import { type Ref, useCallback, useRef, useState } from 'react';
-import { Btn } from '@/ui/primitives/Btn';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { Button } from '@/ui-next/public';
 
 import { NoteBlockView, QuestionPicker } from './NoteBlocks';
 import {
@@ -153,42 +164,36 @@ function ArtifactPicker({
   };
 
   return (
-    <div
-      ref={attachPicker}
-      className="slash-menu fade-key"
-      style={{ maxHeight: 280, overflowY: 'auto' }}
-    >
-      <div className="slash-head meta">交叉链 · 搜索笔记/学习项</div>
+    <div ref={attachPicker} className="nt-menu un-glass">
+      <div className="nt-menu-head">交叉链 · 搜索笔记/学习项</div>
       <input
-        className="input"
-        style={{ margin: '4px 8px', width: 'calc(100% - 16px)' }}
+        className="nt-menu-input"
         value={q}
         placeholder="标题关键词…"
+        aria-label="搜索要链接的笔记或学习项"
         onChange={(e) => changeQuery(e.target.value)}
       />
-      {searchState === 'loading' && <output className="slash-menu-empty">正在搜索…</output>}
+      {searchState === 'loading' && <output className="nt-menu-note">正在搜索…</output>}
       {searchState === 'error' && (
         <>
-          <div className="slash-menu-empty" role="alert">
+          <div className="nt-menu-note" role="alert">
             搜索失败，请重试。
           </div>
-          <button type="button" className="slash-item" onClick={() => runSearch(q)}>
-            <LoomIcon name="refresh" size={13} />
+          <button type="button" className="nt-menu-item" onClick={() => runSearch(q)}>
+            <RefreshCw size={15} aria-hidden="true" />
             <span>重试搜索</span>
           </button>
         </>
       )}
       {rows.map((a) => (
-        <button type="button" key={a.id} className="slash-item" onClick={() => onPick(a)}>
-          <LoomIcon name="link" size={14} />
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {a.title}
-          </span>
-          <span className="mono slash-key">{a.type}</span>
+        <button type="button" key={a.id} className="nt-menu-item" onClick={() => onPick(a)}>
+          <Link size={15} aria-hidden="true" />
+          <span className="nt-menu-label">{a.title}</span>
+          <span className="nt-menu-key">{a.type}</span>
         </button>
       ))}
-      <button type="button" className="slash-item" onClick={onClose}>
-        <LoomIcon name="close" size={13} />
+      <button type="button" className="nt-menu-item" onClick={onClose}>
+        <X size={15} aria-hidden="true" />
         <span>取消</span>
       </button>
     </div>
@@ -258,37 +263,37 @@ export function NoteEditor({
   );
 
   // 斜杠菜单 + 两个 picker，按插入锚点 i 渲染（insertAt 在 i 之后插入）。
-  // 空笔记走 i = -1（插到开头），由列表外的独立 .nb-wrap 宿主渲染。
+  // 空笔记走 i = -1（插到开头），由列表外的独立块行宿主渲染。
   const slashMenus = (i: number) => (
     <>
       {slashAt === i && picker === 'none' && (
-        <div className="slash-menu fade-key">
-          <div className="slash-head meta">插入块</div>
+        <div className="nt-menu un-glass">
+          <div className="nt-menu-head">插入块</div>
           {SLASH_KINDS.map(([kind, label]) => (
             <button
               type="button"
               key={kind}
-              className="slash-item"
+              className="nt-menu-item"
               onClick={() => insertAt(i, makeSemanticBlock(kind))}
             >
-              <LoomIcon name="doc" size={15} />
-              <span>{label}</span>
-              <span className="mono slash-key">/{kind}</span>
+              <FileText size={15} aria-hidden="true" />
+              <span className="nt-menu-label">{label}</span>
+              <span className="nt-menu-key">/{kind}</span>
             </button>
           ))}
-          <button type="button" className="slash-item" onClick={() => setPicker('xlink')}>
-            <LoomIcon name="link" size={15} />
-            <span>交叉链</span>
-            <span className="mono slash-key">@artifact</span>
+          <button type="button" className="nt-menu-item" onClick={() => setPicker('xlink')}>
+            <Link size={15} aria-hidden="true" />
+            <span className="nt-menu-label">交叉链</span>
+            <span className="nt-menu-key">@artifact</span>
           </button>
-          <button type="button" className="slash-item" onClick={() => setPicker('question')}>
-            <LoomIcon name="quiz" size={15} />
-            <span>引用题目</span>
-            <span className="mono slash-key">@question</span>
+          <button type="button" className="nt-menu-item" onClick={() => setPicker('question')}>
+            <CircleQuestionMark size={15} aria-hidden="true" />
+            <span className="nt-menu-label">引用题目</span>
+            <span className="nt-menu-key">@question</span>
           </button>
           {/* D6：quiz 内嵌测验块型已裁撤，不提供插入入口。 */}
-          <div className="slash-foot meta">
-            <LoomIcon name="link" size={11} /> 引用是纯链接——作答永远发生在练习面
+          <div className="nt-menu-foot">
+            <Link size={12} aria-hidden="true" /> 引用是纯链接——作答永远发生在练习面
           </div>
         </div>
       )}
@@ -328,7 +333,7 @@ export function NoteEditor({
   );
 
   return (
-    <div ref={rootRef} className="note-editor">
+    <div ref={rootRef} className="nt-editor">
       {blocks.map((b, i) => {
         const isAtom = b.type === 'crossLinkBlock' || b.type === 'questionRefBlock';
         const reorderLabel =
@@ -344,7 +349,9 @@ export function NoteEditor({
         return (
           <div
             key={key}
-            className={`nb-wrap${overIdx === i ? ' is-over' : ''}${dragIdx === i ? ' is-dragging' : ''}`}
+            className="nt-eblk"
+            data-over={overIdx === i || undefined}
+            data-dragging={dragIdx === i || undefined}
             role="listitem"
             onDragOver={(e) => {
               if (dragIdx != null) {
@@ -354,10 +361,10 @@ export function NoteEditor({
             }}
             onDrop={() => onDrop(i)}
           >
-            <div className="nb-gutter">
+            <div className="nt-eblk-gutter">
               <button
                 type="button"
-                className="nb-grip"
+                className="nt-eblk-btn nt-eblk-grip"
                 draggable={blocks.length > 1}
                 disabled={blocks.length < 2}
                 aria-label={reorderLabel}
@@ -376,11 +383,11 @@ export function NoteEditor({
                   moveBlock(i, to);
                 }}
               >
-                <LoomIcon name="grip" size={14} />
+                <GripVertical size={15} aria-hidden="true" />
               </button>
               <button
                 type="button"
-                className="nb-plus"
+                className="nt-eblk-btn"
                 aria-label={insertLabel}
                 aria-expanded={slashAt === i}
                 title={insertLabel}
@@ -389,27 +396,25 @@ export function NoteEditor({
                   setPicker('none');
                 }}
               >
-                <LoomIcon name="slash" size={13} />
+                <Plus size={15} aria-hidden="true" />
               </button>
               <button
                 type="button"
-                className="nb-plus"
+                className="nt-eblk-btn"
                 aria-label={deleteLabel}
                 title={deleteLabel}
                 onClick={() => removeAt(i)}
               >
-                <LoomIcon name="trash" size={13} />
+                <Trash size={14} aria-hidden="true" />
               </button>
             </div>
-            <div className="nb-content">
+            <div className="nt-eblk-content">
               {isAtom ? (
                 <NoteBlockView block={b} />
               ) : (
-                <div className={`nb-sem nb-sem-${b.attrs?.semantic_kind ?? 'plain'}`}>
+                <div className={`nt-sem nt-sem-${b.attrs?.semantic_kind ?? 'plain'}`}>
                   {b.attrs?.semantic_kind && (
-                    <span className="nb-sem-tag mono">
-                      {SEMANTIC_KIND_LABEL[b.attrs.semantic_kind]}
-                    </span>
+                    <span className="nt-sem-tag">{SEMANTIC_KIND_LABEL[b.attrs.semantic_kind]}</span>
                   )}
                   <RichNoteBlockEditor
                     block={b}
@@ -429,21 +434,21 @@ export function NoteEditor({
           </div>
         );
       })}
-      {/* 空笔记没有块宿主——独立 .nb-wrap 给斜杠菜单提供定位锚，插入走 i=-1（开头）。 */}
-      {blocks.length === 0 && <div className="nb-wrap">{slashMenus(-1)}</div>}
-      <Btn
+      {/* 空笔记没有块宿主——独立块行给斜杠菜单提供定位锚，插入走 i=-1（开头）。 */}
+      {blocks.length === 0 && <div className="nt-eblk nt-eblk-empty">{slashMenus(-1)}</div>}
+      <Button
         size="sm"
         variant="ghost"
-        icon="plus"
+        className="nt-add-block"
         onClick={() => {
           // 锚到最后一块之后；空列表为 -1（上方独立宿主渲染菜单）。
           setSlashAt(slashAt === blocks.length - 1 ? null : blocks.length - 1);
           setPicker('none');
         }}
-        style={{ marginTop: 'var(--s-2)' }}
       >
+        <Plus size={16} aria-hidden="true" />
         添加块
-      </Btn>
+      </Button>
     </div>
   );
 }
