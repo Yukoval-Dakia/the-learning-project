@@ -196,13 +196,16 @@ void (async () => {
       : undefined;
   const fetch =
     devFrontdoor?.fetch ?? (env.RW_FRONTDOOR === '1' ? await createFrontdoor(app) : app.fetch);
-  const server = serve({ fetch, port, createServer: devFrontdoor?.createServer }, (info) => {
-    const mounted = capabilities.flatMap((c) =>
-      (c.api?.routes ?? []).map((r) => `${r.method} ${r.path}`),
-    );
-    console.log(`[rw:api] hono listening on :${info.port}`);
-    console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
-  });
+  const server = serve(
+    { fetch, port, hostname: devFrontdoor?.hostname, createServer: devFrontdoor?.createServer },
+    (info) => {
+      const mounted = capabilities.flatMap((c) =>
+        (c.api?.routes ?? []).map((r) => `${r.method} ${r.path}`),
+      );
+      console.log(`[rw:api] hono listening on :${info.port}`);
+      console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
+    },
+  );
 
   let workerStartup: Promise<void> | undefined;
   installApiShutdown(server, async () => {

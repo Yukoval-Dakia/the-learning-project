@@ -11,6 +11,25 @@ import { type StartEntryFetch, buildFrontdoor } from './frontdoor';
 const START_SSR_ENTRY = 'virtual:tanstack-start-server-entry';
 // vite.config.ts sets base '/_build/'; every Vite-owned URL (client modules, HMR socket) lives there.
 const VITE_BASE = '/_build/';
+// /_build/* is answered by Vite before the token gate, so the dev server listens on loopback only
+// (DEV_HOST overrides) and Vite's file deny list also covers the credential patterns .gitignore lists.
+const DEV_HOST = process.env.DEV_HOST || '127.0.0.1';
+const FS_DENY = [
+  // Vite's own defaults (setting fs.deny replaces them).
+  '.env',
+  '.env.*',
+  '*.{crt,pem,key,p12,pfx,cer,der,jks,keystore}',
+  '.npmrc',
+  '.yarnrc.yml',
+  '**/.git/**',
+  // Repository credential patterns (.gitignore).
+  '.netrc',
+  '.dev.vars*',
+  'credentials*.json',
+  'service-account*.json',
+  'id_rsa*',
+  'id_ed25519*',
+];
 
 // The production build stubs Node builtins that shared domain modules import (they are only called
 // server-side); the dev client would otherwise throw on the import itself.
@@ -32,7 +51,11 @@ export async function createViteFrontdoor(api: Hono) {
     configFile: resolve('server/start/vite.config.ts'),
     appType: 'custom',
     plugins: [browserNodeCryptoStub],
-    server: { middlewareMode: true, hmr: { server: httpServer } },
+    server: {
+      middlewareMode: true,
+      hmr: { server: httpServer },
+      fs: { strict: true, deny: FS_DENY },
+    },
   });
   httpServer.once('close', () => void vite.close());
 
@@ -64,5 +87,5 @@ export async function createViteFrontdoor(api: Hono) {
     });
     return httpServer;
   }) as typeof createHttpServer;
-  return { fetch, createServer };
+  return { fetch, createServer, hostname: DEV_HOST };
 }
