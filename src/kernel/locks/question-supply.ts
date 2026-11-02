@@ -1,4 +1,4 @@
-// Exact transaction lock arguments for the existing question-supply operations.
+// Exact transaction lock arguments for the existing supply operations.
 // Callers retain transaction scope and request-before-ingestion/source/root order.
 import { createHash } from 'node:crypto';
 import { sql } from 'drizzle-orm';
@@ -15,4 +15,8 @@ export async function lockWebSupplyDemand(tx: Tx, demandId: string): Promise<voi
 
 export async function lockQuestionSubmitRequest(tx: Tx, requestId: string): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${requestId}))`);
+}
+
+export async function lockIngestSource(tx: Tx, source: string): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`ingest-source:${source}`}))`);
 }

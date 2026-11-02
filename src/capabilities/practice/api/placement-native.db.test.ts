@@ -43,9 +43,9 @@ import { fenceJudgeUnitClaim } from '../server/judge-operational';
 import { readJudgeRunPermanent } from '../server/judge-run-observation';
 import type { NativeJudgeRunJobData } from '../server/judge-run-payload';
 import * as Placement from '../server/placement-session-lifecycle';
-import { placementStarterIdentity } from '../server/question-supply/placement-starter-identity';
-import { readPlacementStarterOutcomes } from '../server/question-supply/placement-starter-outcome-reader';
-import { materializePlacementStartersForGoal } from '../server/question-supply/placement-starter-store';
+import { placementStarterIdentity } from '../supply/server/placement-starter-identity';
+import { readPlacementStarterOutcomes } from '../supply/server/placement-starter-outcome-reader';
+import { materializePlacementStartersForGoal } from '../supply/server/placement-starter-store';
 import {
   PlacementQuestionSelectionResponseSchema,
   PlacementSessionCreatedSchema,

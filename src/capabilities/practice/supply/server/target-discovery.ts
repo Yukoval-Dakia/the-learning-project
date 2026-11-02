@@ -44,8 +44,6 @@ import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { getMasteryState, globalThetaForDomain } from '@/kernel/read-models/mastery-state';
 import { readHardCalibrationBs } from '@/kernel/read-models/question-difficulty';
-import { resolveSubjectProfile } from '@/subjects/profile';
-import type { SubjectProfile } from '@/subjects/profile-schema';
 import {
   DEFAULT_EVIDENCE_DEADLINE_DAYS,
   DEFAULT_MAX_ATTEMPTS,
@@ -53,7 +51,9 @@ import {
   type SupplyTargetContextV1T,
   buildCoverageEvidenceDemand,
   evidenceDemandToTargetContext,
-} from './evidence-demand';
+} from '@/kernel/supply-contracts';
+import { resolveSubjectProfile } from '@/subjects/profile';
+import type { SubjectProfile } from '@/subjects/profile-schema';
 
 // ── Types（Task 13 Step 1，prompt 字面给定的形状即权威）────────────────────────
 

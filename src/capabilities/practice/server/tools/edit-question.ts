@@ -9,7 +9,7 @@ import {
   probeDraftEdit,
   saveDraftEdit,
   validateDraftEdit,
-} from './submit-question';
+} from '../../supply/public';
 
 // ====================================================================
 // edit_question DomainTool（统一题目编辑面）

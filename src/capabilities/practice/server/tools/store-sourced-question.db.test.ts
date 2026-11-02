@@ -15,11 +15,11 @@ import { knowledge, question, source_asset } from '@/db/schema';
 import type { R2Client } from '@/kernel/object-storage';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { memR2 } from '../../../../../tests/helpers/r2';
-import { canonicalJyeooQuestionHash } from '../question-supply/jyeoo-candidates';
+import { canonicalJyeooQuestionHash } from '../../supply/server/jyeoo-candidates';
 import {
   type StoreSourcedQuestionDeps,
   executeStoreSourcedQuestion,
-} from './store-sourced-question';
+} from '../../supply/tools/store-sourced-question';
 
 // cleanupStagedForRejected → cleanupStagedAssets 的 r2 走默认参数 getR2()（无注入 seam）。
 // mock '@/kernel/object-storage' 让测试注入 memR2 从而断言 R2 对象回收；未设置时保持与生产缺 env

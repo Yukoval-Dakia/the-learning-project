@@ -1,5 +1,5 @@
 // (Supply-Agent/3) — `web_fetch_candidates` DomainTool（effect:'read'）。
-// 供给 agent 化的 web 搜寻面：runWebFetchCandidates 核（question-supply/
+// 供给 agent 化的 web 搜寻面：runWebFetchCandidates 核（supply/server/
 // web-candidates.ts，从退役 jobs/sourcing.ts 提取的"找 + 判"部分）跑一次
 // SourcingTask（Exa 检索 → 抽取 → 结构化），返回【候选】——不写 question、不写
 // verify intent、不写 proposal（图片型候选原样返回，由调用方决定 propose）；提交入库
@@ -24,7 +24,7 @@ import {
   type RunWebFetchCandidatesResult,
   type RunWebSourcingAgentFn,
   runWebFetchCandidates,
-} from '../question-supply/web-candidates';
+} from '../../supply/public';
 import { defaultWebSourcingDeps, runWebSourcingOperation } from '../web-sourcing-operation';
 
 /**

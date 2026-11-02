@@ -30,8 +30,8 @@ import { writeEvent } from '@/kernel/events';
 import { type RunTaskFn, runQuizVerify } from '../../jobs/quiz_verify';
 import { runSourceVerify } from '../../jobs/source_verify';
 import { publishVerifyLifecycleUpdate } from '../../jobs/source_verify_lifecycle';
+import { placementAuthority } from '../../supply/public';
 import { enrollPromotedQuestionScheduling } from '../question-scheduling-enrollment';
-import { lockPlacementSupplyScopes } from '../question-supply/placement-supply-lock';
 
 export interface VerifyAndPromoteParams {
   db: Db;
@@ -214,7 +214,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       // global learning-state write lock FIRST (shared tx-entry order with every
       // material_fsrs_state / mastery_state writer and the cascade revert).
       await acquireLearningStateWriteLock(tx);
-      await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
+      await placementAuthority.lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
       await tx
         .update(question)
         .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
