@@ -976,6 +976,15 @@
     gap: var(--un-sp-1);
   }
 
+  /* On touch, .un-hit grows each small button/chip to a 44px tap area. When these rows wrap,
+     a tight row gap lets a lower control's tap area cover the one above (e.g. 忽略 over
+     建立关系, a write). Keep wrapped rows far enough apart that tap areas never overlap. */
+  @media (pointer: coarse) {
+    & .kn-prop-acts {
+      row-gap: var(--un-sp-4);
+    }
+  }
+
   & .kn-btn-critical {
     color: var(--un-critical);
   }
@@ -988,6 +997,13 @@
     margin: 0;
     padding: 0;
     border: 0;
+  }
+
+  /* Same reason as .kn-prop-acts above: wrapped relation-type chips must not share tap areas. */
+  @media (pointer: coarse) {
+    & .kn-rel-pick {
+      row-gap: var(--un-sp-5);
+    }
   }
 
   & .kn-rel-pick .un-chip-toggle {
