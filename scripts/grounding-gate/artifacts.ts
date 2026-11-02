@@ -11,7 +11,7 @@ import {
   ConjectureProbeSpecV1,
   ConjectureProbeSpecV2Base,
 } from '@/core/schema/business';
-import type { GroundingGateCandidate } from '@/server/grounding-gate/candidates';
+import type { GroundingGateCandidate } from './candidates';
 
 export const GROUNDING_GATE_SCHEMA_VERSION = 1;
 export const GROUNDING_GATE_MIN_CLUSTERS = 6;

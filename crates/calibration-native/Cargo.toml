@@ -2,7 +2,7 @@
 name = "calibration-native"
 version = "0.0.0"
 edition = "2021"
-description = "YUK-493 Phase -1 — Rust napi port of the offline calibration core (mulberry32 + forwardAuc + paired cluster bootstrap). JS (src/server/calibration/*) stays the oracle + fallback; this is bit-exact-parity verified."
+description = "YUK-493 Phase -1 — Rust napi port of the offline calibration core (mulberry32 + forwardAuc + paired cluster bootstrap). JS (src/core/calibration/*) stays the oracle + fallback; this is bit-exact-parity verified."
 publish = false
 
 # rlib added (alongside cdylib) so `cargo test` can build the unit-test harness for the
