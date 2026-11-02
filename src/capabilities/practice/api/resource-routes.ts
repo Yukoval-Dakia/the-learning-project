@@ -1,9 +1,8 @@
 import type { ZodType } from 'zod';
 import { db } from '@/db/client';
 import { ApiError, canonicalResourceResponse, errorResponse } from '@/kernel/http';
-import { createPracticePaperSubmission } from '../server/paper-submission-operation';
 import { createPracticeHintRequest, createPracticeSolveSession } from '../server/solve-operations';
-import { createAnswerDraft } from './paper-answer-route';
+import { createAnswerDraft, createPracticePaperSubmission } from '../session/public';
 import { CreatePaperAnswerDraftBodySchema } from './paper-contracts';
 import { CreateSolveSubmissionBodySchema } from './question-solve-contracts';
 import { createSolveSubmission } from './solve-submit';

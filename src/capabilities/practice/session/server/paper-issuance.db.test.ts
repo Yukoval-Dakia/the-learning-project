@@ -10,16 +10,19 @@ import {
   material_fsrs_state,
 } from '@/db/schema';
 import { getQuestionTimeline } from '@/kernel/read-models/question-activity';
-import { seedFrozenSolveQuestion } from '../../../../tests/fixtures/assessment-solve';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { seedFrozenSolveQuestion } from '../../../../../tests/fixtures/assessment-solve';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { getIssuanceState } from '../../server/assessment/submit';
+import {
+  activateSubmissionCandidate,
+  evaluateSubmission,
+} from '../../server/judge/evaluate-submission';
 import { createAnswerDraft } from '../api/paper-answer-route';
 import { createPaperReviewSession } from '../api/paper-session-create';
 import { createPaperSubmission } from '../api/paper-submit-route';
 import { PATCH as transitionReview } from '../api/review-session-detail';
 import { submitNativePaperAttempt } from './assessment/paper-attempt';
 import { readPaperAssessmentBinding } from './assessment/paper-issuance';
-import { getIssuanceState } from './assessment/submit';
-import { activateSubmissionCandidate, evaluateSubmission } from './judge/evaluate-submission';
 import { getPaperDetail } from './paper-detail';
 import { getPracticeList } from './practice-read';
 

@@ -7,8 +7,11 @@
 // linked review session + derived pos / right-wrong / gen / source.
 
 import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
-import { PAPER_INTENT_SOURCES } from '@/capabilities/practice/server/paper-intent-sources';
-import { countPaperSlots, readPaperSections } from '@/capabilities/practice/server/paper-sections';
+import { PAPER_INTENT_SOURCES } from '@/capabilities/practice/session/server/paper-intent-sources';
+import {
+  countPaperSlots,
+  readPaperSections,
+} from '@/capabilities/practice/session/server/paper-sections';
 import { Artifact } from '@/core/schema/index';
 import type { Db, Tx } from '@/db/client';
 import { artifact, event, knowledge, learning_session } from '@/db/schema';

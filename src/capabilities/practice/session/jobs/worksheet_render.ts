@@ -46,17 +46,17 @@ import { WorksheetRegionMapArchiveBody } from '@/capabilities/practice/api/works
 import {
   type ArchiveRegionMapResult,
   archiveWorksheetRegionMap,
-} from '@/capabilities/practice/server/worksheet/export-store';
+} from '@/capabilities/practice/session/server/worksheet/export-store';
 import {
   type WorksheetPdfVerification,
   WorksheetRenderPermanentError,
   canonicalizeWorksheetPdf,
   verifyWorksheetPdf,
-} from '@/capabilities/practice/server/worksheet/pdf-fidelity';
+} from '@/capabilities/practice/session/server/worksheet/pdf-fidelity';
 import {
   putWorksheetExportPdf,
   worksheetPdfBlobKey,
-} from '@/capabilities/practice/server/worksheet/pdf-store';
+} from '@/capabilities/practice/session/server/worksheet/pdf-store';
 import type { Db } from '@/db/client';
 
 // src/ui/lib/api.ts TOKEN_STORAGE_KEY —— 打印页的 /api 调用从这里读 token。
@@ -122,12 +122,12 @@ export type {
   WorksheetAnchorMeasurement,
   WorksheetPageVerification,
   WorksheetPdfVerification,
-} from '@/capabilities/practice/server/worksheet/pdf-fidelity';
+} from '@/capabilities/practice/session/server/worksheet/pdf-fidelity';
 export {
   WorksheetRenderPermanentError,
   canonicalizeWorksheetPdf,
   verifyWorksheetPdf,
-} from '@/capabilities/practice/server/worksheet/pdf-fidelity';
+} from '@/capabilities/practice/session/server/worksheet/pdf-fidelity';
 
 /** window.__tlpWorksheetRegionMap() 的返回形状（ui/worksheet-measure.ts 的
  * WorksheetRegionMapDraft —— 存档体减 pdf_digest）。 */

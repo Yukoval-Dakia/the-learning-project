@@ -16,13 +16,16 @@ import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
-import { readAutomaticIssuanceServingDecisions } from '@/kernel/records/assessment-issuance';
-import { projectEvaluationToJudgeResult } from '../judge/evaluation-authority';
+import {
+  issuanceRowToContract,
+  readAutomaticIssuanceServingDecisions,
+  revisionRowToContract,
+} from '@/kernel/records/assessment-issuance';
+import { projectFrozenStudyContext } from '../../../server/assessment/study-context';
+import { projectEvaluationToJudgeResult } from '../../../server/judge/evaluation-authority';
 import type { PaperDetailResult, PaperDetailSection, PaperDetailSlot } from '../paper-detail';
 import { resolveKnowledgeNames } from '../practice-read';
-import { issuanceRowToContract, revisionRowToContract } from './issue';
 import type { PaperAssessmentBindingT } from './paper-issuance';
-import { projectFrozenStudyContext } from './study-context';
 
 /** All slots and disclosure rules come from the immutable opening receipt. */
 export async function getFrozenPaperDetail(

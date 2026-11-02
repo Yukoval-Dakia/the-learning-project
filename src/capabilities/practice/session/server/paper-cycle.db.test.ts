@@ -18,7 +18,7 @@ import { FsrsStateSchema } from '@/core/schema/event/blocks';
 
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
+import * as Review from '@/capabilities/practice/session/server/review-session-lifecycle';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
 import {
@@ -35,12 +35,12 @@ import {
   startFrozenPaperFixture,
   startHistoricalPaperFixture,
   submitPaperFixture as submitPaperSlot,
-} from '../../../../tests/fixtures/assessment-paper';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+} from '../../../../../tests/fixtures/assessment-paper';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import * as evaluationService from '../../server/judge/evaluate-submission';
+import { createRecordedModelExecutor } from '../../server/judge/recorded-model-executor';
 import { autosaveAnswerDraft, freezeAnswerDraft } from './answer-draft';
 import { readPaperAssessmentBinding } from './assessment/paper-issuance';
-import * as evaluationService from './judge/evaluate-submission';
-import { createRecordedModelExecutor } from './judge/recorded-model-executor';
 import { getPaperDetail } from './paper-detail';
 
 async function seedQuestion(id: string, reference: string) {

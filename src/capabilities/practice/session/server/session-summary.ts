@@ -17,7 +17,7 @@ import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-poli
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import type { PracticeTaskRunFn } from './task-runtime';
+import type { PracticeTaskRunFn } from '../../server/task-runtime';
 
 const NOTABLE_LIMIT = 3;
 const MODEL_STATISTIC_CLAIMS = [

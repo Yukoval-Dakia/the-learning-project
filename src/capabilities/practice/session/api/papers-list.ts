@@ -8,8 +8,8 @@
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { CreateLegacyPaperReviewSessionBodySchema } from '../../api/paper-contracts';
 import { readPaperList } from '../server/papers-list';
-import { CreateLegacyPaperReviewSessionBodySchema } from './paper-contracts';
 import { createPaperReviewSession } from './paper-session-create';
 
 export async function GET(req?: Request): Promise<Response> {

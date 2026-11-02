@@ -1,9 +1,9 @@
 import { ApiError, errorResponse } from '@/kernel/http';
+import { UpdateReviewSessionBody } from '../../api/contracts';
 import {
   readReviewSession,
   transitionReviewSession,
 } from '../server/session-operations/review-session';
-import { UpdateReviewSessionBody } from './contracts';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {

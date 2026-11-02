@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { artifact, question } from '@/db/schema';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { POST } from './review-sessions';
 
 function createRequest(body?: unknown): Request {

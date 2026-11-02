@@ -13,6 +13,7 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
+import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import {
   type NormalizableQuestionRow,
   contractIntegrityDigest,
@@ -23,7 +24,6 @@ import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { createSolveSubmissionResource } from '../../api/resource-routes';
 import { startSolveSession } from '../solve-session';
 import * as Tutor from '../tutor-session';
-import { issueAssessment } from './issue';
 
 const NOW = new Date('2026-09-25T00:00:00Z');
 

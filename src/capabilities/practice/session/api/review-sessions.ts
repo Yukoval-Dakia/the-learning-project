@@ -1,6 +1,6 @@
 import { ApiError, errorResponse } from '@/kernel/http';
+import { CreateReviewSessionBody } from '../../api/contracts';
 import { createReviewSession } from '../server/session-operations/review-session';
-import { CreateReviewSessionBody } from './contracts';
 
 export async function POST(req: Request): Promise<Response> {
   try {

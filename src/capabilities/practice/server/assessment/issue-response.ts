@@ -1,5 +1,8 @@
 import { ApiError } from '@/kernel/http';
-import type { IssueAssessmentRequest, IssueAssessmentResult } from './issue';
+import type {
+  IssueAssessmentRequest,
+  IssueAssessmentResult,
+} from '@/kernel/records/assessment-issuance';
 
 // Both transports expose the same issued/replayed result and domain-error contract.
 export function projectIssuanceResult(

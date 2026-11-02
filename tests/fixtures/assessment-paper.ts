@@ -1,24 +1,24 @@
 import { createHash } from 'node:crypto';
 import { and, desc, eq, inArray } from 'drizzle-orm';
-import { createPaperReviewSession } from '@/capabilities/practice/api/paper-session-create';
-import {
-  PaperAssessmentBinding,
-  type PaperAssessmentBindingT,
-  paperBindingId,
-  readPaperAssessmentBinding,
-} from '@/capabilities/practice/server/assessment/paper-issuance';
-import { withFrozenPaperReopen } from '@/capabilities/practice/server/assessment/paper-session-transition';
 import { getIssuanceState } from '@/capabilities/practice/server/assessment/submit';
 import {
   activateSubmissionCandidate,
   evaluateSubmission,
 } from '@/capabilities/practice/server/judge/evaluate-submission';
-import { readPaperSections } from '@/capabilities/practice/server/paper-sections';
+import { createPaperReviewSession } from '@/capabilities/practice/session/api/paper-session-create';
+import {
+  PaperAssessmentBinding,
+  type PaperAssessmentBindingT,
+  paperBindingId,
+  readPaperAssessmentBinding,
+} from '@/capabilities/practice/session/server/assessment/paper-issuance';
+import { withFrozenPaperReopen } from '@/capabilities/practice/session/server/assessment/paper-session-transition';
+import { readPaperSections } from '@/capabilities/practice/session/server/paper-sections';
 import {
   type PaperSubmitSlotInput,
   submitPaperSlot,
-} from '@/capabilities/practice/server/paper-submit';
-import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
+} from '@/capabilities/practice/session/server/paper-submit';
+import * as Review from '@/capabilities/practice/session/server/review-session-lifecycle';
 import { canonicalHash } from '@/core/migration/canonical';
 import { Artifact } from '@/core/schema';
 import type { SlotResponseT } from '@/core/schema/assessment';

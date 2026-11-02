@@ -5,16 +5,17 @@ import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { answer, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { lockPaperNativeSlot } from '@/kernel/locks/practice-session';
 import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
-import { assertSessionMutable, freezeAnswerDraft } from '../answer-draft';
-import { projectEvaluationToJudgeResult } from '../judge/evaluation-authority';
 import {
   commitFormalAttempt,
   prepareFormalAttemptSubmission,
   recordFormalAttemptCapture,
-} from './attempt';
+} from '../../../server/assessment/attempt';
+import type { SaveSubmissionRequest } from '../../../server/assessment/submit';
+import { projectEvaluationToJudgeResult } from '../../../server/judge/evaluation-authority';
+import { assertSessionMutable, freezeAnswerDraft } from '../answer-draft';
 import { assertIssuedPaperSlotsRenderable, readPaperAssessmentBinding } from './paper-issuance';
-import type { SaveSubmissionRequest } from './submit';
 
 export interface NativePaperAttemptInput {
   sessionId: string;
@@ -83,9 +84,7 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
     if (lockedSession?.started_at.toISOString() !== binding.started_at) {
       throw new ApiError('stale_occurrence', 'paper was reopened before capture', 409);
     }
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext(${`paper-native:${slot.issuance_id}`}))`,
-    );
+    await lockPaperNativeSlot(tx, slot.issuance_id);
     const [prior] = await tx
       .select({ id: answer.id })
       .from(answer)

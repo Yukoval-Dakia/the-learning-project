@@ -42,14 +42,18 @@ import {
   worksheet_export_item,
   worksheet_region_map_page,
 } from '@/db/schema';
-import { issuanceRowToContract, issueAssessment, revisionRowToContract } from '../assessment/issue';
+import {
+  issuanceRowToContract,
+  issueAssessment,
+  revisionRowToContract,
+} from '../../../server/assessment/issue';
 import {
   type FrozenIssuanceScope,
   type RegionMapIssue,
   SHORT_CODE_PREFIX,
   presentationBinders,
   validateRegionMapArchive,
-} from './region-map-validate';
+} from '../../../server/worksheet/region-map-validate';
 
 // ---------- 公开类型 ----------
 

@@ -12,9 +12,9 @@ import {
   paperFixtureAssessment,
   startFrozenPaperFixture,
   submitPaperFixture as submitPaperSlot,
-} from '../../../../tests/fixtures/assessment-paper';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { prepareFormalAttemptSubmission } from './assessment/attempt';
+} from '../../../../../tests/fixtures/assessment-paper';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { prepareFormalAttemptSubmission } from '../../server/assessment/attempt';
 
 async function seedKnowledge(id: string, domain = 'yuwen'): Promise<void> {
   const now = new Date();

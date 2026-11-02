@@ -3,7 +3,7 @@ import { ApiError } from '@/kernel/http';
 import {
   CreatePaperSubmissionBodySchema,
   LegacyPaperSubmissionBodySchema,
-} from '../api/paper-contracts';
+} from '../../api/paper-contracts';
 import { submitPaperSlot } from './paper-submit';
 
 export async function createPracticePaperSubmission(db: Db, sessionId: string, raw: unknown) {

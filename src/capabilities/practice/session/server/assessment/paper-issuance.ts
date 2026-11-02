@@ -20,8 +20,12 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import {
+  issueAssessment,
+  readAutomaticServingDecision,
+  revisionRowToContract,
+} from '../../../server/assessment/issue';
 import { readPaperSections } from '../paper-sections';
-import { issueAssessment, readAutomaticServingDecision, revisionRowToContract } from './issue';
 
 export const PaperAssessmentBinding = z.object({
   version: z.literal(1),

@@ -6,8 +6,8 @@
 import type { z } from 'zod';
 
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
+import { EndReviewSessionBodySchema } from '../../api/contracts';
 import { closeReviewSession } from '../server/session-operations/review-session';
-import { EndReviewSessionBodySchema } from './contracts';
 
 // Compatibility export: the summary-dispatch contract lives in
 // server/session-operations/review-session.ts.

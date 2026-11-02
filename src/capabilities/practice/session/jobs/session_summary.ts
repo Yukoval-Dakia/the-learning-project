@@ -5,9 +5,11 @@
 // block the close request (and survives the page being closed mid-flight).
 
 import type { Job } from 'pg-boss';
-
-import { type RunTaskFn, runSessionSummary } from '@/capabilities/practice/server/session-summary';
 import { makePracticeTaskTextRunFn } from '@/capabilities/practice/server/task-runtime';
+import {
+  type RunTaskFn,
+  runSessionSummary,
+} from '@/capabilities/practice/session/server/session-summary';
 import type { Db } from '@/db/client';
 
 export interface SessionSummaryJobData {

@@ -7,13 +7,13 @@ import { and, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { answer, learning_session } from '@/db/schema';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
+import { LegacyPaperAnswerDraftBodySchema } from '../../api/paper-contracts';
+import { saveResponseDraft } from '../../server/assessment/submit';
 import { autosaveAnswerDraft } from '../server/answer-draft';
 import {
   assertIssuedPaperSlotsRenderable,
   readPaperAssessmentBinding,
 } from '../server/assessment/paper-issuance';
-import { saveResponseDraft } from '../server/assessment/submit';
-import { LegacyPaperAnswerDraftBodySchema } from './paper-contracts';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {

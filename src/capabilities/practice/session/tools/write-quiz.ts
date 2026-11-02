@@ -22,6 +22,7 @@ import { z } from 'zod';
 
 import type { Db, Tx } from '@/db/client';
 import { artifact, question } from '@/db/schema';
+import { lockWriteQuizTaskRun } from '@/kernel/locks/practice-session';
 import { acquireProposalDecisionLock } from '@/kernel/proposals/applier-helpers';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
@@ -177,9 +178,7 @@ async function executeWriteQuiz(
     // pattern before, so the guard is code, not convention. No UNIQUE index →
     // no migration; the lock closes the check-then-insert TOCTOU.
     if (ctx.taskRunId) {
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`write_quiz:${ctx.taskRunId}`}, 0))`,
-      );
+      await lockWriteQuizTaskRun(tx, ctx.taskRunId);
       const [existing] = await tx
         .select({ id: artifact.id })
         .from(artifact)

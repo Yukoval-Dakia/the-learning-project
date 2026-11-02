@@ -7,12 +7,13 @@
 // error. api/* keeps Request parsing (sendBeacon tolerance included), schema
 // validation, and Response/deprecation shaping.
 
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
-import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
+import { and, desc, eq, inArray } from 'drizzle-orm';
+import * as Review from '@/capabilities/practice/session/server/review-session-lifecycle';
 import { db } from '@/db/client';
 import { artifact, learning_session } from '@/db/schema';
 import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { ApiError } from '@/kernel/http';
+import { lockPaperReviewSessionCreate } from '@/kernel/locks/practice-session';
 import { getStartedBoss } from '@/server/boss/client';
 import {
   assertIssuedPaperSlotsRenderable,
@@ -113,9 +114,7 @@ export async function createPaperReviewSession(paperId: string): Promise<PaperRe
     // A row lock cannot serialize the "no active session exists" case. Use a
     // transaction-scoped lock keyed by paper so concurrent creates cannot both
     // pass the empty lookup and insert separate active sessions.
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`paper-review-session:${paperId}`}, 0))`,
-    );
+    await lockPaperReviewSessionCreate(tx, paperId);
 
     const artifactRows = await tx
       .select({

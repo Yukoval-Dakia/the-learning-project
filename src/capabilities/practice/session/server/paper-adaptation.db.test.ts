@@ -10,7 +10,7 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { artifact, event } from '@/db/schema';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { writePaperAdaptationEvent } from './paper-adaptation';
 
 async function seedPaper(id: string, version: number) {

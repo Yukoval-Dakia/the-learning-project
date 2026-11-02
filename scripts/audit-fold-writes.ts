@@ -268,7 +268,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/practice/server/tools/tool-quiz-core.ts',
+    file: 'src/capabilities/practice/session/tools/tool-quiz-core.ts',
     marker: '.insert(artifact)',
     role: 'event-native-by-caller',
     note: 'Tx-only quiz writer emits artifact_create from the full RETURNING row with the same timestamp; write_quiz owns the enclosing transaction.',

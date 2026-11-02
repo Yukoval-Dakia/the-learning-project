@@ -1,6 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
-import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
 import type {
   AssessmentIssuanceT,
   PracticeIssuanceDtoT,
@@ -9,6 +8,7 @@ import type {
 } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
 import { question, question_group_lifecycle } from '@/db/schema';
+import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { publishPaperModelFixture } from './assessment-paper';

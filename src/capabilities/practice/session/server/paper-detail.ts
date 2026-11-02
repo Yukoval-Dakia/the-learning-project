@@ -5,11 +5,11 @@
 // { submitted: true, feedback_buffered: true } without score, outcome, or feedback text.
 
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
-import { readPaperSections } from '@/capabilities/practice/server/paper-sections';
+import { readPaperSections } from '@/capabilities/practice/session/server/paper-sections';
 import {
   isJudgementVisibleToUser,
   resolveKnowledgeNames,
-} from '@/capabilities/practice/server/practice-read';
+} from '@/capabilities/practice/session/server/practice-read';
 import { Artifact } from '@/core/schema/index';
 import type { Db } from '@/db/client';
 import { answer, artifact, learning_session, question } from '@/db/schema';
@@ -101,7 +101,7 @@ export interface PaperSlotState {
 }
 
 export interface PaperDetailSlot {
-  assessment?: import('../api/paper-contracts').PaperSlotAssessment;
+  assessment?: import('../../api/paper-contracts').PaperSlotAssessment;
   /** The slot's question_id */
   question_id: string;
   /** StructuredQuestion part id; null for atomic questions */

@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
+import * as Review from '@/capabilities/practice/session/server/review-session-lifecycle';
 import { job_events } from '@/db/schema';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { PATCH as patchReviewSession } from './review-session-detail';
 
 function patchRequest(path: string, status: string): Request {

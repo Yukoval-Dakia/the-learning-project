@@ -1,11 +1,18 @@
 import type { Db } from '@/db/client';
-import { enqueueWorksheetRender } from '../queue-runtime';
+import { getPracticeBoss } from '../../../server/queue-runtime';
+import { WORKSHEET_RENDER_QUEUE } from '../../jobs/worksheet-render-queue';
 import {
   type CreateWorksheetExportRequest,
   type CreateWorksheetExportResult,
   WorksheetIdempotencyRaceError,
   createWorksheetExport,
 } from './export-store';
+
+/** Request rendering for an already committed export; submission owns recovery and errors. */
+async function enqueueWorksheetRender(exportToken: string): Promise<void> {
+  const boss = await getPracticeBoss();
+  await boss.send(WORKSHEET_RENDER_QUEUE, { export_token: exportToken });
+}
 
 export async function submitWorksheetExport(
   db: Db,
