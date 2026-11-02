@@ -15,8 +15,11 @@ async function withStartDb<T>(read: (db: Db) => Promise<T>): Promise<T> {
 
 export const readStartWorkbenchSummary = () =>
   withStartDb(async (db) => {
-    const { loadWorkbenchSummary } = await import('@/capabilities/shell/public');
-    return loadWorkbenchSummary(db);
+    const [{ loadWorkbenchSummary }, { queryReviewDue }] = await Promise.all([
+      import('@/capabilities/shell/public'),
+      import('@/capabilities/practice/public'),
+    ]);
+    return loadWorkbenchSummary(db, { queryReviewDue });
   });
 export const readStartOvernightDigest = () =>
   withStartDb(async (db) => {

@@ -90,14 +90,6 @@ export {
   type ConjectureTypedStateRow,
   loadConjectureScores,
 } from './server/conjecture-scores';
-export {
-  type CoverageLatticeRead,
-  type GapActivity,
-  type KcCoverageRow,
-  type LatticeGap,
-  type SubjectCoverage,
-  loadCoverageLattice,
-} from './server/coverage-lattice';
 export { loadEffectivenessTrend } from './server/effectiveness-trend';
 export {
   type EventCorrectionInput,

@@ -62,7 +62,7 @@
     color: var(--un-text-1);
   }
 
-  & .qd-wrongs + .cl-toggle {
+  & .qd-wrongs + .un-fold-toggle {
     justify-self: start;
   }
 
@@ -103,7 +103,7 @@
     color: var(--un-text-1);
   }
 
-  & .qd-attempts .cl-toggle {
+  & .qd-attempts .un-fold-toggle {
     justify-self: start;
   }
 }
