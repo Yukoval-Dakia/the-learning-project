@@ -1,4 +1,10 @@
-import type { NameKcFn } from '@/capabilities/knowledge/public';
+import type { KnowledgeTagEmbedder, NameKcFn } from '@/kernel/records/knowledge-tag';
+import {
+  EMBED_MODEL,
+  type EmbedProviderAttemptOptions,
+  embedText,
+  isDirectProviderAttemptInvariantError,
+} from '@/server/ai/embed';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 import { type ColdStartBridgeRunTaskFn, runColdStartBridge } from './cold-start-bridge';
 
@@ -30,4 +36,20 @@ export function createKnowledgeNamer(params: {
       ...(bridge.cost_usd !== undefined ? { cost_usd: bridge.cost_usd } : {}),
     };
   };
+}
+
+export function createKnowledgeTagEmbedder(
+  providerAttempt?: EmbedProviderAttemptOptions,
+): KnowledgeTagEmbedder {
+  return {
+    provider: 'dashscope',
+    model: EMBED_MODEL,
+    embed: (text) => embedText(text, providerAttempt),
+  };
+}
+
+// Provider-attempt lifecycle failures abort the caller; any other tagging throw is a
+// best-effort miss the caller logs and routes to review.
+export function rethrowKnowledgeTagInvariant(error: unknown): void {
+  if (isDirectProviderAttemptInvariantError(error)) throw error;
 }
