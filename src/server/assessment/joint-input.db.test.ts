@@ -1,10 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  issueAssessment,
-  revisionRowToContract,
-} from '@/capabilities/practice/server/assessment/issue';
-import {
   type SaveSubmissionRequest,
   saveSubmission,
 } from '@/capabilities/practice/server/assessment/submit';
@@ -30,6 +26,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
+import { issueAssessment, revisionRowToContract } from '@/kernel/records/assessment-issuance';
 import {
   type NormalizableQuestionRow,
   type PartRow,

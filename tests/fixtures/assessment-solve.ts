@@ -1,8 +1,8 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
-import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
+import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import {
   normalizeQuestionGroupToContract,
   normalizeQuestionRowToContract,

@@ -208,9 +208,12 @@ function catalogDeclaredModelIds(): Set<string> {
 function taskDefaultModelIds(): Set<string> {
   const ids = new Set<string>();
   const tasksRoot = join(REPO_ROOT, 'src/capabilities');
-  const taskDirs = readdirSync(tasksRoot)
-    .map((owner) => join(tasksRoot, owner, 'tasks'))
-    .filter((dir) => existsSync(dir));
+  // Practice sub-owners (`practice/<owner>/tasks`) declare task defaults one level deeper.
+  const practiceRoot = join(tasksRoot, 'practice');
+  const taskDirs = [
+    ...readdirSync(tasksRoot).map((owner) => join(tasksRoot, owner, 'tasks')),
+    ...readdirSync(practiceRoot).map((owner) => join(practiceRoot, owner, 'tasks')),
+  ].filter((dir) => existsSync(dir));
   for (const file of taskDirs.flatMap(sourceFiles)) {
     const sourceFile = ts.createSourceFile(
       file,
@@ -329,7 +332,10 @@ function isAllowedSite(path: string, node: ts.StringLiteralLike): boolean {
         : undefined;
     return scope !== undefined && (/_MODEL$/u.test(scope) || /\.model$/u.test(scope));
   }
-  return /^src\/capabilities\/[^/]+\/tasks\//u.test(path) && keyName === 'defaultModel';
+  return (
+    /^src\/capabilities\/(?:[^/]+|practice\/[^/]+)\/tasks\//u.test(path) &&
+    keyName === 'defaultModel'
+  );
 }
 
 /** The id must sit on a non-alphanumeric boundary — `jo3i` is not the model 'o3'. */

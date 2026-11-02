@@ -33,7 +33,7 @@ import {
   WorksheetRegionMapArchivedSchema,
   WorksheetTokenParamsSchema,
 } from '../api/worksheet-contracts';
-import { WORKSHEET_RENDER_QUEUE } from '../worksheet-render-queue';
+import { WORKSHEET_RENDER_QUEUE } from './jobs/worksheet-render-queue';
 
 export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description'> = {
   events: {
@@ -52,7 +52,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
           ...API_ERROR_RESPONSES,
         },
         successStatus: [200, 201],
-        load: () => import('../api/review-sessions').then((m) => m.POST),
+        load: () => import('./api/review-sessions').then((m) => m.POST),
       },
       {
         method: 'GET',
@@ -61,7 +61,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
         request: { params: ApiIdParamsSchema },
         responses: { 200: ReviewSessionSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
-        load: () => import('../api/review-session-detail').then((m) => m.GET),
+        load: () => import('./api/review-session-detail').then((m) => m.GET),
       },
       {
         method: 'PATCH',
@@ -70,7 +70,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
         request: { params: ApiIdParamsSchema, body: UpdateReviewSessionBody },
         responses: { 200: ReviewSessionTransitionSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
-        load: () => import('../api/review-session-detail').then((m) => m.PATCH),
+        load: () => import('./api/review-session-detail').then((m) => m.PATCH),
       },
       {
         method: 'POST',
@@ -92,7 +92,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
         request: { params: PaperAnswerDraftParamsSchema },
         responses: { 200: PaperAnswerDraftSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
-        load: () => import('../api/paper-answer-route').then((m) => m.GET),
+        load: () => import('./api/paper-answer-route').then((m) => m.GET),
       },
       {
         method: 'POST',
@@ -114,7 +114,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
         },
         successStatus: 200,
         pagination: { kind: 'cursor', defaultLimit: 50, maxLimit: 200 },
-        load: () => import('../api/papers-list').then((m) => m.GET),
+        load: () => import('./api/papers-list').then((m) => m.GET),
       },
       {
         method: 'GET',
@@ -126,7 +126,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
           ...API_ERROR_RESPONSES,
         },
         successStatus: 200,
-        load: () => import('../api/paper-detail-route').then((m) => m.GET),
+        load: () => import('./api/paper-detail-route').then((m) => m.GET),
       },
       {
         method: 'GET',
@@ -136,7 +136,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
         responses: { 200: PaperDetailResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         deprecation: { successor: '/api/papers/[id]', since: '@1783987200' },
-        load: () => import('../api/legacy-paper-detail').then((m) => m.GET),
+        load: () => import('./api/legacy-paper-detail').then((m) => m.GET),
       },
       // YUK-1523（P5）— 作答卷 PDF 导出。导出 = 逐题经既有 issueAssessment 发放
       //（G4 门只放可判题，拒掉的题随响应返回 typed 原因）；token/短码是页面
@@ -153,7 +153,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
         },
         successStatus: [200, 201],
         load: () =>
-          import('../api/worksheet-export-route').then((m) => m.createWorksheetExportRoute),
+          import('./api/worksheet-export-route').then((m) => m.createWorksheetExportRoute),
       },
       {
         // 渲染器恢复/总览读面（token 不可猜；无私有答案）。
@@ -163,7 +163,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
         request: { params: WorksheetTokenParamsSchema },
         responses: { 200: WorksheetExportStateSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
-        load: () => import('../api/worksheet-export-route').then((m) => m.getWorksheetExportRoute),
+        load: () => import('./api/worksheet-export-route').then((m) => m.getWorksheetExportRoute),
       },
       {
         // 区域图存档：界面线与 PDF 同一渲染 pass 量出的区域图 POST 回后端，
@@ -182,7 +182,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
         },
         successStatus: [200, 201],
         load: () =>
-          import('../api/worksheet-export-route').then((m) => m.archiveWorksheetRegionMapRoute),
+          import('./api/worksheet-export-route').then((m) => m.archiveWorksheetRegionMapRoute),
       },
       {
         // YUK-1529 — 已存档 PDF 下载（content-addressed R2 对象，不可变）。
@@ -195,7 +195,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
         responseMediaTypes: { 200: 'application/pdf' },
         successStatus: 200,
         load: () =>
-          import('../api/worksheet-export-route').then((m) => m.getWorksheetExportPdfRoute),
+          import('./api/worksheet-export-route').then((m) => m.getWorksheetExportPdfRoute),
       },
       {
         // P6 回读面：token + 页 → issuance id、该页冻结区域图与 part/slot 坐标。
@@ -205,7 +205,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
         request: { params: WorksheetPageParamsSchema },
         responses: { 200: WorksheetPageResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
-        load: () => import('../api/worksheet-export-route').then((m) => m.getWorksheetPageRoute),
+        load: () => import('./api/worksheet-export-route').then((m) => m.getWorksheetPageRoute),
       },
     ],
   },
@@ -218,7 +218,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
         // 'agent' 档：多步浏览器任务，DLQ + 重试兜瞬时失败；不调模型零成本。
         name: WORKSHEET_RENDER_QUEUE,
         queue: 'agent',
-        load: () => import('../jobs/worksheet_render').then((m) => m.buildWorksheetRenderHandler),
+        load: () => import('./jobs/worksheet_render').then((m) => m.buildWorksheetRenderHandler),
       },
       // YUK-870 (F3.5b) — Phase 1d session_summary 注册自中央渐缩簿收编（等价
       // 平移红线：LLM 档 1h expire + DLQ、2s/1 worker 选项——与原中央行显式 opts
@@ -229,7 +229,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
         queue: 'llm',
         pollingIntervalSeconds: 2,
         batchSize: 1,
-        load: () => import('../jobs/session_summary').then((m) => m.buildSessionSummaryHandler),
+        load: () => import('./jobs/session_summary').then((m) => m.buildSessionSummaryHandler),
       },
     ],
   },
@@ -237,7 +237,7 @@ export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description
     tools: [
       {
         name: 'write_quiz',
-        load: () => import('../server/tools/write-quiz').then((m) => m.writeQuizTool),
+        load: () => import('./tools/write-quiz').then((m) => m.writeQuizTool),
       },
     ],
   },

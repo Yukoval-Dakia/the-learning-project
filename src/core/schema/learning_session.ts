@@ -35,7 +35,7 @@ export type IngestionStatusT = z.infer<typeof IngestionStatus>;
 
 // review 状态机：started ⇄ paused → completed | abandoned (↳ reopened → started)
 //
-// 'paused' 由 src/capabilities/practice/server/review-session-lifecycle.ts
+// 'paused' 由 src/capabilities/practice/session/server/review-session-lifecycle.ts
 // 写入/读出（pauseReviewSession / resumeReviewSession）；缺了它
 // LearningSessionStatusByType.parse({type:'review', status:'paused'}) 会抛错
 // （paper attempt session 走 review 状态机，practice 列表读时过 Zod 校验，

@@ -30,10 +30,10 @@ import {
 import { errorResponse } from '@/kernel/http';
 import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
+import { getPracticeList } from '../session/public';
 import { REVIEW_DUE_LIMIT_MAX, type ReviewDueRow, queryReviewDue } from './due-list';
 import { knowledgeLabels } from './knowledge-labels';
 import { FRONTIER_MAX_ITEMS, learnableFrontier } from './learnable-frontier';
-import { getPracticeList } from './practice-read';
 import { readQuestionPace } from './question-pace';
 import {
   type DailyPracticePace,
