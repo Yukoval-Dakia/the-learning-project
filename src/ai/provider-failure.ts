@@ -41,9 +41,15 @@ export function classifyProviderFailure(input: {
   subtype?: AgentFailureSubtype;
   /** api_error_result status; null marks connection-class. */
   apiErrorStatus?: number | null;
-  /** HTTP status bound to this attempt's provider response, when captured. */
+  /**
+   * HTTP status bound to the request that failed at termination (strict root
+   * binding or the transport snapshot's last request). An earlier non-2xx from
+   * a recovered or nested request must not arrive here.
+   */
   httpStatus?: number;
   retryAfterMs?: number;
+  /** Terminal carried the provider stream-error shape (stopReason 'error'). */
+  streamErrorTerminal?: boolean;
   transport?: ProviderTransportEvidence;
 }): ProviderFailureInfo | undefined {
   const retry = input.retryAfterMs !== undefined ? { retry_after_ms: input.retryAfterMs } : {};
@@ -58,8 +64,11 @@ export function classifyProviderFailure(input: {
   if (input.apiErrorStatus === null) return { category: 'connection', ...retry };
 
   const initiators = (input.transport?.abort_initiators ?? []).map((marker) => marker.kind);
+  // Rollups (last_failure, send_state) can survive an earlier recovered request;
+  // only the request that was live at termination is probative.
+  const lastRequest = input.transport?.requests.at(-1);
   const timedOut =
-    input.transport?.last_failure?.timeout_layer !== undefined ||
+    lastRequest?.timeout_layer !== undefined ||
     initiators.some((kind) => kind === 'execution_timeout' || kind === 'session_deadline');
   if (timedOut) return { category: 'timeout', ...retry };
   // budget_timeout is the lifecycle's armed-timer identity; a caller-driven
@@ -76,18 +85,13 @@ export function classifyProviderFailure(input: {
     return { category: 'connection', ...retry };
   }
   if (input.subtype === 'error_during_execution') {
-    const transport = input.transport;
-    // A delivered response followed by a provider-side error terminal is a
-    // provider error; a request that never produced a response is a drop.
-    if (transport?.send_state === 'response_received') {
-      return { category: 'provider_error', ...retry };
-    }
-    if (
-      transport !== undefined &&
-      (transport.last_failure !== undefined || transport.totals.requests > 0)
-    ) {
+    // Positive provider evidence only: a verified transport failure is a
+    // connection-class drop; a provider stream-error terminal is provider-side.
+    // A local loop death after clean requests stays unclassified.
+    if (lastRequest?.error !== undefined) {
       return { category: 'connection', ...retry };
     }
+    if (input.streamErrorTerminal) return { category: 'provider_error', ...retry };
   }
   return undefined;
 }

@@ -1177,6 +1177,12 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // Any bound non-2xx feeds provider_http_status; the narrower 400/429/502
     // subset keeps its existing rejection/fault semantics.
     const boundRootRejection = rootBoundProviderStatus(boundRootStatus);
+    // The capture keeps the latest non-2xx across ALL of this query's requests
+    // (retries + nested loops), so it is probative only when the request live
+    // at termination itself was non-2xx. Bind to the snapshot's last request.
+    const lastRequestStatus = options.transportEvidence?.snapshot().requests.at(-1)?.http_status;
+    const terminalRequestStatus =
+      lastRequestStatus !== undefined && lastRequestStatus >= 400 ? lastRequestStatus : undefined;
     const terminal = piTerminalResultFrame({
       messages: finalMessages,
       model: this.model,
@@ -1215,7 +1221,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // YUK-1559 (C6) — last non-2xx this query's capture fetch saw, if any.
       providerError: this.providerErrorCapture?.latest(),
       providerRequestRejection: boundRootRejection === 400 ? { http_status: 400 } : undefined,
-      providerHttpStatus: boundRootStatus,
+      providerHttpStatus: boundRootStatus ?? terminalRequestStatus,
       helpProviderFault:
         boundRootRejection === undefined ? undefined : helpFaultForRootStatus(boundRootRejection),
       // Same shared boundary on errors[0] — pi's errorMessage can carry the

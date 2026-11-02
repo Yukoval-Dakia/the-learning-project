@@ -1233,7 +1233,9 @@ async function streamTaskCollectingImpl(
   });
   let resultText = '';
   let terminalText: string | undefined;
-  let providerFailureEvidence: { http_status?: number; retry_after_ms?: number } | undefined;
+  let providerFailureEvidence:
+    | { http_status?: number; retry_after_ms?: number; stream_error?: true }
+    | undefined;
 
   return lifecycle.withTracing(async () => {
     let usagePromptText = '';
@@ -1344,13 +1346,18 @@ async function streamTaskCollectingImpl(
       });
       const helpFault = !lifecycle.aborted ? boundError.helpProviderFault : undefined;
       if (helpFault) lifecycle.noteExecutableHelp('deterministic_step');
-      const providerFailure = classifyProviderFailure({
-        subtype: boundError.subtype,
-        apiErrorStatus: boundError.apiErrorStatus,
-        httpStatus: providerFailureEvidence?.http_status,
-        retryAfterMs: providerFailureEvidence?.retry_after_ms,
-        transport: lifecycle.transportEvidence.snapshot(),
-      });
+      // An aborted/stopped run never claims a provider cause — our own armed
+      // timer or a caller cancel is not provider evidence.
+      const providerFailure = lifecycle.aborted
+        ? undefined
+        : classifyProviderFailure({
+            subtype: boundError.subtype,
+            apiErrorStatus: boundError.apiErrorStatus,
+            httpStatus: providerFailureEvidence?.http_status,
+            retryAfterMs: providerFailureEvidence?.retry_after_ms,
+            streamErrorTerminal: providerFailureEvidence?.stream_error === true,
+            transport: lifecycle.transportEvidence.snapshot(),
+          });
       const settled = await lifecycle.finishFailure(boundError);
       // A provider-success payload whose projection failed must never be returned
       // as graceful partial text; admission fencing is likewise a fail-closed
