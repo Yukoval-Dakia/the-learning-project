@@ -11,6 +11,7 @@ import {
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memoryClientMock } from '../../../../tests/helpers/memory-client-mock';
 import { reconcileCopilotDurableRun, runCopilotRun } from '../jobs/copilot_run';
+import { writeCopilotReply } from './conversation-writes';
 import { createCopilotExecutionOwner } from './copilot-execution';
 import { assembleCopilotRunInput } from './copilot-run-input';
 import { getAgentSdkSessionId, setAgentSdkSessionId } from './copilot-run-session-cursor';
@@ -20,7 +21,7 @@ import {
   registerCopilotWorkerSession,
 } from './copilot-worker-session';
 import { hashCopilotDurableInput, reserveCopilotDurableAcceptance } from './durable-dispatch';
-import { getCopilotConversationSnapshot } from './turns';
+import { getCopilotConversationSnapshot, getCopilotTurnsBeforeAnchor } from './turns';
 
 const sessionId = 'conversation_answer_only_boundary';
 const message =
@@ -240,5 +241,126 @@ describe('accepted answer-only lifecycle', () => {
       .where(eq(event.action, 'experimental:copilot_user_ask'));
     expect(asks).toHaveLength(1);
     expect(asks[0]?.payload.derivation_policy).toBe('answer_only');
+  });
+  // @invariant security: restricted conversation remains visible to its user without entering later model context
+  // @fails-if cold, replay, compaction or correction reads include restricted content or metadata
+  it('keeps ordinary→restricted→ordinary history visible while filtering cold/replay/compaction and correction references', async () => {
+    const ordinary = await accept('allow', '日常标记：允许后续复验定义域与退化参数。');
+    await writeCopilotReply(testDb(), {
+      sessionId,
+      userAskEventId: ordinary.run_id,
+      replyText: '日常回答：证据尚不足，保留反例。',
+      actorRef: 'agent:copilot',
+      taskRunId: 'ordinary_1',
+      now: new Date(),
+    });
+    let restrictedReply = '';
+    for (let i = 0; i < 25; i++) {
+      const restricted = await accept('answer_only', `受限标记 ${i}：${message.repeat(4)}`);
+      const reply = await writeCopilotReply(testDb(), {
+        sessionId,
+        userAskEventId: restricted.run_id,
+        replyText: `受限答案 ${i}：${message.repeat(4)}`,
+        actorRef: 'agent:copilot',
+        taskRunId: `restricted_${i}`,
+        now: new Date(),
+      });
+      restrictedReply = reply.replyEventId;
+    }
+    const next = await accept('allow', '更正上一轮的结论。');
+    const assemble = (target?: string) =>
+      assembleCopilotRunInput(
+        testDb(),
+        {
+          sessionId,
+          userMessage: next.user_message,
+          triggeredBy: 'chat',
+          now: new Date(),
+          historyAnchorEventId: next.run_id,
+          correctionTargetTurnId: target,
+        },
+        { resolveLearnerStateHeaderFn: async () => header },
+      );
+    const input = await assemble(restrictedReply);
+    const legacyFallback = await assembleCopilotRunInput(
+      testDb(),
+      {
+        sessionId,
+        userMessage: next.user_message,
+        triggeredBy: 'chat',
+        now: new Date(),
+        historyAnchorEventId: 'missing_legacy_delivery',
+      },
+      { resolveLearnerStateHeaderFn: async () => header },
+    );
+    expect(JSON.stringify(legacyFallback.conversation_history)).not.toContain('受限');
+    expect(legacyFallback.correction_contract.restricted_prior_turn_ids).toContain(restrictedReply);
+
+    expect(JSON.stringify(input.conversation_history)).toContain('日常标记');
+    expect(JSON.stringify(input.conversation_history)).toContain('日常回答');
+    expect(input).not.toHaveProperty('validator_context_history');
+    expect(JSON.stringify(input.conversation_history)).not.toContain('受限');
+    expect(input.correction_contract.restricted_target).toBe(true);
+    expect(
+      (
+        await getCopilotTurnsBeforeAnchor(testDb(), {
+          sessionId,
+          anchorEventId: next.run_id,
+          limit: 100,
+        })
+      ).some((turn) => turn.text.includes('受限标记')),
+    ).toBe(true);
+    // Test real execution context encoding with a provider substitute.
+    const contexts: Array<
+      Parameters<
+        NonNullable<
+          NonNullable<Parameters<typeof createCopilotExecutionOwner>[0]>['streamTaskCollectingFn']
+        >
+      >[2]
+    > = [];
+    const owner = createCopilotExecutionOwner({
+      buildExaMcpServerFn: () => null,
+      resolveCopilotSkillDocsFn: async () => undefined,
+      streamTaskCollectingFn: async (_kind, _input, ctx) => {
+        contexts.push(ctx);
+        return {
+          task_run_id: 'after_restricted',
+          text: '',
+          terminalText: '这次只说明需要重新提交内容。',
+          partial: false,
+        };
+      },
+    });
+    const cancellation = {
+      signal: new AbortController().signal,
+      hasConfirmedCancellation: false,
+      materializingToolStarted: false,
+      startPolling() {},
+      dispose() {},
+      probe: async () => 'clear' as const,
+      beforeTool: async () => undefined,
+      piBeforeToolCall: async () => undefined,
+      onToolExecutionStarted() {},
+      onToolExecutionSettled() {},
+      waitForInFlight: async () => true,
+    };
+    for (const resumeSessionId of [undefined, 'pi:owned_prior'])
+      await owner(
+        testDb(),
+        { input, sessionId, taskRunId: 'after_restricted' },
+        { cancellation, deadlineAt: Date.now() + 60_000, resumeSessionId },
+      );
+    for (const ctx of contexts) {
+      expect(JSON.stringify(ctx.compiledModelPrompt)).not.toContain('受限答案');
+      expect(JSON.stringify(ctx.piSessionReplay) ?? '').not.toContain('受限答案');
+      expect(JSON.stringify(ctx.nativeCompaction) ?? '').not.toContain('受限答案');
+    }
+    const { resolveDeterministicCorrectionContract } = await import('./correction-contract');
+    expect(
+      resolveDeterministicCorrectionContract(
+        next.user_message,
+        (await assemble()).correction_contract,
+      ),
+    ).toMatchObject({ kind: 'clarify', reply: expect.stringContaining('重新输入') });
   });
 });
