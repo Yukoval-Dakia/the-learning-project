@@ -130,8 +130,7 @@ cooldown」全从 `event` 派生。
 **绝不假报「已覆盖」**。
 
 ### 2.2 Zone A —— KC 池级覆盖行（诚实判词层，v1 主体）
-每个 active-goal KC 一行，渲染扫描器实际算的池级判词。这里**不出任何「已覆盖格」矩阵**——一个
-KC 一个判词向量，绝不冒充逐格覆盖。
+每个 active-goal KC 一行，渲染扫描器实际算的池级判词。这里**不出任何「已覆盖格」矩阵**——一个 KC 一个判词向量，按池级判词如实呈现。
 
 ### 2.3 缺口 target 明细（emitted targets，四轴坐标落点）
 每 KC 的 `QuestionSupplyTarget[]`——每条携带 desired `(kind, difficultyBand, minSourceTier)` +
