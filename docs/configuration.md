@@ -114,7 +114,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `HOME` | app、worker（jyeoo 子进程） | 原样透传 | `src/capabilities/practice/server/question-supply/jyeoo-spawn.ts` |
 | `PATH` | app、worker（jyeoo 子进程） | 原样透传 | 同上 |
 | `TMPDIR` | app、worker（jyeoo 子进程） | 原样透传 | 同上 |
-| `WORKSHEET_RENDER_APP_ORIGIN` | worker（`worksheet_render`） | 仅完全未设置时缺省 `http://localhost:8787`；设为空串时报 `worksheet_render: WORKSHEET_RENDER_APP_ORIGIN is empty`；compose worker 设为 `http://app:8787` | `src/capabilities/practice/jobs/worksheet_render.ts`；`docker-compose.yml` |
+| `WORKSHEET_RENDER_APP_ORIGIN` | worker（`worksheet_render`） | 仅完全未设置时缺省 `http://localhost:8787`；设为空串时报 `worksheet_render: WORKSHEET_RENDER_APP_ORIGIN is empty`；compose worker 设为 `http://app:8787` | `src/capabilities/practice/session/jobs/worksheet_render.ts`；`docker-compose.yml` |
 
 ### 功能开关
 
