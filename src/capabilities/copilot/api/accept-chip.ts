@@ -3,26 +3,12 @@
 // is still a full event; only the KPI reader excludes it.
 
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/kernel/http';
-import { acceptTeachingChip } from '../server/accept-teaching-chip';
-import { AcceptTeachingChipBodySchema, CopilotRouteIdParamsSchema } from './contracts';
+import { errorResponse } from '@/kernel/http';
+import { requestTeachingChipAcceptance } from '../server/accept-teaching-chip';
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const { id: sessionId } = CopilotRouteIdParamsSchema.parse(params);
-    const raw = await req.json().catch(() => null);
-    const parsed = AcceptTeachingChipBodySchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new ApiError(
-        'validation_error',
-        parsed.error.issues.map((i) => i.message).join('; '),
-        400,
-      );
-    }
-
-    const outcome = await acceptTeachingChip(db, sessionId, parsed.data);
-
-    return Response.json({ ok: true, event_id: outcome.eventId });
+    return Response.json(await requestTeachingChipAcceptance(db, params, () => req.json()));
   } catch (err) {
     return errorResponse(err);
   }
