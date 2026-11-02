@@ -1,22 +1,13 @@
-// YUK-193 — lazy AI reference-solution generator (spec §2).
-//
-// Runs SolutionGenerateTask through the runner (run logging included), parses the
-// structured output, and writes it MERGE-PRESERVING into question.rubric_json +
-// question.reference_md. This is the "fuel" that makes the shipped judges usable
-// on ingested questions, which arrive without a rubric_json.
-//
-// Robustness: a missing key, LLM throw or unparseable output is a LOGGED SKIP —
-// never a 500, never a retry storm. Lazy + idempotent (skip when a reference
-// already exists, unless regenerate).
+// Reference-solution generation, merge-preserving rubric updates, and guarded publication.
+// Provider/parse failures skip the row; successful writes publish in the same transaction.
 import { and, eq, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
-
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
 import { embedHash, questionEmbedText } from '@/core/embed-source';
 import { Rubric } from '@/core/schema/business';
 import { SolutionGenerateOutput } from '@/core/schema/solution';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 
