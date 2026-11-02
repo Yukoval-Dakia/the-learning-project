@@ -2,11 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { type ReactNode, useCallback, useState, useSyncExternalStore } from 'react';
 import { type CompanionLayout, CompanionMount } from '@/capabilities/copilot/ui-public';
 import { useWorkbenchClient } from '@/capabilities/shell/ui-public';
-import { AppSidebar } from '@/ui/shell/AppSidebar';
-import { AppTopbar } from '@/ui/shell/AppTopbar';
 import { CommandPalette, type CommandPaletteProps } from '@/ui/shell/CommandPalette';
-import { MobileTabBar } from '@/ui/shell/MobileTabBar';
+import { NAV, type NavItem, activeFromPath, isSection } from '@/ui/shell/nav-config';
 import { ShellMain } from '@/ui/shell/ShellMain';
+import { StudioNavigation } from '@/ui-next/practice-studio/StudioShell';
 
 // S13 (YUK-335 批次丙) — 主题持久化 key，与 design app.jsx:86 / 既有
 // ThemeToggle primitive 同 key（'loom-theme'），互不打架。
@@ -54,14 +53,6 @@ function persistTheme(theme: ShellTheme): void {
 // ≤720px 走手机布局（抽屉导航 + 底部 tabbar）。SSR 快照固定桌面。
 const MOBILE_QUERY = '(max-width: 720px)';
 
-function readMobileLayout(): boolean {
-  return typeof window.matchMedia === 'function' && window.matchMedia(MOBILE_QUERY).matches;
-}
-
-function readServerMobileLayout(): boolean {
-  return false;
-}
-
 // 学习伙伴的三种形态（ux-shell-today.md）：手机 ≤720 全高底部面板；iPad 721–1199 浮在页面上；
 // 桌面 ≥1200 内容右侧一栏。
 const COMPANION_FLOAT_QUERY = '(max-width: 1199px)';
@@ -107,11 +98,7 @@ export function RootShell(props: {
 // M5-T3 (YUK-321) — 根壳：全路由共享一个学习伙伴实例（裁决 c：组件归
 // copilot 包，路由耦合只存在于本壳层）。
 //
-// S13 (YUK-335 批次丙) — chrome 收编为设计的 sidebar-primary 五件套：
-// .app > AppSidebar + (.main > AppTopbar + <Outlet/>) + MobileTabBar + 根挂
-// CompanionMount。RootShell 持 paletteOpen（S14 已接 CommandPalette）/ mobileNavOpen /
-// railCollapsed / theme state。admin 路由照常套主 chrome（owner override 设计
-// app.jsx:106「admin separate shell」——见 docs/audit/2026-06-13-visual-gap.md）。
+// RootShell owns navigation, theme and the single Companion lifetime; presenters only arrange them.
 function AppFrame({
   children,
   pathname,
@@ -127,7 +114,6 @@ function AppFrame({
   // 点击都 set 它。
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [railCollapsed, setRailCollapsed] = useState(false);
   const [companionOpen, setCompanionOpen] = useState(false);
   const companionLayout = useSyncExternalStore(
     subscribeCompanionLayout,
@@ -142,24 +128,7 @@ function AppFrame({
     persistTheme(next);
   };
 
-  // 720px 断点订阅。离开手机布局时关掉手机导航（change 事件里清），回到手机不复活；
-  // 渲染时也只在手机布局下认 mobileNavOpen。
-  const subscribeMobileLayout = useCallback((notify: () => void) => {
-    if (typeof window.matchMedia !== 'function') return () => {};
-    const media = window.matchMedia(MOBILE_QUERY);
-    const onChange = () => {
-      if (!media.matches) setMobileNavOpen(false);
-      notify();
-    };
-    media.addEventListener('change', onChange);
-    return () => media.removeEventListener('change', onChange);
-  }, []);
-  const mobileLayout = useSyncExternalStore(
-    subscribeMobileLayout,
-    readMobileLayout,
-    readServerMobileLayout,
-  );
-  const navOpen = mobileLayout && mobileNavOpen;
+  const navOpen = mobileNavOpen;
 
   // 壳根节点 attach：应用已存主题到 <html data-theme>（SPA 与 Start 共用本壳），并挂
   // 唯一一个 ⌘K 全局快捷键（与 design app.jsx:90 同 keybind）；卸载时移除。
@@ -196,98 +165,54 @@ function AppFrame({
   const inboxCount = summaryQ.data?.proposals.decision_total;
   const inboxCountUncertain = summaryQ.data?.proposals.has_more === true;
 
-  // 学习伙伴：侧栏 / topbar 按钮与 ⌘J 直接改开合；页面经 openCopilot 发来的请求由
-  // CompanionMount 认领后回调 onOpenChange(true)。
-  const openCopilot = useCallback(() => setCompanionOpen(true), []);
   const companionSide = companionLayout === 'side' && companionOpen;
-
-  const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
+  // A medium viewport keeps one readable task pane; the same existing sheet owner handles focus and scroll.
+  const presentationLayout = companionLayout === 'float' ? 'sheet' : companionLayout;
+  const companionModal = companionOpen && presentationLayout === 'sheet';
 
   return (
-    // data-palette-open 反映 paletteOpen state（CSS 钩子）；CommandPalette（S14，
-    // 见本组件尾部根挂）直接消费 paletteOpen state 控制开合。
     <div
       ref={attachShell}
-      className={`app${railCollapsed ? ' rail-collapsed' : ''}`}
-      // 桌面形态下学习伙伴是内容右侧的一栏，不覆盖正文（C1）。
-      style={
-        companionSide
-          ? {
-              gridTemplateColumns: `${railCollapsed ? 'var(--rail-w-collapsed)' : 'var(--rail-w)'} minmax(0, 1fr) auto`,
-            }
-          : undefined
-      }
+      className="un-st un-st-shell"
+      data-ui-next=""
+      data-un-m3e="practice-studio"
+      data-theme={theme}
+      data-companion-side={companionSide || undefined}
       data-palette-open={paletteOpen ? '' : undefined}
-      // F7 (Codex #401)：移动 nav 抽屉打开时隐藏底部 tabbar——否则 tabbar（fixed
-      // z-index:40）画在 scrim（z-index:25）/ 抽屉之上仍可点，用户能在 focus trap
-      // 仍开时触发导航。CSS 钩子（≤720px 生效；同 data-palette-open 用 undefined 关闭）。
       data-mobile-nav-open={navOpen ? '' : undefined}
     >
-      {navOpen && (
-        // 移动 nav scrim：点击关闭。用 <button>（键盘可达，沿 CopilotDrawer scrim
-        // 先例），避免 div+onClick 的 a11y 漏洞；border/padding 归零让 .scrim 视觉
-        // 不受 button 默认 chrome 影响。
-        <button
-          type="button"
-          aria-label="关闭导航"
-          className="scrim open"
-          style={{ zIndex: 25, border: 0, padding: 0 }}
-          onClick={closeMobileNav}
-        />
-      )}
-
-      <AppSidebar
-        pathname={pathname}
-        navigate={navigate}
-        mobileOpen={navOpen}
-        mobileLayout={mobileLayout}
-        onOpenCopilot={openCopilot}
+      <StudioNavigation
+        items={NAV.filter((entry): entry is NavItem => !isSection(entry)).map((entry) => ({
+          id: entry.id,
+          label: entry.label,
+          current: activeFromPath(pathname) === entry.id,
+          onSelect: () => navigate(entry.path),
+        }))}
+        navigationOpen={navOpen}
+        onNavigationOpen={setMobileNavOpen}
+        blocked={companionModal}
         theme={theme}
-        onToggleTheme={toggleTheme}
-        onNavigated={closeMobileNav}
+        companionOpen={companionOpen}
+        nudgeCount={copilotNudgeCount}
         inboxCount={inboxCount}
         inboxCountUncertain={inboxCountUncertain}
+        onSearch={() => setPaletteOpen(true)}
+        onTheme={toggleTheme}
+        onCompanion={() => {
+          setMobileNavOpen(false);
+          setCompanionOpen((open) => !open);
+        }}
       />
-
-      <ShellMain blockedByModal={navOpen}>
-        <AppTopbar
-          pathname={pathname}
-          onOpenMobileNav={() => setMobileNavOpen(true)}
-          onToggleRail={() => setRailCollapsed((c) => !c)}
-          railCollapsed={railCollapsed}
-          onOpenPalette={() => setPaletteOpen(true)}
-          onOpenCopilot={openCopilot}
-          copilotNudgeCount={copilotNudgeCount}
-        />
-        {children}
-      </ShellMain>
-
-      <MobileTabBar
-        pathname={pathname}
-        navigate={navigate}
-        onOpenMobileNav={() => setMobileNavOpen(true)}
-      />
-
-      {/* 学习伙伴根挂：全路由一个实例。桌面占内容右侧一栏（sticky 全高），iPad 浮在页面上，
-          手机是全高底部面板。nudge 数量由本壳从 nudges query 快照读给 AppTopbar。 */}
-      <div
-        className="shell-companion-slot"
-        style={
-          companionSide
-            ? { gridColumn: 3, gridRow: 1, position: 'sticky', top: 0, height: '100vh' }
-            : undefined
-        }
-      >
+      <ShellMain blockedByModal={navOpen || companionModal}>{children}</ShellMain>
+      <div className="un-st-companion-slot">
         <CompanionMount
           open={companionOpen}
+          presentation="workspace"
           onOpenChange={setCompanionOpen}
-          layout={companionLayout}
+          layout={presentationLayout}
           navigate={navigate}
         />
       </div>
-
-      {/* S14/YUK-329 — ⌘K 命令面板消费 paletteOpen seam。组件 fixed 渲到根；
-          页面组投影 shipped surface inventory，知识节点走 /api/knowledge fetch。 */}
       <CommandPalette
         readTree={readKnowledgeTree}
         open={paletteOpen}

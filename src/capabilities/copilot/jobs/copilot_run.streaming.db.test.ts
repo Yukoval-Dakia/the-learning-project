@@ -82,6 +82,8 @@ async function frames(runId: string) {
 }
 
 describe('real Pi loop → runner → execution → durable job stream', () => {
+  // @invariant data: provider text published before message_end is durable; a cancelled run replays it instead of dropping it, and a completed run replays the finalized reply
+  // @fails-if cancel replay drops or replaces the published prose, or a replayed run re-executes the provider or appends frames; the replyText, calls and frame-count assertions fail
   it.each(['complete', 'cancel'] as const)(
     'persists partial provider text before message_end and %s with replay replacement',
     async (outcome) => {
@@ -288,7 +290,8 @@ describe('real Pi loop → runner → execution → durable job stream', () => {
             ),
           ).toBe(false);
           expect(replayed.phase).toBe('failed');
-          expect(replayed.replyText).not.toBe(provisional);
+          // YUK-1413: prose already published before cancel stays visible on replay.
+          expect(replayed.replyText).toBe(provisional);
         }
         const count = all.length;
         expect(await runCopilotRun(params)).toEqual(result);
