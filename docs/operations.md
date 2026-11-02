@@ -26,7 +26,7 @@
 
 | dev 子进程 | 端口 | 对应 compose |
 | --- | --- | --- |
-| `rw:api`（`RW_WORKER=1 tsx watch server/index.ts`，dev-local 设 `RW_FRONTDOOR=dev`） | :8787 | `app`；页面由同进程的 Vite dev server（middleware 模式）提供，HMR 热更新；生产 `app` 仍直接提供 `dist/start`（`RW_FRONTDOOR=1`）；同进程 pg-boss 只是兜底，不替代独立 worker |
+| `rw:api`（`RW_WORKER=1 tsx watch server/index.ts`，dev-local 设 `RW_FRONTDOOR=dev`） | dev-local 下 :8788（`DEV_PORT`，避开 TEST app 的 :8787）；单独跑时按 `API_PORT`，缺省 :8787 | `app`；页面由同进程的 Vite dev server（middleware 模式）提供，HMR 热更新；生产 `app` 仍直接提供 `dist/start`（`RW_FRONTDOOR=1`）；同进程 pg-boss 只是兜底，不替代独立 worker |
 | `worker:dev`（`tsx scripts/worker.ts`） | — | `worker` |
 
 `dev:local` 从 `POSTGRES_*` 派生 `DATABASE_URL`（默认 `127.0.0.1:5433`），数据库仍是 compose 的 `postgres`：
