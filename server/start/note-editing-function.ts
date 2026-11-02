@@ -3,7 +3,7 @@ import { getRequest } from '@tanstack/react-start/server';
 import { runAuthenticatedStartWorkbench } from './workbench-read';
 
 export const heartbeatStartNoteEditingFunction = createServerFn({ method: 'POST' })
-  .inputValidator((body: string) => body)
+  .validator((body: string) => body)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
       const { heartbeatStartNoteEditing } = await import('./note-editing-operation');
@@ -12,7 +12,7 @@ export const heartbeatStartNoteEditingFunction = createServerFn({ method: 'POST'
   );
 
 export const blurStartNoteEditingFunction = createServerFn({ method: 'POST' })
-  .inputValidator((body: string) => body)
+  .validator((body: string) => body)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
       const { blurStartNoteEditing } = await import('./note-editing-operation');

@@ -3,7 +3,7 @@ import { getRequest } from '@tanstack/react-start/server';
 import { runAuthenticatedStartWorkbench } from './workbench-read';
 
 export const revertStartCopilotCheckpointFunction = createServerFn({ method: 'POST' })
-  .inputValidator((input: { checkpointEventId: string }) => input)
+  .validator((input: { checkpointEventId: string }) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), async () => {
       const outcome = await context.revertCopilotCheckpoint(data.checkpointEventId);
