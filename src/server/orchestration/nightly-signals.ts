@@ -59,7 +59,6 @@ export async function loadNightlyContext(
   const tier = classifyActivityTier({
     now,
     lastLearnerEventAt: lastLearner,
-    examWindow: false,
   });
   const lastLearnerEventAt = lastLearner ? lastLearner.toISOString() : null;
 
@@ -72,11 +71,9 @@ export async function loadNightlyContext(
         job: jobName,
         tier,
         lastLearnerEventAt,
-        examWindow: false,
         newLearnerEvidence: isNewer(lastLearner, lastSuccess),
         treeChanged: isNewer(treeWatermark, lastSuccess),
         embedPending,
-        findingsOpen: 0,
         pendingEdgeProposals,
         returnStockShort,
         degradedNights: degradedStreak(row?.recent ?? []),

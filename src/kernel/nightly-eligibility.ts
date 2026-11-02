@@ -38,12 +38,9 @@ export interface NightlySignals {
   tier: ActivityTier;
   /** ISO 时间；从未有过允许推导的学习事件则为 null。 */
   lastLearnerEventAt: string | null;
-  /** goal 无日期列，读不到考试窗口时调用方传 false。 */
-  examWindow: boolean;
   newLearnerEvidence: boolean;
   treeChanged: boolean;
   embedPending: boolean;
-  findingsOpen: number;
   pendingEdgeProposals: number;
   returnStockShort: boolean;
   /** 该 job 最近终态里、从最新一夜往前连续 degraded 的夜数。 */
@@ -66,9 +63,7 @@ export type NightlyEligibilityFn = (signals: NightlySignals) => EligibilityDecis
 export function classifyActivityTier(input: {
   now: Date;
   lastLearnerEventAt: Date | null;
-  examWindow: boolean;
 }): ActivityTier {
-  if (input.examWindow) return 'active';
   if (!input.lastLearnerEventAt) return 'dormant';
   const age = input.now.getTime() - input.lastLearnerEventAt.getTime();
   if (age < ACTIVITY_ACTIVE_MS) return 'active';
@@ -91,8 +86,8 @@ function reflectionDecision(signals: NightlySignals): EligibilityDecision {
       ? { run: true }
       : skip(signals, 'no new learner evidence since last success');
   }
-  if (signals.newLearnerEvidence || signals.findingsOpen > 0) return { run: true };
-  return skip(signals, 'no new learner evidence and no open findings');
+  if (signals.newLearnerEvidence) return { run: true };
+  return skip(signals, 'no new learner evidence');
 }
 
 function supplyDecision(signals: NightlySignals): EligibilityDecision {
@@ -115,12 +110,11 @@ function structureDecision(
       `pending edge proposals ${signals.pendingEdgeProposals} reached cap ${FRONTIER_PENDING_CAP}`,
     );
   }
-  if (signals.tier === 'dormant') return skip(signals, 'structure maintenance stays off');
-  if (signals.tier === 'idle') {
-    return signals.findingsOpen > 0 ? { run: true } : skip(signals, 'no open findings');
+  if (signals.tier === 'dormant' || signals.tier === 'idle') {
+    return skip(signals, 'structure maintenance stays off');
   }
-  if (signals.treeChanged || signals.findingsOpen > 0) return { run: true };
-  return skip(signals, 'tree unchanged and no open findings');
+  if (signals.treeChanged) return { run: true };
+  return skip(signals, 'tree unchanged');
 }
 
 function deterministicDecision(signals: NightlySignals, usesModel: boolean): EligibilityDecision {
@@ -144,7 +138,9 @@ export function eligibilityFor(
   }
   switch (jobClass) {
     case 'hygiene_dedup':
-      return { run: true };
+      return signals.treeChanged || signals.embedPending
+        ? { run: true }
+        : skip(signals, 'tree unchanged and no pending embeddings');
     case 'hygiene_embed':
       return signals.embedPending ? { run: true } : skip(signals, 'no null embeddings');
     case 'reflection':
