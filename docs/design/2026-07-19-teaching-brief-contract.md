@@ -536,12 +536,11 @@ SoT 和可执行链路后，只能通过一次显式 contract revision，把 `pl
 - **YUK-505 plan impact**：未来可说明「加/减/保持什么、为什么」，但必须有独立 SoT、
   evidence trace 与用户可改提案语义。P0F 不生成、不推断，也不因为字段缺席显示「规划失败」。
 - **YUK-506 method choice**：未来可说明选择 worked example、对照案例、检索等方法及证据；
-  不能从 learning style 画像推断。P0F 不选择方法，不把普通 KC-scoped practice 冒充「已按教学法
-  设计」。
+  不能从 learning style 画像推断。P0F 不选择方法，普通 KC-scoped practice 如实标注。
 - 扩展内容同样受 no-probability、privacy、a11y 与 evidence-first 约束；没有可追溯证据就省略。
 
 YUK-709 可以在 confirmed 结果上复用 canonical `knowledge_id` 接现有 KC-scoped practice，但那是
-用户点击后的 on-demand action，不代表已自动重排 daily stream，也不等于 YUK-505/506 已实现。
+用户点击后的 on-demand action；daily stream 重排归 YUK-505/506。
 
 ## 10. 明确不做
 

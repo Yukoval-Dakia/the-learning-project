@@ -331,7 +331,7 @@ flowchart LR
 - `reprepare` 新版本，不覆盖历史；
 - 自动激活，不增加逐次 owner approval；
 - canceled/failed/expired 不能进入 Today/B3 obligations；
-- 当前普通 `practice_scoped` 不能冒充 intervention-scoped session。
+- 当前普通 `practice_scoped` 与 intervention-scoped session 分属不同 scope。
 
 ## 8. 闸门与依赖的最新解释
 
