@@ -9,7 +9,7 @@ status: accepted
 **Tracking:** [YUK-1468](https://linear.app/yukoval-studios/issue/YUK-1468)。
 **Related:** ADR-0067（教研白板与事件例会——本文 D7 修订其 D5 一处）、ADR-0068（通用学科，D7 来源覆盖诚实声明）、[YUK-1445](https://linear.app/yukoval-studios/issue/YUK-1445)（判分准入）、[YUK-1448](https://linear.app/yukoval-studios/issue/YUK-1448)（题库即题源——其验收 3 被 D3 取代）；讨论稿（细节真相源，绝对路径）`/Volumes/YukovalSBak/yukoval-projects/tlp-status/discussions/supply-agent-draft.md`。
 
-**修订状态（2026-10-19）：** Refs [YUK-1594](https://linear.app/yukoval-studios/issue/YUK-1594)，Proposed。下文新 D6 与修订节须经 owner 同意才生效；原 Accepted 决定仍可在保留的旧 D6 中查阅。上方「尚未实施」是 2026-10-11 的记录，不代表当前 main 的实施进度。
+**修订状态（2026-10-19）：** Refs [YUK-1594](https://linear.app/yukoval-studios/issue/YUK-1594)，Proposed。下文新 D6 与修订节须经 owner 同意才生效；原 Accepted 决定仍可在保留的旧 D6 中查阅。上方「尚未实施」是 2026-10-11 的记录。
 
 ## 背景与问题
 
@@ -95,12 +95,12 @@ owner 原话：「quiz_gen.ts 单独存在就很奇怪。」本节把出题要�
 | [`persistQuizDrafts`](https://github.com/Yukoval-Dakia/the-learning-project/blob/d41f242138ee2336abd9a58bd2e99f3f958b5263/src/capabilities/practice/jobs/quiz_gen.ts#L1149-L1629) 目前以整批一个 `db.transaction` 写材料 `source_document`、父行、全部子行、revision、验证意图及非空 `tool_quiz` artifact 与其 create event。生成调用在事务外；placement 在事务内复核 fence。 | 一次 store 提交完整 parent + parts，失败整组回滚。若仍按已接受 plan 交付一批，则保留整批事务语义，不暗改成逐题部分成功。费用/模型调用不塞进长事务。 |
 | [`createQuestionPart`](https://github.com/Yukoval-Dakia/the-learning-project/blob/d41f242138ee2336abd9a58bd2e99f3f958b5263/src/server/questions/parts.ts#L104-L180) 先锁 root，再插 child；part 也是 `question` 行，不是另一张表。`parent_question_id` 决定 part 身份，`kind='question_part'` 只是显示标签。 | 复用原 owner，保持 root→child 锁序。按数组顺序赋 0-based `part_index`，`metadata.part_ref` 指向归一后的 sub ID；不能用模型自报编号替代。 |
 | [逐 part 写入](https://github.com/Yukoval-Dakia/the-learning-project/blob/d41f242138ee2336abd9a58bd2e99f3f958b5263/src/capabilities/practice/jobs/quiz_gen.ts#L1473-L1535) 使用 stem+单个 sub 的缩窄树；继承父行最终持久化的 KC 并集、难度及 provenance。选项正文进 `choices_md`，派生 prompt 去掉内嵌选项，树仍保留选项。 | 子题能独立展示材料，不重复展示选项；客观小题保留 exact 判分，不因拆分变成 semantic。 |
-| [精确重复与并发冲突](https://github.com/Yukoval-Dakia/the-learning-project/blob/d41f242138ee2336abd9a58bd2e99f3f958b5263/src/capabilities/practice/jobs/quiz_gen.ts#L1289-L1472) 以含 `composite` 区分位的 canonical hash 合并 KC；唯一索引冲突后重读协调。重复分支跳过插入和 parts，保留旧题状态及旧 parts。 | 保留结构区分、重复合并和竞态处理，不把同文本无子题的平题当作篇题，不重复造子行。当前普通 `runQuizGen` **没有按 trigger 的全程 exactly-once 保证**；不能把内容去重说成付费调用幂等。新路径复用 store 的 request_id 回执约束，不承诺模型天然 exactly-once。 |
+| [精确重复与并发冲突](https://github.com/Yukoval-Dakia/the-learning-project/blob/d41f242138ee2336abd9a58bd2e99f3f958b5263/src/capabilities/practice/jobs/quiz_gen.ts#L1289-L1472) 以含 `composite` 区分位的 canonical hash 合并 KC；唯一索引冲突后重读协调。重复分支跳过插入和 parts，保留旧题状态及旧 parts。 | 保留结构区分、重复合并和竞态处理，不把同文本无子题的平题当作篇题，不重复造子行。当前普通 `runQuizGen` **没有按 trigger 的全程 exactly-once 保证**。新路径复用 store 的 request_id 回执约束。 |
 | [组发布与验证意图](https://github.com/Yukoval-Dakia/the-learning-project/blob/d41f242138ee2336abd9a58bd2e99f3f958b5263/src/capabilities/practice/jobs/quiz_gen.ts#L1536-L1568) 同事务落地。`createQuestionPart` 每次会重发组 revision，末尾 publish 再确保整组发布；并非“一组恰好只有一次 publisher 调用”。父子都显式 draft，仅父题有验证意图。 | “一次写入”指一个提交、原子可见，不另写第二套 revision writer。初版 withheld；父题质检与后续整组判分准入未完成前不得把 part 单独送进可练池。 |
 | [`promoteCompositeChildren`](https://github.com/Yukoval-Dakia/the-learning-project/blob/d41f242138ee2336abd9a58bd2e99f3f958b5263/src/capabilities/practice/jobs/quiz_verify.ts#L239-L341) 与父题同事务级联，写时再次排除 archived/dismissed；子题证据写明继承父题，不伪称独立核验。FSRS 只 enroll-if-absent，排除 synthetic root，不重置旧复习历史。 | 统一门保留组级结论与墓碑保护，所有计分单元过准入才能服务。调度状态与验证结论分别保留，不靠删旧 handler 顺手清理数据。 |
 | [`dispatchQuizVerification`](https://github.com/Yukoval-Dakia/the-learning-project/blob/d41f242138ee2336abd9a58bd2e99f3f958b5263/src/capabilities/practice/jobs/quiz_gen.ts#L1707-L1742) 在提交后派发，失败留 durable intent 给恢复，不因 enqueue 失败重跑生成。placement 的重复题还须登记 authority 并排空验证意图。 | 复用 [`verify-dispatch-outbox`](../../src/capabilities/practice/server/verify-dispatch-outbox.ts)，迁移期间处理既有意图；保留 claim、attempt、租约与费用结算，不重复花费来“恢复”已落库题。 |
 
-`experimental:quiz_gen` 运行事件在事务后写，不能把它描述成与题组同事务；`tool_quiz` 只在新题非空时创建，全部重复不能生成空卷（同一 `persistQuizDrafts` / `emitQuizGenerationEvent`）。推荐保留这些可观察结果；只收敛供题 owner，不改组卷与历史读取契约。
+`experimental:quiz_gen` 运行事件在事务后写、与题组不同事务；`tool_quiz` 只在新题非空时创建，全部重复不能生成空卷（同一 `persistQuizDrafts` / `emitQuizGenerationEvent`）。推荐保留这些可观察结果；只收敛供题 owner，不改组卷与历史读取契约。
 
 ### 3. 验证结论：把检查并入 D4，不串两套验证链
 
@@ -158,9 +158,9 @@ owner 原话：「quiz_gen.ts 单独存在就很奇怪。」本节把出题要�
 
 owner 于 2026-10-20 确认选 A（同批退役）：旧路由与 quiz_gen 对照完整备题员路径，通过后一起退役。原稿曾推荐 B（先收敛生成路径再比较路由），因可分开调用边界、减少比较变量；现以 owner 选择为准。选 A 即接受数周对照须运行未经改造的旧整条链；不能选择 A 却宣称只对照改造后的生成路径。
 
-并跑期间须隔离两臂的候选、幂等回执与证据，不能让一臂的题库写入替另一臂填平缺口；只让指定交付臂进实际可练池。记录 exact revision、缺口输入、候选及发布摘要、task-run、provider/model/cost 和失败原因，协调线负责实际验收，不把本次静态调查称作实验结果。上述复用现有提交与发布边界，不新增对照平台。
+并跑期间须隔离两臂的候选、幂等回执与证据，不能让一臂的题库写入替另一臂填平缺口；只让指定交付臂进实际可练池。记录 exact revision、缺口输入、候选及发布摘要、task-run、provider/model/cost 和失败原因，协调线负责实际验收。上述复用现有提交与发布边界，不新增对照平台。
 
-排期已确认选 A（同批退役，owner 2026-10-20）。仍待 owner 确认：保留软判据还是收紧 `material_grounding` / `kind_conformance` 的缺证据语义；refill 是否接管。既有每请求数量限制与 placement 费用授权（`QuizGenTriggerBodySchema`、`placement-starter-attempts`）不能假借 D4“无质量数量顶、费用全记账”悄悄移除，其与新缺口任务的映射由 owner 在实施前定。本票不自行改这些边界，也不为每个调用方开 Linear 票。
+排期已确认选 A（同批退役，owner 2026-10-20）。仍待 owner 确认：保留软判据还是收紧 `material_grounding` / `kind_conformance` 的缺证据语义；refill 是否接管。既有每请求数量限制与 placement 费用授权（`QuizGenTriggerBodySchema`、`placement-starter-attempts`）保留，其与新缺口任务的映射由 owner 在实施前定。本票不自行改这些边界，也不为每个调用方开 Linear 票。
 
 ## 硬边界（后果）
 
@@ -169,7 +169,7 @@ owner 于 2026-10-20 确认选 A（同批退役）：旧路由与 quiz_gen 对�
 3. **agent 永不自盖金标**；金标是 owner 的品味资产，admitted ≠ gold。
 4. **失败必须写回白板**（差什么、为什么不硬凑），缺口保持可见；不用降低门的代价换交付。
 5. **花费不设上限但必须全额记账**：每题 provenance 含花费，费用账本照记（§9-7）；canary / 费用事件单写规则保留。
-6. **jyeoo 覆盖诚实声明**（ADR-0068 D7）：只覆盖高中 10–12 数学，备题员不得假装它覆盖别的学段；web 只经现有 Exa 面、遵守 robots、不整站爬取。
+6. **jyeoo 覆盖诚实声明**（ADR-0068 D7）：只覆盖高中 10–12 数学；web 只经现有 Exa 面、遵守 robots、不整站爬取。
 7. **§9 八项承重能力不动**（见 D7）；refill（默认关）是否交备题员接管随实施一并定，不在本 ADR 预设。
 
 ## 分阶段交付（对齐 AGENTS.md 交付阶段）

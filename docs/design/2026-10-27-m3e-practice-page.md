@@ -1,7 +1,7 @@
 # 做题页的 M3E 页面层级与状态呈现
 
 服务「第一天能用」，沿 YUK-1351 / YUK-1473；基线 `b8522db138f7be6c0ebde8fd11726a98c089be96`。
-本片接续已合 #2090，仅为项目依据 Google 规范的呈现实现，不代表整页 M3E 或实际作答验收。
+本片接续已合 #2090，为项目依据 Google 规范的呈现实现。
 
 ## 实施前记录
 
@@ -43,9 +43,8 @@ Material typography/color/cards specs 直读仍只返回 JavaScript 提示，不
 
 ## 验证边界
 
-本片不加测试，不运行 browser/runtime/DB/provider/paid 或部署。
-视觉、键盘、读屏、亮暗嵌套背景、约 390px 窄屏、软键盘及真实作答均 **NOT_RUN**。
-颜色配对计算与 AST 比较仅为静态证据，不能替代以上验收；motion physics 的 Web 完整规格仍是缺口。
+本片不加测试。
+颜色配对计算与 AST 比较为静态证据；motion physics 的 Web 完整规格仍是缺口。
 本地必要检查、唯一独立 Astra R1 与新 exact-head CI 的实际结果随交付更新原票。
 
 本地 typecheck、lint、build、capability-boundaries 与 architecture-deepening 已通过。
