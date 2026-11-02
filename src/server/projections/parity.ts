@@ -316,10 +316,7 @@ export async function assertLearningItemParity(
 //
 export { artifactsWithGenesisAnchor } from '@/kernel/records/artifact-history';
 
-export {
-  hasQuestionBlockGenesisAnchor,
-  questionBlocksWithGenesisAnchor,
-} from '@/kernel/records/question-block-projection';
+export { questionBlocksWithGenesisAnchor } from '@/kernel/records/question-block-projection';
 
 // ── item_calibration genesis-anchor helpers ───────────────────────────────────────────────────
 //

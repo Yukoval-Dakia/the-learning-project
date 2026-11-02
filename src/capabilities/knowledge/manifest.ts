@@ -13,7 +13,6 @@ import {
   KnowledgeTreeResponseSchema,
   LegacyKnowledgeEdgeDecisionBodySchema,
   LegacyKnowledgeEdgeDecisionResponseSchema,
-  LegacyKnowledgeMisconceptionVetoResponseSchema,
   LegacyKnowledgeProposalDecisionBodySchema,
   LegacyKnowledgeProposalDecisionResponseSchema,
   LegacyKnowledgeProposalListResponseSchema,
@@ -164,23 +163,6 @@ export const knowledgeCapability = defineCapability({
         successStatus: 200,
         pagination: 'none',
         load: () => import('./api/misconceptions').then((m) => m.GET),
-      },
-      {
-        // Dismisses a pending conjecture. Only the candidate segment is live here.
-        method: 'POST',
-        path: '/api/knowledge/misconceptions/[id]/veto',
-        operationId: 'vetoKnowledgeMisconceptionLegacy',
-        request: { params: KnowledgeIdParamsSchema },
-        responses: {
-          200: LegacyKnowledgeMisconceptionVetoResponseSchema,
-          ...API_ERROR_RESPONSES,
-        },
-        successStatus: 200,
-        deprecation: {
-          since: '@1783987200',
-          successor: '/api/proposals/[id]/decisions',
-        },
-        load: () => import('./api/misconception-veto').then((m) => m.POST),
       },
     ],
   },
