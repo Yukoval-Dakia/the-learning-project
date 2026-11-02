@@ -419,7 +419,8 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
   const unsupported = checkHonourableConstraints(scope, demand);
   const retrievalComplete = evidence.complete && evidence.unavailable_channels.length === 0;
   // 需求控制先于任何派发：零/负预算或已过期的需求绝不触发付费 job。
-  const budgetExhausted = demand.control.max_budget_micro_usd <= 0;
+  const budgetExhausted =
+    demand.control.max_budget_micro_usd !== null && demand.control.max_budget_micro_usd <= 0;
   const deadlinePassed =
     demand.control.needed_by !== null && Date.parse(demand.control.needed_by) <= Date.now();
   if (!retrievalComplete || unsupported.length > 0 || budgetExhausted || deadlinePassed) {

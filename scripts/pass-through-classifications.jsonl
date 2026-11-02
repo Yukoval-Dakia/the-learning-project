@@ -273,5 +273,6 @@
 {"file":"src/server/questions/submit-question.ts","kind":"site","symbol":"canonicalJson","targetModule":"src/server/questions/submit-decision.ts","targetSymbol":"canonicalJson","class":"stable_contract"}
 {"file":"src/server/questions/submit-question.ts","kind":"site","symbol":"claimSubmitRequestId","targetModule":"src/server/questions/shared-submit.ts","targetSymbol":"claimSubmitRequestId","class":"stable_contract"}
 {"file":"src/server/questions/submit-question.ts","kind":"site","symbol":"deriveKind","targetModule":"src/server/questions/submit-decision.ts","targetSymbol":"deriveKind","class":"stable_contract"}
+{"file":"src/server/questions/submit-question.ts","kind":"site","symbol":"findSubmitReceipt","targetModule":"src/server/questions/shared-submit.ts","targetSymbol":"findSubmitReceipt","class":"stable_contract"}
 {"file":"src/server/questions/submit-question.ts","kind":"site","symbol":"persistDeclaredQuestionGroup","targetModule":"src/server/questions/shared-submit.ts","targetSymbol":"persistDeclaredQuestionGroup","class":"stable_contract"}
 {"file":"src/server/questions/submit-question.ts","kind":"site","symbol":"writeSubmitReceiptEvent","targetModule":"src/server/questions/shared-submit.ts","targetSymbol":"writeSubmitReceiptEvent","class":"stable_contract"}
