@@ -13,8 +13,7 @@ import { source_asset } from '@/db/schema';
 // source_asset row because an asset id is the handle a session pins. kind and
 // provenance stay caller-supplied; this module owns the storage/lock mechanism.
 
-/** Blob handle this protocol needs. `R2Client` satisfies it structurally; kernel
- * cannot import the server seam, and the protocol never reads objects back. */
+/** Blob handle this protocol needs; it never reads objects back. */
 export interface AssetBlobClient {
   put(key: string, body: Uint8Array, contentType?: string): Promise<void>;
   delete(key: string): Promise<void>;

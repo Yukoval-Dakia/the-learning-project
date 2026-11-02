@@ -107,6 +107,11 @@ export type MemoryBriefRefreshExperimentalT = z.infer<typeof MemoryBriefRefreshE
 
 export const MASTERY_PROGRESS_ACTION = 'experimental:mastery_progress';
 
+// Log-only inference that a question or answer may be faulty. Loose hatch:
+// not a fold input and not a serving hold.
+export const QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION =
+  'experimental:question_or_answer_may_be_faulty' as const;
+
 export const MasteryProgressExperimental = z.object({
   actor_kind: z.literal('system'),
   actor_ref: z.literal('mastery_progress_signal'),

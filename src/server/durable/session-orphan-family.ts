@@ -12,7 +12,6 @@ import {
   ConversationOrphanStateError,
   abandonOrphanConversationTx,
 } from '@/server/session/conversation';
-import { PlacementOrphanStateError, abandonOrphanPlacementTx } from '@/server/session/placement';
 
 export const sessionOrphanFamilySchema = z.enum([
   'prune_orphan_conversation_sessions',
@@ -399,6 +398,10 @@ async function commitRow(
   deferred?: string,
 ): Promise<SessionOrphanOutcome> {
   const key = sessionOrphanKey(request);
+  const placementLifecycle =
+    !deferred && request.family === 'prune_orphan_placement_sessions'
+      ? await import('@/capabilities/practice/public')
+      : null;
   return db.transaction(
     async (tx) => {
       const phase = await lockSessionOrphanControl(tx, key.family);
@@ -425,7 +428,10 @@ async function commitRow(
               outcome = await abandonOrphanConversationTx(tx, { sessionId, cutoff: saved.cutoff });
               break;
             case 'prune_orphan_placement_sessions':
-              outcome = await abandonOrphanPlacementTx(tx, { sessionId, cutoff: saved.cutoff });
+              outcome = await placementLifecycle!.abandonOrphanPlacementTx(tx, {
+                sessionId,
+                cutoff: saved.cutoff,
+              });
               break;
             default: {
               const exhaustive: never = request.family;
@@ -435,7 +441,8 @@ async function commitRow(
         } catch (error) {
           if (
             error instanceof ConversationOrphanStateError ||
-            error instanceof PlacementOrphanStateError
+            (placementLifecycle !== null &&
+              error instanceof placementLifecycle.PlacementOrphanStateError)
           )
             throw new SessionOrphanContractError(error.message, { cause: error });
           throw error;

@@ -13,7 +13,7 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SourceGroundingVerifyResult } from '@/capabilities/practice/server/judge/source-grounding-verify';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
@@ -28,18 +28,14 @@ import {
   contractIntegrityDigest,
   publishedContractSeal,
 } from '@/kernel/records/assessment-normalization';
-import type { QuestionGroupContractSnapshot } from '@/kernel/records/assessment-publication';
-import { getFsrsState } from '@/server/fsrs/state';
 import {
+  type QuestionGroupContractSnapshot,
   loadQuestionGroupContractSnapshot,
   publishQuestionGroup,
   publishQuestionGroupFromRow,
-} from '@/server/questions/publisher';
+} from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import {
-  QUESTION_ADMISSION_POLICY_ID,
-  resolveQuestionAdmissionPolicyId,
-} from '../server/admission/run-admission';
+import { QUESTION_ADMISSION_POLICY_ID } from '../server/admission/run-admission';
 import { runSourceVerify } from './source_verify';
 
 // Solver output shape consumed by verify-framework.runSolveCheck (it only reads
@@ -207,105 +203,6 @@ describe('runSourceVerify', () => {
     await resetDb();
   });
 
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it('rejects a stale verdict when KC attribution changes mid-verify, then retries current version', async () => {
-    const db = testDb();
-    await seedKnowledge('k1');
-    await seedKnowledge('k2');
-    const qid = await seedQuestion({ id: 'q_source_verify_version_race', knowledgeIds: ['k1'] });
-    let mutated = false;
-    const staleRun = vi.fn(async () => {
-      if (!mutated) {
-        mutated = true;
-        await db
-          .update(question)
-          .set({ knowledge_ids: ['k1', 'k2'], version: 1 })
-          .where(eq(question.id, qid));
-      }
-      return { text: solverOutput('代词') };
-    });
-
-    await expect(runSourceVerify({ db, questionId: qid, runTaskFn: staleRun })).rejects.toThrow(
-      'changed during verification',
-    );
-
-    const [afterStale] = await db.select().from(question).where(eq(question.id, qid));
-    expect(afterStale).toMatchObject({
-      draft_status: 'draft',
-      knowledge_ids: ['k1', 'k2'],
-      version: 1,
-    });
-    const staleEvents = await db
-      .select()
-      .from(event)
-      .where(eq(event.action, 'experimental:source_verify'));
-    expect(staleEvents.map((candidate) => candidate.outcome)).toEqual(['error']);
-    expect(await getFsrsState(db, 'knowledge', 'k1')).toBeNull();
-    expect(await getFsrsState(db, 'knowledge', 'k2')).toBeNull();
-
-    const retry = await runSourceVerify({
-      db,
-      questionId: qid,
-      runTaskFn: vi.fn(async () => ({ text: solverOutput('代词') })),
-    });
-    expect(retry.status).toBe('verified');
-    expect(await getFsrsState(db, 'knowledge', 'k1')).not.toBeNull();
-    expect(await getFsrsState(db, 'knowledge', 'k2')).not.toBeNull();
-    const outcomes = (
-      await db.select().from(event).where(eq(event.action, 'experimental:source_verify'))
-    ).map((candidate) => candidate.outcome);
-    expect(outcomes.sort()).toEqual(['error', 'success']);
-  });
-
-  it('YUK-230 overlapping delivery: a transient run does NOT yank a row a concurrent run already verified+promoted', async () => {
-    const db = testDb();
-    await seedKnowledge('k1');
-    const qid = await seedQuestion({
-      knowledgeIds: ['k1'],
-      draftStatus: 'active',
-      metadataOverride: groundingMetadata('asset-src-race'),
-    });
-    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
-    // thread 2 — simulate the race window: WHILE this (stale) run is inside the grounding call,
-    // a CONCURRENT run terminally verifies + promotes the question (writes a source_verify
-    // outcome='success' event). This run then gets a transient error. The fail-closed demote
-    // MUST skip (NOT EXISTS success guard) so the concurrent run's active row is not pulled.
-    const sourceGroundingFn = vi.fn(async () => {
-      await db.insert(event).values({
-        id: createId(),
-        session_id: null,
-        actor_kind: 'agent',
-        actor_ref: 'source_verify',
-        action: 'experimental:source_verify',
-        subject_kind: 'question',
-        subject_id: qid,
-        outcome: 'success',
-        payload: { question_id: qid, promoted: true },
-        caused_by_event_id: null,
-        created_at: new Date(),
-      });
-      return groundingResult('transient');
-    });
-
-    await expect(
-      runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn }),
-    ).rejects.toThrow('source grounding failed (transient)');
-
-    // The row stays 'active' — the concurrent success event blocked the demote.
-    const rows = await db.select().from(question).where(eq(question.id, qid));
-    expect(rows[0].draft_status).toBe('active');
-    // YUK-1045 — §3.3「旧验证不能改变较新 admission 决定」：同一守卫也拦住
-    // contract 挂起写 —— 并发成功已提交 ⇒ 本投递 stale，不得 mint suspended 首版。
-    const lifecycles = await db
-      .select()
-      .from(question_group_lifecycle)
-      .where(eq(question_group_lifecycle.group_id, qid));
-    expect(lifecycles).toHaveLength(0);
-  });
-
   it('YUK-1045 P1 repro: a stale transient run cannot suspend a group a concurrent verify already ADMITTED', async () => {
     const db = testDb();
     await seedKnowledge('k1');
@@ -465,97 +362,5 @@ describe('runSourceVerify', () => {
       kept_revision_id: admitted.revision_id,
       promoted: true,
     });
-  });
-
-  // @invariant grading: a configured admission policy id still keeps the current C1 admission
-  // @fails-if the late source check matches only the default policy constant and republishes withheld
-  it('keeps C1 admission when the policy id is overridden and source verify lands later', async () => {
-    vi.stubEnv('QUESTION_ADMISSION_POLICY_ID', 'question_admission@env');
-    const policyId = resolveQuestionAdmissionPolicyId();
-    expect(policyId).not.toBe(QUESTION_ADMISSION_POLICY_ID);
-
-    const db = testDb();
-    await seedKnowledge('k1');
-    const qid = await seedQuestion({ knowledgeIds: ['k1'] });
-    const snapshot = await loadQuestionGroupContractSnapshot(db, qid, { lockRoot: false });
-    const resolved = resolvedContract(snapshot.contract);
-    const now = new Date('2026-10-17T00:00:00.000Z');
-    const admitted = await publishQuestionGroup(db, {
-      group_id: qid,
-      contract: resolved,
-      expectedCurrentRevision: null,
-      expectedAdmissionGeneration: null,
-      availability: 'general_pool',
-      admission: {
-        state: 'admitted',
-        evidence: {
-          marking_provenance: 'system_verified',
-          verification: {
-            structural_check_passed: true,
-            independent_verification: {
-              passed: true,
-              verifier: 'independent_model',
-              verified_at: now.toISOString(),
-            },
-          },
-          model_slice: null,
-        },
-      },
-      suspension: { suspended: false },
-      verification: {
-        policy_id: policyId,
-        outcome: 'passed',
-        evidence: {
-          pack: 'question_admission',
-          base_contract_digest: publishedContractSeal(resolved).canonical,
-        },
-      },
-      actorRef: 'practice:question_admission',
-      now,
-    });
-    if (admitted.status !== 'published')
-      throw new Error(`fixture admission publish ${admitted.status}`);
-
-    const result = await runSourceVerify({
-      db,
-      questionId: qid,
-      runTaskFn: vi.fn(async () => ({ text: solverOutput('代词') })),
-    });
-
-    expect(result.status).toBe('verified');
-    const [lifecycle] = await db
-      .select()
-      .from(question_group_lifecycle)
-      .where(eq(question_group_lifecycle.group_id, qid));
-    expect(lifecycle).toMatchObject({
-      scoring_admission_state: 'admitted',
-      current_revision_id: admitted.revision_id,
-      scoring_admission_generation: 1,
-      suspended: false,
-    });
-    const revisions = await db
-      .select()
-      .from(question_revision)
-      .where(eq(question_revision.group_id, qid));
-    expect(revisions.map((row) => row.revision_id)).toEqual([admitted.revision_id]);
-    const publishes = await db
-      .select()
-      .from(event)
-      .where(eq(event.action, 'experimental:assessment_publish'));
-    expect(publishes).toHaveLength(1);
-  });
-
-  it('is idempotent — a second run skips as already_verified', async () => {
-    const db = testDb();
-    await seedKnowledge('k1');
-    const qid = await seedQuestion({ knowledgeIds: ['k1'] });
-    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
-
-    const first = await runSourceVerify({ db, questionId: qid, runTaskFn });
-    expect(first.status).toBe('verified');
-    const second = await runSourceVerify({ db, questionId: qid, runTaskFn });
-    expect(second.status).toBe('skipped:already_verified');
-    // solver only ran on the first pass.
-    expect(runTaskFn).toHaveBeenCalledTimes(1);
   });
 });

@@ -20,7 +20,7 @@
 - 组合根是静态数组：`src/capabilities/index.ts` 按固定顺序登记全部 capability manifest，交给 `buildHonoApp`；成员与顺序以该文件为准。
 - `manifest.ts` 只声明归属（`CapabilityManifest`，`src/kernel/manifest.ts`）：必填 `name`、`description`；可选 `events.actions`、`subscriptions.handlers`（`EventSubscriptionDecl[]`）、`api.routes`、`jobs.handlers`、`proposals.kinds`、`copilotTools.tools`、`ui.pages`。`validateComposition()` 在启动（`server/app.ts`）与 CI（`pnpm audit:api-contracts` → `scripts/audit-api-contracts.ts`）校验包名、event action、订阅 `id@vN`（`actions` 必须已被某个包声明、`load` 必填）、route key / `operationId` / 路径参数 / 响应契约、job 名与 DAG、proposal kind、DomainTool 名、UI page 路由的全局唯一性。`load` 是懒加载 thunk；route 与 pg-boss job 没有 `load` 就只是归属元数据、不挂载（`backend: 'dbos'` 的 job 例外，由 DBOS 路径启动）。
 - `public.ts` 是服务端契约，`ui-public.ts` 是客户端契约。`src/server/**` 新增依赖只能落在别人 `public.ts` / `ui-public.ts`（或 kernel 端口），私有模块与 capabilities barrel 一律拒；capability 之间的 value import 按 owner 对计数，同样由 baseline 冻结（`PUBLIC_ENTRYPOINTS`，`scripts/audit-capability-boundaries.ts`）。
-- kernel 端口：`src/kernel/` 承载 manifest、events、tools、read-models、records、proposals、job-dag、cost 等跨 capability 契约。跨包读取只走对方 `public.ts`；`audit:capability-boundaries` 禁止新增 kernel / core → capability / server 的 value import，既有 facade 由 ratchet 冻结（`scripts/lib/dependency-ratchet.ts` 的 `auditKernelReverseEdges`）。
+- kernel 端口：`src/kernel/` 承载 manifest、events、tools、read-models、records、proposals、job-dag、cost 等跨 capability 契约。`src/kernel/projection-writer-policy.ts` 拥有 projection writer 审计政策、实体类型与 boot flag-vector 诊断；配置解析和水合仍归 `src/core/config/` 与 `src/server/config/`。跨包读取只走对方 `public.ts`；`audit:capability-boundaries` 禁止新增 kernel / core → capability / server 的 value import，既有 facade 由 ratchet 冻结（`scripts/lib/dependency-ratchet.ts` 的 `auditKernelReverseEdges`）。
 - `pnpm audit:capability-boundaries` 是精确 ratchet：记录 `capability → server`、`server → capability deep`、跨 capability value 三类边数，变化必须在同一 PR 登记进 `scripts/capability-boundary-baseline.json`。三类边数与当前非平凡 SCC 构成以该文件的 `debts` 为准。
 - `pnpm audit:architecture-deepening` 再查深层 import、公开读环白名单、隐藏写、命令环、TaskSpec / DomainTool / proposal / queue 归属、provider lane census 与依赖上限（严格小于 `DEPENDENCY_CEILINGS`，见 `scripts/audit-architecture-deepening.ts`）。
 - TaskSpec 由各包 `task-public.ts` 贡献、`src/capabilities/task-catalog.ts` 用 `composeTaskCatalog` + `expectedCount` 静态聚合；`src/capabilities/task-registry.ts` 用 `createTaskRegistry` 冻同一 catalog，并导出预算 / prompt readers 给 route 与 job。细节见「五、AI 任务层」。
@@ -223,7 +223,7 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
 
 - **Skill**（提示词包）：`src/subjects/<subject>/skills/<name>/SKILL.md`，跨科包放 `src/subjects/_shared/skills/`；调用方读正文后经 `piSkillDocs` 拼进 systemPrompt，缺包不注入、回落到 prompt 正文（`src/subjects/copilot-skills.ts`、`quiz-gen-skills.ts`、`note-skills.ts`）。
 - **in-process tool bridge**（现役）：领域 route / job 注入 `piToolMounts`（pi `AgentTool`，wire name `mcp__<server>__<tool>`），不对外暴露 endpoint。
-- **外部 MCP 消费**（现役）：Exa 托管 MCP，工具名 `mcp__exa__web_search_exa` / `mcp__exa__web_fetch_exa`（`src/server/ai/mcp/exa.ts`）；其余来源按需接。
+- **外部 MCP 消费**（现役）：Exa 托管 MCP，工具名 `mcp__exa__web_search_exa` / `mcp__exa__web_fetch_exa`（`src/ai/exa-mcp.ts`）；其余来源按需接。
 - **Standalone MCP Server**（对外暴露 resources + tools）：未实现；未来复用 DomainTool registry，不重写工具定义。
 - **Plugin**（学科 bundle）：学科专属逻辑放 `src/subjects/<subject>/`，跨科逻辑放 `core/`。
 
@@ -235,7 +235,7 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
 
 - generic `/api/ai/[task]` 已退场（YUK-321 M5），旧的 400 dispatch 分支随之作废；同类 task 由 capability 领域 route / worker 承接。
 - AI 执行在领域 route 的调用链或 pg-boss job 里调 `runTask()` / `runAgentTask()` / `streamTask()`（copilot：`/api/copilot/chat` 入队 → `copilot_run`；knowledge：`knowledge_maintenance_nightly` → `streamReviewTask`）。
-- pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`。
+- pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`。Copilot 的轮数保持不封顶；同一工具调用没有新证据时，执行层停止后续工具，保留已写出的正文并附上证据与可执行入口，不另设轮数或费用上限。只有失败、没有新证据的读取也在硬超时前走这条收口，不因没有成功读就空转到时限。模型额度（429）、502，或无法按约定读出的模型输出，会停住后续工具并封存原因、停止重试说明和确定性练习；提示接口同样返回这三项，有封存参考时用参考而不是再试一次。每次求助尝试分别封存首 token、首个已验证可执行帮助、完整物、以及全部调用 settled 的时延。失败、超时和取消留在分母里；未知费用保持 null。提示的计时预算在尝试行和提示事件上都记为超时，不记成取消。CF-19 只作为初始假设，读数带模态分层和样本量，不宣称 p95 达标。
 - 工具执行在各自的唯一 owner 写 `tool_call_log`（DomainTool bridge / remote MCP mount / custom mount），runner 只为 spawn 工具补行。
 - 终态写 `cost_ledger`（每次 attempt 一行，带 `task_kind` / `provider` / `model` / `currency`）。
 - 浏览器侧没有 `src/ai/client.ts` 通用 helper；UI 调具体领域 route，避免绕开 profile / tool / ingestion context。
@@ -472,7 +472,7 @@ digest、cursor 与 receipt 语义。
 
 `learning_session` 承载 7 种 type：`ingestion | review | tutor | conversation | placement` 有实装状态机，`explore | create` 仍是 `placeholder` 单值占位。per-type status enum 与判别联合在 `src/core/schema/learning_session.ts`（`LearningSessionStatusByType`）；状态图与合法取值以该文件与各 lifecycle owner 为准，本文不复制。
 
-**Single owner invariant** (ADR-0005 / ADR-0008)：每个 type 只有一个 lifecycle owner——conversation / placement / review / tutor 在 `src/server/session/`（`index.ts` 命名空间导出），ingestion 在 `src/capabilities/ingestion/server/session-lifecycle.ts`。route / handler 不允许直接 `db.update(learning_session)`。
+**Single owner invariant** (ADR-0005 / ADR-0008)：每个 type 只有一个 lifecycle owner。Placement 完整状态操作归 `src/capabilities/practice/server/placement-session-lifecycle.ts`；本域直接消费，外部 orphan caller 经 `practice/public.ts` 调用并持有原事务与 receipt。其他 type 由各自现役 lifecycle owner 负责。route / handler 不允许直接 `db.update(learning_session)`。
 
 **OCR 抽取层** (ADR-0002 修订)：用 Tencent QuestionMarkAgent (async submit+poll)，**不再 cascade**。Vision Tier 2/3 (haiku / sonnet) 仅作为**用户触发的救援**，走 `/api/ingestion/[id]/rescue`，永不参与自动 fallback。
 

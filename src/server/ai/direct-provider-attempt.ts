@@ -33,6 +33,8 @@ export type DirectProviderLifecycleFactory = (input: {
 }) => ProviderAttemptLifecycle;
 
 export interface DirectProviderOperationContext {
+  readonly signal?: AbortSignal;
+  readonly beforeSend?: () => Promise<void>;
   readonly caller: 'api' | 'worker';
   readonly deadlineAt: Date;
   readonly mode?: ProviderAttemptLifecycleMode;
@@ -44,6 +46,9 @@ export interface DirectProviderOperationContext {
 }
 
 export interface DirectProviderOperationOptions {
+  readonly signal?: AbortSignal;
+  /** Caller authority, rechecked by the provider-specific wire boundary after reservation. */
+  readonly beforeSend?: () => Promise<void>;
   readonly db?: Db;
   readonly caller: 'api' | 'worker';
   readonly deadlineAt: Date;
@@ -117,6 +122,8 @@ export function createDirectProviderOperationContext(
   input: DirectProviderOperationOptions,
 ): DirectProviderOperationContext {
   return {
+    signal: input.signal,
+    beforeSend: input.beforeSend,
     db: input.db,
     caller: input.caller,
     mode: input.mode,

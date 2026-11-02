@@ -24,12 +24,12 @@
 import './load-env';
 
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { requireKnowledgeHistory } from '@/capabilities/knowledge/server/node-history-guard';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { db } from '@/db/client';
 import { knowledge, mastery_state, material_fsrs_state } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { requireKnowledgeHistory } from '@/kernel/records/knowledge-node-history-guard';
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 
 const ACTOR_REF = 'ops:yuk1600-knowledge-role-backfill';

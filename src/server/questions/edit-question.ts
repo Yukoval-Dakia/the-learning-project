@@ -44,14 +44,16 @@ import {
 import { OpaqueJsonInput } from '@/kernel/tools/types';
 import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
 import {
+  type InvalidatedScope,
+  computeInvalidatedScope,
+  relevantChangesForOps,
+} from '@/server/questions/draft-edit-impact';
+import {
   type AppliedChange,
   EditOp,
   type EditOpT,
-  type InvalidatedScope,
   type OpIssue,
   applyEditOps,
-  computeInvalidatedScope,
-  relevantChangesForOps,
 } from '@/server/questions/draft-ops';
 
 // ====================================================================
@@ -229,6 +231,7 @@ export type EditQuestionResult =
   | { status: 'proposed'; proposal_id: string; draft_ref?: string; changes: AppliedChange[] };
 
 interface EditContext {
+  beforeWrite?: (tx: Tx) => Promise<void>;
   actorRef: string;
   actorKind: 'agent' | 'user' | 'system';
   taskRunId?: string;
@@ -503,6 +506,7 @@ export async function saveDraftEditInTx(
   params: SaveDraftParams,
 ): Promise<EditQuestionResult> {
   const { input, ctx } = params;
+  await ctx.beforeWrite?.(tx);
   const requestId = input.request_id;
   if (requestId == null || requestId.length === 0) {
     return {

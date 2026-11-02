@@ -20,7 +20,10 @@ import { eq } from 'drizzle-orm';
 import { diffSnapshots } from '@/core/projections/snapshot-diff';
 import { type Db, type Tx, db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
-import { edgeRowToSnapshot, gatherAndFoldKnowledgeEdgeWithMesh } from '@/server/projections/gather';
+import {
+  edgeRowToSnapshot,
+  gatherAndFoldKnowledgeEdgeWithMesh,
+} from '@/kernel/records/knowledge-edge-facts';
 
 type DbLike = Db | Tx;
 

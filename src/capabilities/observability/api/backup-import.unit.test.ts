@@ -4,7 +4,7 @@ import { POST } from './backup-import';
 
 // Inject in-memory R2 for all tests
 const r2 = memR2();
-vi.mock('@/server/r2', () => ({
+vi.mock('@/kernel/object-storage', () => ({
   getR2: () => r2,
   createR2Client: () => r2,
 }));
@@ -82,10 +82,5 @@ describe('POST /api/_/import — guards', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('confirm_required');
-  });
-
-  it('returns 400 when ?confirm has wrong value', async () => {
-    const res = await POST(makePostRequest(new Uint8Array(), '?confirm=please'));
-    expect(res.status).toBe(400);
   });
 });

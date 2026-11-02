@@ -170,6 +170,7 @@ async function resolveDraftQuestionId(ctx: ToolContext, draftRef: string): Promi
 async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const input = inputSchema.parse(raw);
   const serviceCtx = {
+    beforeWrite: ctx.beforeIngestionWrite,
     actorRef: ctx.callerActor.ref,
     actorKind: 'agent' as const,
     taskRunId: ctx.taskRunId,

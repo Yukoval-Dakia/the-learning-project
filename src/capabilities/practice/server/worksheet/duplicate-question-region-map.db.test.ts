@@ -7,7 +7,7 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { question, worksheet_region_map_page } from '@/db/schema';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import {
   WorksheetExportStateSchema,

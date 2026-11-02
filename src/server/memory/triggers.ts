@@ -7,6 +7,7 @@ import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { event } from '@/db/schema';
 import {
   eventAllowsDerivationSql,
+  lockEventDerivationSources,
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
 import {
@@ -14,6 +15,7 @@ import {
   REFLECTION_BRIEF_SCOPE_KEYS,
   eligibilityFor,
 } from '@/kernel/nightly-eligibility';
+import { latestPurposeWithdrawal } from '@/kernel/read-models/purpose-change';
 import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
 import {
   createDirectProviderOperationContext,
@@ -42,6 +44,7 @@ import {
   regenerateMemoryBrief,
   scopeHasNewEvidence,
 } from './brief';
+import { executePurposeBrief } from './brief-purpose';
 import { type MemoryClient, type MemoryEventInput, createMemoryClient } from './client';
 import { isLearnerEvidenceAction } from './learner-evidence';
 import type { MemoryIngestReplayGrant } from './memory-ingest-recovery-contract';
@@ -65,6 +68,7 @@ import {
   persistIngestCompleted,
   readIngestCompleted,
 } from './memory-reconcile-handoff-store';
+import { recoverPurposeChanges } from './purpose-repair';
 import { applyDecisionGates, deduplicateDecisions } from './reconcile-decisions';
 import {
   type CandidateEntry,
@@ -389,6 +393,7 @@ export function buildMemoryEventIngestHandler(
           memories: newMemories,
           persistIntents,
         });
+        if ((await readEventDerivationPolicy(db, row.id)) !== 'allow') continue;
         reconcileDispatch = {
           mode: handoffMode,
           sourceEventId: row.id,
@@ -464,7 +469,9 @@ export function buildMemoryBriefRegenHandler(
     memoryClient?: Pick<MemoryClient, 'search'>;
     generateBrief: GenerateBrief;
   },
-): (jobs: Job<{ scope_key: string; now?: string }>[]) => Promise<void> {
+): (
+  jobs: Job<{ scope_key: string; now?: string; purpose_operation_id?: string }>[],
+) => Promise<void> {
   // Do not construct the client at batch start: a missing key would reject the whole
   // job and defeat the per-scope catch. Mem0 facts are supplementary; brief regen
   // still runs from events.
@@ -476,66 +483,80 @@ export function buildMemoryBriefRegenHandler(
       // storm. The writer stays loud; this catch logs and continues. The prior brief
       // survives because the upsert is only reached on success.
       try {
-        const searchFacts = async () => {
-          // Lazily construct the client inside this try so a missing Mem0 key
-          // degrades to no facts, while a missing LLM key fails later in generate.
-          try {
-            memoryClient ??= createMemoryClient();
-            // Read through the wrapper so superseded facts never enter a long-term summary.
-            const result = await searchMemories(memoryClient, `memory brief ${scopeKey}`, {
-              topK: 10,
-              filters: { scope_key: scopeKey },
-              providerOperation: createMem0OpaqueOperationContext({
-                db,
-                caller: 'worker',
-                deadlineAt: new Date(Date.now() + 65_000),
-                operationAnchor: `memory-brief:${job.id}:${scopeKey}`,
-              }),
-            });
-            return (result?.results ?? []).map((item) => ({ id: item.id, memory: item.memory }));
-          } catch (err) {
-            console.warn(
-              `[memory_brief_regen] Mem0 fact search unavailable for ${scopeKey}; proceeding without facts`,
-              err,
-            );
-            return [];
-          }
-        };
-
-        // Subject scopes need the knowledge-resolved path: attempt/review never tag
-        // `subject:` in affected_scopes, so the affected_scopes guard would return
-        // false for an active subject. The active sweep already filtered, but the
-        // guard still absorbs singleton re-fires and watermark skew.
-        if (scopeKey.startsWith(SUBJECT_SCOPE_PREFIX)) {
-          const subjectId = scopeKey.slice(SUBJECT_SCOPE_PREFIX.length);
-          // Reuse the sweep's now so detection and reload share the same lookback
-          // floor; a fresh clock here could age an edge event out.
-          const now = job.data.now ? new Date(job.data.now) : new Date();
-          // loadSubjectBriefEvents floors at this subject's own refreshed_at, the same
-          // predicate detection uses, so a flagged subject always reloads an event.
-          const events = await loadSubjectBriefEvents(db, subjectId, {
-            lookbackDays: BRIEF_REFRESH_LOOKBACK_DAYS,
-            now,
-          });
-          if (!(await subjectScopeHasNewEvidence(db, scopeKey, events))) continue;
-          await regenerateMemoryBrief({
-            db,
-            scopeKey,
-            loadEvents: async () => events,
-            searchFacts,
-            generate: deps.generateBrief,
-          });
-          continue;
-        }
-
-        // Global and legacy affected_scopes-tagged scopes.
-        if (!(await scopeHasNewEvidence(db, scopeKey))) continue;
-        await regenerateMemoryBrief({
+        await executePurposeBrief(
           db,
-          scopeKey,
-          searchFacts,
-          generate: deps.generateBrief,
-        });
+          { scopeKey, operationId: job.data.purpose_operation_id, jobId: job.id },
+          async (purposeTaskId) => {
+            const purposeId = job.data.purpose_operation_id;
+            const searchFacts = async () => {
+              // Lazily construct the client inside this try so a missing Mem0 key
+              // degrades to no facts, while a missing LLM key fails later in generate.
+              try {
+                memoryClient ??= createMemoryClient();
+                // Read through the wrapper so superseded facts never enter a long-term summary.
+                const result = await searchMemories(memoryClient, `memory brief ${scopeKey}`, {
+                  topK: 10,
+                  filters: { scope_key: scopeKey },
+                  providerOperation: createMem0OpaqueOperationContext({
+                    db,
+                    caller: 'worker',
+                    deadlineAt: new Date(Date.now() + 65_000),
+                    operationAnchor: `memory-brief:${job.id}:${scopeKey}`,
+                  }),
+                });
+                return (result?.results ?? []).map((item) => ({
+                  id: item.id,
+                  memory: item.memory,
+                }));
+              } catch (err) {
+                console.warn(
+                  `[memory_brief_regen] Mem0 fact search unavailable for ${scopeKey}; proceeding without facts`,
+                  err,
+                );
+                return [];
+              }
+            };
+
+            // Subject scopes need the knowledge-resolved path: attempt/review never tag
+            // `subject:` in affected_scopes, so the affected_scopes guard would return
+            // false for an active subject. The active sweep already filtered, but the
+            // guard still absorbs singleton re-fires and watermark skew.
+            if (scopeKey.startsWith(SUBJECT_SCOPE_PREFIX)) {
+              const subjectId = scopeKey.slice(SUBJECT_SCOPE_PREFIX.length);
+              // Reuse the sweep's now so detection and reload share the same lookback
+              // floor; a fresh clock here could age an edge event out.
+              const now = job.data.now ? new Date(job.data.now) : new Date();
+              // loadSubjectBriefEvents floors at this subject's own refreshed_at, the same
+              // predicate detection uses, so a flagged subject always reloads an event.
+              const events = await loadSubjectBriefEvents(db, subjectId, {
+                lookbackDays: BRIEF_REFRESH_LOOKBACK_DAYS,
+                now,
+              });
+              if (!purposeId && !(await subjectScopeHasNewEvidence(db, scopeKey, events))) return;
+              await regenerateMemoryBrief({
+                db,
+                scopeKey,
+                purposeRepair: Boolean(purposeId),
+                taskRunId: purposeTaskId,
+                loadEvents: async () => events,
+                searchFacts,
+                generate: deps.generateBrief,
+              });
+              return;
+            }
+
+            // Global and legacy affected_scopes-tagged scopes.
+            if (!purposeId && !(await scopeHasNewEvidence(db, scopeKey))) return;
+            await regenerateMemoryBrief({
+              db,
+              scopeKey,
+              purposeRepair: Boolean(purposeId),
+              taskRunId: purposeTaskId,
+              searchFacts,
+              generate: deps.generateBrief,
+            });
+          },
+        );
       } catch (err) {
         // Leave the prior brief intact and continue; rethrowing would retry-storm.
         console.error(`[memory_brief_regen] scope ${scopeKey} failed; leaving prior brief`, err);
@@ -604,7 +625,7 @@ async function gatherCandidates(
 
 async function judgeBatch(
   db: Db,
-  job: Pick<Job, 'id'>,
+  job: Pick<Job<{ source_event_id?: string }>, 'id' | 'data'>,
   userId: string,
   newMems: NewMemoryEntry[],
   candidatesByNew: Map<number, CandidateEntry[]>,
@@ -612,6 +633,19 @@ async function judgeBatch(
 ): Promise<Awaited<ReturnType<typeof judgeReconciliation>> | null> {
   try {
     return await judge(newMems, candidatesByNew, {
+      beforeRequest: async () => {
+        const sourceId = job.data.source_event_id;
+        if (!sourceId) {
+          if (await latestPurposeWithdrawal(db))
+            throw new Error('unattributed reconcile source after purpose withdrawal');
+          return;
+        }
+        await db.transaction(async (tx) => {
+          await lockEventDerivationSources(tx, sourceId);
+          if ((await readEventDerivationPolicy(tx, sourceId)) !== 'allow')
+            throw new Error('restricted reconcile source');
+        });
+      },
       providerAttempt: createDirectProviderOperationContext({
         db,
         caller: 'worker',
@@ -719,6 +753,7 @@ export function buildMemoryReconcileHandler(
   return async (jobs) => {
     for (const job of jobs) {
       if (!allowsDerivation(job.data)) continue;
+      if (!job.data.source_event_id && (await latestPurposeWithdrawal(db))) continue;
       if (
         job.data.source_event_id &&
         (await readEventDerivationPolicy(db, job.data.source_event_id)) !== 'allow'
@@ -755,6 +790,11 @@ export function buildMemoryReconcileHandler(
 
         const decisions = await judgeBatch(db, job, userId, newMems, candidatesByNew, judge);
         if (decisions === null) continue;
+        if (
+          job.data.source_event_id &&
+          (await readEventDerivationPolicy(db, job.data.source_event_id)) !== 'allow'
+        )
+          continue;
 
         // Only the first decision per new_index is safe: a second would apply against
         // already-mutated state. Keep the first and warn-drop the rest.
@@ -906,6 +946,7 @@ const OUTBOX_RECOVER_MAX_CYCLES = 1000;
 export async function runMemoryRecoveryFloor(legs: {
   readonly ingest: () => Promise<void>;
   readonly reconcile: () => Promise<void>;
+  readonly purpose?: () => Promise<void>;
 }): Promise<void> {
   const errors: unknown[] = [];
   try {
@@ -915,6 +956,11 @@ export async function runMemoryRecoveryFloor(legs: {
   }
   try {
     await legs.reconcile();
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    await legs.purpose?.();
   } catch (error) {
     errors.push(error);
   }
@@ -941,6 +987,7 @@ export function buildMemoryIngestOutboxRecoverHandler(
       reconcile: async () => {
         await recoverMemoryReconcileHandoffs(db, boss, mode);
       },
+      purpose: () => recoverPurposeChanges(db, boss),
     });
   };
 }

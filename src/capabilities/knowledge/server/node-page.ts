@@ -8,8 +8,10 @@
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
-import { type MasteryDecayBucket, masteryDecayBucket } from '@/core/mastery-freshness';
+import type { MasteryDecayBucket } from '@/core/mastery-freshness';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
+import type { ReviewTimingJson } from '@/core/schema/learner-judgment';
+import type { RetentionReading } from '@/core/schema/scheduling-state';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
 import {
@@ -19,18 +21,19 @@ import {
   resolveOwningLearningItemIds,
 } from '@/kernel/read-models/artifact-backlinks';
 import { getArtifactCorrectionStates } from '@/kernel/read-models/artifact-corrections';
-import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import {
-  getMasteryProjection,
-  getRepresentativeKcBeta,
-} from '@/kernel/read-models/mastery-projection';
+  abilityReadingsByIdOrFail,
+  readLearnerJudgments,
+} from '@/kernel/read-models/learner-judgment';
+import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
+import { getRepresentativeKcBeta } from '@/kernel/read-models/mastery-projection';
 import {
   type NoteSummary,
   interactiveForKnowledge,
   notesForKnowledge,
 } from '@/kernel/read-models/notes-read';
+import { reviewTimingJson } from '@/kernel/read-models/review-timing';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import { type RetentionReading, getFsrsRetrievabilityByIds } from '@/server/fsrs/state';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
 const CROSS_LINK_REF_KIND = 'cross_link';
@@ -109,7 +112,9 @@ export interface KnowledgeNodePage {
   beta: number | null;
   difficulty_anchored: boolean;
   last_evidence_at: string | null;
+  // 'unknown' when there is no evidenced ability. That is not the untrained label.
   mastery_decay_bucket: MasteryDecayBucket;
+  review_timing: ReviewTimingJson;
   subject_profile: SlimSubjectProfile;
   children: NodePageChild[];
   mesh_neighbors: NodePageMeshNeighbor[];
@@ -121,18 +126,6 @@ export interface KnowledgeNodePage {
   backlinks: NodePageBacklink[];
   backlinks_by_type: BacklinksByArtifactType<NodePageBacklink>;
   timeline: NodePageTimelineEntry[];
-}
-
-/**
- * Batched FSRS retrievability for knowledge ids. A missing map entry means no state
- * row, i.e. unknown retention, not zero. `now` is injectable for deterministic tests.
- */
-export async function loadRetrievabilityMap(
-  db: Db,
-  knowledgeIds: string[],
-  now: Date = new Date(),
-): Promise<Map<string, RetentionReading>> {
-  return getFsrsRetrievabilityByIds(db, 'knowledge', knowledgeIds, now);
 }
 
 /**
@@ -188,10 +181,17 @@ export async function loadKnowledgeNodePage(
 
   // Independent reads: mastery may not exist before an attempt, while a difficulty
   // anchor can. Map presence is the has-anchor bit beta=0 alone cannot express.
-  const [masteryProjection, focalBetaMap] = await Promise.all([
-    getMasteryProjection(db, [node.id, ...childRows.map((c) => c.id)]),
+  // One judgment-contract read carries both mastery-family readings (mastery +
+  // retention) under one snapshot, and owns the YUK-1600 non-kc role gate.
+  const [judgmentBatch, focalBetaMap] = await Promise.all([
+    readLearnerJudgments(db, {
+      knowledge_ids: [node.id, ...childRows.map((c) => c.id)],
+      context: 'any',
+      as_of: new Date(),
+    }),
     getRepresentativeKcBeta(db, [node.id]),
   ]);
+  const masteryProjection = abilityReadingsByIdOrFail(judgmentBatch);
   const nodeMastery = masteryProjection.get(node.id);
   const difficultyAnchored = focalBetaMap.has(node.id);
   const focalBeta = focalBetaMap.get(node.id) ?? nodeMastery?.beta ?? null;
@@ -203,14 +203,19 @@ export async function loadKnowledgeNodePage(
       mastery: masteryProjection.get(row.id)?.mastery ?? null,
     }));
 
-  const [focalRetrievabilityMap, outEdges, inEdges] = await Promise.all([
-    // YUK-1600 — retention is a mastery-family reading: a goal/container root never
-    // reads FSRS R(t), even if pre-gate stock rows exist.
-    loadRetrievabilityMap(db, node.role === 'kc' ? [node.id] : []),
+  const [outEdges, inEdges] = await Promise.all([
     listKnowledgeEdges(db, { from: knowledgeId }),
     listKnowledgeEdges(db, { to: knowledgeId }),
   ]);
-  const focalRetrievability = focalRetrievabilityMap.get(node.id);
+  // The contract returns an honest unknown retention for a goal/container focal
+  // node; only a number or candidate score reaches the wire below, so the
+  // payload keeps its cold-start null semantics for unreadable retention.
+  const focalRetention = judgmentBatch.items.find(
+    (item) => item.knowledge_id === node.id,
+  )?.retention;
+  const focalReading = focalRetention?.kind === 'available' ? focalRetention.reading : undefined;
+  const focalRetrievability =
+    typeof focalReading === 'number' || focalReading?.kind === 'score' ? focalReading : undefined;
   const neighborIds = Array.from(
     new Set([
       ...outEdges.map((e) => e.to_knowledge_id),
@@ -369,9 +374,12 @@ export async function loadKnowledgeNodePage(
     created_at: r.created_at.toISOString(),
   }));
 
-  // Absent projection means cold start: no mastery, zero evidence, no last attempt.
+  // A missing evidenced reading is insufficient evidence or a non-evaluable role,
+  // not a cold-start low score. The decay bucket stays unknown, not untrained.
   const nodeEvidenceCount = nodeMastery?.evidence_count ?? 0;
   const nodeLastEvidenceAt = nodeMastery?.last_outcome_at ?? null;
+  const focalJudgment = judgmentBatch.items.find((item) => item.knowledge_id === node.id);
+  if (!focalJudgment) throw new Error(`learner-judgment missing knowledge ${node.id}`);
 
   return {
     id: node.id,
@@ -382,7 +390,7 @@ export async function loadKnowledgeNodePage(
     effective_domain: effectiveDomain,
     role: node.role,
     mastery: nodeMastery?.mastery ?? null,
-    // Cold start is null/false; the client maps null mastery to the unknown band.
+    // Null mastery is insufficient evidence, not a prior point treated as low.
     mastery_lo: nodeMastery?.mastery_lo ?? null,
     mastery_hi: nodeMastery?.mastery_hi ?? null,
     low_confidence: nodeMastery?.low_confidence ?? false,
@@ -399,7 +407,8 @@ export async function loadKnowledgeNodePage(
     beta: focalBeta,
     difficulty_anchored: difficultyAnchored,
     last_evidence_at: nodeLastEvidenceAt ? nodeLastEvidenceAt.toISOString() : null,
-    mastery_decay_bucket: masteryDecayBucket(nodeEvidenceCount, nodeLastEvidenceAt),
+    mastery_decay_bucket: focalJudgment.review_timing.freshness.decay_bucket,
+    review_timing: reviewTimingJson(focalJudgment.review_timing),
     subject_profile: toSlimSubjectProfile(profile),
     children,
     mesh_neighbors: meshNeighbors,

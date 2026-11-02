@@ -4,10 +4,6 @@
 
 import { createHash } from 'node:crypto';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import {
-  rewriteLearningItemKnowledgeIds,
-  rewriteQuestionKnowledgeIds,
-} from '@/capabilities/practice/public';
 import { embedHash, knowledgeEmbedText } from '@/core/embed-source';
 import { newId } from '@/core/ids';
 import type { MergeRepairEntryT, SuggestionKindT } from '@/core/schema/event/known';
@@ -25,13 +21,18 @@ import { archiveProposalCooldownKey, writeArchiveProposal } from '@/kernel/propo
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { rewriteGoalScopeOnMerge } from '@/kernel/records/goal-commands';
+import { retireKcTypedStateOnMerge } from '@/kernel/records/kc-typed-state';
+import {
+  rewriteLearningItemKnowledgeIds,
+  rewriteQuestionKnowledgeIds,
+} from '@/kernel/records/knowledge-merge-attribution';
+import { requireKnowledgeHistory } from '@/kernel/records/knowledge-node-history-guard';
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
+import { retireLearnerAxisStateOnMerge } from '@/kernel/records/learner-axis-state';
+import { retireMasteryStateOnMerge } from '@/kernel/records/mastery-state';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { rewireMisconceptionEdgesForKnowledgeMerge } from '@/kernel/records/misconception-edges';
-import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer';
-import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
 import { retireFsrsStateOnMerge } from '@/server/fsrs/state';
-import { retireMasteryStateOnMerge } from '@/server/mastery/state';
 import { normalizeSubjectKey, sanitizeProposedNodeDomain } from '@/subjects/profile';
 import {
   archiveKnowledgeEdgeFromEvents,
@@ -40,7 +41,6 @@ import {
   listLiveEdgesTouchingNode,
   reactivateKnowledgeEdge,
 } from './edges';
-import { requireKnowledgeHistory } from './node-history-guard';
 
 type DbLike = Db | Tx;
 
@@ -496,7 +496,7 @@ async function refreshReparentEmbedding(
     if (newHash !== moved.hash) {
       await db
         .update(knowledge)
-        .set({ embedding: null, embed_content_hash: newHash })
+        .set({ embedding: null, embed_content_hash: newHash, embed_source_revision: null })
         .where(eq(knowledge.id, moved.id));
     }
   }

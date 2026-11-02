@@ -1,0 +1,309 @@
+{
+  "version": 1,
+  "sites": [
+    {
+      "path": "scripts/migration-apply.ts",
+      "count": 2
+    },
+    {
+      "path": "scripts/yuk1406-repair-select-display.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/agency/jobs/research_meeting_nightly.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/agency/server/misconception-promote.ts",
+      "count": 2
+    },
+    {
+      "path": "src/capabilities/copilot/server/checkpoint-revert-operation.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/copilot/server/copilot-run-coordination.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/copilot/server/durable-dispatch.ts",
+      "count": 3
+    },
+    {
+      "path": "src/capabilities/copilot/server/review-answer-consumer.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/ingestion/server/agent/asks.ts",
+      "count": 2
+    },
+    {
+      "path": "src/capabilities/ingestion/server/agent/budget.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/ingestion/server/agent/ledger.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/ingestion/server/agent/ownership.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/ingestion/server/agent/purpose-stop.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/ingestion/server/block-structured-edit.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/ingestion/server/creation-receipts.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/ingestion/server/image-candidate-accept.ts",
+      "count": 2
+    },
+    {
+      "path": "src/capabilities/ingestion/server/import-completion.ts",
+      "count": 2
+    },
+    {
+      "path": "src/capabilities/ingestion/server/make-paper.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/ingestion/server/operation-store.ts",
+      "count": 2
+    },
+    {
+      "path": "src/capabilities/ingestion/server/purpose-change.ts",
+      "count": 2
+    },
+    {
+      "path": "src/capabilities/notes/server/artifacts/presence/pg.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/notes/server/hub-sync-reconciliation.ts",
+      "count": 2
+    },
+    {
+      "path": "src/capabilities/notes/server/mastery-refine-effect.ts",
+      "count": 2
+    },
+    {
+      "path": "src/capabilities/notes/server/note-refine-triggers.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/jobs/model_slice_admission_run.ts",
+      "count": 2
+    },
+    {
+      "path": "src/capabilities/practice/jobs/rejudge.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/appeal.ts",
+      "count": 5
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/attempt.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/paper-attempt.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/submit.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/server/failure-learning-attribution.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/server/intervention-diagnostics.ts",
+      "count": 2
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-operational.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/evaluate-submission.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/recorded-model-executor.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/server/question-supply/ingest-dedup.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/server/question-supply/placement-supply-lock.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/server/review-operation.ts",
+      "count": 2
+    },
+    {
+      "path": "src/capabilities/practice/server/serving-actions.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/server/session-operations/review-session.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/server/stream-store.ts",
+      "count": 5
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/submit-question.ts",
+      "count": 2
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/write-quiz.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/shell/server/teaching-brief-ack.ts",
+      "count": 1
+    },
+    {
+      "path": "src/db/paid-effect-control.ts",
+      "count": 1
+    },
+    {
+      "path": "src/db/paid-effect-store.ts",
+      "count": 1
+    },
+    {
+      "path": "src/kernel/proposals/applier-helpers.ts",
+      "count": 1
+    },
+    {
+      "path": "src/kernel/proposals/producers.ts",
+      "count": 2
+    },
+    {
+      "path": "src/kernel/proposals/signals.ts",
+      "count": 2
+    },
+    {
+      "path": "src/kernel/records/asset-store.ts",
+      "count": 1
+    },
+    {
+      "path": "src/kernel/records/kc-typed-state.ts",
+      "count": 2
+    },
+    {
+      "path": "src/kernel/records/mastery-state.ts",
+      "count": 2
+    },
+    {
+      "path": "src/kernel/records/subject-control-lock.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/ai/provider-session-admission.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/assessment/activate.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/assessment/settle-apply.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/assessment/settle.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/contract-epoch/epoch.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/durable/judge-family.ts",
+      "count": 3
+    },
+    {
+      "path": "src/server/durable/producer-fence-lock.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/durable/prune-family.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/durable/review-orphan-family.ts",
+      "count": 4
+    },
+    {
+      "path": "src/server/durable/session-orphan-backend.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/durable/session-orphan-family.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/mastery/personalized-difficulty.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/memory/brief-purpose.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/memory/brief.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/memory/memory-ingest-recovery-store.ts",
+      "count": 2
+    },
+    {
+      "path": "src/server/memory/memory-reconcile-handoff-store.ts",
+      "count": 4
+    },
+    {
+      "path": "src/server/memory/purpose-repair.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/questions/edit-question.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/questions/shared-submit.ts",
+      "count": 3
+    },
+    {
+      "path": "src/server/rehearsal/orchestrate.ts",
+      "count": 1
+    },
+    {
+      "path": "src/server/session/conversation.ts",
+      "count": 1
+    }
+  ]
+}

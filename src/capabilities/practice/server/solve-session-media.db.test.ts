@@ -5,15 +5,15 @@ import { resetTestConfig } from '@/core/config/store';
 import { canonicalHash } from '@/core/migration/canonical';
 import { ai_task_runs, event, material_fsrs_state, question, source_asset } from '@/db/schema';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { type RunnerMessage, __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 import { normalizeQuestionGroupToContract } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { issueAssessment } from './assessment/issue';
 import { type RunTaskFn, planSolveHint, startSolveSession } from './solve-session';
 
 const r2 = vi.hoisted(() => ({ get: vi.fn() }));
-vi.mock('@/server/r2', () => ({ getR2: () => r2 }));
+vi.mock('@/kernel/object-storage', () => ({ getR2: () => r2 }));
 const db = testDb();
 const bytes = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1WQAAAAASUVORK5CYII=',

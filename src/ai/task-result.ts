@@ -1,3 +1,4 @@
+import type { SealedHelpLatency } from '@/ai/help-latency';
 import type { TaskTimeoutSource } from '@/ai/task-budget';
 
 export interface TaskTextResult {
@@ -19,6 +20,8 @@ export interface TaskTextResult {
   structured_output?: unknown;
   /** NoteGenerateTask model phases; the job adds parse and DB timings. */
   phases?: NoteGeneratePhaseTimings;
+  /** Help-attempt latency seal. Absent on other task kinds. */
+  help_latency?: SealedHelpLatency;
 }
 
 type RequiredRunFacts = 'task_run_id' | 'finishReason' | 'cost_basis' | 'cost_ref';
@@ -74,6 +77,8 @@ export interface AiTaskUsage {
    * milestones. Metadata only — it never feeds token counts or cost truth.
    */
   transport?: ProviderTransportEvidence;
+  /** Copilot and teaching-turn attempts. Other kinds omit it. */
+  help_latency?: SealedHelpLatency;
 }
 
 /** The one semantic cost truth owned by a central-runner model attempt. */

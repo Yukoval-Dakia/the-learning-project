@@ -25,7 +25,7 @@ export type ItemPriorDraftT = z.infer<typeof ItemPriorDraft>;
 // 与 docs/design/2026-06-15-b-anchor-feasibility-spike.md）。
 //
 // 形状 = 单次结构化输出：每档 θ 模拟若干名学生作答（学生看不到参考答案），
-// 对照 reference_md 判对错；确定性反推（src/core/item-prior-llasa.ts）把
+// 对照 reference_md 判对错；确定性反推（src/core/item-prior-estimation.ts）把
 // 作答分布折回 ItemPriorDraftT（b_logit/confidence/reasoning），复用同一条
 // applyItemPrior 写路径，provenance 用 source='llm_prior_llasa' 区分。
 

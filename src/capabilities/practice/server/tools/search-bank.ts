@@ -11,6 +11,7 @@ import {
   BankSearchV2Error,
   BankSearchV2ErrorSchema,
   BankSearchV2NewSchema,
+  type BankSearchV2Output,
   BankSearchV2OutputSchema,
 } from './bank-requirements';
 import {
@@ -177,6 +178,8 @@ const SearchBankLegacyOutputSchema = z.object({
           /** vector 专有：是否通过 检索计入规则（天花板 + top-1 margin）；
            * false = 只在候选列表展示，不抬 verdict（同 fts weak 语义）。 */
           counted: z.boolean().optional(),
+          /** vector 专有（YUK-1603）：该题向量所依据的行 revision（对账用）。 */
+          source_revision: z.number().int().nullable().optional(),
         }),
       ),
       missing: z.array(z.string()),
@@ -208,7 +211,19 @@ export const SearchBankOutputSchema = z.union([
 ]);
 
 type SearchBankInput = z.infer<typeof SearchBankInputSchema>;
+type SearchBankLegacyOutput = z.infer<typeof SearchBankLegacyOutputSchema>;
 type SearchBankOutput = z.infer<typeof SearchBankOutputSchema>;
+// Overloads let a statically-v1 input (contract_version absent or 1) read the
+// legacy output shape directly; an input carrying contract_version:2 yields
+// the v2 result. The DomainTool storage signature still exposes the union.
+async function executeSearchBank(
+  ctx: ToolContext,
+  rawInput: SearchBankInput & { contract_version: 2 },
+): Promise<BankSearchV2Output | z.infer<typeof BankSearchV2ErrorSchema>>;
+async function executeSearchBank(
+  ctx: ToolContext,
+  rawInput: SearchBankInput,
+): Promise<SearchBankLegacyOutput>;
 async function executeSearchBank(
   ctx: ToolContext,
   rawInput: SearchBankInput,
@@ -257,10 +272,10 @@ async function executeSearchBank(
   });
 }
 
-export const searchBankTool: DomainTool<SearchBankInput, SearchBankOutput> = {
+export const searchBankTool = {
   name: 'search_bank',
   description:
-    'The only question-bank search entrance. Prefer contract_version=2 with original query, explicit requirements[{id,statement,importance:required|preferred}], use:inspect|practice, optional deterministic scope, optional need:{count}, and independent page_size (1–50). Query-only v2 uses a configured interpretation task and returns original spans/ambiguities. V2 checks each authorized immutable revision against every condition and same-task joint requirements; exact source citations are validated. Only all-required supported + joint supported + selected parts available can count as matched. Missing media, incomplete reads, task/parse failures remain unknown. Inspect preserves unpublished drafts as unverified; practice reuses the real issuance gate before each channel cap. Restricted roles use public-text FTS only: existing answer-bearing vectors are unavailable until visibility projections ship. Private/owner use FTS + vector/RRF; recall thresholds do not decide semantic matches. No need means fulfillment=not_assessed. Results disclose scan/verification budgets, before/after rank, task/cost evidence and incomplete recall; no hits never proves bank absence. V2 cursor is server-signed and actor/role/request/result-bound, continues the stored 15-minute snapshot without embedding/model calls; changed/withdrawn versions explicitly stale. Use only {contract_version:2,cursor} to continue. Anchors accept exact question_ref plus preserve/change statements. This slice cannot redeem search evidence for file_bank_gap or versioned quiz/issuance; registered demand and predecessor bindings explicitly reject until their authority is connected. No gap writes, generation, learner-state reads, goal changes or issuance. V1 flat query/limit/scope fields remain legacy_candidate_only; old enough/sparse/none and limit are candidate recall quantities, never v2 fulfillment. New v2 fields never silently downgrade to v1.',
+    'The only question-bank search entrance. Prefer contract_version=2 with original query, explicit requirements[{id,statement,importance:required|preferred}], use:inspect|practice, optional deterministic scope, optional need:{count}, and independent page_size (1–50). Query-only v2 uses a configured interpretation task and returns original spans/ambiguities. V2 checks each authorized immutable revision against every condition and same-task joint requirements; exact source citations are validated. Only all-required supported + joint supported + selected parts available can count as matched. Missing media, incomplete reads, task/parse failures remain unknown. Inspect preserves unpublished drafts as unverified; practice reuses the real issuance gate before each channel cap. Restricted roles use public-text FTS only: existing answer-bearing vectors are unavailable until visibility projections ship. Private/owner use FTS + vector/RRF; vector recall only counts vectors current for the row revision (embed_source_revision; each vector hit echoes that source_revision, null = pre-column legacy vector); recall thresholds do not decide semantic matches. No need means fulfillment=not_assessed. Results disclose scan/verification budgets, before/after rank, task/cost evidence and incomplete recall; no hits never proves bank absence. V2 cursor is server-signed and actor/role/request/result-bound, continues the stored 15-minute snapshot without embedding/model calls; changed/withdrawn versions explicitly stale. Use only {contract_version:2,cursor} to continue. Anchors accept exact question_ref plus preserve/change statements. This slice cannot redeem search evidence for file_bank_gap or versioned quiz/issuance; registered demand and predecessor bindings explicitly reject until their authority is connected. No gap writes, generation, learner-state reads, goal changes or issuance. V1 flat query/limit/scope fields remain legacy_candidate_only; a similar_to anchor whose vector is missing or not current for its content/EMBED_VERSION/row revision degrades honestly to FTS; old enough/sparse/none and limit are candidate recall quantities, never v2 fulfillment. New v2 fields never silently downgrade to v1.',
   effect: 'read',
   inputSchema: SearchBankInputSchema,
   outputSchema: SearchBankOutputSchema,
@@ -274,4 +289,4 @@ export const searchBankTool: DomainTool<SearchBankInput, SearchBankOutput> = {
     return `search_bank · ${output.hits.length}/${output.coverage.candidate_pool_size} · legacy candidates`;
   },
   mirrorEvent: 'never',
-};
+} satisfies DomainTool<SearchBankInput, SearchBankOutput>;

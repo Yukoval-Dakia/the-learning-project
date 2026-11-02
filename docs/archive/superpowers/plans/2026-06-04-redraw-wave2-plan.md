@@ -42,4 +42,4 @@ chain-merge 顺序（globals.css append-append 冲突由集成者机械解，两
 - globals.css 多 lane 追加 → 唯一预期冲突点，机械可解；lane 间不碰彼此路由文件。
 - composer 是本 wave 唯一"新功能面"（非纯 restyle）—— reviewer 重点：流式渲染错误态、不破坏既有 summary/事件留痕、token 不进前端。
 - cleanup 删类必须 grep=0 全仓验证（含未重绘屏仍在用的 legacy 类，删错即回归——故排最后且单独 review）。
-- items 健康条的读聚合：只读现成 view/表，不得新增写路径（audit:schema 零增项）。
+- items 健康条的读聚合：只读现成 view/表；写路径不新增（audit:schema 零增项）。

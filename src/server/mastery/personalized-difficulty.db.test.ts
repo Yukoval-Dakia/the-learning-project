@@ -12,12 +12,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { event, item_calibration, knowledge, mastery_state, question } from '@/db/schema';
+import {
+  buildFamilyKey as familyKey,
+  getFamilyCalibration,
+} from '@/kernel/read-models/question-difficulty';
 import { resetDb } from '../../../tests/helpers/db';
 import {
   FAMILY_MIN_DISTINCT_QUESTIONS,
   FAMILY_MIN_EVIDENCE,
-  familyKey,
-  getFamilyCalibration,
   recordFamilyObservationForAttempt,
 } from './personalized-difficulty';
 

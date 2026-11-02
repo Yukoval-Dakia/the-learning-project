@@ -72,7 +72,7 @@ export const LearningItemArchiveExperimental = z.object({
 });
 export type LearningItemArchiveExperimentalT = z.infer<typeof LearningItemArchiveExperimental>;
 
-/** Practice-owned attribution repair. Unlike status changes, this preserves version and time. */
+/** Structural attribution repair. Unlike status changes, this preserves version and time. */
 export const LearningItemKnowledgeIdsRewriteExperimental = z.object({
   actor_kind: z.literal('system'),
   actor_ref: z.literal('learning-item-attribution-repair'),

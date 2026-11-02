@@ -18,7 +18,7 @@
 
 `knowledge_edge.relation_type`（ADR-0010 核心集合）有 5 个有意义的 type：`prerequisite`、`related_to`、`contrasts_with`、`applied_in`、`derived_from`。P4 之前这些边只被三类消费：creation-validation（rubric-validator 提议时校验）、generic-read（copilot 邻域一把灌）、少量 specialized（topology-gate 仅 prerequisite 环检测、hub-mesh 笔记上下文）。**没有任何「按 relation_type 驱动 mastery 诊断」的消费**——图在长但不影响 per-KC 能力估计。
 
-「KG 承重借用」把边接进 mastery 诊断轴（`mastery_state.theta_hat` 的读侧投影 `getMasteryProjection`，`src/server/mastery/state.ts`）。这催生了**四个同名异实的「prerequisite propagation」机制**，全 dark（flag 默认 false），语义/半径各异：
+「KG 承重借用」把边接进 mastery 诊断轴（`mastery_state.theta_hat` 的读侧投影 `getMasteryProjection`，`src/kernel/read-models/mastery-projection.ts`）。这催生了**四个同名异实的「prerequisite propagation」机制**，全 dark（flag 默认 false），语义/半径各异：
 
 | 机制 | 方向 | 数值形态 | 影响半径 | flag |
 |---|---|---|---|---|
@@ -105,7 +105,7 @@ A5/A6 都 ship 成软层：**只移 surfaced `theta_hat`（能力后验均值）
 ### 9. Rust 落点与 S6 前置
 
 **本单元零 Rust 改动**。A6 kernel 平凡（O(E) 加法）零收益；A5 GMRF 是唯一重数值，但问题是「解形态在 batch-read 尺寸下不可扩展」——**先界定解规模（决定 8 分量守卫 / 将来稀疏 solver），再谈 port 语言**。S6（Rust A5 GMRF port）defer 触发 =（A5 flag 翻 + bit-exact 跨端一致或大分量性能需求），前置四件套：
-1. **deployment-aware loader（非 cwd-relative）+ .node/.wasm 进部署镜像**——`propagate-priors.ts` 白纸黑字：cwd-relative `NODE_PATH` 下 deployment-aware loader 是翻 flag 显式 PREREQUISITE；连 coldstart Rust 都未接生产，任何新 port 继承同 gap。
+1. **deployment-aware loader（非 cwd-relative）+ .node/.wasm 进部署镜像**——`src/capabilities/practice/server/day-one-priors.ts` 白纸黑字：cwd-relative `NODE_PATH` 下 deployment-aware loader 是翻 flag 显式 PREREQUISITE；连 coldstart Rust 都未接生产，任何新 port 继承同 gap。
 2. YUK-501 wasm CI skip 接通（否则 parity 无 gate）。
 3. wasm32-wasip1-threads + napi 双构建面。
 4. crate `napi.targets:["wasm32-wasip1-threads"]`。

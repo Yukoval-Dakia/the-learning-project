@@ -12,6 +12,7 @@
 | `api/workbench-summary.ts` | 工作台聚合 KPI |
 | `api/overnight-digest.ts` | 昨夜窗 digest |
 | `api/prep-desk-conjectures.ts` | 备课台 top pending conjectures |
+| `server/auto-applied-read.ts` + `decide-breaker.ts` + `completion-autoapply-actions.ts` | 历史自动应用卡完整只读投影与全局裁决速率展示；不拥有自动应用或撤销写入 |
 | `server/` | proposals reader/decider/retract、workbench 聚合、overnight digest |
 | `ui/TodayPage.tsx` / `InboxPage.tsx` / `CoachHub.tsx` | 今日、收件箱、Coach 周报 |
 

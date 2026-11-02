@@ -46,6 +46,7 @@ import {
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
+import { lockConjectureFold, lockProbeQuestion, lockProbeServe } from './probe-lock';
 import {
   type PriorProbeResult,
   isEvidenceResult,
@@ -72,11 +73,6 @@ export const PROBE_JUDGE_CLAIM_TTL_MS = 5 * 60_000;
 // v2 reaches a terminal resolution after at most two independent wrong answers.
 // Fifty is a defensive legacy/corruption ceiling, not an expected lifecycle length.
 const MAX_PROBE_HISTORY_FOR_RESOLUTION = 50;
-
-// Fixed key for the transaction-scoped advisory lock that serializes serves. All
-// serves contend on this single key so the count-read + insert critical section runs
-// one-at-a-time (a genuine ≤cap guarantee, not READ COMMITTED hope).
-const PROBE_SERVE_LOCK_KEY = 406_440_3 as const;
 
 function toRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -175,7 +171,7 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
   const referenceMd = params.referenceMd ?? null;
 
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${PROBE_SERVE_LOCK_KEY})`);
+    await lockProbeServe(tx);
 
     const activeBefore = await countActiveProbes(tx);
     if (activeBefore >= MAX_CONCURRENT_ACTIVE_PROBES) {
@@ -227,7 +223,7 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
 /** Explicit delivery command. Publication may precede model admission; GET never serves. */
 export async function servePublishedProbe(db: DbOrTx, probeQuestionId: string) {
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${PROBE_SERVE_LOCK_KEY})`);
+    await lockProbeServe(tx);
     const [probe] = await tx.select().from(question).where(eq(question.id, probeQuestionId));
     if (probe?.source !== PROBE_QUESTION_SOURCE) return { status: 'not_a_probe' as const };
     const [result] = await tx
@@ -527,7 +523,7 @@ export async function claimProbeJudging(
   now: Date = new Date(),
 ): Promise<AnswerProbeResult | null> {
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${probeQuestionId}, 0))`);
+    await lockProbeQuestion(tx, probeQuestionId);
 
     const [completed] = await tx
       .select()
@@ -614,7 +610,7 @@ export async function releaseProbeJudging(
   now: Date = new Date(),
 ): Promise<void> {
   await db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${probeQuestionId}, 0))`);
+    await lockProbeQuestion(tx, probeQuestionId);
     await writeEvent(tx, {
       id: newId(),
       actor_kind: 'system',
@@ -655,7 +651,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
     // Serialize concurrent answers on the SAME probe so check-existing + write is atomic
     // (per-probe key via hashtextextended; different probes don't contend). Closes the
     // read-then-write idempotency gap that would let two racers insert a result each.
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${probeQuestionId}, 0))`);
+    await lockProbeQuestion(tx, probeQuestionId);
 
     const [probe] = await tx
       .select({
@@ -775,7 +771,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
     // Without this second lock, two different probes answered concurrently could
     // both read an empty history and both persist `evidence_for`. The namespace
     // salt keeps the conjecture lock distinct from the per-question lock above.
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${conjectureEventId}, 1))`);
+    await lockConjectureFold(tx, conjectureEventId);
     // Serialize against proposal correction/retraction. The pre-judge route check is
     // only a cost guard; this locked re-check is the commit authority so a stale
     // conjecture can never mint recurrence evidence or a follow-up probe.

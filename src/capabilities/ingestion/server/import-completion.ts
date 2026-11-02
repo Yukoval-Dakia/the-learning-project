@@ -24,9 +24,9 @@ import {
 } from '@/kernel/read-models/subject-profile';
 import { resolveDocumentUsage } from '@/kernel/read-models/usage-policy';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import type { SubjectProfile } from '@/subjects/profile';
 import { ReviewBody, type ReviewBodyParsed } from '../api/operation-schema';
 import { hasAgentEvidence } from './agent/history';

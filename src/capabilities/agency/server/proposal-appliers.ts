@@ -11,7 +11,6 @@
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 
-import type { CreateLearningIntentKnowledgeNodeFn } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { artifact, completion_evidence, event, learning_item } from '@/db/schema';
@@ -36,6 +35,7 @@ import {
 } from '@/kernel/records/learning-items';
 import {
   type AcceptLearningIntentParams,
+  type CreateLearningIntentKnowledgeNodeFn,
   type LearningIntentMaterializeResult,
   acceptLearningIntent,
 } from './learning-intent';

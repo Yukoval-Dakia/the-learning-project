@@ -1,11 +1,11 @@
 import { eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { question, question_group_lifecycle } from '@/db/schema';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
   normalizeQuestionGroupToContract,
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 
 /** Author a deterministic reference for old selection-only fixtures, then really publish it. */
 export async function publishPlacementFixture(db: Db | Tx, questionId: string) {

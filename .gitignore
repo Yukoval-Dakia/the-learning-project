@@ -167,3 +167,9 @@ docs/preflight/*-vision-rejudge.json
 .slim/worktrees/
 .slim/worktrees.json
 # END oh-my-opencode-slim worktrees
+
+# Process docs (planning notes, audits) and generated files live outside git.
+# Shared copy: /Volumes/YukovalSBak/yukoval-projects/tlp-docs/ . Files already tracked here stay tracked.
+docs/planning/
+docs/audit/
+postman/learning-api.postman_collection.json

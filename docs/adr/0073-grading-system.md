@@ -39,7 +39,7 @@ TEST 实测（YUK-1445 排查）：62 道 active 题中 36 道被判分维度冻
 
 ### D6 两个入口一套判分：练习作答 + 拍照录入卷面作答
 
-练习：学习者在 app 作答，走 issuance→submission→判分。拍照录入：页面含学生作答时，录入 agent **逐单元如实读出**——圈了/写了哪个选项（→option_ids）、每空内容、过程、红笔按学习者偏好解读（**事后订正单独记录，绝不冒充作答**）、无法辨认 ⇒ unknown（pending）。capture 经**既有作答写入器**（`captureIngestionOriginal` → `saveSubmission`/`commitFormalAttempt`）进**同一套**判分系统、同一冻结方法与政策；录入侧没有第二套判分逻辑。现状缺口（代码核实）：今天 capture 只把 flat `wrong_answer_md` 映射进单一槽位、选择题靠 label 大写匹配——这正是要被逐单元结构化 capture 取代的启发式；`enroll.ts` 的 outcome-as-signal 旧路径退役为「无判分面时的材料录入」。录入模型同一次调用顺带给的判分意见，**只有**按判分系统契约输出、且该模型/切片对该单元已准入并标定才算数，否则一律 advisory。因此 YUK-1404 录入对比测的是 capture/handoff 正确性；判分质量归本 ADR 所有。
+练习：学习者在 app 作答，走 issuance→submission→判分。拍照录入：页面含学生作答时，录入 agent **逐单元如实读出**——圈了/写了哪个选项（→option_ids）、每空内容、过程、红笔按学习者偏好解读（**事后订正单独记录**）、无法辨认 ⇒ unknown（pending）。capture 经**既有作答写入器**（`captureIngestionOriginal` → `saveSubmission`/`commitFormalAttempt`）进**同一套**判分系统、同一冻结方法与政策；录入侧没有第二套判分逻辑。现状缺口（代码核实）：今天 capture 只把 flat `wrong_answer_md` 映射进单一槽位、选择题靠 label 大写匹配——这正是要被逐单元结构化 capture 取代的启发式；`enroll.ts` 的 outcome-as-signal 旧路径退役为「无判分面时的材料录入」。录入模型同一次调用顺带给的判分意见，**只有**按判分系统契约输出、且该模型/切片对该单元已准入并标定才算数，否则一律 advisory。因此 YUK-1404 录入对比测的是 capture/handoff 正确性；判分质量归本 ADR 所有。
 
 ### D7 按题型的判分方法（owner 2026-10-11 14:19）
 

@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, normalize, resolve, sep } from 'node:path';
-import type { R2Client } from '@/server/r2';
+import type { R2Client } from '@/kernel/object-storage';
 
 function assertSafeKey(key: string): void {
   const normalized = normalize(key);

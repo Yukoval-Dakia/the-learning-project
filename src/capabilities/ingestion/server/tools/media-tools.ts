@@ -7,13 +7,14 @@ import {
 } from '@/capabilities/ingestion/server/glm_ocr';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import { source_asset } from '@/db/schema';
+import { getR2 } from '@/kernel/object-storage';
+import type { SourceAssetRow } from '@/kernel/records/asset-store';
 import { isUniqueViolation, persistSourceAsset } from '@/kernel/records/asset-store';
 import type { ToolContext } from '@/kernel/tools/types';
 import { TOOL_OUTPUT_IMAGES_FIELD } from '@/kernel/tools/types';
 import { AGENT_TOOL_RUN_ID_PREFIX } from '../agent/budget-state';
 import { withAgentProviderLiability } from '../agent/spend';
 import { type PixelBBox, cropToPng, probeImage, rotateImage } from '../image-ops';
-import type { SourceAssetRow } from '../persist-image-asset';
 import { redactIngestionText } from '../privacy-guard';
 import {
   GLM_OCR_MODEL,
@@ -27,7 +28,6 @@ import {
   PixelBBoxInputSchema,
   assertAssetInScope,
   findOwningDocument,
-  getR2,
   loadVerifiedAssetBytes,
   requireAssetRef,
   requireIngestionScope,

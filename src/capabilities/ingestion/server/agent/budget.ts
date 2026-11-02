@@ -14,6 +14,7 @@ import {
 } from '../operation-store';
 import {
   AGENT_BUDGET_EXCEEDED_CODE,
+  AGENT_BUDGET_LOCK_KEY,
   AGENT_BUDGET_UNAVAILABLE_CODE,
   type AgentBudgetGrant,
   budgetUnavailable,
@@ -31,7 +32,6 @@ import {
 } from './spend';
 
 const BUDGET_CONFIG_KEY = 'ingestion.agent_weekly_budget_usd';
-const BUDGET_LOCK_KEY = 'ingestion-agent-weekly-budget';
 const AGENT_JOB_NAME = 'ingestion_agent_run';
 const AGENT_RUN_ID_PREFIX = 'ingestion_agent_run';
 const AGENT_TOOL_RUN_ID_PREFIX = 'ingestion_agent_tool';
@@ -153,7 +153,7 @@ async function authorizeGrant(
   },
 ): Promise<void> {
   // Serialize globally before touching rows so every start decision shares one order.
-  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${BUDGET_LOCK_KEY}))`);
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${AGENT_BUDGET_LOCK_KEY}))`);
 
   await retainUnprovenAgentReservations(tx);
   await retainHistoricalOcrLiabilities(tx, input.sessionId);

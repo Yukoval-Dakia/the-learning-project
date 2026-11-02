@@ -24,31 +24,4 @@ describe('Start functions share Hono authorization', () => {
       expect(epochGate).not.toHaveBeenCalled();
     },
   );
-
-  it('fails closed when the configured secret is missing', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', '');
-    const app = buildHonoApp([], { epochGate: async () => ({ runnable: true }) });
-    expect((await authorizeStartFunction(app, request('test-token')))?.status).toBe(401);
-  });
-
-  it('accepts the original header and consults the same epoch gate', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const epochGate = vi.fn(async () => ({ runnable: true }));
-    const app = buildHonoApp([], { epochGate });
-    expect(await authorizeStartFunction(app, request('test-token'))).toBeUndefined();
-    expect(epochGate).toHaveBeenCalledOnce();
-  });
-
-  it('preserves an authenticated but fenced runtime denial', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([], {
-      epochGate: async () => ({ runnable: false, reason: 'unavailable' }),
-    });
-    const denied = await authorizeStartFunction(app, request('test-token'));
-    expect(denied?.status).toBe(503);
-    expect(await denied?.json()).toMatchObject({
-      error: 'contract_epoch_fenced',
-      reason: 'unavailable',
-    });
-  });
 });

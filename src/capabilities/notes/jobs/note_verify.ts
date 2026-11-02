@@ -1,9 +1,5 @@
 import type { Job } from 'pg-boss';
-
-import {
-  type BossDispatch,
-  dispatchNoteVerificationClaimRecovery,
-} from '@/capabilities/notes/server/note-handoff';
+import { dispatchNoteVerificationClaimRecovery } from '@/capabilities/notes/server/note-handoff';
 import { driveLongNoteCheck } from '@/capabilities/notes/server/note-long-check';
 import {
   listRecoverableNoteVerificationResults,
@@ -27,6 +23,7 @@ import {
   lockPaidEffectControlFamily,
   paidEffectControlTableExists,
 } from '@/db/paid-effect-control';
+import type { BossDispatch } from '@/kernel/records/note-handoff-protocol';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 
 // Retained pg-boss consumer. The verification execution is backend-agnostic in

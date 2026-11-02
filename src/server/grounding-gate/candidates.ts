@@ -5,12 +5,15 @@ import {
   type EnrichedEvidenceCell,
   type EvidenceCell,
   type LoadedConjectureEvidenceImage,
+  type PredictionAccountability,
   applyConjectureHistoryGate,
   collectConjectureEvidenceAssetRefs,
   conjectureKey,
   enrichEvidenceCells,
   gatherConjectureEvidence,
   loadConjectureHistory,
+  loadPredictionAccountabilityByKey,
+  rankEvidenceCellsByAccountability,
 } from '@/capabilities/agency/public';
 import {
   type FailureAttempt,
@@ -21,11 +24,9 @@ import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import {
-  type PredictionAccountability,
-  loadPredictionAccountabilityByKey,
-  rankEvidenceCellsByAccountability,
-} from '@/server/conjectures/accountability';
-import { getMasteryProjection } from '@/server/mastery/state';
+  abilityReadingsByIdOrFail,
+  readLearnerJudgments,
+} from '@/kernel/read-models/learner-judgment';
 
 export const GROUNDING_GATE_WINDOW_DAYS = 14;
 export const GROUNDING_GATE_ENRICH_BATCH_SIZE = 3;
@@ -170,10 +171,13 @@ export async function collectGroundingGateCandidates(
   const knowledgeIds = [
     ...new Set(failures.flatMap((failure) => failure.referenced_knowledge_ids)),
   ];
-  const [masteryByKnowledgeId, knownConjectureKeys] = await Promise.all([
-    knowledgeIds.length > 0 ? getMasteryProjection(db, knowledgeIds) : Promise.resolve(new Map()),
+  // Probe-topic mastery is evidenced ability only. Insufficient evidence is
+  // absent, so selection probes it as unknown instead of a cold-start prior.
+  const [judgmentBatch, knownConjectureKeys] = await Promise.all([
+    readLearnerJudgments(db, { knowledge_ids: knowledgeIds, context: 'any', as_of: new Date() }),
     loadKnownConjectureKeys(db),
   ]);
+  const masteryByKnowledgeId = abilityReadingsByIdOrFail(judgmentBatch);
 
   const rawCells = gatherConjectureEvidence({
     failures,

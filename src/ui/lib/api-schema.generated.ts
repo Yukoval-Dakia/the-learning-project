@@ -1143,6 +1143,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ingestion-sessions/{id}/purpose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getIngestionPurposeImpact"];
+        put?: never;
+        post: operations["changeIngestionPurpose"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ingestion/{id}/blocks": {
         parameters: {
             query?: never;
@@ -15889,6 +15905,429 @@ export interface operations {
             };
         };
     };
+    getIngestionPurposeImpact: {
+        parameters: {
+            query?: {
+                request_id?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        admission: {
+                            deliveries: {
+                                application_error: string | null;
+                                group_id: string;
+                                job_id: string;
+                                paid_state: string;
+                                revision_id: string;
+                                source_event_id: string;
+                                /** @enum {string} */
+                                source_policy: "allow" | "answer_only" | "crisis";
+                                usage_source_event_id: string;
+                            }[];
+                            /** @enum {string} */
+                            effect: "unknown";
+                            /** @enum {string} */
+                            fence: "active";
+                            operation_id: string | null;
+                            /** @enum {string} */
+                            reason: "source_fence_active_history_unknown";
+                            source_document_id: string;
+                            /** @enum {string} */
+                            state: "pending" | "unknown";
+                            /** @enum {string} */
+                            unattributed_history: "unknown";
+                        };
+                        /** @enum {string} */
+                        backup: "unknown";
+                        /** @enum {string} */
+                        cleanup: "pending_or_partial" | "not_requested";
+                        current: {
+                            epoch: string;
+                            /** @enum {string} */
+                            policy: "allow" | "answer_only" | "crisis";
+                            session_id: string;
+                            source_document_id: string;
+                            version: number;
+                        };
+                        /** @enum {string} */
+                        external_effect: "unknown_or_irreversible";
+                        receipt: {
+                            admission_obligation: {
+                                /** @enum {string} */
+                                effect: "unknown";
+                                /** @enum {string} */
+                                reason: "source_fence_active_history_unknown";
+                                source_document_id: string;
+                                /** @enum {string} */
+                                state: "pending";
+                            } | null;
+                            brief_scopes: {
+                                scope_key: string;
+                                version: number;
+                            }[];
+                            changed: boolean;
+                            cleanup_required: boolean;
+                            committed_version: number;
+                            /** @enum {string} */
+                            derivation_policy: "answer_only";
+                            epoch: string;
+                            /** @enum {string} */
+                            external_effect: "unknown_or_irreversible";
+                            input: {
+                                expected_version: number;
+                                /** Format: uuid */
+                                request_id: string;
+                                source_document_id: string;
+                                /** @enum {string} */
+                                target: "allow" | "answer_only";
+                            };
+                            operation_id: string;
+                            /** @enum {boolean} */
+                            policy_committed: true;
+                            /** @enum {string} */
+                            previous_policy: "allow" | "answer_only";
+                            session_id: string;
+                            stop: {
+                                operation_id: string | null;
+                                run_ref: string | null;
+                                session_id: string;
+                            }[];
+                            /** @enum {number} */
+                            version: 1;
+                        } | null;
+                        repairs: {
+                            cursor?: string;
+                            /** @enum {string} */
+                            derivation_policy: "answer_only";
+                            detail: string;
+                            /** Format: uuid */
+                            job_id?: string;
+                            memory_ids?: string[];
+                            operation_id: string;
+                            /** @enum {string} */
+                            sink: "mem0" | "brief" | "brief_dispatch" | "mem0_scan";
+                            source_id: string;
+                            /** @enum {string} */
+                            state: "complete" | "pending" | "failed" | "unknown";
+                            task_run_id?: string;
+                            /** @enum {number} */
+                            version: 1;
+                        }[];
+                        sinks: {
+                            briefs: {
+                                scope_key: string;
+                                /** @enum {string} */
+                                state: "complete" | "pending" | "failed" | "unknown";
+                            }[];
+                            /** @enum {string} */
+                            mem0: "pending_or_partial" | "not_requested";
+                        };
+                        /** @enum {string} */
+                        sqlite_history: "unknown";
+                        stop: {
+                            operation_id: string | null;
+                            run_ref: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "confirmed" | "pending" | "unknown";
+                        }[];
+                        /** @enum {string} */
+                        trace: "unknown";
+                        /** @enum {string} */
+                        unattributed: "unknown";
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    changeIngestionPurpose: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    expected_version: number;
+                    /** Format: uuid */
+                    request_id: string;
+                    source_document_id: string;
+                    /** @enum {string} */
+                    target: "allow" | "answer_only";
+                };
+            };
+        };
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        receipt: {
+                            admission_obligation: {
+                                /** @enum {string} */
+                                effect: "unknown";
+                                /** @enum {string} */
+                                reason: "source_fence_active_history_unknown";
+                                source_document_id: string;
+                                /** @enum {string} */
+                                state: "pending";
+                            } | null;
+                            brief_scopes: {
+                                scope_key: string;
+                                version: number;
+                            }[];
+                            changed: boolean;
+                            cleanup_required: boolean;
+                            committed_version: number;
+                            /** @enum {string} */
+                            derivation_policy: "answer_only";
+                            epoch: string;
+                            /** @enum {string} */
+                            external_effect: "unknown_or_irreversible";
+                            input: {
+                                expected_version: number;
+                                /** Format: uuid */
+                                request_id: string;
+                                source_document_id: string;
+                                /** @enum {string} */
+                                target: "allow" | "answer_only";
+                            };
+                            operation_id: string;
+                            /** @enum {boolean} */
+                            policy_committed: true;
+                            /** @enum {string} */
+                            previous_policy: "allow" | "answer_only";
+                            session_id: string;
+                            stop: {
+                                operation_id: string | null;
+                                run_ref: string | null;
+                                session_id: string;
+                            }[];
+                            /** @enum {number} */
+                            version: 1;
+                        };
+                        replayed: boolean;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     listIngestionSessionBlocks: {
         parameters: {
             query?: never;
@@ -19451,6 +19890,88 @@ export interface operations {
                             reason: string;
                         }) | null;
                         retrievability: number | null;
+                        review_timing: {
+                            basis: {
+                                duration_ms: {
+                                    /** @enum {string} */
+                                    kind: "unknown";
+                                    reason: string;
+                                } | {
+                                    duration_ms: number;
+                                    /** @enum {string} */
+                                    kind: "known";
+                                };
+                                last_retrieval_at: {
+                                    /** @enum {string} */
+                                    kind: "unknown";
+                                    reason: string;
+                                } | {
+                                    at: string;
+                                    /** @enum {string} */
+                                    kind: "known";
+                                };
+                            };
+                            freshness: {
+                                /** @enum {string} */
+                                decay_bucket: "untrained" | "fresh" | "mild" | "stale" | "unknown";
+                                due_at: {
+                                    /** @enum {string} */
+                                    kind: "unknown";
+                                    reason: string;
+                                } | {
+                                    at: string;
+                                    /** @enum {string} */
+                                    kind: "known";
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "absent";
+                                };
+                                mastered_shelf: {
+                                    /** @enum {string} */
+                                    kind: "unknown";
+                                    reason: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "not_high";
+                                } | {
+                                    /** @enum {string} */
+                                    decay_bucket: "untrained" | "fresh" | "mild" | "stale" | "unknown";
+                                    due_at: {
+                                        /** @enum {string} */
+                                        kind: "unknown";
+                                        reason: string;
+                                    } | {
+                                        at: string;
+                                        /** @enum {string} */
+                                        kind: "known";
+                                    } | {
+                                        /** @enum {string} */
+                                        kind: "absent";
+                                    };
+                                    /** @enum {string} */
+                                    kind: "shelf";
+                                };
+                            };
+                            recall: {
+                                /** @enum {string} */
+                                kind: "unknown";
+                                reason: string;
+                            } | {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                /** @enum {string} */
+                                engine: "fsrs" | "forgetting_candidate";
+                                interval: {
+                                    /** @enum {string} */
+                                    calibration: "uncalibrated";
+                                    /** @enum {string} */
+                                    kind: "not_estimated";
+                                };
+                                /** @enum {string} */
+                                kind: "point";
+                                value: number;
+                            };
+                        };
                         /** @enum {string} */
                         role: "kc" | "goal" | "container";
                         subject_profile: {
@@ -29514,6 +30035,10 @@ export interface operations {
                                 evidence_labels: {
                                     [key: string]: string;
                                 };
+                                knowledge_edge?: {
+                                    from_label: string;
+                                    to_label: string;
+                                };
                                 title: string;
                             } | null;
                             proposed_at: string;
@@ -30620,6 +31145,10 @@ export interface operations {
                                 evidence_labels: {
                                     [key: string]: string;
                                 };
+                                knowledge_edge?: {
+                                    from_label: string;
+                                    to_label: string;
+                                };
                                 title: string;
                             } | null;
                             proposed_at: string;
@@ -31709,6 +32238,88 @@ export interface operations {
                             aggregate_decay_bucket: string;
                             legacy_question_fsrs: {
                                 due_at_sec: number;
+                                review_timing: {
+                                    basis: {
+                                        duration_ms: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            duration_ms: number;
+                                            /** @enum {string} */
+                                            kind: "known";
+                                        };
+                                        last_retrieval_at: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            at: string;
+                                            /** @enum {string} */
+                                            kind: "known";
+                                        };
+                                    };
+                                    freshness: {
+                                        /** @enum {string} */
+                                        decay_bucket: "untrained" | "fresh" | "mild" | "stale" | "unknown";
+                                        due_at: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            at: string;
+                                            /** @enum {string} */
+                                            kind: "known";
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "absent";
+                                        };
+                                        mastered_shelf: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "not_high";
+                                        } | {
+                                            /** @enum {string} */
+                                            decay_bucket: "untrained" | "fresh" | "mild" | "stale" | "unknown";
+                                            due_at: {
+                                                /** @enum {string} */
+                                                kind: "unknown";
+                                                reason: string;
+                                            } | {
+                                                at: string;
+                                                /** @enum {string} */
+                                                kind: "known";
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "absent";
+                                            };
+                                            /** @enum {string} */
+                                            kind: "shelf";
+                                        };
+                                    };
+                                    recall: {
+                                        /** @enum {string} */
+                                        kind: "unknown";
+                                        reason: string;
+                                    } | {
+                                        /** @enum {string} */
+                                        calibration: "uncalibrated";
+                                        /** @enum {string} */
+                                        engine: "fsrs" | "forgetting_candidate";
+                                        interval: {
+                                            /** @enum {string} */
+                                            calibration: "uncalibrated";
+                                            /** @enum {string} */
+                                            kind: "not_estimated";
+                                        };
+                                        /** @enum {string} */
+                                        kind: "point";
+                                        value: number;
+                                    };
+                                };
                             } | null;
                             per_knowledge: {
                                 decay_bucket: string;
@@ -31718,6 +32329,88 @@ export interface operations {
                                 last_evidence_at_sec: number | null;
                                 mastery: number | null;
                                 name: string | null;
+                                review_timing: {
+                                    basis: {
+                                        duration_ms: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            duration_ms: number;
+                                            /** @enum {string} */
+                                            kind: "known";
+                                        };
+                                        last_retrieval_at: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            at: string;
+                                            /** @enum {string} */
+                                            kind: "known";
+                                        };
+                                    };
+                                    freshness: {
+                                        /** @enum {string} */
+                                        decay_bucket: "untrained" | "fresh" | "mild" | "stale" | "unknown";
+                                        due_at: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            at: string;
+                                            /** @enum {string} */
+                                            kind: "known";
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "absent";
+                                        };
+                                        mastered_shelf: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "not_high";
+                                        } | {
+                                            /** @enum {string} */
+                                            decay_bucket: "untrained" | "fresh" | "mild" | "stale" | "unknown";
+                                            due_at: {
+                                                /** @enum {string} */
+                                                kind: "unknown";
+                                                reason: string;
+                                            } | {
+                                                at: string;
+                                                /** @enum {string} */
+                                                kind: "known";
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "absent";
+                                            };
+                                            /** @enum {string} */
+                                            kind: "shelf";
+                                        };
+                                    };
+                                    recall: {
+                                        /** @enum {string} */
+                                        kind: "unknown";
+                                        reason: string;
+                                    } | {
+                                        /** @enum {string} */
+                                        calibration: "uncalibrated";
+                                        /** @enum {string} */
+                                        engine: "fsrs" | "forgetting_candidate";
+                                        interval: {
+                                            /** @enum {string} */
+                                            calibration: "uncalibrated";
+                                            /** @enum {string} */
+                                            kind: "not_estimated";
+                                        };
+                                        /** @enum {string} */
+                                        kind: "point";
+                                        value: number;
+                                    };
+                                };
                             }[];
                         };
                         serving: {
@@ -35229,20 +35922,30 @@ export interface operations {
                         };
                         hint_request_id: string;
                         /** @enum {string} */
-                        reason: "timeout" | "provider_error" | "parse_failed" | "media_unavailable" | "unknown";
+                        reason: "timeout" | "provider_error" | "quota" | "bad_gateway" | "parse_failed" | "media_unavailable" | "unknown";
                         reference_available: boolean;
                         reference_revealed: boolean;
                         /** @enum {string} */
                         status: "fallback";
+                        stop_retry?: {
+                            guidance: string;
+                            /** @enum {string} */
+                            retry: "stop";
+                        };
                         text_md: string;
                     } | {
                         elapsed_ms: number;
                         hint_request_id: string;
                         options: ("retry" | "skip")[];
                         /** @enum {string} */
-                        reason: "timeout" | "provider_error" | "parse_failed" | "media_unavailable" | "unknown";
+                        reason: "timeout" | "provider_error" | "quota" | "bad_gateway" | "parse_failed" | "media_unavailable" | "unknown";
                         /** @enum {string} */
                         status: "unavailable";
+                        stop_retry?: {
+                            guidance: string;
+                            /** @enum {string} */
+                            retry: "stop";
+                        };
                         text_md: string;
                     };
                 };
@@ -36768,6 +37471,8 @@ export interface operations {
                         };
                         kpi: {
                             due_count: number;
+                            /** @enum {string} */
+                            due_count_scope?: "actionable_queue_sample";
                             goal_count: number;
                             knowledge_count: number;
                             pending_attribution_count: number;

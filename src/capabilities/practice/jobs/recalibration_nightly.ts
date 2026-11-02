@@ -1,7 +1,7 @@
 // YUK-439 (ADR-0043 2026-10-19 Amendment A2/A3) — 联合标定批的夜间触发器。
 //
 // 历史：本 job 原是 active-PPI 机器（recalibrateQuestion 的 AIPW firm-up + 12 标签硬
-// 门控）的触发器（YUK-372 L1）。YUK-439 起改喂 src/server/mastery/joint-calibration.ts
+// 门控）的触发器（YUK-372 L1）。YUK-439 起改喂 src/kernel/records/joint-calibration.ts
 // 的**连续后验批**：每题从证据账本（difficulty_calibration_evidence，含模型判分与
 // 非 softmax 来源）以先验 N(μ_j, τ_j²) 全量重算后验 b_post——证据从第一条起连续收缩，
 // 无 12 标签跳变、无「首写不可逆」（A3）。旧 AIPW 机器转为离线审计/对照工具（其函数
@@ -23,8 +23,8 @@
 
 import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
+import { runJointCalibrationBatch } from '@/kernel/records/joint-calibration';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
-import { runJointCalibrationBatch } from '@/server/mastery/joint-calibration';
 
 export function buildRecalibrationNightlyHandler(
   db: Db,

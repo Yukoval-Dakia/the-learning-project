@@ -7,7 +7,7 @@ import {
   NOTE_GENERATION_SINGLETON_SECONDS,
   NOTE_HANDOFF_KINDS,
   noteHandoffJobId,
-} from './note-handoff';
+} from '@/kernel/records/note-handoff-protocol';
 
 const TEST_SCHEMA = `pgboss_yuk857_handoff_${process.pid}`;
 

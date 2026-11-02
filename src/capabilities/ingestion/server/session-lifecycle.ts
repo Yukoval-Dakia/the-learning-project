@@ -10,7 +10,10 @@ import { learning_session, question_block, source_document } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
 import { assertFromState } from '@/kernel/learning-session-guard';
-import { USAGE_POLICY_PROVENANCE_KEY } from '@/kernel/read-models/usage-policy';
+import {
+  USAGE_POLICY_PROVENANCE_KEY,
+  resolveSessionDerivationPolicy,
+} from '@/kernel/read-models/usage-policy';
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
 import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx/omission';
 
@@ -181,6 +184,9 @@ export async function enqueueAgentRun(
       params.sessionId,
       'Ingestion.enqueueAgentRun',
     );
+    // Budget lock remains FIRST; policy is authoritative under the session lock.
+    if ((await resolveSessionDerivationPolicy(tx, params.sessionId)) !== 'allow')
+      throw new ApiError('purpose_restricted', 'source does not permit agent ingestion', 422);
 
     await tx
       .update(learning_session)

@@ -20,9 +20,9 @@
 // - dedup 身份只看内容（canonical hash + n-gram），不看 detail id / URL。
 // - 图片题：本地字节校验（magic + sharp decode）→ R2/source_asset → 内部 URL；
 // 任何外部/临时 URL 都不进候选输出，更不进 DB。
-// - Canary 单写在本核（E3 P1-3）：每次运行（含失败）写恰好一条
+// - Canary 单写在本核：每次运行（含失败）写恰好一条
 // action='experimental:jyeoo_fetch' 事件（预算账本 + 漏斗观测面）——agent 工具与
-// executor/脚本路径都经本核，无法绕过观测；工具层不再写。
+// executor/脚本路径都经本核，无法绕过观测；工具层不写。
 
 import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -35,18 +35,13 @@ import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_q
 import type { Db } from '@/db/client';
 import { question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { type R2Client, getR2 } from '@/kernel/object-storage';
 import {
   type SourceAssetRow,
   lockImageStorageKey,
   persistImageAsset,
   sha256Hex,
 } from '@/kernel/records/asset-store';
-import { type R2Client, getR2 } from '@/server/r2';
-
-// r2 访问单主：practice 内只有本模块直接触达 '@/server/r2'（边界 audit 的
-// distinct-file 计数保持基线）。reaper / tools 一律经本模块的转发出口。
-export type { R2Client as JyeooR2Client } from '@/server/r2';
-export { getR2 as resolveJyeooR2 } from '@/server/r2';
 
 import { answerClassCompatible } from '@/subjects/question-kind';
 import { canonicalQuestionContentHash } from '../quiz/content-fingerprint';
@@ -208,7 +203,7 @@ export interface RunJyeooFetchCandidatesParams {
   ctx?: { taskRunId?: string; sessionId?: string; causedByEventId?: string };
   /**
    * r2 惰性解析器：仅当存活候选带图时调用一次。测试注入 memR2；生产 caller 可省略，
-   * 缺省走本模块的 getR2（practice 内 r2 访问单主，见模块头注释）。
+   * 缺省走共享对象存储 owner 的 getR2。
    */
   resolveR2?: () => R2Client;
   now?: Date;
@@ -469,11 +464,10 @@ const emptyCounts = (requested: number): JyeooFetchCandidatesCounts => ({
  * sessionMax 裁到日预算余额内；余额为 0 直接 budget_exhausted 短路（不 spawn）。
  * 失败分类与旧 handler 一致（auth/network/timeout/parse/args/spawn/vip/unknown）。
  *
- * Canary 单写（E3 P1-3）：本核 owns fetch canary——每次运行（含 failed /
+ * Canary 单写：本核 owns fetch canary——每次运行（含 failed /
  * budget_exhausted）写恰好一条 action='experimental:jyeoo_fetch' 事件（预算账本
- * jyeoo-budget 按当日 success 事件 counts.fetched 求和 + 漏斗观测面）。旧位在
- * jyeoo_fetch_candidates 工具层——executor 直调核时绕过观测；移入核后 agent 工具与
- * executor/脚本路径都恰好一条。事件写失败不得翻转抓取结果（best-effort try/catch）。
+ * jyeoo-budget 按当日 success 事件 counts.fetched 求和 + 漏斗观测面）。agent 工具与
+ * executor/脚本路径都经本核，故恰好一条。事件写失败不得翻转抓取结果（best-effort try/catch）。
  */
 export async function runJyeooFetchCandidates(
   params: RunJyeooFetchCandidatesParams,
