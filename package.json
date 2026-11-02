@@ -49,6 +49,7 @@
     "audit:api-contracts": "tsx scripts/audit-api-contracts.ts",
     "audit:capability-boundaries": "tsx scripts/audit-capability-boundaries.ts",
     "audit:architecture-deepening": "tsx scripts/audit-architecture-deepening.ts",
+    "audit:practice-subowners": "tsx scripts/audit-practice-subowners.ts",
     "audit:provider-lanes": "tsx scripts/audit-provider-lanes.ts --root .",
     "audit:capability-boundaries:snapshot": "tsx scripts/audit-capability-boundaries.ts --print-dependency-baseline",
     "audit:partition": "tsx scripts/audit-test-partition.ts",

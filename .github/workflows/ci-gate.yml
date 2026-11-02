@@ -167,6 +167,7 @@ jobs:
         run: |
           pnpm audit:capability-boundaries
           pnpm audit:architecture-deepening
+          pnpm audit:practice-subowners
           pnpm audit:profile
           pnpm audit:learner-copy
           pnpm audit:no-learning-styles

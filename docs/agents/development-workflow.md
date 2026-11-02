@@ -112,6 +112,7 @@ pnpm audit:api-client
 pnpm audit:tool-params
 pnpm audit:capability-boundaries
 pnpm audit:architecture-deepening
+pnpm audit:practice-subowners
 pnpm audit:profile
 pnpm audit:learner-copy
 pnpm audit:no-learning-styles
@@ -206,7 +207,7 @@ the unit/DB lanes; only verified docs-only changes skip them. Each lane computes
 files and direct unmocked DB imports in unit files. The audit lanes run exactly the
 commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition,
 question-writers, API-contract, API-client, tool-params,
-capability-boundary, architecture-deepening, profile, learner-copy, no-learning-styles,
+capability-boundary, architecture-deepening, practice-subowners, profile, learner-copy, no-learning-styles,
 structured-judge, test-policy, task-census, draft-status (insert and pool-read), strict
 flags, hub-sync-writers, provider-lanes, model-source, advisory-locks, relations and
 mastery-provenance.
