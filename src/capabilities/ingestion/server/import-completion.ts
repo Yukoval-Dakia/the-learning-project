@@ -9,8 +9,6 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
-// Enrollment routes by outcome signal (ADR-0024), not a hardcoded failure shape.
-import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
 import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import { canonicalHash } from '@/core/migration/canonical';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
@@ -23,14 +21,12 @@ import {
   resolveSubjectProfileForKnowledgeIds,
 } from '@/kernel/read-models/subject-profile';
 import { resolveDocumentUsage } from '@/kernel/read-models/usage-policy';
-import { withAnswerClass } from '@/kernel/records/answer-class-write';
-import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 import type { SubjectProfile } from '@/subjects/profile';
 import { ReviewBody, type ReviewBodyParsed } from '../api/operation-schema';
 import { hasAgentEvidence } from './agent/history';
-import { capturedQuestionShape } from './captured-question-shape';
+import { recordCapturedQuestion, settleCapturedBlock } from './capture/captured-question';
 import {
   isTerminalIngestionOperation,
   matchesAcceptedIngestionOperationInput,
@@ -341,88 +337,65 @@ export async function completeIngestionImport(
           : undefined;
       const questionId = reusable?.id ?? createId();
       questionIds.push(questionId);
-      const questionMetadata = {
-        ...(reusable?.metadata ?? {}),
-        ...(pendingCaptures.length > 0
-          ? { captured_original_question_ids: pendingCaptures.map((row) => row.id) }
-          : {}),
-        // Legacy reader compat; new code reads question.image_refs.
-        prompt_image_refs: block.image_refs,
-        prompt_image_ref_kind: 'source_asset_id',
-        source_document_id: sessionSourceDocumentId,
-        ingestion_session_id: sessionId,
-        question_block_id: importedBlockId,
-      };
-      if (reusable) {
-        await tx
-          .update(question)
-          .set({ draft_status: null, metadata: questionMetadata, updated_at: now })
-          .where(eq(question.id, questionId));
-      } else {
-        await tx.insert(question).values(
-          withAnswerClass({
-            id: questionId,
-            kind: block.question_kind,
-            choices_md: capturedQuestionShape(importedStructured).choices_md,
-            prompt_md: block.final_prompt_md,
-            reference_md: block.final_reference_md,
-            knowledge_ids: blockKnowledgeIds,
-            difficulty: block.difficulty,
-            visual_complexity: importedVisualComplexity,
-            source: sessionEntrypoint,
-            draft_status: null,
-            variant_depth: 0,
-            figures: importedFigures,
-            image_refs: block.image_refs,
-            structured: importedStructured,
-            metadata: questionMetadata,
-            created_at: now,
-            updated_at: now,
-            version: 0,
-          }),
-        );
-
-        // Mint the first revision in the same transaction. It starts withheld: the
-        // import's scoring input is contractual but not yet verified.
-        await publishQuestionGroupFromRow(tx, {
-          rootId: questionId,
-          actorRef: 'import-completion:question',
-          now,
-        });
-      }
-
-      // enrollCapturedBlock routes by outcome: failure creates a mistake, success
-      // and partial create mastery evidence without FSRS advance, and unanswered
-      // creates an open-question item (ADR-0024).
-      const enroll = await enrollCapturedBlock(tx, {
+      await recordCapturedQuestion(tx, {
         questionId,
-        outcome: block.outcome,
-        answerMd: block.final_wrong_answer_md,
-        answerImageRefs: wrongAnswerImageRefs,
-        knowledgeIds: blockKnowledgeIds,
-        imageRefs: block.image_refs,
-        captureMode: block.image_refs.length > 0 ? 'image' : 'text',
+        sessionId,
+        blockId: importedBlockId,
         sourceDocumentId: sessionSourceDocumentId,
-        docUsage: sessionDocUsage,
+        source: sessionEntrypoint,
+        content: {
+          from: 'review',
+          promptMd: block.final_prompt_md,
+          referenceMd: block.final_reference_md,
+          structured: importedStructured,
+          figures: importedFigures,
+          imageRefs: block.image_refs,
+        },
+        kind: block.question_kind,
+        knowledgeIds: blockKnowledgeIds,
+        difficulty: block.difficulty,
+        visualComplexity: importedVisualComplexity,
+        draftStatus: null,
+        extraMetadata: {
+          ...(pendingCaptures.length > 0
+            ? { captured_original_question_ids: pendingCaptures.map((row) => row.id) }
+            : {}),
+          // Legacy reader compat; new code reads question.image_refs.
+          prompt_image_refs: block.image_refs,
+          prompt_image_ref_kind: 'source_asset_id',
+        },
+        ...(reusable ? { reuse: { metadata: reusable.metadata } } : {}),
+        // A new first revision starts withheld: the import's scoring input is contractual
+        // but not yet verified.
+        actorRef: 'import-completion:question',
         now,
+      });
+
+      // Enrollment routes by outcome (ADR-0024): failure creates a mistake, success and
+      // partial create mastery evidence without FSRS advance, and unanswered creates an
+      // open-question item; the block is then linked and marked imported.
+      const enroll = await settleCapturedBlock(tx, {
+        transition: 'complete_import',
+        blockId: importedBlockId,
+        guard: { kind: 'session_locked' },
+        enroll: {
+          questionId,
+          outcome: block.outcome,
+          answerMd: block.final_wrong_answer_md,
+          answerImageRefs: wrongAnswerImageRefs,
+          knowledgeIds: blockKnowledgeIds,
+          imageRefs: block.image_refs,
+          captureMode: block.image_refs.length > 0 ? 'image' : 'text',
+          sourceDocumentId: sessionSourceDocumentId,
+          docUsage: sessionDocUsage,
+          now,
+        },
       });
 
       // Legacy mistake_id token: the attempt event id, or the record id for unanswered.
       const mistakeId = enroll.attemptEventId ?? enroll.recordId;
       mistakeIds.push(mistakeId);
       recordIds.push(enroll.recordId);
-
-      // Link the block to the question/attempt and mark it imported.
-      await applyQuestionBlockTransition(
-        tx,
-        {
-          kind: 'complete_import',
-          blockId: importedBlockId,
-          questionId,
-          attemptEventId: enroll.attemptEventId,
-        },
-        now,
-      );
     }
 
     // Mark draft blocks the user dropped as ignored.
