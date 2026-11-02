@@ -2,23 +2,23 @@
 
 ## 加载方式
 
-API（`server/index.ts`）与独立 worker（`scripts/worker.ts`）都先调用 `server/env.ts` 的 `loadEnv()`：按 `.env.local` → `.env` 顺序逐行读取，只填 `process.env` 中尚未设置的键，真实环境/compose 注入的值优先，引号值与行尾注释会被剥离（`server/env.ts`）。之后 `src/server/env.ts` 用 `@t3-oss/env-core` + `zod` 校验 server schema，`runtimeEnv` 即 `process.env`，空串按未设置处理；`DATABASE_URL` 是 schema 唯一必填项，`INTERNAL_TOKEN` 由 API 在监听前单独校验（`src/server/env.ts`）。
+API（`server/index.ts`）与独立 worker（`scripts/worker.ts`）都先调用 `server/env.ts` 的 `loadEnv()`：按 `.env.local` → `.env` 顺序逐行读取，只填 `process.env` 中尚未设置的键，真实环境/compose 注入的值优先，引号值与行尾注释会被剥离（`server/env.ts`）。之后 `src/server/config/env.ts` 用 `@t3-oss/env-core` + `zod` 校验 server schema，`runtimeEnv` 即 `process.env`，空串按未设置处理；`DATABASE_URL` 是 schema 唯一必填项，`INTERNAL_TOKEN` 由 API 在监听前单独校验（`src/server/config/env.ts`）。
 
-compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared` 只接收 `TUNNEL_TOKEN`（`docker-compose.yml`）。本机 `pnpm dev:local` 也先加载 `.env.local` / `.env` 再传给三个子进程，并用 `POSTGRES_*`（缺省 `loom`）拼出 `postgres://…@127.0.0.1:5433/…`（`scripts/dev-local.ts`；`scripts/local-db-env.ts`）。`.env.example` 只覆盖 schema 130 个键中的 41 个；仓库里唯一的 `VITE_*` 是 `src/vite-env.d.ts` 的 `VITE_API_BASE` 类型声明、没有消费点，因此不设 client schema；Vitest 下 `skipValidation` 跳过启动校验（`src/vite-env.d.ts`；`src/server/env.ts`）。
+compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared` 只接收 `TUNNEL_TOKEN`（`docker-compose.yml`）。本机 `pnpm dev:local` 也先加载 `.env.local` / `.env` 再传给三个子进程，并用 `POSTGRES_*`（缺省 `loom`）拼出 `postgres://…@127.0.0.1:5433/…`（`scripts/dev-local.ts`；`scripts/local-db-env.ts`）。`.env.example` 只覆盖 schema 130 个键中的 41 个；仓库里唯一的 `VITE_*` 是 `src/vite-env.d.ts` 的 `VITE_API_BASE` 类型声明、没有消费点，因此不设 client schema；Vitest 下 `skipValidation` 跳过启动校验（`src/vite-env.d.ts`；`src/server/config/env.ts`）。
 
 ## 环境变量
 
-表中出处写 `registry` 的键都登记在 `src/core/config/registry.ts`，默认值即该键的 `codeDefault`，并且可被 `system_config` 覆盖（优先级见下文）。`NODE_ENV` 与 `VITEST` 只影响运行时判断（测试下跳过校验、不向 pg-boss 入队），不进下表；`HOME` / `PATH` / `TMPDIR` 作为 jyeoo 子进程环境透传，列入 OCR/录入组（`src/kernel/background-job-enqueue.ts`；`src/server/env.ts`；`src/capabilities/practice/server/question-supply/jyeoo-spawn.ts`）。
+表中出处写 `registry` 的键都登记在 `src/core/config/registry.ts`，默认值即该键的 `codeDefault`，并且可被 `system_config` 覆盖（优先级见下文）。`NODE_ENV` 与 `VITEST` 只影响运行时判断（测试下跳过校验、不向 pg-boss 入队），不进下表；`HOME` / `PATH` / `TMPDIR` 作为 jyeoo 子进程环境透传，列入 OCR/录入组（`src/kernel/background-job-enqueue.ts`；`src/server/config/env.ts`；`src/capabilities/practice/server/question-supply/jyeoo-spawn.ts`）。
 
 ### 数据库与进程
 
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
-| `DATABASE_URL` | app、worker、脚本 | 必填；缺失时 `src/db/client.ts` 启动即抛错 | `src/server/env.ts`；`src/db/client.ts` |
-| `API_PORT` | app | `8787`；非正整数抛错 | `src/server/env.ts` |
+| `DATABASE_URL` | app、worker、脚本 | 必填；缺失时 `src/db/client.ts` 启动即抛错 | `src/server/config/env.ts`；`src/db/client.ts` |
+| `API_PORT` | app | `8787`；非正整数抛错 | `src/server/config/env.ts` |
 | `RW_WORKER` | app | `1` 时同进程启动 pg-boss worker | `server/index.ts` |
 | `RW_FRONTDOOR` | app | `1` 时启用 Start 前门（需要 `dist/start`）；未设时 app 只服务 Hono API | `server/index.ts` |
-| `RW_BOSS_AUTOMATION` | app、worker | `enabled`；`disabled` 关闭 pg-boss 自带 automation | `src/server/env.ts`；`src/server/boss/client.ts` |
+| `RW_BOSS_AUTOMATION` | app、worker | `enabled`；`disabled` 关闭 pg-boss 自带 automation | `src/server/config/env.ts`；`src/server/boss/client.ts` |
 | `POSTGRES_USER` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
 | `POSTGRES_PASSWORD` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
 | `POSTGRES_DB` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
@@ -31,7 +31,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
-| `INTERNAL_TOKEN` | app（`/api/*`） | 必填非空，否则 API 启动失败；`/api/health`、`/api/ready` 豁免 | `src/server/env.ts`；`server/app.ts` |
+| `INTERNAL_TOKEN` | app（`/api/*`） | 必填非空，否则 API 启动失败；`/api/health`、`/api/ready` 豁免 | `src/server/config/env.ts`；`server/app.ts` |
 | `JUDGE_PROVENANCE_SECRET` | app | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时 provenance 签发/校验关闭；worker 不读 | `src/capabilities/practice/server/judge/preview-provenance-token.ts`；`.env.example` |
 | `BANK_GAP_EVIDENCE_SECRET` | app、worker | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时一律视为未设：`search_bank` 不签 MAC，`file_bank_gap` 拒绝 filing | `src/capabilities/practice/server/tools/bank-search.ts`；`src/capabilities/practice/server/tools/file-bank-gap.ts` |
 
@@ -87,7 +87,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `MEM0_LLM_MODEL` | app、worker | 无全局 pin 时 `glm-5.2` | `src/server/ai/mem0/llm-config.ts`；`src/server/ai/providers.ts` |
 | `MEM0_LLM_BASE_URL` | app、worker | 无全局 pin 时 `https://open.bigmodel.cn/api/coding/paas/v4`；host 须过模型端点 allowlist | `src/server/ai/mem0/llm-config.ts` |
 | `MEMORY_RECONCILE_HANDOFF_MODE` | app、worker | `observe`；非法值在 reader 内抛错 | `registry` |
-| `MEM0_TELEMETRY` | app、worker（`mem0ai` SDK） | SDK 默认可向外报 PostHog；compose 强制 `false`；非 compose 部署也应显式 `false` | `docker-compose.yml`；`src/server/env.ts` |
+| `MEM0_TELEMETRY` | app、worker（`mem0ai` SDK） | SDK 默认可向外报 PostHog；compose 强制 `false`；非 compose 部署也应显式 `false` | `docker-compose.yml`；`src/server/config/env.ts` |
 
 ### OCR、录入与外部检索
 
@@ -179,7 +179,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
 | `API_SMOKE_BASE_URL` | 脚本（`api:smoke`） | `http://localhost:3001` | `scripts/api-smoke.ts` |
-| `AUDIT_READ_DATABASE_URL` | 脚本（`ops:threshold-calibration`） | 回落到 `DATABASE_URL`；session 固定只读 | `scripts/ops-threshold-calibration.ts`；`src/server/env.ts` |
+| `AUDIT_READ_DATABASE_URL` | 脚本（`ops:threshold-calibration`） | 回落到 `DATABASE_URL`；session 固定只读 | `scripts/ops-threshold-calibration.ts`；`src/server/config/env.ts` |
 | `B3_GATE_CONFIRM_CLONE` | 脚本（`b3:gate`） | 不等于 `1` 时拒绝运行 | `scripts/b3-gate.ts` |
 | `DELIVERY_API_PORT` | 脚本（`delivery:evidence`） | `8787` | `scripts/delivery-evidence.ts` |
 | `DELIVERY_API_BASE` | 脚本（`delivery:evidence`） | `http://127.0.0.1:<DELIVERY_API_PORT>` | `scripts/delivery-evidence.ts` |
@@ -191,7 +191,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 
 ### schema 中声明、未见读取
 
-`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`（`src/server/env.ts`）。
+`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`（`src/server/config/env.ts`）。
 
 ## DB 配置层 `system_config`
 

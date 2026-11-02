@@ -74,6 +74,7 @@ export {
   parseAdminFailuresQuery,
   parseAdminRunsQuery,
 } from './server/ai-observability';
+export { reconcileBuiltinTraits } from './server/builtin-trait-reconcile';
 export { loadCalibrationMaturity } from './server/calibration-maturity';
 export { observabilityConfigEffectiveFacts } from './server/config-effective-facts';
 export {

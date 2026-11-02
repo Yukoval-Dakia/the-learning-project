@@ -53,8 +53,8 @@ import {
 } from '@/server/ai/vision-judge-config';
 import { INFRA_HOUSEKEEPING_SCHEDULES } from '@/server/boss/infra-schedules';
 import { EXPIRE_AGENT, EXPIRE_FAST, EXPIRE_LLM, RETENTION_7D } from '@/server/boss/queue-config';
-import { resolveApiPort } from '@/server/env';
-import { EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE } from '@/server/event-subscriptions/dispatch-mount';
+import { resolveApiPort } from '@/server/config/env';
+import { EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE } from '@/server/events/subscriptions/dispatch-mount';
 import {
   LAYER_STAGGER_SECONDS,
   NODE_TIMEOUT_SECONDS,
@@ -279,7 +279,7 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
   const infraSchedules: AdminConfigScheduleRow[] = [
     {
       ...EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE,
-      owner: 'server/event-subscriptions',
+      owner: 'server/events/subscriptions',
       source: 'server-event-subscriptions',
     },
     ...INFRA_HOUSEKEEPING_SCHEDULES.map((decl) => ({

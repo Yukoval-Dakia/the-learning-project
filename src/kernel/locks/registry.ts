@@ -57,6 +57,16 @@ export const advisoryLockRegistry = {
     encoding: 'hashtext',
     key: 'copilot:session-selection',
   },
+  contractEpochTransition: {
+    family: 'contract-epoch-transition',
+    encoding: 'hashtext',
+    key: 'contract-epoch:transition',
+  },
+  migrationApplyFence: {
+    family: 'migration-apply-fence',
+    encoding: 'hashtext',
+    key: 'yuk1050:migration-apply',
+  },
   learningStateWrite: {
     family: 'learning-state:write',
     encoding: 'hashtext',

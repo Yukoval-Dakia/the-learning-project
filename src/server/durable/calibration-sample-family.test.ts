@@ -1,7 +1,7 @@
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/db/client';
-import { waitForRunnableEpoch } from '@/server/contract-epoch';
+import { waitForRunnableEpoch } from '@/server/migration/contract-epoch/epoch';
 import {
   CALIBRATION_SAMPLE_ADMISSION_PREREQUISITE,
   CALIBRATION_SAMPLE_FAMILY,
@@ -13,7 +13,9 @@ import {
 } from './calibration-sample-family';
 
 vi.mock('@/db/client', () => ({ db: {} }));
-vi.mock('@/server/contract-epoch', () => ({ waitForRunnableEpoch: vi.fn(async () => {}) }));
+vi.mock('@/server/migration/contract-epoch/epoch', () => ({
+  waitForRunnableEpoch: vi.fn(async () => {}),
+}));
 vi.mock('@dbos-inc/dbos-sdk', () => ({
   DBOS: {
     workflowID: 'sched-judge_calibration_sample-2026-10-11T22:10:00.000Z',

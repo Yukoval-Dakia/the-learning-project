@@ -19,17 +19,15 @@ import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { traceOperation } from '@/server/ai/laminar-tracing';
+import { isUndefinedTable, readContractEpoch, readJobBirthEpoch } from './epoch';
+import { type JobEpochDisposition, jobEpochDisposition } from './jobs';
 import {
   CODE_CONTRACT_EPOCH,
   ContractEpochFenceError,
   type EpochMarker,
   gateContractEpoch,
-  isUndefinedTable,
   logContractEpochFence,
-  readContractEpoch,
-  readJobBirthEpoch,
-} from './epoch';
-import { type JobEpochDisposition, jobEpochDisposition } from './jobs';
+} from './rules';
 
 type JobHandler<J extends Job = Job> = (jobs: J[]) => Promise<unknown>;
 

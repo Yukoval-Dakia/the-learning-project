@@ -9,22 +9,22 @@ import { runAuthenticatedStartAdmin } from './admin-read';
 
 // Runtime validation belongs after the auth/epoch gate, never in a client validator.
 export const getStartAdminRuns = createServerFn({ method: 'GET' })
-  .inputValidator((input: AdminRunsQuery) => input)
+  .validator((input: AdminRunsQuery) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartAdmin(context, getRequest(), (reader) => reader.getRuns(data)),
   );
 export const getStartAdminRunDetail = createServerFn({ method: 'GET' })
-  .inputValidator((input: { id: string }) => input)
+  .validator((input: { id: string }) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartAdmin(context, getRequest(), (reader) => reader.getRunDetail(data)),
   );
 export const getStartAdminCost = createServerFn({ method: 'GET' })
-  .inputValidator((input: AdminCostQuery) => input)
+  .validator((input: AdminCostQuery) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartAdmin(context, getRequest(), (reader) => reader.getCost(data)),
   );
 export const getStartAdminFailures = createServerFn({ method: 'GET' })
-  .inputValidator((input: AdminFailuresQuery) => input)
+  .validator((input: AdminFailuresQuery) => input)
   .handler(({ context, data }) =>
     runAuthenticatedStartAdmin(context, getRequest(), (reader) => reader.getFailures(data)),
   );

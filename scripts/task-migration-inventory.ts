@@ -109,7 +109,7 @@ for (const [name, owner, queue, cron, tz] of [
   ],
   [
     'event_subscription_dispatch',
-    'src/server/event-subscriptions/dispatch-mount.ts',
+    'src/server/events/subscriptions/dispatch-mount.ts',
     'fast',
     '* * * * *',
     'Asia/Shanghai',

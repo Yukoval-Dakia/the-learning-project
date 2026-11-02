@@ -5,7 +5,7 @@ import { DBOS } from '@dbos-inc/dbos-sdk';
 import { z } from 'zod';
 
 import type { Db } from '@/db/client';
-import { waitForRunnableEpoch } from '@/server/contract-epoch';
+import { waitForRunnableEpoch } from '@/server/migration/contract-epoch/epoch';
 
 export const CALIBRATION_SAMPLE_FAMILY = 'judge_calibration_sample';
 export const CALIBRATION_SAMPLE_ADMISSION_PREREQUISITE =

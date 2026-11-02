@@ -1,6 +1,6 @@
 import type { Db } from '@/db/client';
+import { isLiveQuestionReference } from '@/kernel/read-models/live-question-reference';
 import { resolveLiveArtifactPrimaryView } from './notes-integration';
-import { isLiveQuestionReference } from './practice-port';
 
 const QUESTION_KINDS = new Set(['question', '题', '题目']);
 

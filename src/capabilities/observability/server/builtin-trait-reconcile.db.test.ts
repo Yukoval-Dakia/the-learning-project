@@ -6,8 +6,8 @@
 
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { reconcileBuiltinTraits } from './reconcile-builtin-traits';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { reconcileBuiltinTraits } from './builtin-trait-reconcile';
 
 const db = testDb();
 

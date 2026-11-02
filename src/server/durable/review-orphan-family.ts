@@ -12,12 +12,11 @@ import {
   review_orphan_receipt,
   review_orphan_tick,
 } from '@/db/schema';
+import { readContractEpoch, waitForRunnableEpoch } from '@/server/migration/contract-epoch/epoch';
 import {
   ContractEpochFenceError,
   gateContractEpoch,
-  readContractEpoch,
-  waitForRunnableEpoch,
-} from '@/server/contract-epoch';
+} from '@/server/migration/contract-epoch/rules';
 import { lockProducerFenceInstaller } from './producer-fence-lock';
 
 export const REVIEW_ORPHAN_FAMILY = 'prune_orphan_review_sessions';

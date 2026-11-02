@@ -2,6 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createAttempt } from '@/capabilities/practice/api/submit';
 import { practiceCapability } from '@/capabilities/practice/manifest';
+import { installPracticeHostOperations } from '@/capabilities/practice/public';
 import { submitReviewAnswerTool } from '@/capabilities/practice/server/tools/submit-review-answer';
 import {
   assessment_submission,
@@ -60,6 +61,7 @@ const input: CopilotRunInput = {
 };
 
 beforeEach(async () => {
+  await installPracticeHostOperations();
   await resetDb();
   await testDb().execute(sql`TRUNCATE job_events RESTART IDENTITY`);
   __resetRateLimitForTests();

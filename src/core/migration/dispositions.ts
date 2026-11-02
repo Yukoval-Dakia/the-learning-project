@@ -7,9 +7,9 @@
 // delivery 翻译语义」作为结构化数据封存。事实来源：
 //   - census：docs/audit/2026-09-25-yuk1042-pgboss-dlq-census.md
 //     （27 DLQ 行全部逐类盘点；worker 启动自清；group A 8 条 add_started 待 owner）。
-//   - 启动 fences：src/server/contract-epoch/{rules,jobs,boss-fence}.ts
+//   - 启动 fences：src/server/migration/contract-epoch/{rules,jobs,boss-fence}.ts
 //     （drain/translate/fenced 运行期裁决 + epoch guard）。
-//   - 订阅翻译：src/server/event-subscriptions/runtime.ts
+//   - 订阅翻译：src/server/events/subscriptions/runtime.ts
 //     bootstrapSubscription —— 版本 bump 时 outstanding delivery 按 stable
 //     source_event_id 翻译，不盲标 bootstrap_skipped、不盲 replay。
 //
@@ -128,7 +128,7 @@ export function dlqCensusTotal(): number {
 //
 // 运行期裁决归 JOB_EPOCH_DISPOSITION（drain/translate/fenced），
 // 本表只把【策略语义】固化进 manifest —— 不复制分类表本体（单源在
-// src/server/contract-epoch/jobs.ts）。
+// src/server/migration/contract-epoch/jobs.ts）。
 
 export const CUTOVER_QUEUE_SEMANTICS = {
   drain: '队列语义与判分/作答合同无关；任一 active epoch 下运行均正确。',
@@ -151,7 +151,7 @@ export const SUBSCRIPTION_OUTSTANDING_POLICY = {
 // ───────────────────── contract epoch（引用，不复制） ─────────────────────
 //
 // preparing/ready/active 状态机与 CODE_CONTRACT_EPOCH/ASSESSMENT_CONTRACT_EPOCH
-// 单源在 src/server/contract-epoch/rules.ts —— manifest 记录其值，不重复定义。
+// 单源在 src/server/migration/contract-epoch/rules.ts —— manifest 记录其值，不重复定义。
 
 export const CUTOVER_OWNER_ACTIONS = [
   '执行 final backup（cutover-final-backup.sh）：pg_dump + DLQ tombstone 导出 + migration:capture manifest（生产读面，owner-gated）。',

@@ -70,8 +70,11 @@ import {
 import type { MigrationManifest } from '@/core/migration/types';
 import { HistoricalUnknownSubmission } from '@/core/schema/assessment/judgment';
 import { PendingState } from '@/core/schema/assessment/pending';
-import { JOB_EPOCH_DISPOSITION } from '@/server/contract-epoch/jobs';
-import { ASSESSMENT_CONTRACT_EPOCH, CODE_CONTRACT_EPOCH } from '@/server/contract-epoch/rules';
+import { JOB_EPOCH_DISPOSITION } from '@/server/migration/contract-epoch/jobs';
+import {
+  ASSESSMENT_CONTRACT_EPOCH,
+  CODE_CONTRACT_EPOCH,
+} from '@/server/migration/contract-epoch/rules';
 
 export interface CutoverBackupArgs {
   captureDir: string | null;
