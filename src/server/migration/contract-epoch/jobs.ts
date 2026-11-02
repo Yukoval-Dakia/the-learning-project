@@ -100,7 +100,8 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   research_meeting_nightly: 'translate',
   research_meeting_agent_nightly: 'translate',
   frontier_fill_nightly: 'translate',
-  knowledge_edge_propose_nightly: 'translate',
+  // knowledge_edge_propose_nightly retired by YUK-1664 (folded into maintenance); its
+  // leftover queue rows use the fail-closed default ('fenced').
   knowledge_maintenance_nightly: 'translate',
   practice_stream_compose_nightly: 'translate',
   question_supply_nightly: 'translate',

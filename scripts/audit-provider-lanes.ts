@@ -40,7 +40,6 @@ const OPERATOR_PROVIDER_MARKERS = [
 export type ProviderWireFinding = {
   readonly kind:
     | 'dashscope-embedding-fetch'
-    | 'glm-edge-reconcile-fetch'
     | 'glm-memory-reconcile-fetch'
     | 'glm-ocr-layout-parsing-fetch'
     | 'mem0-model-bearing-operation'
@@ -90,10 +89,6 @@ const ATTEMPT_WRAPPER_SURFACES = [
   {
     path: 'src/server/ai/mem0/reconcile-llm.ts',
     requiredTokens: ['executeDirectProviderAttempt', 'glm.memory-reconcile'],
-  },
-  {
-    path: 'src/capabilities/knowledge/server/edge-reconcile.ts',
-    requiredTokens: ['executeDirectProviderAttempt', 'glm.knowledge-edge-reconcile'],
   },
   {
     path: 'src/capabilities/ingestion/server/provider-attempts.ts',
@@ -817,9 +812,6 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
       return [{ kind: 'question-admission-reopen-preflight-fetch', call, path }];
     }
     if (code.includes('/embeddings')) return [{ kind: 'dashscope-embedding-fetch', call, path }];
-    if (code.includes('judgeEdgeReconcile') && code.includes('/chat/completions')) {
-      return [{ kind: 'glm-edge-reconcile-fetch', call, path }];
-    }
     if (code.includes('judgeReconciliation') && code.includes('/chat/completions')) {
       return [{ kind: 'glm-memory-reconcile-fetch', call, path }];
     }
@@ -1098,7 +1090,6 @@ function sameMultiset(left: readonly string[], right: readonly string[]): boolea
 function laneForFinding(kind: ProviderWireFinding['kind']): string | undefined {
   const ids = {
     'dashscope-embedding-fetch': 'dashscope.embedding',
-    'glm-edge-reconcile-fetch': 'glm.knowledge-edge-reconcile',
     'glm-memory-reconcile-fetch': 'glm.memory-reconcile',
     'glm-ocr-layout-parsing-fetch': 'glm.ocr-layout-parsing',
     'mem0-model-bearing-operation': 'mem0.event-memory',

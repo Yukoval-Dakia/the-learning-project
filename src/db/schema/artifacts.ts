@@ -372,6 +372,8 @@ export const memory_reconciliation_log = pgTable(
 // action 二值枚举（KEEP_BOTH/SUPERSEDE），不套 memory 侧四值——结构边无文本可
 // MERGE、RETRACT_NEW 由上游拓扑/语义闸承接（edge-reconcile.ts 模块头）。
 // 行堆积：单用户量级可忽略，不做清理 job（YAGNI），与 memory 表同纪律。
+// YUK-1664：GLM 判定器（edge-reconcile.ts）与夜间边提议者已退役；本表现在只记录
+// 用户接受存量 supersede 提议时的 apply（propose_edge.ts applyApprovedEdgeSupersede）。
 // ─────────────────────────────────────────────────────────────────────────────
 export const edge_reconciliation_log = pgTable(
   'edge_reconciliation_log',
