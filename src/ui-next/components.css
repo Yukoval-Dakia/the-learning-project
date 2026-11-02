@@ -126,8 +126,13 @@
     transition: background-color var(--un-t-feedback) var(--un-ease-glide);
   }
 
-  & .un-chip-toggle:hover {
+  & .un-chip-toggle:hover:not(:disabled) {
     background: var(--un-bg-hover);
+  }
+
+  & .un-chip-toggle:disabled {
+    cursor: default;
+    opacity: 0.45;
   }
 
   & .un-chip-action {
