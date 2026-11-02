@@ -132,7 +132,7 @@ export function QuoteBubble({
   return (
     <button
       type="button"
-      className="un-ps-quote-bubble un-glass"
+      className="un-ps-quote-bubble"
       data-below={below || undefined}
       style={style}
       // Keep the selection alive while the button is pressed.
@@ -140,7 +140,7 @@ export function QuoteBubble({
       onClick={() => onQuote(selection)}
     >
       <MessageSquareQuote size={14} aria-hidden="true" />
-      引用到学习伙伴
+      引用选中内容
     </button>
   );
 }
