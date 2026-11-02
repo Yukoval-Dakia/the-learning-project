@@ -389,6 +389,8 @@ export {
 export const recoverWebSupplies: typeof import('./server/question-supply/web-supply').recoverWebSupplies =
   async (...args) =>
     (await import('./server/question-supply/web-supply')).recoverWebSupplies(...args);
+export const recoverHeldServingRechecks: typeof import('./server/serving-actions').recoverHeldServingRechecks =
+  async (...args) => (await import('./server/serving-actions')).recoverHeldServingRechecks(...args);
 export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';
 export {
   abandonOrphanReviewSession,

@@ -30,13 +30,18 @@ const app = buildHonoApp(capabilities);
 // never-throws：表未建（42P01）/ DB down → hydrate 内部 WARN + 四代码种子地板，
 // 本函数恒 resolve——启动失败矩阵（v2 §4.4）不允许水合拖死 API 面。
 // db client 必须 loadEnv() 之后才 import（模块顶层读 DATABASE_URL）→ 动态 import。
+let subjectRefresh: { stop: () => void } | undefined;
 async function hydrateSubjectsBeforeServe(): Promise<void> {
   try {
-    const [{ db }, { hydrateSubjectRegistryFromDb }] = await Promise.all([
+    const [{ db }, { hydrateSubjectRegistryFromDb }, { startSubjectRefresh }] = await Promise.all([
       import('@/db/client'),
       import('@/kernel/read-models/subject-hydration'),
+      import('@/server/config/subject-refresh'),
     ]);
     const report = await hydrateSubjectRegistryFromDb(db);
+    // 60s level-triggered reconcile, same as the worker: subject edits made by another
+    // process reach this API within one period. Stopped on shutdown.
+    subjectRefresh = startSubjectRefresh(db, 60_000);
     const skippedNote = report.skipped.length > 0 ? ` (skipped ${report.skipped.length})` : '';
     console.log(`[rw:api] subjects hydrated: +${report.hydrated.length}${skippedNote}`);
   } catch (err) {
@@ -188,14 +193,24 @@ void (async () => {
   await startListenLoop();
   // Start owns the Web front door when RW_FRONTDOOR=1 (needs the dist/start build).
   // Startup, DB hydration, tool recovery and shutdown keep their existing single owner.
-  const fetch = env.RW_FRONTDOOR === '1' ? await createFrontdoor(app) : app.fetch;
-  const server = serve({ fetch, port }, (info) => {
-    const mounted = capabilities.flatMap((c) =>
-      (c.api?.routes ?? []).map((r) => `${r.method} ${r.path}`),
-    );
-    console.log(`[rw:api] hono listening on :${info.port}`);
-    console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
-  });
+  // RW_FRONTDOOR=dev serves the same front door through the Vite dev server (HMR); dev-local only.
+  // build:server marks ./dev-frontdoor external so the production bundle never pulls in Vite.
+  const devFrontdoor =
+    env.RW_FRONTDOOR === 'dev'
+      ? await (await import('./dev-frontdoor')).createViteFrontdoor(app)
+      : undefined;
+  const fetch =
+    devFrontdoor?.fetch ?? (env.RW_FRONTDOOR === '1' ? await createFrontdoor(app) : app.fetch);
+  const server = serve(
+    { fetch, port, hostname: devFrontdoor?.hostname, createServer: devFrontdoor?.createServer },
+    (info) => {
+      const mounted = capabilities.flatMap((c) =>
+        (c.api?.routes ?? []).map((r) => `${r.method} ${r.path}`),
+      );
+      console.log(`[rw:api] hono listening on :${info.port}`);
+      console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
+    },
+  );
 
   let workerStartup: Promise<void> | undefined;
   installApiShutdown(server, async () => {
@@ -211,6 +226,7 @@ void (async () => {
       const boss = getRunningBoss();
       if (boss) await stopBossGracefully(boss, 'API shutdown');
     } finally {
+      subjectRefresh?.stop();
       configRefresh?.stop();
       catalogWatch?.stop();
       customProvidersWatch?.stop();

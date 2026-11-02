@@ -35,7 +35,7 @@ export type StartBossWorkerOptions = {
   epochPollIntervalMs?: number;
   /**
    * Set by server/index.ts for the in-process worker. That API process already runs the
-   * config, custom-provider and model-catalog pollers, and they feed the same in-memory
+   * subject, config, custom-provider and model-catalog pollers, and they feed the same in-memory
    * state this worker reads, so a second set would only repeat the same DB reads.
    */
   apiPollersRunning?: boolean;
@@ -112,9 +112,9 @@ export async function startBossWorker(
   // After the member queues exist, so a send has a queue. No members means no cron.
   await registerOrchestrator(boss, db, capabilities);
   // Level-triggered reconcile. unref so the timer does not hold the process. Cleared on stopped.
-  const refresh = startSubjectRefresh(db, 60_000);
-  boss.once('stopped', () => refresh.stop());
   if (!options.apiPollersRunning) {
+    const refresh = startSubjectRefresh(db, 60_000);
+    boss.once('stopped', () => refresh.stop());
     // The worker has no config write path, so this window is how a new row arrives. unref.
     const configRefreshHandle = startConfigRefresh(db, 15_000);
     boss.once('stopped', () => configRefreshHandle.stop());

@@ -1,5 +1,5 @@
 // 作答卷导出的 route handler。薄层：HTTP 整形 + zod 解析 + 域状态 → ApiError 映射；
-// 提交恢复/调度由 practice/server/worksheet/submission 负责；发放复用 issueAssessment，
+// 提交恢复/调度由 practice/session/server/worksheet/submission 负责；发放复用 issueAssessment，
 // 区域图校验/存档在 region-map-validate + export-store。
 
 import type { ZodType } from 'zod';

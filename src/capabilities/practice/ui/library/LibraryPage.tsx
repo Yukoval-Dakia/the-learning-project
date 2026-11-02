@@ -66,7 +66,7 @@ export default function LibraryPage({ navigate, searchStr, replace }: LibraryPag
 
   return (
     <UiNextRoot className="ql-page">
-      <main className="ql-main">
+      <main className="ql-main un-m3e-bridge">
         <header className="ql-head">
           <h1 className="ql-title">题目</h1>
           <p className="ql-sentence">{stateSentence(counts)}</p>

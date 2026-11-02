@@ -1,5 +1,5 @@
 // SessionSummaryTask runner — practice-owned session domain operation.
-// The session_summary job handler (practice/jobs/session_summary.ts) calls this
+// The session_summary job handler (practice/session/jobs/session_summary.ts) calls this
 // after a review session completes. It builds a compact stats snapshot from
 // chained events, runs the task, and stores the result in
 // learning_session.summary_md. The handler logs and rethrows failures so

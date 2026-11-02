@@ -1,5 +1,5 @@
 // SessionSummaryTask is Practice-owned. The output is plain text, not JSON; the
-// runner's consumer (src/capabilities/practice/server/session-summary.ts) trims,
+// runner's consumer (src/capabilities/practice/session/server/session-summary.ts) trims,
 // clamps to 240 chars and requires non-empty.
 
 import { z } from 'zod';
@@ -25,7 +25,7 @@ ${causeTaxonomyList(profile)}
 禁止：任何阿拉伯数字、百分比、题数/次数/计数、套话（「继续加油」「再接再厉」）、夸夸（「做得很好」）、笼统（「多练习」）。要具体、可执行。`;
 }
 
-/** Session input contract (runSessionSummary, src/capabilities/practice/server/session-summary.ts). */
+/** Session input contract (runSessionSummary, src/capabilities/practice/session/server/session-summary.ts). */
 export interface SessionSummaryInput {
   session_id: string;
   duration_min: number | null;

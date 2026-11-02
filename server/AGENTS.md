@@ -5,9 +5,10 @@
 ## WHERE TO LOOK
 | 文件 | 职责 |
 |------|------|
-| `index.ts` | 入口：loadEnv → warnFlipOrder → `buildHonoApp(capabilities)` → `serve()`；设 `RW_FRONTDOOR=1` 时由 Start 前门托管页面；`RW_WORKER=1` 时同进程启 worker |
+| `index.ts` | 入口：loadEnv → warnFlipOrder → `buildHonoApp(capabilities)` → `serve()`；设 `RW_FRONTDOOR=1` 时由 Start 前门托管 built 页面，设 `RW_FRONTDOOR=dev`（仅 `dev:local`）时经 `dev-frontdoor.ts` 用 Vite dev server 托管（HMR）；`RW_WORKER=1` 时同进程启 worker |
 | `app.ts` | 组合根工厂：`buildHonoApp()` 挂载 token gate、`/api/health`、所有 manifest route；`toHonoPath()` 把 `[id]` 转成 `:id` |
 | `composed-routes.ts` | 跨 capability 组装的路由 handler（manifest 声明了路由但不带 `load`）：按 operationId 匹配，缺 handler 时 `buildHonoApp` 抛错，孤儿 handler 由启动入口的 `assertComposedRoutesDeclared` 拦下 |
+| `dev-frontdoor.ts` | dev-only：Vite middleware 模式前门，生产 bundle 不引入；复用 `frontdoor.ts` 的 `buildFrontdoor` |
 | `frontdoor.ts` / `start/` | 固定 Start fetch 前门；通过 request context 调原 Hono app，Start 独立 TS program |
 | `env.ts` | `.env` / `.env.local` 加载（API / Vite / worker 三进程统一） |
 

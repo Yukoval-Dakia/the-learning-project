@@ -3,35 +3,10 @@
    (T1 semantic tokens, T3 glass only on floating layers, M1 motion only on change, A2 hit areas);
    colours, type and shape follow Google M3 Expressive (docs/design/2026-11-03-question-library-m3e.md). */
 
-/* M3E roles. The legacy --un-* colour aliases are rebound on each page's main column, not on the
-   [data-ui-next] root: the base dark-theme token rules target the root with higher specificity and
-   would reset them there. The M3 roles follow the app theme themselves. Width tokens stay. */
+/* M3E roles: each page's main column carries .un-m3e-bridge (src/ui-next/components.css). */
 [data-ui-next].ql-page {
   background: var(--un-md-sys-color-surface);
   color: var(--un-md-sys-color-on-surface);
-
-  & > .ql-main,
-  & > .qd-main {
-    --un-bg: var(--un-md-sys-color-surface);
-    --un-bg-raised: var(--un-md-sys-color-surface-container-lowest);
-    --un-bg-sunk: var(--un-md-sys-color-surface-container-low);
-    --un-bg-hover: var(--un-md-sys-color-surface-container-high);
-    --un-line: var(--un-md-sys-color-outline-variant);
-    --un-line-strong: var(--un-md-sys-color-outline);
-    --un-text-1: var(--un-md-sys-color-on-surface);
-    --un-text-2: var(--un-md-sys-color-on-surface-variant);
-    --un-text-3: var(--un-md-sys-color-on-surface-variant);
-    --un-text-4: var(--un-md-sys-color-outline);
-    --un-text-disabled: color-mix(in srgb, var(--un-md-sys-color-on-surface) 38%, transparent);
-    --un-text-on-accent: var(--un-md-sys-color-on-primary);
-    --un-accent: var(--un-md-sys-color-primary);
-    --un-accent-strong: var(--un-md-sys-color-primary);
-    --un-accent-ink: var(--un-md-sys-color-primary);
-    --un-accent-soft: var(--un-md-sys-color-secondary-container);
-    --un-critical: var(--un-md-sys-color-on-error-container);
-    --un-critical-soft: var(--un-md-sys-color-error-container);
-    --un-focus: var(--un-md-sys-color-primary);
-  }
 }
 
 [data-ui-next].ql-page {

@@ -127,28 +127,36 @@ CI（`CI`、`GITHUB_ACTIONS` 或 `CIRCLECI` 为 `true` / `1`）不拿槽、不�
 它不自动删除旧槽，避免与其他进程回收竞争。若主机重启或 SIGKILL 留下槽位，先核
 `owner` PID 及运行资源，再由运营清理确认为过期的槽；不要删除仍由其他线持有的槽。
 
-Local development uses the docker-compose Postgres database as the source of truth.
-Inside compose, services use `postgres:5432`; host-side commands use the local overlay
-port `127.0.0.1:5433`.
+Local development has its own Postgres, isolated from the TEST stack (whose Postgres is
+`127.0.0.1:5433` / `5544`). Install once, then one command:
 
 ```bash
 pnpm install
-docker compose -f docker-compose.yml -f docker-compose.local.yml up postgres -d
-pnpm db:migrate:local
-pnpm dev:local
+pnpm dev:local      # then open http://127.0.0.1:8788/
 ```
 
-`pnpm dev:local`（= `tsx scripts/dev-local.ts`）spawn **三进程**：
+`dev:local` starts the dev-only Postgres (`docker-compose.dev.yml`, service `postgres-dev`,
+host port **5434**, role/database `loom_dev`, named volume `loom-dev_loom-dev-pgdata`), waits
+until it is healthy, applies pending migrations, then starts the API and worker against it.
+Re-running reuses the volume and only applies new migrations. Docker/OrbStack must be running
+(`open -ga OrbStack`).
+
+- **Guard:** `dev:local` refuses to start if the database target is TEST's (port 5433/5544 or
+  database `loom`). The only override is `DEV_ALLOW_TEST_DB=1`, which prints a warning banner and
+  runs the dev API and worker against TEST's data and jobs — do not use it casually.
+- **Reset the dev DB:** `docker compose -f docker-compose.dev.yml --profile dev down -v`
+  (deletes the dev volume; the next `pnpm dev:local` recreates and migrates it).
+
+`pnpm dev:local`（= `tsx scripts/dev-local.ts`）spawn **两进程**，启动后打印要打开的地址（默认 <http://127.0.0.1:8788/>，可用 `DEV_PORT` 改；8787 留给 TEST 的 app 容器，避免抢端口或误开到 TEST）：
 
 | 进程 | 端口 | 命令 | 角色 |
 | --- | --- | --- | --- |
-| API + Start 前门 | :8787 | `pnpm rw:api`（`tsx watch server/index.ts`，`RW_WORKER=1` 同进程启 pg-boss worker；dev-local 另设 `RW_FRONTDOOR=1`） | Hono 组合根 + in-process worker；页面由 Start 前门同源提供 |
-| Web 构建 | — | `pnpm rw:web`（`vite build --watch --config server/start/vite.config.ts`） | 重建 `dist/start`；API 进程随新产物重启（`dev:local` 启动前先跑一次 `pnpm build:start`） |
+| API + Start 前门 | :8788（`DEV_PORT`） | `pnpm rw:api`（`tsx watch server/index.ts`，`RW_WORKER=1` 同进程启 pg-boss worker；dev-local 另设 `RW_FRONTDOOR=dev`） | Hono 组合根 + in-process worker；Vite dev server 以 middleware 模式跑在同一进程、同一端口（`server/dev-frontdoor.ts`），页面与 `/api/*` 同源，**页面改动热更新（HMR），不需要构建**；改 `server/`、`src/server/` 等服务端文件由 tsx watch 重启 API |
 | Worker | — | `pnpm worker:dev`（`tsx scripts/worker.ts`） | 独立 pg-boss worker 进程 |
 
-dev 拓扑必须 api + web + worker 三进程齐活（YUK-321 M5 双进程拓扑）：`LISTEN loop 不消费 boss job`，dev 也必须有独立 worker 进程；同进程 worker 是 RW_WORKER=1 的兜底，不替代独立 worker。
+dev 拓扑必须 api（含 Vite 前门）+ worker 两进程齐活（YUK-321 M5 双进程拓扑）：`LISTEN loop 不消费 boss job`，dev 也必须有独立 worker 进程；同进程 worker 是 RW_WORKER=1 的兜底，不替代独立 worker。
 
-`pnpm dev` 是 `pnpm dev:local` 的别名。不要使用 stale `.env.local` remote `DATABASE_URL` 做 UI smoke。
+`pnpm dev` 是 `pnpm dev:local` 的别名。dev 的 `DATABASE_URL` 由 dev-local 固定指向 dev Postgres（:5434），忽略 `.env` / `.env.local` 里的 `DATABASE_URL` 与 `POSTGRES_*`。
 
 ```bash
 pnpm smoke:local
