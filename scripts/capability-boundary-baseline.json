@@ -11415,6 +11415,16 @@
       "issue": "YUK-1570",
       "owns": "Server AI owns binding the logged task runner to the host Db. Practice owns reference-solution input construction, output parsing, logged skips, guarded rubric/reference writes and same-transaction publication; runner construction timing is unchanged.",
       "date": "2026-11-01"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/review-answer-consumer.ts",
+      "module": "src/kernel/events/correction-lock.ts",
+      "kind": "value",
+      "symbols": ["lockEventCorrectionSource"],
+      "issue": "YUK-1577",
+      "owns": "Kernel events owns the transaction lock for one correction source event: hashtextextended of the registry key intervention:source:<eventId> at salt 0, shared with writeEvents. review-answer-consumer only chooses to take it after the copilot execution settlement lock.",
+      "date": "2026-11-02"
     }
   ],
   "sourceSizeRecords": [

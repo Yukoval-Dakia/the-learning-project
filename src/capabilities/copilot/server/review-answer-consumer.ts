@@ -2,7 +2,8 @@ import { and, eq, sql } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events, learning_session } from '@/db/schema';
-import { eventCorrectionLockKey, getCorrectionStatus } from '@/kernel/events';
+import { getCorrectionStatus } from '@/kernel/events';
+import { lockEventCorrectionSource } from '@/kernel/events/correction-lock';
 import { ApiError } from '@/kernel/http';
 import type { ToolContext } from '@/kernel/tools/types';
 import { acquireCopilotExecutionSettlementLock } from './copilot-run-coordination';
@@ -43,9 +44,7 @@ export async function resolveCopilotReviewAnswer(
   const authorize = async (tx: Tx, signal: AbortSignal) => {
     // Stop uses this same lock. Correct writers use the same target lock.
     await acquireCopilotExecutionSettlementLock(tx, input.sourceEventId);
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionLockKey(input.sourceEventId)}, 0))`,
-    );
+    await lockEventCorrectionSource(tx, input.sourceEventId);
     const [current] = await tx.select().from(event).where(eq(event.id, ask.id));
     if (
       !current ||

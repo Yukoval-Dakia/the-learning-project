@@ -30,10 +30,6 @@
       "count": 3
     },
     {
-      "path": "src/capabilities/copilot/server/review-answer-consumer.ts",
-      "count": 1
-    },
-    {
       "path": "src/capabilities/ingestion/server/agent/asks.ts",
       "count": 2
     },
