@@ -7237,6 +7237,26 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "bank_search_snapshot",
+      "targetModule": "src/db/schema/ai.ts",
+      "targetSymbol": "bank_search_snapshot",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/tools/bank-search-snapshot.ts",
+          "line": 6
+        }
+      ],
+      "evidence": "Real value import of bank_search_snapshot from @/db/schema at src/capabilities/practice/server/tools/bank-search-snapshot.ts:6; the drizzle table definition is owned verbatim by src/db/schema/ai.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1448",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1448",
+      "date": "2026-11-02"
     }
   ],
   "edgeRecords": [
@@ -12012,15 +12032,6 @@
       "to": 1160,
       "issue": "YUK-1570",
       "responsibilityReason": "The existing proposal presentation owner batch-resolves active learner-visible knowledge-edge endpoint labels and isolates recoverable label-query failures. Inbox cards consume these optional labels instead of assembling names from a separate full-tree request. The same owner retains question and block previews; proposal decisions, writes and locks are unchanged. This records source growth within the approved display contract, not a size exemption or cross-edge reduction."
-    },
-    {
-      "path": "src/db/schema.ts",
-      "date": "2026-10-29",
-      "baseBlob": "7beb3b2983a2c8e47e844650bb678ca2907eeafc",
-      "from": 5043,
-      "to": 5071,
-      "issue": "YUK-1448",
-      "responsibilityReason": "Restore the fixed YUK-1448 standalone short-lived bank_search_snapshot declaration before tool_operation after actual main 0134 knowledge.role. Preserve the complete actual main schema including ingestion_creation_receipt and custom_provider. Only the original 28-line snapshot table is added; its search/read/task/cache consumers remain practice-owned."
     }
   ],
   "compatShims": [

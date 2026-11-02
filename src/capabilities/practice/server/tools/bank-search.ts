@@ -19,14 +19,7 @@ import { stableStringify } from '@/core/migration/canonical';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
 import { embedCurrencyPredicate } from '@/db/embed-currency';
-import { notDraftPredicate } from '@/db/predicates';
-import {
-  item_calibration,
-  knowledge,
-  question,
-  question_group_lifecycle,
-  question_revision,
-} from '@/db/schema';
+import { question, question_group_lifecycle, question_revision } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
 import { embedText } from '@/server/ai/embed';
 import { questionVectorInvalidReason } from '../../jobs/embed_backfill';
