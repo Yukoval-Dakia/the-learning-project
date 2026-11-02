@@ -105,7 +105,7 @@ A5/A6 都 ship 成软层：**只移 surfaced `theta_hat`（能力后验均值）
 ### 9. Rust 落点与 S6 前置
 
 **本单元零 Rust 改动**。A6 kernel 平凡（O(E) 加法）零收益；A5 GMRF 是唯一重数值，但问题是「解形态在 batch-read 尺寸下不可扩展」——**先界定解规模（决定 8 分量守卫 / 将来稀疏 solver），再谈 port 语言**。S6（Rust A5 GMRF port）defer 触发 =（A5 flag 翻 + bit-exact 跨端一致或大分量性能需求），前置四件套：
-1. **deployment-aware loader（非 cwd-relative）+ .node/.wasm 进部署镜像**——`propagate-priors.ts` 白纸黑字：cwd-relative `NODE_PATH` 下 deployment-aware loader 是翻 flag 显式 PREREQUISITE；连 coldstart Rust 都未接生产，任何新 port 继承同 gap。
+1. **deployment-aware loader（非 cwd-relative）+ .node/.wasm 进部署镜像**——`src/capabilities/practice/server/day-one-priors.ts` 白纸黑字：cwd-relative `NODE_PATH` 下 deployment-aware loader 是翻 flag 显式 PREREQUISITE；连 coldstart Rust 都未接生产，任何新 port 继承同 gap。
 2. YUK-501 wasm CI skip 接通（否则 parity 无 gate）。
 3. wasm32-wasip1-threads + napi 双构建面。
 4. crate `napi.targets:["wasm32-wasip1-threads"]`。

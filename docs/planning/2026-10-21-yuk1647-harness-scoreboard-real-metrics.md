@@ -6,8 +6,7 @@
 
 - 把 `harness_scoreboard` 的 M3/M4/M5 从「每个指标一个代理定义」改成 ADR 的逐任务 / 逐子项定义。M3/M4/M5 的载荷改为 `parts[]`，每项独立给出 `numerator`/`denominator`/`value`/`basis`/`note`。
 - M1、M2、M6 的定义与取值方式不变。
-- 10-07～10-18 的 M1–M6 重算：**NOT_RUN**（本机无 TEST 数据库访问，未读取任何凭据）。执行步骤与比对模板见下文。
-- 不新增测试，不跑付费调用，不改 TEST 配置 / 部署。
+- 10-07～10-18 的 M1–M6 重算：待执行（需 TEST 数据库访问）。执行步骤与比对模板见下文。
 
 ## 实现口径
 
@@ -40,11 +39,11 @@
 | `new_question_duplicates` | 重复题数 / 窗口新建题数 | `event`（`experimental:question_draft_submit` 回执、`experimental:quiz_gen`）+ `question.created_at` | 重复 = 提交回执 `status='conflict'` 且 `reason ∈ {duplicate_exact,duplicate_source,near_dup}` + QuizGen `exact_duplicate_count`；同一逻辑提交只计一次（候选提交内层 `${request_id}:submit` 回执折入外层调用方回执）。分母 = 窗口内 `question` 行数（含 draft；提升不改 `created_at`）。比值可超过 1。 |
 | `same_name_same_parent_pairs` | 双胞胎对数（gauge） | `knowledge`（窗口内 `created_at`） | 按 `lower(trim(name)) + parent_id` 分组，每组多出的行数即对数；与旧代理「仅同名」的区别是同父约束。 |
 
-## 10-07～10-18 重算（NOT_RUN，待 owner 批准）
+## 10-07～10-18 重算（待 owner 批准）
 
-本机没有只读 TEST 连接，本 PR 也不申请用任何凭据访问 TEST；重算待 owner 批准后由有 TEST 访问权限的人执行。
+重算待 owner 批准后由有 TEST 访问权限的人执行。
 
-前置条件：可读 TEST Postgres 的连接串（只读角色即可；本仓库不保存也不接受任何凭据）。命令只读；`--persist` 会写一条 `experimental:harness_scoreboard` 投影，**重算比对时不要加**。
+前置条件：可读 TEST Postgres 的连接串（只读角色即可，由执行人持有）。命令只读；`--persist` 会写一条 `experimental:harness_scoreboard` 投影，**重算比对时不要加**。
 
 ```bash
 export PATH=/workspace/el/toolchain/pnpm-shim:/workspace/el/toolchain/node22/bin:$PATH
@@ -57,27 +56,27 @@ DATABASE_URL='postgres://<read-only-user>:<password>@<test-host>:5432/<test-db>'
 
 ### 比对模板（执行人填写）
 
-差值规则（本票采用）：比例类子项按百分点比较（review 的百分比 vs `value*100`），计数 / 天数类 gauge 按相对差 `|recomputed-baseline|/baseline`。M4 `closable` 的基线是条数，比对用 `numerator`；`conflict_involved` 的基线是比例，比对用 `value`。超过 2% 的每一项必须写原因（定义差异或数据缺失），不得改口径凑数。
+差值规则（本票采用）：比例类子项按百分点比较（review 的百分比 vs `value*100`），计数 / 天数类 gauge 按相对差 `|recomputed-baseline|/baseline`。M4 `closable` 的基线是条数，比对用 `numerator`；`conflict_involved` 的基线是比例，比对用 `value`。超过 2% 的每一项必须写原因（定义差异或数据缺失），口径不改。
 
 | 指标 / 子项 | ADR-0075 基线（10-07～10-18） | 重算值 | 差值 | 是否 ≤2% | 原因（超差必填） |
 |---|---|---|---|---|---|
-| M1 零产出 token 占比 | ≥40%（164.4 M / 411.2 M） | NOT_RUN | — | — | — |
-| M2 打转运行数（按 task_kind） | KR 271、Copilot 48、RM 19；失控 4 | NOT_RUN | — | — | — |
-| M3 `quiz_gen_batches` | 55% | NOT_RUN | — | — | — |
-| M3 `source_consistency_questions` | 68/198（34.3%） | NOT_RUN | — | — | 口径：按题终判；review 按检查/题计数未在 ADR 展开 |
-| M3 `note_generation_attempts` | 24/31（77.4%） | NOT_RUN | — | — | 口径：按付费尝试；review 可能按 artifact 终态 |
-| M3 `knowledge_review_writes` | 748/748（100% 丢弃，成功率 0%） | NOT_RUN | — | — | 口径：propose 工具调用落地率 |
-| M4 `pending` | 45 | NOT_RUN | — | — | as-of 10-18 收件箱投影 |
-| M4 `oldest_pending_days` | 9.6 | NOT_RUN | — | — | — |
-| M4 `closable` | 9 | NOT_RUN | — | — | 人工读数 vs 确定性谓词，定义差异须单列 |
-| M4 `conflict_involved` | 17/26（65.4%） | NOT_RUN | — | — | 人工冲突分析 vs 共享知识点谓词 |
-| M5 `new_question_duplicates` | 48/276（17.4%） | NOT_RUN | — | — | 分子含提交回执 + QuizGen exact duplicate |
-| M5 `same_name_same_parent_pairs` | 6 对 | NOT_RUN | — | — | 旧代理仅同名；本实现要求同父 |
-| M6 空闲日花费 | 约 57 M / USD 1.63 每天 | NOT_RUN | — | — | 空闲日 = 零 `actor_kind='user'` 事件 |
+| M1 零产出 token 占比 | ≥40%（164.4 M / 411.2 M） | 待重算 | — | — | — |
+| M2 打转运行数（按 task_kind） | KR 271、Copilot 48、RM 19；失控 4 | 待重算 | — | — | — |
+| M3 `quiz_gen_batches` | 55% | 待重算 | — | — | — |
+| M3 `source_consistency_questions` | 68/198（34.3%） | 待重算 | — | — | 口径：按题终判；review 按检查/题计数未在 ADR 展开 |
+| M3 `note_generation_attempts` | 24/31（77.4%） | 待重算 | — | — | 口径：按付费尝试；review 可能按 artifact 终态 |
+| M3 `knowledge_review_writes` | 748/748（100% 丢弃，成功率 0%） | 待重算 | — | — | 口径：propose 工具调用落地率 |
+| M4 `pending` | 45 | 待重算 | — | — | as-of 10-18 收件箱投影 |
+| M4 `oldest_pending_days` | 9.6 | 待重算 | — | — | — |
+| M4 `closable` | 9 | 待重算 | — | — | 人工读数 vs 确定性谓词，定义差异须单列 |
+| M4 `conflict_involved` | 17/26（65.4%） | 待重算 | — | — | 人工冲突分析 vs 共享知识点谓词 |
+| M5 `new_question_duplicates` | 48/276（17.4%） | 待重算 | — | — | 分子含提交回执 + QuizGen exact duplicate |
+| M5 `same_name_same_parent_pairs` | 6 对 | 待重算 | — | — | 旧代理仅同名；本实现要求同父 |
+| M6 空闲日花费 | 约 57 M / USD 1.63 每天 | 待重算 | — | — | 空闲日 = 零 `actor_kind='user'` 事件 |
 
 重算完成后把结果 JSON 与填好的表放到仓库外 artifact 目录，并在 YUK-1647 回填路径与 SHA256；仓库内只保留这张表与结论。
 
-## 本机验证（合成数据，不是 TEST 重算）
+## 本机验证（合成数据）
 
 在 `/tmp` 起一次性 PG17 + pgvector，跑完全部 drizzle migration，再插入覆盖各分支的合成行，用同一 CLI 实际执行 `--from 2026-10-07 --to 2026-10-18`：
 
@@ -86,16 +85,16 @@ DATABASE_URL='postgres://<read-only-user>:<password>@<test-host>:5432/<test-db>'
 - M5：提交回执 2 条重复 + QuizGen exact 1，新建题 4 → 3/4；同父同名 1 对。
 - `--persist` 写出 `harness_scoreboard_v2_2026-10-07_2026-10-18`（payload version=2），重复执行仍只有 1 行；`readLatestHarnessScoreboard` 解析成功并返回四个 M4 part。
 
-合成行只用于证明查询语义与读写链路，不代表 TEST 真实数值；TEST 重算仍为 NOT_RUN。
+合成行只用于证明查询语义与读写链路。
 
 ## 已知边界
 
 - **M1**：`empty` 产出尚无独立 outcome 列（ADR C2-3 属 P2），分子只含 `status='failure'`；定义未扩展。
-- **M4 历史回放**：propose/rate/correction 可 as-of；block_merge 可裁决性与知识点版本读当前行，若窗口结束后目标被归档/改版，`closable` 会漂移，pending 集含 block_merge 时积压数也会漂移。日更同样读当前行，只是窗口结束到运行之间的时间差更短，不能说「不受影响」。
-- **M4 人工读数**：`closable`、`conflict_involved` 是可复算的确定性定义，不承诺与 review 的 9 / 17 逐条相同。
+- **M4 历史回放**：propose/rate/correction 可 as-of；block_merge 可裁决性与知识点版本读当前行，若窗口结束后目标被归档/改版，`closable` 会漂移，pending 集含 block_merge 时积压数也会漂移。日更同样读当前行，漂移窗口更短。
+- **M4 人工读数**：`closable`、`conflict_involved` 是可复算的确定性定义，与人工 review 读数按口径比对。
 - **M5 分母**：`question.created_at` 含 draft；draft 提升不改 `created_at`，所以「新入库」按新建行近似。
 - **M2**：ADR 基线是三个任务的具体计数；`by_task` 的 key 是 `task_kind`，比对时需按任务名映射。
-- **M7**：guard 触发数尚未记账（P2 RunMonitor 落地后才有），不在本次 M1–M6 重算范围。
+- **M7**：guard 触发数待 P2 RunMonitor 落地后记账。
 
 ## Follow-ups
 

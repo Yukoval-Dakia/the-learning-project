@@ -17,10 +17,4 @@
 | `validate.ts` | 节点/树结构校验 |
 
 ## 关键约束
-- `relation_type` 核心 5 类：`prerequisite | related_to | contrasts_with | applied_in | derived_from`，外加 `experimental:*` 命名空间。
-- 节点/edge 的 propose 都写 `event(action='propose')`，**不直接改硬事实**——accept route 才落地真实 mutation。
 - Failure Learning 的 eligibility、归因与变式提议归 Practice。有界 knowledge / misconception 读在 `src/kernel/read-models/failure-learning-context.ts`。
-
-## ANTI-PATTERNS
-- 破坏性动作（合并节点 / reparent / archive）只能 propose，无直接 write tool。
-- 新 subject profile 改完先跑 `pnpm audit:profile`（坏 profile 会在 `SubjectRegistry.register()` 启动期抛错）。

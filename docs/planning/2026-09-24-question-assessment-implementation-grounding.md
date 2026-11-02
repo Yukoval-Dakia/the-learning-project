@@ -1,6 +1,6 @@
 # 全量题目契约迁移 — implementation grounding
 
-2026-09-24 · YUK-1038 · 状态：source-only grounding + D19 只读 census 完成（lane A/B/C/D 已归并）；D1–D19 已批准；仅剩 Q20 UI preflight 正式批准与 Q21 ticket 拆分待 owner；不能作为已完成实施 spec，未执行实施/迁移。
+2026-09-24 · YUK-1038 · 状态：source-only grounding + D19 只读 census 完成（lane A/B/C/D 已归并）；D1–D19 已批准；仅剩 Q20 UI preflight 正式批准与 Q21 ticket 拆分待 owner；
 
 ## Owner 裁决与本轮范围
 
@@ -8,10 +8,10 @@
 
 - 采用[五层模型方向](2026-09-24-question-assessment-redesign.md)：题目结构、作答要求、评分依据、执行计划、判分记录。
 - 旧 LIGHT/LIGHT-1 分批产品切换建议已被取代；要求全部录入/消费路径、历史数据统一迁移后一次切换。
-- 允许工程依赖排序、离线演练和切换前校验，不把这些包装成部分题目先上线。
-- 任意题目不是有限学校题型枚举；通用复合结构、响应原语、开放作答/原始证据与评分契约须可表达。材料缺失或不能可靠判分必须有明确未决态，不能靠伪零分实现“支持”。
-- 本轮只做源码调查与实施规划，不执行代码实现、schema/data migration、生产访问、付费模型评测或部署。
-- “全量迁移”与“重判全部历史作答”不是同一动作；历史事实缺失不得补造，具体处理须落到映射与验收契约。
+- 工程依赖排序、离线演练和切换前校验只作技术准备，上线仍为一次切换。
+- 任意题目不是有限学校题型枚举；通用复合结构、响应原语、开放作答/原始证据与评分契约须可表达。材料缺失或不能可靠判分必须有明确未决态，伪零分属于判分错误。
+- 本轮只做源码调查与实施规划。
+- “全量迁移”与“重判全部历史作答”不是同一动作；缺失的历史事实按缺失处理，具体处理须落到映射与验收契约。
 
 ## Task plan（接续既有研究，不重置之前任务）
 
@@ -28,10 +28,10 @@
 11. [x] Owner 裁决轮一（已完成）：D1–D5 已批准并落盘 `docs/planning/2026-09-24-question-assessment-decisions.md`；未批准项见该文件 pending tree。
 12. [x] 裁决轮二：D6–D12 已批准并落盘 decisions 文件。
 13. [ ] 固化最终spec/必要ADR/术语与验收矩阵，去重拆分实施票并建立阻塞关系（**公式未定，暂无新 ADR**）。
-14. [ ] 收敛独立worktree实施所有权、集成顺序与release gates，复核未决项，提交owner确认准备完成；未获实施确认不启动业务修改。
+14. [ ] 收敛独立worktree实施所有权、集成顺序与release gates，复核未决项，提交owner确认准备完成，实施确认后启动业务修改。
 15. [ ] 详细学习/UI/admission 计划仍待（UI 正式 preflight 草案已出 `docs/design/2026-09-24-assessment-ui-preflight.md`，**待 owner 正式批准 Q20**；评测 corpus/额度 **D18 已批准 ≤$5**；ticket 拆分 **Q21 待批**）；由 parent 后续整合。
 16. [x] **D19 只读生产 census 已完成**（categorical counts、referential integrity、snapshot/image missing、in-flight state；无原始 learner content）＋ scriptable restore 预备（pg_dump/pg_restore 16.14 in-container、disk 491Gi）；**restore 演练仍待 migration code 存在**（owner-gated）。
-17. [ ] 固化 UI preflight 待 owner 正式批准（Q20）；不创建 ADR/ticket，待 parent reconcile。
+17. [ ] 固化 UI preflight 待 owner 正式批准（Q20），待 parent reconcile。
 
 ## 调查输出契约
 
@@ -49,19 +49,19 @@
 | 全产品统一切换且可回滚 | C，主会话归并 | app/worker/cron/在途会话切换方案 | exact-head发布演练，切换前后写入回滚证据 |
 | 不泄露评分私有信息，交互状态诚实 | D + B | DTO路径、候选/生效结果读取清单 | 浏览器、鉴权、未决态与多模态验收 |
 
-基线：源码 `f804554e6`，文档 branch `docs/yuk-1038-assessment-redesign`。**D19 只读生产 census 已完成（只读，无写入；见 decisions 文件 census 段）**；迁移演练、restore 演练、模型 actual-output、全产品浏览器证据仍无。不得拿旧日期的库存数字或旧 CI 当本轮证据。
+基线：源码 `f804554e6`，文档 branch `docs/yuk-1038-assessment-redesign`。**D19 只读生产 census 已完成（只读，无写入；见 decisions 文件 census 段）**；迁移演练、restore 演练、模型 actual-output、全产品浏览器证据待补，本轮证据以当前实测为准。
 
 ## 1. 已核实的存储与身份基线
 
-本节来自 lane A 的直接源码核查；路径均为仓库相对路径。规划是建议，不是已执行 DDL。
+本节来自 lane A 的直接源码核查；路径均为仓库相对路径，规划为建议。
 
 | 现状 | 实际位置 | 全量迁移影响 |
 |---|---|---|
-| `question` 可变列持有 prompt/reference/rubric/choices/structured/figures；choices 是位置数组 | `src/db/schema.ts:406–503` | 不能把添加 revision 字段当迁移完成；所有内容 writer 要收敛 |
-| `question.version` 是乐观锁，不是完整版本历史 | `src/server/questions/write.ts:348–373` | 不能从一个 version 数字恢复历史学生所见 |
+| `question` 可变列持有 prompt/reference/rubric/choices/structured/figures；choices 是位置数组 | `src/db/schema.ts:406–503` | revision 字段只是起点；所有内容 writer 要收敛 |
+| `question.version` 是乐观锁，不是完整版本历史 | `src/server/questions/write.ts:348–373` | 历史学生所见需 revision 存储，version 数字不含历史 |
 | physical part 是独立 question 行，具有 parent/part_index | `src/server/questions/parts.ts:108–148` | 保留旧 question 身份及调度引用，不按显示序号重铸 |
 | structured part 是 jsonb 中的节点 ID，`part_ref` 指向它 | `src/capabilities/practice/server/judge/narrow-part.ts:12–17,75–104` | 和 physical part 不是同一维度；当前 narrowing 会裁掉兄弟题，联合判分必须改 |
-| quiz_gen 把 structured ID echo 到 physical part metadata | `src/capabilities/practice/jobs/quiz_gen.ts:1397–1399` | echo 不是受约束外键，不能据此保证历史映射 |
+| quiz_gen 把 structured ID echo 到 physical part metadata | `src/capabilities/practice/jobs/quiz_gen.ts:1397–1399` | echo 不是受约束外键，历史映射需显式建立 |
 | 归一化可能重建 tree ID | `src/core/schema/question_author.ts:90`；`quiz_gen.ts:849–895` | 重抽取不能直接覆盖已经发出的身份映射 |
 | `question_block` 是 event-sourced 草稿；question 内容目前 imperative | `src/server/projections/sot-flag.ts:6–14`、`entity-registry.ts:114–181` | 本次不把 question 全面改为另一套 fold；复用现有草稿事件和发布服务 |
 | paper `answer` 带 part_ref、文本和图片；未提交槽有部分唯一约束 | `src/db/schema.ts:868–894` | 新响应集合要保留历史 carrier 及草稿恢复，不只改 submit DTO |
@@ -83,22 +83,22 @@
 | web/jyeoo 来源 | `practice/server/tools/store-sourced-question.ts:157–388` → `src/server/questions/sourced-draft-insert.ts:85–229` | 去重/KC合并/来源 extract/资产守卫保留；统一草稿规范，verify 对 revision 而非可变行 |
 | 批量 quiz_gen、复合题、tool_quiz | `practice/jobs/quiz_gen.ts:1244–1289,1351–1405,1439–1470` | 题组 revision 与 part identity 一起写；artifact 引用稳定身份，实际 serve 绑定版本 |
 | quiz_verify/source_verify/人工 promote | `practice/jobs/quiz_verify.ts:739–914`；`source_verify.ts`；`verify-and-promote.ts:249–270` | 原锁序/版本守卫/tombstone 保留；改成 revision-scoped verification 与 admission generation |
-| author_question + question_draft 接受/拒绝 | `practice/server/tools/question-author.ts:283–345`；`src/capabilities/practice/server/proposal-appliers.ts:342–623` | draft+proposal事务不拆；接受进入统一发布；拒绝不得被异步verify再次激活 |
-| generate_question_candidate | `practice/server/tools/generate-question-candidate.ts:50–80` | 目前不持久化，仍不冒充已发布题；返回候选契约给真实保存者 |
-| mistake_variant 接受 | `proposal-appliers.ts:253–274`；variant_gen/variant_verify | 保留血缘；接受→revision/admission，不能绕发布直接 active |
-| 人工错题 | `practice/api/mistakes.ts:101–117` | 原错误作答证据不能成为答案键；题目契约与初次学习事实分别保留 |
+| author_question + question_draft 接受/拒绝 | `practice/server/tools/question-author.ts:283–345`；`src/capabilities/practice/server/proposal-appliers.ts:342–623` | draft+proposal事务不拆；接受进入统一发布；被拒绝项保持终态，异步 verify 不再激活 |
+| generate_question_candidate | `practice/server/tools/generate-question-candidate.ts:50–80` | 目前不持久化；返回候选契约给真实保存者 |
+| mistake_variant 接受 | `proposal-appliers.ts:253–274`；variant_gen/variant_verify | 保留血缘；接受→revision/admission，必须经发布才 active |
+| 人工错题 | `practice/api/mistakes.ts:101–117` | 错误作答证据不是答案键；题目契约与初次学习事实分别保留 |
 | image_candidate 接受 | `src/capabilities/ingestion/server/image-candidate-accept.ts:836–922` | 保留 terminal-rate 锁/来源图证据；后续 verify 撤销资格不丢已提交答案 |
-| legacy dreaming proposal | `src/capabilities/ingestion/server/legacy-record-appliers.ts:360–382` | 仍可读历史；可达接受路径必须生成新契约，不能成为漏网写口 |
+| legacy dreaming proposal | `src/capabilities/ingestion/server/legacy-record-appliers.ts:360–382` | 仍可读历史；可达接受路径必须生成新契约，写口全部纳入 |
 | seeds / scripts | `scripts/seed-synthetic.ts:291` | seed 也生成完整 revision；synthetic 标识保留，不能靠审计豁免漏迁 |
 | teaching_check | `copilot/server/teaching/materialize-ask-check.ts:49–98` | **container-only 不免迁**；教学turn与revision/issuance原子绑定 |
 | conjecture probe | `agency/server/conjecture/probe-lifecycle.ts:204–260` | probe spec/claim版本与当次发题绑定；相同文本不同probe occurrence不能被去重掉 |
 | intervention diagnostic | `practice/server/intervention-diagnostics.ts:294–385` | immediate/delayed/transfer及教学材料版本纳入冻结上下文；一次性claim与题目审核状态分离 |
-| 已发布题平面/结构化编辑 | `src/server/questions/write.ts:207–377`；`acceptQuestionEditProposal:786–960` | 修改 working copy→新revision；原question平面列变投影，禁止绕发布直接改 |
+| 已发布题平面/结构化编辑 | `src/server/questions/write.ts:207–377`；`acceptQuestionEditProposal:786–960` | 修改 working copy→新revision；原question平面列变投影，只经发布更新 |
 | archive / 恢复 / retraction | `write.ts:391–497`；proposal appliers | 生命周期资格与内容revision分离；释放live去重claim，不清除历史摘要/绑定 |
-| reference_answer_backfill | 同名job/DB test | 生成参考答案也影响评分依据，必须新revision+来源标识，不能直接改已发布列 |
-| answer_class / embed / difficulty / supply metadata backfills | 同名jobs、answer-class-write.ts:44–80 | 明确哪些只是检索投影、哪些改变判分输入；后者走新版本，前者不能悄悄影响旧attempt |
+| reference_answer_backfill | 同名job/DB test | 生成参考答案也影响评分依据，必须新revision+来源标识，已发布列只经发布更新 |
+| answer_class / embed / difficulty / supply metadata backfills | 同名jobs、answer-class-write.ts:44–80 | 明确哪些只是检索投影、哪些改变判分输入；后者走新版本，前者只作检索投影 |
 
-实现文件表须把表内模块短名解析为实际路径；不得照抄未经核对的路径创建平行模块。主要写口之外，implementation gate 再做 insert/update 闭包检索和审计，证明无漏网 runtime writer。
+实现文件表须把表内模块短名解析为实际路径；新模块按核对过的路径创建。主要写口之外，implementation gate 再做 insert/update 闭包检索和审计，证明无漏网 runtime writer。
 
 ## 3. 统一真相源、状态与身份（归并后的推荐）
 
@@ -137,7 +137,7 @@ teaching/probe/intervention 的 revision 与容器occurrence同事务绑定；�
 | 同版复核通过 | 通过相同幂等/CAS恢复，不重复学习结算 |
 | 发布修正版 | 新revision；历史提交仍绑定原版，跨规则复评显式声明依据 |
 
-发题/激活与verify状态变更串行化或CAS；模型调用不在锁内。一次性claim到期恢复不得复活被verify撤回的题。
+发题/激活与verify状态变更串行化或CAS；模型调用不在锁内。一次性claim到期恢复时，被verify撤回的题保持撤回。
 
 ## 4. 现有判分链与统一执行方案
 
@@ -148,9 +148,9 @@ teaching/probe/intervention 的 revision 与容器occurrence同事务绑定；�
 | 当前runner | 实现 | 必须替换的计分假设 |
 |---|---|---|
 | exact V2 | `src/core/capability/judges/exact.ts:55–185` | 只有0/1；保留集合/文本比较能力，按发布policy给部分分 |
-| keyword | `core/capability/judges/keyword.ts:34–99` | substring命中占比+固定0.85/0.4；不能当通用语言理解 |
-| semantic | `practice/server/judge/question-contract.ts:289–409` | 单一holistic score及固定clamp；改为评分单元/等级+证据，不能改名冒充已完成 |
-| steps | `steps-judge.ts:109–349` | 固定步骤/答案权重与信号列表；不能表达所有过程分/替代解法/依赖规则 |
+| keyword | `core/capability/judges/keyword.ts:34–99` | substring命中占比+固定0.85/0.4；仅作关键词近似 |
+| semantic | `practice/server/judge/question-contract.ts:289–409` | 单一holistic score及固定clamp；实质改为评分单元/等级+证据 |
+| steps | `steps-judge.ts:109–349` | 固定步骤/答案权重与信号列表；过程分/替代解法/依赖规则表达不全 |
 | multimodal_direct | `multimodal-direct-judge.ts:101–294` | 单一holistic verdict；要支持跨小问证据及probe signature契约 |
 | unit_dimension | `core/capability/judges/unit_dimension.ts:54–113`、`unit_dimension/score.ts:8–106` | 保留mathjs数值/单位检查；固定1/0.7/0.4/0.3梯度降为历史政策，不做新题默认 |
 
@@ -166,8 +166,8 @@ teaching/probe/intervention 的 revision 与容器occurrence同事务绑定；�
 | solve tutor | `server/solve-session.ts:307+` | 同一提交与评分契约，不另建评分系统 |
 | appeal/rejudge | `jobs/rejudge.ts:95–394` | 改读冻结submission（文本、图、part、版本），不用current row+text-only；所有题型同一evaluator |
 | conjecture probe | `agency/api/probe-answer.ts:110–345` | 保留诊断签名与partial/unsupported安全语义，复用新版结果 |
-| ingestion grading | `ingestion/server/auto-enroll.ts:112–138` | 当前直接调vision；统一切换时必须纳入，flag关着也不是豁免 |
-| advice预览 | `api/advice.ts:73–117` | 签名绑定revision/submission digest/完整candidate；预览不生效不更新学习 |
+| ingestion grading | `ingestion/server/auto-enroll.ts:112–138` | 当前直接调vision；统一切换时必须纳入，无论 flag 状态 |
+| advice预览 | `api/advice.ts:73–117` | 签名绑定revision/submission digest/完整candidate；预览只读，不产生生效与学习更新 |
 
 **不是学生评分的调用不能机械删除**：`src/server/quiz/verify-framework.ts:979–1246,1383–1528` 的solve_check/teaching_quality与source-grounding验证保留异源/否决/来源语义，只把输入改为统一revision契约。问题质量验证与学生得分是两条业务链。
 
@@ -185,21 +185,21 @@ activateEvaluation(evaluationId, expectedEffectiveId: null | id)
 
 外部调用者不需要知道具体runner和重试方式；Interface必须说明不可变输入、错误态、并发前置条件、取消、费用和无重复学习效应。`activateEvaluation`读持久化candidate，不信任客户端传来的评分对象。
 
-- `revision_id / submission_id / evaluation_group_id` 对新runtime必填；历史未知是另一种显式记录类型，不用可选字段让新请求逃避冻结。
+- `revision_id / submission_id / evaluation_group_id` 对新runtime必填；历史未知是另一种显式记录类型；新请求一律带冻结身份。
 - 一份submission可以有多个evaluation attempt，重试身份和学习事实身份不同。幂等键相同但答案/附件/revision不同返回冲突。
-- `expectedEffectiveId` 必填：初次为null，替换为明确旧ID，禁止省略当无条件覆盖。
-- 接受并学习结算的事务/恢复方式由§迁移与投影方案确定；candidate与shadow永不进latest-judge显示通道。
-- 运行时发布plan是评分语义权威；profile配置给未来规划默认值，不能静默覆盖已发题plan。服务可因模态/故障/低置信升级执行器，但不修改给分规则。
+- `expectedEffectiveId` 必填：初次为null，替换为明确旧ID，省略即非法。
+- 接受并学习结算的事务/恢复方式由§迁移与投影方案确定；candidate与shadow只出现在影子比较面。
+- 运行时发布plan是评分语义权威；profile配置给未来规划默认值，已发题plan只随新revision变更。服务可因模态/故障/低置信升级执行器，但不修改给分规则。
 
 ### 4.4 评分单位：避免重复记分
 
 **response slot是作答位置，不是计分权威。** 采用一组唯一`scoring_unit_id`表达答案键、得分点或等级维度；每个单元显式引用其需要的多个slot/材料/证据，贡献分数恰好一次。slot状态、按小问小计、作文维度显示均为投影。
 
-不得同时累加 slot.points + criterion.points + dimension.points，也不得要求“每个关联slot都承担该criterion的全部分”。合计由发布聚合policy选定唯一评分单元，执行sum/cap/weight/档位校验；非加法整体等级用明确映射，未提供映射不凭空制造总分。
+slot.points + criterion.points + dimension.points 只取其一作为总分来源；合计由发布聚合policy选定唯一评分单元，执行sum/cap/weight/档位校验；非加法整体等级用明确映射，未提供映射时总分标待补。
 
-题目定义依赖/替代/带错续算语义，模型只能报告符合哪条规则及其证据，不能在输出中新增依赖图/权重。复杂规则可原文+高级LLM联合判断；不为全部考试构建通用DSL。确定的硬不变量仍由代码校验。
+题目定义依赖/替代/带错续算语义，模型只报告符合哪条规则及其证据；依赖图/权重由题目定义。复杂规则可原文+高级LLM联合判断；不为全部考试构建通用DSL。确定的硬不变量仍由代码校验。
 
-空白、未提交、格式无法解释、缺证据、基础设施失败、需要复核分别表达。只有**完整提交且评分政策明确**时空白可得0；missing或识别失败不能变0。模型概率/置信度/期望值与学生分数彻底分离。
+空白、未提交、格式无法解释、缺证据、基础设施失败、需要复核分别表达。只有**完整提交且评分政策明确**时空白可得0；missing或识别失败保持未决。模型概率/置信度/期望值与学生分数彻底分离。
 
 ## 5. Jev 的真实技术落点
 
@@ -233,9 +233,9 @@ activateEvaluation(evaluationId, expectedEffectiveId: null | id)
 
 旧resolver/override/路线枚举仅在迁移分类和历史payload解释器中保留；新runtime不走。固定unit/keyword/steps数值政策仅作为带版本的历史解释，不成为新题默认。
 
-保留：确定性比较能力、调用真实发生后才标model-backed的规则、来源验证、诊断一次性claim、事件日志、原有授权预算、安全校验。V1双份judge和无生产consumer的generic router可在对应测试迁移后删除，不把“统一”做成确定性能力削弱。
+保留：确定性比较能力、调用真实发生后才标model-backed的规则、来源验证、诊断一次性claim、事件日志、原有授权预算、安全校验。V1双份judge和无生产consumer的generic router可在对应测试迁移后删除，“统一”保持确定性能力不削弱。
 
-## 6. 已定位的验证入口（未运行）
+## 6. 已定位的验证入口
 
 - schema/producer：`question_author`、`quiz_gen_plan`、`structured_question` scoped unit；`quiz_gen.test.ts`、`quiz_verify.test.ts`、`source_verify.test.ts`、`store-sourced-question.db.test.ts`、`proposal-appliers.db.test.ts`、`auto-enroll.db.test.ts`、`import.db.test.ts`、`parts.test.ts`、`write-quiz.test.ts`、`verify-dispatch-outbox.db.test.ts`。
 - submit/runtime：`submit.db.test.ts`、`submit-durable.db.test.ts`、`submit-durable-resource.db.test.ts`、`paper-cycle.db.test.ts`、`solve-submit.db.test.ts`、`probe-answer.db.test.ts`、`judge-run-dispatch-boss-contract.db.test.ts`、`ai_task_run_reconcile.db.test.ts`；invoker/durable/retry/contract scoped unit。
@@ -259,48 +259,48 @@ lane D核查了render→state→persist/resume→wire→API；以下不把wire e
 | PfPaper | `PfPaper.tsx:136,283–303,618–637,786–809`每槽字符串，服务端autosave；`practice-api.ts:535–542`丢弃wire可用图片字段 | ResponseSet autosave/恢复；整组附件及逐slot回答；联合组提交/封存；保留session与计时语义 |
 | PfRetro | `PfRetro.tsx:67,79–88,104–107`“已答·未判”、仅文本、指引回solo申诉 | 展示真实选项/原图/评分单元，accepted/superseded明确；同submission申诉，不要求重新作答 |
 | placement | `ScreenPlacement.tsx:180–208,392–453`单选文本，有手写图入口；`:94–100`pagehide abandoned | 统一控件/提交；发题冻结；切换时不拿新题面承接旧答案，恢复/终止策略显式 |
-| conjecture probes | `ProbeAnswers.tsx:113–134`文字+多图；独立probe answer路由 | 保留conjecture裁决语义，统一response/evaluation，不把探针结论伪装成普通题分数 |
-| ingestion review | `src/ui/components/VisionTab.tsx:381–385,990,1044–1047,1269–1296`session恢复/结构预览/题面编辑 | 可审阅响应契约与评分来源/准入状态；保留原结构及原图，不把prompt编辑丢树当正常无损操作 |
-| DraftReview | `DraftReviewPage.tsx:211–244,727,1093`自由文本answer/enable | stable key、规则缺项和来源可信度可见；人工force-enable不得绕过结构完整性/身份约束 |
+| conjecture probes | `ProbeAnswers.tsx:113–134`文字+多图；独立probe answer路由 | 保留conjecture裁决语义，统一response/evaluation，探针结论与普通题分数分别表达 |
+| ingestion review | `src/ui/components/VisionTab.tsx:381–385,990,1044–1047,1269–1296`session恢复/结构预览/题面编辑 | 可审阅响应契约与评分来源/准入状态；保留原结构及原图，prompt编辑丢树按有损操作显式处理 |
+| DraftReview | `DraftReviewPage.tsx:211–244,727,1093`自由文本answer/enable | stable key、规则缺项和来源可信度可见；人工force-enable仍过结构完整性/身份约束 |
 | QuestionDetail | `QuestionDetailPage.tsx:187–199,786–863`从reference首字母猜key并修改reference头；`:888–922`physical parts | 结构化key/rubric编辑；编辑工作态→新revision；移除首字母hack |
 | Manual mistake / 错题查看 | `RecordPage.tsx:128–139`错答图片写死[]；`web/src/routes/MistakesPage.tsx:223–239`文本对照 | 真实错答文本/图证据保留与展示，来源不混进参考key |
-| stream/serve | 流状态服务端；placement仅给questionId后再getQuestion | issuance作为实际所见锚点；preselected不等于issued；in_progress必须绑定明确版本 |
-| appeal回流 | `observability/ui/EventDetailPage.tsx:138–156`纠正链；Inbox已有judge_retraction | 不重造观测系统；练习/复盘读取effective selection并可定位原评分及复核链 |
-| Copilot / artifacts | `ToolResultView.tsx:7–41`提案结果；`InteractiveArtifactRenderer.tsx:87`沙箱 | author/propose/write_quiz引用新契约；沙箱不是可直接信任的评分writer |
-| 笔记题目引用 | `NoteBlocks.tsx:1–6`纯引用预览跳转；`notes/manifest.ts:61,185`embedded-check已退役 | 更新引用/跳转坐标；**不复活已删除的内嵌答题endpoint或新建答题面**，任意题型不等于扩展产品入口 |
+| stream/serve | 流状态服务端；placement仅给questionId后再getQuestion | issuance作为实际所见锚点；preselected与issued分别表达；in_progress必须绑定明确版本 |
+| appeal回流 | `observability/ui/EventDetailPage.tsx:138–156`纠正链；Inbox已有judge_retraction | 复用现有观测系统；练习/复盘读取effective selection并可定位原评分及复核链 |
+| Copilot / artifacts | `ToolResultView.tsx:7–41`提案结果；`InteractiveArtifactRenderer.tsx:87`沙箱 | author/propose/write_quiz引用新契约；沙箱输出按提案走写入通道 |
+| 笔记题目引用 | `NoteBlocks.tsx:1–6`纯引用预览跳转；`notes/manifest.ts:61,185`embedded-check已退役 | 更新引用/跳转坐标；**已删除的内嵌答题 endpoint 保持删除**；题型支持与产品入口分别决策 |
 
 除明确`src/...`外，practice UI短路径归`src/capabilities/practice/ui/`，placement归onboarding、ProbeAnswers归shell；API归对应capability。最终实施文件表应使用实际完整路径，不凭短名新建副本。
 
 ### 7.1 公私DTO和一致性
 
-- `practice/api/question-detail.ts:118–134`对intervention诊断有sanitised投影，普通详情返回reference/rubric/metadata；solo与placement复用题库详情getQuestion，导致作答前已下载这些字段。普通题库详情可按产品权限看答案，不等于练习投影应收到它们。
+- `practice/api/question-detail.ts:118–134`对intervention诊断有sanitised投影，普通详情返回reference/rubric/metadata；solo与placement复用题库详情getQuestion，导致作答前已下载这些字段。普通题库详情按产品权限含答案；练习投影字段单独定义。
 - `paper-contracts.ts:126–136`的PaperQuestionFace不含reference，是可复用先例；paper-submit-route缓冲反馈不含分数，保留。
 - 新增/分离**显式practice issuance DTO**：题面、所需共享材料/图表、ResponseSpec、opaque issuance/revision/part/slot/option身份；无答案键、私有rubric、模型计划、未经筛选metadata。不要靠UI不渲染来保密。
 - 评分后feedback DTO按可见性policy揭示相应解析/评分依据；题库编辑DTO是另一个用途。generic revision JSON永不整体透传。
-- 题面MathMarkdown仍可能含内嵌图片；源码无`figures/image_refs`独立渲染只能证明**结构化配图没有完整专用消费链**，不能断言所有图片都绝对不可见。必须用“markdown内嵌图+结构化figure+共享材料图”三种fixture分别验收。
+- 题面MathMarkdown仍可能含内嵌图片；源码无`figures/image_refs`独立渲染只证明**结构化配图没有完整专用消费链**；图片可见性用“markdown内嵌图+结构化figure+共享材料图”三种fixture分别验收。
 
 ### 7.2 通用交互覆盖，不按学科造控件
 
 | 响应能力 | 统一发布的实现目标 |
 |---|---|
 | 单/多选 | stable option IDs，原生radio/checkbox或等价可访问控件；空集合与missing区分；选项数量不硬编码4 |
-| 文本/数值/公式 | 保留原文输入和数学预览；结构化解释为派生证据，不悄悄重写原答案 |
+| 文本/数值/公式 | 保留原文输入和数学预览；结构化解释为派生证据，原答案保持原文 |
 | 多空/表格 | 每个显式slot可输入，按行列/题面定位显示；混合响应与整题计分不互相强制一对一 |
-| 配对/排序 | ID对选择与可键盘操作的上下移动/序号编辑足够；**不以“暂时只文本兜底”当全能力完成，也不要求拖拽编辑器** |
+| 配对/排序 | ID对选择与可键盘操作的上下移动/序号编辑足够；**文本兜底按文本能力计；拖拽编辑器非必需** |
 | 证明/作文/作图/实验/复杂作品 | 通用文字+附件证据，图片可绑定整个evaluation group或明确子集；不用专用学科widget才能作答 |
 | 题目图表/材料 | 独立共享材料与figure渲染、缩放、可读替代说明；判分与学生所见引用同版资产 |
-| 音频/其他媒体 | 泛型原始附件能保留，不把`voice` enum当ASR/口语评分完成；若题目要求音高/发音/时序等原媒体证据，执行计划必须具备能力或明确需人工复核，转写不能冒充原媒体 |
+| 音频/其他媒体 | 泛型原始附件能保留，`voice` enum 只表示媒体类型；若题目要求音高/发音/时序等原媒体证据，执行计划必须具备能力或明确需人工复核，转写为派生证据 |
 
-不隐含增加浏览器执行任意代码、完整CAS、音频录音工作站、矢量作图器或QTI进出口。能力覆盖矩阵区分**可表达、可采集、可自动评分、需人工证据**，不能靠一条unsupported记录把自动评分声称全覆盖。
+能力矩阵不含浏览器执行任意代码、完整CAS、音频录音工作站、矢量作图器或QTI进出口。能力覆盖矩阵区分**可表达、可采集、可自动评分、需人工证据**，自动评分覆盖率按证据逐项计。
 
 ### 7.3 UI状态与推荐默认
 
 - 区分草稿未提交、已提交待评、联合组暂定、材料不可读/待复核、生效、被替代；每个状态有submission锚点，刷新不造成重交。
-- solo在答案持久化后可继续下一项，pending可回查；placement需当前结果才能自适应选下一题时显示等待/安全退出，不伪造评级推进。此为推荐交互，需design preflight批准。
-- 整页解题照默认附到当前evaluation group，允许调整关联子集；不得靠模型未验证的切图归属把相邻题答案串用。
-- 新serve默认不shuffle；stable IDs不自动授权重排，“以上都对”/引用字母选项保持原顺序。允许重排的题才做重排不改分性质测试。
+- solo在答案持久化后可继续下一项，pending可回查；placement需当前结果才能自适应选下一题时显示等待/安全退出，评级推进以真实结果为准。此为推荐交互，需design preflight批准。
+- 整页解题照默认附到当前evaluation group，允许调整关联子集；切图归属须验证后使用，相邻题答案不串用。
+- 新serve默认不shuffle；stable IDs 存在不等于允许重排；“以上都对”/引用字母选项保持原顺序。允许重排的题才做重排不改分性质测试。
 - 未有发布计分规则时可保存/审阅，不作为可自动判分的练习发出；无需再让owner在“缺规则也猜着算”之间选择。
-- solo/placement当前不持久化的浏览器草稿，不能被后端迁移凭空恢复；统一切换需明确维护提示与作答保存/等待窗口，不能默许上线丢答卷。
+- solo/placement当前不持久化的浏览器草稿在后端迁移中按丢失处理；统一切换需明确维护提示与作答保存/等待窗口，答卷不丢失。
 
 ### 7.4 实施前UI design preflight材料（未批准，未写UI代码）
 
@@ -376,11 +376,11 @@ lane D核查了render→state→persist/resume→wire→API；以下不把wire e
 - 创建 submission/group 时同时建立对应 head 行；`submission_id` 与 `evaluation_group_id` 必填，初始 `effective_evaluation_id = null`、`generation = 0`。
 - **REQUIRED `expected_effective_id: null | id` 且 `expected_generation`**，防 ABA。
 - 先锁 common learning-write，再一致地锁 submission/head；不可变 digest + group closure + admission generation 校验；派生 policy evidence；receipt + FSRS/θ̂/calibration + effective head + outbox **同事务原子**；模型调用在锁外。
-- 可选 effect receipt（applied/ineligible/failed_pending）不得被吞。
+- 可选 effect receipt（applied/ineligible/failed_pending）必须显式记录。
 - 服务端稳定学习顺序，分离 original occurrence/submitted/evaluation 时间；regrade 不算额外练习。
-- 用户评级 provenance 独立；judge correction **绝不静默覆盖用户已确认评级**。
+- 用户评级 provenance 独立；judge correction 保留用户已确认评级，覆盖需用户确认。
 - 同 coarse 但分值变化的 partial 仍须是 meaningful replacement。
-- 更晚到的早期证据走**有序 replay**，不在完成时追加，也不假装 evidence-only applied。
+- 更晚到的早期证据走**有序 replay**，按真实时序重放。
 
 ## 12. bounded assessment-learning replay（满足全量目标的工程建议；proposed）
 
@@ -389,17 +389,17 @@ lane D核查了render→state→persist/resume→wire→API；以下不把wire e
 - 单学习者 post-checkpoint 全量 ledger replay 可接受，比最小图更简单；**benchmark 未测**。
 - 保留历史实际使用的 calibration/policy 输入与真实 selection 概率/material delivery；**不反事实重做选题**，不用未来 calibration 反向回填。
 - 模式：重算 state、作废 pending/stale 派生结论、保留已交付/用户已批准的历史动作与成本。
-- replay 期间**不重发** models/nudges/memory。
+- replay 期间 models/nudges/memory 不触发。
 
 ## 13. 迁移默认捕获与 native 分类（lane C）
 
-- 默认捕获 **cutover checkpoint 的精确观测**：FSRS/mastery 全 partition/family/item/calibration labels/axis/signals/结构血缘；**不是重算**，也不冒充 replay 已证明。
+- 默认捕获 **cutover checkpoint 的精确观测**：FSRS/mastery 全 partition/family/item/calibration labels/axis/signals/结构血缘；**是观测快照，非重算**。
 - 保留原始 eventID/body/time/actor/cost/causal 链。
-- Native 分类：完整 attempt → submission+imported eval/head；embedded tutor grade；attribution-only 单独；human/import assertion 诚实标注；pending/native 缺件则 blocked；answer/live drafts 精确；缺 issued snapshot → native `historical_unresolved`（**不得用当前 revision 补造**）；correction cycles 保持 unresolved；deferred replay worklist。
+- Native 分类：完整 attempt → submission+imported eval/head；embedded tutor grade；attribution-only 单独；human/import assertion 诚实标注；pending/native 缺件则 blocked；answer/live drafts 精确；缺 issued snapshot → native `historical_unresolved`（保持 unresolved）；correction cycles 保持 unresolved；deferred replay worklist。
 - Pending 保留 run/request/pending 身份、response digest、revision mapping、eval generation、delivery disposition。
-- Completed 但缺 DONE → reconstruct，**不 regrade**。
+- Completed 但缺 DONE → 只 reconstruct。
 - **全量迁移 ≠ 批量历史重判**。
-- 切换前 replay 支持不足时，由 owner 在「display-only correction」与「non-effective pending」间选择，**不得静默 applied learning**。
+- 切换前 replay 支持不足时，由 owner 在「display-only correction」与「non-effective pending」间选择，applied learning 必须显式。
 
 ## 14. census（D19 只读部分已执行）与提案细节
 
@@ -429,7 +429,7 @@ lane D核查了render→state→persist/resume→wire→API；以下不把wire e
 
 - **新写入之前**：恢复一致的冻结 data/queues/subscriptions/assets + 旧 images。
 - **新写入之后**：默认 maintenance + roll-forward；若必须 restore，先导出全部新 submissions/drafts/eval/receipt/blobs 并在独立 target 恢复且有证明的对账；旧 app 无法表示新 shape → **不存在无损 image rollback**。
-- 保留旧 columns/images 作恢复安全，**不是** phased rollout。无部署授权。
+- 保留旧 columns/images 作恢复安全。
 
 ## 17. work DAG（proposed）
 
@@ -461,7 +461,7 @@ contracts/policies → schema+snapshot → effective owner + 并行 census → e
 9. **D9** 允许显式非自动模式：任意题目可显式手动/自评带 provenance，仅手动学习效应，绝不推断 AI 正确性；现有手动保留；手动→θ̂ 精确映射待定。
 10. **D10** 扩展常见原始证据：audio/video/PDF/plaintext 原始附件上传+安全播放/下载，format/size/security 校验；无录音工作站/代码执行/媒体编辑器；full release 不做 image-only fallback。
 11. **D11** 统一服务端自动保存：全部正式练习面（含 solo+placement）在 pinned issuance 自动保存，saving/saved/error，仅服务端 ack 恢复 promise；旧未保存浏览器草稿切换 warn/save/export 不补造。
-12. **D12** 批准两次调用合计 ≤$0.01：synthetic 非敏感 Noul 一次、Choice 一次；不自动重试、不走 advanced；仅首次 smoke 不是 accuracy；**执行已 FINAL（2/2 calls、$0.00003024，仅 wire/auth/cost，无 accuracy 结论）**；不从前预算池挪额度。
+12. **D12** 批准两次调用合计 ≤$0.01：synthetic 非敏感 Noul 一次、Choice 一次；不自动重试、不走 advanced；仅首次 smoke 不是 accuracy；**执行已 FINAL（2/2 calls、$0.00003024，仅 wire/auth/cost）**；不从前预算池挪额度。
 
 已批准（轮三）：
 
@@ -482,14 +482,14 @@ contracts/policies → schema+snapshot → effective owner + 并行 census → e
 
 仍待 owner 决策（PENDING，未批准）：**Q20 UI 正式 design preflight 批准**（草案已出待正式批准）、**Q21 ticket 拆分批准**，之后 final implementation-ready confirmation。此前另列的 learner-visible rubric/披露、omission/finality/assistance policy、cutover measured window、手动→θ̂ 精确映射纳入 Q21 一并定案。
 
-Provider：owner 偏好 OpenRouter（**取代“仅直连 TypeSafe”**），保留 typed sibling `AiRunLifecycle` seam（非 chat），精确集成包以后定；OpenRouter 公开文档核验见 decisions 文件（native `POST /api/v1/systemone` 或 `/api/alpha/decisions`，pinned `typesafe/jev-1.13` → canonical `typesafe/jev-1.13-20260917`，无 chat 门面，text-only 32k，only TypeSafe provider，`allow_fallbacks=false`，`max_price` prompt 0.042/completion 0，probabilities/confidence/usage.cost optional 缺失不补造，confidence 非 accuracy、Score 非 student points，Jev→advanced 独立 invocation）；**key presence 已检查但非 auth 成功**；**D12 受限 smoke 已 FINAL（2/2 calls、$0.00003024，仅 wire/auth/cost）**；除此之外**当前不调用**（**D18 ≤$5 预算已批准但未运行**）。
+Provider：owner 偏好 OpenRouter（**取代“仅直连 TypeSafe”**），保留 typed sibling `AiRunLifecycle` seam（非 chat），精确集成包以后定；OpenRouter 公开文档核验见 decisions 文件（native `POST /api/v1/systemone` 或 `/api/alpha/decisions`，pinned `typesafe/jev-1.13` → canonical `typesafe/jev-1.13-20260917`，无 chat 门面，text-only 32k，only TypeSafe provider，`allow_fallbacks=false`，`max_price` prompt 0.042/completion 0，probabilities/confidence/usage.cost optional 缺失不补造，confidence 非 accuracy、Score 非 student points，Jev→advanced 独立 invocation）；**key presence 已检查**；**D12 受限 smoke 已 FINAL（2/2 calls、$0.00003024，仅 wire/auth/cost）**；**D18 ≤$5 预算已批准，待 harness/budget gate**。
 
-SQL/CAS 等工程细节不需 owner 决策。新增笔记内嵌 quiz 不在本次题目契约迁移范围内。实施时按改动基线更新受影响路径与证据，不把本次源码调查当作永久有效的运行证明。
+SQL/CAS 等工程细节不需 owner 决策。新增笔记内嵌 quiz 不在本次题目契约迁移范围内。实施时按改动基线更新受影响路径与证据。
 
 ## 状态与证据缺口
 
-- 本文为 **source-only grounding**：lane A/B/C/D 调查已归并，源码路径与行为结论有文件/符号/行号；**未**执行 schema/data migration 或部署。初始 grounding 阶段**零模型调用**；其后 **D12 受限 smoke 已 FINAL（2/2 calls、$0.00003024，仅 wire/auth/cost，无 accuracy 结论）**；**D19 只读生产 census 已完成**（REPEATABLE READ READ ONLY，无写入）。
+- 本文为 **source-only grounding**：lane A/B/C/D 调查已归并，源码路径与行为结论有文件/符号/行号。初始 grounding 阶段**零模型调用**；其后 **D12 受限 smoke 已 FINAL（2/2 calls、$0.00003024，仅 wire/auth/cost）**；**D19 只读生产 census 已完成**（REPEATABLE READ READ ONLY，无写入）。
 - **产品决策**：轮一 D1–D5 + 轮二 D6–D12 + 轮三 D13–D16 + 轮四 D17–D19 **已批准**（见 `docs/planning/2026-09-24-question-assessment-decisions.md`），仅剩 **Q20 UI preflight 正式批准**与 **Q21 ticket 拆分**。
-- **证据缺口**：census 已完成；smoke 已完成；**隔离 restore 演练仍待**（owner-gated，待 migration code 存在）；**accuracy actual-output 评测仍待**（**D18 ≤$5 预算已批准**，harness/budget gate 就绪后运行）；无全产品浏览器证据。
-- 因此本文是实施规划基线，**不是**可直接交付实施的最终 spec，也不代表任何能力已上线或已验收。
-- Linear capture：已搜索复判/pending/评分并更新YUK-1038（comment `f88785c9-97e7-446c-96fa-294978b36d43`）。订阅灾备语义复用YUK-766，得分点→学习证据政策复用YUK-438；已分别留言，不重复建票、不冒称完成。其余实施内缺口纳入YUK-1038，实施拆票待产品裁决。
+- **证据缺口**：census 已完成；smoke 已完成；**隔离 restore 演练仍待**（owner-gated，待 migration code 存在）；**accuracy actual-output 评测仍待**（**D18 ≤$5 预算已批准**，harness/budget gate 就绪后运行）；全产品浏览器证据待补。
+- 因此本文是实施规划基线。
+- Linear capture：已搜索复判/pending/评分并更新YUK-1038（comment `f88785c9-97e7-446c-96fa-294978b36d43`）。订阅灾备语义复用YUK-766，得分点→学习证据政策复用YUK-438；已分别留言。其余实施内缺口纳入YUK-1038，实施拆票待产品裁决。
