@@ -14,19 +14,11 @@ import {
   itemPriorPaidEffectInput,
   itemPriorPaidEffectRevision,
 } from '@/capabilities/practice/server/item-prior-paid-effect-adapter';
-import { computePaidEffectIdentity } from '@/core/migration/paid-effect-protocol';
 import { readPaidEffect } from '@/db/paid-effect-store';
-import { dag_orchestration_node, dag_orchestration_run, paid_effect, question } from '@/db/schema';
+import { paid_effect, question } from '@/db/schema';
 import {
   ITEM_PRIOR_MEMBER,
-  type ItemPriorAdmission,
-  type ItemPriorDispatchedAdmission,
-  type ItemPriorDispatchedRequest,
-  ItemPriorDurabilityPrerequisiteError,
-  type ItemPriorExecutionStepRunner,
-  type ItemPriorStepRunner,
   itemPriorDispatchedRequestSchema,
-  runItemPriorDurableMember,
 } from '@/server/durable/item-prior-family';
 import { resetDb, testDb } from '../helpers/db';
 
@@ -37,42 +29,6 @@ const request = {
   nodeId: 'node_itemprior_dbtest',
   runDate: '2026-10-11',
 };
-const noGate = async () => {};
-
-function steps(): ItemPriorStepRunner {
-  let recorded: { name: string; admission: ItemPriorAdmission } | undefined;
-  return {
-    async runStep(name, fn) {
-      if (recorded) {
-        if (recorded.name !== name) throw new Error('Unexpected step at position 0');
-        return structuredClone(recorded.admission);
-      }
-      const admission = await fn();
-      recorded = { name, admission: structuredClone(admission) };
-      return admission;
-    },
-  };
-}
-
-async function seedDagRun(runDate = request.runDate) {
-  const now = new Date();
-  await db.insert(dag_orchestration_run).values({
-    id: request.dagRunId,
-    run_date: runDate,
-    trigger: 'cron',
-    status: 'running',
-    started_at: now,
-    updated_at: now,
-  });
-  await db.insert(dag_orchestration_node).values({
-    id: request.nodeId,
-    run_id: request.dagRunId,
-    job_name: ITEM_PRIOR_MEMBER,
-    status: 'pending',
-    stale: false,
-    updated_at: now,
-  });
-}
 
 async function seedQuestion(id: string) {
   const now = new Date();
@@ -89,16 +45,6 @@ async function seedQuestion(id: string) {
     updated_at: now,
     version: 0,
   });
-}
-
-async function blockedAdmission(runner: ItemPriorStepRunner): Promise<ItemPriorAdmission> {
-  try {
-    await runItemPriorDurableMember({ db, steps: runner, request, gateEpoch: noGate });
-    throw new Error('Candidate unexpectedly completed');
-  } catch (error) {
-    if (!(error instanceof ItemPriorDurabilityPrerequisiteError)) throw error;
-    return error.admission;
-  }
 }
 
 beforeEach(async () => {
@@ -165,39 +111,12 @@ async function activeEffects() {
   return new ItemPriorPaidEffectAdapter(db, dispatched);
 }
 
-async function seedDispatchedNode(
-  rawRequest: unknown,
-  storedPayload?: object,
-  name = ITEM_PRIOR_MEMBER,
-) {
-  const dispatched = await createActiveDispatchedJob(rawRequest, storedPayload, name);
-  await db
-    .update(dag_orchestration_node)
-    .set({ boss_job_id: dispatched.dispatch.deliveryId, status: 'enqueued' })
-    .where(eq(dag_orchestration_node.id, dispatched.nodeId));
-  return dispatched;
-}
-
 afterEach(async () => {
   for (const job of ownedJobs.splice(0)) await fixtureBoss?.deleteJob(job.name, job.id);
 });
 afterAll(async () => {
   await fixtureBoss?.stop();
 });
-
-function executionSteps() {
-  let recorded: ItemPriorDispatchedAdmission | undefined;
-  const runner: ItemPriorExecutionStepRunner = {
-    async runStep(name, fn) {
-      if (name !== 'item-prior-dispatched-admission-v1')
-        throw new Error('Unexpected dispatch step');
-      if (recorded) return structuredClone(recorded);
-      recorded = structuredClone(await fn());
-      return structuredClone(recorded);
-    },
-  };
-  return { runner, admission: () => recorded };
-}
 
 async function realWork(id: string, reps = 3): Promise<ItemPriorPreparedWork> {
   const [candidate] = await db.select().from(question).where(eq(question.id, id));
@@ -229,35 +148,6 @@ function output(b: number, confidence = 1 / 3) {
 const noProvider = async (): Promise<{ text: string }> => {
   throw new Error('Receipts and held effects must not call the provider');
 };
-
-function effectIdentity(work: ItemPriorPreparedWork, rep = 0) {
-  return computePaidEffectIdentity(itemPriorPaidEffectInput(work, rep));
-}
-
-const terminalJobStates = ['cancelled', 'failed', 'completed'] as const;
-
-async function settleOriginalJob(
-  dispatched: ItemPriorDispatchedRequest,
-  state: (typeof terminalJobStates)[number],
-) {
-  if (!fixtureBoss) throw new Error('Missing actual broker fixture');
-  const id = dispatched.dispatch.deliveryId;
-  if (state === 'cancelled') await fixtureBoss.cancel(ITEM_PRIOR_MEMBER, id);
-  else if (state === 'failed') await fixtureBoss.fail(ITEM_PRIOR_MEMBER, id, { fixture: state });
-  else await fixtureBoss.complete(ITEM_PRIOR_MEMBER, id, { fixture: state });
-  expect(await fixtureBoss.getJobById(ITEM_PRIOR_MEMBER, id)).toMatchObject({ state });
-}
-
-function deferred() {
-  let resolve = () => {};
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
-// R2 finding retained: a300 allowed a terminal owning job to claim pending/absent
-// effects until the orchestrator polled.
 
 describe('item prior concrete shared-store consumer (DB)', () => {
   // @invariant concurrency: exactly one reservation wins and only its exact fence/delivery can persist output
