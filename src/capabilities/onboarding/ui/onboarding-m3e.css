@@ -1,4 +1,5 @@
-/* 首次使用 · 设定 (/welcome), M3E presentation (YUK-1473, docs/design/2026-11-03-welcome-m3e.md).
+/* 首次使用 (/welcome, /onboarding/upload; YUK-1473), M3E presentation. Design records:
+   docs/design/2026-11-03-welcome-m3e.md and 2026-11-03-onboard-upload-m3e.md.
    Colours read Google M3 roles; the main column carries .un-m3e-bridge so ui-next primitives
    (ChipToggle, Segmented, Button) read the same roles. Motion only on change (M1). */
 
@@ -102,7 +103,7 @@
   min-width: 0;
 }
 
-[data-ui-next] .un-ob-section:not(:last-child) {
+[data-ui-next] .un-ob-panel {
   padding: 24px;
   border-radius: 24px;
   background: var(--un-md-sys-color-surface-container-low);
@@ -324,6 +325,234 @@
   font-weight: 600;
 }
 
+/* ── Actions row ── */
+[data-ui-next] .un-ob-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ── Upload: drop area and file list (/onboarding/upload) ── */
+[data-ui-next] button.un-ob-drop {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 184px;
+  padding: 32px 24px;
+  border: 1.5px dashed var(--un-md-sys-color-outline);
+  border-radius: var(--un-md-sys-shape-large);
+  background: var(--un-md-sys-color-surface-container-lowest);
+  color: var(--un-md-sys-color-on-surface-variant);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color var(--un-t-feedback) ease-out,
+    background-color var(--un-t-feedback) ease-out;
+}
+
+[data-ui-next] button.un-ob-drop:hover {
+  border-color: var(--un-md-sys-color-primary);
+  background: var(--un-md-sys-color-surface-container-high);
+}
+
+[data-ui-next] button.un-ob-drop:focus-visible {
+  outline: 3px solid var(--un-md-sys-color-primary);
+  outline-offset: 2px;
+}
+
+[data-ui-next] .un-ob-drop-title {
+  color: var(--un-md-sys-color-on-surface);
+  font: 600 16px / 1.5 var(--un-font-sans);
+  text-wrap: pretty;
+}
+
+[data-ui-next] .un-ob-drop-hint {
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  text-wrap: pretty;
+}
+
+[data-ui-next] .un-ob-files {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-ui-next] .un-ob-files li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: var(--un-md-sys-shape-small);
+  background: var(--un-md-sys-color-surface-container-lowest);
+  overflow-wrap: anywhere;
+}
+
+[data-ui-next] .un-ob-files-size {
+  flex: none;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Upload: usage choice (radio cards) ── */
+[data-ui-next] .un-ob-usage {
+  display: grid;
+  gap: 8px;
+}
+
+[data-ui-next] .un-ob-usage-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--un-md-sys-color-outline-variant);
+  border-radius: var(--un-md-sys-shape-medium);
+  background: var(--un-md-sys-color-surface-container-lowest);
+  cursor: pointer;
+}
+
+[data-ui-next] .un-ob-usage-option[data-on] {
+  border-color: transparent;
+  background: var(--un-md-sys-color-secondary-container);
+  color: var(--un-md-sys-color-on-secondary-container);
+}
+
+[data-ui-next] .un-ob-usage-option:has(:focus-visible) {
+  outline: 3px solid var(--un-md-sys-color-primary);
+  outline-offset: 2px;
+}
+
+[data-ui-next] .un-ob-usage-option > input {
+  flex: none;
+  margin: 3px 0 0;
+  accent-color: var(--un-md-sys-color-primary);
+}
+
+[data-ui-next] fieldset:disabled .un-ob-usage-option {
+  cursor: default;
+  opacity: 0.45;
+}
+
+[data-ui-next] .un-ob-usage-text {
+  display: grid;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+[data-ui-next] .un-ob-usage-label {
+  font-weight: 600;
+}
+
+[data-ui-next] .un-ob-usage-hint {
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: var(--un-md-sys-typescale-body-medium-line-height);
+}
+
+[data-ui-next] .un-ob-usage-option[data-on] .un-ob-usage-hint {
+  color: inherit;
+}
+
+/* ── Upload: extraction progress, receipt, next step ── */
+[data-ui-next] .un-ob-progress {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-ui-next] .un-ob-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--un-md-sys-color-on-surface-variant);
+}
+
+[data-ui-next] .un-ob-progress-row[data-state="run"],
+[data-ui-next] .un-ob-progress-row[data-state="done"] {
+  color: var(--un-md-sys-color-on-surface);
+}
+
+[data-ui-next] .un-ob-progress-dot {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--un-md-sys-shape-full);
+  box-shadow: inset 0 0 0 1px var(--un-md-sys-color-outline-variant);
+}
+
+[data-ui-next] .un-ob-progress-row[data-state="run"] .un-ob-progress-dot {
+  color: var(--un-md-sys-color-primary);
+  box-shadow: inset 0 0 0 1.5px var(--un-md-sys-color-primary);
+}
+
+[data-ui-next] .un-ob-progress-row[data-state="done"] .un-ob-progress-dot {
+  background: var(--un-md-sys-color-secondary-container);
+  color: var(--un-md-sys-color-on-secondary-container);
+  box-shadow: none;
+}
+
+[data-ui-next] .un-ob-progress-label {
+  flex: 1;
+  min-width: 0;
+}
+
+[data-ui-next] .un-ob-progress-meta {
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-ui-next] .un-ob-receipt {
+  margin: 0;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: var(--un-md-sys-typescale-body-medium-line-height);
+}
+
+[data-ui-next] .un-ob-exit {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px 24px;
+  padding: 20px 24px;
+  border-radius: 24px;
+  background: var(--un-md-sys-color-surface-container-high);
+}
+
+[data-ui-next] .un-ob-exit-fig {
+  font: 600 32px / 1 var(--un-font-sans);
+  font-variant-numeric: tabular-nums;
+  color: var(--un-md-sys-color-primary);
+}
+
+[data-ui-next] .un-ob-exit-text {
+  margin: 0;
+  color: var(--un-md-sys-color-on-surface);
+  text-wrap: pretty;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next] .un-ob-spin {
+    animation: un-ob-spin 1s linear infinite;
+  }
+
+  @keyframes un-ob-spin {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+}
+
 @media (max-width: 720px) {
   [data-ui-next].un-ob {
     padding: 24px 16px 40px;
@@ -338,11 +567,19 @@
     display: none;
   }
 
-  [data-ui-next] .un-ob-section:not(:last-child) {
+  [data-ui-next] .un-ob-panel {
     padding: 20px 16px;
   }
 
   [data-ui-next] .un-ob-fork {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  [data-ui-next] .un-ob-exit {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  [data-ui-next] .un-ob-exit .un-ob-actions {
+    grid-column: 1 / -1;
   }
 }

@@ -1,3 +1,6 @@
+// Moved from src/ui/components/UsageReceiptLine.tsx with its only consumer (YUK-1473); text and
+// query unchanged, presentation reads the M3E onboarding styles.
+//
 // YUK-1512 — the redaction receipt on the upload screens: one quiet line saying which
 // kinds of personal info were hidden in this upload's recognised text, and,
 // for 'answer_only' material, that it is only used for this question. Fed by the
@@ -75,5 +78,5 @@ export function UsageReceiptLine({
   });
   const receipt = detailQ.data?.usage_receipt;
   if (!receipt) return null;
-  return <p className="usage-receipt">{usageReceiptText(receipt)}</p>;
+  return <p className="un-ob-receipt">{usageReceiptText(receipt)}</p>;
 }

@@ -1,5 +1,5 @@
-// Onboarding ②a · upload cold-wrap (YUK-473 Slice 2).
-// Ported from docs/design/loom-refresh/project/screen-onboarding.jsx (OnboardRecord
+// Onboarding ②a · upload cold-wrap (YUK-473 Slice 2; M3E presentation YUK-1473,
+// docs/design/2026-11-03-onboard-upload-m3e.md). Originally ported from docs/design/loom-refresh/project/screen-onboarding.jsx (OnboardRecord
 // + ObIngest), made real: the prototype mocked ingestion with a setInterval; this
 // drives the LIVE upload→extract pipeline (uploadAsset / expandPdf / expandDocx →
 // POST /api/ingestion → ingestion operation(kind=extract) → useIngestionSSE), styled as the prototype's
@@ -17,28 +17,25 @@
 // 挂知识点·补参考答案" + "OCR 默认/VLM 兜底" describe YUK-482's end state + the OCR/
 // VLM ordering decision, neither true on this path today.
 
+import { ArrowLeft, ArrowRight, Check, CircleAlert, ImageUp, LoaderCircle } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
-import {
-  UploadSubjectPicker,
-  uploadSubjectField,
-  useUploadSubjectChoice,
-} from '@/ui/components/UploadSubjectPicker';
-import {
-  UploadUsagePicker,
-  uploadUsageField,
-  useUploadUsageChoice,
-} from '@/ui/components/UploadUsagePicker';
-import { UsageReceiptLine } from '@/ui/components/UsageReceiptLine';
 import { ApiAuthError } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset } from '@/ui/lib/assets';
 import { latestProgress } from '@/ui/lib/ingestion-phase';
 import { useIngestionSSE } from '@/ui/lib/sse';
-import { Btn } from '@/ui/primitives/Btn';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { Button, UiNextRoot } from '@/ui-next/public';
 import { useIngestionSessionCreateClient } from './ingestion-session-create-client';
-import { ObSteps } from './ObSteps';
-import './onboarding.css';
+import { OnboardingSteps } from './OnboardingSteps';
+import {
+  UploadSubjectPicker,
+  UploadUsagePicker,
+  uploadSubjectField,
+  uploadUsageField,
+  useUploadSubjectChoice,
+  useUploadUsageChoice,
+} from './upload-choices';
+import { UsageReceiptLine } from './usage-receipt';
+import './onboarding-m3e.css';
 
 type Phase = 'idle' | 'expanding' | 'uploading' | 'creating' | 'extracting' | 'done' | 'error';
 
@@ -296,156 +293,134 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
   const rows = computeRows(phase, prog, blockCount);
 
   return (
-    <div ref={attachRoot} className="page page-narrow">
-      <div className="page-head">
-        <div className="eyebrow">RECORD · onboarding · 为你建题库</div>
-        <ObSteps active="source" />
-        <div className="page-head-row">
-          <h1 className="page-title serif">上传你的材料</h1>
-          <Btn variant="ghost" icon="arrowL" onClick={() => navigate('/welcome')}>
+    <UiNextRoot ref={attachRoot} className="un-ob" data-un-m3e="practice-foundation">
+      <main className="un-ob-main un-m3e-bridge">
+        <OnboardingSteps active="source" />
+        <header className="un-ob-heading">
+          <div>
+            <h1>上传你的材料</h1>
+            <p>
+              这一步是在为你建题库。上传后，AI
+              会自动抽题、切分，送进你的题库；之后就能拿去做定位练习。你只要上传，剩下的交给抽题流程。
+            </p>
+          </div>
+          <Button variant="ghost" onClick={() => navigate('/welcome')}>
+            <ArrowLeft size={18} aria-hidden="true" />
             返回设定
-          </Btn>
-        </div>
-      </div>
+          </Button>
+        </header>
 
-      <div className="ob-wrap-banner ob-rise">
-        <div className="ob-wrap-ic">
-          <LoomIcon name="sparkle" size={16} />
-        </div>
-        <div>
-          <div className="ob-wrap-t">
-            这一步是在<b>为你建题库</b>。
-          </div>
-          <div className="ob-wrap-s">
-            上传后，AI
-            会自动抽题、切分，送进你的题库；之后就能拿去做定位练习——你只要上传，剩下交给抽题管道。
-          </div>
-        </div>
-      </div>
+        {phase === 'idle' && (
+          <section className="un-ob-section un-ob-panel" aria-label="选择材料">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ACCEPT}
+              multiple
+              hidden
+              onChange={(e) => onPick(e.target.files)}
+            />
+            <button
+              type="button"
+              className="un-ob-drop"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <ImageUp size={32} aria-hidden="true" />
+              <span className="un-ob-drop-title">{dropzoneTitle(files)}</span>
+              <span className="un-ob-drop-hint">
+                JPEG / PNG / WebP，单次最多 5 页；或 1 个 PDF / DOCX
+              </span>
+            </button>
+            {files.length > 0 && (
+              <ul className="un-ob-files">
+                {files.map((f) => (
+                  <li key={`${f.name}-${f.size}-${f.lastModified}`}>
+                    <span>{f.name}</span>
+                    <span className="un-ob-files-size">{(f.size / 1024).toFixed(1)} KB</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <UploadSubjectPicker
+              value={uploadSubject}
+              onChange={setUploadSubject}
+              docxSelected={files.length === 1 && isDocx(files[0])}
+            />
+            <UploadUsagePicker value={uploadUsage} onChange={setUploadUsage} />
+            {errorMsg && (
+              <p className="un-ob-error" role="alert">
+                <CircleAlert size={16} aria-hidden="true" />
+                {errorMsg}
+              </p>
+            )}
+            <div className="un-ob-actions">
+              <Button variant="primary" onClick={start} disabled={files.length === 0}>
+                <ImageUp size={18} aria-hidden="true" />
+                上传 + 开始抽题
+              </Button>
+            </div>
+          </section>
+        )}
 
-      {phase === 'idle' && (
-        <LoomCard pad className="ob-rise">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={ACCEPT}
-            multiple
-            style={{ display: 'none' }}
-            onChange={(e) => onPick(e.target.files)}
-          />
-          <button
-            type="button"
-            className="dropzone record-dropzone"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <LoomIcon name="image" size={32} />
-            <span className="dropzone-title">{dropzoneTitle(files)}</span>
-            <span className="hint">
-              JPEG / PNG / WebP · 单次最多 5 页 · 或 1 个 PDF / DOCX · 抽题进度走 SSE
-            </span>
-          </button>
-          {files.length > 0 && (
-            <ul className="record-file-list">
-              {files.map((f) => (
-                <li key={`${f.name}-${f.size}-${f.lastModified}`}>
-                  <span>{f.name}</span>
-                  <span className="meta">{(f.size / 1024).toFixed(1)} KB</span>
+        {(inFlight || done) && (
+          <section className="un-ob-section un-ob-panel" aria-label="抽题进度">
+            <ol className="un-ob-progress" aria-live="polite">
+              {rows.map((r) => (
+                <li key={r.label} className="un-ob-progress-row" data-state={r.state}>
+                  <span className="un-ob-progress-dot" aria-hidden="true">
+                    {r.state === 'done' && <Check size={14} />}
+                    {r.state === 'run' && <LoaderCircle size={14} className="un-ob-spin" />}
+                  </span>
+                  <span className="un-ob-progress-label">{r.label}</span>
+                  {r.meta && <span className="un-ob-progress-meta">{r.meta}</span>}
                 </li>
               ))}
-            </ul>
-          )}
-          <UploadSubjectPicker
-            value={uploadSubject}
-            onChange={setUploadSubject}
-            docxSelected={files.length === 1 && isDocx(files[0])}
-          />
-          <UploadUsagePicker value={uploadUsage} onChange={setUploadUsage} />
-          {errorMsg && (
-            <div className="ob-inline-err">
-              <LoomIcon name="alert" size={14} />
-              {errorMsg}
-            </div>
-          )}
-          <div style={{ marginTop: 'var(--s-3)', display: 'flex', justifyContent: 'flex-end' }}>
-            <Btn variant="primary" icon="image" onClick={start} disabled={files.length === 0}>
-              上传 + 开始抽题
-            </Btn>
-          </div>
-        </LoomCard>
-      )}
-
-      {(inFlight || done) && (
-        <LoomCard pad className="ob-rise">
-          <div className="ob-ingest">
-            {rows.map((r) => (
-              <div key={r.label} className={`ob-ing-row${r.state === 'done' ? ' is-done' : ''}`}>
-                <span className={`ob-ing-dot is-${r.state}`}>
-                  {r.state === 'done' ? (
-                    <LoomIcon name="check" size={13} />
-                  ) : r.state === 'run' ? (
-                    <LoomIcon name="refresh" size={13} />
-                  ) : (
-                    <span className="ob-ing-pip" />
-                  )}
-                </span>
-                <span className="ob-ing-l">{r.label}</span>
-                {r.meta && <span className="ob-ing-meta">{r.meta}</span>}
-              </div>
-            ))}
-          </div>
-          {done && <UsageReceiptLine sessionId={sessionId} />}
-          <div className="ob-ing-sse">
-            <span className="dot" />
-            {done
-              ? `event=ingestion.done · 抽到 ${blockCount ?? 0} 题`
-              : 'SSE · GET /api/ingestion/[id]/events · 抽题进度逐条推送'}
-          </div>
-        </LoomCard>
-      )}
-
-      {phase === 'error' && (
-        <LoomCard pad className="ob-rise">
-          <div className="ob-inline-err">
-            <LoomIcon name="alert" size={14} />
-            {errorMsg ?? '抽题失败'}
-          </div>
-          <div style={{ marginTop: 'var(--s-3)', display: 'flex', justifyContent: 'flex-end' }}>
-            <Btn variant="ghost" icon="arrowL" onClick={reset}>
-              重新上传
-            </Btn>
-          </div>
-        </LoomCard>
-      )}
-
-      {(inFlight || done) && (
-        <div className="ob-exitbar ob-rise">
-          <div className="ob-exitbar-fig">{done ? (blockCount ?? 0) : '—'}</div>
-          <div className="ob-exitbar-txt">
+            </ol>
             {done ? (
-              <>
-                <b>{blockCount ?? 0} 题已抽出</b> · 送进题库了，可以拿它们做定位。
-              </>
+              <UsageReceiptLine sessionId={sessionId} />
             ) : (
-              '抽题完成后，这里会亮起「去做定位练习」。'
+              <p className="un-ob-hint">进度会自动更新，不用刷新页面。</p>
             )}
-          </div>
-          <div className="hero-cta">
-            {!done && (
-              <Btn variant="ghost" onClick={() => navigate('/today')}>
-                跳过 · 返回今日
-              </Btn>
-            )}
-            <Btn
-              variant="primary"
-              iconEnd="arrow"
-              disabled={!done}
-              onClick={() => navigate(placementTo)}
-            >
-              去做定位练习
-            </Btn>
-          </div>
-        </div>
-      )}
-    </div>
+          </section>
+        )}
+
+        {phase === 'error' && (
+          <section className="un-ob-section un-ob-panel" aria-label="上传失败">
+            <p className="un-ob-error" role="alert">
+              <CircleAlert size={16} aria-hidden="true" />
+              {errorMsg ?? '抽题失败'}
+            </p>
+            <div className="un-ob-actions">
+              <Button variant="secondary" onClick={reset}>
+                <ArrowLeft size={18} aria-hidden="true" />
+                重新上传
+              </Button>
+            </div>
+          </section>
+        )}
+
+        {(inFlight || done) && (
+          <section className="un-ob-exit" aria-label="下一步">
+            <strong className="un-ob-exit-fig">{done ? (blockCount ?? 0) : '—'}</strong>
+            <p className="un-ob-exit-text">
+              {done
+                ? `${blockCount ?? 0} 题已抽出，送进题库了，可以拿它们做定位。`
+                : '抽题完成后，这里会亮起「去做定位练习」。'}
+            </p>
+            <div className="un-ob-actions">
+              {!done && (
+                <Button variant="ghost" onClick={() => navigate('/today')}>
+                  跳过，返回今日
+                </Button>
+              )}
+              <Button variant="primary" disabled={!done} onClick={() => navigate(placementTo)}>
+                去做定位练习
+                <ArrowRight size={18} aria-hidden="true" />
+              </Button>
+            </div>
+          </section>
+        )}
+      </main>
+    </UiNextRoot>
   );
 }
