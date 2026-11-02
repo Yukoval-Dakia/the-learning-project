@@ -12,7 +12,8 @@
 // bucket (unresolved domain / non-kc parent).
 //
 // The naming model call runs outside any DB transaction. Creation is event-first and
-// projected in the same transaction.
+// projected in the same transaction. The caller binds the embedding provider; kernel
+// records do not import server/ai.
 
 import { eq } from 'drizzle-orm';
 import { questionEmbedText } from '@/core/embed-source';
@@ -21,24 +22,20 @@ import type { Db } from '@/db/client';
 import { ai_task_runs, knowledge } from '@/db/schema';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
+import {
+  type KnowledgeSimilarityCandidate,
+  RETRIEVAL_TOP_K,
+  matchKnowledgeBySimilarity,
+  matchThreshold,
+} from '@/kernel/read-models/knowledge-similarity';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
-// Projection parity assert: throws in dev/test, warns in prod.
-import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
-import {
-  EMBED_MODEL,
-  type EmbedProviderAttemptOptions,
-  embedText,
-  isDirectProviderAttemptInvariantError,
-} from '@/server/ai/embed';
 import { getKnownSubjects } from '@/subjects/profile';
-import { type KnowledgeSimilarityCandidate, matchKnowledgeBySimilarity } from './match-similarity';
-import { prepareProposedKnowledgeId } from './proposals';
-import { RETRIEVAL_TOP_K, matchThreshold } from './tagging-flags';
-
-export function isTagKnowledgeInvariantError(error: unknown): boolean {
-  return isDirectProviderAttemptInvariantError(error);
-}
+// Projection parity assert: throws in dev/test, warns in prod.
+import {
+  prepareProposedKnowledgeId,
+  projectKnowledgeNodeGuarded,
+} from './knowledge-node-materialization';
 
 /**
  * YUK-1604 — revision of the input-entry classification contract stamped on every
@@ -108,15 +105,20 @@ export type NameKcFn = (args: {
   knownSubjects: ReadonlyArray<{ id: string; display_name: string; aliases?: string[] }>;
 }) => Promise<{ kc_name: string } & NamingProvenance>;
 
+/** Question embedder in the KC vector space; provider and model are stamped on audit provenance. */
+export interface KnowledgeTagEmbedder {
+  provider: string;
+  model: string;
+  embed: (text: string) => Promise<number[]>;
+}
+
 export interface TagKnowledgeDeps {
   /**
    * Top-level handle: the retriever needs it, and the verdict is computed before the
    * caller's transaction because naming must never run inside a DB transaction.
    */
   db: Db;
-  /** Embed the question text → query vector. Injected in tests. Defaults to embedText. */
-  embedFn?: (text: string) => Promise<number[]>;
-  providerAttempt?: EmbedProviderAttemptOptions;
+  embedder: KnowledgeTagEmbedder;
   /** Caller-owned naming: a model adapter or a previously resolved bridge result. */
   nameKcFn: NameKcFn;
   /** Override the MATCH cutoff (cosine distance). Defaults to MATCH_THRESHOLD. */
@@ -172,8 +174,7 @@ export async function tagKnowledge(
   deps: TagKnowledgeDeps,
   input: TagKnowledgeInput,
 ): Promise<TagKnowledgeResult> {
-  const { db } = deps;
-  const embedFn = deps.embedFn ?? ((text: string) => embedText(text, deps.providerAttempt));
+  const { db, embedder } = deps;
   const nameKcFn = deps.nameKcFn;
   const threshold = deps.threshold ?? matchThreshold();
   // An explicit empty list also means "use the live registry"; otherwise the naming
@@ -190,7 +191,7 @@ export async function tagKnowledge(
     : 'allow';
   const policyField = derivationPolicy === 'allow' ? {} : { derivation_policy: derivationPolicy };
 
-  const qvec = await embedFn(
+  const qvec = await embedder.embed(
     questionEmbedText({ prompt_md: input.questionText, reference_md: null, choices_md: null }),
   );
 
@@ -259,7 +260,7 @@ export async function tagKnowledge(
             embed_content_hash: c.embed_content_hash,
           })),
           provenance: {
-            embed: { provider: 'dashscope', model: EMBED_MODEL },
+            embed: { provider: embedder.provider, model: embedder.model },
           },
         },
         caused_by_event_id: null,
@@ -316,11 +317,7 @@ export async function tagKnowledge(
 
   const newKcId = await db.transaction(async (tx) => {
     const now = new Date();
-    const createdId = await prepareProposedKnowledgeId(tx, {
-      mutation: 'propose_new',
-      name: kc_name,
-      parent_id: input.subjectRootId,
-    });
+    const createdId = await prepareProposedKnowledgeId(tx, { parent_id: input.subjectRootId });
     await writeEvent(tx, {
       id: newId(),
       session_id: sessionId,
@@ -361,7 +358,7 @@ export async function tagKnowledge(
         parent_role: parentRole,
         effective_domain: targetDomain,
         provenance: {
-          embed: { provider: 'dashscope', model: EMBED_MODEL },
+          embed: { provider: embedder.provider, model: embedder.model },
           naming: {
             task_run_id: namingProvenance.task_run_id ?? null,
             provider: namingFacts.provider,

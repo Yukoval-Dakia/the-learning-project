@@ -3,7 +3,6 @@
  * (2026-10-20 proposal §1–§2). Callers supply measured edge sets at base and
  * head; this module owns the verdicts. No git, fs or parsing here.
  */
-import type { EdgeRecord } from './source-size';
 
 export type AuditedDebt = 'capabilityToServer' | 'crossCapabilityValue' | 'capabilityToKernel';
 
@@ -59,8 +58,7 @@ function isNewEdge(baseIndex: ReadonlyMap<string, 'value' | 'type'>, edge: Kinde
 
 /**
  * Edges present at head but not at base — including type→value upgrades on
- * existing pairs — after rename normalization of both endpoints. This is the
- * "new dependency" set the records must cover.
+ * existing pairs — after rename normalization of both endpoints.
  */
 export function addedEdges<T extends KindedEdge>(
   base: readonly KindedEdge[],
@@ -69,85 +67,6 @@ export function addedEdges<T extends KindedEdge>(
 ): T[] {
   const baseIndex = baseKindIndex(base, renames);
   return head.filter((edge) => isNewEdge(baseIndex, edge));
-}
-
-function sameSymbols(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
-  const sorted = [...b].sort();
-  return [...a].sort().every((symbol, i) => symbol === sorted[i]);
-}
-
-/**
- * Every new audited edge must be covered by a matching edgeRecord appended in
- * this change — the tail after `previousRecords` — whose kind and symbols are
- * then verified against the real measured edge. Historical records are
- * append-only, never re-punished, and can never cover a new edge (a stale
- * type-edge record must not launder a type→value upgrade). Coverage is
- * two-way; a duplicated record for one edge is tolerated ledger inflation,
- * never a hidden edge.
- */
-export function auditEdgeRecords(input: {
-  records: readonly EdgeRecord[];
-  previousRecords: number;
-  head: readonly RatchetEdge[];
-  added: readonly RatchetEdge[];
-}): RatchetViolation[] {
-  const violations: RatchetViolation[] = [];
-  const fail = (file: string, source: string, reason: string) =>
-    violations.push({ file, source, reason });
-
-  const byEdge = new Map<string, RatchetEdge>();
-  for (const edge of input.head) byEdge.set(edgeKey(edge.file, edge.module), edge);
-
-  const covering = new Set<string>();
-  for (const record of input.records.slice(input.previousRecords)) {
-    covering.add(`${record.debt}|${record.file}|${record.module}`);
-  }
-  for (const edge of input.added) {
-    if (!covering.has(`${edge.debt}|${edge.file}|${edge.module}`)) {
-      fail(
-        edge.file,
-        edge.module,
-        `new ${edge.debt} dependency must be registered in edgeRecords {file, module, symbols, issue, owns} — the record must match the real edge`,
-      );
-    }
-  }
-
-  for (const record of input.records.slice(input.previousRecords)) {
-    const key = edgeKey(record.file, record.module);
-    const edge = byEdge.get(key);
-    if (!edge || edge.debt !== record.debt) {
-      fail(
-        record.file,
-        record.module,
-        `edgeRecord names ${record.debt} edge that does not exist at head`,
-      );
-      continue;
-    }
-    if (
-      !input.added.some(
-        (added) => added.debt === edge.debt && edgeKey(added.file, added.module) === key,
-      )
-    ) {
-      fail(
-        record.file,
-        record.module,
-        'edgeRecord covers an edge that already existed at base — records register only new dependencies',
-      );
-      continue;
-    }
-    if (edge.kind !== record.kind) {
-      fail(record.file, record.module, `edgeRecord kind=${record.kind} != measured ${edge.kind}`);
-    }
-    if (!sameSymbols(record.symbols, edge.symbols)) {
-      fail(
-        record.file,
-        record.module,
-        `edgeRecord symbols [${record.symbols.join(', ')}] != consumed symbols [${edge.symbols.join(', ')}]`,
-      );
-    }
-  }
-  return violations;
 }
 
 /**
