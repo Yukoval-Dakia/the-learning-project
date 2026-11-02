@@ -19,8 +19,9 @@ import {
 } from '@/db/schema';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { composeNightly, getStream, reRankAfterAnswer, streamLocalDate } from './stream-store';
+import { streamLocalDate } from '@/kernel/stream-date';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { composeNightly, getStream, reRankAfterAnswer } from './stream-store';
 
 const TODAY = streamLocalDate();
 

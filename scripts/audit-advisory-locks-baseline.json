@@ -154,10 +154,6 @@
       "count": 1
     },
     {
-      "path": "src/capabilities/practice/server/stream-store.ts",
-      "count": 5
-    },
-    {
       "path": "src/capabilities/practice/server/tools/submit-question.ts",
       "count": 2
     },

@@ -1,6 +1,6 @@
 import type { SelectionOrchestratorCandidateT } from '@/core/schema/selection-orchestrator';
 import { DIFFICULTY_PROXY_WEIGHT } from '@/core/theta';
-import type { CollectedSignal } from './candidate-signals';
+import type { CollectedSignal } from '../../server/candidate-signals';
 import type { WeightedCandidate } from './selection-sampler';
 
 /** Reconcile partial LLM advice with the full samplable pool and its arrangement. */

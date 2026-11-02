@@ -6,7 +6,7 @@
 // Wire contract: { rows: [{ id, question_id, prompt_md, reference_md,
 // knowledge_ids, cause, fsrs_state, created_at }] }.
 
-import { handleReviewDue } from '@/capabilities/practice/server/due-list';
+import { handleReviewDue } from '@/capabilities/practice/scheduling/server/due-list';
 
 export async function GET(req: Request): Promise<Response> {
   return handleReviewDue(req);

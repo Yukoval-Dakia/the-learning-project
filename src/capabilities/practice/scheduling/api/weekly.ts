@@ -1,4 +1,4 @@
-import { loadWeeklyReview } from '@/capabilities/practice/server/review-weekly';
+import { loadWeeklyReview } from '@/capabilities/practice/scheduling/server/review-weekly';
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
 

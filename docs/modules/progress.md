@@ -23,7 +23,7 @@
 | `memory_brief_note` 三段式画像 | ✅ schema 落地 (`src/db/schema.ts` L1266)；Dreaming refresh 接 mem0 ingest (ADR-0017 / ADR-0021) | 三段：`recent_week_md` / `recent_months_md` / `long_term_md` |
 | 单题 timeline（`GET /api/questions/[id]?timeline_limit=`） | ✅ 落地 | 返回 attempt + review 事件链；judge cause hydrate 到 attempt |
 | 学习时间线视图（统一 auto event + LearningRecord） | 🟡 部分 | `/today` 与单题 timeline 已落，全局活动时间线 (cross-knowledge / cross-record) 仍 Phase 2 |
-| WeeklyReview Cron 跑批 | 🟡 Coach lane（`coach_weekly` boss handler）已 ship；advice route 在 `src/capabilities/practice/api/weekly.ts` | 用户层"周复盘体验"仍在迭代 |
+| WeeklyReview Cron 跑批 | 🟡 Coach lane（`coach_weekly` boss handler）已 ship；advice route 在 `src/capabilities/practice/scheduling/api/weekly.ts` | 用户层"周复盘体验"仍在迭代 |
 | 按 cause 差异化复习权重 / mastery 衰减 | ❌ Phase 2 | 跑数据后才决定权重 |
 | Coach Orchestrator | ✅ Wave 5 落地 | `coach_daily` / `coach_weekly` boss handlers + `/api/today/copilot-summary` + `/coach` 页面 + Copilot Drawer MVP (PR #179) |
 

@@ -1,6 +1,6 @@
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { resolveSchedulingProjection, selectedForgettingEngine } from '@/kernel/scheduling';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '../placement-scope';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '../../server/placement-scope';
 // Foundation D M2 — moved to Practice by (F4.0).
 // Composite read tools for one question contract (attempts, reviews, FSRS
 // state, linked records, variants, knowledge paths, assets, addressable

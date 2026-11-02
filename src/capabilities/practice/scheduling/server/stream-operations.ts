@@ -8,6 +8,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
 import { checkRateLimit } from '@/kernel/request-rate-limit';
+import { streamLocalDate } from '@/kernel/stream-date';
 import {
   PracticeStreamCalendarDateSchema,
   PracticeStreamQuerySchema,
@@ -24,7 +25,6 @@ import {
   getStream,
   getStreamViewItem,
   recomposeStream,
-  streamLocalDate,
 } from './stream-store';
 
 /** GET 流视图的 item 投影类型（stream-store `StreamView['items']` 元素）。 */

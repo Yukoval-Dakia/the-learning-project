@@ -54,9 +54,8 @@ type DbLike = Db | Tx;
 // ─────────────────────────────────────────────────────────────────────────────
 // attemptLocalDate — 作答时刻 → 用户本地日，显式锁定 Asia/Shanghai。
 //
-// 必须与 selection_observation.date / practice_stream_item.date 的 streamLocalDate
-// 公式一致。有意内联而不 import：streamLocalDate 在 practice 重模块里，拉进来会给
-// mastery 层制造整张依赖图和 cycle 风险；公式单行且时区固定。
+// 必须与 selection_observation.date / practice_stream_item.date 所用的
+// `@/kernel/stream-date` streamLocalDate 公式一致。
 // ─────────────────────────────────────────────────────────────────────────────
 export function attemptLocalDate(now: Date): string {
   return now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });

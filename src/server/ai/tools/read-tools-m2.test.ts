@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getQuestionContextTool } from '@/capabilities/practice/server/tools/question-context';
+import { getQuestionContextTool } from '@/capabilities/practice/scheduling/tools/question-context';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import {
   artifact,
