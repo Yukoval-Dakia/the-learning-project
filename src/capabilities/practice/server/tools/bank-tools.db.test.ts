@@ -3,8 +3,8 @@ import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { generateReferenceSolution } from '@/capabilities/practice/server/reference-solution';
 import * as schema from '@/db/schema';
-
 import { event, material_fsrs_state, question, source_asset } from '@/db/schema';
 import {
   contractIntegrityDigest,
@@ -15,7 +15,6 @@ import {
   publishQuestionGroupFromRow,
 } from '@/kernel/records/assessment-publication';
 import type { ToolContext } from '@/kernel/tools/types';
-import { generateReferenceSolution } from '@/server/ai/solution-generate';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { runEmbedBackfill } from '../../jobs/embed_backfill';
 import { archiveQuestion, editQuestion } from '../question-bank-write';
