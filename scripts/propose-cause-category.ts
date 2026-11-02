@@ -64,7 +64,7 @@ async function main(): Promise<number> {
   const { writeAiProposal } = await import('@/kernel/proposals/writer');
   const { pendingProposalWithCooldown } = await import('@/kernel/proposals/inbox');
   const { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } = await import(
-    '@/capabilities/practice/public'
+    '@/kernel/read-models/cause-overlay'
   );
   const categoryId = `${CAUSE_OVERLAY_ID_PREFIX}${slug}`;
 

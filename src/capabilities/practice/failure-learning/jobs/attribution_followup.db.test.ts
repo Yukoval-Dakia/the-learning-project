@@ -5,7 +5,7 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { runAttributionFollowup } from './attribution_followup';
 
 async function seedQuestion(id: string, knowledgeIds = ['k_xuci']) {

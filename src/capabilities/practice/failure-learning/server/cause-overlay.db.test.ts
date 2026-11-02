@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { ApiError } from '@/kernel/http';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { acceptAiProposal } from '@/server/proposals/actions';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { getCauseCategoryOverlaysByIds } from './cause-overlay';
 
 async function writeCauseCategoryProposal(opts: {

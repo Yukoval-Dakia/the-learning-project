@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { createFailureLearning } from '@/capabilities/practice/server/failure-learning';
 import { makePracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
@@ -8,7 +7,8 @@ import {
   getFailureAttemptWithReasoningTraceById,
 } from '@/kernel/read-models/failure-attempts';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
-import type { DomainTool, ToolContext } from './types';
+import type { DomainTool, ToolContext } from '../../tools/types';
+import { createFailureLearning } from '../server/failure-learning';
 
 const TEXT_EXCERPT_MAX = 180;
 

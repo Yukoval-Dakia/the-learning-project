@@ -1,6 +1,4 @@
-import { and, eq } from 'drizzle-orm';
-import type { Db, Tx } from '@/db/client';
-import { cause_category_overlay } from '@/db/schema';
+import type { Db } from '@/db/client';
 import type {
   ProposalAcceptApplier,
   ProposalAcceptInput,
@@ -8,14 +6,9 @@ import type {
   ProposalDismissApplier,
   ProposalDismissInput,
   ProposalDismissResult,
-  ProposalRetractApplier,
 } from '@/kernel/proposals';
-import { requireLaterProposalCorrection, toProposalLifecycleResult } from '@/kernel/proposals';
-import {
-  asPlainRecord,
-  findExistingRateEvent,
-  writeProposalRateEvent,
-} from '@/kernel/proposals/applier-helpers';
+import { toProposalLifecycleResult } from '@/kernel/proposals';
+import { findExistingRateEvent, writeProposalRateEvent } from '@/kernel/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { recordProposalDecisionSignal } from '@/kernel/proposals/signals';
 import {
@@ -25,7 +18,6 @@ import {
 import { acceptJudgeRetractionProposal } from './judge-retraction-applier';
 import {
   type PracticeApplierOpts,
-  acceptCauseCategoryProposal,
   acceptQuestionDraftProposal,
   acceptQuestionEditProposal,
   acceptVariantQuestionProposal,
@@ -155,54 +147,3 @@ export const judgeRetractionProposalAcceptApplier: ProposalAcceptApplier = async
       runtimeOptions(input, runtime),
     ),
   );
-
-//B — cause_category accept：往 cause_category_overlay INSERT
-// status='active' 行（applier 真身在 proposal-appliers.ts）。
-export const causeCategoryProposalAcceptApplier: ProposalAcceptApplier = async (
-  db,
-  input,
-  runtime,
-) =>
-  wrap(
-    await acceptCauseCategoryProposal(
-      db as Db,
-      input.proposalId,
-      inboxView(input),
-      runtimeOptions(input, runtime),
-    ),
-  );
-
-// retract 语义：accept 已落 overlay 行 → 置 archived_at（唯一回退
-// 维度）。行按 proposal_event_id 归属限定——同 slug 两张 pending proposal 并存
-// 时，retract 未落地那张不许归档别人 accept 的活行（mistake_variant 同款归属
-// 语义）。proposal 从未被 accept（pending 即 retract，行不存在）、行非本
-// proposal 所立、或已归档时幂等 no-op。
-export const causeCategoryProposalRetractApplier: ProposalRetractApplier = async (db, input) => {
-  const tx = db as Tx;
-  const change = asPlainRecord(input.proposal.payload.proposed_change);
-  const categoryId =
-    typeof change.category_id === 'string' && change.category_id.length > 0
-      ? change.category_id
-      : null;
-  if (!categoryId) return;
-  const ownedRow = and(
-    eq(cause_category_overlay.id, categoryId),
-    eq(cause_category_overlay.proposal_event_id, input.proposalId),
-  );
-  const [row] = await tx
-    .select({
-      id: cause_category_overlay.id,
-      updated_at: cause_category_overlay.updated_at,
-      archived_at: cause_category_overlay.archived_at,
-    })
-    .from(cause_category_overlay)
-    .where(ownedRow)
-    .for('update')
-    .limit(1);
-  if (!row || row.archived_at !== null) return;
-  requireLaterProposalCorrection(input.correction_at, row.updated_at);
-  await tx
-    .update(cause_category_overlay)
-    .set({ archived_at: input.correction_at, updated_at: input.correction_at })
-    .where(ownedRow);
-};
