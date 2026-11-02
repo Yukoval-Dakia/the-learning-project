@@ -114,8 +114,8 @@ export async function registerCapabilityJobs(
   capabilities: CapabilityManifest[],
 ): Promise<void> {
   // Practice binds the facts and paid author stages that worker jobs and subscriptions read
-  // through kernel ports. Kernel cannot import a capability. This runs before any handler
-  // mounts and before subscription dispatch starts. The API host installs only the host operations.
+  // through kernel ports. Kernel cannot import a capability. This runs before any capability
+  // job mounts and before subscription dispatch starts. The API host installs only the host operations.
   const practice = await import('@/capabilities/practice/public');
   await practice.installPracticeHostOperations();
   await practice.installDailyReviewPlanFacts();
