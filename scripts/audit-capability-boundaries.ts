@@ -8,7 +8,6 @@ import {
   type RatchetEdge,
   type RatchetViolation,
   addedEdges,
-  auditEdgeRecords,
   auditKernelFacadeConsumption,
   auditKernelReverseEdges,
   compareSccsAgainstBase,
@@ -26,11 +25,7 @@ import {
   SIZE_METRIC,
   type SizedFile,
   auditSourceSizeRatchet,
-  compatShimSchema,
-  edgeRecordSchema,
   inSizeScope,
-  sourceSizeRecordSchema,
-  stableContractRulingSchema,
 } from './lib/source-size';
 
 const SOURCE_RE = /\.[cm]?[jt]sx?$/;
@@ -44,60 +39,21 @@ const DEBT_KINDS = [
   'serverToCapabilityDeep',
   'crossCapabilityValue',
 ] as const;
+const DEBT_LABELS: Record<(typeof DEBT_KINDS)[number], string> = {
+  capabilityToServer: 'capability -> server',
+  serverToCapabilityDeep: 'server -> capability deep',
+  crossCapabilityValue: 'cross-capability value',
+};
 const countSchema = z.number().int().nonnegative();
-const debtSchema = z.object({
+const debtSchema = z.strictObject({
   total: countSchema,
   byOwnerPair: z.record(z.string(), countSchema),
 });
-const changeFields = {
-  debt: z.enum(DEBT_KINDS),
-  pair: z.string().trim().min(1),
-  date: z.iso.date(),
-  from: countSchema,
-  to: countSchema,
-};
-const raiseJustificationSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('offset') }),
-  z.object({ kind: z.literal('recorded_ruling'), ruling: z.url({ protocol: /^https?$/ }) }),
-  // The only channel that may still raise capabilityToServer / crossCapabilityValue
-  // totals: an explicit owner approval carrying the verbatim quote. The audit
-  // verifies presence and shape, not authenticity — review must check the link.
-  z.object({
-    kind: z.literal('owner_approval'),
-    approval: z.url({ protocol: /^https?$/ }),
-    quote: z.string().trim().min(1),
-  }),
-]);
-const baselineChangeSchema = z
-  .discriminatedUnion('direction', [
-    z.object({ ...changeFields, direction: z.literal('decrease') }),
-    z.object({
-      ...changeFields,
-      direction: z.literal('increase'),
-      reason: z.string().trim().min(1),
-      exitCondition: z.string().trim().min(1),
-      justification: raiseJustificationSchema,
-    }),
-  ])
-  .refine(
-    (change) =>
-      change.direction === 'increase' ? change.to > change.from : change.to < change.from,
-    { message: 'decrease requires to < from; increase requires to > from' },
-  );
-const baselineSchema = z.object({
+/** Current ceilings only. Who approved a move and why lives in the PR/Linear/git history. */
+const baselineSchema = z.strictObject({
   schemaVersion: z.literal(1),
   edgeUnit: z.literal(EDGE_UNIT),
-  notes: z.record(z.string(), z.union([z.string(), baselineChangeSchema])).optional(),
-  /** Debt adjustments + stable_contract rulings share one append-only
-   *  ledger; rulings are discriminated by `type` and never enter debt math. */
-  changes: z.array(z.union([baselineChangeSchema, stableContractRulingSchema])).default([]),
-  /** Registration log: every new audited dependency edge needs one entry. */
-  edgeRecords: z.array(edgeRecordSchema).default([]),
-  /** Registration log: >1000-line growth/crossing/new files. */
-  sourceSizeRecords: z.array(sourceSizeRecordSchema).default([]),
-  /** Coordinator-approved compat shims — max 14-day windows, real consumers. */
-  compatShims: z.array(compatShimSchema).default([]),
-  debts: z.object({
+  debts: z.strictObject({
     capabilityToServer: debtSchema,
     serverToCapabilityDeep: debtSchema,
     crossCapabilityValue: debtSchema.extend({ nontrivialSccs: z.array(z.array(z.string())) }),
@@ -153,7 +109,6 @@ export interface BoundaryAuditResult {
     serverEntryNew: { public: number; type: number; blocked: number };
     kernelReverseNew: { value: number; type: number };
     overCeilingFiles: { base: number; head: number };
-    overThresholdFiles: { base: number; head: number };
   };
 }
 
@@ -699,12 +654,19 @@ export function collectDependencySnapshot(projectRoot: string): {
   report: DependencyReport;
   dependencies: SemanticDependency[];
 } {
+  return summarizeDependencies(collectSemanticDependencies(projectRoot));
+}
+
+function summarizeDependencies(dependencies: SemanticDependency[]): {
+  snapshot: DependencySnapshot;
+  report: DependencyReport;
+  dependencies: SemanticDependency[];
+} {
   const capabilityToServer = new Map<string, number>();
   const serverToCapabilityDeep = new Map<string, number>();
   const serverToCapabilityPublic = new Map<string, number>();
   const crossCapabilityValue = new Map<string, number>();
   const crossCapabilityTypeOnly = new Map<string, number>();
-  const dependencies = collectSemanticDependencies(projectRoot);
 
   for (const dependency of dependencies) {
     const { sourceLocation: source, targetLocation: target } = dependency;
@@ -756,33 +718,31 @@ export function collectDependencySnapshot(projectRoot: string): {
   };
 }
 
+/** Where a ceiling came from: the checked-in ledger or the measured base commit. */
+export type CeilingSource = 'baseline' | 'base commit';
+
 function compareCounts(
   name: string,
   actual: DependencyDebt,
-  baseline: DependencyDebt,
+  ceiling: DependencyDebt,
+  source: CeilingSource,
 ): Violation[] {
   const violations: Violation[] = [];
-  for (const pair of new Set([
-    ...Object.keys(actual.byOwnerPair),
-    ...Object.keys(baseline.byOwnerPair),
-  ])) {
+  for (const pair of Object.keys(actual.byOwnerPair)) {
     const current = actual.byOwnerPair[pair] ?? 0;
-    const expected = baseline.byOwnerPair[pair] ?? 0;
-    if (current === expected) continue;
+    const expected = ceiling.byOwnerPair[pair] ?? 0;
+    if (current <= expected) continue;
     violations.push({
-      file: 'scripts/capability-boundary-baseline.json',
+      file: BASELINE_PATH,
       source: pair,
-      reason:
-        current > expected
-          ? `${name} architecture regression: ${current} > baseline ${expected}`
-          : `${name} debt decreased: ${current} < baseline ${expected}; run pnpm audit:capability-boundaries --tighten`,
+      reason: `${name} architecture regression: ${current} > ${source} ${expected}`,
     });
   }
-  if (actual.total !== baseline.total) {
+  if (actual.total > ceiling.total) {
     violations.push({
-      file: 'scripts/capability-boundary-baseline.json',
+      file: BASELINE_PATH,
       source: name,
-      reason: `total is ${actual.total}, baseline is ${baseline.total}`,
+      reason: `total is ${actual.total}, ${source} is ${ceiling.total}`,
     });
   }
   return violations;
@@ -795,61 +755,44 @@ function canonicalSccs(components: string[][]): string[][] {
     .sort((left, right) => left.join('/').localeCompare(right.join('/')));
 }
 
-function compareSccs(actual: string[][], baseline: string[][]): Violation[] {
-  const current = canonicalSccs(actual);
-  const expected = canonicalSccs(baseline);
-  if (JSON.stringify(current) === JSON.stringify(expected)) return [];
-
-  const baselineSets = expected.map((component) => new Set(component));
-  const grew = current.some(
-    (component) =>
-      !baselineSets.some((baselineComponent) =>
-        component.every((member) => baselineComponent.has(member)),
-      ),
+function compareSccs(actual: string[][], ceiling: string[][], source: CeilingSource): Violation[] {
+  const ceilingSets = canonicalSccs(ceiling).map((component) => new Set(component));
+  const grown = canonicalSccs(actual).filter(
+    (component) => !ceilingSets.some((allowed) => component.every((member) => allowed.has(member))),
   );
+  if (grown.length === 0) return [];
   return [
     {
-      file: 'scripts/capability-boundary-baseline.json',
+      file: BASELINE_PATH,
       source: 'crossCapabilityValue.nontrivialSccs',
-      reason: grew
-        ? `cross-capability value SCC grew or a new cycle appeared: ${JSON.stringify(current)}`
-        : `cross-capability value SCC shrank: ${JSON.stringify(current)}; tighten the baseline in this change`,
+      reason: `cross-capability value SCC grew or a new cycle appeared beyond the ${source}: ${JSON.stringify(grown)}`,
     },
   ];
 }
 
+/** Measured debts may only stay at or below the ceiling — any pair, total or SCC growth fails. */
 export function compareDependencySnapshot(
   actual: DependencySnapshot,
-  baseline: DependencySnapshot,
+  ceiling: DependencySnapshot,
+  source: CeilingSource = 'baseline',
 ): Violation[] {
-  if (baseline.schemaVersion !== 1 || baseline.edgeUnit !== EDGE_UNIT) {
+  if (ceiling.schemaVersion !== 1 || ceiling.edgeUnit !== EDGE_UNIT) {
     return [
       {
-        file: 'scripts/capability-boundary-baseline.json',
+        file: BASELINE_PATH,
         source: '',
         reason: `unsupported baseline schema; expected schemaVersion=1 and edgeUnit=${EDGE_UNIT}`,
       },
     ];
   }
   return [
-    ...compareCounts(
-      'capability -> server',
-      actual.debts.capabilityToServer,
-      baseline.debts.capabilityToServer,
-    ),
-    ...compareCounts(
-      'server -> capability deep',
-      actual.debts.serverToCapabilityDeep,
-      baseline.debts.serverToCapabilityDeep,
-    ),
-    ...compareCounts(
-      'cross-capability value',
-      actual.debts.crossCapabilityValue,
-      baseline.debts.crossCapabilityValue,
+    ...DEBT_KINDS.flatMap((debt) =>
+      compareCounts(DEBT_LABELS[debt], actual.debts[debt], ceiling.debts[debt], source),
     ),
     ...compareSccs(
       actual.debts.crossCapabilityValue.nontrivialSccs,
-      baseline.debts.crossCapabilityValue.nontrivialSccs,
+      ceiling.debts.crossCapabilityValue.nontrivialSccs,
+      source,
     ),
   ];
 }
@@ -1014,120 +957,10 @@ export function parseBaseline(text: string, source: string): DependencyBaseline 
 
 export type { DependencyBaseline };
 
-export function readBaselineAtRef(projectRoot: string, ref: string): DependencyBaseline {
-  const git = (args: string[]) =>
-    execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-  return parseBaseline(git(['show', `${ref}:${BASELINE_PATH}`]), `${ref}:${BASELINE_PATH}`);
-}
-
-function compareBaselineChanges(
-  baseline: DependencyBaseline,
-  previous: DependencyBaseline,
-  actual: DependencySnapshot,
-): Violation[] {
-  const violations: Violation[] = [];
-  const fail = (source: string, reason: string) =>
-    violations.push({ file: BASELINE_PATH, source, reason });
-  if (
-    JSON.stringify(baseline.changes.slice(0, previous.changes.length)) !==
-    JSON.stringify(previous.changes)
-  ) {
-    fail('changes', 'baseline change history must be append-only');
-  }
-  for (const ledger of ['edgeRecords', 'sourceSizeRecords', 'compatShims'] as const) {
-    if (
-      JSON.stringify(baseline[ledger].slice(0, previous[ledger].length)) !==
-      JSON.stringify(previous[ledger])
-    ) {
-      fail(ledger, `${ledger} history must be append-only`);
-    }
-  }
-  const replayed = structuredClone(previous.debts);
-  for (const change of baseline.changes.slice(previous.changes.length)) {
-    // stable_contract rulings are site classifications, not debt moves —
-    // they are validated in audit-architecture-deepening against real sites.
-    if ('type' in change) continue;
-    const counts = replayed[change.debt].byOwnerPair;
-    if ((counts[change.pair] ?? 0) !== change.from) {
-      fail(change.pair, `change.from=${change.from} does not match preceding baseline`);
-    }
-    counts[change.pair] = change.to;
-    if (change.direction !== 'increase') continue;
-    if (change.debt === 'serverToCapabilityDeep') {
-      fail(
-        change.pair,
-        'serverToCapabilityDeep is a zero boundary — no justification can raise it; the import must go through the capability public module',
-      );
-      continue;
-    }
-    if (change.justification.kind === 'offset') {
-      const before = previous.debts[change.debt];
-      const measured = actual.debts[change.debt];
-      const otherPairDecreased = Object.entries(before.byOwnerPair).some(
-        ([pair, count]) => pair !== change.pair && (measured.byOwnerPair[pair] ?? 0) < count,
-      );
-      if (!otherPairDecreased || measured.total > before.total) {
-        fail(
-          change.pair,
-          `${change.debt} offset requires a real decrease in another pair and no net growth from base (${before.total} -> ${measured.total}); otherwise record a coordination ruling`,
-        );
-      }
-      continue;
-    }
-    if (
-      change.justification.kind === 'recorded_ruling' &&
-      (change.debt === 'capabilityToServer' || change.debt === 'crossCapabilityValue')
-    ) {
-      fail(
-        change.pair,
-        `a coordination ruling cannot raise ${change.debt}; only an owner approval with the verbatim quote can raise this total (and every new edge still needs an edgeRecord)`,
-      );
-    }
-    // owner_approval raises only via explicit owner words; the audit verifies the
-    // record's shape (URL + verbatim quote), not the link's authenticity — that
-    // check belongs to review.
-  }
-  for (const debt of DEBT_KINDS) {
-    const before = replayed[debt].byOwnerPair;
-    const after = baseline.debts[debt].byOwnerPair;
-    for (const pair of new Set([...Object.keys(before), ...Object.keys(after)])) {
-      const from = before[pair] ?? 0;
-      const to = after[pair] ?? 0;
-      if (from !== to) {
-        fail(
-          pair,
-          `${debt} baseline ${from} -> ${to} needs a dated ${to > from ? 'increase record with reason, exitCondition and justification' : 'decrease record'} in changes`,
-        );
-      }
-    }
-  }
-  return violations;
-}
-
-function tightenBaseline(baseline: DependencyBaseline, actual: DependencySnapshot): void {
-  const date = new Date().toISOString().slice(0, 10);
-  for (const debt of DEBT_KINDS) {
-    const counts = baseline.debts[debt].byOwnerPair;
-    for (const [pair, from] of Object.entries(counts)) {
-      const to = actual.debts[debt].byOwnerPair[pair] ?? 0;
-      if (to >= from) continue;
-      baseline.changes.push({ debt, pair, date, from, to, direction: 'decrease' });
-      if (to === 0) delete counts[pair];
-      else counts[pair] = to;
-    }
-    baseline.debts[debt].total = Object.values(counts).reduce((sum, count) => sum + count, 0);
-  }
-  const current = actual.debts.crossCapabilityValue.nontrivialSccs;
-  const previous = baseline.debts.crossCapabilityValue.nontrivialSccs;
-  if (current.every((group) => previous.some((old) => group.every((node) => old.includes(node))))) {
-    baseline.debts.crossCapabilityValue.nontrivialSccs = current;
-  }
-}
-
 /**
  * Audited base->head edges: capability->server (value and type), cross-capability
- * value, and capability->kernel value edges. New edges in these classes must be
- * registered 1:1 in edgeRecords with the consumed symbols and an issue.
+ * value, and capability->kernel value edges. New edges are counted for the
+ * report; new kernel edges are also checked for facade consumption.
  */
 function auditedRatchetEdges(dependencies: readonly SemanticDependency[]): RatchetEdge[] {
   const edges: RatchetEdge[] = [];
@@ -1230,11 +1063,7 @@ function collectBaseSizeFiles(projectRoot: string, ref: string): SizedFile[] {
   );
   return entries
     .filter((entry) => blobs.has(entry.path))
-    .map((entry) => ({
-      path: entry.path,
-      lines: lineCountOf(blobs.get(entry.path) ?? ''),
-      blob: entry.blob,
-    }));
+    .map((entry) => ({ path: entry.path, lines: lineCountOf(blobs.get(entry.path) ?? '') }));
 }
 
 function collectHeadSizeFiles(projectRoot: string): SizedFile[] {
@@ -1242,11 +1071,7 @@ function collectHeadSizeFiles(projectRoot: string): SizedFile[] {
   for (const path of listTrackedFiles(projectRoot, [...SIZE_METRIC.roots])) {
     if (!inSizeScope(path)) continue;
     try {
-      files.push({
-        path,
-        lines: lineCountOf(readFileSync(resolve(projectRoot, path), 'utf8')),
-        blob: '',
-      });
+      files.push({ path, lines: lineCountOf(readFileSync(resolve(projectRoot, path), 'utf8')) });
     } catch {
       // Tracked but removed from the worktree (pending deletion).
     }
@@ -1288,21 +1113,24 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     projectRoot,
     baseIndex === -1 ? process.env.CAPABILITY_BASE_SHA : argv[baseIndex + 1],
   );
-  const previous = readBaselineAtRef(projectRoot, baseSha);
-  if (tighten) tightenBaseline(baseline, result.dependencySnapshot);
+  const baseDependencies = collectSemanticDependenciesAtRef(projectRoot, baseSha);
+  // The ledger is a ceiling that may lag behind a decrease; measuring the base
+  // commit as well keeps freed slack from being spent by a later change.
   result.violations.push(
-    ...compareBaselineChanges(baseline, previous, result.dependencySnapshot),
-    ...compareDependencySnapshot(result.dependencySnapshot, baseline),
+    ...compareDependencySnapshot(result.dependencySnapshot, baseline, 'baseline'),
+    ...compareDependencySnapshot(
+      result.dependencySnapshot,
+      summarizeDependencies(baseDependencies).snapshot,
+      'base commit',
+    ),
   );
 
   // Anti-regression ratchets measured against the immutable base commit.
-  const today = new Date().toISOString().slice(0, 10);
   const renames = worktreeRenameMap(projectRoot, baseSha, [
     ...SIZE_METRIC.roots,
     'scripts/worker.ts',
   ]);
   const headEdges = auditedRatchetEdges(result.dependencies);
-  const baseDependencies = collectSemanticDependenciesAtRef(projectRoot, baseSha);
   const baseEdges = auditedRatchetEdges(baseDependencies);
   const newEdges = addedEdges(baseEdges, headEdges, renames);
   const headReverse = collectKernelReverseEdges(projectRoot);
@@ -1323,12 +1151,6 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
   const baseSizes = collectBaseSizeFiles(projectRoot, baseSha);
   const headSizes = collectHeadSizeFiles(projectRoot);
   result.violations.push(
-    ...auditEdgeRecords({
-      records: baseline.edgeRecords,
-      previousRecords: previous.edgeRecords.length,
-      head: headEdges,
-      added: newEdges,
-    }),
     ...sccs.violations,
     ...serverEntry.violations,
     ...reverse.violations,
@@ -1338,19 +1160,10 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
         headReverse.filter((edge) => edge.kind === 'value').map((edge) => edge.file),
       ),
     }),
-    ...auditSourceSizeRatchet({
-      base: baseSizes,
-      head: headSizes,
-      renames,
-      records: baseline.sourceSizeRecords,
-      previousRecords: previous.sourceSizeRecords.length,
-      today,
-    }),
+    ...auditSourceSizeRatchet({ base: baseSizes, head: headSizes, renames }),
   );
   const overCeiling = (files: readonly SizedFile[]) =>
     files.filter((file) => file.lines > SIZE_METRIC.hardCeiling).length;
-  const overThreshold = (files: readonly SizedFile[]) =>
-    files.filter((file) => file.lines > SIZE_METRIC.registrationThreshold).length;
   result.regressions = {
     sccs: { base: sccs.baseCount, head: sccs.actualCount },
     newDependencyEdges: newEdges.length,
@@ -1361,7 +1174,6 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     },
     kernelReverseNew: { value: reverse.newValueEdges, type: reverse.newTypeEdges },
     overCeilingFiles: { base: overCeiling(baseSizes), head: overCeiling(headSizes) },
-    overThresholdFiles: { base: overThreshold(baseSizes), head: overThreshold(headSizes) },
   };
   result.ok = result.violations.length === 0;
   if (json) {
@@ -1372,11 +1184,13 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     process.exitCode = 1;
     return;
   }
-  if (tighten) {
+  const measured = serializeDependencySnapshot(result.dependencySnapshot);
+  const slack = measured !== serializeDependencySnapshot(baseline);
+  if (tighten && slack) {
     const formatted = execFileSync(
       'pnpm',
       ['exec', 'biome', 'format', '--stdin-file-path', BASELINE_PATH],
-      { cwd: projectRoot, input: serializeDependencySnapshot(baseline), encoding: 'utf8' },
+      { cwd: projectRoot, input: measured, encoding: 'utf8' },
     );
     writeFileSync(resolve(projectRoot, BASELINE_PATH), formatted);
   }
@@ -1384,11 +1198,16 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     const debts = result.dependencySnapshot.debts;
     const regressions = result.regressions;
     console.log(
-      `Capability boundary audit passed: 0 deep cross-capability imports; debt ratchets exact (capability->server=${debts.capabilityToServer.total}, server->capability-deep=${debts.serverToCapabilityDeep.total}, cross-capability-value=${debts.crossCapabilityValue.total}); ` +
+      `Capability boundary audit passed: 0 deep cross-capability imports; debt ratchets at or below baseline and base commit (capability->server=${debts.capabilityToServer.total}, server->capability-deep=${debts.serverToCapabilityDeep.total}, cross-capability-value=${debts.crossCapabilityValue.total}); ` +
         `new dependency edges=${regressions?.newDependencyEdges ?? 0}; server-entry new edges=${regressions?.serverEntryNew.public ?? 0} approved/${regressions?.serverEntryNew.blocked ?? 0} blocked/${regressions?.serverEntryNew.type ?? 0} type-only; nontrivial SCCs=${regressions?.sccs.head ?? 0} (base ${regressions?.sccs.base ?? 0}); ` +
         `>${SIZE_METRIC.hardCeiling}-line files=${regressions?.overCeilingFiles.head ?? 0} (base ${regressions?.overCeilingFiles.base ?? 0}); ` +
         'capability *-api.ts apiJson escape hatch=0.',
     );
+    if (slack && !tighten) {
+      console.log(
+        `Debt fell below ${BASELINE_PATH}; run pnpm audit:capability-boundaries --tighten in this change to lock the decrease.`,
+      );
+    }
   }
 }
 

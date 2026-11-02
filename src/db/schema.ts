@@ -5,8 +5,7 @@
 // Table definitions live in src/db/schema/*.ts by domain. This file is the
 // one formal entry: a single named re-export layer for drizzle-kit and the
 // @/db/schema consumers. No layering below the domain files; each re-export
-// here is registered as a stable_contract ruling in
-// scripts/capability-boundary-baseline.json.
+// here is classified stable_contract in scripts/pass-through-classifications.jsonl.
 //
 // JSON column types come from src/core/schema/business.ts. Importing the
 // inferred types (not the schemas) keeps these modules zod-free at runtime;

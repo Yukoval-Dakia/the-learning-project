@@ -4,7 +4,6 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse } from '@babel/parser';
-import type { DependencySnapshot } from './audit-capability-boundaries';
 import {
   listTreeFiles,
   readBlobs,
@@ -13,8 +12,10 @@ import {
   worktreeRenameMap,
 } from './lib/git-base-scan';
 import {
-  auditCompatShims,
+  PASS_THROUGH_CLASSIFICATIONS_PATH,
+  auditPassThroughClassifications,
   diffPassThroughSites,
+  parseSiteClassifications,
   scanPassThroughSites,
 } from './lib/pass-through-sites';
 
@@ -1096,7 +1097,7 @@ export interface ArchitectureDeepeningFacts {
   readonly dependency: {
     readonly totals: DependencyCeilings;
     readonly deepPairCounts: Readonly<Record<string, number>>;
-    /** Exact-baseline comparison violations from audit-capability-boundaries. */
+    /** Ledger ceiling violations from audit-capability-boundaries. */
     readonly baselineViolations: readonly { readonly source: string; readonly reason: string }[];
   };
   /** Pass-through shell ratchet measured head-vs-base by the CLI runner. */
@@ -1261,7 +1262,6 @@ async function runCli(): Promise<void> {
     collectDependencySnapshot,
     compareDependencySnapshot,
     parseBaseline,
-    readBaselineAtRef,
     resolveImportTarget,
   } = await import('./audit-capability-boundaries.js');
   const { CONTROL_TOOLS, READ_TOOLS, PROPOSE_WRITE_TOOLS } = await import(
@@ -1364,15 +1364,15 @@ async function runCli(): Promise<void> {
   // --- dependency facts -----------------------------------------------------
   const { snapshot } = collectDependencySnapshot(projectRoot);
   const baselinePath = 'scripts/capability-boundary-baseline.json';
-  const baseline = JSON.parse(
+  const baseline = parseBaseline(
     readFileSync(resolve(projectRoot, baselinePath), 'utf8'),
-  ) as DependencySnapshot;
+    baselinePath,
+  );
   const baselineViolations = compareDependencySnapshot(snapshot, baseline);
 
-  // --- pass-through / compat-shim ratchets ----------------------------------
+  // --- pass-through ratchet -------------------------------------------------
   // New pure re-export / identity-forward sites fail by default; only a
-  // coordinator-approved compatShims entry with real consumers, an exit
-  // condition, an issue and a <=14-day window may cover them.
+  // compat_shim (<=14-day window) or stable_contract classification covers them.
   const argv = process.argv.slice(2);
   const baseIndex = argv.indexOf('--base');
   if (baseIndex !== -1 && !argv[baseIndex + 1]) {
@@ -1419,31 +1419,22 @@ async function runCli(): Promise<void> {
   );
   const renames = worktreeRenameMap(projectRoot, baseSha, SCAN_ROOTS);
   const siteDiff = diffPassThroughSites(baseSites, headSites, renames);
-  const baselineFull = parseBaseline(
-    readFileSync(resolve(projectRoot, baselinePath), 'utf8'),
-    baselinePath,
+  const classifications = parseSiteClassifications(
+    readFileSync(resolve(projectRoot, PASS_THROUGH_CLASSIFICATIONS_PATH), 'utf8'),
+    PASS_THROUGH_CLASSIFICATIONS_PATH,
   );
-  const previousFull = readBaselineAtRef(projectRoot, baseSha);
-  // stable_contract rulings share the changes ledger — only the tail
-  // appended after the base can classify a site (historical rulings already
-  // did their job and are never re-punished).
-  const stableRulings = baselineFull.changes
-    .slice(previousFull.changes.length)
-    .filter((change) => 'type' in change);
-  const passThroughViolations: OwnershipViolation[] = auditCompatShims({
+  const baseClassifications = parseSiteClassifications(
+    readBlobs(projectRoot, baseSha, [PASS_THROUGH_CLASSIFICATIONS_PATH]).get(
+      PASS_THROUGH_CLASSIFICATIONS_PATH,
+    ) ?? '',
+    `${baseSha}:${PASS_THROUGH_CLASSIFICATIONS_PATH}`,
+  );
+  const passThroughViolations: OwnershipViolation[] = auditPassThroughClassifications({
     headSites,
     newSites: siteDiff.added,
-    records: baselineFull.compatShims,
-    previousRecords: previousFull.compatShims.length,
-    stableRulings,
-    readSource: (path) => {
-      try {
-        return readFileSync(resolve(projectRoot, path), 'utf8');
-      } catch {
-        return undefined;
-      }
-    },
-    resolveTarget: resolveHeadTarget,
+    classifications,
+    baseClassifications,
+    renames,
     today: new Date().toISOString().slice(0, 10),
   });
 

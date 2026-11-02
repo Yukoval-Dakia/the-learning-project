@@ -5,9 +5,9 @@ import { dirname, join, resolve } from 'node:path';
 import { expect, test } from 'vitest';
 import { auditCapabilityBoundaries } from './audit-capability-boundaries';
 
-// @invariant security: YUK-1570 owner-approved CI admission rejects growth without a real offset or recorded ruling.
-// @fails-if reason/exitCondition or an unsupported offset claim lets a net increase pass the CLI.
-test('rejects an increase without a real offset or recorded ruling', () => {
+// @invariant security: CI admission rejects capability -> server growth even when the ledger is raised to match.
+// @fails-if a ledger edit alone lets a new capability -> server edge pass the CLI.
+test('rejects dependency growth even when the ledger is raised', () => {
   const root = mkdtempSync(join(tmpdir(), 'capability-ratchet-'));
   const write = (file: string, text: string) => {
     mkdirSync(dirname(join(root, file)), { recursive: true });
@@ -29,25 +29,7 @@ test('rejects an increase without a real offset or recorded ruling', () => {
     write('src/capabilities/practice/public.ts', "import '@/server/ai';");
     baseline.debts.capabilityToServer.byOwnerPair['practice -> ai'] = 1;
     baseline.debts.capabilityToServer.total = 1;
-    write(
-      'scripts/capability-boundary-baseline.json',
-      JSON.stringify({
-        ...baseline,
-        changes: [
-          {
-            direction: 'increase',
-            debt: 'capabilityToServer',
-            pair: 'practice -> ai',
-            date: '2026-10-19',
-            from: 0,
-            to: 1,
-            reason: 'Add an owner-service import',
-            exitCondition: 'Remove the import when the consumer retires',
-            justification: { kind: 'offset' },
-          },
-        ],
-      }),
-    );
+    write('scripts/capability-boundary-baseline.json', JSON.stringify(baseline));
     const result = spawnSync(
       process.execPath,
       [
@@ -59,7 +41,7 @@ test('rejects an increase without a real offset or recorded ruling', () => {
       { cwd: root, encoding: 'utf8' },
     );
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('offset requires');
+    expect(result.stderr).toContain('1 > base commit 0');
   } finally {
     rmSync(root, { recursive: true });
   }
