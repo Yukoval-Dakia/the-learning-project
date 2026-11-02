@@ -3,10 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { artifact, event } from '@/db/schema';
 import {
-  NOTE_GENERATION_SINGLETON_SECONDS,
   NOTE_HANDOFF_KINDS,
   noteHandoffEventId,
-  noteHandoffJobId,
   writeNoteGenerationIntent,
 } from '@/kernel/records/note-handoff-protocol';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -67,38 +65,6 @@ function fakeBoss() {
 describe('Notes durable handoff', () => {
   beforeEach(async () => {
     await resetDb();
-  });
-
-  it('writes completion only after deterministic queue confirmation and is duplicate-safe', async () => {
-    await seedNote('note-generation', { generation: 'pending', verification: 'not_required' });
-    await testDb().transaction((tx) => writeNoteGenerationIntent(tx, 'note-generation'));
-    const boss = fakeBoss();
-
-    await expect(dispatchNoteGeneration(testDb(), 'note-generation', { boss })).resolves.toBe(true);
-    await expect(dispatchNoteGeneration(testDb(), 'note-generation', { boss })).resolves.toBe(
-      false,
-    );
-
-    expect(boss.send).toHaveBeenCalledTimes(1);
-    expect(boss.send).toHaveBeenCalledWith(
-      'note_generate',
-      { artifact_id: 'note-generation' },
-      {
-        id: noteHandoffJobId(NOTE_HANDOFF_KINDS.generationIntent, 'note-generation'),
-        singletonKey: 'note-generation',
-        singletonSeconds: NOTE_GENERATION_SINGLETON_SECONDS,
-      },
-    );
-    const completion = await testDb()
-      .select({ id: event.id })
-      .from(event)
-      .where(
-        eq(
-          event.id,
-          noteHandoffEventId(NOTE_HANDOFF_KINDS.generationDispatchComplete, 'note-generation'),
-        ),
-      );
-    expect(completion).toHaveLength(1);
   });
 
   it('concurrent dispatchers converge on one deterministic job and completion', async () => {

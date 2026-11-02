@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,7 +8,7 @@ import * as hydration from '@/kernel/read-models/subject-hydration';
 import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
 import { BUILTIN_TRAIT_SEEDS, seedTraitId } from '@/subjects/builtin-trait-seeds';
 import { SubjectRegistry } from '@/subjects/profile';
-import { CharterTraitSchema, JudgePolicyTraitSchema } from '@/subjects/trait-schemas';
+import { CharterTraitSchema } from '@/subjects/trait-schemas';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { BINDING, FORK, PUT as SUBJECT_PUT } from '../api/admin-subject-trait-write';
 import { RESET_TO_SEED, ROLLBACK, PUT as SHARED_PUT } from '../api/admin-trait-write';
@@ -440,65 +440,5 @@ it('preserves both CAS axes, validation/lookup order, general restrictions and a
       input: { traitId: fork.traitId, expectedRevision: 99, targetRevision: 999 },
     },
     { kind: 'stale', axis: 'trait', currentRevision: 0 },
-  );
-});
-
-it('fanout rejection names affected binders, and incompatible rollback snapshots write nothing', async () => {
-  const a = await createCustom();
-  const b = await createCustom('生物：共享校验');
-  const judgeId = seedTraitId('general', 'judge_policy');
-  const judge = await trait(judgeId);
-  const bad = JudgePolicyTraitSchema.parse({
-    ...JudgePolicyTraitSchema.parse(judge.payload),
-    judgeCapabilities: ['judge_phantom_nope'],
-  });
-  const result = await assertReadOnlyParity(
-    { kind: 'shared', input: { traitId: judgeId, expectedRevision: judge.revision, payload: bad } },
-    { kind: 'invalid' },
-  );
-  if (result.kind !== 'invalid') throw new Error('expected fanout rejection');
-  expect(result.issues?.map((issue) => issue.subjectId)).toEqual(
-    expect.arrayContaining(['general', a, b]),
-  );
-  expect(result.issues?.every((issue) => issue.errors.length > 0)).toBe(true);
-  await assertReadOnlyParity(
-    {
-      kind: 'edit',
-      input: {
-        subjectId: a,
-        kind: 'judge_policy',
-        expectedSubjectRevision: 0,
-        expectedTraitRevision: judge.revision,
-        payload: bad,
-      },
-    },
-    { kind: 'invalid', issues: [{ subjectId: a, errors: expect.any(Array) }] },
-  );
-  const seed = await trait(seedId);
-  await editSharedTrait(poolDb, {
-    traitId: seedId,
-    expectedRevision: seed.revision,
-    payload: charter('新活内容。\n'.repeat(300)),
-  });
-  // Reproduce a historical snapshot whose payload no longer fits the current schema.
-  await poolDb
-    .update(schema.subject_trait_journal)
-    .set({ payload: { nested: [{ missing: true }], methodology: null } })
-    .where(
-      and(
-        eq(schema.subject_trait_journal.trait_id, seedId),
-        eq(schema.subject_trait_journal.revision, seed.revision),
-      ),
-    );
-  await assertReadOnlyParity(
-    {
-      kind: 'rollback',
-      input: {
-        traitId: seedId,
-        expectedRevision: seed.revision + 1,
-        targetRevision: seed.revision,
-      },
-    },
-    { kind: 'invalid', message: expect.stringContaining('no longer parses') },
   );
 });

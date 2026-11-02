@@ -199,7 +199,7 @@
 
 ### M1.4 — YUK-47 Phase 2C chat deploy + browser E2E
 
-**问题**：Phase 2C teaching session 代码已 ship 但 NAS 容器是旧 build，浏览器 E2E 未跑过。
+**问题**：Phase 2C teaching session 代码已 ship 但 NAS 容器是旧 build，浏览器 E2E 待跑。
 
 **Scope**：
 - NAS `docker compose up --build`

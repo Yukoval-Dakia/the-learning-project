@@ -1406,6 +1406,7 @@ async function execute(ctx: ToolContext, raw: ExecInput): Promise<Output> {
         actorRef: ctx.callerActor.ref,
         actorKind: 'agent',
         beforeWrite: ctx.beforeIngestionWrite,
+        signal: ctx.signal,
         sessionId: ctx.sessionId ?? null,
         taskRunId: ctx.taskRunId,
         causedByEventId: ctx.causedByEventId ?? null,

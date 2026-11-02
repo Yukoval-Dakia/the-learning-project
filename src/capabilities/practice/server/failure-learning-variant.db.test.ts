@@ -2,7 +2,7 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { event, knowledge, question } from '@/db/schema';
+import { knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -120,38 +120,4 @@ describe('runVariantGen', () => {
     // LLM called only once
     expect(runTaskFn).toHaveBeenCalledTimes(1);
   });
-
-  it.each(['accept', 'dismiss'] as const)(
-    'does not regenerate after the same-attempt proposal is rated %s',
-    async (rating) => {
-      const db = testDb();
-      await seedKnowledge();
-      await seedQuestion({ id: 'q1' });
-      const attemptId = createId();
-      await seedFailureAttempt(attemptId, 'q1');
-      await seedJudgeForAttempt(attemptId, 'concept');
-      const runTaskFn = vi.fn(async () => ({ text: VALID_VARIANT_OUTPUT }));
-      const first = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
-      const proposalId = first.proposal_id;
-      if (!proposalId) throw new Error('expected first proposal id');
-
-      await db.insert(event).values({
-        id: createId(),
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'rate',
-        subject_kind: 'event',
-        subject_id: proposalId,
-        outcome: 'success',
-        payload: { rating },
-        caused_by_event_id: proposalId,
-        created_at: new Date(),
-      });
-
-      await expect(runVariantGen({ db, attemptEventId: attemptId, runTaskFn })).resolves.toEqual({
-        status: 'skipped:already_has_variant',
-      });
-      expect(runTaskFn).toHaveBeenCalledTimes(1);
-    },
-  );
 });

@@ -10,7 +10,7 @@ import { ApiError } from '@/kernel/http';
 import { wakeHubSyncAfterCommit } from '@/server/boss/hub-sync-wake';
 import { acceptAiProposal } from '@/server/proposals/actions';
 import { Conversation } from '@/server/session';
-import type { AcceptTeachingChipBodySchema } from '../api/contracts';
+import { AcceptTeachingChipBodySchema, CopilotRouteIdParamsSchema } from '../api/contracts';
 
 // ADR-0011 §2.1 — a chip's source_event_id may only anchor to an agent
 // message in the same session, so a counted accept_suggestion can never anchor
@@ -159,4 +159,24 @@ export async function acceptTeachingChip(
     payload,
   });
   return { eventId: chipEventId };
+}
+
+export async function requestTeachingChipAcceptance(
+  db: Db,
+  params: Record<string, string>,
+  readBody: () => Promise<unknown>,
+): Promise<{ ok: true; event_id: string }> {
+  const { id: sessionId } = CopilotRouteIdParamsSchema.parse(params);
+  const raw = await readBody().catch(() => null);
+  const parsed = AcceptTeachingChipBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new ApiError(
+      'validation_error',
+      parsed.error.issues.map((i) => i.message).join('; '),
+      400,
+    );
+  }
+
+  const outcome = await acceptTeachingChip(db, sessionId, parsed.data);
+  return { ok: true, event_id: outcome.eventId };
 }

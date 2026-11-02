@@ -69,14 +69,27 @@ async function embedChunk(
     async (attempt) => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15_000);
+      const signal = providerAttempt.signal
+        ? AbortSignal.any([controller.signal, providerAttempt.signal])
+        : controller.signal;
+      let wireStarted = false;
       try {
+        try {
+          signal.throwIfAborted();
+          await providerAttempt.beforeSend?.();
+          signal.throwIfAborted();
+        } catch (error) {
+          attempt.markTerminal('aborted', 'provider_send_not_authorized', 0);
+          throw error;
+        }
         let res: Response;
         try {
+          wireStarted = true;
           res = await fetch(`${BASE_URL}/embeddings`, {
             method: 'POST',
             headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
             body: JSON.stringify({ model: EMBED_MODEL, input: chunk, dimensions: EMBED_DIMS }),
-            signal: controller.signal,
+            signal,
           });
         } catch (error) {
           attempt.markTerminal('failed', 'provider_network_error');
@@ -130,7 +143,7 @@ async function embedChunk(
         }
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
-          attempt.markTerminal('aborted', 'provider_request_aborted');
+          attempt.markTerminal('aborted', 'provider_request_aborted', wireStarted ? 1 : 0);
         }
         throw error;
       } finally {

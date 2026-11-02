@@ -7104,6 +7104,110 @@
     },
     {
       "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "requestTeachingChipAcceptance",
+      "targetModule": "src/capabilities/copilot/server/accept-teaching-chip.ts",
+      "targetSymbol": "requestTeachingChipAcceptance",
+      "owner": "copilot",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/copilot-teaching-chip-operation.ts",
+          "line": 14
+        }
+      ],
+      "evidence": "The authenticated Start teaching-chip host imports this complete request at await-import AST and module path line 14 and invokes it at line 16 with db, the original id params and an async JSON reader. The context reference is type-only; the retained HTTP POST also consumes this request. The existing stable Copilot client reaches MessageStream's corrective-chip callback and TurnActions.acceptCorrectiveChip without changing its pending, acknowledgement or silent failure behavior.",
+      "rationale": "Copilot owns the complete teaching-chip request: original ID parsing before deferred JSON decoding, malformed JSON to null, the existing body schema and message-only validation_error/400, invocation of the unchanged acceptance owner and the full ok/event_id response. HTTP and Start preserve the original generic ID error, anchor rules, proposal acceptance before fire-and-forget wake and chip-event write, and partial-commit/unknown boundaries; no parsing, eligibility or transaction policy is duplicated in the UI or host.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-6b1cd8b4-93b1-4f47-baf5-7721bb3218c7"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> proposals",
+      "date": "2026-11-01",
+      "from": 4,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "embedQuestionTextForIngest",
+      "targetModule": "src/capabilities/practice/jobs/embed_backfill.ts",
+      "targetSymbol": "embedQuestionTextForIngest",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/questions/draft-submit-dedup.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "embed_backfill.ts:63-78; draft-submit-dedup.ts prepareDraftSubmitVector; server/questions/submit-question.ts submitDraftQuestion",
+      "rationale": "Question-text embedding uses the existing canonical text recipe, provider-attempt context and dimension validation. The submit owner requests the vector outside its transaction; it does not copy provider/model/dimension rules.",
+      "issue": "YUK-1569",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1569#comment-3c8c5f11-17be-4664-b29d-bda2c458334d",
+      "date": "2026-11-01"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "findVectorNearDuplicate",
+      "targetModule": "src/capabilities/practice/server/question-supply/ingest-dedup.ts",
+      "targetSymbol": "findVectorNearDuplicate",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/questions/draft-submit-dedup.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "ingest-dedup.ts:174-211; draft-submit-dedup.ts deduplicateNewDraftInTx",
+      "rationale": "This is the canonical global near-duplicate reader, including root visibility, current embedding revision, cosine threshold and finite-result handling. The draft owner consumes the result inside the insertion transaction instead of cloning those decisions.",
+      "issue": "YUK-1569",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1569#comment-3c8c5f11-17be-4664-b29d-bda2c458334d",
+      "date": "2026-11-01"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "vectorNearHoldMetadata",
+      "targetModule": "src/capabilities/practice/server/question-supply/ingest-dedup.ts",
+      "targetSymbol": "vectorNearHoldMetadata",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/questions/draft-submit-dedup.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "ingest-dedup.ts:239-252; source_verify.ts:626 consumes readVectorNearHold; draft-submit-dedup.ts deduplicateNewDraftInTx",
+      "rationale": "The existing near-duplicate hold wire format stays owned by Practice and shared with its source verifier. Draft submission attaches that exact result to the new row, without a second metadata encoding or treating proximity as an automatic rejection.",
+      "issue": "YUK-1569",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1569#comment-3c8c5f11-17be-4664-b29d-bda2c458334d",
+      "date": "2026-11-01"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> coldstart",
+      "date": "2026-11-01",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "shell -> knowledge",
+      "date": "2026-11-01",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
       "file": "src/server/questions/submit-question.ts",
       "siteKind": "site",
       "symbol": "findSubmitReceipt",
@@ -11222,6 +11326,86 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/cause-catalog.ts",
+      "module": "src/kernel/proposals/inbox.ts",
+      "kind": "value",
+      "symbols": ["pendingProposalWithCooldown"],
+      "issue": "YUK-1570",
+      "owns": "直接消费既有完整proposal inbox读取与冷却判定 canonical；原Practice caller的业务资格、调用顺序、事务/锁、幂等与恢复不变，退出无逻辑practice-runtime纯转出。",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "module": "src/kernel/proposals/inbox.ts",
+      "kind": "value",
+      "symbols": ["hasProposalWithCooldownKey"],
+      "issue": "YUK-1570",
+      "owns": "直接消费既有完整proposal inbox读取与冷却判定 canonical；原Practice caller的业务资格、调用顺序、事务/锁、幂等与恢复不变，退出无逻辑practice-runtime纯转出。",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "module": "src/kernel/proposals/producers.ts",
+      "kind": "value",
+      "symbols": ["writeVariantQuestionProposal"],
+      "issue": "YUK-1570",
+      "owns": "直接消费既有完整proposal variant提议写入 canonical；原Practice caller的业务资格、调用顺序、事务/锁、幂等与恢复不变，退出无逻辑practice-runtime纯转出。",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/proposal-accept-applier.ts",
+      "module": "src/kernel/proposals/signals.ts",
+      "kind": "value",
+      "symbols": ["recordProposalDecisionSignal"],
+      "issue": "YUK-1570",
+      "owns": "直接消费既有完整proposal 决定反馈与重建 canonical；原Practice caller的业务资格、调用顺序、事务/锁、幂等与恢复不变，退出无逻辑practice-runtime纯转出。",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/proposal-appliers.ts",
+      "module": "src/kernel/proposals/signals.ts",
+      "kind": "value",
+      "symbols": ["ensureProposalDecisionSignal", "recordProposalDecisionSignal"],
+      "issue": "YUK-1570",
+      "owns": "直接消费既有完整proposal 决定反馈与重建 canonical；原Practice caller的业务资格、调用顺序、事务/锁、幂等与恢复不变，退出无逻辑practice-runtime纯转出。",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/reference-solution.ts",
+      "module": "src/kernel/read-models/subject-profile.ts",
+      "kind": "value",
+      "symbols": ["resolveSubjectProfileForKnowledgeIds"],
+      "issue": "YUK-1570",
+      "owns": "Subject-profile resolution and orphan fallback remain owned by the existing kernel reader. Practice reference generation consumes the same resolver formerly re-exported by Knowledge public.",
+      "date": "2026-11-01"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/reference-solution.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1570",
+      "owns": "Assessment publication owns immutable question-group revisions and admission invalidation. The complete Practice reference-solution operation calls it inside the unchanged content-write transaction after the guarded update.",
+      "date": "2026-11-01"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/reference-solution.ts",
+      "module": "src/server/ai/runner-fn.ts",
+      "kind": "value",
+      "symbols": ["makeRunTaskTextFn"],
+      "issue": "YUK-1570",
+      "owns": "Server AI owns binding the logged task runner to the host Db. Practice owns reference-solution input construction, output parsing, logged skips, guarded rubric/reference writes and same-transaction publication; runner construction timing is unchanged.",
+      "date": "2026-11-01"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/practice/server/question-supply/web-supply.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
@@ -11851,19 +12035,37 @@
     },
     {
       "path": "src/capabilities/practice/server/tools/submit-question.ts",
-      "date": "2026-10-30",
+      "date": "2026-11-02",
       "baseBlob": "ccfd6d08ab323db094cd15d4325e714aec053a80",
       "from": 1314,
-      "to": 1455,
+      "to": 1315,
+      "issue": "YUK-1569",
+      "responsibilityReason": "R1 S1: forward the existing ToolContext AbortSignal at the real ordinary draft-submit consumer, alongside its existing beforeIngestionWrite authority. The submit owner and canonical embedding wire boundary recheck cancellation/purpose before send; this one-line consumer wiring adds no business decision, provider configuration, new endpoint or test."
+    },
+    {
+      "path": "src/kernel/proposals/presentation.ts",
+      "date": "2026-11-01",
+      "baseBlob": "2b5c6873544a60354a8b74210f18f3a04cb054ff",
+      "from": 1082,
+      "to": 1160,
+      "issue": "YUK-1570",
+      "responsibilityReason": "The existing proposal presentation owner batch-resolves active learner-visible knowledge-edge endpoint labels and isolates recoverable label-query failures. Inbox cards consume these optional labels instead of assembling names from a separate full-tree request. The same owner retains question and block previews; proposal decisions, writes and locks are unchanged. This records source growth within the approved display contract, not a size exemption or cross-edge reduction."
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/submit-question.ts",
+      "date": "2026-11-02",
+      "baseBlob": "903797e292a5c7b0174a95fc64e0c0f1eda8eb39",
+      "from": 1315,
+      "to": 1456,
       "issue": "YUK-1468",
       "responsibilityReason": "Owner-approved flat submit crash closure: request-first claim recheck in the actual write transaction, atomic original pending receipt with publication and verify intent, and matching-fingerprint recovery through the original parser/receipt codec. No verifier, admission or paid algorithm change; preflight exact/source merges remain outside the transaction. Measured by the native audit, not an exemption. 2026-11-02 owner FULL placement policy: a server-only placement candidate submit binds question, epoch and the authority-carrying source_verify intent in the same flat transaction after the attempt fence; declared-parts candidates are refused for placement; non-placement submit unchanged."
     },
     {
       "path": "src/capabilities/practice/jobs/source_verify.ts",
       "date": "2026-11-02",
-      "baseBlob": "09f8a525ee2ab94ede36fe8e6be7783228bd3771",
-      "from": 1374,
-      "to": 1427,
+      "baseBlob": "c8a6cb2cfc563804a506e6e6588eab1b7b40d08b",
+      "from": 1370,
+      "to": 1423,
       "issue": "YUK-1468",
       "responsibilityReason": "Owner FULL placement policy (2026-11-02): source_verify consumes the server-written placement authority. Paid solve/grounding calls are fenced and recorded through the shared paid-authority owner, writeback asserts at the quiz_verify position, and a stale authority skips without a verify error. No verifier algorithm change."
     },
@@ -12468,7 +12670,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 159,
+      "total": 154,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -12496,11 +12698,9 @@
         "practice -> ai": 38,
         "practice -> assessment": 1,
         "practice -> boss": 12,
-        "practice -> coldstart": 1,
         "practice -> fsrs": 2,
         "practice -> mastery": 2,
         "practice -> memory": 1,
-        "practice -> proposals": 4,
         "practice -> questions": 1,
         "shell -> boss": 1,
         "shell -> proposals": 1,
@@ -12512,7 +12712,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 14,
+      "total": 13,
       "byOwnerPair": {
         "agency -> notes": 0,
         "agency -> practice": 2,
@@ -12522,7 +12722,6 @@
         "observability -> agency": 1,
         "observability -> practice": 1,
         "shell -> agency": 1,
-        "shell -> knowledge": 1,
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },

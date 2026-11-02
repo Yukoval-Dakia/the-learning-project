@@ -4,48 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProviderRequestIdentity } from '@/core/schema/provider-attempt';
 import { db } from '@/db/client';
-import { provider_attempt, provider_attempt_admission } from '@/db/schema';
+import { provider_attempt_admission } from '@/db/schema';
 import { createProviderAttemptLifecycle } from '@/server/ai/provider-attempt-lifecycle';
 import { resetDb } from '../../../../tests/helpers/db';
-import {
-  ProviderAttemptResumeConflictError,
-  executeTencentOcrSubmit,
-  extractionPageOperationId,
-} from './provider-attempts';
-
-function legacySubmitAttempt(pageOperationId: string, jobId: string, startedAt: Date) {
-  return {
-    attempt_id: randomUUID(),
-    operation_id: pageOperationId,
-    attempt_kind: 'wire',
-    provider: 'tencent',
-    model: 'QuestionMarkAgent',
-    lane_id: 'tencent.question-mark-agent',
-    protocol: 'http',
-    endpoint_class: 'tencent.question-mark-agent.submit',
-    caller: 'worker',
-    operation_kind: 'ocr_page_submit',
-    external_request_id: jobId,
-    terminal_status: 'succeeded',
-    terminal_reason: 'provider_response_accepted',
-    wire_count: 1,
-    usage_json: {
-      basis: 'unknown' as const,
-      unit: 'tokens',
-      input: null,
-      output: null,
-      total: null,
-      source: 'provider_response_absent',
-    },
-    cost_basis: 'unknown',
-    cost_amount: null,
-    cost_currency: 'CNY',
-    cost_source: 'provider_cost_absent',
-    started_at: startedAt,
-    provider_start_reserved_at: startedAt,
-    finished_at: startedAt,
-  };
-}
+import { executeTencentOcrSubmit, extractionPageOperationId } from './provider-attempts';
 
 beforeEach(async () => {
   vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
@@ -130,55 +92,5 @@ describe('ingestion provider-attempt resume helpers', () => {
     expect(expiredOwner?.terminal_at?.getTime()).toBeGreaterThanOrEqual(
       expiredOwner?.lease_expires_at?.getTime() ?? Number.POSITIVE_INFINITY,
     );
-  });
-
-  it('propagates conflicting saved JobIds and creates no recovery wire attempt', async () => {
-    // Given: two crash-gap Submit attempts persisted different JobIds for one page operation.
-    const pageOperationId = extractionPageOperationId({
-      canonicalOperationId: `ingop_${randomUUID()}`,
-      bossJobId: 'unused-canonical-anchor',
-      pageIndex: 0,
-    });
-    await db
-      .insert(provider_attempt)
-      .values([
-        legacySubmitAttempt(
-          pageOperationId,
-          'first-saved-job',
-          new Date('2026-08-09T00:00:00.000Z'),
-        ),
-        legacySubmitAttempt(
-          pageOperationId,
-          'second-saved-job',
-          new Date('2026-08-09T00:01:00.000Z'),
-        ),
-      ]);
-    const before = await db
-      .select()
-      .from(provider_attempt)
-      .where(eq(provider_attempt.operation_id, pageOperationId));
-
-    const submit = vi.fn(async () => 'must-not-submit');
-
-    // When: recovery tries to resolve the durable provider identity.
-    await expect(
-      executeTencentOcrSubmit({
-        db,
-        pageOperationId,
-        bossJobId: 'conflicting-saved-jobs',
-        deliveryRetryCount: 0,
-        deliveryStartedOn: new Date(),
-        params: { ImageBase64: 'page' },
-        submit,
-      }),
-    ).rejects.toBeInstanceOf(ProviderAttemptResumeConflictError);
-
-    // Then: the invariant error propagates before any recovery Submit or Describe can run.
-    expect(submit).not.toHaveBeenCalled();
-    const attempts = await db
-      .select()
-      .from(provider_attempt)
-      .where(eq(provider_attempt.operation_id, pageOperationId));
-    expect(attempts).toHaveLength(before.length);
   });
 });

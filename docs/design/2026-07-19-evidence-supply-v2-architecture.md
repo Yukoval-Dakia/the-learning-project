@@ -359,7 +359,7 @@ jyeoo dg 保存为：
 }
 ```
 
-不得把 dg 伪装成校准后的 IRT b；后续用 attempt 数据拟合 source-specific calibration。
+dg 按原始未校准值使用；后续用 attempt 数据拟合 source-specific calibration。
 
 ## 7. Supply and Selection Coupling
 

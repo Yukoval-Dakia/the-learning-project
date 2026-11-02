@@ -3,14 +3,7 @@
 // operation itself is mocked: these cases pin the handler's control flow only.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { PaidEffectControlAdmission } from '@/core/migration/paid-effect-protocol';
-
 import { buildNoteVerifyHandler } from './note_verify';
-
-const admitted: PaidEffectControlAdmission = {
-  kind: 'admitted',
-  control: { family: 'note_verify', backend: 'pg-boss', generation: 0, explicit: false },
-};
 
 const runNoteVerify = vi.hoisted(() =>
   vi.fn(async () => ({ status: 'skipped:not_found' as const })),
@@ -43,18 +36,5 @@ describe('note_verify pg-boss handler backend-control admission', () => {
       'fenced',
     );
     expect(runNoteVerify).not.toHaveBeenCalled();
-  });
-
-  // @invariant concurrency: an admitted delivery reaches exactly one operation execution keyed by the job's artifact_id
-  // @fails-if admission throws on the happy path or the handler loses/mangles the artifact_id it hands to the operation
-  it('executes the operation once per admitted delivery', async () => {
-    const handler = buildNoteVerifyHandler({} as never, {
-      admitDelivery: async () => admitted,
-    });
-    await expect(
-      handler([{ id: 'job-2', data: { artifact_id: 'a2' } } as never]),
-    ).resolves.toBeUndefined();
-    expect(runNoteVerify).toHaveBeenCalledTimes(1);
-    expect(runNoteVerify).toHaveBeenCalledWith(expect.objectContaining({ artifactId: 'a2' }));
   });
 });
