@@ -11,10 +11,11 @@ import {
   type KnowledgeOperationContext,
   entityKey,
   prefetchKnowledgeOperations,
+  prefetchKnowledgeOperationsForNode,
   verifyKnowledgeOperationFacts,
 } from './knowledge-operation';
 import { getAnchorEventId } from './materialized-id-index';
-import { rowToFoldEvent } from './projection-events';
+import { type FoldEventRow, rowToFoldEvent } from './projection-events';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
@@ -79,10 +80,9 @@ export async function gatherAndFoldKnowledgeNode(
   prefetchedRates?: Map<string, EventRow[]>,
   prefetchedOps?: KnowledgeOperationContext,
 ): Promise<KnowledgeRowSnapshotT | null> {
-  // Raw pre-check before any id filtering: every knowledge_operation rate fact in
-  // the log must strict-decode; an undecodable fact is unattributable and fails
-  // the whole knowledge scan closed.
-  const ops = prefetchedOps ?? (await prefetchKnowledgeOperations(db));
+  // Per-node callers get the targeted GIN-served scan; full-table callers pass a
+  // class-level prefetch. There is deliberately no unbounded default.
+  const ops = prefetchedOps ?? (await prefetchKnowledgeOperationsForNode(db, nodeId));
 
   // Q1: events whose subject_id is nodeId.
   // Covers genesis, auto_tag, reparent, archive, merge-as-into, and split-as-from.
@@ -115,7 +115,7 @@ export async function gatherAndFoldKnowledgeNode(
         );
 
   // Dedup the gathered rows by event id; the legs overlap.
-  const byId = new Map<string, EventRow>();
+  const byId = new Map<string, FoldEventRow>();
   for (const r of [...q1, ...q2, ...q3]) byId.set(r.id, r);
 
   // v1 discovery: a node declared as an operation target joins the set even when
@@ -227,7 +227,7 @@ export async function hasKnowledgeNodeGenesisAnchor(db: DbLike, nodeId: string):
     .limit(1);
   if (indexed.length > 0) return true;
 
-  const ops = await prefetchKnowledgeOperations(db);
+  const ops = await prefetchKnowledgeOperationsForNode(db, nodeId);
   for (const rateId of ops.scan.targetsByEntity.get(entityKey('knowledge', nodeId)) ?? []) {
     const entry = ops.scan.byRateId.get(rateId);
     if (
