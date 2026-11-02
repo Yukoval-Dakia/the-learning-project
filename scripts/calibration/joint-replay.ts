@@ -16,6 +16,7 @@
 // READ-ONLY / REPORT-ONLY：绝不翻 flag、绝不写库。DB 读取在
 // scripts/replay-joint-calibration.ts（thin seam，镜像 ops-calibration 的 loader 纪律）。
 
+import { ece } from '@/core/calibration/ece';
 import {
   type DifficultyEvidencePoint,
   evidenceWeight,
@@ -39,7 +40,6 @@ import {
   aipwMean,
   impliedBLabel,
 } from '@/server/mastery/recalibration';
-import { ece } from './ece';
 
 /** 一条作答史记录（loader 产出；synthetic 模式由脚本生成）。 */
 export interface JointReplayAttempt {
