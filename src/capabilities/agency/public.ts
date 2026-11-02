@@ -1,6 +1,7 @@
 // Stable server contract for consumers outside the agency capability.
 
 export { AgentNotesQuerySchema } from './api/contracts';
+export { submitConjectureProbeAnswer } from './api/probe-answer';
 export {
   type PredictionAccountability,
   loadPredictionAccountabilityByKey,
