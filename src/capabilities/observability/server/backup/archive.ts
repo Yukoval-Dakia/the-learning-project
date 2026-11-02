@@ -11,18 +11,16 @@ import { readCompletionContract } from '@/core/event-subscription-effect';
 import type { Db, Tx } from '@/db/client';
 import * as schema from '@/db/schema';
 import type { R2Client } from '@/kernel/object-storage';
-import { hydrateConfigFromDb } from '@/server/config/hydrate';
+import { MEM0_COLLECTION_COLUMNS, mem0CollectionTable } from '@/kernel/records/mem0-collection';
 import {
   BACKUP_EXCLUDED_TABLES,
   FK_ORDER,
   MAX_INLINE_ASSETS,
-  MEM0_COLLECTION_COLUMNS,
   PAID_EFFECT_BACKUP_TABLES,
   RESTORE_WIPE_ONLY_TABLES,
   SCHEMA_VERSION,
   SUBSCRIPTION_PROGRESS_TABLES,
   type TableName,
-  mem0CollectionTable,
 } from './constants';
 import { buildMistakesCsv, buildReviewEventsCsv } from './csv';
 import { type Manifest, buildReadme } from './readme';
@@ -121,7 +119,7 @@ function assertEveryTableIsBackedUpOrExcluded(): void {
     throw new Error(
       `backup reverse-lockstep: pgTable(s) not covered by the backup payload: ${orphans.join(
         ', ',
-      )}. Each new table MUST be added to FK_ORDER (and bump SCHEMA_VERSION) so it is wiped-and-restored, OR added to BACKUP_EXCLUDED_TABLES with a reason if it is transient/derived/operational state. See src/server/export/constants.ts.`,
+      )}. Each new table MUST be added to FK_ORDER (and bump SCHEMA_VERSION) so it is wiped-and-restored, OR added to BACKUP_EXCLUDED_TABLES with a reason if it is transient/derived/operational state. See src/capabilities/observability/server/backup/constants.ts.`,
     );
   }
 }
@@ -307,6 +305,8 @@ export interface RestoreFromArchiveOpts {
    * schema cannot contain jobs from the archived runtime.
    */
   operationalRestoreTarget?: 'live' | 'fresh_disposable';
+  /** Re-reads the config snapshot after commit; the composition root owns the config store. */
+  hydrateConfig: (db: Db) => Promise<unknown>;
 }
 
 function restoreValue(table: TableName, column: string, value: unknown) {
@@ -429,6 +429,7 @@ export async function restoreFromArchive({
   bytes,
   retireInterventionPreparationJobs,
   operationalRestoreTarget = 'live',
+  hydrateConfig,
 }: RestoreFromArchiveOpts): Promise<{ status: number; body: RestoreResult }> {
   if (bytes.byteLength === 0) {
     return {
@@ -959,7 +960,7 @@ export async function restoreFromArchive({
 
   // The transaction wrote a strictly newer epoch, so this hydrate must re-read; other
   // processes converge via their refresh.
-  await hydrateConfigFromDb(db);
+  await hydrateConfig(db);
 
   // Re-PUT assets to R2.
   let assetsUploaded = 0;

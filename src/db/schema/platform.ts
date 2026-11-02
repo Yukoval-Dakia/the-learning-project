@@ -96,7 +96,7 @@ export const migration_apply_phase = pgTable(
 //   - 'preparing'：维护窗口，全部 runtime 路径 fenced（含旧 epoch）。
 //   - 'ready'：迁移已验证待激活，仍 fenced（安静窗口）。
 //   - 'active'：仅当 marker.epoch 等于运行代码的 contract epoch 才 runnable。
-// 备份语义：durable（非运维态）→ FK_ORDER，见 src/server/export/constants.ts。
+// 备份语义：durable（非运维态）→ FK_ORDER，见 src/capabilities/observability/server/backup/constants.ts。
 export const contract_epoch = pgTable(
   'contract_epoch',
   {

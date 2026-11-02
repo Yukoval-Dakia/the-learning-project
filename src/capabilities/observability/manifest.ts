@@ -413,6 +413,7 @@ export const observabilityCapability = defineCapability({
           400: ApiErrorResponseSchema,
           401: ApiErrorResponseSchema,
           500: ApiErrorResponseSchema,
+          503: ApiErrorResponseSchema,
         },
         successStatus: 200,
         load: () => import('./api/backup-import').then((m) => m.POST),
