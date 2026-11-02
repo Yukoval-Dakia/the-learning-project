@@ -30,13 +30,18 @@ const app = buildHonoApp(capabilities);
 // never-throws：表未建（42P01）/ DB down → hydrate 内部 WARN + 四代码种子地板，
 // 本函数恒 resolve——启动失败矩阵（v2 §4.4）不允许水合拖死 API 面。
 // db client 必须 loadEnv() 之后才 import（模块顶层读 DATABASE_URL）→ 动态 import。
+let subjectRefresh: { stop: () => void } | undefined;
 async function hydrateSubjectsBeforeServe(): Promise<void> {
   try {
-    const [{ db }, { hydrateSubjectRegistryFromDb }] = await Promise.all([
+    const [{ db }, { hydrateSubjectRegistryFromDb }, { startSubjectRefresh }] = await Promise.all([
       import('@/db/client'),
       import('@/kernel/read-models/subject-hydration'),
+      import('@/server/config/subject-refresh'),
     ]);
     const report = await hydrateSubjectRegistryFromDb(db);
+    // 60s level-triggered reconcile, same as the worker: subject edits made by another
+    // process reach this API within one period. Stopped on shutdown.
+    subjectRefresh = startSubjectRefresh(db, 60_000);
     const skippedNote = report.skipped.length > 0 ? ` (skipped ${report.skipped.length})` : '';
     console.log(`[rw:api] subjects hydrated: +${report.hydrated.length}${skippedNote}`);
   } catch (err) {
@@ -211,6 +216,7 @@ void (async () => {
       const boss = getRunningBoss();
       if (boss) await stopBossGracefully(boss, 'API shutdown');
     } finally {
+      subjectRefresh?.stop();
       configRefresh?.stop();
       catalogWatch?.stop();
       customProvidersWatch?.stop();
