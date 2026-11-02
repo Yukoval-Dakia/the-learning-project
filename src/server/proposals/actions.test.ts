@@ -2,11 +2,11 @@ import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { completion_evidence, event, knowledge, learning_item } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { gatherAndFoldLearningItem } from '@/server/projections/gather';
 import {
+  gatherAndFoldLearningItem,
   hasLearningItemGenesisAnchor,
-  learningItemLiveRowToSnapshot,
-} from '@/server/projections/parity';
+} from '@/kernel/records/learning-items';
+import { learningItemLiveRowToSnapshot } from '@/server/projections/parity';
 import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { type ProposalLifecycleResult, acceptAiProposal, retractAiProposal } from './actions';

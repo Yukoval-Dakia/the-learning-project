@@ -4,8 +4,10 @@ import type { Tx } from '@/db/client';
 import { event, goal, learning_item, mistake_variant } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { updateGoalStatus } from '@/kernel/records/goal-commands';
-import { gatherAndFoldGoal } from '@/server/projections/gather';
-import { goalLiveRowToSnapshot } from '@/server/projections/parity';
+import {
+  gatherAndFoldGoal,
+  goalRowToSnapshot as goalLiveRowToSnapshot,
+} from '@/kernel/records/goal-history';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { acceptAiProposal, retractAiProposal } from './actions';
 
