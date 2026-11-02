@@ -9,6 +9,7 @@ import {
   JEV_PRICEBOOK_VERSION,
   type TokenCounts,
   hasLocalPricing,
+  isJevModel,
   jevLocalCostUsd,
   localCostUsd,
 } from './pricing';
@@ -49,11 +50,14 @@ export function resolveAttemptCostTruth(input: {
     };
   }
 
-  // YUK-1563 part 4 — custom providers: pi's usage.cost comes from the rate
-  // card copied off the same-id catalog entry, so it is the same 'estimated'
-  // classification. Without a catalog card for that model there is no honest
-  // price → unknown, never a fabricated zero.
-  if (looksLikeCustomProviderId(input.provider)) {
+  // YUK-1563 part 4 — custom providers and OpenRouter pi chat models: pi's
+  // usage.cost comes from the catalog rate card for that model id, so it is an
+  // 'estimated' classification. Without a catalog card for that model there is no
+  // honest price → unknown, never a fabricated zero.
+  if (
+    looksLikeCustomProviderId(input.provider) ||
+    (input.provider === 'openrouter' && !isJevModel(input.model))
+  ) {
     const catalogProvider = catalogProviderFor(input.provider);
     const hasCard =
       catalogProvider !== undefined && catalogModelCost(catalogProvider, input.model) !== undefined;

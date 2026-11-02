@@ -106,8 +106,8 @@ export type PiToolMount =
   | {
       type: 'custom';
       /**
-       * Escape hatch for non-registry tools (agency evidence / director). The
-       * caller owns execute and must keep logging semantics identical.
+       * Escape hatch for non-registry tools. The caller owns execute and must
+       * keep logging semantics identical.
        */
       tools: AgentTool[];
     };

@@ -161,10 +161,7 @@ export const agencyCapability = defineCapability({
         // （上游失败 dreaming 照跑，只是少看几条 pending）。cron 移除，改由 orchestrator 触发。
         name: 'dreaming_nightly',
         eligibility: nightlyEligibility('reflection'),
-        dependsOn: [
-          { job: 'knowledge_edge_propose_nightly', soft: true },
-          { job: 'knowledge_maintenance_nightly', soft: true },
-        ],
+        dependsOn: [{ job: 'knowledge_maintenance_nightly', soft: true }],
         queue: 'agent',
         load: () => import('./jobs/dreaming_nightly').then((m) => m.buildDreamingNightlyHandler),
       },
@@ -223,23 +220,6 @@ export const agencyCapability = defineCapability({
         load: () =>
           import('./jobs/research_meeting_nightly').then(
             (m) => m.buildResearchMeetingNightlyHandler,
-          ),
-      },
-      // Agent-led 教研例会 director (shadow lane, dark-ship). The app-level pending-dedup
-      // TOCTOU must stay closed: the deterministic lane commits its proposals before the
-      // agent lane reads the pending inbox as its dedup base. That is a DAG hard edge, not
-      // a clock offset. queue:'agent' because ResearchMeetingDirectorTask is a multi-turn
-      // tool loop (EXPIRE_AGENT=7200s exceeds its own 300s wall-clock abort). Kill switch
-      // RESEARCH_MEETING_AGENT_ENABLED (default OFF) makes the handler a no-op while the
-      // node still succeeds.
-      {
-        name: 'research_meeting_agent_nightly',
-        dependsOn: ['research_meeting_nightly'],
-        eligibility: nightlyEligibility('reflection'),
-        queue: 'agent',
-        load: () =>
-          import('./jobs/research_meeting_agent_nightly').then(
-            (m) => m.buildResearchMeetingAgentNightlyHandler,
           ),
       },
     ],
