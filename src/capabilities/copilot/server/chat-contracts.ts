@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { DerivationPolicy } from '@/core/schema/derivation-policy';
 import { ReviewAnswerAttachmentSchema } from '@/kernel/tools/review-answer';
+import { ConfirmationCommand, type ConfirmationOccurrenceT } from '../confirmation-contract';
 
 export const COPILOT_CHAT_TRIGGER_KINDS = ['chat', 'chip'] as const;
 export type CopilotChatTriggerKind = (typeof COPILOT_CHAT_TRIGGER_KINDS)[number];
@@ -36,6 +37,7 @@ export interface CopilotSkillTurn {
 
 /** The persisted pair needed to interpret a skill turn after reconnect/replay. */
 export interface CopilotModeState {
+  confirmation?: ConfirmationOccurrenceT;
   skill_turn: CopilotSkillTurn;
   skill_context: CopilotSkillContextT;
 }
@@ -95,9 +97,23 @@ export const CopilotChatRequest = z
       .optional(),
     durable: z.boolean().optional(),
     review_answer: ReviewAnswerAttachmentSchema.optional(),
+    confirmation: ConfirmationCommand.optional(),
     correction_target_turn_id: z.string().min(1).max(160).optional(),
   })
   .superRefine((request, ctx) => {
+    if (
+      request.confirmation &&
+      (request.review_answer ||
+        request.triggered_by !== 'chat' ||
+        request.derivation_policy === 'answer_only' ||
+        request.correction_target_turn_id)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['confirmation'],
+        message: 'confirmation requires an authorized chat command',
+      });
+    }
     if (
       request.review_answer &&
       (request.derivation_policy === 'answer_only' ||

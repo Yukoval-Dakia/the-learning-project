@@ -42,6 +42,7 @@ import {
   loadTeachingContext,
   parseTurnOutput,
 } from '../teaching';
+import { confirmationTeachingIntent } from '../teaching/confirmation';
 
 // Injectable runner seam (kind, input, ctx) → { text }; defaults to runAgentTask.
 type RunAgentTaskFn = (
@@ -72,6 +73,8 @@ export type PendingAskCheckParams = Omit<MaterializeAskCheckParams, 'sourceRef'>
 
 export interface TeachingSkillResult {
   /** Reply markdown to surface as the Copilot reply. */
+  confirmationIntent?: boolean;
+  confirmationEnd?: boolean;
   text_md: string;
   kind: TeachingTurnOutputT['kind'];
   suggested_next: TeachingTurnOutputT['suggested_next'];
@@ -109,6 +112,21 @@ export async function runTeachingSkill(
 ): Promise<TeachingSkillResult> {
   const { db, sessionId, learningItemId, userMessage, providerSessionDeadlineAt } = params;
   const run = deps.runAgentTaskFn ?? runAgentTask;
+  const intent = confirmationTeachingIntent(userMessage);
+  if (intent && params.taskRunId) {
+    params.signal?.throwIfAborted();
+    await loadTeachingContext(db, learningItemId);
+    return {
+      kind: intent === 'end' ? 'end' : 'explain',
+      suggested_next: intent === 'end' ? 'end' : 'continue',
+      text_md:
+        intent === 'end'
+          ? '好的，今天先到这里。'
+          : '要不要用一道题确认？也可以不做或稍后；不会自动提交作答。',
+      task_run_id: params.taskRunId,
+      ...(intent === 'offer' ? { confirmationIntent: true } : { confirmationEnd: true }),
+    };
+  }
 
   params.signal?.throwIfAborted();
   const context = await loadTeachingContext(db, learningItemId);

@@ -132,6 +132,32 @@ async function installPrepareInterventionAuthor(capabilities: CapabilityManifest
   await installInterventionAuthorStages();
 }
 
+const INTERVENTION_DIAGNOSTIC_JOBS = new Set([
+  'prepare_intervention',
+  'intervention_prepare_recovery',
+]);
+const INTERVENTION_SETTLEMENT_SUBSCRIPTION = 'agency.intervention-diagnostic-review-settlement';
+
+// Activation, recovery and settlement call the kernel diagnostic materializer.
+// Practice owns its stream day, judge-run activity and schedule enrollment and binds
+// them here, before those handlers mount and before subscription dispatch starts.
+async function installInterventionDiagnosticMaterializer(
+  capabilities: CapabilityManifest[],
+): Promise<void> {
+  const materializes = capabilities.some(
+    (capability) =>
+      (capability.jobs?.handlers ?? []).some((handler) =>
+        INTERVENTION_DIAGNOSTIC_JOBS.has(handler.name),
+      ) ||
+      (capability.subscriptions?.handlers ?? []).some(
+        (subscription) => subscription.id === INTERVENTION_SETTLEMENT_SUBSCRIPTION,
+      ),
+  );
+  if (!materializes) return;
+  const { installInterventionDiagnosticLeaves } = await import('@/capabilities/practice/public');
+  await installInterventionDiagnosticLeaves();
+}
+
 /** Called after registerHandlers. Chain targets in that book must already exist. */
 export async function registerCapabilityJobs(
   boss: PgBoss,
@@ -140,6 +166,7 @@ export async function registerCapabilityJobs(
 ): Promise<void> {
   await installCoachDailyReviewPlan(capabilities);
   await installPrepareInterventionAuthor(capabilities);
+  await installInterventionDiagnosticMaterializer(capabilities);
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
     .filter((d) => d.load || d.backend === 'dbos');

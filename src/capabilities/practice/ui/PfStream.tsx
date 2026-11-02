@@ -1,15 +1,13 @@
-// M2 练习面 — 流视图（YUK-316）。
-// 设计基准 docs/design/loom-refresh/project/pface-stream.jsx：§6.1 织线纵轨——
-// item 挂在线上、AI 开场白与第一人称理由陪练递题、已完成项收紧成织入的一行；
-// 跳过的留流尾可捡回；流尾点播移交真实 Copilot tool loop，不在本地伪造成功态。
-
 import { useState } from 'react';
 import { makeLookup } from '@/ui/lib/makeLookup';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
-import { Btn } from '@/ui/primitives/Btn';
-import { EmptyState } from '@/ui/primitives/EmptyState';
-import { IconBtn } from '@/ui/primitives/IconBtn';
-import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
+
+import {
+  PracticeQueue,
+  PracticeQueueState,
+  type QueueRow,
+} from '@/ui-next/practice-studio/PracticeQueue';
 
 import type { PfToast } from './PracticeFacePage';
 import type { StreamItem, StreamSource, StreamStatus, StreamView } from './practice-api';
@@ -130,13 +128,8 @@ export function PfStream({
   const [demand, setDemand] = useState('');
   const [recomposing, setRecomposing] = useState(false);
 
-  if (loading) return <p className="quiet-empty">正在准备练习流…</p>;
-  if (error)
-    return (
-      <p className="quiet-empty" role="alert">
-        流加载失败：{error.message}
-      </p>
-    );
+  if (loading) return <PracticeQueueState />;
+  if (error) return <PracticeQueueState error={error.message} />;
   if (!stream) return null;
 
   const scope = stream.scope ?? null;
@@ -160,7 +153,6 @@ export function PfStream({
   const closingLine = scope
     ? `「${scope.label}」这轮题目都完成了。`
     : '今天的线都织完了——回头看哪根还松，随时叫我补。';
-  const closingMeta = scope ? '专项练习' : '今日小结';
 
   const skip = (it: StreamItem) => {
     void updateItem(it, 'skipped', '跳过练习', async () => {
@@ -192,247 +184,63 @@ export function PfStream({
     setDemand('');
   };
 
-  const row = (it: StreamItem) => {
-    const isCur = currentItem?.id === it.id;
-    const cls = [
-      'pf-row',
-      `kind-${it.item_kind === 'paper' ? 'paper' : 'question'}`,
-      it.status === 'done'
-        ? 'is-done'
-        : it.status === 'skipped'
-          ? 'is-skipped'
-          : isCur
-            ? 'is-current'
-            : 'is-pending',
-    ].join(' ');
-
-    if (it.status === 'done') {
-      // done 织入行（设计 pface-stream.jsx L40-52 / pface.css L72-74）：badge + 锚点名 +
-      // verdict 三色 badge + 完成时刻。锚点只读结构化读模型字段，不再解析 reasoning 文案。
-      const doneAnchor =
-        (it.item_kind === 'paper' ? it.paper_title : it.knowledge_name) ?? srcMeta(it.source).label;
-      const verdict = it.verdict ? STREAM_VERDICT_META[it.verdict] : null;
-      return (
-        <div key={it.id} className={cls} data-morph-row="">
-          <span className="pf-node" />
-          <div className="pf-done">
-            <PfSrcBadge source={it.source} />
-            <span className="pf-done-kp" data-morph={practiceMorphKey(it.id)}>
-              {doneAnchor}
-            </span>
-            {verdict && (
-              <span className={`badge tone-${it.verdict}`}>
-                <LoomIcon name={verdict.icon} size={11} />
-                {verdict.label}
-              </span>
-            )}
-            <span className="pf-done-at">{completedAtLabel(it.completed_at)}</span>
-          </div>
-        </div>
-      );
-    }
-
+  const row = (it: StreamItem): QueueRow => {
+    const completed = it.status === 'done';
     const isSkipped = it.status === 'skipped';
-    // YUK-1510 — answered but not moved on from yet: opening it shows the recorded answer.
-    const isAnswered = it.item_kind === 'question' && it.answer_recorded;
-    let ctaLabel = '开始作答';
-    let ctaIcon: LoomIconName = 'pencil';
-    if (isSkipped) {
-      ctaLabel = '捡回来';
-      ctaIcon = 'undo';
-    } else if (it.item_kind === 'paper') {
-      ctaLabel = '进入卷';
-      ctaIcon = 'layers';
-    } else if (isAnswered) {
-      ctaLabel = '已交 · 查看';
-      ctaIcon = 'eye';
-    }
     const anchor = it.item_kind === 'paper' ? it.paper_title : it.knowledge_name;
-    const inner = (
-      <div className="pf-item">
-        <div className="pf-item-top">
-          <PfSrcBadge source={it.source} />
-          {/* 散题卡知识点锚点（设计 pface.css L52 pf-item-kp，15px/600）。 */}
-          {it.item_kind === 'question' && anchor && (
-            // YUK-1473 — the shared title (M4): it grows into the question page's title and back.
-            <span className="pf-item-kp" data-morph={practiceMorphKey(it.id)}>
-              {anchor}
-            </span>
-          )}
-          <span className="pf-item-kind mono">
-            <span className="src-q">{it.item_kind === 'paper' ? '整卷练习' : '单题练习'}</span>
-          </span>
-        </div>
-        {it.item_kind === 'paper' && (
-          <>
-            {/* 卷卡标题 + facts 均来自结构化读模型；估时沿用 stream budget 的同项真值。 */}
-            {anchor && <div className="pf-paper-title">{anchor}</div>}
-            {it.total_slots !== null && (
-              <div className="pf-paper-facts">
-                <span>
-                  <b className="tnum">{it.total_slots}</b> 题
-                </span>
-                <span className="dot-sep">·</span>
-                <span>约 {it.estimated_minutes} 分钟</span>
-              </div>
-            )}
-            <span className="pf-paper-note">
-              <LoomIcon name="clock" size={12} />
-              交卷后统一判分 · 卷内无即时反馈
-            </span>
-          </>
-        )}
-        <div className="pf-reason">
-          <LoomIcon name="sparkle" size={13} className="ico" />
-          <span>{it.reasoning}</span>
-        </div>
-        <div className="pf-item-cta">
-          <Btn
-            size="sm"
-            variant={
-              isCur
-                ? 'primary'
-                : isSkipped
-                  ? 'ghost'
-                  : it.item_kind === 'paper'
-                    ? 'secondary'
-                    : 'ghost'
-            }
-            icon={ctaIcon}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (isSkipped) void unskip(it);
+    const label = isSkipped
+      ? '捡回来'
+      : it.item_kind === 'paper'
+        ? '进入卷'
+        : it.answer_recorded
+          ? '已交 · 查看'
+          : '开始作答';
+    return {
+      id: it.id,
+      morphKey: practiceMorphKey(it.id),
+      title: anchor ?? srcMeta(it.source).label,
+      source: srcMeta(it.source).label,
+      kind: it.item_kind === 'paper' ? '整卷练习' : '单题练习',
+      reason: it.reasoning,
+      facts:
+        it.item_kind === 'paper' && it.total_slots !== null
+          ? `${it.total_slots} 题 · 约 ${it.estimated_minutes} 分钟`
+          : null,
+      note: it.item_kind === 'paper' ? '交卷后统一判分 · 卷内无即时反馈' : null,
+      current: currentItem?.id === it.id,
+      completed,
+      completion: completed ? completedAtLabel(it.completed_at) : null,
+      verdict: it.verdict ? STREAM_VERDICT_META[it.verdict].label : null,
+      action: completed
+        ? null
+        : {
+            label,
+            run: () => {
+              if (isSkipped) unskip(it);
               else openItem(it);
-            }}
-          >
-            {ctaLabel}
-          </Btn>
-          {!isSkipped && it.status === 'pending' && it.source !== 'intervention' && (
-            <button
-              type="button"
-              className="pf-skip"
-              onClick={(e) => {
-                e.stopPropagation();
-                void skip(it);
-              }}
-            >
-              跳过 · 流尾可回头
-            </button>
-          )}
-        </div>
-      </div>
-    );
-
-    return (
-      <div key={it.id} className={cls} data-morph-row="">
-        <span className="pf-node" />
-        {it.item_kind === 'paper' ? <div className="pf-item-stack">{inner}</div> : inner}
-      </div>
-    );
+            },
+          },
+      skip:
+        !isSkipped && it.status === 'pending' && it.source !== 'intervention'
+          ? () => skip(it)
+          : null,
+    };
   };
 
   return (
-    <div className="pface">
-      <div className="pf-open">
-        <span className="pf-open-ava">
-          <LoomIcon name="sparkle" size={18} />
-        </span>
-        <div>
-          <p className="pf-open-line">{openingLine}</p>
-          <span className="pf-open-meta">
-            {scope ? `知识点专项 · ${scope.label}` : '今日练习'} · {stream.date} · 预算{' '}
-            {stream.budget.minutes} 分钟
-          </span>
-        </div>
-      </div>
-
-      {items.length > 0 && (
-        <div className="pf-prog">
-          <span className="pf-prog-n">
-            <b className="tnum">{stream.progress.done}</b> / {stream.progress.total}
-          </span>
-          <div className="bar thin">
-            <span style={{ width: `${(stream.progress.done / stream.progress.total) * 100}%` }} />
-          </div>
-          <span className="pf-prog-eta">{progressEta}</span>
-        </div>
-      )}
-
-      {items.length === 0 ? (
-        <EmptyState icon="review" title={emptyTitle} text={emptyText} />
-      ) : (
-        <div className="pf-thread">{active.map(row)}</div>
-      )}
-
-      {skipped.length > 0 && (
-        <>
-          <div className="section-label pf-skipped-label">
-            <h2 className="serif">跳过的</h2>
-            <span className="rule" />
-            <span className="count">{skipped.length}</span>
-          </div>
-          <div className="pf-thread">{skipped.map(row)}</div>
-        </>
-      )}
-
-      {/* 收尾短结（设计 pface-stream.jsx L155-163 / pface.css L97-100）：今日全部织完后
-          在流尾渲一张 good-soft 收尾卡。文案为纯 UI 鼓励性短结（无数据依赖）。
-          FOLLOW-UP（phase-deferred）：设计源 meta「coach · 收尾 · $cost」需收尾 agent run
-          的成本/时刻——M2 无 closing-line 读模型（opening_line 才有模板），故 meta 用
-          中性文案，不伪造成本数字。M4 夜链 AI 化后由 composer 写真值，见报告。 */}
-      {allDone && (
-        <div className="pf-close" style={{ marginTop: 'var(--s-8)' }}>
-          <span className="pf-open-ava">
-            <LoomIcon name="checkCircle" size={18} />
-          </span>
-          <div>
-            <p className="pf-close-line">{closingLine}</p>
-            <span className="pf-close-meta">{closingMeta} · 已完成</span>
-          </div>
-        </div>
-      )}
-
-      {!scope && (
-        <div className="pf-item-cta" style={{ marginTop: 'var(--s-5)' }}>
-          <Btn
-            size="sm"
-            variant="ghost"
-            icon="refresh"
-            disabled={recomposing}
-            onClick={() => void recompose()}
-          >
-            {recomposing ? '重排中…' : '按当前信号重排'}
-          </Btn>
-        </div>
-      )}
-
-      {!scope && (
-        <div className="pf-ondemand">
-          <div className="pf-ondemand-label">
-            <LoomIcon name="send" size={13} />
-            临时加练
-          </div>
-          <div className="composer">
-            <textarea
-              rows={1}
-              value={demand}
-              placeholder="向我点播：比如「来份判断句专项卷」"
-              onChange={(e) => setDemand(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handoffDemand();
-                }
-              }}
-              aria-label="向 AI 点播"
-            />
-            <IconBtn icon="send" size={16} title="交给 Copilot 点播" onClick={handoffDemand} />
-          </div>
-          <p className="pf-ondemand-hint">
-            将在 Copilot 中执行；生成过程、失败与可运行卷链接都在那里显示。
-          </p>
-        </div>
-      )}
-    </div>
+    <PracticeQueue
+      opening={openingLine}
+      context={`${scope ? `知识点专项 · ${scope.label}` : '今日练习'} · ${stream.date} · 预算 ${stream.budget.minutes} 分钟`}
+      done={stream.progress.done}
+      total={stream.progress.total}
+      remaining={progressEta}
+      active={active.map(row)}
+      skipped={skipped.map(row)}
+      emptyTitle={emptyTitle}
+      emptyText={emptyText}
+      closing={allDone ? closingLine : null}
+      recompose={scope ? null : { busy: recomposing, run: () => void recompose() }}
+      demand={scope ? null : { value: demand, change: setDemand, handoff: handoffDemand }}
+    />
   );
 }

@@ -262,6 +262,10 @@ async function applyManualAssertCorrection(
   if (candidate.evaluation.record.status === 'completed') {
     const activation = await activateSubmissionCandidate(db, intent, {
       actorRef: 'assessment:correction',
+      correction: {
+        appealEventId: input.correctionEventId,
+        priorEvaluationId: original.evaluation_id,
+      },
       record: (tx) =>
         writeCorrectionResolution(tx, {
           correctionEventId: input.correctionEventId,
