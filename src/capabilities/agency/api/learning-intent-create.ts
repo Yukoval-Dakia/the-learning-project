@@ -26,68 +26,77 @@ function storedIntentTopic(payload: ProposalInboxRow['payload']): string | null 
   return typeof topic === 'string' && topic.length > 0 ? topic : null;
 }
 
+/** Own the complete learning-intent request: validation, same-topic replay, paid planning. */
+export async function requestLearningIntent(
+  database: Db,
+  loadBody: () => Promise<unknown>,
+  runTaskFn?: RunTaskFn,
+) {
+  let raw: unknown;
+  try {
+    raw = await loadBody();
+  } catch {
+    throw new ApiError('validation_error', 'request body must be valid JSON', 400);
+  }
+  const parsed = CreateLearningIntentBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new ApiError(
+      'validation_error',
+      parsed.error.issues.map((issue) => issue.message).join('; '),
+      400,
+    );
+  }
+
+  const pending = await listProposalInboxRows(database, {
+    status: 'pending',
+    kind: 'learning_item',
+  });
+  for (const candidate of pending) {
+    // Same-topic reuse only: an exact pending for the learner's original
+    // words replays free after reload/retry; every other pending (different
+    // or unreadable topic) falls through to a fresh proposal, untouched.
+    if (storedIntentTopic(candidate.payload) !== parsed.data.topic) continue;
+    const restored = LearningIntentProposalResponseSchema.safeParse({
+      proposal_id: candidate.id,
+      ...candidate.payload.proposed_change,
+    });
+    if (restored.success) return restored.data;
+  }
+
+  // Charge the global AI-funnel budget only when this request is actually about to
+  // dispatch a paid outline run; same-topic replays above stay free.
+  checkRateLimit();
+  return planLearningIntent({
+    db: database,
+    topic: parsed.data.topic,
+    runTaskFn: runTaskFn ?? makeRunTaskFn(database),
+  });
+}
+
+export function learningIntentErrorResponse(err: unknown): Response {
+  if (err instanceof LearningIntentError) {
+    // topic_not_found = topic isn't in the tree (client-correctable → 422).
+    // llm_parse_failed / invalid_atomic_knowledge_id are upstream AI-quality faults,
+    // not server bugs → 502 so monitoring doesn't page on model hiccups.
+    const status =
+      err.code === 'topic_not_found'
+        ? 422
+        : err.code === 'llm_parse_failed' || err.code === 'invalid_atomic_knowledge_id'
+          ? 502
+          : 500;
+    return Response.json({ error: err.code, message: err.message }, { status });
+  }
+  return errorResponse(err);
+}
+
 export function buildCreateLearningIntentHandler(deps: CreateLearningIntentHandlerDeps = {}) {
   return async function createLearningIntent(req: Request): Promise<Response> {
     try {
-      let raw: unknown;
-      try {
-        raw = await req.json();
-      } catch {
-        throw new ApiError('validation_error', 'request body must be valid JSON', 400);
-      }
-      const parsed = CreateLearningIntentBodySchema.safeParse(raw);
-      if (!parsed.success) {
-        throw new ApiError(
-          'validation_error',
-          parsed.error.issues.map((issue) => issue.message).join('; '),
-          400,
-        );
-      }
-
-      try {
-        const database = deps.database ?? db;
-        const pending = await listProposalInboxRows(database, {
-          status: 'pending',
-          kind: 'learning_item',
-        });
-        for (const candidate of pending) {
-          // Same-topic reuse only: an exact pending for the learner's original
-          // words replays free after reload/retry; every other pending (different
-          // or unreadable topic) falls through to a fresh proposal, untouched.
-          if (storedIntentTopic(candidate.payload) !== parsed.data.topic) continue;
-          const restored = LearningIntentProposalResponseSchema.safeParse({
-            proposal_id: candidate.id,
-            ...candidate.payload.proposed_change,
-          });
-          if (restored.success) return Response.json(restored.data);
-        }
-
-        // Charge the global AI-funnel budget only when this request is actually about to
-        // dispatch a paid outline run; same-topic replays above stay free.
-        checkRateLimit();
-        const proposal = await planLearningIntent({
-          db: database,
-          topic: parsed.data.topic,
-          runTaskFn: deps.runTaskFn ?? makeRunTaskFn(database),
-        });
-        return Response.json(proposal);
-      } catch (err) {
-        if (err instanceof LearningIntentError) {
-          // topic_not_found = topic isn't in the tree (client-correctable → 422).
-          // llm_parse_failed / invalid_atomic_knowledge_id are upstream AI-quality faults,
-          // not server bugs → 502 so monitoring doesn't page on model hiccups.
-          const status =
-            err.code === 'topic_not_found'
-              ? 422
-              : err.code === 'llm_parse_failed' || err.code === 'invalid_atomic_knowledge_id'
-                ? 502
-                : 500;
-          return Response.json({ error: err.code, message: err.message }, { status });
-        }
-        throw err;
-      }
+      return Response.json(
+        await requestLearningIntent(deps.database ?? db, () => req.json(), deps.runTaskFn),
+      );
     } catch (err) {
-      return errorResponse(err);
+      return learningIntentErrorResponse(err);
     }
   };
 }

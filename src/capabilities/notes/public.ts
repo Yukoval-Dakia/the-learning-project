@@ -28,6 +28,7 @@ export { editArtifactBodyBlocks } from './server/body-blocks-edit';
 // Notes owns the consumer-effective facts for its config keys; the composition
 // root folds them into GET /api/admin/config.
 export { notesConfigEffectiveFacts } from './server/config-effective-facts';
+export { requestEditingBlur, requestEditingHeartbeat } from './server/editing-request';
 export type { NoteListQuery, NoteListResponse } from './server/note-list-read';
 export { loadNoteList } from './server/note-list-read';
 export { loadNotePage } from './server/note-page';

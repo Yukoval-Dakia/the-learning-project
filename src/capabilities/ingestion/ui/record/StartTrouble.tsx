@@ -1,4 +1,5 @@
 import { Button } from '@/ui-next/public';
+import { useRecordClient } from './record-client';
 import { START_WORDS, stopWords } from './record-copy';
 import { type StartState, retryStart, startRecording } from './record-start';
 import type { Recording } from './recording-model';
@@ -17,12 +18,13 @@ export function StartTrouble({
   /** A paper the learner allows the helper to read; only then is the helper offered. */
   paper: boolean;
 }) {
+  const { startLane } = useRecordClient();
   const busy = start?.status === 'starting';
   const extract = (
     <Button
       variant="primary"
       disabled={busy}
-      onClick={() => void startRecording(rec.id, 'extract')}
+      onClick={() => void startRecording(rec.id, 'extract', startLane)}
     >
       {rec.phase === 'failed' ? '改用普通识别' : '开始认题'}
     </Button>
@@ -40,7 +42,7 @@ export function StartTrouble({
             <Button
               variant="primary"
               disabled={busy}
-              onClick={() => void startRecording(rec.id, 'extract')}
+              onClick={() => void startRecording(rec.id, 'extract', startLane)}
             >
               改用普通识别
             </Button>
@@ -49,7 +51,7 @@ export function StartTrouble({
             <Button
               variant={start.lane === 'agent' ? 'secondary' : 'primary'}
               disabled={busy}
-              onClick={() => void retryStart(rec.id)}
+              onClick={() => void retryStart(rec.id, startLane)}
             >
               再试一次
             </Button>
@@ -68,7 +70,10 @@ export function StartTrouble({
         <div className="rc-actions">
           {extract}
           {paper && (
-            <Button variant="secondary" onClick={() => void startRecording(rec.id, 'agent')}>
+            <Button
+              variant="secondary"
+              onClick={() => void startRecording(rec.id, 'agent', startLane)}
+            >
               让录入助手整理
             </Button>
           )}
@@ -90,12 +95,18 @@ export function StartTrouble({
           {agentStopped ? (
             extract
           ) : (
-            <Button variant="primary" onClick={() => void startRecording(rec.id, 'extract')}>
+            <Button
+              variant="primary"
+              onClick={() => void startRecording(rec.id, 'extract', startLane)}
+            >
               再认一次
             </Button>
           )}
           {canRetryAgent && (
-            <Button variant="secondary" onClick={() => void startRecording(rec.id, 'agent')}>
+            <Button
+              variant="secondary"
+              onClick={() => void startRecording(rec.id, 'agent', startLane)}
+            >
               让录入助手再试一次
             </Button>
           )}
