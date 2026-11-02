@@ -156,7 +156,7 @@ export const dbTestInclude = [
   'src/capabilities/observability/server/subject-control-write.db.test.ts',
   'src/capabilities/observability/server/subject-create.db.test.ts',
   'src/capabilities/observability/server/trait-control-operations.db.test.ts',
-  'src/capabilities/practice/api/placement-native.db.test.ts',
+  'src/capabilities/practice/placement/api/placement-native.db.test.ts',
   'src/capabilities/practice/api/judge-run-status-route.db.test.ts',
   'src/capabilities/practice/question-bank/api/question-detail-write.db.test.ts',
   'src/capabilities/practice/question-bank/api/question-detail.db.test.ts',

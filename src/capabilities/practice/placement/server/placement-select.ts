@@ -14,8 +14,11 @@ import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { question, question_group_lifecycle } from '@/db/schema';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
-import { type CandidateInput, collectCandidateSignals } from './candidate-signals';
-import { rotationClassForKind } from './variant-rotation';
+import {
+  type CandidateInput,
+  collectCandidateSignals,
+  rotationClassForKind,
+} from '../../scheduling/public';
 
 type DbLike = Db | Tx;
 

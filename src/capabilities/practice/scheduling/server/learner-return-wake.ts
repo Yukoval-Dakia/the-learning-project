@@ -12,9 +12,9 @@ import type {
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
 import { LEARNING_EVENT_ACTIONS } from '@/kernel/nightly-eligibility';
+import { loadActivityTier } from '@/kernel/read-models/activity-tier';
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
 import { streamLocalDate } from '@/kernel/stream-date';
-import { loadActivityTier } from '../../server/activity-tier';
 import { getPracticeBoss } from '../../server/queue-runtime';
 import { composeNightly } from './stream-store';
 

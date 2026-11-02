@@ -1,8 +1,8 @@
 import { inArray } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
-import type { CandidateInput } from '../../server/candidate-signals';
-import { rotationClassForKind } from '../../server/variant-rotation';
+import type { CandidateInput } from './candidate-signals';
+import { rotationClassForKind } from './variant-rotation';
 
 /**
  * Read signal inputs for already-selected stream candidates, without deciding eligibility.
