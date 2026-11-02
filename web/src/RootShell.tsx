@@ -4,7 +4,7 @@ import { type CompanionLayout, CompanionMount } from '@/capabilities/copilot/ui-
 import { useWorkbenchClient } from '@/capabilities/shell/ui-public';
 import { AppSidebar } from '@/ui/shell/AppSidebar';
 import { AppTopbar } from '@/ui/shell/AppTopbar';
-import { CommandPalette } from '@/ui/shell/CommandPalette';
+import { CommandPalette, type CommandPaletteProps } from '@/ui/shell/CommandPalette';
 import { MobileTabBar } from '@/ui/shell/MobileTabBar';
 import { ShellMain } from '@/ui/shell/ShellMain';
 
@@ -98,6 +98,7 @@ export function RootShell(props: {
   children: ReactNode;
   pathname: string;
   navigate: (to: string) => void;
+  readKnowledgeTree?: CommandPaletteProps['readTree'];
 }) {
   if (props.pathname.startsWith(BARE_PATH_PREFIX)) return <>{props.children}</>;
   return <AppFrame {...props} />;
@@ -115,10 +116,12 @@ function AppFrame({
   children,
   pathname,
   navigate,
+  readKnowledgeTree,
 }: {
   children: ReactNode;
   pathname: string;
   navigate: (to: string) => void;
+  readKnowledgeTree?: CommandPaletteProps['readTree'];
 }) {
   // chrome state。paletteOpen 驱动 CommandPalette（S14）；⌘K toggle + searchbox
   // 点击都 set 它。
@@ -286,6 +289,7 @@ function AppFrame({
       {/* S14/YUK-329 — ⌘K 命令面板消费 paletteOpen seam。组件 fixed 渲到根；
           页面组投影 shipped surface inventory，知识节点走 /api/knowledge fetch。 */}
       <CommandPalette
+        readTree={readKnowledgeTree}
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         navigate={navigate}

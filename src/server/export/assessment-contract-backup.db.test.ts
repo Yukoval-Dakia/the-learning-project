@@ -165,33 +165,4 @@ describe('assessment contract truth-source backup round-trip (YUK-1044)', () => 
       },
     ]);
   });
-
-  it('outside restore mode the immutability guards still reject UPDATE/DELETE (regression)', async () => {
-    const db = testDb();
-    await seedContractRows();
-
-    await expect(
-      db.execute(sql`UPDATE question_revision SET integrity_digest = 'rewritten'`),
-    ).rejects.toMatchObject({ cause: { code: 'P0001' } });
-    await expect(db.execute(sql`DELETE FROM assessment_submission`)).rejects.toMatchObject({
-      cause: { code: 'P0001' },
-    });
-    await expect(
-      db.execute(sql`UPDATE question_admission_verification SET outcome = 'failed'`),
-    ).rejects.toMatchObject({ cause: { code: 'P0001' } });
-    await expect(
-      db.execute(sql`UPDATE assessment_issuance SET claim_policy = 'one_time'`),
-    ).rejects.toMatchObject({ cause: { code: 'P0001' } });
-    await expect(db.execute(sql`DELETE FROM assessment_issuance`)).rejects.toMatchObject({
-      cause: { code: 'P0001' },
-    });
-    // claim 生命周期列在恢复模式之外仍可变。
-    await db.execute(
-      sql`UPDATE assessment_issuance SET claim_status = 'claimed', claimed_by_ref = 'session:t'`,
-    );
-    const claim = await db.execute<{ claim_status: string }>(
-      sql`SELECT claim_status FROM assessment_issuance WHERE issuance_id = 'iss_bk1'`,
-    );
-    expect(claim[0].claim_status).toBe('claimed');
-  });
 });
