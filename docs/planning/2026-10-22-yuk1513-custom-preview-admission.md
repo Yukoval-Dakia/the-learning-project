@@ -44,7 +44,7 @@ iframe 只获本 block 的公开 binds / select item_id+label 与空 entries，�
 
 操作真实 click 激活块、click 块、click 外部按钮后观察完整 3s。用后首次返焦点拒绝；保留原宿主使用前第三次抢焦点和累计 1s >5 / 30s >20 熔断语义、inert 与 next-task hand-back。观察中途失败立即关闭端口并强制清理浏览器。
 
-以下为下一次独立获批运行窗的输入与预期观察：正常块应由自身发出全部 bind 信封；while(1) 应在硬 deadline 前后终止并拒绝；递增 native/JS 分配应触发 cgroup memory failure；load throw、漏一个 bind、空 answered、多余字段、unknown、自导航/reload、blur 后 refocus 各应拒绝并写原因；取消 delivery 应留 receipt_ready，重放不增加 paid model 调用；no-custom 应不启动进程也不增加预演证据。
+以下仅为下一次独立获批运行窗的输入与预期观察 TEXT，均 **NOT_RUN**：正常块应由自身发出全部 bind 信封；while(1) 应在硬 deadline 前后终止并拒绝；递增 native/JS 分配应触发 cgroup memory failure；load throw、漏一个 bind、空 answered、多余字段、unknown、自导航/reload、blur 后 refocus 各应拒绝并写原因；取消 delivery 应留 receipt_ready，重放不增加 paid model 调用；no-custom 应不启动进程也不增加预演证据。
 
 ## 静态交付与剩余责任
 

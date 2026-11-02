@@ -85,10 +85,10 @@ kernel 反向硬门及现有兼容期限；**不按 public/index/port 名称免�
 裁定后最小验收：同一真实 frontier 站点可表达获批长期契约；
 旧 practice 兼容口仍受原准入/期限约束；新增 kernel→server 不因分类获豁免；
 新增 alias/变目标不能复用旧裁决；未分类默认失败。
-登记样本只计真实获批项。
+没有真实获批登记样本时明确 NOT_RUN，不编造批准或写测试来演示。
 
 目前未改 #1895 的 audit、baseline、产品或测试代码；未新增审查或 writer。
-专门分类机制待实现。
+专门分类机制尚未实现/运行；DB/TEST/Docker/provider/runtime 全部 NOT_RUN。
 合并单次唤醒已禁用，两小时进度任务保留。
 
 ---

@@ -106,7 +106,7 @@ verify-framework 1766→1414、choice-surface 392、quiz_verify 1788→1790。
 
 - 实跑：上述 5 门经 heavy.sh（argv/UTC/真实 rc 全录）；cmp/diff/grep
   字节证明；`node --check` 三文件 PARSE OK（v26.10.0）。
-
+- NOT_RUN（owner 规则）：tests/vitest、DB、TEST、Docker、daemon、
   provider、runtime、demo。
 
 ## 证据

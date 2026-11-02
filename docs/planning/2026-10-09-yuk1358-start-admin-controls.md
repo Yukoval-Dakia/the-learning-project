@@ -16,4 +16,4 @@
 - subject/trait完整CAS、422、general限制、COW、fan-out、noop及提交后hydrate保持。Start错误适配保留ApiError details供现有UI判断。
 - catalog/journal所有嵌套消费者接线；默认100/cap200/trait cursor保持，不能用无界read。
 - scoped unit、父独立DB、built RPC/browser、独立review与准确CI分别留证；实际runtime验收先核锁，不碰主测试数据或provider。
-- 三页面与全路由退出分开核销。
+- 仅完成这三页面不等于所有路由/旧SPA/任务恢复退出。

@@ -27,7 +27,7 @@ declared comparators"），且当前无 text_key 的已准入模型切片（D17�
 ### A. 确定性终态答案提取（核心修复）
 
 `src/core/schema/judge-routing.ts` 的确定性提取合同（parent actual-output
-复核发现 R1 初修仍会误发满分，本次窄修替换该策略）：
+复核发现 R1 初修仍会误发满分，本次窄修替换该策略，不代表 PR 验收）：
 
 - `extractFinalAnswer(text)` 接受完整答案声明行，或最终句中从
   句首/逗号/分号开始的 `所以/因此/故/综上/即/∴` 结论从句；
@@ -108,9 +108,9 @@ executor + admission 就绪的独立小切片。invoker 不新增语义回退，
   - proposal 创建时在组 advisory lock 下读 `evaluation_effective_head`，把
     `expected_effective_id`/`expected_generation` 冻结进 proposed_change；
     accept 与 activation CAS 只认该快照 —— head 已移动 ⇒ `stale_correction_target`
-    拒绝（重报新提案）或 CAS `conflict` 如实返回，stale 一律显式拒绝。
+    拒绝（重报新提案）或 CAS `conflict` 如实返回，绝不静默 rebase 覆盖后到纠错。
     已完成 accept 的重放天然非变异（evaluation_key 重放 + CAS + 确定性事件 id）。
-  - durable correction event / accept rate 只作记录：rejudge 路径任何
+  - durable correction event / accept rate 都不是投递证明：rejudge 路径任何
     重试都先补一遍 singleton enqueue（`singletonKey=correctionEventId`，60s
     窗口内去重；窗口外 dup job 由精确 resolution 检查、付费前持久申诉绑定、
     既有 claim/result 回执及 activation CAS 分别约束）再判定完成。
@@ -223,7 +223,7 @@ key 除特别注明外为 `11`，满分 1；均 `model_units_invoked=0`。
 
 42 条直接函数实际输出对应 `judge-routing.ts` SHA-256
 `81c40f40d9d6d8a3a4299aaa0508e7ac8264c76a169313745153d8c69fd9cb75`。
-本次完整差异副本：
+未写/改测试代码；测试套件 NOT_RUN（owner 指定）。本次完整差异副本：
 `/private/tmp/yuk1407-extraction-repair.patch`；最终提交/推送身份另封存
 `/private/tmp/yuk1407-extraction-repair-delivery.log`。
 
@@ -268,10 +268,10 @@ key 除特别注明外为 `11`，满分 1；均 `model_units_invoked=0`。
    JudgeExecution/pending run，不改已关闭的 head/CAS 或原模型预算/执行策略。
    `manual_assert` 虽有 review_context，但不调用模型，保留原合同不加模型绑定。
 4. `jobs/rejudge.ts`：已解决仅认 assessment_appeal_resolution 的因果回执；
-   新 binding 挂在 appeal 因果链上，但不是 resolution；重投按 resolution 到达执行。
+   新 binding 挂在 appeal 因果链上，但不是 resolution，不得让重投被提前跳过。
 5. 本文与同 draft PR #1797 body：记录三项 P1 状态、A/B/crash 读写顺序、历史
    未知的保守处理、允许检查及真实 DB/runtime 证据缺口。parent 负责聚焦核验/QA、
-   Linear 和根文档；review 预算已耗尽。
+   Linear 和根文档；review 预算已耗尽，不发 R3。
 
 无 migration、新通用 subsystem、测试代码、临时断言 harness、测试套件、DB/queue/
 worker/services/containers/provider/paid/TEST/QA 操作；不修改排除文件或已有回执。
@@ -311,19 +311,19 @@ structured-judge/provider-attempt-truth audits；这些不能证明 crash DB 行
    input、mode、policy、source、assisted、review_context、asserted results。
 4. **binding load transaction COMMIT → model claim COMMIT → executor → result COMMIT
    → candidate seal → 原 CAS activation/settlement**。绑定不匹配或槽位被不同 candidate
-   占用即 conflict；冲突时显式报错。binding 的 COMMIT ack 丢失时没有进入执行；
+   占用即 conflict；不会用新 attempt 重买。binding 的 COMMIT ack 丢失时没有进入执行；
    重试读同 receipt。模型运行时不持 load transaction；原组 session lock 仍只负责串行。
 5. A 新绑定 N 后 claim/pay，再在 candidate 前崩溃：B 即使早已创建但尚未执行，也
    会看到 N 的 reservation，分配 N+1；A 的先行 binding 可证明其 claim 归属，因此
    B 不会仅因 A 的已绑定 claim 被当成历史未知。若 B 终态未决、head 不变，A 重投
    仍按自身 binding 取 **N**，不取 latest+1。既有 recorded executor 对同
    group/submission/N/unit 查同 `evt_model_claim_*`/`evt_model_result_*`：有效 result
-   重放；result 缺失/无效、digest 不同或旧 held outcome 均保持非重试未知。
+   重放；result 缺失/无效、digest 不同或旧 held outcome 均保持非重试未知，不重发。
    即使 B 已占 N+1、原 A result 已 sealed，也不会形成 A 的第二个付费身份。
 6. candidate 已 sealed、resolution 尚未落库时重投：第 1 步直接重放 candidate，
-   激活仍用原冻结 head；有效 head 已移走仍按既有 CAS conflict。
+   激活仍用原冻结 head；有效 head 已移走仍按既有 CAS conflict，不静默 rebase。
    binding 的 caused_by_event_id 指向 appeal，但 handler 只把
-   `experimental:assessment_appeal_resolution` 当作已解决，恢复 job 正常进入。
+   `experimental:assessment_appeal_resolution` 当作已解决，binding 不能吞掉恢复 job。
 
 #### 历史/未知的兼容处理
 
@@ -360,8 +360,11 @@ structured-judge/provider-attempt-truth audits；这些不能证明 crash DB 行
 - `pnpm audit:provider-attempt-truth` → `audit-provider-attempt-truth.log`。
 - `git diff --check` → `diff-check.log`。
 
+无新/改测试代码、临时断言 harness 或测试套件执行。DB、queue、worker、services、
+containers、provider、paid、TEST、真实页面、真实学习者、QA 均 NOT_RUN；没有用 CLI
+合成输出冒充崩溃对账。exact-head CI 本次不等待、不判 PASS；parent 后续读取实际状态。
 P1-3 读写顺序为源码论证；真实 PostgreSQL kill/ack-loss/intervening B、历史 receipt
-对账及重新入队留 parent 的受锁真实窗口。
+对账及重新入队仍需 parent 的受锁真实窗口。整票 YUK-1407 仍未完成。
 
 
 ## CI 回归修复（8d301cc 后；implementation，不是 R3）
@@ -500,7 +503,7 @@ Linear/root PLAN/.remember；代码 writer 在交付后释放。
 
 1. 非答案声明行按换行和中文句号 `。` 识别完整过程句，末句的句号是语法边界。
    不按 ASCII 小数点、`!`、算符、等号或元组内部逗号拆值；`答/答案/最终答案`
-   声明仍占有原整行，`答：北京。上海` 保留完整。
+   声明仍占有原整行，不能把 `答：北京。上海` 截成 `北京`。
 2. 最终句继续接受原完整结论标记或完整赋值；另接受从句首或逗号/分号边界
    开始，由 `相加/可得/得到/得` 引出的**完整 identifier=value 从句**。
    肯定结果词本身不提取数字，也不放宽 RHS；整个候选仍经过原
@@ -513,9 +516,10 @@ Linear/root PLAN/.remember；代码 writer 在交付后释放。
    无法确定变量的完整结论、关系式/连等式不因最后出现可匹配值而消失。
    例如 `所以 S5=10。S5=11。`、`所以11。因此12` 仍冲突；变量比较沿用
    既有 NFKC/大小写规范化。新结果从句之前同句内有结论或完整同变量赋值时
-   也保留其冲突检查，此前完整的 `S5=10=11` 仍参与冲突检查。
+   也保留其冲突检查，不能借 `得 S5=11` 隐藏此前完整的 `S5=10=11`。
 5. 否定句不作 copula/RHS 子匹配：`所以答案不是11`、`所以答案不为11`、
-   `所以结果不可能是11` 仍保留完整字符串；`不是S5=11` 保留完整字符串。关系字符继续拒绝；`S5=11!` 保留 `11!`；
+   `所以结果不可能是11` 仍保留完整字符串；`不是S5=11` 不能匹配完整标识符
+   赋值。关系字符继续拒绝；`S5=11!` 保留 `11!`，不能匹配 `11`；
    `S5=10=11` / `S5=1+2+8=11` 仍拒绝，不求值。
    `11*` 等被 answer-head 吞 token 的候选仍整体拒绝。
 6. 父已实测的正例 `将 x=-2 代入 ax-6=2，得 -2a-6=2。\n所以 a=-4`
@@ -566,15 +570,16 @@ Linear/PLAN/.remember 与 PR 的最终验收状态由父协调线统一维护。
   exit 0 → `/private/tmp/yuk1407-real-terminal-tests-unchanged.log`。
 
 完整实际差异将封存 `/private/tmp/yuk1407-real-terminal.patch`，提交身份与 clean-tree
-状态封存 `/private/tmp/yuk1407-real-terminal-delivery.log`。提交后释放本树 writer，
-由父核修并在其独占真实窗口复验。
+状态封存 `/private/tmp/yuk1407-real-terminal-delivery.log`。这些静态结果不代表提取
+actual-output、旧库 head 激活、真实 rejudge 或页面验收 PASS。提交后释放本树 writer，
+由父核修并在其独占真实窗口复验，不再自行继续写入。
 
 ### 接续合并 origin/main（2026-10-19，merge `112b0f319`）
 
 - 新接续分支 `yuk-1407-process-answer-resume` 基于固定原 head `8ffdd3ae6`，merge 最新 `origin/main`（`36b1346a0`）后正常推回 `fix/yuk-1407-process-answer-correction`；唯一冲突文件 `src/core/schema/assessment/evaluation.ts`（3 hunk）。
 - 冲突裁断：全部保留 main 的 YUK-1568 K1 声明契约——`runDeterministicComparator` 增 `declaredShape` 形参、`gradeBlankExactUnit(unit, entry, declaredShape)`、分发点按冻结 slot 查 `answer_shape`；本 PR 的提取拦截挂在未声明文本空路径（`declaredShape == null` 门控），声明槽走共享比较核心 compareDeclaredBlank；`judged_by: executor.comparator` receipt 字段与 main 的声明传递并存。未回退任何 main 新声明。
-- 本机静态门全绿：`pnpm typecheck` / `pnpm lint`（179 warnings，同基线）/ `pnpm build` exit 0；`biome check` 冲突文件 clean。
-- 新 head 的 S5=11 / a=-4 真实页面与 DB 复验待父获批窗口；真实提取行为未变（拦截条件外加 `declaredShape == null`，未声明槽路径逐字保留）。
+- 本机静态门全绿：`pnpm typecheck` / `pnpm lint`（179 warnings，同基线）/ `pnpm build` exit 0；`biome check` 冲突文件 clean。未写/改任何测试，未跑 DB/容器/provider。
+- 未复验：新 head 的 S5=11 / a=-4 真实页面与 DB 复验仍待父获批窗口；真实提取行为未变（拦截条件外加 `declaredShape == null`，未声明槽路径逐字保留）。
 
 ### glm 跨模型审查修复（2026-10-20）
 
@@ -583,4 +588,4 @@ Linear/PLAN/.remember 与 PR 的最终验收状态由父协调线统一维护。
 - **重判永久绑定冲突落 hold**：`rejudgeNativeAppeal` 对 `appeal_execution_conflict` / `attempt_conflict` / `evaluation_key_conflict` 写 `binding_conflict` resolution，不再只靠 pg-boss DLQ。
 - **纠错提案原子去重**：producer 在写事务内先取 `proposal-cooldown` 咨询锁再复查 pending，同一 evaluation 的并发重复落单只保留一条，避免两次 accept 各跑一次同一冻结输入的付费重判。
 - 同步修正 `proposal.ts` 中引用不存在测试的过时注释，以及 `proposal-appliers.ts` 的旧 judge_retraction 无 applier 描述。
-- 本机 `pnpm typecheck` / `pnpm lint`（179 warnings，同基线）/ `pnpm build` exit 0；`audit:schema` / `audit:capability-boundaries` / `audit:architecture-deepening` / `audit:structured-judge` / `audit:test-policy` / `audit:provider-attempt-truth` 均 exit 0。
+- 本机 `pnpm typecheck` / `pnpm lint`（179 warnings，同基线）/ `pnpm build` exit 0；`audit:schema` / `audit:capability-boundaries` / `audit:architecture-deepening` / `audit:structured-judge` / `audit:test-policy` / `audit:provider-attempt-truth` 均 exit 0。未写/改测试，未跑 DB/queue/provider/真实页面。

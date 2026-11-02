@@ -44,7 +44,7 @@
 - `pnpm audit:test-policy`（base `4fd179818`）：files=1、checked=1、inherited=27、errors=[] —— 合并 case 作为 changed case 通过准入。
 - `pnpm audit:partition`：errors=[]。
 - `pnpm build`：通过（既有 `INEFFECTIVE_DYNAMIC_IMPORT` 警告，与本次无关）。
-- 完整 test gate 由 push 后 exact-head CI Gate 执行；`request_id` 去重路径与 rejected 行为的真实运行待 CI 验证。
+- **NOT_RUN**：未运行任何 vitest / DB 测试——批准不含 DB 运行授权；完整 test gate 由 push 后 exact-head CI Gate 执行。`request_id` 去重路径与 rejected 行为的真实运行待 CI 验证。
 
 ## PR 描述须引用
 

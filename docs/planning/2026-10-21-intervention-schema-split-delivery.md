@@ -67,7 +67,7 @@ protected/其他文件：diff 仅含上表范围 + merge；36 个消费者与全
    分文件让历史分支与共享锚点更易定位，不等于历史接受范围与当前绑定隔离。
 4. **修改局部性**：新增历史形状可能局部；共享绑定收紧必须核多个分支。
    不声称两个场景的编辑或审读范围必然减少。
-5. **行为证据**：下述静态证据限于行为保持与结构。
+5. **行为证据**：下述静态证据限于行为保持与结构；运行时门仍 NOT_RUN。
 
 本次文案纠偏依据原 YUK-1572 评论
 https://linear.app/yukoval-studios/issue/YUK-1572#comment-050998a7-f1a7-43de-bd43-c27193e53b42。
@@ -110,7 +110,7 @@ scanner 实测原文：`pass-through sites 1097 (+11 new)`——恰为本片 11 
 `stable_contract` site 全覆盖，无未分类违规；`dependency totals 403/0/37`
 与 ratchet 精确一致，`new dependency edges=0`。**尺寸下降披露**：
 `>1500-line files=12 (base 13)`——本片使 intervention.ts 退出该档；
-此为实测量，门保持原样，交父登记。
+此为实测量，不自行放宽门，交父登记。tests/DB/runtime/provider 按禁令未跑未改。
 
 ## main 整合核验（R1 APPROVE 后，无新增审查）
 

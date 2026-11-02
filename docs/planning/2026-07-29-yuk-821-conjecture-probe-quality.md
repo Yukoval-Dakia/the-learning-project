@@ -79,7 +79,7 @@ P0 可以识别“题目范围/结构明显不匹配”，也让独立模型审�
 同一 8 例回归曾暴露 reviewer 把“题干要求单选、实际两个选项都正确”的题包判为 pass；
 P0 因此明确要求 author 逐项解答并保证单选唯一，reviewer 必须先独立解题、逐项判断，
 若零个或多个正确选项（包括 reference 自己承认多个正确）一律报
-`reference_incorrect`。这仍是模型语义闸门。
+`reference_incorrect`。这仍是模型语义闸门，不冒充 P1 的学科确定性证明。
 
 ### 固定 8-case 回归结果
 
@@ -196,7 +196,7 @@ P0 因此明确要求 author 逐项解答并保证单选唯一，reviewer 必须
 - 新归纳不再携带题目；
 - claim + DiagnosticSpec 一起形成共识；
 - author/reviewer 独立、同模型、同证据；
-- 一次整包重生成；两次质量失败 abstain；operational 与质量反对票分开；
+- 一次整包重生成；两次质量失败 abstain；operational 不冒充质量反对票；
 - nightly/director/accept 三个入口均不能绕过；
 - proposal 保存完整 lineage、reviewed hypothesis、reviewed package 与审计；v1 只可读，不能用于新 accept；
 - 升级迁移在 v2 producer 启动前收口全部 pre-binding pending conjecture；运行时 Zod

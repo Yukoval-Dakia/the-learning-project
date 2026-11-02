@@ -38,7 +38,7 @@ provider/paid、effective-domain图读、事务/CAS/恢复/embedding写入失效
 父唯一frozen install通过且依赖三hash不变。首轮typecheck/lint/build通过；boundary仅实测下降待登记，architecture另发现原backfill版本转出的新目标站点。总协调批准最窄两文件收口：inventory把版本binding移至已有core import，保两await/模块加载顺序；backfill仅删旧export，排除这些binding/出口后全文一致，无新stable/compat。
 
 原生tighten只登记knowledge→ai12→10、practice→ai50→49、total387→384；39历史changes原entry字节前缀全保→41，其他分类字段不变。父仅恢复native重排的历史entry键序，JSON语义同native；不以此数字作为目标或并行收益。最终源码 `370c7bdc19a635af1e93c69e38070e0fa788a4e9` 五门经heavy串行全部rc0；两audit固定base214，旧失败raw保留。实测384/0/36、SCC1（三成员）、超长12、新边0、pass-through1086（+0 new），只作诊断。依赖未重复安装，三hash同唯一安装回执。
-该轮后首次独立R1已完成（见下文）；每次新组合仍需其exact-head CI。
+tests/DB/TEST/Docker/provider/runtime均NOT_RUN。该轮后首次独立R1已完成（见下文）；每次新组合仍需其exact-head CI，不拆出绕审。
 
 最终源码及七caller保护：`YUK-1570/370c7bdc19a635af1e93c69e38070e0fa788a4e9/embedding-final-proof/proof.json`；五门raw/argv/UTC/rc在同head `embedding-final-gates/`。原获批出口收口patch SHA `be9304bcdf4e3733e7133befd12a9c98646b057c6323ffc8863cf18ec7acb64d`，9cbc相对证据保留。
 

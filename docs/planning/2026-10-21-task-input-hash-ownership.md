@@ -86,6 +86,6 @@ raw stdout/stderr、argv、UTC、真实 rc、逐 owned blob/body 与 main 账目
 原始算法证据仍为 `YUK-1570/32bda226435b50cd3391b0a1cdec68fd78bf64c4/task-input-hash-source/`，
 其清单 SHA-256 为 `22ff757673b8c09c8e68154d1e851843207e330013a9296f2cd715eed166fe8b`；旧 seal 未覆盖。
 
-测试零修改。
+tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/CI、部署均 NOT_RUN；测试零修改。
 本轮仅普通整合、原生 ledger 登记及本交付文档更新，无语义修复或自派审查。
 父统一负责后续验收发布与 issue 状态；未发现需新增 tracker 的独立缺陷，未调用 Linear。

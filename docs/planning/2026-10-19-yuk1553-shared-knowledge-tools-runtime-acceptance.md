@@ -15,7 +15,7 @@
 - `registerTool` 新增 C1-1 注册期契约：effectful 工具（propose/write/control）的
   顶层或一级字段拒绝 `z.unknown()` / `z.any()` / 无约束 record。4 个既有 opaque
   JSON 字段改用 `OpaqueJsonInput`（z.json）；本机转换通过，但 provider 对
-  `$ref`/`definitions` 的 wire 接受度待验。
+  `$ref`/`definitions` 的 wire 接受度 **NOT_RUN**。
 - 源码静态对账：`knowledge_review` surface = 5 readers +
   2 propose 工具（`src/kernel/tools/allowlists.ts`）；Dreaming 显式列表继承
   同名集合（不再展开 KNOWLEDGE_REVIEW_TOOLS），无新增 grant。
@@ -81,4 +81,4 @@
   与 1553 计划接受锁/父节点选择 —— 后续 ticket。
 - P1 TEST 前后指标依赖 P0 记账（1557，外部 lane）。
 - `tool_call_log` 对共享工具的 wire 级 JSONSchema 实测（audit:tool-params
-  只核 post-conversion 静态 schema）。
+  只核 post-conversion 静态 schema，NOT_RUN 声明沿用 Luna 盘点结论）。

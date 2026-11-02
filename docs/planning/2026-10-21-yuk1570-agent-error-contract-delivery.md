@@ -130,7 +130,7 @@ main 全 33 条 changes 的逻辑与原始 entry 字节前缀相同，现共 35 
 `<final-head>/agent-error/final-main-refresh/`。
 
 所有本机 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/自派审、
-父 PR/exact-head CI 统一处理。
+Linear/清树均 NOT_RUN。无新范围外 actionable follow-up；父 PR/exact-head CI 统一处理。
 
 ## 父接管最新 main 整合（2026-10-21）
 

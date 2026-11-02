@@ -149,7 +149,7 @@ re-pend → `boss.send` 入队 `admission_version:3` + marker。任一校验失�
   用量、结果、当次选择规则。没有触发 crosscheck 的题明确记不适用，不补造运行。
   参数/规则取该次解析冻结的运行证据，不能结束时重读配置。当前 model_profile_resolved 是
   带 task_run_id 的 console 事件，native 参数/规则尚不是 ai_task_runs 的专用持久化字段；
-  窗口必须封存实际运行事件并与请求/响应、DB 用量记录对账，缺证据标待验。
+  窗口必须封存实际运行事件并与请求/响应、DB 用量记录对账，缺证据就标未验证。
 - 成本如实记录，含 unknown 成本（receipt/attempts 层）。
 - 5 条全部 admitted 或带解释 withheld；任何 `pending`/`unknown` 即为失败，**不自动 rerun**
   —— 回到 owner 裁决。
@@ -163,10 +163,10 @@ re-pend → `boss.send` 入队 `admission_version:3` + marker。任一校验失�
   `@3` 行；`unknown` `@3` 行按既有 reconcile 流程处理（不可自动 replay）。
 - 旧 `@2`/`@1` applied verdict 在 `@3` 下仍 terminal，回滚不撤销 applied 证据。
 
-## 本 PR 待验证项
+## 本 PR 未验证项
 
 - 官方端点的授权 chat/tool 最小探针已200，仅证明端点与工具能力；新代码的正式预检、
-  五题 reopen、MiMo 双编码问题在新模型上的对照待执行。此前离线 replay 仅为纯逻辑证据。
+  五题 reopen、MiMo 双编码问题在新模型上的对照尚未执行。此前离线 replay 仅为纯逻辑证据。
 - `tool_call_log` evidence 行写入路径经 typecheck/lint/build 与代码走读核对，未在真实 DB
   运行。
 - 新增 @1/@2 `receipt_ready` 运行时 fence 经 typecheck/lint/build、锁序走读（家族

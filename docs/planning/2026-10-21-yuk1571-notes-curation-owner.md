@@ -75,7 +75,7 @@ pass-through sites1087（+0 new）。baseline全文与base相同，未tighten、
 这不是新算法深度或消环；public64→60及旧口退出才是本片验收差量。
 本文验证结果更新是门后唯一差异，产品/脚本/配置字节与受检head相同。
 
-
+测试编写/修改/运行、DB/TEST/Docker/daemon/provider/runtime/demo/paid均NOT_RUN。
 独立R1与exact-head CI由父后续单独记录；本地门不冒充CI或运行验收。
 
 永久证据位于

@@ -114,6 +114,6 @@ phases; both halves share `TerminalProjectionEvent` vocabulary by design. The
 existing boundary audits do not verify terminal-write ownership — noted as a
 limitation of current checks; no new gate is added here.
 
-Exact-head CI and independent review remain required before merge.
+NOT_RUN: local tests, DB, TEST, Docker, provider, runtime acceptance and
 deployment. No test code changes. Exact-head CI and independent review remain
 required before merge.

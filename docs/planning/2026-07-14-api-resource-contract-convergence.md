@@ -63,7 +63,7 @@ Loom 当前 API 已有可靠的资源型基础，但整体仍是“内部业务 
 | ingestion session | `/api/ingestion-sessions` | 当前 `learning_session(type=ingestion)` 的资源名 |
 | operation/job | `.../:id/extraction-jobs` 等 | AI/OCR/导入/组卷的异步受理资源 |
 | attempt/submission | `/api/.../attempts`、`.../submissions` | 用户作答及提交事实 |
-| correction | `/api/events/:id/corrections` | 对历史事件的追加纠正，独立于原事件 |
+| correction | `/api/events/:id/corrections` | 对历史事件的追加纠正，不伪装为原事件覆盖 |
 | knowledge node | `/api/knowledge-nodes` | 当前 `/api/knowledge/:id` 实际资源 |
 | practice stream | `/api/practice-streams/:date` | daily stream 是按日期寻址的投影视图 |
 | backup/restore job | `/api/admin/backups`、`/api/admin/restore-jobs` | 取代 `/api/_/*` 私有命令面 |
@@ -223,7 +223,7 @@ Canonical 可增长集合：
 其余 manifest 读面显式归为不分页投影：配置 registry（subjects/traits）、单资源内聚合
 （note page、correction state、knowledge tree/node）、固定时间窗/last-N feed（AI changes、Copilot
 turns、agent notes）、有硬上限的 typeahead/备课卡，以及 workbench/admin/calibration 等汇总报表。
-这些端点按当前契约不遍历集合；若未来改为可遍历历史，必须先切换 cursor contract。
+这些端点不承诺集合遍历；若未来改为可遍历历史，必须先切换 cursor contract，不能继续扩大裸数组。
 
 ## 9. Deprecation 与删除门槛
 

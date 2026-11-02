@@ -75,7 +75,7 @@ re-export（`enqueueReviewSessionSummary`）继续被 canonical route /
   动态模板拼接或直接 handler import；10 个删模块仅被 manifest `load` 引用。
   开放 PR diff 无旧路径引用；#1797 与 `practice/manifest.ts` 同文件但 hunk
   不重叠（其改 proposalKinds 区，merge 时已无损并入）。
-- 仓外只读扫描：`_work`、`tlp-status/review`、
+- 仓外只读扫描（未执行任何脚本/容器/daemon）：`_work`、`tlp-status/review`、
   `tlp-local-prod`、`nas-maintain` 及父转达的 ops canonical 清单。
   ops 面真实 HTTP 调用 6 处全部指向保留路由：`GET /api/questions/<id>` ×2、
   `POST /api/worksheet-exports`、`POST /api/review-sessions`（canonical）、
@@ -86,9 +86,27 @@ re-export（`enqueueReviewSessionSummary`）继续被 canonical route /
     路由表（注册条目），不是出站 HTTP caller；`DELIVERY_API_BASE` 仅声明未消费。
   - `formal-cancel-01`/`release-20261020-01` operator 动态 import 的
     `/tmp/yuk1573-deploy.py`、`/tmp/yuk1567-dc42-restore.py` 现已不存在——
-    封存 helper 如实记录为 missing
+    封存 helper 不能当作当前 runtime 字节完整证明，如实记录为 missing
     reference；可见 call site 只引用保留/canonical 路径。
 - 剔除项：无。21 条全部维持移除。
+
+## 验证（本机允许集内；运行时对齐 NOT_RUN）
+
+- 执行：`pnpm typecheck`、`pnpm lint`（0 error，177 warnings ≈ main 基线）、
+  `pnpm build`（web + server/worker/migrate cjs）、`pnpm gen:postman`、
+  `pnpm gen:api-client`（确定性双跑 SHA256 不变）、`pnpm audit:api-client` 已绿。
+- 只读 audit 通过：`api-contracts`（160/160 declared，0 legacy，151 paths）、
+  `api-client-usage`、`schema`、`partition`、`draft-status`、`test-policy`、
+  `task-census`、`profile`、`question-writers`、`tool-params`、`learner-copy`、
+  `no-learning-styles`、`structured-judge`、`dependencies`（10 既有计数）。
+- `capability-boundaries` / `architecture-deepening`：经 `--tighten` 登记真实减少
+  （capability→server 420→416；ingestion→boss 8→7、ingestion→session 9→8、
+  shell→proposals 4→2）。`capability-boundary-baseline.json` 的 `notes` 已注明
+  减少来源是删除 alias 间接边，不是新算法深化；audit 脚本/CI 未动。
+- **NOT_RUN**：本机 tests/DB/provider/paid/runtime/deploy/`tsx -e` 全部未运行；
+  以上为静态验证结果，不冒称运行时 parity 或外部 consumer 验收。
+  Docker/OrbStack daemon 全程未触碰。
+- 本文是实施自报，不构成独立 review；R1+R2 由父统一组织。
 
 ## 外置证据（仓库外，未覆盖旧 seal）
 

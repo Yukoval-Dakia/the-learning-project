@@ -143,4 +143,9 @@ structure/response_spec/scoring_basis/execution_plan 四层；`ResolvedAdmission
   resolved 均无 presentation，本次 follow-up 以 `deterministic_default` 补上。
 - 证据：
   `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-20261019-yuk1547-p0-restored-copy/{issuance-results.json,repair-apply/summary.json}`。
-- serving gate 保持原样。
+- TEST 未补发、未部署；serving gate 未放松。
+
+## 本 PR 未验证项（NOT_RUN）
+
+- 仅过 typecheck/lint/build 与代码走读；未连接任何 DB、未跑 provider/付费、未部署。
+- 带 `deterministic_default` 的发布路径、servable-after 复测需协调线在副本上重跑。

@@ -10,7 +10,7 @@
 - `ingestion/tasks/structure.ts`：`buildStructurePrompt` 新增「关键能力 5 · 数学公式定界」——要求 `prompt_text`、`options[].text`、`sub_questions` 题面中的公式带 `$...$` / `$$...$$` 定界；已定界公式（含 `\(...\)`、`\[...\]`）原样保留；代码（Python/缩进/反斜杠）与普通文字不包 `$`；拿不准保持原样、宁可不包。`answers` / `analysis` 明确排除。
 - `ingestion/server/structure.ts`：`nodeToStructured` 在规范映射处新增 `canonicalizeExplicitMathDelimiters` —— 仅把**已显式定界**的 `\(...\)`→`$...$`、`\[...\]`→`$$...$$`（应用于 `prompt_text` 与 `options[].text`，子问随递归覆盖；`answers`/`analysis` 不动）。正则镜像渲染层已验证的 `LATEX_DELIMITED`（`src/ui/lib/math-markdown.tsx`）：代码 span/fence 优先返回、前置反斜杠（LaTeX 换行）不是开界、公式不跨空行/反引号、相邻 `$` 加保护空格。**不猜测包裹任何裸文本**；无自动重试/cascade；不伪造验证。
 - 离线证据曾抓到一次真实缺陷：初版正则漏了渲染层的 `(?:...)` 非捕获包裹，捕获组只留最后一个字符（`\(x^2+1\)`→`$1$`）。已修复为与渲染层逐字一致，见下「证据」。
-- **未验证声明**：裸公式（模型未按指令定界）的实际产出质量**待付费 sealed gold 验收**。旧数据行不回填、不动。
+- **未验证声明**：裸公式（模型未按指令定界）的实际产出质量**未经付费 sealed gold 验收，保持未验证**。旧数据行不回填、不动。
 
 ## O2 — BlockAssembly 理由学习者化
 
@@ -48,7 +48,7 @@ interface ProposalBlockPreview {
 
 ## 检查
 
-`pnpm install --frozen-lockfile`（新工作树，无 lockfile 漂移）→ `pnpm typecheck` ✅ → `pnpm lint`（175 条均为存量 warning；本次 6 文件 0 error，新代码 1 warning 已修）✅ → `pnpm build` exit 0（web/start/server/worker/migrate 全部产出）✅ → `pnpm gen:api-client`（增量 40 行）✅ → `pnpm gen:postman`（no-op diff，未改路由/请求）✅ → `pnpm audit:api-client` 在提交前 diff 非空属预期（重生成为确定性同 blob，随本提交落库后即绿）。未新增测试（不触五类不变量；投影安全属读侧展示合同，由离线证据覆盖）。
+`pnpm install --frozen-lockfile`（新工作树，无 lockfile 漂移）→ `pnpm typecheck` ✅ → `pnpm lint`（175 条均为存量 warning；本次 6 文件 0 error，新代码 1 warning 已修）✅ → `pnpm build` exit 0（web/start/server/worker/migrate 全部产出）✅ → `pnpm gen:api-client`（增量 40 行）✅ → `pnpm gen:postman`（no-op diff，未改路由/请求）✅ → `pnpm audit:api-client` 在提交前 diff 非空属预期（重生成为确定性同 blob，随本提交落库后即绿）。未跑 full `pnpm test`（按规约）；未新增测试（不触五类不变量；投影安全属读侧展示合同，由离线证据覆盖）。
 
 ## P1 修复（第二轮）— 截断不打断公式定界
 
@@ -74,7 +74,7 @@ options.text 60（及 evidence label / 摘要项的 48/120 同路）会把 cap �
 `ALL YUK-1404 OFFLINE EVIDENCE ASSERTIONS PASSED`。
 
 复核门（本机）：`pnpm typecheck` ✅ exit 0；`pnpm lint` ✅ exit 0（174 条均为存量，
-presentation.ts 0 条）；`pnpm build` ✅ exit 0。
+presentation.ts 0 条）；`pnpm build` ✅ exit 0。未跑 full `pnpm test`（规约）。
 
 material limits：公式外的裸反斜杠命令（如未被定界的 `\frac`）不在保护范围（不猜测数学）；
 公式本身超过 cap 时摘要可能极短甚至仅 `…`（可接受，优于泄漏半截语法）；未闭合 fence
@@ -85,7 +85,7 @@ material limits：公式外的裸反斜杠命令（如未被定界的 `\frac`）
 
 ## 边界与遗留
 
-
+- 无 UI/Start/manifest/DBOS/DB/容器/runtime/provider 调用；无 push/PR/deploy；无子委托。未跑迁移（确认无重叠）。
 - material limits：裸公式产出质量未付费验收（见 O1）；占位会话被压制的页码措辞可能留下轻度语法粗糙（如「两块的某页」），属罕见模型泄漏的防御性降级；防御清理不处理中文数字页码（如「第一页」），指令已引导模型写阿拉伯数字形式。
 
 ## R2 修复（第三轮）— 手写扫描器替换为渲染层真实 parser（已验证 P1）
@@ -133,6 +133,6 @@ material limits：公式外的裸反斜杠命令（如未被定界的 `\frac`）
 （174 条均为存量 warning，presentation.ts 0 条）；`pnpm build` ✅ exit 0（含 migrate
 bundle；`dist/migrate.cjs` 不含 parser——不可达，unified/remark-parse/micromark 无
 `import.meta`/`fileURLToPath` 顶层使用，`dist/server.cjs`/`dist/worker.cjs` 的 12/13 处
-`fileURLToPath` 与 596 基线完全一致，非新增）。未新增仓库
+`fileURLToPath` 与 596 基线完全一致，非新增）。未跑 full `pnpm test`（规约）；未新增仓库
 内测试（不触五类不变量；读侧展示合同由离线证据覆盖）。R2 coverage 仅读 + parent 四例
 真实复现，无 DB/TEST/model 质量承认。

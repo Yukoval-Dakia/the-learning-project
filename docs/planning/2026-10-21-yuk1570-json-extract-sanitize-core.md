@@ -86,3 +86,12 @@ provider-session-admission / 错误 class / hash 规范化 / paid consumer 正�
 - serverToCapabilityDeep 0、crossCapabilityValue 37 不变；kernel/core→server 新边 0；
 - `pnpm audit:architecture-deepening`：dependency totals 394/0/37 < 531/70/62，
   pass-through sites 1088（+0 new），SCC/ownership/queue/provider-lane 全部通过。
+
+## 机器实跑 / NOT_RUN
+
+- heavy.sh 串行实跑（raw stdout/stderr + argv + UTC + 真实 rc 封存于仓外
+  `final-runs/`）：typecheck / lint / build / 两 audit，结果见最终 head 封存。
+- 依赖来源：父一次 frozen install（`pnpm install --frozen-lockfile` rc0，
+  `226…/parent-frozen-install.json`，log sha256 98560ead…）；本 writer 未再 install。
+- NOT_RUN：本机 tests / vitest / DB / provider / runtime / Docker / 部署；
+  不 push / 不开 PR / 不发 review——父统一集成验收。

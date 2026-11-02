@@ -19,6 +19,6 @@ Start集成线程5796已确认上述固定tick、锁内资格与reopen验收要�
 
 ## 退出验收
 
-在独立合成数据库和进程中验证旧worker/延迟cron插入fence、单恢复owner、epoch等待、部分行已提交而checkpoint未写的崩溃恢复、并发关闭/reopen、重复tick、未知事务结果、实际cron/timezone和rollback窗口。业务状态和job event不得重复，未处理行不得丢失。最终删除旧族注册必须先排空并分类全部旧义务；排空以运行验收为准退出。
+在独立合成数据库和进程中验证旧worker/延迟cron插入fence、单恢复owner、epoch等待、部分行已提交而checkpoint未写的崩溃恢复、并发关闭/reopen、重复tick、未知事务结果、实际cron/timezone和rollback窗口。业务状态和job event不得重复，未处理行不得丢失。最终删除旧族注册必须先排空并分类全部旧义务；源码清单或schedule行不足以证明退出。
 
 调查来源为T3只读任务 `yuk1359-next-dbos-family-readonly-20261009-v1`（Codex gpt-6-luna high，completed/noPending）；父另实读上述handler、Review转换与DBOS lifecycle。无DB、测试、服务、provider或部署运行。跟踪沿既有1355 comment `75be48f8-c41f-4911-ad14-ee65a1d1e179`，不重复建票。

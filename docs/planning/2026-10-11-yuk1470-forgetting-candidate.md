@@ -1,6 +1,6 @@
 # YUK-1470：统一遗忘候选与主线接入准备
 
-状态：候选核心与应用接入已实施并完成本地 scoped 验证；默认仍为 FSRS，父线 TEST T1–T6 待执行。固定 `history-kernel-logistic-v1` 工程参数规格。基线为已合 main `79825bb6da73f9894c65a5d6735e3725f098e8e1`。
+状态：候选核心与应用接入已实施并完成本地 scoped 验证；默认仍为 FSRS，父线 TEST T1–T6 尚未执行。固定 `history-kernel-logistic-v1` 工程参数规格。基线为已合 main `79825bb6da73f9894c65a5d6735e3725f098e8e1`。
 
 ## 已批准行为
 
@@ -34,7 +34,7 @@
 
 ## 当前缺项
 
-纯核心位于 `src/core/forgetting/`，包含版本化状态、证据映射、演化/读取/求根、有效历史重放与无模型兜底。独立 25 次 / 180 天 oracle 与反例测试覆盖数值性质；实现及 spec 解释见该目录 README。参数全部 engineering/uncalibrated。数据库及消费者接入已在候选分支实现；TEST 调度验收、独立审查、远端 exact-head CI、个人预测校准与学习效果未完成。父协调线负责整合、审查与 TEST；本接入线不打开 PR、不部署、不切换 main 默认。
+纯核心位于 `src/core/forgetting/`，包含版本化状态、证据映射、演化/读取/求根、有效历史重放与无模型兜底。独立 25 次 / 180 天 oracle 与反例测试覆盖数值性质；实现及 spec 解释见该目录 README。参数全部 engineering/uncalibrated，不冒称群体拟合先验。数据库及消费者接入已在候选分支实现；TEST 调度验收、独立审查、远端 exact-head CI、个人预测校准与学习效果未完成。父协调线负责整合、审查与 TEST；本接入线不打开 PR、不部署、不切换 main 默认。
 
 ## 纯核心切片历史验证（2026-10-11，接入之前）
 
@@ -81,7 +81,7 @@ due list、get_review_due、Today 经 `resolveSchedulingProjection` 读取同一
 
 ### Scoped 验证与命令
 
-实际 Postgres 16.14，镜像 `pgvector/pgvector:0.8.2-pg16-bookworm`，仅 throwaway DB yuk1470，localhost:32771。容器 `yuk1470-forgetting-db-20261011-2059-c3f26c55` 已按 exact name stop/rm。锁、full pnpm test、Testcontainers/Ryuk 或 prune。协调线随后报告清理时存在 CI 独占窗口及 parity 失败；本线已报告自身 exact-name stop/rm，不将此清理声称为共享 host parity 验收。未操作 jolly_johnson 或 preserved evidence container。今后任何容器创建/删除先等协调线明确 start。
+实际 Postgres 16.14，镜像 `pgvector/pgvector:0.8.2-pg16-bookworm`，仅 throwaway DB yuk1470，localhost:32771。容器 `yuk1470-forgetting-db-20261011-2059-c3f26c55` 已按 exact name stop/rm；不再需要 DB。未运行 TEST/provider/部署锁、full pnpm test、Testcontainers/Ryuk 或 prune。协调线随后报告清理时存在 CI 独占窗口及 parity 失败；本线已报告自身 exact-name stop/rm，不将此清理声称为共享 host parity 验收。未操作 jolly_johnson 或 preserved evidence container。今后任何容器创建/删除先等协调线明确 start。
 
 迁移命令：
 
@@ -145,7 +145,7 @@ pnpm audit:partition
 
 全部 exit 0；lint 172 个现有 warning；test-policy 检查 38 changed/new、81 inherited，errors=[]；partition unit65/db208/migration1，errors=[]。API client/Postman 与节点 retention DTO 同步。证据存本工作树 `.cache/yuk1470-evidence/` 的 *-head.log；早期失败 candidate-db-r1–r11 保留，不用最后通过覆盖失败历史。证据未提交，不把本地通过当远端 CI 或 TEST 通过。
 
-### 父验收 / Group F 清单
+### 父验收 / Group F 未执行清单
 
 以下均由父协调线在授权 TEST 窗口执行；全部通过之前默认保持 FSRS。
 

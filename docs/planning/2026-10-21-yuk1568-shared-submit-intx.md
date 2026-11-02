@@ -67,7 +67,7 @@ CI 事实（如实记录，不重跑）：09e04 head run39611151600 已终态 �
 
 下一可验收产物是含实际 declared consumer 的完整 PR。触发条件：父静态门、精确出口分类、R1/既有P0/P1裁决及当前 head GitHub CI Gate。owner 2026-10-21 已取消 last-push/17分钟等待；不为 advisory 新建 timer、等待或重跑，至多 R1+R2 预算不变。
 
-既有 edit-submit DB case 随公开入口接到内核。需要新断言时另报文本方案，测试不作为产品准备前置。
+测试/断言（含临时脚本）、DB 重放/并发/回滚、复合组真实 serving、producer actual-output、provider/paid、部署均 NOT_RUN。既有 edit-submit DB case 随公开入口接到内核，但未在本机执行。需要新断言时另报文本方案，测试不作为产品准备前置。
 
 ## 后续主交付和运行边界
 

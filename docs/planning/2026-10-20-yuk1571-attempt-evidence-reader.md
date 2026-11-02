@@ -70,6 +70,10 @@
 - `pnpm audit:architecture-deepening` **EXPECTED-FAIL**（4 条：2 stale catalog + 2 同 baseline delta）
 - `pnpm audit:capability-boundaries:snapshot` 实测快照已封存（见外部路径）
 
+## NOT_RUN
+
+本机不跑任何测试套件（无新增/修改/删除及执行）、DB、tsx-eval/合成输入脚本、provider/付费链路、Docker、完整 `pnpm test`。行为验收由 exact-head CI Gate（既有 ingestion/practice 相关测试零改动）与独立审查承担。audit catalog 与 boundary baseline 更新、exact-head CI 归父。
+
 ## Revision / 外部路径
 
 - base：`origin/main` 58289c056（worktree `/Users/yuqi/.t3/worktrees/the-learning-project/t3-618ae27e`，无票号分支 `t3/attempt-evidence-reader`；父 checkpoint 线 `t3/question-evidence-snapshot-kernel` 未带入）

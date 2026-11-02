@@ -42,7 +42,7 @@ Node 24.19.0 / pnpm 11.13.1：自有 scoped units 87/87；合入的 assessment p
 - prospective stream/due/variant/rehearsal filtering 与已接受旧合同恢复：`stream-store.db.test.ts`、`api/stream.db.test.ts`、`src/server/rehearsal/rehearsal.db.test.ts`。
 - 上游 DBOS cron/outage/horizon fixture 改动是测试/worker-fixture delta；它们不改变本族事务，但其进程/定时恢复结论需要对应 DBOS window，不能用本轮单位测试代替。
 
-完整 source-to-test 文件映射见 `semantic-delta.json`。本轮只跑已授权的离线 gates，不预占或启动新窗口。pure serving contract、UI presentation、生成契约与文档 delta 分列记录；浏览器/生产验收分开核销。
+完整 source-to-test 文件映射见 `semantic-delta.json`。本轮只跑已授权的离线 gates，不预占或启动新窗口。pure serving contract、UI presentation、生成契约与文档 delta 分列记录；其 source/build 通过也不代表浏览器或生产验收。
 
 ## 可直接交给父任务的 PR 文案提纲
 

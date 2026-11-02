@@ -324,7 +324,7 @@ full evidence target editing/media acceptance and complete frozen teaching input
 
 - 历史judge申诉API不再创建重判任务，返回409 historical_unknown；先RED证明原先200且新增事件。旧队列未决申诉写单一held回执，重放/并发幂等；历史已完成申诉继续读取，不改历史原判。
 - 删除rejudge旧current-row/model/revert分支，只保留原生冻结original→新candidate→head CAS与结算。真实发布/原件/recorded离线端口替换旧judgeFn fixture，覆盖改判/同分/确定性/冻结输入/并发/试卷/明确用户FSRS/自动theta/失败回滚/晚到有序重放/KC合并保护。partial原生规则为未局部化则abstain，随后full才写一次success；不恢复已否决的旧partial→1。
-- 59DB（API7/worker20/native提交32）、typecheck、changedBiome、build、Postman通过。边界去掉旧revert边，baseline收紧447→446，无新增豁免。所有模型为离线fixture。
+- 59DB（API7/worker20/native提交32）、typecheck、changedBiome、build、Postman通过。边界去掉旧revert边，baseline收紧447→446，无新增豁免。所有模型为离线fixture，不代表真实质量验证。
 - probe检查确认目标错误签名是独立承重语义，后续必须冻结并保留，不能只移植coarse score。剩余probe/ingestion/diagnostic生产与消费、旧solo主测试仍在1047主线。未PR/push/review/CI/部署/付费，不停止检查点。
 
 ## 2026-10-05 01:29 UTC — 诊断原生提交/消费/恢复（未发布）
@@ -334,7 +334,7 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - Agency订阅version3增加真实assessment_activation；Practice注册其事件所有权（API生成组合校验先发现漏登记，修后通过）。消费在共享learning写锁内读取current head并推进原干预记录，迟到旧通知不会回写旧分数；申诉保持相同原review/暴露时点与follow-up due。首个真实原生消费用例先RED后修。
 - 租约回收/日流恢复识别已有effective head的native attempt，已提交题不会因订阅延迟重新开放；回归先RED（draft被恢复成active）后修。无头pending仍由原durable pending/FAILED/REQUEUED护栏控制。
 - 为保持锁序，干预activate/review/reconcile先取既有全局learning锁，再取干预锁。把原有无表SQL锁实现移到db/learning-state-lock.ts，server入口仅重导出同一实现，Agency直接消费db基础设施；没有复制锁namespace或隐藏server依赖。曾尝试新增server import的审计不通过，已收敛，baseline保持446/0/48不抬高。
-- 128 distinct DB + 最后锁模块55DB、84 distinct unit（UI恢复/manifest/组合）、typecheck、changedBiome（零error/12warning）、build、API client/Postman生成和边界审计通过。全部模型均离线fixture。
+- 128 distinct DB + 最后锁模块55DB、84 distinct unit（UI恢复/manifest/组合）、typecheck、changedBiome（零error/12warning）、build、API client/Postman生成和边界审计通过。全部模型均离线fixture；这不等于生产诊断producer已发布或模型质量准入通过。
 - 仍需：生产诊断发题契约、native head转为manual/assisted/unsupported时撤销旧干预通过判定的显式未决态；probe签名/发题、ingestion先持久化发布、旧solo主suite及归因消费者。此后继续同一1047主线；无PR/push/review/CI/生产/付费。
 
 
@@ -381,10 +381,10 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - 恢复工作树后删除旧 `review-settlement.ts` writer 与无消费者的 `JudgedSubmit`；保留 live `ValidatedSubmit`。静态审计转向真实 native settlement。提交 `8588e31bb`；23 DB、19 invariant unit、typecheck、build 通过，boundary 446→440。
 - 发布与归一化实现下沉到 `kernel/records/assessment-publication.ts`、`assessment-normalization.ts`，原 `server/questions` 路径仅显式兼容出口。两个实现只依赖共享 core/db/kernel，无 capability/server 反向依赖；诊断与接下来的 probe/ingestion 共用同一实现，不增加 deep import 债务。
 - V2 probe 的完整正确/目标错误签名随私有评分契约冻结并参与 digest。原生 rule executor 保留独立 signature match；缺失、含糊、分数冲突或部分分产生待复核，不能由分数推断目标错误。公开 structure/response spec 不泄露签名。
-- 诊断 materializer 原子发布三个诊断 revision，默认 withheld/no_admitted_executor；author/reviewer 审核与模型评分准入分开。未准入不入 FSRS、不产生可执行 stream；已有 revision 与准入状态不被 reconciliation 重写。模型计划仅在 withheld 时允许 null slice，admitted 仍拒绝。
+- 诊断 materializer 原子发布三个诊断 revision，默认 withheld/no_admitted_executor；author/reviewer 审核不冒充模型评分准入。未准入不入 FSRS、不产生可执行 stream；已有 revision 与准入状态不被 reconciliation 重写。模型计划仅在 withheld 时允许 null slice，admitted 仍拒绝。
 - 一次性发题在服务端强制 claim，即使调用方未显式传 claim；同 issuance ID 重试保留旧 revision/binding。诊断自动发题检查 due/draft，不允许 manual 绕过。提交处理租约独立于发题 claim，已持久化原答即使没有有效评分也阻止另开原答，允许原答幂等重试。
 - 证据：44 intervention preparation DB、33 issuance/persistence DB、12 native diagnostic HTTP DB、30 publisher DB、151 scoped unit，通过；typecheck、build、boundary 440/0/48 通过。日志在 `/tmp/yuk1047-diag-*`、`/tmp/yuk1047-claim-regress.log`、`/tmp/yuk1047-native-publication-unit2.log` 与 `/tmp/yuk1047-withheld.log`。
-- 未完成：Probe route/lifecycle、ingestion 原件先落库、native failure consumers、准入和入口登记。1047 仍 In Progress。
+- 未完成：Probe route/lifecycle、ingestion 原件先落库、native failure consumers、准入和入口登记。未调用付费 provider，未部署，未开 PR；1047 仍 In Progress。
 
 ## 2026-10-05 本机续接：Probe 原生链
 
@@ -409,7 +409,7 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - This resumed verification: 12 capture DB, 44 diagnostic preparation DB, 40 attribution/subscription DB, 30 variant DB, 80 reporting DB, and 4 native cross-consumer DB passed (overlapping suites, not summed as distinct). Typecheck, build and exact boundary audit (437/0/48) passed before the final formatting pass. No full local test, paid provider, deployment, or PR.
 - Remaining: native review occurrence/rating aggregation and snapshot CSV exports; final production entry/admission census; final scoped gates then independent review and PR/CI. Reporting must count surviving actual FSRS effects once per evaluation group and preserve user rating independently from current correctness. CSV must retain original/effective distinction and frozen content. Existing CoachHub derives correctness from ratings and labels all non-correct rows wrong; that UI limitation needs tracked disposition, not invented correctness in backend data. No UI change is authorized here.
 
-- Owner随后明确批准现有CoachReport最小修正（不新增页面、不扩Probe）。已按实际判决计算正确率，部分正确纳入已判分分母，未判分不进入分母；逐日分四类，评级分布独立。新增daily incorrect/partial/ungraded字段。9 UI tests通过。
+- Owner随后明确批准现有CoachReport最小修正（不新增页面、不扩Probe）。已按实际判决计算正确率，部分正确纳入已判分分母但不冒充全对，未判分不进入分母；逐日分四类，评级分布独立。新增daily incorrect/partial/ungraded字段。9 UI tests通过。
 - 复习读面从存活FSRS结算收据按evaluation_group去重，沿用原occurrence时间并保留显式用户评级；capture-only/首次failed_pending不造复习，撤回排除，保留历史调度的失败替换不抹掉真实复习。共用纯reversion计算供settlement和报告，group verdict纯投影从DB loader中抽出供CSV接用。5 pure unit及10 weekly/native DB通过；另外group verdict/order/settlement回归49项通过（合跑59仅3旧weekly断言因新增字段失败，已修并重验10）。CSV与registry/final gates仍未完成。
 
 

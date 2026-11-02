@@ -12,7 +12,7 @@
   `budget_timeout` fail-closed，且 **零 accepted append**（points=0 /
   not_material=0 / safe_reply=0）。盲证据腿在该模型上从未提交过任何一次
   submission tool call。
-- **Case b（checkpoint resume 注入）前置条件不可达。** resume 证明需要
+- **Case b（checkpoint resume 注入）未执行：前置条件不可达。** resume 证明需要
   ≥8 条 accepted append 后中断重试；该模型在产品 durable budget 内 0 条 append，
   注入点永远不会出现。跑 case b 只会用 ~16 分钟复现已证明的零 append 结论。
 - 这不是 validator bug、也不是 endpoint 缺陷：同 lane 的单工具 probe 证明
@@ -106,7 +106,7 @@
   是内容驱动而非 attempt 计数驱动）。
 - `tool_call_log` 0 行（`autoLogToolCalls:false`，符合设定）。
 
-### Case b — recovery run（原因记录）
+### Case b — recovery run（未执行，原因记录）
 
 - 注入前置：reference checkpoint ≥8 条 accepted records（或 ≥12 points）后 abort。
 - 实测：glm-5.3-flash 4/4 attempt 零 accepted append → 注入点不可达。

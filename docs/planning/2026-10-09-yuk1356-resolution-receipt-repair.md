@@ -60,11 +60,11 @@ unit 只验证沿用的 evaluation projection/status 合同，不是本修复的
 build 的 web/Start/server/worker/migrate 产物共 884 文件，已复制到 build-artifacts，
 manifest 为 build-artifacts.json，其 SHA256 为
 `b27a04c86c796d84b83253bbb0c0c58d25a912433480b3488e5e82a5899d577c`。
-这只是产物封存。源码输入、原失败 fixture 与父文档快照也在同目录。
+这只是产物封存，未执行这些产物。源码输入、原失败 fixture 与父文档快照也在同目录。
 精确交付 commit、源码 diff 和全部证据入口由 HANDOFF.md 记录。
 
-独立 R1 固定读取 5f09，仍由父级负责裁决；R1 裁决由父级负责。
+独立 R1 固定读取 5f09，仍由父级负责裁决；本交付不代表 R1 resolved。
 DB、migration、实际进程、provider、最终产物 logger 证明与后续交付仍由父级验收。
-
+未执行 full test、Docker、DB、provider、browser、安装、锁、PR、push、Linear、
 切 branch 或 merge。已验证根因属于父级已捕获的 YUK-1356，同轮未发现新的独立
 actionable follow-up；遵守父级独占 tracker 和 PLAN/now/验收文档的边界。

@@ -1,7 +1,7 @@
 # YUK-1567 — Cancel Unsent Paid Intents (generic `pending → cancelled`) — Ops Manual
 
 Status: implementation slice (code + docs only). **Nothing in this document has been
-executed against any database.**
+executed against any database.** Every operational step below is `NOT_RUN` in this
 slice and is written for the parent/migration line to execute later on the approved
 deployment DB.
 
@@ -337,6 +337,23 @@ extended so `cancelled` rows count as resolved history (`continue`) alongside
 misreported as an uncovered obligation and block the unrelated reauthorization lane;
 with it, cancelled rows still can never be voided or successor-bound (the void
 function accepts only `unknown`). Reported here as required.
+
+## 11. NOT_RUN record
+
+In this slice **none** of the following were run — by design and by instruction:
+
+- `plan`/`apply` of `scripts/yuk1567-cancel-unsent-intents.ts` — `NOT_RUN` (no DB
+  access from this worktree; the ops run is the parent/migration line's step).
+- Migration application — `0127` is source-generated only (`drizzle-kit generate`);
+  `NOT_RUN` against any database.
+- Any DB/container/TEST access, provider call, queue/job/worker mutation — `NOT_RUN`.
+- `pnpm test` or any test — `NOT_RUN` (prohibited in this slice).
+- The mechanical test sync in `src/server/export/paid-effect-backup.db.test.ts` —
+  the three exact line changes were approved by the coordination line
+  (2026-10-20, owner10-19 standing list authorization) and applied verbatim in
+  commit `902b266a0`; the test itself remains `NOT_RUN` here.
+
+Checks actually run are recorded in the PR body / handoff report.
 
 ## 12. Operator runbook (for the executor, later)
 

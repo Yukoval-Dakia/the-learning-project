@@ -112,7 +112,7 @@ admission/confirm_lossy 政策：零改动（offline 断言钉死键集不变）
 drizzle select 链为内存假桩（fixture 见脚本头 **FAKE DB PORTS** 声明）——它证明的
 是真实 `loadProposalPresentations` / `batchResolveSubjectDisplayIds` /
 `resolveSubjectRenderNotation` / 真实 `SubjectRegistry` 的纯解析·共识·措辞逻辑，
-关键断言：
+**不构成任何 DB/runtime 证明**。关键断言：
 
 | 用例 | 期望 | 结果 |
 |---|---|---|
@@ -143,7 +143,7 @@ drizzle select 链为内存假桩（fixture 见脚本头 **FAKE DB PORTS** 声�
 | `pnpm audit:api-contracts` | 0 |
 | `pnpm audit:capability-boundaries` | 0 |
 
-未新增测试（不触五类不变
+未跑 full `pnpm test`（规约：exact-head CI Gate 负责）；未新增测试（不触五类不变
 量；DTO/读侧展示合同由上述离线证据覆盖）。无 DB/容器/runtime/provider/浏览器调
 用；无 UI/Start/boot/DBOS/迁移/新抽象；无 push/PR/merge/Linear。
 

@@ -1,6 +1,6 @@
 # YUK1376 错题读取迁移
 
-实现提交：`d231403441345b7a6936cec10157df741d69c955`，基于main `36f719675`。状态：PR1598于2026-10-07 19:02:53Z合入main `c7c2482ca`。独立初审P0/P1 NONE，准确head `291f1c5b3` 的CI Gate `37669157822`全部成功；合并tree `b55aff84e4212d3ee65161323551d4eca5c2edf9`与候选一致，17分钟等待窗已满足；Start挂载与旧SPA退出待核销。
+实现提交：`d231403441345b7a6936cec10157df741d69c955`，基于main `36f719675`。状态：PR1598于2026-10-07 19:02:53Z合入main `c7c2482ca`。独立初审P0/P1 NONE，准确head `291f1c5b3` 的CI Gate `37669157822`全部成功；合并tree `b55aff84e4212d3ee65161323551d4eca5c2edf9`与候选一致，17分钟等待窗已满足。未部署，未核销Start挂载或旧SPA退出。
 
 ## 行为与接口
 
@@ -28,7 +28,7 @@ Native FailureAttempt上游尚不支持题面/答题图片快照适配，本提�
 
 使用submission/revision/issuance冻结坐标，优先复用公开发题投影的绑定校验与私有材料过滤。按发出part、slot和group evidence目标读取原始作答，不复制整组证据到无关卡片；图像需匹配身份、digest和所属范围。参考答案必须遵守已有揭示策略，不能将scoring basis或私有rubric直接公开。缺席与损坏分别处理，不回退到mutable题面。多part、多submission、各响应类型、重判撤回和正常编辑后的历史稳定性均需真实scoped DB验证。不改kernel契约、评分写入、全局组合根或UI，不增加表或回填历史。
 
-真实附件验收另需走鉴权content端点，核对原始字节、缺失附件及未授权请求；返回ID和SSR附件按钮与浏览器Lightbox验收分开核销。冻结题面媒体完整呈现仍须单独核销。
+真实附件验收另需走鉴权content端点，核对原始字节、缺失附件及未授权请求；返回ID和SSR附件按钮不等于浏览器Lightbox已验收。冻结题面媒体完整呈现仍须单独核销，不能以本轮文字投影代替。
 
 
 ## Native实现交回与父验证
@@ -37,7 +37,7 @@ Native FailureAttempt上游尚不支持题面/答题图片快照适配，本提�
 
 保留RED证明原GET题面、选择答案及图片为空。作者95DB、48unit、typecheck/lint/build及capability/API/schema audits通过；父核127项hash全部匹配，manifest SHA256 `71a2c1e51971d01b396db3e3edfbda3594803ec5bf84dcbf3c150bf62c90f135`，并在固定002712b79上独立复跑两份scoped DB文件，95 passed、exit0。父日志 `/tmp/yuk1376-native-parent-db.log`。作者完整证据 `/tmp/yuk1376-native-implementation-evidence.md`。
 
-独立初审 `yuk1376-native-independent-review-20261008-v1` 已启动，codex/gpt-6.1-sol/xhigh，只读固定002712b79对3fef55277；结果待交回。准确head CI及真实HTTP/附件字节验收待完成。
+独立初审 `yuk1376-native-independent-review-20261008-v1` 已启动，codex/gpt-6.1-sol/xhigh，只读固定002712b79对3fef55277；结果待交回。准确head CI及真实HTTP/附件字节验收尚未完成，未部署。
 
 native参考答案继续null：该读取路径没有持久化的可信reveal-policy输入，不临时发明全公开策略。严重损坏冻结坐标导致kernel无法确认effective failure时，原reader先过滤该行；直接helper损坏输入测试不能证明GET会展示这种unknown行。本次不改既有kernel过滤或伪造失败。figure仅有公开caption/alt摘要，完整图片与非图像媒体展示尚未完成。这些边界继续属于1376/1359核销范围，不能以本次95DB宣称整个迁移完成。
 
@@ -57,7 +57,7 @@ native参考答案继续null：该读取路径没有持久化的可信reveal-pol
 
 最后一轮独立验证审 `yuk1376-native-p1-verification-review-20261008-v1` 已启动，codex/gpt-6.1-sol/xhigh，只读固定f201对e4a。准确head CI及运行验收待完成。没有两项既有P1之外的新actionable follow-up；其余边界保留在1376/1359，不另建重复票。
 
-验证审已completed/noPending，固定f20134123的P0/P1均NONE，两项原finding均resolved。审查追踪resolver成员与digest校验、不可变DB约束、分页范围、撤回过滤及私有内容隔离，核对四文件hash和RED/GREEN断言。初审加本次验证审预算已用完。后续提交仅更新交付文档。
+验证审已completed/noPending，固定f20134123的P0/P1均NONE，两项原finding均resolved。审查追踪resolver成员与digest校验、不可变DB约束、分页范围、撤回过滤及私有内容隔离，核对四文件hash和RED/GREEN断言；未运行测试或操作runtime。初审加本次验证审预算已用完，不启动第三轮。后续提交仅更新交付文档。
 
 
 ## 隔离HTTP与原页面验收，2026-10-07 20:26Z
@@ -72,7 +72,7 @@ PR1599已合入7bc216509，tree与CI head6ab98ed8c一致；CI Gate37677610975成
 
 浏览器经真实token入口访问原SPA，刷新后四条冻结题面且无mutable/private标记；八个附件缩略图和Lightbox图片均实际解码。语文筛选显示零行。归因中状态对应隔离环境未启动worker，不能冒称归因执行完成。
 
-本轮三图片在不同证据角色复用；完整独立图片角色矩阵另行验收；纯整组图片评分仍需合法模型准入与actual-output证据。确定性跨part fixture只证明投影范围。reference继续null、figure仅公开caption/alt，完整媒体呈现、Start迁移与旧入口删除未完成。保留在1376/1359，不另建重复follow-up。
+本轮三图片在不同证据角色复用，不能代替完整独立图片角色矩阵；纯整组图片评分仍需合法模型准入与actual-output证据。确定性跨part fixture只证明投影范围，不证明图片理解。reference继续null、figure仅公开caption/alt，完整媒体呈现、Start迁移与旧入口删除未完成。保留在1376/1359，不另建重复follow-up。
 
 
 ## 2026-10-08 公开材料读取验收进展
@@ -90,4 +90,4 @@ PR1600准确运行候选 `1bd0263e5` / ARM64 image `8c7d64632ebdf1b4ea6b99501f06
 
 证据根：`/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1376-materials-1bd0263e5/evidence`。`running-image.json`绑定运行image与revision，`http-acceptance/http-exact-image-01/`保存九次请求与真实PNG，`db-before.json`/`db-after.json`及`http-invariance.json`记录86表只读事务排序摘要，`lock-release.json`记录释放。公开材料checker SHA256为 `f251ebd653aec834f65ee33350b2906f182cb999e7373b61d1ceb63587fa81c6`。
 
-本轮仅复用既有短passage与figure。127 scoped DB覆盖七种材料契约与缺失/损坏分支，须与此HTTP证据分开报告。保留fixture按原样；后续文档提交不改变受测源码。
+本轮仅复用既有短passage与figure，不代表其他材料真实blob、长文媒体页面渲染或模型评分质量。127 scoped DB覆盖七种材料契约与缺失/损坏分支，须与此HTTP证据分开报告。未迁移、重新播种或修改保留fixture；没有worker/provider/DLQ操作。后续文档提交不改变受测源码。

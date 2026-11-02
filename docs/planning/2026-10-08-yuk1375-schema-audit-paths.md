@@ -6,7 +6,7 @@
 
 实施验证：四个scoped文件123测试、typecheck/lint/build退出0；两改动文件Biome无诊断，全仓297既有warnings。父核32项SHA清单，并独立复跑audit文件54测试通过。父真实CLI产生170467字节非空JSON，与子任务结果完全一致：885字段、0未豁免stub、41已有allowed stub，无allowlist hygiene或retention问题。原准确基线731未豁免/119allowed；恢复809个原stub的生产写入证据，另10字段增加既有写入计数。未通过改allowlist掩盖结果。
 
-证据：/tmp/yuk1375-evidence.md、/tmp/yuk1375-sha256.txt、/tmp/yuk1375-comparison.json、/tmp/yuk1375-parent-unit.log、/tmp/yuk1375-parent-cli.json。审计仍是有界静态语法证据。未修改产品/schema/dependencies，未操作runtime，无需为此工具修复重部署应用。
+证据：/tmp/yuk1375-evidence.md、/tmp/yuk1375-sha256.txt、/tmp/yuk1375-comparison.json、/tmp/yuk1375-parent-unit.log、/tmp/yuk1375-parent-cli.json。审计仍是有界静态语法证据，不证明运行时行为或完整迁移完成。未修改产品/schema/dependencies，未操作runtime，无需为此工具修复重部署应用。
 
 当前独立只读review仍在进行，exact-head CI待push；不能先记Done。没有新暴露的未豁免stub或需独立建票的缺陷，41已有allowed项保持原归属。下一实施票1376承接/mistakes非UI迁移，主线负责最终挂载。
 

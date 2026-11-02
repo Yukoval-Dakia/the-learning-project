@@ -53,4 +53,4 @@ main 全树4461个 tracked 条目按 mode/type/blob 核对，除明确列出的�
 
 整合与账本核对原始回执封于仓外 merge head `68d4ae0baf3649589e21ed7b007118517071af54/source_verify-r1-main-integration/`。package/lock/workspace 三hash仍与父唯一 install receipt 一致，本轮没有重装。文档提交后的新 exact head 须经 heavy.sh 串行重新执行 typecheck/lint/build/两audit；raw stdout/stderr、argv、UTC、真实rc放在 `architecture-deepening/YUK-1572/<本交付git HEAD>/source_verify-five-gates/`，最终源码/body/main全树与账本证明放在同 head 的 `source_verify-r1-final/`。不复用旧head检查，不覆盖旧seal。
 
-测试代码零修改。父线继续负责独立验收、PR/CI与既有 YUK-1572 整票义务。
+所有 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/watch/review/Linear/部署/清树均 NOT_RUN；测试代码零修改。未发现本范围之外的新 actionable follow-up；父线继续负责独立验收、PR/CI与既有 YUK-1572 整票义务。

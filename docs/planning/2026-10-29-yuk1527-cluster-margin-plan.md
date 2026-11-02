@@ -5,7 +5,7 @@
 骨架状态：`countedRankV2` / `sameTopic` 在 `bank-vector-retrieval.ts`，规则版本为 2。
 样本仍是 `pending_external_fill`，没有选定 A1/A2/A3，也没有写入 `clusterMargin`、窗口 K、
 q↔q 否证上界。新检索只走 decisive 条款（0.55 / 0.15，仍是 provisional）。游标保持 schema v3，
-15 分钟 TTL 内按签发时的 `vd`/`vc` 还原，续页不重算。网格待跑。
+15 分钟 TTL 内按签发时的 `vd`/`vc` 还原，续页不重算。网格未跑。
 
 ## 问题
 
@@ -66,13 +66,13 @@ coverage.verdict。margin 的前提假设是 rank-2 为**竞争者**：领先幅
   期望任何参数下都不计入。
 
 配额可行性：105 题副本若供不满某层（尤其 present_cluster / adjacent_trap），lead 在
-MANIFEST 如实登记缺口与实际条数——**降配如实登记**；可按 §1.4 程序扩展新标注补足。
+MANIFEST 如实登记缺口与实际条数——**不得静默降配**；可按 §1.4 程序扩展新标注补足。
 
 ### 1.3 「不含题干原词」操作定义（换说法集准入线）
 
 对每条 entry 的每个 expected 题取 `prompt_md` 的 CJK 字 bigram 集合；query 的字 bigram
-集合与**任一** expected 题题干 bigram 集合的 Jaccard 重叠 ≤ 0.2。absent 条目与
-库中最近邻题题干重叠同样 ≤ 0.2（防词面泄漏把 absent 变简单）。逐条实测值在冻结时记入
+集合与**任一** expected 题题干 bigram 集合的 Jaccard 重叠 ≤ 0.2。absent 条目同样不得与
+库中最近邻题题干超过该重叠（防词面泄漏把 absent 变简单）。逐条实测值在冻结时记入
 entry 的 `stem_overlap` 字段。判定属补齐程序一部分，本轮只定契约。
 
 ### 1.4 冻结文件、格式与补齐程序
@@ -92,7 +92,7 @@ JSON 与 `CalibrationFileSchema`（标定脚本）同形扩展：entry 增 `stra
 2. 仓库内锚点（文言断句 / 离子方程式）expected id 与簇结构从 stage1 产物核实后升 `frozen`。
 3. `sha256sum` 三文件写入 MANIFEST。此后三文件只读：任何修改 = 作废重冻（新目录+新
    MANIFEST），已用过的验证集/换说法集作废须重新标注替换。
-4. 纪律条款：**任何调参运行以三文件全部 frozen 且 MANIFEST 记录 SHA256 为前提**。
+4. 纪律条款：**三文件全部 frozen 且 MANIFEST 记录 SHA256 之前，任何调参运行不得开始**。
 
 ## 二、同话题题簇比较方案（交付 2）
 
@@ -104,13 +104,13 @@ JSON 与 `CalibrationFileSchema`（标定脚本）同形扩展：entry 增 `stra
    - 同变式家族：`root_question_id` / `parent_variant_id` 同根 ⇒ 定义上同话题；
    - 同组 parts：`parent_question_id` 同组 ⇒ 同题；
    - exact 查重：`canonical_content_hash` 相同 ⇒ 同题。
-   - 入库向量近重 hold（≥0.93）**不计入**：它是待裁决记录而非既判结论，不进初始组合，
+   - 入库向量近重 hold（≥0.93）**不算**：它是待裁决记录而非既判结论，不进初始组合，
      留作后续扩展项（前提：先有裁决态）。
 2. **共享知识点**：两题 `knowledge_ids` **标注面叶子 id 交集非空**。明确边界：只比实际
-   标注集合——等差数列与递推数列共享祖先「数列」KC 不计为证据。
-   无 KC 标注 = 该证据不可用。
+   标注集合，**不向上折叠祖先域**——等差数列与递推数列共享祖先「数列」KC 不构成证据。
+   无 KC 标注 = 该证据不可用（不视为反证）。
 3. **题间向量距离 q↔q**（仅辅助，**方向不对称**）：可作**否证**——q↔q 距离大于上界 ⇒
-   直接判不同话题（挡 KC 标注错误）；**不作证实**——「q↔q 距离小 ⇒ 同话题」被本方案
+   直接判不同话题（挡 KC 标注错误）；**禁止作证实**——「q↔q 距离小 ⇒ 同话题」被本方案
    明文排除出公式空间，不进网格。理由：等差/递推内容空间近邻但不同主题，距离小不携带
    主题同一性的信息。
 
@@ -156,11 +156,11 @@ countedRankV2(baselineTopK 升序, sameTopic, params):
   定位（YUK-1516 §参数）。
 - 挑参**只看调参集**。目标函数分层：① `false_enough = 0`（硬，absent ∪ adjacent_trap）；
   ② present_cluster recall 最大化；③ `precision_when_counted` 目标 1.0——低于 1.0 的
-  胜出点须附逐例误计入清单交 owner 裁决。
+  胜出点须附逐例误计入清单交 owner 裁决，不得静默接受。
 - **验证集只看一次**：胜出臂+定稿参数在 validation-set 单次运行报告同套指标；此后任何
-  再调参 ⇒ 验证集作废重冻（§1.4.3）。换说法集同样一次性。
+  再调参 ⇒ 验证集作废重冻（§1.4.3）。换说法集同样一次性、不反馈调参。
 - 运行边界：全部评测只读既有距离产物；新 query 需新 embed 的，走另行批准的付费标定
-  运行（本票留后续）。
+  运行（本票本轮不跑）。
 
 ### 2.5 指标（含单向量召回单独报告）
 
@@ -171,7 +171,7 @@ countedRankV2(baselineTopK 升序, sameTopic, params):
 | `query_recall` | present_single 同口径 | 防 v1 已能处理的部分回归 |
 | `precision_when_counted` | counted id ∈ expected 的比率 | 目标 1.0；误计入单独列 adjacent 诱因 |
 | `spurious_gap_rate` | present 条目 fused verdict ≠ enough（gap_request 误发）的比率 | 产品级病灶指标：v1 在 present_cluster 上应显著 >0 |
-| **单向量召回（单独报告）** | 以上全部先在**仅向量通道**（baseline 序列上评 countedRank 纯函数，无 FTS 融合）计算 | 与融合链路结果**分开列两套数字，分开列**——防 FTS 强命中掩盖向量规则的 false-none |
+| **单向量召回（单独报告）** | 以上全部先在**仅向量通道**（baseline 序列上评 countedRank 纯函数，无 FTS 融合）计算 | 与融合链路结果**分开列两套数字，不得混算**——防 FTS 强命中掩盖向量规则的 false-none |
 
 `spurious_gap_rate` 的融合列仅作产品影响观测，不参与挑参（挑参只看单向量列）。
 
@@ -181,16 +181,17 @@ countedRankV2(baselineTopK 升序, sameTopic, params):
    （`bankVectorBaselinePredicates`）——不另起第二套检索路径产 ranking；标定 harness
    延续「与引擎同源谓词/同源规则函数」的单一真相模式。
 2. **不恢复第二套 matcher**：查重证据只读既有产物（变式家族、canonical hash、同组、
-   0.35 查重轴常量），question↔question matcher 不新建，不改 `MATCHER_COSINE_MAX_DISTANCE`。
-3. **新链路用 v2 decisive 条款**：decisive 条款仍是 0.55 / 0.15。规则版本已是 2，
+   0.35 查重轴常量），不新建 question↔question matcher，不改 `MATCHER_COSINE_MAX_DISTANCE`。
+3. **不用旧 v1 领先量规则冒充新链路**：decisive 条款仍是 0.55 / 0.15。规则版本已是 2，
    但簇分支关闭，伪代码里的题簇计入还不是线上行为。
 4. **与 #1969 恢复线（YUK-1448，OPEN）对齐**：#1969 明文「原距离 0.55、top-1 margin 及
    校准文件未改；旧 counted 标记不决定 v2 semantic matched」。共享 search/schema 面
    （search_bank 输出 schema、通道结构、coverage 口径）以 #1969 落地版为准；本票 v2
-   实施 PR 必须 rebase 于 #1969 合入后的 main，不预改其接口。**#1969 现为 draft；本文引用其文件名/行为仅为对齐说明**（§现状基线只列
+   实施 PR 必须 rebase 于 #1969 合入后的 main，不预改其接口。**#1969 现为 draft（未合
+   main），本文引用其文件名/行为仅为对齐说明，不得当作 main 已交付**（§现状基线只列
    main 事实即为此）。
-5. **不对齐 draft**：draft 状态轴维持 #1969 落地版（draft_state scope 语义、baseline
-   面含 draft 的现状维持 #1969 落地版）；题簇证据输入不含 `draft_status`。
+5. **不对齐 draft**：本票不依赖、不改变 draft 状态轴（draft_state scope 语义、baseline
+   面含 draft 的现状维持 #1969 落地版）；题簇证据不拿 `draft_status` 当输入。
 
 ## 四、本轮不做
 

@@ -85,7 +85,7 @@ lane 未改 baseline、门或 ignore；不登记已不存在的临时 server JSO
 保护 proof 证：job/material/output 三个完整 blob 与已审 d2f65fc8 相同；
 main 其它文件、删除状态及 ledger 与 f52a41bb 完全相同。
 package/lock/workspace hashes 与父既有安装回执相同，lane 没有再次安装。
-
+全部 tests/vitest、DB、TEST、Docker、daemon、provider、runtime、demo、paid：NOT_RUN。
 不 push、PR、watch、review、Linear 或清树。未发现范围外新 actionable 缺陷；
 tracker capture、最终审查、CI、baseline 实测登记与整合由父负责。
 
@@ -105,3 +105,4 @@ manifest `7ca200149729dea107177e3434784616868eb83c00bd1cde25eb0188a908ae01`。
 `17cd275b326cb0578ef2c0a0d15e39ef46dc22e2a75b2509293001784d3a6cfc`；未覆盖。
 原 source/preflight/handoff seal 全部独立保留。当前无待批边登记、compat、未知 caller
 或范围扩张请求。源码与短文档提交后 clean 停止 writer；源码保持原 R1，不开启新审查，交父验收／发布；
+不自行审查／push／PR。测试与真实运行继续 NOT_RUN。

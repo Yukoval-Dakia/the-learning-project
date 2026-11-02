@@ -67,7 +67,7 @@ segments / fill·stroke 颜色 / 描边宽 / bounds，也没有原始内容流�
   `verifyWorksheetPdf`（经 `WorksheetRegionMapArchiveBody` 契约解析）：
   PASS，9/9 页，页序 [2,48,59,66,70,75,80,85,90]，逐页 MediaBox
   594.96×841.92pt A4 portrait，36 个锚点实测误差 ≤0.086mm。
-
+- NOT_RUN：无 DB / 容器 / provider / 付费 / TEST 运行；无端到端
   worksheet_render job 重放与真实存档（原 30 题 export 与 ≥60 题更大
   真卷的验收由父 lane 安排）；未写测试代码；本机不跑 full `pnpm
   test`，exact-head CI Gate 由 push 后执行。

@@ -17,7 +17,7 @@
 - **main 普查**：fetch 后 `origin/main` 领先 12 commits（dependabot  deps、
   ADR-0068/0069/0070、YUK-1405/1359/1438）；#1657/#1658 未合入 main，未带入。
   `git merge-tree --write-tree HEAD origin/main`（merge 前后各一次）均无冲突
-  → 按「only if needed」**未合 main**。
+  → 按「only if needed」**未做 main merge**，无 moving-migration 整合。
 - 未含 UI / Start / boot / DBOS / DB / 容器 / runtime / provider / key /
   付费调用 / deploy；未 push 前无外部副作用；无子委托。
 
@@ -82,9 +82,9 @@
 改动文件 0 条）· `pnpm build` ✅（web + server/worker/migrate esbuild 全部
 产出；migrate 5.7mb 无 parser 与 596 基线一致）· `pnpm gen:api-client` ✅
 零 diff · `pnpm gen:postman` ✅ 零 diff（33 folders/87 paths/94 requests）。
-未新增测试。
+未跑 full `pnpm test`（规约）；未新增测试。
 
-## 6. 留给 parent 的 scoped DB 命令
+## 6. 留给 parent 的 scoped DB 命令（本 lane 未运行）
 
 ```bash
 cd /Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1404-math-merge-presentation && \

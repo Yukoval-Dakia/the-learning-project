@@ -38,11 +38,11 @@ PR1582 已合并，tool binding、公开 Sourcing tool_call_log、Copilot两轮�
 
 新增 actual-output 文件使用唯一 capture id、exclusive create，测试仅 `YUK1341_PRODUCT_ACTUAL=1` 显式启用。四个场景各预留$0.75，总预留$3；每个场景单次，无失败自动重跑：frozen结构化数学评分、合成三角形图判读、真实Mem0 SDK抽取、真实记忆调和。Mem0抽取使用本地合成4维向量/内存store，仅LLM到真实Go；不把它当DashScope/生产pgvector验收。每份产物记录exact source revision、输入输出digest、task_run或opaque/direct attempt身份、tokens/cost真相。完整评分质量准入、真实生产浏览器和部署验收由父线程另行完成。
 
-本地 unit/DB/static/audit/build 和 actual-output 结果见下文最终证据小节。独立review、exact-head CI Gate、merge等待窗归父线程。
+本地 unit/DB/static/audit/build 和 actual-output 结果见下文最终证据小节。完整 `pnpm test` 未运行。独立review、exact-head CI Gate、merge等待窗尚归父线程。
 
 ## 私有运行配置迁移与回退
 
-目标目录 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-20261007`。本writer未修改它。父线程报告app/worker仍是旧5d738dbc0 healthy、pair未设置、OPENCODE key存在；新路由部署状态以父线程核验为准。
+目标目录 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-20261007`。本writer未修改它。父线程报告app/worker仍是旧5d738dbc0 healthy、pair未设置、OPENCODE key存在；这不代表新路由已部署。
 
 1. 父线程完成review/CI/集成，按现有发布要求锁定镜像revision，重新取得新鲜备份并做restore验证。旧备份有restore证据仍不能替代下一次fresh backup。
 2. 私有app和worker共同设置 `AI_PROVIDER_OVERRIDE=opencode-go`、`AI_PROVIDER_MODEL=mimo-v2.6-pro`；继续使用已有 `OPENCODE_API_KEY`，不打印值。两进程可选的session admission策略要覆盖 `opencode-go`；不复制Xiaomi容量猜作新provider限制。保留各既有admission模式和recovery开关，必要策略由父线程核对。
@@ -50,7 +50,7 @@ PR1582 已合并，tool binding、公开 Sourcing tool_call_log、Copilot两轮�
 4. app(read)/worker(write)同时更新新镜像和同一pair后重建/启动；migrate没有模型请求但仍沿正常发布流程运行。没有独立Mem0容器；mem0volume不迁移、不删除，app/worker各自history路径保留。私有Compose仅app/worker/migrate，禁止down/remove-orphans/down-v。
 5. 启动后检查两进程的变量名/非秘密provider/model值与key存在布尔，再查看新的ai_task_runs、provider_attempt、tool_call_log、cost truth，做有界合成产品场景验收。不要盲重放旧402/DLQ请求。
 
-配置回退：停止新AI接纳并按既有恢复纪律停/等writer，恢复切换前的两项pair状态及既有MEM0_LLM_*，同时重启app/worker以清除缓存client。该回退回到旧registry Xiaomi和GLM；Xiaomi402已知仍会失败，按现状记录。需要保留可用的上一版Go配置/镜像时，以父线程已验证的版本为准。无schema改变时发布仍做恢复/旧镜像兼容检查；不得自动覆盖生产DB或删卷。
+配置回退：停止新AI接纳并按既有恢复纪律停/等writer，恢复切换前的两项pair状态及既有MEM0_LLM_*，同时重启app/worker以清除缓存client。该回退回到旧registry Xiaomi和GLM；Xiaomi402已知仍会失败，不能声称恢复日用。需要保留可用的上一版Go配置/镜像时，以父线程已验证的版本为准。无schema改变不免除发布时的恢复/旧镜像兼容检查；不得自动覆盖生产DB或删卷。
 
 Linear capture与PR操作按任务约束留父线程。当前新增可行动事项只有本任务内修正，未对外建票；YUK-1342探针封存跟进继续存在，本轮harness只做任务专用安全开关，不扩张通用系统。
 
@@ -77,7 +77,7 @@ Linear capture与PR操作按任务约束留父线程。当前新增可行动事�
 - `pnpm typecheck` PASS；最终local `pnpm lint` 0 errors / 297基线warnings；`pnpm build` PASS，web/server/worker/migrate。补probe过滤后执行scoped Biome/typecheck，不再重烧模型。
 - provider-lanes、provider-attempt-truth、partition、capability-boundaries、architecture-deepening、schema、profile、task-census、draft-status、draft-status-reads、api-client、api-client-usage均PASS；capability→server/server→capability/cross-capability ratchets仍437/0/48，没有放宽。
 - `pnpm audit --prod --audit-level=high` 无high/critical，3 low/15 moderate沿基线；sharp0.35.5与MCP1.32.1保留。
-- 未运行完整本地`pnpm test`。独立review、exact-head CI、最终镜像和生产浏览器/API/DB验收归父线程。
+- 未运行完整本地`pnpm test`。没有push/PR/merge/GitHub评论/Linear/部署/用户级配置。独立review、exact-head CI、最终镜像和生产浏览器/API/DB验收尚归父线程。
 
 此次没有未解决的聊天consumer绕过点。尚未实跑全部54任务/全部选用job、生产Copilot session入口或完整评分质量集；source/scoped证据不能替代它们。专用Jev typed、OCR、embedding边界见上文，不隐瞒这些实际服务仍在。YUK-1340 UI工作树和CopilotDock/UItests未触及。
 

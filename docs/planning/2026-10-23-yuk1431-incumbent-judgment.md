@@ -27,7 +27,7 @@ owner 最新顺序是共用判断与对账先行；本文不执行 ADR-0070 旧 
 输入是 strict object，仅接受 `knowledge_ids`、`context='any'`、`as_of: Date`；
 额外来源字段或其他语境直接拒收，不接入身体、作息或排名。
 系统现有 DB 是单学习者范围，本片不发明学习者身份或跨人比较。
-`as_of` 只代表当前状态的 retention 评价时刻。
+`as_of` 只代表当前状态的 retention 评价时刻，不代表历史重建或输入截止点。
 
 production 路径：`copilot-run-input.ts` 的默认 resolver →
 `resolveLearnerStateHeader` → `readLearnerStateProjection` →
@@ -48,13 +48,13 @@ production 路径：`copilot-run-input.ts` 的默认 resolver →
 - 配置选择来自 `selectedForgettingEngine()`，实际 reading 引擎另记：
   现役端口的 number 是 FSRS，结构化 score 是 candidate，unknown reading 不证明实际引擎。
   即使选择配置为 FSRS，也不把存量 candidate reading 改叫 FSRS。
-  生产部署与切换批准另凭证据。
+  源码默认 fsrs 不等于生产部署或切换批准证据。
 
 新 `Db` 读取使用 `REPEATABLE READ / READ ONLY`，两个部件顺序复用同一连接与快照。
 每个部件使用 savepoint，部件失败成为对应 unknown，不让 SQL 错误污染另一部件。
 调用方传入 `Tx` 时读取其真实 isolation/access mode；只有已有 read-only repeatable-read
 或 serializable 事务才读部件，其他事务返回 unknown，不用 savepoint 假称升级了快照。
-事务建立/提交失败返回 snapshot unknown。这是源码约束。
+事务建立/提交失败返回 snapshot unknown。这是源码约束，DB 运行验证仍 NOT_RUN。
 
 既有 `getMasteryProjectionFn` 注入签名保持兼容，注入仍经同一适配函数；
 显式部分来源注入标 `injected_partial_source`，retention 未注入即 unknown，
@@ -113,7 +113,7 @@ YUK-1969 的两处测试 TEXT 仍归 owner，本片不写测试或重跑旧红�
 - `pnpm build`：exit 0，`build.log`；web、Start、server、worker、migrate 均完成 bundle。
 - `git diff --cached --check`：exit 0。源码本身约束数值直通，未将源码证据替代 runtime parity。
 
-
+NOT_RUN：所有测试/断言脚本、DB/浏览器/Chromium、provider/embedding、容器、部署、
 真实 Copilot 输出、运行时引擎选择、快照隔离/数值对等实测、封存/对账及学习效果。
 未因环境缺失把上述范围冒称通过；本片没有 runtime 授权。
 父协调负责独立 R1、必要 R2、exact-head CI、merge 与最终验收；writer 不 watch/poll/review/resolve/merge。

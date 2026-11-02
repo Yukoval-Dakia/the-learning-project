@@ -86,7 +86,7 @@ mark、receipt 或 COMMIT 无法完成时整笔回滚或结果 unknown，不进�
 安装的 Drizzle postgres-js 实现中，`PostgresJsTransaction.transaction` 调用
 `this.session.client.savepoint`；postgres-js 的 scope catch 先等待 `rollback to`
 再抛出错误，outer transaction 使用另一 scope。该实现支持 savepoint 失败后在原
-outer Tx 继续写 failed/receipt。这里是依赖源码核对。
+outer Tx 继续写 failed/receipt。这里是依赖源码核对，真实故障注入仍为 NOT_RUN。
 
 manual miss 在同一 Tx 完整保留 question → 现有 kernel
 `publishQuestionGroupFromRow` → frozen snapshot → attempt → learning_record →
@@ -125,7 +125,7 @@ invariant/fails-if、ledger/paid/unknown/fence/control、不擦写断言及 FK_O
 
 本线不运行 tests/fixtures/断言脚本、DB、Docker、migrate、restore、HTTP/browser、
 provider/paid、replay、daemon、部署或旧 unknown。真实并发相同/不同输入、scope 隔离、
-资源删除后重放、savepoint SQL 故障、mark/receipt/commit/连接故障、备份恢复待故障注入验收。
+资源删除后重放、savepoint SQL 故障、mark/receipt/commit/连接故障、备份恢复均 NOT_RUN。
 静态通过不能替代这些验收；预算内唯一 R2、exact-head CI 与合入由父线程安排。
 
 ## 静态证据与审查范围

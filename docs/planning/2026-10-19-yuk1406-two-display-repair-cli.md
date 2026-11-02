@@ -138,3 +138,10 @@ current_integrity_digest/admission_generation/admission_state +
   canonical paid/task-run 真实费用、路由与异常 → 再 apply 第二题。合计上限
   $0.05；出现 unknown/4xx/错路由/其他 group 或其他任务 → 停止下一题并报告，
   禁止自动重放 unknown。
+
+## NOT_RUN（本 lane 不执行）
+
+DB、容器、provider、业务 HTTP、运行锁、`plan`/`apply` 实际执行、新题发行、
+PDF——全部由迁移线在有窗口的真实副本/生产按授权运行。本 PR 仅含 CLI 与本文档，
+附静态验证：`pnpm typecheck`、`pnpm exec biome check`、`pnpm build`、相关既有
+audit。日志存 `cli-author-checks/`（仓库外 tlp-status 目录）。

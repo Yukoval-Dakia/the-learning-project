@@ -57,4 +57,5 @@ heavy.sh 包装执行，原始日志与 SHA256 封存于仓库外：
 - `pnpm audit:architecture-deepening`：exit 0
 - `pnpm exec biome check`（11 个触及文件）：exit 0
 
-`demo-flywheel.ts` 待执行。
+NOT_RUN：全部测试/DB/provider/runtime/Docker（按 owner 规则本片不触及
+五类不变量，且 owner 禁止未经批准运行测试）；`demo-flywheel.ts` 未执行。

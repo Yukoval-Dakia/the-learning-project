@@ -89,9 +89,9 @@ trusted=false 与 null 区别，以及原纠错事件作为 verdictEvent 的行�
   初次采证进程 rc1 源于 rg 继承 stdin 未给搜索路径，源码比对全过；修正显式 `.` 后
   v2 rc0，原始失败 raw 保留。未运行产品逻辑或测试。
 
-初交付时 node_modules 缺失的旧 seal 保留；后续结果见下。本 lane
+初交付时 node_modules 缺失，五门 NOT_RUN 的旧 seal 保留；后续结果见下。本 lane
 未安装/更新/复制依赖。
-
+本机 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid 全部 NOT_RUN；
 没有 push/PR/watch/review/Linear/清树。baseline 登记、exact-head CI、独立审查与
 Linear 状态归父。
 
@@ -198,7 +198,7 @@ practice blob身份覆盖loadCommitted/写协议/锁/claim/恢复。4465个 main
 `--base f52a41bb2b8453a3cce8907e805327e20d821934`。实测394/0/36、SCC1×3、
 超1500行12（同main）、pass-through1095/+0新；未把上游收益算本片，无语义修补。
 最新静态值闭包85模块/208边，无capability/server反向值依赖；前述83/203为初交付9fca。
-
+所有tests/DB/TEST/Docker/provider/runtime/paid均NOT_RUN，无install/update/复制依赖、
 push/PR/Linear/清树或自派审。
 
 raw stdout/stderr、argv/UTC/真实rc、逐owned blob/body、main前缀与stable原文证明：
@@ -211,7 +211,7 @@ merge冲突、原红/恢复后的tighten与AST事实在c46目录的
 
 ## 父接管最新 main 整合（2026-10-21）
 
-原writer provider启动失败，父核terminal/null active、无遗留进程及clean后接管。普通合入main `ea000ff69ccc202b488923c74b4521a7bd5b391f`；受检源码 `6f951eda15523287099f47bbcc65703be54e5923`，heavy.sh全机2槽五门真实rc0。原R1不重开；全部产品非import正文与R1相同，main全部非owned mode/type/blob保留。baseline历史34条raw entry前缀保持，仅原生tighten登记本片真实变化。当前候选server=393、cross=36，不计已合main。
+原writer provider启动失败，父核terminal/null active、无遗留进程及clean后接管。普通合入main `ea000ff69ccc202b488923c74b4521a7bd5b391f`；受检源码 `6f951eda15523287099f47bbcc65703be54e5923`，heavy.sh全机2槽五门真实rc0。原R1不重开；全部产品非import正文与R1相同，main全部非owned mode/type/blob保留。baseline历史34条raw entry前缀保持，仅原生tighten登记本片真实变化。当前候选server=393、cross=36，不计已合main。测试、DB、provider/runtime、install均未执行。
 
 证据 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/6f951eda15523287099f47bbcc65703be54e5923/parent-main-ea-gates`（results.json、parent-proof.json、五门raw）。本提交仅追加文档，受检源码/baseline不变，旧seal不覆盖。父接续PR/exactCI及合后实际main审计。
 

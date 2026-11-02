@@ -1,36 +1,36 @@
 # YUK-1359 旧路径退出与文档一致性调查
 
-状态：首轮调查及父级源码抽查完成；这是退出工作的输入清单。源码基线为 main `26f1015810cc3d902f6229b615d9630f05982eef`；通过 `git show` 读取。该历史阶段由57961995承担集成，本线程维护消费者调查。当前本线程7631承担用户整个迁移的协调交付责任；57961995承担Start集成/发布，具体writer与文件ownership按各lane交接执行。
+状态：首轮调查及父级源码抽查完成；这是退出工作的输入，不是完整逐族迁移台账，未删除代码、未完成迁移。源码基线为 main `26f1015810cc3d902f6229b615d9630f05982eef`；通过 `git show` 读取，未切换或修改其他实施工作树。该历史阶段由57961995承担集成，本线程维护消费者调查。当前本线程7631承担用户整个迁移的协调交付责任；57961995承担Start集成/发布，具体writer与文件ownership按各lane交接执行。
 
-Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Linear 残留功能；见[当前优先级](2026-10-07-non-ui-migration-priority.md)。保留现有 UI 行为是过渡状态，旧 SPA 运行路径仍计划退出。最终删除必须以实际消费者切换和行为证据为条件。
+Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Linear 残留功能；见[当前优先级](2026-10-07-non-ui-migration-priority.md)。保留现有 UI 行为不等于永久保留旧 SPA 运行路径。最终删除必须以实际消费者切换和行为证据为条件。
 
 ## 当前退出状态，2026-10-09 JST
 
-本节任务族基线已更新为正式main `96077db1905ebab6a522b0ae36f9f22e26be5895`；路由仍按已核验main6212收据记录。父使用固定Git对象重新提取任务声明，复现旧6212结果后核对1394增量，不读取在建judge文件。下文历史行号和验收只适用于各自版本。1355、1356、1358、1359 仍在进行；源码合入与部署、旧消费者退出分别验收。
+本节任务族基线已更新为正式main `96077db1905ebab6a522b0ae36f9f22e26be5895`；路由仍按已核验main6212收据记录。父使用固定Git对象重新提取任务声明，复现旧6212结果后核对1394增量，不读取在建judge文件。下文历史行号和验收只适用于各自版本。1355、1356、1358、1359均未完成；源码合并不代表部署或旧消费者退出。
 
 | 范围 | 已有证据 | 尚需完成 |
 | --- | --- | --- |
-| Start 前门与 `/mistakes` | PR1592已合入；RPC、图片、鉴权、筛选及重试见[验收索引](evidence/2026-10-08-yuk1352-start-runtime.json)。 | canonical boot、完整消费者与旧入口退出。完整导航曾由practice初始化增加一行，后续错题读取的86表无变只覆盖该读取路径。 |
+| Start 前门与 `/mistakes` | PR1592已合入；RPC、图片、鉴权、筛选及重试见[验收索引](evidence/2026-10-08-yuk1352-start-runtime.json)。 | canonical boot、完整消费者与旧入口退出。完整导航曾由practice初始化增加一行，不能将后续错题读取的86表无变扩大为整个导航无写。 |
 | `/today`、`/inbox` 与根跳转 | PR1609已合入；主读取、费用、decision/undo及真实验收见[工作台交接](2026-10-08-yuk1358-start-workbench-handoff.md)。 | PR1622已合入main6212，Today20与board50实际Start读取、26RPC和浏览器验收见[父验收](2026-10-09-yuk1358-start-agent-notes-parent.md)。嵌套消费者仍有退出义务。TeachingBrief等按[W1清单](2026-10-08-yuk1359-w1-consumers.md)继续退出。 |
-| 五个管理只读页 | PR1615已合入；fc021的96RPC、五页浏览器、88表无写及后续整合证据见[管理页交接](2026-10-08-yuk1358-start-admin-handoff.md)。 | 完整boot与部署；各 revision 证据分批记录，运行验收单独进行。 |
-| 配置与科目三个页面 | PR1620已合main10df，复用1389/1390/1391公共操作。18操作、122RPC、35窗口和三页浏览器证据见[父验收](2026-10-09-yuk1358-start-admin-controls-parent.md)。 | canonical自动启动与全SPA退出仍未完成。配置提交成功但刷新失败按现状记录；catalog/journal只读首屏与RPC完整分页的证据分开保留。 |
-| W2/W3/W4与practice | 1380事件详情/纠错、1392 board公共读取已合入；1356共享review操作及真实Pi原件效果已有证据。 | 15个页面仍无显式Start入口；领域出口与消费者完成分别核销。practice实际提交、判分DBOS及共享子树继续验收。 |
-| 构建与镜像入口 | `server/start/routes/$.ts`调用legacySpa；frontdoor、package build及Dockerfile仍服务旧web产物。 | 全部实际消费者迁移后统一dev/build/镜像入口，再删旧挂载。保留UI使用的组件、样式按消费者判断去留。 |
+| 五个管理只读页 | PR1615已合入；fc021的96RPC、五页浏览器、88表无写及后续整合证据见[管理页交接](2026-10-08-yuk1358-start-admin-handoff.md)。 | 完整boot与部署；各revision证据不能拼成一次运行验收。 |
+| 配置与科目三个页面 | PR1620已合main10df，复用1389/1390/1391公共操作。18操作、122RPC、35窗口和三页浏览器证据见[父验收](2026-10-09-yuk1358-start-admin-controls-parent.md)。 | canonical自动启动与全SPA退出仍未完成。配置提交成功但刷新失败不得重写；catalog/journal只读首屏与RPC完整分页的证据分开保留。 |
+| W2/W3/W4与practice | 1380事件详情/纠错、1392 board公共读取已合入；1356共享review操作及真实Pi原件效果已有证据。 | 15个页面仍无显式Start入口；领域出口不等于消费者完成。practice实际提交、判分DBOS及共享子树继续验收。 |
+| 构建与镜像入口 | `server/start/routes/$.ts`调用legacySpa；frontdoor、package build及Dockerfile仍服务旧web产物。 | 全部实际消费者迁移后统一dev/build/镜像入口，再删旧挂载。保留UI使用的组件、样式不能按目录名删除。 |
 | 持久任务恢复 | main96077已有prune_job_events、review、conversation、placement四个DBOS声明；1393/1394源码、故障恢复和cron证据已交付。 | 默认phase仍pg-boss；共享host仍按phase挂兼容worker/schedule。最终逐族运行切换、旧义务分类排空、回退和唯一恢复owner仍待验收。 |
 
-[路由收据](evidence/2026-10-09-yuk1359-route-coverage-main6212.json)逐项对应UI_SURFACES的28项：12页面加根跳转，共13项有显式Start路由；15页面仍走旧SPA回落。这是入口覆盖；页面的嵌套消费者迁移逐项核销。旧f80d基线的9/19收据继续保留为历史。
+[路由收据](evidence/2026-10-09-yuk1359-route-coverage-main6212.json)逐项对应UI_SURFACES的28项：12页面加根跳转，共13项有显式Start路由；15页面仍走旧SPA回落。这是入口覆盖，不是完成率，不证明页面的嵌套消费者全部迁移。旧f80d基线的9/19收据继续保留为历史。
 
 15页面为 `/welcome`、`/onboarding/upload`、`/placement`、`/profile`、`/events/$id`、`/record`、`/practice`、`/drafts`、`/questions`、`/questions/$id`、`/knowledge`、`/knowledge/$id`、`/notes`、`/notes/$id`、`/coach`。PR1623事件页尚未合入，不提前计入；handoff页数不包含根跳转，不能直接和这里的13项比较。
 
-[任务声明收据](evidence/2026-10-09-yuk1359-job-declarations-main96077.json)只解析 `jobs.handlers`，排除event handlers。main有57个manifest声明，其中53个pg-boss load入口和4个DBOS声明；manifest schedule22、infra schedule2、memory schedule3，合计声明数仍27。原两个注册文件的direct work调用点由11减为9，但该数不含durable host内部按phase保留的兼容注册，完整旧consumer数以逐族台账为准。旧[6212收据](evidence/2026-10-09-yuk1359-job-declarations-main6212.json)保留，原提取结果本次逐项复现。
+[任务声明收据](evidence/2026-10-09-yuk1359-job-declarations-main96077.json)只解析 `jobs.handlers`，排除event handlers。main有57个manifest声明，其中53个pg-boss load入口和4个DBOS声明；manifest schedule22、infra schedule2、memory schedule3，合计声明数仍27。原两个注册文件的direct work调用点由11减为9，但该数不含durable host内部按phase保留的兼容注册，不能当成完整旧consumer数或退出比例。旧[6212收据](evidence/2026-10-09-yuk1359-job-declarations-main6212.json)保留，原提取结果本次逐项复现。
 
-YUK1394已随PR1624合main96077，exact a880 CI37852269707全绿、merge tree相同。两个清理任务从infra迁至observability manifest，只读profile audit改为04:26。父29项DB、34项进程恢复及隔离删锁反例见[共享锁验收](evidence/2026-10-09-yuk1394-shared-fence-verification.json)，其余证据保持[原revision](2026-10-09-yuk1394-parent-acceptance.md)。0117明确将两族phase初始化为pg-boss；session-orphan-worker仍在pg-boss/draining-pg-boss阶段注册boss.work，仅pg-boss阶段挂旧schedule。因此源码声明已交付，实际旧binary停写、运行phase切换和队列义务归零由运行验收确认。
+YUK1394已随PR1624合main96077，exact a880 CI37852269707全绿、merge tree相同。两个清理任务从infra迁至observability manifest，只读profile audit改为04:26。父29项DB、34项进程恢复及隔离删锁反例见[共享锁验收](evidence/2026-10-09-yuk1394-shared-fence-verification.json)，其余证据保持[原revision](2026-10-09-yuk1394-parent-acceptance.md)。0117明确将两族phase初始化为pg-boss；session-orphan-worker仍在pg-boss/draining-pg-boss阶段注册boss.work，仅pg-boss阶段挂旧schedule。因此源码声明已交付，实际旧binary停写、运行phase切换和队列义务归零并未由本次静态检查证明。
 
-下一判分族沿既有YUK1356继续，包含 `judge_run` 与 `judge_pending_reconcile`；设计已完成并核验，唯一T3实现任务yuk1356-durable-judge-implementation-20261009-v1正在freshmain96077分支实施；尚无交付候选。Start消费者与boot仍归5796。`promote_conversation_idle`的五分钟用户事件时钟及选择后插入竞态仍归1355，待真实DB重现验证。其余任务族仍需独立核消费者、唯一恢复owner及退出条件。
+下一判分族沿既有YUK1356继续，包含 `judge_run` 与 `judge_pending_reconcile`；设计已完成并核验，唯一T3实现任务yuk1356-durable-judge-implementation-20261009-v1正在freshmain96077分支实施；尚无交付候选，不提前计入上述main统计。Start消费者与boot仍归5796。`promote_conversation_idle`的五分钟用户事件时钟及选择后插入竞态仍归1355，尚未真实DB重现，不冒称已验证P1。其余任务族仍需独立核消费者、唯一恢复owner及退出条件。
 
-Linear捕获：路由清点 `01c035d9-4603-484f-b542-ad37a495c50e`，任务清单 `a85667b1-7fc7-4f44-95bf-f43d3f95893a`，后续housekeeping `cb362f85-e98f-4936-b809-de70ed8983fe`。共享audit修复PR1618及各lane证据仍有效，整迁移继续。本次仅更新文档。
+Linear捕获：路由清点 `01c035d9-4603-484f-b542-ad37a495c50e`，任务清单 `a85667b1-7fc7-4f44-95bf-f43d3f95893a`，后续housekeeping `cb362f85-e98f-4936-b809-de70ed8983fe`。共享audit修复PR1618及各lane证据仍有效，但不关闭整迁移。本次仅更新文档，无runtime、provider、队列或数据操作。
 
-DBOS恢复缺口已核到[具体helper与历史证据](2026-10-09-yuk1359-dbos-restore-evidence-gap.md)：全库dump没有排除DBOS，但仓库drill只统计三个旧schema；当前部署所附102表恢复清单没有DBOS表。完整恢复演练仍须覆盖实际DBOS状态、领域receipt和唯一恢复owner，归既有1359/1329。
+DBOS恢复缺口已核到[具体helper与历史证据](2026-10-09-yuk1359-dbos-restore-evidence-gap.md)：全库dump没有排除DBOS，但仓库drill只统计三个旧schema；当前部署所附102表恢复清单没有DBOS表。完整恢复演练仍须覆盖实际DBOS状态、领域receipt和唯一恢复owner，归既有1359/1329，不以旧备份成功核销。
 
 ## 历史调查记录
 
@@ -40,9 +40,9 @@ DBOS恢复缺口已核到[具体helper与历史证据](2026-10-09-yuk1359-dbos-r
 
 [W3清单](2026-10-08-yuk1359-w3-consumers.md)覆盖题库、笔记、知识图谱和agent-notes七条路由；[W4清单](2026-10-08-yuk1359-w4-consumers.md)覆盖coach/profile及跨页CopilotDock。源码基线、父级抽查和后续main31b68eaa的变化边界分别写在清单内，所有运行矩阵仍待执行。
 
-W3不能遗漏HTTP里的learner可见性、edge端点锁/事务/wake、question删除确认顺序、note编辑presence和最后会话flush；W4不能把未知202恢复、已接受turns快照、断流、Stop与revert刷新混成一个重试。KnowledgeDetail主查询现有错误分态限制已记录为迁移验收项。W5八个管理页含设置/admin/config仍须逐消费者核查。
+W3不能遗漏HTTP里的learner可见性、edge端点锁/事务/wake、question删除确认顺序、note编辑presence和最后会话flush；W4不能把未知202恢复、已接受turns快照、断流、Stop与revert刷新混成一个重试。KnowledgeDetail主查询现有错误分态限制已记录为迁移验收项。W5八个管理页含设置/admin/config仍须逐消费者核查，未在本轮标为完成。
 
-YUK1380事件领域PR1607已合入main4a3d797dd，本docs分支正常整合并保留该代码。公共读取/纠错和原HTTP消费者已交付；Start挂载与整页运行验收仍待，见[事件领域证据](2026-10-08-yuk1380-event-domain.md)。1358/1359仍In Progress。本次只增退出证据。
+YUK1380事件领域PR1607已合入main4a3d797dd，本docs分支正常整合并保留该代码。公共读取/纠错和原HTTP消费者已交付；Start挂载与整页运行验收仍待，见[事件领域证据](2026-10-08-yuk1380-event-domain.md)。1358/1359仍In Progress。本次只增退出证据，没有删除旧入口、修改产品或执行runtime。
 
 ## W5清单与路由覆盖复核，2026-10-08
 
@@ -58,16 +58,16 @@ YUK1382捕获runs费用未知值显示零的既有UI缺陷，未混入1381领域
 
 | 原位置 | 问题 | 建议替换或处理 |
 | --- | --- | --- |
-| 3、8 行 | “未开始实施”和纯规划定位已不能说明当前进展 | 标明这是历史准备方案，当前实施以 Linear 和非 UI 优先级为准 |
+| 3、8 行 | “未开始实施”和纯规划定位已不能说明当前进展 | 标明这是历史准备方案，当前实施以 Linear 和非 UI 优先级为准；不把整个原文伪装成当前运行状态 |
 | 23–35 行，§2 | 强制每条新路由同时上线重写 UI，理由也以避免搬运旧 UI 为前提 | 将本节现行决定替换为：“先在 TanStack Start 保留现有页面与交互，迁移其路由、数据和业务接线；视觉重写另行恢复。每波独立验证业务与恢复行为。”旧决定移入历史决策记录 |
 | 39 行 | 管理页面必须套新设计系统 | 暂缓设计系统变更；本轮管理页只迁移承载与数据接线，保持行为 |
-| 45–48 行，§3 | SPA 回落和开关可能被误读为最终架构；删除被绑定“日用一周” | 明确回落仅为1352过渡方案；每条路径登记替代者、消费者、验证和删除任务。当前只在Agent测试环境验收，不能把owner尚未要求的日用部署当作迁移前置条件；保留必要的观察和恢复证据与已承诺门禁 |
+| 45–48 行，§3 | SPA 回落和开关可能被误读为最终架构；删除被绑定“日用一周” | 明确回落仅为1352过渡方案；每条路径登记替代者、消费者、验证和删除任务。当前只在Agent测试环境验收，不能把owner尚未要求的日用部署当作迁移前置条件；保留必要的观察和恢复证据，不自动缩短已承诺门禁 |
 | 49–51 行 | “生产”未区分重置后的测试用途，容易误导恢复旧私人库 | 当前目标明确为Agent测试环境。保留停写备份、隔离恢复验证、部署锁和恢复顺序；禁止再次清库或自动恢复私人数据 |
-| 75–76、78–79 行，§5 | P2/P3/P4/P6仍把UI票列作迁移并行或退出依赖 | UI票保持延期；1356非UI退出条件独立于1357视觉交付；1358按路由/任务族列功能对等、恢复与旧入口删除证据，必要接线与视觉重写分开核销 |
+| 75–76、78–79 行，§5 | P2/P3/P4/P6仍把UI票列作迁移并行或退出依赖 | UI票保持延期；1356非UI退出条件独立于1357视觉交付；1358按路由/任务族列功能对等、恢复与旧入口删除证据，必要接线不视为视觉重写 |
 | 80 行，P7 | “旧 primitives”直接进入删除目标，可能删除现有页面仍用的组件 | 将其改为“仅删除已无消费者的旧 primitives；仍服务保留页面的组件继续保留”。旧SPA启动/构建/回落与业务组件是否存活分别裁决 |
-| 87–101 行，§6 | “不再空谈，用loft定稿”等措辞像当前实施指令 | 标记整节为后续UI恢复时的预备输入；保留Opus5.5限制 |
+| 87–101 行，§6 | “不再空谈，用loft定稿”等措辞像当前实施指令 | 标记整节为后续UI恢复时的预备输入，本轮不执行、不作为非UI迁移阻塞；保留Opus5.5限制 |
 | 110–114 行，§7 | API保留绑定旧UI下线，混淆外观重写与网络调用方迁移 | API退役以真实页面/工具/外部消费者已切换为条件，保留必要契约并同步Postman；1357视觉工作延期，不阻止1356业务操作统一 |
-| 147–148 行，§11 | epic仍在NEXT，UI loft可立即并行 | 替换为实际owner分工：1352/1355/1356主线实施、1364本线程收口、1359本线程调查；UI暂缓。阶段完成需引用提交与验收 |
+| 147–148 行，§11 | epic仍在NEXT，UI loft可立即并行 | 替换为实际owner分工：1352/1355/1356主线实施、1364本线程收口、1359本线程调查；UI暂缓。阶段完成需引用提交与验收，不能仅改状态措辞 |
 | 156、160行，§12 | 一周后统一删旧代码、P7删globals.css可能绕过消费者检查 | 对每个旧入口定义退出证据；仍被保留UI消费的样式不因技术栈迁移直接删除。视觉债留到UI恢复，不把它当成旧运行路径保留的理由 |
 
 ADR-0066 的业务边界仍适用：页面命令、Pi工具和后台任务共用业务操作（34–49行）；一个义务仅由一个持久执行机制恢复（65–69行）。其105–106行是决策当时的运行状态和交付边界，后续应新增实施状态链接，不把历史陈述直接用作今天的运行证明。
@@ -78,34 +78,34 @@ ADR-0066 的业务边界仍适用：页面命令、Pi工具和后台任务共用
 
 | 路径/符号与基线证据 | 实际消费者和当前职责 | 替代与退出条件 | 所属任务 |
 | --- | --- | --- | --- |
-| `web/src/main.tsx:3–25`、`web/src/router.tsx`；`server/index.ts:66–74` | SPA挂载TokenGate、QueryClient、Router；生产按RW_STATIC_DIR提供web/dist并回落index.html | 现有页面逐一由Start承载，保留鉴权、草稿、深链与导航；全部消费者迁移和回退验收后删除旧挂载/静态回落，双路由为过渡态 | 1352前门、1358路由、1359清理 |
+| `web/src/main.tsx:3–25`、`web/src/router.tsx`；`server/index.ts:66–74` | SPA挂载TokenGate、QueryClient、Router；生产按RW_STATIC_DIR提供web/dist并回落index.html | 现有页面逐一由Start承载，保留鉴权、草稿、深链与导航；全部消费者迁移和回退验收后删除旧挂载/静态回落，不能永久双路由 | 1352前门、1358路由、1359清理 |
 | `package.json:118–122`、`Dockerfile:19,95`、`web/vite.config.ts` | rw:web构建、rw:api开发入口、镜像静态产物和RW_STATIC_DIR仍服务当前入口 | 同步切换build/dev/镜像COPY/运行入口及测试，不只删除web目录。生产容器与开发模式都需证明仅一个入口 | 1352、1359 |
-| `server/app.ts:114–228`、capability manifests | Hono承担API token、epoch、manifest路由装配和404；practice仍注册legacy-review-sessions、legacy-practice、legacy-paper-detail | 先迁移实际调用方及共享业务操作；Hono是保留HTTP组合根还是迁到Start routes，须P7 ADR裁决 | 1352、1356、1358、1359 |
+| `server/app.ts:114–228`、capability manifests | Hono承担API token、epoch、manifest路由装配和404；practice仍注册legacy-review-sessions、legacy-practice、legacy-paper-detail | 先迁移实际调用方及共享业务操作；Hono是保留HTTP组合根还是迁到Start routes，须P7 ADR裁决，不能当作已决定删除 | 1352、1356、1358、1359 |
 | `src/ui/lib/api`；CopilotDock.tsx:38、PfPaper.tsx:52，以及notes/onboarding API模块 | 现有页面真实依赖HTTP客户端，不是无用兼容层 | 按消费者迁移收缩；server function只替换网络入口，不复制业务规则。仍使用HTTP契约的消费者需要继续支持 | 1352、1358、1359 |
 | `scripts/worker.ts`、`src/server/boss/start-worker.ts:108–122` | app开发模式与独立worker共用注册流程；先注册capability队列，再发verify启动恢复，顺序是活性契约 | DBOS接手所有义务后再删pg-boss启动/恢复路径；同一任务不可被双恢复。开发模式RW_WORKER也需迁移 | 1355、1359 |
-| `src/server/boss/handlers.ts:178–224` | verify_dispatch_recover读取持久intent，只重投quiz_verify/source_verify；基础cron使用INFRA_HOUSEKEEPING_SCHEDULES | 保留intent、目标队列/工作流准备顺序和只恢复验证的边界；验收切换交错与真实cron，验收以切换交错与真实cron为准 | 1355及对应业务族、1359 |
+| `src/server/boss/handlers.ts:178–224` | verify_dispatch_recover读取持久intent，只重投quiz_verify/source_verify；基础cron使用INFRA_HOUSEKEEPING_SCHEDULES | 保留intent、目标队列/工作流准备顺序和只恢复验证的边界；验收切换交错与真实cron，不能硬编码doubleSchedule=false作证 | 1355及对应业务族、1359 |
 | `src/capabilities/practice/manifest.ts:961–974` | judge_pending_reconcile扫描已录作答但判词未落的义务，经限流入队judge_run | 新judge工作流唯一负责恢复后停用旧sweeper；已有pending、未知外部结果、重复回执、取消和版本冲突逐项裁决 | 1355、1356、1359 |
-| `src/capabilities/copilot/manifest.ts:227–241` | copilot_run_reconcile按两分钟节奏修复持久outcome，并只处理队列证实的执行前丢失/过期歧义 | 迁移时保留bounded liveness与unknown判断；旧队列查不到时按 unknown 处理，由 bounded liveness 裁决 | 1355、1358、1359 |
+| `src/capabilities/copilot/manifest.ts:227–241` | copilot_run_reconcile按两分钟节奏修复持久outcome，并只处理队列证实的执行前丢失/过期歧义 | 迁移时保留bounded liveness与unknown判断；不能将旧队列查不到等同未执行而盲重试 | 1355、1358、1359 |
 | `src/server/memory/memory-reconcile-handoff.ts:28` | memory_reconcile及其持久交接义务仍存活 | 保留确定job身份、outbox/domain恢复语义，接手唯一恢复责任后方可删除旧队列机制 | 1355、1358、1359 |
-| `package.json:162`、`docker-compose.yml:81–84` | pg-boss仍是生产依赖；worker有30秒优雅排空要求 | 所有生产者、handler、cron、reconcile和诊断读面迁移后移除依赖；schema退役要有备份/恢复演练与义务排空，验证以源码和运行为准 | 1355、1359 |
-| `src/server/ai/execution-adapter.ts:177–183`、`src/server/ai/runner.ts` | ExecutionAdapter仍创建PiAgentAdapter并被runner消费 | Pi是保留方向；只在旧消息形状全部消费者完成迁移且行为验证后收缩适配，收缩以消费者迁移完成与行为验证为条件 | 业务迁移责任方、1359最终核对 |
+| `package.json:162`、`docker-compose.yml:81–84` | pg-boss仍是生产依赖；worker有30秒优雅排空要求 | 所有生产者、handler、cron、reconcile和诊断读面迁移后移除依赖；schema退役要有备份/恢复演练与义务排空，不因测试库曾重置而跳过源码和运行验证 | 1355、1359 |
+| `src/server/ai/execution-adapter.ts:177–183`、`src/server/ai/runner.ts` | ExecutionAdapter仍创建PiAgentAdapter并被runner消费 | Pi是保留方向；只在旧消息形状全部消费者完成迁移且行为验证后收缩适配，不能按adapter文件名直接删 | 业务迁移责任方、1359最终核对 |
 
-README中的注册任务数量只是基线文档陈述，全量注册器 census 与完整生产者/cron/DLQ/恢复台账继续由1355维护，本表突出不能在清理中丢失的职责。
+README中的注册任务数量只是基线文档陈述，本调查未执行全量注册器 census，不能据此证明全部任务族已覆盖。完整生产者/cron/DLQ/恢复台账继续由1355维护，本表突出不能在清理中丢失的职责。
 
 ### 历史基线26f101581中尚未合入的候选路径
 
-Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts` 的 `buildLegacySpa`、`FrontdoorContext.legacySpa` 和双router清理归属。父核对 `git ls-tree -r 26f101581 server/`：该精确基线尚无这些文件。它们是候选实施的退出目标。
+Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts` 的 `buildLegacySpa`、`FrontdoorContext.legacySpa` 和双router清理归属。父核对 `git ls-tree -r 26f101581 server/`：该精确基线尚无这些文件。它们是候选实施的退出目标，不能据此把当前main描述成已运行Start；本轮未读取其活跃工作树。
 
 ### 证据边界与需纠正的历史叙述
 
-只读子任务提供消费者线索；父直接核对SPA挂载、静态回落、build入口、worker注册顺序、verify恢复、judge/Copilot sweeper和Pi适配实例。已修正子任务中的 `web/router.tsx` 路径笔误，应为 `web/src/router.tsx`。子任务沿用旧ADR称Pi步骤恢复“未验证”，该说法过时：基线已含PR1590的隔离P0 gate；但P0只覆盖隔离gate；真实业务族迁移与provider窗口验收另行进行。
+只读子任务提供消费者线索；父直接核对SPA挂载、静态回落、build入口、worker注册顺序、verify恢复、judge/Copilot sweeper和Pi适配实例。已修正子任务中的 `web/router.tsx` 路径笔误，应为 `web/src/router.tsx`。子任务沿用旧ADR称Pi步骤恢复“未验证”，该说法过时：基线已含PR1590的隔离P0 gate；但P0不是所有真实业务族迁移和provider窗口验收，不能扩大结论。
 
-全部可执行退出工作已归入现有1352/1355/1356/1358/1359。
+本轮没有执行服务、测试、删除代码或依赖修改。全部可执行退出工作已归入现有1352/1355/1356/1358/1359；未发现需另开票的已证实新缺陷，不为清单条目重复建票。
 
 
 ## 注册面静态基数补充
 
-基线仍为 `26f1015810cc3d902f6229b615d9630f05982eef`。从 `git show` 的 TypeScript AST 读取9个顶层 capability manifest 的 `jobs.handlers`，得到53个有 `load` 的 handler，其中18个显式声明 `schedule`。这是静态声明数；调度策略逐族核验。
+基线仍为 `26f1015810cc3d902f6229b615d9630f05982eef`。从 `git show` 的 TypeScript AST 读取9个顶层 capability manifest 的 `jobs.handlers`，得到53个有 `load` 的 handler，其中18个显式声明 `schedule`。这不是运行中的队列数、AI任务数或完整恢复义务数；名称含 nightly 不代表 manifest 中有 schedule，调度策略还需逐族核验。
 
 | capability | handler 数 |
 | --- | ---: |
@@ -118,9 +118,9 @@ Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts`
 | practice | 24 |
 | onboarding、shell | 0 |
 
-`COPILOT_NUDGE_EVALUATE_QUEUE` 的值由 `src/server/boss/queue-names.ts` 定义为 `copilot_nudge_evaluate`。上述53项不包含6个基础设施 housekeeping schedule，也不能覆盖 manifest 之外的 memory handoff/recovery。README 中“52 registered / 51 static / 1 compatibility”是 AI task census，与本队列注册数口径不同。
+`COPILOT_NUDGE_EVALUATE_QUEUE` 的值由 `src/server/boss/queue-names.ts` 定义为 `copilot_nudge_evaluate`。上述53项不包含6个基础设施 housekeeping schedule，也不能覆盖 manifest 之外的 memory handoff/recovery。README 中“52 registered / 51 static / 1 compatibility”是 AI task census，不能拿来与此队列注册数比较。
 
-同基线 `UI_SURFACES` 有28项（27个 page、1个根路径 redirect），包含 `/admin/config` 设置页。页面存在的静态证据只证明存在；导航可达与浏览器行为另行验收。迁移台账应逐页核对保留行为及旧入口退出条件。完整静态提取保存在 `/tmp/yuk1359-static-registries.json`；这些数量仅用于发现漏项。
+同基线 `UI_SURFACES` 有28项（27个 page、1个根路径 redirect），包含 `/admin/config` 设置页。页面存在的静态证据不等于导航可达或浏览器行为已验收。迁移台账应逐页核对保留行为及旧入口退出条件。完整静态提取保存在 `/tmp/yuk1359-static-registries.json`；这些数量仅用于发现漏项，不作为整个迁移完成的证明。
 
 ## 非 UI 波次覆盖补充
 
@@ -162,13 +162,13 @@ Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts`
 | 必须保留的行为 | 领域/API证据 | 新入口浏览器及退出证据 |
 | --- | --- | --- |
 | 错题事实读取与只读性 | 真实POST失败记录后GET，核对attempt/record/question身份；GET前后持久表无写入；无provider调用 | Start直达、刷新与录入后跳转均显示同一记录 |
-| 历史题面与参考答案 | 记录后正常编辑题目仍返回当时有效snapshot；父题、旧无snapshot、损坏/null分别验证；历史题面绑定当时有效 snapshot | 卡片呈现真实历史或诚实缺失，不静默丢掉旧记录 |
+| 历史题面与参考答案 | 记录后正常编辑题目仍返回当时有效snapshot；父题、旧无snapshot、损坏/null分别验证；不能把当前题面冒充历史 | 卡片呈现真实历史或诚实缺失，不静默丢掉旧记录 |
 | 答题图片 | POST保存image refs后GET投影保留顺序与身份，缺席/空值及异常引用按契约处理 | 原AttachmentStrip与Lightbox可读取同一附件，关闭/重新打开正常 |
 | 科目与知识关联 | builtin alias/custom/unknown科目及首knowledge派生与现行契约一致 | 科目、状态、归因三筛选组合及清除正常；知识名缺失保留短ID |
-| 纠错及归因优先级 | 现有GET排除retracted attempts、跟随judge替代、user cause优先；“已纠正”标签只反映实际返回的 correction state | 对实际返回的correction state使用原标签；user/agent/pending及misc标签不变 |
+| 纠错及归因优先级 | 现有GET排除retracted attempts、跟随judge替代、user cause优先；不能把页面有“已纠正”标签当成所有撤回记录均须返回 | 对实际返回的correction state使用原标签；user/agent/pending及misc标签不变 |
 | 查询边界和截断 | 默认50、最大200、since/question_id/subject、非法输入400、等时间cursor稳定 | 页面仍请求200并保留200+提示；本轮不新增分页视觉 |
 | 加载与时间行为 | typed客户端保留HTTP错误而非转换成空列表 | loading/error/retry/empty分别可达；pending跨30秒阈值在原15秒tick内更新 |
-| 导航与权限 | 真实装配入口无内部token被拒绝，合法请求成功；鉴权经真实装配入口验证 | /record、/practice、/events/$id、/knowledge/$id深链与返回正常；鉴权续接和刷新通过 |
+| 导航与权限 | 真实装配入口无内部token被拒绝，合法请求成功；直接handler测试不代替鉴权 | /record、/practice、/events/$id、/knowledge/$id深链与返回正常；鉴权续接和刷新通过 |
 | 单一业务读取与旧入口退出 | GET和主线Start适配调用同一typed operation；浏览器依赖图无server-only泄漏 | 主线实际挂载证据、旧SPA消费者替换diff、构建与镜像入口核对后才核销旧路径 |
 
 现有UI的“已纠正”分支与API的retracted排除是不同证据层，验收不能只凭页面标签推断领域语义。typed领域层交回后，本线程核源码与隔离DB，主线负责组合根挂载；最终浏览器和旧路径退出仍归1358/1359共同交付。设置面板 `/admin/config` 保持在W5范围，本lane不修改或删除。
@@ -176,18 +176,18 @@ Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts`
 
 ### PR1598/1599已验证范围与剩余退出条件
 
-2026-10-07 19:02:53Z，PR1598合入 `c7c2482ca`。CI head `291f1c5b3` 与合并tree一致，CI Gate `37669157822`成功，独立初审无P0/P1。父在固定代码 `d23140344` 独立跑过59项DB测试，日志 `/tmp/yuk1376-parent-db.log`；后续只改文档。下表已纳入PR1599及20:26Z隔离验收结果；完整证据见文末补充。
+2026-10-07 19:02:53Z，PR1598合入 `c7c2482ca`。CI head `291f1c5b3` 与合并tree一致，CI Gate `37669157822`成功，独立初审无P0/P1。父在固定代码 `d23140344` 独立跑过59项DB测试，日志 `/tmp/yuk1376-parent-db.log`；后续只改文档。下表已纳入PR1599及20:26Z隔离验收结果；完整证据见文末补充，不扩大到未运行的场景。
 
 | 层与行为 | 当前证据 | 尚未完成 |
 | --- | --- | --- |
 | 领域/API读取 | GET和公开 `readMistakes` 共用校验与投影；科目、参数、cursor、撤回、替代judge与归因优先级有scoped DB覆盖 | Start实际挂载尚未交回 |
 | Legacy历史题面和作答图片 | 冻结父子题、正常编辑、缺席/损坏快照、图片ID保留及旧cursor页回归通过 | 图片实际字节及浏览器展示尚未验收 |
 | Native错题 | PR1599冻结revision/issuance/submission读取已合入；102 DB及隔离HTTP四行证明编辑后保持冻结题面、本submission附件与联合范围 | 整组图片真实模型评分、完整媒体与可信参考答案揭示仍开放 |
-| 浏览器客户端契约 | scoped unit通过；原SPA真实登录、刷新四行、语文空筛选、八缩略图及Lightbox打开和Escape关闭已验收 | 新Start入口尚未可验收；loading/retry、组合筛选、计时、深链与关闭后重开 |
-| 附件读取 | 隔离S3实际上传/读取/删除、原字节/SHA/MIME/ETag/304、404与401通过；浏览器Blob图片实际解码 | 独立图片角色矩阵与新Start入口仍需验收；完整媒体支持另见附件验收 |
+| 浏览器客户端契约 | scoped unit通过；原SPA真实登录、刷新四行、语文空筛选、八缩略图及Lightbox打开和Escape关闭已验收 | 新Start入口尚未可验收；loading/retry、组合筛选、计时、深链与关闭后重开未全部验证 |
+| 附件读取 | 隔离S3实际上传/读取/删除、原字节/SHA/MIME/ETag/304、404与401通过；浏览器Blob图片实际解码 | 独立图片角色矩阵与新Start入口仍需验收；本轮三个图片复用不能证明完整媒体支持 |
 | 旧SPA退出 | 无退出完成证据 | 页面仍由旧SPA承载；主线需提供Start挂载及旧消费者/构建/镜像入口替换证据 |
 
-这些剩余项保留在1376及1358/1359，完整路由迁移继续。设置面板仍属于W5，未被删除或从清单中移除。本记录不增加新功能票。
+这些剩余项保留在1376及1358/1359，未因PR合并关闭完整路由迁移。设置面板仍属于W5，未被删除或从清单中移除。本记录不增加新功能票，也不代表已部署。
 
 
 ## 1376运行证据补充，2026-10-07 20:26Z
@@ -197,9 +197,9 @@ PR1599已合入7bc216509，tree与CI head6ab98ed8c一致；CI Gate37677610975成
 
 ## W1消费者补全与PR1600合入
 
-PR1600已于2026-10-07 21:18:58Z合入 `7100dfae4`，合并tree `743ee4d80617dc9b34c7533d724e052af5fd50c4` 与准确head `c40a18621` 一致；CI Gate `37686417034` 成功，独立初审P0/P1 NONE，无未裁决review threads，完整17分钟窗满足。Start挂载任务归主线，实际新入口行为及旧SPA退出待验收。
+PR1600已于2026-10-07 21:18:58Z合入 `7100dfae4`，合并tree `743ee4d80617dc9b34c7533d724e052af5fd50c4` 与准确head `c40a18621` 一致；CI Gate `37686417034` 成功，独立初审P0/P1 NONE，无未裁决review threads，完整17分钟窗满足。未部署。Start挂载任务归主线，实际新入口行为及旧SPA退出尚未完成。
 
-[W1详细消费者清单](2026-10-08-yuk1359-w1-consumers.md)固定基线7bc216509，覆盖Today子组件与Inbox共享命令。新增确认ProfileBand的目标画像读取和LearningIntentComposer的待审提议提交；不新增恢复owner。后续新入口按[Start验收矩阵](2026-10-08-yuk1376-start-acceptance.md)取得实际证据，新入口按Start验收矩阵取得实际证据。既有1358/1359/1376覆盖剩余工作，本轮无新独立缺陷。
+[W1详细消费者清单](2026-10-08-yuk1359-w1-consumers.md)固定基线7bc216509，覆盖Today子组件与Inbox共享命令。新增确认ProfileBand的目标画像读取和LearningIntentComposer的待审提议提交；不新增恢复owner。后续新入口按[Start验收矩阵](2026-10-08-yuk1376-start-acceptance.md)取得实际证据，不能借用旧SPA的通过结论。既有1358/1359/1376覆盖剩余工作，本轮无新独立缺陷，不重复建票。
 
 
 ## Main7472 route entry census

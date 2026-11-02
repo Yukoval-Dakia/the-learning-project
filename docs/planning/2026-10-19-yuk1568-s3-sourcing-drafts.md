@@ -101,14 +101,16 @@ conversion_issues → 提交返回 withheld（不铸 revision），草稿保留�
   rubric、reference、judge 意图、材料与 structured 内容由发布归一的
   完整 digest 证明归属；structured 归一可能优先读叶答案/选项，所以
   额外检查 flat verifier 实际读取的 reference 字节与 choices 也在冻结
-  材料/槽中，旧 flat 列单独校验。figure digest 仅复用冻结值重建归一输入。solver 图片 id 从冻结 figure 材料取得，
+  材料/槽中，不能借叶内容掩盖被忽略的旧 flat 列。figure digest 仅复用冻结值重建归一输入，
+  不假称重新查询或验证资产。solver 图片 id 从冻结 figure 材料取得，
   未封存的行级 bbox/placement 不作 figures_hint。
   不满足证明时，核验输入从**该 revision 的投影**构造（`revisionToDraftDocument` →
   `draftCanonicalIdentity` → `deriveKind`，与共享 submit 写行同一组
   原语，经 seam→tools 既有边再出口，零新增 capability→questions 债）；
   显式清空旧行 `rubric_json`、`judge_kind_override`、`structured`、
   `image_refs`、`figures`。例如 key A→B 的 withheld 编辑即使行 rubric
-  仍是 A，也只把冻结 B 送入真实 solve comparison；冻结选择键优先于旧私有 rubric/解析。行只供来源级 provenance
+  仍是 A，也只把冻结 B 送入真实 solve comparison；旧私有 rubric/解析
+  不得优先于冻结选择键。行只供来源级 provenance
   （web_sourced/source_ref/metadata）与 plumbing（id/version/draft_status）。
   所有有 revision 的分支均不把未封存的 metadata 答案/解析提示送给
   solver；来源证据和 KC 校验仍用行账本。无 revision 的真 legacy 组照旧行输入。
@@ -161,7 +163,8 @@ typed 路径不再用「stored 投影 vs stored 投影」的自洽假戳：
 只在行内投影与该向量真实输入逐字段一致时才复用（typed 投影常不等于
 flat 文本——select 的 reference 投影成字母键）。写入时再以相同内容
 CAS（`canonical_content_hash IS NOT DISTINCT FROM`）防内容身份变化。
-canonical hash 会归一 whitespace/NFKC/image URL，**只证明 canonical 身份**。同 canonical 身份的
+canonical hash 会归一 whitespace/NFKC/image URL，**不是 exact embed-input
+hash，不能证明任意原始字节变化都使 CAS 失配**。同 canonical 身份的
 原文漂移即使写入旧输入的 exact embed 戳，后续 vector validity 仍以
 `hash_mismatch` 拒绝它。不一致保持未嵌入（abstain）——交既有 nightly
 `embed_backfill` 按行内文本重算；本修复不执行 embed/backfill 付费调用。
@@ -177,8 +180,9 @@ intent。与旧 flat 链的即时核验等价。
 ### flat writer 守卫
 
 `insertSourcedDraft` 加 `assertNoDraftDeclarations` fail-closed：携带
-parts 的候选撞进旧 writer 直接抛错。jyeoo_fetch 及未声明
-sourcing_web 候选照旧全走旧链——**旧 writer 只服务无声明路径**。
+parts 的候选撞进旧 writer 直接抛错（不静默吞声明）。jyeoo_fetch 及未声明
+sourcing_web 候选照旧全走旧链——**旧 writer 未为新声明扩展**，只保旧无
+声明路径。
 
 ## 保留 / 删除清单
 
@@ -187,9 +191,9 @@ sourcing_web 候选照旧全走旧链——**旧 writer 只服务无声明路径
 | KC 活体校验 / 外源 host 校验 / exact hash merge / 一页一题 URL claim（含 raced release）/ n-gram near-dup / 向量近重 hold / staged 资产 cleanup / demand-attribution | 全部原序保留（判重先于分流执行） |
 | `web_sourced` provenance（url/title/fetched_at/whitelist_match/extraction_hash/extract）、`difficulty_evidence`、`supply_trace`（折叠进 metadata + intent）、`created_by`/`difficulty`、`canonical_content_hash`、`attribution_state`、route meta、`prompt_image_refs` | typed 路径经 `sourced` 注入同事务落行 |
 | request claim/replay（外层 requestId + 派生 `:save`/`:submit`）、availability、draft_status='draft'、durable verify intent + 即时 dispatch、canary `experimental:submit_question` 事件（+draft_block_id） | 保留 |
-| `judge_kind_override` / `rubric_json` / `structured` 行投影 / `kind` 标签 / `image_refs`/`figures`/`staged_asset_ids` | 不注入：typed 契约是权威（judge_kind_override/rubric_json 单值无法如实描述多 unit；structured 列改由 `draftDocumentToStructuredQuestion` 投影；kind 由 `deriveKind`）。声明+图像资产同现显式 `invalid_request`（本片不承载资产绑定） |
+| `judge_kind_override` / `rubric_json` / `structured` 行投影 / `kind` 标签 / `image_refs`/`figures`/`staged_asset_ids` | 不注入：typed 契约是权威（judge_kind_override/rubric_json 单值无法如实描述多 unit；structured 列改由 `draftDocumentToStructuredQuestion` 投影；kind 由 `deriveKind`）。声明+图像资产同现显式 `invalid_request`（本片不承载资产绑定，不静默降级） |
 | `insertSourcedDraft` + `publishQuestionGroupFromRow` 对已声明候选的 flat insert+row publish | 删除（该分支不再存在）；旧 writer 仅保留给未声明 caller + fail-closed 守卫 |
-| embed 向量戳 | R1 F4 修正：仅当行内投影与向量真实输入（flat questionText）逐字段一致才复用戳，写入 canonical 内容身份 CAS（非 exact 字节 CAS）；不一致 abstain 交既有 nightly backfill |
+| embed 向量戳 | R1 F4 修正：仅当行内投影与向量真实输入（flat questionText）逐字段一致才复用戳，写入 canonical 内容身份 CAS（非 exact 字节 CAS）；不一致 abstain 交既有 nightly backfill，本修复不运行付费调用 |
 
 ## 事务与重放（如实）
 
@@ -238,9 +242,9 @@ sourcing_web 候选照旧全走旧链——**旧 writer 只服务无声明路径
   `intervention-diagnostics`/`probe-lifecycle`/`quiz_verify` 其余 28 调用
   点处置：后续 slice，父协调。
 - declared + 图像资产（staged/figures/structured/image_refs）的 typed
-  承载：本片显式拒绝，后续按需扩。
+  承载：本片显式拒绝，后续按需扩（不许静默降级）。
 - shared submit 的 source-URL/跨 KC 向量去重泛化（YUK-1569）：本片只保
-  本 candidate 现有 guard；1569 全部入口另行处理。
+  本 candidate 现有 guard，未扩为修 1569 全部入口。
 - 存量 40 题 / 七题验收 / 存量重新发布（YUK-1573 冻结）：第 4 片独立方案。
 
 ## 验证（本机实际执行——逐命令如实）
@@ -268,7 +272,10 @@ canonical 把坏 seal 算成一致。不改库存、receipt、digest 算法或�
 `pnpm audit:question-writers` 均 **exit 0**；各完整 `<command>.log` 与
 实际 `<command>.exit` 均在上面独立目录。`git diff --check` exit 0。
 `source-change.patch` / `source.sha256` 封存检查的同一源码，检查后未改。
-只改 `source_verify.ts` 与本文；父继续负责定向验收和 Linear/总看板。
+只改 `source_verify.ts` 与本文；不新增模块、
+review、测试/断言/合成输入或临时函数脚本。DB/容器/provider/HTTP业务/
+runtime/浏览器/运营锁/stock/CI 查询均 **NOT_RUN**，不 merge/deploy。
+没有本范围以外的新 follow-up；父继续负责定向验收和 Linear/总看板。
 
 ### 父定向核验后更正（基线 `51967a6ee`）
 
@@ -296,11 +303,12 @@ canonical 把坏 seal 算成一致。不改库存、receipt、digest 算法或�
   `seal.canonical`，`:989` 原样写入 revision.integrity_digest。本修复
   也对同快照行归一结果调用这一 `publishedContractSeal(...).canonical`。
   其实现 `assessment-normalization.ts:1023–1048` 对同四层/可选展示
-  做同 schema parse + stable key JSON + SHA256。
-  旧的 `contractIntegrityDigest` 仅是 normalizer 提交时兼容 seal，与现役 canonical 库存口径不同。图片 digest 仍取该冻结版资产输入。
+  做同 schema parse + stable key JSON + SHA256；未另写 digest 算法。
+  旧的 `contractIntegrityDigest` 仅是 normalizer 提交时兼容 seal，不能
+  直接与现役 canonical 库存比较。图片 digest 仍取该冻结版资产输入。
 - **旧 rubric A / 新 key B**：canonical 封存覆盖 scoring_basis 的真实键，
-  从旧行重建的 A 与冻结 B 分开；转冻结投影后 rubric/override 仍明确置空。
-  新标准 presentation 放行保持冻结优先；工作行按既有流程改。
+  从旧行重建的 A 不等于冻结 B；转冻结投影后 rubric/override 仍明确置空。
+  新标准 presentation 放行不恢复旧 rubric 优先权，不提前修改工作行。
 
 本次全量日志独立保存（上一记录原样保留）：
 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-yuk1568-s3-20261019/r2-fix-codex-logs/presentation-canonical-YpZK0h/`。
@@ -321,13 +329,15 @@ audit 的最终退出码未取回，不计作最终通过（原日志保留）�
 | `pnpm audit:question-writers` | 0 / `audit-question-writers.log`（中断前已取得退出码） |
 | `git diff --check` | 0 |
 
-`source-change.patch` / `source.sha256` 封存同一源码；中断后未再修改产品代码。保持同 PR draft，
+`source-change.patch` / `source.sha256` 封存同一源码；中断后未再修改产品代码。
+测试/断言/临时合成脚本（包括仅打印）、DB/容器/provider/runtime/HTTP业务/
+浏览器/运营锁/stock 均 **NOT_RUN**。未新开 review/子代理；保持同 PR draft，
 父继续定向核验与总看板/Linear 收口。
 
 ### R2 后首次实现的历史检查（基线 `93344bddc`，结果为 `51967a6ee`）
 
 父随后确认本实现仍有上述标准展示误 hold 与 seal 算法差异，故以下
-当前实现及证据以上节更正为准。
+检查通过不构成功能完成；当前实现及证据以上节更正为准。
 
 本轮只改 `source_verify.ts` 与本文；没有新投影模块，没有改
 URL/shared submit/embed、owner override、双 CAS、row version 或 C1。
@@ -353,7 +363,11 @@ URL/shared submit/embed、owner override、双 CAS、row version 或 C1。
 `typecheck-final.log` 与 `build.log` 均 exit 0；最后一次材料闸收紧后再跑
 sealed 三检查，以其结果为最终证据。源码封存在 `source-change.patch` /
 `source.sha256`。没有新的可执行 follow-up 超出这两项父已确认问题；
-Linear/总看板与最终验收继续由父线程统一维护。
+Linear/总看板与最终验收继续由父线程统一维护，本 writer 不扩 ticket 范围。
+
+没有编写或运行任何测试、断言、临时测试脚本、合成输入或 inline eval。
+DB/容器/provider/HTTP 业务/浏览器/运营锁/stock/实际 sourcing 与 grounding
+均 **NOT_RUN**；没有 merge/deploy，也不声称运行验收。
 
 ### R1 历史记录
 
@@ -383,5 +397,19 @@ R1 修复轮（两轮 fix commit：`fc6d15804` F1/F3/F4 + 本 commit F2 真收�
   成立；R1 修复轮改动后以本 HEAD 的重跑证据（上表）为准。
 - **超范围记录（不算验收）**：R1 前作者曾以 `tsx -e` 内联调用
   `draftDocumentToContract` / `revisionToDraftDocument` /
-  `QuestionDraftDocument.safeParse` 观察合成 doc 的声明往返。父已判定该次
-  演练超出 brief 允许的「typecheck/lint/build/只读查询」范围，仅保留事实记录。
+  `QuestionDraftDocument.safeParse` 观察合成 doc 的声明往返——父已判定该
+  执行超出 brief 允许的「typecheck/lint/build/只读查询」范围；此处仅保留
+  事实记录（观测输出存在会话 transcript，无落盘文件、无断言、无 DB），
+  不作为任何验证证据主张。修复轮遵守禁令，未再做任何此类演练。
+
+## NOT_RUN（未验证范围，如实）
+
+- **runtime**：未跑 sourcing task / web-candidates / submit_question 真链
+  路；producer→draft→revision 为源码路径推演。
+- **DB**：未建库、未跑任何 DB 测试（owner 禁令）；事务/CAS/回执语义为
+  源码推演非运行证据；声明 revision 的 hold/promote/suspend typed 更新未
+  在真库跑过。
+- **provider**：未调 LLM/embed/exa/jyeoo；向量近重/embedding 逻辑未实测。
+- **browser/UI**：无 UI 改动。
+- **七题验收**：存量 K1 七题不在本片范围（第 4 片）；未做 acceptance。
+- **quiz_gen/ingestion 等剩余 consumer**：未迁移（见上节）。

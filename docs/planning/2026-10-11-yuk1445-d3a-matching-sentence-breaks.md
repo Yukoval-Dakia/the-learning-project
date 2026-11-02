@@ -53,7 +53,7 @@
 槽的内部字缝）、`key_position_duplicated`、`key_rule_conflicts_exact_set`
 （`max_breaks < 接受集合大小` —— 精确集合不得被自家规则归零）、`key_pairing_violation`。
 `serving-admission` 对确定性比较器单元照常放行（结构校验已证明单槽可判）；
-model/human 执行器照旧 withhold。
+model/human 执行器照旧 withhold，不冒充准入。
 
 **已知后续（另行 lane，本切片不扩判分记录）**：无规则 partial 目前以
 `needs_review` pending + detail 文本承载对数；typed 承载（`ScoredUnitResult` 加
@@ -86,10 +86,10 @@ compile-forced 消费面（各一 case）：`coverage.ts`（能力矩阵行 + ki
 - `pnpm gen:api-client` 两次运行 sha256 相同（`33798fde…4bd6`，幂等）。
 - `pnpm audit:api-client` 在未提交工作树按定义失败（生成物相对 HEAD 有 diff）；
   提交后（schema + 生成物同 commit）复跑通过 —— 见 §6 后续。
-
+- 未跑（按边界）：完整 `pnpm test`（仅 exact-head CI Gate 执行）、`pnpm gen:postman`
   （未改任何 API route，route 面不变）、DB/docker/runtime/provider。
 
-## 6. 验收（父线程所有）
+## 6. 未运行的验收（父线程所有）
 
 1. 独立不同模型 review（真实 diff）。
 2. 真实 issuance/consumer 验收（R10 UI 点选块尚未落此线；capture/UI 接线归 UI 线）。
@@ -162,7 +162,7 @@ judgment `e01c259fa060d54a`、scoring `8a0882b5087e3e99`、evaluation
 - 基数 owner 补充绑定：**新录入**的 matching 条目必须声明 pairing（及适用时
   has_distractors）—— 这是录入侧（store/entry gate）义务；纯 schema 无法区分
   新旧 revision，故字段保持 optional+历史宽松缺省，不做破坏存量的强制。
-- 边界：base/head 均未实现 per-item calibration registration；本切片的标定探针
+- 免责：base/head 均未实现 per-item calibration registration；本切片的标定探针
   用例**不是** admission，D3 亦未全部完成（R10 UI 点选块、录入侧 spec 产出、
   作答卷往返等仍归各自 lane）。
 
@@ -209,7 +209,7 @@ judgment `e01c259fa060d54a`、scoring `8a0882b5087e3e99`、evaluation
   （score=null、coarse_outcome='partial'、evidence 带 known/partial_units），
   否则学习者侧 JudgeResultV2 对 partial 聚合仍回落 unsupported 文案。
 - 纯决策层测试不证明 DB 层 no-write；settle.db 级探针属 1470 的
-  settle*.db.test（可按需准备，待运行）。
+  settle*.db.test（可按需准备，未运行）。
 
 ### 测试清单（owner 22:15 规则；before → after；入口与理由）
 
@@ -302,7 +302,7 @@ evaluation-authority 的消费分支写好后按边界撤回（`git checkout` �
   aggregate → verdict(unsupported+typed reason) → ratingForVerdict=null →
   KC 弃权 → θ abstain；另两条为不同 failure 原因：混合卷不吞 holistic
   未映射、partial 不吞同卷他人票）。
-- **DB 边界（prepared，待运行）**：新 task-owned
+- **DB 边界（prepared，未运行）**：新 task-owned
   `src/server/assessment/yuk1445-partial-settlement-boundary.db.test.ts`
   （非 foreign settle*.db.test.ts）。真实链：publishQuestionGroup（手建 D3a
   契约 + contractIntegrityDigest）→ 真实 evaluateSubmissionCore →
@@ -322,9 +322,9 @@ exit 0；`audit:api-client` 提交后复跑绿。**真 8af RED**（源文件 che
 sha256 前 16 `370fded45018d24c`；此前 §8 的 red log 记录保留）。签名：
 judgment `ab4684987ce65f1a`、settlement `710fa2f8700b8a11`、scoring.test
 `b4ce87a2e289fff8`、settlement.test `f7708acefd0c440f`、DB 边界测试
-`eef566643bbcf5d0`。DB 待运行（无窗口）；FSRS #1700 排序归 coordinator。
+`eef566643bbcf5d0`。DB 未运行（无窗口）；FSRS #1700 排序归 coordinator。
 
-## 10. 公开 unknown-score 契约补齐，DB 用例待运行
+## 10. 公开 unknown-score 契约补齐，DB 用例仍未运行
 
 本刀从干净 `175f55a20ce083b5250ad23bf4621ff905ec0e28` 继续，不重做
 `a371dd845 → 8af031a80 → 4d04277e1 → 175f55a20`。Coordinator/migration
@@ -380,7 +380,7 @@ KC/holistic 直测和重复空白 fixture。保留的 6 个核心入口用例分
 Vitest 实际展开清单为 `/tmp/yuk1445-public-partial-unit-inventory.json`，
 逐用例状态为 `/tmp/yuk1445-public-partial-test-inventory.tsv`：scoring **20**、
 settlement **23**、evaluation **55**、既有 authority **7**，共 **105 passed**。
-其中 authority 的既有内部 mock 未修改；新 DB/public 链运行证据另计。
+其中 authority 的既有内部 mock 未修改；这些旧用例不证明新 DB/public 链已运行。
 DB 仅 **1 prepared not run**。Policy 相对整链基线 e6b8880b5 检查 7 个新增用例。
 
 ### Node 24.19.0 门禁与 parent 交接
