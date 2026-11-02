@@ -12475,6 +12475,20 @@ export interface operations {
                                 /** @enum {string} */
                                 source: "ephemeral_html";
                             };
+                            public_prose?: {
+                                failure?: {
+                                    /** @enum {number} */
+                                    http_status?: 400;
+                                    /** @enum {string} */
+                                    kind: "provider_rejected" | "execution_failed" | "finalization_failed" | "cancelled" | "execution_unknown";
+                                };
+                                last_event_id: number;
+                                /** @enum {string} */
+                                status: "streaming" | "completed" | "interrupted" | "failed";
+                                text: string;
+                                /** @enum {number} */
+                                version: 1;
+                            };
                             reply_event_id?: string;
                             /** @enum {string} */
                             role: "user" | "ai" | "tombstone";
