@@ -12,7 +12,7 @@ afterAll(fixture.teardown);
 // @invariant data: old prune and review partial receipts survive both new-family admissions
 // @fails-if native family admission changes retained old-family receipts or repeats an already committed old effect
 it('recovers genuine old prune and review partial ledgers before and after both new-family admissions', async () => {
-  const { runSessionOrphanTick } = await import('@/server/durable/session-orphan-family');
+  const { runSessionOrphanTick } = await import('@/server/durable/session-orphan-tick');
 
   fixture.selectedFamily = families[0];
   const pruneArtifact = await verifiedArtifact('prune'),

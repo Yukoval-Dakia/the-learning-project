@@ -1,6 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { learning_session } from '@/db/schema';
+import { COPILOT_SESSION_SELECTION_LOCK } from '@/kernel/locks/copilot-session-selection-lock';
 import {
   families,
   native,
@@ -8,8 +9,7 @@ import {
   startSession,
 } from '../../../tests/dbos-session-orphan/support';
 import { testDb } from '../../../tests/helpers/db';
-import { runSessionOrphanTick } from '../durable/session-orphan-family';
-import { COPILOT_SESSION_SELECTION_LOCK } from './conversation';
+import { runSessionOrphanTick } from '../durable/session-orphan-tick';
 
 const family = families[0];
 beforeEach(() => resetOrphans());

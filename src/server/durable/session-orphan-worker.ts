@@ -8,8 +8,8 @@ import {
   type SessionOrphanBoundaryHook,
   type SessionOrphanFamily,
   readSessionOrphanPhase,
-  runSessionOrphanTick,
 } from './session-orphan-family';
+import { runSessionOrphanTick } from './session-orphan-tick';
 
 export function registerSessionOrphanWorkflows(
   db: Db,
