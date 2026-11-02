@@ -17,6 +17,7 @@ import {
   renderHelpExitMarkdown,
 } from '@/ai/help-provider-fault';
 import type { PiToolMount } from '@/ai/pi-tool-mount';
+import { type ProviderFailureInfo, classifyProviderFailure } from '@/ai/provider-failure';
 import { installTaskOperationObserver } from '@/ai/task-observation';
 import type { RunTaskResult } from '@/ai/task-result';
 import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';
@@ -1174,8 +1175,11 @@ export interface StreamCollectResult extends RunTaskResult {
   partial?: boolean;
   /** Present on a partial result — the underlying error message. */
   error?: string;
-  /** Safe classification from this attempt's observed provider response. */
-  failure?: { kind: 'provider_request_rejected'; httpStatus: 400 };
+  /**
+   * Safe classification of a proven provider failure, with the provider's
+   * Retry-After when it sent one. Absent when no provider fault is proven.
+   */
+  providerFailure?: ProviderFailureInfo;
 }
 
 export async function streamTaskCollecting(
@@ -1229,7 +1233,7 @@ async function streamTaskCollectingImpl(
   });
   let resultText = '';
   let terminalText: string | undefined;
-  let failure: StreamCollectResult['failure'];
+  let providerFailureEvidence: { http_status?: number; retry_after_ms?: number } | undefined;
 
   return lifecycle.withTracing(async () => {
     let usagePromptText = '';
@@ -1295,12 +1299,7 @@ async function streamTaskCollectingImpl(
           },
           apiErrorMessages: (msg) => (msg.result ? [msg.result] : []),
           onResultError: (msg) => {
-            if (
-              msg.subtype === 'error_during_execution' &&
-              msg.provider_request_rejection?.http_status === 400
-            ) {
-              failure = { kind: 'provider_request_rejected', httpStatus: 400 };
-            }
+            if (msg.provider_failure !== undefined) providerFailureEvidence = msg.provider_failure;
           },
           abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
         });
@@ -1343,8 +1342,15 @@ async function streamTaskCollectingImpl(
         aborted: lifecycle.aborted,
         costUsd: lifecycle.costUsd,
       });
-      const helpFault = !lifecycle.aborted && !failure ? boundError.helpProviderFault : undefined;
+      const helpFault = !lifecycle.aborted ? boundError.helpProviderFault : undefined;
       if (helpFault) lifecycle.noteExecutableHelp('deterministic_step');
+      const providerFailure = classifyProviderFailure({
+        subtype: boundError.subtype,
+        apiErrorStatus: boundError.apiErrorStatus,
+        httpStatus: providerFailureEvidence?.http_status,
+        retryAfterMs: providerFailureEvidence?.retry_after_ms,
+        transport: lifecycle.transportEvidence.snapshot(),
+      });
       const settled = await lifecycle.finishFailure(boundError);
       // A provider-success payload whose projection failed must never be returned
       // as graceful partial text; admission fencing is likewise a fail-closed
@@ -1352,8 +1358,9 @@ async function streamTaskCollectingImpl(
       if (!settled || successSettlementFailed || boundError.subtype === 'provider_admission') {
         throw boundError;
       }
-      // 400 stays the existing rejection. Quota / 502 / parse seal an exit the
-      // caller can publish without another model turn. Cancellation is not one.
+      // Quota / 502 / parse seal an exit the caller can publish without another
+      // model turn; the proven category still rides providerFailure so the wire
+      // can name it. Cancellation is not one.
       if (helpFault) {
         const exit = renderHelpExitMarkdown(helpFault);
         const prose = resultText.trim();
@@ -1367,6 +1374,7 @@ async function streamTaskCollectingImpl(
           cost_basis: lifecycle.costBasis,
           cost_ref: lifecycle.costRef,
           partial: false,
+          ...(providerFailure ? { providerFailure } : {}),
         };
       }
       return {
@@ -1379,7 +1387,7 @@ async function streamTaskCollectingImpl(
         cost_ref: lifecycle.costRef,
         partial: true,
         error: error instanceof Error ? error.message : String(error),
-        ...(!lifecycle.aborted && failure ? { failure } : {}),
+        ...(providerFailure ? { providerFailure } : {}),
       };
     } finally {
       lifecycle.dispose();

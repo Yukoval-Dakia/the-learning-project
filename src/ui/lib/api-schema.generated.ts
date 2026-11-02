@@ -12662,10 +12662,10 @@ export interface operations {
                             };
                             public_prose?: {
                                 failure?: {
-                                    /** @enum {number} */
-                                    http_status?: 400;
+                                    http_status?: number;
                                     /** @enum {string} */
-                                    kind: "provider_rejected" | "execution_failed" | "finalization_failed" | "cancelled" | "execution_unknown";
+                                    kind: "provider_rejected" | "rate_limited" | "provider_error" | "timeout" | "connection" | "execution_failed" | "finalization_failed" | "cancelled" | "execution_unknown";
+                                    retry_after_seconds?: number;
                                 };
                                 last_event_id: number;
                                 /** @enum {string} */

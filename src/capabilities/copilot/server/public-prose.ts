@@ -2,11 +2,11 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { job_events } from '@/db/schema';
 import {
-  COPILOT_PROVIDER_REJECTION_REPLY,
   type CopilotPublicProse,
   type CopilotPublicProseFailure,
   parseCopilotPublicProse,
 } from '../public-prose-contract';
+
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
@@ -32,17 +32,6 @@ export function publicProseStatus(
     : failure.kind === 'cancelled' || failure.kind === 'execution_unknown'
       ? 'interrupted'
       : 'failed';
-}
-
-/** Safe public copy; the original durable reason/error and paid receipts remain independent. */
-export function publicProseFailureMessage(failure?: CopilotPublicProseFailure): string {
-  if (failure?.kind === 'provider_rejected' && failure.http_status === 400)
-    return COPILOT_PROVIDER_REJECTION_REPLY;
-  if (failure?.kind === 'cancelled') return '已停止这次运行。';
-  if (failure?.kind === 'execution_unknown')
-    return '这次运行的执行结果尚未确认；请先确认现有结果，再决定是否重新发起。';
-  if (failure?.kind === 'finalization_failed') return '这次回答未完成可验证的收口。';
-  return '这次运行未完成回答。';
 }
 
 /**

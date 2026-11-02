@@ -1037,7 +1037,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     });
     // Only this root invocation sees the observed fetch. Children keep the
     // original streamFn; neither their responses nor query.latest prove root failure.
-    const rootRejections = new WeakMap<PiAssistantMessage, 400 | 429 | 502>();
+    const rootRejections = new WeakMap<PiAssistantMessage, number>();
     const rootStreamFn: StreamFn = async (model, llmContext, streamOptions) => {
       const collector = options.transportEvidence;
       const before = collector?.snapshot();
@@ -1065,7 +1065,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         .result()
         .then((assistant) => {
           const after = collector?.snapshot();
-          const boundStatus = rootBoundProviderStatus(rootResponse?.status);
+          const boundStatus =
+            rootResponse !== undefined && !rootResponse.ok ? rootResponse.status : undefined;
           if (
             !before ||
             !after ||
@@ -1173,6 +1174,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       finalAssistant && !this.abort.signal.aborted && !cappedByMaxTurns
         ? rootRejections.get(finalAssistant)
         : undefined;
+    // Any bound non-2xx feeds provider_http_status; the narrower 400/429/502
+    // subset keeps its existing rejection/fault semantics.
+    const boundRootRejection = rootBoundProviderStatus(boundRootStatus);
     const terminal = piTerminalResultFrame({
       messages: finalMessages,
       model: this.model,
@@ -1210,9 +1214,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           : undefined,
       // YUK-1559 (C6) — last non-2xx this query's capture fetch saw, if any.
       providerError: this.providerErrorCapture?.latest(),
-      providerRequestRejection: boundRootStatus === 400 ? { http_status: 400 } : undefined,
+      providerRequestRejection: boundRootRejection === 400 ? { http_status: 400 } : undefined,
+      providerHttpStatus: boundRootStatus,
       helpProviderFault:
-        boundRootStatus === undefined ? undefined : helpFaultForRootStatus(boundRootStatus),
+        boundRootRejection === undefined ? undefined : helpFaultForRootStatus(boundRootRejection),
       // Same shared boundary on errors[0] — pi's errorMessage can carry the
       // full unsanitized provider body and must not bypass redaction/cap.
       sanitizeErrorMessage: this.providerErrorCapture?.sanitize,
