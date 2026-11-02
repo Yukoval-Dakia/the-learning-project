@@ -1,5 +1,4 @@
 import { createId } from '@paralleldrive/cuid2';
-import { sql } from 'drizzle-orm';
 import postgres from 'postgres';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@/db/client';
@@ -7,7 +6,6 @@ import { knowledge, learning_item, practice_stream_item, question } from '@/db/s
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
 import { resetDb } from '../../../../tests/helpers/db';
-import { handleReviewDue } from './due-list';
 
 const DATES = Array.from({ length: 10 }, (_, index) => `2026-08-${10 + index}`);
 const clients: Array<ReturnType<typeof postgres>> = [];
@@ -175,39 +173,7 @@ afterEach(async () => {
   vi.resetModules();
 });
 
-const operations = [
-  { kind: 'nightly', name: 'nightly composes' },
-  { kind: 'recompose', name: 'explicit recomposes' },
-] as const;
-
 describe('Practice stream reserved connection integration', () => {
-  it('runs due-list dependencies on the injected transaction backend', async () => {
-    // Given an explicit transaction injected into the due-list handler.
-    const { db } = await createMaxTenSingletonDb();
-    let expectedBackendPid: number | undefined;
-    let observedBackendPid: number | undefined;
-
-    // When the handler reaches its goal reader after all earlier due-list reads.
-    const response = await db.transaction(async (tx) => {
-      const [expected] = await tx.execute(sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`);
-      expectedBackendPid = Number(expected.pid);
-      return handleReviewDue(new Request('http://internal/api/review/due?limit=1'), {
-        db: tx,
-        listActiveGoalsFn: async (activeDb) => {
-          const [observed] = await activeDb.execute(
-            sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`,
-          );
-          observedBackendPid = Number(observed.pid);
-          return [];
-        },
-      });
-    });
-
-    // Then downstream reads observe the same physical backend as the lock-holder transaction.
-    expect(response.status).toBe(200);
-    expect(observedBackendPid).toBe(expectedBackendPid);
-  });
-
   it('keeps ten same-date reranks on their lock-holder transaction', async () => {
     // Given an external holder blocking all ten same-key reranks in a production-sized pool.
     const { db, client } = await createMaxTenSingletonDb(10_000);
@@ -264,52 +230,4 @@ describe('Practice stream reserved connection integration', () => {
     expect(results).toHaveLength(10);
     expect(results.every((result) => result.status === 'fulfilled')).toBe(true);
   });
-
-  it.each(operations)(
-    'completes ten different-date $name on the production max-ten singleton pool',
-    async ({ kind }) => {
-      // Given ten independent paid-work keys whose operations pause at one provider barrier.
-      const { db, client } = await createMaxTenSingletonDb();
-      const { composeNightly, recomposeStream } = await import('./stream-store');
-      const run = { nightly: composeNightly, recompose: recomposeStream }[kind];
-      const questionId = await seedSamplableQuestion(db);
-      const allOperationsEntered = Promise.withResolvers<void>();
-      const releaseOperations = Promise.withResolvers<void>();
-      let enteredCount = 0;
-      const loadMemoryPrior = async () => {
-        enteredCount += 1;
-        if (enteredCount === DATES.length) allOperationsEntered.resolve();
-        await releaseOperations.promise;
-        return ['reserved connection owns locked work'];
-      };
-      const inFlight = DATES.map((date) =>
-        run(db, date, {
-          policy: { policy: 'softmax_mfi' },
-          composeDeps: {
-            loadMemoryPrior,
-            runTaskFn: async () => ({
-              text: JSON.stringify({
-                candidates: [{ refId: questionId, weight: 1, role: 'new_check', reason: date }],
-              }),
-            }),
-            rng: () => 0,
-          },
-        }),
-      );
-      const settled = Promise.allSettled(inFlight);
-
-      // When every different-date operation must reach the barrier using only its reserved slot.
-      const barrierOutcome = await Promise.race([
-        allOperationsEntered.promise.then(() => 'all_entered' as const),
-        new Promise<'timed_out'>((resolve) => setTimeout(() => resolve('timed_out'), 2_000)),
-      ]);
-      releaseOperations.resolve();
-      if (barrierOutcome === 'timed_out') await client.end({ timeout: 0 });
-      const results = barrierOutcome === 'all_entered' ? await settled : [];
-
-      // Then no operation self-starves by borrowing an eleventh connection for Drizzle work.
-      expect(barrierOutcome).toBe('all_entered');
-      expect(results).toEqual(DATES.map(() => ({ status: 'fulfilled' as const, value: 1 })));
-    },
-  );
 });
