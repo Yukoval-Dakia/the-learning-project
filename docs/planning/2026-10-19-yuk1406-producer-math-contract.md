@@ -103,35 +103,6 @@ item 顺序派生，与 label_md 内容无关。
 | `admission/resolved-publication.ts:441-446,462-467` | 字母按位置派生；choices_md 取 label_md | 正文更干净 |
 | `ingestion/server/assessment-capture.ts:95-117` | 圈选字母→item 按 label_md **前导 token** 解析 | R1 裁决：未证明本片新增可达回归（见下） |
 
-## 未覆盖入口 / 已知边界（如实列出，不宣称 1406 全票 Done）
-
-1. **assessment-capture 的 label 解析**（ingestion 线，非本片写权，未改动）：
-   `resolveSelectLabels` 按 label_md 前导 token 解字母的依赖本身脆弱（首 token
-   碰撞时无展示坐标校验，不能笼统保证不误判）。**R1 独立裁决：现役 capture
-   走 `q_capture_*` 先 legacy 发行（同事务 row normalizer 发布，不经本片
-   converter；选择题初始为 legacy single/multi，捕获走 option.label 映射）；
-   capture 重入读 issuance 冻结 revision（非 current），未找到把本片新转换
-   select 送进该函数的真实产品路径——即本片未证明新增可达回归。**旧的脆弱
-   前缀依赖不是本片修复，本片也不改 assessment-capture / slot-renderers。若
-   将来修圈选，须按该张作答卷实际冻结的展示映射（issuance revision /
-   option_order / presentation marker）反查 item_id，不得把字母塞回
-   label_md（R1 建议归属 ingestion capture resolver）。
-2. **答案值字段的定界（R1 撤回项）**：reference_md / structured answers /
-   analysis 的显示包装与评分语义分离归后续 **K1 quiz_gen typed 生产迁移**；
-   在那之前本片对答案字段无任何新增强制，exact 评分语义、extractAnswerHead、
-   grade、全局归一化均未动。
-3. **web_sourced / sourcing 裸公式**（ubm 同缺陷族）：共享检查已就位
-   （见下），但 sourcing 侧接线由其独占 writer 后续完成，本片不碰。
-4. **存量题目**：YUK-1573 冻结期间不修存量、不动旧题/paid；两道 DTO 样本
-   （含旧 ttnpco/eya6l 缺定界）保持原样。
-5. **重复题干**：另有样本待查（父线），本片不处理，不用 regex 从 prompt 删
-   选项。
-6. **producer wire 根因**：原模型原始输出仍不可证明存在（初版 provenance 误报
-   已更正），本片修的是确定性边界（schema 契约 + 转换），不是对历史 wire 的
-   追责。
-7. `embedMaterialInPrompt` 在 parse 后嵌入的 material 原文不带定界时不触发检查
-   （source 原文不改）——producer 契约只约束 agent 自产字段。
-
 ## 共享 API（后续 sourcing 接入点）
 
 `src/core/question-math-markdown.ts`（新）：
@@ -147,17 +118,6 @@ sourcing 线最小接入点：在其输出 schema 的渲染字段 superRefine �
 `reportBareMath`/`reportStructuredBareMath` 形状）。**不要复制第二份
 validator，不要造 registry**。注意同样只接显示字段，不接答案值字段（R1
 P1 同理）。本共享 API 在 R2 关闭前视为未接受状态。
-
-## NOT_RUN（本片未运行的验证，如实声明）
-
-- **DB / 容器 / TEST / provider / HTTP / runtime**：全部未运行（任务边界禁
-  止）。schema 检查的实际拒收行为、mimo-v2.5-pro 对新 prompt 的遵循率、
-  admission 新转换的真实 resolved 形状，均未经真实运行验证。
-- **七题网页 / 两题 DTO 回放**：未运行（需 UI 线与真实 issuance，非本片范
-  围）。
-- **测试**：未编写、未运行（owner 2026-10-10/10-11 规则；本片不变量属
-  producer 格式契约，如需断言测试须先出文本方案报协调线批准）。本地仅
-  typecheck / lint / build 与既有 audit。
 
 ## 检查证据
 

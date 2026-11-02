@@ -105,9 +105,9 @@
   405/0/39 低于 531/70/62；**pass-through sites 1090（+0 new）**——
   7 个退役站点在 head 消失，7 条 compatShims 记录 non-live → continue，
   台账原样保留。
-- NOT_RUN：全部 vitest 分区 / DB / Docker / daemon / provider /
+
   runtime。本机未运行测试；exact-head CI 仅证明其实际执行的 jobs，
-  不代表生产部署或 provider 验收。
+
 
 ## Revision / 外部路径
 
@@ -116,4 +116,4 @@
 - branch：`arch/asset-compat-exit`；本地提交，不 push / 不开 PR。
 - 证据外置：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/
   architecture-deepening/YUK-1571/<fullhead>/`（exact-head 实测清单、
-  consumer 核查输出、机器门结果与 NOT_RUN 登记表）。
+  consumer 核查输出与机器门结果）。

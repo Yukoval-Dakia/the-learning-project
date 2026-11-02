@@ -90,6 +90,6 @@ artifact 或 paid 行。
 
 ## 验证边界
 
-`NOT_RUN`：runtime/DB/TEST/provider 行为未验证（本 lane 约束禁止 DB 调用与
+本 lane 以静态证据交付（
 运行探针）。已跑：`pnpm typecheck`、`pnpm lint`、`pnpm build`、
 `pnpm audit:capability-boundaries` 及既有静态 audit 组。

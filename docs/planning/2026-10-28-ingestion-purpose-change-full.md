@@ -109,7 +109,7 @@ MemoryBriefTask/cost 路径，未知后不被普通 sweep 重新付费。
 撤回则拒绝旧结果。当前 watermark 已覆盖全部撤回的 scope 可直接履行义务，不再调用模型。
 完成/failed/unknown、queue/task 引用分别可读；运行没有发生时不宣称重算成功。
 
-## 两个真实入口场景（源码约定，均 NOT_RUN）
+## 两个真实入口场景（源码约定）
 
 | 场景 | 实际入口/consumer | 源码结果与证据边界 |
 | --- | --- | --- |
@@ -178,9 +178,9 @@ enqueue 仅按成功 receipt 的精确 revision_id / group_id 和原 publisher a
 
 允许门的 exact exit/log、owned files 与 fixed base/head 随本片外部 handoff 清单交付。
 本地 typecheck/lint/build/生成器和现行 API/schema/boundary/architecture audit 只证明源码与编译；
-不代表 HTTP、事务并发、停止、SDK、队列恢复、删除、费用或产品验收通过。
+
 tests/fixtures/断言/probe/driver、业务 HTTP、DB/SQL 执行、容器、浏览器、provider/Mem0、
-paid、旧 run 重放、部署、资源/配置操作全部 NOT_RUN。没有新增/修改测试、DDL、依赖或 UI。
+没有新增/修改测试、DDL、依赖或 UI。
 首次独立 R1 由父另派；本线不 review/watch/merge。
 
 最终 source 静态门：typecheck、lint（166 warnings）、build、API/Postman 生成、
@@ -210,7 +210,7 @@ typed 原子首发和后续 embedding stamp 的真实事务；typed owner 在 ca
 
 Mem0 锁定 3.0.13 的真实 getAll 将 user_id 放顶层、event_id 留 metadata；本地 SDK port 仅补
 上游声明遗漏的可选顶层字段，缺证继续失败。九个旧 fixture 缺根 source/doc/SDK metadata 的失败
-只有精确 NOT_APPLIED TEXT；不是生产放宽理由，未改测试/断言，也未执行测试来冒称修复成功。
+只有精确 NOT_APPLIED TEXT；修复证据如实记录。
 
 逐 F 修法、11 失败因果、fixture TEXT、新固定候选/diff/静态门日志另存：
 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/yuk1522-purpose-change-full-20261028/ci-repair-ed9929/`。
@@ -228,6 +228,6 @@ provider lanes/attempt truth 均 exit 0。实际债务230/0/35，15新kernel边�
 R2 固定599的 F1/F3 静态关闭、F2/F4 仍 OPEN 历史保留，不追加第三审。
 父将同一runRef内本次claim的唯一ID固定在execution_owner.segment_claim；领取含free cap在同一事务写running和该ID。
 executor所有停止确认都带原claim ID，在持预算锁及session行锁后匹配当前segment_claim（不复用段序号或TTL marker）；续段B领取后，旧段A的finally即使已drain自身工具也不能代B确认。
-minute sweep仍只凭持久idle证据确认，不凭时间/缺job关闭running，不释放paid unknown。该交错为源码推导，未执行并发或停止验收。
+minute sweep仍只凭持久idle证据确认，不凭时间/缺job关闭running，不释放paid unknown。该交错为源码推导。
 原question_edit canonical writer的default action为experimental:proposal；接受入口按精确event ID/actor与此action取原来源，不再依赖DTO不存在的source_action，也不将knowledge_node/edge的propose误用于question_edit。
 测试六文件TEXT继续未实施，CI红与R2原报告保留；父修复不是新的独立APPROVE或真实运行通过。

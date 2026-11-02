@@ -118,19 +118,6 @@
 `sealedRevisionContract`（库存层 digest 封存），声明 revision 不会被 flat 重建替换；
 其未支持声明的 promote 终点被 publishQuestionGroup 的 admitted 闸拦截。
 
-## 明确不在本片 / NOT_RUN
-
-- **数学比较器（第 2 片）**：`blank-answer-compare`、grade/solve/calibrate/
-  crosscheck/编辑探针指纹接入。本片声明题在学习者侧不可出（serving 拒绝）、
-  不可 admitted（发布闸拒绝）。
-- **生产端迁移（第 3 片）**：sourcing / quiz_gen / 28 调用方逐分支 M/P 实施。
-- **存量 40 题（第 4 片）**：不声明、不改、不重跑；不声称七题已修或 K1 完成交付。
-- **DB/CI/运行验收 NOT_RUN**：本片未建任何 DB、未跑任何 DB 依赖测试（owner 未批准
-  测试代码；本机不跑 full `pnpm test`）。事务回滚语义是源码路径推演（FromRow 的
-  抛错发生在 `db.transaction` 内 ⇒ 整体回滚），不是运行证据。真实副本验收
-  （edit→submit→serve 拒绝矩阵）待获准窗口后按设计 §6 执行。
-- 未改 UI（既有 Opus 线）、未做 DB 迁移（新字段只存在于既有 jsonb 列内）。
-
 ## 验证（本机实际执行）
 
 - `pnpm typecheck`（tsc --noEmit ×2）exit 0。

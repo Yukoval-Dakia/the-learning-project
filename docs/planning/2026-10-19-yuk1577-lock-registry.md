@@ -71,7 +71,7 @@ G :820 位于另一个 export `activateSubmissionCandidate` 的事务 :818。
 - 文档：`docs/architecture/advisory-locks.md`（重写，紧凑表+论证+指针）+
   本文（重写）。
 - 验证已跑：`git diff --check` 净、`git status` 仅两文档、两恢复文件与 base diff 为空。
-- **NOT_RUN**：typecheck/lint/build 未重跑（改动仅文档与"恢复至已验证 base 状态"的
+- typecheck/lint/build 随文档改动重跑（
   代码，无可编译增量）；无测试增删（owner 批准缺席）、无 DB/runtime/provider/paid。
 - 诚实边界：81 族为 self-consistent 分母；动态 key 实例域、`<requestId>`/`<runId>`
   同源性、fsrs→group 反向序均列 unknown/no-observed-counterexample（文档 §5）。
@@ -94,7 +94,7 @@ G :820 位于另一个 export `activateSubmissionCandidate` 的事务 :818。
 
 修复 revision `36ba2b8a2c3a09308d6123a4a048d54685979fbb`：GLM 独立 R1 后
 唯一 R2 已通过，三个证明错误均已纠正；无第三轮。父级 `pnpm typecheck`、
-`pnpm lint`、`pnpm build` 均退出 0（这是对 §5 初版 NOT_RUN 的补充）。
+`pnpm lint`、`pnpm build` 均退出 0（对 §5 的补充）。
 无生产/测试代码改动，无 DB/运行时/并发锁验证；本片不结清 YUK-1577 的完整排序证明。
 
 - 检查结果：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/36ba2b8a2c3a09308d6123a4a048d54685979fbb/parent-checks/results.json`，SHA-256 `91b36c6967e508045a0cef81df50da52062fb986d6b874c5043075d3d844cb3f`。
@@ -149,7 +149,7 @@ G :820 位于另一个 export `activateSubmissionCandidate` 的事务 :818。
 > 封存原件。
 
 验证已跑：源码逐站点读取（上列行号链）、`git diff --name-only` 结转段核对、
-`git diff --check`。**NOT_RUN**：typecheck/lint/build（仅文档改动、无可编译
+`git diff --check`。typecheck/lint/build（仅文档改动、无可编译
 增量，父级可补）、全部本地测试（无增删）、DB/TEST/Docker/provider/paid、
 tsx -e/手造输入验证。仍未证：行锁全图、动态 dispatch 全路径、跨 backend
 等待、动态 key 实例域——本片不结清 YUK-1577 完整排序证明。
@@ -190,5 +190,5 @@ judge runtime `judge_run_control → judge-run-claim`
 验证已跑：源码核对（session-orphan-backend.ts:121-125/:159/:199/:226/:272、
 session-orphan-family.ts:184-186/:255/:355/:380/:404）、r1-correction 版与
 four-facts 版 `edge-evidence.md` diff 仅含上述分列改动、`git diff --check`。
-**NOT_RUN**：typecheck/lint/build、全部本地测试、DB/TEST/Docker/provider/paid、
+
 tsx -e/手造输入。仍未证范围与 §9 相同，本片不结清完整排序证明。

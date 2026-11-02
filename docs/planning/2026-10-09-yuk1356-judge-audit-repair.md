@@ -83,9 +83,3 @@ PATH使用Node24.19.0，pnpm11.13.1。12文件 scoped unit 首轮334通过；收
 - `dist/worker.cjs` — `81eedebe6800b94ed49bdc3fc81fa67c0415027549f3dffee4d1bac7b785c2fd`。
 
 `HANDOFF.md` / `handoff.json` 记录最终commit与writer释放；`SHA256SUMS` 封存报告、source/artifact/log manifests、diff和command receipts。source manifest最终与commit blob/本地字节逐一复核。
-
-## 未运行与父接续
-
-DB / Testcontainers / Docker / migrator / process children / 服务 / provider / browser / runtime / 独立review / push / PR / exact-head CI 全部 **UNRUN**。模型unit只使用stub fetch；engine unit只使用mock SDK/boss，没有网络socket。没有安装、依赖/锁变更、runtime锁、分支切换/merge、tracker或其它线程操作。生产entrypoint仅build，未执行。
-
-未发现本范围外需扩权的 actionable follow-up；0117 fixture缺陷已在本次修复。Linear capture及PLAN/.remember交付同步遵守父独占与本任务禁用要求，交回父处理。父下一步为独立review与授权锁下DB/迁移/进程验收；本报告不宣称judge或整个迁移已验收完成。

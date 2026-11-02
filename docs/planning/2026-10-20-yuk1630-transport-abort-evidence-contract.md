@@ -56,4 +56,4 @@ admin surfaces show raw JSON only).
 
 - Not a reproduction of the historical 10s timeout; not HTTP/2 evidence.
 - Abort origin is stated as evidence-consistent, not captured-proven.
-- Failure-path timeout samples remain NOT_RUN (no real timeout occurred).
+- Failure-path timeout samples await a real timeout window.

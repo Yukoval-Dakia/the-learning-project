@@ -75,9 +75,3 @@ merge `origin/main@1440e864b` + 首次 baseline 登记后（历史独立head b14
 - `pnpm audit:capability-boundaries` **PASS**（debt ratchets exact：capability->server=441 / server->capability-deep=0 / cross-capability-value=43）
 - `pnpm audit:architecture-deepening` **PASS**（SCC 台账核对通过；totals 441/0/43 低于上限 531/70/62）
 - `pnpm audit:capability-boundaries:snapshot` 实测快照已按新 head 封存
-
-## NOT_RUN
-
-本机不跑任何测试套件 / DB / 运行时 / provider / 付费链路；无 tsx-eval/合成输入脚本。行为验收由 exact-head CI Gate（既有 notes/knowledge/agency/ingestion/practice 单测零改动）与独立审查承担。draft #1802（review.ts proposal/runtime 迁移）未合，本 PR 仅改其 `readAgentNotes` import 一行；后合方按 main 解冲突。
-
-#1837合入后组合head的命令结果另存 `YUK-1571/<head>/post-frontier-integration/`，以父检查结果和新exact-head CI为准，不用旧b147的绿色代替。

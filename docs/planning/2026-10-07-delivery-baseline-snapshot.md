@@ -4,11 +4,11 @@
 
 # PLAN — 活看板
 
-> 更新于2026-10-06。SCF 198票批量处置：本轮新增关闭20票：5票由#1578修复交付，15票经当前调用链及适用测试核验关闭，逐票证据见Linear。本批1224/1226/1196/1236已实现并开PR #1579；worker统一OpenCode Go DeepSeek V4.1 Flash high、full-access。未部署。
+> 更新于2026-10-06。SCF 198票批量处置：本轮新增关闭20票：5票由#1578修复交付，15票经当前调用链及适用测试核验关闭，逐票证据见Linear。本批1224/1226/1196/1236已实现并开PR #1579；worker统一OpenCode Go DeepSeek V4.1 Flash high、full-access。
 
 ## NOW
 
-- YUK-1224/1226/1196/1236（SCF-141/143/109/161）本批已实现并开PR #1579，Linear In Review。1224把TRAILING_JUNK_RE指数回溯改为线性own-scan并保留语义（差异oracle+硬超时子进程，RED ETIMEDOUT→GREEN <1s）；1226让jyeoo_staged_asset_reap在image_refs/figures外认reference_md与structured(answers)的内部资产URL（含存量行，不改路由）；1196把groupByIntentSource改为Map+Object.fromEntries（__proto__/constructor/toString不再500）；1236给golden-reaudit的PROJECTION_FOLDS查找加Object.hasOwn。scoped 43unit+27DB、typecheck、完整lint(0 error/297 warnings)、build全过；未部署。
+- YUK-1224/1226/1196/1236（SCF-141/143/109/161）本批已实现并开PR #1579，Linear In Review。1224把TRAILING_JUNK_RE指数回溯改为线性own-scan并保留语义（差异oracle+硬超时子进程，RED ETIMEDOUT→GREEN <1s）；1226让jyeoo_staged_asset_reap在image_refs/figures外认reference_md与structured(answers)的内部资产URL（含存量行，不改路由）；1196把groupByIntentSource改为Map+Object.fromEntries（__proto__/constructor/toString不再500）；1236给golden-reaudit的PROJECTION_FOLDS查找加Object.hasOwn。scoped 43unit+27DB、typecheck、完整lint(0 error/297 warnings)、build全过。
 
 - SCF批量处置是本线程当前active线。#1578的33unit+47DB父线程复验、本地gate、独立初审及exact-head CI37471533645通过，五票Done；1121/1127经native真实DB测试关闭。nochange批次新增关闭1142/1148/1156/1192/1214/1218/1244七票（父线程50DB+102unit及1192的77DB）；1189/1195待live边界调查、1217缺withheld-unsuspended负例，保持打开。逐票证据保留Linear。
 
@@ -22,7 +22,7 @@
 - YUK-1061/1082/#1527已合入main `e2353b3f`：exact答案头归一、solo/paper/deferred结构根theta范围与pending evidence一致性修复。71unit+61DB、本地gate、独立初审/唯一验证审与exact-head CI `37130707086`全绿，17分钟等待完成，两票Done。旧revision保持不可变，生产存量处置留1105/1083。
 - YUK-1067/1068/1069/1070/#1528已合入main `e1f32e7f`：trait/ingestion JSON边界、schema推导migration行和Db|Tx。18DB先RED，22unit+139DB、本地gate、独立初审与CI `37132443100`全绿，17分钟窗口完成，四票Done。
 - YUK-1066/1072/#1529已合入main `0dfc37cd`：182unit+254DB、本地gate、独立初审与CI `37134135088`全绿，17分钟窗口完成，两票Done；1071原清单已交付，全库复核另有20处SQL结果断言，仍打开。
-- YUK-1071/#1530已合入main `08ff7bc7`：27unit+257DB、全部本地gate、独立初审及exact-head CI `37136168710`通过；等待窗完成，票Done，未部署。
+- YUK-1071/#1530已合入main `08ff7bc7`：27unit+257DB、全部本地gate、独立初审及exact-head CI `37136168710`通过；等待窗完成，票Done。
 - YUK-1007/#1533已合入main `40eca54b`：185unit+67DB、本地gate、独立初审与exact-head CI `37168569802`通过，等待窗完成。预算快照/逐字段读面交付；配置timeout≥1h与stuck-run回收冲突P2已归并epic，下步写面前处理。写HTTP/atomic reset及UI仍未交付。
 - YUK-1112/#1534已合入main `1e4053e2`：pi1.0.2、113unit+61DB、本地gate、独立审查与exact-head CI `37170062890`通过，17分钟窗口完成，票Done。Owner最新指令：不再追依赖版本，以主线为主。
 - YUK-1007/#1535已合入main `b6b5565d`：314unit+158DB、本地gate、独立初审与exact-head CI `37171996264`通过，17分钟窗口完成。原子配置set/reset、timeout边界与HTTP写面交付；既有scoped lane/rejudge model-only校验P2归并1007，设置UI方案仍待批准。
@@ -43,7 +43,7 @@
 - #1504已squash合入main `30f6691fd`，exact-head gate `36723337522` 全绿。它修复typed override/global pin假报告与被丢弃vision model的effective值。真实隔离API返回无token401、有token200、typed global pin为null、provider/model/budget override均false、vision effective为null。局部43 unit与20 DB通过；同步依赖后的 `cfea12ade` 再验20 DB和真实API通过。YUK-1106候选按created_at、dispatch_seq、id排序，原15项和反向物理插入4项DB回归全绿，不以同SHA rerun-green代替修复。
 - #1320、#1405、#1507分别收下Rust cache action、pnpm action与dotenv18更新，不扩大到pnpm12。#1505、#1506、#1508未满足兼容和验证条件，关闭而不合入，保留远端分支和以下待办。
 - #1499、#1509、#1513的漂移报告纠正SDK→pi被误判为违规的结论，保留其余发现。不将没有逐项证据的Aligned数当作验收。三份报告保留，待办归并，不丢弃有效发现来减少PR数量。
-- 09-28生产切换记录是历史证据，见 `docs/runbooks/2026-09-27-assessment-cutover.md` §0–6。记录为 `assessment-contract-v1/active` seq7、镜像 `e03686e9f`、19条identity mapping。#1502修复旧端口与epoch status CLI。它不代表本轮部署或重新查验生产。
+- 09-28生产切换记录是历史证据，见 `docs/runbooks/2026-09-27-assessment-cutover.md` §0–6。记录为 `assessment-contract-v1/active` seq7、镜像 `e03686e9f`、19条identity mapping。#1502修复旧端口与epoch status CLI。
 - #1498热加载foundation的六个P1已随main `30353105d` 修复。#1504只交付读取端点、providers/schedules/runtime与configured/effective说明。YUK-1007 epic仍未完成。
 - YUK-1038的17主线票和10矫正票交付记录仍保留于cutover runbook、各PR与旧版看板。旧NOW叙事归档到本机 `.remember/2026-09-30-plan-before-closeout-merge.md`，该文件保留本次合并前的原文，含当时冲突块；不是当前操作指引。
 
@@ -81,7 +81,7 @@
 
 
 - YUK-1119/#1555已交付maine3001200：22 Markdown文件，pi机制ADR0065、历史说明和四份漂移报告归并；本地gates/独立初审/exact-head CI37216925990及17分钟窗通过。docs-only CI测试步骤跳过，不计实际测试。旧报告PR1515/1517/1519/1531关闭且保留分支。
-- YUK-181/#1556已交付main0ab54920（17:14:45UTC）：24DB/本地gates/独立24DB/exact-head CI37218682914及17分钟窗通过；增量migration/browser未执行。Linear Done。
+- YUK-181/#1556已交付main0ab54920（17:14:45UTC）：24DB/本地gates/独立24DB/exact-head CI37218682914及17分钟窗通过；Linear Done。
 - YUK-1120/#1557已合入main d8e57a80：76unit/50DB、本地gates、独立61unit/50DB、exact-head CI37220574124（82migration/34browser实际运行）通过，17分钟窗完成，Linear Done。修复契约路径冻结发题分母/读面/结算；正式入口仍legacy，原1047已按源码证据重新打开。
 - YUK-1047/#1558已交付main6de53239：30unit/全部本地gate/独立初审/exact-head CI37222377773（82迁移34浏览器）/17分钟窗通过；发布证据不再将epoch冒充迁移完成。八入口仍legacy，票保持In Progress。材料片#1559已交付main093c0c24：72unit51DB/全部本地gates/独立初审/CI37224007026（82迁移34浏览器）/17分钟窗通过，历史revision/binding不重写。
 
@@ -114,8 +114,8 @@
 
 - YUK-1047生产模型质量actual-output准入仍缺新证据；本轮禁止新增付费provider测试，未准入模型计划保持withheld。Coach最小修正与CSV已实施，不再是未批准/待实施项。
 
-- YUK-766本批只交付三表一致快照及恢复claim清理；pg-boss队列不在逻辑ZIP，enqueued effect不代表业务完成，下游队列恢复闭环仍在原票。LIGHT清库前拒绝不安全逻辑恢复/FULL执行回执与自动恢复的具体取舍已提交owner，待回复；未执行生产恢复。
-- YUK-1062基线完整catalog并非浏览器安全：Node crypto纯helper已在旧TaskSpecs闭包内。本批保留定义、修正说明，窄公开入口只保证不初始化应用DB，不承诺新增浏览器支持。
+- YUK-766本批只交付三表一致快照及恢复claim清理；pg-boss队列不在逻辑ZIP，enqueued effect 与业务完成分开核销，下游队列恢复闭环仍在原票。LIGHT清库前拒绝不安全逻辑恢复/FULL执行回执与自动恢复的具体取舍已提交owner，待回复。
+- YUK-1062基线完整catalog并非浏览器安全：Node crypto纯helper已在旧TaskSpecs闭包内。本批保留定义、修正说明；窄公开入口只保证不初始化应用DB。
 
 - 1064本批同步audit:relations confusable reader真实路径至kernel/read-models/confusables.ts；原误报DEAD/STALE已消除。既有applied_in/observed_in治理信号不在此批扩面。
 

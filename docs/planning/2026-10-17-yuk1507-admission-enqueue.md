@@ -6,7 +6,7 @@
 
 本片只修改 practice manifest 的新 subscriber 与现有 question_admission_run 条目、该 job，以及 admission 下 enqueue/receipt。无 DDL，复用已纳入备份恢复的 paid_effect/control。注册器、worker、publisher、source_verify、模型路由不改。
 
-与主线 LIGHT #1753 同一窗口合并：本片 #1752 先、#1753 后；两者一起交付，不单独部署。#1753 只将 source_verify 来源核验成功改为 withheld/unverified_rules。发布口强制 admitted 携带已通过独立核验不在这两片内，因既有 fixture 修改需 owner 批准，由主线另交 PR；不能宣称通用发布门已关闭。
+与主线 LIGHT #1753 同一窗口合并：本片 #1752 先、#1753 后；两者一起交付。#1753 只将 source_verify 来源核验成功改为 withheld/unverified_rules。发布口强制 admitted 携带已通过独立核验不在这两片内，因既有 fixture 修改需 owner 批准，由主线另交 PR；通用发布门另行收口。
 
 ## 触发与锁
 
@@ -33,13 +33,13 @@ worker 在 family 锁内校验原 pg-boss delivery 仍 active 且 payload 相等
 - pending、调用结果未封存或崩溃发生在完整收据之前：保留 unknown/未决义务，不伪造成功或零成本；需要对账，不自动重跑整批。
 - 到期 sending 在下一次本 family job 进入时归类为 unknown。没有新增 cron 或后台自动修复器。
 
-完整收据前的局部结果目前无法从 ai_task_runs 的摘要还原。这意味着一次失败可能阻塞同题后续 revision，直到人工对账；安全性不等于自动恢复能力。原调用若仍存活，可由同 delivery/fence 写入真实晚到结果。
+完整收据前的局部结果目前无法从 ai_task_runs 的摘要还原。这意味着一次失败可能阻塞同题后续 revision，直到人工对账；自动恢复另行设计。原调用若仍存活，可由同 delivery/fence 写入真实晚到结果。
 
 ## 验证状态与待批准方案
 
 源码类型检查、lint、build、capability 边界和 task census audit 已通过。独立 R1/R2 已结束。owner 批准后，既有订阅备份 fixture 改为先 bootstrap 全部订阅者，再让同一 action 的订阅者共用源事件；六个身份各保留七种交付状态。下面四项真实边界方案仍是文本，未另写 case。不能称自动准入已验收。
 
-待 owner 批准的文本测试方案（当前 NOT_RUN，未写代码）：
+待 owner 批准的文本测试方案（待批准）：
 
 1. 真实 event-subscription/job/PG 边界：已提交的当前 pending 发布只入队一次，历史 bootstrap 与 stale/hold 发布不产生付费工作；事务回滚不留下半个入队效果。
 2. 真实 PG 并发 claim：两个 delivery 只有一条持久获胜 claim；相同 digest 的 failed/suspended、跨 revision unknown 不获得第二条 claim。验证状态，不断言 mock 调用次数。
@@ -58,7 +58,7 @@ worker 在 family 锁内校验原 pg-boss delivery 仍 active 且 payload 相等
 - `/tmp/yuk1507-boundaries-02.log`：exit 0，baseline 未抬升。
 - `/tmp/yuk1507-task-census-02.log`：exit 0，56 kinds；首次动态包装调用的 census 失败保留在 `-01.log`，未修改 audit。
 
-初版 typecheck 的 nullable revision_id 错误保留在 `/tmp/yuk1507-typecheck-01.log`，已修复；以上不构成 DB、runtime 或 provider PASS。
+初版 typecheck 的 nullable revision_id 错误保留在 `/tmp/yuk1507-typecheck-01.log`，已修复；
 
 ## 独立 R1 与修复
 

@@ -1,6 +1,6 @@
 # YUK-1392 Agent-note board 公共读取
 
-基线 main f80d47703；父票1358，整体退出1359仍 In Progress。1391已合入，不等于Start trait消费者或整页迁移完成。本线程7631承担整体交付责任，5796承担Start集成/发布；边界来自owner明确授权。
+基线 main f80d47703；父票1358，整体退出1359仍 In Progress。1391已合入；整页迁移分开核销。本线程7631承担整体交付责任，5796承担Start集成/发布；边界来自owner明确授权。
 
 ## Scope and contract
 
@@ -74,7 +74,7 @@ wire 和 manifest 未变，故 Postman spec 无需修改。baseline/allowlist �
 
 父建议 scoped DB 命令为
 `pnpm vitest run --config vitest.db.config.ts src/capabilities/agency/server/note-board-read.db.test.ts src/capabilities/agency/api/notes.db.test.ts src/capabilities/agency/server/notes.db.test.ts`。
-作者未运行 DB、Docker、服务、provider、browser、runtime 或 paid calls，也未 push/PR/Linear。
+
 没有新增 actionable follow-up；既有 Start 消费和整体退出义务仍由1358/1359覆盖。
 本记录仅建立源码、无 DB unit、静态检查及 bundle 证据；DB、独立 review、exact-head CI、页面/部署验收仍待父完成。
 

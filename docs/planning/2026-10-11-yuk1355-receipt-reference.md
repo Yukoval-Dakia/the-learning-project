@@ -88,7 +88,7 @@ DBOS step 结果丢失后重放时，重入的仍是 `runNoteVerify` 的 reserve
 1. 生产侧派发的 DBOS 变体（`note-handoff.ts` 目前 `boss.send('note_verify', …)`）——cutover 时需父级加 DBOS enqueue 或保留 pg-boss 派发 + 双端消费裁决；
 2. 串行注册与共享 lifecycle（`register-capability-jobs.ts` 只准入既有族）；
 3. phase/fence/退出排空机制（参照 review_orphan_control 模式）；
-4. 对 `skipped:in_progress`、`skipped:ambiguous` 及其他业务结果逐项定义待完成义务查询与处置。SUCCESS workflow 不等于业务完成；未完成/未知效果必须保持可见且不得自动重购。
+4. 对 `skipped:in_progress`、`skipped:ambiguous` 及其他业务结果逐项定义待完成义务查询与处置。SUCCESS workflow 与业务完成分开；未完成/未知效果必须保持可见。
 
 ## 6. 测试
 
@@ -98,7 +98,7 @@ DBOS step 结果丢失后重放时，重入的仍是 `runNoteVerify` 的 reserve
 
 ## 7. 验证与交付
 
-离线检查：scoped unit test、`pnpm typecheck`、`pnpm lint`、`pnpm build`、`pnpm audit:test-policy`（本 lane base）。本地 commit 仅含 owned 文件 + vitest.shared.ts 两行追加。运行时缺口（DB 测试未跑、DBOS 未注册、CI 未跑）如实报告，独立 review 与 exact-head CI 由父级按 PR 负责。
+离线检查：scoped unit test、`pnpm typecheck`、`pnpm lint`、`pnpm build`、`pnpm audit:test-policy`（本 lane base）。本地 commit 仅含 owned 文件 + vitest.shared.ts 两行追加。运行时缺口如实报告，独立 review 与 exact-head CI 由父级按 PR 负责。
 
 ## 8. Independent review result
 

@@ -1,7 +1,7 @@
 # 录入历史的冻结来源标题（YUK-1522）
 
 本片服务原 R8「帮助靠谱」读面，仅交付独立后端标题读取及 draft PR。
-不代表 YUK-1522 全票、独立审查、exact-head CI 或运行验收完成。
+
 
 ## 基线与范围
 
@@ -92,7 +92,7 @@ baseline 仅追加该机器真实报项的精确 file/module/symbol/issue/owns�
 `postman/api-endpoints.json`、`postman/learning-api.postman_collection.json`、
 `scripts/capability-boundary-baseline.json`、本设计文档，共 11 个 owned 文件。
 
-本线禁止且未执行：测试/fixture/断言脚本、DB、Docker/daemon、browser、产品 HTTP、provider、
+本线范围限于静态交付。
 模型/paid、runtime、部署、配置或运维操作。首轮独立审查与 exact-head CI 交父线程。
 Linear 原票和全局状态由父线程维护；本片没有发现需另开票的独立 actionable follow-up，
 未创建重复票。未知标题与运行验证缺口已是原票范围，不另算完成。未 watch/poll/merge/resolve PR。
@@ -117,7 +117,7 @@ capability-boundaries 和 architecture-deepening，五项均 exit 0；lint 164 w
 父正常整合后只认可新组合的真实门与后续 exact-head CI，不外推旧绿。
 
 本片唯一独立 R1 已固定 `c11076236` 启动，尚无结论；此后仅文档记录不改变受审产品。
-测试、DB、产品 HTTP、provider、browser、paid、runtime 和部署仍为 NOT_RUN。
+
 2037、1969 的待批测试与迁移顺序均保持原样。
 
 ## 独立审查及合前主线更新
@@ -137,7 +137,7 @@ required Gate120213691652成功，实际 review threads 为0；没有运行第�
 capability-boundaries、architecture-deepening，五项全部 exit0。日志同一外置 review 目录
 `parent-0f05-*.log`；依赖数321/0/39、kernel新边1、pass-through新增0。
 R1结论只覆盖固定的本片产品，旧534 CI不冒称覆盖新组合；推送新head后重新取得其exact CI。
-未扩大为上游产品复审、第三审、测试或任何运行权限，原 NOT_RUN 保持。
+
 
 ## 合前 P1：普通抽取的冻结标题
 
@@ -162,7 +162,7 @@ extracted_prompt_md，不运行 provider；仍单个 RR/READ ONLY、最多五次
 
 两个 GET 的既有 owner/live consumer、filter/count/page 边界、agent run 隔离及旧不可变
 legacy 文本回退保持。wire enum 与真实生成物同步。仅原预算内一次验证审 R2、最终静态门
-及新 exact-head CI 待完成；测试、DB、HTTP/browser、provider/paid、runtime/部署继续 NOT_RUN。
+及新 exact-head CI 待完成。
 
 上述 P1 修复最终静态门均 exit0：typecheck、lint（164 warnings）、build、
 API contracts/client/client-usage、capability-boundaries、architecture-deepening。

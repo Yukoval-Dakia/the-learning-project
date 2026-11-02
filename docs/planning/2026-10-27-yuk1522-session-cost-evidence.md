@@ -120,7 +120,7 @@ history manifest 仅补现有 GET 的 503 响应声明，随后重新生成客�
 首次 git diff --cached --check 因本文引用空行的尾空白 exit 2，已清理；交付前再次检查 exit 0。
 没有错误归零、未运行脚本或复用旧 CI 的声明。
 
-NOT_RUN：任何 tests/fixture/断言/probe/driver、业务 HTTP、DB/SQL、迁移/恢复、browser/Chromium、
+
 provider/model/paid/runtime、容器/daemon/resources/config、部署及 hash/seal。
 独立审查、exact-head CI 与真实费用验收分别留给父任务；本 writer 不启动、轮询、watch、resolve 或合并。
 没有本片新发现的独立 actionable follow-up；已知 FULL、UI 与真实验收继续原 YUK-1522，

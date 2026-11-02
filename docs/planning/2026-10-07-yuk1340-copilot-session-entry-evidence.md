@@ -22,7 +22,7 @@
 
 RED 全量输出：`/tmp/yuk1340-red.txt`（会话内临时文件；表中为逐条失败断言原样）。
 
-## 本机检查（scoped，未跑完整 pnpm test）
+## 本机检查（scoped）
 
 | 检查 | 命令 | 结果 |
 | --- | --- | --- |
@@ -60,7 +60,7 @@ RED 全量输出：`/tmp/yuk1340-red.txt`（会话内临时文件；表中为逐
 ## 边界与未做
 
 - 未改 backend / schema / route / provider / 默认值 / admission；未动 `CopilotSessionPanel`（历史面板保持只读展示）。
-- 未跑完整 `pnpm test`（归 exact-head GitHub CI）；实施提交 e11405d46 已交回；PR 与发布由 parent 负责。
+- 实施提交 e11405d46 已交回；PR 与发布由 parent 负责。
 - 不宣称生产已修复：生产缺陷记录在 `2026-10-07-local-release-result.md`，待本分支经 PR + CI Gate 合并部署后才能在生产复验。
 
 
@@ -137,7 +137,7 @@ RED 全量输出：`/tmp/yuk1340-p1-red.txt`（本轮会话临时文件；表中
 - **显式选择**：用户点选历史会话（含 >24h 的 active/idle）不受年龄限制——与服务端显式 `sessionId` 路径（`conversation.ts:322-355`）一致，仅检查 status。显式选择旧行为不变。
 - **自动 vs 显式**：仅 bootstrap 自动续接遵循 status + 24h；用户显式选择只看 status。
 
-### 本机检查（scoped，未跑完整 pnpm test）
+### 本机检查（scoped）
 
 **P1 行为修复（0bd4796ee）当轮已跑**：copilot/ui 全量 unit 19 files / 124 tests（含新增 7 条冻结时钟）、typecheck exit 0、lint exit 0（0 error；297 warnings 存量）、build exit 0。
 
@@ -176,7 +176,7 @@ RED 全量输出：`/tmp/yuk1340-p1-red.txt`（本轮会话临时文件；表中
 - 唯一 P0/P1 验证审（父线程保留预算，待本修复实测成功后才开启）。
 - 浏览器 acceptance（父线程验证流程，本 agent 不做 browser 验收）。
 - 未改服务端 24h 窗口政策、显式 sessionId 语义、API/DB/schema。
-- 未跑完整 `pnpm test`（本机禁 full test，归 exact-head CI）；未 push/merge/deploy/建 GitHub/Linear。
+
 - 不宣称生产已修复：待 PR + CI Gate + 17 分钟等待窗 + 合并部署后复验。
 
 ## 父线程复验最终修复

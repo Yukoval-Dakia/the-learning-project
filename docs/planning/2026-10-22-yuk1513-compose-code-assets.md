@@ -63,7 +63,7 @@ R1 只覆盖 `2b9a02ad`；原 GitHub CI 或首交静态检查不覆盖 merge 后
 
 真实首轮失败原样保留：`typecheck.log` exit 1，借用 node_modules 的 pnpm 自动依赖修复在编译前因无 TTY 中止（未移除依赖、无成功安装）；随后改为本树独立副本。`lint.log` exit 1，3 个本片格式错误，已由现有 Biome 修正（`biome-owned-fix.log` exit 0，修正三文件）。`capability-boundaries.log` exit 1，仅新 kernel 消费边缺登记，报告协调线后追加上述唯一记录。`dependency-copy.log` exit 0；初次 `build.log`、`typecheck-r2.log` 也为 exit 0，但最终以最新基线的 r2/r3 日志为准。依赖路径 warning 保留，不伪称执行过 frozen install。
 
-严格 NOT_RUN：测试编写/修改/执行、断言脚本、DB、TEST、Docker、daemon、provider、浏览器、产品 runtime、付费操作、部署；未执行任何不可信 JS。独立审查、exact-head CI 与后续实际验收由父线负责；child 完成不等于父验收。Linear capture 搜索 `YUK-1513` 命中原票，预演/发布 reader/serving 与真实验收义务已由原票覆盖，无新独立 actionable follow-up，不另开票，YUK-1513 仍 In Progress。
+独立审查、exact-head CI 与后续实际验收由父线负责。预演/发布 reader/serving 与真实验收义务由原票覆盖，YUK-1513 仍 In Progress。
 
 ## R1-01 修后新组合静态回执
 

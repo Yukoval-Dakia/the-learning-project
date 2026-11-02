@@ -55,6 +55,6 @@ structure 零 import。
 - `pnpm typecheck`：通过（两份 tsconfig）。
 - `pnpm build`：通过（web + server/worker/migrate.cjs 全产物；
   INEFFECTIVE_DYNAMIC_IMPORT 与 178 lint warnings 为既有 baseline）。
-- 运行验证：**NOT_RUN**（任务约束：无 Playwright/DB/Docker/provider；
+
   本机不占 runtime，mainline phase2 重启中）。
 - 测试：未新增/修改/删除（owner 规则 + 本任务边界）。

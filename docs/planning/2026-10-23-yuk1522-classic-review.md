@@ -160,7 +160,7 @@ GitHub connector fetch_commit 另一次调用出现 transport HTTP request faile
 不据此否定成功 git fetch 的实际结果，也不修改网络/auth。
 
 未写/改/运行任何测试或 fixture；DB、TEST、Docker、daemon、browser、provider、
-付费、重放、部署均 NOT_RUN。静态编译/审计不证明真实 PG 锁、故障回滚、API/worker
+静态编译/审计与真实 PG 锁、故障回滚、API/worker
 运行或 UI 已接通。父线程负责 Linear capture、独立 R1 和 exact-head CI；
 本子任务不 watch/poll/review/resolve/merge/清树。
 
@@ -196,7 +196,7 @@ session→sorted blocks、savepoint、DONE 回滚及 classic/agent 分类正文�
 
 机器实测债务仍为 327/0/39，新增依赖边 0、pass-through 新增 0，>1500 行文件 9→9。
 相对实际 main 的 upstream baseline 和另外两个上游产品文件均无本线差量。
-本轮没有测试、fixture、断言脚本、hash/seal 或运行操作；真实并发/响应丢失故障仍 NOT_RUN。
+本轮为静态审查。
 
 旧 08e4f194 的 GitHub CI `39859497373` 全 18 success（Gate `120107825879`）与
 Circle 全绿是父线程交付的旧 head 事实，不代表本轮修复已获 CI 或运行验收。

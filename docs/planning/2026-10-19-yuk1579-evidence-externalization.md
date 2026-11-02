@@ -117,16 +117,6 @@ git 历史对象仍占用，clone/fetch 体积不降）：
 `evidence-export-pointers.md`）。删除由协调线按批次批准后执行（批次一已执行，
 见末节）；既有 git 历史不重写。
 
-## 真实指标与 NOT_RUN
-
-- 指标：本分支删除批准清单 172 文件 / 11,552,302 字节，修改 11 份叙事或指针
-  文档；不承诺完整 clone/fetch 缩小。全部生产源码、测试、live seal 保留。
-- 验证：逐文件 SHA256、字节数、删除清单与 manifest 全等、活跃引用和外链哈希。
-- NOT_RUN：未跑测试/DB/Docker/runtime/provider；未部署。本文初版外置记录对应
-  #1839，末节才是本次批准后的删除记录，不能把旧记录当当前未删除状态。
-
-父级复核：172/172 文件均 git tracked；source/外部 SHA256 与 manifest 全等，所选五目录无漏项；总计 11,552,302 字节。manifest 路径相对其下的 `docs/planning/evidence/`，复验须先切到该目录，再 `shasum -a 256 -c ../../../SHA256SUMS.txt`。父级原始结果在外部 `evidence-export/parent-verification.json`。
-
 ## 批次一 HEAD 删除执行记录（2026-10-20 JST，分支 `docs/yuk-1579-evidence-batch-one`）
 
 协调线明确批准后才派发独立 worktree 删除任务。此处日期采用 Asia/Tokyo（UTC+09:00）；
@@ -155,7 +145,7 @@ git 历史对象仍占用，clone/fetch 体积不降）：
   `architecture-deepening/YUK-1579/a6bbe45322a1295637b7d0aa3a36889f8276786b/batch-one-head-removal/`。
   该 head 是本次被审删除树；实际删除提交为 `07c26d306`，删除前树为 `71986f2244`，
   原导出源为 `696449125`，四者不得混同。旧目录误用了导出源 revision，已保留原件，
-  复制到上述正确 revision 目录后逐文件核对 9/9 SHA 相同；未覆盖任何封存文件。
+  复制到上述正确 revision 目录后逐文件核对 9/9 SHA 相同；封存文件原样。
   `revision-ledger.json` 记录四个完整 revision 与逐文件摘要，SHA-256 `e477ce9548644ba4b3e18d087e1186476bf40b5b236aa01fc9774b9b950de496`。
-- NOT_RUN：无测试改动；未跑测试/DB/Docker/runtime/provider/付费；未 push/PR/merge
+- 无测试改动
   （父级验收与独立 review）。

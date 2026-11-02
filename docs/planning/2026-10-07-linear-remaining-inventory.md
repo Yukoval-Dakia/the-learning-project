@@ -1,6 +1,6 @@
 # Linear 残留工作盘点 — 2026-10-07
 
-查询范围：YUK 团队，非归档，状态类型 backlog/unstarted/started；三组查询均返回 hasNextPage=false。此清单用于迁移之后逐项核销，不代表每张都是尚未实现的独立功能。状态随主线推进会变化，执行前须重新读取票据和代码。
+查询范围：YUK 团队，非归档，状态类型 backlog/unstarted/started；三组查询均返回 hasNextPage=false。此清单用于迁移之后逐项核销。状态随主线推进会变化，执行前须重新读取票据和代码。
 
 共 260 张：Backlog 227、Todo 21、进行/审查中 12。其中 169 张标题为 SCF 核验或修复候选，不可未经核验当作已确认漏洞。
 

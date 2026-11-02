@@ -101,4 +101,3 @@ pass-through 站点身份与 base 相同（`site|local-export`），未生成新
 - 实现：`dae8ce8b525855f678d1fbf0307e2950a344bd89`；整合 `3698dabb5`：`a1ffa0b7a1a343f83d792393f0119380271c4a46`。
 - 证据外置：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/a1ffa0b7a1a343f83d792393f0119380271c4a46/`。父修订与检查记录见该目录 `parent-lint-errors.log`、`parent-checks.json`。
 - 作者首轮 lint 失败实际是本片导出排序和函数签名格式两项 error；测试 suppression 提示为 warning，未修改测试。父仅按 Biome 修正，锁与执行语句不变；原失败日志保留。
-- NOT_RUN：本机 tests/DB/Docker/provider/runtime；类型、构建和静态审计不替代运行期验收。

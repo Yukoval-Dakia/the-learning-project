@@ -6,7 +6,7 @@
 ## 这是什么、不是什么
 
 - **是**：superpowers 工作流时期的历史语料——spec、实施 plan、brainstorm、research、closeout audit 的原始载体，与滚动状态总览 `status.md`。
-- **不是**：默认工作上下文。agent 日常决策以 `AGENTS.md`、`docs/adr/`（ADR-0001 起）、根 `CONTEXT.md`、`docs/modules/`、`docs/agents/` 为准；本目录仅供溯源查证，**旧设计不得据此对抗现行 ADR**。
+- **不是**：默认工作上下文。agent 日常决策以 `AGENTS.md`、`docs/adr/`（ADR-0001 起）、根 `CONTEXT.md`、`docs/modules/`、`docs/agents/` 为准；本目录仅供溯源查证，**旧设计以现行 ADR 为准**。
 - 退役时经四路独立提取审（specs / plans-2026-05 / plans-2026-06+ / ADR 覆盖基线），仍有效的 owner 决定已按「宁少勿滥」并入现行 ADR 与领域文档，各条均注明本目录内的归档原文路径；其余内容或已录于现行 ADR，或已随后续架构演进失效。
 
 ## 旧路径 → 新路径

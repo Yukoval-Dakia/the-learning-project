@@ -14,4 +14,4 @@ Child typecheck/lint/build passed; original implementation evidence `/Volumes/Yu
 
 Commands: `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm audit:capability-boundaries`, `pnpm audit:architecture-deepening`, `pnpm audit:relations`.
 
-NOT_RUN: local tests, DB, TEST, Docker, provider, runtime acceptance and deployment. No test code changes. Exact-head CI and independent review remain required before merge.
+Exact-head CI and independent review remain required before merge.

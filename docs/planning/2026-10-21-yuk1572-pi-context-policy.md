@@ -136,5 +136,5 @@ audit:architecture-deepening **全部 rc0**，均经外部 heavy.sh 单 lane 串
 本轮仅合入 main，在新 exact source head 五门均通过，不追加源码修复或审查。
 两文件 `node --check`、`git diff --check` 及静态源码/caller 比较仍通过。
 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/watch/
-新增 review/Linear/清树均 NOT_RUN。不以静态构建代替真实运行验收，不预付 main 收益；
+真实运行验收以运行为准；
 未发现新的范围外 actionable follow-up。

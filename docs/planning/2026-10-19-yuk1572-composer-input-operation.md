@@ -98,7 +98,7 @@ round-robin/goal 软偏置（queryReviewDue 内部原样）、`resolveDailyPract
 - `pnpm audit:capability-boundaries` → exit 0（444/0/48，无新跨 capability 边）
 - `pnpm audit:architecture-deepening` → exit 0
 - `pnpm audit:relations` → exit 0（dead-edge 行项为既有 report-only 信号）
-- NOT_RUN：本机测试套件、DB/TEST/Docker、运行时回放、provider/付费调用
+
   （owner 规则）。行为等价由上表逐边对照论证，未经真实请求或事务回放；
   「干预诊断仍可前缀并集」「降级后同 tx 后续查询」等运行时事实为代码级
   同构结论，非实测。

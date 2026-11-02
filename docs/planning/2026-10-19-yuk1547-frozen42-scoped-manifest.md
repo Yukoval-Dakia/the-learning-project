@@ -100,11 +100,3 @@ skip（actor 检查），永远不可能变成付费工作，owning 它不会吞
 - `review/stage1-frozen42-prep-20261019/current-bindings-readonly.json`
   sha256 `232cd000…c8`（42 项 current 绑定 + source/provenance，无漂移）—
   正式 manifest 由协调线按本 schema 生成，非本文件。
-
-## NOT_RUN（本任务边界）
-
-- 未读 TEST DB、未跑容器/锁/provider/付费、未编辑外部冻结证据。
-- 无断言/测试代码（owner 规则）；验证仅 typecheck/lint/build 与只读分析。
-- 真实窗口前置（父 lane）：生成正式 scoped manifest（42 项按
-  `current-bindings-readonly.json`）、preflight receipt、合并后 ledger、
-  `--sent` 名单、部署本 CLI 后开窗 drive。

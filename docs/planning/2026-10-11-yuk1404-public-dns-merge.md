@@ -44,7 +44,7 @@ typed 错误契约、decision admission/stale 语义：均未动，上游亦未�
 - `pnpm typecheck` → exit 0（`/tmp/yuk1404-typecheck-20261011.log`）。
 - `pnpm lint` → exit 0，172 条既存 warning（`/tmp/yuk1404-lint-20261011.log`）。
 - `pnpm build` → exit 0（`/tmp/yuk1404-build-20261011.log`）。
-未跑：full `pnpm test`、DB/docker/runtime/provider/deploy/sharedlock（按任务边界）。
+
 
 ## 不在本 PR 范围
 

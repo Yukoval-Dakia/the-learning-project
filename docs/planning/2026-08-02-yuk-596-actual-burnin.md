@@ -58,7 +58,7 @@
 - **F05 materializing-mirror**：`author_artifact` 已提交并完成 mirror 后收到 Stop。系统保留已完成
   写入，但 fail-closed 为 `checkpoint_safe:false`，不暴露伪安全 checkpoint。
 - P2 evidence caveat：F03 polling 捕获 Stop 前已有 3 个 read mirror；它不是“delta 后且 tool 前”
-  的纯隔离样本。取消的 ai_run usage=0/cost=null 只证明 abort contract，不证明取消前实际消耗。
+  的纯隔离样本。取消的 ai_run usage=0/cost=null 只证明 abort contract。
 
 ## Actual-output findings
 

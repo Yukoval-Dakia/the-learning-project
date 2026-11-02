@@ -97,23 +97,6 @@
 - 边界构成：读簇为"event 表 → 有效投影 → 候选态"完整职责闭包；
   写者对它的耦合 = 消费读函数 + 注入一个 rederive 端口。
 
-## 机器实跑 / NOT_RUN
-
-实跑（本机，heavy.sh 槽位内，原始日志与 argv/UTC/真实 rc 封存于
-`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1572/4c50287cf2b9b1bd4cd39721b024eb1c5da293c1/parent-gates-after-rate-limit/`）：
-
-- `pnpm typecheck`：父实际执行 rc=0，argv/UTC/log SHA见 results.jsonl
-- `pnpm lint`：父实际执行 rc=0，argv/UTC/log SHA见 results.jsonl
-- `pnpm build`：父实际执行 rc=0，argv/UTC/log SHA见 results.jsonl
-- `pnpm audit:capability-boundaries`：父实际执行 rc=0，argv/UTC/log SHA见 results.jsonl
-- `pnpm audit:architecture-deepening`：父实际执行 rc=0，argv/UTC/log SHA见 results.jsonl
-- 静态：`biome check`（global 2.5.7 冒烟，早于 frozen install）exit 0；
-  Node strip-types 语法解析 settle-read OK；`git diff --check` clean。
-
-NOT_RUN：全部 tests/vitest/DB/migration/provider/runtime/demo（lane
-授权明确禁止）。
-
-
 ## 父接手后的实测与边界
 
 原writer因模型额度中断，未完成的文档占位已由父替换为真实回执，源码与4c50287逐字相同。父21:53:40–21:54:25 UTC经heavy.sh串行完成五门：typecheck/lint/build/两architecture audits全部0；403/0/37、SCC1、超长15保持，pass-through新增0。机器未发射新站点不等于证明新接口深化；公开适配口只绑定既有scope/plan推导，不宣称caller步骤变少。原static接缝说明中的boolean|undefined应更正为实际SettlementScope.frozenLearningScope:boolean；旧封存保留，本文作更正。

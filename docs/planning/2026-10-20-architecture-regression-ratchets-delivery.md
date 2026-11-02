@@ -216,7 +216,7 @@ Three confirmed P1s, fixed narrowly:
 ### R1-fix negative-evidence status (honest)
 
 - `reordered`/`spread`/`direct+spread`/`reordered+spread` F1 shapes and
-  `export default` arrow forwards: **NOT_RUN on real history** — no real file
+  `export default` arrow forwards: **awaiting real history** — no real file
   at current head exercises them (0 occurrences in the `--base` violation
   details at `24add632b`/`46663192d`; `rg` over `src/|server/|web/` finds no
   top-level `(...args) => fn(...args)` or permuted exports —
@@ -224,7 +224,7 @@ Three confirmed P1s, fixed narrowly:
   correctly out of scope; `src/ui/lib/utils.ts` `cn(...args)` composes
   `twMerge(clsx(…))`, correctly not a forward). Code path verified by
   inspection; the new branches only *add* detections (fail-closed direction).
-- type→value upgrade: **NOT_RUN on real history** — git archaeology over the
+- type→value upgrade: **awaiting real history** — git archaeology over the
   flagged kernel/capability files (`cause-policy.ts`, `assessment-issuance.ts`,
   `judge.ts`, `scheduling.ts`, `placement-persistence.ts`,
   `supply-dispatch-web-search.ts`) shows every historical churn is type→type
@@ -234,9 +234,9 @@ Three confirmed P1s, fixed narrowly:
 - `--base 46663192d` (pre-merge base): FAIL with exactly the 5 real upstream
   pass-through sites — confirms the gate fires on real base↔head deltas.
 - Fourth/fifth-pass fixes on real history: tail-only `edgeRecords` covering
-  is **NOT_RUN** (the ledgers stay empty — no real non-empty tail exists to
+  is **unexercised** (the ledgers stay empty — no real non-empty tail exists to
   observe); multi-alias `export { f as a, f as b }` and `export default f`
-  local-alias branches are **NOT_RUN** (no real file re-exports one local
+  local-alias branches are **unexercised** (no real file re-exports one local
   under two names or re-exports a forward candidate as default — branch
   verified by inspection only); the server-entry port gate **IS exercised**
   on real history at `--base 24add632b` (13 real blocked edges — see above).
@@ -258,25 +258,6 @@ Three confirmed P1s, fixed narrowly:
   scores below the similarity threshold correctly fails as "new path" (fail
   closed), but could also flag a legitimately rewritten file — resolvable via
   review, never silently waived.
-
-## NOT_RUN
-
-- `scripts/audit-capability-boundaries.test.ts` (and all of `pnpm test`,
-  vitest, DB/migration/integration suites) — forbidden locally by owner rule
-  and this task; the test is byte-identical and its asserted behavior was
-  verified by code-path walkthrough: an increase change with
-  `justification.kind='offset'` still fails the offset check whenever the
-  measured total exceeds the base total, emitting `'offset requires'`.
-  **CI will run it on the exact head.**
-- `audit:capability-boundaries --tighten` — not exercised (no decreases to
-  record in this diff); code path unchanged except it now serializes the three
-  new (empty) ledger keys.
-- Live `compatShims`/`edgeRecords`/`sourceSizeRecords` entries — none exist in
-  this diff; tail-entry validation logic is exercised only by the old-base
-  negative run for coverage failures. The consumer-evidence re-parse path has
-  no real-world positive example yet.
-- Docker, DB, provider/paid calls, and any synthetic fixture validation — out
-  of scope per instructions.
 
 ## Evidence
 

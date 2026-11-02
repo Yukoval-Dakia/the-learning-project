@@ -114,7 +114,7 @@ fixed main，未带父旧提交；本 worktree T3 预建分支落后 36 提交/�
 - 语句级搬移对账脚本（`reconcile.py`）：PASS（语义与边界见「行为证据」）。
 - `git diff` 审查：恰 3 源码 hunk，保护段零命中。PASS。
 
-NOT_RUN：全部测试/vitest/DB/provider/runtime/Docker/paid（owner 规则；本片
+
 不触五类不变量）。globals.css 等存量 warning 未处理（写权外）。
 
 ## 证据

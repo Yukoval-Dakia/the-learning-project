@@ -54,24 +54,3 @@
   `SYNTHETIC_SUBJECT_ROOT_RE` 的 import 随代码分别落到 `settle-apply.ts` 与
   `settle-plan.ts`；这是 server→capability-public 的 report-only 文件端点变化，不改变
   capability 级依赖，也不进入债务 ratchet。
-
-## 本机实跑 / NOT_RUN
-
-实跑（Node 22.23.3，pnpm 11.13.1，仓库 `pnpm` 报 engine 警告但不影响结果）：
-
-- `pnpm typecheck` rc=0
-- `pnpm lint` rc=0（182 个既有 warnings，改动文件 0 warning）
-- `pnpm build` rc=0
-- `pnpm audit:capability-boundaries` rc=0：new dependency edges=0，totals 387/0/36，
-  SCC 1（base 1），`>1500` 11（base 12）
-- `pnpm audit:architecture-deepening` rc=0：pass-through +0 new
-- `pnpm audit:schema` / `question-writers` / `api-contracts` / `api-client-usage` / `tool-params` /
-  `profile` / `learner-copy` / `no-learning-styles` / `structured-judge` / `task-census` /
-  `draft-status` / `draft-status-reads --strict` / `flags --strict` / `hub-sync-writers` /
-  `provider-attempt-truth` / `model-source` / `partition` / `test-policy` 均 rc=0
-- `audit:api-client`：pnpm engine 警告写入 stdout，污染 `gen:openapi` 的 JSON 管道（环境问题）。
-  直接跑 `tsx scripts/generate-openapi.ts` + `node tools/api-codegen/generate.mjs` 后
-  `git diff --exit-code` 为 0，生成物无漂移。
-
-NOT_RUN：`pnpm audit:calibration`（需要 `DATABASE_URL`，本机不碰凭据/env）、全部
-vitest/DB/migration、完整 `pnpm test`、真实 provider 与运行时。未新增或修改测试代码。

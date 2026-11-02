@@ -1,6 +1,6 @@
 # YUK-1346 实际验收与整理重投修复
 
-2026-10-07 原验收时记录的生产为 f3bfff2cfe2aea0efbf7d11ead8a84ebfab497ef；这是历史状态，不代表当前 runtime。最新 owner 已退休聊天审核，恢复/source 验证与旧 P1 supersession 见[当前恢复记录](2026-10-07-yuk1346-main-streaming-recovery.md)。任务报告 PR1593 已由另一 owner 部署，本 lane 未复验。
+2026-10-07 原验收时记录的生产为 f3bfff2cfe2aea0efbf7d11ead8a84ebfab497ef；这是历史状态。最新 owner 已退休聊天审核，恢复/source 验证与旧 P1 supersession 见[当前恢复记录](2026-10-07-yuk1346-main-streaming-recovery.md)。任务报告 PR1593 已由另一 owner 部署。
 
 ## 已观察的产品行为
 
@@ -14,7 +14,7 @@
 
 独立续验修正了观测脚本，不修改旧失败记录。r4 bundle ce43c6c5d7c8a873f2063ac461017dd53dbfaafb56ee39bbbc84b15efee0a589 的 observe/capture/finish-ingest 通过。第一次真实整理调用于08:52:51Z开始、08:53:51Z超时；attempt83073746-4d81-4170-93a8-dff152b303b6 为 aborted/provider_request_aborted、wire1，无 external request ID/usage/cost，无 reconciliation_log。不是 KEEP_BOTH 或成功，不重投。
 
-父只读对照确认旧业务、事件、57条旧向量、旧调和记录及保留队列未意外改变；A产生的已知实体与SDK身份辅助写入单列。续验原本计划的SDK hook未命中pnpm真实路径，因此没有实际guard收据，不能声称运行了该guard。最终SQL只能证明观察到的一次同用户身份替换。
+父只读对照确认旧业务、事件、57条旧向量、旧调和记录及保留队列未意外改变；A产生的已知实体与SDK身份辅助写入单列。续验原本计划的SDK hook未命中pnpm真实路径，因此没有实际guard收据。最终SQL只能证明观察到的一次同用户身份替换。
 
 ## YUK-1350 源码修复
 
@@ -59,7 +59,7 @@ Owner 完整非 UI 迁移优先，UI 暂缓；主 runtime agent TESTONLY，旧 a
 - `pnpm install --frozen-lockfile` exit 0，未改写 manifest/lock。
 - `pnpm vitest run --config vitest.unit.config.ts tests/pi-dbos-gate/contract.unit.test.ts src/server/memory/reconcile-llm.test.ts src/capabilities/copilot/server/copilot-execution.unit.test.ts`：3 files / 57 passed。模型为合成 seam，不调用 provider。
 - `pnpm vitest run --config vitest.db.config.ts tests/pi-dbos-gate/recovery.db.test.ts src/server/memory/reconcile-handler.db.test.ts -t 'Pi|direct provider-start fence after abort'`：2 files / 16 passed、24 skipped；10 项 Pi + DBOS 真实子进程恢复，6 项 direct fence/deadline，transport 为合成替身。
-- `pnpm typecheck`、`pnpm lint`、`pnpm build`、`pnpm audit:partition` 均 exit 0。lint 297 既有 warnings；partition 的既有启发式提示不等于新增分区失败。没有修改规则、baseline 或 exemptions。
+- `pnpm typecheck`、`pnpm lint`、`pnpm build`、`pnpm audit:partition` 均 exit 0。lint 297 既有 warnings；partition 的启发式提示为既有。没有修改规则、baseline 或 exemptions。
 - 源码比较和 `git diff --check` 通过。没有新的源码冲突，无需重跑与这次 merge 无关的旧整套验证。
 
 日志与本轮 gate 合成证据单独保存在 `/tmp`，main 原封存 evidence 不被覆盖。

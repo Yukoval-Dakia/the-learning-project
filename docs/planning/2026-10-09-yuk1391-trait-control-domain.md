@@ -1,6 +1,6 @@
 # YUK-1391 — Trait 六操作共享领域出口
 
-基线main `7b89041799881249bbe89344deae8942cc867f70`。沿1358子票查重：1387为读取、1390为subject控制、667为既有HTTP契约，无本slice重复；YUK1391 In Progress。六操作共享入口与两个现有HTTP消费者已实现；154 scoped unit与静态/build证据见下。26个新DB案例仅编写，未执行。源码完成不代表管理页或整个迁移完成。
+基线main `7b89041799881249bbe89344deae8942cc867f70`。沿1358子票查重：1387为读取、1390为subject控制、667为既有HTTP契约，无本slice重复；YUK1391 In Progress。六操作共享入口与两个现有HTTP消费者已实现；154 scoped unit与静态/build证据见下。26个新DB案例仅编写。管理页与整个迁移分开核销。
 
 ## Ownership
 
@@ -67,7 +67,7 @@ Existing regression files: src/server/subjects/trait-write.db.test.ts, src/capab
 | 命令 | exit | 完整log与范围 |
 |---|---|---|
 | `pnpm vitest run --config vitest.unit.config.ts src/capabilities/observability/server/trait-control-operations.unit.test.ts src/capabilities/observability/server/subject-control-operations.unit.test.ts src/subjects/trait-compose.test.ts` | 0 | `/tmp/yuk1391-unit.log`，154 tests / 3 files；新seam/HTTP 75 |
-| `pnpm typecheck` | 0 | `/tmp/yuk1391-typecheck.log`，含Start tsconfig；只编译DB测试，未执行 |
+| `pnpm typecheck` | 0 | `/tmp/yuk1391-typecheck.log`，含Start tsconfig；只编译DB测试 |
 | `pnpm lint` | 0 | `/tmp/yuk1391-lint.log`，290既有warnings；task文件scoped Biome无diagnostics |
 | `pnpm exec biome check <7 task source/test/baseline files>` | 0 | `/tmp/yuk1391-scoped-biome.log` |
 | `pnpm build` | 0 | `/tmp/yuk1391-build.log`，Vite SPA/Start、server/worker/migrate bundles；未启动它们 |
@@ -85,7 +85,7 @@ Existing regression files: src/server/subjects/trait-write.db.test.ts, src/capab
 
 unit log保留Vite configLoader native兼容warning。build保留node:crypto browser externalization、large chunks与review-operation静态/动态import warning，未改其owner代码。没有新增task文件Biome诊断。
 
-## 已编写但尚未执行的DB验收
+## 已编写的DB验收（待执行）
 
 新`server/trait-control-operations.db.test.ts`有26案例：domain与真实HTTP各六条committed flow、两条no-write parity矩阵、domain与HTTP各六种operation的actual42P01 postcommit hydrate failure。使用real pool Db与独立postgres observer连接，resetDb隔离，没有beginTestTransaction或savepoint shim。成功hydrate之前observer先验证commit可见；之后验证registry。输入包含长中文、嵌套noteTemplate、未知/缺失payload、两CAS轴、幻judge与不兼容历史快照。
 

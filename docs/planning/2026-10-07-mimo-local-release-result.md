@@ -31,7 +31,7 @@ R2 的63对象快照共7,961,112 bytes，于00:28:11.796Z完成，早于00:28:19
 | 恢复副本原生学习 | 发卷201、无效作答422、advice200、activation applied、重复请求 idempotent_replay；SQL仅一条结算及一次 FSRS 更新 | 确定性题目；不是全部练习页面或模型评分准入 |
 | 生产浏览器 Copilot | 显式新对话后两轮202均成功；第二轮记得椭圆场景，建议第一步卡住时分步对照；刷新后两轮文字一致，无 page error | 自动会话入口 P1 仍由 #1583 修复；本次没有掩盖成已修 |
 | 生产 API/DB | session `h2ech9r3vwb0j4ej6hy5z1cw` 保持 `pi:be7d8c1d-56ee-44dc-ba4d-f2bfa8d5f739`；2 ask/2 reply，均 MiMo2.6Pro success，无 tool call 或掌握/计划改写 | 假设场景明确标为上线验收；回答不是掌握证据，也没有验证独立迁移能力 |
-| 生产后台记忆 | 截至封存，3项 MemoryBriefTask success，均 MiMo2.6Pro；opaque Mem0 操作成功，2个 direct reconciliation wire 记录为目标pair | opaque记录仍为mem0/model=null，SDK wire/count/cost不完整，不冒充逐请求模型证明 |
+| 生产后台记忆 | 截至封存，3项 MemoryBriefTask success，均 MiMo2.6Pro；opaque Mem0 操作成功，2个 direct reconciliation wire 记录为目标pair | opaque记录仍为mem0/model=null，SDK wire/count/cost如实记缺 |
 | HTTPS/鉴权 | 本机与 tailnet health/readiness200；业务 `/api/copilot/sessions` 无令牌401、有令牌200 | readiness本身按实现公开，不用它证明鉴权；实体远程设备未验收 |
 
 两轮 Copilot task run 尾缀为 `d362b0046d84f929ae4a1aa639bfbd3c8caa03c84592de38b475ca8ca6bca0cc` 和 `363a380b31dae526a7dbc24b1ffa4c5bed20084db436459b0370c8f7434adfa7`，完整ID见证据。Pi catalog estimated分别 `$0.001417462`、`$0.001326547`，合计 `$0.002744009`。加上上述3项自然后台摘要，已知估值快照为 `$0.017686259`；这不是账户账单或本次全部费用，Mem0/直接调和仍 unknown。后台沿用现有产品任务预算，不声称验证脚本覆盖所有后台费用。
@@ -46,6 +46,6 @@ R2 的63对象快照共7,961,112 bytes，于00:28:11.796Z完成，早于00:28:19
 
 ## 下一条交付
 
-YUK-1341 的产品模型配置和本机辅导恢复已交付；54聊天消费者的源码覆盖不等于54项质量验收。专用 embedding、typed Jev、OCR协议仍保留，评分切片的 admission/withheld 不放宽。
+YUK-1341 的产品模型配置和本机辅导恢复已交付；54聊天消费者的源码覆盖与质量验收分开核销。专用 embedding、typed Jev、OCR协议仍保留，评分切片的 admission/withheld 不放宽。
 
 YUK-1340 / #1583 保持活动：修复自动选择过期会话、默认已结束会话入口及与新 main 的冲突，保留显式历史选择和待恢复请求。修复已由writer交回并通过父线程组件、DB及构建页面验收；仍待新exact-head CI、合并窗与生产发布验收。随后用真实椭圆学习过程验证证据记录、帮助程度和后续复验安排。单次建议中的“能复述”仍不能替代独立迁移表现，完整行为基线继续由 YUK-1103/YUK-405 推进。

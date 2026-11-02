@@ -30,7 +30,7 @@ active 与 completed consumer 现在共享冻结题面投影。完成后的结�
 
 负向 fixture 曾因冻结 guard、外键及合法初次结果 fallback 失败；最终通过既有隔离 restore fixture 构造异常，保留生产约束并明确验证正常写入仍被拒绝。没有通过删除或放宽生产约束取得测试通过。
 
-独立初审及唯一验证审均已完成，发现已修复，不启动第三轮审查。PR #1591 仍需新提交的 exact-head CI 和合并条件；此记录不代表已部署。真实 provider 输出质量不属于本次离线契约验证结论。
+独立初审及唯一验证审均已完成，发现已修复。PR #1591 仍需新提交的 exact-head CI 和合并条件；真实 provider 输出质量另由线上验收覆盖。
 
 ## GitHub 后续 P1：完整的历史来源
 
@@ -42,7 +42,7 @@ PR comment `4206851930` 指出，已完成结果投影只冻结题面，仍从�
 
 主线 P0 gate `42987dfd7` 已正常合入 `67f465e79`，仅看板和历史交接文档发生冲突。合并后冻结依赖安装、104 DB（含 P0 进程恢复）、74 unit、typecheck/lint/build 与 diff check 全部通过；日志 `/tmp/yuk1364-main-{install,db,unit,typecheck,lint,build}.log`。旧 head `eb0e5f53b` 的 CI 不能作为新修复的合并依据。
 
-边界：旧 issued 记录没有原生 assessment refs 时保留冻结 issuance/revision 的历史契约；Scout 按 KC 发现候选的查询仍以当前 question 标签筛选，这与共享 fold 的已发现结果有效性校验不同，本修复未更改其发现语义。未发现需另建票的已证实缺陷；本轮 actionable finding 已在 YUK-1364 内闭环。以上是隔离 DB、离线执行端和本地构建证据，不是 provider 质量、CI 或 live-runtime 验收。该任务修复既有 finding，未启动第三轮审查，未部署或变更运行库。
+边界：旧 issued 记录没有原生 assessment refs 时保留冻结 issuance/revision 的历史契约；Scout 按 KC 发现候选的查询仍以当前 question 标签筛选，这与共享 fold 的已发现结果有效性校验不同，发现语义不变。以上是隔离 DB、离线执行端和本地构建证据。
 
 
 ## 主线依赖升级后的集成
@@ -86,7 +86,7 @@ writer最终9文件191 DB、4文件72 unit、typecheck/lint/build、API contract
 
 正常合入 main `6e54da8df`（包含1365 PR1593/1594）为 `50954a9c4`，冲突仅PLAN/历史交接，保留有效owner边界和最新优先级。合并后父独立运行4文件124 DB、5文件77 unit及typecheck/lint/build，全部exit0；日志 `/tmp/yuk1364-parent-rubric-merge-{db,unit,typecheck,lint,build}.log`。另运行API startup scoped unit，结果见同前缀`startup.log`。
 
-14:11Z实读主release已为6e54da8df/build765c61f/imagefd8c046b97fe，Agent TEST ONLY，验收范围记录为部分：即时生命周期SSE已确认，真实正文因provider429限额未完成；没有代为重试或重放DLQ。新修复head尚未部署或完成容器HTTP复验；ac4旧基线不能替代它。
+14:11Z实读主release已为6e54da8df/build765c61f/imagefd8c046b97fe，Agent TEST ONLY，验收范围记录为部分：即时生命周期SSE已确认，真实正文因provider429限额未完成；新修复head待部署与容器HTTP复验。
 
 
 ## 完整评分契约 P1 修复与父验收
@@ -97,7 +97,7 @@ GitHub comment `4208030193` 指出冻结 `probe_spec` 只比较 prompt/reference
 
 writer最终270 DB、136 unit、typecheck/lint/build及boundary/API/partition audits通过。父核对9项源码、21份日志和8项封存材料的SHA256，并重新运行 complete-spec、probe-answer、prep-desk 三个DB文件，113/113通过，exit0。父日志 `/tmp/yuk1364-complete-spec-parent-db.log`；完整清单 `/tmp/yuk1364-complete-spec-manifest.json`。新测试使用真实隔离Postgres和Request/Response处理函数，模型执行端为脚本替身，没有付费调用。这不等于监听HTTP、镜像或真实模型质量验收。
 
-先前66e候选的隔离监听HTTP已验证错误reference拒绝、冻结题面、正常编辑后的合成历史结果及幂等ack，14:18Z清理自有服务并释放锁；该旧证据不覆盖本次完整spec修复。当前新head仍待exact-head CI、镜像隔离HTTP及发布门禁，不启动第三轮独立review。旧66e发布脚本已加拒绝执行保护，未执行。当前actionable finding归既有YUK-1364，无需另建重复票。
+先前66e候选的隔离监听HTTP已验证错误reference拒绝、冻结题面、正常编辑后的合成历史结果及幂等ack，14:18Z清理自有服务并释放锁；该旧证据不覆盖本次完整spec修复。当前新head仍待exact-head CI、镜像隔离HTTP及发布门禁，第三轮审查预算已用完。旧66e发布脚本已加拒绝执行保护，未执行。当前actionable finding归既有YUK-1364，无需另建重复票。
 
 
 ## 9a43085a0 准确镜像隔离 HTTP 验收
@@ -110,7 +110,7 @@ native fixture通过正式publication在首次issuance前只改target_error_resp
 
 15:18:17Z停止并移除自有app、PG及匿名volume、internal网络，重新核对owner后释放deployment.lock，显式通知1365与主线。主release仍为6e54da8df/imagefd8，四服务healthy，没有修改主库。证据根为runtimeRoot/yuk1364-preflight-9a43085a0/evidence，acceptance-summary.json、lock-release.json及evidence-sha256.json封存实际结果。
 
-合并前发现CI Gate 37642044307整体failure，已生成16个job均success或合法skip，最后汇总gate未生成，无failed-step日志。GitHub拒绝一次failed-only retry；改用现有workflow_dispatch在相同head触发37643395029完整gate。根因尚未确定，不能以部分绿色代替完整gate；此记录不代表已合并或部署。
+合并前发现CI Gate 37642044307整体failure，已生成16个job均success或合法skip，最后汇总gate未生成，无failed-step日志。GitHub拒绝一次failed-only retry；改用现有workflow_dispatch在相同head触发37643395029完整gate。根因尚未确定；完整 gate 以汇总 job 为准。
 
 手动完整CI `37643395029` 随后在准确9a43085a0全部通过，包含最后汇总job；本地与镜像证据未变。然而普通expected-head squash仍被base policy拒绝。规则要求GitHub Actions汇总context；REST核对head上该context为success，PR临时merge commit `598d76c545ed186e5ac77acd5021c5d52ddd2338`无check-runs。未使用admin或修改规则。将本次实际验收文档提交到PR，以新的pull_request事件重新取得规则认可的CI，旧工作流失败记录保留。
 
@@ -161,7 +161,7 @@ P2 4208871942 的 LIMIT-before-validation 已源码确认，运行影响尚未�
 
 最终 e468492d3 的 CI37653519120 已全绿，审查前6threads resolved，但合并前再次读取发现新P1 PRRT_kwDOSXB98s6qAM6d：冻结execution_plan允许非探针executor/task，可能先错误评分再422或V1采纳。禁止合并/发布e468。T3 codex gpt-6-astra high 唯一码writer task yuk1364-executor-contract-repair-20261008-v1 正在生产/冻结/消费矩阵与RED复现后修复，不是第三review。父仅docs/ops，不能并发测试或编辑源码。
 
-当前无部署锁、无自有容器。候选 deployment-yuk1364-e468492d3 helper未执行，无release-gates-verified.json。新增verify_mem0_archive完整目录/WAL恢复校验合成测试通过，已记YUK1329并通知1365owner；旧main-file-only integrity ok仍能漏WAL行，但不推断生产损坏。主live6e是e468祖先，listener/worker/package/lock相同。77c镜像HTTP旧证据不覆盖未来新修复。
+当前无部署锁、无自有容器。候选 deployment-yuk1364-e468492d3 helper待执行。新增verify_mem0_archive完整目录/WAL恢复校验合成测试通过，已记YUK1329并通知1365owner；旧main-file-only integrity ok仍能漏WAL行，但不推断生产损坏。主live6e是e468祖先，listener/worker/package/lock相同。77c镜像HTTP旧证据不覆盖未来新修复。
 
 ### 执行契约修复 a5e623045
 

@@ -65,12 +65,3 @@ ts-tokenize 与 main 逐字节相同；无新增文件。
 五 audit 间其余"相似"均为不同策略或合并不净减：三种 walker 机制（Dirent×2 形、statSync×2）、
 两套 lexer（fold 私有状态机、hub codeText 选择性保留）、四套 allowlist 校验（不同 issue 形状
 与消息契约）。按"不合并不同 policy meaning、不为统一引入净增接口"红线保持本地。
-
-## 7. 验证与 NOT_RUN
-
-已跑（最终树）：11 变体同树对照逐字节一致（before2/after2）；`pnpm typecheck` 0；
-`pnpm lint` 0（179 warnings = main 基线）；`pnpm build` 0。
-NOT_RUN：完整 `pnpm test`（owner 规则，push 后 exact-head CI Gate 执行）；未写/改任何测试；
-无 DB/Docker/runtime/provider/paid 动作；未 push、未 PR。
-
-父级源码 `8b22c2b95fc28aba8363bbbcc6a6f5f3009425b7` 的 typecheck/lint/build 均 exit0（lint179warnings）。11个既有命令均exit0，10项捕获输出与before2逐字节一致；schema JSON的管道捕获截断为73,728B，改用文件重定向得到202,568B且与before2全等，原失败记录保留，schema源码未改。日志在 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/8b22c2b95fc28aba8363bbbcc6a6f5f3009425b7/parent/`；checks-sha256.json摘要 `fdc812f268ac26dab3f3a47beb5cc038b60abb7ffc88e1a9da857dbe7f5835e5`。现有语料执行证据不替代代码分支等价论证。

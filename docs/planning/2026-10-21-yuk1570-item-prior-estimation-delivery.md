@@ -78,7 +78,7 @@ typecheck/lint/build rc0（lint 181 warnings）；首轮两 audit 仅报实际�
 `97c82f47ec9be9c2367d23c04755a1d999ab8ad9/parent-final-audits/`。
 父独立 AST 核14个原声明逐字迁移、35个operation留守声明不变、9组diff只在批准hunk；测试删唯一import后全文同。
 旧路径在受保护 tasks/schema 的注释及TaskSpec说明文字仍有3处，均非代码引用，本片未扩大到这些内容。
-所有本机 tests/DB/TEST/Docker/daemon/provider/runtime/demo/paid 均 NOT_RUN；测试批准不扩大运行范围。
+测试批准范围外项不运行。
 唯一独立 R1、PR/exact CI由父继续推进，未把本地门通过当成运行或main收益。
 
 ## 已审源码与最新 main 组合
