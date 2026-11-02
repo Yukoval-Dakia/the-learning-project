@@ -51,7 +51,7 @@ import {
   VISION_JUDGE_TASK_KINDS,
   visionJudgeProviderOverride,
 } from '@/server/ai/vision-judge-config';
-import { INFRA_HOUSEKEEPING_SCHEDULES } from '@/server/boss/handlers';
+import { INFRA_HOUSEKEEPING_SCHEDULES } from '@/server/boss/infra-schedules';
 import { EXPIRE_AGENT, EXPIRE_FAST, EXPIRE_LLM, RETENTION_7D } from '@/server/boss/queue-config';
 import { resolveApiPort } from '@/server/config/env';
 import { EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE } from '@/server/events/subscriptions/dispatch-mount';
