@@ -1,7 +1,7 @@
 // CoachTask contract. The model-facing shape is `CoachPlanDraft` (prose +
 // proposals + attention tags); the persisted TodayPlan numbers are composed by
 // the job from the due queue + daily budget. This strict parseText is the owned
-// contract; coach_daily / coach_weekly handlers keep their own best-effort parse
+// contract; the coach_daily handler keeps its own best-effort parse
 // for live-model prose wrapping.
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
@@ -19,14 +19,14 @@ export const coachTaskSpec = {
   definition: {
     kind: 'CoachTask',
     description:
-      'Wave 5 / T-D6 — Phase 3 Global Coach Orchestrator. Reads via the `coach` DomainTool allowlist and outputs a `TodayPlan` draft consumed by the coach_daily / coach_weekly handlers. Count, minutes, time box and subject mix are computed server-side; the model supplies daily_focus, knowledge focus, intent tags and proposals. All mutations are routed through propose_* tools (zero direct DB writes).',
+      'Wave 5 / T-D6 — Phase 3 Global Coach Orchestrator. Reads via the `coach` DomainTool allowlist and outputs a `TodayPlan` draft consumed by the coach_daily handler. Count, minutes, time box and subject mix are computed server-side; the model supplies daily_focus, knowledge focus, intent tags and proposals. All mutations are routed through propose_* tools (zero direct DB writes).',
     defaultProvider: 'xiaomi',
     // 纯文本推理，无 vision 需求；mimo-v2.5 (multimodal) 作为 fallback 保留。
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_BUDGET, maxIterations: 12, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,
-    // coach_daily / coach_weekly handlers supply the surface-specific DomainTool
+    // The coach_daily handler supplies the surface-specific DomainTool
     // allowlist from src/kernel/tools/allowlists.ts; registry default stays empty.
     allowedTools: [],
     prompt: {
