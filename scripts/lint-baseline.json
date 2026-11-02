@@ -4,7 +4,7 @@
   "infoPolicy": "info diagnostics are counted: separate infos ratchet total and per-rule rows; each severity total must equal the baseline",
   "totals": {
     "errors": 0,
-    "warnings": 156,
+    "warnings": 154,
     "infos": 0
   },
   "byRule": {
@@ -18,7 +18,7 @@
       "warning": 7
     },
     "lint/complexity/noImportantStyles": {
-      "warning": 6
+      "warning": 5
     },
     "lint/complexity/useOptionalChain": {
       "warning": 26
@@ -36,7 +36,7 @@
       "warning": 1
     },
     "lint/style/noDescendingSpecificity": {
-      "warning": 46
+      "warning": 45
     },
     "lint/style/noNonNullAssertion": {
       "warning": 8
