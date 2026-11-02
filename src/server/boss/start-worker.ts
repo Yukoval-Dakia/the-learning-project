@@ -32,6 +32,12 @@ import { hydrateSubjectRegistryFromDb, startSubjectRefresh } from '@/server/subj
 export type StartBossWorkerOptions = {
   /** Epoch-gate poll interval. Tests pass a short value. */
   epochPollIntervalMs?: number;
+  /**
+   * Set by server/index.ts for the in-process worker. That API process already runs the
+   * config, custom-provider and model-catalog pollers, and they feed the same in-memory
+   * state this worker reads, so a second set would only repeat the same DB reads.
+   */
+  apiPollersRunning?: boolean;
 };
 
 export async function startBossWorker(
@@ -107,9 +113,11 @@ export async function startBossWorker(
   // Level-triggered reconcile. unref so the timer does not hold the process. Cleared on stopped.
   const refresh = startSubjectRefresh(db, 60_000);
   boss.once('stopped', () => refresh.stop());
-  // The worker has no config write path, so this window is how a new row arrives. unref.
-  const configRefreshHandle = startConfigRefresh(db, 15_000);
-  boss.once('stopped', () => configRefreshHandle.stop());
+  if (!options.apiPollersRunning) {
+    // The worker has no config write path, so this window is how a new row arrives. unref.
+    const configRefreshHandle = startConfigRefresh(db, 15_000);
+    boss.once('stopped', () => configRefreshHandle.stop());
+  }
   try {
     const refreshed = await refreshModelCatalog(db);
     if (refreshed.outcome === 'stored') {
@@ -126,17 +134,19 @@ export async function startBossWorker(
     });
   }, MODEL_CATALOG_REFRESH_INTERVAL_MS);
   catalogRefresh.unref();
-  // The refresh lock serializes writers. This watch reloads the row another
-  // worker stored, so this process does not keep a stale merge in memory.
-  const catalogWatch = startModelCatalogWatch(db);
-  // The worker has no custom-provider write path either; this window is how a
-  // new definition arrives. unref, same cadence as the catalog watch.
-  const customProvidersWatch = startCustomProvidersWatch(db, CUSTOM_PROVIDERS_WATCH_INTERVAL_MS);
-  boss.once('stopped', () => {
-    clearInterval(catalogRefresh);
-    catalogWatch.stop();
-    customProvidersWatch.stop();
-  });
+  boss.once('stopped', () => clearInterval(catalogRefresh));
+  if (!options.apiPollersRunning) {
+    // The refresh lock serializes writers. This watch reloads the row another
+    // worker stored, so this process does not keep a stale merge in memory.
+    const catalogWatch = startModelCatalogWatch(db);
+    // The worker has no custom-provider write path either; this window is how a
+    // new definition arrives. unref, same cadence as the catalog watch.
+    const customProvidersWatch = startCustomProvidersWatch(db, CUSTOM_PROVIDERS_WATCH_INTERVAL_MS);
+    boss.once('stopped', () => {
+      catalogWatch.stop();
+      customProvidersWatch.stop();
+    });
+  }
   // A crash is the usual reason a run stays 'running'. Restart converges those rows.
   // The nightly cron covers a database outage where nobody restarts. A sweep failure must not abort boot.
   try {

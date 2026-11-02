@@ -145,7 +145,9 @@ async function startInProcessWorker(): Promise<void> {
     import('@/db/client'),
     import('@/server/boss/start-worker'),
   ]);
-  await startBossWorker(db);
+  // This process already started the config, custom-provider and model-catalog pollers
+  // before serve, so the worker must not start a second set.
+  await startBossWorker(db, { apiPollersRunning: true });
   console.log('[rw:api] in-process pg-boss worker running (RW_WORKER=1)');
 }
 
