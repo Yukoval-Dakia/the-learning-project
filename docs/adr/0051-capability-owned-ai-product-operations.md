@@ -68,9 +68,8 @@ route、pg-boss job、Copilot tool 和 cron 只是 operation 的入口或触发�
 - SDK event → terminal result/error 的统一翻译；
 - model-attempt usage、成本与审计留痕。
 
-它不负责领域 parse 后的业务有效性、领域 transaction、proposal 语义或产品成功。观测上必须
-区分 `model_attempt` 与 `product_operation`；模型 terminal success 不能冒充产品已经 parse、
-commit 或交付成功。
+它不负责领域 parse 后的业务有效性、领域 transaction、proposal 语义或产品成功。观测上必须区分 `model_attempt` 与 `product_operation`；模型 terminal success 与产品侧 parse、
+commit、交付成功分属两层判据。
 
 ### 3. Task contract 归 capability，中央 catalog 退化为 projection
 

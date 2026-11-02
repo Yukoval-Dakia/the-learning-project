@@ -26,7 +26,7 @@
 
 ## 验证边界
 
-本轮 source-only，无新增 useEffect。tests 零写零跑；业务 HTTP、浏览器、DB、provider/paid、实际用途变更/停止/清理及部署 NOT_RUN。必要本机 typecheck/lint/build、相关 audit 与本片唯一独立 R1 按实际结果记录；源码和静态门不替代真实费用/界面验收。共享 Linear field notes 接口返回 `Tool get_agent_context not found`，以固定交接与真实源码为准。
+本轮 source-only，无新增 useEffect。必要本机 typecheck/lint/build、相关 audit 与本片唯一独立 R1 按实际结果记录。共享 Linear field notes 接口返回 `Tool get_agent_context not found`，以固定交接与真实源码为准。
 
 本机 api-client-usage、capability-boundaries、architecture-deepening、learner-copy、typecheck、lint、build 均 exit0；六个源码文件 Biome 无诊断，diff check 通过。依赖由已有离线缓存安装，package/lock 未改。独立首次 R1 尚待完成。
 
