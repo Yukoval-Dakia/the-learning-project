@@ -88,7 +88,7 @@ const ATTEMPT_WRAPPER_SURFACES = [
     requiredTokens: ['executeDirectProviderAttempt', 'dashscope.embedding'],
   },
   {
-    path: 'src/server/memory/reconcile-llm.ts',
+    path: 'src/server/ai/mem0/reconcile-llm.ts',
     requiredTokens: ['executeDirectProviderAttempt', 'glm.memory-reconcile'],
   },
   {
@@ -110,7 +110,7 @@ const ATTEMPT_WRAPPER_SURFACES = [
 ] as const satisfies readonly { path: string; requiredTokens: readonly string[] }[];
 
 const MIGRATED_COST_SURFACES = [
-  'src/server/memory/triggers.ts',
+  'src/capabilities/agency/server/memory/triggers.ts',
   'src/capabilities/knowledge/server/propose_edge.ts',
   'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts',
   'src/capabilities/ingestion/server/provider-attempts.ts',

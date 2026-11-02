@@ -15,7 +15,7 @@ async function main(): Promise<void> {
   const { db } = await import('../src/db/client');
   try {
     const { authorizeMemoryIngestReplay, listStalledMemoryIngests, memoryIngestReplayGrantId } =
-      await import('../src/server/memory/memory-ingest-recovery-store');
+      await import('../src/capabilities/agency/server/memory/memory-ingest-recovery-store');
     if (command.kind === 'list') {
       console.log(
         JSON.stringify(await listStalledMemoryIngests(db, command.afterId, command.limit), null, 2),
@@ -29,7 +29,9 @@ async function main(): Promise<void> {
     const boss = createBoss();
     try {
       await getStartedBoss();
-      const { buildMemoryEventIngestHandler } = await import('../src/server/memory/triggers');
+      const { buildMemoryEventIngestHandler } = await import(
+        '../src/capabilities/agency/server/memory/triggers'
+      );
       await buildMemoryEventIngestHandler(db, boss, { replayGrant: grant })([
         { data: { event_id: command.request.sourceEventId } },
       ]);

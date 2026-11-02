@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { config } from 'dotenv';
 import { buildLocalDevEnv } from './local-db-env';
 
@@ -24,7 +24,12 @@ const env: NodeJS.ProcessEnv = {
   NEXT_PUBLIC_BASE_URL: localEnv.NEXT_PUBLIC_BASE_URL,
 };
 
-const api = spawn('pnpm', ['rw:api'], { stdio: 'inherit', env });
+// The Start front door serves the built client/server bundle, so build it once before the
+// API boots; `rw:web` then rebuilds on change and tsx watch restarts the API on new output.
+const firstBuild = spawnSync('pnpm', ['build:start'], { stdio: 'inherit', env });
+if (firstBuild.status !== 0) process.exit(firstBuild.status ?? 1);
+
+const api = spawn('pnpm', ['rw:api'], { stdio: 'inherit', env: { ...env, RW_FRONTDOOR: '1' } });
 const web = spawn('pnpm', ['rw:web'], { stdio: 'inherit', env });
 const worker = spawn('pnpm', ['worker:dev'], { stdio: 'inherit', env });
 const children = [api, web, worker];

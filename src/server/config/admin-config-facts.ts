@@ -5,6 +5,7 @@
 // the auth-status projection (never credential values).
 
 import { capabilities } from '@/capabilities';
+import { MEMORY_INFRA_SCHEDULES, memoryReconcileHandoffMode } from '@/capabilities/agency/public';
 import { copilotConfigEffectiveFacts } from '@/capabilities/copilot/public';
 import { ingestionConfigEffectiveFacts } from '@/capabilities/ingestion/public';
 import { knowledgeConfigEffectiveFacts } from '@/capabilities/knowledge/public';
@@ -54,8 +55,6 @@ import { INFRA_HOUSEKEEPING_SCHEDULES } from '@/server/boss/handlers';
 import { EXPIRE_AGENT, EXPIRE_FAST, EXPIRE_LLM, RETENTION_7D } from '@/server/boss/queue-config';
 import { resolveApiPort } from '@/server/config/env';
 import { EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE } from '@/server/events/subscriptions/dispatch-mount';
-import { memoryReconcileHandoffMode } from '@/server/memory/memory-reconcile-handoff';
-import { MEMORY_INFRA_SCHEDULES } from '@/server/memory/triggers';
 import {
   LAYER_STAGGER_SECONDS,
   NODE_TIMEOUT_SECONDS,
@@ -296,7 +295,7 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
       name: decl.name,
       cron: decl.cron,
       tz: decl.tz,
-      owner: 'server/memory',
+      owner: 'capabilities/agency/server/memory',
       queue: decl.queue,
       source: 'server-memory-infra' as const,
       ...(decl.note !== undefined ? { note: decl.note } : {}),

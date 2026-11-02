@@ -52,7 +52,7 @@ Skip for: pure docs / pure backend / pure schema / pure test / work inside an al
 ## Stack (post YUK-321 M5)
 
 - Hono API (`server/index.ts` + composition root `server/app.ts`, :8787)
-- Vite SPA (`web/`, TanStack Router + React 19, :5173, dev `/api` proxy → :8787)
+- TanStack Start front door (`server/start/`, React 19, served from the API on :8787); shared shell assets in `web/src/`
 - pg-boss worker as separate process (`scripts/worker.ts`)
 - Postgres + Drizzle (postgresql dialect, postgres driver); **no Redis**
 - R2/S3 blob via `@aws-sdk/client-s3` (`src/server/r2.ts`)
@@ -91,7 +91,7 @@ pnpm dev:local       # compose Postgres :5433 + api + web + worker (推荐入口
 pnpm typecheck       # tsc --noEmit
 pnpm lint            # biome check .
 pnpm format          # biome format --write .
-pnpm build           # rw:web:build + 三 esbuild 产物
+pnpm build           # build:start + 三 esbuild 产物
 ```
 
 Pre-PR: `pnpm typecheck`, `pnpm lint`, `pnpm audit:schema`,

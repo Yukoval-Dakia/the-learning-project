@@ -76,7 +76,8 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   COPILOT_NUDGE_KC_COOLDOWN_HOURS: 'src/capabilities/copilot/server/nudge-config.ts',
   SELECTION_POLICY: 'src/capabilities/practice/server/stream-store.ts',
   HUB_SYNC_MODE: 'src/capabilities/notes/server/hub-sync-reconciliation.ts',
-  MEMORY_RECONCILE_HANDOFF_MODE: 'src/server/memory/memory-reconcile-handoff.ts',
+  MEMORY_RECONCILE_HANDOFF_MODE:
+    'src/capabilities/agency/server/memory/memory-reconcile-handoff.ts',
   PROJECTION_IS_WRITER_ITEM_CALIBRATION: 'src/kernel/projection-writer-policy.ts',
   PLACEMENT_PROBE_ENABLED: 'src/capabilities/practice/server/placement-session-lifecycle.ts',
   AI_RATE_LIMIT_MAX: 'src/kernel/request-rate-limit.ts',

@@ -5,10 +5,10 @@
 ## WHERE TO LOOK
 | 文件 | 职责 |
 |------|------|
-| `index.ts` | 入口：loadEnv → warnFlipOrder → `buildHonoApp(capabilities)` → `serve()`；prod 设 `RW_STATIC_DIR` 时托管 SPA；`RW_WORKER=1` 时同进程启 worker |
+| `index.ts` | 入口：loadEnv → warnFlipOrder → `buildHonoApp(capabilities)` → `serve()`；设 `RW_FRONTDOOR=1` 时由 Start 前门托管页面；`RW_WORKER=1` 时同进程启 worker |
 | `app.ts` | 组合根工厂：`buildHonoApp()` 挂载 token gate、`/api/health`、所有 manifest route；`toHonoPath()` 把 `[id]` 转成 `:id` |
 | `composed-routes.ts` | 跨 capability 组装的路由 handler（manifest 声明了路由但不带 `load`）：按 operationId 匹配，缺 handler 时 `buildHonoApp` 抛错，孤儿 handler 由启动入口的 `assertComposedRoutesDeclared` 拦下 |
-| `frontdoor.ts` / `start/` | 固定 Start fetch 前门；通过 request context 调原 Hono app，未迁页面回落原 SPA；Start 独立 TS program 避免与 SPA 路由注册冲突 |
+| `frontdoor.ts` / `start/` | 固定 Start fetch 前门；通过 request context 调原 Hono app，Start 独立 TS program |
 | `env.ts` | `.env` / `.env.local` 加载（API / Vite / worker 三进程统一） |
 
 ## CONVENTIONS
@@ -16,7 +16,7 @@
 - route handler 是 `(req: Request, params: Record<string, string>) => Promise<Response>` 形态；`params` 由 Hono `c.req.param()` 透传。
 - `route.load` 是懒加载 thunk：manifest 保持纯元数据，组合根首次请求时才解析 handler，之后缓存复用。
 - `RW_WORKER=1` 时 `server/index.ts` 同进程启动 pg-boss worker；生产 compose 用独立 worker 容器，不设 `RW_WORKER`。
-- built Web 前门：设 `RW_STATIC_DIR=/app/web/dist`，Start `/api/$` 调原 `app.fetch`，页面 `/$`调原 SPA 资产回落。缺失 chunks 返回 404。兼容层由 YUK-1359 / P7 删除。
+- built Web 前门：设 `RW_FRONTDOOR=1`（镜像内默认设），Start `/api/$` 调原 `app.fetch`；无旧 SPA 回落，未匹配路径 404。
 - Start request/function middleware 的授权只能复用 Hono `/api/auth/check`（token + epoch），不能自行授予权限或复制业务规则。
 
 ## ANTI-PATTERNS

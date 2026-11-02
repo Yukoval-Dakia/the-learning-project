@@ -29,7 +29,6 @@ import {
 import { requireKnowledgeHistory } from '@/kernel/records/knowledge-node-history-guard';
 import {
   assertKnowledgeParentExists,
-  prepareProposedKnowledgeId,
   projectKnowledgeNodeGuarded,
 } from '@/kernel/records/knowledge-node-materialization';
 import { retireLearnerAxisStateOnMerge } from '@/kernel/records/learner-axis-state';
@@ -45,6 +44,7 @@ import {
   listLiveEdgesTouchingNode,
   reactivateKnowledgeEdge,
 } from './edges';
+import { acceptKnowledgeCreate } from './knowledge-create-operation';
 
 type DbLike = Db | Tx;
 
@@ -473,19 +473,33 @@ async function refreshReparentEmbedding(
   }
 }
 
+/** An incident edge this call actually retired, with the archive fact it wrote. */
+export interface RetiredKnowledgeEdge {
+  edge_id: string;
+  event_id: string;
+}
+
 async function archiveIncidentKnowledgeEdges(
   tx: Tx,
   nodeId: string,
   now: Date,
   reason: string,
-): Promise<void> {
+): Promise<RetiredKnowledgeEdge[]> {
   // Endpoint knowledge row is already locked/updated by the caller. Preserve the global lock order
   // shared with live edge writers: endpoint knowledge row(s) → knowledge_edge advisory lock.
   await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', [nodeId]);
   const touching = await listLiveEdgesTouchingNode(tx, nodeId);
+  const retired: RetiredKnowledgeEdge[] = [];
   for (const edge of touching) {
-    await archiveKnowledgeEdgeFromEvents(tx, edge.id, { created_at: now, reasoning: reason });
+    const eventId = newId();
+    const archived = await archiveKnowledgeEdgeFromEvents(tx, edge.id, {
+      event_id: eventId,
+      created_at: now,
+      reasoning: reason,
+    });
+    if (archived.archived) retired.push({ edge_id: edge.id, event_id: eventId });
   }
+  return retired;
 }
 
 async function requireKnowledgeRetirementBase(tx: Tx, id: string, version: number): Promise<void> {
@@ -500,9 +514,9 @@ export async function prepareKnowledgeArchive(
   tx: Tx,
   payload: ArchivePayload,
   now: Date,
-): Promise<void> {
+): Promise<RetiredKnowledgeEdge[]> {
   await requireKnowledgeRetirementBase(tx, payload.node_id, payload.expected_version);
-  await archiveIncidentKnowledgeEdges(
+  return archiveIncidentKnowledgeEdges(
     tx,
     payload.node_id,
     now,
@@ -869,10 +883,8 @@ async function assertNotAlreadyRated(db: DbLike, proposalId: string): Promise<vo
 
 // YUK-471 — knowledge ids touched by an accept, re-projected and compared against
 // the row the imperative path wrote in the same tx.
-function affectedNodeIds(result: AcceptResult): string[] {
+function affectedNodeIds(result: Exclude<AcceptResult, { kind: 'propose_new_applied' }>): string[] {
   switch (result.kind) {
-    case 'propose_new_applied':
-      return [result.new_node_id];
     case 'reparent_applied':
       return [result.node_id];
     case 'archive_applied':
@@ -922,7 +934,7 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       await lockMutationRows(tx, apply);
       const now = new Date();
 
-      let result: AcceptResult;
+      let result: Exclude<AcceptResult, { kind: 'propose_new_applied' }>;
       let reparentEmbedding: ReparentEmbeddingSnapshot | null = null;
       // YUK-543 — merge-repair breadcrumb pinned on the rate event and used by
       // the post-rate learning_item parity assert.
@@ -930,9 +942,8 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       try {
         switch (apply.mutation) {
           case 'propose_new': {
-            const newNodeId = await prepareProposedKnowledgeId(tx, apply);
-            result = { kind: 'propose_new_applied', new_node_id: newNodeId };
-            break;
+            const created = await acceptKnowledgeCreate(tx, { proposalId, payload: apply, now });
+            return { kind: 'propose_new_applied', new_node_id: created.new_node_id };
           }
           case 'reparent': {
             if (propose.subject_id !== apply.node_id) {
@@ -999,20 +1010,9 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
         throw e;
       }
 
-      // YUK-471 — thread minted node ids onto the rate=accept event and the reverse
-      // index (nodeId → anchor propose event) for replay. Only propose_new/split mint
-      // ids; reparent/merge/archive omit materialized_ids.
-      let mintedKnowledgeIds: string[];
-      switch (result.kind) {
-        case 'propose_new_applied':
-          mintedKnowledgeIds = [result.new_node_id];
-          break;
-        case 'split_applied':
-          mintedKnowledgeIds = result.new_node_ids;
-          break;
-        default:
-          mintedKnowledgeIds = [];
-      }
+      // Only split mints ids here (propose_new is a complete Knowledge operation);
+      // reparent/merge/archive omit materialized_ids.
+      const mintedKnowledgeIds = result.kind === 'split_applied' ? result.new_node_ids : [];
       const materializedIds =
         mintedKnowledgeIds.length > 0 ? { knowledge: mintedKnowledgeIds } : undefined;
 

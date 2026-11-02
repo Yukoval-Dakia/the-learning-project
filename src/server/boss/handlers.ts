@@ -2,18 +2,17 @@ import type { PgBoss } from 'pg-boss';
 import type { PlacementVerificationAuthority } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
-import { buildBriefGenerator } from '@/server/memory/brief-writer';
-import { registerMemoryHandlers } from '@/server/memory/triggers';
 import { fenceAwareJobHandler } from '@/server/migration/contract-epoch/boss-fence';
 import { buildEchoHandler } from './handlers/echo';
 import { buildPromoteConversationIdleHandler } from './handlers/promote_conversation_idle';
+import { registerMemoryHandlers } from './memory-queues';
 import {
   VERIFY_DISPATCH_RECOVERY_QUEUE,
   buildVerifyDispatchRecoveryHandler,
 } from './verify-dispatch-recovery';
 
 // 只挂基础设施。域 job 在各 capability manifest，经 register-capability-jobs 挂载，不要迁回这里。
-// 留在这里的是 echo、会话空闲、memory 模块自己的队列，以及校验补发。
+// 留在这里的是 echo、会话空闲、Agency 记忆管线自己的队列（memory-queues.ts），以及校验补发。
 // 建队配方在 queue-config.ts。
 
 /**
@@ -59,8 +58,8 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     fenceAwareJobHandler(db, 'echo', buildEchoHandler(db)),
   );
 
-  // 不传 writer 时，brief 重算会落到会抛错的默认实现。fence 在 registerMemoryHandlers 里面。
-  await registerMemoryHandlers(boss, db, { generateBrief: buildBriefGenerator({ db }) });
+  // brief writer、付费判官与 fence 都在 registerMemoryHandlers 里面装配。
+  await registerMemoryHandlers(boss, db);
 
   await createOrUpdateQueue(boss, 'promote_conversation_idle', FAST_QUEUE_OPTS);
   await boss.work(

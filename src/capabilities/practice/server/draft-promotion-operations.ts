@@ -1,9 +1,9 @@
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { DraftForceEnableBodySchema } from '../api/draft-moderation-contracts';
 import type { RunTaskFn } from '../jobs/quiz_verify';
 import { verifyAndPromote } from './quiz/verify-and-promote';
+import { makeRunTaskFn } from './task-runtime';
 
 export async function enablePracticeDraft(db: Db, params: Record<string, string>) {
   const id = (params.id ?? '').trim();
