@@ -9,7 +9,7 @@ import {
   startSession,
 } from '../../../tests/dbos-session-orphan/support';
 import { testDb } from '../../../tests/helpers/db';
-import { runSessionOrphanTick } from '../durable/session-orphan-family';
+import { runSessionOrphanTick } from '../durable/session-orphan-tick';
 
 const family = families[0];
 beforeEach(() => resetOrphans());

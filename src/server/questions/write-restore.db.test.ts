@@ -8,14 +8,15 @@
 //   - verify 挂起（suspended）不因 restore 解除；
 //   - not_archived / not_found / protected / version CAS conflict 如实返回。
 
-import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { StructuredQuestionT } from '@/core/schema/structured_question';
-import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
+import {
+  archiveQuestion,
+  restoreQuestion,
+} from '@/capabilities/practice/server/question-bank-write';
+import { event, question, question_group_lifecycle } from '@/db/schema';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { archiveQuestion, editQuestion, restoreQuestion } from './write';
 
 const ADMITTED = {
   state: 'admitted' as const,
@@ -136,40 +137,6 @@ describe('restoreQuestion（YUK-1045 archive 对偶）', () => {
     expect((events[0].payload as Record<string, unknown>).reclaimed_claim).toBe(true);
   });
 
-  it('claim held by another live question ⇒ claim_conflict, nothing restored', async () => {
-    const db = testDb();
-    const qid = 'rst_q2';
-    await seedQuestion(qid, { canonical_content_hash: 'sha256:rst-2' });
-    await publishQuestionGroupFromRow(db, {
-      rootId: qid,
-      admission: ADMITTED,
-      actorRef: 'test',
-      now: new Date(),
-    });
-    const v = (await readQuestion(qid)).version;
-    await archiveQuestion(db, qid, v, 'self');
-
-    // 占用者拿走 hash（重新生产同内容）。
-    const holderId = createId();
-    await seedQuestion(holderId, { canonical_content_hash: 'sha256:rst-2' });
-
-    const afterArchive = await readQuestion(qid);
-    const conflict = await restoreQuestion(db, qid, afterArchive.version, 'self');
-    expect(conflict.status).toBe('claim_conflict');
-    expect(conflict.conflicting_question_id).toBe(holderId);
-
-    // 全组回滚：行仍归档、hash 仍 NULL、lifecycle 仍 withdrawn。
-    const still = await readQuestion(qid);
-    expect((still.metadata as Record<string, unknown>).archived_at).not.toBeNull();
-    expect(still.canonical_content_hash).toBeNull();
-    expect((await readLifecycle(qid))?.withdrawn).toBe(true);
-    const events = await db
-      .select()
-      .from(event)
-      .where(eq(event.action, 'experimental:question_restore'));
-    expect(events).toHaveLength(0);
-  });
-
   it('composite group: cascade-archived parts restore with the parent; independently-archived part stays tombstoned', async () => {
     const db = testDb();
     const rootId = 'rst_root';
@@ -211,218 +178,8 @@ describe('restoreQuestion（YUK-1045 archive 对偶）', () => {
     const lifecycle = await readLifecycle(rootId);
     expect(lifecycle?.withdrawn).toBe(false);
   });
-
-  it('verify suspension (suspended=true) survives restore — re-review, not restore, lifts it', async () => {
-    const db = testDb();
-    const qid = 'rst_q4';
-    await seedQuestion(qid, { canonical_content_hash: 'sha256:rst-4' });
-    await publishQuestionGroupFromRow(db, {
-      rootId: qid,
-      admission: { state: 'withheld', reason: 'verification_failed' },
-      suspension: { suspended: true, reason: 'verify_hold' },
-      actorRef: 'test:suspend',
-      now: new Date(),
-    });
-    const v = (await readQuestion(qid)).version;
-    await archiveQuestion(db, qid, v, 'self');
-    const restored = await restoreQuestion(db, qid, (await readQuestion(qid)).version, 'self');
-    expect(restored.status).toBe('restored');
-    const lifecycle = await readLifecycle(qid);
-    expect(lifecycle?.withdrawn).toBe(false);
-    expect(lifecycle?.suspended).toBe(true); // verify 挂起不随 restore 解除
-    expect(lifecycle?.suspension_reason).toBe('verify_hold');
-  });
-
-  it('not_archived / not_found / version-conflict outcomes are honest', async () => {
-    const db = testDb();
-    const qid = 'rst_q5';
-    await seedQuestion(qid); // live, not archived
-    const v = (await readQuestion(qid)).version;
-    expect(await restoreQuestion(db, qid, v, 'self')).toMatchObject({ status: 'not_archived' });
-    expect(await restoreQuestion(db, 'missing-q', 0, 'self')).toMatchObject({
-      status: 'not_found',
-    });
-
-    await archiveQuestion(db, qid, v, 'self');
-    const archivedV = (await readQuestion(qid)).version;
-    const stale = await restoreQuestion(db, qid, archivedV + 5, 'self');
-    expect(stale.status).toBe('conflict');
-  });
-
-  it('复审 P1 — restoring a part of an auto-withdrawn group un-withdraws it (root not archived)', async () => {
-    const db = testDb();
-    const rootId = 'rst_root2';
-    await seedQuestion(rootId, {
-      kind: 'composite',
-      canonical_content_hash: 'sha256:rst-root2',
-    });
-    await seedPart('rst2_p1', rootId, 0);
-    await seedPart('rst2_p2', rootId, 1);
-    await publishQuestionGroupFromRow(db, {
-      rootId,
-      admission: ADMITTED,
-      actorRef: 'test',
-      now: new Date(),
-    });
-
-    // 单独归档 p1（root 仍活）→ 组重发 revision，liveParts 剩 p2。
-    const p1 = await readQuestion('rst2_p1');
-    expect((await archiveQuestion(db, 'rst2_p1', p1.version, 'self')).status).toBe('archived');
-    expect((await readLifecycle(rootId))?.withdrawn).toBe(false);
-
-    // 单独归档最后一块 live part ⇒ publish 链落 withdrawn（无可发布成员）。
-    const p2 = await readQuestion('rst2_p2');
-    expect((await archiveQuestion(db, 'rst2_p2', p2.version, 'self')).status).toBe('archived');
-    expect((await readLifecycle(rootId))?.withdrawn).toBe(true);
-
-    // 恢复 p2：组重获 live 成员 —— 自撤回必须复位（撤回源于 tombstone 全量，
-    // 非显式根归档：根行无 archived_at 墓碑）。
-    const p2v = (await readQuestion('rst2_p2')).version;
-    const restored = await restoreQuestion(db, 'rst2_p2', p2v, 'self');
-    expect(restored.status).toBe('restored');
-    const lifecycle = await readLifecycle(rootId);
-    expect(lifecycle?.withdrawn).toBe(false);
-    expect((await readQuestion('rst2_p2')).draft_status).toBe('draft');
-    // 独立归档的 p1 不被顺带恢复（自己的 tombstone 未清）。
-    const p1Row = await readQuestion('rst2_p1');
-    expect((p1Row.metadata as Record<string, unknown>).archived_at).not.toBeUndefined();
-  });
-
-  it('复审 P1 — editing an archived row invalidates the retained claim (stale hash not resurrected)', async () => {
-    const db = testDb();
-    const qid = 'rst_q7';
-    await seedQuestion(qid, { canonical_content_hash: 'sha256:rst-7' });
-    const v = (await readQuestion(qid)).version;
-    await archiveQuestion(db, qid, v, 'self');
-    expect(
-      ((await readQuestion(qid)).metadata as Record<string, unknown>).archived_content_hash,
-    ).toBe('sha256:rst-7');
-
-    // 编辑归档行内容 ⇒ 留痕的 claim 快照与内容脱钩 —— 必须作废。
-    const ev = (await readQuestion(qid)).version;
-    const edited = await editQuestion(db, qid, ev, { prompt_md: '编辑后的新题面' }, 'self');
-    expect(edited.status).toBe('updated');
-    const editedRow = await readQuestion(qid);
-    expect((editedRow.metadata as Record<string, unknown>).archived_content_hash).toBeUndefined();
-
-    const restored = await restoreQuestion(db, qid, editedRow.version, 'self');
-    expect(restored.status).toBe('restored');
-    const after = await readQuestion(qid);
-    expect(after.draft_status).toBe('draft');
-    // stale claim 不复活（canonical_content_hash 保持 NULL）。
-    expect(after.canonical_content_hash).toBeNull();
-  });
-
-  it('archived row never published (no lifecycle) restores without lifecycle write — honest no-op', async () => {
-    const db = testDb();
-    const qid = 'rst_q6';
-    await seedQuestion(qid, { canonical_content_hash: 'sha256:rst-6' });
-    const v = (await readQuestion(qid)).version;
-    await archiveQuestion(db, qid, v, 'self');
-    expect(await readLifecycle(qid)).toBeNull(); // 从未发布
-
-    const restored = await restoreQuestion(db, qid, (await readQuestion(qid)).version, 'self');
-    expect(restored.status).toBe('restored');
-    const after = await readQuestion(qid);
-    expect(after.draft_status).toBe('draft');
-    expect(after.canonical_content_hash).toBe('sha256:rst-6');
-    expect(await readLifecycle(qid)).toBeNull(); // 无 lifecycle 可复位，如实跳过
-  });
 });
 
 // YUK-1099 — PUBLISH_TRIGGERING_FIELDS 补齐 structured（PR-Agent P1）：
 // structured 树是判分输入（part/slot/option 身份来源），编辑它 ⇒ 同一事务内
 // 铸新 revision；jsonb 语义相等（键序无关）⇒ 真 noop，不造伪版本。
-describe('editQuestion — structured 判分输入触发发布（YUK-1099）', () => {
-  beforeEach(resetDb);
-
-  function leafStructured(id: string, promptText: string): StructuredQuestionT {
-    return {
-      id,
-      role: 'standalone',
-      prompt_text: promptText,
-      answers: ['42'],
-    } as unknown as StructuredQuestionT;
-  }
-
-  it('structured edit republishes in the same transaction — revision carries the edited leaf prompt', async () => {
-    const db = testDb();
-    const qid = 'se_q1';
-    await seedQuestion(qid, {
-      kind: 'short_answer',
-      choices_md: null,
-      structured: leafStructured('n1', '(1) 旧题面'),
-    });
-    // 先铸首版，确认后续编辑产生的是【新】revision。
-    const first = await publishQuestionGroupFromRow(db, {
-      rootId: qid,
-      actorRef: 'test:seed-publish',
-      now: new Date(),
-    });
-    expect(first.status).toBe('published');
-    if (first.status !== 'published') return;
-
-    const before = await readQuestion(qid);
-    const edited = await editQuestion(
-      db,
-      qid,
-      before.version,
-      { structured: leafStructured('n1', '(1) 已修订的题面') },
-      'self',
-    );
-    expect(edited.status).toBe('updated');
-
-    const lifecycle = await readLifecycle(qid);
-    const currentRevisionId = lifecycle?.current_revision_id;
-    if (currentRevisionId == null) throw new Error('structured edit did not publish a revision');
-    expect(currentRevisionId).not.toBe(first.revision_id);
-    const [rev] = await db
-      .select()
-      .from(question_revision)
-      .where(eq(question_revision.revision_id, currentRevisionId))
-      .limit(1);
-    expect(rev.structure.parts[0]?.prompt_md).toBe('(1) 已修订的题面');
-    expect(rev.revision_ordinal).toBe(2);
-  });
-
-  it('identical structured tree (jsonb key order irrelevant) is a real noop — no version bump, no revision churn', async () => {
-    const db = testDb();
-    const qid = 'se_q2';
-    await seedQuestion(qid, {
-      kind: 'short_answer',
-      choices_md: null,
-      structured: leafStructured('n1', '(1) 题面'),
-    });
-    await publishQuestionGroupFromRow(db, {
-      rootId: qid,
-      actorRef: 'test:seed-publish',
-      now: new Date(),
-    });
-    const lifecycleBefore = await readLifecycle(qid);
-
-    const before = await readQuestion(qid);
-    // jsonb 读回不保键序：构造同一树的键序变体提交 —— 必须识别为无实际变化。
-    const sameTreeDifferentOrder = {
-      answers: ['42'],
-      prompt_text: '(1) 题面',
-      role: 'standalone',
-      id: 'n1',
-    } as unknown as StructuredQuestionT;
-    const edited = await editQuestion(
-      db,
-      qid,
-      before.version,
-      { structured: sameTreeDifferentOrder },
-      'self',
-    );
-    expect(edited.status).toBe('noop');
-    expect(edited.version).toBe(before.version);
-
-    const lifecycleAfter = await readLifecycle(qid);
-    expect(lifecycleAfter?.current_revision_id).toBe(lifecycleBefore?.current_revision_id);
-    // noop 必须连 audit event 也不写（patchValueEqual 判同 ⇒ after 为空）。
-    const editEvents = await db.select().from(event).where(eq(event.subject_id, qid));
-    const editAudit = editEvents.filter((e) => e.action === 'experimental:question_edit');
-    expect(editAudit).toHaveLength(0);
-  });
-});

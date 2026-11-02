@@ -5,8 +5,8 @@ import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, question_block, source_asset } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import type { R2Client } from '@/kernel/object-storage';
 import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
-import type { R2Client } from '@/server/r2';
 import { type VisionBlock, runVisionExtract } from './vision';
 
 export type RescueTier = 2 | 3;

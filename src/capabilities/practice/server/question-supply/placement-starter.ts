@@ -17,8 +17,8 @@ import type { QuestionSupplyTarget } from './target-discovery';
 const PLACEMENT_STARTER_COUNT = 8;
 
 // The status→queued transition can collide with placement_starter_claim_nonterminal_uq when another
-// claim for the same goal+subject is already in flight (round-2). postgres.js surfaces the
-// index name as constraint_name; pg-boss's internal `pg` driver uses `constraint`. drizzle wraps the
+// claim for the same goal+subject is already in flight. postgres.js surfaces the index name as
+// constraint_name; pg-boss's internal `pg` driver uses `constraint`. drizzle wraps the
 // driver error in a DrizzleQueryError, so walk the `.cause` chain and check both field names.
 function isNonterminalSingleFlightViolation(err: unknown): boolean {
   for (let cur: unknown = err, depth = 0; cur != null && depth < 5; depth++) {
@@ -114,7 +114,7 @@ export async function dispatchPlacementStarterClaimTx(
   // Enqueue + status→queued run in a SAVEPOINT (nested tx) so a nonterminal single-flight 23505 on
   // the pending→queued update rolls back the enqueue (no orphan quiz_gen job) without aborting the
   // outer tx — then we leave the claim pending for a later attempt. The outer FOR UPDATE lock on
-  // the claim persists across the savepoint (round-2 /).
+  // the claim persists across the savepoint.
   try {
     return await tx.transaction(async (sp) => {
       const target = buildPlacementStarterTarget(claim);

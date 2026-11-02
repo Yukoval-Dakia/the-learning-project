@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { stableStringify } from '../../migration/stable-stringify';
 import { ConjectureProbeResponseJudgement } from '../conjecture-probe-response';
 import { EvaluationGroupId, EvaluationId, IssuanceId, RevisionId, SubmissionId } from './ids';
+import { GraderKcMasteryEvidence } from './kc-mastery-evidence';
 import { EvidenceAttachment } from './materials';
 import { PendingState } from './pending';
 import { ResponseSet } from './response';
@@ -183,6 +184,10 @@ export const ScoredUnitResult = z.object({
     .optional(),
   feedback_md: z.string().optional(),
   evidence_citations: z.array(EvidenceCitation).default([]),
+  /**
+   * 掌握证据。不参与 points_awarded，也不进入聚合。缺省 = 结算侧自行归属。
+   */
+  kc_mastery_evidence: GraderKcMasteryEvidence.optional(),
   /**
    * YUK-1407 — 实际执行路径：deterministic comparator id / model task_kind /
    * 'human_review'。由 evaluateSubmissionCore 分发点盖印（receipt 的 route

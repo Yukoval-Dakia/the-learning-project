@@ -9,7 +9,7 @@ Collection-as-code for the Hono API surface（capability manifests → `server/a
 | File | What |
 |---|---|
 | `api-endpoints.json` | **Source of truth.** Hand-maintained per-route specs (path, methods, query, body, notes). Edit this when a route changes. |
-| `learning-api.postman_collection.json` | **Generated** from `api-endpoints.json` by `pnpm gen:postman` — do not hand-edit. One folder per top-level segment; collection-level API-key auth injects `x-internal-token: {{internalToken}}`; `/api/health` overrides to no-auth. |
+| `learning-api.postman_collection.json` | **Generated** from `api-endpoints.json` by `pnpm gen:postman` (not tracked in git; `pnpm api:smoke` regenerates it) — do not hand-edit. One folder per top-level segment; collection-level API-key auth injects `x-internal-token: {{internalToken}}`; `/api/health` overrides to no-auth. |
 | `learning-local.postman_environment.json` | `baseUrl` + `internalToken` (ships **empty** — the secret is never committed). |
 
 ## Using it

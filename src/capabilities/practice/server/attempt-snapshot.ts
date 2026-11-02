@@ -21,7 +21,7 @@
 import type { StateSnapshotExperimentalT } from '@/core/schema/event/state-snapshot';
 import type { Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
-import type { ThetaSnapshotEntry } from '@/server/mastery/state';
+import type { ThetaSnapshotEntry } from '@/kernel/records/mastery-state';
 
 type FsrsSnapshotEntry = StateSnapshotExperimentalT['payload']['fsrs_snapshots'][number];
 type Segment = 'theta' | 'fsrs';

@@ -7,7 +7,7 @@
 
 ## 0. 状态与边界
 
-- 本文件是 **source-check only**：给出普查原文引用、组件类型、信息架构、交互与文件清单；**不构成质量、运行时或可达性证明**。
+- 本文件是 **source-check only**：给出普查原文引用、组件类型、信息架构、交互与文件清单。
 - 本文件**不写任何 UI 代码**；无 route / 组件 / 样式新增。
 - 后端读面（read model）与写面仅**枚举**（非 UI writer scope），见 §10。
 - 存储方案（census §3 storage options）由 owner 在批准后另行拍板；本设计按 census 推荐的 **storage-3 混合**（secret 留 env，flag / per-task override / locale / threshold 进 DB）排版 P1 写路径，但不锁 schema。

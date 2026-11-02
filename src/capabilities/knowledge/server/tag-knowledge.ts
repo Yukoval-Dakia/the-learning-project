@@ -252,6 +252,11 @@ export async function tagKnowledge(
             name: c.name,
             cosine_distance: c.cosine_distance,
             confidence: matchConfidence(c.cosine_distance),
+            // YUK-1603 — version provenance so each attributed match reconciles back to
+            // the node revision whose vector produced it (NULL = pre-column legacy).
+            version: c.version,
+            embed_source_revision: c.embed_source_revision,
+            embed_content_hash: c.embed_content_hash,
           })),
           provenance: {
             embed: { provider: 'dashscope', model: EMBED_MODEL },

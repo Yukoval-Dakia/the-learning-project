@@ -323,3 +323,58 @@ export async function createWrongAnswer(input: RecordManualMistakeInput) {
     body: buildRecordManualMistakeBody(input),
   });
 }
+
+export type PurposeInput = ApiOperationRequestBody<'changeIngestionPurpose'>;
+export type PurposeImpact = ApiOperationJsonResponse<'getIngestionPurposeImpact'>;
+export type PurposeResult = ApiOperationJsonResponse<'changeIngestionPurpose'>;
+
+export function purposeLocation(id: string, requestId?: string): string {
+  const path = `/api/ingestion-sessions/${encodeURIComponent(id)}/purpose`;
+  return requestId ? `${path}?request_id=${encodeURIComponent(requestId)}` : path;
+}
+
+/** A receipt Location must stay bound to this session and this exact request. */
+function checkedPurposeLocation(id: string, requestId: string, location: string): string {
+  const base = window.location.origin;
+  const actual = new URL(location, base);
+  const expected = new URL(purposeLocation(id, requestId), base);
+  if (actual.href !== expected.href) {
+    throw new ApiError(
+      '用途回执地址与原请求不一致，保留原请求等待核对。',
+      0,
+      'purpose_location_mismatch',
+    );
+  }
+  return actual.pathname + actual.search;
+}
+
+export async function getPurposeImpact(id: string, requestId?: string, location?: string) {
+  const url =
+    requestId && location
+      ? checkedPurposeLocation(id, requestId, location)
+      : purposeLocation(id, requestId);
+  const impact = await apiOperationJson('getIngestionPurposeImpact', {
+    url,
+    method: 'GET',
+    init: { cache: 'no-store' },
+  });
+  if (impact.current.session_id !== id) {
+    throw new ApiError('用途记录与这次录入不一致。', 0, 'purpose_session_mismatch');
+  }
+  return impact;
+}
+
+/** Generated wire types; raw response retained only to consume the canonical Location header. */
+export async function changePurpose(id: string, body: PurposeInput) {
+  const response = await apiFetch(purposeLocation(id), {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  const location = checkedPurposeLocation(
+    id,
+    body.request_id,
+    response.headers.get('Location') ?? purposeLocation(id, body.request_id),
+  );
+  const result = (await response.json()) as PurposeResult;
+  return { ...result, location };
+}

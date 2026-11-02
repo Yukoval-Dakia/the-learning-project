@@ -375,6 +375,9 @@ export function createRubricModelExecutor(
           kind: 'scored',
           points_awarded: total,
           ...(decision.feedback_md !== undefined ? { feedback_md: decision.feedback_md } : {}),
+          ...(decision.kc_mastery_evidence
+            ? { kc_mastery_evidence: decision.kc_mastery_evidence }
+            : {}),
           evidence_citations: citations,
           ...(decision.confidence !== undefined ? { confidence: decision.confidence } : {}),
           run_refs: refs,

@@ -38,10 +38,9 @@ ColorLight/Dark、Palette、TypeScale、Shape、FilledCard 与 OutlinedTextField
 
 CSS 尺寸/字阶为项目 Web 映射，沿现有同源中文字体，不称官方现成 React/M3E 库。
 只扩展显式 token opt-in 选择器，未改现有 practice 取值/主题优先级，不重绑全站旧 aliases。
-工具卡/教学卡/历史列表、动作按钮/Chip/Segmented完整 M3E 状态、motion physics 不是本片完成声明。
+工具卡/教学卡/历史列表、动作按钮/Chip/Segmented 完整 M3E 状态、motion physics 均不在本片交付范围。
 旧 ui-next 视觉引用由当前 M3E 决定覆盖；作用域/同源/无业务逻辑约束保持。
 
 ## 验证边界
 
-tests 零写零跑；browser/截图/视觉/键盘/读屏/窄屏/明暗实测、真实消息/DB/provider/runtime/paid/部署均 NOT_RUN。
-静态 AST/选择器/颜色核对不能替代上述验收；只按原预算一次独立 Astra R1 与新 exact-head CI 收口。
+静态 AST/选择器/颜色核对为静态证据；只按原预算一次独立 Astra R1 与新 exact-head CI 收口。

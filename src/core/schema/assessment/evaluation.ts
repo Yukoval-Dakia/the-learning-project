@@ -25,6 +25,7 @@ import {
   type SubmissionRecordT,
   aggregateUnitResults,
 } from './judgment';
+import { GraderKcMasteryEvidence } from './kc-mastery-evidence';
 import type { SharedMaterialT } from './materials';
 import { PendingState, type PendingStateT } from './pending';
 import type { ResponseSlotT, ResponseSpecT, SlotResponseT } from './response';
@@ -110,6 +111,8 @@ export const ModelUnitOutcome = z.discriminatedUnion('kind', [
       .default([]),
     /** 分布形状信号（非 accuracy）；缺失不得补造（OpenRouter 核验 D12）。 */
     confidence: z.number().min(0).max(1).optional(),
+    /** 掌握证据。聚合不读它。 */
+    kc_mastery_evidence: GraderKcMasteryEvidence.optional(),
     run_refs: z.array(z.string().min(1)).default([]),
     cost_usd_micros: z.number().int().min(0).optional(),
   }),
@@ -1299,6 +1302,9 @@ export async function evaluateSubmissionCore(
           judged_by: executor.task_kind,
           ...(outcome.matched ? { matched: outcome.matched } : {}),
           ...(outcome.feedback_md ? { feedback_md: outcome.feedback_md } : {}),
+          ...(outcome.kc_mastery_evidence
+            ? { kc_mastery_evidence: outcome.kc_mastery_evidence }
+            : {}),
           evidence_citations: outcome.evidence_citations,
           ...(probeJudgement ? { probe_judgement: probeJudgement } : {}),
         },

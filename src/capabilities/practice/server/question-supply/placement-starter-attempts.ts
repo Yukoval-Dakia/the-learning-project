@@ -44,7 +44,7 @@ export interface PlacementVerificationAuthority {
 export class PlacementStarterAdmissionError extends Error {}
 // Budget exhaustion is a TERMINAL admission failure: no redelivery can make progress (known_cost
 // never decreases), so the handler terminalizes the claim as 'exhausted' and completes the job
-// rather than retrying into the same throw (round-3, codex P2-A). Subclass so existing
+// rather than retrying into the same throw. Subclass so existing
 // `instanceof PlacementStarterAdmissionError` checks + `/budget/` message assertions still hold.
 export class PlacementStarterBudgetExhaustedError extends PlacementStarterAdmissionError {}
 export class PlacementStarterUnknownCostError extends PlacementStarterAdmissionError {}
@@ -683,12 +683,11 @@ export async function recordPlacementAttemptOutput(
       .from(placement_starter_cost_component)
       .where(eq(placement_starter_cost_component.id, reservationId))
       .for('update');
-    // Settle-before-raise (review, codex P2): persist the ACTUAL provider run id + cost
-    // and correct known_cost FIRST, then surface over-cap to the caller as a return flag. The prior
-    // shape threw before the settle write, so an over-budget generation call lost its real
-    // provider_task_run_id + actual cost and left the claim pinned to the 500k reservation
-    // placeholder. This transaction commits the settlement; the caller decides whether over-cap
-    // blocks the delivery.
+    // Settle-before-raise: persist the ACTUAL provider run id + cost and correct known_cost FIRST,
+    // then surface over-cap to the caller as a return flag. An over-budget generation call must not
+    // lose its real provider_task_run_id + actual cost or leave the claim pinned to the 500k
+    // reservation placeholder. This transaction commits the settlement; the caller decides whether
+    // over-cap blocks the delivery.
     if (reservation) {
       if (reservation.cost === null) {
         throw new PlacementStarterAdmissionError('placement reservation cost is missing');
@@ -1031,11 +1030,9 @@ export async function countEligiblePlacementQuestions(
   // Eligibility = the question is authorized for this claim, currently POOL-VISIBLE (active, via the
   // shared notDraftPredicate), not archived, and probes the claim's KC. An 'active' draft_status is
   // itself the verification proof — nothing reaches active without passing a verify gate (quiz_verify,
-  // source_verify, or an explicit accept). The prior inner join on a fresh experimental:quiz_verify
-  // success event WRONGLY excluded active DUPLICATES that were verified via a different path (or a
-  // prior attempt): quiz_gen attaches such a live question to the attempt but the outbox terminal_skips
-  // re-verifying an already-active question, so no quiz_verify event is ever written for it
-  // (round-3, codex P2-B).
+  // source_verify, or an explicit accept). A fresh experimental:quiz_verify success event is NOT
+  // required: quiz_gen attaches an already-active DUPLICATE to the attempt, and the outbox
+  // terminal_skips re-verifying it, so no quiz_verify event is ever written for it.
   const verified = await db
     .select({ questionId: placement_starter_attempt_question.question_id })
     .from(placement_starter_attempt_question)
@@ -1069,10 +1066,9 @@ export async function placementAttemptVerificationSettled(
   attemptId: string,
 ): Promise<boolean> {
   // A question's verification is SETTLED when it is already pool-visible (active — verified by
-  // definition; an active DUPLICATE the outbox terminal_skips never gets a fresh quiz_verify event,
-  // round-3, codex P2-B) OR it carries a terminal quiz_verify verdict (any non-error
-  // outcome — pass/needs_review/fail all settle a draft). Only a still-draft question with no
-  // terminal verdict keeps the delivery polling.
+  // definition; an active DUPLICATE the outbox terminal_skips never gets a fresh quiz_verify event)
+  // OR it carries a terminal quiz_verify verdict (any non-error outcome — pass/needs_review/fail all
+  // settle a draft). Only a still-draft question with no terminal verdict keeps the delivery polling.
   const rows = await db
     .select({
       questionId: placement_starter_attempt_question.question_id,

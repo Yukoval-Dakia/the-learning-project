@@ -1,9 +1,5 @@
-// YUK-1570 — canonical mastery p(L) projection read model: the SINGLE
-// display/AI-facing read of mastery, plus the A5/A6 KG-borrowing soft layer and
-// the representative-KC β resolution it consumes. Moved verbatim from
-// src/server/mastery/state.ts; the server module remains the SOLE writer of
-// `mastery_state` (ADR-0035) and keeps an explicit compat re-export for current
-// tests/external users.
+// Canonical mastery p(L) projection, KG borrowing and representative-KC beta reads.
+// Online diagnostic writes belong to kernel/records/mastery-state (ADR-0035).
 
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 

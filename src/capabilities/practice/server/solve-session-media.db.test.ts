@@ -13,7 +13,7 @@ import { issueAssessment } from './assessment/issue';
 import { type RunTaskFn, planSolveHint, startSolveSession } from './solve-session';
 
 const r2 = vi.hoisted(() => ({ get: vi.fn() }));
-vi.mock('@/server/r2', () => ({ getR2: () => r2 }));
+vi.mock('@/kernel/object-storage', () => ({ getR2: () => r2 }));
 const db = testDb();
 const bytes = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1WQAAAAASUVORK5CYII=',

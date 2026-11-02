@@ -6,13 +6,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // YUK-909 — deterministic lint warning ratchet over `biome check .`.
 //
 // The baseline file (scripts/lint-baseline.json) records the owner-approved Biome 2
-// warning/info totals plus per-rule counts. The gate fails when either severity total
-// exceeds the baseline; both totals may only decrease over time. Diagnostic emission
-// order from Biome's parallel scanner is not stable, so counting sorts by rule before
-// any comparison or serialization. Info diagnostics are counted (own ratchet total and
-// own per-rule rows), not silently dropped — the decision is recorded in the baseline.
+// warning/info totals plus per-rule counts. The gate passes only when every severity
+// total equals the baseline. Growth fails. A shortfall also fails until this same
+// change rewrites the baseline; a warning-only nudge is not accepted. Diagnostic
+// emission order from Biome's parallel scanner is not stable, so counting sorts by
+// rule before any comparison or serialization. Info diagnostics are counted (own
+// ratchet total and own per-rule rows), not silently dropped — the decision is
+// recorded in the baseline.
 //
-// Lower the baseline after a warning-fixing batch lands with:
+// Rewrite the baseline in the same change that removes diagnostics:
 //   pnpm lint:ratchet:update
 // (refuses to write a document that raises any severity total).
 
@@ -45,8 +47,15 @@ function severityPlural(severity) {
   return `${severity}s`;
 }
 
-// Pure ratchet comparison: ok=false only when a severity total regresses (current >
-// baseline). A decrease is ok=true with staleBy set so callers can nudge regeneration.
+function ratchetKind(regressions, staleBy) {
+  if (regressions.length > 0) return 'regression';
+  if (Object.keys(staleBy).length > 0) return 'stale';
+  return 'match';
+}
+
+// Exact match is the only passing gate. Growth is regression; a shortfall is stale
+// and must be rewritten in the same change. --update still accepts a shortfall and
+// refuses a regression.
 export function evaluateRatchet(current, baseline) {
   const regressions = [];
   const staleBy = {};
@@ -60,7 +69,8 @@ export function evaluateRatchet(current, baseline) {
       staleBy[plural] = baselineCount - currentCount;
     }
   }
-  return { ok: regressions.length === 0, staleBy, regressions };
+  const kind = ratchetKind(regressions, staleBy);
+  return { ok: kind === 'match', kind, staleBy, regressions };
 }
 
 // Per-rule delta rows (positive delta = growth) for human review of a regression.
@@ -107,7 +117,7 @@ export function buildBaselineDocument(summary) {
     channel:
       'biome check . --reporter=json --max-diagnostics=none (summary totals + per-diagnostic category)',
     infoPolicy:
-      'info diagnostics are counted: separate infos ratchet total and per-rule rows, decreasing only like warnings',
+      'info diagnostics are counted: separate infos ratchet total and per-rule rows; each severity total must equal the baseline',
     totals: { errors: summary.errors, warnings: summary.warnings, infos: summary.infos },
     byRule,
   };
@@ -209,6 +219,17 @@ function readBaselineOrNull(repoRoot) {
   return baseline;
 }
 
+function renderStale(staleBy) {
+  const detail = Object.entries(staleBy)
+    .map(([plural, by]) => `${by} fewer ${plural}`)
+    .join(', ');
+  return [
+    `[lint-ratchet] FAIL: current counts are below the baseline (${detail}).`,
+    'Rewrite the baseline in this same change: pnpm lint:ratchet:update',
+    'The baseline may only decrease — raising it is not supported.',
+  ].join('\n');
+}
+
 function renderRegression(regression, deltas) {
   const lines = [
     `[lint-ratchet] FAIL: ${regression.severity} diagnostics grew from ${regression.baseline} to ${regression.current} (+${regression.current - regression.baseline}).`,
@@ -252,7 +273,7 @@ function main() {
     const existing = readBaselineOrNull(repoRoot);
     if (existing) {
       const verdict = evaluateRatchet(current, existing);
-      if (!verdict.ok) {
+      if (verdict.kind === 'regression') {
         for (const regression of verdict.regressions) {
           console.error(renderRegression(regression, ruleDeltas(current, existing)));
         }
@@ -279,7 +300,7 @@ function main() {
   }
   const baseline = loaded;
   const verdict = evaluateRatchet(current, baseline);
-  if (!verdict.ok) {
+  if (verdict.kind === 'regression') {
     const deltas = ruleDeltas(current, baseline);
     for (const regression of verdict.regressions) {
       console.error(renderRegression(regression, deltas));
@@ -287,14 +308,13 @@ function main() {
     process.exitCode = 1;
     return;
   }
-  const stale = Object.entries(verdict.staleBy);
-  if (stale.length > 0) {
-    console.log(
-      `::warning title=Lint baseline is stale::Current counts are below the recorded baseline (${stale.map(([plural, by]) => `${by} fewer ${plural}`).join(', ')}). Lower it with: pnpm lint:ratchet:update`,
-    );
+  if (verdict.kind === 'stale') {
+    console.error(renderStale(verdict.staleBy));
+    process.exitCode = 1;
+    return;
   }
   console.log(
-    `[lint-ratchet] OK: ${current.warnings} warnings / ${current.infos} infos within baseline ${baseline.totals.warnings} / ${baseline.totals.infos}.`,
+    `[lint-ratchet] OK: ${current.warnings} warnings / ${current.infos} infos match baseline ${baseline.totals.warnings} / ${baseline.totals.infos}.`,
   );
 }
 

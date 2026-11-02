@@ -1,7 +1,7 @@
 import { runRescue } from '@/capabilities/ingestion/server/rescue';
 import { db } from '@/db/client';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
-import { getR2 } from '@/server/r2';
+import { getR2 } from '@/kernel/object-storage';
 import { RescueBody } from './operation-schema';
 
 /**

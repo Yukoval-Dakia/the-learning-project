@@ -64,11 +64,9 @@ export async function closeReviewSession(
     // Enqueue async SessionSummaryTask. Best-effort: if pg-boss
     // is down the session still closes successfully and summary stays null
     // (the /learning-sessions/[id] UI shows a stub in that case).
-    // Skipped in tests via the shared shouldEnqueueBackgroundJobs
-    // the singleton boss instance + per-route invocation bloats the
-    // testcontainer's connection pool past max_connections, tipping over
-    // src/server/boss/client.test.ts. The summary handler is covered by its
-    // own unit test (src/server/session/summary.test.ts).
+    // Skipped in tests via the shared shouldEnqueueBackgroundJobs: the singleton
+    // boss instance + per-route invocation bloats the testcontainer's connection
+    // pool past max_connections, tipping over src/server/boss/client.db.test.ts.
     await enqueueReviewSessionSummary(sessionId);
   } else {
     await Review.abandonReviewSession(db, sessionId);

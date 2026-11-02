@@ -72,10 +72,10 @@ mastery_state.θ̂（Elo 原地覆盖）+ material_fsrs_state（ts-fsrs Card）�
 
 ### 7. 迁移 + gate
 - A 类（θ̂/FSRS）：不需 genesis backfill（attempt/review 早只写 event），补快照算子即可。
-- **item_calibration 例外（Codex P2 修正）**：**不**归 A 类——其行由 `runItemPriorBackfill`→`applyItemPrior` 直接 `insert`（`item_prior_backfill.ts:101-103` / `item-calibration.ts:28-42`），**非 attempt/review 事件派生**，无 canonical event 可 fold。若按 A 类跳过 backfill，`audit:projection` 会把现有 `b`/`confidence` 当 drift 或重建为空 → 砸 MFI/θ̂。落地：归 B 类做 genesis-event backfill（每行补 `experimental:genesis` 锚），或为 calibration 写专属 canonical event。
+- **item_calibration 例外（Codex P2 修正）**：**不**归 A 类——其行由 `runItemPriorBackfill`→`applyItemPrior` 直接 `insert`（`item_prior_backfill.ts:101-103` / `item-calibration.ts:28-42`），**非 attempt/review 事件派生**，无 canonical event 可 fold。若按 A 类跳过 backfill，`ops:projection` 会把现有 `b`/`confidence` 当 drift 或重建为空 → 砸 MFI/θ̂。落地：归 B 类做 genesis-event backfill（每行补 `experimental:genesis` 锚），或为 calibration 写专属 canonical event。
 - B 类（结构表）：genesis-event backfill（每行补一条 **`experimental:genesis`**（非裸 `genesis`——见下方 Codex 实施输入）system event 让 fold 当前态==现状）。
 - 双写期：写 projection + append event + 即时 `fold==projection` 校验，一致再切真相源。
-- 新 `pnpm audit:projection`（仿 audit:schema）：全量 fold diff vs 现表，非空=drift fail，机器守门「事件=真相」。
+- 新 `pnpm ops:projection`（仿 audit:schema，但不是 CI gate）：全量 fold diff vs 现表，非空=drift fail，连库检查「事件=真相」。
 - step9-invariant-audit 扩反向断言：A 类写者旁必须有 snapshot-event append。
 - 切换铁律：knowledge → knowledge_edge（FK）；artifact 末位。
 

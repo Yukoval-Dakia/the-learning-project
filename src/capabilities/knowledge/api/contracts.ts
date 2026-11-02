@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
+import { ReviewTimingJsonSchema } from '@/core/schema/learner-judgment';
 import { RetentionReadingSchema } from '@/core/schema/scheduling-state';
 import { ApiPageSchema } from '@/kernel/http-contracts';
 import { SubjectProfileSchema } from '@/subjects/profile-schema';
@@ -212,6 +213,7 @@ export const KnowledgeNodePageResponseSchema = z.object({
   difficulty_anchored: z.boolean(),
   last_evidence_at: z.string().nullable(),
   mastery_decay_bucket: z.enum(['untrained', 'fresh', 'mild', 'stale', 'unknown']),
+  review_timing: ReviewTimingJsonSchema,
   subject_profile: SubjectProfileSchema.pick({
     id: true,
     displayName: true,

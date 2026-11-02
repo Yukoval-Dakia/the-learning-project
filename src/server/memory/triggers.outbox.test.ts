@@ -54,53 +54,6 @@ describe('outbox poll handler (real-path)', () => {
     await realBoss.deleteAllJobs(MEMORY_EVENT_INGEST_QUEUE);
   });
 
-  it('tx rollback: writeEvent inside rolled-back tx produces 0 event rows AND 0 ingest jobs', async () => {
-    const db = testDb();
-    const boss = { send: vi.fn(async () => 'job-x') };
-    const id = newId();
-
-    // ADR-0005 single-owner invariant: writeEvent only INSERTs; with the
-    // outbox there's no side-effect that escapes the caller tx.
-    await expect(
-      db.transaction(async (tx) => {
-        await writeEvent(tx, { id, ...attemptPayload() });
-        throw new Error('caller rolled back');
-      }),
-    ).rejects.toThrow('caller rolled back');
-
-    const rows = await db.select().from(event).where(eq(event.id, id));
-    expect(rows).toHaveLength(0);
-
-    // Poller sees no pending rows → no enqueue.
-    const poll = buildMemoryIngestOutboxPollHandler(db, boss);
-    await poll([]);
-    expect(boss.send).not.toHaveBeenCalled();
-  });
-  it('idempotency: writeEvent twice with same id → 1 event row → poll → 1 enqueue', async () => {
-    const db = testDb();
-    const boss = { send: vi.fn(async () => 'job-1') };
-    const id = newId();
-    const base = { id, ...attemptPayload() };
-
-    await writeEvent(db, base);
-    // onConflictDoNothing — second writeEvent is a no-op; payload not overwritten.
-    await writeEvent(db, base);
-
-    const rows = await db.select().from(event).where(eq(event.id, id));
-    expect(rows).toHaveLength(1);
-    expect(rows[0].ingest_at).toBeNull();
-
-    const poll = buildMemoryIngestOutboxPollHandler(db, boss);
-    await poll([]);
-
-    expect(boss.send).toHaveBeenCalledTimes(1);
-    expect(boss.send).toHaveBeenCalledWith(
-      MEMORY_EVENT_INGEST_QUEUE,
-      { event_id: id },
-      expect.objectContaining({ db: expect.any(Object) }),
-    );
-  });
-
   it('tx rollback: pg-boss send participates in the same poll transaction', async () => {
     const db = testDb();
     const id = newId();

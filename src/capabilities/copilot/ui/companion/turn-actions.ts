@@ -2,7 +2,6 @@
 // a landed revert, 更正这轮, and the teaching 「重做 / 回看前置」 chip (a KPI event, not a chat turn).
 
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
-import { apiJson } from '@/ui/lib/api';
 import { saveCopilotDerivationPreference } from '../durable-reconnect-storage';
 import type { CompanionCtx } from './companion-context';
 import { plainRevertError } from './plain-errors';
@@ -65,17 +64,11 @@ export function createTurnActions(ctx: CompanionCtx): TurnActions {
   ) {
     ctx.set({ chipPending: questionId });
     try {
-      await apiJson<{ ok: boolean; event_id: string }>(
-        `/api/teaching-sessions/${sessionId}/accept-chip`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            suggestion_kind: 'corrective',
-            chip_label: '重做 / 回看前置',
-            ...(replyEventId ? { source_event_id: replyEventId } : {}),
-          }),
-        },
-      );
+      await ctx.client.acceptTeachingChip(sessionId, {
+        suggestion_kind: 'corrective',
+        chip_label: '重做 / 回看前置',
+        ...(replyEventId ? { source_event_id: replyEventId } : {}),
+      });
       ctx.set({ chipAcked: questionId });
       window.setTimeout(() => {
         if (ctx.get().chipAcked === questionId) ctx.set({ chipAcked: null });

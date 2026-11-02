@@ -19,6 +19,7 @@ import { stableStringify } from '@/core/migration/canonical';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
+import { embedCurrencyPredicate } from '@/db/embed-currency';
 import { notDraftPredicate } from '@/db/predicates';
 import {
   item_calibration,
@@ -36,8 +37,11 @@ import { EvidenceDemandV1 } from '../question-supply/evidence-demand';
 import { encodeBankRef, readBankServableParts, resolveBankRefs } from './bank-ref';
 import {
   BANK_VECTOR_RETRIEVAL_MAX_DISTANCE,
+  BANK_VECTOR_RETRIEVAL_PARAMS,
+  bankVectorBaselineLimit,
   bankVectorBaselinePredicates,
-  bankVectorCountedRank,
+  compileSameTopic,
+  countedRankV2,
 } from './bank-vector-retrieval';
 
 /** 每个召回通道的截断上限（OOM 保护；命中即 retrieval_truncated=true）。 */
@@ -231,6 +235,10 @@ export interface BankSearchMatchEvidence {
    * counted=true 的向量命中抬 coverage.verdict；false = 只在候选列表展示，语义同
    * fts weak（缺题科目照常 mint gap_request）。 */
   counted?: boolean;
+  /** vector 专有（YUK-1603）：该题存储向量所依据的行 revision（embed_source_
+   * revision）。检索谓词只放行当前 revision 的向量；NULL = 该列上线前的旧向量
+   * （来源未知，按可用处理），供调用方对账。 */
+  source_revision?: number | null;
 }
 
 export interface BankSearchHit {
@@ -832,9 +840,9 @@ async function runSearchBankInSnapshot(
   let fused: RrfFused[];
   let unavailable: BankSearchCoverage['unavailable_channels'];
   let retrievalTruncated: boolean;
-  // YUK-1516 — 向量命中逐题携带检索时的 cosine 距离与计入规则判定，供
-  // match_evidence / counted_pool_size / 续页游标还原使用（新检索由通道 B 填，
-  // 续页由 cursor.pool 还原——续页不 embed，无查询向量可重算）。
+  // 向量命中逐题携带检索时的 cosine 距离与计入判定，供 match_evidence /
+  // counted_pool_size / 续页游标还原。新检索由通道 B 填写。续页不 embed，也不
+  // 重算规则：v3 游标在 15 分钟 TTL 内还原签发时写入的 vd/vc（含规则 v1 签发的）。
   let vectorMeta = new Map<string, { distance: number; counted: boolean }>();
   if (cursor) {
     // Resume the original bounded pool. New rows/ranks never replace earlier results,
@@ -875,7 +883,8 @@ async function runSearchBankInSnapshot(
     // 锚无向量（从未嵌入/被编辑失效等待回填）→ 通道不可用，FTS 照常——诚实降级，
     // 绝不退回查询文本向量冒充内容相似。锚题自身仍是合法候选（距离 0 最相似；
     // 调用方可用 exclude_refs 显式排除）。
-    // 锚向量须与当前 EMBED_VERSION 及锚题当前内容 hash 同版，否则同样视为不可用。
+    // 锚向量须与当前 EMBED_VERSION、锚题当前内容 hash 及当前行 revision 同版
+    // （questionVectorInvalidReason），否则同样视为不可用。
     let anchorVector: number[] | null = null;
     let anchorInvalidReason: string | null = null;
     if (resolved.similarToGroupId !== undefined) {
@@ -885,8 +894,10 @@ async function runSearchBankInSnapshot(
           prompt_md: question.prompt_md,
           reference_md: question.reference_md,
           choices_md: question.choices_md,
+          version: question.version,
           embed_version: question.embed_version,
           embed_content_hash: question.embed_content_hash,
+          embed_source_revision: question.embed_source_revision,
         })
         .from(question)
         .where(eq(question.id, resolved.similarToGroupId))
@@ -906,7 +917,7 @@ async function runSearchBankInSnapshot(
           ? Promise.resolve({ vector: anchorVector })
           : Promise.resolve({
               vector: null,
-              error: `similar_to anchor content vector unusable (${anchorInvalidReason}): never embedded, embedded under an older EMBED_VERSION, or invalidated by a content edit; awaiting embed_backfill`,
+              error: `similar_to anchor content vector unusable (${anchorInvalidReason}): never embedded, embedded under an older EMBED_VERSION, stamped from an older row revision, or invalidated by a content edit; awaiting embed_backfill`,
             })
         : deps
             .embedFn(effectiveQuery)
@@ -930,13 +941,14 @@ async function runSearchBankInSnapshot(
     let vectorRows: Array<{ id: string; distance: number }> = [];
     if (vectorResult.vector != null) {
       const distanceExpr = sql<number>`(${question.embedding} <=> ${toSqlVector(vectorResult.vector)}::vector)`;
-      // 两个查询分工（YUK-1516，R1 review P1 修正）：
+      // 两个查询分工：
       //   - scoped pool（下）：召回/池成员资格/逐题距离——scope 过滤全部生效；
-      //   - baseline margin（并行）：只在「合格库面」（bankVectorBaselinePredicates，
-      //     无 scope 过滤）上取 rank-1/rank-2 判 decisive。margin 绝不能算在 scoped
-      //     pool 上：scope 滤掉全局 rank-2 竞争者会凭空制造 decisive margin，把缺题
-      //     科目顶成 sparse/enough 并吞掉 gap_request（false-enough 方向）。
-      // 计入条件 = 该题既是 scoped 池内命中，又恰是 baseline rank-1 且全局 margin ≥ δ。
+      //   - baseline（并行）：只在「合格库面」（bankVectorBaselinePredicates，
+      //     无 scope 过滤）上取计入窗口。margin 绝不能算在 scoped pool 上：scope
+      //     滤掉全局 rank-2 竞争者会凭空制造 decisive margin，把缺题科目顶成
+      //     sparse/enough 并吞掉 gap_request（false-enough 方向）。
+      // 计入条件 = 该题是 scoped 池内命中，且 countedRankV2 计为 baseline rank-1。
+      // 簇分支关闭时，这仍是「全局 rank-1 且 margin ≥ δ」。
       const [vecAll, baselineTop] = await Promise.all([
         // 召回取最近 CAP+1 行、不在 SQL 里加距离天花板：逐题距离与天花板筛选在应用层
         // 执行（bank-vector-retrieval.ts）。截断只影响池尾；rank-1/rank-2 判定走
@@ -945,18 +957,48 @@ async function runSearchBankInSnapshot(
           .select({ id: question.id, distance: distanceExpr })
           .from(question)
           .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
-          .where(and(where, sql`${question.embedding} IS NOT NULL`))
+          // YUK-1603 — scoped pool only over current-revision vectors; a stale vector
+          // is not a current candidate (baseline margin query uses the same rule via
+          // bankVectorBaselinePredicates).
+          .where(
+            and(where, sql`${question.embedding} IS NOT NULL`, embedCurrencyPredicate(question)),
+          )
           .orderBy(sql`${distanceExpr} ASC`)
           .limit(BANK_SEARCH_CHANNEL_CAP + 1),
         db
-          .select({ id: question.id, distance: distanceExpr })
+          .select({
+            id: question.id,
+            distance: distanceExpr,
+            rootQuestionId: question.root_question_id,
+            parentVariantId: question.parent_variant_id,
+            parentQuestionId: question.parent_question_id,
+            canonicalContentHash: question.canonical_content_hash,
+            knowledgeIds: question.knowledge_ids,
+          })
           .from(question)
           .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
           .where(and(...bankVectorBaselinePredicates()))
           .orderBy(sql`${distanceExpr} ASC`)
-          .limit(2),
+          .limit(bankVectorBaselineLimit(BANK_VECTOR_RETRIEVAL_PARAMS)),
       ]);
-      const countedRank = bankVectorCountedRank(baselineTop.map((row) => row.distance));
+      const sameTopic = compileSameTopic(
+        baselineTop.map((row) => ({
+          id: row.id,
+          rootQuestionId: row.rootQuestionId,
+          parentVariantId: row.parentVariantId,
+          parentQuestionId: row.parentQuestionId,
+          canonicalContentHash: row.canonicalContentHash,
+          leafKnowledgeIds: row.knowledgeIds ?? [],
+        })),
+        BANK_VECTOR_RETRIEVAL_PARAMS.cluster.status === 'open'
+          ? BANK_VECTOR_RETRIEVAL_PARAMS.cluster.arm
+          : { kind: 'closed' },
+      );
+      const countedRank = countedRankV2(
+        baselineTop.map((row) => ({ id: row.id, distance: row.distance })),
+        sameTopic,
+        BANK_VECTOR_RETRIEVAL_PARAMS,
+      );
       const countedId =
         countedRank === 0 && baselineTop.length > 0 ? (baselineTop[0]?.id ?? null) : null;
       const qualified = vecAll.filter((row) => row.distance <= BANK_VECTOR_RETRIEVAL_MAX_DISTANCE);
@@ -1006,6 +1048,9 @@ async function runSearchBankInSnapshot(
         knowledge_ids: question.knowledge_ids,
         draft_status: question.draft_status,
         created_at: question.created_at,
+        // YUK-1603 — 行属性读取（新检索与续页同快照/同规则）：向量命中证据回报
+        // 该题向量所依据的行 revision，供对账；NULL = 该列上线前的旧向量。
+        embed_source_revision: question.embed_source_revision,
         lc_state: question_group_lifecycle.scoring_admission_state,
         lc_withheld_reason: question_group_lifecycle.scoring_admission_withheld_reason,
         lc_availability: question_group_lifecycle.availability,
@@ -1073,6 +1118,9 @@ async function runSearchBankInSnapshot(
               // YUK-1516 — 距离与计入判定随证据器输出；counted=false 的向量命中
               // 只在候选列表展示（同 fts weak），不抬 verdict。不带 strength。
               ...(meta !== undefined ? { distance: meta.distance, counted: meta.counted } : {}),
+              // YUK-1603 — 该题存储向量所依据的行 revision（对账用；NULL = 该列
+              // 上线前的旧向量，检索谓词按「未知来源可用」放行）。
+              source_revision: row.embed_source_revision ?? null,
             };
           }
           return {
@@ -1290,7 +1338,7 @@ async function runSearchBankInSnapshot(
         '未被本通道召回的题不构成「库中没有」',
         ...(scope.similar_to !== undefined && unavailable.includes('vector')
           ? [
-              'similar_to 锚题暂无当前同版内容向量（未嵌入、旧 EMBED_VERSION 或被内容编辑失效，待 embed_backfill 回填）——向量通道不可用，本页仅 FTS 召回',
+              'similar_to 锚题暂无当前同版内容向量（未嵌入、旧 EMBED_VERSION、落后行 revision 或被内容编辑失效，待 embed_backfill 回填）——向量通道不可用，本页仅 FTS 召回',
             ]
           : []),
       ],

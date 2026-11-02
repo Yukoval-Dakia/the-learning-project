@@ -4,6 +4,7 @@
 
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
+import type { WorkbenchSummary } from '../workbench-api';
 
 interface Kpi {
   key: string;
@@ -51,7 +52,7 @@ export function KpiRow({
   proposalsHasMore,
   navigate,
 }: {
-  kpi: { due_count: number; pending_attribution_count: number; knowledge_count: number };
+  kpi: WorkbenchSummary['kpi'];
   // 第 4 卡只展示真正需要用户裁决的数量；C-strength pending 记录属于旁观事实，
   // 不得制造虚假的待办积压。
   proposalsDecisionTotal: number;
@@ -62,10 +63,13 @@ export function KpiRow({
   const cards: Kpi[] = [
     {
       key: 'due',
-      label: '今日到期',
+      label: kpi.due_count_scope === 'actionable_queue_sample' ? '本批可复习' : '今日到期',
       icon: 'review',
       value: kpi.due_count,
-      sub: '按复习间隔排入的项目',
+      sub:
+        kpi.due_count_scope === 'actionable_queue_sample'
+          ? '当前这批可以开始复习'
+          : '按复习间隔排入的项目',
       onGo: () => navigate('/practice'),
     },
     {

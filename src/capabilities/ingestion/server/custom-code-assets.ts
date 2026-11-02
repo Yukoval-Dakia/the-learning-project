@@ -6,9 +6,10 @@ import {
 } from '@/core/schema/assessment/presentation';
 import { DRAFT_DOCUMENT_SCHEMA_VERSION, QuestionDraftDocument } from '@/core/schema/question-draft';
 import { learning_session, question_block } from '@/db/schema';
+import { getR2 } from '@/kernel/object-storage';
 import { ImmutableAssetError, persistImmutableCustomCodeAsset } from '@/kernel/records/asset-store';
 import type { ToolContext } from '@/kernel/tools/types';
-import { getR2, requireIngestionScope } from './tools/source-tool-support';
+import { requireIngestionScope } from './tools/source-tool-support';
 
 type CustomCodeFailure = {
   status:

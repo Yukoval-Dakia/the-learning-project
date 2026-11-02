@@ -164,12 +164,15 @@ export function builtinEndpointKeysFor(provider: string): ReadonlySet<string> {
 /**
  * DashScope (Aliyun Model Studio) embedding lane endpoints: code-owned
  * first-party model endpoints the bundled catalog snapshot omits (the runtime
- * catalog lists the compatible-mode endpoints under its alibaba buckets). The
- * embedding credential never travels to another host.
+ * catalog lists the compatible-mode endpoints under its alibaba buckets).
+ * The Beijing workspace-dedicated MaaS host is what MEM0_EMBEDDING_BASE_URL
+ * resolves to for a workspace key. The embedding credential never travels to
+ * another host. This set feeds the model-endpoint allowlist only.
  */
 export const DASHSCOPE_EMBEDDING_ENDPOINT_KEYS: ReadonlySet<string> = endpointKeysOf([
   'https://dashscope.aliyuncs.com/compatible-mode/v1',
   'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+  'https://ws-tcvd1h9009b55vr0.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
 ]);
 
 export const BUILTIN_MODEL_ENDPOINT_HOSTS: ReadonlySet<string> = (() => {

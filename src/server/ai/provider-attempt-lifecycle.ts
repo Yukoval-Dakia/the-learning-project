@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-// allow: SIZE_OK — one transactional state machine owns acquisition, fencing, external-ID CAS, and settlement.
+// allow: SIZE_OK — one transactional state machine owns lock order, fencing, external-ID CAS, and settlement.
 import {
   ProviderAttemptTerminalEvidence,
   type ProviderAttemptTerminalEvidence as ProviderAttemptTerminalEvidenceT,
@@ -12,6 +12,11 @@ import type { Db, Tx } from '@/db/client';
 import { provider_attempt, provider_attempt_admission } from '@/db/schema';
 import type { ProviderAttemptAdmissionPolicy } from './provider-attempt-admission-config';
 import { type AttemptState, evaluateExistingAttempt } from './provider-attempt-decisions';
+import {
+  lockProviderAttempt,
+  lockProviderAttemptLane,
+  lockProviderAttemptOperationKind,
+} from './provider-attempt-lock';
 
 export type ProviderAttemptLifecycleMode = 'off' | 'observe' | 'enforce';
 export type ProviderAttemptAdmission = 'off' | 'acquired' | 'would_deny' | 'untracked';
@@ -159,9 +164,12 @@ export function createProviderAttemptLifecycle(input: {
 
   async function acquireOperationKindFence(tx: Tx) {
     if (input.providerStartFence === 'operation_kind') {
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt-operation-kind:${identity.operationId}:${identity.provider}:${identity.lane}:${identity.operationKind}`}, 0))`,
-      );
+      await lockProviderAttemptOperationKind(tx, {
+        operationId: identity.operationId,
+        provider: identity.provider,
+        lane: identity.lane,
+        operationKind: identity.operationKind,
+      });
       const candidateRows = await tx.execute<{ attempt_id: string }>(sql`
                     SELECT a.attempt_id::text
                     FROM provider_attempt AS a
@@ -180,14 +188,10 @@ export function createProviderAttemptLifecycle(input: {
         ...new Set([identity.attemptId, ...candidateRows.map((candidate) => candidate.attempt_id)]),
       ].sort();
       for (const candidateId of candidateIds) {
-        await tx.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt:${candidateId}`}, 0))`,
-        );
+        await lockProviderAttempt(tx, candidateId);
       }
     } else {
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt:${identity.attemptId}`}, 0))`,
-      );
+      await lockProviderAttempt(tx, identity.attemptId);
     }
   }
 
@@ -526,9 +530,7 @@ export function createProviderAttemptLifecycle(input: {
               > => {
                 await acquireOperationKindFence(tx);
                 if (policy !== null) {
-                  await tx.execute(
-                    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt-lane:${identity.lane}`}, 0))`,
-                  );
+                  await lockProviderAttemptLane(tx, identity.lane);
                 }
                 const rows = await tx.execute<{
                   provider_start_reserved_at: Date | string | null;
@@ -579,9 +581,7 @@ export function createProviderAttemptLifecycle(input: {
         if (bypass) return;
         try {
           await input.db.transaction(async (tx) => {
-            await tx.execute(
-              sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt:${identity.attemptId}`}, 0))`,
-            );
+            await lockProviderAttempt(tx, identity.attemptId);
             const rows = await tx.execute<{
               external_request_id: string | null;
               owned: boolean;
@@ -618,9 +618,7 @@ export function createProviderAttemptLifecycle(input: {
         }
         try {
           return await input.db.transaction(async (tx) => {
-            await tx.execute(
-              sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt:${identity.attemptId}`}, 0))`,
-            );
+            await lockProviderAttempt(tx, identity.attemptId);
             const rows = await tx.execute<AttemptState>(sql`SELECT a.terminal_status,
               a.terminal_reason, a.wire_count, a.usage_json, a.cost_basis, a.cost_amount,
               a.cost_currency, a.cost_source,
@@ -689,12 +687,8 @@ export function createProviderAttemptLifecycle(input: {
         if (input.mode === 'off' && input.persistAttemptWhenOff !== true) return makeHandle('off');
         try {
           const admission = await input.db.transaction(async (tx) => {
-            await tx.execute(
-              sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt:${identity.attemptId}`}, 0))`,
-            );
-            await tx.execute(
-              sql`SELECT pg_advisory_xact_lock(hashtextextended(${`provider-attempt-lane:${identity.lane}`}, 0))`,
-            );
+            await lockProviderAttempt(tx, identity.attemptId);
+            await lockProviderAttemptLane(tx, identity.lane);
             const rows =
               await tx.execute<AttemptState>(sql`SELECT a.operation_id::text, a.attempt_kind,
               a.provider, a.model, a.lane_id, a.protocol, a.endpoint_class, a.caller,

@@ -5,6 +5,7 @@
 import { and, asc, eq, isNull, ne, sql } from 'drizzle-orm';
 import { settleOneQuestionPageHit } from '@/capabilities/practice/server/quiz/content-fingerprint';
 import type { Db, Tx } from '@/db/client';
+import { embedCurrencyPredicate } from '@/db/embed-currency';
 import { question } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
 import { JYEOO_SOURCE_HOST } from './jyeoo-supply-config';
@@ -182,6 +183,9 @@ export async function findVectorNearDuplicate(
       and(
         visibleSourceRow(),
         sql`${question.embedding} IS NOT NULL`,
+        // YUK-1603 — a revision-stale vector is not a near-dup witness for the
+        // current content; the embed_backfill currency sweep re-stamps/re-embeds it.
+        embedCurrencyPredicate(question),
         ...(excludeQuestionId != null ? [ne(question.id, excludeQuestionId)] : []),
       ),
     )
@@ -255,4 +259,13 @@ export function readVectorNearHold(metadata: Record<string, unknown>): VectorNea
   if (typeof similarity !== 'number' || !Number.isFinite(similarity)) return null;
   if (similarity + 1e-9 < VECTOR_NEAR_DUP_MIN_SIMILARITY) return null;
   return { neighbor_question_id: neighbor, similarity };
+}
+
+/** One hold decision for source verification and ordinary draft admission. */
+export async function readVisibleVectorNearHold(
+  db: Db | Tx,
+  metadata: Record<string, unknown>,
+): Promise<VectorNearHold | null> {
+  const hold = readVectorNearHold(metadata);
+  return hold != null && (await visibleSourceNeighbor(db, hold.neighbor_question_id)) ? hold : null;
 }

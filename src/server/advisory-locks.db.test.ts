@@ -1,5 +1,5 @@
 // YUK-497 — two-connection regressions for the GLOBAL learning-state write lock
-// ('learning-state:write', src/server/advisory-locks.ts).
+// ('learning-state:write', src/db/learning-state-lock.ts).
 //
 // Review findings closed here (REQUEST CHANGES round on yuk-497-copilot-checkpoint-revert):
 //   1. Absent-row / check-then-insert races: every production material_fsrs_state /
@@ -40,13 +40,13 @@ import {
   material_fsrs_state,
   question,
 } from '@/db/schema';
-import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
-import { retireFsrsStateOnMerge, upsertFsrsState } from '@/server/fsrs/state';
 import {
   retireMasteryStateOnMerge,
   updateThetaForAttempt,
   upsertMasteryState,
-} from '@/server/mastery/state';
+} from '@/kernel/records/mastery-state';
+import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
+import { retireFsrsStateOnMerge, upsertFsrsState } from '@/server/fsrs/state';
 import { backfillKnowledgeGenesis } from '../../scripts/backfill-genesis-events';
 import { issueSoloFixture } from '../../tests/fixtures/assessment-solo';
 import { nativeSoloHttpFixture } from '../../tests/fixtures/native-solo-http';

@@ -1,12 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
-import {
-  eventCorrectionLockKey,
-  eventCorrectionsGlobalLockKey,
-  getEventById,
-} from '@/kernel/events';
+import { getEventById } from '@/kernel/events';
 import type {
   EventSubscriptionDelivery,
   EventSubscriptionHandlerFactory,
@@ -14,6 +9,7 @@ import type {
 } from '@/kernel/manifest';
 import { getEffectiveProbeResultStatuses } from '@/kernel/read-models/probe-evidence';
 import { getStartedBoss } from '@/server/boss/client';
+import { lockInterventionCorrectionsAll, lockInterventionSource } from './intervention-lock';
 import {
   InterventionSourceProbeResultPayload,
   buildInterventionSnapshotFromProbeResult,
@@ -111,12 +107,8 @@ export async function handleProbeResultInterventionDelivery(
   const identity = interventionIdentityForProbeResult(delivery.sourceEventId);
 
   const record = await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
-    );
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionLockKey(delivery.sourceEventId)}, 0))`,
-    );
+    await lockInterventionCorrectionsAll(tx);
+    await lockInterventionSource(tx, delivery.sourceEventId);
     const existing = await loadInterventionBySourceProbeResult(tx, delivery.sourceEventId);
     if (existing) {
       if (existing.status !== 'preparing') return existing;

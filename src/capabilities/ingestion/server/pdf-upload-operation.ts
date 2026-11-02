@@ -1,6 +1,6 @@
 import type { Db } from '@/db/client';
+import { getR2 } from '@/kernel/object-storage';
 import { persistImageAsset } from '@/kernel/records/asset-store';
-import { getR2 } from '@/server/r2';
 import { renderPdfToPngPages } from './pdf-render';
 import { extractPdfTextLayers } from './pdf-text';
 import { pdfPageImageProvenance, preparePdfSourceAssets } from './source-package';

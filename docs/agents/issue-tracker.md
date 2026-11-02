@@ -29,14 +29,14 @@ Linear 原生层级 → 项目语义：
 ### 纪律（standing rules，每次都遵守）
 
 - **Linear = 驾驶舱，不是 compute**：绝不用 Linear 原生 coding session（委派 issue→Linear 跑 agent 出 PR）——它按 AI credits 真金白银扣（$0.5–5+/次，opt-in，不充钱没有此功能）。委派一律走 `W`→`O`（Open in coding tool）把 issue 丢进**本地 Claude Code**（owner 的 Max 订阅/机器，0 Linear 充值）。其它面（Projects / Cycles / Labels / Agent chat / project update / PR 状态自动流转）全不碰 credits，放心用。
-- **活的工作进 Project**：为当前主线建/更新 issue 时挂到对应 live Project——**领域模型重构 (YUK-203)** / **私人教研团 rethink (YUK-405)** / **记忆层 (YUK-322)** / **UI 重绘 (YUK-169)**；新主线就建新 Project。别让活跃工作裸飘成 parent-issue 树（2026-06-18 重组前的旧病）。
+- **活的工作进 Project**：为当前主线建/更新 issue 时挂到对应 live Project——**领域模型重构 (YUK-203)** / **私人教研团 rethink (YUK-405)** / **记忆层 (YUK-322)** / **UI 重绘 (YUK-169)**；新主线就建新 Project。别让活跃工作裸飘成 parent-issue 树。
 - **带 area 标签**：每个 issue 挂一个 `area:matcher|kg|practice|copilot|memory|ui`（子系统轴，与 triage 标签正交）。
 - **Cycle 只装焦点**：只把当前在跑的 issue 挂 cycle，别灌整个 backlog。
 - 完整说明见 `docs/agents/linear-maximization.md` + `docs/agents/linear-agent-guidance.md`。
 
 ### Closeout issue capture gate
 
-Every implementation, audit, planning, or migration task must reconcile Linear before the final response. This is a gate, not a nice-to-have.
+Every implementation, audit, planning, or migration task must reconcile Linear before the final response. This is a gate.
 
 1. Collect actionable follow-ups discovered during the turn:
    - repo/code/doc drift verified against current files;
@@ -72,7 +72,7 @@ Default labels:
 
 ### Issue body template
 
-When the issue maps to a plan-doc task (the common case for phase work), use this 6-section template. It is the shape that worked for the P0 milestone (YUK-27..33). Skip sections that don't apply rather than leaving them empty.
+When the issue maps to a plan-doc task (the common case for phase work), use this 6-section template. Skip sections that don't apply rather than leaving them empty.
 
 ```markdown
 ## Files
@@ -160,7 +160,7 @@ Owner enabled **Team Settings → Workflow → Pull request and commit automatio
 - ✅ PR / commit opened → issue auto `In Progress`（"On PR or commit open"；YUK-415 Backlog→In Progress @ PR #457 开）。
 - ✅ PR merged → issue auto `Done`（"On PR or commit merge → Done"；YUK-415 In Progress→Done @ merge）。
 - ✅ Branch `yuk-415-…`（Linear `gitBranchName` 形态）+ commit `Closes YUK-415` 正确 link 并驱动自动流转 → **branch 用 Linear 的 `gitBranchName` 形态命名**（不要 `<phase>/<slug>`）。
-- ⚠️ 仍未观测到 firing：PR review activity → `In Review`。配置已设，但 #457 直接 merge、无 review 事件，故没触发（configured-but-unexercised，不是坏了）。
+- ⚠️ 仍未观测到 firing：PR review activity → `In Review`。配置已设，但 #457 直接 merge、无 review 事件，故没触发（configured-but-unexercised）。
 
 **自动化已 LIVE 的副作用**：任意 commit/PR 文字出现 `YUK-NN`（哪怕 `Refs` / 哪怕无关）→ open 时自动 `In Progress`、merge 时自动 `Done`。所以 commit/PR **只引用真正要推进/关闭的 issue**（见下方 Keyword convention）。
 

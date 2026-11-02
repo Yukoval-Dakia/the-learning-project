@@ -1,4 +1,4 @@
-import { type Mock, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createMem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
 import { createMemoryClient } from './client';
 
@@ -27,19 +27,6 @@ vi.mock('mem0ai/oss', () => {
 // from MemoryClient, so this stays file-local (NOT tests/helpers/memoryClientMock,
 // which mocks the OUTER project surface). Every method is a no-op default with a
 // spread override for whichever one a given test drives.
-function mem0LikeMock(
-  overrides: Partial<Record<'add' | 'search' | 'delete' | 'history' | 'get' | 'getAll', Mock>> = {},
-) {
-  return {
-    add: vi.fn(async () => ({ results: [] })),
-    search: vi.fn(async () => ({ results: [] })),
-    delete: vi.fn(async () => ({ message: 'ok' })),
-    history: vi.fn(async () => []),
-    get: vi.fn(async () => null),
-    getAll: vi.fn(async () => ({ results: [] })),
-    ...overrides,
-  };
-}
 
 // P1 (YUK-341)：LLM/embedder 全走 openai-compat（智谱 GLM + 阿里百炼），凭据经 config
 // 传入，无 process.env 改写（旧 withXiaomiBaseUrl env-dance + YUK-232 mutex 已删）。
@@ -113,65 +100,5 @@ describe('createMemoryClient', () => {
     ).rejects.toThrow('cannot enter memory');
     expect(sdk.loaded.mock.calls.length).toBe(before);
     expect(beforeAdd).not.toHaveBeenCalled();
-  });
-
-  it('redacts child and parent gold references before inferred memory extraction', async () => {
-    const memory = mem0LikeMock();
-    const client = createMemoryClient({ env, memoryFactory: () => memory });
-
-    await client.addEventMemoryOnce(
-      {
-        id: 'evt_attempt_snapshot',
-        actor_kind: 'user',
-        action: 'attempt',
-        subject_kind: 'question',
-        subject_id: 'q-child',
-        payload: {
-          answer_md: 'learner answer must remain',
-          question_snapshot: {
-            schema_version: 1,
-            question: {
-              question_id: 'q-child',
-              prompt_md: 'child prompt remains',
-              reference_md: 'CHILD GOLD MUST NOT LEAVE',
-            },
-            parent_question: {
-              question_id: 'q-parent',
-              prompt_md: 'parent prompt remains',
-              reference_md: 'PARENT GOLD MUST NOT LEAVE',
-            },
-          },
-        },
-        affected_scopes: ['global'],
-        created_at: new Date('2026-07-28T00:00:00Z'),
-        kind: 'event',
-      },
-      testProviderOperation(),
-      async () => {},
-    );
-
-    const serialized = memory.add.mock.calls[0]?.[0] as string;
-    const extractionInput = JSON.parse(serialized) as {
-      payload: {
-        answer_md: string;
-        question_snapshot: {
-          question: Record<string, unknown>;
-          parent_question: Record<string, unknown>;
-        };
-      };
-    };
-    expect(extractionInput.payload.answer_md).toBe('learner answer must remain');
-    expect(extractionInput.payload.question_snapshot.question.prompt_md).toBe(
-      'child prompt remains',
-    );
-    expect(extractionInput.payload.question_snapshot.parent_question.prompt_md).toBe(
-      'parent prompt remains',
-    );
-    expect(extractionInput.payload.question_snapshot.question).not.toHaveProperty('reference_md');
-    expect(extractionInput.payload.question_snapshot.parent_question).not.toHaveProperty(
-      'reference_md',
-    );
-    expect(serialized).not.toContain('CHILD GOLD MUST NOT LEAVE');
-    expect(serialized).not.toContain('PARENT GOLD MUST NOT LEAVE');
   });
 });

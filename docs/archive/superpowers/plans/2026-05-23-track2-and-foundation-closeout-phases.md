@@ -67,7 +67,7 @@
 
 **已有 Linear issue**：[YUK-7 — build-time profile validator](https://linear.app/yukoval-studios/issue/YUK-7) (Backlog, 3pts) + [YUK-8 — profile validator 接入 pnpm test pre-PR gate](https://linear.app/yukoval-studios/issue/YUK-8) (Backlog, 1pt)。本 lane **不新建 Linear issue**，把这两条挂到本 Project 的 M2 Milestone 即可。
 
-**问题**：[src/subjects/wenyan/profile.ts](../../../src/subjects/wenyan/profile.ts) / [math/profile.ts](../../../../src/subjects/math/profile.ts)) / [physics/profile.ts](../../../../src/subjects/physics/profile.ts)) 各自定义 `SlimSubjectProfile`，[src/subjects/profile.ts](../../../../src/subjects/profile.ts)) 的 `SubjectRegistry` 不在启动期验证 `judgeCapabilities` 是否都已注册、`causeCategories` id 是否唯一、`renderConfig` 字段是否齐。下一个 subject（english / programming）只能靠人肉对照。Foundation B v0.3 §1.5 明确写过的 "build-time profile validator" 至今未做。
+**问题**：[src/subjects/wenyan/profile.ts](../../../src/subjects/wenyan/profile.ts) / [math/profile.ts](../../../../src/subjects/math/profile.ts)) / [physics/profile.ts](../../../../src/subjects/physics/profile.ts)) 各自定义 `SlimSubjectProfile`，[src/subjects/profile.ts](../../../../src/subjects/profile.ts)) 的 `SubjectRegistry` 不在启动期验证 `judgeCapabilities` 是否都已注册、`causeCategories` id 是否唯一、`renderConfig` 字段是否齐。下一个 subject（english / programming）只能靠人肉对照。Foundation B v0.3 §1.5 明确写过的 "build-time profile validator" 尚缺。
 
 **注意**：[`SubjectProfileSchema`](../../../../src/subjects/profile.ts)) (line 41-77) + [`validateProfile()`](../../../../src/core/capability/validate-profile.ts)) (line 96-) **已存在**。本 lane **不新建** schema/validator，只补 missing 接入。
 

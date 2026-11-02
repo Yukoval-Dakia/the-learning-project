@@ -4,7 +4,8 @@ import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset, source_document } from '@/db/schema';
 
-import { type R2Client, type SourceAssetRow, getR2 } from '../persist-image-asset';
+import type { R2Client } from '@/kernel/object-storage';
+import type { SourceAssetRow } from '@/kernel/records/asset-store';
 import {
   type AssetRefInput,
   loadAssetBytesVerified,
@@ -168,5 +169,3 @@ export async function findOwningDocument(
     .limit(1);
   return rows[0]?.id ?? null;
 }
-
-export { getR2 };
