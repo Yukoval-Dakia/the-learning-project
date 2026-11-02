@@ -43,6 +43,8 @@ fetch 后 main 固定 `02778f6d11bcd82f372c9b1b5452d80cc18bd537`；新分支 `fe
 
 确认题原文提交沿原 materializing 策略抑制实时/重放的“撤回本轮更改”入口；直接 checkpoint API 与原 cascade 策略也拒绝此根，避免仅撤对话却承诺撤销正式作答或结算。原文、判分与回执保留，合法申诉/纠错仍走原入口。
 
+通用纠错或历史记录已撤回 submit 对话根时，原 turns tombstone 仅说明对话已撤回，并明确此操作不撤销正式作答、判分或结算；不再给该 tombstone checkpoint。普通可逆对话的原撤回说明与身份保持。
+
 邀请授权检查在原短事务内持有 ask settlement、corrections:all 与包括邀请 reply 的排序 source 锁；发行及首次 activation 提交前保持互斥。provider 仍在这些事务外，不以重复无锁读取代替撤回串行化。
 
 协调批准仅现有 practice/ui-public.ts 的 `ConfirmationAssessment` value export，target `ui/ConfirmationAssessment.tsx#ConfirmationAssessment`，owner practice，consumer RootShell命名import AST11；`ConfirmationDraftClient`为type-only。批准：https://linear.app/yukoval-studios/issue/YUK-1465#comment-6bd917e1-bee4-4db0-bb32-7412a523ef2d ，实际UTC date 2026-11-01。按原JSON只append一条changes，历史prefix/debts/pair/totals/offset/compatShims保持；不放行目录。

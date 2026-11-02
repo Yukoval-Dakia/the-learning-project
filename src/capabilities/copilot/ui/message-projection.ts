@@ -364,7 +364,7 @@ export function projectReplayMessage(turn: ReplayTurn): ReplayChatMessage | null
       id: turn.event_id,
       role: 'tombstone',
       text: turn.text || '本轮更改已撤回',
-      checkpoint_event_id: turn.checkpoint_event_id ?? turn.event_id,
+      checkpoint_event_id: turn.checkpoint_event_id,
     };
   if (typeof turn.text !== 'string') return null;
   const publicProse = parsePublicProse(turn.public_prose);

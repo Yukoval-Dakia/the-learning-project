@@ -490,12 +490,17 @@ async function projectCopilotTurnRows(
     const checkpointEventId = row.action === USER_ASK_ACTION ? row.id : row.caused_by_event_id;
     if (checkpointEventId && retractedParentIds.has(checkpointEventId)) {
       if (row.id === checkpointEventId) {
+        const isConfirmationSubmission =
+          (row.payload as { confirmation?: { kind?: string } } | null)?.confirmation?.kind ===
+          'submit';
         turns.push({
           role: 'tombstone',
-          text: '本轮更改已撤回',
+          text: isConfirmationSubmission
+            ? '本轮对话已撤回。此操作不撤销正式作答、判分或结算记录。'
+            : '本轮更改已撤回',
           at: row.created_at.toISOString(),
           event_id: row.id,
-          checkpoint_event_id: row.id,
+          ...(!isConfirmationSubmission ? { checkpoint_event_id: row.id } : {}),
         });
       }
       continue;
