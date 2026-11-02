@@ -30,6 +30,7 @@ export type {
 } from './server/privacy-guard';
 export { writeIngestionUsageReceipt } from './server/privacy-guard';
 export type { BlockMergeAcceptResult } from './server/proposal-appliers';
+export { requestPurposeChange, requestPurposeImpact } from './server/purpose-request';
 export { revertIngestionBlock } from './server/revert-auto-enroll';
 export { readIngestionSessionBlocks } from './server/session-blocks-read';
 export { readIngestionSessionDetail } from './server/session-detail';
