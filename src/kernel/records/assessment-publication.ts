@@ -766,7 +766,7 @@ export async function publishQuestionGroup(
     let nextOrdinal = 1;
     if (currentRevisionId == null && !suppliedAccepted) {
       throw new Error(
-        `publishQuestionGroup: integrity_digest mismatch (supplied ${contract.integrity_digest}, canonical ${seal.canonical}) — regenerate the contract via contract-normalizer`,
+        `publishQuestionGroup: integrity_digest mismatch (supplied ${contract.integrity_digest}, canonical ${seal.canonical}) — regenerate the contract via assessment-normalization`,
       );
     }
     if (currentRevisionId != null) {
@@ -797,7 +797,7 @@ export async function publishQuestionGroup(
         sameSealedDocument(current, seal, contract.integrity_digest, suppliedAccepted);
       if (!suppliedAccepted && !sameDocument) {
         throw new Error(
-          `publishQuestionGroup: integrity_digest mismatch (supplied ${contract.integrity_digest}, canonical ${seal.canonical}) — regenerate the contract via contract-normalizer`,
+          `publishQuestionGroup: integrity_digest mismatch (supplied ${contract.integrity_digest}, canonical ${seal.canonical}) — regenerate the contract via assessment-normalization`,
         );
       }
       if (current != null && sameDocument) {
