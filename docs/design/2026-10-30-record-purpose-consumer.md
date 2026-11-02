@@ -24,7 +24,7 @@
 
 现役链：RecordingSheet → PurposeSection → usePurposeChange → record-api 的 getPurposeImpact/changePurpose。GET使用生成operation，POST为读取Location保留原apiFetch Response，body/response仍由生成operation类型拥有；没有第二份后端schema或Start入口。请求在当前标签页sessionStorage保留，关闭标签页不承诺恢复；未知时界面明确要求保留标签页。用session+request_id隔离查询且禁用placeholder跨请求复用；无自动重发或新编号。状态改变后失效原record读缓存，不在UI重写录入状态。
 
-本机 api-contracts、api-client、api-client-usage、capability-boundaries、architecture-deepening、learner-copy、typecheck、lint、build均exit0；最后的拒绝重试guard与文案修正后再次typecheck/lint/build通过。新增/修改6源码文件Biome无诊断；全仓lint有168 warnings，未增加allowlist或改baseline。tests零写零跑，未启动页面或用途请求，浏览器/实际stop/repair/delete/provider/部署NOT_RUN。
+本机 api-contracts、api-client、api-client-usage、capability-boundaries、architecture-deepening、learner-copy、typecheck、lint、build均exit0；最后的拒绝重试guard与文案修正后再次typecheck/lint/build通过。新增/修改6源码文件Biome无诊断；全仓lint有168 warnings，未增加allowlist或改baseline。
 
 证据目录：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1473/record-purpose-20261030/`，checks.json及final/记录首次门。首次独立审查发现卸载旧实例的迟到响应能覆盖新请求恢复记录（astra-r1.md）。修复将发送前保存、成功及拒绝写回统一为同步核对持久槽后写入：UUID与完整body、Location、resolution必须仍等于该次写入的预期记录；不匹配或无法读取时不覆盖，保留现有记录并停止当前实例的后续命令。旧实例完成时以其原attempt核对，不能用新记录取得写权。原槽为空才可从空状态写入；替换旧已完成请求仍核对原快照。只在持久写入成功后发布本实例的成功回执。
 

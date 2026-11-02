@@ -1,6 +1,7 @@
 import type { Db, Tx } from '@/db/client';
 import type { question } from '@/db/schema';
 import type { PublishQuestionGroupResult } from '@/kernel/records/assessment-publication';
+import { DraftSubmitVectorRequired, prepareDraftSubmitVector } from './draft-submit-dedup';
 import {
   SubmitTransactionAbort,
   drainSubmitVerifyIntents,
@@ -125,6 +126,7 @@ export type SubmitResult =
     };
 
 interface SubmitContext {
+  signal?: AbortSignal;
   beforeWrite?: (tx: Tx) => Promise<void>;
   actorRef: string;
   actorKind: 'agent' | 'user' | 'system';
@@ -142,7 +144,28 @@ export async function submitDraftQuestion(
 ): Promise<SubmitResult> {
   let out: SubmitResult;
   try {
-    out = await db.transaction((tx) => submitDraftQuestionInTx(tx, input, ctx));
+    try {
+      out = await db.transaction((tx) =>
+        submitDraftQuestionInTx(tx, input, ctx, { checkDraftVector: true }),
+      );
+    } catch (error) {
+      if (!(error instanceof DraftSubmitVectorRequired)) throw error;
+      const draftVector = await prepareDraftSubmitVector(
+        db,
+        error,
+        input.request_id,
+        ctx.taskRunId ? 'worker' : 'api',
+        {
+          signal: ctx.signal,
+          beforeSend: ctx.beforeWrite
+            ? () => db.transaction(async (tx) => ctx.beforeWrite?.(tx))
+            : undefined,
+        },
+      );
+      out = await db.transaction((tx) =>
+        submitDraftQuestionInTx(tx, input, ctx, { checkDraftVector: true, draftVector }),
+      );
+    }
   } catch (error) {
     if (error instanceof SubmitTransactionAbort) return error.receipt;
     throw error;
