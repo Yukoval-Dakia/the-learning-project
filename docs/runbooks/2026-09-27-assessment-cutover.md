@@ -76,7 +76,7 @@ pnpm migration:epoch status --target=<pg>
 pnpm migration:epoch outstanding --target=<pg>
 ```
 
-按 `JOB_EPOCH_DISPOSITION`（`src/server/contract-epoch/jobs.ts`）处置
+按 `JOB_EPOCH_DISPOSITION`（`src/server/migration/contract-epoch/jobs.ts`）处置
 `created/retry/active/failed` 存量：
 
 - **drain 类**（housekeeping/mem0/订阅分发等）：preparing 下也被 fenced，
@@ -200,7 +200,7 @@ submission/draft 行旧代码读不了，勉强起旧镜像会产出错误判分
 ```bash
 # B1. 导出全部 post-cutover 新写入（submissions/drafts/eval/receipt/blobs
 #     + 事件水位）——生产用 pg_dump 全量或按
-#     src/server/rehearsal/post-write.ts exportPostWriteDelta 的表序导出
+#     src/server/release/rehearsal/post-write.ts exportPostWriteDelta 的表序导出
 #     到 canonical JSON + digest。
 # B2. 独立 target restore pre-cutover dump（恢复旧 shape）。
 # B3. 回放 delta（replayPostWriteDelta 拓扑序 insert；冲突即 fail）。
