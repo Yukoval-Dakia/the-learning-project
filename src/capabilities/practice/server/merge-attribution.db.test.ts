@@ -5,7 +5,7 @@ import {
   rewriteLearningItemKnowledgeIds,
   rewriteQuestionKnowledgeIds,
 } from '@/kernel/records/knowledge-merge-attribution';
-import { gatherAndFoldLearningItem } from '@/server/projections/gather';
+import { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
 import { learningItemLiveRowToSnapshot } from '@/server/projections/parity';
 import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

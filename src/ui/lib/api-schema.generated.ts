@@ -30220,6 +30220,10 @@ export interface operations {
                                 evidence_labels: {
                                     [key: string]: string;
                                 };
+                                knowledge_edge?: {
+                                    from_label: string;
+                                    to_label: string;
+                                };
                                 title: string;
                             } | null;
                             proposed_at: string;
@@ -31325,6 +31329,10 @@ export interface operations {
                                 }[];
                                 evidence_labels: {
                                     [key: string]: string;
+                                };
+                                knowledge_edge?: {
+                                    from_label: string;
+                                    to_label: string;
                                 };
                                 title: string;
                             } | null;
@@ -37648,6 +37656,8 @@ export interface operations {
                         };
                         kpi: {
                             due_count: number;
+                            /** @enum {string} */
+                            due_count_scope?: "actionable_queue_sample";
                             goal_count: number;
                             knowledge_count: number;
                             pending_attribution_count: number;

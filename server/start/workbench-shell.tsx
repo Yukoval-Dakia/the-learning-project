@@ -12,7 +12,7 @@ import { TokenGate } from '../../web/src/TokenGate';
 import { startAgentNoteClient } from './agent-note-client';
 import { startCopilotClient } from './copilot-summary-client';
 import { startSubjectClient } from './subject-client';
-import { startWorkbenchClient } from './workbench-client';
+import { startKnowledgeTreeClient, startWorkbenchClient } from './workbench-client';
 
 const confirmationClient = {
   getIssuanceState: startIssuanceStateClient,
@@ -38,6 +38,7 @@ export function StartWorkbenchShell({
                   confirmationClient={confirmationClient}
                   pathname={pathname}
                   navigate={startNavigate}
+                  readKnowledgeTree={startKnowledgeTreeClient}
                 >
                   {children}
                 </RootShell>

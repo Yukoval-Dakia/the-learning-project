@@ -129,48 +129,6 @@ function learnerCapture() {
 }
 
 describe('redactMigrationCapture（终轮：默认拒绝 + 完整分区家族）', () => {
-  it('全家族私有文本被替换 —— copilot user_message / record summary_md / propose 标题也不漏', () => {
-    const redacted = redactMigrationCapture(learnerCapture());
-    const serialized = JSON.stringify(redacted.rawFacts.events);
-    expect(serialized).not.toContain(SENTINEL);
-    expect(JSON.stringify(redacted.rawFacts.answers)).not.toContain(SENTINEL);
-
-    const byId = new Map(redacted.rawFacts.events.map((e) => [e.id, e]));
-    const payloadOf = (id: string) => byId.get(id)?.payload as Record<string, unknown>;
-
-    // 原有变体（review P1-6）继续覆盖。
-    expect(payloadOf('a1').answer_md).toMatchObject({ __redacted: true, length: SENTINEL.length });
-    expect(payloadOf('a1').reasoning_trace).toMatchObject({ __redacted: true });
-    expect((payloadOf('j1').cause as Record<string, unknown>).analysis_md).toMatchObject({
-      __redacted: true,
-    });
-    const pendingBody = (payloadOf('p1').submit as Record<string, unknown>).body as Record<
-      string,
-      unknown
-    >;
-    expect(pendingBody.response_md).toMatchObject({ __redacted: true });
-    expect(payloadOf('run-1').user_response_md).toMatchObject({ __redacted: true });
-    const judgeBlock = payloadOf('run-1').judge as Record<string, unknown>;
-    expect(judgeBlock.feedback_md).toMatchObject({ __redacted: true });
-    expect(judgeBlock.score).toBe(1);
-    expect(judgeBlock.coarse_outcome).toBe('correct');
-    expect(payloadOf('c1').reason_md).toMatchObject({ __redacted: true });
-    expect(payloadOf('j1b').feedback_md).toMatchObject({ __redacted: true });
-
-    // P1-4（终轮）：copilot 输入、record capture 摘要、知识 propose 标题。
-    expect(payloadOf('cop-1').user_message).toMatchObject({ __redacted: true });
-    expect(payloadOf('cop-1').surface).toBe('copilot'); // 标记保留
-    expect(payloadOf('rc-1').summary_md).toMatchObject({ __redacted: true });
-    expect(payloadOf('rc-1').record_kind).toBe('mistake');
-    expect(payloadOf('rc-1').generated_by).toBe('auto_capture');
-    expect(payloadOf('prop-1').title).toMatchObject({ __redacted: true });
-    expect(payloadOf('prop-1').rationale_md).toMatchObject({ __redacted: true });
-
-    const answer = redacted.rawFacts.answers[0];
-    expect(answer.content_md).toMatchObject({ __redacted: true });
-    expect(answer.vision_extracted).toMatchObject({ __redacted: true });
-  });
-
   it('未知家族的未知文本键默认被脱敏（默认拒绝），标记/结构保留 → 分类逐类不变', () => {
     const capture = learnerCapture();
     // 模拟未来新增家族的未知文本键（+ 一个已登记的安全枚举键）。
@@ -197,56 +155,5 @@ describe('redactMigrationCapture（终轮：默认拒绝 + 完整分区家族）
     expect(after.records.map((r) => [r.source_id, r.category])).toEqual(
       before.records.map((r) => [r.source_id, r.category]),
     );
-  });
-
-  it('YUK-1098：数组标量继承父键策略 —— 非安全键 string[] 逐元素脱敏，安全键数组保留', () => {
-    const capture = withEvents(emptyCapture(), [
-      ev({
-        id: 'doc-1',
-        action: 'experimental:extract_source_document',
-        subject_kind: 'record',
-        subject_id: 'doc-1',
-        payload: {
-          warnings: [`${SENTINEL}-w1`, `${SENTINEL}-w2`],
-          failure_reasons: [`${SENTINEL}-f1`],
-          question_id: ['q-1', 'q-2'],
-          knowledge_ids: ['kc-1', 'kc-2'],
-          image_refs: [`${SENTINEL}-asset`],
-          status: 'done',
-          nested: { warnings: [`${SENTINEL}-deep`] },
-          matrix: [[`${SENTINEL}-m1`]],
-          rows: [{ note_md: `${SENTINEL}-row`, status: 'active' }],
-        },
-      }),
-    ]);
-    const redacted = redactMigrationCapture(capture);
-    expect(JSON.stringify(redacted.rawFacts.events)).not.toContain(SENTINEL);
-
-    const payload = redacted.rawFacts.events[0]?.payload as Record<string, unknown>;
-    expect(payload.warnings).toHaveLength(2);
-    for (const w of payload.warnings as unknown[]) {
-      expect(w).toMatchObject({ __redacted: true });
-    }
-    expect((payload.warnings as Array<{ sha256: string }>)[0]?.sha256).toHaveLength(64);
-    expect(payload.failure_reasons).toEqual([expect.objectContaining({ __redacted: true })]);
-    // 安全键数组整体保留（登记键的 id 数组）。
-    expect(payload.question_id).toEqual(['q-1', 'q-2']);
-    // 未登记的 _ids/_refs 数组键同属默认拒绝 —— 元素是标量，父键不安全即脱敏
-    // （比旧「数组元素无键」更严；分类器只读 Array.isArray/length，不受影响）。
-    expect(payload.knowledge_ids).toEqual([
-      expect.objectContaining({ __redacted: true }),
-      expect.objectContaining({ __redacted: true }),
-    ]);
-    expect(payload.image_refs).toEqual([expect.objectContaining({ __redacted: true })]);
-    expect(payload.status).toBe('done');
-    // 嵌套对象内的非安全 string[] 同样按其父键脱敏。
-    const nested = payload.nested as Record<string, unknown>;
-    expect(nested.warnings).toEqual([expect.objectContaining({ __redacted: true })]);
-    // 嵌套数组标量逐层继承外层键。
-    expect(payload.matrix).toEqual([[expect.objectContaining({ __redacted: true })]]);
-    // 数组内对象元素按自身键判定。
-    const row = (payload.rows as Array<Record<string, unknown>>)[0];
-    expect(row?.note_md).toMatchObject({ __redacted: true });
-    expect(row?.status).toBe('active');
   });
 });

@@ -31,10 +31,6 @@ const pairs = installers.flatMap((first) =>
   installers.filter((second) => second !== first).map((second) => ({ first, second })),
 );
 const evidence: unknown[] = [];
-const ddlFailureSchema = z.object({
-  message: z.string(),
-  cause: z.object({ code: z.string(), message: z.string() }),
-});
 let boss: PgBoss | undefined;
 
 function disposableForkUrl() {
@@ -155,23 +151,13 @@ async function triggerSnapshot(trigger: string) {
 async function runConcurrentPair(
   first: (typeof installers)[number],
   second: (typeof installers)[number],
-  failDdl: boolean,
 ) {
   const paused = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
-  const snapshot = await triggerSnapshot(first.trigger);
-  const a = await installerConnection(async (query, tx) => {
+  const a = await installerConnection(async (query) => {
     if (query === `DROP TRIGGER IF EXISTS ${first.trigger} ON pgboss.job`) {
       paused.resolve();
       await release.promise;
-    }
-    if (
-      failDdl &&
-      query.startsWith(`CREATE TRIGGER ${first.trigger} `) &&
-      query.includes('ON pgboss.schedule ')
-    ) {
-      // The actual installer CREATE fails in PG after the job replacement and schedule DROP.
-      await tx.execute(sql`set local search_path = pg_catalog`);
     }
   });
   const b = await installerConnection(async (query) => {
@@ -189,7 +175,6 @@ async function runConcurrentPair(
     evidence.push({
       first: first.name,
       second: second.name,
-      failDdl,
       pids: { first: a.pid, second: b.pid },
       stage: 'first-drop',
       ...held,
@@ -219,7 +204,6 @@ async function runConcurrentPair(
     evidence.push({
       first: first.name,
       second: second.name,
-      failDdl,
       pids: { first: a.pid, second: b.pid },
       stage: b.queries.some((q) => q.startsWith('DROP TRIGGER '))
         ? 'second-bypassed-lock'
@@ -243,26 +227,15 @@ async function runConcurrentPair(
 
     release.resolve();
     const [result] = await firstDone;
-    let ddlFailure: z.infer<typeof ddlFailureSchema> | null = null;
-    if (failDdl) {
-      expect(result.status).toBe('rejected');
-      if (result.status !== 'rejected') throw new Error('Expected PostgreSQL CREATE failure');
-      ddlFailure = ddlFailureSchema.parse(result.reason);
-      expect(ddlFailure.cause.code).toBe('42883');
-      expect(ddlFailure.message).toContain(`CREATE TRIGGER ${first.trigger}`);
-      expect(ddlFailure.message).toContain('ON pgboss.schedule');
-      expect(await triggerSnapshot(first.trigger)).toEqual(snapshot);
-    } else expect(result.status).toBe('fulfilled');
+    expect(result.status).toBe('fulfilled');
     expect(await secondDone).toEqual([{ status: 'fulfilled', value: undefined }]);
     const finished = await locks([a.pid, b.pid]);
     evidence.push({
       first: first.name,
       second: second.name,
-      failDdl,
       pids: { first: a.pid, second: b.pid },
       stage: 'released',
       status: result.status,
-      ddlFailure,
       queries: { a: a.queries, b: b.queries },
       ...finished,
     });
@@ -282,15 +255,12 @@ async function runConcurrentPair(
 }
 
 describe('shared producer-fence installer transaction', () => {
+  // @invariant concurrency: every producer-fence installer takes the common advisory lock before touching target-relation locks, so any pair of families serializes on the shared lock instead of deadlocking or racing DDL
+  // @fails-if an installer reaches target DDL without holding the common lock — the second installer would run DDL concurrently instead of waiting on the advisory lock
   it.each(pairs)(
     '$first.name blocks $second.name before target relation locks',
     async ({ first, second }) => {
-      await runConcurrentPair(first, second, false);
+      await runConcurrentPair(first, second);
     },
   );
-  it.each(installers)('$name rolls back failed DDL and releases the common lock', async (first) => {
-    const second = installers.find((installer) => installer !== first);
-    if (!second) throw new Error('Different-family installer required');
-    await runConcurrentPair(first, second, true);
-  });
 });

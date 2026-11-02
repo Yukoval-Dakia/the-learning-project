@@ -38,14 +38,11 @@ export function KpiRow({
   const cards: Kpi[] = [
     {
       key: 'due',
-      label:
-        'due_count_scope' in kpi && kpi.due_count_scope === 'actionable_queue_sample'
-          ? '本批可复习'
-          : '今日到期',
+      label: kpi.due_count_scope === 'actionable_queue_sample' ? '本批可复习' : '今日到期',
       icon: 'review',
       value: kpi.due_count,
       sub:
-        'due_count_scope' in kpi && kpi.due_count_scope === 'actionable_queue_sample'
+        kpi.due_count_scope === 'actionable_queue_sample'
           ? '当前这批可以开始复习'
           : '按复习间隔排入的项目',
       onGo: () => navigate('/practice'),

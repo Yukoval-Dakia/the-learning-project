@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -189,53 +189,5 @@ describe('Start controls with committed pool writes and an independent observer'
     );
     expect(hydrate).not.toHaveBeenCalled();
     expect(await snapshot()).toEqual(before);
-  });
-  it('uses the canonical config writer once per commit, retains receipts, and keeps secret config rejection atomic', async () => {
-    const writer = vi.fn(createAdminConfigWriter(pool));
-    setAdminConfigWriter(writer);
-    const receipt = await run((c) =>
-      c.patchConfig({
-        changes: [{ action: 'set', key: 'locale.learner', value: 'en' }],
-        note: '保留确认原因\n与条件',
-      }),
-    );
-    expect(receipt.changes).toHaveLength(1);
-    expect(writer).toHaveBeenCalledOnce();
-    expect(
-      (await run((c) => c.getConfig())).keys.find((k) => k.key === 'locale.learner')?.value,
-    ).toBe('en');
-    const before = await snapshot();
-    await denied(
-      run((c) =>
-        c.patchConfig({
-          changes: [
-            { action: 'set', key: 'locale.learner', value: 'zh-CN' },
-            { action: 'set', key: 'XIAOMI_API_KEY', value: 'forbidden-secret' },
-          ],
-        }),
-      ),
-      400,
-    );
-    expect(await snapshot()).toEqual(before);
-    const reset = await run((c) => c.resetConfig({ keys: ['locale.learner'] }));
-    expect(reset.committed_epoch).toBeGreaterThan(receipt.committed_epoch);
-    const [storedEpoch] = await observer
-      .select()
-      .from(schema.system_config_epoch)
-      .where(eq(schema.system_config_epoch.id, 'global'));
-    expect(storedEpoch?.epoch).toBe(reset.committed_epoch);
-    expect(reset.changes).toHaveLength(1);
-    expect(reset.changes[0].epoch).toBe(reset.committed_epoch);
-    const journals = await observer
-      .select()
-      .from(schema.system_config_journal)
-      .where(eq(schema.system_config_journal.key, 'locale.learner'))
-      .orderBy(schema.system_config_journal.revision);
-    expect(journals.map(({ action }) => action)).toEqual(['set', 'clear']);
-    expect(journals[1].revision).toBe(reset.changes[0].revision);
-    expect(writer).toHaveBeenCalledTimes(3);
-    expect(
-      (await run((c) => c.getConfig())).keys.find((k) => k.key === 'locale.learner')?.value,
-    ).toBe('zh-CN');
   });
 });

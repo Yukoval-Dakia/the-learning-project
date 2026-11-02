@@ -1,5 +1,4 @@
 // Owns judge_retraction accept: evaluation appeal/rejudge/assert, and legacy judge-event retract.
-// The decision signal is reached through proposal-appliers so practice keeps one practice-runtime import.
 
 import { and, eq } from 'drizzle-orm';
 

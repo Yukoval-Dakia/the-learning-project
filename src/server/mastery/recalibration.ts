@@ -4,7 +4,7 @@
 // 难度读链 effectiveB 由 kernel/read-models/question-difficulty 持有（此处保留旧出口），
 // 优先读取联合标定后验 b_post；本模块的**写侧机器**（recalibrateQuestion 的 AIPW firm-up + 12 标签
 // 硬门控 + label hook）自 YUK-439 起转为离线审计/对照工具：生产夜跑（recalibration_
-// nightly）改喂 src/server/mastery/joint-calibration.ts 的连续后验批（RECALIBRATION_
+// nightly）改喂 src/kernel/records/joint-calibration.ts 的连续后验批（RECALIBRATION_
 // MIN_LABELS 硬门控与 b_calib 首写语义随之退出生产路径，A3）；label hook 仍被 settle
 // 调用（既有契约 pin 的审计面），但 label 账本不再喂标定。AIPW 估计器（aipwMean /
 // ppiPlusMean / estimateLambdaStar）保留：重放对照脚本（scripts/replay-joint-calibration）

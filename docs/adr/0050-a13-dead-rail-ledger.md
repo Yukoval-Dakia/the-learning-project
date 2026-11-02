@@ -117,8 +117,7 @@ score 时间排序，两条时间轴不得互相覆盖。
 `MISCONCEPTION_HARD_CONFIRM_ENABLED` 继续默认 OFF，理由不是 defer 问责，而是两条
 仍未满足的诚实门：当前 Judge 没有明确 `target_error_match`，且 soft→hard 必须
 owner 当刻新确认。nightly caller 强制 `ownerFreshlyConfirmed=false`，所以即使 flag
-误开也不能执行 hard mutation；它只能看到 `EMERGING`。不得把普通答错冒充
-M-diagnostic，也不得把后台 job 冒充 owner 确认。flag ledger 已同步为 live caller。
+误开也不能执行 hard mutation；它只能看到 `EMERGING`。普通答错计为普通作答证据，后台 job 计为后台来源证据。flag ledger 已同步为 live caller。
 
 ---
 
