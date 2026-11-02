@@ -41,7 +41,7 @@
 - 使用 pnpm，不引入 npm/yarn lockfile。常用：`pnpm dev:local`、`pnpm vitest run --config vitest.unit.config.ts <file>`、`pnpm vitest run --config vitest.db.config.ts <file>`、`pnpm test:migration`、`pnpm typecheck`、`pnpm lint`、`pnpm build`。
 - 本机只跑改动触及的不变量测试（若有）+ typecheck/lint/build；`pnpm build` 是 pre-PR gate。watch loop 只用于 scoped file（`pnpm test:unit:watch` / `pnpm test:db:watch`）。
 - 涉及 agent/model 实际输出或学习效果的验收，用真实 provider actual-output 或学习者结果对账，封存 exact revision、输入/输出 digest、task-run ID、provider/model/cost；不用 mock 单测冒充。
-- 修改 API route 时同步 `postman/api-endpoints.json` 并运行 `pnpm gen:postman`；文件权限尊重 umask，不硬编码 mode bits。
+- 文件权限尊重 umask，不硬编码 mode bits。
 
 ## Comments（注释）
 
@@ -63,7 +63,7 @@
 
 ## Planning, docs, and tracking
 
-- 架构/设计决策写版本化 planning docs 与 ADR；README 随 runtime 形态同步；domain layout 用根 `CONTEXT.md` 与 `docs/adr/`。
+- 架构/设计决策写 ADR 或 `docs/design/`；过程性的规划、清单、审计和回执写到仓库外的 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/`（planning/、audit/），不进 git；README 随 runtime 形态同步；domain layout 用根 `CONTEXT.md` 与 `docs/adr/`。
 - 批量证据外置 `tlp-audit-artifacts/<line-or-issue>/<head>/`（架构线必须落在 `architecture-deepening/` 子路径）；git 只留结论、命令、revision、外部路径与 SHA256 摘要；git 历史不重写；把既有批量证据从 HEAD 删除前必须先外置复制、hash 核验、建 git 指针并经协调线逐批确认。
 - Linear（Yukoval Studios / YUK）是权威 tracker，GitHub Issues 仅历史。branch/commit/PR 用 `YUK-NN`；多票逐个 `Closes YUK-NN`；任务收尾执行 capture gate（先查重再建/更新 actionable follow-up，没有则说明原因）；触及的 issue 状态当场与代码现实对齐。流程见 `docs/agents/issue-tracker.md`，标签见 `docs/agents/triage-labels.md`。
 - 代码检索：概念/未知位置先 `ykv-code-index.search_code`；已知符号/引用用 Serena（每 session 首次先 `serena.initial_instructions`，行号 0-based）；已知字面量/regex/文件名用 grep，无结果不断言不存在；索引偏靶时查 index health 再交叉验证。
