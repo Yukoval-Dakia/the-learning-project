@@ -3,7 +3,7 @@
 // author_question (ADR-0032 D8 unified question-authoring front door) and
 // propose_question_edit (ADR-0032 D6-B / YUK-203 lane L6) are practice product
 // operations: they propose only — the user accepts in the inbox; accept
-// appliers live in practice/server/proposal-appliers.ts. Shared proposal
+// appliers live in practice/question-bank/server/proposal-appliers.ts. Shared proposal
 // inbox/writer machinery lives in @/kernel/proposals.
 
 import { eq } from 'drizzle-orm';
