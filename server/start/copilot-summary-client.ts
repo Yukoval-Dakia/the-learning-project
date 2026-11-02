@@ -1,6 +1,7 @@
 import { type CopilotClient, httpCopilotClient } from '@/capabilities/copilot/ui-public';
 import { authenticatedStartFetch } from './authenticated-fetch';
 import { startCopilotCancelRunClient } from './copilot-cancel-run-client';
+import { startCopilotChatClient } from './copilot-chat-client';
 import { startCopilotCheckpointRevertClient } from './copilot-checkpoint-revert-client';
 import {
   dismissStartCopilotNudgeFunction,
@@ -16,6 +17,7 @@ import { startCopilotTurnsClient } from './copilot-turns-client';
 export const startCopilotClient: CopilotClient = {
   ...httpCopilotClient,
   acceptTeachingChip: startCopilotTeachingChipClient,
+  sendChat: startCopilotChatClient,
   revertCheckpoint: startCopilotCheckpointRevertClient,
   cancelRun: startCopilotCancelRunClient,
   listTurns: startCopilotTurnsClient,

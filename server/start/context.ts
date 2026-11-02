@@ -13,6 +13,7 @@ import type {
   markCopilotNudgeOpened,
   readCopilotSessions,
   readCopilotTurns,
+  requestCopilotChat,
   requestCopilotCheckpointRevert,
   requestTeachingChipAcceptance,
 } from '@/capabilities/copilot/public';
@@ -87,6 +88,10 @@ export type FrontdoorContext = {
     sessionId: string;
     body: string;
   }) => Promise<Awaited<ReturnType<typeof requestTeachingChipAcceptance>>>;
+  sendCopilotChat: (
+    input: { body: string; key: string | null },
+    signal: AbortSignal,
+  ) => Promise<Awaited<ReturnType<typeof requestCopilotChat>>>;
   revertCopilotCheckpoint: (
     checkpointEventId: string,
   ) => Promise<Awaited<ReturnType<typeof requestCopilotCheckpointRevert>>>;
