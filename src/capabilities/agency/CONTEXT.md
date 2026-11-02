@@ -13,7 +13,7 @@ AF §4）。用户面只有只读观察窗（/agent-notes 页 + today 块）。
 - server/notes.ts — writeAgentNote / readAgentNotes / readAllAgentNotes
 - api/notes.ts — GET /api/agents/notes（外壳 app/api/agents/notes/route.ts 挂载）
 - ui/ — 看板/卡片/derive/meta/已读态/页面（外壳 app/(app)/agent-notes/page.tsx 挂载；
-  today 页直接 import AgentNotesBoard）
+  today 页的 AgentNotesBoard 由路由壳注入 shell TodayPage）
 - 包外读写方：notes 写 = src/server/boss/handlers/quiz_verify.ts；
   notes 读 = src/capabilities/knowledge/server/review.ts；
   goals 读 = practice due-list / learning-items queries（注意力先验）；
