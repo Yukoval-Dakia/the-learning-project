@@ -107,69 +107,20 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   }
 }
 
-const COACH_JOBS = new Set(['coach_daily']);
-
-// Coach reads the kernel plan projection. Practice owns the due/budget/pace
-// facts and binds them here, before any coach handler is mounted. Kernel
-// read-models cannot import that capability.
-async function installCoachDailyReviewPlan(capabilities: CapabilityManifest[]): Promise<void> {
-  const coaches = capabilities.some((capability) =>
-    (capability.jobs?.handlers ?? []).some((handler) => COACH_JOBS.has(handler.name)),
-  );
-  if (!coaches) return;
-  const { installDailyReviewPlanFacts } = await import('@/capabilities/practice/public');
-  await installDailyReviewPlanFacts();
-}
-
-// prepare_intervention runs the kernel author sequence. Practice owns the paid
-// author and review stages and binds them here, before that handler can run.
-async function installPrepareInterventionAuthor(capabilities: CapabilityManifest[]): Promise<void> {
-  const prepares = capabilities.some((capability) =>
-    (capability.jobs?.handlers ?? []).some((handler) => handler.name === 'prepare_intervention'),
-  );
-  if (!prepares) return;
-  const { installInterventionAuthorStages } = await import('@/capabilities/practice/public');
-  await installInterventionAuthorStages();
-}
-
-const INTERVENTION_DIAGNOSTIC_JOBS = new Set([
-  'prepare_intervention',
-  'intervention_prepare_recovery',
-]);
-const INTERVENTION_SETTLEMENT_SUBSCRIPTION = 'agency.intervention-diagnostic-review-settlement';
-
-// Activation, recovery and settlement call the kernel diagnostic materializer.
-// Practice owns its stream day, judge-run activity and schedule enrollment and binds
-// them here, before those handlers mount and before subscription dispatch starts.
-async function installInterventionDiagnosticMaterializer(
-  capabilities: CapabilityManifest[],
-): Promise<void> {
-  const materializes = capabilities.some(
-    (capability) =>
-      (capability.jobs?.handlers ?? []).some((handler) =>
-        INTERVENTION_DIAGNOSTIC_JOBS.has(handler.name),
-      ) ||
-      (capability.subscriptions?.handlers ?? []).some(
-        (subscription) => subscription.id === INTERVENTION_SETTLEMENT_SUBSCRIPTION,
-      ),
-  );
-  if (!materializes) return;
-  const { installInterventionDiagnosticLeaves } = await import('@/capabilities/practice/public');
-  await installInterventionDiagnosticLeaves();
-}
-
 /** Called after registerHandlers. Chain targets in that book must already exist. */
 export async function registerCapabilityJobs(
   boss: PgBoss,
   db: Db,
   capabilities: CapabilityManifest[],
 ): Promise<void> {
-  // Copilot jobs call Practice-owned operations through kernel ports.
-  const { installPracticeHostOperations } = await import('@/capabilities/practice/public');
-  await installPracticeHostOperations();
-  await installCoachDailyReviewPlan(capabilities);
-  await installPrepareInterventionAuthor(capabilities);
-  await installInterventionDiagnosticMaterializer(capabilities);
+  // Practice binds the facts and paid author stages that worker jobs and subscriptions read
+  // through kernel ports. Kernel cannot import a capability. This runs before any capability
+  // job mounts and before subscription dispatch starts. The API host installs only the host operations.
+  const practice = await import('@/capabilities/practice/public');
+  await practice.installPracticeHostOperations();
+  await practice.installDailyReviewPlanFacts();
+  await practice.installInterventionAuthorStages();
+  await practice.installInterventionDiagnosticLeaves();
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
     .filter((d) => d.load || d.backend === 'dbos');

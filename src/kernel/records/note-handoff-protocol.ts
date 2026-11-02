@@ -58,23 +58,6 @@ export type BossDispatch = {
   getJobById(queue: string, id: string): Promise<{ readonly state: string } | null>;
 };
 
-type NoteHandoffBossResolver = () => Promise<BossDispatch>;
-
-let noteHandoffBossResolver: NoteHandoffBossResolver | undefined;
-
-/** Composition root wires pg-boss dispatch so non-notes capabilities can enqueue note jobs. */
-export function registerNoteHandoffBossResolver(resolver: NoteHandoffBossResolver): void {
-  noteHandoffBossResolver = resolver;
-}
-
-async function resolveNoteHandoffBoss(explicit?: BossDispatch): Promise<BossDispatch> {
-  if (explicit) return explicit;
-  if (!noteHandoffBossResolver) {
-    throw new Error('note handoff boss resolver is not registered');
-  }
-  return noteHandoffBossResolver();
-}
-
 function deterministicHex(namespace: string, artifactId: string): string {
   return createHash('sha256').update(`${namespace}\0${artifactId}`).digest('hex');
 }
@@ -196,7 +179,7 @@ export async function dispatchNoteHandoff(
   db: Db,
   artifactId: string,
   intentKind: IntentKind,
-  deps: { readonly boss?: BossDispatch } = {},
+  deps: { readonly boss: BossDispatch },
 ): Promise<boolean> {
   const intentId = noteHandoffEventId(intentKind, artifactId);
   const completionKind = completionFor(intentKind);
@@ -204,7 +187,7 @@ export async function dispatchNoteHandoff(
   if (!(await recordExists(db, intentId)) || (await recordExists(db, completionId))) return false;
   if (!(await artifactCanReceiveNoteHandoff(db, artifactId, intentKind))) return false;
 
-  const boss = await resolveNoteHandoffBoss(deps.boss);
+  const { boss } = deps;
   const queue = queueFor(intentKind);
   const jobId = noteHandoffJobId(intentKind, artifactId);
   const jobOptions = jobOptionsFor(intentKind, artifactId, jobId);
@@ -238,7 +221,7 @@ export async function dispatchNoteHandoff(
 export async function dispatchNoteGeneration(
   db: Db,
   artifactId: string,
-  deps: { readonly boss?: BossDispatch } = {},
+  deps: { readonly boss: BossDispatch },
 ): Promise<boolean> {
   return dispatchNoteHandoff(db, artifactId, NOTE_HANDOFF_KINDS.generationIntent, deps);
 }
@@ -246,7 +229,7 @@ export async function dispatchNoteGeneration(
 export async function dispatchNoteVerification(
   db: Db,
   artifactId: string,
-  deps: { readonly boss?: BossDispatch } = {},
+  deps: { readonly boss: BossDispatch },
 ): Promise<boolean> {
   return dispatchNoteHandoff(db, artifactId, NOTE_HANDOFF_KINDS.verificationIntent, deps);
 }
