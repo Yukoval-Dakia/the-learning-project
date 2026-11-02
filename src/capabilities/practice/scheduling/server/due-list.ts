@@ -49,7 +49,7 @@ import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 // so the brief-refresh layer shares the SAME canonical bridge.
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from './placement-scope';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '../../server/placement-scope';
 
 // swappable active-goals reader so DB tests inject goal
 // fixtures (mirrors coach_daily.ts / dreaming_nightly.ts CoachRunDeps pattern).

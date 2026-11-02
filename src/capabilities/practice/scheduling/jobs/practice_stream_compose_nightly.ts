@@ -26,8 +26,9 @@ import { randomUUID } from 'node:crypto';
 import type { Job } from 'pg-boss';
 
 import type { Db } from '@/db/client';
+import { streamLocalDate } from '@/kernel/stream-date';
 import { buildSeededSelectionRng } from '../server/selection-seed';
-import { composeNightly, streamLocalDate } from '../server/stream-store';
+import { composeNightly } from '../server/stream-store';
 
 export interface StreamComposeNightlyResult {
   /** 预产的本地日（YYYY-MM-DD）。 */

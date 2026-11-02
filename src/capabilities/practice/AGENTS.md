@@ -7,18 +7,18 @@
 |------|------|
 | `manifest.ts` | 组合根：根目录条目加各子 owner 的 `manifest-part.ts`，按固定顺序拼接（路由注册顺序即匹配顺序） |
 | `<owner>/` | 子 owner 目录（grading、settlement、question-bank、failure-learning、session、scheduling、supply、placement），各有 `public.ts` 与 `manifest-part.ts`；根目录其余文件归练习面，尚未迁出的按 `scripts/audit-practice-subowners.ts` 的映射计归属 |
-| `api/*.ts` | review/submit/due/advice/weekly/appeal/sessions、placement、drafts、practice/paper、questions/solve、calibration anchors |
+| `api/*.ts` | review/submit/appeal、placement、drafts、practice/paper、questions/solve、calibration anchors |
 | `server/placement-session-lifecycle.ts` | Placement 完整状态操作与运行时 flag；跨域 orphan 操作经 `public.ts` |
 | `server/verify-dispatch-outbox.ts` | 验证 intent、同事务派发与 orphan 恢复；基础设施 adapter 在 `src/server/boss/verify-dispatch-recovery.ts` |
 | `server/question-supply/coverage-lattice.ts` / `api/coverage-lattice.ts` | 供题覆盖细目只读读模型与 `/api/admin/coverage-lattice`：供题扫描器四规则的 KC 池级覆盖 + 缺口 targets + 供给活动聚合；Observability admin 页只展示 |
 | `failure-learning/server/failure-learning.ts` | 失败尝试 eligibility、归因、变式提议的 owner operation；durable subscriber 只调用该入口 |
-| `server/` | 判分路由、FSRS 投影、paper/流编排、stream-store、placement、mastery 交互 |
+| `server/` | 判分路由、paper 编排、placement、mastery 交互 |
 | `jobs/` | Practice 后台任务；错因学习的 `attribution_followup` → `variant_gen` durable 链在 `failure-learning/jobs/` |
 | `tasks/` / `tools/` | Practice-owned AI TaskSpecs 与 DomainTool 适配层；错因学习的在 `failure-learning/{tasks,tools}/` |
 | `ui/` | PracticeFacePage；`ui/library/` 题目库（全部 / 做错过 / 待审核 / 暂不出题）与单题页 |
 
 ## CONVENTIONS
-- 子 owner 依赖自下而上：grading → settlement / question-bank → failure-learning → session → scheduling → supply → placement → 练习面（`docs/design/2026-11-03-practice-split.md` §0）。目录外只经 `<owner>/public.ts` 引用子 owner，根 `manifest.ts` 另可引用 `manifest-part.ts`；owner 之间的 import 边只减不增，由 `pnpm audit:practice-subowners` 强制。
+- 子 owner 依赖自下而上：grading → settlement / question-bank → failure-learning → session → scheduling → supply → placement → 练习面（`docs/design/2026-11-03-practice-split.md` §0）。目录外只经 `<owner>/public.ts` 引用子 owner，根 `manifest.ts` 另可引用 `manifest-part.ts`，根 `tasks/index.ts` 另可引用 `<owner>/tasks/*`；owner 之间的 import 边只减不增，由 `pnpm audit:practice-subowners` 强制。
 - 外部消费方只 import 根 `public.ts` / `ui-public.ts`，不直接引用子 owner 目录。
 - 判分走 `JudgeResultV2`：coarse_outcome × score_meaning，历史判分不可变（rejudge = 新 event）。
 - paper/组卷容器是 `tool_quiz` artifact；session 内 attempt 走 `learning_session(type='review')`。

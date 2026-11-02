@@ -9,13 +9,13 @@ import {
   type SelectionOrchestratorCandidateT,
   SelectionOrchestratorDraft,
 } from '@/core/schema/selection-orchestrator';
-import type { CollectedSignal } from './candidate-signals';
+import type { CollectedSignal } from '../../server/candidate-signals';
 import {
   MEM0_PRIOR_BLOCK_CHAR_CAP,
   MEM0_PRIOR_CAP,
   MEM0_PRIOR_ITEM_CHAR_CAP,
   SELECTION_ORCHESTRATOR_CANDIDATE_CAP,
-} from './selection-constants';
+} from '../../server/selection-constants';
 
 // ───────────────────────────────────────────────────────────────────────────
 // 分桶（bucketing）——signal-fidelity mitigation（:68）。

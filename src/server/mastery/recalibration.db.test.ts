@@ -5,7 +5,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { recordSelectionObservation } from '@/capabilities/practice/server/selection-observations';
+import { recordSelectionObservation } from '@/capabilities/practice/scheduling/server/selection-observations';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import {

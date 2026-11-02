@@ -312,7 +312,7 @@ DDL 唯一真相源是 `src/db/schema.ts`（单文件、按段注释）；本节
 - `answer` / `learning_session` / `event`。
 - 观测与费用：`ai_task_runs` / `tool_call_log` / `tool_operation` / `cost_ledger` / `provider_attempt` / `job_events`。
 
-**读模型 vs 投影表**：`QuestionActivitySummary` 与周报（`loadWeeklyReview` 按窗口聚合 event，`src/capabilities/practice/server/review-weekly.ts`）是即时读模型、不落表；p(L) 诊断在 `mastery_state`、FSRS 调度在 `material_fsrs_state`（随 `action='review'` 同事务写），都是物理投影表。
+**读模型 vs 投影表**：`QuestionActivitySummary` 与周报（`loadWeeklyReview` 按窗口聚合 event，`src/capabilities/practice/scheduling/server/review-weekly.ts`）是即时读模型、不落表；p(L) 诊断在 `mastery_state`、FSRS 调度在 `material_fsrs_state`（随 `action='review'` 同事务写），都是物理投影表。
 
 **已 DROP，只作迁移背景**：`mistake`（改由 attempt event 表达，`outcome='failure'` 即错题视图）、`judgment` + `user_appeal`（改由 judge event）、`dreaming_proposal`（改由 propose event）、`review_event`、`ingestion_session`。`MemoryItem` / `MaintenanceSuggestion` 从未建表；记忆 brief 落 `memory_brief_note`。
 

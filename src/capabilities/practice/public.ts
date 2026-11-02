@@ -1,5 +1,7 @@
 // Stable server contract for consumers outside the practice capability.
 
+import { loadReviewDueReader } from './scheduling/public';
+
 // Compatibility export; shared read models consume their owner, kernel/events,
 // directly so initialization does not re-enter the practice runtime barrel.
 export type { EffectiveTruth } from '@/kernel/events';
@@ -12,6 +14,18 @@ export {
 } from './failure-learning/public';
 export { embedQuestionTextForIngest } from './jobs/embed_backfill';
 export type { QuizGenJobData } from './jobs/quiz_gen';
+export {
+  type WeeklyReportQuery,
+  getPracticeStream,
+  handleReviewDue,
+  installDailyReviewPlanFacts,
+  loadWeeklyReview,
+  previewReviewAdvice,
+  queryReviewDue,
+  recomposePracticeStream,
+  scheduleReview,
+  updatePracticeStreamItem,
+} from './scheduling/public';
 export { runQuestionAdmissionChecks } from './server/admission/checks';
 // Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
 // bundle on the @kernel + @db chain with no SDK import.
@@ -26,7 +40,6 @@ export {
 // practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
-export { scheduleReview } from './server/fsrs';
 export {
   DEFAULT_MAX_PER_RUN,
   type ItemPriorCandidateFrozen,
@@ -79,18 +92,6 @@ export {
   recoverOrphanVerifyDispatches,
   writeVerifyDispatchIntent,
 } from './server/verify-dispatch-outbox';
-export const queryReviewDue: typeof import('./server/due-list').queryReviewDue = async (...args) =>
-  (await import('./server/due-list')).queryReviewDue(...args);
-// Binds practice's due queue, minute budget and measured pace into the kernel
-// plan projection. Coach calls the kernel reader; it does not import this module.
-export async function installDailyReviewPlanFacts(): Promise<void> {
-  const [{ installDailyReviewPlanFactReader }, { readDailyReviewPlanFacts }] = await Promise.all([
-    import('@/kernel/read-models/daily-review-plan'),
-    import('./server/daily-review-plan'),
-  ]);
-  installDailyReviewPlanFactReader(readDailyReviewPlanFacts);
-}
-
 // Binds the operations Practice owns behind kernel ports that API routes and worker
 // jobs both call. Hosts call this before serving or mounting handlers.
 export async function installPracticeHostOperations(): Promise<void> {
@@ -100,7 +101,7 @@ export async function installPracticeHostOperations(): Promise<void> {
     { installLearningContentValidator },
     { installConversationConfirmationAssessment },
     { captureReviewAnswerBinding, consumeReviewAnswerBinding },
-    { executeGetReviewDue },
+    executeGetReviewDue,
     { validateLearningContent },
     { issueConversationConfirmation, readConversationConfirmation, submitConversationConfirmation },
   ] = await Promise.all([
@@ -109,7 +110,7 @@ export async function installPracticeHostOperations(): Promise<void> {
     import('@/kernel/tools/learning-content-validation'),
     import('@/kernel/records/conversation-confirmation-assessment'),
     import('./server/review-operation'),
-    import('./server/tools/question-context'),
+    loadReviewDueReader(),
     import('./server/learning-content-validation'),
     import('./server/conversation-confirmation'),
   ]);
@@ -143,12 +144,6 @@ export async function installInterventionDiagnosticLeaves(): Promise<void> {
     ]);
   install(interventionDiagnosticLeaves);
 }
-
-type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;
-export const handleReviewDue: HandleReviewDue = async (...args) => {
-  const dueList = await import('./server/due-list');
-  return dueList.handleReviewDue(...args);
-};
 
 export { type CreateAttemptBody, CreateAttemptBodySchema } from './api/contracts';
 // explicit operations used by scripts and integration consumers.
@@ -339,7 +334,6 @@ export {
   validateJudgeEngineInventory,
 } from './server/judge-engine-client';
 export { readPlacementProfile } from './server/placement-profile';
-export { type WeeklyReportQuery, loadWeeklyReview } from './server/review-weekly';
 
 // Resolve the existing session operation in the initialized host graph after auth.
 export const readPlacementSession: typeof import('./server/session-operations/placement-session').readPlacementSession =
@@ -366,17 +360,11 @@ export {
 export { runPracticeServingAction } from './server/serving-action-operation';
 export { releaseHeldPlacement } from './server/session-operations/placement-held-release';
 export { selectNextPlacementQuestion } from './server/session-operations/placement-next';
-export {
-  getPracticeStream,
-  recomposePracticeStream,
-  updatePracticeStreamItem,
-} from './server/stream-operations';
 export const startPlacementProbe: typeof import('./server/session-operations/placement-session').startPlacementProbe =
   async (...args) =>
     (await import('./server/session-operations/placement-session')).startPlacementProbe(...args);
 
 export { CreateReviewSessionBody } from './api/contracts';
-export { previewReviewAdvice } from './server/advice-operation';
 export { createPracticeAppeal } from './server/appeal-operation';
 export { revealFrozenStudyReference } from './server/assessment/study-context';
 export { readPracticeDraftList } from './server/draft-list-read';
@@ -388,6 +376,15 @@ export {
 export const recoverWebSupplies: typeof import('./server/question-supply/web-supply').recoverWebSupplies =
   async (...args) =>
     (await import('./server/question-supply/web-supply')).recoverWebSupplies(...args);
+// Scheduling triggers supply (post-compose refill, return-wake nightly supply) only through
+// these lazy entries until the supply owner lands a kernel port.
+export type { RefillDeps } from './server/question-supply/refill';
+export const refillActiveLearningPools: typeof import('./server/question-supply/refill').refillActiveLearningPools =
+  async (...args) =>
+    (await import('./server/question-supply/refill')).refillActiveLearningPools(...args);
+export const runQuestionSupplyNightly: typeof import('./jobs/question_supply_nightly').runQuestionSupplyNightly =
+  async (...args) =>
+    (await import('./jobs/question_supply_nightly')).runQuestionSupplyNightly(...args);
 export const recoverHeldServingRechecks: typeof import('./server/serving-actions').recoverHeldServingRechecks =
   async (...args) => (await import('./server/serving-actions')).recoverHeldServingRechecks(...args);
 export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';
