@@ -4,7 +4,7 @@
 exact `6015f2a0fe1163eefc168ec782a5fb657099c0d7` 的
 [CI34053995106](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/34053995106)
 全绿，独立初审P1已修且唯一验证审PASS。2026-09-06T19:20:27Z合并main
-`fbc87f3b1ade3bc726d9371033a4c073d6c6f1a3`，Linear Done；未部署。
+`fbc87f3b1ade3bc726d9371033a4c073d6c6f1a3`，Linear Done。
 
 ## 范围与结果
 
@@ -23,7 +23,7 @@ exact `6015f2a0fe1163eefc168ec782a5fb657099c0d7` 的
 
 actual 脚本使用生产 HTTP adapter（非合成 reservation）、真实 v2 接纳事务、
 物理 pg-boss fetch 的持久 payload 与 `runCopilotRun`。测试手动驱动取件、
-终态后 wake 与 complete，以保留 SDK evidence capture；不冒充自动 poller。
+终态后 wake 与 complete，以保留 SDK evidence capture。
 原 unified 场景仍使用真实 Hono socket + manifest handler。
 
 超时调用生产 Stop 并等待实际任务结算，不用 Promise.race 丢弃付费工作。
@@ -61,7 +61,7 @@ actual 脚本使用生产 HTTP adapter（非合成 reservation）、真实 v2 �
   root将两处真实调用统一到测试内部的settleWithAcceptanceDeadline：超时无条件失败，
   Stop rejection即时捕获为cause，仍等待execution与Stop都结算；不新增产品接口。
   等价旧逻辑下2项RED（含未处理Stop rejection），修复后4项GREEN；随后真实cancel/pickup零付费再验通过。
-  exact-head CI、唯一验证审与merge均完成，额外4项deadline测试使本地unit合计126；未部署。
+  exact-head CI、唯一验证审与merge均完成，额外4项deadline测试使本地unit合计126。
 
 ## 实际输出与预算
 

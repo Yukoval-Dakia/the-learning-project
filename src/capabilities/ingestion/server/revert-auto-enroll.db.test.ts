@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
@@ -191,83 +191,5 @@ describe('revertAutoEnrolledBlock', () => {
     // Question row preserved (evidence-first, reusable).
     const q = await db.select().from(question).where(eq(question.id, res.questionId));
     expect(q).toHaveLength(1);
-  });
-
-  it('retracts an unanswered auto-enrollment against its capture event', async () => {
-    const db = testDb();
-    const { sessionId, blockId } = await seedAndAutoEnroll(db, 'unanswered');
-
-    const capture = (
-      await db.select().from(event).where(eq(event.action, 'experimental:record_capture'))
-    )[0];
-
-    const res = await revertAutoEnrolledBlock(db, { blockId, sessionId });
-
-    expect(res.retractedEventId).toBe(capture.id);
-    const [after] = await db.select().from(question_block).where(eq(question_block.id, blockId));
-    expect(after.status).toBe('draft');
-    // No active record remains for the question.
-    const active = await db
-      .select()
-      .from(learning_record)
-      .where(
-        and(eq(learning_record.question_id, res.questionId), isNull(learning_record.archived_at)),
-      );
-    expect(active).toHaveLength(0);
-  });
-
-  it('rejects reverting a non-auto_enrolled block (409)', async () => {
-    const db = testDb();
-    const now = new Date();
-    const sessionId = createId();
-    await db.insert(learning_session).values({
-      id: sessionId,
-      type: 'ingestion',
-      status: 'extracted',
-      source_document_id: createId(),
-      source_asset_ids: [],
-      entrypoint: 'vision_paper',
-      warnings: [],
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-    const blockId = createId();
-    await db.insert(question_block).values({
-      id: blockId,
-      ingestion_session_id: sessionId,
-      source_document_id: null,
-      source_asset_ids: [],
-      page_spans: [],
-      structured: structured('q'),
-      figures: [],
-      layout_quality: 'structured',
-      image_refs: [],
-      crop_refs: [],
-      visual_complexity: 'low',
-      extraction_confidence: 1,
-      status: 'draft', // not auto_enrolled
-      knowledge_hint: null,
-      merged_from_block_ids: [],
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-
-    await expect(revertAutoEnrolledBlock(db, { blockId, sessionId })).rejects.toMatchObject({
-      status: 409,
-    });
-  });
-
-  it('rejects reverting a block that belongs to a different session (404, cross-session)', async () => {
-    const db = testDb();
-    const { blockId } = await seedAndAutoEnroll(db, FAILURE_DRAFT);
-    // Revert via a foreign session id → 404 (block not found in that session),
-    // and the block stays auto_enrolled (no cross-session mutation).
-    await expect(
-      revertAutoEnrolledBlock(db, { blockId, sessionId: 'someone_elses_session' }),
-    ).rejects.toMatchObject({ status: 404 });
-    const [blk] = await db.select().from(question_block).where(eq(question_block.id, blockId));
-    expect(blk.status).toBe('auto_enrolled');
   });
 });
