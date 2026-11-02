@@ -101,7 +101,7 @@ export interface AdmissionVerificationWrite {
   evidence?: Record<string, unknown>;
 }
 
-/** 发布输入：契约四层由 contract-normalizer 产出（此处只收成品）。 */
+/** 发布输入：契约四层由 assessment-normalization 产出（此处只收成品）。 */
 export interface PublishQuestionGroupInput {
   group_id: string;
   contract: {

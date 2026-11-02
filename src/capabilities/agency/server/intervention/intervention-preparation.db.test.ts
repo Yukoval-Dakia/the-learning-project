@@ -58,13 +58,13 @@ import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
 import type { EventSubscriptionDelivery } from '@/kernel/manifest';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
-import { INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS } from '@/kernel/records/intervention-diagnostic-materialize';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
 import {
   contractIntegrityDigest,
   normalizeQuestionRowToContract,
-} from '@/server/questions/contract-normalizer';
+} from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import { INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS } from '@/kernel/records/intervention-diagnostic-materialize';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { publishPaperModelFixture } from '../../../../../tests/fixtures/assessment-paper';
 import { issueHistoricalSoloFixture } from '../../../../../tests/fixtures/assessment-solo';

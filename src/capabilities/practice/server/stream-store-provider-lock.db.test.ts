@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { knowledge, learning_item, question } from '@/db/schema';
+import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
-import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
 import { resetDb } from '../../../../tests/helpers/db';
 import { composeNightly } from './stream-store';
 

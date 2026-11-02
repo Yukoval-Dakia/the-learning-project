@@ -14,7 +14,7 @@ import { sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NotePatchT } from '@/core/schema/note-patch';
 
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../../tests/helpers/db';
 
 const persistNoteRefineApply = vi.fn(async (args: { artifactId: string }) => ({
   status: 'applied' as const,
