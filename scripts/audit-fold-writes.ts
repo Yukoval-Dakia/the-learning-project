@@ -226,10 +226,17 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/notes/server/sections.ts',
+    file: 'src/capabilities/notes/server/artifact-body-commit.ts',
     marker: '.update(artifact)',
     role: 'event-native-by-caller',
-    note: 'Section body/history CAS and full body_blocks_edit snapshot share the transaction, version and timestamp.',
+    note: 'Sole note body commit on the caller transaction: locked read, version CAS UPDATE, backlink sync, full body_blocks_edit snapshot and optional lifecycle event from one after-state and one watermarked timestamp.',
+  },
+  {
+    table: 'artifact',
+    file: 'src/capabilities/notes/server/note-long-check.ts',
+    marker: '.update(artifact)',
+    role: 'event-native-by-caller',
+    note: 'Long-check marker attrs updates are version-guarded and paired with set_attrs lifecycle events at the update timestamp; the revision body goes through artifact-body-commit.',
   },
   {
     table: 'artifact',
@@ -250,7 +257,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     file: 'src/capabilities/notes/jobs/note_generate.ts',
     marker: '.update(artifact)',
     role: 'event-native-by-caller',
-    note: 'Generation status/body updates emit same-tx lifecycle/full body snapshots with exact row timestamps.',
+    note: 'Generation status/attrs updates emit same-tx lifecycle events with exact row timestamps; body writes go through artifact-body-commit.',
   },
   {
     table: 'artifact',

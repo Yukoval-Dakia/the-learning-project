@@ -8,11 +8,8 @@ import { type SQL, and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { type NoteGeneratePhaseTimings, type TaskTextResult, aiAgentRef } from '@/ai/task-result';
-import {
-  emitArtifactBodyBlocksEditEvent,
-  emitArtifactLifecycleEvent,
-} from '@/capabilities/notes/server/artifacts/mutation-events';
-import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
+import { commitArtifactBody } from '@/capabilities/notes/server/artifact-body-commit';
+import { emitArtifactLifecycleEvent } from '@/capabilities/notes/server/artifacts/mutation-events';
 import {
   NOTE_ARTIFACT_TYPES,
   isNoteArtifactType,
@@ -42,7 +39,6 @@ import {
 import { dispatchNoteVerification } from '@/capabilities/notes/server/note-handoff';
 import { attrsClearingNoteLongCheck } from '@/capabilities/notes/server/note-long-check';
 import { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
-import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { writeNoteVerificationIntent } from '@/kernel/records/note-handoff-protocol';
@@ -285,17 +281,20 @@ export async function runNoteGenerate(
     assertNoteGenerationReferences(parsed.body_blocks, referenceArtifacts);
     validationMs = Date.now() - validationStarted;
 
-    // Compound mutation: body + statuses + provenance must fold as two same-tx
-    // events. body_blocks_edit requires a version advance, so this first content
-    // write bumps it. Both events opt out of memory ingestion (background work).
+    // Body + statuses + provenance commit as one compound write; both events opt
+    // out of memory ingestion (background work).
     const now = new Date();
     const generatedByRef = aiAgentRef('NoteGenerateTask', result);
     const dbStarted = Date.now();
-    // One tx keeps the backlink index in step with the body and rolls the UPDATE
-    // back if an event payload is malformed. The AI body may only take over an
-    // empty body or the untouched fallback; learner content flips back to failed.
+    const pendingNoteGuard = and(
+      inArray(artifact.type, NOTE_ARTIFACT_TYPES),
+      eq(artifact.generation_status, 'pending'),
+      isNull(artifact.archived_at),
+    );
+    // The AI body may only take over an empty body or the untouched fallback;
+    // learner content flips back to failed.
     type SuccessTxOutcome =
-      | { kind: 'ready'; rows: Array<{ id: string }> }
+      | { kind: 'ready' }
       | { kind: 'learner_edited' }
       | { kind: 'not_pending' };
     const updated = await db.transaction(async (tx): Promise<SuccessTxOutcome> => {
@@ -305,119 +304,64 @@ export async function runNoteGenerate(
         referenceArtifacts,
       );
       assertNoteGenerationReferences(parsed.body_blocks, currentReferences);
-      // Read inside the tx (FOR UPDATE) so events carry the values actually written.
-      const beforeRows = await tx
-        .select({
-          version: artifact.version,
-          body_blocks: artifact.body_blocks,
-          history: artifact.history,
-          attrs: artifact.attrs,
-        })
-        .from(artifact)
-        .where(
-          and(
-            eq(artifact.id, artifactId),
-            inArray(artifact.type, NOTE_ARTIFACT_TYPES),
-            eq(artifact.generation_status, 'pending'),
-            isNull(artifact.archived_at),
-          ),
-        )
-        .for('update')
-        .limit(1);
-      const before = beforeRows[0];
-      if (!before) return { kind: 'not_pending' }; // concurrently no longer pending
-      const clearedFailure = attrsClearingGenerationFailure(before.attrs);
-      // A fresh generation epoch restarts the long-note check cycle (YUK-1642).
-      const clearedLongCheck = attrsClearingNoteLongCheck(clearedFailure.attrs);
-      const clearedAttrs =
-        clearedFailure.cleared || clearedLongCheck.cleared ? { attrs: clearedLongCheck.attrs } : {};
-      if (!mayOverwriteNoteBodyForGeneration(before.body_blocks, before.history, before.version)) {
+      const commit = await commitArtifactBody(tx, {
+        artifactId,
+        where: pendingNoteGuard,
+        requestedAt: now,
+        plan: (before) => {
+          if (
+            !mayOverwriteNoteBodyForGeneration(before.body_blocks, before.history, before.version)
+          ) {
+            return { skip: 'learner_edited' as const };
+          }
+          const clearedFailure = attrsClearingGenerationFailure(before.attrs);
+          // A fresh generation epoch restarts the long-note check cycle (YUK-1642).
+          const clearedLongCheck = attrsClearingNoteLongCheck(clearedFailure.attrs);
+          return {
+            body: parsed.body_blocks,
+            lifecycle: {
+              op: 'set_generation_status',
+              generationStatus: 'ready',
+              verificationStatus: 'queued',
+              generatedBy: generatedByRef,
+              ...(clearedFailure.cleared || clearedLongCheck.cleared
+                ? { attrs: clearedLongCheck.attrs }
+                : {}),
+            },
+            actor: {
+              kind: 'agent',
+              ref: 'note_generate',
+              taskRunId: result.task_run_id ?? null,
+              costMicroUsd: costUsdToMicroUsd(result.cost_usd),
+            },
+            optOutMemoryIngestion: true,
+          };
+        },
+      });
+      if (commit.status === 'missing' || commit.status === 'conflict') {
+        return { kind: 'not_pending' };
+      }
+      if (commit.status === 'skipped') {
         // Authored over the fallback: keep it and honestly report failed.
         const kept = await tx
           .update(artifact)
           .set({ generation_status: 'failed', updated_at: now })
-          .where(
-            and(
-              eq(artifact.id, artifactId),
-              inArray(artifact.type, NOTE_ARTIFACT_TYPES),
-              eq(artifact.generation_status, 'pending'),
-              isNull(artifact.archived_at),
-            ),
-          )
+          .where(and(eq(artifact.id, artifactId), pendingNoteGuard))
           .returning({ id: artifact.id });
         if (kept.length === 0) return { kind: 'not_pending' };
         await emitArtifactLifecycleEvent(tx, {
           subjectId: artifactId,
           op: 'set_generation_status',
           generationStatus: 'failed',
-          nextVersion: before.version,
+          nextVersion: commit.base.version,
           actorKind: 'agent',
           actorRef: 'note_generate',
           createdAt: now,
         });
         return { kind: 'learner_edited' };
       }
-      const nextVersion = before.version + 1;
-      // No history entry here: carry the current one so the full-snapshot event
-      // does not blank the column.
-      const historyAfter = (
-        Array.isArray(before.history) ? before.history : []
-      ) as ArtifactHistoryEntryT[];
-
-      const rows = await tx
-        .update(artifact)
-        .set({
-          body_blocks: parsed.body_blocks as never,
-          generation_status: 'ready',
-          verification_status: 'queued',
-          generated_by: { ...generatedByRef } as never,
-          ...clearedAttrs,
-          version: nextVersion,
-          updated_at: now,
-        })
-        .where(
-          and(
-            eq(artifact.id, artifactId),
-            inArray(artifact.type, NOTE_ARTIFACT_TYPES),
-            eq(artifact.generation_status, 'pending'),
-            isNull(artifact.archived_at),
-          ),
-        )
-        .returning({ id: artifact.id });
-      if (rows.length === 0) return { kind: 'not_pending' };
-
-      await syncBlockRefsForArtifact(tx, artifactId, parsed.body_blocks);
-
-      await emitArtifactBodyBlocksEditEvent(tx, {
-        subjectId: artifactId,
-        previousArtifactVersion: before.version,
-        nextArtifactVersion: nextVersion,
-        bodyBlocks: parsed.body_blocks,
-        previousBodyBlocks: (before.body_blocks ?? null) as ArtifactBodyBlocksT | null,
-        historyAfter,
-        actorKind: 'agent',
-        actorRef: 'note_generate',
-        taskRunId: result.task_run_id ?? null,
-        costMicroUsd: costUsdToMicroUsd(result.cost_usd),
-        createdAt: now,
-        optOutMemoryIngestion: true,
-      });
-      await emitArtifactLifecycleEvent(tx, {
-        subjectId: artifactId,
-        op: 'set_generation_status',
-        generationStatus: 'ready',
-        verificationStatus: 'queued',
-        generatedBy: generatedByRef,
-        ...clearedAttrs,
-        nextVersion,
-        actorKind: 'agent',
-        actorRef: 'note_generate',
-        taskRunId: result.task_run_id ?? null,
-        costMicroUsd: costUsdToMicroUsd(result.cost_usd),
-        createdAt: now,
-      });
       await writeNoteVerificationIntent(tx, artifactId);
-      return { kind: 'ready', rows };
+      return { kind: 'ready' };
     });
 
     dbWriteMs = Date.now() - dbStarted;
@@ -552,76 +496,32 @@ export async function runNoteGenerate(
     if (fallbackMaterial) {
       try {
         const wroteFallback = await db.transaction(async (tx): Promise<boolean> => {
-          const beforeRows = await tx
-            .select({
-              version: artifact.version,
-              body_blocks: artifact.body_blocks,
-              history: artifact.history,
-            })
-            .from(artifact)
-            .where(
-              and(
-                eq(artifact.id, artifactId),
-                inArray(artifact.type, NOTE_ARTIFACT_TYPES),
-                eq(artifact.generation_status, 'failed'),
-                eq(artifact.version, flipVersion),
-                isNull(artifact.archived_at),
-              ),
-            )
-            .for('update')
-            .limit(1);
-          const before = beforeRows[0];
-          if (!before) return false; // raced between tx1 and tx2 — leave it alone
-
-          const bodyIsEmpty = noteBodyIsEmpty(before.body_blocks);
-          if (!bodyIsEmpty) return false; // already filled — idempotent no-op
-
-          const fallbackBody = buildNoteGenerationFallbackBody(fallbackMaterial);
-          const nextVersion = before.version + 1;
-          const fallbackHistoryAfter: ArtifactHistoryEntryT[] = [
-            ...(Array.isArray(before.history) ? before.history : []),
-            {
-              version: nextVersion,
-              at: failedAt,
-              by: { by: 'system' },
-              summary_md: '生成失败：写入确定性原材料兜底正文（非 AI 生成）',
-              action: 'note_generation_fallback',
-              previous_artifact_version: before.version,
-              next_artifact_version: nextVersion,
+          const commit = await commitArtifactBody(tx, {
+            artifactId,
+            where: and(
+              inArray(artifact.type, NOTE_ARTIFACT_TYPES),
+              eq(artifact.generation_status, 'failed'),
+              eq(artifact.version, flipVersion),
+              isNull(artifact.archived_at),
+            ),
+            requestedAt: failedAt,
+            plan: (before) => {
+              // Already filled — idempotent no-op.
+              if (!noteBodyIsEmpty(before.body_blocks)) return { skip: 'filled' as const };
+              return {
+                body: buildNoteGenerationFallbackBody(fallbackMaterial),
+                history: {
+                  by: { by: 'system' },
+                  summary_md: '生成失败：写入确定性原材料兜底正文（非 AI 生成）',
+                  action: 'note_generation_fallback',
+                },
+                actor: { kind: 'agent', ref: NOTE_GENERATION_FALLBACK_ACTOR_REF },
+                optOutMemoryIngestion: true,
+              };
             },
-          ];
-          const rows = await tx
-            .update(artifact)
-            .set({
-              body_blocks: fallbackBody as never,
-              version: nextVersion,
-              history: fallbackHistoryAfter as never,
-              updated_at: failedAt,
-            })
-            .where(
-              and(
-                eq(artifact.id, artifactId),
-                eq(artifact.version, before.version),
-                eq(artifact.generation_status, 'failed'),
-                isNull(artifact.archived_at),
-              ),
-            )
-            .returning({ id: artifact.id });
-          if (rows.length === 0) return false;
-
-          await syncBlockRefsForArtifact(tx, artifactId, fallbackBody);
-          await emitArtifactBodyBlocksEditEvent(tx, {
-            subjectId: artifactId,
-            previousArtifactVersion: before.version,
-            nextArtifactVersion: nextVersion,
-            bodyBlocks: fallbackBody,
-            previousBodyBlocks: (before.body_blocks ?? null) as ArtifactBodyBlocksT | null,
-            historyAfter: fallbackHistoryAfter,
-            actorKind: 'agent',
-            actorRef: NOTE_GENERATION_FALLBACK_ACTOR_REF,
-            createdAt: failedAt,
-            optOutMemoryIngestion: true,
           });
+          // missing: raced between tx1 and tx2 — leave it alone.
+          if (commit.status !== 'committed') return false;
           if (fallbackMaterial.question?.reference_md) {
             await recordNoteFallbackReferenceExposure(tx, {
               issuanceId: fallbackMaterial.question.issuance_id,

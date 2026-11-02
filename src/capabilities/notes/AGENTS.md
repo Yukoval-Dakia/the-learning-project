@@ -16,6 +16,7 @@
 
 ## CONVENTIONS
 - 编辑器栈 = TipTap 3；block-tree 用 optimistic lock。
+- 笔记正文提交（body_blocks + version + history）只经 `server/artifact-body-commit.ts`：调用方给出调用方事务与决策回调，入口持有行锁、版本 +1、块引用同步、成对 fold 事件与时间戳；入口不开事务、不拿 advisory 锁。精修（`note-refine-apply.ts`）与 hub 同步（`hub-sync-reconciliation.ts`）有各自事件/fence 语义，不经此入口。
 - `note_refine` 触发源 = mark_wrong / mastery_change / dreaming / verify（dwell 已裁）。dreaming 由已提交的 `experimental:dreaming_note_refresh` 订阅入队，agency 不直接调用 notes。
 - `note_generate` / `note_verify` 只经同事务 intent + 提交后 dispatcher 衔接；completion 表示 queue dispatch 已确认，不表示模型业务完成。
 - `note_generate` 失败显式落 `failed`，pg-boss redelivery 用 CAS 重开为 `pending`；已 `ready` 的成功重投跳过。

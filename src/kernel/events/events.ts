@@ -303,7 +303,7 @@ export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<st
  * so same-clock or delayed transitions cannot sort backward. No wall-clock read. */
 export async function nextProjectionEventTime(
   tx: Tx,
-  kind: 'goal' | 'learning_item' | 'mistake_variant',
+  kind: 'goal' | 'learning_item' | 'mistake_variant' | 'artifact',
   id: string,
   requestedAt: Date,
 ): Promise<Date> {
