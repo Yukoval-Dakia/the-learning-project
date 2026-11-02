@@ -643,10 +643,11 @@ const IN_PROCESS_WORKER = 'src/server/boss/start-worker.ts';
 type ManifestComposition = {
   readonly roots: CompositionRoot[];
   /**
-   * `jobs/handlers/load` thunks as `source=>target` pairs. A registered manifest is itself
-   * api-reachable, so treating the thunk's dynamic import as an ordinary runtime edge would pull
-   * every job implementation and its worker-only provider wires into the api closure. The thunk
-   * target is a worker composition root instead; the traversals below skip exactly these pairs.
+   * `source=>target` edges that start a worker composition root: every `jobs/handlers/load`
+   * thunk, plus the in-process worker start in `server/index.ts`. A registered manifest is itself
+   * api-reachable, so treating these dynamic imports as ordinary runtime edges would pull every
+   * job implementation and its worker-only provider wires into the api closure. Each target is a
+   * worker root instead; the traversals below skip exactly these pairs.
    */
   readonly jobThunkEdges: ReadonlySet<string>;
 };
