@@ -44,6 +44,5 @@
 
 ## ANTI-PATTERNS
 - 别把 Copilot 做成通用 AI 调用入口；所有 task 仍走领域 route / worker。
-- 别在客户端持 provider key；SSE 也走 `/api/*` token gate。
+- SSE 也走 `/api/*` token gate。
 - Copilot 工具必须经 `copilotTools` 贡献制登记，禁止私自注册。
-- 别把 Copilot 当作绕过 capability 边界的后门。
