@@ -16,8 +16,8 @@ import { useCallback, useRef } from 'react';
 
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-
-import { type ChoiceOption, withoutLabelPrefix } from './response-types';
+import { displayOptionContent } from './display-option-content';
+import type { ChoiceOption } from './response-types';
 
 export interface ChoiceSetResponseProps {
   options: ChoiceOption[];
@@ -173,7 +173,7 @@ export function ChoiceSetResponse({
                 <span className="rs-opt-k">{opt.label}</span>
                 <span className="rs-opt-t">
                   <MathMarkdown notation={notation}>
-                    {withoutLabelPrefix(opt.text_md, opt.label)}
+                    {displayOptionContent(opt.text_md, opt.label)}
                   </MathMarkdown>
                 </span>
               </button>
