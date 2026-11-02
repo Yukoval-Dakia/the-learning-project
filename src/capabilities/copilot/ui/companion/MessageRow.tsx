@@ -1,13 +1,14 @@
 // One turn in the conversation. The learner's line sits right in a quiet bubble; the companion's
 // reply is plain prose with its steps above it and what it produced below it. A reply is one
-// element from the first word to settled: while it streams it is lighter, with a caret and
-// 「生成中 · 还未生效」; the terminal Markdown then replaces the draft in place (C3).
+// element from the first word to settled. The caret describes reply generation only;
+// it cannot establish whether any tool operation has already taken effect.
 // Memoized: a streaming delta rebuilds only the growing message, so settled rows skip re-rendering.
 
 import { memo } from 'react';
 import { DeferredMarkdownRenderer } from '@/ui/lib/deferred-markdown-renderer';
 import { Chip } from '@/ui-next/public';
 import type { ChatMessage } from '../message-projection';
+import { publicProseStatusText } from '../public-prose';
 import { HeroBlock } from './HeroBlock';
 import { ProposalNotice } from './ProposalNotice';
 import { splitProposalDisclosure } from './proposal-disclosure';
@@ -45,19 +46,30 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   if (m.role === 'tombstone') {
     return <p className="un-cp-row un-cp-row-tombstone">{m.text}</p>;
   }
-  const { text, pending } = splitProposalDisclosure(m.text);
-  const settled = !m.streaming;
+  const canonical = splitProposalDisclosure(m.text);
+  const publicProse = m.public_prose;
+  const incomplete = publicProse?.status === 'failed' || publicProse?.status === 'interrupted';
+  // Successful terminal text retains its sealed corrections and disclosures.
+  const body =
+    incomplete || publicProse?.status === 'streaming' ? publicProse.text : canonical.text;
+  const generationStatus = publicProse ? publicProseStatusText(publicProse) : undefined;
+  const generating = m.streaming || publicProse?.status === 'streaming';
+  const settled = !generating;
   const turnId = m.reply_event_id;
   const canCorrect = settled && turnId !== undefined && props.turnNumber !== undefined;
   const checkpoint = settled ? m.checkpoint_event_id : undefined;
   return (
-    <div className="un-cp-row un-cp-row-ai" data-streaming={m.streaming ? '' : undefined}>
+    <div className="un-cp-row un-cp-row-ai" data-streaming={generating ? '' : undefined}>
       <StepList steps={stepsOf(m)} />
-      <DeferredMarkdownRenderer className="un-cp-md un-cp-reply">{text}</DeferredMarkdownRenderer>
-      {m.streaming ? (
+      <DeferredMarkdownRenderer className="un-cp-md un-cp-reply">{body}</DeferredMarkdownRenderer>
+      {incomplete ? (
+        <p className="un-cp-reply-status" role="status">
+          {generationStatus}
+        </p>
+      ) : generating ? (
         <p className="un-cp-reply-meta" aria-live="off">
           <span className="un-cp-caret" aria-hidden="true" />
-          生成中 · 还未生效
+          正在回复
         </p>
       ) : null}
       <SkillTurnBlock
@@ -67,30 +79,33 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
         onAcceptCorrective={props.onAcceptCorrective}
       />
       {m.primary_view ? <HeroBlock view={m.primary_view} navigate={props.navigate} /> : null}
-      {settled ? <ProposalNotice pending={pending} navigate={props.navigate} /> : null}
+      {settled ? <ProposalNotice pending={canonical.pending} navigate={props.navigate} /> : null}
       {canCorrect || checkpoint ? (
-        <div className="un-cp-row-actions">
-          {canCorrect && turnId ? (
-            <button
-              type="button"
-              className="un-cp-text-btn un-hit"
-              aria-pressed={props.correctionSelected}
-              onClick={() => props.onSelectCorrection(turnId, props.turnNumber ?? 0)}
-            >
-              更正这轮
-            </button>
-          ) : null}
-          {checkpoint ? (
-            <button
-              type="button"
-              className="un-cp-text-btn un-hit"
-              disabled={props.revertPending}
-              onClick={() => props.onRevert(checkpoint)}
-            >
-              {props.revertPending ? '撤回中…' : '撤回本轮更改'}
-            </button>
-          ) : null}
-        </div>
+        <details className="un-st-message-operations">
+          <summary>本轮操作</summary>
+          <div className="un-cp-row-actions">
+            {canCorrect && turnId ? (
+              <button
+                type="button"
+                className="un-cp-text-btn un-hit"
+                aria-pressed={props.correctionSelected}
+                onClick={() => props.onSelectCorrection(turnId, props.turnNumber ?? 0)}
+              >
+                更正这轮
+              </button>
+            ) : null}
+            {checkpoint ? (
+              <button
+                type="button"
+                className="un-cp-text-btn un-hit"
+                disabled={props.revertPending}
+                onClick={() => props.onRevert(checkpoint)}
+              >
+                {props.revertPending ? '撤回中…' : '撤回本轮更改'}
+              </button>
+            ) : null}
+          </div>
+        </details>
       ) : null}
     </div>
   );
