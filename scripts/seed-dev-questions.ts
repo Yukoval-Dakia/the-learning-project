@@ -16,6 +16,7 @@ import './load-env';
 import { inArray } from 'drizzle-orm';
 import { MARKING_RULE_PROVENANCE, QUESTION_AVAILABILITY } from '@/core/schema/assessment/lifecycle';
 import { type Db, type Tx, db } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { knowledge, question } from '@/db/schema';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
@@ -151,8 +152,10 @@ export async function seedDevQuestions(dbh: DbLike, now: Date = new Date()): Pro
   const pending = QUESTIONS.filter((q) => !present.has(questionId(q.ref)));
   if (pending.length === 0) return 0;
 
-  const enrolled: Array<{ nodeId: string; evidenceEventId: string }> = [];
   await dbh.transaction(async (tx) => {
+    // Global learning-state lock first (before row locks), as other FSRS-enrolling writers do.
+    await acquireLearningStateWriteLock(tx);
+    const evidenceByNode = new Map<string, string>();
     // Approved nodes; the root carries the subject domain (domain IS NOT NULL ↔ parent_id IS NULL).
     for (const spec of NODE_SPECS) {
       await tx
@@ -222,21 +225,19 @@ export async function seedDevQuestions(dbh: DbLike, now: Date = new Date()): Pro
       if (published.status !== 'published') {
         throw new Error(`seed-dev-questions: ${id} was not published (${published.status})`);
       }
-      enrolled.push({ nodeId: q.node, evidenceEventId: published.event_id });
+      if (!evidenceByNode.has(q.node)) evidenceByNode.set(q.node, published.event_id);
+    }
+    // Same transaction as the publications, so a crash cannot leave admitted questions without cards.
+    for (const [nodeId, evidenceEventId] of evidenceByNode) {
+      await enrollFsrsStateIfAbsent(tx, {
+        subject_kind: 'knowledge',
+        subject_id: nodeId,
+        ...initialSchedulingState(nodeId, now),
+        last_review_event_id: evidenceEventId,
+      });
     }
   });
 
-  const seen = new Set<string>();
-  for (const { nodeId, evidenceEventId } of enrolled) {
-    if (seen.has(nodeId)) continue;
-    seen.add(nodeId);
-    await enrollFsrsStateIfAbsent(dbh, {
-      subject_kind: 'knowledge',
-      subject_id: nodeId,
-      ...initialSchedulingState(nodeId, now),
-      last_review_event_id: evidenceEventId,
-    });
-  }
   return pending.length;
 }
 
