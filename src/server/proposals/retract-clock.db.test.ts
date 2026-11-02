@@ -9,18 +9,18 @@ import {
   writeVariantQuestionProposal,
 } from '@/kernel/proposals/producers';
 import { writeAiProposal } from '@/kernel/proposals/writer';
+import { gatherAndFoldArtifact } from '@/kernel/records/artifact-history';
 import { updateGoalStatus } from '@/kernel/records/goal-commands';
 import {
-  gatherAndFoldArtifact,
   gatherAndFoldGoal,
-  gatherAndFoldLearningItem,
-  gatherAndFoldMistakeVariant,
-} from '@/server/projections/gather';
+  goalRowToSnapshot as goalLiveRowToSnapshot,
+} from '@/kernel/records/goal-history';
+import { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
 import {
-  goalLiveRowToSnapshot,
-  learningItemLiveRowToSnapshot,
+  gatherAndFoldMistakeVariant,
   mistakeVariantLiveRowToSnapshot,
-} from '@/server/projections/parity';
+} from '@/kernel/records/mistake-variant-facts';
+import { learningItemLiveRowToSnapshot } from '@/server/projections/parity';
 import { backfillArtifactGenesis } from '../../../scripts/backfill-genesis-events';
 import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';

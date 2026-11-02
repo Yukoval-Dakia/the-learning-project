@@ -7,16 +7,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // NOT as the original bare error escaping the assert. We mock the gather layer to force the
 // throw deterministically (the node reducer is throw-free with real data, so a real-data test
 // can't reach this defensive path — hence the mock).
-vi.mock('./gather', () => ({
+vi.mock('@/kernel/records/knowledge-node-history', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/kernel/records/knowledge-node-history')>()),
   gatherAndFoldKnowledgeNode: vi.fn(async () => {
     throw new TypeError('boom-node');
   }),
+}));
+vi.mock('@/kernel/records/knowledge-edge-facts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/kernel/records/knowledge-edge-facts')>()),
   gatherAndFoldKnowledgeEdge: vi.fn(async () => {
     throw new TypeError('boom-edge');
   }),
 }));
 
-import { gatherAndFoldKnowledgeNode } from './gather';
+import { gatherAndFoldKnowledgeNode } from '@/kernel/records/knowledge-node-history';
 import { assertKnowledgeNodeParity } from './parity';
 
 const fakeDb = {} as never;

@@ -17,7 +17,6 @@ import { DIFFICULTY_PROXY_WEIGHT, difficultyToLogitB, expectedScore } from '@/co
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, item_family_calibration, mastery_state } from '@/db/schema';
 import {
-  buildFamilyKey,
   getFamilyCalibration,
   resolveFamilyKeyForQuestion,
 } from '@/kernel/read-models/question-difficulty';
@@ -25,7 +24,6 @@ import {
 export {
   type FamilyCalibrationRow,
   effectiveFamilyB,
-  getFamilyCalibration,
 } from '@/kernel/read-models/question-difficulty';
 
 type DbLike = Db | Tx;
@@ -51,13 +49,6 @@ export const OBJECTIVE_JUDGE_ROUTES: ReadonlySet<string> = new Set<string>(['exa
 export function isObjectiveJudgeRoute(route: string | null | undefined): boolean {
   return route != null && OBJECTIVE_JUDGE_ROUTES.has(route);
 }
-
-// family_key = `${subject}:${primaryKnowledgeId}:${kind}:${source}`. `subject` is derived
-// from the primary KC's effective domain; the exact question id is deliberately absent
-// because questions in a family share one delta. The format itself lives in
-// kernel/read-models/question-difficulty.ts; `familyKey` keeps the writer
-// and existing test imports on the same implementation.
-export const familyKey = buildFamilyKey;
 
 // Empirical-Bayes shrinkage: shrunk = n/(n+priorStrength)·rawDelta. n=0 → 0 (fully
 // shrunk), n=priorStrength → half, n→∞ → raw. Keeps noisy families near zero until they

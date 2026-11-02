@@ -24,8 +24,8 @@ import {
 import {
   edgeRowToSnapshot,
   gatherAndFoldKnowledgeEdge,
-  gatherAndFoldKnowledgeNode,
-} from '@/server/projections/gather';
+} from '@/kernel/records/knowledge-edge-facts';
+import { gatherAndFoldKnowledgeNode } from '@/kernel/records/knowledge-node-history';
 import { backfillKnowledgeGenesis } from '../../../../scripts/backfill-genesis-events';
 import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

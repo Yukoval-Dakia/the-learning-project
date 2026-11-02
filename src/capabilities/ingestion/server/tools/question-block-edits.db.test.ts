@@ -17,8 +17,8 @@ import {
   structuredToPromptMarkdown,
 } from '@/core/schema/structured_question';
 import { job_events, question_block } from '@/db/schema';
+import { gatherAndFoldQuestionBlock } from '@/kernel/records/question-block-projection';
 import { __resetRegistryForTests } from '@/server/ai/tools/registry';
-import { gatherAndFoldQuestionBlock } from '@/server/projections/gather';
 import { questionBlockLiveRowToSnapshot } from '@/server/projections/parity';
 import { backfillQuestionBlockGenesis } from '../../../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';

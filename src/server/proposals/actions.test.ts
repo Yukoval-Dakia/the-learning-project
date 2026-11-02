@@ -14,16 +14,16 @@ import {
 } from '@/db/schema';
 import { acquireProposalDecisionLock } from '@/kernel/proposals/applier-helpers';
 import { writeAiProposal } from '@/kernel/proposals/writer';
+import { gatherAndFoldKnowledgeEdge } from '@/kernel/records/knowledge-edge-facts';
 import {
-  gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
-  gatherAndFoldLearningItem,
-} from '@/server/projections/gather';
-import {
-  hasLearningItemGenesisAnchor,
   knowledgeLiveRowToSnapshot,
-  learningItemLiveRowToSnapshot,
-} from '@/server/projections/parity';
+} from '@/kernel/records/knowledge-node-history';
+import {
+  gatherAndFoldLearningItem,
+  hasLearningItemGenesisAnchor,
+} from '@/kernel/records/learning-items';
+import { learningItemLiveRowToSnapshot } from '@/server/projections/parity';
 import { backfillKnowledgeEdgeGenesis } from '../../../scripts/backfill-genesis-events';
 import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
