@@ -1,3 +1,4 @@
+import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import type { ConfirmationAssessmentRenderer } from '../confirmation';
 // The shell's one companion instance. Always mounted (closed it renders nothing visible): it restores
 // unconfirmed sends from the browser once, claims open requests published by pages, polls nudges
@@ -11,6 +12,7 @@ import { useCompanionController, useTurnPolling } from './use-companion';
 
 export interface CompanionMountProps {
   confirmationRenderer?: ConfirmationAssessmentRenderer;
+  readNotePage: NotePageClient;
   open: boolean;
   presentation?: 'workspace';
   onOpenChange: (open: boolean) => void;
@@ -31,6 +33,7 @@ export function CompanionMount({
   navigate,
   presentation,
   confirmationRenderer,
+  readNotePage,
 }: CompanionMountProps) {
   const controller = useCompanionController();
   const nudges = useCopilotNudges();
@@ -62,6 +65,7 @@ export function CompanionMount({
       {open ? (
         <CompanionPanel
           confirmationRenderer={confirmationRenderer}
+          readNotePage={readNotePage}
           controller={controller}
           presentation={presentation}
           layout={layout}
