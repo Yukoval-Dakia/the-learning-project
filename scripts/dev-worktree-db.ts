@@ -23,7 +23,17 @@ function worktreeRoot(): string {
 }
 
 export function devDatabaseName(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.DEV_DB_NAME) return env.DEV_DB_NAME;
+  if (env.DEV_DB_NAME) {
+    // Callers interpolate the name into SQL, so an override is held to the same plain
+    // identifier shape a derived name always has.
+    const name = env.DEV_DB_NAME;
+    if (!DEV_DATABASE_PATTERN.test(name) || name.length > MAX_NAME_LENGTH) {
+      throw new Error(
+        `DEV_DB_NAME="${name}" is not a dev database name (loom_dev or loom_dev_<a-z0-9_>, at most ${MAX_NAME_LENGTH} chars)`,
+      );
+    }
+    return name;
+  }
   const root = worktreeRoot();
   const base =
     basename(root)
