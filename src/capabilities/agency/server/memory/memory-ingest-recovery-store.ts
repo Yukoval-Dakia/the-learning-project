@@ -7,6 +7,7 @@ import {
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
 import { lockMemoryIngestSource, lockMemoryOperatorRequest } from '@/kernel/locks/memory-locks';
+import { providerOperationIdForInvocation } from './mem0-runtime';
 import {
   type MemoryIngestReplayGrant,
   MemoryIngestReplayGrantSchema,
@@ -24,7 +25,6 @@ import {
   readMemoryIngestStarted,
   writeMemoryHandoffRecord,
 } from './memory-reconcile-handoff-store';
-import { providerOperationIdForInvocation } from './mem0-runtime';
 
 const AUTHORIZED = 'operator_replay_authorized';
 const STARTED = 'operator_add_started';

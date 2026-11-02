@@ -8,6 +8,7 @@ import {
   eventBelongsToDocumentSql,
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
+import { lockPurposeBriefScope } from '@/kernel/locks/memory-locks';
 import {
   PURPOSE_CHANGE_ACTION,
   PURPOSE_REPAIR_ACTION,
@@ -15,7 +16,6 @@ import {
   type PurposeRepairRecordT,
   readPurposeRepairs,
 } from '@/kernel/read-models/purpose-change';
-import { lockPurposeBriefScope } from '@/kernel/locks/memory-locks';
 import { type MemoryClient, createMemoryClient } from './mem0-runtime';
 import { readIngestCompleted, readMemoryIngestStarted } from './memory-reconcile-handoff-store';
 import { recordPurposeRepair } from './purpose-repair-store';

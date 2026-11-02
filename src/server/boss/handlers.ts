@@ -1,5 +1,4 @@
 import type { PgBoss } from 'pg-boss';
-import { buildBriefGenerator } from '@/capabilities/agency/public';
 import type { PlacementVerificationAuthority } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
@@ -59,8 +58,8 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     fenceAwareJobHandler(db, 'echo', buildEchoHandler(db)),
   );
 
-  // 不传 writer 时，brief 重算会落到会抛错的默认实现。fence 在 registerMemoryHandlers 里面。
-  await registerMemoryHandlers(boss, db, { generateBrief: buildBriefGenerator({ db }) });
+  // brief writer、付费判官与 fence 都在 registerMemoryHandlers 里面装配。
+  await registerMemoryHandlers(boss, db);
 
   await createOrUpdateQueue(boss, 'promote_conversation_idle', FAST_QUEUE_OPTS);
   await boss.work(

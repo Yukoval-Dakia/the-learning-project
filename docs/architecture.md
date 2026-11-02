@@ -462,7 +462,7 @@ YUK-861 对 Verify、Notes、Memory 三条 durable handoff 做了架构 closeout
 |---|---|---|
 | Verify (`src/capabilities/practice/server/verify-dispatch-outbox.ts`) | draft 与 `writeVerifyDispatchIntent()` 同一 transaction；`dispatchPendingVerifyIntents()` 锁 pending intent，并用 `fromPgBossDrizzleTx(tx)` enqueue | enqueue 与 per-question/verifier completion 同一 transaction；失败保留 intent，`recoverOrphanVerifyDispatches()` 只恢复 verify |
 | Notes (`src/capabilities/notes/server/note-handoff.ts`) | artifact transaction 写 append-only intent；queue send 在 commit 后发生 | exact returned job ID 或 exact `getJobById()` readback 确认 receipt 后写 completion；`hub_sync_recovery` 作为共享 floor，claim/result recovery 仍由 Notes 自己拥有 |
-| Memory (`src/server/memory/memory-reconcile-handoff*.ts`) | DB transaction 只写 marker/intent/completion/cursor；Mem0 lookup/SDK 与 pg-boss 在 transaction 外 | 上游 provider truth 由 fence、`add_started` 和 resolution 约束；下游一个 batch job 的 exact receipt 被物化为共享 job/digest 的多条 per-memory completion；严格 `observe|write|recover|drain` 与 append-only bounded cursor 保持 Memory-owned |
+| Memory (`src/capabilities/agency/server/memory/memory-reconcile-handoff*.ts`) | DB transaction 只写 marker/intent/completion/cursor；Mem0 lookup/SDK 与 pg-boss 在 transaction 外 | 上游 provider truth 由 fence、`add_started` 和 resolution 约束；下游一个 batch job 的 exact receipt 被物化为共享 job/digest 的多条 per-memory completion；严格 `observe|write|recover|drain` 与 append-only bounded cursor 保持 Memory-owned |
 
 这三个边界必须继续由各 owner 维护。重复少量机械 dispatch/readback 代码是可接受的架构成本；
 不得以 callback 成功、共享 completion 或统一 optional-field shell 替代真实 transaction、provider、

@@ -12,8 +12,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { newId } from '@/core/ids';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { _resetBossForTests, createBoss } from '@/server/boss/client';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { MEMORY_EVENT_INGEST_QUEUE, buildMemoryIngestOutboxPollHandler } from './triggers';
 
 function attemptPayload(question_id = 'q1') {

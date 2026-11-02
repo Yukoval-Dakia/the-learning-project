@@ -14,6 +14,7 @@
 import './load-env';
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import { listActiveSubjectsSinceRefresh } from '@/capabilities/agency/server/memory/active-subjects';
 import type { RubricGate } from '@/capabilities/knowledge/public';
 import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/public';
 import { scheduleReview } from '@/capabilities/practice/public';
@@ -39,7 +40,6 @@ import { writeAiProposal } from '@/kernel/proposals/writer';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
 import { upsertFsrsState } from '@/server/fsrs/state';
-import { listActiveSubjectsSinceRefresh } from '@/capabilities/agency/server/memory/active-subjects';
 import { loadYuwenFixtures } from '@/subjects/yuwen/fixtures';
 
 type DbLike = Db | Tx;

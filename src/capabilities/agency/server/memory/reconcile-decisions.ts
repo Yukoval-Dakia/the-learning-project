@@ -1,6 +1,5 @@
 import type {
   CandidateEntry,
-  CandidatesByNew,
   NewMemoryEntry,
   ReconcileAction,
   ReconcileDecision,

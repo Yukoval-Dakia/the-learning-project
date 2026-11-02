@@ -7,8 +7,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { installModelEndpointHostAllowlist } from '@/core/config/model-endpoint-allowlist';
 import { provider_attempt } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { createMemoryClient } from '@/server/ai/mem0/client';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { readIngestCompleted } from './memory-reconcile-handoff-store';
 import { buildMemoryEventIngestHandler } from './triggers';
 

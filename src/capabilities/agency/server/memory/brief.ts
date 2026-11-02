@@ -3,13 +3,9 @@ import { allowsDerivation } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
 import { event, memory_brief_note } from '@/db/schema';
 import { allowedEventIds, eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
-import {
-  PURPOSE_BRIEF_LOCK,
-  briefPurposeCurrent,
-  latestPurposeWithdrawal,
-} from '@/kernel/read-models/purpose-change';
-import { BRIEF_REFRESH_BUDGET, LONG_TERM_FRESHNESS_BUDGET } from '@/kernel/tools/budgets';
 import { lockPurposeBrief } from '@/kernel/locks/memory-locks';
+import { briefPurposeCurrent, latestPurposeWithdrawal } from '@/kernel/read-models/purpose-change';
+import { BRIEF_REFRESH_BUDGET, LONG_TERM_FRESHNESS_BUDGET } from '@/kernel/tools/budgets';
 import { scoreLongTermFreshness } from './brief-freshness';
 import { markBriefPurpose, scopeBriefPurposeCurrent } from './brief-purpose';
 import { learnerEvidenceSql } from './learner-evidence';

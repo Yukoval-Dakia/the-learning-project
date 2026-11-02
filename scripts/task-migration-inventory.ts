@@ -62,7 +62,9 @@ const rows: {
 const declarations = sources.filter(
   ({ path }) =>
     /^src\/capabilities\/[^/]+\/manifest.ts$/.test(path) ||
-    ['src/server/boss/handlers.ts', 'src/capabilities/agency/server/memory/triggers.ts'].includes(path),
+    ['src/server/boss/handlers.ts', 'src/capabilities/agency/server/memory/triggers.ts'].includes(
+      path,
+    ),
 );
 for (const { path, text } of declarations) {
   const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);

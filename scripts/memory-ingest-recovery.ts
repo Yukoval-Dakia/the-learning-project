@@ -29,7 +29,9 @@ async function main(): Promise<void> {
     const boss = createBoss();
     try {
       await getStartedBoss();
-      const { buildMemoryEventIngestHandler } = await import('../src/capabilities/agency/server/memory/triggers');
+      const { buildMemoryEventIngestHandler } = await import(
+        '../src/capabilities/agency/server/memory/triggers'
+      );
       await buildMemoryEventIngestHandler(db, boss, { replayGrant: grant })([
         { data: { event_id: command.request.sourceEventId } },
       ]);

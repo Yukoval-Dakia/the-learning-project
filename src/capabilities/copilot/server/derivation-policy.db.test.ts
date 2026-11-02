@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { event, job_events, learning_session } from '@/db/schema';
-import { writeJobEvent } from '@/kernel/job-events';
 import { dispatchMemoryReconcile } from '@/capabilities/agency/server/memory/memory-reconcile-handoff';
 import {
   buildMemoryEventIngestHandler,
   buildMemoryReconcileHandler,
 } from '@/capabilities/agency/server/memory/triggers';
+import { event, job_events, learning_session } from '@/db/schema';
+import { writeJobEvent } from '@/kernel/job-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memoryClientMock } from '../../../../tests/helpers/memory-client-mock';
 import { reconcileCopilotDurableRun, runCopilotRun } from '../jobs/copilot_run';

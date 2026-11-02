@@ -11,6 +11,7 @@ import {
   MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
   MEMORY_RECONCILE_QUEUE,
   type ReconcileMemInput,
+  buildBriefGenerator,
   buildMemoryBriefRegenHandler,
   buildMemoryBriefSweepHandler,
   buildMemoryEventIngestHandler,
@@ -51,10 +52,6 @@ async function reflectionBriefsOff(db: Db, now: Date): Promise<boolean> {
   }
 }
 
-async function defaultGenerateBrief(): Promise<never> {
-  throw new Error('memory brief LLM generator is not configured');
-}
-
 export async function registerMemoryHandlers(
   boss: PgBoss,
   db: Db,
@@ -63,7 +60,7 @@ export async function registerMemoryHandlers(
     generateBrief?: GenerateBrief;
   } = {},
 ): Promise<void> {
-  const generateBrief = deps.generateBrief ?? defaultGenerateBrief;
+  const generateBrief = deps.generateBrief ?? buildBriefGenerator({ db });
 
   // Ingest runs mem0's extraction + embedding, so give it the shared LLM expiry
   // policy and a DLQ instead of pg-boss defaults.

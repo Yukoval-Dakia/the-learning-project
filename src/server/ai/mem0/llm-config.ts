@@ -19,9 +19,7 @@ export type MemoryLlmConfig = {
 };
 
 /** Mem0 extraction and both direct reconciliation callers share the product pin. */
-export function resolveMemoryLlmConfig(
-  env: Env = process.env,
-): MemoryLlmConfig {
+export function resolveMemoryLlmConfig(env: Env = process.env): MemoryLlmConfig {
   const pin = resolveGlobalProviderSwitch(env, getLaneOverride('global'));
   if (!pin) {
     const apiKey = env.ZHIPU_API_KEY?.trim();

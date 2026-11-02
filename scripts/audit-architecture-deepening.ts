@@ -1330,14 +1330,8 @@ async function runCli(): Promise<void> {
       batchSize: job.batchSize,
     })),
   );
-  const centralSources = [
-    ...sourceFilesUnder(projectRoot, resolve(projectRoot, 'src/server/boss')),
-    ...sourceFilesUnder(projectRoot, resolve(projectRoot, 'src/server/memory')),
-  ];
-  const centralLiterals = scanCentralQueueLiterals(centralSources, [
-    'src/server/boss/',
-    'src/server/memory/',
-  ]);
+  const centralSources = sourceFilesUnder(projectRoot, resolve(projectRoot, 'src/server/boss'));
+  const centralLiterals = scanCentralQueueLiterals(centralSources, ['src/server/boss/']);
 
   // --- proposal facts ------------------------------------------------------
   const proposalDeclarations = capabilities.flatMap((cap) =>

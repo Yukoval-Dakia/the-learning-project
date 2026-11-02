@@ -1,15 +1,15 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { memory_brief_note } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { lockPurposeBriefScope } from '@/kernel/locks/memory-locks';
 import {
   BRIEF_PURPOSE_ACTION,
   briefPurposeCurrent,
   readPurposeReceipt,
   readPurposeRepairs,
 } from '@/kernel/read-models/purpose-change';
-import { lockPurposeBriefScope } from '@/kernel/locks/memory-locks';
 import { recordPurposeRepair } from './purpose-repair-store';
 
 export async function scopeBriefPurposeCurrent(db: Db | Tx, scopeKey: string) {

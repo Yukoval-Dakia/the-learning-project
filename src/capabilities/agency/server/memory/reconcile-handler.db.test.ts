@@ -34,10 +34,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-import { createMem0Collection } from '../../../../../tests/helpers/mem0-collection';
-import { memoryClientMock } from '../../../../../tests/helpers/memory-client-mock';
 import type { MemoryClient } from '@/server/ai/mem0/client';
 import { judgeReconciliation } from '@/server/ai/mem0/reconcile-llm';
+import { createMem0Collection } from '../../../../../tests/helpers/mem0-collection';
+import { memoryClientMock } from '../../../../../tests/helpers/memory-client-mock';
 import { insertPlannedRows, loadUnappliedLog, makePlannedRow } from './reconcile-store';
 import { buildMemoryReconcileHandler } from './triggers';
 

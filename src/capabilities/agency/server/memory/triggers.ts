@@ -29,12 +29,6 @@ import {
 } from './brief';
 import { executePurposeBrief } from './brief-purpose';
 import { isLearnerEvidenceAction } from './learner-evidence';
-import type { MemoryIngestReplayGrant } from './memory-ingest-recovery-contract';
-import {
-  assertMemoryIngestReplayGrant,
-  claimMemoryIngestReplay,
-  memoryIngestReplayAnchor,
-} from './memory-ingest-recovery-store';
 import {
   type CandidateEntry,
   type MemoryClient,
@@ -48,8 +42,13 @@ import {
   isDirectProviderAttemptInvariantError,
   searchMemories,
 } from './mem0-runtime';
+import type { MemoryIngestReplayGrant } from './memory-ingest-recovery-contract';
 import {
-  MEMORY_RECONCILE_QUEUE,
+  assertMemoryIngestReplayGrant,
+  claimMemoryIngestReplay,
+  memoryIngestReplayAnchor,
+} from './memory-ingest-recovery-store';
+import {
   type MemoryReconcileHandoffMode,
   dispatchMemoryReconcile,
   memoryReconcileHandoffMode,
@@ -85,9 +84,6 @@ export const MEMORY_BRIEF_SWEEP_QUEUE = 'memory_brief_sweep';
 // sweep catches whatever a restart or an oversized burst leaves behind.
 export const MEMORY_INGEST_OUTBOX_POLL_QUEUE = 'memory_ingest_outbox_poll';
 export const MEMORY_INGEST_OUTBOX_RECOVER_QUEUE = 'memory_ingest_outbox_recover';
-// Reconcile is event-driven; recovery shares the hourly ingest floor rather than
-// registering another queue or cron.
-export { MEMORY_RECONCILE_QUEUE } from './memory-reconcile-handoff';
 
 /**
  * Static cron declarations: the same table drives boss.schedule registration and

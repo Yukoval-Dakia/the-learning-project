@@ -14,9 +14,6 @@ import { DASHSCOPE_EMBED_MODEL_ID } from '@/server/ai/providers';
 import { MEM0_COLLECTION_DEFAULT } from '@/server/export/constants';
 import { type Env, memoryLlmHeaders, resolveMemoryLlmConfig } from './llm-config';
 
-export type { Env } from './llm-config';
-export { memoryLlmHeaders, resolveMemoryLlmConfig } from './llm-config';
-
 // The global product pin selects the extraction LLM; embeddings keep their own
 // model and dimensions on the existing pgvector collection (ADR-0017).
 const DEFAULT_COLLECTION = MEM0_COLLECTION_DEFAULT;

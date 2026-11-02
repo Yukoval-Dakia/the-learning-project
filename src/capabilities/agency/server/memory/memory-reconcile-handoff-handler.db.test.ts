@@ -3,10 +3,11 @@ import type { Job } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import type { MemoryClient, MemoryEventInput } from '@/server/ai/mem0/client';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { memoryClientMock } from '../../../../../tests/helpers/memory-client-mock';
-import type { MemoryClient, MemoryEventInput } from '@/server/ai/mem0/client';
-import { MEMORY_RECONCILE_QUEUE, buildMemoryEventIngestHandler } from './triggers';
+import { MEMORY_RECONCILE_QUEUE } from './memory-reconcile-handoff';
+import { buildMemoryEventIngestHandler } from './triggers';
 
 function ingestJob(eventId: string): Job<{ event_id: string }> {
   return {
