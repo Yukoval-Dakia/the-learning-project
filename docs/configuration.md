@@ -4,7 +4,7 @@
 
 API（`server/index.ts`）与独立 worker（`scripts/worker.ts`）都先调用 `server/env.ts` 的 `loadEnv()`：按 `.env.local` → `.env` 顺序逐行读取，只填 `process.env` 中尚未设置的键，真实环境/compose 注入的值优先，引号值与行尾注释会被剥离（`server/env.ts`）。之后 `src/server/config/env.ts` 用 `@t3-oss/env-core` + `zod` 校验 server schema，`runtimeEnv` 即 `process.env`，空串按未设置处理；`DATABASE_URL` 是 schema 唯一必填项，`INTERNAL_TOKEN` 由 API 在监听前单独校验（`src/server/config/env.ts`）。
 
-compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared` 只接收 `TUNNEL_TOKEN`（`docker-compose.yml`）。本机 `pnpm dev:local` 也先加载 `.env.local` / `.env` 再传给两个子进程，并用 `POSTGRES_*`（缺省 `loom`）拼出 `postgres://…@127.0.0.1:5433/…`（`scripts/dev-local.ts`；`scripts/local-db-env.ts`）。`.env.example` 只覆盖 schema 130 个键中的 41 个；仓库里唯一的 `VITE_*` 是 `src/vite-env.d.ts` 的 `VITE_API_BASE` 类型声明、没有消费点，因此不设 client schema；Vitest 下 `skipValidation` 跳过启动校验（`src/vite-env.d.ts`；`src/server/config/env.ts`）。
+compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared` 只接收 `TUNNEL_TOKEN`（`docker-compose.yml`）。本机 `pnpm dev:local` 也先加载 `.env.local` / `.env` 再传给两个子进程，但 `DATABASE_URL` 固定指向 dev 专用 Postgres（`postgres://loom_dev:…@127.0.0.1:5434/loom_dev`，忽略 `.env` 的 `DATABASE_URL` / `POSTGRES_*`；`scripts/dev-local.ts`；`docker-compose.dev.yml`）。`.env.example` 只覆盖 schema 130 个键中的 41 个；仓库里唯一的 `VITE_*` 是 `src/vite-env.d.ts` 的 `VITE_API_BASE` 类型声明、没有消费点，因此不设 client schema；Vitest 下 `skipValidation` 跳过启动校验（`src/vite-env.d.ts`；`src/server/config/env.ts`）。
 
 ## 环境变量
 
@@ -23,8 +23,9 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `POSTGRES_USER` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
 | `POSTGRES_PASSWORD` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
 | `POSTGRES_DB` | 脚本（dev 连接串、备份） | `loom` | `scripts/local-db-env.ts` |
-| `LOCAL_POSTGRES_HOST` | 脚本（`dev:local`） | `127.0.0.1` | `scripts/local-db-env.ts` |
-| `LOCAL_POSTGRES_PORT` | 脚本（`dev:local`） | `5433` | `scripts/local-db-env.ts` |
+| `LOCAL_POSTGRES_HOST` | 脚本（`dev:local`） | `127.0.0.1` | `scripts/local-db-env.ts`；`scripts/dev-local.ts` |
+| `LOCAL_POSTGRES_PORT` | 脚本（`dev:local`） | dev 库 `5434`（`docker-compose.dev.yml`，用户/库 `loom_dev`，卷 `loom-dev_loom-dev-pgdata`）；设为 `5433`/`5544`（TEST）会被 dev:local 拒绝；其余脚本（`db:migrate:local` 等）缺省仍是 `5433` | `scripts/dev-local.ts`；`scripts/local-db-env.ts` |
+| `DEV_ALLOW_TEST_DB` | 脚本（`dev:local`） | 未设；`1` 才允许 dev:local 连 TEST 库（沿用 `.env` 的 `POSTGRES_*`），启动打印警告横幅；dev API/worker 会写 TEST 数据并消费其 job | `scripts/dev-local.ts` |
 | `LOCAL_NEXT_PORT` | 脚本（`dev:local`） | `3001`，仅用于拼 `NEXT_PUBLIC_BASE_URL` | `scripts/local-db-env.ts` |
 | `LOOM_PG_IMAGE` | 脚本（cutover 备份） | `pgvector/pgvector:0.8.2-pg16-bookworm` | `scripts/cutover-backup.ts` |
 

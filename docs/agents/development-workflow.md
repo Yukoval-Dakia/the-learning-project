@@ -20,7 +20,7 @@ ignored local files after the merge. Do not reintroduce another lane's task stat
 ## Local processes
 
 ```bash
-pnpm dev:local        # API + Start 前门 :8788（DEV_PORT 可改；Vite dev server，页面 HMR）+ worker；Postgres 需先起
+pnpm dev:local        # 唯一入口：起 dev Postgres(:5434，与 TEST 隔离)+迁移+API/Start 前门 :8788(Vite HMR)+worker；打开 http://127.0.0.1:8788/
 pnpm dev              # alias for dev:local
 pnpm rw:api           # Hono API（设 RW_FRONTDOOR=dev 才带 Vite 前门；dev:local 已设）
 pnpm worker:dev       # standalone pg-boss worker
