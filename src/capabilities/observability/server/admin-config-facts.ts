@@ -108,6 +108,36 @@ export interface AdminConfigRuntimeSection {
   };
 }
 
+/**
+ * One AI task's catalog defaults plus its next-invocation budget baseline, read
+ * from the task registry by the composition root (the read face must not import it).
+ */
+export interface AdminConfigTaskFacts {
+  readonly kind: string;
+  readonly default_provider: string;
+  readonly default_model: string;
+  readonly default_budget: {
+    readonly maxIterations: number;
+    readonly maxCost: number;
+    readonly transientRetries: number;
+    readonly timeout: number;
+  };
+  /** Typed tasks bypass the chat provider chain, so overrides and the global pin do not apply. */
+  readonly typed: boolean;
+  readonly budget_wiring: {
+    readonly maxIterations: boolean;
+    readonly maxCost: boolean;
+    readonly transientRetries: boolean;
+    readonly timeout: boolean;
+  };
+  readonly effective_budget: {
+    readonly maxIterations: number | 'unbounded' | null;
+    readonly maxCost: number | null;
+    readonly transientRetries: number;
+    readonly timeout: number;
+  };
+}
+
 /** Full fact bundle; recomputed per request for hot reload. */
 export interface AdminConfigRuntimeFacts {
   /** Runtime global switch, validated by its real reader. Null includes an invalid switch. */
@@ -122,7 +152,11 @@ export interface AdminConfigRuntimeFacts {
       }
     >
   >;
+  /** Registry order; the read face lays its task rows out in this order. */
+  readonly task_catalog: readonly AdminConfigTaskFacts[];
   readonly providers: readonly AdminConfigProviderRow[];
+  /** Cron declarations from capability manifests (jobs.handlers[].schedule). */
+  readonly manifest_schedules: readonly AdminConfigScheduleRow[];
   readonly infra_schedules: readonly AdminConfigScheduleRow[];
   readonly runtime: AdminConfigRuntimeSection;
   readonly effective_values: ConfigEffectiveFacts;

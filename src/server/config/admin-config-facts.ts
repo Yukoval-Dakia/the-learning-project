@@ -16,10 +16,16 @@ import type {
   AdminConfigProviderRow,
   AdminConfigRuntimeFacts,
   AdminConfigScheduleRow,
+  AdminConfigTaskFacts,
 } from '@/capabilities/observability/public';
 import { observabilityConfigEffectiveFacts } from '@/capabilities/observability/public';
 import { practiceConfigEffectiveFacts } from '@/capabilities/practice/public';
-import { type TaskKind, getLearnerLocale, tasks } from '@/capabilities/task-registry';
+import {
+  type TaskKind,
+  getLearnerLocale,
+  taskBudgetFacts,
+  tasks,
+} from '@/capabilities/task-registry';
 import type { ConfigEffectiveFact } from '@/core/config/effective';
 import { DB_POOL_MAX } from '@/db/pool';
 import { projectDagMembers } from '@/kernel/manifest';
@@ -259,6 +265,36 @@ function providerAuthFacts(provider: ProviderAuthSurfaceRow['name']): AdminConfi
   };
 }
 
+function taskCatalogFacts(): AdminConfigTaskFacts[] {
+  return Object.entries(tasks).map(([kind, def]) => {
+    const budget = taskBudgetFacts(kind as TaskKind);
+    return {
+      kind,
+      default_provider: def.defaultProvider,
+      default_model: def.defaultModel,
+      default_budget: def.budget,
+      typed: 'execution' in def && def.execution === 'typed',
+      budget_wiring: budget.wired,
+      effective_budget: budget.effective,
+    };
+  });
+}
+
+/** Cron rows declared by capability manifests; orchestrated DAG members have no cron. */
+function manifestScheduleRows(): AdminConfigScheduleRow[] {
+  return capabilities
+    .flatMap((cap) => (cap.jobs?.handlers ?? []).map((job) => ({ cap, job })))
+    .filter(({ job }) => job.schedule !== undefined)
+    .map(({ cap, job }) => ({
+      name: job.name,
+      cron: job.schedule?.cron ?? '',
+      tz: job.schedule?.tz ?? '',
+      owner: cap.name,
+      queue: job.queue,
+      source: 'capability-manifest' as const,
+    }));
+}
+
 export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
   const typedBindings = registeredTypedTaskBindings();
   const providers: AdminConfigProviderRow[] = providerAuthSurface().map((row) => ({
@@ -340,7 +376,9 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
         }
       }),
     ),
+    task_catalog: taskCatalogFacts(),
     providers,
+    manifest_schedules: manifestScheduleRows(),
     infra_schedules: infraSchedules,
     runtime: {
       port,

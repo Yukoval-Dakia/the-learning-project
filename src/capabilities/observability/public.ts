@@ -36,6 +36,7 @@ export type {
   AdminConfigRuntimeFactsSource,
   AdminConfigRuntimeSection,
   AdminConfigScheduleRow,
+  AdminConfigTaskFacts,
 } from './server/admin-config-facts';
 export {
   __resetAdminConfigRuntimeFactsForTests,
