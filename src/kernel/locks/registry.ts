@@ -194,6 +194,13 @@ export const advisoryLockRegistry = {
     keyPrefix: 'yuk1514:serving:',
     suffixFields: ['eventId'],
   },
+  imageCandidateAccept: {
+    family: 'image-candidate-accept',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'image_candidate_accept:',
+    suffixFields: ['proposalId'],
+  },
   assessmentEvaluationGroup: {
     family: 'assessment-evaluation-group',
     encoding: 'hashtext-pair',

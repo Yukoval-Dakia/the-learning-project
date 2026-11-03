@@ -2,7 +2,7 @@
 // output. This is NOT an answer-correctness judge (that is multimodal_direct); it
 // answers a single question: does the question's 题面 actually appear in / derive
 // from the source image it was extracted from? It exists to catch VLM hallucination
-// on the image_candidate extraction path, where the extracted prompt + answer can be
+// on image_candidate extraction, where the extracted prompt + answer can be
 // internally self-consistent yet unrelated to the image.
 //
 // Runtime lives in src/capabilities/practice/grading/server/judge/source-grounding-verify.ts (reuses the same

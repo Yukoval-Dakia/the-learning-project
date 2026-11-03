@@ -31,7 +31,6 @@ export const fastTestInclude = [
   'server/app.unit.test.ts',
   'server/start/auth.unit.test.ts',
   'src/capabilities/ingestion/server/docx/route-classify.test.ts',
-  'src/capabilities/ingestion/server/image-candidate-accept.unit.test.ts',
   'src/capabilities/notes/jobs/note_verify.control.test.ts',
   'src/capabilities/notes/tasks/note-generate-output.unit.test.ts',
   'src/capabilities/observability/api/backup-import.unit.test.ts',

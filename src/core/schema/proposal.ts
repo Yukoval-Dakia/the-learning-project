@@ -204,7 +204,6 @@ export const acceptSupportedProposalKinds = [
   'record_promotion',
   'goal_scope',
   'block_merge',
-  'image_candidate',
   'question_draft',
   // Active-question structured node edit.
   'question_edit',
@@ -227,10 +226,10 @@ export const acceptSupportedProposalKinds = [
 //       lifecycle changes require an explicit user decision.
 //   B — propose（pending 入收件箱，人审 accept）。默认档，绝大多数 kind 在此。
 //   C — observe-only（仅折叠到 AI 观察面，无 Accept CTA）。恰好是「无 accept
-//       applier」的三 kind：dispatchAccept 对它们抛 unsupported_proposal_kind。
+//       applier」的 kind：dispatchAccept 对它们抛 unsupported_proposal_kind。
 //
 // 红线（防双 SoT 漂移）：C 档集合 ⟺
-// `aiProposalKinds ∖ acceptSupportedProposalKinds`（当前 = {defer, archive}）
+// `aiProposalKinds ∖ acceptSupportedProposalKinds`（当前 = {defer, archive, image_candidate}）
 // 恒等。强度轴 ≠ accept-applier 轴 ≠ tone 视觉轴（KIND_META.tone），三轴勿耦合。
 export type AiProposalStrength = 'A' | 'B' | 'C';
 
@@ -240,6 +239,8 @@ export const aiProposalKindStrength = {
   // C — observe-only（恒 ⟺ aiProposalKinds ∖ acceptSupportedProposalKinds）。
   defer: 'C',
   archive: 'C',
+  // Retired: no producer and no accept applier; legacy rows stay readable.
+  image_candidate: 'C',
   // 判分纠错：人审 accept 才生效（B 档），绝不自动执行。
   judge_retraction: 'B',
   // B — propose（默认档）。
@@ -258,7 +259,6 @@ export const aiProposalKindStrength = {
   record_promotion: 'B',
   goal_scope: 'B',
   block_merge: 'B',
-  image_candidate: 'B',
   question_draft: 'B',
   question_edit: 'B',
   conjecture: 'B',

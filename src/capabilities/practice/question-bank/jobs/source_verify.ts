@@ -189,8 +189,8 @@ type QuestionRow = typeof question.$inferSelect;
 
 // ---------- source-grounding gate (single_source_grounding rows) ----------
 //
-// image_candidate accept (src/capabilities/ingestion/server/image-candidate-accept.ts)
-// materializes a web_sourced draft whose deterministic `source_consistency` n-gram check
+// The retired image_candidate accept path materialized web_sourced drafts whose
+// deterministic `source_consistency` n-gram check
 // is GROUNDING-AGAINST-SELF: the stored `extract` is the SAME single VLM call's own
 // output, so the overlap passes (near-)trivially. Those rows carry
 // metadata.single_source_grounding=true + the source image's asset id
@@ -1130,8 +1130,9 @@ export async function runSourceVerify(
         // 'draft' so a failed-verify cold-start question leaves the pool.
         //
         // SCOPED-BY-CONSTRUCTION (no marker column needed): the ONLY question that can be 'active'
-        // when source_verify reaches this !promote branch is a cold-start pre-promote (the same
-        // image_candidate-accept path that also carries single_source_grounding — so a
+        // when source_verify reaches this !promote branch is a cold-start pre-promote (rows
+        // materialized by the retired image_candidate accept path also carry
+        // single_source_grounding — so a
         // grounding FAIL is one of the reasons a pre-promoted draft lands here). A normal
         // web_sourced draft (sourcing.ts) is 'draft' here → the WHERE draft_status='active' guard
         // makes the demote a no-op; an already-verified question is short-circuited by the

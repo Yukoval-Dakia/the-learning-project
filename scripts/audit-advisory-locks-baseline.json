@@ -58,10 +58,6 @@
       "count": 1
     },
     {
-      "path": "src/capabilities/ingestion/server/image-candidate-accept.ts",
-      "count": 2
-    },
-    {
       "path": "src/capabilities/ingestion/server/import-completion.ts",
       "count": 2
     },

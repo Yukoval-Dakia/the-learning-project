@@ -1474,8 +1474,9 @@ async function runCli(): Promise<void> {
       declarations: proposalDeclarations,
       supportedKinds,
       // judge_retraction now has an accept applier (practice proposal-appliers), so it leaves
-      // the producer-only set.
-      producerOnlyKinds: ['archive', 'defer'],
+      // the producer-only set. image_candidate keeps schema support for historical events;
+      // its producer and accept applier are retired, so pending leftovers are dismiss-only.
+      producerOnlyKinds: ['archive', 'defer', 'image_candidate'],
     },
     providerAttemptCensus: {
       attemptTruthViolations,

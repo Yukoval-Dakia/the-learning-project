@@ -855,14 +855,6 @@
     gap: var(--un-sp-2) var(--un-sp-3);
   }
 
-  & .ib-cost-note {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--un-sp-1);
-    color: var(--un-caution);
-    font-size: var(--un-fs-1);
-  }
-
   & .ib-prop-meta {
     display: flex;
     align-items: center;
