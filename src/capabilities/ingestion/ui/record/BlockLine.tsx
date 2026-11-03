@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { RescueButton, RevertButton } from './BlockTools';
 import { promptOf } from './block-text';
 import type { QuestionEdit, Readiness } from './import-draft';
@@ -64,7 +65,9 @@ export function BlockLine({
       <li className="rc-line" data-checked={check?.marked} {...hover}>
         <span className="rc-line-no un-num">{no}</span>
         <div className="rc-line-main">
-          <p className="rc-line-text">{promptOf(block) || '（没认出文字）'}</p>
+          <MathMarkdown className="rc-line-text">
+            {promptOf(block) || '（没认出文字）'}
+          </MathMarkdown>
           <div className="rc-line-tools">
             {check && (
               <label className="rc-switch rc-switch-sm">
@@ -107,7 +110,7 @@ export function BlockLine({
             onChange={(e) => onEdit({ prompt: e.target.value })}
           />
         ) : (
-          <p className="rc-line-text">{edit.prompt || '（没认出文字）'}</p>
+          <MathMarkdown className="rc-line-text">{edit.prompt || '（没认出文字）'}</MathMarkdown>
         )}
         {!edit.skip && (
           <KnowledgePick
