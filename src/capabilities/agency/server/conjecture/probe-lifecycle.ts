@@ -197,9 +197,16 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
 /** Explicit delivery command. Publication may precede model admission; GET never serves. */
 export async function servePublishedProbe(db: DbOrTx, probeQuestionId: string) {
   return db.transaction(async (tx) => {
-    await lockProbeServe(tx);
-    const [probe] = await tx.select().from(question).where(eq(question.id, probeQuestionId));
+    // Question row before the serve cap, the order answerProbe uses (row → … → cap).
+    // Cap first deadlocks with an answer that holds this row and serves its follow-up.
+    // In serveProbeOnce the row is already this transaction's, so this waits on nothing.
+    const [probe] = await tx
+      .select()
+      .from(question)
+      .where(eq(question.id, probeQuestionId))
+      .for('update');
     if (probe?.source !== PROBE_QUESTION_SOURCE) return { status: 'not_a_probe' as const };
+    await lockProbeServe(tx);
     const [result] = await tx
       .select({ id: event.id })
       .from(event)
