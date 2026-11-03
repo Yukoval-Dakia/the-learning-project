@@ -18,12 +18,17 @@
 // by kind + learner day. The read surface evaluates live and never writes; the
 // hourly job is the only writer.
 
-import { inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { STUCK_RUN_THRESHOLD_MS } from '@/core/ai-run-limits';
 import { CONFIG_REGISTRY, getConfig } from '@/core/config/store';
 import { learnerLocalDay } from '@/core/learner-day';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import {
+  CONFIG_INCOMPLETE_EVENT_ACTION,
+  ConfigIncompletePayloadSchema,
+  checkConfigCompleteness,
+} from '@/kernel/config-completeness';
 import { writeEvents } from '@/kernel/events';
 import { isTaskFailureOutcome } from '@/kernel/records/ai-attempt-facts';
 
@@ -62,10 +67,19 @@ export interface TaskFailureAlertRead extends TaskFailureAlert {
   recorded_at: string | null;
 }
 
+/** A process running without a required setting; names only, never values. */
+export interface ConfigIncompleteAlert {
+  process: 'api' | 'worker';
+  missing: string[];
+  /** api: this read's live check; worker: when its latest boot reported it. */
+  seen_at: string;
+}
+
 export interface TaskFailureAlertsRead {
   checked_at: string;
   thresholds: TaskFailureAlertThresholds;
   alerts: TaskFailureAlertRead[];
+  config_incomplete: ConfigIncompleteAlert[];
 }
 
 function configNumber(key: string): number {
@@ -235,6 +249,35 @@ async function recordedAlerts(db: Db | Tx, ids: string[]): Promise<Map<string, D
   return new Map(rows.map((row) => [row.id, row.created_at]));
 }
 
+// The API answers for itself live. The worker only reports at boot (one event per UTC day),
+// so its row is its latest report inside a day and can outlive a fix by up to that long.
+async function loadConfigIncomplete(db: Db | Tx, now: Date): Promise<ConfigIncompleteAlert[]> {
+  const out: ConfigIncompleteAlert[] = [];
+  const api = checkConfigCompleteness();
+  if (!api.complete) out.push({ process: 'api', missing: api.missing, seen_at: now.toISOString() });
+  const [row] = await db
+    .select({ payload: event.payload, created_at: event.created_at })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, CONFIG_INCOMPLETE_EVENT_ACTION),
+        gte(event.created_at, new Date(now.getTime() - DAY_MS)),
+        sql`${event.payload}->>'process' = 'worker'`,
+      ),
+    )
+    .orderBy(desc(event.created_at))
+    .limit(1);
+  const worker = row ? ConfigIncompletePayloadSchema.safeParse(row.payload) : null;
+  if (row && worker?.success) {
+    out.push({
+      process: 'worker',
+      missing: worker.data.missing,
+      seen_at: row.created_at.toISOString(),
+    });
+  }
+  return out;
+}
+
 /** Read-only: live evaluation plus whether each alert episode has been recorded. */
 export async function loadTaskFailureAlerts(
   db: Db | Tx,
@@ -246,9 +289,11 @@ export async function loadTaskFailureAlerts(
     db,
     alerts.map((alert) => alert.id),
   );
+  const configIncomplete = await loadConfigIncomplete(db, now);
   return {
     checked_at: now.toISOString(),
     thresholds,
+    config_incomplete: configIncomplete,
     alerts: alerts.map((alert) => {
       const recordedAt = recorded.get(alert.id) ?? null;
       return {
