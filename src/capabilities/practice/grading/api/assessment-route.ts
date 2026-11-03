@@ -1,19 +1,17 @@
 // issueAssessment / saveSubmission / 自动保存的 route handler。
-// 薄层：只做 HTTP 整形 + zod 解析 + 域状态 → ApiError 映射；业务全在
-// practice/server/assessment/{issue,submit}.ts。
+// 薄层：只做 HTTP 整形；发题与自动保存的解析和域状态 → ApiError 映射在
+// server/assessment/request.ts（Start 前门共用），业务在 server/assessment/submit.ts。
 
-import type { ZodType } from 'zod';
 import { db } from '@/db/client';
 import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
-import { issueAssessment } from '@/kernel/records/assessment-issuance';
+import { CreateSubmissionBodySchema } from '../../api/assessment-contracts';
 import {
-  CreateSubmissionBodySchema,
-  IssueAssessmentBodySchema,
-  SaveResponseDraftBodySchema,
-} from '../../api/assessment-contracts';
-import { projectIssuanceResult } from '../server/assessment/issue-response';
+  parseAssessmentBody,
+  requestAssessmentIssuance,
+  requestResponseDraftSave,
+} from '../server/assessment/request';
 import { revealFrozenStudyReference } from '../server/assessment/study-context';
-import { getIssuanceState, saveResponseDraft, saveSubmission } from '../server/assessment/submit';
+import { getIssuanceState, saveSubmission } from '../server/assessment/submit';
 
 export async function revealStudyReference(
   _req: Request,
@@ -26,35 +24,11 @@ export async function revealStudyReference(
   }
 }
 
-async function parseBody<T>(req: Request, schema: ZodType<T>): Promise<T> {
-  const raw = await req.json().catch(() => null);
-  const parsed = schema.safeParse(raw);
-  if (!parsed.success) {
-    const message = parsed.error.issues
-      .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-      .join('; ');
-    throw new ApiError('validation_error', message, 400);
-  }
-  return parsed.data;
-}
-
 // ---------- POST /api/issuances ----------
 
 export async function createIssuance(req: Request): Promise<Response> {
   try {
-    const body = await parseBody(req, IssueAssessmentBodySchema);
-    const out = await issueAssessment(db, {
-      issuance_id: body.issuance_id,
-      group_id: body.group_id,
-      revision_id: body.revision_id,
-      part_ids: body.part_ids,
-      option_order_overrides: body.option_order_overrides,
-      mode: body.mode,
-      container_occurrence_ref: body.container_occurrence_ref ?? null,
-      claim: body.claim,
-      actorRef: 'api:issue',
-    });
-    const response = projectIssuanceResult(body, out);
+    const response = await requestAssessmentIssuance(db, () => req.json());
     return resourceResponse(response, {
       outcome: response.status === 'issued' ? 'created' : 'existing',
       location: `/api/issuances/${encodeURIComponent(response.issuance.issuance_id)}`,
@@ -85,40 +59,7 @@ export async function getIssuance(
 
 export async function saveDraft(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const body = await parseBody(req, SaveResponseDraftBodySchema);
-    const out = await saveResponseDraft(db, {
-      issuance_id: params.id,
-      evaluation_group_ref: body.evaluation_group_ref ?? null,
-      response_set: body.response_set,
-      group_evidence: body.group_evidence,
-      expected_save_epoch: body.expected_save_epoch,
-    });
-    switch (out.status) {
-      case 'saved':
-        return Response.json(out);
-      case 'issuance_not_found':
-        throw new ApiError('not_found', `issuance '${params.id}' not found`, 404);
-      case 'invalid_response':
-        throw new ApiError(
-          'invalid_response',
-          `response_set invalid for issued scope: ${(out.issues ?? []).join('; ')}`,
-          422,
-        );
-      case 'stale_draft':
-        throw new ApiError(
-          'stale_draft',
-          `draft epoch ${out.current_save_epoch} is newer than expected_save_epoch — refresh before overwriting`,
-          409,
-        );
-      case 'already_submitted':
-        throw new ApiError(
-          'already_submitted',
-          out.conflict_reason ?? 'draft for an already-submitted attempt cannot be recreated',
-          409,
-        );
-      default:
-        throw new ApiError('internal_error', 'unexpected saveResponseDraft status', 500);
-    }
+    return Response.json(await requestResponseDraftSave(db, params.id, () => req.json()));
   } catch (err) {
     return errorResponse(err);
   }
@@ -128,7 +69,7 @@ export async function saveDraft(req: Request, params: Record<string, string>): P
 
 export async function createSubmission(req: Request): Promise<Response> {
   try {
-    const body = await parseBody(req, CreateSubmissionBodySchema);
+    const body = await parseAssessmentBody(() => req.json(), CreateSubmissionBodySchema);
     const out = await saveSubmission(db, {
       issuance_id: body.issuance_id,
       evaluation_group_id: body.evaluation_group_id,

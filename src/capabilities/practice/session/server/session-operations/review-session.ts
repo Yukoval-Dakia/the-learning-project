@@ -3,9 +3,10 @@
 // route files used to re-know one by one: which Review member implements a
 // transition, the paper-frozen reopen wrapper, the close → session_summary
 // dispatch contract (env-gated, best-effort), creation dispatch between the
-// FSRS and paper-bound flows, and the detail read's type filter + not-found
-// error. api/* keeps Request parsing (sendBeacon tolerance included), schema
-// validation, and Response/deprecation shaping.
+// FSRS and paper-bound flows (create body parsing included, shared by the Hono
+// route and the Start front door), and the detail read's type filter + not-found
+// error. api/* keeps the other routes' Request parsing (sendBeacon tolerance
+// included), schema validation, and Response/deprecation shaping.
 
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import * as Review from '@/capabilities/practice/session/server/review-session-lifecycle';
@@ -15,6 +16,7 @@ import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { ApiError } from '@/kernel/http';
 import { lockPaperReviewSessionCreate } from '@/kernel/locks/practice-session';
 import { getStartedBoss } from '@/server/boss/client';
+import { CreateReviewSessionBody } from '../../../api/contracts';
 import {
   assertIssuedPaperSlotsRenderable,
   assertPaperOpenable,
@@ -99,11 +101,28 @@ export interface PaperReviewSessionResult {
   created: boolean;
 }
 
-/** Dispatch session creation: paper-bound flow when a paper id was supplied. */
-export async function createReviewSession(input: {
-  paperId?: string;
-}): Promise<PaperReviewSessionResult> {
-  if (input.paperId) return createPaperReviewSession(input.paperId);
+/**
+ * POST /api/review-sessions for both doors: an empty body starts an FSRS session, a paper id
+ * starts or reuses that paper's session.
+ */
+export async function createReviewSession(requestText: string): Promise<PaperReviewSessionResult> {
+  let raw: unknown = {};
+  if (requestText.trim()) {
+    try {
+      raw = JSON.parse(requestText);
+    } catch {
+      throw new ApiError('validation_error', 'request body must be valid JSON', 400);
+    }
+  }
+  const parsed = CreateReviewSessionBody.safeParse(raw);
+  if (!parsed.success) {
+    throw new ApiError(
+      'validation_error',
+      parsed.error.issues.map((issue) => issue.message).join('; '),
+      400,
+    );
+  }
+  if (parsed.data.paper_id) return createPaperReviewSession(parsed.data.paper_id);
   const { sessionId } = await Review.startReviewSession(db);
   return { sessionId, created: true };
 }
