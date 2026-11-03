@@ -59,8 +59,13 @@ export function buildLearnerReturnWakeHandler(
     const [row] = await db.select().from(event).where(eq(event.id, eventId)).limit(1);
     if (!row || !WAKE_ACTIONS.has(row.action)) return;
 
-    const coachWoken = await enqueueCoachIfDue(db, await getStartedBoss(), new Date());
-    if (coachWoken) console.log('[learner_return_wake] coach plan stale; coach_daily enqueued');
+    // The coach wake is an add-on: its failure must not cost the learner the brief refresh below.
+    try {
+      const coachWoken = await enqueueCoachIfDue(db, await getStartedBoss(), new Date());
+      if (coachWoken) console.log('[learner_return_wake] coach plan stale; coach_daily enqueued');
+    } catch (err) {
+      console.error('[learner_return_wake] coach wake check failed; continuing', err);
+    }
 
     const tier = await loadActivityTier(db, row.created_at, row.created_at);
     if (tier !== 'idle' && tier !== 'dormant') return;

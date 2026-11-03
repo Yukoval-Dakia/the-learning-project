@@ -229,6 +229,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
   const deriveWeakPoints =
     deps.deriveWeakPointsFn ??
     ((db: Db, input: { now: Date }) => deriveActionableWeakPoints(db, input));
+  // Run-log contract value kept verbatim from the nightly era; the trigger is now the return wake.
   const triggerActorRef = 'nightly_coach';
   const objective = COACH_DAILY_OBJECTIVE;
 
