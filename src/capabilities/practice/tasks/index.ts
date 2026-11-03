@@ -30,7 +30,6 @@ import { quizGenTaskSpec } from './quiz-generation';
 import { quizPlanTaskSpec } from './quiz-planning';
 import { solutionGenerateTaskSpec, solutionGenerateVisionTaskSpec } from './solution-generation';
 import { sourcingTaskSpec } from './sourcing';
-import { supplyPlanTaskSpec } from './supply-planning';
 import { teachingQualityTaskSpec } from './teaching-quality';
 
 export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
@@ -58,7 +57,6 @@ export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
   SelectionOrchestratorTask: selectionOrchestratorTaskSpec,
   SessionSummaryTask: sessionSummaryTaskSpec,
   SourcingTask: sourcingTaskSpec,
-  SupplyPlanTask: supplyPlanTaskSpec,
   JevScoringDecisionTask: jevScoringDecisionTaskSpec,
   AssessmentRuleJudgeTask: assessmentRuleTaskSpec,
   AssessmentRubricJudgeTask: assessmentRubricTaskSpec,

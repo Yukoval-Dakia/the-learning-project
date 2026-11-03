@@ -32,5 +32,6 @@ export const taskCatalog = composeTaskCatalog(
   // YUK-1448: +BankRequirementInterpretTask +BankConditionVerifyTask → 60.
   // YUK-1664: −KnowledgeEdgeProposeTask（夜间边提议并入 KnowledgeReviewTask）→ 59.
   // YUK-1664: -ResearchMeetingDirectorTask（影子例会线退役，ADR-0067 D4）→ 58.
-  58,
+  // YUK-1739: -SupplyPlanTask（jyeoo 路由并入夜间扫描器的确定性规则）→ 57.
+  57,
 );

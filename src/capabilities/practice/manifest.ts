@@ -1,7 +1,6 @@
 import { QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION } from '@/core/schema/event';
 import { API_ERROR_RESPONSES, ApiErrorResponseSchema } from '@/kernel/http-contracts';
 import { type CapabilityManifest, defineCapability } from '@/kernel/manifest';
-import { nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import { CoverageLatticeResponseSchema } from './api/coverage-lattice-contracts';
 import {
@@ -168,20 +167,6 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/jyeoo_staged_asset_reap').then((m) => m.buildJyeooStagedAssetReapHandler),
       },
-      // YUK-987 (985/E2) — 供给需求层 planner agent。LLM 产出 SupplyPlanV1 需求计划，机器门
-      // （schema/活KC/词表/去重/预算声明，supply-plan-gate.ts）校验后逐项写需求事件，并把
-      // accepted plan 入队 supply_execute（确定性 executor）。05:50 cron：在 recalibration 固化（DAG 04:50 起）之后、
-      // question_supply_nightly（DAG ~06:00）之前。与 DAG 无硬边是设计使然：扫描器安全网必须
-      // 能在 planner 失败/空计划时照常派发缺口（planner 不得拖死安全网）；反向也无边——
-      // planner 读原始信号而非扫描器结论，需求独立形成，同 job 内跑 discoverSupplyTargets
-      // 写 shadow 对比事件（YUK-698 Phase D 影子评估）。queue=llm：LLM burn 同档 DLQ 重试。
-      {
-        name: 'supply_planner',
-        schedule: { cron: '50 5 * * *', tz: 'Asia/Shanghai' },
-        eligibility: nightlyEligibility('deterministic', { usesModel: true }),
-        queue: 'llm',
-        load: () => import('./jobs/supply_planner').then((m) => m.buildSupplyPlannerHandler),
-      },
       // YUK-1560 删除 axis_state_nightly 夜写及 batch writer；learner_axis_state 只保留历史行（merge 时 rename/freeze）。
       ...fromOwnerParts((part) => part.jobs?.handlers),
     ],
@@ -219,8 +204,7 @@ export const practiceCapability = defineCapability({
       },
       // YUK-1448 (Stage 1 batch D) — search_bank 检索不足时的缺口落单工具：幂等登记
       // EvidenceDemandV1 + 检索约束到既有供题台账，再走现有 dispatcher；无法落实的
-      // 限制返回 held/unsupported_constraint。授权面：copilot（COPILOT_TOOLS）；
-      // supply_planner 保持只读挂载；不进 Maintenance。
+      // 限制返回 held/unsupported_constraint。授权面：copilot（COPILOT_TOOLS）；不进 Maintenance。
       {
         name: 'file_bank_gap',
         load: () => import('./server/tools/file-bank-gap').then((m) => m.fileBankGapTool),

@@ -243,8 +243,7 @@ export {
 // Keep executeSupplyPlan/buildSupplyExecutorDeps out of this barrel: that chain
 // (plan-executor → web-candidates → SourcingTask → pi agent runtime) pulls the SDK into the
 // migrate cjs bundle, whose top-level createRequire(import.meta.url) fails at startup.
-// server/worker mark it external, so only migrate is affected. scripts/supply-execute.ts
-// imports the deep path directly.
+// server/worker mark it external, so only migrate is affected.
 
 export {
   MEM0_PRIOR_BLOCK_CHAR_CAP,

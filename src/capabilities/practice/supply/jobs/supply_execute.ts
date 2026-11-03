@@ -1,16 +1,13 @@
 // 供给执行 job：确定性 plan executor 的 pg-boss 入口。
-// 三个 caller 共用：
-//   (a) supply_planner 门后第二阶段——accepted plan 立即入队本 job（planner 当晚
-//       计划当晚执行；规划与执行分离，各自独立 DLQ 重试语义，planner 不等执行）；
-//   (b) dispatcher 安全网派发——sourcing_web 分支重指向本队列（scanner 构造需求项，
+// caller：
+//   (a) dispatcher 派发——sourcing_web / jyeoo_fetch 路由入本队列（scanner 构造需求项，
 //       route_preference 带所选路由起的完整 plan；web blocked 时同一需求沿余下
 //       路由回落，见 web-supply.ts 的 routesTried/nextRoute）；
-//   (b') web 需求路由回落——observe/recovery 见 blocked 后以同一 demand_id 入队
-//       本队列（plan_event_id=web_supply_fallback_<demandId>，singletonKey 同名）；
-//   (c) 手动 caller：scripts/supply-execute.ts（--plan <id> | --latest）。
+//   (b) web 需求路由回落——observe/recovery 见 blocked 后以同一 demand_id 入队
+//       本队列（plan_event_id=web_supply_fallback_<demandId>，singletonKey 同名）。
 // executor 本体是纯确定性模块（question-supply/plan-executor.ts）：无 LLM 判断，
 // 路由按 route_preference 机械走；LLM 只在候选工具内部（web SourcingTask / jyeoo
-// subprocess / quiz_gen job）。幂等键 plan_event_id（planner 路径）；scanner/手动
+// subprocess / quiz_gen job）。幂等键 plan_event_id（回落路径）；scanner
 // 路径 plan_event_id=null，幂等由 store seam 的 canonical hash 承担（重投只吃
 // duplicate_exact 软拒，不堆重复 draft）。
 import type { JobWithMetadata } from 'pg-boss';
@@ -31,7 +28,7 @@ import {
 } from '../server/plan-executor';
 import { runWebFetchCandidates } from '../server/web-candidates';
 
-/** scanner / planner 共用的默认 jyeoo 抓取参数（与 scripts/jyeoo-backfill.ts 缺省一致）。 */
+/** 默认 jyeoo 抓取参数（与 scripts/jyeoo-backfill.ts 缺省一致）。 */
 export const SUPPLY_EXECUTE_JYEOO_DEFAULTS: JyeooFetchConfig = {
   grade: 11,
   subject: 'math2',
@@ -42,7 +39,7 @@ export const SUPPLY_EXECUTE_JYEOO_DEFAULTS: JyeooFetchConfig = {
 // ── job data 契约（snake_case，pg-boss payload） ──────────────────────────────
 // route_preference 取 SupplyRoute 全词表（executor 对 author_question /
 // ingest_existing / image_candidate 等不可执行路由记 skipped:'route_not_executable'，
-// 留痕诚实——planner 的完整偏好不静默截断）。
+// 留痕诚实——完整偏好不静默截断）。
 const SupplyExecuteItem = z.object({
   demand_id: z.string().min(1),
   knowledge_id: z.string().min(1),
@@ -72,7 +69,7 @@ const SupplyExecuteJobData = z.object({
 export type SupplyExecuteJobDataT = z.infer<typeof SupplyExecuteJobData>;
 
 /**
- * 生产 deps 装配（supply_planner phase-2 / 手动 caller 共用）。web 生产线的
+ * 生产 deps 装配。web 生产线的
  * runSourcingAgent/parseLoose 经 defaultWebSourcingDeps() 唯一组装点；
  * quiz_gen enqueue 失败上抛（pg-boss 语义保留）；web 由同 demand owner
  * 持久恢复，不将来源获取变成用户 proposal。

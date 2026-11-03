@@ -123,11 +123,11 @@ flowchart TB
 ### 1. Task Registry (58 TaskSpecs)
 
 The central `src/capabilities/task-catalog.ts` composes TaskSpecs from 6 capability owner maps
-via `composeTaskCatalog` from `src/ai/task-catalog.ts` (which enforces `expectedCount = 58` at module load):
+via `composeTaskCatalog` from `src/ai/task-catalog.ts` (which enforces `expectedCount = 57` at module load):
 
 | Capability | Task Count | Examples |
 |------------|------------|----------|
-| Practice | 27 | AttributionTask, VariantGenTask, JudgeTasks, QuizGenTask, SourcingTask, SupplyPlanTask |
+| Practice | 26 | AttributionTask, VariantGenTask, JudgeTasks, QuizGenTask, SourcingTask |
 | Ingestion | 9 | VisionExtractTask, StructureTask, TaggingTask |
 | Knowledge | 2 | FrontierPrerequisiteTask, KnowledgeReviewTask |
 | Notes | 3 | NoteGenerateTask, NoteVerifyTask, NoteRefineTask |

@@ -116,8 +116,7 @@ export const PROPOSE_WRITE_TOOLS = [
   'glm_ocr',
   // YUK-1448 (Stage 1 batch D) — search_bank 检索不足时的缺口落单工具（幂等台账
   // 登记 + 既有 dispatcher；held/unsupported_constraint 不静默丢字段）。授权面：
-  // 仅 copilot（COPILOT_TOOLS）；supply_planner 保持只读挂载；其余面不授
-  // （备题/供给域写工具，非运维面）。
+  // 仅 copilot（COPILOT_TOOLS）；其余面不授（备题/供给域写工具，非运维面）。
   'file_bank_gap',
   // YUK-1522 (R8) — ingestion agent contract tools. report_ingestion_progress
   // writes the durable stage/item/error event stream; ask_learner creates and

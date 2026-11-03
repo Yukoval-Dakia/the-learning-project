@@ -1,7 +1,7 @@
 // YUK-988 (Supply-Agent/3) — SupplyPlan 确定性执行核（E3 Slice 3）。
 //
-// 把 planner 落地的 SupplyPlan items（experimental:supply_planner 事件 + 逐项
-// experimental:supply_planner_demand）沿 route_preference 顺序转成真实获取动作：
+// 把 supply_execute 需求项（夜间扫描器 / placement / web 回落派发）沿 route_preference
+// 顺序转成真实获取动作：
 //
 //   - jyeoo_fetch → runJyeooFetchCandidates（预算租约 + 批量吸收）+ 逐候选 commit；
 //   - sourcing_web → 注入的 runWebFetchCandidates（web 候选生产线，LLM 相位在工具层）
@@ -51,7 +51,7 @@ import type { DifficultyBand } from './target-discovery';
 import type { RunWebFetchCandidatesParams, RunWebFetchCandidatesResult } from './web-candidates';
 import { dispatchWebSupplyRouteFallback, runWebSupply } from './web-supply';
 
-/** executor 可执行的获取路由（SupplyPlanV1.route_preference 的可执行子集）。 */
+/** executor 可执行的获取路由（SupplyRoute 词表的可执行子集）。 */
 export type SupplyRouteName = 'jyeoo_fetch' | 'sourcing_web' | 'quiz_gen';
 
 export const SUPPLY_EXECUTOR_ROUTES: readonly SupplyRouteName[] = [
@@ -112,7 +112,7 @@ async function resolveDeclaredStageGrade(
   return jyeooGradeForDeclaredStage(rows[0]?.declaredStage ?? null);
 }
 
-/** planner → executor 的需求项（SupplyPlanItemV1 的执行投影；kind 'any' = 无题型约束）。 */
+/** executor 的需求项（kind 'any' = 无题型约束）。 */
 export interface SupplyDemandItem {
   demandId: string;
   knowledgeId: string;
@@ -248,7 +248,7 @@ export const SUPPLY_EXECUTOR_EVENT_ACTION = 'experimental:supply_executor';
 /** 逐 item 增量完成事件：崩溃重跑的 resume 凭证（demand_id 粒度幂等）。 */
 export const SUPPLY_EXECUTOR_ITEM_EVENT_ACTION = 'experimental:supply_executor_item';
 
-// ── 锚点解析（镜像 supply_planner.loadLiveKnowledge 的 parent 链有效 domain 求解） ──
+// ── 锚点解析（parent 链有效 domain 求解） ──
 
 interface LiveKnowledgeRow {
   id: string;
@@ -794,7 +794,7 @@ export async function executeSupplyPlan(
       } else if (route === 'quiz_gen') {
         tally = await runQuizGenRoute(run, deps);
       } else {
-        // SupplyPlanV1 词表含 author_question / ingest_existing / image_candidate 等
+        // SupplyRoute 词表含 author_question / ingest_existing / image_candidate 等
         // 无自动执行面的路由（dispatcher 同款：emit + manual，不盲发）。
         tally = {
           route,

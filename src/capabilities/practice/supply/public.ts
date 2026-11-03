@@ -41,7 +41,7 @@ export {
   readVisibleVectorNearHold,
   vectorNearHoldMetadata,
 } from './server/ingest-dedup';
-export { jyeooBudgetRemaining, jyeooDailyFetchBudget } from './server/jyeoo-budget';
+export { jyeooDailyFetchBudget } from './server/jyeoo-budget';
 export {
   type JyeooFetchCandidatesResult,
   canonicalJyeooQuestionHash,
@@ -73,7 +73,6 @@ export {
   type SupplyGapKind,
   type SupplyRoute,
   acquisitionTierForQuestion,
-  discoverSupplyTargets,
   seedGenerationMethod,
   seedRoutePreference,
   targetFingerprint,
@@ -149,11 +148,6 @@ export {
   materializePlacementStartersForGoal,
   resolvePlacementStarterGoalAuthority,
 } from './server/placement-starter-store';
-export {
-  checkSupplyPlanKnowledgeIds,
-  checkSupplyPlanStructure,
-  parseSupplyPlanOutput,
-} from './server/supply-plan-gate';
 export {
   EditQuestionInput,
   type EditQuestionInputT,

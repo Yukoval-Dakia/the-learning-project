@@ -338,9 +338,9 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
 以下路径整块归功能线。架构线的任何切片都不要求在功能线落位之前改动它们：
 
 - `practice/server/question-supply/*`：web-supply、placement-starter*、plan-executor、dispatcher、refill、target-discovery 等。
-- `practice/jobs/` 根目录余项：`quiz_gen*`、`supply_planner`、`jyeoo_staged_asset_reap`。`supply_execute`、`question_supply_nightly` 已在 `practice/supply/jobs/`，`source_verify*`、`question_admission_run` 已在 `practice/question-bank/jobs/`；`confusable_contrast_nightly` 已删除，对比缺口并入 `question_supply_nightly` 的缺口发现。
+- `practice/jobs/` 根目录余项：`quiz_gen*`、`jyeoo_staged_asset_reap`。`supply_execute`、`question_supply_nightly` 已在 `practice/supply/jobs/`，`source_verify*`、`question_admission_run` 已在 `practice/question-bank/jobs/`；`confusable_contrast_nightly` 已删除，对比缺口并入 `question_supply_nightly` 的缺口发现；`supply_planner` 已删除，jyeoo 路由并入扫描器的确定性路由规则。
 - `server/tools/submit-question.ts` 的供题候选路径，以及 `file-bank-gap`、`jyeoo-fetch-candidates`、`web-fetch-candidates`、`generate-question-candidate`、`question-author`、`store-sourced-question`。
-- `server/{placement-starter-recovery,supply-plan-operation,web-sourcing-operation,question-generation-grounding}.ts`，供题相关 tasks，`api/quiz-gen-trigger*`。
+- `server/{placement-starter-recovery,web-sourcing-operation,question-generation-grounding}.ts`，供题相关 tasks，`api/quiz-gen-trigger*`。
 
 **建议目标：** `practice/supply/` 子 owner，位于 scheduling 之上、placement 之下。也可以是独立的 `src/capabilities/supply`，但它对题库/判分的 value 依赖会使跨能力 ratchet 上调，见 §6，由功能线权衡。
 

@@ -1,7 +1,7 @@
 // Dispatch supply targets to existing acquisition faces and record traces.
 // Thin IO layer: map a target's chosen route to an existing job/task. No new acquisition
 // task or AI task.
-// - sourcing_web → supply_execute (plan executor, commit seam, source verify)
+// - sourcing_web / jyeoo_fetch → supply_execute (plan executor, commit seam, source verify)
 // - quiz_gen → quiz_gen (only when material/closed-book generation is explicitly wanted)
 // - author_question / image_candidate / ingest_existing → not auto-dispatched; emit
 // status='manual' for a user or copilot to pick up.
@@ -29,6 +29,7 @@ type DispatchQueue = 'supply_execute' | 'quiz_gen';
  * key/value types checked while preserving the literal keys for the derived Set.
  */
 const AUTO_ROUTE_TO_QUEUE: Partial<Record<SupplyRoute, DispatchQueue>> = {
+  jyeoo_fetch: 'supply_execute',
   sourcing_web: 'supply_execute',
   quiz_gen: 'quiz_gen',
 };
@@ -166,7 +167,7 @@ function queuedSupplyPromise(
   const route = row.chosen_route;
   const count = row.desired_count;
   if (typeof jobId !== 'string' || jobId.length === 0) return null;
-  if (route !== 'sourcing_web' && route !== 'quiz_gen') return null;
+  if (route !== 'sourcing_web' && route !== 'jyeoo_fetch' && route !== 'quiz_gen') return null;
   if (typeof count !== 'number' || !Number.isInteger(count) || count <= 0) return null;
   return { jobId, route, count };
 }
@@ -230,6 +231,8 @@ export interface DispatchDeps {
   transformSupplyTrace?: (trace: SupplyTraceV1T) => unknown;
   /** Claim-owned transactions require enqueue/event failures to abort rather than degrade. */
   atomic?: boolean;
+  /** Passed only by question_supply_nightly; see route-planner SupplyRouteOptions. */
+  jyeooBudgetRemaining?: number;
 }
 
 /**
@@ -298,7 +301,7 @@ export async function dispatchSupplyTarget(
   const actorRef = deps.actorRef ?? 'question_supply';
   const cooldownDays = deps.cooldownDays ?? SUPPLY_DISPATCH_COOLDOWN_DAYS;
   const webSearchAvailable = (deps.webSearchAvailable ?? defaultWebSearchAvailable)();
-  const routePlan = planSupplyRoutes(target);
+  const routePlan = planSupplyRoutes(target, { jyeooBudgetRemaining: deps.jyeooBudgetRemaining });
   const anchorKid = target.knowledgeIds[0] ?? null;
 
   // Single-source the supply_trace input; both call sites (dispatch data + observability event)
@@ -371,7 +374,7 @@ export async function dispatchSupplyTarget(
         reason: target.reason,
       };
     } else {
-      // 自动派：AUTO_ROUTE_TO_QUEUE 单源映射（sourcing_web→'supply_execute'，quiz_gen→'quiz_gen'）。
+      // 自动派：AUTO_ROUTE_TO_QUEUE 单源映射（sourcing_web/jyeoo_fetch→'supply_execute'，quiz_gen→'quiz_gen'）。
       const queue: DispatchQueue = resolveDispatchQueue(autoRoute);
       const dispatchTrace = traceFor(autoRoute);
       const commonData = {
@@ -420,7 +423,7 @@ export async function dispatchSupplyTarget(
               ...(placementTrace ? { supply_trace: placementTrace } : {}),
             }
           : null;
-      // E3 — sourcing_web 分支重指向确定性 executor。route_preference 携带从
+      // E3 — supply_execute 分支（sourcing_web / jyeoo_fetch）走确定性 executor。route_preference 携带从
       // 所选路由起的完整 route plan（含不可执行尾项，executor 记 skipped 留痕）：
       // 需求持久化整份计划后，web blocked 时同一需求可沿余下路由回落（YUK-1664
       // S3，executor 内 in-run / observe·recovery 异步各一次，routeTried 有界）。
@@ -433,13 +436,15 @@ export async function dispatchSupplyTarget(
             demand_id: executorDemandId,
             knowledge_id: anchorKid,
             kind: target.kind && target.kind !== 'any' ? target.kind : 'any',
-            // forward the target's difficulty band (was hardcoded null).
-            // executorData only runs on the supply_execute queue (autoRoute ===
-            // 'sourcing_web'), where plan-executor validates the band against
-            // DIFFICULTY_BANDS and feeds it to runJyeooFetchCandidates' band filter.
+            // plan-executor validates the band against DIFFICULTY_BANDS and feeds it
+            // to runJyeooFetchCandidates' band filter.
             difficulty_band: target.difficultyBand,
             count: target.desiredCount,
-            route_preference: routePlan.slice(routePlan.indexOf(autoRoute)),
+            // A jyeoo head is chosen without the web-search gate, so web-dependent tail
+            // routes are dropped here when search is unavailable.
+            route_preference: routePlan
+              .slice(routePlan.indexOf(autoRoute))
+              .filter((route) => webSearchAvailable || !routeNeedsWebSearch(route, target)),
             ...(target.placementStarter
               ? { placement_claim_id: target.placementStarter.claimId }
               : {}),
@@ -464,7 +469,7 @@ export async function dispatchSupplyTarget(
           const { trigger, ref_id, ...rest } = quizGenData;
           jobId = await enqueue(queue, { trigger, ref_id, ...rest });
         } else {
-          // sourcing_web（supply_execute 队列）——executor 单路由需求项。
+          // sourcing_web / jyeoo_fetch（supply_execute 队列）——executor 单需求项。
           jobId = await enqueue(queue, executorData);
         }
         result = {

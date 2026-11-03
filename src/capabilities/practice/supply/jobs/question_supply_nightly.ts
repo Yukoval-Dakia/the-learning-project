@@ -3,7 +3,7 @@
 // 结构上仿 item_prior_backfill.ts：纯发现（discoverSupplyTargets 覆盖缺口 +
 // discoverConfusableContrastTargets 易混对比缺口，零写零 LLM）→
 // 确定性缺口扫描得 QuestionSupplyTarget[] → dispatchSupplyTargets 把每个目标派到
-// 既有获取面（sourcing / quiz_gen 队列）或标 manual。出题（quiz_gen / author）+ 录入
+// 既有获取面（supply_execute：jyeoo / web；quiz_gen 队列）或标 manual。出题（quiz_gen / author）+ 录入
 // （OCR）两条创建路径产生的「KC 前沿但缺题」缺口都被此夜扫兜住——无需每条创建路径埋
 // hook。
 //
@@ -31,6 +31,7 @@ import {
 } from '@/capabilities/practice/public';
 import { discoverConfusableContrastTargets } from '@/capabilities/practice/supply/server/confusable-contrast-discovery';
 import { runInventoryShadowDualRead } from '@/capabilities/practice/supply/server/inventory-projection';
+import { jyeooBudgetRemaining } from '@/capabilities/practice/supply/server/jyeoo-budget';
 import {
   type QuestionSupplyTarget,
   computePriority,
@@ -284,7 +285,12 @@ async function runSupplyDiscoveryAndDispatch(
   // 优先级的 N 个，其余留下轮（截掉的目标不 dispatch ⇒ 无 fingerprint 落库 ⇒ 无 cooldown 副作用）。
   const dispatchTargets = targets.slice(0, deps.maxPerRun ?? DEFAULT_MAX_PER_RUN);
   if (dispatchTargets.length === 0) return emptyTally(targets.length);
-  const results = await dispatchSupplyTargets(db, dispatchTargets, deps.dispatchDeps);
+  // jyeoo 付费抓取只经这里：路由规则读当日余额，派发数仍是上面的 per-run 硬顶。
+  const results = await dispatchSupplyTargets(db, dispatchTargets, {
+    ...deps.dispatchDeps,
+    jyeooBudgetRemaining:
+      deps.dispatchDeps?.jyeooBudgetRemaining ?? (await jyeooBudgetRemaining(db)),
+  });
   return tallyByStatus(results, targets.length);
 }
 
