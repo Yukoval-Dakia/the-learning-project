@@ -1058,22 +1058,38 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
     });
   } catch (e) {
     if (staleError) {
-      // Best-effort rollback marker so later reads see status='stale', not pending.
+      // Best-effort rollback marker so later reads see status='stale', not pending. Written
+      // under the proposal row lock and only while unrated, so it cannot land beside a dismiss.
       try {
-        await writeEvent(db, {
-          id: newId(),
-          session_id: null,
-          actor_kind: 'user',
-          actor_ref: 'self',
-          action: 'rate',
-          subject_kind: 'event',
-          subject_id: proposalId,
-          outcome: 'success',
-          payload: { rating: 'rollback' },
-          caused_by_event_id: proposalId,
-          task_run_id: null,
-          cost_micro_usd: null,
-          created_at: new Date(),
+        await db.transaction(async (tx) => {
+          await tx.execute(sql`SELECT id FROM event WHERE id = ${proposalId} FOR UPDATE`);
+          const [rated] = await tx
+            .select({ id: event.id })
+            .from(event)
+            .where(
+              and(
+                eq(event.action, 'rate'),
+                eq(event.subject_kind, 'event'),
+                eq(event.caused_by_event_id, proposalId),
+              ),
+            )
+            .limit(1);
+          if (rated) return;
+          await writeEvent(tx, {
+            id: newId(),
+            session_id: null,
+            actor_kind: 'user',
+            actor_ref: 'self',
+            action: 'rate',
+            subject_kind: 'event',
+            subject_id: proposalId,
+            outcome: 'success',
+            payload: { rating: 'rollback' },
+            caused_by_event_id: proposalId,
+            task_run_id: null,
+            cost_micro_usd: null,
+            created_at: new Date(),
+          });
         });
       } catch (err) {
         console.warn('acceptProposal: failed to write stale rate event', err);
@@ -1087,6 +1103,7 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
 export async function dismissProposal(
   db: Db,
   proposalId: string,
+  userNote?: string,
 ): Promise<{ idempotent: boolean }> {
   // Same row lock as acceptProposal, so a dismiss racing an in-flight accept sees its rate
   // instead of writing a second one; the rate check only counts under that lock.
@@ -1138,7 +1155,7 @@ export async function dismissProposal(
       subject_kind: 'event',
       subject_id: proposalId,
       outcome: 'success',
-      payload: { rating: 'dismiss' },
+      payload: { rating: 'dismiss', ...(userNote ? { user_note: userNote } : {}) },
       caused_by_event_id: proposalId,
       task_run_id: null,
       cost_micro_usd: null,

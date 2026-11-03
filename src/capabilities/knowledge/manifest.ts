@@ -264,6 +264,13 @@ export const knowledgeCapability = defineCapability({
               (m) => m.knowledgeMutationProposalAcceptApplier,
             ),
         },
+        // Same applier as knowledge_node: dismiss must take accept's proposal row lock.
+        dismiss: {
+          load: () =>
+            import('./server/proposal-appliers').then(
+              (module) => module.knowledgeNodeProposalDismissApplier,
+            ),
+        },
       },
       {
         kind: 'knowledge_edge',
