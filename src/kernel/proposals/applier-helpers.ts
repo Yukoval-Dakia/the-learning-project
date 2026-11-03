@@ -9,14 +9,14 @@ import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { advisoryLockRegistry, deriveHashtextExtendedLockKey } from '@/kernel/locks/registry';
 
 type DbLike = Db | Tx;
 
 /** Serialize one proposal across lifecycle paths that opt into the shared decision lock. */
 export async function acquireProposalDecisionLock(tx: Tx, proposalId: string): Promise<void> {
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`proposal_decision:${proposalId}`}, 0))`,
-  );
+  const key = deriveHashtextExtendedLockKey(advisoryLockRegistry.proposalDecision, { proposalId });
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 }
 
 export type ExistingRateDecision = 'accept' | 'dismiss' | 'reverse' | 'change_type' | 'rollback';
