@@ -69,6 +69,8 @@ const Assessment = z.object({
   ),
   independent_mastery: z.literal(false),
   evidence_scope: z.literal('chat_context_unknown'),
+  /** YUK-1406 — subject render notation from the server; absent on older snapshots. */
+  notation: z.string().nullable().optional(),
 });
 type Snapshot = z.infer<typeof Assessment>;
 
@@ -258,14 +260,16 @@ function AssessmentBody(
             {dto.materials.map((m) => (
               <div key={m.material_id}>
                 {m.content_md !== undefined ? (
-                  <MathMarkdown>{m.content_md}</MathMarkdown>
+                  <MathMarkdown notation={a.notation ?? null}>{m.content_md}</MathMarkdown>
                 ) : (
                   <StimulusFigure assetId={m.asset_id} caption={m.caption} alt={m.alt_text} />
                 )}
               </div>
             ))}
             {dto.faces.map((face) => (
-              <MathMarkdown key={face.part_id}>{face.prompt_md}</MathMarkdown>
+              <MathMarkdown key={face.part_id} notation={a.notation ?? null}>
+                {face.prompt_md}
+              </MathMarkdown>
             ))}
             {dto.response_spec.slots.map((slot) => {
               const spec = nativeSlotFieldSpec(slot);
@@ -276,6 +280,7 @@ function AssessmentBody(
                   key={slot.slot_id}
                   spec={spec}
                   value={nativeResponseValue(entry)}
+                  notation={a.notation ?? null}
                   disabled={locked}
                   label={slot.placement?.label}
                   hotkeys={false}

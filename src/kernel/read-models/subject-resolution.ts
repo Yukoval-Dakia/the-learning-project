@@ -5,7 +5,9 @@
 // Unresolvable knowledge ids fall back to the default profile rather than dropping
 // the row.
 
+import { eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
+import { question } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import {
   type SubjectRegistry,
@@ -110,4 +112,24 @@ export async function batchResolveSubjectDisplayIds(
       return [row.id, firstId ? (firstIdToSubjectId.get(firstId) ?? null) : null];
     }),
   );
+}
+
+/**
+ * One question's learner-facing render notation (`katex` for math): its first knowledge
+ * point's display subject, then the registry notation. Same rule as the question and paper
+ * detail reads; used by surfaces that serve one question at a time (placement, chat
+ * confirmation), so formulas render instead of showing `$…$` source (YUK-1406).
+ */
+export async function resolveQuestionRenderNotation(
+  db: Db | Tx,
+  questionId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ knowledge_ids: question.knowledge_ids })
+    .from(question)
+    .where(eq(question.id, questionId));
+  const subjects = await batchResolveSubjectDisplayIds(db, [
+    { id: questionId, knowledge_ids: row?.knowledge_ids ?? [] },
+  ]);
+  return resolveSubjectRenderNotation(subjects.get(questionId) ?? null);
 }

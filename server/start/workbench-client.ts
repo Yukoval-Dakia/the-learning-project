@@ -19,6 +19,7 @@ import {
   getStartOvernightDigest,
   getStartProposalInbox,
   getStartRecentAiChanges,
+  getStartTaskFailureAlerts,
   getStartTeachingBrief,
   getStartTodayCost,
   getStartWorkbenchSummary,
@@ -30,6 +31,7 @@ export const startWorkbenchClient: WorkbenchClient = {
   getWorkbenchSummary: () => getStartWorkbenchSummary(transport),
   getOvernightDigest: () => getStartOvernightDigest(transport),
   getTodayCost: () => getStartTodayCost(transport),
+  getTaskFailureAlerts: () => getStartTaskFailureAlerts(transport),
   listDecisionProposalPage: (cursor) =>
     getStartProposalInbox({
       ...transport,
@@ -82,6 +84,8 @@ export const startWorkbenchClient: WorkbenchClient = {
     ),
 };
 
+// Shared by the today system notice and the admin home.
+export const startTaskFailureAlertsClient = () => getStartTaskFailureAlerts(transport);
 export const startKnowledgeFrontierClient = () => getStartKnowledgeFrontier(transport);
 export const startKnowledgeReviewDueClient = () => getStartKnowledgeReviewDue(transport);
 
