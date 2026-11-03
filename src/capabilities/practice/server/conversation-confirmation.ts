@@ -20,6 +20,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { resolveQuestionRenderNotation } from '@/kernel/read-models/subject-resolution';
 import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { CreateAttemptBodySchema } from '../api/contracts';
@@ -382,6 +383,8 @@ export async function readConversationConfirmation(db: Db | Tx, occurrenceId: st
     receipts,
     independent_mastery: false as const,
     evidence_scope: 'chat_context_unknown' as const,
+    // YUK-1406 — the subject's render notation, so the stem and options render formulas.
+    notation: await resolveQuestionRenderNotation(db, binding.question_id),
     exposure_history: 'partial_unknown' as const,
   };
 }
