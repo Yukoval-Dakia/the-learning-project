@@ -16,7 +16,6 @@ export {
   getFailureAttemptsWithReasoningTrace,
   getJudgeForAttempt,
 } from '@/kernel/read-models/failure-attempts';
-export { loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
 export {
   batchResolveEffectiveDomains,
   getEffectiveDomain,
@@ -34,7 +33,7 @@ export {
   batchResolveSubjectIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
-export { KnowledgeIdParamsSchema, KnowledgeTreeQuerySchema } from './api/contracts';
+export { KnowledgeIdParamsSchema } from './api/contracts';
 export { knowledgeConfigEffectiveFacts } from './server/config-effective-facts';
 export { createManualKnowledgeEdge } from './server/edge-create';
 export type {
@@ -50,8 +49,11 @@ export {
 } from './server/edges';
 export { readKnowledgeEdges } from './server/edges-list';
 export { loadFrontierRail } from './server/frontier-read';
+export {
+  readLearnerKnowledgeNodePage,
+  readLearnerKnowledgeTree,
+} from './server/learner-knowledge-request';
 export { loadMisconceptionsForKc } from './server/misconception-read';
-export { loadKnowledgeNodePage } from './server/node-page';
 export type { AcceptResult as KnowledgeAcceptResult } from './server/proposals';
 export {
   ACCEPT_RESULT_KINDS,

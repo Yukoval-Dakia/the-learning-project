@@ -28,11 +28,6 @@ export {
   EventDetailResponseSchema,
   EventParamsSchema,
 } from './api/event-contracts';
-export {
-  controlWriteHttpOutcome,
-  parseTraitJournalLimit,
-  traitWriteHttpOutcome,
-} from './api/subjects-write-http';
 export type {
   AdminConfigCatalogModelRow,
   AdminConfigProviderAuth,
@@ -56,6 +51,24 @@ export {
 } from './server/admin-config-operations';
 export type { AdminConfigWriteResult, AdminConfigWriter } from './server/admin-config-writer';
 export { setAdminConfigWriter } from './server/admin-config-writer';
+export {
+  type AdminRequestOutcome,
+  type TraitRequestOutcome,
+  requestAdminSubjectTraits,
+  requestAdminTraitJournal,
+  requestAdminTraits,
+  requestEditSharedTrait,
+  requestEditSubjectTrait,
+  requestForkSubjectTrait,
+  requestRebindSubjectTrait,
+  requestRenameAdminSubject,
+  requestResetAdminSubject,
+  requestResetTraitToSeed,
+  requestRestoreAdminSubject,
+  requestRetireAdminSubject,
+  requestRollbackTrait,
+  requestValidateAdminSubject,
+} from './server/admin-control-request';
 export {
   type AdminCostDto,
   type AdminCostOptions,
@@ -120,26 +133,14 @@ export {
   type TraitJournalPage,
   type TraitJournalPageOptions,
   type TraitJournalRow,
-  getAdminSubjectTraits,
-  getTraitJournalPage,
   listAdminSubjects,
-  listAdminTraits,
 } from './server/subject-admin-read';
 export {
-  AdminSubjectCasBodySchema,
   type AdminSubjectCasInput,
-  AdminSubjectControlParamsSchema,
-  type AdminSubjectControlResult,
   type AdminSubjectValidationResult,
-  RenameAdminSubjectBodySchema,
   type RenameAdminSubjectInput,
   type ValidateAdminSubjectInput,
-  ValidateAdminSubjectInputSchema,
   renameAdminSubject,
-  resetAdminSubject,
-  restoreAdminSubject,
-  retireAdminSubject,
-  validateAdminSubject,
 } from './server/subject-control-operations';
 export { thinCreateSubject } from './server/subject-create';
 export {
@@ -148,20 +149,12 @@ export {
 } from './server/subject-profile-audit';
 export { type TodayCost, loadTodayCost } from './server/today-cost';
 export {
-  AdminSubjectTraitParamsSchema,
-  AdminTraitWriteParamsSchema,
   type EditSharedTraitInput,
-  EditSharedTraitInputSchema,
   type EditSubjectTraitInput,
-  EditSubjectTraitInputSchema,
   type FanoutIssue,
-  ForkSubjectTraitBodySchema,
   type ForkSubjectTraitInput,
-  RebindSubjectTraitBodySchema,
   type RebindSubjectTraitInput,
-  ResetAdminTraitBodySchema,
   type ResetTraitToSeedInput,
-  RollbackAdminTraitBodySchema,
   type RollbackTraitInput,
   type TraitWriteResult,
   editSharedTrait,

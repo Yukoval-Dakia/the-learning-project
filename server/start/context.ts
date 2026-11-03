@@ -33,9 +33,9 @@ import type {
 } from '@/capabilities/ingestion/public';
 import type {
   createManualKnowledgeEdge,
-  loadKnowledgeNodePage,
   loadMisconceptionsForKc,
   readKnowledgeEdges,
+  readLearnerKnowledgeNodePage,
 } from '@/capabilities/knowledge/public';
 import type { thinCreateSubject } from '@/capabilities/observability/public';
 import type { AdminControlClient } from '@/capabilities/observability/ui/admin-control-client';
@@ -163,7 +163,7 @@ export type FrontdoorContext = {
   readKnowledgeEdges: (subject?: string) => Promise<Awaited<ReturnType<typeof readKnowledgeEdges>>>;
   readKnowledgeNodePage: (
     id: string,
-  ) => Promise<NonNullable<Awaited<ReturnType<typeof loadKnowledgeNodePage>>>>;
+  ) => Promise<Awaited<ReturnType<typeof readLearnerKnowledgeNodePage>>>;
   readKnowledgeMisconceptions: (id: string) => Promise<{
     rows: Awaited<ReturnType<typeof loadMisconceptionsForKc>>;
   }>;

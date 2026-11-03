@@ -1,12 +1,11 @@
 // YUK-521 (A4 出手强度轴) — 收件箱三档分流的**纯视图逻辑**（无 DB / 无 React）。
 //
-// 抽出来让分桶 + 撤销窗口态判定在 no-DB unit 车道单测（effectiveness-trend-view.ts 范式）。
-// InboxPage.tsx 从这里 import 同一套函数——单一真相，UI 与测试不漂移。
+// InboxPage.tsx 从这里 import 同一套分桶 + 撤销窗口态函数。
 //
-// 三档语义（强度轴，红线 — 与 accept-applier 轴 YUK-44 / tone 视觉轴正交）：
-//   A 自动应用（completion；后台静默物化 + 撤销窗口，卡来自独立读模型 auto-applied-read）
-//   B 逐条人审（真裁决项，复用 ProposalCard；含 breaker 退回 B 的 A-strength completion）
-//   C 纯状态（无 accept applier 的 defer/archive/judge_retraction；折叠链到 AI 观察面）
+// 三档语义（强度轴，与 tone 视觉轴无关）：
+//   A 自动应用（后台静默物化 + 撤销窗口，卡来自独立读模型 auto-applied-read）
+//   B 逐条人审（真裁决项，复用 ProposalCard）
+//   C 纯状态（无 accept applier；折叠链到 AI 观察面）
 //
 // **tier 映射以 core 的强度表（aiProposalKindStrength）为单一真相**——设计稿 v0 的
 // INBOX_TIER 把 record_* 放 A 是错的（它们是 LEGACY tombstone，归 B），故不照抄设计映射。

@@ -5,7 +5,7 @@
 // EvaluationGroupPanel 编辑，这里只如实展示。
 
 import './response.css';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { FileText, Mic, Video, X } from 'lucide-react';
 
 import { AssetEvidencePreview } from './AssetEvidencePreview';
 import type { EvidenceAttachment } from './response-types';
@@ -52,10 +52,13 @@ export function AttachmentStrip({
               />
             ) : (
               <span className="rs-attach-file">
-                <LoomIcon
-                  name={att.kind === 'audio' ? 'mic' : att.kind === 'video' ? 'record' : 'doc'}
-                  size={13}
-                />
+                {att.kind === 'audio' ? (
+                  <Mic size={16} aria-hidden="true" />
+                ) : att.kind === 'video' ? (
+                  <Video size={16} aria-hidden="true" />
+                ) : (
+                  <FileText size={16} aria-hidden="true" />
+                )}
                 {name}
               </span>
             )}
@@ -69,12 +72,12 @@ export function AttachmentStrip({
             {onRemove && (
               <button
                 type="button"
-                className="rs-attach-x"
+                className="rs-attach-x un-hit"
                 disabled={disabled}
                 onClick={() => onRemove(att.asset_id)}
                 aria-label={`移除${name}`}
               >
-                <LoomIcon name="close" size={11} />
+                <X size={14} aria-hidden="true" />
               </button>
             )}
           </span>

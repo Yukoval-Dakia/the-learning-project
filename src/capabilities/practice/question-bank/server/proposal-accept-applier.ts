@@ -1,5 +1,9 @@
 import type { Db } from '@/db/client';
-import { findExistingRateEvent, writeProposalRateEvent } from '@/kernel/proposals/applier-helpers';
+import {
+  acquireProposalDecisionLock,
+  findExistingRateEvent,
+  writeProposalRateEvent,
+} from '@/kernel/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import type {
   ProposalAcceptApplier,
@@ -29,6 +33,7 @@ export const {
   variantQuestionProposalDismissApplier,
   variantQuestionProposalRetractApplier,
 } = createPracticeProposalLifecycle({
+  acquireProposalDecisionLock,
   findExistingRateEvent,
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,

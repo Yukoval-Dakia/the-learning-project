@@ -286,6 +286,7 @@ export {
   releaseHeldPlacement,
   selectNextPlacementItem,
   selectNextPlacementQuestion,
+  selectOrphanPlacementCandidates,
   startPlacementProbe,
   transitionPlacementSession,
 } from './placement/public';
@@ -297,6 +298,7 @@ export {
   getPaperDetail,
   readPaperList,
   readWorksheetExport,
+  selectOrphanReviewCandidates,
   submitPaperSlot,
   transitionReviewSession,
 } from './session/public';

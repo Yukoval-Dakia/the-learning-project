@@ -17,6 +17,7 @@ import { artifact, completion_evidence, event, learning_item } from '@/db/schema
 import { nextProjectionEventTime, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
+  acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,
@@ -36,6 +37,7 @@ import {
 import {
   type AcceptLearningIntentParams,
   type CreateLearningIntentKnowledgeNodeFn,
+  LearningIntentError,
   type LearningIntentMaterializeResult,
   acceptLearningIntent,
 } from './learning-intent';
@@ -113,8 +115,8 @@ export interface RelearnAcceptResult {
  * transaction as the hierarchy/artifact inserts — this branch must not write a second one.
  *
  * If the proposal already has an accept rate event, re-derive the materialization result
- * from persisted rows; acceptLearningIntent's own `proposal_already_rated` guard would
- * otherwise throw on the second call.
+ * from persisted rows, both before the call and when acceptLearningIntent's
+ * `proposal_already_rated` guard (checked under the decision lock) reports a racing decision.
  */
 export async function acceptLearningItemProposal(
   db: Db,
@@ -130,13 +132,15 @@ export async function acceptLearningItemProposal(
     );
   }
 
-  const existingRateRows = await db
-    .select()
-    .from(event)
-    .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
-    .limit(1);
-  const existingRate = existingRateRows[0];
-  if (existingRate) {
+  const replayDecided = async (): Promise<LearningItemAcceptResult | null> => {
+    const existingRate = (
+      await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
+        .limit(1)
+    )[0];
+    if (!existingRate) return null;
     const ratePayload = existingRate.payload as { rating?: string };
     if (ratePayload.rating !== 'accept') {
       throw new ApiError(
@@ -159,7 +163,10 @@ export async function acceptLearningItemProposal(
       enqueued_note_generate_jobs: enqueued,
       idempotent: true,
     };
-  }
+  };
+
+  const replayed = await replayDecided();
+  if (replayed) return replayed;
 
   if (!opts.createLearningIntentKnowledgeNode || !opts.createLearningIntentNote) {
     throw new ApiError(
@@ -168,12 +175,23 @@ export async function acceptLearningItemProposal(
       500,
     );
   }
-  const result: LearningIntentMaterializeResult = await acceptLearningIntent({
-    db,
-    proposalId,
-    createKnowledgeNode: opts.createLearningIntentKnowledgeNode,
-    createNote: opts.createLearningIntentNote,
-  });
+  let result: LearningIntentMaterializeResult;
+  try {
+    result = await acceptLearningIntent({
+      db,
+      proposalId,
+      createKnowledgeNode: opts.createLearningIntentKnowledgeNode,
+      createNote: opts.createLearningIntentNote,
+    });
+  } catch (err) {
+    // acceptLearningIntent re-checks under the decision lock; a decision that committed
+    // while this accept waited replays like the check above.
+    if (err instanceof LearningIntentError && err.code === 'proposal_already_rated') {
+      const raced = await replayDecided();
+      if (raced) return raced;
+    }
+    throw err;
+  }
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
   const enqueued = await enqueueLearningIntentNotes(
     db,
@@ -301,8 +319,7 @@ export async function acceptCompletionProposal(
   const change = asPlainRecord(proposal.payload.proposed_change);
   const learningItemId = requiredString(change.learning_item_id, 'learning_item_id', proposalId);
 
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) {
+  const replayAccepted = async (existingRate: { id: string }): Promise<CompletionAcceptResult> => {
     await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
     return {
       kind: 'completion',
@@ -310,7 +327,11 @@ export async function acceptCompletionProposal(
       learning_item_id: learningItemId,
       idempotent: true,
     };
-  }
+  };
+
+  // Cheap short-circuit; the transaction re-checks under the decision lock.
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) return replayAccepted(existingRate);
 
   const item = (
     await db
@@ -335,7 +356,11 @@ export async function acceptCompletionProposal(
     triggering_signals: stringArray(change.triggering_signals),
   };
 
-  await db.transaction(async (tx) => {
+  const concurrentAccept = await db.transaction(async (tx) => {
+    // Decision lock before the item row lock, as dismiss and retract take it.
+    await acquireProposalDecisionLock(tx, proposalId);
+    const decided = await existingAcceptRate(tx, proposalId);
+    if (decided) return decided;
     // Serialize the state check, event append and projection on the same row lock.
     const [current] = await tx
       .select()
@@ -398,7 +423,9 @@ export async function acceptCompletionProposal(
     });
     // Materialize canonical structural state from the events in this transaction.
     await projectLearningItemGuarded(tx, learningItemId);
+    return null;
   });
+  if (concurrentAccept) return replayAccepted(concurrentAccept);
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
   return { kind: 'completion', rate_event_id: rateEventId, learning_item_id: learningItemId };
@@ -414,8 +441,7 @@ export async function acceptRelearnProposal(
   const change = asPlainRecord(proposal.payload.proposed_change);
   const learningItemId = requiredString(change.learning_item_id, 'learning_item_id', proposalId);
 
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) {
+  const replayAccepted = async (existingRate: { id: string }): Promise<RelearnAcceptResult> => {
     await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
     return {
       kind: 'relearn',
@@ -423,7 +449,11 @@ export async function acceptRelearnProposal(
       learning_item_id: learningItemId,
       idempotent: true,
     };
-  }
+  };
+
+  // Cheap short-circuit; the transaction re-checks under the decision lock.
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) return replayAccepted(existingRate);
 
   const item = (
     await db
@@ -442,7 +472,11 @@ export async function acceptRelearnProposal(
   }
 
   const rateEventId = newId();
-  await db.transaction(async (tx) => {
+  const concurrentAccept = await db.transaction(async (tx) => {
+    // Decision lock before the item row lock, as dismiss and retract take it.
+    await acquireProposalDecisionLock(tx, proposalId);
+    const decided = await existingAcceptRate(tx, proposalId);
+    if (decided) return decided;
     // Serialize the state check, event append and projection on the same row lock.
     const [current] = await tx
       .select()
@@ -495,7 +529,9 @@ export async function acceptRelearnProposal(
     });
     // Materialize canonical structural state from the events in this transaction.
     await projectLearningItemGuarded(tx, learningItemId);
+    return null;
   });
+  if (concurrentAccept) return replayAccepted(concurrentAccept);
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
   return { kind: 'relearn', rate_event_id: rateEventId, learning_item_id: learningItemId };

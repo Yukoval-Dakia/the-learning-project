@@ -1,5 +1,5 @@
 // M4-T6 (YUK-319/YUK-318)：收件箱 ui 数据层——统一 /api/proposals 的 wire
-// 类型、kind 元数据（aiProposalKinds 全量；对账见 inbox-meta.unit.test.ts）与决策 callers。
+// 类型、kind 元数据（aiProposalKinds 全量）与决策 callers。
 // 设计基准 docs/design/loom-refresh/project/data.jsx（KIND_META / REL_LABEL）：
 // 设计稿只列 12 kind；defer / archive / judge_retraction / image_candidate /
 // question_draft / question_edit 按同一 tone 语系补全（hard=节奏类、neutral=归档、
