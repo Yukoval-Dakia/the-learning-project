@@ -30,6 +30,7 @@ import {
   selectActorRef,
   selectSurface,
 } from '@/capabilities/copilot/server/copilot-run-input';
+import { createCopilotRunProgressWriter } from '@/capabilities/copilot/server/copilot-run-progress';
 import {
   captureWorkerSessionCursor,
   commitWorkerSessionCursor,
@@ -50,7 +51,6 @@ import {
   hasCopilotSettlementTerminal,
   markCopilotRunStarted,
   projectCopilotOutcomeMarker,
-  publishCopilotRunProgressEvent,
   terminalRunResult,
   withCopilotExecutionSettlementLock,
   writeFailedTerminalProjection,
@@ -432,8 +432,16 @@ async function executeAcceptedCopilotRun(
     historyAnchorEventId: runId,
   });
   const resumeSessionId = await selectResumableWorkerSession(db, data.session_id, answerOnly);
-  let progressChain: Promise<void> = Promise.resolve();
   let streamedProse = '';
+  // Delta persistence is coalesced; streamedProse only grows with committed
+  // flushes, so partial-reply recovery always matches durable evidence.
+  const progressWriter = createCopilotRunProgressWriter({
+    db,
+    runId,
+    onDeltaAccepted: (text) => {
+      streamedProse += text;
+    },
+  });
   const toolSummaries: string[] = [];
   const partialReply = () => copilotPartialReply({ prose: streamedProse, toolSummaries });
   const displayedProse = (): string | undefined =>
@@ -683,28 +691,13 @@ async function executeAcceptedCopilotRun(
           const isProse = activity.kind === 'prose_delta';
           const payload = isProse ? { text: activity.text } : projectCopilotActivity(activity);
           if (!payload) return;
-          progressChain = progressChain
-            .catch(() => undefined)
-            .then(async () => {
-              // Stop and terminal commits share the settlement lock. A queued
-              // delta cannot cross either boundary, even when persistence lags
-              // the provider; the boundary rule lives in the settlement owner.
-              await publishCopilotRunProgressEvent(
-                db,
-                runId,
-                isProse ? { kind: 'delta', text: activity.text } : { kind: 'step', payload },
-                isProse
-                  ? (text) => {
-                      streamedProse += text;
-                    }
-                  : undefined,
-              );
-            });
-          return progressChain;
+          progressWriter.push(
+            isProse ? { kind: 'delta', text: activity.text } : { kind: 'step', payload },
+          );
         },
       },
     );
-    await drainDeltaChain(progressChain, runId);
+    await drainDeltaChain(progressWriter.drain(), runId);
     const finalized = result.finalization;
     const finalReply = finalized.replyText;
     const preparedReply: PreparedCopilotReply = finalized.preparedReply;
@@ -854,7 +847,7 @@ async function executeAcceptedCopilotRun(
     if (err instanceof DurableTerminalProjectionError) throw err;
     // streamTaskCollecting graceful-degrades（resolve partial，见上），故这里只捕获
     // 它之外的 throw（装配 / MCP mount / 事件写），或注入 fixture 的 throw。
-    await drainDeltaChain(progressChain, runId);
+    await drainDeltaChain(progressWriter.drain(), runId);
     if ((await cancellationControl.probe()) === 'cancel_requested') {
       return await settleObservedCancellation();
     }

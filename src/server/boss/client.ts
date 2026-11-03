@@ -63,6 +63,11 @@ export function createBoss(): PgBoss {
   bossState.instance = new PgBoss({
     connectionString,
     schema: 'pgboss',
+    // Wakes workers on queues that opt in via `notify: true` the moment a job
+    // row commits (pg-boss emits a transactional pg_notify in the INSERT). One
+    // dedicated LISTEN connection per process; if it can't be established,
+    // pg-boss emits a `warning` and workers keep polling as the fallback.
+    useListenNotify: true,
     ...(automation === 'disabled'
       ? { schedule: false, supervise: false, migrate: false, registerInstance: false }
       : {}),
