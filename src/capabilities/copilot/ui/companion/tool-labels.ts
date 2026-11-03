@@ -57,3 +57,48 @@ export function toolLabel(toolName: string): string {
   for (const [pattern, label] of FALLBACKS) if (pattern.test(toolName)) return label;
   return '处理中的一步';
 }
+
+// YUK-1664 — what the companion is doing right now, said to the learner while a step runs (the
+// one-line activity before the reply text arrives). Common tools get their own phrase; any other
+// tool reads as a verb by what it does plus its plain name, so no internal tool name ever shows.
+const ACTIVITY: Readonly<Record<string, string>> = {
+  query_memory_brief: '正在看你的学习概况',
+  query_mistakes: '正在查你最近的错题',
+  get_review_due: '正在看今天该复习什么',
+  query_knowledge: '正在查相关的知识点',
+  get_subject_graph_overview: '正在看知识的整体结构',
+  expand_knowledge_subgraph: '正在找关联的知识点',
+  find_knowledge_paths: '正在找知识点之间的联系',
+  query_events: '正在看你最近的学习动态',
+  query_records: '正在翻你的学习记录',
+  get_record_context: '正在看这条记录',
+  get_question_context: '正在看这道题',
+  get_attempt_context: '正在看你这次的作答',
+  get_learning_item_context: '正在看这个学习项',
+  search_bank: '正在题库里找题',
+  read_bank: '正在读题库里的题',
+  check_bank: '正在核对题库',
+  search_memory_facts: '正在回想你之前说过的情况',
+  read_agent_notes: '正在看之前记下的学习笔记',
+  write_agent_note: '正在记一条学习笔记',
+  generate_question_candidate: '正在出题',
+  author_question: '正在出题',
+  write_quiz: '正在组一份练习',
+  attribute_mistake: '正在分析错因',
+  present_primary_view: '正在整理要给你看的内容',
+};
+
+const ACTIVITY_VERBS: ReadonlyArray<[RegExp, string]> = [
+  [/^propose_/, '正在准备'],
+  [/^(?:query|get|search|read|find|expand|check)_/, '正在查看'],
+  [/^(?:write|author|update|generate|edit)_/, '正在整理'],
+];
+
+export function toolActivity(toolName: string): string {
+  const known = ACTIVITY[toolName];
+  if (known) return known;
+  const label = toolLabel(toolName);
+  for (const [pattern, verb] of ACTIVITY_VERBS)
+    if (pattern.test(toolName)) return `${verb}${label}`;
+  return `正在处理：${label}`;
+}
