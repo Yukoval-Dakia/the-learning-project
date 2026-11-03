@@ -10,6 +10,7 @@ import type {
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
 import { loadLatestTrustedInterventionDiagnosticVerdict } from '@/kernel/read-models/intervention-diagnostic-verdict';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import {
   recordInterventionDiagnosticReview,
   recordNativeInterventionDiagnosticReview,
@@ -32,7 +33,7 @@ export async function handleInterventionDiagnosticJudgeDelivery(
       const submissionId = 'submission_id' in source.payload ? source.payload.submission_id : null;
       if (source.subject_kind !== 'evaluation_group' || typeof submissionId !== 'string')
         return { status: 'skipped', reason: 'native activation coordinates unavailable' };
-      attemptId = `evt_assessment_${submissionId}`;
+      attemptId = assessmentAttemptEventId(submissionId);
     }
     const native = await recordNativeInterventionDiagnosticReview(db, attemptId);
     if (!native)
