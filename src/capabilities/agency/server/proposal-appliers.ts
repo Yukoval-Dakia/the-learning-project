@@ -13,21 +13,20 @@ import { and, eq, inArray, isNull } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
-import { artifact, completion_evidence, event, learning_item } from '@/db/schema';
+import { artifact, completion_evidence, learning_item } from '@/db/schema';
 import { nextProjectionEventTime, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
-  acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
-  existingAcceptRate,
   requiredString,
   stringArray,
 } from '@/kernel/proposals/applier-helpers';
 import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/kernel/proposals/signals';
+  type ProposalAcceptEffectOutcome,
+  type RecordedProposalRate,
+  runProposalAccept,
+} from '@/kernel/proposals/decision-protocol';
 // Completion/relearn record subject-keyed actions, then materialize through the
 // single structural writer. Approval and row locking stay in this owner transaction.
 import {
@@ -37,7 +36,6 @@ import {
 import {
   type AcceptLearningIntentParams,
   type CreateLearningIntentKnowledgeNodeFn,
-  LearningIntentError,
   type LearningIntentMaterializeResult,
   acceptLearningIntent,
 } from './learning-intent';
@@ -53,11 +51,7 @@ export interface AgencyApplierOpts {
 
 export interface LearningItemAcceptResult {
   kind: 'learning_item';
-  /**
-   * Rate event id chained to the proposal. For learning_item the rate event
-   * is written by acceptLearningIntent() inside its own transaction, so this
-   * field is filled by re-querying after materialization.
-   */
+  /** Rate event id chained to the proposal. */
   rate_event_id: string;
   hub_learning_item_id: string;
   atomic_learning_item_ids: string[];
@@ -111,12 +105,8 @@ export interface RelearnAcceptResult {
 
 /**
  * learning_item accept materializes the 1-hub + child note hierarchy through the
- * acceptLearningIntent owner service, which writes its own rate event in the same
- * transaction as the hierarchy/artifact inserts — this branch must not write a second one.
- *
- * If the proposal already has an accept rate event, re-derive the materialization result
- * from persisted rows, both before the call and when acceptLearningIntent's
- * `proposal_already_rated` guard (checked under the decision lock) reports a racing decision.
+ * acceptLearningIntent effect inside the kernel decision transaction, which writes the one
+ * rate event. A recorded accept re-derives the materialization result from persisted rows.
  */
 export async function acceptLearningItemProposal(
   db: Db,
@@ -132,100 +122,79 @@ export async function acceptLearningItemProposal(
     );
   }
 
-  const replayDecided = async (): Promise<LearningItemAcceptResult | null> => {
-    const existingRate = (
-      await db
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
-        .limit(1)
-    )[0];
-    if (!existingRate) return null;
-    const ratePayload = existingRate.payload as { rating?: string };
-    if (ratePayload.rating !== 'accept') {
-      throw new ApiError(
-        'conflict',
-        `proposal ${proposalId} already decided as ${ratePayload.rating}`,
-        409,
+  const run = await runProposalAccept(db, proposalId, {
+    proposal,
+    userNote: opts.user_note,
+    signal: 'after_commit',
+    replay: async (rate: RecordedProposalRate): Promise<LearningItemAcceptResult> => {
+      const summary = await summarizeLearningItemMaterialization(db, proposalId);
+      const enqueued = await enqueueLearningIntentNotes(
+        db,
+        [...summary.atomic_artifact_ids, ...summary.long_artifact_ids],
+        opts.enqueueLearningIntentNote,
       );
-    }
-    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-    const summary = await summarizeLearningItemMaterialization(db, proposalId);
-    const enqueued = await enqueueLearningIntentNotes(
-      db,
-      [...summary.atomic_artifact_ids, ...summary.long_artifact_ids],
-      opts.enqueueLearningIntentNote,
-    );
-    return {
-      kind: 'learning_item',
-      rate_event_id: existingRate.id,
-      ...summary,
-      enqueued_note_generate_jobs: enqueued,
-      idempotent: true,
-    };
-  };
+      return {
+        kind: 'learning_item',
+        rate_event_id: rate.id,
+        ...summary,
+        enqueued_note_generate_jobs: enqueued,
+        idempotent: true,
+      };
+    },
+    prepare: async () => {
+      const { createLearningIntentKnowledgeNode, createLearningIntentNote } = opts;
+      if (!createLearningIntentKnowledgeNode || !createLearningIntentNote) {
+        throw new ApiError(
+          'inconsistent_state',
+          'learning intent owner commands were not composed',
+          500,
+        );
+      }
+      return {
+        createKnowledgeNode: createLearningIntentKnowledgeNode,
+        createNote: createLearningIntentNote,
+      };
+    },
+    effect: async (
+      { tx, writeRate },
+      commands,
+    ): Promise<ProposalAcceptEffectOutcome<LearningItemAcceptResult>> => {
+      let rateEventId = '';
+      const materialized = await acceptLearningIntent({
+        tx,
+        proposalId,
+        ...commands,
+        writeRate: async (rate) => {
+          rateEventId = await writeRate(rate);
+          return rateEventId;
+        },
+      });
+      return {
+        status: 'accepted',
+        result: {
+          kind: 'learning_item',
+          rate_event_id: rateEventId,
+          hub_learning_item_id: materialized.hub_learning_item_id,
+          atomic_learning_item_ids: materialized.atomic_learning_item_ids,
+          long_learning_item_ids: materialized.long_learning_item_ids,
+          hub_artifact_id: materialized.hub_artifact_id,
+          atomic_artifact_ids: materialized.atomic_artifact_ids,
+          long_artifact_ids: materialized.long_artifact_ids,
+          root_knowledge_id: materialized.root_knowledge_id,
+          created_knowledge_ids: materialized.created_knowledge_ids,
+          enqueued_note_generate_jobs: 0,
+        },
+      };
+    },
+  });
+  if (run.outcome !== 'accepted') return run.result;
 
-  const replayed = await replayDecided();
-  if (replayed) return replayed;
-
-  if (!opts.createLearningIntentKnowledgeNode || !opts.createLearningIntentNote) {
-    throw new ApiError(
-      'inconsistent_state',
-      'learning intent owner commands were not composed',
-      500,
-    );
-  }
-  let result: LearningIntentMaterializeResult;
-  try {
-    result = await acceptLearningIntent({
-      db,
-      proposalId,
-      createKnowledgeNode: opts.createLearningIntentKnowledgeNode,
-      createNote: opts.createLearningIntentNote,
-    });
-  } catch (err) {
-    // acceptLearningIntent re-checks under the decision lock; a decision that committed
-    // while this accept waited replays like the check above.
-    if (err instanceof LearningIntentError && err.code === 'proposal_already_rated') {
-      const raced = await replayDecided();
-      if (raced) return raced;
-    }
-    throw err;
-  }
-  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
   const enqueued = await enqueueLearningIntentNotes(
     db,
-    [...result.atomic_artifact_ids, ...result.long_artifact_ids],
+    [...run.result.atomic_artifact_ids, ...run.result.long_artifact_ids],
     opts.enqueueLearningIntentNote,
   );
-
-  const rateRows = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
-    .limit(1);
-  const rateEventId = rateRows[0]?.id;
-  if (!rateEventId) {
-    throw new ApiError(
-      'inconsistent_state',
-      `acceptLearningIntent for ${proposalId} returned without writing a rate event`,
-      500,
-    );
-  }
-
-  return {
-    kind: 'learning_item',
-    rate_event_id: rateEventId,
-    hub_learning_item_id: result.hub_learning_item_id,
-    atomic_learning_item_ids: result.atomic_learning_item_ids,
-    long_learning_item_ids: result.long_learning_item_ids,
-    hub_artifact_id: result.hub_artifact_id,
-    atomic_artifact_ids: result.atomic_artifact_ids,
-    long_artifact_ids: result.long_artifact_ids,
-    root_knowledge_id: result.root_knowledge_id,
-    created_knowledge_ids: result.created_knowledge_ids,
-    enqueued_note_generate_jobs: enqueued,
-  };
+  return { ...run.result, enqueued_note_generate_jobs: enqueued };
 }
 
 /**
@@ -309,6 +278,21 @@ async function summarizeLearningItemMaterialization(
   };
 }
 
+type LearningItemRow = typeof learning_item.$inferSelect;
+
+async function readUnarchivedLearningItem(
+  db: Db,
+  learningItemId: string,
+): Promise<LearningItemRow | undefined> {
+  return (
+    await db
+      .select()
+      .from(learning_item)
+      .where(and(eq(learning_item.id, learningItemId), isNull(learning_item.archived_at)))
+      .limit(1)
+  )[0];
+}
+
 export async function acceptCompletionProposal(
   db: Db,
   proposalId: string,
@@ -319,116 +303,102 @@ export async function acceptCompletionProposal(
   const change = asPlainRecord(proposal.payload.proposed_change);
   const learningItemId = requiredString(change.learning_item_id, 'learning_item_id', proposalId);
 
-  const replayAccepted = async (existingRate: { id: string }): Promise<CompletionAcceptResult> => {
-    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-    return {
+  const { result } = await runProposalAccept(db, proposalId, {
+    proposal,
+    userNote: opts.user_note,
+    signal: 'after_commit',
+    replay: async (rate: RecordedProposalRate): Promise<CompletionAcceptResult> => ({
       kind: 'completion',
-      rate_event_id: existingRate.id,
+      rate_event_id: rate.id,
       learning_item_id: learningItemId,
       idempotent: true,
-    };
-  };
+    }),
+    prepare: async () => {
+      const item = await readUnarchivedLearningItem(db, learningItemId);
+      if (!item) throw new ApiError('not_found', `learning_item ${learningItemId} not found`, 404);
+      if (item.status !== 'pending' && item.status !== 'in_progress') {
+        throw new ApiError(
+          'conflict',
+          `completion proposal ${proposalId} expected pending/in_progress item, got ${item.status}`,
+          409,
+        );
+      }
+      return item;
+    },
+    effect: async (
+      { tx, writeRate },
+      item,
+    ): Promise<ProposalAcceptEffectOutcome<CompletionAcceptResult>> => {
+      const evidenceJson = {
+        ...asPlainRecord(change.evidence_json),
+        proposal_id: proposalId,
+        triggering_signals: stringArray(change.triggering_signals),
+      };
+      // Serialize the state check, event append and projection on the same row lock.
+      const [current] = await tx
+        .select()
+        .from(learning_item)
+        .where(and(eq(learning_item.id, learningItemId), isNull(learning_item.archived_at)))
+        .for('update');
+      if (!current || current.version !== item.version || current.status !== item.status) {
+        throw new ApiError('conflict', 'learning_item changed before proposal acceptance', 409);
+      }
+      if (!(await hasLearningItemGenesisAnchor(tx, learningItemId))) {
+        throw new Error('learning_item requires canonical projection migration before mutation');
+      }
+      const now = await nextProjectionEventTime(tx, 'learning_item', learningItemId, new Date());
+      // One clock for the action, evidence and decision. Derived fields remain untouched.
+      await writeEvent(tx, {
+        id: newId(),
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'experimental:learning_item_complete',
+        subject_kind: 'learning_item',
+        subject_id: learningItemId,
+        outcome: 'success',
+        payload: {},
+        caused_by_event_id: proposalId,
+        created_at: now,
+        ingest_at: now,
+      });
 
-  // Cheap short-circuit; the transaction re-checks under the decision lock.
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) return replayAccepted(existingRate);
+      await tx.insert(completion_evidence).values({
+        id: newId(),
+        learning_item_id: learningItemId,
+        path: 'ai_propose',
+        evidence_json: evidenceJson,
+        decided_at: now,
+      });
 
-  const item = (
-    await db
-      .select()
-      .from(learning_item)
-      .where(and(eq(learning_item.id, learningItemId), isNull(learning_item.archived_at)))
-      .limit(1)
-  )[0];
-  if (!item) throw new ApiError('not_found', `learning_item ${learningItemId} not found`, 404);
-  if (item.status !== 'pending' && item.status !== 'in_progress') {
-    throw new ApiError(
-      'conflict',
-      `completion proposal ${proposalId} expected pending/in_progress item, got ${item.status}`,
-      409,
-    );
-  }
-
-  const rateEventId = newId();
-  const evidenceJson = {
-    ...asPlainRecord(change.evidence_json),
-    proposal_id: proposalId,
-    triggering_signals: stringArray(change.triggering_signals),
-  };
-
-  const concurrentAccept = await db.transaction(async (tx) => {
-    // Decision lock before the item row lock, as dismiss and retract take it.
-    await acquireProposalDecisionLock(tx, proposalId);
-    const decided = await existingAcceptRate(tx, proposalId);
-    if (decided) return decided;
-    // Serialize the state check, event append and projection on the same row lock.
-    const [current] = await tx
-      .select()
-      .from(learning_item)
-      .where(and(eq(learning_item.id, learningItemId), isNull(learning_item.archived_at)))
-      .for('update');
-    if (!current || current.version !== item.version || current.status !== item.status) {
-      throw new ApiError('conflict', 'learning_item changed before proposal acceptance', 409);
-    }
-    if (!(await hasLearningItemGenesisAnchor(tx, learningItemId))) {
-      throw new Error('learning_item requires canonical projection migration before mutation');
-    }
-    const now = await nextProjectionEventTime(tx, 'learning_item', learningItemId, new Date());
-    // One clock for the action, evidence and decision. Derived fields remain untouched.
-    await writeEvent(tx, {
-      id: newId(),
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'experimental:learning_item_complete',
-      subject_kind: 'learning_item',
-      subject_id: learningItemId,
-      outcome: 'success',
-      payload: {},
-      caused_by_event_id: proposalId,
-      created_at: now,
-      ingest_at: now,
-    });
-
-    await tx.insert(completion_evidence).values({
-      id: newId(),
-      learning_item_id: learningItemId,
-      path: 'ai_propose',
-      evidence_json: evidenceJson,
-      decided_at: now,
-    });
-
-    // The accept `rate` event is the proposal-decision signal. It is
-    // subject_kind='event' (chained to the proposal), NOT subject_kind='learning_item', so the
-    // learning_item Q1 fold never gathers it; it is the proposal inbox's decision marker.
-    await writeEvent(tx, {
-      id: rateEventId,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'rate',
-      subject_kind: 'event',
-      subject_id: proposalId,
-      outcome: 'success',
-      payload: {
-        rating: 'accept',
-        materialized_learning_item_id: learningItemId,
-        // Pin the EXACT pre-accept state so retract restores it instead of guessing.
-        // completion accepts pending|in_progress; record which (and the prior completed_at,
-        // normally null) here.
-        materialized_prior_status: item.status,
-        materialized_prior_completed_at: item.completed_at ? item.completed_at.toISOString() : null,
-        ...(opts.user_note ? { user_note: opts.user_note } : {}),
-      },
-      caused_by_event_id: proposalId,
-      created_at: now,
-    });
-    // Materialize canonical structural state from the events in this transaction.
-    await projectLearningItemGuarded(tx, learningItemId);
-    return null;
+      // The accept `rate` event is the proposal-decision signal. It is
+      // subject_kind='event' (chained to the proposal), NOT subject_kind='learning_item', so the
+      // learning_item Q1 fold never gathers it; it is the proposal inbox's decision marker.
+      const rateEventId = await writeRate({
+        created_at: now,
+        payload: {
+          materialized_learning_item_id: learningItemId,
+          // Pin the EXACT pre-accept state so retract restores it instead of guessing.
+          // completion accepts pending|in_progress; record which (and the prior completed_at,
+          // normally null) here.
+          materialized_prior_status: item.status,
+          materialized_prior_completed_at: item.completed_at
+            ? item.completed_at.toISOString()
+            : null,
+        },
+      });
+      // Materialize canonical structural state from the events in this transaction.
+      await projectLearningItemGuarded(tx, learningItemId);
+      return {
+        status: 'accepted',
+        result: {
+          kind: 'completion',
+          rate_event_id: rateEventId,
+          learning_item_id: learningItemId,
+        },
+      };
+    },
   });
-  if (concurrentAccept) return replayAccepted(concurrentAccept);
-
-  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-  return { kind: 'completion', rate_event_id: rateEventId, learning_item_id: learningItemId };
+  return result;
 }
 
 export async function acceptRelearnProposal(
@@ -441,98 +411,81 @@ export async function acceptRelearnProposal(
   const change = asPlainRecord(proposal.payload.proposed_change);
   const learningItemId = requiredString(change.learning_item_id, 'learning_item_id', proposalId);
 
-  const replayAccepted = async (existingRate: { id: string }): Promise<RelearnAcceptResult> => {
-    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-    return {
+  const { result } = await runProposalAccept(db, proposalId, {
+    proposal,
+    userNote: opts.user_note,
+    signal: 'after_commit',
+    replay: async (rate: RecordedProposalRate): Promise<RelearnAcceptResult> => ({
       kind: 'relearn',
-      rate_event_id: existingRate.id,
+      rate_event_id: rate.id,
       learning_item_id: learningItemId,
       idempotent: true,
-    };
-  };
-
-  // Cheap short-circuit; the transaction re-checks under the decision lock.
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) return replayAccepted(existingRate);
-
-  const item = (
-    await db
-      .select()
-      .from(learning_item)
-      .where(and(eq(learning_item.id, learningItemId), isNull(learning_item.archived_at)))
-      .limit(1)
-  )[0];
-  if (!item) throw new ApiError('not_found', `learning_item ${learningItemId} not found`, 404);
-  if (item.status !== 'done' && item.status !== 'resting') {
-    throw new ApiError(
-      'conflict',
-      `relearn proposal ${proposalId} expected done/resting item, got ${item.status}`,
-      409,
-    );
-  }
-
-  const rateEventId = newId();
-  const concurrentAccept = await db.transaction(async (tx) => {
-    // Decision lock before the item row lock, as dismiss and retract take it.
-    await acquireProposalDecisionLock(tx, proposalId);
-    const decided = await existingAcceptRate(tx, proposalId);
-    if (decided) return decided;
-    // Serialize the state check, event append and projection on the same row lock.
-    const [current] = await tx
-      .select()
-      .from(learning_item)
-      .where(and(eq(learning_item.id, learningItemId), isNull(learning_item.archived_at)))
-      .for('update');
-    if (!current || current.version !== item.version || current.status !== item.status) {
-      throw new ApiError('conflict', 'learning_item changed before proposal acceptance', 409);
-    }
-    if (!(await hasLearningItemGenesisAnchor(tx, learningItemId))) {
-      throw new Error('learning_item requires canonical projection migration before mutation');
-    }
-    const now = await nextProjectionEventTime(tx, 'learning_item', learningItemId, new Date());
-    // One clock for the action, evidence and decision. Derived fields remain untouched.
-    await writeEvent(tx, {
-      id: newId(),
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'experimental:learning_item_relearn',
-      subject_kind: 'learning_item',
-      subject_id: learningItemId,
-      outcome: 'success',
-      payload: {},
-      caused_by_event_id: proposalId,
-      created_at: now,
-      ingest_at: now,
-    });
-    // The accept `rate` event is a proposal decision, not a subject-keyed item mutation.
-    await writeEvent(tx, {
-      id: rateEventId,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'rate',
-      subject_kind: 'event',
-      subject_id: proposalId,
-      outcome: 'success',
-      payload: {
-        rating: 'accept',
-        materialized_learning_item_id: learningItemId,
-        // Pin the EXACT pre-accept state. relearn accepts done|resting and clears
-        // completed_at; without both fields, retract cannot tell a `resting` item
-        // (completed_at already null) from a `done` one and would corrupt it into `done`
-        // with a fabricated completed_at.
-        materialized_prior_status: item.status,
-        materialized_prior_completed_at: item.completed_at ? item.completed_at.toISOString() : null,
-        ...(opts.user_note ? { user_note: opts.user_note } : {}),
-      },
-      caused_by_event_id: proposalId,
-      created_at: now,
-    });
-    // Materialize canonical structural state from the events in this transaction.
-    await projectLearningItemGuarded(tx, learningItemId);
-    return null;
+    }),
+    prepare: async () => {
+      const item = await readUnarchivedLearningItem(db, learningItemId);
+      if (!item) throw new ApiError('not_found', `learning_item ${learningItemId} not found`, 404);
+      if (item.status !== 'done' && item.status !== 'resting') {
+        throw new ApiError(
+          'conflict',
+          `relearn proposal ${proposalId} expected done/resting item, got ${item.status}`,
+          409,
+        );
+      }
+      return item;
+    },
+    effect: async (
+      { tx, writeRate },
+      item,
+    ): Promise<ProposalAcceptEffectOutcome<RelearnAcceptResult>> => {
+      // Serialize the state check, event append and projection on the same row lock.
+      const [current] = await tx
+        .select()
+        .from(learning_item)
+        .where(and(eq(learning_item.id, learningItemId), isNull(learning_item.archived_at)))
+        .for('update');
+      if (!current || current.version !== item.version || current.status !== item.status) {
+        throw new ApiError('conflict', 'learning_item changed before proposal acceptance', 409);
+      }
+      if (!(await hasLearningItemGenesisAnchor(tx, learningItemId))) {
+        throw new Error('learning_item requires canonical projection migration before mutation');
+      }
+      const now = await nextProjectionEventTime(tx, 'learning_item', learningItemId, new Date());
+      // One clock for the action, evidence and decision. Derived fields remain untouched.
+      await writeEvent(tx, {
+        id: newId(),
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'experimental:learning_item_relearn',
+        subject_kind: 'learning_item',
+        subject_id: learningItemId,
+        outcome: 'success',
+        payload: {},
+        caused_by_event_id: proposalId,
+        created_at: now,
+        ingest_at: now,
+      });
+      // The accept `rate` event is a proposal decision, not a subject-keyed item mutation.
+      const rateEventId = await writeRate({
+        created_at: now,
+        payload: {
+          materialized_learning_item_id: learningItemId,
+          // Pin the EXACT pre-accept state. relearn accepts done|resting and clears
+          // completed_at; without both fields, retract cannot tell a `resting` item
+          // (completed_at already null) from a `done` one and would corrupt it into `done`
+          // with a fabricated completed_at.
+          materialized_prior_status: item.status,
+          materialized_prior_completed_at: item.completed_at
+            ? item.completed_at.toISOString()
+            : null,
+        },
+      });
+      // Materialize canonical structural state from the events in this transaction.
+      await projectLearningItemGuarded(tx, learningItemId);
+      return {
+        status: 'accepted',
+        result: { kind: 'relearn', rate_event_id: rateEventId, learning_item_id: learningItemId },
+      };
+    },
   });
-  if (concurrentAccept) return replayAccepted(concurrentAccept);
-
-  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-  return { kind: 'relearn', rate_event_id: rateEventId, learning_item_id: learningItemId };
+  return result;
 }

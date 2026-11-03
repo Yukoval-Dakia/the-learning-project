@@ -106,9 +106,19 @@ describe('variant_question proposal lifecycle', () => {
     const { proposalId, mistakeVariantId } = await seedVariantQuestionProposal();
     const enqueue = vi.fn(async () => {});
 
-    const first = await acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue });
+    const first = await acceptAiProposal(
+      testDb(),
+      proposalId,
+      {},
+      { enqueueVariantVerify: enqueue },
+    );
     assertProposalLifecycleResult<VariantQuestionAcceptResult>(first, 'variant_question');
-    const second = await acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue });
+    const second = await acceptAiProposal(
+      testDb(),
+      proposalId,
+      {},
+      { enqueueVariantVerify: enqueue },
+    );
     expect(second).toMatchObject({
       kind: 'variant_question',
       idempotent: true,

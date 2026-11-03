@@ -3,29 +3,22 @@ import { and, eq, inArray } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { mistake_variant } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { runProposalDismiss } from '@/kernel/proposals/decision-protocol';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import type {
   ProposalDismissApplier,
-  ProposalDismissInput,
   ProposalRetractApplier,
   ProposalRetractInput,
 } from '@/kernel/proposals/index';
 import { requireLaterProposalCorrection } from '@/kernel/proposals/types';
 
 interface PracticeLifecycleRuntime {
-  acquireProposalDecisionLock: (tx: Tx, proposalId: string) => Promise<void>;
   findExistingRateEvent: (
     tx: Tx,
     proposalId: string,
   ) => Promise<{ decision: string; payload: unknown } | null>;
   hasMistakeVariantGenesisAnchor: (tx: Tx, variantId: string) => Promise<boolean>;
   projectMistakeVariantGuarded: (tx: Tx, variantId: string) => Promise<unknown>;
-  recordDismissSignal: (db: Db, input: ProposalDismissInput) => Promise<void>;
-  writeProposalRateEvent: (
-    db: Db | Tx,
-    proposalId: string,
-    rating: 'accept' | 'dismiss',
-    userNote?: string,
-  ) => Promise<{ rate_event_id: string | null; idempotent?: boolean; rate_at: Date }>;
 }
 
 async function retractVariantQuestion(
@@ -64,18 +57,19 @@ export function createPracticeProposalLifecycle(runtime: PracticeLifecycleRuntim
   questionEditProposalRetractApplier: ProposalRetractApplier;
 } {
   return {
-    variantQuestionProposalDismissApplier: async (db, input) => {
-      const ownerDb = db as Db;
-      const rate = await ownerDb.transaction(async (tx) => {
-        // Same decision lock as the variant accept, so a dismiss and an accept serialize.
-        await runtime.acquireProposalDecisionLock(tx, input.proposalId);
-        const rate = await runtime.writeProposalRateEvent(
-          tx,
-          input.proposalId,
-          'dismiss',
-          input.user_note,
-        );
-        if (!rate.idempotent) {
+    variantQuestionProposalDismissApplier: async (db, input) => ({
+      kind: input.proposal.payload.kind,
+      // The kernel takes the decision lock the variant accept takes, so a dismiss and an
+      // accept serialize; the signal follows the commit, only for a new dismiss.
+      result: await runProposalDismiss(db as Db, input.proposalId, {
+        proposal: {
+          ...input.proposal,
+          kind: input.proposal.payload.kind,
+          target: input.proposal.payload.target,
+        } as ProposalInboxRow,
+        userNote: input.user_note,
+        signal: 'after_commit',
+        effect: async (tx) => {
           const [draftVariant] = await tx
             .select({ id: mistake_variant.id })
             .from(mistake_variant)
@@ -87,28 +81,15 @@ export function createPracticeProposalLifecycle(runtime: PracticeLifecycleRuntim
             )
             .for('update')
             .limit(1);
-          if (!draftVariant) return rate;
+          if (!draftVariant) return;
 
           if (!(await runtime.hasMistakeVariantGenesisAnchor(tx, draftVariant.id))) {
             throw new Error(`Variant ${draftVariant.id} needs canonical projection migration`);
           }
           await runtime.projectMistakeVariantGuarded(tx, draftVariant.id);
-        }
-        return rate;
-      });
-      if (!rate.idempotent) {
-        await runtime.recordDismissSignal(ownerDb, input);
-      }
-
-      return {
-        kind: input.proposal.payload.kind,
-        result: {
-          kind: 'dismissed',
-          rate_event_id: rate.rate_event_id,
-          ...(rate.idempotent ? { idempotent: true } : {}),
         },
-      };
-    },
+      }),
+    }),
     variantQuestionProposalRetractApplier: (db, input) =>
       retractVariantQuestion(db as Tx, input, runtime),
     questionEditProposalRetractApplier: async (db, input) => {

@@ -27,7 +27,6 @@ import {
   misconceptionPromoteEnabled,
   promoteConjectureToMisconception,
 } from '@/capabilities/agency/server/misconception-promote';
-import { newId } from '@/core/ids';
 import {
   ConjectureDiagnosticSpec,
   ConjectureHypothesisProposalDraft,
@@ -38,20 +37,18 @@ import {
   evaluateConjectureProbePackageStructure,
 } from '@/core/schema/business';
 import type { Db } from '@/db/client';
-import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
-  acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
-  existingAcceptRate,
   requiredString,
 } from '@/kernel/proposals/applier-helpers';
-import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/kernel/proposals/signals';
+  type ProposalAcceptEffectOutcome,
+  type RecordedProposalRate,
+  runProposalAccept,
+} from '@/kernel/proposals/decision-protocol';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 
 // Wire error code (typed ApiError, HTTP 409) raised when the accept cannot serve its
 // discriminating probe because MAX_CONCURRENT_ACTIVE_PROBES probes are already active.
@@ -96,256 +93,246 @@ export async function acceptConjectureProposal(
   // The conjecture's stable identity is the proposal event id (no separate row).
   const conjectureId = proposalId;
 
-  // Idempotency: a prior accept rate event short-circuits (409s on a non-accept prior
-  // decision via existingAcceptRate). No second rate event, no second CORE write — re-accept
-  // returns the recorded corrected_by_owner verbatim.
-  const replayAccepted = async (existingRate: {
-    id: string;
-    payload: unknown;
-  }): Promise<ConjectureAcceptResult> => {
-    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-    const ratePayload = existingRate.payload as { corrected_by_owner?: boolean };
-    return {
-      kind: 'conjecture',
-      rate_event_id: existingRate.id,
-      conjecture_id: conjectureId,
-      corrected_by_owner: ratePayload.corrected_by_owner === true,
-      weakness_confirmed: false,
-      idempotent: true,
-    };
-  };
-
-  // Cheap short-circuit; the transaction re-checks under the decision lock.
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) return replayAccepted(existingRate);
-
-  // All newly accepted conjectures must carry a frozen DiagnosticSpec, both structured
-  // probe specs and a passing independent-review audit. Optionality in the proposal JSON
-  // schema exists only so historical terminal rows remain readable.
-  const diagnosticSpec = ConjectureDiagnosticSpec.safeParse(change.diagnostic_spec);
-  const primaryProbeSpec = ConjectureProbeSpecV2.safeParse(change.probe_spec);
-  const followupProbeSpec = ConjectureProbeSpecV2.safeParse(change.followup_probe_spec);
-  const qualityAudit = ConjectureProbeQualityAudit.safeParse(change.probe_quality);
-  const persistedProbeMd = typeof change.probe_md === 'string' ? change.probe_md.trim() : '';
-  const persistedProbeReferenceMd =
-    typeof change.probe_reference_md === 'string' ? change.probe_reference_md.trim() : '';
-  const persistedFollowupMd =
-    typeof change.followup_probe_md === 'string' ? change.followup_probe_md.trim() : '';
-  const persistedFollowupReferenceMd =
-    typeof change.followup_probe_reference_md === 'string'
-      ? change.followup_probe_reference_md.trim()
-      : '';
-  const structuralFailures =
-    primaryProbeSpec.success && followupProbeSpec.success && typeof change.predicted_p === 'number'
-      ? evaluateConjectureProbePackageStructure({
+  // A prior accept rate replays the recorded corrected_by_owner verbatim: no second rate
+  // event, no second CORE write. A non-accept prior decision is a 409.
+  const { result } = await runProposalAccept(db, proposalId, {
+    proposal,
+    userNote: opts.user_note,
+    signal: 'after_commit',
+    replay: async (rate: RecordedProposalRate): Promise<ConjectureAcceptResult> => {
+      const ratePayload = rate.payload as { corrected_by_owner?: boolean };
+      return {
+        kind: 'conjecture',
+        rate_event_id: rate.id,
+        conjecture_id: conjectureId,
+        corrected_by_owner: ratePayload.corrected_by_owner === true,
+        weakness_confirmed: false,
+        idempotent: true,
+      };
+    },
+    prepare: async () => {
+      // All newly accepted conjectures must carry a frozen DiagnosticSpec, both structured
+      // probe specs and a passing independent-review audit. Optionality in the proposal JSON
+      // schema exists only so historical terminal rows remain readable.
+      const diagnosticSpec = ConjectureDiagnosticSpec.safeParse(change.diagnostic_spec);
+      const primaryProbeSpec = ConjectureProbeSpecV2.safeParse(change.probe_spec);
+      const followupProbeSpec = ConjectureProbeSpecV2.safeParse(change.followup_probe_spec);
+      const qualityAudit = ConjectureProbeQualityAudit.safeParse(change.probe_quality);
+      const persistedProbeMd = typeof change.probe_md === 'string' ? change.probe_md.trim() : '';
+      const persistedProbeReferenceMd =
+        typeof change.probe_reference_md === 'string' ? change.probe_reference_md.trim() : '';
+      const persistedFollowupMd =
+        typeof change.followup_probe_md === 'string' ? change.followup_probe_md.trim() : '';
+      const persistedFollowupReferenceMd =
+        typeof change.followup_probe_reference_md === 'string'
+          ? change.followup_probe_reference_md.trim()
+          : '';
+      const structuralFailures =
+        primaryProbeSpec.success &&
+        followupProbeSpec.success &&
+        typeof change.predicted_p === 'number'
+          ? evaluateConjectureProbePackageStructure({
+              primary: primaryProbeSpec.data,
+              followup: followupProbeSpec.data,
+              predicted_p: change.predicted_p,
+            })
+          : [];
+      const evidenceEventIds = proposal.payload.evidence_refs
+        .filter((ref) => ref.kind === 'event')
+        .map((ref) => ref.id);
+      const boundV3Audit =
+        qualityAudit.success && qualityAudit.data.schema_version === 3 ? qualityAudit.data : null;
+      const persistedHypothesis =
+        diagnosticSpec.success && boundV3Audit
+          ? ConjectureHypothesisProposalDraft.safeParse({
+              kind: 'proposal',
+              claim_md: change.claim_md,
+              knowledge_id: change.knowledge_id,
+              evidence_event_ids: evidenceEventIds,
+              diagnostic_spec: diagnosticSpec.data,
+              cause_category: change.cause_category,
+              recurrence_count: change.recurrence_count,
+            })
+          : null;
+      const failureReasons: string[] = [];
+      if (!diagnosticSpec.success) failureReasons.push('diagnostic_spec_invalid');
+      if (!primaryProbeSpec.success) failureReasons.push('primary_probe_spec_invalid');
+      if (!followupProbeSpec.success) failureReasons.push('followup_probe_spec_invalid');
+      if (!qualityAudit.success) failureReasons.push('probe_quality_audit_invalid');
+      if (qualityAudit.success && !boundV3Audit) {
+        failureReasons.push('probe_quality_audit_unbound');
+      }
+      if (persistedHypothesis && !persistedHypothesis.success) {
+        failureReasons.push('persisted_hypothesis_invalid');
+      }
+      if (
+        persistedHypothesis?.success &&
+        boundV3Audit &&
+        !conjectureHypothesesEqual(boundV3Audit.reviewed_hypothesis, persistedHypothesis.data)
+      ) {
+        failureReasons.push('probe_quality_hypothesis_mismatch');
+      }
+      if (change.discriminating !== true) failureReasons.push('not_discriminating');
+      failureReasons.push(...structuralFailures.map((code) => `structural:${code}`));
+      if (primaryProbeSpec.success) {
+        if (primaryProbeSpec.data.prompt_md !== persistedProbeMd) {
+          failureReasons.push('primary_prompt_mismatch');
+        }
+        if (primaryProbeSpec.data.reference_md !== persistedProbeReferenceMd) {
+          failureReasons.push('primary_reference_mismatch');
+        }
+      }
+      if (followupProbeSpec.success) {
+        if (followupProbeSpec.data.prompt_md !== persistedFollowupMd) {
+          failureReasons.push('followup_prompt_mismatch');
+        }
+        if (followupProbeSpec.data.reference_md !== persistedFollowupReferenceMd) {
+          failureReasons.push('followup_reference_mismatch');
+        }
+      }
+      if (
+        boundV3Audit &&
+        primaryProbeSpec.success &&
+        followupProbeSpec.success &&
+        typeof change.predicted_p === 'number' &&
+        !conjectureProbePackagesEqual(boundV3Audit.reviewed_package, {
           primary: primaryProbeSpec.data,
           followup: followupProbeSpec.data,
           predicted_p: change.predicted_p,
         })
-      : [];
-  const evidenceEventIds = proposal.payload.evidence_refs
-    .filter((ref) => ref.kind === 'event')
-    .map((ref) => ref.id);
-  const boundV3Audit =
-    qualityAudit.success && qualityAudit.data.schema_version === 3 ? qualityAudit.data : null;
-  const persistedHypothesis =
-    diagnosticSpec.success && boundV3Audit
-      ? ConjectureHypothesisProposalDraft.safeParse({
-          kind: 'proposal',
-          claim_md: change.claim_md,
-          knowledge_id: change.knowledge_id,
-          evidence_event_ids: evidenceEventIds,
-          diagnostic_spec: diagnosticSpec.data,
-          cause_category: change.cause_category,
-          recurrence_count: change.recurrence_count,
-        })
-      : null;
-  const failureReasons: string[] = [];
-  if (!diagnosticSpec.success) failureReasons.push('diagnostic_spec_invalid');
-  if (!primaryProbeSpec.success) failureReasons.push('primary_probe_spec_invalid');
-  if (!followupProbeSpec.success) failureReasons.push('followup_probe_spec_invalid');
-  if (!qualityAudit.success) failureReasons.push('probe_quality_audit_invalid');
-  if (qualityAudit.success && !boundV3Audit) {
-    failureReasons.push('probe_quality_audit_unbound');
-  }
-  if (persistedHypothesis && !persistedHypothesis.success) {
-    failureReasons.push('persisted_hypothesis_invalid');
-  }
-  if (
-    persistedHypothesis?.success &&
-    boundV3Audit &&
-    !conjectureHypothesesEqual(boundV3Audit.reviewed_hypothesis, persistedHypothesis.data)
-  ) {
-    failureReasons.push('probe_quality_hypothesis_mismatch');
-  }
-  if (change.discriminating !== true) failureReasons.push('not_discriminating');
-  failureReasons.push(...structuralFailures.map((code) => `structural:${code}`));
-  if (primaryProbeSpec.success) {
-    if (primaryProbeSpec.data.prompt_md !== persistedProbeMd) {
-      failureReasons.push('primary_prompt_mismatch');
-    }
-    if (primaryProbeSpec.data.reference_md !== persistedProbeReferenceMd) {
-      failureReasons.push('primary_reference_mismatch');
-    }
-  }
-  if (followupProbeSpec.success) {
-    if (followupProbeSpec.data.prompt_md !== persistedFollowupMd) {
-      failureReasons.push('followup_prompt_mismatch');
-    }
-    if (followupProbeSpec.data.reference_md !== persistedFollowupReferenceMd) {
-      failureReasons.push('followup_reference_mismatch');
-    }
-  }
-  if (
-    boundV3Audit &&
-    primaryProbeSpec.success &&
-    followupProbeSpec.success &&
-    typeof change.predicted_p === 'number' &&
-    !conjectureProbePackagesEqual(boundV3Audit.reviewed_package, {
-      primary: primaryProbeSpec.data,
-      followup: followupProbeSpec.data,
-      predicted_p: change.predicted_p,
-    })
-  ) {
-    failureReasons.push('probe_quality_package_mismatch');
-  }
-  if (failureReasons.length > 0) {
-    throw new ApiError(
-      CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
-      `cannot accept: verified v3 diagnostic/probe package failed [${failureReasons.join(', ')}]; reprepare it before accepting`,
-      409,
-    );
-  }
+      ) {
+        failureReasons.push('probe_quality_package_mismatch');
+      }
+      if (failureReasons.length > 0) {
+        throw new ApiError(
+          CONJECTURE_PROBE_QUALITY_REQUIRED_CODE,
+          `cannot accept: verified v3 diagnostic/probe package failed [${failureReasons.join(', ')}]; reprepare it before accepting`,
+          409,
+        );
+      }
 
-  // Both claim schemas now trim at their boundaries. Keep a normalized content comparison
-  // as defense in depth so direct/internal callers cannot turn a no-op payload into an edit.
-  const originalClaim = typeof change.claim_md === 'string' ? change.claim_md.trim() : '';
-  const submittedClaim =
-    typeof opts.corrected_payload?.claim_md === 'string'
-      ? opts.corrected_payload.claim_md.trim()
-      : undefined;
-  const correctedClaim =
-    submittedClaim !== undefined && submittedClaim !== originalClaim ? submittedClaim : undefined;
-  const isEdit = correctedClaim !== undefined;
-
-  const now = new Date();
-  const rateEventId = newId();
-
-  // The rate write + the flag-gated misconception promotion are ATOMIC in ONE transaction.
-  // Atomicity is load-bearing: a crash after the rate write but before the promotion upsert
-  // would strand a misconception-less accept that the idempotency guard above then skips
-  // permanently.
-  //
-  // Still no FSRS / review / learning-item state. A minted misconception is SOFT-track
-  // (source='soft', dark flag) — an AI prior the owner agreed with, NOT a confirmed weakness.
-  const concurrentAccept = await db.transaction(async (tx) => {
-    // Same lock dismiss, retract and answerProbe take. Accept never takes a probe-question
-    // or conjecture-fold lock, so decision → misc → probe-serve agrees with answerProbe's
-    // probe-question → fold → decision → probe-serve.
-    await acquireProposalDecisionLock(tx, proposalId);
-    const decided = await existingAcceptRate(tx, proposalId);
-    if (decided) return decided;
-    await writeEvent(tx, {
-      id: rateEventId,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'rate',
-      subject_kind: 'event',
-      subject_id: proposalId,
-      outcome: 'success',
-      // RateEvent.payload is non-strict — these extra keys are stripped by parse but
-      // PERSISTED raw on the event row; the read model + calibration read them back.
-      payload: {
-        rating: 'accept',
-        conjecture_id: conjectureId,
-        // scope-tagger derives `topic:<kc>` from referenced_knowledge_ids, so this event's
-        // affected_scopes (and the mem0 projection that copies them) are retrievable under
-        // the conjecture's knowledge scope instead of only 'global'.
-        referenced_knowledge_ids: [requiredString(change.knowledge_id, 'knowledge_id', proposalId)],
-        // accept = agree with direction (NOT confirmed); edit = corrected_by_owner.
-        corrected_by_owner: isEdit,
-        calibration_anchor: isEdit ? 'edit' : 'accept',
-        ...(correctedClaim ? { corrected_claim_md: correctedClaim } : {}),
-        ...(opts.user_note ? { user_note: opts.user_note } : {}),
-      },
-      caused_by_event_id: proposalId,
-      created_at: now,
-    });
-
-    // DARK promotion hop. Reads recurrence_count off the persisted proposal change (NOT a
-    // fresh gatherConjectureEvidence). K_PROMOTE=2 is redundant with the induction floor
-    // (every conjecture already recurred ≥2) — the real gate is the flag + human accept.
+      // Both claim schemas now trim at their boundaries. Keep a normalized content comparison
+      // as defense in depth so direct/internal callers cannot turn a no-op payload into an edit.
+      const originalClaim = typeof change.claim_md === 'string' ? change.claim_md.trim() : '';
+      const submittedClaim =
+        typeof opts.corrected_payload?.claim_md === 'string'
+          ? opts.corrected_payload.claim_md.trim()
+          : undefined;
+      const correctedClaim =
+        submittedClaim !== undefined && submittedClaim !== originalClaim
+          ? submittedClaim
+          : undefined;
+      const isEdit = correctedClaim !== undefined;
+      return { correctedClaim, evidenceEventIds, isEdit, primaryProbeSpec };
+    },
+    // The rate write + the flag-gated misconception promotion are ATOMIC in ONE transaction.
+    // Atomicity is load-bearing: a crash after the rate write but before the promotion upsert
+    // would strand a misconception-less accept that the idempotency guard above then skips
+    // permanently.
     //
-    // An EDIT accept promotes NOTHING: the rewrite has no evidence of its own (titling a node
-    // with it would hang the original claim's evidenceEventIds off an unevidenced belief),
-    // and persisting the original claim would park a belief the owner just declined. Nothing
-    // is lost: corrected_by_owner + corrected_claim_md stay durable on the rate event (and
-    // project to mem0), so a later pass can re-derive evidence for the rewrite.
-    const promotionEnabled = misconceptionPromoteEnabled();
-    const knowledgeId = requiredString(change.knowledge_id, 'knowledge_id', proposalId);
-    const causeCategory = requiredString(change.cause_category, 'cause_category', proposalId);
+    // Still no FSRS / review / learning-item state. A minted misconception is SOFT-track
+    // (source='soft', dark flag) — an AI prior the owner agreed with, NOT a confirmed weakness.
+    effect: async (
+      { tx, writeRate },
+      { correctedClaim, evidenceEventIds, isEdit, primaryProbeSpec },
+    ): Promise<ProposalAcceptEffectOutcome<ConjectureAcceptResult>> => {
+      const now = new Date();
+      // The kernel already holds the decision lock, the one dismiss, retract and answerProbe
+      // take. Accept never takes a probe-question or conjecture-fold lock, so decision → misc →
+      // probe-serve agrees with answerProbe's probe-question → fold → decision → probe-serve.
+      const rateEventId = await writeRate({
+        created_at: now,
+        // RateEvent.payload is non-strict — these extra keys are stripped by parse but
+        // PERSISTED raw on the event row; the read model + calibration read them back.
+        payload: {
+          conjecture_id: conjectureId,
+          // scope-tagger derives `topic:<kc>` from referenced_knowledge_ids, so this event's
+          // affected_scopes (and the mem0 projection that copies them) are retrievable under
+          // the conjecture's knowledge scope instead of only 'global'.
+          referenced_knowledge_ids: [
+            requiredString(change.knowledge_id, 'knowledge_id', proposalId),
+          ],
+          // accept = agree with direction (NOT confirmed); edit = corrected_by_owner.
+          corrected_by_owner: isEdit,
+          calibration_anchor: isEdit ? 'edit' : 'accept',
+          ...(correctedClaim ? { corrected_claim_md: correctedClaim } : {}),
+        },
+      });
 
-    // An edit also retracts any pre-existing SOFT node for this deterministic cause×KC
-    // identity. Cleanup is deliberately independent of the current promotion flag: a node may
-    // have been created while the flag was ON and still needs retiring after an OFF rollback.
-    // The row/edges are archived, never deleted; a HARD node is left untouched.
-    if (isEdit) {
-      await archiveSoftMisconceptionForConjecture(tx, causeCategory, knowledgeId, now);
-    }
+      // DARK promotion hop. Reads recurrence_count off the persisted proposal change (NOT a
+      // fresh gatherConjectureEvidence). K_PROMOTE=2 is redundant with the induction floor
+      // (every conjecture already recurred ≥2) — the real gate is the flag + human accept.
+      //
+      // An EDIT accept promotes NOTHING: the rewrite has no evidence of its own (titling a node
+      // with it would hang the original claim's evidenceEventIds off an unevidenced belief),
+      // and persisting the original claim would park a belief the owner just declined. Nothing
+      // is lost: corrected_by_owner + corrected_claim_md stay durable on the rate event (and
+      // project to mem0), so a later pass can re-derive evidence for the rewrite.
+      const promotionEnabled = misconceptionPromoteEnabled();
+      const knowledgeId = requiredString(change.knowledge_id, 'knowledge_id', proposalId);
+      const causeCategory = requiredString(change.cause_category, 'cause_category', proposalId);
 
-    if (!isEdit && promotionEnabled && Number(change.recurrence_count) >= K_PROMOTE) {
-      await promoteConjectureToMisconception(tx, {
-        conjectureId,
-        knowledgeId,
-        // Both producer schemas trim; this remains normalized defense in depth.
-        claimMd: requiredString(change.claim_md, 'claim_md', proposalId).trim(),
-        causeCategory,
-        confidence: Number(change.confidence),
-        recurrenceCount: Number(change.recurrence_count),
-        evidenceEventIds,
+      // An edit also retracts any pre-existing SOFT node for this deterministic cause×KC
+      // identity. Cleanup is deliberately independent of the current promotion flag: a node may
+      // have been created while the flag was ON and still needs retiring after an OFF rollback.
+      // The row/edges are archived, never deleted; a HARD node is left untouched.
+      if (isEdit) {
+        await archiveSoftMisconceptionForConjecture(tx, causeCategory, knowledgeId, now);
+      }
+
+      if (!isEdit && promotionEnabled && Number(change.recurrence_count) >= K_PROMOTE) {
+        await promoteConjectureToMisconception(tx, {
+          conjectureId,
+          knowledgeId,
+          // Both producer schemas trim; this remains normalized defense in depth.
+          claimMd: requiredString(change.claim_md, 'claim_md', proposalId).trim(),
+          causeCategory,
+          confidence: Number(change.confidence),
+          recurrenceCount: Number(change.recurrence_count),
+          evidenceEventIds,
+          now,
+        });
+      }
+
+      // Serve the discriminating probe ATOMICALLY with the rate event + dark promotion: a
+      // serve throw propagates through the nested SAVEPOINT and aborts the whole outer tx, so
+      // the owner never gets an accept record without its probe. serveProbeOnce's internal
+      // db.transaction nests as a SAVEPOINT, and its pg_advisory_xact_lock is transaction-
+      // scoped, so the cap-serialize guarantee holds across the whole accept. serveProbeOnce
+      // writes ONLY the draft question row (no FSRS / attempt / θ̂). The rate re-check under
+      // the decision lock means a probe is served at most once per conjecture.
+      //
+      // `cap_reached` is a normal RETURN, so it does NOT self-abort the tx. Throw instead:
+      // committing the rate anchor + promotion with no probe strands an accepted-without-probe
+      // chain that the idempotency guard would then block from retry. The proposal stays pending
+      // until a probe is answered (countActiveProbes drops) and the owner re-accepts.
+      const probe = await serveProbeOnce({
+        db: tx,
+        conjectureProposalId: conjectureId,
+        knowledgeId: requiredString(change.knowledge_id, 'knowledge_id', proposalId),
+        probeMd: requiredString(change.probe_md, 'probe_md', proposalId),
+        referenceMd: requiredString(change.probe_reference_md, 'probe_reference_md', proposalId),
+        probeSpec: primaryProbeSpec.success ? primaryProbeSpec.data : undefined,
         now,
       });
-    }
-
-    // Serve the discriminating probe ATOMICALLY with the rate event + dark promotion: a
-    // serve throw propagates through the nested SAVEPOINT and aborts the whole outer tx, so
-    // the owner never gets an accept record without its probe. serveProbeOnce's internal
-    // db.transaction nests as a SAVEPOINT, and its pg_advisory_xact_lock is transaction-
-    // scoped, so the cap-serialize guarantee holds across the whole accept. serveProbeOnce
-    // writes ONLY the draft question row (no FSRS / attempt / θ̂). The rate re-check under
-    // the decision lock means a probe is served at most once per conjecture.
-    //
-    // `cap_reached` is a normal RETURN, so it does NOT self-abort the tx. Throw instead:
-    // committing the rate anchor + promotion with no probe strands an accepted-without-probe
-    // chain that the idempotency guard would then block from retry. The proposal stays pending
-    // until a probe is answered (countActiveProbes drops) and the owner re-accepts.
-    const probe = await serveProbeOnce({
-      db: tx,
-      conjectureProposalId: conjectureId,
-      knowledgeId: requiredString(change.knowledge_id, 'knowledge_id', proposalId),
-      probeMd: requiredString(change.probe_md, 'probe_md', proposalId),
-      referenceMd: requiredString(change.probe_reference_md, 'probe_reference_md', proposalId),
-      probeSpec: primaryProbeSpec.success ? primaryProbeSpec.data : undefined,
-      now,
-    });
-    if (probe.status === 'cap_reached') {
-      throw new ApiError(
-        PROBE_SLOTS_FULL_CODE,
-        `cannot accept: all ${MAX_CONCURRENT_ACTIVE_PROBES} mind-probe slots are active; answer a probe to free a slot, then retry`,
-        409,
-      );
-    }
-    return null;
+      if (probe.status === 'cap_reached') {
+        throw new ApiError(
+          PROBE_SLOTS_FULL_CODE,
+          `cannot accept: all ${MAX_CONCURRENT_ACTIVE_PROBES} mind-probe slots are active; answer a probe to free a slot, then retry`,
+          409,
+        );
+      }
+      return {
+        status: 'accepted',
+        result: {
+          kind: 'conjecture',
+          rate_event_id: rateEventId,
+          conjecture_id: conjectureId,
+          corrected_by_owner: isEdit,
+          weakness_confirmed: false,
+        },
+      };
+    },
   });
-  if (concurrentAccept) return replayAccepted(concurrentAccept);
-
-  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-
-  return {
-    kind: 'conjecture',
-    rate_event_id: rateEventId,
-    conjecture_id: conjectureId,
-    corrected_by_owner: isEdit,
-    weakness_confirmed: false,
-  };
+  return result;
 }

@@ -64,13 +64,15 @@ export interface ProposalAcceptResult {
   lifecycle_outcome?: 'accepted' | 'dismissed';
 }
 
+/**
+ * Composition-only runtime seams (e.g. network/job fakes). Never proposal data,
+ * never part of the kernel input contract.
+ */
+export type ProposalRuntimeSeams = Readonly<Record<string, unknown>>;
+
 export type ProposalAcceptApplier = (
   db: unknown,
   input: ProposalAcceptInput,
-  /**
-   * Composition-only runtime seams (e.g. network/job fakes). Never proposal data,
-   * never part of the kernel input contract.
-   */
   runtime?: unknown,
 ) => Promise<ProposalAcceptResult>;
 

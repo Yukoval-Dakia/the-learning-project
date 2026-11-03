@@ -60,7 +60,7 @@ function excerpt(value: string | null | undefined, max = TEXT_EXCERPT_MAX): stri
 //     (cause-targetable, depth≤2, chain terminus) and soft guard (in-flight cap,
 //     cooldown) lives there and is preserved by construction (HARD INVARIANT #1/#3).
 //   * The record seed writes `kind:'record_promotion'` with `target:'question'`
-//     so the EXISTING `acceptRecordPromotionProposal` + its `existingAcceptRate`
+//     so the EXISTING `acceptRecordPromotionProposal` + its accept-rate
 //     idempotency (caused_by_event_id = proposalId) apply verbatim (HARD INVARIANT
 //     #2). A1 introduces NO new proposal kind and touches NO accept-time code.
 //   * The two legacy tools (propose_variant / propose_record_promotion) STAY as-is

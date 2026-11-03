@@ -1,20 +1,14 @@
 import type { Db } from '@/db/client';
-import {
-  acquireProposalDecisionLock,
-  findExistingRateEvent,
-  writeProposalRateEvent,
-} from '@/kernel/proposals/applier-helpers';
+import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import type {
   ProposalAcceptApplier,
   ProposalAcceptInput,
   ProposalAcceptResult,
   ProposalDismissApplier,
-  ProposalDismissInput,
   ProposalDismissResult,
 } from '@/kernel/proposals/index';
 import { toProposalLifecycleResult } from '@/kernel/proposals/index';
-import { recordProposalDecisionSignal } from '@/kernel/proposals/signals';
 import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
@@ -34,22 +28,9 @@ export const {
   variantQuestionProposalDismissApplier,
   variantQuestionProposalRetractApplier,
 } = createPracticeProposalLifecycle({
-  acquireProposalDecisionLock,
   findExistingRateEvent,
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
-  recordDismissSignal: (db: Db, input: ProposalDismissInput) =>
-    recordProposalDecisionSignal(
-      db,
-      {
-        ...input.proposal,
-        kind: input.proposal.payload.kind,
-        target: input.proposal.payload.target,
-      } as ProposalInboxRow,
-      'dismiss',
-      input.user_note,
-    ),
-  writeProposalRateEvent,
 });
 
 function inboxView(input: { proposal: ProposalAcceptInput['proposal'] }): ProposalInboxRow {
