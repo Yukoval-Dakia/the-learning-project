@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { makeLookup } from '@/ui/lib/makeLookup';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
 
 import {
   PracticeQueue,
@@ -50,7 +49,7 @@ const SRC_META_FALLBACK: SrcMeta = { label: '其它来源', tone: 'neutral', ico
 const warnedSources = new Set<string>();
 const lookupSrcMeta = makeLookup(SRC_META as Readonly<Record<string, SrcMeta>>, SRC_META_FALLBACK);
 
-// 所有 SRC_META 访问一律经此（PfSrcBadge + done 行锚点 + 做题页眉）——不再有 bare index。
+// 所有 SRC_META 访问一律经此（队列行 + done 行锚点 + 做题页眉）——不再有 bare index。
 function srcMeta(source: string): SrcMeta {
   const meta = lookupSrcMeta(source);
   if (meta !== SRC_META_FALLBACK) return meta;
@@ -71,16 +70,6 @@ export function practiceMorphKey(itemId: string): string {
 /** The source's plain label (e.g. for the practice page's eyebrow). */
 export function practiceSourceLabel(source: string): string {
   return srcMeta(source).label;
-}
-
-export function PfSrcBadge({ source }: { source: string }) {
-  const s = srcMeta(source);
-  return (
-    <span className={`badge tone-${s.tone}`}>
-      <LoomIcon name={s.icon as never} size={12} />
-      {s.label}
-    </span>
-  );
 }
 
 const STREAM_VERDICT_META = {

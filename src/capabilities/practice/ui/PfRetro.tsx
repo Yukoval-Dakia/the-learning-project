@@ -1,10 +1,12 @@
-// M2 练习面 — 交卷结果 / 复盘（YUK-316，pfr 共用骨架）。
+// M2 练习面 — 交卷结果 / 复盘（YUK-316）。
 // 设计基准 docs/design/loom-refresh/project/pface-paper.jsx（PfrBody/Result/Retro）：
 // 分数 hero + 判定分布条 + AI 整卷小结 + 逐题展开（你的作答 / AI 反馈 / 不服判）。
 // 整卷小结 M2 为本地模板（按错数挑选）；M4 夜链接管后改为 AI 生成随卷持久化。
 // 错题去向 trace（归因事件 / 变式排期）等 M4 归因链上线后接真数据。
+// M3E 呈现：docs/design/2026-11-03-practice-face-m3e.md（样式 practice-face-m3e.css）。
 
 import { useQuery } from '@tanstack/react-query';
+import { ArrowLeft, ChevronDown, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { AttachmentStrip } from '@/ui/components/response/AttachmentStrip';
@@ -18,10 +20,8 @@ import {
 import { SlotResultBadge } from '@/ui/components/response/SlotResultBadge';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { Btn } from '@/ui/primitives/Btn';
-import { EmptyState } from '@/ui/primitives/EmptyState';
-import { ErrorState } from '@/ui/primitives/ErrorState';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { Button, Chip } from '@/ui-next/public';
 
 import type { PaperSlot } from './practice-api';
 import { usePracticeClient } from './practice-client';
@@ -74,15 +74,15 @@ export function PfrQRow({
   const answerImages = sub?.answer_image_refs ?? [];
 
   return (
-    <div className="pfr-q">
+    <div className="pf-rq">
       <button
         type="button"
-        className="pfr-q-head"
+        className="pf-rq-head"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
       >
-        <span className="pfr-q-n">{String(n).padStart(2, '0')}</span>
-        <span className="pfr-q-stem">{slot.question.prompt_md}</span>
+        <span className="pf-rq-n">{String(n).padStart(2, '0')}</span>
+        <span className="pf-rq-stem">{slot.question.prompt_md}</span>
         {sub ? (
           sub.visible_to_user ? (
             <SlotResultBadge
@@ -95,16 +95,12 @@ export function PfrQRow({
             <SlotResultBadge lifecycle="group_tentative" />
           )
         ) : (
-          <span className="badge tone-neutral">未作答</span>
+          <Chip>未作答</Chip>
         )}
-        <LoomIcon
-          name={open ? 'chevronDown' : 'arrow'}
-          size={15}
-          style={{ color: 'var(--ink-4)', flex: 'none' }}
-        />
+        <ChevronDown size={18} aria-hidden="true" className="pf-rq-chev" />
       </button>
       {open && (
-        <div className="pfr-q-body">
+        <div className="pf-rq-body">
           {(slot.question.image_refs ?? []).map((assetId) => (
             <AssetEvidencePreview
               key={assetId}
@@ -113,8 +109,8 @@ export function PfrQRow({
               variant="inline"
             />
           ))}
-          <div className="pfr-q-row">
-            <span className="cmp-label">你的作答</span>
+          <div className="pf-rq-row">
+            <span className="pf-rq-label">你的作答</span>
             {isChoice && sub ? (
               <ChoiceSetResponse
                 options={choiceOptions}
@@ -139,14 +135,12 @@ export function PfrQRow({
               // it renders in the neutral default font.
               <span>{sub.answer_md}</span>
             ) : (
-              <span className="quiet-empty" style={{ padding: 0 }}>
-                （未作答）
-              </span>
+              <span className="pf-rq-none">（未作答）</span>
             )}
           </div>
           {answerImages.length > 0 && (
-            <div className="pfr-q-row">
-              <span className="cmp-label">作答附件</span>
+            <div className="pf-rq-row">
+              <span className="pf-rq-label">作答附件</span>
               <AttachmentStrip
                 attachments={answerImages.map((id) => ({ asset_id: id, slot_ids: null }))}
                 onPreview={setZoomAsset}
@@ -154,23 +148,21 @@ export function PfrQRow({
             </div>
           )}
           {visible?.feedback_md && (
-            <div className="pfr-q-row">
-              <span className="cmp-label">AI 反馈</span>
+            <div className="pf-rq-row">
+              <span className="pf-rq-label">AI 反馈</span>
               {/* YUK-1005 — markdown+KaTeX for judge feedback / reference answer;
                   the collapsed header stem stays a raw-text preview strip. */}
               <MathMarkdown notation={slot.question.notation}>{visible.feedback_md}</MathMarkdown>
             </div>
           )}
           {visible?.reference_md && (
-            <div className="pfr-q-row">
-              <span className="cmp-label">参考</span>
+            <div className="pf-rq-row">
+              <span className="pf-rq-label">参考</span>
               <MathMarkdown notation={slot.question.notation}>{visible.reference_md}</MathMarkdown>
             </div>
           )}
           {appealable && verdict !== null && verdict !== 'good' && (
-            <div className="quiet-empty" style={{ padding: 0, alignSelf: 'flex-start' }}>
-              此处暂不能直接重判；需要申诉时，请从散题反馈卡提交理由。
-            </div>
+            <p className="pf-rq-note">此处暂不能直接重判；需要申诉时，请从散题反馈卡提交理由。</p>
           )}
         </div>
       )}
@@ -191,37 +183,45 @@ export function PfRetro({ artifactId, onBack }: { artifactId: string; onBack: ()
     queryFn: () => getPaperDetail(artifactId),
   });
 
-  if (detailQ.isLoading) return <p className="quiet-empty">取卷中…</p>;
+  if (detailQ.isLoading)
+    return (
+      <p className="pf-m3-state un-m3e-bridge" role="status">
+        取卷中…
+      </p>
+    );
   // 三态分离（YUK-732，与 NoteReaderPage 口径一致）：瞬时加载失败 ≠ 真空态。
   // isLoadingError = 无缓存的首次 fetch 失败——示带重试的错误态；已加载后窗口聚焦/重连
   // 触发的后台 refetch 失败会保留旧 data，不落此分支、不整页替换。
-  // 404 语义是「卷不存在/已删」= 空，不是「加载失败」——放行到下面的 EmptyState（同
-  // NoteReaderPage 口径），只有瞬时错误（网络/5xx）才示带重试的 ErrorState。
+  // 404 语义是「卷不存在/已删」= 空，不是「加载失败」——放行到下面的空态（同
+  // NoteReaderPage 口径），只有瞬时错误（网络/5xx）才示带重试的出错行。
   const isNotFound = detailQ.error instanceof ApiError && detailQ.error.status === 404;
   if (detailQ.isLoadingError && !isNotFound)
     return (
-      <div className="pfr">
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={onBack}>
-          返回卷架
-        </Btn>
-        <ErrorState text="复盘加载失败。" onRetry={() => void detailQ.refetch()} />
+      <div className="pf-retro un-m3e-bridge">
+        <div className="pf-retro-top">
+          <Button variant="ghost" onClick={onBack}>
+            <ArrowLeft size={18} aria-hidden="true" />
+            返回卷架
+          </Button>
+        </div>
+        <div className="pf-m3-error">
+          <RetryLine message="复盘加载失败。" onRetry={() => void detailQ.refetch()} />
+        </div>
       </div>
     );
   const detail = detailQ.data;
   // 真空态：detail 成功返回但没有可复盘的记录，或 404（卷不存在）——语义上「空」，非「加载失败」。
   if (!detail)
     return (
-      <div className="pfr">
-        <EmptyState
-          icon="doc"
-          title="还没有复盘"
-          text="这张卷还没有可复盘的作答记录。"
-          action={
-            <Btn size="sm" variant="ghost" icon="arrowL" onClick={onBack}>
-              返回卷架
-            </Btn>
-          }
-        />
+      <div className="pf-retro un-m3e-bridge">
+        <div className="pf-m3-state">
+          <h2>还没有复盘</h2>
+          <p>这张卷还没有可复盘的作答记录。</p>
+          <Button variant="ghost" onClick={onBack}>
+            <ArrowLeft size={18} aria-hidden="true" />
+            返回卷架
+          </Button>
+        </div>
       </div>
     );
 
@@ -244,71 +244,71 @@ export function PfRetro({ artifactId, onBack }: { artifactId: string; onBack: ()
   ).length;
 
   return (
-    <div className="pfr" data-screen-label={`复盘 · ${artifactId}`}>
-      <div className="pfs-top">
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={onBack}>
+    <div className="pf-retro un-m3e-bridge" data-screen-label={`复盘 · ${artifactId}`}>
+      <div className="pf-retro-top">
+        <Button variant="ghost" onClick={onBack}>
+          <ArrowLeft size={18} aria-hidden="true" />
           返回卷架
-        </Btn>
-        <span className="pfp-title">{detail.title} · 复盘</span>
+        </Button>
+        <h1 className="pf-retro-title">{detail.title} · 复盘</h1>
       </div>
 
-      <div className="pfr-hero">
-        <div className="pfr-score">
-          <b className="tnum">
+      <div className="pf-retro-hero">
+        <p className="pf-retro-score">
+          <b>
             {good}
-            <span style={{ fontSize: 28, color: 'var(--ink-4)' }}> / {total}</span>
+            <span> / {total}</span>
           </b>
           <span>
             对 ·{' '}
             {detail.session?.status === 'completed' ? '已交卷' : (detail.session?.status ?? '')}
           </span>
-        </div>
-        <div className="pfr-dist">
-          <div className="dist-bar" style={{ height: 10 }}>
-            {good > 0 && <span className="dist-seg good" style={{ flex: good }} />}
-            {hard > 0 && (
-              <span className="dist-seg" style={{ flex: hard, background: 'var(--hard)' }} />
-            )}
-            {again > 0 && <span className="dist-seg again" style={{ flex: again }} />}
+        </p>
+        <div className="pf-retro-dist">
+          <div className="pf-dist-bar pf-dist-bar-lg" aria-hidden="true">
+            {good > 0 && <span data-seg="good" style={{ flex: good }} />}
+            {hard > 0 && <span data-seg="hard" style={{ flex: hard }} />}
+            {again > 0 && <span data-seg="again" style={{ flex: again }} />}
           </div>
-          <div className="dist-legend">
-            <span className="g-right">{good} 对</span>
+          <p className="pf-dist-legend">
+            <span data-seg="good">{good} 对</span>
             {hard > 0 && (
               <>
-                <span className="dot-sep">·</span>
-                <span style={{ color: 'var(--hard-ink)' }}>{hard} 部分</span>
+                <span aria-hidden="true">·</span>
+                <span data-seg="hard">{hard} 部分</span>
               </>
             )}
-            <span className="dot-sep">·</span>
-            <span className="g-wrong">{again} 错/未答</span>
-          </div>
+            <span aria-hidden="true">·</span>
+            <span data-seg="again">{again} 错/未答</span>
+          </p>
         </div>
       </div>
 
-      <div className="pfr-summary">
-        <span className="pf-open-ava">
-          <LoomIcon name="sparkle" size={16} />
+      <div className="pf-retro-summary">
+        <span className="pf-retro-ava" aria-hidden="true">
+          <Sparkles size={18} />
         </span>
         <div>
-          <p className="pfr-summary-text">
+          <p className="pf-retro-summary-text">
             {unknownScores > 0
               ? `${good} 题完整正确，${hard} 题部分正确，${again} 题错或未答。其中 ${unknownScores} 题分数未知。`
               : summaryByWrong(hard + again, total)}
           </p>
-          <div className="pfr-summary-meta">paper.judge · 交卷统一判分</div>
+          <p className="pf-retro-summary-meta">交卷统一判分</p>
         </div>
       </div>
 
-      <div className="pfr-list">
+      <div className="pf-retro-list">
         {slots.map((s, i) => (
           <PfrQRow key={`${s.question_id}-${s.part_ref ?? ''}`} n={i + 1} slot={s} appealable />
         ))}
       </div>
 
-      <div className="pfr-foot">
-        <Btn variant="secondary" icon="arrowL" onClick={onBack}>
+      <div className="pf-retro-foot">
+        <Button variant="secondary" onClick={onBack}>
+          <ArrowLeft size={18} aria-hidden="true" />
           返回卷架
-        </Btn>
+        </Button>
       </div>
     </div>
   );
