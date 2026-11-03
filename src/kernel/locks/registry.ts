@@ -192,7 +192,7 @@ export const advisoryLockRegistry = {
     encoding: 'hashtextextended',
     salt: 0,
     keyPrefix: 'supply-spend:v1:',
-    suffixFields: ['bucket', 'day'],
+    suffixFields: ['day'],
   },
   questionServingCommand: {
     family: 'serving-command',

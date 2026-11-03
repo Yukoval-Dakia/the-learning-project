@@ -8,7 +8,6 @@ import {
 } from '@/kernel/placement-starter-outcome';
 import { placementStarterIdentity } from './placement-starter-identity';
 import { resolvePlacementStarterGoalAuthority } from './placement-starter-store';
-import { STARTER_BUDGET_EXHAUSTED } from './spend-gate';
 
 /** Call in a read-only repeatable-read transaction so goal and claim binding share a snapshot. */
 export async function readPlacementStarterOutcomes(
@@ -88,16 +87,6 @@ export async function readPlacementStarterOutcomes(
         state: 'unknown',
         next_action: 'resolve_unknown_outcome',
         failure_reason: { code: 'cost_unknown' },
-      };
-    }
-    if (claim.status === 'pending_dispatch' && claim.last_error_code === STARTER_BUDGET_EXHAUSTED) {
-      return {
-        ...claimed,
-        state: 'deferred',
-        next_action: 'upload_own_questions',
-        failure_reason: null,
-        deferred_reason: 'starter_budget_exhausted',
-        retry_after: claim.next_reconcile_at.toISOString(),
       };
     }
     switch (claim.status) {

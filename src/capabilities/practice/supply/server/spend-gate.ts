@@ -1,50 +1,37 @@
-// Supply spend gate: the one place that decides whether supply work may spend and what it is
-// charged. Two buckets that never draw on each other:
+// Nightly supply spend gate: the one place that decides whether nightly supply work may
+// spend and what each unit of it is charged. Callers: the nightly dispatch (hold before
+// enqueue), the in-demand route fallback (hold before the send), and the web sourcing run
+// (grow the hold into its run cap, then settle). Work the nightly did not admit is not gated.
 //
-// - nightly (SUPPLY_NIGHTLY_SPEND_CAP_USD per learner day): gaps the nightly scan dispatches,
-//   their in-demand route switches and their verification. Callers hold before the enqueue or
-//   send; a web sourcing run grows its unit's hold into its run cap, then settles. Work the
-//   nightly did not admit is not gated here.
-// - starter (PLACEMENT_STARTER_CLAIM_CAP_USD per claim, PLACEMENT_STARTER_DAILY_CLAIMS per
-//   learner day): placement starter claims. The day count is held in the dispatch transaction;
-//   the claim's spend is its own cost-component ledger, checked before every paid effect.
-//
-// Day holds are append-only `experimental:supply_spend` events, subject `<bucket>:<day>`
-// (Asia/Shanghai learner day, core/learner-day), serialized by that bucket-day's advisory lock.
-// A key's records stay on the day of its first hold. Unknown cost never counts as zero: a
-// started nightly run without a priced cost is charged its hold, and an unpriced starter call
-// counts at its reservation. Verification and generation jobs outside supply cannot be
-// attributed to a nightly unit, so they are charged at their reservation.
+// Ledger: append-only `experimental:supply_spend` events, subject = learner day
+// (Asia/Shanghai, core/learner-day). A key's records stay on the day of its first hold.
+// Day total = Σ per key (settled ? charge : hold), kept ≤ SUPPLY_NIGHTLY_SPEND_CAP_USD under
+// that day's advisory lock. A run's actual cost is its ai_task_runs cost truth; a started run
+// without a priced cost is charged its hold, never zero. Verification (source_verify /
+// quiz_verify) and generation jobs run outside supply and cannot be attributed to a unit, so
+// they are charged at their reservation.
 import { createHash } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getConfig } from '@/core/config/store';
-import { learnerDayWindowUtc, learnerLocalDay } from '@/core/learner-day';
+import { learnerLocalDay } from '@/core/learner-day';
 import type { Db, Tx } from '@/db/client';
-import {
-  ai_task_runs,
-  event,
-  placement_starter_claim,
-  placement_starter_cost_component,
-} from '@/db/schema';
+import { ai_task_runs, event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { lockSupplySpendDay } from '@/kernel/locks/question-supply';
 
 const SUPPLY_SPEND_ACTION = 'experimental:supply_spend';
+const CAP_CONFIG_KEY = 'SUPPLY_NIGHTLY_SPEND_CAP_USD';
 
-/** Hold for one nightly sourcing or generation run before it starts. A sourcing run grows it
- * into its own cap from free budget when it starts and settles to its actual cost. */
+/** Hold for one sourcing or generation run before it starts. A sourcing run grows it into
+ * its own cap from free budget when it starts and settles to its actual cost. */
 const RUN_RESERVATION_MICRO_USD = 100_000;
-/** One verification model call (solve check, admission solve, grounding judge). */
-const VERIFY_CALL_RESERVATION_MICRO_USD = 10_000;
-/** A question is verified with up to three paid calls. */
-const VERIFY_RESERVATION_MICRO_USD = 3 * VERIFY_CALL_RESERVATION_MICRO_USD;
-
-type Bucket = 'nightly' | 'starter';
+/** Per-question verification charge (up to three paid calls: solve check, admission solve,
+ * grounding judge); also what a requested question holds until settlement. */
+const VERIFY_RESERVATION_MICRO_USD = 3 * 10_000;
 
 const SpendRecord = z.object({
   version: z.literal(1),
-  bucket: z.enum(['nightly', 'starter']),
   day: z.string(),
   key: z.string(),
   seq: z.number().int().nonnegative(),
@@ -60,10 +47,9 @@ type SpendRecordT = z.infer<typeof SpendRecord>;
 
 const nightlyUnitKey = (targetId: string) => `nightly:${targetId}`;
 const fallbackKey = (targetId: string, route: string) => `nightly:${targetId}:fallback:${route}`;
-const starterClaimKey = (claimId: string) => `starter:${claimId}`;
 
-function usdConfigMicro(key: string): number {
-  const value = getConfig(key);
+function capMicroUsd(): number {
+  const value = getConfig(CAP_CONFIG_KEY);
   // An unreadable cap admits nothing rather than everything.
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? Math.round(value * 1_000_000)
@@ -74,19 +60,15 @@ function chargeOf(record: SpendRecordT): number {
   return record.kind === 'settle' ? (record.charge_micro_usd ?? 0) : record.hold_micro_usd;
 }
 
-/** Latest record per key in one bucket-day. */
-async function readDay(
-  db: Db | Tx,
-  bucket: Bucket,
-  day: string,
-): Promise<Map<string, SpendRecordT>> {
+/** Latest record per key on one day. */
+async function readDay(db: Db | Tx, day: string): Promise<Map<string, SpendRecordT>> {
   const rows = await db
     .select({ payload: event.payload })
     .from(event)
     .where(
       and(
         eq(event.subject_kind, 'query'),
-        eq(event.subject_id, `${bucket}:${day}`),
+        eq(event.subject_id, day),
         eq(event.action, SUPPLY_SPEND_ACTION),
       ),
     );
@@ -94,7 +76,7 @@ async function readDay(
   for (const row of rows) {
     const parsed = SpendRecord.safeParse(row.payload);
     // A record this gate cannot read could be a live hold: refuse to guess the day total.
-    if (!parsed.success) throw new Error(`unreadable supply spend record on ${bucket}:${day}`);
+    if (!parsed.success) throw new Error(`unreadable supply spend record on ${day}`);
     const prior = latest.get(parsed.data.key);
     if (!prior || parsed.data.seq > prior.seq) latest.set(parsed.data.key, parsed.data);
   }
@@ -109,21 +91,21 @@ function dayTotal(records: Map<string, SpendRecordT>): number {
 
 async function dayOfKey(db: Db, key: string): Promise<string | null> {
   const [row] = await db
-    .select({ day: sql<string>`${event.payload}->>'day'` })
+    .select({ day: event.subject_id })
     .from(event)
     .where(and(eq(event.action, SUPPLY_SPEND_ACTION), sql`${event.payload}->>'key' = ${key}`))
     .limit(1);
   return row?.day ?? null;
 }
 
-async function onNightlyDay<T>(
+async function onDay<T>(
   db: Db,
   day: string,
   work: (tx: Tx, records: Map<string, SpendRecordT>) => Promise<T>,
 ): Promise<T> {
   return db.transaction(async (tx) => {
-    await lockSupplySpendDay(tx, 'nightly', day);
-    return work(tx, await readDay(tx, 'nightly', day));
+    await lockSupplySpendDay(tx, day);
+    return work(tx, await readDay(tx, day));
   });
 }
 
@@ -133,7 +115,7 @@ async function append(tx: Tx, record: SpendRecordT): Promise<void> {
     id: `supply_spend_${createHash('sha256').update(record.key).digest('hex')}_${record.seq}`,
     action: SUPPLY_SPEND_ACTION,
     subject_kind: 'query',
-    subject_id: `${record.bucket}:${record.day}`,
+    subject_id: record.day,
     actor_kind: 'agent',
     actor_ref: 'supply_spend_gate',
     outcome: 'success',
@@ -148,19 +130,17 @@ async function append(tx: Tx, record: SpendRecordT): Promise<void> {
   });
 }
 
-// ── Nightly bucket ───────────────────────────────────────────────────────────
-
 export type SupplySpendHold =
   | { granted: true }
   | { granted: false; capMicroUsd: number; committedMicroUsd: number };
 
-async function holdNewNightlyKey(
+async function holdNewKey(
   db: Db,
   input: { key: string; holdMicroUsd: number; verifyMicroUsd: number; now: Date },
 ): Promise<SupplySpendHold> {
   const day = learnerLocalDay(input.now);
-  const cap = usdConfigMicro('SUPPLY_NIGHTLY_SPEND_CAP_USD');
-  return onNightlyDay(db, day, async (tx, records) => {
+  const cap = capMicroUsd();
+  return onDay(db, day, async (tx, records) => {
     if (records.has(input.key)) return { granted: true };
     const committed = dayTotal(records);
     if (committed + input.holdMicroUsd > cap) {
@@ -168,7 +148,6 @@ async function holdNewNightlyKey(
     }
     await append(tx, {
       version: 1,
-      bucket: 'nightly',
       day,
       key: input.key,
       seq: 0,
@@ -187,7 +166,7 @@ export function holdNightlySupplyUnit(
   input: { targetId: string; questionCount: number; now?: Date },
 ): Promise<SupplySpendHold> {
   const verify = input.questionCount * VERIFY_RESERVATION_MICRO_USD;
-  return holdNewNightlyKey(db, {
+  return holdNewKey(db, {
     key: nightlyUnitKey(input.targetId),
     holdMicroUsd: RUN_RESERVATION_MICRO_USD + verify,
     verifyMicroUsd: verify,
@@ -200,7 +179,7 @@ export async function releaseNightlySupplyUnit(db: Db, targetId: string): Promis
   const key = nightlyUnitKey(targetId);
   const day = await dayOfKey(db, key);
   if (!day) return;
-  await onNightlyDay(db, day, async (tx, records) => {
+  await onDay(db, day, async (tx, records) => {
     const current = records.get(key);
     if (!current || current.kind === 'settle') return;
     await append(tx, {
@@ -227,7 +206,7 @@ export async function holdNightlyRouteFallback(
   if (await dayOfKey(db, key)) return 'granted';
   if (!(await dayOfKey(db, nightlyUnitKey(input.targetId)))) return 'not_nightly';
   const verify = input.questionCount * VERIFY_RESERVATION_MICRO_USD;
-  const hold = await holdNewNightlyKey(db, {
+  const hold = await holdNewKey(db, {
     key,
     holdMicroUsd: (input.route === 'quiz_gen' ? RUN_RESERVATION_MICRO_USD : 0) + verify,
     verifyMicroUsd: verify,
@@ -250,8 +229,8 @@ export async function admitNightlySourcingRun(
   const key = nightlyUnitKey(input.targetId);
   const day = await dayOfKey(db, key);
   if (!day) return { gated: false };
-  const cap = usdConfigMicro('SUPPLY_NIGHTLY_SPEND_CAP_USD');
-  return onNightlyDay(db, day, async (tx, records) => {
+  const cap = capMicroUsd();
+  return onDay(db, day, async (tx, records) => {
     const current = records.get(key);
     if (!current || current.kind === 'settle') return { gated: true, runCapMicroUsd: 0 };
     const free = Math.max(0, cap - dayTotal(records));
@@ -302,7 +281,7 @@ export async function settleNightlySourcingRun(
   const day = await dayOfKey(db, key);
   if (!day) return;
   const cost = await runCostMicroUsd(db, input.taskRunIds);
-  await onNightlyDay(db, day, async (tx, records) => {
+  await onDay(db, day, async (tx, records) => {
     const current = records.get(key);
     if (!current || current.kind === 'settle') return;
     const runCharge = cost.unpriced
@@ -317,113 +296,4 @@ export async function settleNightlySourcingRun(
       task_run_ids: [...input.taskRunIds],
     });
   });
-}
-
-// ── Starter bucket ───────────────────────────────────────────────────────────
-
-/** last_error_code of a pending claim the day's starter claim limit refused to dispatch. */
-export const STARTER_BUDGET_EXHAUSTED = 'starter_budget_exhausted';
-
-/** Money cap a starter claim gets when it is created or first dispatched. */
-export function starterClaimCapMicroUsd(): number {
-  return usdConfigMicro('PLACEMENT_STARTER_CLAIM_CAP_USD');
-}
-
-/** Thrown inside the starter dispatch savepoint so a refused dispatch writes nothing there. */
-export class StarterDailyLimitReached extends Error {
-  constructor(readonly retryAt: Date) {
-    super('starter_budget_exhausted: today’s starter claims are used up');
-  }
-}
-
-/**
- * In the starter dispatch transaction, right before the enqueue: count the claim against
- * today's starter claims. Throws StarterDailyLimitReached when they are used up. Caller order:
- * claim row, then the admission hook's goal/scope locks, then this bucket-day lock.
- */
-export async function holdStarterClaimDispatch(
-  tx: Tx,
-  input: { claimId: string; capMicroUsd: number; now?: Date },
-): Promise<void> {
-  const day = learnerLocalDay(input.now ?? new Date());
-  await lockSupplySpendDay(tx, 'starter', day);
-  const records = await readDay(tx, 'starter', day);
-  const key = starterClaimKey(input.claimId);
-  if (records.has(key)) return;
-  const limit = getConfig('PLACEMENT_STARTER_DAILY_CLAIMS');
-  if (typeof limit !== 'number' || records.size >= limit) {
-    throw new StarterDailyLimitReached(learnerDayWindowUtc(day, day).to);
-  }
-  await append(tx, {
-    version: 1,
-    bucket: 'starter',
-    day,
-    key,
-    seq: 0,
-    kind: 'hold',
-    hold_micro_usd: input.capMicroUsd,
-    verify_micro_usd: 0,
-  });
-}
-
-/** A starter claim's web acquisition may use at most half its cap; the rest verifies questions. */
-const starterAcquisitionCeiling = (capMicroUsd: number) => Math.floor(capMicroUsd / 2);
-
-/** What a capped sourcing_web starter claim has spent: priced calls at cost, unpriced calls at
- * their reservation. null = no starter cap applies (older uncapped claims, quiz_gen claims). */
-async function starterClaimSpend(
-  db: Db | Tx,
-  claimId: string,
-): Promise<{ capMicroUsd: number; spentMicroUsd: number } | null> {
-  const [claim] = await db
-    .select({
-      cap: placement_starter_claim.budget_limit_micro_usd,
-      route: placement_starter_claim.supply_route,
-    })
-    .from(placement_starter_claim)
-    .where(eq(placement_starter_claim.id, claimId));
-  if (claim?.route !== 'sourcing_web' || claim.cap === null) return null;
-  const components = await db
-    .select({
-      kind: placement_starter_cost_component.component_kind,
-      cost: placement_starter_cost_component.cost_micro_usd,
-    })
-    .from(placement_starter_cost_component)
-    .where(eq(placement_starter_cost_component.claim_id, claimId));
-  let spent = 0;
-  for (const component of components) {
-    spent +=
-      component.cost ??
-      (component.kind === 'web_acquisition'
-        ? starterAcquisitionCeiling(claim.cap)
-        : VERIFY_CALL_RESERVATION_MICRO_USD);
-  }
-  return { capMicroUsd: claim.cap, spentMicroUsd: spent };
-}
-
-/** Before a delivery or a verification call of a starter claim: is there budget left for it? */
-export async function starterClaimHasRoom(
-  db: Db | Tx,
-  claimId: string,
-  effect: 'delivery' | 'verification_call',
-): Promise<boolean> {
-  const spend = await starterClaimSpend(db, claimId);
-  if (!spend) return true;
-  return effect === 'delivery'
-    ? spend.spentMicroUsd < spend.capMicroUsd
-    : spend.spentMicroUsd + VERIFY_CALL_RESERVATION_MICRO_USD <= spend.capMicroUsd;
-}
-
-/** Money cap of a starter claim's web sourcing run, within `ceilingMicroUsd`. */
-export async function starterSourcingRunCapMicroUsd(
-  db: Db,
-  claimId: string,
-  ceilingMicroUsd: number,
-): Promise<number> {
-  const spend = await starterClaimSpend(db, claimId);
-  if (!spend) return ceilingMicroUsd;
-  return Math.max(
-    0,
-    Math.min(ceilingMicroUsd, starterAcquisitionCeiling(spend.capMicroUsd) - spend.spentMicroUsd),
-  );
 }

@@ -13,7 +13,6 @@ import {
   PLACEMENT_QUEUE_EXPIRY_MS,
   type PlacementAttemptAuthority,
   type PlacementAttemptHeartbeat,
-  PlacementStarterBudgetExhaustedError,
   PlacementStarterStaleAuthorityError,
   PlacementStarterUnderfillError,
   acquirePlacementAttempt,
@@ -24,7 +23,6 @@ import {
   reconcilePlacementDelivery,
   startPlacementAttemptHeartbeat,
 } from './placement-starter-attempts';
-import { markPlacementStarterClaimTerminal } from './placement-starter-store';
 
 /** Server-held authority for one web placement delivery; never derived from job/trace text. */
 export interface PlacementWebDelivery {
@@ -71,27 +69,12 @@ export async function runPlacementWebDelivery(input: {
   ) {
     throw new Error('placement supply_execute queue expiry must be 120 minutes');
   }
-  let attempt: PlacementAttemptAuthority;
-  try {
-    attempt = await acquirePlacementAttempt(db, {
-      claimId,
-      pgBossJobId: job.id,
-      deliveryNo,
-      startedOn: job.startedOn,
-    });
-  } catch (err) {
-    if (!(err instanceof PlacementStarterBudgetExhaustedError)) throw err;
-    // A spent claim can never make progress: end it and complete the job instead of letting
-    // every redelivery fail on the same refusal (the quiz_gen consumer's rule).
-    await db.transaction((tx) =>
-      markPlacementStarterClaimTerminal(tx, claimId, 'exhausted', new Date(), {
-        class: 'budget_exhausted',
-        code: 'budget_exhausted',
-        message: 'placement starter claim cap reached before a delivery could be acquired',
-      }),
-    );
-    return;
-  }
+  const attempt = await acquirePlacementAttempt(db, {
+    claimId,
+    pgBossJobId: job.id,
+    deliveryNo,
+    startedOn: job.startedOn,
+  });
   const heartbeat = startPlacementAttemptHeartbeat(db, attempt, job.signal);
   try {
     // Submit dispatches verification inside execute; the question authority requires the

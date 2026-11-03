@@ -1,4 +1,4 @@
-// Placement claim authority for questions and reservation-free paid effects (YUK-1468 policy).
+// Placement claim authority for questions and uncapped paid effects (YUK-1468 FULL policy).
 // One owner for: binding a question to a live delivery attempt with its verification epoch
 // (quiz_gen persist, sourcing_web submit/resume), reading a question's current binding, and the
 // fence + ledger of every real paid effect of a sourcing_web claim. Reservation-based paid calls
@@ -19,12 +19,10 @@ import {
   type PlacementAttemptAuthority,
   type PlacementCostComponentKind,
   PlacementStarterAdmissionError,
-  PlacementStarterBudgetExhaustedError,
   assertPlacementAttemptFence,
   assertPlacementAuthority,
   recomputePlacementKnownCost,
 } from './placement-starter-attempts';
-import { starterClaimHasRoom } from './spend-gate';
 
 /** Server-side authority for a sourcing_web placement paid effect, at either granularity. */
 export type PlacementPaidEffectAuthority =
@@ -47,9 +45,8 @@ function paidEffectOwner(authority: PlacementPaidEffectAuthority) {
 
 /**
  * Gate before a real paid call on a sourcing_web claim. Uses the same fence/epoch facts as the
- * original quiz_gen/quiz_verify path, then the starter bucket's per-claim cap (spend-gate.ts).
- * A stale delivery, superseded epoch, terminal claim or spent claim cannot start new spend.
- * Concurrent calls each see the cap before either is recorded, so they can pass it by one call.
+ * original quiz_gen/quiz_verify path; there is no reservation because this policy has no money
+ * cap. A stale delivery, superseded epoch or terminal claim cannot start new spend.
  */
 export async function assertPlacementPaidEffectAuthority(
   db: Db,
@@ -66,11 +63,6 @@ export async function assertPlacementPaidEffectAuthority(
       throw new PlacementStarterAdmissionError(
         'placement paid effect without reservation requires a sourcing_web claim',
       );
-    }
-    const owner = paidEffectOwner(authority).claimId;
-    const effect = authority.scope === 'attempt' ? 'delivery' : 'verification_call';
-    if (!(await starterClaimHasRoom(tx, owner, effect))) {
-      throw new PlacementStarterBudgetExhaustedError('placement starter claim budget exhausted');
     }
   });
 }
@@ -269,9 +261,8 @@ type PaidResult = { task_run_id?: string | null; cost_usd?: number | null };
 /**
  * Paid-call hooks for one placement-bound question verification (the verify framework's
  * before/settle/release seams, plus a runTask wrapper for single calls). Each real call is
- * gated on the question's claim/attempt/epoch/fence and the claim's starter cap, and recorded
- * with its real run id and cost; a call that threw after the gate is recorded unknown, which
- * the starter bucket counts at its reservation.
+ * gated on the question's claim/attempt/epoch/fence and recorded with its real run id and cost;
+ * a call that threw after the gate is recorded unknown. No reservation: uncapped policy.
  */
 export function buildPlacementQuestionPaidCalls(
   db: Db,

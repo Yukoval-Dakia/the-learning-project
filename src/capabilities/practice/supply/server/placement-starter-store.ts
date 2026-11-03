@@ -17,7 +17,6 @@ import { createKnowledgeNodeFromEvents } from '@/kernel/records/knowledge-node-b
 import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
 import type { PlacementStarterIdentity } from './placement-starter-identity';
 import { placementStarterIdentity } from './placement-starter-identity';
-import { starterClaimCapMicroUsd } from './spend-gate';
 
 export interface PlacementStarterGoalAuthority {
   goalId: string;
@@ -247,12 +246,12 @@ export async function ensurePlacementStarterAnchorAndClaim(
       demand_id: identity.demandId,
       target_id: identity.targetId,
       status: 'pending_dispatch',
-      // Owner 2026-11-02 (YUK-1468): new placement requests belong to the source agent. 8 is the
-      // delivery target and 3 deliveries are transport recovery only. The money cap is the
-      // starter bucket's per-claim cap (spend-gate.ts); existing claims keep their stored policy.
+      // Owner 2026-11-02 (YUK-1468): new placement requests belong to the source agent under the
+      // approved background supply policy. 8 is the delivery target, 3 deliveries are transport
+      // recovery only, and there is no money cap; existing claims keep their stored policy.
       supply_route: 'sourcing_web',
       max_paid_attempts: 3,
-      budget_limit_micro_usd: starterClaimCapMicroUsd(),
+      budget_limit_micro_usd: null,
       known_cost_micro_usd: 0,
       next_reconcile_at: now,
       created_at: now,

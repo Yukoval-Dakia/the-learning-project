@@ -106,7 +106,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | `withinComposePaidWorkLock` | `practice/scheduling/server/compose-paid-work-lock.ts` | `stream:compose-paid:<date>` session |
 | `lockPracticeStreamPartition` / `lockPracticeStreamScope` | `src/kernel/locks/practice-stream.ts` | 练习流 xact：每日流 `stream:compose:<date>`、按需会话 `stream:session:<sessionId>`、作用域 `stream:scope:<date>:<knowledgeId>`。取锁顺序仍在 `stream-store.ts`（scope → session partition） |
 | `lockQuestionServingCommand` | `src/kernel/locks/question-serving-command.ts` | 题目 serving 命令账本 `yuk1514:serving:<eventId>` `hashtextextended(key, 0)` xact，键来自 `advisoryLockRegistry.questionServingCommand`；调用点 `practice/question-bank/server/serving-actions.ts` 的 `runServingAction`，同键并发命令等胜者提交后重放 |
-| `lockSupplySpendDay` | `src/kernel/locks/question-supply.ts` | 供题预算账本 `supply-spend:v1:<bucket>:<day>`（bucket = nightly / starter，day = Asia/Shanghai 学习日）`hashtextextended(key, 0)` xact，键来自 `advisoryLockRegistry.supplySpendDay`；唯一调用方 `practice/supply/server/spend-gate.ts`。nightly：每个入口（夜扫占额、换路占额、找题开跑扩额、结清/释放）各开一个短事务，第一条语句取锁；starter：在起始题派发事务的 savepoint 里取，持锁期间只读写该桶该日的 `experimental:supply_spend` 事件 |
+| `lockSupplySpendDay` | `src/kernel/locks/question-supply.ts` | 夜扫供题预算账本 `supply-spend:v1:<day>`（day = Asia/Shanghai 学习日）`hashtextextended(key, 0)` xact，键来自 `advisoryLockRegistry.supplySpendDay`；唯一调用方 `practice/supply/server/spend-gate.ts`，每个入口（夜扫占额、换路占额、找题开跑扩额、结清/释放）各开一个短事务，第一条语句取锁，持锁期间只读写该日的 `experimental:supply_spend` 事件 |
 | `acquireControlPlaneLockSql` / `withControlPlane` | `src/kernel/records/subject-control-lock.ts`；唯一取锁点 `observability/server/subject-control/commit.ts` | int 597001 xact，作为事务第一条语句；subject revision 与 control journal 同在该模块记账 |
 
 ## 3. 族表（81 + 1）
@@ -202,7 +202,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | 79 | yuk1406-repair-operation | yuk1406_select_display_label_repair | hashtextextended:0 | transaction | xact | 1 |  |
 | 80 | assessment-resolution-claim | evt_native_resolution_<hash> | hashtext | transaction | xact | 1 | assessment-evaluation-group |
 | 81 | appeal-rejudge-legacy-claim | hte(<appeal.id>, 0) | hashtextextended:0 | transaction | xact | 1 |  |
-| 82 | supply-spend-day | supply-spend:v1:<bucket>:<day> | hashtextextended:0 | transaction | xact | 1 | (starter) placement-supply |
+| 82 | supply-spend-day | supply-spend:v1:<day> | hashtextextended:0 | transaction | xact | 1 |  |
 
 #10/#80/#81 由旧版混族行 `assessment-appeal-claim`（sites 3）拆出：request
 （appeal.ts:24）、resolution（appeal.ts:78）、历史 rejudge（rejudge.ts:45）
@@ -269,7 +269,7 @@ edge-evidence 版 SHA-256
   `family-control → per-tick` 同段拼接撤回。
 - **paid-effect**：`control → identity row → gate → control row`（pinned，文件注释）。
 - **provider**：`op-kind → sorted attempt → lane`。
-- **supply spend**：nightly 桶 `supply-spend:v1:nightly:<day>` 总是所在事务的第一把、也是唯一一把 advisory 锁；这些事务不嵌在 web-supply demand、learning-state 或任何持锁事务里。starter 桶 `supply-spend:v1:starter:<day>` 只在 `dispatchPlacementStarterClaimTx` 里取：`placement_starter_claim` 行 FOR UPDATE → 准入回调（开始定位：placement-supply 范围锁；恢复扫：goal 行 FOR UPDATE NOWAIT → placement-supply 范围锁）→ savepoint 内 starter 日锁 → 派发写（event 行、pg-boss job 行）。starter 日锁之后不再取任何 advisory 锁；两桶键不同，互不等待。spend-gate 写入的事件无 correction 目标，不取 corrections 锁。
+- **supply spend**：`supply-spend:v1:<day>` 总是所在事务的第一把、也是唯一一把 advisory 锁；spend-gate 的事务不嵌在 web-supply demand、learning-state 或任何持锁事务里，事务内只读写 event 行（写入的事件无 correction 目标，不取 corrections 锁）。无前驱、无后继。
 - 小边：probe-question → conjecture-fold → proposal_decision → probe-serve-cap（answerProbe
   follow-up 投放）；proposal_decision → misc → probe-serve-cap（conjecture 接受，
   conjecture-accept.ts；接受不取 probe-question / conjecture-fold，与作答同向）；探针链共用

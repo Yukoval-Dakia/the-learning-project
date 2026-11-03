@@ -15,12 +15,6 @@ import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { EvidenceDemandV1, evidenceDemandToTargetContext } from '@/kernel/supply-contracts';
 import { dispatchSupplyTarget } from './dispatcher';
 import { PLACEMENT_QUEUE_EXPIRY_MS } from './placement-starter-attempts';
-import {
-  STARTER_BUDGET_EXHAUSTED,
-  StarterDailyLimitReached,
-  holdStarterClaimDispatch,
-  starterClaimCapMicroUsd,
-} from './spend-gate';
 import type { QuestionSupplyTarget } from './target-discovery';
 
 const PLACEMENT_STARTER_COUNT = 8;
@@ -76,7 +70,7 @@ export function buildPlacementStarterDemand(claim: ClaimRow) {
     inventory_goal: { eligible_count: PLACEMENT_STARTER_COUNT, horizon_days: 1 },
     control: {
       needed_by: null,
-      // The claim's own cap; null only on claims dispatched before the starter bucket existed.
+      // null for sourcing_web claims: no money cap under the approved background policy.
       max_budget_micro_usd: claim.budget_limit_micro_usd,
       max_attempts: claim.max_paid_attempts,
     },
@@ -128,19 +122,13 @@ export async function dispatchPlacementStarterClaimTx(
   admit: PlacementStarterAdmission = async () => true,
   sendSupplyExecute: SendSupplyExecute = enqueuePlacementSupplyExecuteJob,
 ): Promise<string | null> {
-  const [locked] = await tx
+  const [claim] = await tx
     .select()
     .from(placement_starter_claim)
     .where(eq(placement_starter_claim.id, claimId))
     .for('update');
-  if (!locked || locked.status !== 'pending_dispatch') return locked?.pg_boss_job_id ?? null;
-  if (!(await admit(tx, locked))) return null;
-  // A sourcing_web claim created before the starter bucket existed takes the bucket's cap now,
-  // before anything is spent; the executor then enforces it like any new claim's.
-  const claim =
-    locked.supply_route === 'sourcing_web' && locked.budget_limit_micro_usd === null
-      ? { ...locked, budget_limit_micro_usd: starterClaimCapMicroUsd() }
-      : locked;
+  if (!claim || claim.status !== 'pending_dispatch') return claim?.pg_boss_job_id ?? null;
+  if (!(await admit(tx, claim))) return null;
 
   const now = new Date();
   // Enqueue + status→queued run in a SAVEPOINT (nested tx) so a nonterminal single-flight 23505 on
@@ -149,13 +137,6 @@ export async function dispatchPlacementStarterClaimTx(
   // the claim persists across the savepoint.
   try {
     return await tx.transaction(async (sp) => {
-      if (claim.supply_route === 'sourcing_web') {
-        await holdStarterClaimDispatch(sp, {
-          claimId: claim.id,
-          capMicroUsd: claim.budget_limit_micro_usd ?? 0,
-          now,
-        });
-      }
       const target = buildPlacementStarterTarget(claim);
       const result = await dispatchSupplyTarget(sp, target, {
         atomic: true,
@@ -189,11 +170,6 @@ export async function dispatchPlacementStarterClaimTx(
         .set({
           status: 'queued',
           pg_boss_job_id: jobId,
-          budget_limit_micro_usd: claim.budget_limit_micro_usd,
-          // A dispatch that an earlier day's starter limit refused clears that marker here.
-          ...(claim.last_error_code === STARTER_BUDGET_EXHAUSTED
-            ? { last_error_class: null, last_error_code: null, last_error: null }
-            : {}),
           updated_at: now,
           version: claim.version + 1,
         })
@@ -206,27 +182,6 @@ export async function dispatchPlacementStarterClaimTx(
       return jobId;
     });
   } catch (err) {
-    if (err instanceof StarterDailyLimitReached) {
-      // Today's starter claims are used up. Not an error: the claim stays pending, the
-      // placement read shows starter_budget_exhausted, and the recovery sweeper offers it
-      // again when the next learner day starts.
-      await tx
-        .update(placement_starter_claim)
-        .set({
-          last_error_class: STARTER_BUDGET_EXHAUSTED,
-          last_error_code: STARTER_BUDGET_EXHAUSTED,
-          last_error: null,
-          next_reconcile_at: err.retryAt,
-          updated_at: now,
-        })
-        .where(
-          and(
-            eq(placement_starter_claim.id, claim.id),
-            eq(placement_starter_claim.status, 'pending_dispatch'),
-          ),
-        );
-      return null;
-    }
     if (!isNonterminalSingleFlightViolation(err)) throw err;
     // Another revision still owns the paid single-flight slot. The losing claim may be the CURRENT
     // authoritative revision, so terminalizing it would be irreversible: its deterministic
