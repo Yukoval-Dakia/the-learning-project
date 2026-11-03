@@ -103,7 +103,8 @@ tool adapter；如果新接口落地后旧实现仍并行存在，则不是完�
 
 `pnpm audit:capability-boundaries` 同时执行 access seam 检查和三张 dependency debt ratchet：
 
-1. capability → server；
+1. capability → server（不含平台依赖 `src/server/ai`、`src/server/boss`，只单列报告，见
+   `docs/agents/development-workflow.md`）；
 2. server → capability deep；
 3. cross-capability value edge 与非平凡 SCC。
 
