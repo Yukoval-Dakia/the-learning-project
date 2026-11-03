@@ -35,11 +35,11 @@ import {
 import type { Db } from '@/db/client';
 import { event, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { lookupGroupSubjects } from '@/kernel/read-models/model-admission';
 import {
   assertModelAdmissionSliceRegistrable,
   createAdmissionRunExecutor,
   currentModelPins,
-  lookupGroupSubjects,
   modelSliceIdFor,
   registerModelAdmissionSlice,
 } from '../server/judge/evaluate-submission';

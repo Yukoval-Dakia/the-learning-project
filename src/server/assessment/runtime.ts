@@ -4,16 +4,13 @@ export { type ActivateEvaluationRequestT, activateEvaluation } from './activate'
 export { createJevModelExecutor } from './jev-model-executor';
 export { snapshotAssessmentLearningScope } from './learning-scope';
 export {
-  type GroupSubjectLookup,
   ModelSliceRegistrationError,
   type RegisterModelAdmissionSliceInput,
   assertModelAdmissionSliceRegistrable,
   currentModelPins,
   gradingSliceMatchesLivePin,
-  lookupGroupSubjects,
   modelSliceIdFor,
   registerModelAdmissionSlice,
-  resolveModelAdmissionContext,
   retireModelAdmissionSlice,
 } from './model-slice-registry';
 export { createPiModelExecutor } from './pi-model-executor';

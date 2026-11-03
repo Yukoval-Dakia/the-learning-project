@@ -115,12 +115,15 @@ export async function registerCapabilityJobs(
 ): Promise<void> {
   // Practice binds the facts and paid author stages that worker jobs and subscriptions read
   // through kernel ports. Kernel cannot import a capability. This runs before any capability
-  // job mounts and before subscription dispatch starts. The API host installs only the host operations.
+  // job mounts and before subscription dispatch starts. The API host installs only the host
+  // operations. Agency probes issue assessments, so the model pin reader is bound here too.
   const practice = await import('@/capabilities/practice/public');
   await practice.installPracticeHostOperations();
   await practice.installDailyReviewPlanFacts();
   await practice.installInterventionAuthorStages();
   await practice.installInterventionDiagnosticLeaves();
+  const { installModelAdmissionPins } = await import('@/server/assessment/model-admission-pins');
+  await installModelAdmissionPins();
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
     .filter((d) => d.load || d.backend === 'dbos');
