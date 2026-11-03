@@ -13,22 +13,12 @@ export interface NudgeConfig {
   dailyMax: number;
   /** nudge 过期窗（小时）——过期后读模型静默过滤，不删行。 */
   expiresHours: number;
-  /** 同 KC 连错达到该次数才触发。 */
-  streakN: number;
-  /** 同 KC streak nudge 冷却窗（小时）。 */
-  kcCooldownHours: number;
 }
 
 export function loadNudgeConfig(env: NodeJS.ProcessEnv = process.env): NudgeConfig {
   // DB > env > code-default；env 层无效值由 registry envParse 回落到默认。
   const cfg = getConfigMany(
-    [
-      'COPILOT_NUDGE_ENABLED',
-      'COPILOT_NUDGE_DAILY_MAX',
-      'COPILOT_NUDGE_EXPIRES_HOURS',
-      'COPILOT_NUDGE_STREAK_N',
-      'COPILOT_NUDGE_KC_COOLDOWN_HOURS',
-    ],
+    ['COPILOT_NUDGE_ENABLED', 'COPILOT_NUDGE_DAILY_MAX', 'COPILOT_NUDGE_EXPIRES_HOURS'],
     env,
   );
   return {
@@ -36,10 +26,5 @@ export function loadNudgeConfig(env: NodeJS.ProcessEnv = process.env): NudgeConf
     dailyMax: typeof cfg.COPILOT_NUDGE_DAILY_MAX === 'number' ? cfg.COPILOT_NUDGE_DAILY_MAX : 3,
     expiresHours:
       typeof cfg.COPILOT_NUDGE_EXPIRES_HOURS === 'number' ? cfg.COPILOT_NUDGE_EXPIRES_HOURS : 24,
-    streakN: typeof cfg.COPILOT_NUDGE_STREAK_N === 'number' ? cfg.COPILOT_NUDGE_STREAK_N : 3,
-    kcCooldownHours:
-      typeof cfg.COPILOT_NUDGE_KC_COOLDOWN_HOURS === 'number'
-        ? cfg.COPILOT_NUDGE_KC_COOLDOWN_HOURS
-        : 24,
   };
 }
