@@ -336,6 +336,23 @@ function DegradedKindsFlags() {
   );
 }
 
+// YUK-1738 — one generic line when some AI task kind keeps failing (observability's read).
+// Learner copy only: never the task kind, counts or run ids — those live at the top of
+// /admin/runs. Silent while loading, on error, and when there is no alert.
+const TASK_FAILURE_ALERTS_KEY = ['task-failure-alerts'] as const;
+function TaskFailureNotice() {
+  const { getTaskFailureAlerts } = useWorkbenchClient();
+  const q = useQuery({ queryKey: TASK_FAILURE_ALERTS_KEY, queryFn: getTaskFailureAlerts });
+  if (!q.data || q.data.alerts.length === 0) return null;
+  return (
+    <p className="td-flag td-flag-caution" role="status">
+      <CircleAlert size={16} aria-hidden="true" className="td-flag-ic" />
+      <span className="td-flag-t">有一部分 AI 工作最近连续没有成功</span>
+      <span className="td-flag-s">相关的结果可能暂时缺失或来得慢一些。</span>
+    </p>
+  );
+}
+
 // Exported for the probe-queue independence regression test (YUK-707 round-2 [major]):
 // the 待你试做 queue must stay reachable while the overnight-digest query is loading/errored.
 export function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
@@ -546,6 +563,7 @@ export default function TodayPage({
               {/* YUK-707 · workbench 位置 1 — degraded_kinds 红旗上提，永在 brief 之前直显
                 ([裁决 1])；无 degraded 事实时渲 null。 */}
               <DegradedKindsFlags />
+              <TaskFailureNotice />
 
               {/* YUK-707 · workbench 位置 2 — 唯一「为你而备」主 handoff 交付，default-visible
                 ([裁决 主]，contract §0/§5）。navigate 供 YUK-709 confirmed → KC-scoped

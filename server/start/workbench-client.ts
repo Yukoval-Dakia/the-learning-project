@@ -31,6 +31,7 @@ export const startWorkbenchClient: WorkbenchClient = {
   getWorkbenchSummary: () => getStartWorkbenchSummary(transport),
   getOvernightDigest: () => getStartOvernightDigest(transport),
   getTodayCost: () => getStartTodayCost(transport),
+  getTaskFailureAlerts: () => getStartTaskFailureAlerts(transport),
   listDecisionProposalPage: (cursor) =>
     getStartProposalInbox({
       ...transport,
