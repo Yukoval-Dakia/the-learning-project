@@ -12,6 +12,7 @@ import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { prefersReducedMotion, useSharedMorph } from '@/ui-next/public';
 import './practice-face.css';
 import './practice-face-m3e.css';
+import './practice-paper-m3e.css';
 
 import { PfPaper } from './PfPaper';
 import { PfRetro } from './PfRetro';
@@ -75,12 +76,11 @@ function ToastIcon({ name }: { name?: string }) {
 
 /**
  * The page root's look per view. The question page lays out its own width and padding, as in the
- * loft; the list and the retro are M3E pages; a paper keeps the shared page frame until it moves.
+ * loft; the list, a paper and the retro are M3E pages.
  */
 function pageClass(kind: Mode['kind']): string {
   if (kind === 'solo') return 'pface-loom pface-next';
-  if (kind === 'list' || kind === 'retro') return 'un-root un-pq-page pface-loom';
-  return 'page wide pface-loom';
+  return 'un-root un-pq-page pface-loom';
 }
 
 function replaceConfirmedItem(view: StreamView | undefined, confirmed: StreamItem) {
@@ -792,7 +792,7 @@ export default function PracticeFacePage({
     );
   }
 
-  const m3ePage = mode.kind === 'list' || mode.kind === 'retro';
+  const m3ePage = mode.kind !== 'solo';
   return (
     <main
       id="main-content"
