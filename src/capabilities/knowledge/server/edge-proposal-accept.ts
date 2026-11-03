@@ -166,6 +166,15 @@ export async function decideKnowledgeEdgeProposal(
         if (proposal) assertStillPending(proposal, proposeEventId);
       },
     });
+    // The template answers a retracted proposal with no rate; this owner's callers expect
+    // a decided rate id, so keep the not_pending conflict the pre-template path returned.
+    if (dismissed.rate_event_id === null) {
+      throw new ApiError(
+        'not_pending',
+        `proposal ${proposeEventId} is not pending (retracted); it cannot be dismissed`,
+        409,
+      );
+    }
     return {
       kind: 'knowledge_edge',
       rate_event_id: dismissed.rate_event_id,

@@ -225,7 +225,7 @@ edge-evidence 版 SHA-256
 证，§5 逐一标注——不得把边集当作完整排序或无环证明使用。
 
 - **learning spine**：`G → fsrs:<kind>:<id>(sorted) → mastery:ability_global(sorted)`；
-  merge accept：`event row FOR UPDATE → G → knowledge rows → knowledge_edge(sorted) →
+  merge accept：`proposal_decision → event row FOR UPDATE → G → knowledge rows → knowledge_edge(sorted) →
   retire 命名空间`（dyn：applyX 内 retire 顺序按 mutation 分支分发）。
 - **assessment group spine**：`G → group(xact pair) → evaluation/submission/
   effective_head/group-root 行锁 → fsrs:* → ability_global`（activate.ts:225-235 起；
