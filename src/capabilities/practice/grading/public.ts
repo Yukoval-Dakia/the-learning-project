@@ -4,13 +4,11 @@
 
 export { createJevModelExecutor } from './server/jev-model-executor';
 export {
-  ModelSliceRegistrationError,
   assertModelAdmissionSliceRegistrable,
   currentModelPins,
   gradingSliceMatchesLivePin,
   modelSliceIdFor,
   registerModelAdmissionSlice,
-  retireModelAdmissionSlice,
 } from './server/model-slice-registry';
 export { createPiModelExecutor } from './server/pi-model-executor';
 export { createRubricModelExecutor } from './server/rubric-model-executor';

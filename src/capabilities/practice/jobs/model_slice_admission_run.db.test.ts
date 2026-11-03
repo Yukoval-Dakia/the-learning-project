@@ -15,14 +15,14 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   ModelSliceRegistrationError,
   currentModelPins,
   modelSliceIdFor,
   registerModelAdmissionSlice,
   retireModelAdmissionSlice,
-} from '../grading/public';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+} from '../grading/server/model-slice-registry';
 import {
   buildModelSliceAdmissionRunHandler,
   runModelSliceAdmission,

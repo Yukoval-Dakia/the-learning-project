@@ -22,13 +22,16 @@ export function installModelPinReader(reader: () => ModelPins): void {
   readPins = reader;
 }
 
-function requireModelPins(): ModelPins {
-  if (!readPins) {
-    throw new Error(
-      'model pin reader is not installed; call installModelAdmissionPins before reading model admission',
-    );
-  }
-  return readPins();
+const NO_PINS: ModelPins = new Map();
+
+// Pins are only compared against an active slice. Without one the serving decision does not
+// read them, so a host or DB test that admitted no slice needs no reader; with one, fail loudly.
+function readModelPins(hasActiveSlice: boolean): ModelPins {
+  if (readPins) return readPins();
+  if (!hasActiveSlice) return NO_PINS;
+  throw new Error(
+    'model pin reader is not installed; call installModelAdmissionPins before reading model admission',
+  );
 }
 
 export function admittedSliceFromRow(row: SliceRow): AdmittedModelSliceT {
@@ -53,7 +56,7 @@ export async function resolveModelAdmissionContext(db: Db | Tx): Promise<ModelAd
     .where(eq(model_admission_slice.status, 'active'));
   return {
     slices: new Map(rows.map((row) => [row.slice_id, admittedSliceFromRow(row)])),
-    current_models: requireModelPins(),
+    current_models: readModelPins(rows.length > 0),
   };
 }
 

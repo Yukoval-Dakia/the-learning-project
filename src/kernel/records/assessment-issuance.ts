@@ -45,12 +45,12 @@ import {
   question_revision,
 } from '@/db/schema';
 import { getEvents, writeEvent } from '@/kernel/events';
-import { probeContainerRef } from '@/kernel/read-models/probe-delivery';
 import {
   type GroupSubjectLookup,
   lookupGroupSubjects,
   resolveModelAdmissionContext,
 } from '@/kernel/read-models/model-admission';
+import { probeContainerRef } from '@/kernel/read-models/probe-delivery';
 
 function subjectIdFromLookup(lookup: GroupSubjectLookup | undefined): string | null {
   return lookup?.kind === 'subject' ? lookup.subject : null;

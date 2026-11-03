@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { currentModelPins } from '@/capabilities/practice/grading/public';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { defaultPresentation } from './presentation';
 import { ResponseSpec } from './response';
 import type { PublishedQuestionRevisionT } from './revision';

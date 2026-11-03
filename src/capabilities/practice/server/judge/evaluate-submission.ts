@@ -63,7 +63,6 @@ import {
   snapshotAssessmentLearningScope,
   withdrawCapturedOccurrence,
 } from '@/server/assessment/runtime';
-import { lookupGroupSubjects } from '@/kernel/read-models/model-admission';
 import {
   createJevModelExecutor,
   createPiModelExecutor,

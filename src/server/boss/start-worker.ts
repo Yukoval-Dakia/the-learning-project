@@ -100,9 +100,6 @@ export async function startBossWorker(
   // The worker never calls getStartedBoss. Without this mark, getRunningBoss() stays
   // empty and the mutation wake never fires. Both branches above leave boss usable.
   markBossStarted(boss);
-  // Agency probe jobs issue assessments, which read the live model pins through a kernel port.
-  const { installModelAdmissionPins } = await import('@/capabilities/practice/public');
-  await installModelAdmissionPins();
   await registerHandlers(boss, db);
   // Infrastructure queues first. Manifest jobs create the domain queues this book sends to.
   await registerCapabilityJobs(boss, db, capabilities);

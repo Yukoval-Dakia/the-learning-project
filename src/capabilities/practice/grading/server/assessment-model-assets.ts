@@ -11,10 +11,7 @@ import {
   createAssessmentAssetLoader as createAssetLoader,
   withinAssessmentSignal,
 } from '@/kernel/records/assessment-assets';
-import {
-  containsRenderedImage,
-  hasInlineQuestionImage,
-} from './jev-model-executor';
+import { containsRenderedImage, hasInlineQuestionImage } from './jev-model-executor';
 
 export {
   type AssessmentAssetBytes,
