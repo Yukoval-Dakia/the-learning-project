@@ -33,6 +33,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { type ReactNode, useId, useMemo, useState, useSyncExternalStore } from 'react';
+import { invalidateAfterProposalRetract, queryKeys } from '@/ui/lib/write-invalidation';
 import { ToastHost } from '@/ui-next/feedback/ToastHost';
 import { showToast } from '@/ui-next/feedback/toast-store';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
@@ -63,7 +64,7 @@ import './inbox-m3e.css';
 
 // A 档撤销窗口的重渲染节拍：每 15s 刷新 nowMs，让倒计时 + live→consumed 过渡随时间走。
 const UNDO_TICK_MS = 15_000;
-const DECISION_QUERY_KEY = ['proposals', 'pending', 'decision'] as const;
+const DECISION_QUERY_KEY = queryKeys.decisionProposals;
 const EMPTY_DECISION_PAGES: readonly ProposalPageWire[] = [];
 const EMPTY_DECISION_PAGE_PARAMS: readonly (string | null)[] = [];
 
@@ -437,10 +438,10 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   const queryClient = useQueryClient();
   const decisionQ = useInfiniteQuery(decisionQueryOptions(listDecisionProposalPage));
   const observationQ = useQuery({
-    queryKey: ['proposals', 'pending', 'observation-preview'],
+    queryKey: queryKeys.observationProposals,
     queryFn: listObservationProposalPreview,
   });
-  const aaQ = useQuery({ queryKey: ['proposals', 'auto-applied'], queryFn: listAutoApplied });
+  const aaQ = useQuery({ queryKey: queryKeys.autoAppliedProposals, queryFn: listAutoApplied });
 
   // 第一页 commit 后才开始逐页补齐；每次只发一个 continuation。失败时停住并把重试权交给
   // 用户，避免瞬时错误形成请求风暴。已加载卡片始终保持可操作。
@@ -497,9 +498,9 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     setReverting((r) => ({ ...r, [proposalId]: true }));
     try {
       await retractProposal(proposalId);
-      // Retract turns the auto-applied proposal stale (never pending), so only its A-lane digest
-      // changes. Refetching the infinite decision query would replay every loaded backlog page.
-      await aaQ.refetch();
+      // Retract turns the auto-applied proposal stale (never pending): only the A-lane digest
+      // changes, and the infinite decision query is left alone.
+      await invalidateAfterProposalRetract(queryClient);
     } catch (err) {
       showError(err instanceof Error ? err.message : '撤销失败，请重试。');
     } finally {

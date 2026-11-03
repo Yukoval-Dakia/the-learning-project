@@ -27,6 +27,7 @@ import { useState } from 'react';
 import { PROBE_SLOTS_FULL_CODE } from '@/core/schema/conjecture';
 
 import { ApiError } from '@/ui/lib/api';
+import { invalidateAfterProposalDecision, queryKeys } from '@/ui/lib/write-invalidation';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -57,7 +58,7 @@ export function PrepDeskConjectures() {
   const client = useWorkbenchClient();
   const qc = useQueryClient();
   const q = useQuery({
-    queryKey: ['prep-desk-conjectures'],
+    queryKey: queryKeys.prepDeskConjectures,
     queryFn: client.getPrepDeskConjectures,
   });
   const [deciding, setDeciding] = useState<Record<string, boolean>>({});
@@ -75,13 +76,9 @@ export function PrepDeskConjectures() {
     });
     try {
       await client.decideProposal(id, decision);
-      // The conjecture leaves the pending set; refresh both the panel and the
-      // /today 备课猜想 count chip that gates this panel's entry point.
-      await qc.invalidateQueries({ queryKey: ['prep-desk-conjectures'] });
-      await qc.invalidateQueries({ queryKey: ['overnight-digest'] });
-      // Accepting a conjecture serves a probe → refresh the 待你试做 queue so the new
-      // probe appears without a manual reload (codex review-784).
-      await qc.invalidateQueries({ queryKey: ['prep-desk-probes'] });
+      // Refreshes this panel, the /today count chip, the 待你试做 queue (an accepted
+      // conjecture serves a probe) and the sidebar inbox count.
+      await invalidateAfterProposalDecision(qc, { kind: 'conjecture' });
     } catch (err) {
       // A failed decision must NOT silently vanish (CodeRabbit review-782): keep
       // the card and surface a retry affordance instead of an unhandled rejection.
