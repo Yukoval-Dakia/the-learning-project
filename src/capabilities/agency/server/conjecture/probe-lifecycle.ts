@@ -1,4 +1,5 @@
-import { getFsrsRetrievabilityByIds, selectedForgettingEngine } from '@/kernel/scheduling';
+import { getFsrsRetrievabilityByIds } from '@/kernel/records/scheduling-state';
+import { selectedForgettingEngine } from '@/kernel/scheduling';
 // Probe drafts stay outside practice pools; publication freezes their question and
 // response signatures, and actual queue delivery creates the native issuance.
 // Only answerProbe writes the terminal conjecture result — never practice attempts,

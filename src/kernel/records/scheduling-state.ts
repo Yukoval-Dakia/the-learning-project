@@ -7,7 +7,9 @@ import { and, eq, inArray } from 'drizzle-orm';
 
 import { initialFsrsState } from '@/core/fsrs';
 import { newId } from '@/core/ids';
+import { initialCandidateState, projectCandidateDue } from '@/core/scheduling/candidate';
 import {
+  type CandidateState,
   CandidateStateSchema,
   type SchedulingState,
   SchedulingStateSchema,
@@ -20,15 +22,38 @@ import {
   withLearningStateLock,
 } from '@/db/learning-state-lock';
 import { material_fsrs_state } from '@/db/schema';
-import { initialCandidateState, projectCandidateDue } from './candidate';
-import { type RetentionReading, retrievabilityForKc } from './retention';
-
-export type { RetentionReading } from './retention';
-
-import { selectedForgettingEngine } from './engine-selection';
+import { HostOperationNotInstalledError } from '@/kernel/host-operation';
+import {
+  type RetentionReading,
+  retrievabilityForKc,
+  selectedForgettingEngine,
+} from '@/kernel/scheduling';
 
 type DbLike = Db | Tx;
 export type FsrsSubjectKind = 'question' | 'knowledge';
+
+// Rebuilding a candidate state replays sealed settlement history, which settlement
+// owns; it installs the rebuild at host startup. Only the candidate engine needs it.
+export type CandidateStateRebuild = (
+  tx: Tx,
+  subject: { kind: FsrsSubjectKind; id: string },
+  now: Date,
+) => Promise<CandidateState>;
+
+let installedCandidateStateRebuild: CandidateStateRebuild | undefined;
+
+export function installCandidateStateRebuild(rebuild: CandidateStateRebuild): void {
+  installedCandidateStateRebuild = rebuild;
+}
+
+function candidateStateRebuild(): CandidateStateRebuild {
+  if (!installedCandidateStateRebuild) {
+    throw new HostOperationNotInstalledError(
+      'candidate state rebuild is not installed; call installSchedulingCandidateRebuild at startup',
+    );
+  }
+  return installedCandidateStateRebuild;
+}
 
 /** Resolve one row under the selected engine without writing a second projection. */
 export async function resolveSchedulingProjection<T extends { state: unknown; due_at: Date }>(
@@ -43,7 +68,7 @@ export async function resolveSchedulingProjection<T extends { state: unknown; du
     selectedForgettingEngine() === 'forgetting_candidate' &&
     (!parsed.success || !isCandidateState(parsed.data))
   ) {
-    const { candidateStateForRead } = await import('@/server/assessment/settle');
+    const candidateStateForRead = candidateStateRebuild();
     try {
       const rebuilt = await db.transaction((tx) => candidateStateForRead(tx, { kind, id }, now));
       const state = parsed.success
@@ -101,7 +126,8 @@ export async function getFsrsRetrievabilityByIds(
     try {
       const row = await resolveSchedulingProjection(db, subjectKind, raw.subject_id, raw, now);
       values.set(raw.subject_id, retrievabilityForKc(row.state, now));
-    } catch {
+    } catch (err) {
+      if (err instanceof HostOperationNotInstalledError) throw err;
       values.set(raw.subject_id, {
         kind: 'unknown',
         reason: 'state_or_history_unavailable',

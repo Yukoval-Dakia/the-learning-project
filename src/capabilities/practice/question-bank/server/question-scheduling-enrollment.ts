@@ -7,7 +7,7 @@ import {
   getFsrsState,
   initialSchedulingState,
   upsertFsrsState,
-} from '@/server/fsrs/state';
+} from '@/kernel/records/scheduling-state';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../../server/placement-scope';
 
 interface SchedulingEnrollmentEvidence {

@@ -236,13 +236,12 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
         (!(cause instanceof ApiError) && !(cause instanceof ApiAuthError)) ||
         (cause instanceof ApiError && cause.code === 'copilot_enqueue_ambiguous');
       if (acceptanceUnknown) {
-        // Keep the exact tuple: 恢复 replays it and can only find the original run.
+        // Keep the exact tuple: 恢复 replays it and can only find the original run. The footer
+        // notice states the delivery doubt; the AI row stays empty rather than voicing it.
         markPending(key, { dispatching: false, error: ACCEPTANCE_UNKNOWN_COPY });
         ctx.updateMessages((previous) =>
           previous.map((m) =>
-            m.idempotency_key === key && m.role === 'ai'
-              ? { ...m, text: '还不能确认这条是否已送达。', streaming: false }
-              : m,
+            m.idempotency_key === key && m.role === 'ai' ? { ...m, text: '', streaming: false } : m,
           ),
         );
         return;
@@ -251,11 +250,12 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
       const copy = plainSendError(cause);
       explicit?.onRefused(copy);
       dropPending(key);
+      // Nothing was accepted, so there is no reply row; the error notice below carries the copy.
       ctx.updateMessages((previous) =>
-        previous.map((m) => {
-          if (m.idempotency_key !== key) return m;
-          const cleared = { ...m, idempotency_key: undefined, derivation_policy: undefined };
-          return m.role === 'ai' ? { ...cleared, text: copy, streaming: false } : cleared;
+        previous.flatMap((m) => {
+          if (m.idempotency_key !== key) return [m];
+          if (m.role === 'ai') return [];
+          return [{ ...m, idempotency_key: undefined, derivation_policy: undefined }];
         }),
       );
       // Nothing was sent: give the words back to the composer unless the learner already typed more.

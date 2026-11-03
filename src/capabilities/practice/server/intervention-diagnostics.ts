@@ -12,12 +12,12 @@ import {
   loadNativeInterventionDiagnosticState,
 } from '@/kernel/read-models/intervention-diagnostic-verdict';
 import type { InterventionDiagnosticLeaves } from '@/kernel/records/intervention-diagnostic-materialize';
-import { streamLocalDate } from '@/kernel/stream-date';
 import {
   enrollFsrsStateIfAbsent,
   initialSchedulingState,
   retireQuestionFsrsState,
-} from '@/server/fsrs/state';
+} from '@/kernel/records/scheduling-state';
+import { streamLocalDate } from '@/kernel/stream-date';
 import { readJudgeQuestionActivity } from './judge-run-observation';
 
 export const interventionDiagnosticLeaves: InterventionDiagnosticLeaves = {
