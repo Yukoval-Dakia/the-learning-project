@@ -31,6 +31,11 @@ export const readStartTodayCost = () =>
     const { loadTodayCost } = await import('@/capabilities/observability/public');
     return loadTodayCost(db);
   });
+export const readStartTaskFailureAlerts = () =>
+  withStartDb(async (db) => {
+    const { loadTaskFailureAlerts } = await import('@/capabilities/observability/public');
+    return loadTaskFailureAlerts(db);
+  });
 export const readStartProposalInbox = (input: unknown) =>
   withStartDb(async (db) => {
     const { readProposalInbox } = await import('@/capabilities/shell/public');
