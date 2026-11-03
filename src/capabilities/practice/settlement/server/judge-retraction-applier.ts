@@ -616,13 +616,14 @@ export async function acceptJudgeRetractionProposal(
   }
 
   if (
-    run.outcome === 'accepted' &&
+    (run.outcome === 'accepted' || run.outcome === 'replayed') &&
     parsed.lane === 'evaluation' &&
     parsed.correctionKind === 'rejudge' &&
     run.result.correction_event_id
   ) {
-    // Post-commit by contract: the singleton send is a delivery hint, not part of
-    // the decision. A rejected accept never reaches here; a replayed one does not re-enqueue.
+    // Post-commit, so a crash or a failed send after the decision commits would strand the
+    // appeal with no sweep to find it; a replayed accept re-sends to heal that. The singleton
+    // key (appeal event id) and the resolved-appeal early exit make a duplicate send harmless.
     try {
       await (opts.enqueueRejudge ?? defaultEnqueueRejudge)(run.result.correction_event_id);
     } catch (err) {
