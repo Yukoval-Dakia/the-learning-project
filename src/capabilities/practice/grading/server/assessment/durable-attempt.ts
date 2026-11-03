@@ -33,7 +33,7 @@ import { projectJudgeRunNotification } from '../judge-run-notification';
 import { readJudgeRunPermanent } from '../judge-run-observation';
 import type { NativeJudgeRunJobData } from '../judge-run-payload';
 import { NativeJudgeResolutionPayload } from '../judge-run-payload';
-import { JUDGE_RUN_EVENTS } from '../judge-run-status';
+import { JUDGE_RUN_EVENTS, nativeJudgeRunId } from '../judge-run-status';
 import {
   type FormalAttemptCapture,
   commitFormalAttempt,
@@ -65,7 +65,7 @@ export async function dispatchNativeAttempt(
     request,
   );
   const { submission } = prepared;
-  const runId = `judge_native_${submission.submission_id}`;
+  const runId = nativeJudgeRunId(submission.submission_id);
   const pendingId = `evt_pending_${runId}`;
   const identity = {
     question_id: questionId,

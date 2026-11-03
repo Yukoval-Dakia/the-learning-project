@@ -14,9 +14,9 @@ import {
   resolveVerdictForAttempt,
   resolveVerdictsForNativeAttempts,
 } from '@/kernel/read-models/assessment-verdict';
+import { JudgeRunTerminalResultSchema } from '../../api/assessment-contracts';
 import { projectEvaluationToJudgeResult } from './judge/evaluation-authority';
 import { ratingFromCoarseOutcome } from './judge-rating';
-import { JudgeRunTerminalResultSchema } from './judge-run-status';
 
 export const NativeJudgeResolutionPayload = JudgeRunTerminalResultSchema.extend({
   version: z.literal(1),

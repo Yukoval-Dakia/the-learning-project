@@ -18982,6 +18982,63 @@ export interface operations {
                             };
                             revision_id: string;
                         } | null;
+                        settled?: {
+                            /** @enum {string} */
+                            kind: "terminal";
+                            run: {
+                                result: ({
+                                    already_persisted?: boolean;
+                                    assessment?: {
+                                        candidate_id: string;
+                                        effective_evaluation_id?: string | null;
+                                        evaluation_group_id: string;
+                                        original_evaluation_id?: string | null;
+                                        submission_id: string;
+                                    } & {
+                                        [key: string]: unknown;
+                                    };
+                                    attempt_event_id: string;
+                                    capability_ref?: {
+                                        id: string;
+                                        version: string;
+                                    };
+                                    coarse_outcome?: string;
+                                    confidence?: number;
+                                    evidence_json?: unknown;
+                                    feedback_md?: string;
+                                    final_rating?: string;
+                                    judge_event_id?: string | null;
+                                    late_arrival?: boolean;
+                                    model?: string;
+                                    outcome?: string;
+                                    provider?: string;
+                                    provider_override?: string | null;
+                                    route?: string | null;
+                                    score?: number | null;
+                                    score_meaning?: string;
+                                    /** @enum {string} */
+                                    status?: "effective" | "review_required";
+                                    task_run_id?: string;
+                                    telemetry?: unknown;
+                                } & {
+                                    [key: string]: unknown;
+                                }) | null;
+                                run_id: string;
+                                /** @enum {string} */
+                                status: "done";
+                            } | {
+                                /** @enum {string|null} */
+                                result: null;
+                                run_id: string;
+                                /** @enum {string} */
+                                status: "queued" | "started" | "failed";
+                            };
+                        } | {
+                            /** @enum {string} */
+                            kind: "pending";
+                            poll_url: string;
+                            run_id: string;
+                        };
                         submissions: {
                             evaluation_group_id: string;
                             group_evidence: {
@@ -24049,6 +24106,63 @@ export interface operations {
                                         };
                                         revision_id: string;
                                     } | null;
+                                    settled?: {
+                                        /** @enum {string} */
+                                        kind: "terminal";
+                                        run: {
+                                            result: ({
+                                                already_persisted?: boolean;
+                                                assessment?: {
+                                                    candidate_id: string;
+                                                    effective_evaluation_id?: string | null;
+                                                    evaluation_group_id: string;
+                                                    original_evaluation_id?: string | null;
+                                                    submission_id: string;
+                                                } & {
+                                                    [key: string]: unknown;
+                                                };
+                                                attempt_event_id: string;
+                                                capability_ref?: {
+                                                    id: string;
+                                                    version: string;
+                                                };
+                                                coarse_outcome?: string;
+                                                confidence?: number;
+                                                evidence_json?: unknown;
+                                                feedback_md?: string;
+                                                final_rating?: string;
+                                                judge_event_id?: string | null;
+                                                late_arrival?: boolean;
+                                                model?: string;
+                                                outcome?: string;
+                                                provider?: string;
+                                                provider_override?: string | null;
+                                                route?: string | null;
+                                                score?: number | null;
+                                                score_meaning?: string;
+                                                /** @enum {string} */
+                                                status?: "effective" | "review_required";
+                                                task_run_id?: string;
+                                                telemetry?: unknown;
+                                            } & {
+                                                [key: string]: unknown;
+                                            }) | null;
+                                            run_id: string;
+                                            /** @enum {string} */
+                                            status: "done";
+                                        } | {
+                                            /** @enum {string|null} */
+                                            result: null;
+                                            run_id: string;
+                                            /** @enum {string} */
+                                            status: "queued" | "started" | "failed";
+                                        };
+                                    } | {
+                                        /** @enum {string} */
+                                        kind: "pending";
+                                        poll_url: string;
+                                        run_id: string;
+                                    };
                                     submissions: {
                                         evaluation_group_id: string;
                                         group_evidence: {
@@ -25368,6 +25482,63 @@ export interface operations {
                                             };
                                             revision_id: string;
                                         } | null;
+                                        settled?: {
+                                            /** @enum {string} */
+                                            kind: "terminal";
+                                            run: {
+                                                result: ({
+                                                    already_persisted?: boolean;
+                                                    assessment?: {
+                                                        candidate_id: string;
+                                                        effective_evaluation_id?: string | null;
+                                                        evaluation_group_id: string;
+                                                        original_evaluation_id?: string | null;
+                                                        submission_id: string;
+                                                    } & {
+                                                        [key: string]: unknown;
+                                                    };
+                                                    attempt_event_id: string;
+                                                    capability_ref?: {
+                                                        id: string;
+                                                        version: string;
+                                                    };
+                                                    coarse_outcome?: string;
+                                                    confidence?: number;
+                                                    evidence_json?: unknown;
+                                                    feedback_md?: string;
+                                                    final_rating?: string;
+                                                    judge_event_id?: string | null;
+                                                    late_arrival?: boolean;
+                                                    model?: string;
+                                                    outcome?: string;
+                                                    provider?: string;
+                                                    provider_override?: string | null;
+                                                    route?: string | null;
+                                                    score?: number | null;
+                                                    score_meaning?: string;
+                                                    /** @enum {string} */
+                                                    status?: "effective" | "review_required";
+                                                    task_run_id?: string;
+                                                    telemetry?: unknown;
+                                                } & {
+                                                    [key: string]: unknown;
+                                                }) | null;
+                                                run_id: string;
+                                                /** @enum {string} */
+                                                status: "done";
+                                            } | {
+                                                /** @enum {string|null} */
+                                                result: null;
+                                                run_id: string;
+                                                /** @enum {string} */
+                                                status: "queued" | "started" | "failed";
+                                            };
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "pending";
+                                            poll_url: string;
+                                            run_id: string;
+                                        };
                                         submissions: {
                                             evaluation_group_id: string;
                                             group_evidence: {
@@ -26301,6 +26472,63 @@ export interface operations {
                                         };
                                         revision_id: string;
                                     } | null;
+                                    settled?: {
+                                        /** @enum {string} */
+                                        kind: "terminal";
+                                        run: {
+                                            result: ({
+                                                already_persisted?: boolean;
+                                                assessment?: {
+                                                    candidate_id: string;
+                                                    effective_evaluation_id?: string | null;
+                                                    evaluation_group_id: string;
+                                                    original_evaluation_id?: string | null;
+                                                    submission_id: string;
+                                                } & {
+                                                    [key: string]: unknown;
+                                                };
+                                                attempt_event_id: string;
+                                                capability_ref?: {
+                                                    id: string;
+                                                    version: string;
+                                                };
+                                                coarse_outcome?: string;
+                                                confidence?: number;
+                                                evidence_json?: unknown;
+                                                feedback_md?: string;
+                                                final_rating?: string;
+                                                judge_event_id?: string | null;
+                                                late_arrival?: boolean;
+                                                model?: string;
+                                                outcome?: string;
+                                                provider?: string;
+                                                provider_override?: string | null;
+                                                route?: string | null;
+                                                score?: number | null;
+                                                score_meaning?: string;
+                                                /** @enum {string} */
+                                                status?: "effective" | "review_required";
+                                                task_run_id?: string;
+                                                telemetry?: unknown;
+                                            } & {
+                                                [key: string]: unknown;
+                                            }) | null;
+                                            run_id: string;
+                                            /** @enum {string} */
+                                            status: "done";
+                                        } | {
+                                            /** @enum {string|null} */
+                                            result: null;
+                                            run_id: string;
+                                            /** @enum {string} */
+                                            status: "queued" | "started" | "failed";
+                                        };
+                                    } | {
+                                        /** @enum {string} */
+                                        kind: "pending";
+                                        poll_url: string;
+                                        run_id: string;
+                                    };
                                     submissions: {
                                         evaluation_group_id: string;
                                         group_evidence: {
