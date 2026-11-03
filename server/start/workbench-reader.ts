@@ -1,5 +1,5 @@
-import { z } from 'zod';
-import { ProposalDecisionInput } from '@/core/schema/proposal';
+import type { z } from 'zod';
+import type { ProposalDecisionInput } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 
@@ -49,31 +49,23 @@ function knowledgeTimestampJson(value: Date | string): string {
 }
 
 export const readStartKnowledgeTree = async (input?: { subject?: string }) => {
-  const { KnowledgeTreeQuerySchema, loadTreeSnapshot } = await import(
-    '@/capabilities/knowledge/public'
-  );
-  const parsed = KnowledgeTreeQuerySchema.safeParse(input ?? {});
-  if (!parsed.success) {
+  const read = await withStartDb(async (db) => {
+    const { readLearnerKnowledgeTree } = await import('@/capabilities/knowledge/public');
+    return readLearnerKnowledgeTree(db, input ?? {});
+  });
+  if (!read.ok) {
     // Preserve the HTTP tree route's code-only validation envelope.
     throw Response.json({ error: 'validation_error' }, { status: 400 });
   }
-  return withStartDb(async (db) => {
-    const { isLearnerVisibleKnowledgeId } = await import(
-      '@/kernel/read-models/learner-knowledge-visibility'
-    );
-    const rows = await loadTreeSnapshot(db, parsed.data.subject);
-    return {
-      rows: rows
-        .filter((row) => isLearnerVisibleKnowledgeId(row.id))
-        .map((row) => ({
-          ...row,
-          archived_at: row.archived_at == null ? null : knowledgeTimestampJson(row.archived_at),
-          last_evidence_at:
-            row.last_evidence_at == null ? null : knowledgeTimestampJson(row.last_evidence_at),
-          last_active_at: knowledgeTimestampJson(row.last_active_at),
-        })),
-    };
-  });
+  return {
+    rows: read.rows.map((row) => ({
+      ...row,
+      archived_at: row.archived_at == null ? null : knowledgeTimestampJson(row.archived_at),
+      last_evidence_at:
+        row.last_evidence_at == null ? null : knowledgeTimestampJson(row.last_evidence_at),
+      last_active_at: knowledgeTimestampJson(row.last_active_at),
+    })),
+  };
 };
 export const readStartKnowledgeFrontier = () =>
   withStartDb(async (db) => {
@@ -92,56 +84,31 @@ export const readStartConjectures = () =>
   });
 export const readStartRecentAiChanges = () =>
   withStartDb(async (db) => {
-    const { listNoteRefineChanges } = await import('@/capabilities/notes/public');
-    const rows = await listNoteRefineChanges(db, {
-      since: new Date(Date.now() - 24 * 60 * 60_000),
-      limit: 25,
-    });
+    const { readRecentAiChanges } = await import('@/capabilities/notes/public');
+    const recent = await readRecentAiChanges(db);
     return {
-      window_hours: 24 as const,
-      rows: rows.map((row) => ({ ...row, created_at: row.created_at.toISOString() })),
+      ...recent,
+      rows: recent.rows.map((row) => ({ ...row, created_at: row.created_at.toISOString() })),
     };
   });
 
-const DecisionRequest = z.object({ id: z.string().trim().min(1), input: ProposalDecisionInput });
-export type StartProposalDecisionRequest = z.input<typeof DecisionRequest>;
+export type StartProposalDecisionRequest = {
+  id: string;
+  input: z.input<typeof ProposalDecisionInput>;
+};
 export const createStartProposalDecision = (input: unknown) =>
   withStartDb(async (db) => {
-    const parsed = DecisionRequest.safeParse(input);
-    if (!parsed.success)
-      throw new ApiError(
-        'validation_error',
-        parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; '),
-        400,
-      );
-    const { createProposalDecision } = await import('@/server/proposals/decision-resource');
-    const { wakeHubSyncAfterCommit } = await import('@/server/boss/hub-sync-wake');
-    const resource = await createProposalDecision(db, parsed.data.id, parsed.data.input);
-    // The canonical command has committed. Wake latency/failure cannot change success.
-    void wakeHubSyncAfterCommit().catch(() => {});
-    return resource;
+    const { commitProposalDecisionRequest } = await import('@/server/proposals/decision-resource');
+    const request = (input ?? {}) as { id?: unknown; input?: unknown };
+    return commitProposalDecisionRequest(db, request.id, request.input);
   });
 
-const UndoRequest = z.object({ artifactId: z.string().min(1), eventId: z.string().min(1) });
-export type StartAiChangeUndoRequest = z.input<typeof UndoRequest>;
+export type StartAiChangeUndoRequest = { artifactId: string; eventId: string };
 export const undoStartAiChange = (input: unknown) =>
   withStartDb(async (db) => {
-    const parsed = UndoRequest.safeParse(input);
-    if (!parsed.success)
-      throw new ApiError('validation_error', 'artifact id and event id are required', 400);
-    const { listNoteRefineChanges, undoNoteRefineApplyEvent } = await import(
-      '@/capabilities/notes/public'
-    );
-    const { artifactId, eventId } = parsed.data;
-    const changes = await listNoteRefineChanges(db, { artifactId, limit: 200 });
-    if (!changes.some((row) => row.event_id === eventId)) {
-      throw new ApiError(
-        'not_found',
-        `note refine apply event ${eventId} was not found for artifact ${artifactId}`,
-        404,
-      );
-    }
-    return undoNoteRefineApplyEvent(db, { applyEventId: eventId });
+    const { undoArtifactAiChange } = await import('@/capabilities/notes/public');
+    const request = (input ?? {}) as { artifactId?: unknown; eventId?: unknown };
+    return undoArtifactAiChange(db, request.artifactId, request.eventId);
   });
 
 export const readStartActiveProbes = () =>
