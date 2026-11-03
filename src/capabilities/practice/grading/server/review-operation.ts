@@ -15,12 +15,13 @@ import {
 } from '@/db/schema';
 import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { ApiError } from '@/kernel/http';
-import type { CreateAttemptBody } from '../../api/contracts';
+import { type CreateAttemptBody, CreateAttemptBodySchema } from '../../api/contracts';
 import { validatePlacementSubmission } from '../../placement/public';
 import { normalizeReviewSubmitActivityRef } from './activity-ref';
 import { commitFormalAttempt } from './assessment/attempt';
 import type { NativeAttemptDispatchPort } from './assessment/native-attempt-dispatch-port';
 import { judgeDurableEnabled } from './judge-durable-config';
+import { projectReviewAnswerResponse } from './review-answer-response';
 
 type QuestionRow = typeof question.$inferSelect;
 
@@ -349,4 +350,21 @@ export async function submitReviewAnswer(
     }
     throw err;
   }
+}
+/**
+ * POST /api/attempts for both doors: a missing or malformed body reaches the schema as null.
+ * Callers keep only transport shaping (the Hono 202 divert headers, Start JSON).
+ */
+export async function requestReviewAnswer(
+  database: Db,
+  readBody: () => Promise<unknown>,
+  context: Pick<ReviewAnswerContext, 'signal'>,
+) {
+  const parsed = CreateAttemptBodySchema.safeParse(await readBody().catch(() => null));
+  if (!parsed.success) {
+    const message = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+    throw new ApiError('validation_error', message, 400);
+  }
+  const result = await submitReviewAnswer(database, parsed.data, { signal: context.signal });
+  return projectReviewAnswerResponse(parsed.data, result);
 }
