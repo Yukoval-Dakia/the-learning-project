@@ -293,13 +293,6 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envParse: flagEnv,
     tier: 'A',
   },
-  WAVE6_TRIGGER_VERIFY_ENABLED: {
-    schema: z.boolean(),
-    codeDefault: false,
-    envName: 'WAVE6_TRIGGER_VERIFY_ENABLED',
-    envParse: flagEnv,
-    tier: 'A',
-  },
   NOTES_MASTERY_SUBSCRIPTION_ENABLED: {
     schema: z.boolean(),
     codeDefault: true,

@@ -15,6 +15,10 @@ import {
   isNoteArtifactType,
 } from '@/capabilities/notes/server/note-artifact-types';
 import {
+  noteBodyContractIssues,
+  noteKnownIssuesSummary,
+} from '@/capabilities/notes/server/note-contract-check';
+import {
   type NoteGenerationFailure,
   attrsClearingGenerationFailure,
   attrsWithGenerationFailure,
@@ -36,12 +40,10 @@ import {
   assertNoteGenerationReferences,
   lockCurrentNoteGenerationReferences,
 } from '@/capabilities/notes/server/note-generation-references';
-import { dispatchNoteVerification } from '@/capabilities/notes/server/note-handoff';
-import { attrsClearingNoteLongCheck } from '@/capabilities/notes/server/note-long-check';
 import { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
+import type { ArtifactVerificationSummaryT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { writeNoteVerificationIntent } from '@/kernel/records/note-handoff-protocol';
 import {
   type TaskTextRunFn,
   costUsdToMicroUsd,
@@ -59,8 +61,22 @@ export type RunTaskFn = TaskTextRunFn;
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
-  dispatchVerification?: (artifactId: string) => Promise<boolean>;
 };
+
+// Dead attrs marker from the retired long-note revise/recheck loop (YUK-1772);
+// a fresh generation epoch still clears it so the field cannot lie.
+function attrsClearingNoteLongCheck(attrs: unknown): {
+  attrs: Record<string, unknown>;
+  cleared: boolean;
+} {
+  const next =
+    attrs !== null && typeof attrs === 'object' && !Array.isArray(attrs)
+      ? { ...(attrs as Record<string, unknown>) }
+      : {};
+  if (!Object.hasOwn(next, 'note_long_check')) return { attrs: next, cleared: false };
+  delete next.note_long_check;
+  return { attrs: next, cleared: true };
+}
 
 export { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
 
@@ -250,36 +266,62 @@ export async function runNoteGenerate(
   let dbWriteMs: number | null = null;
   const modelStarted = Date.now();
 
+  const assertStillPending = async () => {
+    const activeRows = await db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(
+        and(
+          eq(artifact.id, artifactId),
+          inArray(artifact.type, NOTE_ARTIFACT_TYPES),
+          eq(artifact.generation_status, 'pending'),
+          isNull(artifact.archived_at),
+        ),
+      )
+      .limit(1);
+    if (activeRows.length === 0) {
+      throw new Error(`note generation is no longer pending and active: ${artifactId}`);
+    }
+  };
+
   try {
-    const result = await runTaskFn('NoteGenerateTask', input, {
+    let result = await runTaskFn('NoteGenerateTask', input, {
       subjectProfile,
       piSkillDocs: skillDocs,
-      beforeProviderQuery: async () => {
-        const activeRows = await db
-          .select({ id: artifact.id })
-          .from(artifact)
-          .where(
-            and(
-              eq(artifact.id, artifactId),
-              inArray(artifact.type, NOTE_ARTIFACT_TYPES),
-              eq(artifact.generation_status, 'pending'),
-              isNull(artifact.archived_at),
-            ),
-          )
-          .limit(1);
-        if (activeRows.length === 0) {
-          throw new Error(`note generation is no longer pending and active: ${artifactId}`);
-        }
-      },
+      beforeProviderQuery: assertStillPending,
     });
     modelWaitMs = Date.now() - modelStarted;
     attempt = result;
     const parseStarted = Date.now();
-    const parsed = parseNoteGenerateOutput(result.text, row.type, result.finishReason);
+    let parsed = parseNoteGenerateOutput(result.text, row.type, result.finishReason);
     parseMs = Date.now() - parseStarted;
     const validationStarted = Date.now();
     assertNoteGenerationReferences(parsed.body_blocks, referenceArtifacts);
+    let contractIssues = noteBodyContractIssues(row.type, parsed.body_blocks);
+    // Deterministic contract check rides back into the SAME generation flow:
+    // one bounded revision round with the typed issues as revision_context.
+    // Unresolved issues are saved on the note as its known issues — never a
+    // fabricated verdict, never a second independent AI pass (YUK-1772).
+    if (contractIssues.length > 0) {
+      result = await runTaskFn(
+        'NoteGenerateTask',
+        {
+          ...input,
+          revision_context: { issues: contractIssues, body_blocks: parsed.body_blocks },
+        },
+        {
+          subjectProfile,
+          piSkillDocs: skillDocs,
+          beforeProviderQuery: assertStillPending,
+        },
+      );
+      attempt = result;
+      parsed = parseNoteGenerateOutput(result.text, row.type, result.finishReason);
+      assertNoteGenerationReferences(parsed.body_blocks, referenceArtifacts);
+      contractIssues = noteBodyContractIssues(row.type, parsed.body_blocks);
+    }
     validationMs = Date.now() - validationStarted;
+    const knownIssues: ArtifactVerificationSummaryT | null = noteKnownIssuesSummary(contractIssues);
 
     // Body + statuses + provenance commit as one compound write; both events opt
     // out of memory ingestion (background work).
@@ -322,7 +364,10 @@ export async function runNoteGenerate(
             lifecycle: {
               op: 'set_generation_status',
               generationStatus: 'ready',
-              verificationStatus: 'queued',
+              // No verify pass exists anymore: reset a stale axis and persist
+              // the deterministic findings as the note's known issues.
+              verificationStatus: 'not_required',
+              verificationSummary: knownIssues,
               generatedBy: generatedByRef,
               ...(clearedFailure.cleared || clearedLongCheck.cleared
                 ? { attrs: clearedLongCheck.attrs }
@@ -360,7 +405,6 @@ export async function runNoteGenerate(
         });
         return { kind: 'learner_edited' };
       }
-      await writeNoteVerificationIntent(tx, artifactId);
       return { kind: 'ready' };
     });
 
@@ -561,8 +605,6 @@ export function buildNoteGenerateHandler(
   deps: DepsOverride = {},
 ): (jobs: Job<NoteGenerateJobData>[]) => Promise<void> {
   const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
-  const dispatchVerification =
-    deps.dispatchVerification ?? ((artifactId: string) => dispatchNoteVerification(db, artifactId));
   return async (jobs) => {
     for (const job of jobs) {
       const artifactId = job.data?.artifact_id;
@@ -572,9 +614,6 @@ export function buildNoteGenerateHandler(
       }
       try {
         const result = await runNoteGenerate({ db, artifactId, runTaskFn });
-        if (result.status === 'ready') {
-          await dispatchVerification(artifactId);
-        }
         console.log(`[note_generate] ${artifactId} → ${result.status}`);
       } catch (err) {
         console.error(`[note_generate] ${artifactId} failed`, err);

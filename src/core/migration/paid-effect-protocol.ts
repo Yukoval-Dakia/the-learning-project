@@ -393,7 +393,6 @@ export class PaidEffectSwitchBlockedError extends PaidEffectProtocolError {
  * Their new adapters alone cannot fence the retained driver during cutover.
  */
 export const PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES: readonly string[] = [
-  'note_verify',
   'item_prior_backfill',
   'judge_calibration_sample',
 ];
