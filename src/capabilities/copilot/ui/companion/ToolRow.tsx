@@ -179,7 +179,9 @@ export function StepActivity({
     const running = steps.findLast((step) => step.status === 'running');
     if (running) text = running.activity;
     return (
-      <p className="un-cp-activity" role="status" aria-live="polite">
+      // Not a live region: RunFooter already announces the run's stage politely; announcing every
+      // step here too (up to dozens per reply) would flood a screen reader.
+      <p className="un-cp-activity" aria-live="off">
         <span className="un-cp-step-glyph" aria-hidden="true">
           <LoaderCircle size={14} className="un-cp-spin" />
         </span>

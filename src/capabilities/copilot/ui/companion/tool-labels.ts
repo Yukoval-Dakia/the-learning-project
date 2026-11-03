@@ -100,5 +100,5 @@ export function toolActivity(toolName: string): string {
   const label = toolLabel(toolName);
   for (const [pattern, verb] of ACTIVITY_VERBS)
     if (pattern.test(toolName)) return `${verb}${label}`;
-  return `正在处理：${label}`;
+  return label === '处理中的一步' ? '正在处理' : `正在处理：${label}`;
 }
