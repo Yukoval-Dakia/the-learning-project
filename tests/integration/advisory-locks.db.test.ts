@@ -246,9 +246,9 @@ async function assertBlocksOnGlobalLockHoldingNoAdvisory<T>(
 /**
  * Like {@link assertBlocksOnGlobalLockHoldingNoAdvisory}, but for the proposal accept
  * path: while the tx waits on G it may hold exactly the proposal_decision advisory and
- * the propose event row FOR UPDATE (RowShareLock on `event`), which the shared decision
- * template acquires before the merge's G — mutation rows (question/knowledge) must stay
- * unlocked.
+ * the propose event row FOR UPDATE (RowShareLock on `event` and its indexes), which the
+ * shared decision template acquires before the merge's G — the question and knowledge
+ * mutation tables must stay unlocked, as in the no-advisory variant.
  */
 async function assertBlocksOnGlobalLockHoldingDecisionLock<T>(
   contended: () => Promise<T>,
@@ -292,9 +292,8 @@ async function assertBlocksOnGlobalLockHoldingDecisionLock<T>(
                 WHERE g.pid = w.pid AND g.locktype = 'advisory' AND g.granted) AS granted_advisory,
              (SELECT count(*)::int FROM pg_locks g
                 WHERE g.pid = w.pid AND g.granted
-                  AND g.locktype = 'relation'
-                  AND g.mode <> 'AccessShareLock'
-                  AND g.relation <> 'event'::regclass::oid) AS granted_mutation_rel
+                  AND g.relation IN ('question'::regclass::oid, 'knowledge'::regclass::oid)
+                  AND g.mode <> 'AccessShareLock') AS granted_mutation_rel
         FROM pg_locks w
        WHERE w.locktype = 'advisory' AND NOT w.granted
          AND w.database = (SELECT oid FROM pg_database WHERE datname = current_database())
