@@ -45,8 +45,7 @@ export function getEditingSessionSnapshot(
   return getPresenceStore().getEditingSessionSnapshot(artifactId);
 }
 
-// Unit suites mock the store to an in-memory implementation; DB suites clear the
-// editing_presence table.
+// DB suites clear both presence tables.
 export function resetEditingSessionStateForTests(): Promise<void> {
   return getPresenceStore().reset();
 }

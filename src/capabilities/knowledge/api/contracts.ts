@@ -272,9 +272,3 @@ export const KnowledgeMisconceptionSchema = z.object({
 export const KnowledgeMisconceptionListResponseSchema = z.object({
   rows: z.array(KnowledgeMisconceptionSchema),
 });
-
-export const LegacyKnowledgeMisconceptionVetoResponseSchema = z.object({
-  kind: z.literal('dismissed'),
-  rate_event_id: z.string().nullable(),
-  idempotent: z.boolean().optional(),
-});

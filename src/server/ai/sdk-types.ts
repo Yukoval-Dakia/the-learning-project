@@ -141,6 +141,18 @@ export interface SDKResultError {
   provider_request_rejection?: { http_status: 400 };
   /** Quota, 502, or a typed parse failure. HTTP 400 stays on provider_request_rejection. */
   help_provider_fault?: HelpProviderFault;
+  /**
+   * Structured provider-side evidence on an error terminal: `http_status` is
+   * only a status bound to the request that failed at termination (strict root
+   * binding or the transport snapshot's last request); `retry_after_ms` pairs
+   * with that same status; `stream_error` marks the provider stream-error
+   * terminal shape, itself positive provider evidence.
+   */
+  provider_failure?: {
+    http_status?: number;
+    retry_after_ms?: number;
+    stream_error?: true;
+  };
   subtype:
     | 'error_during_execution'
     | 'error_max_turns'

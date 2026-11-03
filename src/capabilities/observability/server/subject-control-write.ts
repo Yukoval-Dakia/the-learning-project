@@ -1,8 +1,8 @@
 // 控制行写面业务层（CAS 轴 = subject.revision）：rename/retire/restore/reset/
 // validate。
 //
-// 写事务开头取控制面 advisory lock；CAS 只守卫陈旧 UI 提交（锁内比对，'stale'
-// 携 currentRevision）。rename/reset 锁内验证 root 历史并写 fold event；
+// 写事务经 withControlPlane（开头取控制面锁）；CAS 只守卫陈旧 UI 提交（锁内比对，
+// 'stale' 携 currentRevision）。rename/reset 锁内验证 root 历史并写 fold event；
 // subject/revision/journal 与 root 事件及投影同事务，未知历史整体回滚。
 
 import { and, eq, isNull, ne } from 'drizzle-orm';
@@ -10,18 +10,11 @@ import { getDefaultRegistry } from '@/core/capability/judges';
 import { validateProfile } from '@/core/capability/validate-profile';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
-import {
-  knowledge,
-  subject,
-  subject_control_journal,
-  subject_trait,
-  subject_trait_binding,
-} from '@/db/schema';
+import { knowledge, subject, subject_trait, subject_trait_binding } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { subjectRootId } from '@/kernel/records/knowledge-node-birth';
 import { requireKnowledgeHistory } from '@/kernel/records/knowledge-node-history-guard';
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
-import { acquireControlPlaneLockSql } from '@/kernel/records/subject-control-lock';
 import {
   BUILTIN_SUBJECT_IDS,
   type BuiltinSubjectId,
@@ -35,6 +28,7 @@ import {
   type SubjectTraitKind,
   parseTraitPayloads,
 } from '@/subjects/trait-schemas';
+import { commitSubjectRevision, withControlPlane } from './subject-control/commit';
 
 export type ControlWriteResult =
   | { kind: 'ok'; subjectRevision: number }
@@ -125,8 +119,7 @@ export async function renameSubject(
     return { kind: 'invalid', message: 'displayName must be non-empty' };
   const norm = normalizeSubjectKey(displayName);
 
-  return db.transaction(async (tx): Promise<ControlWriteResult> => {
-    await tx.execute(acquireControlPlaneLockSql);
+  return withControlPlane(db, async (tx): Promise<ControlWriteResult> => {
     const now = new Date();
     const row = await loadSubjectRow(tx, args.subjectId);
     if (!row) return { kind: 'not_found', message: `unknown subject "${args.subjectId}"` };
@@ -137,28 +130,18 @@ export async function renameSubject(
     if (await normCollides(tx, args.subjectId, norm)) {
       return { kind: 'conflict', message: `display name "${displayName}" is already taken` };
     }
-    const nextRevision = row.revision + 1;
-    await tx
-      .update(subject)
-      .set({
-        display_name: displayName,
-        display_name_norm: norm,
-        revision: nextRevision,
-        updated_at: now,
-      })
-      .where(eq(subject.id, args.subjectId));
+    const nextRevision = await commitSubjectRevision(tx, {
+      subjectId: args.subjectId,
+      fromRevision: row.revision,
+      action: 'rename',
+      detail: { from: row.display_name, to: displayName },
+      now,
+      patch: { display_name: displayName, display_name_norm: norm },
+    });
     await updateSubjectRootNameFromControl(tx, {
       subjectId: args.subjectId,
       nextName: displayName,
       controlAction: 'rename',
-    });
-    await tx.insert(subject_control_journal).values({
-      subject_id: args.subjectId,
-      revision: nextRevision,
-      action: 'rename',
-      detail: { from: row.display_name, to: displayName },
-      actor: 'owner',
-      created_at: now,
     });
     return { kind: 'ok', subjectRevision: nextRevision };
   });
@@ -172,8 +155,7 @@ export async function retireSubject(
     // general 是固定 default fallback；可替换 fallback 机制不采纳。
     return { kind: 'forbidden', message: 'general cannot be retired' };
   }
-  return db.transaction(async (tx): Promise<ControlWriteResult> => {
-    await tx.execute(acquireControlPlaneLockSql);
+  return withControlPlane(db, async (tx): Promise<ControlWriteResult> => {
     const now = new Date();
     const row = await loadSubjectRow(tx, args.subjectId);
     if (!row) return { kind: 'not_found', message: `unknown subject "${args.subjectId}"` };
@@ -181,18 +163,13 @@ export async function retireSubject(
       return { kind: 'stale', currentRevision: row.revision };
     }
     if (row.retired_at !== null) return { kind: 'noop', subjectRevision: row.revision };
-    const nextRevision = row.revision + 1;
-    await tx
-      .update(subject)
-      .set({ retired_at: now, revision: nextRevision, updated_at: now })
-      .where(eq(subject.id, args.subjectId));
-    await tx.insert(subject_control_journal).values({
-      subject_id: args.subjectId,
-      revision: nextRevision,
+    const nextRevision = await commitSubjectRevision(tx, {
+      subjectId: args.subjectId,
+      fromRevision: row.revision,
       action: 'retire',
       detail: {},
-      actor: 'owner',
-      created_at: now,
+      now,
+      patch: { retired_at: now },
     });
     return { kind: 'ok', subjectRevision: nextRevision };
   });
@@ -202,8 +179,7 @@ export async function restoreSubject(
   db: Db,
   args: { subjectId: string; expectedRevision: number },
 ): Promise<ControlWriteResult> {
-  return db.transaction(async (tx): Promise<ControlWriteResult> => {
-    await tx.execute(acquireControlPlaneLockSql);
+  return withControlPlane(db, async (tx): Promise<ControlWriteResult> => {
     const now = new Date();
     const row = await loadSubjectRow(tx, args.subjectId);
     if (!row) return { kind: 'not_found', message: `unknown subject "${args.subjectId}"` };
@@ -218,18 +194,13 @@ export async function restoreSubject(
         message: `display name "${row.display_name}" is now taken by another live subject`,
       };
     }
-    const nextRevision = row.revision + 1;
-    await tx
-      .update(subject)
-      .set({ retired_at: null, revision: nextRevision, updated_at: now })
-      .where(eq(subject.id, args.subjectId));
-    await tx.insert(subject_control_journal).values({
-      subject_id: args.subjectId,
-      revision: nextRevision,
+    const nextRevision = await commitSubjectRevision(tx, {
+      subjectId: args.subjectId,
+      fromRevision: row.revision,
       action: 'restore',
       detail: {},
-      actor: 'owner',
-      created_at: now,
+      now,
+      patch: { retired_at: null },
     });
     return { kind: 'ok', subjectRevision: nextRevision };
   });
@@ -245,8 +216,7 @@ export async function resetSubject(
     // general 的绑定结构性锁定在自有种子，reset 无意义。
     return { kind: 'forbidden', message: 'general bindings are structurally locked (P1-1)' };
   }
-  return db.transaction(async (tx): Promise<ControlWriteResult> => {
-    await tx.execute(acquireControlPlaneLockSql);
+  return withControlPlane(db, async (tx): Promise<ControlWriteResult> => {
     const now = new Date();
     const row = await loadSubjectRow(tx, args.subjectId);
     if (!row) return { kind: 'not_found', message: `unknown subject "${args.subjectId}"` };
@@ -308,20 +278,16 @@ export async function resetSubject(
           ),
         );
     }
-    const nextRevision = row.revision + 1;
-    await tx
-      .update(subject)
-      .set({
-        revision: nextRevision,
-        updated_at: now,
-        ...(nameChanges
-          ? {
-              display_name: seedDisplayName,
-              display_name_norm: seedDisplayNameNorm,
-            }
-          : {}),
-      })
-      .where(eq(subject.id, args.subjectId));
+    const nextRevision = await commitSubjectRevision(tx, {
+      subjectId: args.subjectId,
+      fromRevision: row.revision,
+      action: 'reset',
+      detail: { rebound },
+      now,
+      patch: nameChanges
+        ? { display_name: seedDisplayName, display_name_norm: seedDisplayNameNorm }
+        : undefined,
+    });
     if (nameChanges) {
       await updateSubjectRootNameFromControl(tx, {
         subjectId: args.subjectId,
@@ -329,14 +295,6 @@ export async function resetSubject(
         controlAction: 'reset',
       });
     }
-    await tx.insert(subject_control_journal).values({
-      subject_id: args.subjectId,
-      revision: nextRevision,
-      action: 'reset',
-      detail: { rebound },
-      actor: 'owner',
-      created_at: now,
-    });
     // 孤儿化 fork trait 及其 journal 保留（无硬删面）。
     return { kind: 'ok', subjectRevision: nextRevision };
   });

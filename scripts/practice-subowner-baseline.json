@@ -29,7 +29,6 @@
     "supply -> grading",
     "supply -> question-bank",
     "supply -> scheduling",
-    "supply -> placement",
     "supply -> face",
     "placement -> kernel-bound",
     "placement -> grading",

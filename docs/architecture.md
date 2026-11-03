@@ -9,7 +9,7 @@
 - **app**：`server/index.ts`（`pnpm build:server` → `dist/server.cjs`），`@hono/node-server` 监听 `API_PORT`（默认 8787，`src/server/config/env.ts` 的 `resolveApiPort`）。启动关键步骤：`loadEnv` → 科目 / 配置 / 模型目录水合 → capability tools 注册 → `recoverToolOperationsOnBoot` → admin config 注入 → `startListenLoop` → serve。
 - **worker**：`scripts/worker.ts`（`pnpm build:worker` → `dist/worker.cjs`）。`bootWorker()`（`src/server/boss/worker-boot.ts`）先注册 tools，再调 `startBossWorker` 挂 pg-boss、capability jobs、夜间 orchestrator 与 DBOS。worker 不启动 HTTP，也不开 LISTEN loop（`scripts/worker.ts` 注释）。
 - **migrate**：`scripts/migrate.ts` → `dist/migrate.cjs`，以 `node dist/migrate.cjs` 在 app / worker 之前跑 Drizzle migration。
-- **dev**：`pnpm dev:local`（`scripts/dev-local.ts`）spawn 两进程：`rw:api`（`tsx watch server/index.ts`，脚本自带 `RW_WORKER=1`，dev-local 另设 `RW_FRONTDOOR=dev`：Vite dev server 以 middleware 模式跑在 API 进程内，页面同源在 :8788（`DEV_PORT`，只绑 127.0.0.1，`DEV_HOST` 可改）并支持 HMR，`server/dev-frontdoor.ts` 用与生产前门相同的 request context 调 Hono app，不需要 `build:start`）、`worker:dev`（`tsx scripts/worker.ts`）。因此 dev 里 app 进程与独立 worker 都会消费队列。
+- **dev**：`pnpm dev:local`（`scripts/dev-local.ts`）spawn 两进程：`rw:api`（`tsx watch server/index.ts`，脚本自带 `RW_WORKER=1`，dev-local 另设 `RW_FRONTDOOR=dev`：Vite dev server 以 middleware 模式跑在 API 进程内，页面同源在自动探测的端口——8788 起首个空闲，`DEV_PORT` 固定，只绑 127.0.0.1，`DEV_HOST` 可改——并支持 HMR，`server/dev-frontdoor.ts` 用与生产前门相同的 request context 调 Hono app，不需要 `build:start`）、`worker:dev`（`tsx scripts/worker.ts`）。因此 dev 里 app 进程与独立 worker 都会消费队列。dev Postgres 是共享容器（:5434）内每 worktree 一个库（`loom_dev_<name>_<hash>`，`scripts/dev-worktree-db.ts`），多个 worktree 并行开发互不共享数据；重置本 worktree 库用 `pnpm dev:reset`。
 - **prod**：`docker-compose.yml` 的 `migrate` / `app`（`node dist/server.cjs`，镜像 target `runner`）/ `worker`（`node dist/worker.cjs`，target `worker`，额外带 headless Chromium 供 `worksheet_render`）/ `postgres`（pgvector）/ `mem0-init` / `cloudflared`。app 与 worker 共用 `DATABASE_URL`；worker 是 mem0 SQLite history 的唯一写者。
 - **静态面**：未设 `RW_FRONTDOOR=1` 时 app 只服务 Hono API；设了（镜像内默认设）则走 `server/frontdoor.ts` 的 Start 前门（需要 `dist/start` 构建产物），见下文。
 
@@ -42,7 +42,7 @@
 - 进程：独立 worker（prod `dist/worker.cjs`，dev `scripts/worker.ts`）；dev 的 app 进程因 `RW_WORKER=1` 也会挂一份。启动配方在 `src/server/boss/start-worker.ts`：基础设施队列 `registerHandlers` → capability jobs `registerCapabilityJobs` → verify 补发 → event subscription → orchestrator。
 - 每个 job 独立队列；manifest 的 `queue` 只是档位（`llm` / `agent` / `fast`）。llm / agent 有 `<name>_dlq`、`retryLimit=2`、30s 退避；fast 无 DLQ（`src/server/boss/queue-config.ts`）。
 - 调度有两种：带 `schedule` 的是裸 cron（`boss.schedule`，按 `tz`）；带 `dependsOn`（含 `[]`）的是夜间 DAG 成员，自身不注册 cron。DAG 只有一根锚点 `nightly_orchestrator`，`30 2 * * *` Asia/Shanghai，启动补跑窗口 5h，tick 60s 自续；硬边失败跳过下游，soft 边照跑并记 stale（`src/server/orchestration/constants.ts`、`src/kernel/job-dag.ts`）。
-- DAG 成员与根以各 capability `manifest.ts` 的 `dependsOn` 为准，例如 `dreaming_nightly`、`coach_daily`、`knowledge_edge_propose_nightly`、`knowledge_maintenance_nightly`、`item_prior_backfill`、`recalibration_nightly`、`embed_backfill`、`answer_class_backfill`。
+- DAG 成员与根以各 capability `manifest.ts` 的 `dependsOn` 为准，例如 `dreaming_nightly`、`coach_daily`、`knowledge_maintenance_nightly`、`item_prior_backfill`、`recalibration_nightly`、`embed_backfill`、`answer_class_backfill`。
 - 域 handler 在 `src/capabilities/<name>/jobs/*.ts`；中央 `src/server/boss/handlers.ts` 只留基础设施（`echo`、`promote_conversation_idle`、verify 补发、memory 队列）。
 
 ### DBOS durable 路径
@@ -442,7 +442,7 @@ DROP TRIGGER IF EXISTS hub_sync_knowledge_dirty ON knowledge;
 DROP TRIGGER IF EXISTS hub_sync_knowledge_edge_dirty ON knowledge_edge;
 ```
 
-重建 = 重跑 `drizzle/0071` 的 `CREATE TRIGGER` 段（函数体仍在，无需重建）+ 跑一次 nightly repair（`runHubAutoSyncNightly`）补齐停用期间遗漏的 coverage。停用期间 abandoned `artifact_edit_session` 的清扫**不受 `off` 或 dormancy 影响**——它在 nightly 的 `beforeEligibility` 与 mode 门之前无条件跑（`sweepAbandonedEditSessions`），presence 卫生不该受 reconciler mode 或资格门控制。
+重建 = 重跑 `drizzle/0071` 的 `CREATE TRIGGER` 段（函数体仍在，无需重建）+ 跑一次 nightly repair（`runHubAutoSyncNightly`）补齐停用期间遗漏的 coverage。停用期间 abandoned `artifact_edit_session` 的清扫**不受 `off` 或 dormancy 影响**——它在 nightly 的 `beforeEligibility` 与 mode 门之前无条件跑（presence owner 的 `reapAbandonedEditSessions`，`src/capabilities/notes/server/artifacts/presence/pg.ts`），presence 卫生不该受 reconciler mode 或资格门控制。
 
 **Restore 语义（R3）**：`hub_sync_reconciliation` 走 `BACKUP_EXCLUDED_TABLES`（非 FK_ORDER）——restore 重插 `artifact` 时 `hub_sync_artifact_dirty` 逐行 fan-out 重建每个 live hub 的 pending 游标（`O(atomics×hubs)` 的一次性 churn，单用户规模可忽略），nightly repair 兜底 coverage；故 restore 后无需手工补游标。
 
@@ -460,7 +460,7 @@ YUK-861 对 Verify、Notes、Memory 三条 durable handoff 做了架构 closeout
 
 | owner | 事实与提交边界 | receipt / recovery |
 |---|---|---|
-| Verify (`src/capabilities/practice/server/verify-dispatch-outbox.ts`) | draft 与 `writeVerifyDispatchIntent()` 同一 transaction；`dispatchPendingVerifyIntents()` 锁 pending intent，并用 `fromPgBossDrizzleTx(tx)` enqueue | enqueue 与 per-question/verifier completion 同一 transaction；失败保留 intent，`recoverOrphanVerifyDispatches()` 只恢复 verify |
+| Verify (`src/capabilities/practice/question-bank/server/verify-dispatch-outbox.ts`) | draft 与 `writeVerifyDispatchIntent()` 同一 transaction；`dispatchPendingVerifyIntents()` 锁 pending intent，并用 `fromPgBossDrizzleTx(tx)` enqueue | enqueue 与 per-question/verifier completion 同一 transaction；失败保留 intent，`recoverOrphanVerifyDispatches()` 只恢复 verify |
 | Notes (`src/capabilities/notes/server/note-handoff.ts`) | artifact transaction 写 append-only intent；queue send 在 commit 后发生 | exact returned job ID 或 exact `getJobById()` readback 确认 receipt 后写 completion；`hub_sync_recovery` 作为共享 floor，claim/result recovery 仍由 Notes 自己拥有 |
 | Memory (`src/capabilities/agency/server/memory/memory-reconcile-handoff*.ts`) | DB transaction 只写 marker/intent/completion/cursor；Mem0 lookup/SDK 与 pg-boss 在 transaction 外 | 上游 provider truth 由 fence、`add_started` 和 resolution 约束；下游一个 batch job 的 exact receipt 被物化为共享 job/digest 的多条 per-memory completion；严格 `observe|write|recover|drain` 与 append-only bounded cursor 保持 Memory-owned |
 
@@ -472,7 +472,7 @@ digest、cursor 与 receipt 语义。
 
 `learning_session` 承载 7 种 type：`ingestion | review | tutor | conversation | placement` 有实装状态机，`explore | create` 仍是 `placeholder` 单值占位。per-type status enum 与判别联合在 `src/core/schema/learning_session.ts`（`LearningSessionStatusByType`）；状态图与合法取值以该文件与各 lifecycle owner 为准，本文不复制。
 
-**Single owner invariant** (ADR-0005 / ADR-0008)：每个 type 只有一个 lifecycle owner。Conversation 的完整生命周期归 `src/capabilities/copilot/server/conversation-lifecycle.ts`，共享 idle / orphan caller 经 Copilot `public.ts` 消费现有操作。Placement 完整状态操作归 `src/capabilities/practice/server/placement-session-lifecycle.ts`；本域直接消费，外部 orphan caller 经 `practice/public.ts` 调用并持有原事务与 receipt。Ingestion 在 `src/capabilities/ingestion/server/session-lifecycle.ts`，其他 type 由各自现役 lifecycle owner 负责。route / handler 不允许直接 `db.update(learning_session)`。
+**Single owner invariant** (ADR-0005 / ADR-0008)：每个 type 只有一个 lifecycle owner。Conversation 的完整生命周期归 `src/capabilities/copilot/server/conversation-lifecycle.ts`，共享 idle / orphan caller 经 Copilot `public.ts` 消费现有操作。Placement 完整状态操作归 `src/capabilities/practice/placement/server/placement-session-lifecycle.ts`；本域直接消费，外部 orphan caller 经 `practice/public.ts` 调用并持有原事务与 receipt。Ingestion 在 `src/capabilities/ingestion/server/session-lifecycle.ts`，其他 type 由各自现役 lifecycle owner 负责。route / handler 不允许直接 `db.update(learning_session)`。
 
 **OCR 抽取层** (ADR-0002 修订)：用 Tencent QuestionMarkAgent (async submit+poll)，**不再 cascade**。Vision Tier 2/3 (haiku / sonnet) 仅作为**用户触发的救援**，走 `/api/ingestion/[id]/rescue`，永不参与自动 fallback。
 

@@ -1,0 +1,524 @@
+// YUK-361 Phase 3 Step A (Task 7) — 候选信号收集 collectCandidateSignals。
+//
+// 把非到期候选题/卷变成 `SelectionCandidateSignal[]`（core/selection-signals.ts 定义的
+// 形状）。**零选题行为变更**：本模块只读 DB（mastery_state / item_calibration）+ 复用
+// core 数学，**不接进 composeDailyStream / 不改可见选题顺序**（接线是 Step C，roadmap
+// Task 8 余）。
+//
+// 权威 spec：
+//   - docs/archive/superpowers/plans/2026-06-16-phase3-randomized-mfi-impl.md（Step A）
+//   - docs/archive/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md Task 7
+//   - ADR-0042 §1/§2 + 编排档2 amendment（L1 信号集扩充 §9.2）
+//   - ADR-0035（三轴正交：FSRS=R 调度 / mastery_state=p(L) 诊断 / item_calibration=b 锚）
+//
+// 严守只读契约（item-更新半边锁死 G4）：本模块**永不写** item_calibration / mastery_state。
+// b 锚只读 track='hard'（软轨 b 永不进 p(L)/调度，ADR-0035）。
+
+import { and, eq, isNotNull, sql } from 'drizzle-orm';
+import type { QuestionKindT } from '@/core/schema/judge-routing';
+import {
+  EARLY_KLP_ENABLED,
+  EARLY_KLP_N,
+  type SelectionCandidateSignal,
+  diagnosticScore,
+  klpScore,
+  mfiScore,
+} from '@/core/selection-signals';
+import { THETA_GRID_ENABLED, type ThetaGridPosterior, klpScoreFromGrid } from '@/core/theta-grid';
+import type { Db, Tx } from '@/db/client';
+import { mistake_variant, question } from '@/db/schema';
+import {
+  type MasteryStateRow,
+  effectiveThetaForKcBatch,
+  getMasteryStates,
+} from '@/kernel/read-models/mastery-state';
+import {
+  type BSource,
+  type CandidateDifficultyRead,
+  prepareCandidateDifficultyRead,
+} from '@/kernel/read-models/question-difficulty';
+import { MISCONCEPTION_RECURRENCE_ENABLED } from '../../server/selection-constants';
+import { rotationClassForKind } from './variant-rotation';
+
+type DbLike = Db | Tx;
+
+/**
+ * 候选输入。一条候选 = 一题或一卷。
+ *   - 题候选携带 kind / knowledgeIds / difficulty（用于 θ̂ 聚合、recall 路由、b 弱锚兜底）。
+ *   - 卷候选只带 role（paper）——卷的内部题信号由组卷层处理，本层只透传 role，不算 MFI。
+ */
+export interface CandidateInput {
+  refKind: 'question' | 'paper';
+  refId: string;
+  role: SelectionCandidateSignal['role'];
+  /** 题候选必填；卷候选省略。recall 路由 + 题型档归类用。 */
+  kind?: QuestionKindT;
+  /** 题候选挂的全部 KC。空/缺 → θ̂/precision 留 undefined（无个体能力锚）。 */
+  knowledgeIds?: string[];
+  /** 题候选的 1-5 难度档（兜底 b 弱锚来源）。缺 → 无 b。 */
+  difficulty?: number;
+  /**
+   * YUK-372 L3 — question.source（family_key 解析所需，与 kind + knowledgeIds[0] 共同成键）。
+   * 缺 → 跳过家族查询 → 纯 effectiveB（NO-OP，向后兼容）。
+   */
+  source?: string;
+}
+
+/**
+ * b 锚来源标注（type SelectionCandidateSignal 无 b_source 字段——这是有意的：core 信号
+ * 形状只承载 IRT 量，不承载 provenance）。Step C 的 sampler 需要据来源给弱锚 b 降权
+ * （difficulty_proxy 的 b 是序数当 interval 的占位、非真值，VERIFY:difficulty-logit-map
+ * REFUTED），故本层返回 `CollectedSignal` = 信号 + `bSource` 旁路标注。
+ *   - 'item_calibration'：来自 item_calibration.b（track='hard'，真锚）。
+ *   - 'difficulty_proxy'：来自 difficultyToLogitB(difficulty)（弱锚，Step C 降权）。
+ *   - 'none'：既无标定也无 difficulty → b 留 undefined（无难度信息）。
+ */
+export type { BSource } from '@/kernel/read-models/question-difficulty';
+
+/**
+ * 收集层返回类型：core 信号 + b 来源旁路标注 + 选题评分快照。
+ *
+ * `mfiScore` / `diagnosticScore` 是收集时算好的快照（复用 core 数学，不在此重算）——
+ * recall-locked 候选**不算**（recall 题重背，不进 MFI/sampler 评分，ADR-0042:36/ADR-0030），
+ * 故这两个字段对 recall 候选恒为 undefined。无 thetaHat/b（缺 KC 或缺难度）时也为 undefined。
+ *
+ * A3 (YUK-435)：`mfiScore` 字段承载的是**当前生效准则**算出的信息分——点 MFI（默认 /
+ * warm KC）或 KLP（EARLY_KLP_ENABLED && 冷启 KC）。`scoreKind`（继承自 core 信号 type）
+ * 旁路标注用了哪种。flag OFF（默认）恒为点 MFI，逐位等同今天。字段名保留 `mfiScore`
+ * 是为不破坏 Step C sampler 既有读点（语义已泛化为「信息分」）。
+ */
+export type CollectedSignal = SelectionCandidateSignal & {
+  bSource: BSource;
+  /** 信息分快照（点 MFI = p(1−p)，p=σ(θ̂−b)；或 KLP 后验加权积分）。recall-locked / 缺 θ̂或b → undefined。 */
+  mfiScore?: number;
+  /** 诊断评分快照 = MFI × 不确定性降权。recall-locked / 缺 θ̂/b/precision → undefined。 */
+  diagnosticScore?: number;
+};
+
+/** 冷启兜底（mastery_state 无行）：θ̂=0（logit 原点先验中性），precision=1（弱先验 1 单位信息，SE=1）。 */
+const COLD_START_THETA = 0;
+const COLD_START_PRECISION = 1;
+/** A3 (YUK-435) 冷启兜底 evidence_count=0（< EARLY_KLP_N ⇒ 落 KLP 冷启段）。never-seen KC 无作答证据。 */
+const COLD_START_EVIDENCE = 0;
+
+/**
+ * 多 KC θ̂ 聚合：取最弱 KC（min theta_hat）。ADR-0042:36「多 KC 用 θ̂_min」——选题
+ * 关心「这道题最薄弱的那个前提知识点掌握得多差」，故 thetaHat=θ̂_min，thetaPrecision
+ * 取该最弱 KC 自己的 precision（不是跨 KC 平均——选题信息量评估锚在最弱环节）。
+ *
+ * 读每个 KC 的 mastery_state（getMasteryState，'knowledge' 维），冷启行（null）兜底
+ * θ̂=0 / precision=1。无 KC（空 knowledgeIds）→ 返回 undefined/undefined（无个体能力锚，
+ * 评分层退化为无 θ̂ 状态）。
+ *
+ * A2 (YUK-434) — the per-KC θ_hat is the OFFSET θ_KC; the value compared/returned is
+ *   the EFFECTIVE theta = θ_global(domain-of-KC) + θ_KC (effectiveThetaForKc). Now
+ *   LIVE (HIERARCHICAL_ELO_ENABLED=true, P1 go-live YUK-361): a new KC of a strong
+ *   domain compares at its inherited effective ability rather than cold 0; an orphan /
+ *   domain-unresolvable KC degrades to θ_KC (effectiveThetaForKc catches + returns θ_KC).
+ *   With the flag OFF (still a valid mocked-false regression) effectiveThetaForKc
+ *   returns θ_KC UNCHANGED and resolves no domain/global row → read path BYTE-IDENTICAL
+ *   to single-layer (weakest-by-θ_hat, same precision).
+ *
+ * A3 (YUK-435) — also surface the WEAKEST KC's `evidence_count` (the per-KC cold-start
+ *   regime gate for KLP scoring) from the row ALREADY READ here (zero new query). The
+ *   evidence_count tracks the SAME KC whose θ̂/precision is returned (the θ̂_min KC), so
+ *   the KLP-vs-MFI decision and the score it produces are anchored on one consistent KC.
+ *   Cold start (no row / empty KCs) → 0 (< EARLY_KLP_N → cold regime). n=1-legal:
+ *   evidence_count is a single-learner sufficient statistic, KLP is a selection
+ *   criterion (no estimation), so one learner's count is the whole signal.
+ */
+// YUK-716 — pure over the two prefetched maps (`masteryByKc` = one `getMasteryStates` batch;
+// `effectiveThetaByKc` = one `effectiveThetaForKcBatch`). No DB reads here: the per-KC
+// `getMasteryState` + `effectiveThetaForKc` N+1 moved up into `collectCandidateSignals`'s bulk
+// prefetch. Semantics are byte-identical — the same θ̂_min pick, precision, evidence, grid, and
+// `θ_global = effective − θ_KC` restore, just read from maps instead of per-KC queries.
+function aggregateWeakestKc(
+  knowledgeIds: string[],
+  masteryByKc: Map<string, MasteryStateRow>,
+  effectiveThetaByKc: Map<string, number>,
+): {
+  thetaHat?: number;
+  thetaPrecision?: number;
+  evidenceCount: number;
+  // A4 inc-2 (YUK-436) — the WEAKEST KC's grid posterior + its θ_global anchor, captured
+  // for the SAME KC whose θ̂/precision/evidence is returned (one consistent KC). null grid
+  // (no row / shadow write never ran) → selection falls back to the Gaussian KLP / MFI path.
+  gridPosterior?: ThetaGridPosterior | null;
+  thetaGlobal?: number;
+} {
+  if (knowledgeIds.length === 0) {
+    return { thetaHat: undefined, thetaPrecision: undefined, evidenceCount: 0 };
+  }
+  let weakestTheta = Number.POSITIVE_INFINITY;
+  let weakestPrecision = COLD_START_PRECISION;
+  let weakestEvidence = COLD_START_EVIDENCE;
+  let weakestGrid: ThetaGridPosterior | null = null;
+  let weakestThetaGlobal = 0;
+  for (const kid of knowledgeIds) {
+    const row = masteryByKc.get(kid) ?? null;
+    const thetaKc = row?.theta_hat ?? COLD_START_THETA;
+    // Effective theta (θ_global + θ_KC). Flag off / absent → === thetaKc (bit-identical).
+    const theta = effectiveThetaByKc.get(kid) ?? thetaKc;
+    const precision = row?.theta_precision ?? COLD_START_PRECISION;
+    const evidence = row?.evidence_count ?? COLD_START_EVIDENCE;
+    if (theta < weakestTheta) {
+      weakestTheta = theta;
+      weakestPrecision = precision;
+      weakestEvidence = evidence;
+      weakestGrid = row?.theta_grid_json ?? null;
+      // θ_global = effective − θ_KC offset (effectiveThetaForKc folds θ_global in; subtract
+      // the offset back out). Flag off → effective === θ_KC → θ_global = 0 (grid over raw b).
+      weakestThetaGlobal = theta - thetaKc;
+    }
+  }
+  return {
+    thetaHat: weakestTheta,
+    thetaPrecision: weakestPrecision,
+    evidenceCount: weakestEvidence,
+    gridPosterior: weakestGrid,
+    thetaGlobal: weakestThetaGlobal,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P2 D2 / A8 — misconceptionRecurrence（错误观念复发度）选题信号。
+//
+// 填补 candidate-signals.ts §9.2 三 first-class 信号里 `misconceptionRecurrence` 这一格
+// （examRelevance 仍无 cheap reader，留 undefined）。
+//
+// 权威 spec：
+//   - ADR-0042 编排档2 amendment（GPT 研究稿 §9.2）——选题不止 MFI 中心。
+//   - core/selection-signals.ts:53「错题家族复发频次」computation-deferred 注。
+//
+// 消费方（live，本处只产值不碰）：selection-orchestrator.ts:97
+//   `bucketUnit(sig.misconceptionRecurrence)` → SelectionOrchestratorTask LLM prompt
+//   （softmax-selection.ts tryLlmOrchestration）。**选题专属**——此值绝不进
+//   updateThetaForAttempt / p(L) / FSRS（红线 #1；updateThetaForAttempt 的 input 形状
+//   UpdateThetaForAttemptInput 里根本没有承载它的字段，结构性切断）。
+//
+// 单用户工具（CLAUDE.md Auth：「single-user tool；no per-user auth」）——schema 里
+// mistake_variant / question / mastery_state 全无 user_id 列。故每条 mistake_variant 行
+// 就是 THIS learner 自己的错误记录。本信号是**纯 per-learner SELF-STATE tally**
+// （sufficient-statistic 式计数），归一化常数 owner-fixed（module const，同其它选题权重），
+// **绝不估计任何 cross-examinee 量**（admissibility HARD，n=1 admissible）。
+//
+// 链接（KC-based，prompt PREFER）：候选题触及 KC 集 K（cand.knowledgeIds）。
+//   1. 找触及任一 kc∈K 的题：question.knowledge_ids @> [kc]（已有 GIN 索引）。
+//   2. 这些题上的错误：mistake_variant.parent_question_id ∈ 那些题 id，按 cause_category
+//      group + count（每行 = 该错因家族的一次复发）。
+//   3. 复发分 = 跨 cause_category 的 MAX 计数（这道题最常复发的那个错误观念有多顽固）。
+//   4. 归一化：min(1, maxCount / NORMALIZATION_CONST)（owner-fixed const，非学习/估计量）。
+//   无任何错误数据（learner 在候选 KC 上无 cause 记录）→ undefined（NEVER zero-fill：
+//   undefined=「无数据」，0=「测得为零」——评分层据此 MFI-only 退化 vs 当硬零处理）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Dark-ship flag MISCONCEPTION_RECURRENCE_ENABLED lives in ./selection-constants (imported
+// above) — a pure IO-free module so tests can mock just that export (EARLY_KLP pattern).
+// Default false → misconceptionRecurrence undefined for all → orchestrator prompt +
+// mfiScore/diagnosticScore byte-identical to today (the aggregate read is never issued).
+
+/**
+ * Owner-fixed normalization constant for misconceptionRecurrence (NOT a learned / estimated
+ * quantity — a module const, same class as the other selection weights). The raw signal is
+ * this learner's MAX per-cause-family recurrence count over questions probing the candidate's
+ * KCs; we map it onto [0,1] by `min(1, count / RECURRENCE_NORM)`. RECURRENCE_NORM=5 means
+ * "5+ recurrences of the same misconception family on this candidate's KCs ⇒ saturated (1.0)".
+ * Owner-tunable like a weight; it is NOT inferred from any cross-examinee distribution.
+ */
+const RECURRENCE_NORM = 5;
+
+/** Stable, collision-free identity for a KC set. Order and duplicate KCs never changed the
+ * reference query's OR predicate, so canonicalising them preserves its semantics. */
+function recurrenceKnowledgeSetKey(knowledgeIds: readonly string[]): string {
+  return JSON.stringify(Array.from(new Set(knowledgeIds)).sort());
+}
+
+/**
+ * Per-learner cross-attempt cause-family recurrence for every candidate KC set in one request.
+ *
+ * This is the YUK-741 set-based read boundary. It issues at most ONE aggregate query over the
+ * union of all requested KCs, retaining `parent_question_id → question.knowledge_ids` in each
+ * grouped evidence row. The in-memory fold then projects each row only into candidate sets whose
+ * KCs intersect that question. A Set de-duplicates candidate-set routing, so a question carrying
+ * two KCs from the same candidate contributes each mistake exactly once — identical to the old
+ * boolean OR predicate rather than double-counting through a KC unnest join.
+ *
+ * SELF-STATE sufficient statistic (single-user tool → every mistake_variant row is THIS
+ * learner's). Only status='active' + non-null cause rows count. Draft/dismissed/broken rows retain
+ * their cause_category in storage but are not confirmed recurrence evidence, so they remain
+ * excluded. For each candidate, counts are summed per cause family across matching parent
+ * questions, then the maximum family count is normalised through the owner-fixed RECURRENCE_NORM.
+ *
+ * The returned array is aligned to `candidateKnowledgeIds`. NEVER zero-fill:
+ *   - empty K (candidate has no KCs) → undefined;
+ *   - no confirmed cause rows on K → undefined;
+ *   - empty/all-empty input → no query and aligned undefined values.
+ */
+export async function batchAggregateMisconceptionRecurrence(
+  db: DbLike,
+  candidateKnowledgeIds: readonly (readonly string[])[],
+): Promise<(number | undefined)[]> {
+  if (candidateKnowledgeIds.length === 0) return [];
+
+  const seenKnowledgeSetKeys = new Set<string>();
+  const setKeysByKc = new Map<string, Set<string>>();
+  const inputKeys = candidateKnowledgeIds.map((knowledgeIds) => {
+    const key = recurrenceKnowledgeSetKey(knowledgeIds);
+    if (knowledgeIds.length === 0) return key;
+
+    if (!seenKnowledgeSetKeys.has(key)) {
+      const distinct = Array.from(new Set(knowledgeIds));
+      seenKnowledgeSetKeys.add(key);
+      for (const knowledgeId of distinct) {
+        const keys = setKeysByKc.get(knowledgeId) ?? new Set<string>();
+        keys.add(key);
+        setKeysByKc.set(knowledgeId, keys);
+      }
+    }
+    return key;
+  });
+
+  const unionKcIds = Array.from(setKeysByKc.keys());
+  if (unionKcIds.length === 0) return inputKeys.map(() => undefined);
+
+  // Preserve the established `@>` shape so question_knowledge_ids_gin(jsonb_path_ops) remains
+  // usable. `?|` is intentionally avoided because that operator is unsupported by path_ops.
+  const unionContainment = sql.join(
+    unionKcIds.map(
+      (knowledgeId) => sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`,
+    ),
+    sql` OR `,
+  );
+
+  // One row per (parent question, cause family) retains the evidence linkage needed to fold the
+  // same row into every intersecting candidate set without fetching one aggregate per candidate.
+  const evidenceRows = await db
+    .select({
+      questionId: question.id,
+      knowledgeIds: question.knowledge_ids,
+      causeCategory: mistake_variant.cause_category,
+      recurrenceCount: sql<number>`count(*)::int`,
+    })
+    .from(mistake_variant)
+    .innerJoin(question, eq(question.id, mistake_variant.parent_question_id))
+    .where(
+      and(
+        isNotNull(mistake_variant.cause_category),
+        eq(mistake_variant.status, 'active'),
+        sql`(${unionContainment})`,
+      ),
+    )
+    .groupBy(question.id, question.knowledge_ids, mistake_variant.cause_category);
+
+  const countsBySetAndCause = new Map<string, Map<string, number>>();
+  for (const row of evidenceRows) {
+    // One question may carry multiple requested KCs. Route to each candidate-set key once so its
+    // evidence count matches the reference `kc1 OR kc2` query rather than being multiplied.
+    const matchingSetKeys = new Set<string>();
+    for (const knowledgeId of row.knowledgeIds) {
+      for (const key of setKeysByKc.get(knowledgeId) ?? []) matchingSetKeys.add(key);
+    }
+    if (row.causeCategory === null) continue; // narrowed by SQL; retain a fail-closed TS guard.
+    for (const key of matchingSetKeys) {
+      const byCause = countsBySetAndCause.get(key) ?? new Map<string, number>();
+      byCause.set(row.causeCategory, (byCause.get(row.causeCategory) ?? 0) + row.recurrenceCount);
+      countsBySetAndCause.set(key, byCause);
+    }
+  }
+
+  const scoreBySet = new Map<string, number>();
+  for (const [key, byCause] of countsBySetAndCause) {
+    const maxCount = Math.max(...byCause.values());
+    if (maxCount > 0) scoreBySet.set(key, Math.min(1, maxCount / RECURRENCE_NORM));
+  }
+  return inputKeys.map((key) => scoreBySet.get(key));
+}
+
+/** Collect one question after the early family snapshot and other signal reads. */
+async function collectQuestionSignal(
+  cand: CandidateInput,
+  masteryByKc: Map<string, MasteryStateRow>,
+  effectiveThetaByKc: Map<string, number>,
+  difficultyRead: CandidateDifficultyRead,
+  misconceptionRecurrence?: number,
+): Promise<CollectedSignal> {
+  const knowledgeIds = cand.knowledgeIds ?? [];
+  const { thetaHat, thetaPrecision, evidenceCount, gridPosterior, thetaGlobal } =
+    aggregateWeakestKc(knowledgeIds, masteryByKc, effectiveThetaByKc);
+  const { b, bSource } = await difficultyRead.read(cand.refId, cand.difficulty);
+
+  // recall-eligibility（ADR-0030 by-kind 路由 → recall/application）。
+  //   recall（fill_blank/translation）：原题重背，FSRS 测的就是这道 recall item。recall
+  //   题**绝不进 MFI/sampler 评分**（换题会污染 FSRS 信号；ADR-0042:36/ADR-0030）——
+  //   recallLocked:true 且不算 mfiScore/diagnosticScore。
+  //   application：可换变体，进 MFI 评分。
+  // kind 缺省（卷候选不会走这里；题候选理应带 kind）时**保守锁 recall（fail CLOSED）**：
+  //   undefined kind 意味着我们无法证明这题可换变体（如目标题被硬删、kind 丢失）——
+  //   宁可把它当原题重背确定性透传，也不能让一道身份不明的题进 sampler/MFI 而违反铁律③
+  //   （recall-locked = 同题永不被抽样/MFI 评分）。这是 review CLUSTER D 的 fail-open→
+  //   fail-closed 纠正。
+  const recallLocked = cand.kind ? rotationClassForKind(cand.kind) === 'recall' : true;
+
+  // 评分快照：复用 core 数学（mfiScore/klpScore/diagnosticScore，selection-signals.ts），
+  // 不在此重算。recall-locked 或缺 θ̂/b 时不算（留 undefined，scoreKind 同样 undefined）。
+  //
+  // A3 (YUK-435) — cold-start KLP 门控：weakest-KC evidence_count < EARLY_KLP_N 且
+  //   EARLY_KLP_ENABLED ⇒ 用 KLP（后验加权 Fisher 网格积分，不押 volatile θ̂ 单点）；
+  //   否则点 MFI。`scoreKind` 旁路标注用了哪种准则（provenance）。
+  //   FLAG OFF (DEFAULT)：useEarlyKlp 恒 false ⇒ 永远点 MFI ⇒ 选题评分逐位等同今天
+  //   （bitwise regression anchor，candidate-signals.db.test.ts 用 toBe 钉死）；scoreKind
+  //   只是新增的旁路字段，不改任何既有 score 数值。precision 缺失（无 θ̂ 状态）时 KLP
+  //   无法算（需 precision）⇒ 退点 MFI（与今天一致）。
+  //
+  // A4 inc-2 (YUK-436) — grid→KLP 接线（dark-ship，THETA_GRID_ENABLED 默认 false）：当该 KC
+  //   有网格后验（theta_grid_json）且 flag ON 时，**优先**用 klpScoreFromGrid——直接对实际
+  //   离散后验加权 Fisher 积分，免去 A3 的 Gaussian(θ̂, thetaSe) 重构（A4「免费 Fisher 选题」
+  //   payoff）。FLAG OFF (DEFAULT)：useGrid 恒 false（短路在 gridPosterior 判定前）⇒ 走 A3 老
+  //   路径 ⇒ 选题评分逐位等同今天（bitwise anchor 不破——即使行里已有 shadow 网格也不读）。
+  //   翻 flag 须 gated on 校准验证（theta-grid.ts 头注 inc-2 deferred）。
+  let mfi: number | undefined;
+  let diag: number | undefined;
+  let scoreKind: SelectionCandidateSignal['scoreKind'];
+  if (!recallLocked && thetaHat !== undefined && b !== undefined) {
+    // b is already narrowed non-undefined by the enclosing `if`; useGrid only adds the
+    // grid-presence gate (THETA_GRID_ENABLED FIRST so flag-off short-circuits before any read).
+    const useGrid = THETA_GRID_ENABLED && gridPosterior != null && thetaGlobal !== undefined;
+    if (useGrid && gridPosterior != null && thetaGlobal !== undefined) {
+      mfi = klpScoreFromGrid(gridPosterior, b, thetaGlobal);
+      scoreKind = 'klp_grid';
+    } else if (EARLY_KLP_ENABLED && evidenceCount < EARLY_KLP_N && thetaPrecision !== undefined) {
+      mfi = klpScore(thetaHat, b, thetaPrecision);
+      scoreKind = 'klp';
+    } else {
+      mfi = mfiScore(thetaHat, b);
+      scoreKind = 'mfi';
+    }
+    if (thetaPrecision !== undefined) {
+      diag = diagnosticScore(thetaHat, b, thetaPrecision);
+    }
+  }
+
+  // P2 D2 / A8 — misconceptionRecurrence（错误观念复发度，选题专属，flag-gated dark-ship）。
+  //   FLAG OFF (DEFAULT)：短路在读之前 → 恒 undefined → orchestrator prompt + mfiScore/
+  //     diagnosticScore 路径逐位等同今天（NEVER zero-fill）。
+  //   FLAG ON：per-learner SELF-STATE tally（batchAggregateMisconceptionRecurrence）。无数据 →
+  //     undefined（NOT 0）。recall-locked 也照常算——它是候选画像的一部分（生产里
+  //     recall-locked 在喂 orchestrator 前已被切出，故此值对它实际不被消费；但保持
+  //     snapshot 完整、不引入 recall 特例分支）。
+  return {
+    refKind: 'question',
+    refId: cand.refId,
+    role: cand.role,
+    thetaHat,
+    thetaPrecision,
+    b,
+    recallLocked,
+    bSource,
+    mfiScore: mfi,
+    diagnosticScore: diag,
+    scoreKind,
+    // ─────────────────────────────────────────────────────────────────────────
+    // §9.2 / ADR-0042 编排档2 first-class 信号扩充（选题不止 MFI 中心）。
+    // NEVER zero-fill——undefined = 「无数据」，0 = 「测得为零」，评分层据此 MFI-only 退化。
+    //   - examRelevance（考纲/考点权重）：仍无 cheap reader——SubjectProfileSchema
+    //     （profile-schema.ts）无 examWeight/syllabus 字段；无考纲映射数据源。引入 subject
+    //     profile 考纲权重表后，在此据 candidate 的 knowledgeIds → 考点权重映射计算。
+    //   - misconceptionRecurrence（错误观念复发度）：**已填**（P2 D2 / A8）。flag-gated
+    //     dark-ship（MISCONCEPTION_RECURRENCE_ENABLED，默认 false → undefined → orchestrator
+    //     prompt byte-identical）。ON 时 batchAggregateMisconceptionRecurrence 算 per-learner
+    //     SELF-STATE 错因家族跨 attempt 复发频次（KC-based linkage），归一化到 0-1（owner-fixed
+    //     RECURRENCE_NORM）。无数据 → undefined（见该函数文档）。
+    // transferGap 不再投影为永久 undefined：无 per-(KC,context) reader 时，字段与 prompt
+    // 都不存在；等真实 reader + red-capable tests 一起落地后再恢复（YUK-792）。
+    // 不为剩余信号自建子系统/查询（缺数据留 undefined + scope discipline）。
+    // ─────────────────────────────────────────────────────────────────────────
+    examRelevance: undefined,
+    misconceptionRecurrence,
+  };
+}
+
+/**
+ * 收集一条卷候选的信号。卷只透传 role（paper），不算任何 IRT/MFI 量——卷的内部题信号
+ * 由组卷/卷架层处理，选题层把卷当作一个不可拆的 'paper' 候选透传（ADR-0042 卷架旁路）。
+ */
+function collectPaperSignal(cand: CandidateInput): CollectedSignal {
+  return {
+    refKind: 'paper',
+    refId: cand.refId,
+    role: cand.role,
+    // 卷无个体 θ̂/b/recall 语义；§9.2 三信号同理留 undefined（卷不进 MFI 画像）。
+    bSource: 'none',
+  };
+}
+
+/**
+ * 收集非到期候选的选题信号。纯读（mastery_state / item_calibration），无写、无 LLM。
+ *
+ * 顺序串行处理（候选数量是「今日非到期候选池」量级，非全库；getMasteryState 是单行点查，
+ * 无需并发批读复杂度）。Step C sampler 消费返回的 CollectedSignal[]：据 mfiScore/
+ * diagnosticScore softmax 抽样、据 bSource 给弱锚降权、据 recallLocked 切断 recall 喂 MFI。
+ */
+export async function collectCandidateSignals(
+  db: DbLike,
+  candidates: CandidateInput[],
+): Promise<CollectedSignal[]> {
+  // Preserve the early family snapshot; hard anchors remain sequential per-question reads.
+  const questionCands = candidates.filter(
+    (c): c is CandidateInput & { kind: QuestionKindT } => c.refKind === 'question',
+  );
+  const difficultyRead = await prepareCandidateDifficultyRead(
+    db,
+    questionCands.map((c) => ({
+      questionId: c.refId,
+      primaryKnowledgeId: (c.knowledgeIds ?? [])[0],
+      kind: c.kind,
+      source: c.source,
+    })),
+  );
+  // YUK-716 — bulk-prefetch the per-KC mastery reads that were the aggregateWeakestKc N×M N+1.
+  // ONE getMasteryStates over the union of all question candidates' KCs + ONE
+  // effectiveThetaForKcBatch (θ_global folded in when HIERARCHICAL_ELO_ENABLED, else a no-read
+  // pass-through). The per-KC θ̂_min selection stays in aggregateWeakestKc as pure in-memory
+  // computation over these two maps (byte-identical picks). Hard b stays per-candidate:
+  // it is a per-refId (not per-KC) read outside the θ̂ aggregation's N×M hot path.
+  const unionKcIds = Array.from(new Set(questionCands.flatMap((c) => c.knowledgeIds ?? [])));
+  const masteryByKc = await getMasteryStates(db, unionKcIds, 'knowledge');
+  const effectiveThetaByKc = await effectiveThetaForKcBatch(
+    db,
+    unionKcIds.map((kid) => ({
+      knowledgeId: kid,
+      thetaKc: masteryByKc.get(kid)?.theta_hat ?? COLD_START_THETA,
+    })),
+  );
+
+  // YUK-741 — recurrence is a request-level sidecar, not a per-candidate query. Flag OFF keeps
+  // the historical hard short-circuit: no recurrence aggregate is issued and every value stays
+  // undefined. Flag ON performs one union-KC aggregate for all question candidates; outputs stay
+  // aligned with questionCands, including empty/sparse sets and duplicate KC-set signatures.
+  const recurrenceByQuestion = MISCONCEPTION_RECURRENCE_ENABLED
+    ? await batchAggregateMisconceptionRecurrence(
+        db,
+        questionCands.map((candidate) => candidate.knowledgeIds ?? []),
+      )
+    : questionCands.map(() => undefined);
+
+  const out: CollectedSignal[] = [];
+  let questionIndex = 0;
+  for (const cand of candidates) {
+    if (cand.refKind === 'paper') {
+      out.push(collectPaperSignal(cand));
+    } else {
+      out.push(
+        await collectQuestionSignal(
+          cand,
+          masteryByKc,
+          effectiveThetaByKc,
+          difficultyRead,
+          recurrenceByQuestion[questionIndex],
+        ),
+      );
+      questionIndex += 1;
+    }
+  }
+  return out;
+}

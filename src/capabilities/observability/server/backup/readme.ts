@@ -72,6 +72,10 @@ can repeat completed side effects or paid work. After a job failure, a deferred 
 or a receipt-write failure, the owner must reconcile persisted evidence using
 docs/sub5-restore-cli.md before exporting a new ZIP. Unknown results remain blocked.
 The existing intervention preparation recovery is not a general queue restore.
+Event memory-ingest state is restored as archived, so already-extracted and opted-out
+events are not re-sent to paid extraction. Learner events dispatched at export without
+an ingest marker are reopened for the outbox poller; dispatches older than the first
+archived marker are not.
 Stop writers/workers for a live restore and reconcile operational queues before
 resuming them. Use a full PostgreSQL backup when queue state must also be recovered.
 

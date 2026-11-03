@@ -22,6 +22,7 @@
 | `cost.ts` / `canonical-json.ts` | 共享数值与序列化 helper |
 | `object-storage.ts` | 共享 R2/S3 对象 I/O：完整 client 接口、SDK 命令/响应适配与 lazy singleton；不拥有资产引用、数据库事务或付费策略 |
 | `http.ts` | 公共 HTTP helper（公共件，非契约） |
+| `judge.ts` / `placement.ts` / `placement-persistence.ts` / `scheduling.ts` | 根目录过渡门面：只 re-export 现有消费者实际使用的符号，不得新增符号。`judge.ts` 只剩 ingestion / agency 用到的 6 个判题入口 |
 | `manifest.unit.test.ts` / `composition.unit.test.ts` | 契约与组合唯一性校验 |
 
 ## CONVENTIONS

@@ -12,9 +12,12 @@ import {
   findExistingRateEvent,
   writeProposalRateEvent,
 } from '@/kernel/proposals/applier-helpers';
+import {
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/kernel/proposals/signals';
 import { createLearningIntentNote } from '@/kernel/records/learning-intent-note-birth';
-import { dispatchNoteGeneration } from '@/kernel/records/note-handoff-protocol';
-import * as ownerRuntime from '@/server/proposals/owner-runtime';
+import { type BossDispatch, dispatchNoteGeneration } from '@/kernel/records/note-handoff-protocol';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
 import { acceptGoalScopeProposal } from './goals/accept';
 import { createLearningIntentKnowledgeNode } from './learning-intent';
@@ -26,7 +29,11 @@ import {
 } from './proposal-appliers';
 import { type ProposalInboxRow, createAgencyProposalLifecycle } from './proposal-lifecycle';
 
-type AgencyAcceptRuntime = AgencyApplierOpts & ConjectureApplierOpts;
+type AgencyAcceptRuntime = AgencyApplierOpts &
+  ConjectureApplierOpts & {
+    // The accept dispatcher supplies the boss; agency does not import the platform client.
+    readonly getBoss?: () => Promise<BossDispatch>;
+  };
 
 export const {
   agencyProposalDismissApplier,
@@ -35,12 +42,11 @@ export const {
   learningItemProposalRetractApplier,
   relearnProposalRetractApplier,
 } = createAgencyProposalLifecycle({
-  ...ownerRuntime,
   acquireProposalDecisionLock,
   findExistingRateEvent,
   writeProposalRateEvent,
   recordDismissSignal: (db, input: ProposalDismissInput) =>
-    ownerRuntime.recordProposalDecisionSignal(
+    recordProposalDecisionSignal(
       db,
       {
         ...input.proposal,
@@ -63,10 +69,12 @@ function inboxView(input: ProposalAcceptInput): ProposalInboxRow {
 
 function runtimeOptions(db: Db, input: ProposalAcceptInput, runtime: unknown): AgencyAcceptRuntime {
   const seams = runtime && typeof runtime === 'object' ? (runtime as AgencyAcceptRuntime) : {};
+  const { getBoss } = seams;
   const enqueueLearningIntentNote =
     seams.enqueueLearningIntentNote ??
-    (shouldEnqueueBackgroundJobs()
-      ? (artifactId: string) => dispatchNoteGeneration(db as Db, artifactId)
+    (shouldEnqueueBackgroundJobs() && getBoss
+      ? async (artifactId: string) =>
+          dispatchNoteGeneration(db as Db, artifactId, { boss: await getBoss() })
       : undefined);
   return {
     ...seams,
@@ -126,9 +134,9 @@ export const goalScopeProposalAcceptApplier: ProposalAcceptApplier = async (db, 
     user_note: input.user_note,
   });
   if (result.idempotent) {
-    await ownerRuntime.ensureProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
+    await ensureProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
   } else {
-    await ownerRuntime.recordProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
+    await recordProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
   }
   return wrap(result);
 };

@@ -147,7 +147,11 @@ export function RichNoteBlockEditor(props: Props) {
   }, [props.block]);
   // Unknown/invalid stored structures are never silently coerced by TipTap.
   if (!prepared)
-    return <div role="alert">此块包含暂不支持的结构，已保留原内容，不能直接编辑。</div>;
+    return (
+      <div role="alert" className="nt-edit-unsupported">
+        此块包含暂不支持的结构，已保留原内容，不能直接编辑。
+      </div>
+    );
   return <EditableBlock key={prepared.schemaKey} {...props} extensions={prepared.extensions} />;
 }
 
@@ -174,7 +178,7 @@ function EditableBlock({
     immediatelyRender: false,
     editorProps: {
       attributes: {
-        class: 'nb-edit-area',
+        class: 'nt-edit-area',
         role: 'textbox',
         'aria-multiline': 'true',
         'aria-label': label,

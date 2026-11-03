@@ -57,7 +57,8 @@ import { ai_task_runs, event, knowledge, question } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { RESEARCH_MEETING_SAMPLES, runResearchMeetingNightly } from './research_meeting_nightly';
+import { RESEARCH_MEETING_SAMPLES } from '../server/conjecture/evidence-images';
+import { runResearchMeetingNightly } from './research_meeting_nightly';
 
 const KC_ID = 'kn_word_activation';
 const CAUSE = 'concept_confusion';

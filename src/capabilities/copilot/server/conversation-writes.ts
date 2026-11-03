@@ -3,19 +3,29 @@
 
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
+import type { ProviderFailureInfo } from '@/ai/provider-failure';
 import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
+import {
+  COPILOT_CHIP_TRIGGER_ACTION as CHIP_TRIGGER_EVENT_ACTION,
+  COPILOT_REPLY_ACTION as REPLY_EVENT_ACTION,
+  COPILOT_USER_ASK_ACTION as USER_ASK_EVENT_ACTION,
+} from '@/kernel/events/copilot-actions';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { ApiError } from '@/kernel/http';
 import { captureReviewAnswerBinding } from '@/kernel/records/review-answer-binding';
 import type { ReviewAnswerAttachment } from '@/kernel/tools/review-answer';
 import type { ConfirmationCommandT, ConfirmationOccurrenceT } from '../confirmation-contract';
-import type { CopilotPublicProse, CopilotPublicProseFailure } from '../public-prose-contract';
+import {
+  type CopilotPublicProse,
+  type CopilotPublicProseFailure,
+  providerFailureToPublicFailure,
+  publicProseFailureMessage,
+} from '../public-prose-contract';
 import type { CopilotModeState, CopilotSkillContextT, CopilotSkillTurn } from './chat-contracts';
 import {
   publicProseFailureForReason,
-  publicProseFailureMessage,
   publicProseStatus,
   readCopilotPublicProse,
 } from './public-prose';
@@ -37,12 +47,6 @@ import type { CopilotPrimaryView } from './turns';
 export type { PreparedCopilotReply } from './reply-finalization';
 
 type WriteEventFn = (db: Db | Tx, input: WriteEventInput) => Promise<string>;
-
-const CHIP_TRIGGER_EVENT_ACTION = 'experimental:copilot_chip_trigger';
-const USER_ASK_EVENT_ACTION = 'experimental:copilot_user_ask';
-// Experimental action parsed by the generic ExperimentalEvent escape hatch, so
-// no schema change is needed; its payload is free-form per that event.
-const REPLY_EVENT_ACTION = 'experimental:copilot_reply';
 
 /** Persist the accepted ask/chip identity used by FIFO, replay and causal tool mirrors. */
 export async function writeCopilotInputEvent(
@@ -169,6 +173,11 @@ export async function writeCopilotReply(
     /** Structured, whitelisted failure supplied by the execution owner; never raw errors. */
     publicProseFailure?: CopilotPublicProseFailure;
     /**
+     * Proven provider failure on a sealed-exit success (help_quota / bad_gateway):
+     * the reply stays completed while the wire still names the real category.
+     */
+    providerFailure?: ProviderFailureInfo;
+    /**
      * Optional terminal outcome for durable recovery. A durable success marker
      * lets a pg-boss redelivery repair missing job terminal events without
      * running the paid model/tools a second time; historical callers may omit it.
@@ -199,7 +208,9 @@ export async function writeCopilotReply(
                   publicProseFailureForReason(params.durableFailure?.reason)),
           ),
           ...(params.outcome === 'success'
-            ? {}
+            ? params.providerFailure !== undefined
+              ? { failure: providerFailureToPublicFailure(params.providerFailure) }
+              : {}
             : {
                 failure:
                   params.publicProseFailure ??

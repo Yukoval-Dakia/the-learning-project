@@ -1,11 +1,11 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryReviewDue } from '@/capabilities/practice/scheduling/server/due-list';
-import { executeGetReviewDue } from '@/capabilities/practice/scheduling/tools/question-context';
 import {
   prefetchProbeSelection,
   selectProbeFromPrefetch,
-} from '@/capabilities/practice/server/variant-rotation';
+} from '@/capabilities/practice/scheduling/server/variant-rotation';
+import { executeGetReviewDue } from '@/capabilities/practice/scheduling/tools/question-context';
 import { replay } from '@/core/forgetting';
 import { initialFsrsState } from '@/core/fsrs';
 import { canonicalHash } from '@/core/migration/canonical';

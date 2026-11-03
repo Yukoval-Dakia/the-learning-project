@@ -31,9 +31,9 @@ export const TRACKED_CONSUMERS: readonly string[] = [
   'src/capabilities/knowledge/server/frontier-read.ts',
   'src/kernel/read-models/learnable-frontier.ts',
   'src/kernel/read-models/knowledge-graph.ts',
-  'src/capabilities/practice/api/placement-profile.ts',
+  'src/capabilities/practice/placement/api/placement-profile.ts',
   'src/capabilities/knowledge/server/tools/knowledge-readers.ts',
-  'src/capabilities/practice/server/question-detail.ts',
+  'src/capabilities/practice/question-bank/server/question-detail.ts',
   // transitive consumer (spec §1.1): receives a caller-parsed projection.
   'src/capabilities/agency/server/conjecture/evidence.ts',
 ] as const;

@@ -7,7 +7,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { runItemPriorBackfill } from '@/capabilities/practice/jobs/item_prior_backfill';
+import { runItemPriorBackfill } from '@/capabilities/practice/question-bank/jobs/item_prior_backfill';
 import { newId } from '@/core/ids';
 import { item_calibration, knowledge, question } from '@/db/schema';
 import { resetDb, testDb } from '../helpers/db';

@@ -6,12 +6,16 @@ import { sha256CanonicalJson } from '@/kernel/canonical-json';
 
 export { CopilotPrimaryViewSchema } from '../primary-view-contract';
 
+import type { ProviderFailureInfo } from '@/ai/provider-failure';
 import type {
   ProposalEffectContract,
   ToolExecutionGateInput,
   ToolExecutionResultObservation,
 } from '@/kernel/tools/types';
-import { COPILOT_PROVIDER_REJECTION_REPLY } from '../public-prose-contract';
+import {
+  providerFailureToPublicFailure,
+  publicProseFailureMessage,
+} from '../public-prose-contract';
 import type { CopilotCorrectionContract } from './correction-contract';
 import { resolveCorrectionReply } from './correction-contract';
 import { stripCopilotInternalComments } from './prose-stream';
@@ -359,10 +363,10 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
 
   async function finalizeTerminal(
     terminalText: string,
-    failure?: { kind: 'provider_request_rejected'; httpStatus: 400 },
+    failure?: ProviderFailureInfo,
   ): Promise<CopilotReplyFinalizationResult> {
-    if (failure?.kind === 'provider_request_rejected' && failure.httpStatus === 400) {
-      return failClosed(failure);
+    if (failure !== undefined) {
+      return failClosed(publicProseFailureMessage(providerFailureToPublicFailure(failure)));
     }
     const startVersion = traceVersion;
     const startTraceSha = digestTrace(trace);
@@ -459,15 +463,9 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     traceVersion += 1;
   }
 
-  function failClosed(failure?: {
-    kind: 'provider_request_rejected';
-    httpStatus: 400;
-  }): CopilotReplyFinalizationResult {
+  function failClosed(copy = FINALIZATION_FAILURE_REPLY): CopilotReplyFinalizationResult {
     const disclosure = proposalDisclosure(trace);
-    const replyText = applyProposalDisclosure(
-      failure ? COPILOT_PROVIDER_REJECTION_REPLY : FINALIZATION_FAILURE_REPLY,
-      disclosure,
-    );
+    const replyText = applyProposalDisclosure(copy, disclosure);
     const traceSha = digestTrace(trace);
     return {
       replyText,

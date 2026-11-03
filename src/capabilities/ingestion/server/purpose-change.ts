@@ -19,11 +19,9 @@ import {
   documentUsageEpoch,
   readDocumentDerivationPolicy,
 } from '@/kernel/read-models/usage-policy';
-import {
-  AGENT_BUDGET_LOCK_KEY,
-  parseAgentBudget,
-  writeAgentBudgetPath,
-} from './agent/budget-state';
+import { AGENT_BUDGET_LOCK_KEY, parseAgentBudget } from './agent/budget-state';
+import { agentStopState, requestAgentStop } from './agent/ownership';
+import { commitDocumentUsagePolicy } from './session/source-document-provenance';
 
 /** Complete private owner. The API never updates provenance or reconstructs a receipt. */
 export async function changeIngestionPurpose(db: Db, sessionId: string, raw: unknown) {
@@ -91,24 +89,8 @@ export async function changeIngestionPurpose(db: Db, sessionId: string, raw: unk
     const stopped: PurposeChangeReceiptT['stop'] = [];
     if (cleanupRequired) {
       for (const bound of sessions.filter((row) => row.source_document_id === doc.id)) {
-        const budget = parseAgentBudget(bound.agent_budget);
-        const owner = budget?.execution_owner;
-        if (owner?.state === 'active') {
-          await writeAgentBudgetPath(tx, bound.id, ['execution_owner'], {
-            ...owner,
-            stop_request_id: operationId,
-          });
-          stopped.push({
-            session_id: bound.id,
-            run_ref: owner.run_ref,
-            operation_id: owner.operation_id,
-          });
-        } else if (
-          ['queued', 'extracting'].includes(bound.status) ||
-          Object.keys(budget?.unproven_dispatches ?? {}).length
-        ) {
-          stopped.push({ session_id: bound.id, run_ref: null, operation_id: null });
-        }
+        const target = await requestAgentStop(tx, bound, operationId);
+        if (target) stopped.push(target);
       }
     }
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${PURPOSE_BRIEF_LOCK}, 0))`);
@@ -143,21 +125,7 @@ export async function changeIngestionPurpose(db: Db, sessionId: string, raw: unk
       external_effect: 'unknown_or_irreversible',
       derivation_policy: 'answer_only',
     });
-    await tx
-      .update(source_document)
-      .set({
-        provenance: {
-          ...doc.provenance,
-          usage_policy: {
-            ...(rawPolicy as Record<string, unknown> | undefined),
-            derivation_policy: input.target,
-          },
-          usage_epoch: epoch,
-        },
-        version: doc.version + 1,
-        updated_at: new Date(),
-      })
-      .where(eq(source_document.id, doc.id));
+    await commitDocumentUsagePolicy(tx, doc, { target: input.target, epoch });
     await writeEvent(tx, {
       id: operationId,
       session_id: sessionId,
@@ -206,14 +174,7 @@ export async function readIngestionPurposeImpact(db: Db, sessionId: string, requ
         const owner = parseAgentBudget(bound?.budget)?.execution_owner;
         stop.push({
           ...target,
-          state:
-            target.run_ref &&
-            owner?.run_ref === target.run_ref &&
-            owner.stop_request_id === receipt?.operation_id
-              ? owner.stop_confirmed === true
-                ? 'confirmed'
-                : 'pending'
-              : 'unknown',
+          state: agentStopState(owner, target.run_ref, receipt?.operation_id),
         });
       }
       return {

@@ -1,11 +1,21 @@
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { type WriteProposalResult, runWriteProposal } from '@/capabilities/knowledge/server/review';
-import { db } from '@/db/client';
+import {
+  type KnowledgeMutationOutput,
+  proposeKnowledgeMutationTool,
+} from '@/capabilities/knowledge/server/tools/proposal-tools';
+import { type Db, db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { resetDb } from '../../../../tests/helpers/db';
 import { runKnowledgeMaintenanceNightly } from './knowledge_maintenance_nightly';
+
+function proposeNewChild(db: Db, parentId: string, name: string, reasoning: string) {
+  return proposeKnowledgeMutationTool.execute(
+    { db, taskRunId: '', callerActor: { kind: 'agent', ref: 'dreaming' } },
+    { change: { mutation: 'propose_new', parent_id: parentId, name }, reasoning },
+  );
+}
 
 async function seedParentKnowledge(id = createId()) {
   const now = new Date();
@@ -29,6 +39,8 @@ describe('knowledge_maintenance_nightly handler', () => {
     await resetDb();
   });
 
+  // @invariant concurrency: two maintenance runs racing one cooldown key leave exactly one pending proposal
+  // @fails-if the proposal gate lock or pending-key check is skipped and both runs write a proposal
   it('does not create duplicate proposals when concurrent runs race the same cooldown key', async () => {
     const parentId = await seedParentKnowledge();
     let waiting = 0;
@@ -46,10 +58,12 @@ describe('knowledge_maintenance_nightly handler', () => {
       runKnowledgeMaintenanceNightly(db, {
         streamReviewTaskFn: async ({ db }) => {
           await waitForBoth();
-          await runWriteProposal(db, {
-            payload: { mutation: 'propose_new', parent_id: parentId, name: 'Raced child' },
-            reasoning: 'same concurrent maintenance proposal',
-          });
+          await proposeNewChild(
+            db,
+            parentId,
+            'Raced child',
+            'same concurrent maintenance proposal',
+          );
           return new Response('done');
         },
       });
@@ -62,28 +76,28 @@ describe('knowledge_maintenance_nightly handler', () => {
     ).toHaveLength(1);
   });
 
+  // @invariant concurrency: a pending proposal's cooldown key blocks a second proposal from a later run
+  // @fails-if the duplicate-pending check is bypassed and the inbox holds two pending rows
   it('does not create a second proposal when the same cooldown key is already pending', async () => {
     const parentId = await seedParentKnowledge();
-    const first = await runWriteProposal(db, {
-      payload: { mutation: 'propose_new', parent_id: parentId, name: 'Duplicate child' },
-      reasoning: 'first pending proposal',
-    });
-    expect(first.kind).toBe('tree_mutation');
-    if (first.kind !== 'tree_mutation') throw new Error(`unexpected kind ${first.kind}`);
+    const first = await proposeNewChild(db, parentId, 'Duplicate child', 'first pending proposal');
+    expect(first.status).toBe('proposed');
 
-    let second: WriteProposalResult | null = null;
+    let second: KnowledgeMutationOutput | null = null;
     const result = await runKnowledgeMaintenanceNightly(db, {
       streamReviewTaskFn: async ({ db }) => {
-        second = await runWriteProposal(db, {
-          payload: { mutation: 'propose_new', parent_id: parentId, name: 'Duplicate child' },
-          reasoning: 'same proposal should be skipped',
-        });
+        second = await proposeNewChild(
+          db,
+          parentId,
+          'Duplicate child',
+          'same proposal should be skipped',
+        );
         return new Response('done');
       },
     });
 
     expect(second).toMatchObject({
-      kind: 'skipped_duplicate',
+      status: 'skipped:duplicate_pending',
       proposal_id: first.proposal_id,
       cooldown_key: `knowledge_node:${parentId}:Duplicate child`,
     });

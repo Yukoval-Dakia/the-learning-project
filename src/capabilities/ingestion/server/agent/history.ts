@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { type SessionAskRow, readSessionAsks } from './asks';
+import { type SessionAskRow, readSessionAsks } from './ask-store';
 import {
   AGENT_BUDGET_UNAVAILABLE_CODE,
   parseAgentBudget,
@@ -27,6 +27,7 @@ import {
   IngestionAskOption,
 } from './contract';
 import { foldAgentItemEvents, readAgentRunLedger } from './ledger';
+import { markAgentSegmentIdle } from './ownership';
 
 // Durable run-history owner. job_events carry the live timeline but are pruned at
 // ~30 days; this module checkpoints the run's final facts into the session's
@@ -520,14 +521,12 @@ export async function persistAgentRunHistory(
     ...(unparsedPrevious !== undefined ? { unparsed_previous: unparsedPrevious } : {}),
   };
   await writeAgentBudgetPath(tx, sessionId, ['history'], snapshot);
-  if (input.executionClosed === true) {
-    const owner = (await readAgentBudget(tx, sessionId, true))?.execution_owner;
-    if (owner?.state === 'active')
-      await writeAgentBudgetPath(tx, sessionId, ['execution_owner'], {
-        ...owner,
-        segment_state: 'idle',
-      });
-  }
+  if (input.executionClosed === true)
+    await markAgentSegmentIdle(
+      tx,
+      sessionId,
+      (await readAgentBudget(tx, sessionId, true))?.execution_owner,
+    );
 }
 
 // ---------- merged read ----------

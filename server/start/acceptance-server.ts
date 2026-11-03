@@ -16,6 +16,11 @@ const { installModelAdmissionPins, installPracticeHostOperations } = await impor
 );
 await installPracticeHostOperations();
 await installModelAdmissionPins();
+const [{ buildAdminConfigRuntimeFacts }, { setAdminConfigRuntimeFacts }] = await Promise.all([
+  import('@/server/config/admin-config-facts'),
+  import('@/capabilities/observability/public'),
+]);
+setAdminConfigRuntimeFacts(buildAdminConfigRuntimeFacts);
 assertComposedRoutesDeclared(capabilities);
 const fetch = await createFrontdoor(buildHonoApp(capabilities));
 const server = serve({ fetch, hostname: '127.0.0.1', port });

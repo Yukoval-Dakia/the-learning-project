@@ -1,30 +1,47 @@
 // M3 知识面 — 节点详情页（YUK-317）。
 // 设计基准 docs/design/loom-refresh/project/screen-knowledge-detail.jsx：
-// hero（MasteryRing + decay bucket + R%）+ kd-grid 两栏——主栏笔记按 kind
+// hero（掌握环 + decay bucket + R%）+ 两栏——主栏笔记按 kind
 // 分组（「knowledge_id 是笔记上的标签 · 笔记按 note_atomic / note_hub /
 // note_long 区分，一条笔记可挂多个知识点」：primary atomic 整篇 inline，
 // 其余 link rows）+ 邻居按关系分组（层级先行）；侧栏反链按来源类型分组 +
 // 活动时间线。「标注笔记」区后端无读路径——M3 空态挂账（pre-flight 偏离③）。
 // 「复习此点」把明确请求交给现有 Copilot；没有已交付 write path 的 AI 起草不展示假入口。
+// M3E 呈现（YUK-1473）：外壳 UiNextRoot.kn-page + main.un-m3e-bridge，样式在 knowledge-m3e.css，
+// 记录见 docs/design/2026-11-03-knowledge-m3e.md。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  ArrowLeft,
+  ArrowRight,
+  BookOpen,
+  ChevronRight,
+  FileText,
+  Link2,
+  List,
+  ListTree,
+  RotateCcw,
+  Sparkles,
+} from 'lucide-react';
+import type { ReactNode } from 'react';
 import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
-import { Btn } from '@/ui/primitives/Btn';
-import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
-import { EmptyState } from '@/ui/primitives/EmptyState';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { MasteryRing } from '@/ui/primitives/MasteryRing';
-import { SectionLabel } from '@/ui/primitives/SectionLabel';
+import { ToastHost } from '@/ui-next/feedback/ToastHost';
+import { FoldList } from '@/ui-next/primitives/FoldList';
+import { SectionHead } from '@/ui-next/primitives/SectionHead';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button, UiNextRoot } from '@/ui-next/public';
+import './knowledge-m3e.css';
 
 import { BandChip } from './BandChip';
 import { humanizeActivity } from './humanize-activity';
+import { DecayChip, RelTag, VerifyChip } from './KnowledgeChips';
+import { KnowledgeEmpty } from './KnowledgeEmpty';
 import type { KnowledgeNodePage, NoteSummary } from './knowledge-api';
 import { useKnowledgeClient } from './knowledge-client';
 import { knowledgeNodeQueryOptions } from './knowledge-node-query';
+import { MasteryDial } from './MasteryDial';
 import { MisconceptionList } from './MisconceptionList';
 import { DiagnosticDrill, NodeComposite, TransferList } from './NodeComposite';
 import { REL_CUE } from './relation-cue';
-import './knowledge.css';
 
 const DECAY_BUCKET_META: Record<
   KnowledgeNodePage['mastery_decay_bucket'],
@@ -43,10 +60,6 @@ const NOTE_KIND_LABEL: Record<string, string> = {
   note_long: '长文笔记',
 };
 
-function noteKindShort(type: string): string {
-  return type.replace(/^note_/, '');
-}
-
 function NoteLinkRow({
   note,
   go,
@@ -58,28 +71,28 @@ function NoteLinkRow({
 }) {
   const verified = note.verification_status === 'verified';
   return (
-    <button type="button" className="note-link-row" onClick={() => go(note.id)}>
-      <LoomIcon name={note.type === 'note_long' ? 'doc' : 'list'} size={15} />
-      <span className="note-link-title">{note.title}</span>
-      <span className={`verify-badge ${verified ? 'verified' : 'draft'}`} style={{ flex: 'none' }}>
-        <LoomIcon name={verified ? 'check' : 'sparkle'} size={10} />
-        {verified ? '已校验' : '草稿'}
+    <button type="button" className="kn-link-row" onClick={() => go(note.id)}>
+      <span className="kn-link-row-ic" aria-hidden="true">
+        {note.type === 'note_long' ? <FileText size={15} /> : <List size={15} />}
       </span>
-      <span className="meta">{new Date(note.updated_at).toLocaleDateString('zh-CN')}</span>
-      <LoomIcon name="arrow" size={13} className="thread-arrow" />
+      <span className="kn-link-row-title">{note.title}</span>
+      <VerifyChip verified={verified} />
+      <span className="kn-link-row-date un-num">
+        {new Date(note.updated_at).toLocaleDateString('zh-CN')}
+      </span>
+      <ChevronRight size={15} aria-hidden="true" className="kn-row-arrow" />
     </button>
   );
 }
 
 // ADR-0033 D5 — interactive artifact discovery section. Pure presentational
-// (resolved props only, no queries) so both the node detail page (.kd-main) and
-// the graph node drawer (.drawer-sec) reuse it and it is renderToString-testable
+// (resolved props only, no queries) so both the node detail page (main column) and
+// the graph node drawer (its section) reuse it and it is renderToString-testable
 // (AutoEnrolledPanel PanelBody precedent). The interactive artifact reuses
 // /notes/{id} as its reader shell (note-page READER_TYPES), so rows link there;
-// the .note-kind-interactive tag distinguishes them from note kinds. Empty →
-// renders nothing in the drawer-sec form (the section header carries its own
-// count when shown) — KnowledgeDetailPage gates the SectionLabel on length so no
-// empty block appears on the page either.
+// the 互动 tag distinguishes them from note kinds. Empty → renders nothing (the
+// section header carries its own count when shown) — KnowledgeDetailPage gates the
+// section on length so no empty block appears on the page either.
 export function InteractiveArtifactDiscovery({
   artifacts,
   go,
@@ -96,7 +109,7 @@ export function InteractiveArtifactDiscovery({
         <button
           type="button"
           key={a.id}
-          className="note-link-row"
+          className="kn-link-row"
           onClick={() =>
             go(
               entryId
@@ -105,26 +118,45 @@ export function InteractiveArtifactDiscovery({
             )
           }
         >
-          <span className="note-kind-tag note-kind-interactive">
-            <LoomIcon name="sparkle" size={12} />
+          <span className="kn-tag kn-tag-accent">
+            <Sparkles size={12} aria-hidden="true" />
             互动
           </span>
-          <span className="note-link-title">{a.title}</span>
-          <span className="meta">{new Date(a.updated_at).toLocaleDateString('zh-CN')}</span>
-          <LoomIcon name="arrow" size={13} className="thread-arrow" />
+          <span className="kn-link-row-title">{a.title}</span>
+          <span className="kn-link-row-date un-num">
+            {new Date(a.updated_at).toLocaleDateString('zh-CN')}
+          </span>
+          <ChevronRight size={15} aria-hidden="true" className="kn-row-arrow" />
         </button>
       ))}
     </>
   );
 }
 
-const BL_META: Record<string, { label: string; icon: string }> = {
-  note_atomic: { label: '知识笔记', icon: 'doc' },
-  note_hub: { label: '汇总笔记', icon: 'doc' },
-  note_long: { label: '长文笔记', icon: 'doc' },
-  interactive: { label: '互动内容', icon: 'sparkle' },
-  learning_item: { label: '学习项', icon: 'items' },
+const BL_META: Record<string, { label: string; icon: ReactNode }> = {
+  note_atomic: { label: '知识笔记', icon: <FileText size={13} aria-hidden="true" /> },
+  note_hub: { label: '汇总笔记', icon: <FileText size={13} aria-hidden="true" /> },
+  note_long: { label: '长文笔记', icon: <FileText size={13} aria-hidden="true" /> },
+  interactive: { label: '互动内容', icon: <Sparkles size={13} aria-hidden="true" /> },
+  learning_item: { label: '学习项', icon: <BookOpen size={13} aria-hidden="true" /> },
 };
+
+// Timeline dot tone from the event outcome (failure → critical, success → positive, else neutral).
+function outcomeTone(outcome: string | null | undefined): 'critical' | 'positive' | 'info' {
+  if (outcome === 'failure') return 'critical';
+  if (outcome === 'success') return 'positive';
+  return 'info';
+}
+
+// The detail page's frame: the ui-next scope, the bridged main column, and the toast host.
+function DetailFrame({ children }: { children: ReactNode }) {
+  return (
+    <UiNextRoot className="kn-page">
+      <main className="kn-detail-main un-m3e-bridge">{children}</main>
+      <ToastHost />
+    </UiNextRoot>
+  );
+}
 
 export function knowledgeBacklinkHref(fromType: string, artifactId: string, entryId: string) {
   return fromType === 'interactive' || fromType.startsWith('note_')
@@ -168,19 +200,20 @@ export default function KnowledgeDetailPage({
 
   if (pageQ.isLoading)
     return (
-      <main className="page wide knowledge-loom">
-        <p className="quiet-empty">取节点…</p>
-      </main>
+      <DetailFrame>
+        <SkeletonLines rows={5} label="正在取节点" />
+      </DetailFrame>
     );
   const node = pageQ.data;
   if (!node)
     return (
-      <main className="page wide knowledge-loom">
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => navigate('/knowledge')}>
+      <DetailFrame>
+        <button type="button" className="kn-back" onClick={() => navigate('/knowledge')}>
+          <ArrowLeft size={16} aria-hidden="true" />
           返回知识
-        </Btn>
-        <p className="quiet-empty">节点不存在或已归档。</p>
-      </main>
+        </button>
+        <KnowledgeEmpty icon={<ListTree size={22} />} title="节点不存在或已归档。" />
+      </DetailFrame>
     );
 
   const db = DECAY_BUCKET_META[node.mastery_decay_bucket];
@@ -199,48 +232,38 @@ export default function KnowledgeDetailPage({
   const miscRows = miscQ.data?.rows ?? [];
 
   return (
-    <main className="page wide knowledge-loom">
-      <div className="page-head">
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => navigate('/knowledge')}>
-          返回知识
-        </Btn>
-        <div className="page-head-row" style={{ marginTop: 'var(--s-3)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-4)' }}>
-            {/* ⑥治理：hero 环去裸 pct，档由下方 meta 行的 BandChip 给。 */}
-            <MasteryRing mastery={node.mastery} size={56} showNumber={false} />
-            <div>
-              <h1 className="page-title serif">{node.name}</h1>
-              <div className="nowrap-meta" style={{ marginTop: 4 }}>
-                {/* S10 (YUK-335 §3.9)：父节点不再做页头内联下划线文字链——层级关系
-                    归入下方「邻居 · 按关系分组」Card 内首个 kd-rel-block（parent + children
-                    同一处渲染），删去此处非 design-system 的内联链。 */}
-                <span className={`decay-bucket tone-${db.tone}`}>
-                  <LoomIcon name={db.icon as never} size={12} />
-                  <span>衰减 · {db.label}</span>
-                </span>
-                <span className="dot-sep">·</span>
-                {/* A5 S1 (YUK-354) — 离散档 BandChip 替代裸 M{pct}%（⑥治理：绝不裸概率）。 */}
-                <BandChip input={node} />
-                <span className="dot-sep">·</span>
-                <span className="meta">{node.evidence_count} 条学习依据</span>
-              </div>
-            </div>
-          </div>
-          <div className="hero-cta" style={{ marginLeft: 'auto' }}>
-            <Btn
-              variant="secondary"
-              icon="review"
-              onClick={() => {
-                // The companion shows 「正在看：知识点 · <name>」 and scopes its quiz chip to it.
-                setCompanionFocus({ kind: 'knowledge', id: node.id, title: node.name });
-                openCopilot(knowledgeReviewRequest(node.name));
-              }}
-            >
-              复习此点
-            </Btn>
+    <DetailFrame>
+      <button type="button" className="kn-back" onClick={() => navigate('/knowledge')}>
+        <ArrowLeft size={16} aria-hidden="true" />
+        返回知识
+      </button>
+      <header className="kn-hero">
+        {/* ⑥治理：hero 环去裸 pct，档由下方 meta 行的 BandChip 给。 */}
+        <MasteryDial mastery={node.mastery} size={56} />
+        <div className="kn-hero-text">
+          <h1 className="kn-hero-title">{node.name}</h1>
+          <div className="kn-hero-meta">
+            {/* S10 (YUK-335 §3.9)：父节点不在页头做内联链——层级关系归入下方「邻居 · 按关系分组」
+                首个层级块（parent + children 同一处渲染）。 */}
+            <DecayChip cue={db} label={`衰减 · ${db.label}`} />
+            {/* A5 S1 (YUK-354) — 离散档 BandChip 替代裸 M{pct}%（⑥治理：绝不裸概率）。 */}
+            <BandChip input={node} />
+            <span className="kn-hero-evidence un-num">{node.evidence_count} 条学习依据</span>
           </div>
         </div>
-      </div>
+        <div className="kn-hero-cta">
+          <Button
+            onClick={() => {
+              // The companion shows 「正在看：知识点 · <name>」 and scopes its quiz chip to it.
+              setCompanionFocus({ kind: 'knowledge', id: node.id, title: node.name });
+              openCopilot(knowledgeReviewRequest(node.name));
+            }}
+          >
+            <RotateCcw size={16} aria-hidden="true" />
+            复习此点
+          </Button>
+        </div>
+      </header>
 
       {/* A5 S3 (YUK-354) — NodeComposite 三维折叠（R · p(L) · difficulty）插在 hero 下方,
           对齐设计源 screen-knowledge-detail.jsx:75 的 <NodeComposite> 位置。三维 RAW 由
@@ -258,313 +281,301 @@ export default function KnowledgeDetailPage({
         }}
       />
 
-      <div className="kd-grid">
-        <div className="kd-main">
-          {/* A5 S4 (YUK-531 PR-5) — 「指向此点的误区」funnel 置于 .kd-main 首子（误区是一等异构，
+      <div className="kn-detail-grid">
+        <div className="kn-detail-col">
+          {/* A5 S4 (YUK-531 PR-5) — 「指向此点的误区」funnel 置于主栏首段（误区是一等异构，
               先于迁移/诊断/笔记）。confirmed(RT1 误区) + candidate(猜想/候选) 两段；conf 定性、
               seen 计数，绝不裸概率（⑥）。veto = Option A：candidate「判错了」→ live dismiss pending
               conjecture；confirmed「判错了」→ 仅乐观「已纠偏」本地态（confirmed-archive 延后 + PR-3
               promote flag OFF → confirmed 段 day-one 空）。 */}
-          <SectionLabel count={miscRows.length || null}>可能相关的误区</SectionLabel>
-          <MisconceptionList
-            items={miscRows}
-            knowledgeId={node.id}
-            isLoading={miscQ.isLoading}
-            isError={miscQ.isError}
-            onRetry={() => void miscQ.refetch()}
-            navigate={navigate}
-            onVeto={(mcId, segment) => {
-              // Option A：仅 candidate 段打服务端 dismiss。返回 mutateAsync 的 Promise 让 card
-              // await + 失败回滚乐观 verdict（B / ⑥：失败绝不滞留假「已纠偏」）。confirmed 段 card
-              // 的否决钮已 disabled（C，confirmed-archive 是延后 soft-track 后端 slice），此 guard
-              // 仍兜底——confirmed 永不打服务端写。
-              if (segment === 'candidate') return vetoMut.mutateAsync(mcId);
-            }}
-          />
+          <section className="kn-sec" aria-labelledby="kn-sec-misc">
+            <SectionHead
+              id="kn-sec-misc"
+              title="可能相关的误区"
+              aside={miscRows.length > 0 ? <span className="un-num">{miscRows.length}</span> : null}
+            />
+            <MisconceptionList
+              items={miscRows}
+              knowledgeId={node.id}
+              isLoading={miscQ.isLoading}
+              isError={miscQ.isError}
+              onRetry={() => void miscQ.refetch()}
+              navigate={navigate}
+              onVeto={(mcId, segment) => {
+                // Option A：仅 candidate 段打服务端 dismiss。返回 mutateAsync 的 Promise 让 card
+                // await + 失败回滚乐观 verdict（B / ⑥：失败绝不滞留假「已纠偏」）。confirmed 段 card
+                // 的否决钮已 disabled（C，confirmed-archive 是延后 soft-track 后端 slice），此 guard
+                // 仍兜底——confirmed 永不打服务端写。
+                if (segment === 'candidate') return vetoMut.mutateAsync(mcId);
+              }}
+            />
+          </section>
 
           {/* A5 S3 (YUK-354) — 迁移 + 诊断下钻：忠于冷启设计的诚实空态（borrowed-θ 软层
               dark-ship / CDM·IRT 无后端），不假造数字。 */}
-          <SectionLabel>可能带动它的知识</SectionLabel>
-          <TransferList />
+          <section className="kn-sec" aria-labelledby="kn-sec-transfer">
+            <SectionHead id="kn-sec-transfer" title="可能带动它的知识" />
+            <TransferList />
+            {/* DiagnosticDrill 自带折叠 header（「进一步诊断」），不再叠一个小节标题。 */}
+            <DiagnosticDrill />
+          </section>
 
-          {/* DiagnosticDrill 自带折叠 header（「诊断下钻 · CDM/IRT」），不再叠 SectionLabel（OCR 双 header）。 */}
-          <DiagnosticDrill />
+          <section className="kn-sec" aria-labelledby="kn-sec-notes">
+            <SectionHead id="kn-sec-notes" title="笔记" />
+            <p className="kn-note-hint">
+              <Link2 size={13} aria-hidden="true" />
+              一篇笔记可以关联多个知识点；从这里打开时，会保留当前知识点作为阅读入口。
+            </p>
 
-          <SectionLabel>笔记</SectionLabel>
-          <div className="kd-note-hint meta">
-            <LoomIcon name="link" size={12} />
-            一篇笔记可以关联多个知识点；从这里打开时，会保留当前知识点作为阅读入口。
-          </div>
+            {!primary && otherNotes.length === 0 ? (
+              <div className="kn-card">
+                <KnowledgeEmpty
+                  icon={<FileText size={22} />}
+                  title="还没有带此标签的笔记"
+                  text="可以在笔记编辑器中关联这个知识点；这里暂不提供自动起草。"
+                />
+              </div>
+            ) : (
+              <>
+                {primary && (
+                  <article className="kn-card kn-primary-note" aria-label={primary.title}>
+                    <div className="kn-primary-head">
+                      <span className="kn-tag kn-tag-accent">
+                        <FileText size={12} aria-hidden="true" />
+                        主笔记
+                      </span>
+                      <span className="kn-primary-title">{primary.title}</span>
+                      <VerifyChip verified={primary.verification_status === 'verified'} />
+                    </div>
+                    {/* T6 简化渲染：从 semanticBlock 抽 source_markdown；
+                        完整块渲染（NoteBlocks）随 T7 阅读器落地后可替换。 */}
+                    <div className="kn-primary-body">
+                      {(primary.body_blocks?.content ?? [])
+                        .filter((b) => b.attrs?.source_markdown)
+                        .map((b) => (
+                          <p key={b.attrs?.id ?? b.attrs?.source_markdown} className="kn-primary-p">
+                            {b.attrs?.source_markdown}
+                          </p>
+                        ))}
+                    </div>
+                    <div className="kn-primary-acts">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => navigate(noteHref(primary.id))}
+                      >
+                        <FileText size={14} aria-hidden="true" />
+                        在阅读器中打开
+                        <ArrowRight size={14} aria-hidden="true" />
+                      </Button>
+                    </div>
+                  </article>
+                )}
 
-          {!primary && otherNotes.length === 0 ? (
-            <div className="card card-pad">
-              <EmptyState
-                icon="doc"
-                title="还没有带此标签的笔记"
-                text="可以在笔记编辑器中关联这个知识点；这里暂不提供自动起草。"
-              />
-            </div>
-          ) : (
-            <>
-              {primary && (
-                <div className="card card-pad kd-primary-note">
-                  <div className="kd-primary-head">
-                    <span className="note-kind-tag note-kind-atomic">
-                      <LoomIcon name="doc" size={12} />
-                      主笔记
-                    </span>
-                    <span className="kd-primary-title serif">{primary.title}</span>
-                    <span
-                      className={`verify-badge ${primary.verification_status === 'verified' ? 'verified' : 'draft'}`}
-                    >
-                      <LoomIcon
-                        name={primary.verification_status === 'verified' ? 'check' : 'sparkle'}
-                        size={11}
+                {[...byKind.entries()].map(([kind, arr]) => (
+                  <div key={kind} className="kn-note-group">
+                    <div className="kn-note-group-h">
+                      <span className="kn-tag">{NOTE_KIND_LABEL[kind] ?? '笔记'}</span>
+                      <span className="un-num">{arr.length} 篇</span>
+                    </div>
+                    {arr.map((nt) => (
+                      <NoteLinkRow
+                        key={nt.id}
+                        note={nt}
+                        go={(noteId) => navigate(noteHref(noteId))}
                       />
-                      {primary.verification_status === 'verified' ? '已校验' : '草稿'}
-                    </span>
+                    ))}
                   </div>
-                  {/* T6 简化渲染：从 semanticBlock 抽 source_markdown；
-                      完整块渲染（NoteBlocks）随 T7 阅读器落地后可替换。 */}
-                  <div className="kd-primary-body">
-                    {(primary.body_blocks?.content ?? [])
-                      .filter((b) => b.attrs?.source_markdown)
-                      .map((b) => (
-                        <div
-                          key={b.attrs?.id ?? b.attrs?.source_markdown}
-                          className="nb-p"
-                          style={{ whiteSpace: 'pre-wrap' }}
-                        >
-                          {b.attrs?.source_markdown}
-                        </div>
-                      ))}
-                  </div>
-                  <div
-                    className="note-ref-acts"
-                    style={{ borderTop: '1px solid var(--line)', paddingTop: 'var(--s-3)' }}
-                  >
-                    <Btn
-                      size="sm"
-                      variant="primary"
-                      icon="doc"
-                      iconEnd="arrow"
-                      onClick={() => navigate(noteHref(primary.id))}
-                    >
-                      在阅读器中打开
-                    </Btn>
-                  </div>
-                </div>
-              )}
-
-              {[...byKind.entries()].map(([kind, arr]) => (
-                <div key={kind} className="kd-note-group">
-                  <div className="kd-note-group-h">
-                    <span className={`note-kind-tag note-kind-${noteKindShort(kind)}`}>
-                      {NOTE_KIND_LABEL[kind] ?? '笔记'}
-                    </span>
-                    {arr.length} 篇
-                  </div>
-                  {arr.map((nt) => (
-                    <NoteLinkRow
-                      key={nt.id}
-                      note={nt}
-                      go={(noteId) => navigate(noteHref(noteId))}
-                    />
-                  ))}
-                </div>
-              ))}
-            </>
-          )}
+                ))}
+              </>
+            )}
+          </section>
 
           {/* ADR-0033 D5 — 互动产物 discovery：interactive_artifacts wire 已在
               node-page；空则整块不渲染（gate on length），避免空块。行链到
               /notes/{id}（互动产物复用 NoteReader 作为阅读壳）。 */}
           {node.interactive_artifacts.length > 0 && (
-            <>
-              <SectionLabel>互动产物 · {node.interactive_artifacts.length}</SectionLabel>
-              <div className="kd-note-group">
+            <section className="kn-sec" aria-labelledby="kn-sec-interactive">
+              <SectionHead
+                id="kn-sec-interactive"
+                title={`互动产物 · ${node.interactive_artifacts.length}`}
+              />
+              <div className="kn-note-group">
                 <InteractiveArtifactDiscovery
                   artifacts={node.interactive_artifacts}
                   go={navigate}
                   entryId={id}
                 />
               </div>
-            </>
+            </section>
           )}
 
-          {/* S10 (YUK-335 §3.9 + 批次乙 review)：层级 + typed 关系作为 sibling
-              kd-rel-block 并入同一个 Card（设计源 screen-knowledge-detail.jsx:152-165，
-              非图谱侧抽屉 screen-knowledge.jsx 的 drawer-sec）。层级块用 kd-rel-h
-              header（tree icon + 「层级」），与同卡内 typed 关系块 header 风格一致——
-              消除原 drawer-sec-h 与 kd-rel-h 同页打架。children 走普通 rel-row（设计源
-              无 .indent），MasteryRing size=22 对齐设计源；parent + children 都无时
-              单一「无层级邻居」quiet-empty。 */}
-          <SectionLabel>邻居 · 按关系分组</SectionLabel>
-          <div className="card card-pad">
-            <div className="kd-rel-block">
-              <div className="kd-rel-h">
-                <LoomIcon name="tree" size={13} />
-                层级
+          {/* S10 (YUK-335 §3.9 + 批次乙 review)：层级 + typed 关系作为同一张卡里的并列块
+              （设计源 screen-knowledge-detail.jsx:152-165）。层级块（上级 + 下级）先行；
+              parent + children 都无时单一「无层级邻居」。 */}
+          <section className="kn-sec" aria-labelledby="kn-sec-neighbors">
+            <SectionHead id="kn-sec-neighbors" title="邻居 · 按关系分组" />
+            <div className="kn-card kn-neighbors">
+              <div className="kn-rel-block">
+                <h3 className="kn-rel-h">
+                  <ListTree size={13} aria-hidden="true" />
+                  层级
+                </h3>
+                {node.parent_name && (
+                  <button
+                    type="button"
+                    className="kn-rel-row"
+                    onClick={() => node.parent_id && navigate(`/knowledge/${node.parent_id}`)}
+                  >
+                    <span className="kn-rel-kind">上级</span>
+                    {/* de-wenyan: parent_name carries no domain on the node-page
+                        wire (only the page node itself has effective_domain), so
+                        fall to the neutral default font rather than hardcode serif. */}
+                    <span className="kn-rel-name">{node.parent_name}</span>
+                    <ChevronRight size={15} aria-hidden="true" className="kn-row-arrow" />
+                  </button>
+                )}
+                {node.children.map((c) => (
+                  <button
+                    type="button"
+                    key={c.id}
+                    className="kn-rel-row"
+                    onClick={() => navigate(`/knowledge/${c.id}`)}
+                  >
+                    <span className="kn-rel-kind">下级</span>
+                    {/* de-wenyan: NodePageChild carries no domain (see parent note). */}
+                    <span className="kn-rel-name">{c.name}</span>
+                    {/* ⑥治理：子节点环去裸 pct（保 glance 环弧）。子节点行 BandChip 升级需扩
+                        NodePageChild 的 band 字段（mastery_lo/hi/low_confidence/evidence_count），
+                        属 follow-up。 */}
+                    <MasteryDial mastery={c.mastery} size={22} />
+                  </button>
+                ))}
+                {!node.parent_name && node.children.length === 0 && (
+                  <p className="kn-quiet kn-rel-empty">无层级邻居</p>
+                )}
               </div>
-              {node.parent_name && (
-                <button
-                  type="button"
-                  className="rel-row"
-                  onClick={() => node.parent_id && navigate(`/knowledge/${node.parent_id}`)}
-                >
-                  <span className="rel-kind">上级</span>
-                  {/* de-wenyan: parent_name carries no domain on the node-page
-                      wire (only the page node itself has effective_domain), so
-                      fall to the neutral default font rather than hardcode serif. */}
-                  <span>{node.parent_name}</span>
-                  <LoomIcon name="arrow" size={13} />
-                </button>
-              )}
-              {node.children.map((c) => (
-                <button
-                  type="button"
-                  key={c.id}
-                  className="rel-row"
-                  onClick={() => navigate(`/knowledge/${c.id}`)}
-                >
-                  <span className="rel-kind">下级</span>
-                  {/* de-wenyan: NodePageChild carries no domain (see parent note). */}
-                  <span>{c.name}</span>
-                  {/* ⑥治理：子节点环去裸 pct（保 glance 环弧）。子节点行 BandChip 升级需扩
-                      NodePageChild 的 band 字段（mastery_lo/hi/low_confidence/evidence_count），
-                      属 follow-up。 */}
-                  <MasteryRing mastery={c.mastery} size={22} showNumber={false} />
-                </button>
-              ))}
-              {!node.parent_name && node.children.length === 0 && (
-                <div className="quiet-empty">无层级邻居</div>
-              )}
-            </div>
-            {[...byRel.entries()].map(([rel, arr]) => {
-              const cue = REL_CUE[rel] ?? REL_CUE.related_to;
-              return (
-                <div key={rel} className="kd-rel-block">
-                  <div className="kd-rel-h">
-                    <span className={`rel-tag rel-tag-${rel}`}>
-                      <span className="mono">{cue.glyph}</span>
-                      {cue.label}
-                    </span>
+              {[...byRel.entries()].map(([rel, arr]) => {
+                const cue = REL_CUE[rel] ?? REL_CUE.related_to;
+                return (
+                  <div key={rel} className="kn-rel-block">
+                    <h3 className="kn-rel-h">
+                      <RelTag rel={rel} cue={cue} />
+                    </h3>
+                    {arr.map((o) => (
+                      <button
+                        type="button"
+                        key={o.edge_id}
+                        className="kn-rel-row"
+                        onClick={() => navigate(`/knowledge/${o.knowledge_id}`)}
+                      >
+                        {/* de-wenyan: NodePageMeshNeighbor carries no domain. */}
+                        <span className="kn-rel-name">{o.name}</span>
+                        <span className="kn-glyph kn-rel-dir">
+                          {o.direction === 'out' ? '→' : '←'}
+                        </span>
+                        <ChevronRight size={15} aria-hidden="true" className="kn-row-arrow" />
+                      </button>
+                    ))}
                   </div>
-                  {arr.map((o) => (
-                    <button
-                      type="button"
-                      key={o.edge_id}
-                      className="rel-row"
-                      onClick={() => navigate(`/knowledge/${o.knowledge_id}`)}
-                    >
-                      {/* de-wenyan: NodePageMeshNeighbor carries no domain. */}
-                      <span>{o.name}</span>
-                      <span className="meta mono">{o.direction === 'out' ? '→' : '←'}</span>
-                      <LoomIcon name="arrow" size={13} />
-                    </button>
-                  ))}
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          </section>
         </div>
 
-        <div className="kd-side">
-          <SectionLabel>关联内容 · 按来源分组</SectionLabel>
-          <div className="card card-pad">
-            {node.backlinks.length === 0 ? (
-              <div className="quiet-empty">无反向链接</div>
-            ) : (
-              Object.entries(node.backlinks_by_type)
-                .filter(([, arr]) => arr.length > 0)
-                .map(([t, arr]) => (
-                  <div key={t} className="bl-group">
-                    <div className="bl-kind mono">
-                      <LoomIcon name={(BL_META[t]?.icon ?? 'note') as never} size={12} />
-                      {BL_META[t]?.label ?? t} · {arr.length}
-                    </div>
-                    <CollapsibleList
-                      as="div"
-                      items={arr}
-                      renderItem={(b) => {
-                        const href = knowledgeBacklinkHref(t, b.from_artifact_id, id);
-                        const rowKey = `${b.from_artifact_id}-${b.from_block_id}`;
-                        const body = (
-                          <span key={`${rowKey}-body`} className="bl-row-main">
-                            <span className="bl-row-t">{b.from_title}</span>
-                            <span className="bl-row-m meta">
-                              {href ? '打开内容' : '当前没有可打开的详情页'}
+        <aside className="kn-detail-side" aria-label="关联内容与活动">
+          <section className="kn-sec" aria-labelledby="kn-sec-backlinks">
+            <SectionHead id="kn-sec-backlinks" title="关联内容 · 按来源分组" />
+            <div className="kn-card">
+              {node.backlinks.length === 0 ? (
+                <p className="kn-quiet">无反向链接</p>
+              ) : (
+                Object.entries(node.backlinks_by_type)
+                  .filter(([, arr]) => arr.length > 0)
+                  .map(([t, arr]) => (
+                    <div key={t} className="kn-bl-group">
+                      <h3 className="kn-bl-kind">
+                        {BL_META[t]?.icon ?? <FileText size={13} aria-hidden="true" />}
+                        {BL_META[t]?.label ?? t} · {arr.length}
+                      </h3>
+                      <FoldList
+                        as="div"
+                        className="kn-bl-list"
+                        items={arr}
+                        renderItem={(b) => {
+                          const href = knowledgeBacklinkHref(t, b.from_artifact_id, id);
+                          const rowKey = `${b.from_artifact_id}-${b.from_block_id}`;
+                          const body = (
+                            <span key={`${rowKey}-body`} className="kn-bl-main">
+                              <span className="kn-bl-title">{b.from_title}</span>
+                              <span className="kn-bl-sub">
+                                {href ? '打开内容' : '当前没有可打开的详情页'}
+                              </span>
                             </span>
-                          </span>
-                        );
-                        return href ? (
-                          <button
-                            type="button"
-                            key={rowKey}
-                            className="bl-row"
-                            onClick={() => navigate(href)}
-                          >
-                            {body}
-                            <LoomIcon name="arrow" size={12} className="thread-arrow" />
-                          </button>
-                        ) : (
-                          <div key={rowKey} className="bl-row">
-                            {body}
-                          </div>
-                        );
-                      }}
-                    />
-                  </div>
-                ))
-            )}
-          </div>
-
-          <SectionLabel>活动</SectionLabel>
-          <div className="card card-pad">
-            {node.timeline.length === 0 ? (
-              <div className="quiet-empty">无活动记录</div>
-            ) : (
-              // 倒序已是最近在前（wire 约定）。默认只露最近 3 条，其余收进「全部 N 条」——
-              // 防 kd-side 被无界时间线撑爆（S8 audit §3.9；owner 2026-10-18 折叠决定，设计 L5）。
-              <CollapsibleList
-                as="div"
-                className="event-chain"
-                items={node.timeline}
-                renderItem={(a, i, shownCount) => (
-                  <div key={a.event_id} className="event-row">
-                    <span className="event-rail">
-                      <span
-                        className="event-dot"
-                        style={{
-                          background: `var(--${a.outcome === 'failure' ? 'again' : a.outcome === 'success' ? 'good' : 'info'})`,
+                          );
+                          return href ? (
+                            <button
+                              type="button"
+                              key={rowKey}
+                              className="kn-bl-row"
+                              onClick={() => navigate(href)}
+                            >
+                              {body}
+                              <ChevronRight size={14} aria-hidden="true" className="kn-row-arrow" />
+                            </button>
+                          ) : (
+                            <div key={rowKey} className="kn-bl-row">
+                              {body}
+                            </div>
+                          );
                         }}
                       />
-                      {i < shownCount - 1 && <span className="event-line" />}
-                    </span>
-                    <div className="event-body">
-                      {/* S8 (YUK-335 §2 P3 + 批次乙 review)：人话句是 event row 主叙事行，
-                            走 .kd-event-lead（fs-meta + ink-2，= 设计源 .event-label 权重）
-                            而非 globals .event-note 最弱档；event-head 去掉裸 a.action mono
-                            标签（避免 debug-log 味与人话句重复），只留时间（meta/ink-3，弱于主句）。 */}
-                      <div className="kd-event-lead">{humanizeActivity(a)}</div>
-                      <div className="event-head nowrap-meta">
-                        <span className="meta">
+                    </div>
+                  ))
+              )}
+            </div>
+          </section>
+
+          <section className="kn-sec" aria-labelledby="kn-sec-activity">
+            <SectionHead id="kn-sec-activity" title="活动" />
+            <div className="kn-card">
+              {node.timeline.length === 0 ? (
+                <p className="kn-quiet">无活动记录</p>
+              ) : (
+                // 倒序已是最近在前（wire 约定）。默认只露最近 3 条，其余收进「全部 N 条」——
+                // 防侧栏被无界时间线撑爆（S8 audit §3.9；owner 2026-10-18 折叠决定，设计 L5）。
+                <FoldList
+                  as="div"
+                  className="kn-events"
+                  items={node.timeline}
+                  renderItem={(a, i, shownCount) => (
+                    <div key={a.event_id} className="kn-event">
+                      <span className="kn-event-rail" aria-hidden="true">
+                        <span className={`kn-event-dot tone-${outcomeTone(a.outcome)}`} />
+                        {i < shownCount - 1 && <span className="kn-event-line" />}
+                      </span>
+                      <div className="kn-event-body">
+                        {/* S8 (YUK-335 §2 P3 + 批次乙 review)：人话句是 event row 主叙事行（强），
+                            时间弱于主句；不渲裸 a.action 标签（避免 debug-log 味与人话句重复）。 */}
+                        <p className="kn-event-lead">{humanizeActivity(a)}</p>
+                        <p className="kn-event-time un-num">
                           {new Date(a.created_at).toLocaleString('zh-CN', {
                             month: 'numeric',
                             day: 'numeric',
                             hour: '2-digit',
                             minute: '2-digit',
                           })}
-                        </span>
+                        </p>
                       </div>
                     </div>
-                  </div>
-                )}
-              />
-            )}
-          </div>
-        </div>
+                  )}
+                />
+              )}
+            </div>
+          </section>
+        </aside>
       </div>
-    </main>
+    </DetailFrame>
   );
 }

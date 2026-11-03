@@ -49,6 +49,11 @@ import {
 import type { CopilotPrimaryView } from '@/capabilities/copilot/server/turns';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
+import {
+  COPILOT_ASK_ACTIONS,
+  COPILOT_CHIP_TRIGGER_ACTION,
+  COPILOT_USER_ASK_ACTION,
+} from '@/kernel/events/copilot-actions';
 import { writeJobEvent } from '@/kernel/job-events';
 import {
   type BossJobObservation,
@@ -56,7 +61,7 @@ import {
   observeBossJob,
 } from '@/server/boss/job-observation';
 import type { CopilotPublicProse, CopilotPublicProseFailure } from '../public-prose-contract';
-import { publicProseFailureMessage } from './public-prose';
+import { publicProseFailureMessage } from '../public-prose-contract';
 
 export const COPILOT_RUN_QUEUE = 'copilot_run' as const;
 
@@ -233,18 +238,13 @@ async function persistPreExecutionCancellation(tx: Tx, runId: string): Promise<v
     .from(event)
     .where(eq(event.id, runId))
     .limit(1);
-  if (
-    !ask?.sessionId ||
-    !['experimental:copilot_user_ask', 'experimental:copilot_chip_trigger'].includes(ask.action)
-  )
-    return;
+  if (!ask?.sessionId || !(COPILOT_ASK_ACTIONS as readonly string[]).includes(ask.action)) return;
   if (await findPersistedDurableReply(tx, runId)) return;
   await persistCopilotRunCancellationMarker(tx, {
     runId,
     sessionId: ask.sessionId,
-    actorRef:
-      ask.action === 'experimental:copilot_chip_trigger' ? 'agent:copilot_chip' : 'agent:copilot',
-    checkpointSafe: ask.action === 'experimental:copilot_user_ask',
+    actorRef: ask.action === COPILOT_CHIP_TRIGGER_ACTION ? 'agent:copilot_chip' : 'agent:copilot',
+    checkpointSafe: ask.action === COPILOT_USER_ASK_ACTION,
   });
 }
 
@@ -294,7 +294,7 @@ async function durableCheckpointPayload(
       .from(event)
       .where(eq(event.id, runId))
       .limit(1);
-    if (root?.action !== 'experimental:copilot_user_ask') return {};
+    if (root?.action !== COPILOT_USER_ASK_ACTION) return {};
     turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [runId])).has(runId);
   } catch (probeErr) {
     console.error('[copilot_run] materializing-tool probe failed; suppressing revert anchor', {

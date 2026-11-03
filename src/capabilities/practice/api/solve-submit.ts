@@ -2,7 +2,7 @@
 import { SolveError, submitSolveAttempt } from '@/capabilities/practice/server/solve-session';
 import { db } from '@/db/client';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
-import { SolveSubmissionBodySchema } from './question-solve-contracts';
+import { SolveSubmissionBodySchema } from './solve-contracts';
 
 export async function createSolveSubmission(
   req: Request,

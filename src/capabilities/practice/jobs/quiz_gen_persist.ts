@@ -20,24 +20,23 @@ import { artifact, question, source_document } from '@/db/schema';
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
-import { materializeGeneratedQuestionParts } from '../server/question-parts';
-import {
-  type SupplyTraceV1T,
-  withSupplyTraceDifficultyEvidence,
-} from '../server/question-supply/evidence-demand';
-import { assertPlacementAttemptFence } from '../server/question-supply/placement-starter-attempts';
-import { authorizePlacementQuestion as authorizePlacementQuestionTx } from '../server/question-supply/placement-starter-paid-authority';
+import { type SupplyTraceV1T, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
 import {
   type ExactQuestionDuplicateKnowledgeMerge,
   canonicalQuestionContentHash,
   combineExactDuplicateKnowledgeIds,
+  materializeGeneratedQuestionParts,
   mergeExactQuestionDuplicateKnowledgeIds,
-} from '../server/quiz/content-fingerprint';
+  writeVerifyDispatchIntent,
+} from '../question-bank/public';
 import {
   embedMaterialInPrompt,
   synthesizeMaterialSourceRefs,
 } from '../server/quiz/quiz-gen-material';
-import { writeVerifyDispatchIntent } from '../server/verify-dispatch-outbox';
+import {
+  assertPlacementAttemptFence,
+  authorizePlacementQuestion as authorizePlacementQuestionTx,
+} from '../supply/public';
 import type {
   GeneratedQuizDrafts,
   QuizGenerationContext,

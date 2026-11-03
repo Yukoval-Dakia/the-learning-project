@@ -9,15 +9,15 @@ import { createHash, randomUUID } from 'node:crypto';
 import { open, readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import type { Provider } from '@/ai/task-spec';
-import { evaluateAdmissionVoidGroup } from '@/capabilities/practice/server/admission/reauthorization';
-import { QUESTION_ADMISSION_TASK_KIND } from '@/capabilities/practice/server/admission/solve';
+import { evaluateAdmissionVoidGroup } from '@/capabilities/practice/question-bank/server/admission/reauthorization';
+import { QUESTION_ADMISSION_TASK_KIND } from '@/capabilities/practice/question-bank/server/admission/solve';
 import {
   QuestionAdmissionSolveInput,
   QuestionAdmissionSourceCrosscheckInput,
   QuestionAdmissionSourceCrosscheckOutput,
   parseQuestionAdmissionSolveModelOutput,
   questionAdmissionSolveTaskSpec,
-} from '@/capabilities/practice/tasks/question-admission-solve';
+} from '@/capabilities/practice/question-bank/tasks/question-admission-solve';
 import { getTaskSystemPrompt } from '@/capabilities/task-registry';
 import { zodToToolParametersSchema } from '@/kernel/zod-json-schema';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';

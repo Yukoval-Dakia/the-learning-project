@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { createAsk, readAskState } from '../agent/asks';
+import { readAskState } from '../agent/ask-store';
+import { createAsk } from '../agent/asks';
 import {
   INGESTION_AGENT_ITEM_PREVIEW_MAX,
   IngestionAgentErrorCode,

@@ -1,5 +1,6 @@
 import {
   type SQL,
+  type SQLWrapper,
   and,
   asc,
   count,
@@ -13,12 +14,10 @@ import {
   like,
   lt,
   not,
-  notExists,
   notInArray,
   or,
   sql,
 } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/pg-core';
 import {
   type AiProposalKindT,
   type AiProposalPayloadT,
@@ -133,6 +132,30 @@ function rateStatus(rate: EventRow | undefined): ProposalStatus {
   if (!rate) return 'pending';
   const payload = toRecord(rate.payload);
   return isTerminalRating(payload.rating) ? terminalRateStatus[payload.rating] : 'pending';
+}
+
+/**
+ * SQL form of rateStatus: true when the proposal's latest chained rate (same
+ * created_at/id order as loadLatestRateByProposal) carries a terminal rating.
+ * `proposalId` must reference an outer table other than the inner aliases.
+ */
+export function proposalLatestRateTerminalSql(proposalId: SQLWrapper): SQL<boolean> {
+  return sql<boolean>`EXISTS (
+    SELECT 1 FROM ${event} AS latest_rate
+    WHERE latest_rate.action = 'rate'
+      AND latest_rate.caused_by_event_id = ${proposalId}
+      AND latest_rate.payload->>'rating' IN (${sql.join(
+        terminalRatings.map((rating) => sql`${rating}`),
+        sql`, `,
+      )})
+      AND NOT EXISTS (
+        SELECT 1 FROM ${event} AS newer_rate
+        WHERE newer_rate.action = 'rate'
+          AND newer_rate.caused_by_event_id = ${proposalId}
+          AND (newer_rate.created_at > latest_rate.created_at
+            OR (newer_rate.created_at = latest_rate.created_at AND newer_rate.id > latest_rate.id))
+      )
+  )`;
 }
 
 // Shared guard for terminal fold markers (rubric_verdict / topology_verdict).
@@ -274,37 +297,6 @@ export async function countPendingProposalInboxByKind(
   db: DbLike,
   options: { batchSize?: number; maxBatches?: number } = {},
 ): Promise<PendingProposalCountResult> {
-  const latestRate = alias(event, 'pending_count_latest_rate');
-  const newerRate = alias(event, 'pending_count_newer_rate');
-  const hasTerminalLatestRate = db
-    .select({ one: sql`1` })
-    .from(latestRate)
-    .where(
-      and(
-        eq(latestRate.action, 'rate'),
-        eq(latestRate.caused_by_event_id, event.id),
-        inArray(sql<string>`${latestRate.payload}->>'rating'`, terminalRatings),
-        notExists(
-          db
-            .select({ one: sql`1` })
-            .from(newerRate)
-            .where(
-              and(
-                eq(newerRate.action, 'rate'),
-                eq(newerRate.caused_by_event_id, event.id),
-                or(
-                  gt(newerRate.created_at, latestRate.created_at),
-                  and(
-                    eq(newerRate.created_at, latestRate.created_at),
-                    gt(newerRate.id, latestRate.id),
-                  ),
-                ),
-              ),
-            ),
-        ),
-      ),
-    );
-
   const counts: Partial<Record<AiProposalKindT, number>> = {};
   const batchSize = options.batchSize ?? PENDING_PROPOSAL_COUNT_BATCH_SIZE;
   const maxBatches = options.maxBatches ?? PENDING_PROPOSAL_COUNT_MAX_BATCHES;
@@ -321,7 +313,7 @@ export async function countPendingProposalInboxByKind(
     const loadedRows: EventRow[] = await db
       .select()
       .from(event)
-      .where(and(proposalWhere(), notExists(hasTerminalLatestRate), afterWhere))
+      .where(and(proposalWhere(), not(proposalLatestRateTerminalSql(event.id)), afterWhere))
       .orderBy(asc(event.created_at), asc(event.id))
       .limit(batchSize + 1);
     const hasMore = loadedRows.length > batchSize;

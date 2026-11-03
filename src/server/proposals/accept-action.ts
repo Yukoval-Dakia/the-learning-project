@@ -9,6 +9,7 @@ import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { ensureProposalDecisionSignal } from '@/kernel/proposals/signals';
 import { extractRecordEvidenceIds, markRecordsActioned } from '@/kernel/records/record-processing';
+import { getStartedBoss } from '@/server/boss/client';
 import type { AcceptAiProposalOpts } from './action-types';
 import {
   assertPending,
@@ -147,7 +148,8 @@ export async function acceptAiProposal(
     }
   }
 
-  const dispatched = await dispatchAccept(db, proposal, opts, opts);
+  // Owners that enqueue follow-up jobs take the boss from the runtime instead of importing it.
+  const dispatched = await dispatchAccept(db, proposal, opts, { ...opts, getBoss: getStartedBoss });
 
   const recordIds = extractRecordEvidenceIds(proposal.payload.evidence_refs);
   if (recordIds.length > 0 && dispatched.lifecycleOutcome === 'accepted') {

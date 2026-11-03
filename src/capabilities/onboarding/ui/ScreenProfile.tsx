@@ -1,5 +1,5 @@
-// Onboarding ④ · placement-done starter profile (YUK-473 Slice 4).
-// Ported from docs/design/loom-refresh/project/screen-onboarding.jsx (ScreenProfile),
+// Onboarding ④ · placement-done starter profile (YUK-473 Slice 4; M3E presentation YUK-1473,
+// docs/design/2026-11-03-profile-m3e.md). Originally ported from docs/design/loom-refresh/project/screen-onboarding.jsx (ScreenProfile),
 // made real over GET /api/placement/profile (per-KC mastery_state projection). The
 // placement probe's `settling` lands here (?goal threaded through); "开始日常练习" → /today.
 //
@@ -17,15 +17,13 @@
 // src/core/recompute) and checks it against the server. Read-only.
 
 import { useQuery } from '@tanstack/react-query';
+import { ArrowRight, CircleAlert, Clock, Target, Upload } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { ApiError } from '@/ui/lib/api';
-import { Btn } from '@/ui/primitives/Btn';
-import { EmptyState } from '@/ui/primitives/EmptyState';
-import { ErrorState } from '@/ui/primitives/ErrorState';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { SkLines } from '@/ui/primitives/SkLines';
-import { ObSteps } from './ObSteps';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button, UiNextRoot } from '@/ui-next/public';
+import { OnboardingError, OnboardingState } from './OnboardingStatus';
+import { OnboardingSteps } from './OnboardingSteps';
 import { usePlacementProfileClient } from './placement-client';
 import type { PlacementProfile, ProfileKc } from './profile-api';
 import {
@@ -42,7 +40,7 @@ import {
   summarizeRecompute,
 } from './recompute/recompute-core';
 import { useRecompute } from './recompute/useRecompute';
-import './onboarding.css';
+import './onboarding-m3e.css';
 import './recompute/recompute.css';
 
 const pct = (v: number) => Math.round(v * 100);
@@ -113,18 +111,19 @@ export default function ScreenProfile({ navigate }: ScreenProfileProps) {
   if (!goalId) {
     return (
       <ProfileShell>
-        <LoomCard pad padLg>
-          <EmptyState
-            icon="target"
+        <section className="un-ob-section un-ob-panel">
+          <OnboardingState
+            icon={<Target size={24} />}
             title="还没有画像"
             text="先设定一个目标、做一轮定位练习，我才好给你一份起始画像。"
             action={
-              <Btn variant="primary" iconEnd="arrow" onClick={() => navigate('/today')}>
+              <Button variant="primary" onClick={() => navigate('/today')}>
                 回今日
-              </Btn>
+                <ArrowRight size={18} aria-hidden="true" />
+              </Button>
             }
           />
-        </LoomCard>
+        </section>
       </ProfileShell>
     );
   }
@@ -132,9 +131,9 @@ export default function ScreenProfile({ navigate }: ScreenProfileProps) {
   if (profileQ.isLoading) {
     return (
       <ProfileShell>
-        <LoomCard pad padLg>
-          <SkLines rows={4} />
-        </LoomCard>
+        <section className="un-ob-section un-ob-panel">
+          <SkeletonLines rows={4} label="正在读取你的画像" />
+        </section>
       </ProfileShell>
     );
   }
@@ -147,9 +146,9 @@ export default function ScreenProfile({ navigate }: ScreenProfileProps) {
         : `画像加载失败：${(err as Error | null)?.message ?? '未知'}`;
     return (
       <ProfileShell>
-        <LoomCard pad padLg>
-          <ErrorState text={msg} onRetry={() => profileQ.refetch()} />
-        </LoomCard>
+        <section className="un-ob-section un-ob-panel">
+          <OnboardingError text={msg} onRetry={() => profileQ.refetch()} />
+        </section>
       </ProfileShell>
     );
   }
@@ -157,18 +156,19 @@ export default function ScreenProfile({ navigate }: ScreenProfileProps) {
   if (profileQ.data.kcs.length === 0) {
     return (
       <ProfileShell>
-        <LoomCard pad padLg>
-          <EmptyState
-            icon="clock"
+        <section className="un-ob-section un-ob-panel">
+          <OnboardingState
+            icon={<Clock size={24} />}
             title="画像还空着"
             text="这个目标还没有可定位的证据。先上传材料或做一轮定位，画像会随练习长出来。"
             action={
-              <Btn variant="primary" icon="record" onClick={() => navigate('/onboarding/upload')}>
+              <Button variant="primary" onClick={() => navigate('/onboarding/upload')}>
+                <Upload size={18} aria-hidden="true" />
                 去上传材料
-              </Btn>
+              </Button>
             }
           />
-        </LoomCard>
+        </section>
       </ProfileShell>
     );
   }
@@ -233,20 +233,24 @@ function ProfileBody({
 
   return (
     <ProfileShell>
-      <p className="ob-prof-narr ob-rise">{narrative}</p>
-      <div className="ob-prof-honest ob-rise">
-        <LoomIcon name="alert" size={13} />
+      <p className="un-ob-prof-narr">{narrative}</p>
+      <p className="un-ob-prof-honest">
+        <CircleAlert size={16} aria-hidden="true" />
         {evidencedCount > 0 ? (
-          <>
-            基于 {evidencedCount} 个知识点的<b style={{ margin: '0 3px' }}>初步判断</b> ·
-            多数还需更多练习确认，下面把不确定一并摆出来
-          </>
+          <span>
+            基于 {evidencedCount} 个知识点的<strong>初步判断</strong>
+            。多数还需更多练习确认，下面把不确定一并摆出来。
+          </span>
         ) : (
-          <>当前还没有作答证据 · 下面的范围只是起点，会随练习收紧</>
+          <span>当前还没有作答证据，下面的范围只是起点，会随练习收紧。</span>
         )}
-      </div>
+      </p>
 
-      <LoomCard pad padLg className="ob-rise" {...(showVerify ? { 'data-rc': rcState } : {})}>
+      <section
+        className="un-ob-section un-ob-panel"
+        aria-label="各知识点的掌握判断"
+        {...(showVerify ? { 'data-rc': rcState } : {})}
+      >
         {showVerify && maturitySummary && <RcMaturityBadge summary={maturitySummary} />}
 
         {showVerify && summary && (
@@ -259,7 +263,7 @@ function ProfileBody({
           />
         )}
 
-        <div className="ob-kc-list">
+        <div className="un-ob-kc-list">
           {kcs.map((k) => (
             <KcRow
               key={k.id}
@@ -271,12 +275,14 @@ function ProfileBody({
         </div>
 
         {weakestExtras.length > 0 && (
-          <section className="ob-prof-weakest" aria-labelledby="ob-prof-weakest-title">
-            <h2 id="ob-prof-weakest-title">仍需留意的薄弱点</h2>
-            <p>
+          <section className="un-ob-prof-weakest" aria-labelledby="ob-prof-weakest-title">
+            <h2 id="ob-prof-weakest-title" className="un-ob-question">
+              仍需留意的薄弱点
+            </h2>
+            <p className="un-ob-hint">
               这些知识点的证据较少，但当前判断更薄弱；即使不在上面的高证据列表里，也会保留在这里。
             </p>
-            <div className="ob-kc-list">
+            <div className="un-ob-kc-list">
               {weakestExtras.map((k) => (
                 <KcRow
                   key={k.id}
@@ -291,36 +297,37 @@ function ProfileBody({
 
         {showVerify && detailOpen && summary && <RcDetailPanel summary={summary} />}
 
-        <div className="ob-prof-legend">
-          <span>
-            <i style={{ background: 'color-mix(in oklab, var(--coral) 26%, transparent)' }} />
-            珊瑚带 = 可能掌握区间（不是分数）
-          </span>
-          <span>
-            <i style={{ background: 'var(--coral)', width: 8, height: 14, borderRadius: 6 }} />
+        <ul className="un-ob-prof-legend">
+          <li>
+            <i data-swatch="band" aria-hidden="true" />
+            色带 = 可能掌握区间（不是分数）
+          </li>
+          <li>
+            <i data-swatch="mark" aria-hidden="true" />
             标记 = 当前最可能的位置
-          </span>
-          <span>
-            <i style={{ background: 'color-mix(in oklab, var(--ink-4) 20%, transparent)' }} />
+          </li>
+          <li>
+            <i data-swatch="low" aria-hidden="true" />
             灰带 = 低置信，区间很宽
-          </span>
-        </div>
+          </li>
+        </ul>
 
         {truncated && (
-          <div className="ob-prof-trunc meta">
-            {weakestExtras.length > 0 ? `显示 ${shown} 个重点（含当前最弱项）` : `显示前 ${shown}`}{' '}
-            · 共 {totalKcs} 个知识点
-          </div>
+          <p className="un-ob-hint">
+            {weakestExtras.length > 0 ? `显示 ${shown} 个重点（含当前最弱项）` : `显示前 ${shown}`}
+            ，共 {totalKcs} 个知识点
+          </p>
         )}
-      </LoomCard>
+      </section>
 
-      <div className="ob-prof-foot">
-        <Btn variant="primary" size="lg" iconEnd="arrow" onClick={() => navigate('/today')}>
+      <div className="un-ob-prof-foot">
+        <Button variant="primary" onClick={() => navigate('/today')}>
           开始日常练习
-        </Btn>
-        <span className="meta">
-          进入今日后，复习队列、学习项、Coach 都会随你练习一起长出来——画像也会越来越准。
-        </span>
+          <ArrowRight size={18} aria-hidden="true" />
+        </Button>
+        <p className="un-ob-hint">
+          进入今日后，复习队列、学习项、Coach 都会随你练习一起长出来，画像也会越来越准。
+        </p>
       </div>
     </ProfileShell>
   );
@@ -328,16 +335,18 @@ function ProfileBody({
 
 function ProfileShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="page ob-prof">
-      <div className="page-head">
-        <div className="eyebrow">起始画像 · 当前掌握判断</div>
-        <ObSteps active="profile" />
-        <div className="page-head-row">
-          <h1 className="page-title serif">我们现在怎么看你</h1>
-        </div>
-      </div>
-      {children}
-    </div>
+    <UiNextRoot className="un-ob" data-un-m3e="practice-foundation">
+      <main className="un-ob-main un-m3e-bridge">
+        <OnboardingSteps active="profile" />
+        <header className="un-ob-heading">
+          <div>
+            <h1>我们现在怎么看你</h1>
+            <p>起始画像：当前对每个知识点的掌握判断。</p>
+          </div>
+        </header>
+        {children}
+      </main>
+    </UiNextRoot>
   );
 }
 
@@ -369,28 +378,26 @@ function KcRow({
 
   return (
     <div
-      className={`ob-kc${kc.low_confidence ? ' is-lowconf' : ''}${untested ? ' is-untested' : ''}${
-        drifted ? ' rc-kc-drift' : ''
-      }`}
+      className={`un-ob-kc${drifted ? ' rc-kc-drift' : ''}`}
+      data-lowconf={kc.low_confidence || undefined}
+      data-untested={untested || undefined}
     >
-      <div className="ob-kc-id">
-        <span className="ob-kc-name">{kc.name}</span>
-      </div>
-      <div className="ob-band">
+      <div className="un-ob-kc-name">{kc.name}</div>
+      <div className="un-ob-band">
         {untested ? (
-          <div className="ob-band-untested">未测 · 暂无证据</div>
+          <div className="un-ob-band-untested">未测，暂无证据</div>
         ) : (
           <>
-            <div className="ob-band-track">
+            <div className="un-ob-band-track">
               <span
-                className="ob-band-fill"
+                className="un-ob-band-fill"
                 style={{ left: `${pct(lo)}%`, width: `${pct(hi - lo)}%` }}
               />
-              <span className="ob-band-lo" style={{ left: `${pct(lo)}%` }} />
-              <span className="ob-band-hi" style={{ left: `${pct(hi)}%` }} />
-              <span className="ob-band-mark" style={{ left: `${pct(point)}%` }} />
+              <span className="un-ob-band-edge" style={{ left: `${pct(lo)}%` }} />
+              <span className="un-ob-band-edge" style={{ left: `${pct(hi)}%` }} />
+              <span className="un-ob-band-mark" style={{ left: `${pct(point)}%` }} />
             </div>
-            <div className="ob-band-axis">
+            <div className="un-ob-band-axis">
               <span>较弱</span>
               <span>
                 可能区间 {pct(lo)}–{pct(hi)}
@@ -400,10 +407,12 @@ function KcRow({
           </>
         )}
       </div>
-      <div className="ob-kc-conf">
+      <div className="un-ob-kc-conf">
         {verdict && <RcKcChip state={rcState} kind={verdict.kind} />}
-        <span className={`ob-conf-pill t-${conf}`}>{CONF_LABEL[conf]}</span>
-        <span className="ob-kc-ev">{untested ? '0 题' : `${kc.evidence_count} 题记录`}</span>
+        <span className="un-ob-conf" data-conf={conf}>
+          {CONF_LABEL[conf]}
+        </span>
+        <span className="un-ob-kc-ev">{untested ? '0 题' : `${kc.evidence_count} 题记录`}</span>
       </div>
     </div>
   );

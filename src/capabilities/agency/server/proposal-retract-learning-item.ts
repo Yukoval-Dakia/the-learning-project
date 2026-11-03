@@ -6,20 +6,38 @@ import { learning_item } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { ProposalRetractInput } from '@/kernel/proposals';
 import { requireLaterProposalCorrection } from '@/kernel/proposals/types';
-export interface LearningItemRetractRuntime {
-  archiveProposalArtifacts: (
-    tx: Tx,
-    input: { proposalId: string; archivedAt: Date },
-  ) => Promise<void>;
-  hasLearningItemGenesisAnchor: (tx: Tx, itemId: string) => Promise<boolean>;
-  projectLearningItemGuarded: (tx: Tx, itemId: string) => Promise<unknown>;
+import {
+  hasLearningItemGenesisAnchor,
+  projectLearningItemGuarded,
+} from '@/kernel/records/learning-items';
+
+type ArchiveProposalArtifacts = (
+  tx: Tx,
+  input: { proposalId: string; archivedAt: Date },
+) => Promise<void>;
+
+/**
+ * The retract dispatcher supplies the Notes archive so agency does not import Notes.
+ * Without it the retract throws before touching anything and the whole correction rolls
+ * back: leaving a retracted proposal's notes live is not an acceptable degradation.
+ */
+function archiveFromRuntime(runtime: unknown): ArchiveProposalArtifacts {
+  const archive =
+    runtime && typeof runtime === 'object'
+      ? (runtime as { archiveProposalArtifacts?: unknown }).archiveProposalArtifacts
+      : undefined;
+  if (typeof archive !== 'function') {
+    throw new Error('learning_item retract requires archiveProposalArtifacts in the runtime');
+  }
+  return archive as ArchiveProposalArtifacts;
 }
 
 export async function retractLearningItemProposal(
   tx: Tx,
   input: ProposalRetractInput,
-  runtime: LearningItemRetractRuntime,
+  runtime: unknown,
 ): Promise<void> {
+  const archiveProposalArtifacts = archiveFromRuntime(runtime);
   const affectedItems = await tx
     .select()
     .from(learning_item)
@@ -33,7 +51,7 @@ export async function retractLearningItemProposal(
     );
   }
   for (const item of affectedItems) {
-    if (!(await runtime.hasLearningItemGenesisAnchor(tx, item.id))) {
+    if (!(await hasLearningItemGenesisAnchor(tx, item.id))) {
       throw new Error('learning_item requires canonical projection migration before retraction');
     }
     await writeEvent(tx, {
@@ -51,9 +69,9 @@ export async function retractLearningItemProposal(
     });
   }
 
-  for (const item of affectedItems) await runtime.projectLearningItemGuarded(tx, item.id);
+  for (const item of affectedItems) await projectLearningItemGuarded(tx, item.id);
 
-  await runtime.archiveProposalArtifacts(tx, {
+  await archiveProposalArtifacts(tx, {
     proposalId: input.proposalId,
     archivedAt: input.correction_at,
   });

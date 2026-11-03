@@ -2,12 +2,8 @@
 // absent: the owner already saw it, and the answer area shows the neutral question,
 // not a "we think you're wrong" primer. No calibration number crosses the wire.
 
-import { and, desc, eq, sql } from 'drizzle-orm';
-import {
-  MAX_CONCURRENT_ACTIVE_PROBES,
-  PROBE_QUESTION_SOURCE,
-  PROBE_RESULT_ACTION,
-} from '@/core/schema/conjecture';
+import { and, desc, eq } from 'drizzle-orm';
+import { MAX_CONCURRENT_ACTIVE_PROBES } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import {
   assessment_issuance,
@@ -16,6 +12,7 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
+import { activeProbePredicate, probeIssuanceIdSql } from '@/kernel/read-models/probe-delivery';
 import { validateIssuedProbeFromProposal } from './teaching-brief';
 
 // Single-source the persisted probe contract from core, not another capability's server.
@@ -45,7 +42,7 @@ export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
     .innerJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
     .innerJoin(
       assessment_issuance,
-      eq(assessment_issuance.issuance_id, sql<string>`'iss_probe_' || ${question.id}`),
+      eq(assessment_issuance.issuance_id, probeIssuanceIdSql(question.id)),
     )
     .innerJoin(
       question_revision,
@@ -53,40 +50,12 @@ export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
     )
     .where(
       and(
-        eq(question.source, PROBE_QUESTION_SOURCE),
+        // Same active set countActiveProbes caps on, filtered before the window; only
+        // valid issued provenance may then be advertised as answerable.
+        activeProbePredicate(),
         eq(question_group_lifecycle.scoring_admission_state, 'admitted'),
         eq(question_group_lifecycle.suspended, false),
         eq(question_group_lifecycle.withdrawn, false),
-        sql`NOT EXISTS (
-          SELECT 1 FROM ${event}
-          WHERE ${event.subject_kind} = 'question'
-            AND ${event.subject_id} = ${question.id}
-            AND ${event.action} = ${PROBE_RESULT_ACTION}
-        )`,
-        // Mirror getCorrectionStatuses' latest-write-wins fold in SQL so stale,
-        // unanswered probes are removed before the three-row window is applied.
-        // Capacity accounting remains in countActiveProbes; only valid issued
-        // provenance may be advertised as answerable here.
-        sql`(
-          COALESCE(${question.metadata}->>'conjecture_proposal_id', '') = ''
-          OR COALESCE((
-            SELECT correction.payload->>'correction_kind'
-            FROM ${event} AS correction
-            WHERE correction.action = 'correct'
-              AND correction.subject_kind = 'event'
-              AND correction.subject_id =
-                  ${question.metadata}->>'conjecture_proposal_id'
-              AND (
-                (correction.payload->>'correction_kind' = 'supersede'
-                  AND COALESCE(correction.payload->>'replacement_event_id', '') <> '')
-                OR (correction.payload->>'correction_kind' IN
-                    ('retract', 'mark_wrong', 'restore')
-                  AND NOT correction.payload ? 'replacement_event_id')
-              )
-            ORDER BY correction.created_at DESC, correction.id DESC
-            LIMIT 1
-          ), '') NOT IN ('retract', 'mark_wrong', 'supersede')
-        )`,
       ),
     )
     .orderBy(desc(question.created_at), desc(question.id))

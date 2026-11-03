@@ -65,7 +65,10 @@ export interface CopilotSummary {
   dreaming_last_run_at: string | null;
 }
 
-const COACH_PLACEHOLDER_FOCUS = '昨晚 Coach 还没出新计划，先按你昨天排的复习队列开始即可。';
+// Only claims the summary can verify from its own reads: a due review queue
+// exists only when review_due_count > 0; otherwise state the missing plan only.
+const COACH_PLACEHOLDER_FOCUS_WITH_QUEUE = '昨晚 Coach 还没出新计划，先按到期的复习队列开始即可。';
+const COACH_PLACEHOLDER_FOCUS_NO_QUEUE = '昨晚 Coach 还没出新计划。';
 
 const LEARNER_PROPOSAL_SUMMARIES: Readonly<Record<string, string>> = {
   knowledge_node: '有一项知识点建议待你查看。',
@@ -171,13 +174,11 @@ export async function loadCopilotSummary(
   // daily_focus sits at the payload top level or under payload.today_plan. The guard also
   // covers historical events written before the writer started stripping plan claims.
   const todayPlanInPayload = coachPayload?.today_plan as Record<string, unknown> | undefined;
-  const rawDailyFocus =
+  const coachDailyFocus =
     (typeof coachPayload?.daily_focus === 'string' ? coachPayload.daily_focus : null) ||
     (typeof todayPlanInPayload?.daily_focus === 'string'
       ? (todayPlanInPayload.daily_focus as string)
-      : null) ||
-    COACH_PLACEHOLDER_FOCUS;
-  const dailyFocus = guardDailyFocusClaims(rawDailyFocus);
+      : null);
 
   // Prefer TodayPlan counts; fall back to the cron counter, then null when Coach hasn't run.
   const planAdjustmentsArr = Array.isArray(todayPlanInPayload?.plan_adjustments)
@@ -224,6 +225,12 @@ export async function loadCopilotSummary(
   // Capped at reviewDueLimit (max 50); the drawer renders "50" as a stable upper bound,
   // and the full review queue is the dedicated /today route's job.
   const reviewDueCount = dueOutput.queue_summary.total_returned;
+  const dailyFocus =
+    coachDailyFocus !== null
+      ? guardDailyFocusClaims(coachDailyFocus)
+      : reviewDueCount > 0
+        ? COACH_PLACEHOLDER_FOCUS_WITH_QUEUE
+        : COACH_PLACEHOLDER_FOCUS_NO_QUEUE;
   const briefRaw = briefOutput.note?.recent_week_md ?? null;
   // First paragraph, capped so the drawer stays compact; null when empty or whitespace.
   const briefGlobalMd = briefRaw

@@ -1,0 +1,418 @@
+// YUK-281 (YUK-203) — PATCH (edit) + DELETE (archive) route DB integration tests.
+//
+// Covers: editable-field PATCH, bloodline-field rejection, optimistic-lock
+// conflict, unknown knowledge_ids rejection; DELETE association-count gate
+// (no confirm → 409 + counts), confirm flow → soft-archive (re-draft), pool
+// exclusion after archive, composite parent→part cascade, and the edit/archive
+// audit events.
+
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { newId } from '@/core/ids';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
+import { artifact, event, material_fsrs_state, question } from '@/db/schema';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { DELETE, PATCH } from './question-detail';
+
+const NOW = new Date('2026-06-07T00:00:00Z');
+
+async function seedQuestion(opts: {
+  id?: string;
+  kind?: string;
+  knowledge_ids?: string[];
+  draft_status?: string | null;
+  parent_question_id?: string | null;
+  source?: string;
+  version?: number;
+}): Promise<string> {
+  const id = opts.id ?? newId();
+  await testDb()
+    .insert(question)
+    .values({
+      id,
+      kind: opts.kind ?? 'reading',
+      prompt_md: 'original prompt',
+      reference_md: 'original ref',
+      choices_md: null,
+      knowledge_ids: opts.knowledge_ids ?? [],
+      difficulty: 3,
+      source: opts.source ?? 'manual',
+      draft_status: opts.draft_status ?? 'active',
+      parent_question_id: opts.parent_question_id ?? null,
+      created_at: NOW,
+      updated_at: NOW,
+      version: opts.version ?? 0,
+    });
+  return id;
+}
+
+async function seedAttempt(questionId: string, outcome: 'success' | 'failure'): Promise<void> {
+  await testDb()
+    .insert(event)
+    .values({
+      id: newId(),
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: questionId,
+      outcome,
+      payload: { answer_md: 'a', answer_image_refs: [], referenced_knowledge_ids: [] },
+      created_at: NOW,
+    });
+}
+
+function mkFsrsState() {
+  return {
+    due: NOW.toISOString(),
+    stability: 1.5,
+    difficulty: 5,
+    elapsed_days: 0,
+    scheduled_days: 1,
+    learning_steps: 0,
+    reps: 1,
+    lapses: 0,
+    state: 'review',
+    last_review: null,
+  };
+}
+
+async function seedQuestionFsrs(questionId: string): Promise<void> {
+  await testDb()
+    .insert(material_fsrs_state)
+    .values({
+      id: `f_q_${questionId}`,
+      subject_kind: 'question',
+      subject_id: questionId,
+      state: mkFsrsState() as unknown as (typeof material_fsrs_state.$inferInsert)['state'],
+      due_at: NOW,
+      updated_at: NOW,
+    });
+}
+
+async function seedPaperRef(questionId: string): Promise<void> {
+  await testDb()
+    .insert(artifact)
+    .values({
+      id: newId(),
+      type: 'tool_quiz',
+      title: 'paper',
+      knowledge_ids: [],
+      intent_source: 'quiz_gen',
+      source: 'ai_generated',
+      tool_kind: 'quiz',
+      tool_state: { question_ids: [questionId] } as (typeof artifact.$inferInsert)['tool_state'],
+      generation_status: 'ready',
+      created_at: NOW,
+      updated_at: NOW,
+    });
+}
+
+function mkPatchReq(id: string, body: unknown): Request {
+  return new Request(`http://localhost/api/questions/${id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+function mkDeleteReq(id: string, query = ''): Request {
+  return new Request(`http://localhost/api/questions/${id}${query}`, { method: 'DELETE' });
+}
+
+async function loadRow(id: string) {
+  const rows = await testDb().select().from(question).where(eq(question.id, id)).limit(1);
+  return rows[0];
+}
+
+describe('PATCH /api/questions/[id]', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('rejects edits to product-owned intervention diagnostics', async () => {
+    const id = await seedQuestion({ source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE });
+
+    const res = await PATCH(mkPatchReq(id, { version: 0, prompt_md: 'mutated prompt' }), { id });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ error: 'immutable_question' });
+    expect(await loadRow(id)).toMatchObject({
+      prompt_md: 'original prompt',
+      draft_status: 'active',
+      version: 0,
+    });
+  });
+});
+
+describe('DELETE /api/questions/[id]', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns association counts + 409 when confirm is absent', async () => {
+    const id = await seedQuestion({});
+    await seedAttempt(id, 'failure'); // counts as both attempt + mistake
+    await seedAttempt(id, 'success');
+    await seedQuestionFsrs(id);
+    await seedPaperRef(id);
+    await seedQuestion({ parent_question_id: id, draft_status: 'active' });
+    await seedQuestion({ parent_question_id: id, draft_status: 'draft' });
+
+    const res = await DELETE(mkDeleteReq(id, '?version=0'), { id });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as {
+      error: string;
+      associations: {
+        attempts: number;
+        mistakes: number;
+        fsrs_cards: number;
+        paper_refs: number;
+        children: number;
+      };
+      has_associations: boolean;
+    };
+    expect(body.error).toBe('confirm_required');
+    expect(body.associations.attempts).toBe(2);
+    expect(body.associations.mistakes).toBe(1);
+    expect(body.associations.fsrs_cards).toBe(1);
+    expect(body.associations.paper_refs).toBe(1);
+    expect(body.associations.children).toBe(2);
+    expect(body.has_associations).toBe(true);
+
+    // Nothing was archived.
+    const row = await loadRow(id);
+    expect(row?.draft_status).toBe('active');
+  });
+
+  it('treats attached children as an association even without learning-history refs', async () => {
+    const parentId = await seedQuestion({ kind: 'reading' });
+    await seedQuestion({ parent_question_id: parentId });
+
+    const res = await DELETE(mkDeleteReq(parentId), { id: parentId });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as {
+      associations: { children: number };
+      has_associations: boolean;
+    };
+    expect(body.associations.children).toBe(1);
+    expect(body.has_associations).toBe(true);
+  });
+
+  it('soft-archives (re-drafts) on confirm=true', async () => {
+    const id = await seedQuestion({ draft_status: 'active' });
+
+    const res = await DELETE(mkDeleteReq(id, '?version=0&confirm=true'), { id });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; archived: boolean; event_id: string };
+    expect(body.ok).toBe(true);
+    expect(body.archived).toBe(true);
+
+    const row = await loadRow(id);
+    expect(row?.draft_status).toBe('draft'); // excluded from pool/due/practice
+    expect(row?.version).toBe(1);
+    const meta = row?.metadata as Record<string, unknown> | null;
+    expect(meta?.archived_reason).toBe('user');
+    expect(meta?.archived_previous_draft_status).toBe('active');
+    expect(typeof meta?.archived_at).toBe('number');
+  });
+
+  it('rejects archival of product-owned intervention diagnostics', async () => {
+    const id = await seedQuestion({ source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE });
+    await seedQuestionFsrs(id);
+
+    const res = await DELETE(mkDeleteReq(id, '?version=0&confirm=true'), { id });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ error: 'immutable_question' });
+    expect(await loadRow(id)).toMatchObject({ draft_status: 'active', version: 0 });
+    expect(
+      await testDb()
+        .select()
+        .from(material_fsrs_state)
+        .where(eq(material_fsrs_state.subject_id, id)),
+    ).toHaveLength(1);
+  });
+
+  it('fails closed when a legacy client confirms a parent without acknowledging children', async () => {
+    const parentId = await seedQuestion({ kind: 'reading', draft_status: 'active' });
+    const partId = await seedQuestion({
+      kind: 'fill_blank',
+      draft_status: 'active',
+      parent_question_id: parentId,
+    });
+
+    const res = await DELETE(mkDeleteReq(parentId, '?version=0&confirm=true'), { id: parentId });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; associations: { children: number } };
+    expect(body.error).toBe('children_confirmation_required');
+    expect(body.associations.children).toBe(1);
+    expect((await loadRow(parentId))?.draft_status).toBe('active');
+    expect((await loadRow(partId))?.draft_status).toBe('active');
+  });
+
+  it('writes an experimental:question_archive event', async () => {
+    const id = await seedQuestion({ draft_status: 'active' });
+    await DELETE(mkDeleteReq(id, '?version=0&confirm=true'), { id });
+    const evs = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'experimental:question_archive'), eq(event.subject_id, id)));
+    expect(evs).toHaveLength(1);
+    const payload = evs[0]?.payload as { archived: boolean; previous_draft_status: string };
+    expect(payload.archived).toBe(true);
+    expect(payload.previous_draft_status).toBe('active');
+  });
+
+  it('cascades archive to composite parts (parent → parts re-drafted)', async () => {
+    const parentId = await seedQuestion({ kind: 'reading', draft_status: 'active' });
+    const partA = await seedQuestion({
+      kind: 'question_part',
+      draft_status: 'active',
+      parent_question_id: parentId,
+    });
+    const partB = await seedQuestion({
+      kind: 'question_part',
+      draft_status: 'active',
+      parent_question_id: parentId,
+    });
+    // A part belonging to a DIFFERENT parent must NOT be touched.
+    const otherParent = await seedQuestion({ draft_status: 'active' });
+    const otherPart = await seedQuestion({
+      kind: 'question_part',
+      draft_status: 'active',
+      parent_question_id: otherParent,
+    });
+
+    const res = await DELETE(
+      mkDeleteReq(parentId, '?version=0&confirm=true&confirm_children=true'),
+      { id: parentId },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { cascaded_part_ids: string[] };
+    expect(new Set(body.cascaded_part_ids)).toEqual(new Set([partA, partB]));
+
+    expect((await loadRow(partA))?.draft_status).toBe('draft');
+    expect((await loadRow(partB))?.draft_status).toBe('draft');
+    // Untouched.
+    expect((await loadRow(otherPart))?.draft_status).toBe('active');
+  });
+
+  it('rejects parent archival when an active intervention diagnostic child is protected', async () => {
+    const parentId = await seedQuestion({ kind: 'reading', draft_status: 'active' });
+    const diagnosticPart = await seedQuestion({
+      kind: 'fill_blank',
+      draft_status: 'active',
+      parent_question_id: parentId,
+      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+    });
+
+    const res = await DELETE(
+      mkDeleteReq(parentId, '?version=0&confirm=true&confirm_children=true'),
+      { id: parentId },
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ error: 'immutable_question' });
+    expect((await loadRow(parentId))?.draft_status).toBe('active');
+    expect((await loadRow(diagnosticPart))?.draft_status).toBe('active');
+  });
+
+  // YUK-388 Step 1 regression — part-ness is derived from the `parent_question_id`
+  // FK, NOT the `kind='question_part'` sentinel. A part linked via the FK but
+  // carrying a NON-sentinel kind (the post-Step-3 shape, or any future vocabulary)
+  // must still be cascade-archived. Conversely, a top-level question carrying a
+  // stale legacy `kind='question_part'` but NO parent FK must NOT be touched —
+  // proving the cascade no longer reads `kind` at all.
+  it('cascades by parent FK regardless of kind (sentinel migrated off kind)', async () => {
+    const parentId = await seedQuestion({ kind: 'reading', draft_status: 'active' });
+    // Part identified ONLY by the FK; kind is the canonical type, not the sentinel.
+    const fkPart = await seedQuestion({
+      kind: 'fill_blank',
+      draft_status: 'active',
+      parent_question_id: parentId,
+    });
+    // Legacy dead-data row: still tagged with the old sentinel kind but has NO
+    // parent FK, so it is a standalone question, not a part of `parentId`.
+    const orphanSentinel = await seedQuestion({
+      kind: 'question_part',
+      draft_status: 'active',
+      parent_question_id: null,
+    });
+
+    const res = await DELETE(
+      mkDeleteReq(parentId, '?version=0&confirm=true&confirm_children=true'),
+      { id: parentId },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { cascaded_part_ids: string[] };
+    // FK part is cascaded despite its non-sentinel kind.
+    expect(new Set(body.cascaded_part_ids)).toEqual(new Set([fkPart]));
+    expect((await loadRow(fkPart))?.draft_status).toBe('draft');
+    // The kind-sentinel orphan (no parent FK) is NOT touched.
+    expect((await loadRow(orphanSentinel))?.draft_status).toBe('active');
+  });
+
+  // YUK-388 Step 1 — zero behavior change for FSRS: a part is an independent
+  // `question` row with its own `material_fsrs_state`. Cascade-archiving the
+  // parent re-drafts the part row but MUST NOT delete or mutate the part's FSRS
+  // card (independent scheduling identity preserved — fsrs.ts supports_activity_kinds).
+  it('preserves the part FSRS card on cascade (independent scheduling identity)', async () => {
+    const parentId = await seedQuestion({ kind: 'reading', draft_status: 'active' });
+    const part = await seedQuestion({
+      kind: 'fill_blank',
+      draft_status: 'active',
+      parent_question_id: parentId,
+    });
+    await seedQuestionFsrs(part);
+
+    const before = await testDb()
+      .select()
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_id, part));
+    expect(before).toHaveLength(1);
+
+    const res = await DELETE(
+      mkDeleteReq(parentId, '?version=0&confirm=true&confirm_children=true'),
+      { id: parentId },
+    );
+    expect(res.status).toBe(200);
+
+    // Part row was re-drafted (out of the pool) ...
+    expect((await loadRow(part))?.draft_status).toBe('draft');
+    // ... but its FSRS card is intact and untouched.
+    const after = await testDb()
+      .select()
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_id, part));
+    expect(after).toHaveLength(1);
+    expect(after[0]?.id).toBe(before[0]?.id);
+    expect(after[0]?.subject_kind).toBe('question');
+    expect(after[0]?.due_at?.getTime()).toBe(before[0]?.due_at?.getTime());
+  });
+
+  it('400s when version query param is missing on a CONFIRMED delete', async () => {
+    const id = await seedQuestion({});
+    const res = await DELETE(mkDeleteReq(id, '?confirm=true'), { id });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns the 409 confirm gate even when version is absent (unconfirmed)', async () => {
+    // The first unconfirmed DELETE must surface the association warning so the UI
+    // can render the confirm dialog — it must NOT 400 on the missing version.
+    const id = await seedQuestion({});
+    await seedAttempt(id, 'failure');
+    const res = await DELETE(mkDeleteReq(id, ''), { id });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; has_associations: boolean };
+    expect(body.error).toBe('confirm_required');
+    expect(body.has_associations).toBe(true);
+  });
+
+  it('409s on version mismatch with confirm', async () => {
+    const id = await seedQuestion({ version: 5 });
+    const res = await DELETE(mkDeleteReq(id, '?version=0&confirm=true'), { id });
+    expect(res.status).toBe(409);
+  });
+});

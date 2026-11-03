@@ -10,7 +10,7 @@ import {
   CreateSolveSessionBodySchema,
   HintRequestBodySchema,
   StartSolveBodySchema,
-} from '../api/question-solve-contracts';
+} from '../api/solve-contracts';
 import { SolveError, planSolveHintOutcome, startSolveSession } from './solve-session';
 
 function parseResourceInput<T>(raw: unknown, schema: ZodType<T>): T {

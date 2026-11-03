@@ -21,7 +21,7 @@
 import type { Job } from 'pg-boss';
 import type { DispatchResult } from '@/capabilities/practice/public';
 import { dispatchPracticeSupplyTargets as dispatchSupplyTargets } from '@/capabilities/practice/public';
-import { discoverConfusableContrastTargets } from '@/capabilities/practice/server/question-supply/confusable-contrast-discovery';
+import { discoverConfusableContrastTargets } from '@/capabilities/practice/supply/public';
 import type { Db } from '@/db/client';
 
 type DispatchDeps = Parameters<typeof dispatchSupplyTargets>[2];

@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   archiveQuestion,
   restoreQuestion,
-} from '@/capabilities/practice/server/question-bank-write';
+} from '@/capabilities/practice/question-bank/server/question-bank-write';
 import { event, question, question_group_lifecycle } from '@/db/schema';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../tests/helpers/db';

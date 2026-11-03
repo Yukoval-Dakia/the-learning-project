@@ -10,6 +10,7 @@ import {
   piDomainMount,
   piRemoteMcpMount,
 } from '@/ai/pi-tool-mount';
+import type { ProviderFailureInfo } from '@/ai/provider-failure';
 import { observeTaskOperation } from '@/ai/task-observation';
 import type { RunTaskResult } from '@/ai/task-result';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
@@ -147,7 +148,8 @@ export interface CopilotExecutionResult {
   finalization: CopilotReplyFinalizationResult;
   partial: boolean;
   error?: string;
-  failure?: { kind: 'provider_request_rejected'; httpStatus: 400 };
+  /** Proven provider failure (category + bound status + provider Retry-After). */
+  providerFailure?: ProviderFailureInfo;
   sdkSessionId?: string;
   contextDigest: string;
   correctionFiling?: SealedCorrectionFiling;
@@ -162,7 +164,7 @@ export type ExecuteCopilotTurn = (
 type AgentResult = Pick<RunTaskResult, 'task_run_id' | 'text'> & { finishReason?: string };
 type StreamResult = Pick<
   StreamCollectResult,
-  'task_run_id' | 'text' | 'terminalText' | 'partial' | 'error' | 'failure'
+  'task_run_id' | 'text' | 'terminalText' | 'partial' | 'error' | 'providerFailure'
 > & { finishReason?: string };
 
 /** Process-level adapters. Product callers use ExecuteCopilotTurn, never this seam. */
@@ -583,9 +585,9 @@ export function createCopilotExecutionOwner(
       const closure = noProgress.closure();
       const cancelled =
         policy.cancellation.signal.aborted || policy.cancellation.hasConfirmedCancellation;
-      const providerRejected = result.failure?.kind === 'provider_request_rejected';
+      const providerFailed = result.providerFailure !== undefined;
       const sealedClosure =
-        closure !== undefined && !cancelled && !providerRejected ? closure : undefined;
+        closure !== undefined && !cancelled && !providerFailed ? closure : undefined;
       const planned = sealedClosure
         ? await chooseVerifiedFallback({
             db,
@@ -616,7 +618,7 @@ export function createCopilotExecutionOwner(
         async (reportOutcome) => {
           const finalized = await finalizer.finalizeTerminal(
             closureText ?? (partial ? '' : terminalText),
-            closureText === undefined && partial ? result.failure : undefined,
+            closureText === undefined && partial ? result.providerFailure : undefined,
           );
           reportOutcome(finalized.accepted ? 'accepted' : 'rejected');
           return finalized;
@@ -630,7 +632,7 @@ export function createCopilotExecutionOwner(
         partial,
         ...(executionError ? { error: executionError } : {}),
         ...(finalization.accepted && planned?.filing ? { correctionFiling: planned.filing } : {}),
-        ...(result.failure ? { failure: result.failure } : {}),
+        ...(result.providerFailure ? { providerFailure: result.providerFailure } : {}),
         ...(observedSdkSessionId && retainSdkSession ? { sdkSessionId: observedSdkSessionId } : {}),
         contextDigest,
       };

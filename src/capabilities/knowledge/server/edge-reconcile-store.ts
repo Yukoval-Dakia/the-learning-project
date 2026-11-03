@@ -14,6 +14,16 @@ type DbLike = Db | Tx;
 
 export type EdgeReconcileLogAction = 'KEEP_BOTH' | 'SUPERSEDE';
 
+/** A reconcile decision recorded when the user accepts a supersede proposal. */
+export type EdgeReconcileDecision = {
+  action: EdgeReconcileLogAction;
+  /** Required for SUPERSEDE; null for KEEP_BOTH. */
+  neighbor_index: number | null;
+  superseded_edge_id: string | null;
+  confidence: number;
+  reason: string;
+};
+
 /** A planned write-ahead row: one per reconcile decision. */
 export type EdgePlannedRow = {
   id: string;
@@ -27,11 +37,6 @@ export type EdgePlannedRow = {
   llm_raw: unknown;
   planned_at: Date;
 };
-
-/** Build the candidate-edge dedup key (mirrors propose_edge.ts edgeKey). */
-export function edgeReconcileKey(fromId: string, toId: string, relationType: string): string {
-  return `${fromId}|${toId}|${relationType}`;
-}
 
 /** Insert planned rows; applied_at is stamped at the end of the same transaction. */
 export async function insertEdgePlannedRows(db: DbLike, rows: EdgePlannedRow[]): Promise<void> {

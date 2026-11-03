@@ -10,7 +10,9 @@
 // 文案（标题「下一步,你学得动这些」/ frontier-sub / reason）不得引入难度或正确率承诺措辞。
 // 详见 docs/design/2026-07-03-frontier-gate-spec.md §Q6。
 
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { Target } from 'lucide-react';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { BandChip } from './BandChip';
 import type { FrontierRailItem } from './knowledge-api';
 
@@ -43,52 +45,40 @@ function renderFrontierBody({
   navigate: (to: string) => void;
 }) {
   if (isError) {
-    return (
-      <p className="quiet-empty">
-        下一步建议暂不可用。
-        {onRetry && (
-          <button type="button" className="frontier-retry" onClick={onRetry}>
-            <LoomIcon name="refresh" size={13} />
-            重试
-          </button>
-        )}
-      </p>
-    );
+    if (onRetry) return <RetryLine message="下一步建议暂不可用。" onRetry={onRetry} />;
+    return <p className="kn-quiet">下一步建议暂不可用。</p>;
   }
   if (isLoading) {
-    return <p className="quiet-empty">正在看你学得动什么…</p>;
+    return <SkeletonLines rows={2} label="正在看你学得动什么" />;
   }
   if (items.length === 0) {
-    return <p className="quiet-empty">暂无明确下一步——多录入 / 练习后会逐步浮现。</p>;
+    return <p className="kn-quiet">暂无明确下一步——多录入 / 练习后会逐步浮现。</p>;
   }
   return (
-    <div className="frontier-list">
+    <ul className="kn-frontier-list">
       {items.map((f) => (
-        <button
-          type="button"
-          key={f.kid}
-          className="frontier-card"
-          onClick={() => navigate(`/knowledge/${encodeURIComponent(f.kid)}`)}
-        >
-          <div className="frontier-card-top">
-            <span className="frontier-card-name">{f.name}</span>
-            {f.propose ? (
-              <span className="frontier-tag-propose">建议 · 低置信</span>
-            ) : (
-              <span className="frontier-tag-next">下一步</span>
-            )}
-          </div>
-          <div className="frontier-reason">{f.reason}</div>
-          <div className="frontier-note">
-            {f.propose ? (
-              <span className="badge tone-info">待确认建议</span>
-            ) : (
-              <BandChip input={f} />
-            )}
-          </div>
-        </button>
+        <li key={f.kid}>
+          <button
+            type="button"
+            className="kn-frontier-card"
+            onClick={() => navigate(`/knowledge/${encodeURIComponent(f.kid)}`)}
+          >
+            <span className="kn-frontier-top">
+              <span className="kn-frontier-name">{f.name}</span>
+              {f.propose ? (
+                <span className="kn-tag kn-tag-dashed">建议 · 低置信</span>
+              ) : (
+                <span className="kn-tag kn-tag-accent">下一步</span>
+              )}
+            </span>
+            <span className="kn-frontier-reason">{f.reason}</span>
+            <span className="kn-frontier-note">
+              {f.propose ? <span className="kn-tag">待确认建议</span> : <BandChip input={f} />}
+            </span>
+          </button>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 
@@ -100,19 +90,21 @@ export function FrontierRail({
   navigate,
 }: FrontierRailProps) {
   return (
-    <div className="frontier">
-      <div className="frontier-head">
-        <span className="frontier-ic">
-          <LoomIcon name="target" size={19} />
+    <section className="kn-frontier" aria-labelledby="kn-frontier-title">
+      <div className="kn-frontier-head">
+        <span className="kn-frontier-ic" aria-hidden="true">
+          <Target size={18} />
         </span>
         <div>
-          <h3 className="frontier-title">下一步，你学得动这些</h3>
-          <div className="frontier-sub">
+          <h2 id="kn-frontier-title" className="kn-frontier-title">
+            下一步，你学得动这些
+          </h2>
+          <p className="kn-frontier-sub">
             所需基础已经具备 · 这是<b>建议</b>，不是必经路，随时可以忽略
-          </div>
+          </p>
         </div>
       </div>
       {renderFrontierBody({ items, isLoading, isError, onRetry, navigate })}
-    </div>
+    </section>
   );
 }

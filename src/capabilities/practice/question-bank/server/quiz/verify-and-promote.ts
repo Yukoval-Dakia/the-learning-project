@@ -1,0 +1,418 @@
+// 增量 3 — verifyAndPromote 薄 tier-dispatcher (caller-agnostic gate).
+// plan §+ Gate 设计决策 (owner 拍板 b1). 三个 caller 的统一 gate 入口:
+// ① matcher lazy verify ② owner manual override (inc-4 UI) ③ 未来 pre-warm.
+// 它是一个**薄派发**: 按 source 字面转调现有 per-question runSourceVerify / runQuizVerify
+// (整体调用)，**不合并、不重写**任何 verify / promote / metadata / writeAgentNote / catch
+// 逻辑——那些全部由被转调的 run 函数天然产生 (三态/幂等/守门/note 全保留，blast radius 归零)。
+// 唯一例外是 override 分支 (skipVerify): owner 强制启用、跳 AI verify，没有 run 函数可转调，
+// 故此分支自己跑 promote (draft→active + FSRS enroll-if-absent + writeEvent)。它直接复用
+// acceptQuestionDraftProposal (proposal-appliers.ts:286) 的 draft→active+FSRS 同形逻辑 (参照，
+// 非 import)，与 run 函数同款 enroll-if-absent，绝不重置已有 schedule。
+// 边界纪律 : 本模块**只能** import runSourceVerify / runQuizVerify (正常分支
+// 转调) + 少量 promote 操作 (writeEvent / enrollPromotedQuestionScheduling /
+// publishVerifyLifecycleUpdate，仅 override 分支用)。派发判别按 source 字面
+// (web_sourced/quiz_gen)，比 deriveSourceTier 更稳。
+// **绝不** import 或复刻两 handler 的 check 逻辑 / promote 事务 / metadata 构造 / writeAgentNote
+// 那是「合并抽取」的滑坡，被 b1 决策否决。
+
+import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { newId } from '@/core/ids';
+import {
+  LEGACY_DRAFT_STATUS,
+  MARKING_RULE_PROVENANCE,
+  QUESTION_AVAILABILITY,
+} from '@/core/schema/assessment/lifecycle';
+import type { Db } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
+import { event, knowledge, question, question_group_lifecycle } from '@/db/schema';
+import { writeEvent } from '@/kernel/events/index';
+import { placementAuthority } from '../../../supply/public';
+import { type RunTaskFn, runQuizVerify } from '../../jobs/quiz_verify';
+import { runSourceVerify } from '../../jobs/source_verify';
+import { publishVerifyLifecycleUpdate } from '../../jobs/source_verify_lifecycle';
+import { enrollPromotedQuestionScheduling } from '../question-scheduling-enrollment';
+
+export interface VerifyAndPromoteParams {
+  db: Db;
+  /** 转调的 run 函数内部 re-SELECT (保留现有幂等/守门契约). */
+  questionId: string;
+  /** 透传给被转调的 run 函数 (db 测试注 vi.fn). */
+  runTaskFn: RunTaskFn;
+  /** 默认 agent；owner manual (inc-4) 传 user. override 分支的 verify event actor. */
+  actor?: { kind: 'agent' | 'user'; ref: string };
+  /** override：跳 AI verify，直接 promote (inc-4 owner path，inc-3 实现+测). */
+  skipVerify?: { reason: string };
+  /** dispatch seam：默认转调真实 runSourceVerify/runQuizVerify；db 测试注 fake 验「派到哪个」. */
+  deps?: {
+    runSourceVerify?: typeof runSourceVerify;
+    runQuizVerify?: typeof runQuizVerify;
+  };
+}
+
+export interface VerifyAndPromoteResult {
+  /** run 函数 status==='verified' (quiz 的 needs_review/failed → false). */
+  promoted: boolean;
+  /** 透传 run 函数 status ('verified'|'needs_review'|'failed'|'skipped:*'). */
+  status: string;
+  /** promote 留痕引用 (run 函数不返 id；promote 后按幂等查谓词回查；override 分支自产). */
+  verifyEventId?: string;
+  /** 不 promote 的状态/驳回理由. */
+  reason?: string;
+}
+
+// source → experimental verify action (留痕 action 串不合并， gotcha 8).
+function verifyActionForSource(
+  source: string,
+): 'experimental:source_verify' | 'experimental:quiz_verify' {
+  return source === 'web_sourced' ? 'experimental:source_verify' : 'experimental:quiz_verify';
+}
+
+// the only sources whose drafts may be promoted into the raw active pool:
+// web_sourced (→ source_verify) / quiz_gen (→ quiz_verify). Container-scoped drafts
+// (teaching_check / copilot_authored / embedded check / authentic / …) are NOT raw-pool
+// promotable — the override branch must reject them just like the normal branch's source
+// guard does (verifyActionForSource alone would mis-map them to experimental:quiz_verify).
+function isPromotableSource(source: string): boolean {
+  return source === 'web_sourced' || source === 'quiz_gen';
+}
+
+/**
+ * Re-query the verify event id written by the转调 run fn on a successful promote. run 函数
+ * 不返 verify event id (RunSourceVerifyResult/RunQuizVerifyResult 只返 status/checks/overall)，
+ * 但 matcher 需要 verifyEventId 留痕。回查谓词 = run 函数内部幂等查的同款索引路径
+ * (action, subject_kind='question', subject_id, outcome != 'error')，取最新一条。
+ * 改 run 函数返 id 是后续 cleanup follow-up (不改 handler 签名，否则破 b1 等价回归).
+ */
+async function lookupVerifyEventId(
+  db: Db,
+  questionId: string,
+  action: 'experimental:source_verify' | 'experimental:quiz_verify',
+): Promise<string | undefined> {
+  const rows = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, action),
+        eq(event.subject_kind, 'question'),
+        eq(event.subject_id, questionId),
+        ne(event.outcome, 'error'),
+      ),
+    )
+    .orderBy(desc(event.created_at))
+    .limit(1);
+  return rows[0]?.id;
+}
+
+/**
+ * caller-agnostic gate. re-SELECT source+draft_status → branch:
+ * - skipVerify override → own promote txn (draft→active + FSRS + user-actor verify event).
+ * - web_sourced → runSourceVerify; quiz_gen → runQuizVerify; 其它 → skipped:unsupported_source.
+ * 正常分支把 run 函数 status 映射成 VerifyAndPromoteResult (promoted = status==='verified')，
+ * promote 后回查 verifyEventId. **不重实现** 任何 promote/check/metadata/note —— 全在 run 函数里.
+ */
+export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<VerifyAndPromoteResult> {
+  const { db, questionId, runTaskFn, skipVerify } = p;
+
+  // 一次轻量 SELECT 取 source + draft_status + metadata (派发判别 + override promote 前置守门).
+  // S3（R1 F2）—— override 的「被复核对象」身份与行依据在同一
+  // 语句快照取得（join lifecycle）：分读会让 owner 决定落到调用中途换上
+  // 的新 revision 上。owner override 不执行模型核验——身份一致即可，不
+  // 虚构 solver 证据。
+  const rows = await db
+    .select({
+      id: question.id,
+      source: question.source,
+      draft_status: question.draft_status,
+      knowledge_ids: question.knowledge_ids,
+      metadata: question.metadata,
+      parent_question_id: question.parent_question_id,
+      lifecycleRevisionId: question_group_lifecycle.current_revision_id,
+      admissionGeneration: question_group_lifecycle.scoring_admission_generation,
+    })
+    .from(question)
+    .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
+    .where(eq(question.id, questionId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) {
+    return { promoted: false, status: 'skipped:not_found', reason: 'question not found' };
+  }
+
+  // a question_part is group-internal: it has no independent verify
+  // intent and must never be promoted standalone (an active child under a
+  // still-draft parent breaks the composite atomic gate). Guard HERE — one
+  // choke point covers BOTH branches below: the normal dispatch would route a
+  // quiz_gen part into a paid runQuizVerify, and the override branch would
+  // force-promote it with no verify at all. Parts go active only via the
+  // parent's verify cascade (quiz_verify.ts).
+  if (row.parent_question_id != null) {
+    return { promoted: false, status: 'skipped:question_part' };
+  }
+
+  // 「被复核对象」身份与上方行依据同一语句快照（见上行注释）。
+  const overrideInput = {
+    revisionId: row.lifecycleRevisionId ?? null,
+    admissionGeneration: row.admissionGeneration ?? null,
+  };
+
+  // ── override 分支 (skipVerify) ──────────────────────────────────────────────
+  // owner 强制启用：不调 run 函数，自己跑 promote (draft→active + FSRS enroll-if-absent +
+  // user-actor verify event)。这是 inc-3 唯一需要 verifyAndPromote 自己写 promote 的分支——
+  // 因为 owner override 跳过 verify，没有 run 函数可转调。复用 acceptQuestionDraftProposal 的
+  // draft→active+FSRS 同形逻辑 (参照)。
+  if (skipVerify) {
+    // the override branch ran BEFORE the source guard, so a container draft
+    // (teaching_check / copilot_authored / embedded check) whose source is not a raw-pool-
+    // promotable source got force-promoted to active. Validate source + draft_status FIRST:
+    // ① only raw-pool-promotable sources (web_sourced / quiz_gen) may be promoted — anything
+    // else → skipped:unsupported_source (mirror the normal branch's source guard).
+    // ② only a true 'draft' is promotable (呼应 条目 5) — a non-draft row →
+    // skipped:not_draft.
+    // Reject WITHOUT promoting or writing any verify event.
+    if (!isPromotableSource(row.source)) {
+      return { promoted: false, status: 'skipped:unsupported_source' };
+    }
+    // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate.
+    if (row.draft_status !== LEGACY_DRAFT_STATUS.DRAFT) {
+      return { promoted: false, status: 'skipped:not_draft' };
+    }
+    // B-archived-draft (inc-4a) — a soft-archived (re-drafted) question
+    // carries metadata.archived_at (set by archiveQuestion in ../question-bank-write.ts).
+    // owner force-enable must NEVER resurrect such a draft back to active;
+    // reject WITHOUT promoting or writing any verify event (don't update it back to active).
+    // same for metadata.dismissed_at (question_draft proposal dismiss): an
+    // owner-rejected draft must NEVER be force-enabled back into the pool.
+    const meta = row.metadata as Record<string, unknown> | null;
+    if (meta?.archived_at != null || meta?.dismissed_at != null) {
+      return { promoted: false, status: 'skipped:archived_draft' };
+    }
+    // B-archived-KC (inc-4a) — owner override builds FSRS cards per
+    // knowledge_ids node. If ANY referenced KC is archived (knowledge.archived_at IS
+    // NOT NULL) we must NOT promote / enroll — an archived node would get a fresh
+    // card it shouldn't have (mirrors source_verify's knowledge-survival gate).
+    // Reject WITHOUT promoting or writing any verify event.
+    const overrideKnowledgeIds = Array.from(new Set(row.knowledge_ids ?? []));
+    if (overrideKnowledgeIds.length > 0) {
+      const liveKnowledge = await db
+        .select({ id: knowledge.id })
+        .from(knowledge)
+        .where(and(inArray(knowledge.id, overrideKnowledgeIds), isNull(knowledge.archived_at)));
+      const liveIds = new Set(liveKnowledge.map((k) => k.id));
+      const hasArchivedKc = overrideKnowledgeIds.some((id) => !liveIds.has(id));
+      if (hasArchivedKc) {
+        return { promoted: false, status: 'skipped:archived_knowledge' };
+      }
+    }
+    const action = verifyActionForSource(row.source);
+    const actor = p.actor ?? { kind: 'agent' as const, ref: 'verify_and_promote' };
+    const now = new Date();
+    const verifyEventId = newId();
+
+    await db.transaction(async (tx) => {
+      // global learning-state write lock FIRST (shared tx-entry order with every
+      // material_fsrs_state / mastery_state writer and the cascade revert).
+      await acquireLearningStateWriteLock(tx);
+      await placementAuthority.lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
+      await tx
+        .update(question)
+        .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
+        .where(eq(question.id, questionId));
+
+      await enrollPromotedQuestionScheduling(tx, {
+        questionId,
+        knowledgeIds: row.knowledge_ids ?? [],
+        evidenceEventId: verifyEventId,
+        now,
+      });
+
+      // composite cascade on owner override: a force-enabled 篇
+      // parent must take its draft children with it (the same atomic-group rule
+      // the quiz_verify cascade applies on the verified path). Otherwise the
+      // parent becomes pool-eligible (EXISTS counts the still-draft children)
+      // while the parts — excluded from moderation and owning no verify intent
+      // stay draft forever. The draft/tombstone predicates live in the
+      // UPDATE's WHERE (returning-gated) so a concurrent archive/dismiss can't
+      // be overwritten back to 'active'; FSRS enroll mirrors the parent rule
+      // (knowledge-level when labeled — usually a no-op since the parent's loop
+      // just enrolled those ids — question-level fallback when unlabeled).
+      const promotedParts = await tx
+        .update(question)
+        .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
+        .where(
+          and(
+            eq(question.parent_question_id, questionId),
+            eq(question.draft_status, LEGACY_DRAFT_STATUS.DRAFT),
+            sql`${question.metadata}->>'archived_at' IS NULL`,
+            sql`${question.metadata}->>'dismissed_at' IS NULL`,
+          ),
+        )
+        .returning({ id: question.id, knowledgeIds: question.knowledge_ids });
+      for (const part of promotedParts) {
+        await enrollPromotedQuestionScheduling(tx, {
+          questionId: part.id,
+          knowledgeIds: part.knowledgeIds ?? [],
+          evidenceEventId: verifyEventId,
+          now,
+        });
+      }
+
+      // evidence-first 留痕: owner-override promote 写 actor_kind:'user' + skipped_verify:true
+      // + reason，按 source 派生 action (不合并成单 experimental:verify， gotcha 8).
+      await writeEvent(tx, {
+        id: verifyEventId,
+        session_id: null,
+        actor_kind: actor.kind,
+        actor_ref: actor.ref,
+        action,
+        subject_kind: 'question',
+        subject_id: questionId,
+        outcome: 'success',
+        payload: {
+          question_id: questionId,
+          promoted: true,
+          skipped_verify: true,
+          reason: skipVerify.reason,
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: now,
+      });
+
+      // 统一发布链：owner-override promote 即 的 admission 时刻。
+      // 同事务重发组 revision 为 admitted（结构校验通过；跳过独立核验是 owner
+      // 决定，evidence 如实记录 —— D1：manual ≠ official）。
+      // suspension:false clears verify_hold; owner recheck passes on the same version.
+      // retraction_hold always stays.
+      // P：已声明 revision 走冻结契约的 typed lifecycle 更新（未声明
+      // 组照旧行归一）；manual evidence 与 admitted 语义原样，声明 + admitted
+      // 仍过 publishQuestionGroup 的判分就绪闸（不可判声明 ⇒ 拒发回滚）。
+      await publishVerifyLifecycleUpdate(tx, {
+        rootId: row.parent_question_id ?? questionId,
+        expectedRevision: overrideInput.revisionId,
+        expectedGeneration: overrideInput.admissionGeneration,
+        admission: {
+          state: 'admitted',
+          evidence: {
+            marking_provenance: MARKING_RULE_PROVENANCE.MANUAL,
+            verification: {
+              structural_check_passed: true,
+              independent_verification: null,
+            },
+            model_slice: null,
+          },
+        },
+        suspension: { suspended: false },
+        verification: {
+          // owner 跳过独立核验的决定如实记账（policy=manual override，非模型判定）。
+          policy_id: 'owner_override@1',
+          outcome: 'passed',
+          evidence: { override_reason: skipVerify.reason ?? null },
+        },
+        availability: QUESTION_AVAILABILITY.GENERAL_POOL,
+        actorRef: 'verify-and-promote:owner_override',
+        now,
+      });
+    });
+
+    return { promoted: true, status: 'skipped:owner_override', verifyEventId };
+  }
+
+  // ── 正常分支 = 薄派发 ───────────────────────────────────────────────────────
+  // B-normal-draft (inc-4a) — the override branch already guards draft_status;
+  // the normal branch did NOT, so an owner-UI retry (or matcher race) landing on an
+  // already-active row would re-run a PAID verify against a non-draft. The delegated run fn
+  // only short-circuits on source mismatch / terminal-event idempotency, NOT on
+  // draft_status, so gate it here BEFORE dispatch.
+  // - A non-draft row that already carries a TERMINAL verify event was legitimately
+  // promoted (e.g. an eager verify landed first,): report it as
+  // promoted + surface the existing verify event id, so a matcher caller doesn't
+  // skip a perfectly usable row.
+  // - A non-draft row WITHOUT a terminal verify event (owner-UI retry on an already-
+  // active row, never legitimately promoted via this path) → skipped:not_draft.
+  // Either way the PAID run fn is NOT dispatched against a non-draft.
+  // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate.
+  if (row.draft_status !== LEGACY_DRAFT_STATUS.DRAFT) {
+    const verifyEventId = await lookupVerifyEventId(
+      db,
+      questionId,
+      verifyActionForSource(row.source),
+    );
+    if (verifyEventId) {
+      return { promoted: true, status: 'skipped:already_verified', verifyEventId };
+    }
+    return { promoted: false, status: 'skipped:not_draft' };
+  }
+  // mirror the override branch's tombstone guard (metadata.archived_at
+  // check above) and extend it to metadata.dismissed_at: a proposal-dismissed or
+  // soft-archived row is dead, not pending — never dispatch a PAID verify against
+  // it and never promote it back to active. The matcher already skips these, but
+  // owner-UI retry / direct callers can land here.
+  const normalMeta = row.metadata as Record<string, unknown> | null;
+  if (normalMeta?.archived_at != null || normalMeta?.dismissed_at != null) {
+    return { promoted: false, status: 'skipped:archived_draft' };
+  }
+  // 按 source 字面转调现有 per-question run 函数 (整体调用)。三态 / writeAgentNote note /
+  // metadata 写回 / catch / 幂等 全部由被转调的 run 函数天然产生.
+  const runSourceVerifyFn = p.deps?.runSourceVerify ?? runSourceVerify;
+  const runQuizVerifyFn = p.deps?.runQuizVerify ?? runQuizVerify;
+
+  // source 字面优先 (比 deriveSourceTier 更稳；tier ∈ {1,2} ≈ source/sourced 走 source_verify，
+  // tier ∈ {3,4} ≈ material/generated 走 quiz_verify，但 draft verify 现实只有这两个 source).
+  let status: string;
+  if (row.source === 'web_sourced') {
+    const r = await runSourceVerifyFn({ db, questionId, runTaskFn });
+    status = r.status;
+  } else if (row.source === 'quiz_gen') {
+    const r = await runQuizVerifyFn({ db, questionId, runTaskFn });
+    status = r.status;
+  } else {
+    // 防御：现实只有 web_sourced / quiz_gen 进 draft verify。其它 source 不派发。
+    return { promoted: false, status: 'skipped:unsupported_source' };
+  }
+
+  // an eager verify can promote the row BEFORE this lazy call lands. Then the
+  // run fn short-circuits as skipped:already_verified (terminal verify event exists) but the
+  // row is ALREADY active. Treating that as promoted:false (status !== 'verified') would make
+  // the matcher skip a perfectly usable row. Re-SELECT on already_verified: if the row is no
+  // longer a draft (eager promote happened), report it as promoted + surface the existing
+  // verify event id. If it's still a draft (the terminal event was a failed/needs_review
+  // verdict, not a promote), keep the honest not-promoted result.
+  // NOTE (inc-4a) — the B-normal-draft pre-dispatch guard above already catches a row that
+  // was non-draft at SELECT time. This post-dispatch block still covers the TOCTOU race: a
+  // row that WAS a draft at SELECT but got eager-promoted concurrently between SELECT and
+  // dispatch (the run fn then returns already_verified against a now-active row).
+  if (status === 'skipped:already_verified') {
+    const post = await db
+      .select({ draft_status: question.draft_status })
+      .from(question)
+      .where(eq(question.id, questionId))
+      .limit(1);
+    // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate.
+    const alreadyActive =
+      post[0] !== undefined && post[0].draft_status !== LEGACY_DRAFT_STATUS.DRAFT;
+    if (alreadyActive) {
+      const verifyEventId = await lookupVerifyEventId(
+        db,
+        questionId,
+        verifyActionForSource(row.source),
+      );
+      return { promoted: true, status, verifyEventId };
+    }
+  }
+
+  const promoted = status === 'verified';
+  let verifyEventId: string | undefined;
+  if (promoted) {
+    verifyEventId = await lookupVerifyEventId(db, questionId, verifyActionForSource(row.source));
+  }
+
+  return {
+    promoted,
+    status,
+    verifyEventId,
+    // needs_review / failed / skipped:* 时把 status 折成 reason (非 promote 的驳回理由).
+    ...(promoted ? {} : { reason: status }),
+  };
+}

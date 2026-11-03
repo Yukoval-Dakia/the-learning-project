@@ -129,9 +129,9 @@ via `composeTaskCatalog` from `src/ai/task-catalog.ts` (which enforces `expected
 |------------|------------|----------|
 | Practice | 27 | AttributionTask, VariantGenTask, JudgeTasks, QuizGenTask, SourcingTask, SupplyPlanTask |
 | Ingestion | 9 | VisionExtractTask, StructureTask, TaggingTask |
-| Knowledge | 3 | KnowledgeEdgeProposeTask, FrontierPrerequisiteTask, KnowledgeReviewTask |
+| Knowledge | 2 | FrontierPrerequisiteTask, KnowledgeReviewTask |
 | Notes | 3 | NoteGenerateTask, NoteVerifyTask, NoteRefineTask |
-| Agency | 13 | DreamingTask, CoachTask, MindModelInductionTask, ResearchMeetingDirectorTask |
+| Agency | 12 | DreamingTask, CoachTask, MindModelInductionTask, ConjectureProbeAuthorTask |
 | Copilot | 3 | CopilotTask, TeachingTurnTask |
 
 ### 2. Execution Flow

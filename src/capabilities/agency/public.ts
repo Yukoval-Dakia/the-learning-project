@@ -7,26 +7,11 @@ export {
 } from './api/learning-intent-create';
 export { submitConjectureProbeAnswer } from './api/probe-answer';
 export {
-  type PredictionAccountability,
-  loadPredictionAccountabilityByKey,
-  rankEvidenceCellsByAccountability,
-} from './server/conjecture/accountability';
-export {
-  type ConjectureEvidenceAssetRef,
-  type ConjectureEvidenceImageSource,
-  type EnrichedEvidenceCell,
-  type EvidenceCell,
-  type LoadedConjectureEvidenceImage,
-  collectConjectureEvidenceAssetRefs,
-  conjectureKey,
-  gatherConjectureEvidence,
-} from './server/conjecture/evidence';
-export { enrichEvidenceCells } from './server/conjecture/evidence-enrichment';
-export {
-  type ConjectureHistory,
-  applyConjectureHistoryGate,
-  loadConjectureHistory,
-} from './server/conjecture/history';
+  type ConjectureCandidate,
+  selectConjectureCandidates,
+} from './server/conjecture/candidate-selection';
+export type { ConjectureEvidenceImageSource } from './server/conjecture/evidence';
+export type { ConjectureImageFetchFn } from './server/conjecture/evidence-images';
 export type {
   InduceConjectureInput,
   InduceConjectureResult,
@@ -57,6 +42,8 @@ export {
 // The platform boss layer mounts the memory pipeline queues; admin config reads its crons and mode.
 export type { GenerateBrief } from './server/memory/brief';
 export { buildBriefGenerator } from './server/memory/brief-writer';
+// Backup restore reopens outbox rows whose pg-boss job was lost with the queue.
+export { reopenUnstartedMemoryIngests } from './server/memory/memory-ingest-recovery-store';
 export {
   MEMORY_RECONCILE_QUEUE,
   memoryReconcileHandoffMode,

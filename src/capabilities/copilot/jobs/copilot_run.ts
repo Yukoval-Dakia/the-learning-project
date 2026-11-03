@@ -73,6 +73,7 @@ import type { Db, Tx } from '@/db/client';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { computeReplay } from '@/kernel/job-events';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
+import { providerFailureToPublicFailure } from '../public-prose-contract';
 import {
   DURABLE_COPILOT_EXECUTION_BUDGET,
   type ExecuteCopilotTurn,
@@ -725,10 +726,9 @@ async function executeAcceptedCopilotRun(
     if (result.partial) {
       return await handleDurableFailure(db, {
         err: new Error(result.error ?? 'run failed'),
-        publicProseFailure:
-          result.failure?.kind === 'provider_request_rejected' && result.failure.httpStatus === 400
-            ? { kind: 'provider_rejected', http_status: 400 }
-            : { kind: 'execution_failed' },
+        publicProseFailure: result.providerFailure
+          ? providerFailureToPublicFailure(result.providerFailure)
+          : { kind: 'execution_failed' },
         runId,
         sessionId: data.session_id,
         actorRef,
@@ -789,6 +789,7 @@ async function executeAcceptedCopilotRun(
             replyFinalization: finalized.receipt,
             outcome: 'success',
             durableFinishReason: result.finishReason,
+            ...(result.providerFailure ? { providerFailure: result.providerFailure } : {}),
             ...(modeState ? { modeState } : {}),
             now: new Date(),
           });

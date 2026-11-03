@@ -1,6 +1,9 @@
 // Backup restore (destructive: requires ?confirm=wipe-and-reload).
 
-import { retireInterventionPreparationJobs } from '@/capabilities/agency/public';
+import {
+  reopenUnstartedMemoryIngests,
+  retireInterventionPreparationJobs,
+} from '@/capabilities/agency/public';
 import { getConfig } from '@/core/config/store';
 import { db } from '@/db/client';
 import { getR2 } from '@/kernel/object-storage';
@@ -85,6 +88,7 @@ export async function POST(req: Request): Promise<Response> {
     r2: getR2(),
     bytes,
     retireInterventionPreparationJobs,
+    reopenUnstartedMemoryIngests,
     hydrateConfig,
   });
   return Response.json(body, { status });

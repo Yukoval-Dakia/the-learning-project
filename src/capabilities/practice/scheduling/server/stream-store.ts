@@ -16,13 +16,13 @@ import {
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 // 取题瞬间 refill（池见底补题）经根 public 按需调用：compose 后 best-effort，flag-off 为 no-op。
 import type { RefillDeps } from '../../public';
-import { type CollectedSignal, collectCandidateSignals } from '../../server/candidate-signals';
 import {
   DEFAULT_SELECTION_POLICY,
   DEFAULT_TEMPERATURE,
   type SelectionPolicyConfig,
 } from '../../server/selection-constants';
 import { startReviewSession, transitionReviewSessionState } from '../../session/public';
+import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
 import { readQuestionPace } from './question-pace';
 import {

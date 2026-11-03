@@ -2,8 +2,9 @@ import { sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import * as Ingestion from '../session-lifecycle';
 import { settleAgentRunBudget } from './budget';
-import { AGENT_BUDGET_LOCK_KEY, readAgentBudget, writeAgentBudgetPath } from './budget-state';
+import { AGENT_BUDGET_LOCK_KEY, readAgentBudget } from './budget-state';
 import { persistAgentRunHistory } from './history';
+import { agentStopAcknowledgement, confirmAgentStop } from './ownership';
 
 /** Only the executor whose awaited task/tools have ended may acknowledge stop.
  * Financial resolution is delegated unchanged: unknown liabilities stay unknown.
@@ -16,13 +17,14 @@ export async function confirmAgentPurposeStop(
 ) {
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${AGENT_BUDGET_LOCK_KEY}))`);
-    const owner = (await readAgentBudget(tx, sessionId, true))?.execution_owner;
-    if (!owner || owner.run_ref !== runRef || !owner.stop_request_id) return false;
-    // A continuation keeps runRef but claims a different segment. An old
-    // executor's drained barrier cannot acknowledge that successor's stop.
-    if (proof === 'idle' ? owner.segment_state !== 'idle' : owner.segment_claim !== proof.claimId)
-      return false;
-    if (owner.stop_confirmed) return true;
+    const ack = agentStopAcknowledgement(
+      (await readAgentBudget(tx, sessionId, true))?.execution_owner,
+      runRef,
+      proof,
+    );
+    if (ack.kind === 'refused') return false;
+    if (ack.kind === 'already_confirmed') return true;
+    const { owner } = ack;
     await Ingestion.markExtractionFailed(
       tx,
       sessionId,
@@ -34,11 +36,7 @@ export async function confirmAgentPurposeStop(
       terminal: 'failed',
       error: { code: 'purpose_withdrawn', external_effect: 'unknown_or_irreversible' },
     });
-    await writeAgentBudgetPath(tx, sessionId, ['execution_owner'], {
-      ...owner,
-      state: 'closed',
-      stop_confirmed: true,
-    });
+    await confirmAgentStop(tx, sessionId, owner);
     await persistAgentRunHistory(tx, { sessionId, runState: 'failed', executionClosed: true });
     return true;
   });

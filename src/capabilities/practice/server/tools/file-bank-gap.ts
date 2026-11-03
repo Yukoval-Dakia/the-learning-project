@@ -36,24 +36,25 @@ import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
-import { type DispatchResult, dispatchSupplyTarget } from '../question-supply/dispatcher';
 import {
   EvidenceDemandV1,
   type EvidenceDemandV1T,
   evidenceDemandToTargetContext,
-} from '../question-supply/evidence-demand';
-import {
-  type DifficultyBand,
-  type QuestionSupplyTarget,
-  targetFingerprint,
-} from '../question-supply/target-discovery';
+} from '@/kernel/supply-contracts';
+import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 import {
   BankGapRequestSchema,
   type BankSearchScope,
   verifyBankGapEvidenceMac,
-} from './bank-search';
+} from '../../question-bank/public';
+import {
+  type DifficultyBand,
+  type DispatchResult,
+  type QuestionSupplyTarget,
+  dispatchSupplyTarget,
+  targetFingerprint,
+} from '../../supply/public';
 
 // ── 输入 / 输出契约 ──────────────────────────────────────────────────────────
 

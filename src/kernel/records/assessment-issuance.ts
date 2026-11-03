@@ -45,6 +45,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { getEvents, writeEvent } from '@/kernel/events';
+import { probeContainerRef } from '@/kernel/read-models/probe-delivery';
 import {
   type GroupSubjectLookup,
   lookupGroupSubjects,
@@ -448,7 +449,7 @@ async function issueAssessmentInternal(
     }
     if (root.source === 'mind_probe') {
       if (mode !== 'auto_score') return { status: 'not_admitted' };
-      if (request.container_occurrence_ref !== `probe:${root.id}`)
+      if (request.container_occurrence_ref !== probeContainerRef(root.id))
         return { status: 'container_ref_required' };
     }
     if (!capture && lifecycle?.scoring_admission_state !== 'admitted') {

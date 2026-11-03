@@ -6,15 +6,15 @@
 
 import type { ConfigEffectiveFacts } from '@/core/config/effective';
 import { readJudgeCalibrationConfig } from '../jobs/judge-calibration-config';
-import { judgeFallbackProvider } from './judge-durable-config';
-import { jyeooDailyFetchBudget } from './question-supply/jyeoo-budget';
+import { resolveSolveOverrideFromEnv } from '../question-bank/public';
 import {
   jyeooBinaryPath,
+  jyeooDailyFetchBudget,
   jyeooSpawnMaxStderrBytes,
   jyeooSpawnMaxStdoutBytes,
   jyeooSpawnTimeoutMs,
-} from './question-supply/jyeoo-supply-config';
-import { resolveSolveOverrideFromEnv } from './quiz/solve-lane';
+} from '../supply/public';
+import { judgeFallbackProvider } from './judge-durable-config';
 
 export function practiceConfigEffectiveFacts(): ConfigEffectiveFacts {
   const calibration = readJudgeCalibrationConfig();

@@ -20,9 +20,8 @@
 | `embed_backfill` | 根 | practice/manifest | `embedding IS NULL` 扫描（question+knowledge，limit 100）|
 | `kc_dedup_nightly` | ← `embed_backfill` **硬**（跨包）| knowledge/manifest | pgvector 近重 KC → merge 提议。硬 gate `embedding IS NOT NULL`|
 | `answer_class_backfill` | 根（**无下游**）| practice/manifest | 纯派生 NULL 尾兜底（on-write `withAnswerClass` 已全量上线）|
-| `knowledge_edge_propose_nightly` | 根 | knowledge/manifest | 24h 失败窗提边（空窗早退；watermark 续扫 = YUK-377 轻量档待做）|
-| `knowledge_maintenance_nightly` | ← `knowledge_edge_propose_nightly` **软** | knowledge/manifest | KnowledgeReviewTask 维护流。软边：读 proposal inbox 当去重基线，上游挂了照样正确产出 |
-| `dreaming_nightly` | ← `edge_propose` **软** + `knowledge_maintenance_nightly` **软** | agency/manifest | Dreaming producer（DomainTool MCP bridge）|
+| `knowledge_maintenance_nightly` | 根 | knowledge/manifest | KnowledgeReviewTask 维护流：全树 + 近期失败 → 树 mutation 与 mesh 边提议（`propose_knowledge_edge`）。YUK-1664 起兼任夜间边提议者（原 `knowledge_edge_propose_nightly` 已退役，`RETIRED_BARE_CRONS` 清残留队列）|
+| `dreaming_nightly` | ← `knowledge_maintenance_nightly` **软** | agency/manifest | Dreaming producer（DomainTool MCP bridge）|
 | `coach_daily` | 根 | agency/manifest | TodayPlan/brief；读在线 mastery/session 态 |
 | `goal_scope_propose_nightly` | 根 | agency/manifest | mastery tree-snapshot 提议 goal_scope（cap=1）|
 | `research_meeting_nightly` | 根 | agency/manifest | reconcile-before-propose 教研例会（空夜早退，不写空 anchor/scan 事件）|
@@ -32,7 +31,7 @@
 | Queue | cron | 注册点 | 说明 |
 |-------|------|--------|------|
 | `nightly_orchestrator` | `30 2` | orchestration/register.ts | **DAG 单锚点**（见上节）——建当夜 run + enqueue 根节点，随后 60s 自调度 tick。整夜单点，故按 `createJobQueue` 配方建队（retryDelay 30s + backoff + `nightly_orchestrator_dlq`），不再继承 pg-boss 的 retry_delay 0 / 无 DLQ 默认（YUK-778）|
-| `hub_auto_sync_nightly` | `45 2` | notes/manifest | hub auto-zone 重算。**与 `knowledge_edge_propose_nightly` 无运行期依赖**——两者各自独立 sweep，不编边。YUK-1560 资格门：dormant 只跳过 coverage repair；abandoned edit-session presence sweep 在 `beforeEligibility` 先跑 |
+| `hub_auto_sync_nightly` | `45 2` | notes/manifest | hub auto-zone 重算。**与知识边提议无运行期依赖**——各自独立 sweep，不编边。YUK-1560 资格门：dormant 只跳过 coverage repair；abandoned edit-session presence sweep 在 `beforeEligibility` 先跑 |
 | `memory_brief_sweep` | `0 3` | agency/server/memory/triggers.ts（挂载在 boss/memory-queues.ts） | stale brief 扫描 → enqueueBriefRegen（6min singleton；subject 腿事件化 = YUK-581）|
 | `prune_job_events` | `0 4` | observability/manifest.ts → shared durable host | 默认 pg-boss；独立 phase、原 prune-v1 recovery 合同保持 |
 | `verify_dispatch_recover` | `10 4` | ../handlers.ts | `../verify-dispatch-recovery.ts` 适配 Practice 验证 intent 恢复；只补发 source/quiz verify（另在 worker startup 单次触发）|
@@ -63,7 +62,7 @@
 ## 事件触发链（enqueue-by-event，非 cron）
 - `note_generate` / `note_verify` 由 Notes manifest 注册；同事务 intent + 提交后 deterministic dispatch 衔接，由 `hub_sync_recovery` 每分钟补投。
 - `attribution_followup`（替代 inline `after()`）→ `variant_gen`；accept 后 → `variant_verify`
-- `quiz_gen` → `quiz_verify`、`sourcing` / `jyeoo_fetch` → `source_verify`、`variant_verify` —— YUK-868 起全部由 practice/manifest 声明注册（handler 在 `src/capabilities/practice/jobs/`），中央 handlers.ts 不再登记这三条 verify 队列；`verify_dispatch_recover` 仍由基础设施 `../verify-dispatch-recovery.ts` 装配，协议归 `src/capabilities/practice/server/verify-dispatch-outbox.ts`；只补发，queue 名不变
+- `quiz_gen` → `quiz_verify`、`sourcing` / `jyeoo_fetch` → `source_verify`、`variant_verify` —— YUK-868 起全部由 practice/manifest 声明注册（`quiz_gen` handler 在 `src/capabilities/practice/jobs/`，三条 verify handler 在 `src/capabilities/practice/question-bank/jobs/`），中央 handlers.ts 不再登记这三条 verify 队列；`verify_dispatch_recover` 仍由基础设施 `../verify-dispatch-recovery.ts` 装配，协议归 `src/capabilities/practice/question-bank/server/verify-dispatch-outbox.ts`；只补发，queue 名不变
 - `tencent_ocr_extract` —— 生产 OCR async（R2 creds 缺失不应破坏 test worker：lazy `get r2()`）
 - `session_summary` —— review session end 后 enqueue
 - `note_refine` —— 5 trigger 之一触发；NotePatch `≤3 ops AND ≤2 new blocks → mutator`，否则 propose

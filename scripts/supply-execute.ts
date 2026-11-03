@@ -17,11 +17,11 @@ config({ path: '.env', override: false });
 import { and, desc, eq } from 'drizzle-orm';
 // YUK-1064 CLI exception: preserve the YUK-988 public-barrel exclusion documented
 // in practice/public.ts; this opt-in executor deliberately owns the model runtime.
-import { buildSupplyExecutorDeps } from '@/capabilities/practice/jobs/supply_execute';
+import { buildSupplyExecutorDeps } from '@/capabilities/practice/supply/jobs/supply_execute';
 import {
   type SupplyDemandItem,
   executeSupplyPlan,
-} from '@/capabilities/practice/server/question-supply/plan-executor';
+} from '@/capabilities/practice/supply/server/plan-executor';
 import { SupplyPlanV1 } from '@/core/schema/supply_plan';
 import { db } from '@/db/client';
 import { event } from '@/db/schema';

@@ -15,6 +15,7 @@ import {
 } from '@/kernel/read-models/learnable-frontier';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
+import { pendingEdgeProposeEventPredicate } from '@/kernel/read-models/pending-edge-proposals';
 
 const RELATION_PREREQUISITE = 'prerequisite' as const;
 
@@ -90,8 +91,9 @@ function isMastered(
 }
 
 /**
- * Pending proposed prerequisite edges: propose events with no rate event and no
- * rejected fold. Mirrors loadPendingEdgeProposalKeys but returns full payloads.
+ * Pending proposed prerequisite edges by the kernel's inbox-pending predicate, so a
+ * corrected or decided proposal never shows as 待确认. The frontier writer dedups
+ * against the inbox gate itself.
  */
 async function loadPendingPrereqProposals(db: Db): Promise<PendingPrereqProposal[]> {
   const proposeRows = await db
@@ -99,13 +101,8 @@ async function loadPendingPrereqProposals(db: Db): Promise<PendingPrereqProposal
     .from(event)
     .where(
       and(
-        eq(event.action, 'propose'),
-        eq(event.subject_kind, 'knowledge_edge'),
-        // Filter in SQL: only prerequisite proposals, and no terminal rejected fold.
-        // Mirrors loadPendingEdgeProposalKeys — keep in sync.
+        pendingEdgeProposeEventPredicate(),
         sql`(${event.payload}->>'relation_type') = ${RELATION_PREREQUISITE}`,
-        sql`(${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'`,
-        sql`(${event.payload}->'topology_verdict'->>'status') IS DISTINCT FROM 'reject'`,
       ),
     )
     // Tiebreak by id: tight proposal loops can share a millisecond, and the item cap
@@ -113,27 +110,8 @@ async function loadPendingPrereqProposals(db: Db): Promise<PendingPrereqProposal
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(FRONTIER_PROPOSE_SCAN_CAP);
 
-  if (proposeRows.length === 0) return [];
-
-  // Accept/dismiss writes a chained rate event; a rated proposal is no longer pending.
-  const proposeIds = proposeRows.map((r) => r.id);
-  const rateRows = await db
-    .select({ caused_by_event_id: event.caused_by_event_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'rate'),
-        eq(event.subject_kind, 'knowledge_edge'),
-        inArray(event.caused_by_event_id, proposeIds),
-      ),
-    );
-  const rated = new Set(
-    rateRows.map((r) => r.caused_by_event_id).filter((id): id is string => id !== null),
-  );
-
   const out: PendingPrereqProposal[] = [];
   for (const row of proposeRows) {
-    if (rated.has(row.id)) continue;
     const p = row.payload as {
       from_knowledge_id?: unknown;
       to_knowledge_id?: unknown;

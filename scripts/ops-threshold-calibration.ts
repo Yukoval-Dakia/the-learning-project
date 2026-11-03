@@ -618,7 +618,7 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
   const MATCH_THRESHOLD = matchThreshold();
   const DEDUP_DISTANCE_MAX = dedupDistanceMax();
   const { MATCHER_COSINE_MAX_DISTANCE } = await import(
-    '@/capabilities/practice/server/quiz/matcher'
+    '@/capabilities/practice/question-bank/server/quiz/matcher'
   );
 
   const url = env.AUDIT_READ_DATABASE_URL ?? env.DATABASE_URL;

@@ -74,11 +74,8 @@ export interface MarkIdleAndFlushResult {
   results: PersistNoteRefineApplyResult[];
 }
 
-// Cross-process editing presence. Two concrete impls:
-//   - InMemoryPresenceStore — process-local Map, without durable drain recovery.
-//   - PgPresenceStore       — shared via `editing_presence` across web + worker.
-// All reads/writes are async to accommodate PG I/O; the in-memory impl resolves
-// synchronously.
+// Cross-process editing presence, implemented by PgPresenceStore and shared via
+// `artifact_edit_session` + `editing_presence` across web + worker.
 export interface PresenceStore {
   // Upsert the caller's editing session row, under the shared per-artifact advisory
   // lock so it serializes with hub-sync finalization. Never touches other sessions.

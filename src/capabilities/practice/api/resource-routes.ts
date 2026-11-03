@@ -4,7 +4,7 @@ import { ApiError, canonicalResourceResponse, errorResponse } from '@/kernel/htt
 import { createPracticeHintRequest, createPracticeSolveSession } from '../server/solve-operations';
 import { createAnswerDraft, createPracticePaperSubmission } from '../session/public';
 import { CreatePaperAnswerDraftBodySchema } from './paper-contracts';
-import { CreateSolveSubmissionBodySchema } from './question-solve-contracts';
+import { CreateSolveSubmissionBodySchema } from './solve-contracts';
 import { createSolveSubmission } from './solve-submit';
 
 type JsonObject = Record<string, unknown>;

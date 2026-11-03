@@ -3,6 +3,7 @@ import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events, learning_session } from '@/db/schema';
 import { getCorrectionStatus } from '@/kernel/events';
+import { COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
 import { lockEventCorrectionSource } from '@/kernel/events/correction-lock';
 import { ApiError } from '@/kernel/http';
 import { consumeReviewAnswerBinding } from '@/kernel/records/review-answer-binding';
@@ -32,7 +33,7 @@ export async function resolveCopilotReviewAnswer(
       and(
         eq(event.id, input.sourceEventId),
         eq(event.session_id, input.sessionId),
-        eq(event.action, 'experimental:copilot_user_ask'),
+        eq(event.action, COPILOT_USER_ASK_ACTION),
         eq(event.actor_kind, 'user'),
         eq(event.actor_ref, 'user:self'),
       ),
@@ -52,7 +53,7 @@ export async function resolveCopilotReviewAnswer(
       current.session_id !== input.sessionId ||
       current.actor_kind !== 'user' ||
       current.actor_ref !== 'user:self' ||
-      current.action !== 'experimental:copilot_user_ask' ||
+      current.action !== COPILOT_USER_ASK_ACTION ||
       JSON.stringify(BoundReviewAnswerSchema.parse(current.payload.review_answer)) !==
         JSON.stringify(binding)
     ) {

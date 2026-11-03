@@ -13,7 +13,6 @@ import {
   KnowledgeTreeResponseSchema,
   LegacyKnowledgeEdgeDecisionBodySchema,
   LegacyKnowledgeEdgeDecisionResponseSchema,
-  LegacyKnowledgeMisconceptionVetoResponseSchema,
   LegacyKnowledgeProposalDecisionBodySchema,
   LegacyKnowledgeProposalDecisionResponseSchema,
   LegacyKnowledgeProposalListResponseSchema,
@@ -165,38 +164,10 @@ export const knowledgeCapability = defineCapability({
         pagination: 'none',
         load: () => import('./api/misconceptions').then((m) => m.GET),
       },
-      {
-        // Dismisses a pending conjecture. Only the candidate segment is live here.
-        method: 'POST',
-        path: '/api/knowledge/misconceptions/[id]/veto',
-        operationId: 'vetoKnowledgeMisconceptionLegacy',
-        request: { params: KnowledgeIdParamsSchema },
-        responses: {
-          200: LegacyKnowledgeMisconceptionVetoResponseSchema,
-          ...API_ERROR_RESPONSES,
-        },
-        successStatus: 200,
-        deprecation: {
-          since: '@1783987200',
-          successor: '/api/proposals/[id]/decisions',
-        },
-        load: () => import('./api/misconception-veto').then((m) => m.POST),
-      },
     ],
   },
   jobs: {
     handlers: [
-      {
-        // Propose-only topology producer. No real upstream, which is why it is a root.
-        name: 'knowledge_edge_propose_nightly',
-        dependsOn: [],
-        eligibility: nightlyEligibility('structure'),
-        queue: 'llm',
-        load: () =>
-          import('./jobs/knowledge_edge_propose_nightly').then(
-            (m) => m.buildKnowledgeEdgeProposeNightlyHandler,
-          ),
-      },
       {
         // Propose-only bootstrap for an empty frontier.
         name: 'frontier_fill_nightly',
@@ -207,10 +178,11 @@ export const knowledgeCapability = defineCapability({
           import('./jobs/frontier_fill_nightly').then((m) => m.buildFrontierFillNightlyHandler),
       },
       {
-        // Multi-step maintenance producer. The edge-propose dependency is soft: it reads
-        // the inbox and still produces correctly if that upstream fails.
+        // Multi-step maintenance producer and the nightly mesh-edge proposer: it reads the
+        // whole tree plus recent failures and proposes edges via propose_knowledge_edge.
+        // No real upstream, which is why it is a root.
         name: 'knowledge_maintenance_nightly',
-        dependsOn: [{ job: 'knowledge_edge_propose_nightly', soft: true }],
+        dependsOn: [],
         eligibility: nightlyEligibility('structure'),
         queue: 'agent',
         load: () =>

@@ -11,7 +11,6 @@ import {
 } from './intervention';
 import { learningIntentOutlineTaskSpec } from './learning-intent';
 import { memoryBriefTaskSpec } from './memory-brief';
-import { researchMeetingDirectorTaskSpec } from './research-meeting-director';
 
 export const agencyTaskSpecs = defineOwnedTaskSpecs('agency', {
   LearningIntentOutlineTask: learningIntentOutlineTaskSpec,
@@ -23,7 +22,6 @@ export const agencyTaskSpecs = defineOwnedTaskSpecs('agency', {
   InterventionRecommendationTask: interventionRecommendationTaskSpec,
   InterventionPackageAuthorTask: interventionPackageAuthorTaskSpec,
   InterventionPackageReviewTask: interventionPackageReviewTaskSpec,
-  ResearchMeetingDirectorTask: researchMeetingDirectorTaskSpec,
   DreamingTask: dreamingTaskSpec,
   CoachTask: coachTaskSpec,
   MemoryBriefTask: memoryBriefTaskSpec,

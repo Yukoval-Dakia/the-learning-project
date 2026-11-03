@@ -105,7 +105,8 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | `lockProducerFenceInstaller` 等 | `src/server/durable/*` | durable family install/control/tick |
 | `withinComposePaidWorkLock` | `practice/scheduling/server/compose-paid-work-lock.ts` | `stream:compose-paid:<date>` session |
 | `lockPracticeStreamPartition` / `lockPracticeStreamScope` | `src/kernel/locks/practice-stream.ts` | 练习流 xact：每日流 `stream:compose:<date>`、按需会话 `stream:session:<sessionId>`、作用域 `stream:scope:<date>:<knowledgeId>`。取锁顺序仍在 `stream-store.ts`（scope → session partition） |
-| `acquireControlPlaneLockSql` | `server/subjects/control-plane-lock.ts` | int 597001 |
+| `lockQuestionServingCommand` | `src/kernel/locks/question-serving-command.ts` | 题目 serving 命令账本 `yuk1514:serving:<eventId>` `hashtextextended(key, 0)` xact，键来自 `advisoryLockRegistry.questionServingCommand`；调用点 `practice/question-bank/server/serving-actions.ts` 的 `runServingAction`，同键并发命令等胜者提交后重放 |
+| `acquireControlPlaneLockSql` / `withControlPlane` | `src/kernel/records/subject-control-lock.ts`；唯一取锁点 `observability/server/subject-control/commit.ts` | int 597001 xact，作为事务第一条语句；subject revision 与 control journal 同在该模块记账 |
 
 ## 3. 族表（81）
 

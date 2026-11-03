@@ -130,23 +130,7 @@
       "count": 1
     },
     {
-      "path": "src/capabilities/practice/server/question-supply/ingest-dedup.ts",
-      "count": 1
-    },
-    {
-      "path": "src/capabilities/practice/server/question-supply/placement-supply-lock.ts",
-      "count": 1
-    },
-    {
       "path": "src/capabilities/practice/server/review-operation.ts",
-      "count": 2
-    },
-    {
-      "path": "src/capabilities/practice/server/serving-actions.ts",
-      "count": 1
-    },
-    {
-      "path": "src/capabilities/practice/server/tools/submit-question.ts",
       "count": 2
     },
     {

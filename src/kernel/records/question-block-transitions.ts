@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 import type { Tx } from '@/db/client';
 import { question_block } from '@/db/schema';
@@ -11,6 +11,8 @@ type QuestionBlockTransition =
       blockId: string;
       questionId: string;
       attemptEventId: string | null;
+      /** CAS on the version the caller activated against; a miss fails its transaction. */
+      expectedVersion?: number;
     }
   | { kind: 'ignore_source' | 'restore_after_revert'; blockId: string }
   | {
@@ -94,6 +96,8 @@ export async function applyQuestionBlockTransition(
     nextVersion = transition.draft.version + 1;
   } else {
     blockId = transition.blockId;
+    const expectedVersion =
+      'expectedVersion' in transition ? transition.expectedVersion : undefined;
     const [{ version }] = await tx
       .update(question_block)
       .set({
@@ -101,7 +105,11 @@ export async function applyQuestionBlockTransition(
         updated_at: now,
         version: sql`${question_block.version} + 1`,
       })
-      .where(eq(question_block.id, blockId))
+      .where(
+        expectedVersion === undefined
+          ? eq(question_block.id, blockId)
+          : and(eq(question_block.id, blockId), eq(question_block.version, expectedVersion)),
+      )
       .returning({ version: question_block.version });
     nextVersion = version;
   }

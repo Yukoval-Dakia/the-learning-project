@@ -43,6 +43,11 @@ import {
   acquireProposalDecisionLock,
   findExistingRateEvent,
 } from '@/kernel/proposals/applier-helpers';
+import {
+  activeProbePredicate,
+  probeContainerRef,
+  probeIssuanceId,
+} from '@/kernel/read-models/probe-delivery';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
@@ -119,39 +124,7 @@ export async function countActiveProbes(db: DbOrTx): Promise<number> {
   const rows = await db
     .select({ metadata: question.metadata })
     .from(question)
-    .where(
-      and(
-        eq(question.source, PROBE_QUESTION_SOURCE),
-        sql`NOT EXISTS (
-          SELECT 1 FROM ${event}
-          WHERE ${event.subject_kind} = 'question'
-            AND ${event.subject_id} = ${question.id}
-            AND ${event.action} = ${PROBE_RESULT_ACTION}
-        )`,
-        // Exclude corrected conjectures before the cap-sized window. Keep missing
-        // provenance in the count so corrupt rows cannot silently free a slot.
-        sql`(
-          COALESCE(${question.metadata}->>'conjecture_proposal_id', '') = ''
-          OR COALESCE((
-            SELECT correction.payload->>'correction_kind'
-            FROM ${event} AS correction
-            WHERE correction.action = 'correct'
-              AND correction.subject_kind = 'event'
-              AND correction.subject_id =
-                  ${question.metadata}->>'conjecture_proposal_id'
-              AND (
-                (correction.payload->>'correction_kind' = 'supersede'
-                  AND COALESCE(correction.payload->>'replacement_event_id', '') <> '')
-                OR (correction.payload->>'correction_kind' IN
-                    ('retract', 'mark_wrong', 'restore')
-                  AND NOT correction.payload ? 'replacement_event_id')
-              )
-            ORDER BY correction.created_at DESC, correction.id DESC
-            LIMIT 1
-          ), '') NOT IN ('retract', 'mark_wrong', 'supersede')
-        )`,
-      ),
-    )
+    .where(activeProbePredicate())
     .limit(MAX_CONCURRENT_ACTIVE_PROBES);
   return rows.length;
 }
@@ -240,12 +213,12 @@ export async function servePublishedProbe(db: DbOrTx, probeQuestionId: string) {
     const [original] = await tx
       .select({ revision_id: assessment_issuance.revision_id })
       .from(assessment_issuance)
-      .where(eq(assessment_issuance.issuance_id, `iss_probe_${probeQuestionId}`));
+      .where(eq(assessment_issuance.issuance_id, probeIssuanceId(probeQuestionId)));
     return issueAssessment(tx, {
       group_id: probeQuestionId,
       revision_id: original?.revision_id,
-      issuance_id: `iss_probe_${probeQuestionId}`,
-      container_occurrence_ref: `probe:${probeQuestionId}`,
+      issuance_id: probeIssuanceId(probeQuestionId),
+      container_occurrence_ref: probeContainerRef(probeQuestionId),
       actorRef: 'conjecture:probe-serve',
     });
   });

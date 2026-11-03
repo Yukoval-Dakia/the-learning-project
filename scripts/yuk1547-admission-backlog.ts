@@ -125,15 +125,15 @@ import {
   ADMISSION_FAMILY,
   admissionJobId,
   lockAdmissionGroup,
-} from '@/capabilities/practice/server/admission/enqueue';
+} from '@/capabilities/practice/question-bank/server/admission/enqueue';
 import {
   type AdmissionVoidRecovered,
   type AdmissionVoidRelease,
   recoverAdmissionVoidSend,
   releaseAdmissionVoidSuccessor,
-} from '@/capabilities/practice/server/admission/reauthorization';
-import { resolveQuestionAdmissionPolicyId } from '@/capabilities/practice/server/admission/run-admission';
-import { QUESTION_ADMISSION_TASK_KIND } from '@/capabilities/practice/server/admission/solve';
+} from '@/capabilities/practice/question-bank/server/admission/reauthorization';
+import { resolveQuestionAdmissionPolicyId } from '@/capabilities/practice/question-bank/server/admission/run-admission';
+import { QUESTION_ADMISSION_TASK_KIND } from '@/capabilities/practice/question-bank/server/admission/solve';
 import { getPracticeBoss } from '@/capabilities/practice/server/queue-runtime';
 import {
   QUESTION_ADMISSION_PAID_UNIT,

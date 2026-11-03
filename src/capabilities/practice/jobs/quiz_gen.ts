@@ -49,6 +49,11 @@ import { knowledge, learning_item } from '@/db/schema';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
 import {
+  type PlacementVerificationAuthority,
+  SupplyTraceV1,
+  type SupplyTraceV1T,
+} from '@/kernel/supply-contracts';
+import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   type DomainToolName,
   toMcpAllowedToolName,
@@ -61,7 +66,14 @@ import {
   resolveQuizGenSkills,
   skillKindToQuestionKind,
 } from '@/subjects/quiz-gen-skills';
-import { SupplyTraceV1, type SupplyTraceV1T } from '../server/question-supply/evidence-demand';
+import {
+  EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
+  dispatchPendingVerifyIntents,
+} from '../question-bank/public';
+import { type FewShotExample, renderFewShotBlock } from '../server/quiz/fewshot-retrieve';
+import { embedMaterialInPrompt } from '../server/quiz/quiz-gen-material';
+import { QuizGenOutputFailure, parseOutput } from '../server/quiz/quiz-gen-output';
+import type { DifficultyBand } from '../supply/public';
 import {
   PLACEMENT_ATTEMPT_HEARTBEAT_MS,
   PLACEMENT_QUEUE_EXPIRY_MS,
@@ -72,11 +84,11 @@ import {
   PlacementStarterBudgetExhaustedError,
   PlacementStarterStaleAuthorityError,
   PlacementStarterUnknownCostError,
-  type PlacementVerificationAuthority,
   acquirePlacementAttempt,
   assertPlacementAttemptFence,
   finishPlacementAttempt,
   markAttemptVerifying,
+  markPlacementStarterClaimTerminal,
   placementDeliveryMetadata,
   reconcilePlacementDelivery,
   recordPlacementAttemptOutput,
@@ -85,14 +97,7 @@ import {
   reservePlacementGenerationCall,
   startPlacementAttemptHeartbeat,
   terminalizePlacementUnknownCost,
-} from '../server/question-supply/placement-starter-attempts';
-import { markPlacementStarterClaimTerminal } from '../server/question-supply/placement-starter-store';
-import type { DifficultyBand } from '../server/question-supply/target-discovery';
-import { EXACT_DUPLICATE_EVENT_SAMPLE_CAP } from '../server/quiz/content-fingerprint';
-import { type FewShotExample, renderFewShotBlock } from '../server/quiz/fewshot-retrieve';
-import { embedMaterialInPrompt } from '../server/quiz/quiz-gen-material';
-import { QuizGenOutputFailure, parseOutput } from '../server/quiz/quiz-gen-output';
-import { dispatchPendingVerifyIntents } from '../server/verify-dispatch-outbox';
+} from '../supply/public';
 import { persistQuizDrafts } from './quiz_gen_persist';
 import {
   QUIZ_PLAN_MAX_ATTEMPTS,
@@ -140,7 +145,7 @@ export interface QuizGenJobData {
   // phase-deferred: contrast-aware generation (consuming this field to write a discrimination
   // question) is a flag-flip increment — the dispatcher forwards it now (dark behind
   // CONFUSABLE_CONTRAST_ENABLED) so the seam is data-complete; the handler does not yet read
-  // it. Context: src/capabilities/practice/server/question-supply/confusable-contrast-discovery.ts.
+  // it. Context: src/capabilities/practice/supply/server/confusable-contrast-discovery.ts.
   knowledge_ids?: string[];
   supply_trace?: SupplyTraceV1T;
 }
