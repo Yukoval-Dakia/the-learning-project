@@ -20,16 +20,10 @@ import {
 } from '../server/nudge-triggers';
 
 /** job.data 形状（松守边界，判定事实由 evaluate 从 event 表回读——payload 只带定位 id）。 */
-const JobData = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('ingestion_complete'),
-    session_id: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal('attempt_failure'),
-    attempt_event_id: z.string().min(1),
-  }),
-]);
+const JobData = z.object({
+  kind: z.literal('ingestion_complete'),
+  session_id: z.string().min(1),
+});
 
 /** postgres.js surfaces unique violations as code '23505' (possibly wrapped); walk the cause chain. */
 function isUniqueViolation(err: unknown): boolean {
@@ -47,10 +41,7 @@ function isUniqueViolation(err: unknown): boolean {
  * 捕获后当已发跳过（writeEvent 的 onConflictDoNothing 只 target PK）。
  */
 export async function runCopilotNudgeEvaluate(db: Db, input: NudgeEvaluateInput): Promise<void> {
-  const inputRef =
-    input.kind === 'ingestion_complete'
-      ? `session=${input.session_id}`
-      : `attempt=${input.attempt_event_id}`;
+  const inputRef = `session=${input.session_id}`;
   const config = loadNudgeConfig();
   const decision = await evaluateNudgeTrigger(db, input, config);
   if (!decision.fire) {

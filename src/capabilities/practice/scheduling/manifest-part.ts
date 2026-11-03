@@ -1,7 +1,8 @@
 // 学习安排 owner 的 manifest 片段，由根 `manifest.ts` 组合。
 import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import type { CapabilityManifest } from '@/kernel/manifest';
-import { LEARNING_EVENT_ACTIONS, nightlyEligibility } from '@/kernel/nightly-eligibility';
+import { nightlyEligibility } from '@/kernel/nightly-eligibility';
+import { LEARNING_ACTIVITY_ACTIONS } from '@/kernel/read-models/learner-activity';
 import {
   ReviewAdviceBodySchema,
   ReviewAdviceResponseSchema,
@@ -25,7 +26,7 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
       {
         id: 'practice.learner-return-wake',
         version: 1,
-        actions: [...LEARNING_EVENT_ACTIONS],
+        actions: [...LEARNING_ACTIVITY_ACTIONS],
         load: () =>
           import('./server/learner-return-wake').then((m) => m.buildLearnerReturnWakeSubscriber),
       },

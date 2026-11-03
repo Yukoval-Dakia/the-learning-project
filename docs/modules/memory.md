@@ -30,7 +30,8 @@ the matching evidence ids; the model only writes each window's prose. Two scopes
 The nightly sweep (`buildMemoryBriefSweepHandler`, scheduled `0 3 * * *` Asia/Shanghai) enqueues
 per-scope regen jobs onto `MEMORY_BRIEF_REGEN_QUEUE`; `buildMemoryBriefRegenHandler` drains them and
 calls `regenerateMemoryBrief`, which upserts the `memory_brief_note` row (`onConflictDoUpdate` on the
-unique `scope_key`). `enqueueBriefRegen` dedups per scope on a 6-minute singleton window.
+unique `scope_key`). `enqueueMemoryBriefRegen` (`src/kernel/memory-brief-regen.ts`) dedups per scope
+on a singleton window: 4 hours for `subject:*` scopes, 6 minutes for the rest.
 
 ### `global` path (BR-6, unchanged)
 

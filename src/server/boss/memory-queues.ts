@@ -3,7 +3,6 @@
 import type { Job, PgBoss } from 'pg-boss';
 import {
   type GenerateBrief,
-  MEMORY_BRIEF_REGEN_QUEUE,
   MEMORY_BRIEF_SWEEP_QUEUE,
   MEMORY_EVENT_INGEST_QUEUE,
   MEMORY_INFRA_SCHEDULES,
@@ -20,6 +19,7 @@ import {
   buildMemoryReconcileHandler,
 } from '@/capabilities/agency/public';
 import type { Db } from '@/db/client';
+import { MEMORY_BRIEF_REGEN_QUEUE } from '@/kernel/memory-brief-regen';
 import { MEMORY_BRIEF_SWEEP_JOB, eligibilityFor } from '@/kernel/nightly-eligibility';
 import type { MemoryClient } from '@/server/ai/mem0/client';
 import { judgeReconciliation } from '@/server/ai/mem0/reconcile-llm';

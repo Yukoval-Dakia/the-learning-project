@@ -32,7 +32,7 @@
 |-------|------|--------|------|
 | `nightly_orchestrator` | `30 2` | orchestration/register.ts | **DAG 单锚点**（见上节）——建当夜 run + enqueue 根节点，随后 60s 自调度 tick。整夜单点，故按 `createJobQueue` 配方建队（retryDelay 30s + backoff + `nightly_orchestrator_dlq`），不再继承 pg-boss 的 retry_delay 0 / 无 DLQ 默认（YUK-778）|
 | `hub_auto_sync_nightly` | `45 2` | notes/manifest | hub auto-zone 重算。**与知识边提议无运行期依赖**——各自独立 sweep，不编边。YUK-1560 资格门：dormant 只跳过 coverage repair；abandoned edit-session presence sweep 在 `beforeEligibility` 先跑 |
-| `memory_brief_sweep` | `0 3` | agency/server/memory/triggers.ts（挂载在 boss/memory-queues.ts） | stale brief 扫描 → enqueueBriefRegen（6min singleton；subject 腿事件化 = YUK-581）|
+| `memory_brief_sweep` | `0 3` | agency/server/memory/triggers.ts（挂载在 boss/memory-queues.ts） | stale brief 扫描 → enqueueMemoryBriefRegen（`src/kernel/memory-brief-regen.ts`，subject 4h / 其余 6min singleton；subject 腿事件化 = YUK-581）|
 | `prune_job_events` | `0 4` | observability/manifest.ts → shared durable host | 默认 pg-boss；独立 phase、原 prune-v1 recovery 合同保持 |
 | `verify_dispatch_recover` | `10 4` | ../handlers.ts | `../verify-dispatch-recovery.ts` 适配 Practice 验证 intent 恢复；只补发 source/quiz verify（另在 worker startup 单次触发）|
 | `prune_orphan_review_sessions` | `15 4` | observability/manifest.ts → shared durable host | 默认 pg-boss；固定 cutoff、冻结 candidates、锁内 Review writer + 同事务 receipt；started/paused 严格 started_at < tick cutoff 安全网 |
