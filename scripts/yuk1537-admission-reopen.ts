@@ -217,15 +217,14 @@ async function reopen(receiptPath: string, manifestPath: string) {
   const { lockPaidEffectControlFamily, readPaidEffectControl } = await import(
     '@/db/paid-effect-control'
   );
-  const { getPracticeBoss, practiceBossTransaction } = await import(
-    '@/capabilities/practice/server/queue-runtime'
-  );
+  const { getStartedBoss } = await import('@/server/boss/client');
+  const { fromPgBossDrizzleTx } = await import('@/db/pg-boss-drizzle');
   const { publishQuestionGroup } = await import('@/kernel/records/assessment-publication');
   const { publishedContractSeal, publishedSealAccepts } = await import(
     '@/kernel/records/assessment-normalization'
   );
   const { getR2 } = await import('@/kernel/object-storage');
-  const boss = await getPracticeBoss();
+  const boss = await getStartedBoss();
   try {
     const jobs = await db.transaction(async (tx) => {
       await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
@@ -342,7 +341,7 @@ async function reopen(receiptPath: string, manifestPath: string) {
             dispatch_generation: control.generation,
             reopen_unknown_input_digest: row.input_digest,
           },
-          { id, db: practiceBossTransaction(tx) },
+          { id, db: fromPgBossDrizzleTx(tx) },
         );
         if (queued === null)
           throw new Error('Marked job already exists; inspect instead of replaying');

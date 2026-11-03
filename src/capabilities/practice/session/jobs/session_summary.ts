@@ -5,12 +5,12 @@
 // block the close request (and survives the page being closed mid-flight).
 
 import type { Job } from 'pg-boss';
-import { makePracticeTaskTextRunFn } from '@/capabilities/practice/server/task-runtime';
 import {
   type RunTaskFn,
   runSessionSummary,
 } from '@/capabilities/practice/session/server/session-summary';
 import type { Db } from '@/db/client';
+import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 
 export interface SessionSummaryJobData {
   session_id: string;
@@ -24,7 +24,7 @@ export function buildSessionSummaryHandler(
   db: Db,
   deps: DepsOverride = {},
 ): (jobs: Job<SessionSummaryJobData>[]) => Promise<void> {
-  const runTaskFn = deps.runTaskFn ?? makePracticeTaskTextRunFn(db);
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskTextFn(db);
   return async (jobs) => {
     for (const job of jobs) {
       const sessionId = job.data?.session_id;

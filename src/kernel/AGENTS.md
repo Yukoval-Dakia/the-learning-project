@@ -10,7 +10,7 @@
 | `read-models/model-admission.ts` | 判分模型准入的读侧：active 切片、题组→科目查找；当前模型 pin 表由 practice 判分 owner 的 `installModelAdmissionPins()`（`capabilities/practice/grading/server/model-admission-pins.ts`，经 practice `public.ts` 转出）在 API、Start 验收入口、worker 与维护脚本启动时安装；未安装时只要存在 active 切片即抛错（无 active 切片时 pin 不参与判定）。切片登记与退役归 `capabilities/practice/grading/server/model-slice-registry` |
 | `events/` | event envelope 的完整读写 API、修正投影（corrections / effective-truth）和 deterministic scope tagging；唯一 event INSERT owner |
 | `tools/` | DomainTool 契约（types / allowlists / budgets / context-throttle），central registry 与 capability tool 共享 |
-| `read-models/` | 跨 capability 只读投影（failure attempts、failure-learning knowledge context、question activity、cause policy、knowledge tree/subject 解析、questions 列表、daily review plan inputs、intervention preparation stage、note section projection） |
+| `read-models/` | 跨 capability 只读投影（failure attempts、failure-learning knowledge context、question activity、cause policy、knowledge tree/subject 解析、目标定位范围与种子根锚点 `placement-scope`、questions 列表、daily review plan inputs、intervention preparation stage、note section projection） |
 | `scheduling.ts` + `records/scheduling-state.ts` | 遗忘引擎选择（`FORGETTING_ENGINE`）与保持率读数；`material_fsrs_state` 唯一存取（读投影、enroll/upsert/退役/merge，锁序不变）。写入调用方仍只有结算等既有 owner（ADR-0037）。候选引擎重建由结算经 `installSchedulingCandidateRebuild()` 在 API / worker / acceptance 启动时安装；未安装时只在候选引擎需要重建的分支抛 `HostOperationNotInstalledError`，默认 `fsrs` 引擎不受影响 |
 | `records/mastery-state.ts` | 在线 mastery 诊断的完整 attempt 更新、显式 upsert 与单 KC merge retirement；跨面结算、恢复和 merge 编排仍归调用方 |
 | `records/intervention-diagnostic-materialize.ts` | 干预诊断题物料化与退役：题行谱系、草稿/准入门、一次性发布、当日流安置（锁在 `locks/intervention-diagnostic-delivery.ts`）。Agency 在干预事务内调用；Practice 在 worker 启动时绑定当日流日期、判分活动与题目排程入学/退役 |
@@ -21,6 +21,7 @@
 | `proposals/` | proposal 生命周期 registry + inbox / writer / producers / signals engine（kernel 共享机制） |
 | `locks/registry.ts` | 命名 advisory-lock 键模板与键派生。不取锁、不证明顺序。contract-epoch 状态迁移由 `locks/contract-epoch-transition-lock.ts` 消费；迁移演练竞争写者 fence 由 `locks/migration-apply-fence.ts` 消费。learning-state write 由 `src/db/learning-state-lock.ts` 消费；provider-attempt 三族（hashtextextended salt 0）由 `src/server/ai/provider-attempt-lock.ts` 消费；探针 serve cap、probe question、conjecture fold 由 `src/capabilities/agency/server/conjecture/probe-lock.ts` 消费；intervention instance / corrections:all / source 由 `src/capabilities/agency/server/intervention/intervention-lock.ts` 消费（store、恢复与 probe-result 订阅）；同一 corrections:all / source 键由 `src/kernel/events/correction-lock.ts` 消费（`writeEvents` 与 review-answer-consumer） |
 | `cost.ts` / `canonical-json.ts` | 共享数值与序列化 helper |
+| `parse-task-output.ts` / `generation-prompt-support.ts` | TaskSpec 文本输出的 JSON 解析与 schema 校验；出题类 prompt 的题型词表与科目 rubric 规范段 |
 | `object-storage.ts` | 共享 R2/S3 对象 I/O：完整 client 接口、SDK 命令/响应适配与 lazy singleton；不拥有资产引用、数据库事务或付费策略 |
 | `http.ts` | 公共 HTTP helper（公共件，非契约） |
 | `judge.ts` / `placement.ts` / `placement-persistence.ts` | 根目录过渡门面：只 re-export 现有消费者实际使用的符号，不得新增符号。`judge.ts` 只剩 ingestion / agency 用到的 6 个判题入口 |

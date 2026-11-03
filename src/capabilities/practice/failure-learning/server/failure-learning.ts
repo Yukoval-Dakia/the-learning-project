@@ -7,8 +7,8 @@ import {
   getFailureAttemptWithReasoningTraceById,
 } from '@/kernel/read-models/failure-attempts';
 import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-context';
+import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import type { PracticeTaskRunFn } from '../../server/task-runtime';
 import {
   type AttributionOutcome,
   runAttributionAndWriteJudgeEvent,
@@ -76,7 +76,7 @@ export interface FailureLearning {
 
 export interface FailureLearningDeps {
   db: Db;
-  runTaskFn: PracticeTaskRunFn;
+  runTaskFn: BoundRunTaskTextFn;
   enqueueVariant?: (attemptEventId: string) => Promise<void>;
 }
 

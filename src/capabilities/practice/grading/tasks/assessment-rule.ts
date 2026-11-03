@@ -3,7 +3,7 @@ import {
   AssessmentRuleDecision,
   type AssessmentRuleDecisionT,
 } from '@/core/schema/assessment/model-decision';
-import { parseTaskOutput } from '../../tasks/parse-output';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 
 export const assessmentRuleTaskSpec = {
   ownership: 'owned',

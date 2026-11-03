@@ -18,8 +18,8 @@ import { writeAiProposal } from '@/kernel/proposals/writer';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-context';
+import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
-import type { PracticeTaskRunFn } from '../../server/task-runtime';
 import {
   type CauseCategoryProposeInput,
   parseCauseCategoryProposeOutput,
@@ -62,7 +62,7 @@ export async function maybeProposeCauseCategoryFromOthers(params: {
   db: Db;
   /** effectiveProfile（声明 ∪ overlay.active）——负面清单 + subject id 来源。 */
   profile: SubjectProfile;
-  runTaskFn: PracticeTaskRunFn;
+  runTaskFn: BoundRunTaskTextFn;
 }): Promise<void> {
   try {
     const { db, profile } = params;

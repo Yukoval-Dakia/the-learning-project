@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { makePracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import type { DomainTool, ToolContext } from '../../tools/types';
 import { type VariantProposalResult, createFailureLearning } from '../server/failure-learning';
 
@@ -73,7 +73,7 @@ async function proposeVariantExecute(
     return mapVariantProposalToToolOutput(
       await createFailureLearning({
         db: ctx.db,
-        runTaskFn: makePracticeTaskRunFn(ctx.db, {
+        runTaskFn: makeRunTaskFn(ctx.db, {
           signal: ctx.signal,
           parentTaskRunId: ctx.taskRunId,
           ...(ctx.providerSessionDeadlineAt !== undefined

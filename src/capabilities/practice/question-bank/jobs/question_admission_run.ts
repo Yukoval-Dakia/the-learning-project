@@ -36,8 +36,8 @@ import {
   publishedSealAccepts,
 } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import { type BoundRunTaskTextFn, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from '../../server/task-runtime';
 import {
   placementAuthority as placementAuthorityPort,
   readVisibleVectorNearHold,
@@ -214,7 +214,7 @@ export async function runAdmissionForQuestion(
   db: Db,
   suppliedData: QuestionAdmissionRunData,
   delivery: AdmissionDelivery = { id: randomUUID() },
-  deps: { runTask?: PracticeTaskRunFn; signal?: AbortSignal } = {},
+  deps: { runTask?: BoundRunTaskTextFn; signal?: AbortSignal } = {},
 ): Promise<QuestionAdmissionRunResult> {
   const data = AdmissionJobData.parse(suppliedData);
   let groupId = data.question_id;
@@ -432,11 +432,11 @@ export async function runAdmissionForQuestion(
     try {
       const executeTask =
         deps.runTask ??
-        makePracticeTaskTextRunFn(db, {
+        makeRunTaskTextFn(db, {
           providerSessionDeadlineAt: Date.now() + 15 * 60_000,
           judgeRetryPolicy: 'none',
         });
-      const runTask: PracticeTaskRunFn = async (...args) => {
+      const runTask: BoundRunTaskTextFn = async (...args) => {
         try {
           await beforeSend();
           const [kind, input, ctx] = args;

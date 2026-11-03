@@ -1,6 +1,6 @@
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
-import { makeRunTaskFn } from '../../server/task-runtime';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { DraftForceEnableBodySchema } from '../api/draft-moderation-contracts';
 import type { RunTaskFn } from '../jobs/quiz_verify';
 import { verifyAndPromote } from './quiz/verify-and-promote';

@@ -46,6 +46,18 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
   subscriptions: {
     handlers: [
       {
+        // Admission verdicts and source_verify suspends both land on the declared
+        // assessment_publish action; the handler re-checks the hold through the same
+        // paid-effect command path (auto ledger key).
+        id: 'practice.serving-recheck',
+        version: 1,
+        actions: ['experimental:assessment_publish'],
+        load: () =>
+          import('./server/serving-recheck-subscription').then(
+            (m) => m.buildServingRecheckSubscriber,
+          ),
+      },
+      {
         id: 'practice.question-admission-enqueue',
         version: 1,
         actions: ['experimental:assessment_publish'],

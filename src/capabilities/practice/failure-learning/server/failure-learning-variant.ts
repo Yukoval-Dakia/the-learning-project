@@ -32,8 +32,8 @@ import { getMisconceptionsByIds } from '@/kernel/read-models/failure-learning-co
 // Runtime creation records its complete base, including cause_category, before
 // index and projection. Genesis remains the legacy backfill event, not runtime creation.
 import { createMistakeVariantDraft } from '@/kernel/records/mistake-variant-facts';
+import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import type { PracticeTaskRunFn } from '../../server/task-runtime';
 import { MISCONCEPTION_CANDIDATE_PREFIX } from '../tasks/attribute-retrieve';
 import { type VariantGenInput, parseVariantOutput } from '../tasks/variant-gen';
 import { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './cause-overlay';
@@ -45,7 +45,7 @@ import { loadNativeFailureContext } from './failure-learning-native';
 // the inbox even when the user defers review.
 export const VARIANTS_MAX_IN_FLIGHT = 3;
 
-export type RunTaskFn = PracticeTaskRunFn;
+export type RunTaskFn = BoundRunTaskTextFn;
 
 export interface RunVariantGenParams {
   db: Db;

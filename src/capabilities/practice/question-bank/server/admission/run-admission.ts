@@ -31,8 +31,8 @@ import type { ScoringRuleT } from '@/core/schema/assessment/scoring-rule';
 import { validateStructure } from '@/core/schema/assessment/structure';
 import type { Db } from '@/db/client';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+import { type BoundRunTaskTextFn, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
-import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from '../../../server/task-runtime';
 import {
   type AdmissionProbe,
   type ProbeOutcome,
@@ -70,8 +70,8 @@ export function resolveQuestionAdmissionPolicyId(): string {
 
 export interface QuestionAdmissionOptions {
   db: Db;
-  /** 缺省 makePracticeTaskTextRunFn(db) —— 测试/编排可注入替代。 */
-  runTask?: PracticeTaskRunFn;
+  /** 缺省 makeRunTaskTextFn(db) —— 测试/编排可注入替代。 */
+  runTask?: BoundRunTaskTextFn;
   subjectProfile?: SubjectProfile;
   /**
    * OPEN owner decision — solve 2 是否必须异源模型族。默认 null = 同一
@@ -212,8 +212,7 @@ export async function runQuestionAdmission(
 ): Promise<QuestionAdmissionResult> {
   const policyId = options.policyId ?? resolveQuestionAdmissionPolicyId();
   const now = options.now ?? new Date();
-  const runTask =
-    options.runTask ?? makePracticeTaskTextRunFn(options.db, { judgeRetryPolicy: 'none' });
+  const runTask = options.runTask ?? makeRunTaskTextFn(options.db, { judgeRetryPolicy: 'none' });
   const solverContext =
     options.solver2 != null ? 'independent_model' : 'same_model_isolated_context';
   const per_unit = new Map<string, UnitAdmissionResult>();

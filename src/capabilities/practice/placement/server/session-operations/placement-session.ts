@@ -18,7 +18,7 @@ import { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
 import {
   resolveGoalPlacementScope,
   resolveNearbyPlacementScope,
-} from '../../../server/placement-scope';
+} from '@/kernel/read-models/placement-scope';
 import {
   dispatchPlacementStarterClaim,
   materializePlacementStartersForGoal,
