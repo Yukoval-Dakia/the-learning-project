@@ -9,9 +9,8 @@ import { loadLastLearnerEventAt } from '@/kernel/read-models/learner-activity';
 
 export const COACH_DAILY_QUEUE = 'coach_daily';
 
-// Each run is one paid CoachTask. The nightly DAG ran it at most once a night;
-// pg-boss keeps one job per key per 24h slot, so the on-return wake never runs
-// more often than that.
+// pg-boss keeps one job per key per 24h slot, the same one-job-a-day bound the
+// nightly DAG had. A job's retries (llm tier) each bill a CoachTask attempt, as before.
 const COACH_WAKE_WINDOW_SECONDS = 24 * 60 * 60;
 // Written by the agency scan owner at the start of every coach run, success or not,
 // so a failed run also counts as this window's attempt.
@@ -39,10 +38,10 @@ export async function enqueueCoachIfDue(
   const lastLearnerAt = await loadLastLearnerEventAt(db);
   if (!lastLearnerAt) return false;
   if (lastCoachAt && lastLearnerAt.getTime() <= lastCoachAt.getTime()) return false;
-  await boss.send(
+  const jobId = await boss.send(
     COACH_DAILY_QUEUE,
     {},
     { singletonKey: 'coach.wake', singletonSeconds: COACH_WAKE_WINDOW_SECONDS },
   );
-  return true;
+  return jobId !== null;
 }

@@ -65,8 +65,8 @@
 - `tencent_ocr_extract` —— 生产 OCR async（R2 creds 缺失不应破坏 test worker：lazy `get r2()`）
 - `session_summary` —— review session end 后 enqueue
 - `note_refine` —— 5 trigger 之一触发；NotePatch `≤3 ops AND ≤2 new blocks → mutator`，否则 propose
-- `learner_return_wake` —— YUK-1560：attempt / review / assessment_attempt 订阅入队。只在入队前档位是空闲或休眠时准备今日安排和限量补题；允许推导的事件才刷新 `subject:` 简报。任何档位都先经 `src/kernel/coach-wake.ts` 判断教练计划是否过期
-- `coach_daily` —— 不在夜间 DAG。`learner_return_wake` 在「24h 内无 coach 运行且此后有允许推导的学习活动」时入队，singleton `coach.wake` 24h 槽（每槽至多一次付费 CoachTask，不高于原每夜一次）
+- `learner_return_wake` —— YUK-1560：订阅 kernel `LEARNING_ACTIVITY_ACTIONS` 入队。只在入队前档位是空闲或休眠时准备今日安排和限量补题；允许推导的事件才刷新 `subject:` 简报。任何档位都先经 `src/kernel/coach-wake.ts` 判断教练计划是否过期
+- `coach_daily` —— 不在夜间 DAG。`learner_return_wake` 在「24h 内无 coach 运行且此后有允许推导的学习活动」时入队，singleton `coach.wake` 24h 槽（每槽至多一个 job，与原每夜一次同界；llm 档失败重试各自计费，与改前相同）
 
 ## YUK-1393 review orphan recovery
 

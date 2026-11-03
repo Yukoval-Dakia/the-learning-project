@@ -5,7 +5,6 @@ import {
   INTERVENTION_PREPARATION_FAILED_ACTION,
   INTERVENTION_SETTLED_ACTION,
 } from '@/core/schema/intervention';
-import { COACH_DAILY_QUEUE } from '@/kernel/coach-wake';
 import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { nightlyEligibility } from '@/kernel/nightly-eligibility';
@@ -169,7 +168,8 @@ export const agencyCapability = defineCapability({
       {
         // 不在夜间 DAG：学习者回来且计划过期时由 learner_return_wake 经 kernel 端口按义务入队
         // （每 24h 槽至多一次，见 kernel/coach-wake.ts）。
-        name: COACH_DAILY_QUEUE,
+        // Literal on purpose: the task-census audit attributes jobs by string-literal names.
+        name: 'coach_daily',
         queue: 'llm',
         load: () => import('./jobs/coach_daily').then((m) => m.buildCoachDailyHandler),
       },
