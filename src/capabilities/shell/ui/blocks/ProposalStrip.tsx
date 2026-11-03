@@ -1,14 +1,24 @@
 // M4-T6 (YUK-319)：提议收件箱摘要条（设计稿 screen-today.jsx ProposalStrip）。
 // 数据源 workbench summary proposals（total + by_kind 全 kind 零值映射）；
 // chips 只渲非零 kind，降序。
+// YUK-1713 — M3E presentation (today-m3e.css .td-card / .td-kind; kind tones through
+// inbox-look.ts like the inbox). Counts, filtering, order and the /inbox target are unchanged.
 
-import { Btn } from '@/ui/primitives/Btn';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { ArrowRight, Inbox } from 'lucide-react';
+import { Button } from '@/ui-next/public';
 
 import { kindMeta } from '../inbox-api';
+import { inboxTone } from '../inbox-look';
 import { isMovedOutKind } from '../inbox-tier';
 import type { WorkbenchSummary } from '../workbench-api';
+
+// Exact count, a lower bound (≥N) when the scan hit its cap, or '?' when the capped scan found
+// none it could count (early returns instead of a nested ternary; same order).
+function decisionCountText(total: number, hasMore: boolean): number | string {
+  if (!hasMore) return total;
+  if (total > 0) return `≥${total}`;
+  return '?';
+}
 
 export function ProposalStrip({
   proposals,
@@ -21,48 +31,42 @@ export function ProposalStrip({
     .filter(([kind, n]) => n > 0 && !isMovedOutKind(kind))
     .sort((a, b) => b[1] - a[1]);
   return (
-    <LoomCard pad>
-      <div className="card-head">
-        <span className="card-icon">
-          <LoomIcon name="inbox" size={18} />
+    <section className="td-card">
+      <div className="td-card-head">
+        <span className="td-card-ic" aria-hidden="true">
+          <Inbox size={18} />
         </span>
-        <div className="card-title">提议收件箱</div>
-        <Btn
+        <h3 className="td-card-title">提议收件箱</h3>
+        <Button
           size="sm"
           variant="ghost"
-          iconEnd="arrow"
-          style={{ marginLeft: 'auto' }}
+          className="td-card-aside"
           onClick={() => navigate('/inbox')}
         >
           去收件箱
-        </Btn>
+          <ArrowRight size={16} aria-hidden="true" />
+        </Button>
       </div>
       {proposals.decision_total === 0 && !proposals.has_more ? (
-        <div className="quiet-empty">没有待审提议。</div>
+        <p className="td-quiet">没有待审提议。</p>
       ) : (
-        <div className="prop-summary">
-          <div className="prop-summary-n serif tnum">
-            {proposals.has_more
-              ? proposals.decision_total > 0
-                ? `≥${proposals.decision_total}`
-                : '?'
-              : proposals.decision_total}
-          </div>
-          <div className="prop-summary-kinds">
-            {proposals.has_more && (
-              <span className="meta">计数已达扫描上限，可能还有待审提议。</span>
-            )}
+        <div className="td-props">
+          <p className="td-props-n un-num">
+            {decisionCountText(proposals.decision_total, proposals.has_more)}
+          </p>
+          <div className="td-props-kinds">
+            {proposals.has_more && <p className="td-quiet">计数已达扫描上限，可能还有待审提议。</p>}
             {breakdown.map(([k, n]) => {
               const meta = kindMeta(k);
               return (
-                <span key={k} className={`chip tone-chip-${meta.tone}`}>
-                  {meta.label} <b className="mono">{n}</b>
+                <span key={k} className="td-kind" data-tone={inboxTone(meta.tone)}>
+                  {meta.label} <b className="un-num">{n}</b>
                 </span>
               );
             })}
           </div>
         </div>
       )}
-    </LoomCard>
+    </section>
   );
 }

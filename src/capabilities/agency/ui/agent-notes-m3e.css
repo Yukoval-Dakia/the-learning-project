@@ -2,15 +2,17 @@
    docs/design/2026-11-03-inbox-agent-notes-events-m3e.md. Design language:
    docs/design/2026-10-07-ui-visual-direction.md (T1 semantic tokens, T3 glass only on floating
    layers, M1 motion only on change, A2 hit areas). The main column carries .un-m3e-bridge, so every
-   --un-* role below reads the Google M3 roles. The Today board keeps its own legacy .an-* look
-   until Today moves. */
+   --un-* role below reads the Google M3 roles. The Today board (AgentNotesBoard, root .ag-board,
+   also a bridge; YUK-1713) reuses the same grouped rows, so the shared rules below apply under
+   either scope; its own frame is at the end of the block. Today record:
+   docs/design/2026-11-03-today-finish-m3e.md. */
 
 [data-ui-next].ag-page {
   background: var(--un-md-sys-color-surface);
   color: var(--un-md-sys-color-on-surface);
 }
 
-[data-ui-next].ag-page {
+:is([data-ui-next].ag-page, [data-ui-next] .ag-board) {
   /* ═══ Page frame ═══ */
   & .ag-main {
     display: grid;
@@ -482,6 +484,161 @@
     font-size: var(--un-fs-2);
   }
 
+  /* ═══ Today board (AgentNotesBoard): a quiet sunk panel around the same rows ═══ */
+  & .ag-board-label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--un-sp-1) var(--un-sp-3);
+  }
+
+  & .ag-board-card {
+    display: grid;
+    gap: var(--un-sp-3);
+    min-width: 0;
+    padding: var(--un-sp-4);
+    border-radius: 24px;
+    background: var(--un-bg-sunk);
+  }
+
+  & .ag-board-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+    min-width: 0;
+  }
+
+  & .ag-board-toggle {
+    display: flex;
+    flex: 1 1 240px;
+    align-items: center;
+    gap: var(--un-sp-3);
+    min-width: 0;
+    padding: var(--un-sp-1);
+    margin: calc(-1 * var(--un-sp-1));
+    border-radius: var(--un-r-2);
+    text-align: start;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .ag-board-toggle:hover {
+    background: var(--un-bg-hover);
+  }
+
+  & .ag-board-ic {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--un-r-3);
+    background: var(--un-bg-raised);
+    color: var(--un-text-2);
+  }
+
+  & .ag-board-titles {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  & .ag-board-title {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    font-weight: var(--un-fw-semibold);
+    line-height: var(--un-lh-tight);
+  }
+
+  & .ag-board-chevbtn {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--un-r-3);
+    color: var(--un-text-2);
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .ag-board-chevbtn:hover {
+    background: var(--un-bg-hover);
+  }
+
+  & .ag-board-chev {
+    transition: transform var(--un-t-small) var(--un-ease-glide);
+  }
+
+  & .ag-board-card[data-open="1"] .ag-board-chev {
+    transform: rotate(180deg);
+  }
+
+  & .ag-board-peek {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-1) var(--un-sp-2);
+    min-width: 0;
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    text-align: start;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .ag-board-peek:hover {
+    background: var(--un-bg-hover);
+  }
+
+  & .ag-board-peek b {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .ag-board-peek-t {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  & .ag-board-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2) var(--un-sp-3);
+  }
+
+  & .ag-board-note {
+    flex: 1 1 auto;
+  }
+
+  & .ag-board-more {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    color: var(--un-accent-ink);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .ag-board-more:hover {
+    background: var(--un-bg-hover);
+  }
+
+  /* The head (toggle, 看全部, chevron) and the foot (看全部, 全部已读) wrap on narrow screens; on
+     touch keep wrapped rows far enough apart that 44px tap areas never overlap. */
+  @media (pointer: coarse) {
+    & .ag-board-head,
+    & .ag-board-foot {
+      row-gap: var(--un-sp-4);
+    }
+  }
+
   @media (max-width: 720px) {
     & .ag-main {
       padding-inline: var(--un-sp-4);
@@ -503,9 +660,19 @@
   }
 }
 
+/* The empty Today board: one faint line, no heading, no card. */
+[data-ui-next] .ag-board-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--un-sp-2);
+  margin-block: var(--un-sp-5);
+  color: var(--un-text-3);
+  font-size: var(--un-fs-1);
+}
+
 /* Motion only on change (M1/M3): opened runs fade in once; no keyframes under reduced motion. */
 @media (prefers-reduced-motion: no-preference) {
-  [data-ui-next].ag-page .ag-runs[open] .ag-run-list {
+  :is([data-ui-next].ag-page, [data-ui-next] .ag-board) .ag-runs[open] .ag-run-list {
     animation: ag-fade-in var(--un-t-small) var(--un-ease-glide);
   }
 

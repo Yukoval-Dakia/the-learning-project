@@ -1,0 +1,481 @@
+/* Today (/today; YUK-1713, YUK-1324), M3E presentation of the pieces that were still on the old
+   base: the page wash, the AI failure flags, the overnight band (夜链 · 交班) with its disclosures,
+   the four column cards (sessions, AI changes, proposals, cost) and the week heat. The page frame,
+   heading, count cards, next-step cards and profile panel live in src/ui-next/today/today.css;
+   the brief / conjecture / probe / overnight-cost blocks in coach-shared-m3e.css. Everything below
+   the heading sits in .td-flow, a .un-m3e-bridge, so the --un-* roles read the Google M3 roles of
+   the Today root. Design record: docs/design/2026-11-03-today-finish-m3e.md (T1 semantic tokens,
+   T3 no shadows on cards, M1 motion only on change, A2 hit areas). */
+
+/* ═══ Page wash (YUK-1324) ═══
+   A soft tint at the top of the content column. It is the root's own background layer, so it can
+   never be wider than the page: no 100vw box, no horizontal scroll at any width. */
+main[data-ui-next].un-today-page {
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--un-md-sys-color-secondary-container) 55%, transparent) 0,
+    transparent 440px
+  );
+  background-repeat: no-repeat;
+}
+
+[data-ui-next] {
+  & .td-flow {
+    min-width: 0;
+  }
+
+  & .td-quiet {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  /* ═══ Cards on Today: white panel, hairline, no shadow ═══ */
+  & .td-card {
+    display: grid;
+    gap: var(--un-sp-4);
+    min-width: 0;
+    padding: var(--un-sp-5);
+    border-radius: 24px;
+    background: var(--un-md-sys-color-surface-container-lowest);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-md-sys-color-outline-variant);
+  }
+
+  & .td-card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2) var(--un-sp-3);
+    min-width: 0;
+  }
+
+  & .td-card-ic {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--un-r-3);
+    background: var(--un-md-sys-color-surface-container-high);
+    color: var(--un-md-sys-color-on-surface-variant);
+  }
+
+  & .td-card-ic[data-tone="accent"] {
+    background: var(--un-md-sys-color-secondary-container);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .td-card-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    font-weight: var(--un-fw-semibold);
+    line-height: var(--un-lh-tight);
+  }
+
+  & .td-card-aside {
+    flex: none;
+    margin-left: auto;
+  }
+
+  /* Static count chips (not buttons). */
+  & .td-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+    min-width: 0;
+  }
+
+  & .td-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 28px;
+    padding: 2px 10px;
+    border-radius: var(--un-r-1);
+    background: var(--un-md-sys-color-surface-container-high);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    overflow-wrap: anywhere;
+  }
+
+  & .td-chip b {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  /* ═══ AI failure flags (position 1, above the brief) ═══ */
+  & .td-flags {
+    display: grid;
+    gap: var(--un-sp-2);
+    min-width: 0;
+  }
+
+  & .td-flag {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px var(--un-sp-2);
+    min-width: 0;
+    padding: var(--un-sp-2) var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-critical-soft);
+    color: var(--un-critical);
+  }
+
+  & .td-flag-ic {
+    flex: none;
+  }
+
+  & .td-flag-t {
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .td-flag-s {
+    min-width: 0;
+    font-size: var(--un-fs-1);
+    overflow-wrap: anywhere;
+  }
+
+  /* ═══ 夜链 · 交班: disclosure pills and what they open ═══ */
+  & .td-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-self: start;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0 var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    box-shadow: inset 0 0 0 1px var(--un-md-sys-color-outline-variant);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+    text-align: start;
+    transition: background-color var(--un-t-small) var(--un-ease-glide);
+  }
+
+  & .td-toggle:hover {
+    background: var(--un-md-sys-color-surface-container-high);
+  }
+
+  & .td-toggle[aria-expanded="true"] {
+    background: var(--un-md-sys-color-secondary-container);
+    box-shadow: none;
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .td-toggle b {
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .td-chev {
+    flex: none;
+    transition: transform var(--un-t-small) var(--un-ease-glide);
+  }
+
+  & .td-toggle[aria-expanded="true"] .td-chev {
+    transform: rotate(180deg);
+  }
+
+  & .td-reveal {
+    display: grid;
+    gap: var(--un-sp-3);
+    min-width: 0;
+  }
+
+  & .td-foot {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-2);
+  }
+
+  /* 待你试做 sits under the band card, independent of it. */
+  & .td-probes {
+    display: grid;
+    gap: var(--un-sp-3);
+    min-width: 0;
+    margin-top: var(--un-sp-3);
+  }
+
+  /* A row of chips can hold the 备课猜想 toggle; wrapped rows keep 44px tap areas apart. */
+  @media (pointer: coarse) {
+    & .td-chips,
+    & .td-foot {
+      row-gap: var(--un-sp-4);
+    }
+  }
+
+  /* ═══ Rows: sessions and AI changes ═══ */
+  & .td-rows {
+    display: grid;
+    min-width: 0;
+  }
+
+  & .td-rows > .td-row:not(:first-child) {
+    border-top: var(--un-hairline) solid var(--un-md-sys-color-outline-variant);
+  }
+
+  & .td-row {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-3);
+    min-width: 0;
+    padding: var(--un-sp-3) 0;
+  }
+
+  & .td-row-lead {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--un-r-1);
+    background: var(--un-md-sys-color-surface-container-high);
+    color: var(--un-text-2);
+  }
+
+  & .td-row-lead[data-tone="positive"] {
+    background: var(--un-positive-soft);
+    color: var(--un-positive);
+  }
+
+  & .td-row-lead[data-tone="caution"] {
+    background: var(--un-caution-soft);
+    color: var(--un-caution);
+  }
+
+  & .td-row-lead[data-tone="secondary"] {
+    background: color-mix(in srgb, var(--un-md-sys-color-secondary) 14%, transparent);
+    color: var(--un-md-sys-color-secondary);
+  }
+
+  & .td-row-body {
+    display: grid;
+    flex: 1 1 auto;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  & .td-row-title {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+    line-height: var(--un-lh-tight);
+    overflow-wrap: anywhere;
+  }
+
+  & .td-row-sub {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px var(--un-sp-2);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    overflow-wrap: anywhere;
+  }
+
+  & .td-row-end {
+    flex: none;
+  }
+
+  & .td-row[data-undone="1"] .td-row-body {
+    opacity: 0.62;
+  }
+
+  & .td-mono {
+    font-family: var(--un-font-mono);
+    font-size: 0.92em;
+  }
+
+  & .td-done {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--un-positive);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .td-row-err {
+    padding: 0 0 var(--un-sp-3) 44px;
+    color: var(--un-critical);
+    font-size: var(--un-fs-1);
+  }
+
+  /* ═══ 提议收件箱 ═══ */
+  & .td-props {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-3) var(--un-sp-5);
+    min-width: 0;
+  }
+
+  & .td-props-n {
+    color: var(--un-text-1);
+    font: 500 40px / 1 var(--un-font-sans);
+  }
+
+  & .td-props-kinds {
+    display: flex;
+    flex: 1 1 200px;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+    min-width: 0;
+  }
+
+  & .td-kind {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 28px;
+    padding: 2px 10px;
+    border-radius: var(--un-r-1);
+    background: var(--un-md-sys-color-surface-container-high);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .td-kind[data-tone="accent"] {
+    background: var(--un-md-sys-color-secondary-container);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .td-kind[data-tone="secondary"] {
+    background: color-mix(in srgb, var(--un-md-sys-color-secondary) 14%, transparent);
+    color: var(--un-md-sys-color-secondary);
+  }
+
+  & .td-kind[data-tone="positive"] {
+    background: var(--un-positive-soft);
+    color: var(--un-positive);
+  }
+
+  & .td-kind[data-tone="caution"] {
+    background: var(--un-caution-soft);
+    color: var(--un-caution);
+  }
+
+  & .td-kind[data-tone="critical"] {
+    background: var(--un-critical-soft);
+    color: var(--un-critical);
+  }
+
+  /* ═══ 今日 AI 成本 ═══ */
+  & .td-cost {
+    display: grid;
+    gap: var(--un-sp-2);
+    min-width: 0;
+  }
+
+  & .td-cost-amt {
+    color: var(--un-text-1);
+    font: 500 28px / 1.2 var(--un-font-sans);
+    overflow-wrap: anywhere;
+  }
+
+  & .td-cost-note {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    overflow-wrap: anywhere;
+  }
+
+  /* ═══ 学习画像: kept-from-last-read notice ═══ */
+  & .td-stale {
+    margin-top: var(--un-sp-2);
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: var(--un-caution-soft);
+    color: var(--un-caution);
+    font-size: var(--un-fs-1);
+  }
+
+  /* ═══ 7 天活动热力: one row of seven days, level by tint (plus the count below) ═══ */
+  & .td-heat {
+    display: grid;
+    gap: var(--un-sp-2);
+    min-width: 0;
+  }
+
+  & .td-heat-row,
+  & .td-heat-axis {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  & .td-heat-cell {
+    height: 40px;
+    border-radius: var(--un-r-1);
+    background: var(--un-md-sys-color-surface-container-high);
+  }
+
+  & .td-heat-cell[data-lvl="1"] {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-primary) 18%,
+      var(--un-md-sys-color-surface-container-high)
+    );
+  }
+
+  & .td-heat-cell[data-lvl="2"] {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-primary) 36%,
+      var(--un-md-sys-color-surface-container-high)
+    );
+  }
+
+  & .td-heat-cell[data-lvl="3"] {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-primary) 56%,
+      var(--un-md-sys-color-surface-container-high)
+    );
+  }
+
+  & .td-heat-cell[data-lvl="4"] {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-primary) 78%,
+      var(--un-md-sys-color-surface-container-high)
+    );
+  }
+
+  & .td-heat-cell[data-lvl="5"] {
+    background: var(--un-md-sys-color-primary);
+  }
+
+  & .td-heat-axis {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    text-align: center;
+  }
+
+  & .td-heat-axis > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-width: 760px) {
+    & .td-card {
+      padding: var(--un-sp-4);
+    }
+  }
+}
+
+/* Motion only on change (M1): a disclosure the learner opens fades in once. No entrance motion
+   anywhere else; no keyframes under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next] .td-reveal {
+    animation: td-fade-in var(--un-t-small) var(--un-ease-glide);
+  }
+
+  @keyframes td-fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+}

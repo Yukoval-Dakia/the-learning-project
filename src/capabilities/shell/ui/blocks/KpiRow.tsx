@@ -1,10 +1,11 @@
-import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
+// Today's four count cards (M3E: today.css .un-today-metric; YUK-1713 swapped the last old icon).
+import { ArrowRight } from 'lucide-react';
 import type { WorkbenchSummary } from '../workbench-api';
 
 interface Kpi {
   key: string;
   label: string;
-  icon: LoomIconName;
+  icon: 'review' | 'mistakes' | 'knowledge' | 'inbox';
   value: number | string;
   sub: string;
   onGo: () => void;
@@ -16,9 +17,17 @@ function KpiCard({ kpi }: { kpi: Kpi }) {
       <span>{kpi.label}</span>
       <strong>{kpi.value}</strong>
       <span className="un-today-meta">{kpi.sub}</span>
-      <LoomIcon name="arrow" size={18} />
+      <ArrowRight size={18} aria-hidden="true" />
     </button>
   );
+}
+
+// The proposals card's number: exact, a lower bound (≥N) when the scan hit its cap, or '?' when
+// the capped scan found none it could count (early returns instead of a nested ternary).
+function proposalsValue(total: number, hasMore: boolean): number | string {
+  if (!hasMore) return total;
+  if (total > 0) return `≥${total}`;
+  return '?';
 }
 
 export function KpiRow({
@@ -67,11 +76,7 @@ export function KpiRow({
       key: 'proposals',
       label: 'AI 提议',
       icon: 'inbox',
-      value: proposalsHasMore
-        ? proposalsDecisionTotal > 0
-          ? `≥${proposalsDecisionTotal}`
-          : '?'
-        : proposalsDecisionTotal,
+      value: proposalsValue(proposalsDecisionTotal, proposalsHasMore),
       sub: proposalsHasMore ? '扫描已达上限，可能仍有待审' : '等待裁决的提议',
       onGo: () => navigate('/inbox'),
     },

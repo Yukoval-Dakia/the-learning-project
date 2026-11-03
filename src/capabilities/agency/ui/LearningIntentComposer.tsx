@@ -1,13 +1,14 @@
 // YUK-604 — live learner entry for the existing Learning Intent planner.
 // Planning creates a B-tier proposal only; the owner confirms it in the shared
 // proposal inbox, where acceptance materializes the learning-item/note tree.
+// YUK-1713 — M3E presentation (learning-intent.css; ui-next Button / Chip, lucide). The topic
+// state, Enter-to-submit form, trim + pending guard, disabled rules, error reset on edit and
+// the /inbox targets are unchanged.
 
 import { useMutation } from '@tanstack/react-query';
+import { ArrowRight, RefreshCw, Sparkles, Target } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
-import { Btn } from '@/ui/primitives/Btn';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { SectionLabel } from '@/ui/primitives/SectionLabel';
+import { Button, Chip } from '@/ui-next/public';
 import { createLearningIntentProposal } from './learning-intent-api';
 import './learning-intent.css';
 
@@ -39,16 +40,16 @@ export function LearningIntentComposer({
   const plan = mutation.data;
 
   return (
-    <section className="li-intent-section">
-      <SectionLabel>下一条学习主线</SectionLabel>
-      <LoomCard pad className="li-intent-card">
+    <section className="li-intent un-m3e-bridge">
+      <h2 className="un-today-section-title">下一条学习主线</h2>
+      <div className="li-intent-card">
         <div className="li-intent-copy">
-          <span className="card-icon accent">
-            <LoomIcon name="target" size={18} />
+          <span className="li-intent-ic" aria-hidden="true">
+            <Target size={18} />
           </span>
           <div>
-            <div className="card-title">把“我想学什么”拆成可执行路径</div>
-            <p className="meta li-intent-help">
+            <h3 className="li-intent-title">把“我想学什么”拆成可执行路径</h3>
+            <p className="li-intent-help">
               AI 先生成主线与原子学习项；只有你在收件箱确认后，才会创建学习项和配套笔记。
             </p>
           </div>
@@ -56,16 +57,15 @@ export function LearningIntentComposer({
 
         {pendingCount > 0 && !plan ? (
           <div className="li-intent-existing">
-            <span>
-              已有 {pendingCount} 条学习路径等待你确认。先处理现有提议，再生成下一条主线。
-            </span>
-            <Btn variant="secondary" iconEnd="arrow" onClick={() => navigate('/inbox')}>
+            <p>已有 {pendingCount} 条学习路径等待你确认。先处理现有提议，再生成下一条主线。</p>
+            <Button variant="secondary" onClick={() => navigate('/inbox')}>
               去收件箱
-            </Btn>
+              <ArrowRight size={16} aria-hidden="true" />
+            </Button>
           </div>
         ) : (
           <form className="li-intent-form" onSubmit={submit}>
-            <label className="sr-only" htmlFor="learning-intent-topic">
+            <label className="un-sr-only" htmlFor="learning-intent-topic">
               想学习的主题
             </label>
             <input
@@ -80,31 +80,35 @@ export function LearningIntentComposer({
                 if (mutation.isError) mutation.reset();
               }}
             />
-            <Btn
+            <Button
               type="submit"
               variant="secondary"
-              icon={mutation.isPending ? 'refresh' : 'sparkle'}
               disabled={!topic.trim() || mutation.isPending || Boolean(plan)}
             >
+              {mutation.isPending ? (
+                <RefreshCw size={16} aria-hidden="true" />
+              ) : (
+                <Sparkles size={16} aria-hidden="true" />
+              )}
               {mutation.isPending ? '正在生成…' : '生成学习路径'}
-            </Btn>
+            </Button>
           </form>
         )}
 
         {mutation.isError && (
-          <div className="li-intent-error" role="alert">
+          <p className="li-intent-error" role="alert">
             学习路径暂时没有生成，请稍后重试。你的现有目标和学习数据没有变化。
-          </div>
+          </p>
         )}
 
         {plan && (
           <div className="li-intent-preview" aria-live="polite">
             <div className="li-intent-preview-head">
               <div>
-                <span className="meta">待你确认的主线</span>
-                <div className="li-intent-hub serif">{plan.hub.title}</div>
+                <p className="li-intent-kicker">待你确认的主线</p>
+                <p className="li-intent-hub">{plan.hub.title}</p>
               </div>
-              <span className="badge tone-good">已生成提议</span>
+              <Chip tone="positive">已生成提议</Chip>
             </div>
             <p className="li-intent-summary">{plan.hub.summary_md}</p>
             <ol className="li-intent-steps">
@@ -122,14 +126,15 @@ export function LearningIntentComposer({
               ))}
             </ol>
             <div className="li-intent-actions">
-              <span className="meta">确认前不会改动知识图或学习项。</span>
-              <Btn variant="good" iconEnd="arrow" onClick={() => navigate('/inbox')}>
+              <p className="li-intent-help">确认前不会改动知识图或学习项。</p>
+              <Button variant="primary" onClick={() => navigate('/inbox')}>
                 去收件箱确认
-              </Btn>
+                <ArrowRight size={16} aria-hidden="true" />
+              </Button>
             </div>
           </div>
         )}
-      </LoomCard>
+      </div>
     </section>
   );
 }
