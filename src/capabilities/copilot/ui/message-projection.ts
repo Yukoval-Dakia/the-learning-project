@@ -74,10 +74,14 @@ export function projectCopilotReply(
   };
 }
 
+/**
+ * The AI row carries only real reply text. While nothing has arrived it stays empty and the row's
+ * own "正在回复" line plus the run footer show the state; engineering status never becomes the
+ * model's words.
+ */
 export function projectDurableCopilotMessage(
   previous: ChatMessage,
   view: CopilotRunView,
-  fallbackText: string,
 ): ChatMessage | null {
   // Deltas are provisional; DONE metadata alone cannot certify their contents.
   const terminalText = text(view.replyPayload?.reply_md);
@@ -108,14 +112,13 @@ export function projectDurableCopilotMessage(
     public_prose: publicProse,
     ...(view.toolCalls && view.toolCalls.length > 0 ? { tool_calls: view.toolCalls } : {}),
   };
-  if (!terminal)
-    return { ...base, text: view.replyText || fallbackText || previous.text, streaming: true };
+  if (!terminal) return { ...base, text: view.replyText || previous.text, streaming: true };
   const reply = projectCopilotReply(
     base,
     {
       ...view.replyPayload,
       public_prose: publicProse,
-      reply: view.phase === 'completed' ? terminalText : view.replyText || fallbackText,
+      reply: view.phase === 'completed' ? terminalText : view.replyText,
       checkpoint_event_id:
         view.failureReason === 'ambiguous_execution'
           ? undefined
@@ -124,7 +127,8 @@ export function projectDurableCopilotMessage(
     undefined,
     view.phase === 'failed',
   );
-  return reply ?? { ...base, text: fallbackText, streaming: false };
+  // A failed run with neither text nor a public failure status (legacy rows): state the outcome.
+  return reply ?? { ...base, text: '这次没有完成回答。', streaming: false };
 }
 
 export function copilotRunReplyMessageId(runId: string): string {
@@ -157,7 +161,9 @@ export function projectPendingCopilotMessagePair(
   const ai: ChatMessage = {
     id: pending.aiMessageId,
     role: 'ai',
-    text: pending.dispatching === false ? '还不能确认这条是否已送达。' : '正在发送…',
+    // No status words in the AI row: while sending, the row's own "正在回复" line is the only
+    // indicator; an unconfirmed delivery is stated (with 恢复) by the footer notice.
+    text: '',
     streaming: pending.dispatching !== false,
     session_id: pending.sessionId,
     idempotency_key: pending.idempotencyKey,
@@ -221,7 +227,6 @@ export function projectCopilotRunUpdate(
     runId: string;
     sessionId: string;
     view: CopilotRunView;
-    fallbackText: string;
     userMessage?: string;
     derivationPolicy?: DerivationPolicyT;
   },
@@ -278,7 +283,7 @@ export function projectCopilotRunUpdate(
   ) {
     return next;
   }
-  const projected = projectDurableCopilotMessage(previous, run.view, run.fallbackText);
+  const projected = projectDurableCopilotMessage(previous, run.view);
   if (projected) return upsertCopilotMessage(next, projected);
   if (run.view.phase !== 'completed') return next;
   return upsertCopilotMessage(next, {

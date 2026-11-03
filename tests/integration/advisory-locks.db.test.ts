@@ -45,8 +45,8 @@ import {
   updateThetaForAttempt,
   upsertMasteryState,
 } from '@/kernel/records/mastery-state';
+import { retireFsrsStateOnMerge, upsertFsrsState } from '@/kernel/records/scheduling-state';
 import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
-import { retireFsrsStateOnMerge, upsertFsrsState } from '@/server/fsrs/state';
 import { backfillKnowledgeGenesis } from '../../scripts/backfill-genesis-events';
 import { issueSoloFixture } from '../fixtures/assessment-solo';
 import { nativeSoloHttpFixture } from '../fixtures/native-solo-http';

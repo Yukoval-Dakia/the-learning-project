@@ -18,7 +18,7 @@ import { consumeDurableCopilotRun, createCopilotRunView } from '../subtask-event
 import type { ActiveRun, CompanionCtx } from './companion-context';
 import type { RunSnapshot } from './companion-state';
 import { plainError } from './plain-errors';
-import { fallbackText, isTerminal, progressStage, reconnectCopy } from './run-copy';
+import { isTerminal, progressStage, reconnectCopy } from './run-copy';
 
 /** Replay-last-N window (matches the turns route default). */
 const REPLAY_LIMIT = 20;
@@ -58,7 +58,6 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
         sessionId: run.sessionId,
         view: run.view,
         derivationPolicy: run.derivationPolicy,
-        fallbackText: fallbackText(run),
         ...(run.userMessage ? { userMessage: run.userMessage } : {}),
       }),
     );
@@ -210,7 +209,6 @@ export function createRunTracker(ctx: CompanionCtx): RunTracker {
           sessionId,
           view: run.view,
           derivationPolicy: run.derivationPolicy,
-          fallbackText: fallbackText(run),
           ...(run.userMessage ? { userMessage: run.userMessage } : {}),
         });
       }
