@@ -1,5 +1,5 @@
-// Proposal accept appliers for ingestion. block_merge lives here; image_candidate
-// delegates to ./image-candidate-accept. The shared dispatch only routes here.
+// Proposal accept appliers for ingestion. block_merge lives here. The shared
+// dispatch only routes here.
 
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';

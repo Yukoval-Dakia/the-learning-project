@@ -1,4 +1,3 @@
-import type { ImageCandidateAcceptDeps } from '@/capabilities/ingestion/public';
 import type { EnqueueVariantVerifyFn } from '@/capabilities/practice/public';
 import type { ActivityRefT } from '@/core/schema/activity';
 import type { RelationTypeSchemaT } from '@/core/schema/event/blocks';
@@ -18,7 +17,6 @@ export type AcceptAiProposalOpts = {
   user_note?: string;
   enqueueVariantVerify?: EnqueueVariantVerifyFn;
   enqueueLearningIntentNote?: EnqueueLearningIntentNoteFn;
-  imageCandidateDeps?: ImageCandidateAcceptDeps;
 } & (
   | {
       decision?: 'accept';

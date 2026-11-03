@@ -157,26 +157,7 @@ const prunedMisconceptionModules = [
 
 export const PRUNED_MISCONCEPTION_MODULES = prunedMisconceptionModules;
 
-export const IMPORTED_FETCH_EXCEPTIONS = [
-  {
-    path: 'src/capabilities/ingestion/server/pinned-fetch.ts',
-    source: 'undici',
-    imported: 'fetch',
-    local: 'undiciFetch',
-    owner: 'capabilities/ingestion',
-    purpose: 'bounded content-download transport; not an AI/provider wire',
-    expectedCalls: 1,
-    directImporters: [
-      {
-        path: 'src/capabilities/ingestion/server/image-candidate-accept.ts',
-        kind: 'runtime',
-        source: '@/capabilities/ingestion/server/pinned-fetch',
-        imported: 'fetchWithPinnedDispatcher',
-        local: 'fetchWithPinnedDispatcher',
-      },
-    ],
-  },
-] as const satisfies readonly ImportedFetchException[];
+export const IMPORTED_FETCH_EXCEPTIONS: readonly ImportedFetchException[] = [];
 
 // YUK-1025 — the Claude Agent SDK entry was removed with Adapter A: the pi
 // engine reaches providers via in-process dynamic imports (pi-ai), so no
@@ -409,10 +390,6 @@ export const PROVIDER_LANES = [
       },
       {
         path: 'src/capabilities/ingestion/server/auto-enroll.ts',
-        imports: ['@/capabilities/ingestion/server/knowledge-namer'],
-      },
-      {
-        path: 'src/capabilities/ingestion/server/image-candidate-accept.ts',
         imports: ['@/capabilities/ingestion/server/knowledge-namer'],
       },
     ],

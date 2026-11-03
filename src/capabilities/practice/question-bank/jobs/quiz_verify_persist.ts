@@ -672,8 +672,8 @@ export async function persistQuizVerifyVerdict(
       // the pool.
       // quiz_verify has NO demote branch (unlike
       // source_verify.ts's active→draft demote) and that is SAFE: no path
-      // pre-promotes a quiz_gen row to active before quiz_verify runs (cold-start
-      // image-candidate-accept hardcodes web_sourced→source_verify;
+      // pre-promotes a quiz_gen row to active before quiz_verify runs (the retired
+      // image_candidate accept pre-promoted web_sourced rows into source_verify;
       // verify-and-promote/proposal-appliers/legacy-record-appliers active-writers never
       // target an unverified quiz_gen draft). The new solve_check veto lands in this
       // existing else and only writes metadata/updated_at — draft_status is never touched

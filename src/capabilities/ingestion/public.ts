@@ -13,10 +13,6 @@ export { ingestionConfigEffectiveFacts } from './server/config-effective-facts';
 export { createManualMistake } from './server/create-manual-mistake';
 export { createIngestionSession } from './server/create-session';
 export type {
-  ImageCandidateAcceptDeps,
-  ImageCandidateAcceptResult,
-} from './server/image-candidate-accept';
-export type {
   RecordLinksAcceptResult,
   RecordPromotionAcceptResult,
 } from './server/legacy-record-appliers';

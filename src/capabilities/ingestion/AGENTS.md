@@ -9,7 +9,7 @@
 | `api/contracts.ts` | ingestion session、multipart 上传、blocks、SSE 与兼容动作的 wire schema |
 | `api/*.ts` | sessions / pdf / docx / blocks / events / extract / import / make-paper / rescue / revert / assets / mistakes |
 | `server/` | 抽取核心：Tencent/GLM OCR client、parser、structure、vision rescue、auto-enroll、tagging、session 守卫 |
-| `server/proposal-appliers.ts` | `block_merge` / `image_candidate` accept applier |
+| `server/proposal-appliers.ts` | `block_merge` accept applier |
 | `ui/RecordPage.tsx` | 录入面（`/record`） |
 
 ## CONVENTIONS
