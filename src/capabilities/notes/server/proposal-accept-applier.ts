@@ -11,6 +11,7 @@ import type {
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
 import {
+  acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,
@@ -85,8 +86,10 @@ async function acceptNoteUpdateProposal(
     );
   }
 
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) {
+  const replayAccepted = async (existingRate: {
+    id: string;
+    payload: unknown;
+  }): Promise<NoteUpdateAcceptResult> => {
     await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
     const payload = existingRate.payload as {
       materialized_apply_event_id?: unknown;
@@ -106,13 +109,22 @@ async function acceptNoteUpdateProposal(
           : null,
       idempotent: true,
     };
-  }
+  };
+
+  // Cheap short-circuit; the transaction re-checks under the decision lock.
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) return replayAccepted(existingRate);
 
   const now = new Date();
   const rateEventId = newId();
   let applyEventId: string | null = null;
   let artifactVersion: number | null = null;
-  await db.transaction(async (tx) => {
+  const concurrentAccept = await db.transaction(async (tx) => {
+    // Same lock as dismiss and retract, taken before the artifact row, so a racing
+    // decision on this proposal is seen here instead of landing beside this accept.
+    await acquireProposalDecisionLock(tx, proposalId);
+    const decided = await existingAcceptRate(tx, proposalId);
+    if (decided) return decided;
     const applyResult = await persistNoteRefineApply({
       db: tx,
       artifactId,
@@ -149,7 +161,9 @@ async function acceptNoteUpdateProposal(
       created_at: now,
     });
     await recordProposalDecisionSignal(tx, proposal, 'accept', opts.user_note);
+    return null;
   });
+  if (concurrentAccept) return replayAccepted(concurrentAccept);
 
   return {
     kind: 'note_update',

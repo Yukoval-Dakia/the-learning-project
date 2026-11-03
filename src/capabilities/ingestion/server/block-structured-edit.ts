@@ -794,7 +794,11 @@ function topLevelNodes(structured: StructuredQuestionT | null): StructuredQuesti
   return [structured];
 }
 
-export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Promise<EditResult> {
+// Given a Tx this is a savepoint: proposal accept commits the merge with its rate event.
+export async function mergeQuestions(
+  db: Db | Tx,
+  params: MergeQuestionsParams,
+): Promise<EditResult> {
   return db.transaction(async (tx) => {
     const primary = await loadBlockForUpdate(tx, params.primaryBlockId);
     if (!primary) return { status: 'skipped:block_not_found' };

@@ -3,16 +3,17 @@
 // `target.subject_id` (reserved by the producer), so accept is deterministic and
 // idempotent. Scope/title/sequence_hint are read off the possibly edited proposed_change.
 //
-// dismiss is handled by the generic rate-event path in actions.ts (no row to
-// materialize). retract tombstones the goal to 'dormant' (see actions.ts).
+// dismiss writes only the rate event (agency dismiss applier, same decision lock as this
+// accept). retract tombstones the goal to 'dormant' (proposal-retract-goal.ts).
 
 import { and, eq } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { acquireProposalDecisionLock } from '@/kernel/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { materializeAcceptedGoal } from '@/kernel/records/goal-commands';
 import { resolveKnownSubjectId } from '@/subjects/profile';
@@ -82,14 +83,15 @@ export async function acceptGoalScopeProposal(
       : 0;
 
   // Idempotency: an accept rate event already exists → goal row is materialized.
-  const existingRate = (
-    await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
-      .limit(1)
-  )[0];
-  if (existingRate) {
+  const replayDecided = async (reader: Db | Tx): Promise<GoalScopeAcceptResult | null> => {
+    const existingRate = (
+      await reader
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
+        .limit(1)
+    )[0];
+    if (!existingRate) return null;
     const ratePayload = existingRate.payload as { rating?: string };
     if (ratePayload.rating !== 'accept') {
       throw new ApiError(
@@ -104,11 +106,18 @@ export async function acceptGoalScopeProposal(
       goal_id: goalId,
       idempotent: true,
     };
-  }
+  };
+
+  // Cheap short-circuit; the transaction re-checks under the decision lock.
+  const replayed = await replayDecided(db);
+  if (replayed) return replayed;
 
   const now = new Date();
   const rateEventId = newId();
-  await db.transaction(async (tx) => {
+  const concurrentAccept = await db.transaction(async (tx) => {
+    await acquireProposalDecisionLock(tx, proposalId);
+    const decided = await replayDecided(tx);
+    if (decided) return decided;
     // Write the accept `rate` event FIRST so the goal fold sees the chained accept in
     // the same tx and projects status='active'.
     await writeEvent(tx, {
@@ -136,7 +145,9 @@ export async function acceptGoalScopeProposal(
       proposalId,
       now,
     });
+    return null;
   });
+  if (concurrentAccept) return concurrentAccept;
 
   return { kind: 'goal_scope', rate_event_id: rateEventId, goal_id: goalId };
 }

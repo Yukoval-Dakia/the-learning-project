@@ -92,8 +92,9 @@ export async function writeProposalRateEvent(
   return { rate_event_id: rateEventId, rate_at: rateAt };
 }
 
+// Accepts Tx so accept appliers can re-check under the decision lock.
 export async function existingAcceptRate(
-  db: Db,
+  db: DbLike,
   proposalId: string,
 ): Promise<(typeof event.$inferSelect & { decision: ExistingRateDecision }) | null> {
   const existingRate = await findExistingRateEvent(db, proposalId);
