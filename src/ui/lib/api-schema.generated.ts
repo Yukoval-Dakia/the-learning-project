@@ -34857,7 +34857,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    accept_pending?: boolean;
                     activity_ref?: {
                         id: string;
                         /** @enum {string} */
