@@ -1,7 +1,8 @@
 // GET /api/admin/config 的装配层：只做装配与分类，不做解析决策。
 // 分层（env pin > DB > env fallback > code default / compose-forced 跳 DB）由
 // src/core/config 的 resolveConfigValue 单一真相源决定；effective 值与
-// providers/infra schedules/runtime 来自组合根注入的真实事实（admin-config-facts.ts）。
+// tasks/providers/schedules/runtime 来自组合根注入的真实事实（admin-config-facts.ts）；
+// 本模块不 import 组合根（capabilities 清单 / task registry）。
 // 输出直接是 wire 形状（AdminConfigResponseSchema）。
 //
 // 诚实性规则：
@@ -15,8 +16,6 @@
 //
 // 纯同步、零 DB：route 调用点在快照之上，hydrate 由 boot/refresh 周期负责。
 
-import { capabilities } from '@/capabilities';
-import { type TaskKind, taskBudgetFacts, tasks } from '@/capabilities/task-registry';
 import type { ConfigSource, ConfigValue } from '@/core/config/store';
 import {
   CONFIG_REGISTRY,
@@ -32,6 +31,7 @@ import type {
   AdminConfigRuntimeFacts,
   AdminConfigRuntimeSection,
   AdminConfigScheduleRow,
+  AdminConfigTaskFacts,
 } from './admin-config-facts';
 
 /** 读面值的 JSON 形状（ConfigValue 去 undefined；非有限数在装配层归 null）。 */
@@ -104,8 +104,8 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: 'src/server/ai/provider-attempt-admission-config.ts',
   AI_PROVIDER_SESSION_ADMISSION_MODE: 'src/server/ai/provider-session-admission-policy.ts',
   AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON: 'src/server/ai/provider-session-admission-policy.ts',
-  'lane.verify_solve.provider': 'src/capabilities/practice/server/quiz/solve-lane.ts',
-  'lane.verify_solve.model': 'src/capabilities/practice/server/quiz/solve-lane.ts',
+  'lane.verify_solve.provider': 'src/capabilities/practice/question-bank/server/quiz/solve-lane.ts',
+  'lane.verify_solve.model': 'src/capabilities/practice/question-bank/server/quiz/solve-lane.ts',
   'lane.vision_judge.provider': 'src/server/ai/vision-judge-config.ts',
   'lane.vision_judge.model': 'src/server/ai/vision-judge-config.ts',
   'lane.global.provider': 'src/server/ai/providers.ts',
@@ -151,14 +151,9 @@ export interface AdminConfigTaskRow {
   } | null;
   readonly default_provider: string;
   readonly default_model: string;
-  readonly default_budget: {
-    readonly maxIterations: number;
-    readonly maxCost: number;
-    readonly transientRetries: number;
-    readonly timeout: number;
-  };
-  readonly budget_wiring: ReturnType<typeof taskBudgetFacts>['wired'];
-  readonly effective_budget: ReturnType<typeof taskBudgetFacts>['effective'];
+  readonly default_budget: AdminConfigTaskFacts['default_budget'];
+  readonly budget_wiring: AdminConfigTaskFacts['budget_wiring'];
+  readonly effective_budget: AdminConfigTaskFacts['effective_budget'];
   readonly budget_note: string;
   readonly override: { provider?: string; model?: string; budget?: Record<string, unknown> } | null;
   readonly override_wired: {
@@ -174,7 +169,7 @@ export interface AdminConfigReadModel {
     readonly epoch: number;
     readonly hydrated_at: string | null;
   };
-  /** 运行时事实（providers[]/infra schedules/runtime/effective）是否已由组合根
+  /** 运行时事实（tasks[]/providers[]/schedules/runtime/effective）是否已由组合根
    * 注入；false 时对应分区如实置空，不伪造。 */
   readonly facts_injected: boolean;
   readonly keys: readonly AdminConfigKeyRow[];
@@ -213,26 +208,6 @@ function resolveGlobalPin(env: NodeJS.ProcessEnv): { provider?: string; model?: 
   // Caller gate（providers.ts readGlobalProviderSwitch）：model-only DB 行惰性。
   const lanePair = getLaneOverride('global', env);
   return lanePair?.provider !== undefined ? lanePair : null;
-}
-
-/**
- * capability manifest 声明的 cron 投影（真实声明源：capabilities[] 的
- * jobs.handlers[].schedule；不手工复制清单）。编排 DAG 成员（dependsOn 存在）
- * 无 cron——由 orchestrator 触发，成员名单见 runtime.orchestration.dag_members。
- */
-function manifestScheduleRows(): AdminConfigScheduleRow[] {
-  return capabilities
-    .flatMap((cap) => (cap.jobs?.handlers ?? []).map((job) => ({ cap, job })))
-    .filter(({ job }) => job.schedule !== undefined)
-    .map(({ cap, job }) => ({
-      name: job.name,
-      cron: job.schedule?.cron ?? '',
-      tz: job.schedule?.tz ?? '',
-      owner: cap.name,
-      queue: job.queue,
-      source: 'capability-manifest' as const,
-    }))
-    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 const SCHEDULES_READ_ONLY_NOTE =
@@ -290,18 +265,17 @@ export function buildAdminConfigReadModel(
     });
 
   const globalPin = facts?.global_pin !== undefined ? facts.global_pin : resolveGlobalPin(env);
-  const taskRows: AdminConfigTaskRow[] = Object.entries(tasks).map(([kind, def]) => {
+  const taskRows: AdminConfigTaskRow[] = (facts?.task_catalog ?? []).map((task) => {
+    const { kind, typed } = task;
     const override = getTaskOverride(kind);
-    const budget = taskBudgetFacts(kind as TaskKind);
-    const typed = 'execution' in def && def.execution === 'typed';
     return {
       kind,
       effective_binding: facts?.task_bindings?.[kind] ?? null,
-      default_provider: def.defaultProvider,
-      default_model: def.defaultModel,
-      default_budget: def.budget,
-      budget_wiring: budget.wired,
-      effective_budget: budget.effective,
+      default_provider: task.default_provider,
+      default_model: task.default_model,
+      default_budget: task.default_budget,
+      budget_wiring: task.budget_wiring,
+      effective_budget: task.effective_budget,
       budget_note:
         '下次调用的预算基线；显式调用参数优先，执行及重试使用固定快照。chat费用上限/typed轮数未接线（null）；重试还受caller opt-in、路由pin及retry:none约束，流式不自动重试。',
       override: override
@@ -320,7 +294,8 @@ export function buildAdminConfigReadModel(
     };
   });
 
-  const infraRows = facts?.infra_schedules ?? [];
+  const byName = (left: AdminConfigScheduleRow, right: AdminConfigScheduleRow) =>
+    left.name.localeCompare(right.name);
   return {
     snapshot: { epoch: snap.epoch, hydrated_at: snap.hydratedAt === '' ? null : snap.hydratedAt },
     facts_injected: facts !== null,
@@ -331,9 +306,11 @@ export function buildAdminConfigReadModel(
     ),
     schedules: {
       read_only_note: SCHEDULES_READ_ONLY_NOTE,
+      // Manifest cron rows first, then server infra rows; DAG members carry no cron
+      // (the orchestrator triggers them) and are listed in runtime.orchestration.dag_members.
       rows: [
-        ...manifestScheduleRows(),
-        ...[...infraRows].sort((left, right) => left.name.localeCompare(right.name)),
+        ...[...(facts?.manifest_schedules ?? [])].sort(byName),
+        ...[...(facts?.infra_schedules ?? [])].sort(byName),
       ],
     },
     runtime: facts?.runtime ?? null,

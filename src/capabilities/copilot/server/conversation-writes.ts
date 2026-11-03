@@ -7,6 +7,11 @@ import type { ProviderFailureInfo } from '@/ai/provider-failure';
 import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
+import {
+  COPILOT_CHIP_TRIGGER_ACTION as CHIP_TRIGGER_EVENT_ACTION,
+  COPILOT_REPLY_ACTION as REPLY_EVENT_ACTION,
+  COPILOT_USER_ASK_ACTION as USER_ASK_EVENT_ACTION,
+} from '@/kernel/events/copilot-actions';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { ApiError } from '@/kernel/http';
 import { captureReviewAnswerBinding } from '@/kernel/records/review-answer-binding';
@@ -42,12 +47,6 @@ import type { CopilotPrimaryView } from './turns';
 export type { PreparedCopilotReply } from './reply-finalization';
 
 type WriteEventFn = (db: Db | Tx, input: WriteEventInput) => Promise<string>;
-
-const CHIP_TRIGGER_EVENT_ACTION = 'experimental:copilot_chip_trigger';
-const USER_ASK_EVENT_ACTION = 'experimental:copilot_user_ask';
-// Experimental action parsed by the generic ExperimentalEvent escape hatch, so
-// no schema change is needed; its payload is free-form per that event.
-const REPLY_EVENT_ACTION = 'experimental:copilot_reply';
 
 /** Persist the accepted ask/chip identity used by FIFO, replay and causal tool mirrors. */
 export async function writeCopilotInputEvent(

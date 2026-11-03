@@ -33,7 +33,7 @@ import { practiceCapability } from '@/capabilities/practice/manifest';
 import {
   ADMISSION_FAMILY,
   lockAdmissionGroup,
-} from '@/capabilities/practice/server/admission/enqueue';
+} from '@/capabilities/practice/question-bank/server/admission/enqueue';
 import type {
   ExecutionPlanT,
   PresentationT,

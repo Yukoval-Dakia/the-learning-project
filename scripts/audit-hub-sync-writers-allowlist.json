@@ -42,7 +42,7 @@
       "reason": "Subject knowledge-tree seed; seed-time inserts fire the trigger and dirty any existing hubs."
     },
     {
-      "path": "src/capabilities/practice/jobs/embed_backfill.ts",
+      "path": "src/capabilities/practice/question-bank/jobs/embed_backfill.ts",
       "tables": ["knowledge"],
       "reason": "Nightly embed backfill writes ONLY non-topology columns (embedding/embed_model/embed_version/embed_content_hash) which the trigger ignores; inventoried for table-level completeness (does not dirty hubs)."
     },

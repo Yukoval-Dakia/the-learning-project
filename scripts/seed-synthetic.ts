@@ -142,7 +142,7 @@ export const PASS_TO = NODES.jushi;
 
 // The L2 dismiss cluster uses 'related_to' (distinct from the PASS relation so
 // the bump's effect is isolated). related_to is SYMMETRIC → cooldownKeys[0] is
-// the SORTED-normalized form (proposal-tools.ts edgeCooldownKeys).
+// the SORTED-normalized form (edge-proposal-write.ts knowledgeEdgeCooldownKeys).
 export const L2_DISMISS_RELATION = 'related_to';
 
 // Deterministic question / event ids.
@@ -163,7 +163,7 @@ function hoursAgo(hours: number, now: Date): Date {
 }
 
 export function passCooldownKey(from: string, to: string): string {
-  // asymmetric relation → directional form (edgeCooldownKeys cooldownKeys[0]).
+  // asymmetric relation → directional form (knowledgeEdgeCooldownKeys(...)[0]).
   return `knowledge_edge:${from}|${to}|${PASS_RELATION}`;
 }
 function symmetricCooldownKey(from: string, to: string, relation: string): string {

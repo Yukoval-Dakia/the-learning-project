@@ -1,0 +1,434 @@
+// M4-T4 (YUK-319) — practice 包 proposal applier 测试，自
+// src/server/proposals/actions.test.ts 原样迁入（variant_question lifecycle +
+// question_draft accept 两个 describe 段）。入口仍走 dispatch 壳的
+// acceptAiProposal/dismissAiProposal/retractAiProposal —— 搬迁不改行为，
+// 测试继续从公共 API 进入以覆盖「壳路由 → 包 applier」整条链。
+
+import { createId } from '@paralleldrive/cuid2';
+import { and, eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { QuestionEditOpT } from '@/core/schema/proposal';
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
+import { event, knowledge, mistake_variant, question } from '@/db/schema';
+import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
+import { writeAiProposal } from '@/kernel/proposals/writer';
+import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
+import { migrateCanonicalProjections } from '../../../../../scripts/migrate-canonical-projections';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { assertProposalLifecycleResult } from '../../../../../tests/helpers/proposal-lifecycle';
+import type { VariantQuestionAcceptResult } from './proposal-appliers';
+
+const KNOWLEDGE_BASE = {
+  domain: 'yuwen',
+  parent_id: null,
+  merged_from: [] as string[],
+  proposed_by_ai: false,
+  approval_status: 'approved' as const,
+  version: 0,
+};
+
+async function seedKnowledge(ids: string[]): Promise<void> {
+  const db = testDb();
+  const now = new Date();
+  for (const id of ids) {
+    await db.insert(knowledge).values({
+      id,
+      name: id,
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      ...KNOWLEDGE_BASE,
+    });
+  }
+}
+
+// YUK-17 / ADR-0018 — variant_question lifecycle integration.
+describe('variant_question proposal lifecycle', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  async function seedParentQuestion(id: string): Promise<void> {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(question).values({
+      id,
+      kind: 'short_answer',
+      prompt_md: '原题 prompt',
+      reference_md: '原题 reference',
+      knowledge_ids: ['k_xuci'],
+      difficulty: 3,
+      source: 'manual',
+      variant_depth: 0,
+      root_question_id: null,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+
+  async function seedVariantQuestionProposal(prepare = true): Promise<{
+    proposalId: string;
+    mistakeVariantId: string;
+  }> {
+    const db = testDb();
+    const proposalId = await writeVariantQuestionProposal(db, {
+      source_question_id: 'q_parent',
+      source_attempt_event_id: 'e_attempt',
+      prompt_md: '变式 prompt',
+      reference_md: '变式 reference',
+      difficulty: 3,
+      knowledge_ids: ['k_xuci'],
+      parent_variant_id: 'q_parent',
+      root_question_id: 'q_parent',
+      variant_depth: 1,
+      reason_md: '针对 concept cause 的变式',
+    });
+    const mvId = createId();
+    const now = new Date();
+    await db.insert(mistake_variant).values({
+      id: mvId,
+      parent_question_id: 'q_parent',
+      variant_question_id: null,
+      proposal_event_id: proposalId,
+      status: 'draft',
+      failure_reasons: [],
+      cause_category: 'concept',
+      created_at: now,
+      updated_at: now,
+    });
+    // This fixture models persisted legacy data entering a migrated deployment.
+    if (prepare) await migrateCanonicalProjections(db);
+    return { proposalId, mistakeVariantId: mvId };
+  }
+
+  it('accept idempotent: second accept returns the same materialized id without duplicating', async () => {
+    await seedParentQuestion('q_parent');
+    const { proposalId, mistakeVariantId } = await seedVariantQuestionProposal();
+    const enqueue = vi.fn(async () => {});
+
+    const first = await acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue });
+    assertProposalLifecycleResult<VariantQuestionAcceptResult>(first, 'variant_question');
+    const second = await acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue });
+    expect(second).toMatchObject({
+      kind: 'variant_question',
+      idempotent: true,
+      question_id: first.question_id,
+      mistake_variant_id: mistakeVariantId,
+    });
+
+    const questions = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, first.question_id));
+    expect(questions).toHaveLength(1);
+    const mvRows = await testDb()
+      .select()
+      .from(mistake_variant)
+      .where(eq(mistake_variant.id, mistakeVariantId));
+    expect(mvRows[0]).toMatchObject({ status: 'active', variant_question_id: first.question_id });
+  });
+});
+
+// ADR-0031 / YUK-304 (lane B) — question_draft accept: promote draft→active +
+// FSRS enroll-if-absent + rate event, idempotent on caused_by_event_id.
+describe('question_draft accept (ADR-0031 lane B)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  async function seedDraftQuestion(opts: { knowledgeIds?: string[]; id?: string } = {}) {
+    const db = testDb();
+    const id = opts.id ?? 'q_draft_1';
+    const knowledgeIds = opts.knowledgeIds ?? ['k_draft'];
+    if (knowledgeIds.length > 0) await seedKnowledge(knowledgeIds);
+    const now = new Date();
+    await db.insert(question).values({
+      id,
+      kind: 'short_answer',
+      prompt_md: '解释「之」的用法。',
+      reference_md: '代词。',
+      knowledge_ids: knowledgeIds,
+      difficulty: 3,
+      source: 'copilot_authored',
+      draft_status: 'draft',
+      created_at: now,
+      updated_at: now,
+    });
+    return id;
+  }
+
+  async function seedQuestionDraftProposal(proposalId: string, questionId: string) {
+    await writeAiProposal(testDb(), {
+      id: proposalId,
+      actor_ref: 'agent:copilot',
+      payload: {
+        kind: 'question_draft',
+        target: { subject_kind: 'question', subject_id: questionId },
+        reason_md: 'copilot 拟题（seed=knowledge）',
+        evidence_refs: [],
+        proposed_change: {
+          question_id: questionId,
+          kind: 'short_answer',
+          difficulty: 3,
+          knowledge_ids: ['k_draft'],
+          seed_mode: 'knowledge',
+        },
+      },
+    });
+  }
+
+  it('double-accept is idempotent (no second rate event, no FSRS churn)', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion();
+    await seedQuestionDraftProposal('qd_p4', questionId);
+
+    const first = await acceptAiProposal(db, 'qd_p4');
+    const again = await acceptAiProposal(db, 'qd_p4');
+    expect(again.kind).toBe('question_draft');
+    if (again.kind !== 'question_draft' || first.kind !== 'question_draft') {
+      throw new Error('unreachable');
+    }
+    expect(again.idempotent).toBe(true);
+    expect(again.rate_event_id).toBe(first.rate_event_id);
+
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'qd_p4')));
+    expect(rateRows).toHaveLength(1);
+  });
+
+  it('dismiss is idempotent: a replayed dismiss writes no second rate event', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion();
+    await seedQuestionDraftProposal('qd_d3', questionId);
+
+    const first = await dismissAiProposal(db, 'qd_d3');
+    const again = await dismissAiProposal(db, 'qd_d3');
+    expect(first.kind).toBe('dismissed');
+    expect(again.kind).toBe('dismissed');
+
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'qd_d3')));
+    expect(rateRows).toHaveLength(1);
+  });
+});
+
+// ADR-0032 D6-B (YUK-203 lane L6) — question_edit accept: apply a narrow, typed
+// structured node edit to an ACTIVE question behind a mini verify gate, with a
+// reversible audit event + rate event, idempotent on caused_by_event_id.
+describe('question_edit accept (ADR-0032 D6-B)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  // A stem with two sub leaves: a choice sub + a short-answer sub. Exercises both
+  // leaf shapes (options vs answers/analysis) under one tree.
+  function buildStructured(): StructuredQuestionT {
+    return {
+      id: 'n_stem',
+      role: 'stem',
+      prompt_text: '阅读下面文段，回答问题。',
+      sub_questions: [
+        {
+          id: 'n_choice',
+          role: 'sub',
+          question_no: '1',
+          prompt_text: '下列加点字注音正确的一项是？',
+          options: [
+            { label: 'A', text: '甲' },
+            { label: 'B', text: '乙' },
+          ],
+          answers: ['A'],
+        },
+        {
+          id: 'n_short',
+          role: 'sub',
+          question_no: '2',
+          prompt_text: '解释「之」的用法。',
+          answers: ['代词。'],
+          analysis: '此处作宾语。',
+        },
+      ],
+    };
+  }
+
+  async function seedActiveStructuredQuestion(
+    opts: {
+      id?: string;
+      draftStatus?: string | null;
+      structured?: StructuredQuestionT | null;
+    } = {},
+  ): Promise<{ id: string; version: number }> {
+    const db = testDb();
+    const id = opts.id ?? 'q_active_1';
+    const now = new Date();
+    const structured = opts.structured === undefined ? buildStructured() : opts.structured;
+    await db.insert(question).values({
+      id,
+      kind: 'short_answer',
+      prompt_md: '阅读下面文段，回答问题。',
+      reference_md: '代词。',
+      knowledge_ids: [],
+      difficulty: 3,
+      source: 'manual',
+      draft_status: opts.draftStatus === undefined ? 'active' : opts.draftStatus,
+      structured,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const [row] = await db.select().from(question).where(eq(question.id, id));
+    return { id, version: row.version };
+  }
+
+  async function seedQuestionEditProposal(
+    proposalId: string,
+    questionId: string,
+    edit: QuestionEditOpT,
+  ): Promise<void> {
+    await writeAiProposal(testDb(), {
+      id: proposalId,
+      actor_ref: 'agent:copilot',
+      payload: {
+        kind: 'question_edit',
+        target: { subject_kind: 'question', subject_id: questionId },
+        reason_md: 'copilot 提议修订题面',
+        evidence_refs: [{ kind: 'question', id: questionId }],
+        proposed_change: { question_id: questionId, edit },
+      },
+    });
+  }
+
+  it('double-accept is idempotent (no second audit event, no extra version bump)', async () => {
+    const db = testDb();
+    const { id } = await seedActiveStructuredQuestion({ id: 'q_active_idem' });
+    await seedQuestionEditProposal('qe_p4', id, {
+      op: 'edit_node_text',
+      node_id: 'n_stem',
+      prompt_text: '阅读下面文段（修订版），回答问题。',
+    });
+
+    const first = await acceptAiProposal(db, 'qe_p4');
+    const again = await acceptAiProposal(db, 'qe_p4');
+    expect(again.kind).toBe('question_edit');
+    if (again.kind !== 'question_edit' || first.kind !== 'question_edit') {
+      throw new Error('unreachable');
+    }
+    expect(again.idempotent).toBe(true);
+    expect(again.rate_event_id).toBe(first.rate_event_id);
+    // The idempotent re-accept does not re-apply (no new audit event id).
+    expect(again.edit_event_id).toBeNull();
+    expect(again.version).toBe(1);
+
+    const [row] = await db.select().from(question).where(eq(question.id, id));
+    expect(row.version).toBe(1);
+    const editRows = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:question_structure_edit'));
+    expect(editRows).toHaveLength(1);
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'qe_p4')));
+    expect(rateRows).toHaveLength(1);
+  });
+
+  it('serializes concurrent accept and retract so exactly one terminal decision wins', async () => {
+    const db = testDb();
+    const { id } = await seedActiveStructuredQuestion({ id: 'q_active_retract_race' });
+    await seedQuestionEditProposal('qe_retract_race', id, {
+      op: 'edit_node_text',
+      node_id: 'n_short',
+      prompt_text: '并发接受后应保留的题面。',
+    });
+
+    const settled = await Promise.allSettled([
+      acceptAiProposal(db, 'qe_retract_race'),
+      retractAiProposal(db, 'qe_retract_race', { reason_md: '并发撤回' }),
+    ]);
+    expect(settled.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = settled.filter((result) => result.status === 'rejected');
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({ status: 409 });
+
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'qe_retract_race')));
+    const correctionRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'correct'), eq(event.subject_id, 'qe_retract_race')));
+    expect(rateRows.length + correctionRows.length).toBe(1);
+
+    const [row] = await db.select().from(question).where(eq(question.id, id));
+    expect(row.version).toBe(rateRows.length === 1 ? 1 : 0);
+  });
+
+  // ADR-0032 D6-B optimistic-lock regression — the version-guarded UPDATE
+  // (and(eq(id), eq(version, row.version)).returning() → length===0 → 409) is the
+  // head write-safety guarantee of this lane. The applier READS question.version,
+  // then writes WHERE version = <the value it read>. A concurrent structured edit
+  // that bumps the version BETWEEN that read and the guarded write must make the
+  // write match 0 rows → 409, leaving the persisted tree untouched (the stale edit
+  // never lands).
+  //
+  // The applier reads the row OUTSIDE its db.transaction(...) and writes INSIDE it
+  // (acceptQuestionEditProposal: read then `db.transaction`). So we spy on
+  // db.transaction to interpose exactly one out-of-band version bump after the
+  // read but before the guarded UPDATE runs — a deterministic stand-in for a
+  // racing concurrent edit. (A bump done BEFORE acceptAiProposal would be read by
+  // the applier and the guard would simply match the newer version — no 409.)
+  it('409s when question.version is bumped concurrently between the applier read and write (optimistic-lock guard)', async () => {
+    const db = testDb();
+    const { id } = await seedActiveStructuredQuestion({ id: 'q_active_verconflict' });
+    await seedQuestionEditProposal('qe_p11', id, {
+      op: 'edit_node_text',
+      node_id: 'n_short',
+      prompt_text: '解释「之」在此句中的具体用法（应被乐观锁挡住）。',
+    });
+
+    const realTransaction = db.transaction.bind(db);
+    let bumped = false;
+    const txSpy = vi.spyOn(db, 'transaction').mockImplementation(async (cb, cfg) => {
+      // Fire the out-of-band bump exactly once, on the applier's transaction: the
+      // applier has already read version=0, so bumping to 1 on a separate (outer)
+      // connection makes its guarded UPDATE (WHERE version = 0) match 0 rows.
+      if (!bumped) {
+        bumped = true;
+        await db.update(question).set({ version: 1 }).where(eq(question.id, id));
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: pass-through to the real overload.
+      return realTransaction(cb as any, cfg as any);
+    });
+
+    await expect(acceptAiProposal(db, 'qe_p11')).rejects.toMatchObject({ status: 409 });
+    txSpy.mockRestore();
+
+    // The structured tree is unchanged (the stale edit never landed): the bumped
+    // version (1) stands, with no further increment from the rejected applier.
+    const [after] = await db.select().from(question).where(eq(question.id, id));
+    expect(after.version).toBe(1);
+    const tree = after.structured as StructuredQuestionT;
+    const short = tree.sub_questions?.find((n) => n.id === 'n_short');
+    expect(short?.prompt_text).toBe('解释「之」的用法。');
+    expect(short?.source).toBeUndefined();
+
+    // The version-guarded UPDATE throws INSIDE the transaction, so the whole tx
+    // rolls back: no audit event, no rate event, proposal stays pending.
+    const editRows = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:question_structure_edit'));
+    expect(editRows).toHaveLength(0);
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'qe_p11')));
+    expect(rateRows).toHaveLength(0);
+  });
+});

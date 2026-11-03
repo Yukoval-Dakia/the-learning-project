@@ -6,6 +6,7 @@
 
 import type { ConfigEffectiveFacts } from '@/core/config/effective';
 import { readJudgeCalibrationConfig } from '../jobs/judge-calibration-config';
+import { resolveSolveOverrideFromEnv } from '../question-bank/public';
 import {
   jyeooBinaryPath,
   jyeooDailyFetchBudget,
@@ -14,7 +15,6 @@ import {
   jyeooSpawnTimeoutMs,
 } from '../supply/public';
 import { judgeFallbackProvider } from './judge-durable-config';
-import { resolveSolveOverrideFromEnv } from './quiz/solve-lane';
 
 export function practiceConfigEffectiveFacts(): ConfigEffectiveFacts {
   const calibration = readJudgeCalibrationConfig();

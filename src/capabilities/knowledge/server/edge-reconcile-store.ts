@@ -38,11 +38,6 @@ export type EdgePlannedRow = {
   planned_at: Date;
 };
 
-/** Build the candidate-edge dedup key `from|to|relation_type`. */
-export function edgeReconcileKey(fromId: string, toId: string, relationType: string): string {
-  return `${fromId}|${toId}|${relationType}`;
-}
-
 /** Insert planned rows; applied_at is stamped at the end of the same transaction. */
 export async function insertEdgePlannedRows(db: DbLike, rows: EdgePlannedRow[]): Promise<void> {
   if (rows.length === 0) return;

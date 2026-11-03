@@ -1,7 +1,6 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ResponseSetT, ResponseSlotT, ScoringBasisT } from '@/core/schema/assessment';
-import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
@@ -10,20 +9,14 @@ import {
   question_block,
   question_group_lifecycle,
   question_revision,
-  source_asset,
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { commitFormalAttempt, recordFormalAttemptCapture, saveSubmission } from '@/kernel/judge';
 import type { DocumentUsage } from '@/kernel/read-models/usage-policy';
-import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { freezeImageEvidence } from '@/kernel/records/assessment-evidence';
 import { issueCapturedAssessment } from '@/kernel/records/assessment-issuance';
-import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
-import { writeQuestionBlockLifecycleEvent } from '@/kernel/records/question-block-lifecycle-event';
 import type { AutoEnrolledBlock } from './auto-enroll';
-import { capturedQuestionShape } from './captured-question-shape';
-import { enrollCapturedBlock } from './enroll';
-import { figuresForQuestion } from './figure_attach';
+import { recordCapturedQuestion, settleCapturedBlock } from './capture/captured-question';
 
 type Block = typeof question_block.$inferSelect;
 
@@ -334,55 +327,21 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
         409,
       );
     if (!existing) {
-      const figureAssets = block.figures.length
-        ? await tx
-            .select({
-              id: source_asset.id,
-              storage_key: source_asset.storage_key,
-              sha256: source_asset.sha256,
-            })
-            .from(source_asset)
-            .where(
-              inArray(
-                source_asset.id,
-                block.figures.map((figure) => figure.asset_id),
-              ),
-            )
-        : [];
-      await tx.insert(question).values(
-        withAnswerClass({
-          id: questionId,
-          ...capturedQuestionShape(block.structured),
-          prompt_md: block.structured
-            ? structuredToPromptMarkdown(block.structured)
-            : (block.extracted_prompt_md ?? ''),
-          reference_md: block.reference_md,
-          structured: block.structured,
-          figures: figuresForQuestion(block.structured, block.figures, {
-            sourceAssetIds: block.source_asset_ids,
-            assets: figureAssets,
-          }),
-          image_refs: block.image_refs,
-          knowledge_ids: input.knowledgeIds,
-          difficulty: input.difficulty,
-          source: session.entrypoint ?? 'vision_paper',
-          variant_depth: 0,
-          draft_status: 'draft',
-          metadata: {
-            ingestion_session_id: session.id,
-            question_block_id: block.id,
-            source_document_id: session.source_document_id,
-            capture_block_version: block.version,
-            capture_input_digest: sourceDigest,
-            source_asset_ids: block.source_asset_ids,
-          },
-          created_at: now,
-          updated_at: now,
-          version: 0,
-        }),
-      );
-      await publishQuestionGroupFromRow(tx, {
-        rootId: questionId,
+      await recordCapturedQuestion(tx, {
+        questionId,
+        sessionId: session.id,
+        blockId: block.id,
+        sourceDocumentId: session.source_document_id,
+        source: session.entrypoint ?? 'vision_paper',
+        content: { from: 'block', block },
+        knowledgeIds: input.knowledgeIds,
+        difficulty: input.difficulty,
+        draftStatus: 'draft',
+        extraMetadata: {
+          capture_block_version: block.version,
+          capture_input_digest: sourceDigest,
+          source_asset_ids: block.source_asset_ids,
+        },
         actorRef: 'ingestion:capture',
         now,
       });
@@ -506,46 +465,30 @@ export async function enrollNativeCapture(
       const coarse = prepared.candidate.result.coarse_outcome;
       if (coarse === 'unsupported')
         throw new ApiError('capture_unresolved', 'capture requires review', 409);
-      const record = await enrollCapturedBlock(tx, {
-        questionId: captured.questionId,
-        nativeAttemptEventId: attemptId,
-        outcome: coarse === 'correct' ? 'success' : coarse === 'incorrect' ? 'failure' : 'partial',
-        answerMd: input.block.wrong_answer_md ?? '',
-        answerImageRefs: input.pageRefs,
-        imageRefs: input.block.image_refs,
-        knowledgeIds: captured.knowledgeIds,
-        captureMode: input.pageRefs.length ? 'image' : 'text',
-        sourceDocumentId: captured.sourceDocumentId,
-        docUsage: input.docUsage,
-        now: input.now,
-        generatedBy: 'workflow_judge',
+      const record = await settleCapturedBlock(tx, {
+        transition: 'auto_enroll',
+        blockId: block.id,
+        guard: { kind: 'version_cas', version: block.version },
+        enroll: {
+          questionId: captured.questionId,
+          nativeAttemptEventId: attemptId,
+          outcome:
+            coarse === 'correct' ? 'success' : coarse === 'incorrect' ? 'failure' : 'partial',
+          answerMd: input.block.wrong_answer_md ?? '',
+          answerImageRefs: input.pageRefs,
+          imageRefs: input.block.image_refs,
+          knowledgeIds: captured.knowledgeIds,
+          captureMode: input.pageRefs.length ? 'image' : 'text',
+          sourceDocumentId: captured.sourceDocumentId,
+          docUsage: input.docUsage,
+          now: input.now,
+          generatedBy: 'workflow_judge',
+        },
       });
       await tx
         .update(question)
         .set({ draft_status: 'active', updated_at: input.now })
         .where(eq(question.id, captured.questionId));
-      const [updated] = await tx
-        .update(question_block)
-        .set({
-          status: 'auto_enrolled',
-          imported_question_id: captured.questionId,
-          imported_attempt_event_id: attemptId,
-          version: sql`${question_block.version} + 1`,
-          updated_at: input.now,
-        })
-        .where(and(eq(question_block.id, block.id), eq(question_block.version, block.version)))
-        .returning({ version: question_block.version });
-      await writeQuestionBlockLifecycleEvent(tx, {
-        blockId: block.id,
-        op: 'set_status',
-        status: 'auto_enrolled',
-        importedQuestionId: captured.questionId,
-        importedAttemptEventId: attemptId,
-        nextVersion: updated.version,
-        actorKind: 'agent',
-        actorRef: 'workflow_judge',
-        now: input.now,
-      });
       enrolled = {
         block_id: block.id,
         question_id: captured.questionId,

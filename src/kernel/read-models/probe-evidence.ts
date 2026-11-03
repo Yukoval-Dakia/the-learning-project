@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import {
   PROBE_QUESTION_INITIAL_VERSION,
   PROBE_QUESTION_KIND,
@@ -15,6 +15,7 @@ import {
   loadCompletedProbeAssessmentAnchors,
   validateCompletedProbeProvenance,
 } from './completed-probe-provenance';
+import { probeIssuanceIdSql } from './probe-delivery';
 
 type DbLike = Db | Tx;
 
@@ -259,7 +260,7 @@ export async function getEffectiveProbeResultStatuses(
           .from(question)
           .leftJoin(
             assessment_issuance,
-            eq(assessment_issuance.issuance_id, sql<string>`'iss_probe_' || ${question.id}`),
+            eq(assessment_issuance.issuance_id, probeIssuanceIdSql(question.id)),
           )
           .leftJoin(
             question_revision,

@@ -1,7 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { generateReferenceSolution } from '@/capabilities/practice/server/reference-solution';
+import { generateReferenceSolution } from '@/capabilities/practice/question-bank/server/reference-solution';
 import { question } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 

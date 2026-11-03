@@ -6,6 +6,7 @@ import type { R2Client } from '@/kernel/object-storage';
 import type { SourceAssetRow } from '@/kernel/records/asset-store';
 import { persistSourceAsset, sha256Hex } from '@/kernel/records/asset-store';
 import type { PdfPageText } from './pdf-text';
+import { recordSourcePackage } from './session/source-document-provenance';
 
 // Unified source package for one ingestion session.
 //
@@ -410,14 +411,7 @@ export async function materializeSourcePackage(
     };
   }
 
-  const provenance = {
-    ...(doc.provenance as Record<string, unknown>),
-    source_package: pkg,
-  } as typeof source_document.$inferInsert.provenance;
-  await db
-    .update(source_document)
-    .set({ body_md: bodyMd, provenance, updated_at: new Date() })
-    .where(eq(source_document.id, sourceDocumentId));
+  await recordSourcePackage(db, sourceDocumentId, { sourcePackage: pkg, bodyMd });
   return pkg;
 }
 
@@ -528,7 +522,7 @@ export async function attachWordSourcePackage(
   input: AttachWordPackageInput,
 ): Promise<SourcePackageV1> {
   const [doc] = await db
-    .select()
+    .select({ id: source_document.id })
     .from(source_document)
     .where(eq(source_document.id, input.sourceDocumentId))
     .limit(1);
@@ -611,14 +605,10 @@ export async function attachWordSourcePackage(
     ...(input.renderedPdfAssetId ? { rendered_pdf_asset_id: input.renderedPdfAssetId } : {}),
     ...(input.markdownAbsentReason ? { markdown_absent_reason: input.markdownAbsentReason } : {}),
   };
-  const provenance = {
-    ...(doc.provenance as Record<string, unknown>),
-    source_package: pkg,
-    ...(input.omittedMedia?.length ? { source_package_omitted_media: input.omittedMedia } : {}),
-  } as typeof source_document.$inferInsert.provenance;
-  await db
-    .update(source_document)
-    .set({ body_md: bodyMd, provenance, updated_at: new Date() })
-    .where(eq(source_document.id, input.sourceDocumentId));
+  await recordSourcePackage(db, input.sourceDocumentId, {
+    sourcePackage: pkg,
+    bodyMd,
+    omittedMedia: input.omittedMedia,
+  });
   return pkg;
 }

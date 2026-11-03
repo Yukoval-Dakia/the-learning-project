@@ -11,7 +11,7 @@ import type { ConfirmationAction } from './turn-sender';
 import { memo } from 'react';
 import { Chip } from '@/ui-next/public';
 import type { ChatMessage } from '../message-projection';
-import { publicProseStatusText } from '../public-prose';
+import { publicProseFailureBadge, publicProseStatusText } from '../public-prose';
 import { ConversationMarkdown } from './ConversationMarkdown';
 import { HeroBlock } from './HeroBlock';
 import { ProposalNotice } from './ProposalNotice';
@@ -63,6 +63,8 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   const body =
     incomplete || publicProse?.status === 'streaming' ? publicProse.text : canonical.text;
   const generationStatus = publicProse ? publicProseStatusText(publicProse) : undefined;
+  // A sealed help exit completes with its exit copy as the body; the badge says why it exited.
+  const failureBadge = publicProse ? publicProseFailureBadge(publicProse) : undefined;
   const generating = m.streaming || publicProse?.status === 'streaming';
   const settled = !generating;
   const turnId = m.reply_event_id;
@@ -72,6 +74,11 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
     <div className="un-cp-row un-cp-row-ai" data-streaming={generating ? '' : undefined}>
       <StepList steps={stepsOf(m)} />
       <ConversationMarkdown className="un-cp-md un-cp-reply">{body}</ConversationMarkdown>
+      {failureBadge ? (
+        <p className="un-cp-reply-badge">
+          <Chip tone="caution">{failureBadge}</Chip>
+        </p>
+      ) : null}
       {incomplete ? (
         <p className="un-cp-reply-status" role="status">
           {generationStatus}

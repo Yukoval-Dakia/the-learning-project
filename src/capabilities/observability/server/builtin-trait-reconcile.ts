@@ -6,7 +6,7 @@
 // 版本不等时：未被 owner 编辑 → 覆盖升级 + 'reconcile'；编辑过 → 保留 + WARN。
 // 「被 owner 编辑」= ∃ actor='owner' 且 revision > 最近 create/reconcile/
 // reset_to_seed 边界——reset-to-seed 后升级恢复送达，append-only 下不会永久冻结。
-// 事务开头取控制面 advisory lock，owner-journal 判定在锁内读。
+// 事务经 withControlPlane（开头取控制面锁），owner-journal 判定在锁内读。
 //
 // 绑定/科目/claims 全部 insert-if-missing：owner 的换绑/rename 不被重跑覆写
 // （reconcile 只治理 trait 内容血统，不治理控制行）。
@@ -14,14 +14,11 @@
 import { and, eq } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import {
-  subject,
-  subject_control_journal,
   subject_name_claim,
   subject_trait,
   subject_trait_binding,
   subject_trait_journal,
 } from '@/db/schema';
-import { acquireControlPlaneLockSql } from '@/kernel/records/subject-control-lock';
 import {
   BUILTIN_SUBJECT_IDS,
   BUILTIN_TRAIT_SEEDS,
@@ -29,7 +26,8 @@ import {
   seedTraitId,
 } from '@/subjects/builtin-trait-seeds';
 import { BUILTIN_SUBJECT_ALIASES, normalizeSubjectKey, subjectProfiles } from '@/subjects/profile';
-import { SUBJECT_TRAIT_KINDS, type SubjectTraitKind } from '@/subjects/trait-schemas';
+import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
+import { insertSubjectRow, withControlPlane } from './subject-control/commit';
 
 // drizzle 事务句柄（tx 没有 $client）。
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -73,44 +71,27 @@ export async function reconcileBuiltinTraits(db: Db): Promise<BuiltinTraitReconc
   };
   const now = new Date();
 
-  await db.transaction(async (tx) => {
-    await tx.execute(acquireControlPlaneLockSql);
-
+  await withControlPlane(db, async (tx) => {
     for (const subjectId of BUILTIN_SUBJECT_IDS) {
       const profile = subjectProfiles[subjectId];
       if (!profile) throw new Error(`reconcileBuiltinTraits: builtin '${subjectId}' missing`);
 
       // subject 控制行 insert-if-missing：rename/retire 是 owner 面，不覆写。
-      const insertedSubject = await tx
-        .insert(subject)
-        .values({
+      // control journal 'create' 行（rev 0，actor='migrate'）只随真插入落。
+      const insertedSubject = await insertSubjectRow(tx, {
+        row: {
           id: subjectId,
           display_name: profile.displayName,
           display_name_norm: normalizeSubjectKey(profile.displayName),
           origin: 'builtin',
           is_selectable: subjectId !== 'general', // general 结构性排除
           retired_at: null,
-          revision: 0,
-          created_at: now,
-          updated_at: now,
-        })
-        .onConflictDoNothing({ target: subject.id })
-        .returning({ id: subject.id });
-      if (insertedSubject.length > 0) {
-        report.insertedSubjects += 1;
-        // control journal 'create' 行（rev 0，actor='migrate'）——只随真插入落。
-        await tx
-          .insert(subject_control_journal)
-          .values({
-            subject_id: subjectId,
-            revision: 0,
-            action: 'create',
-            detail: {},
-            actor: 'migrate',
-            created_at: now,
-          })
-          .onConflictDoNothing();
-      }
+        },
+        actor: 'migrate',
+        now,
+        ifMissing: true,
+      });
+      if (insertedSubject) report.insertedSubjects += 1;
 
       // claims：canonical + builtin 别名，insert-if-missing；PK 拦抢占。
       await tx

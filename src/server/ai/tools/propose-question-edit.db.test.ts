@@ -5,12 +5,12 @@
 // gate_rejected / duplicate_pending), and the happy `proposed` path that writes a
 // pending question_edit proposal carrying the typed op. The accept-side (applier)
 // behaviour is covered in
-// src/capabilities/practice/server/proposal-appliers.db.test.ts.
+// src/capabilities/practice/question-bank/server/proposal-appliers.db.test.ts.
 
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { proposeQuestionEditTool } from '@/capabilities/practice/server/tools/proposal-tools';
+import { proposeQuestionEditTool } from '@/capabilities/practice/question-bank/tools/proposal-tools';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { question } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';

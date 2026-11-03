@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { ApiError } from '@/kernel/http';
+import type { PurposeChangeReceiptT } from '@/kernel/read-models/purpose-change';
 import {
   documentUsageEpoch,
   readDocumentDerivationPolicy,
@@ -9,6 +10,7 @@ import { writeAgentRunSegment } from '../events/agent-progress';
 import {
   type AgentExecutionOwner,
   budgetUnavailable,
+  parseAgentBudget,
   readAgentBudget,
   writeAgentBudgetPath,
 } from './budget-state';
@@ -216,6 +218,97 @@ export async function closeAgentExecution(tx: Tx, sessionId: string, operationId
       ...identity,
       dispatch_state: 'closed',
     });
+}
+
+// Segment and stop transitions. Lock contract: the caller already holds the
+// session row lock (and, if it settles budget, the global budget advisory lock
+// taken before it) and passes the owner it read under that lock. These take no
+// lock, so the global-budget -> session-row order stays entirely the caller's.
+
+/** Only this claim may later acknowledge a stop for the running segment. */
+export async function markAgentSegmentRunning(
+  tx: Tx,
+  sessionId: string,
+  owner: AgentExecutionOwner,
+  segmentClaim: string,
+) {
+  await writeAgentBudgetPath(tx, sessionId, ['execution_owner'], {
+    ...owner,
+    segment_state: 'running',
+    segment_claim: segmentClaim,
+  });
+}
+
+/** An idle active owner is what the stop sweeper may confirm without a claim. */
+export async function markAgentSegmentIdle(
+  tx: Db | Tx,
+  sessionId: string,
+  owner: AgentExecutionOwner | undefined,
+) {
+  if (owner?.state !== 'active') return;
+  await writeAgentBudgetPath(tx, sessionId, ['execution_owner'], {
+    ...owner,
+    segment_state: 'idle',
+  });
+}
+
+/** Purpose withdrawal. Null means this session has no execution to stop or report. */
+export async function requestAgentStop(
+  tx: Tx,
+  session: { id: string; status: string; agent_budget: unknown },
+  stopRequestId: string,
+): Promise<PurposeChangeReceiptT['stop'][number] | null> {
+  const budget = parseAgentBudget(session.agent_budget);
+  const owner = budget?.execution_owner;
+  if (owner?.state === 'active') {
+    await writeAgentBudgetPath(tx, session.id, ['execution_owner'], {
+      ...owner,
+      stop_request_id: stopRequestId,
+    });
+    return { session_id: session.id, run_ref: owner.run_ref, operation_id: owner.operation_id };
+  }
+  // No owner to fence, but a queued/unproven dispatch may still execute.
+  if (
+    ['queued', 'extracting'].includes(session.status) ||
+    Object.keys(budget?.unproven_dispatches ?? {}).length
+  )
+    return { session_id: session.id, run_ref: null, operation_id: null };
+  return null;
+}
+
+/** A continuation keeps runRef but claims a different segment, so an old
+ * executor's drained barrier cannot acknowledge that successor's stop. */
+export function agentStopAcknowledgement(
+  owner: AgentExecutionOwner | undefined,
+  runRef: string,
+  proof: { claimId: string } | 'idle',
+):
+  | { kind: 'refused' }
+  | { kind: 'already_confirmed' }
+  | { kind: 'confirm'; owner: AgentExecutionOwner } {
+  if (!owner || owner.run_ref !== runRef || !owner.stop_request_id) return { kind: 'refused' };
+  if (proof === 'idle' ? owner.segment_state !== 'idle' : owner.segment_claim !== proof.claimId)
+    return { kind: 'refused' };
+  if (owner.stop_confirmed) return { kind: 'already_confirmed' };
+  return { kind: 'confirm', owner };
+}
+
+export async function confirmAgentStop(tx: Tx, sessionId: string, owner: AgentExecutionOwner) {
+  await writeAgentBudgetPath(tx, sessionId, ['execution_owner'], {
+    ...owner,
+    state: 'closed',
+    stop_confirmed: true,
+  });
+}
+
+export function agentStopState(
+  owner: AgentExecutionOwner | undefined,
+  runRef: string | null,
+  stopRequestId: string | undefined,
+): 'confirmed' | 'pending' | 'unknown' {
+  if (!runRef || owner?.run_ref !== runRef || owner.stop_request_id !== stopRequestId)
+    return 'unknown';
+  return owner.stop_confirmed === true ? 'confirmed' : 'pending';
 }
 
 /** Every post-claim write must still belong to its frozen run. */

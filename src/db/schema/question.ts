@@ -236,7 +236,7 @@ export const question = pgTable(
     // (mirrors the variant parent-ref precedent above; new axis = composition, not
     // variant lineage). Nullable: NULL on a plain/root question, set only on parts.
     // `part_index` orders parts within a parent. Written by the part-creation owner
-    // `src/capabilities/practice/server/question-parts.ts` (createQuestionPart). Because a part IS a
+    // `src/capabilities/practice/question-bank/server/question-parts.ts` (createQuestionPart). Because a part IS a
     // question, it gets FSRS state + flows through the existing fsrs_question
     // due/review path unchanged — independent scheduling falls out of independent
     // question rows. Parent-level aggregation scheduling is DEFERRED (ADR-0014 line
@@ -271,7 +271,7 @@ export const question = pgTable(
     // NOT fold effective-domain — only the content-hash column is added here.
     // Nullable: existing non-NULL-embedding rows get a NULL hash at migration time
     // and recompute it on the next edit. Write paths: embed_backfill stamps it at
-    // fill time; editQuestion (src/capabilities/practice/server/question-bank-write.ts) recomputes it when
+    // fill time; editQuestion (src/capabilities/practice/question-bank/server/question-bank-write.ts) recomputes it when
     // prompt_md/reference_md/choices_md change and NULLs `embedding` on mismatch
     // (next backfill re-embeds). Compared, never read for behaviour.
     embed_content_hash: text('embed_content_hash'),

@@ -178,6 +178,13 @@ export const advisoryLockRegistry = {
     keyPrefix: 'placement-supply:v1:',
     suffixFields: ['knowledgeId'],
   },
+  questionServingCommand: {
+    family: 'serving-command',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'yuk1514:serving:',
+    suffixFields: ['eventId'],
+  },
 } as const satisfies Record<string, AdvisoryLockNamespace>;
 
 export function deriveHashtextLockKey<T extends string>(namespace: {

@@ -9,8 +9,6 @@ import {
   type ColdStartBridgeRunTaskFn,
   runColdStartBridge,
 } from '@/capabilities/ingestion/server/cold-start-bridge';
-import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
-import { figuresForQuestion } from '@/capabilities/ingestion/server/figure_attach';
 import {
   createKnowledgeNamer,
   createKnowledgeTagEmbedder,
@@ -43,7 +41,7 @@ import {
 import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
-import { knowledge, learning_session, question, question_block, source_asset } from '@/db/schema';
+import { knowledge, learning_session, question_block } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
 /**
  * WorkflowJudge auto-enroll path.
@@ -58,13 +56,14 @@ import { writeEvent } from '@/kernel/events';
 import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
-import { withAnswerClass } from '@/kernel/records/answer-class-write';
-import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { type NameKcFn, tagKnowledge } from '@/kernel/records/knowledge-tag';
-import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 import { getKnownSubjects } from '@/subjects/profile';
 import { enrollNativeCapture } from './assessment-capture';
-import { capturedQuestionShape } from './captured-question-shape';
+import {
+  capturedQuestionShape,
+  recordCapturedQuestion,
+  settleCapturedBlock,
+} from './capture/captured-question';
 import { redactIngestionText } from './privacy-guard';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
@@ -476,94 +475,52 @@ export async function runAutoEnrollForSession(
       }
 
       const questionId = createId();
-      const figureAssets = block.figures.length
-        ? await tx
-            .select({
-              id: source_asset.id,
-              storage_key: source_asset.storage_key,
-              sha256: source_asset.sha256,
-            })
-            .from(source_asset)
-            .where(
-              inArray(
-                source_asset.id,
-                block.figures.map((figure) => figure.asset_id),
-              ),
-            )
-        : [];
-      await tx.insert(question).values(
-        withAnswerClass({
-          id: questionId,
-          kind: verdict.prefilled.question_kind,
-          choices_md: capturedQuestionShape(block.structured).choices_md,
-          prompt_md: questionMd,
-          // OCR-extracted answer only; reference generation is out of scope.
-          reference_md: block.reference_md ?? null,
-          knowledge_ids: enrollKnowledgeIds,
-          difficulty: verdict.prefilled.difficulty,
-          source: sessionEntrypoint,
-          variant_depth: 0,
-          figures: figuresForQuestion(block.structured, block.figures, {
-            sourceAssetIds: block.source_asset_ids,
-            assets: figureAssets,
-          }),
-          image_refs: block.image_refs,
-          // Carry structured only when prompt_md is regenerable from it (ADR-0002);
-          // questionMd is derived from structured, so they match when present.
-          structured: block.structured ?? null,
-          // Placement excludes only 'draft'; null and 'active' both pass.
-          draft_status: draftStatus,
-          metadata: {
-            source_document_id: sourceDocumentId,
-            ingestion_session_id: params.sessionId,
-            question_block_id: block.id,
-            // Judge decision for traceability; this path is reached only on auto.
-            workflow_judge: {
-              route: verdict.route,
-              judge_route: verdict.route,
-              confidence: verdict.confidence,
-              reasoning: verdict.reasoning,
-            },
+      await recordCapturedQuestion(tx, {
+        questionId,
+        sessionId: params.sessionId,
+        blockId: block.id,
+        sourceDocumentId,
+        source: sessionEntrypoint,
+        // OCR-extracted answer only; reference generation is out of scope.
+        content: { from: 'block', block },
+        kind: verdict.prefilled.question_kind,
+        knowledgeIds: enrollKnowledgeIds,
+        difficulty: verdict.prefilled.difficulty,
+        // Placement excludes only 'draft'; null and 'active' both pass.
+        draftStatus,
+        extraMetadata: {
+          // Judge decision for traceability; this path is reached only on auto.
+          workflow_judge: {
+            route: verdict.route,
+            judge_route: verdict.route,
+            confidence: verdict.confidence,
+            reasoning: verdict.reasoning,
           },
-          created_at: now,
-          updated_at: now,
-          version: 0,
-        }),
-      );
-
-      // Mint the first revision in the same transaction. Extraction and student answers
-      // stay separate: a missing OCR answer is withheld, and student work goes through
-      // the attempt event, never the answer key.
-      await publishQuestionGroupFromRow(tx, {
-        rootId: questionId,
+        },
+        // A missing OCR answer is withheld; student work goes through the attempt event,
+        // never the answer key.
         actorRef: 'auto-enroll:question',
         now,
       });
 
       // Same enrollment owner as the human path; only provenance and answer differ.
-      const enroll = await enrollCapturedBlock(tx, {
-        questionId,
-        outcome,
-        answerMd,
-        answerImageRefs,
-        knowledgeIds: enrollKnowledgeIds,
-        imageRefs: block.image_refs,
-        captureMode,
-        sourceDocumentId,
-        now,
-        generatedBy: 'workflow_judge',
-      });
-
-      await applyQuestionBlockTransition(
-        tx,
-        {
-          kind: 'auto_enroll',
-          blockId: block.id,
+      const enroll = await settleCapturedBlock(tx, {
+        transition: 'auto_enroll',
+        blockId: block.id,
+        guard: { kind: 'row_locked' },
+        enroll: {
           questionId,
-          attemptEventId: enroll.attemptEventId,
+          outcome,
+          answerMd,
+          answerImageRefs,
+          knowledgeIds: enrollKnowledgeIds,
+          imageRefs: block.image_refs,
+          captureMode,
+          sourceDocumentId,
+          now,
+          generatedBy: 'workflow_judge',
         },
-        now,
-      );
+      });
 
       return {
         block_id: block.id,

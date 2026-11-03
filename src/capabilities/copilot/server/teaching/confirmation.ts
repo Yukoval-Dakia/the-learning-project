@@ -6,6 +6,7 @@ import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events, learning_session } from '@/db/schema';
 import { getCorrectionStatus, writeEvent } from '@/kernel/events';
+import { COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
 import {
   lockEventCorrectionSource,
   lockEventCorrectionsAll,
@@ -107,7 +108,7 @@ async function authorize(
     if (
       !ask ||
       ask.session_id !== sessionId ||
-      ask.action !== 'experimental:copilot_user_ask' ||
+      ask.action !== COPILOT_USER_ASK_ACTION ||
       ask.actor_kind !== 'user' ||
       ask.actor_ref !== 'user:self' ||
       (await readEventDerivationPolicy(tx, id)) !== 'allow' ||

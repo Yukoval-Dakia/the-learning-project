@@ -1,6 +1,6 @@
 // trait 域写面业务层：edit/fork/rebind/rollback/reset-to-seed。
 //
-// 一切写事务开头取控制面 advisory lock；CAS 只守卫陈旧 UI 提交（锁内比对
+// 一切写事务经 withControlPlane（开头取控制面锁）；CAS 只守卫陈旧 UI 提交（锁内比对
 // expectedRevision，'stale' 携 currentRevision）。
 // 所有权按 trait 判定：自有（本科种子或 owner_subject_id=本科）原地写，非自有
 // 同事务 fork-and-edit。general 的 fork/换绑一律 forbidden，只有自有种子可编。
@@ -8,18 +8,11 @@
 
 import { isDeepStrictEqual } from 'node:util';
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import { validateProfile } from '@/core/capability/validate-profile';
 import type { Db, Tx } from '@/db/client';
-import {
-  subject,
-  subject_control_journal,
-  subject_trait,
-  subject_trait_binding,
-  subject_trait_journal,
-} from '@/db/schema';
-import { acquireControlPlaneLockSql } from '@/kernel/records/subject-control-lock';
+import { subject, subject_trait, subject_trait_binding, subject_trait_journal } from '@/db/schema';
 import {
   BUILTIN_SUBJECT_IDS,
   BUILTIN_TRAIT_SEEDS,
@@ -33,6 +26,7 @@ import {
   TRAIT_PAYLOAD_SCHEMA_VERSIONS,
   parseTraitPayloads,
 } from '@/subjects/trait-schemas';
+import { commitSubjectRevision, withControlPlane } from './subject-control/commit';
 
 // ---------- 结果联合（route 壳映射状态码） ----------
 
@@ -163,8 +157,7 @@ export async function editSubjectTrait(
   const parsed = parsePayload(args.kind, args.payload);
   if (!parsed.ok) return { kind: 'invalid', message: parsed.message };
 
-  return db.transaction(async (tx): Promise<TraitWriteResult> => {
-    await tx.execute(acquireControlPlaneLockSql);
+  return withControlPlane(db, async (tx): Promise<TraitWriteResult> => {
     const now = new Date();
 
     const subjectRow = await loadSubjectRow(tx, args.subjectId);
@@ -285,18 +278,12 @@ export async function editSubjectTrait(
           eq(subject_trait_binding.trait_kind, args.kind),
         ),
       );
-    const nextSubjectRevision = subjectRow.revision + 1;
-    await tx
-      .update(subject)
-      .set({ revision: nextSubjectRevision, updated_at: now })
-      .where(eq(subject.id, args.subjectId));
-    await tx.insert(subject_control_journal).values({
-      subject_id: args.subjectId,
-      revision: nextSubjectRevision,
+    await commitSubjectRevision(tx, {
+      subjectId: args.subjectId,
+      fromRevision: subjectRow.revision,
       action: 'fork',
       detail: { kind: args.kind, from_trait_id: trait.id, to_trait_id: newTraitId },
-      actor: 'owner',
-      created_at: now,
+      now,
     });
     return { kind: 'ok', traitId: newTraitId, revision: 1, forked: true };
   });
@@ -308,8 +295,7 @@ export async function editSharedTrait(
   db: Db,
   args: { traitId: string; expectedRevision: number; payload: unknown },
 ): Promise<TraitWriteResult> {
-  return db.transaction(async (tx): Promise<TraitWriteResult> => {
-    await tx.execute(acquireControlPlaneLockSql);
+  return withControlPlane(db, async (tx): Promise<TraitWriteResult> => {
     const now = new Date();
     const trait = await loadTraitRow(tx, args.traitId);
     if (!trait) return { kind: 'not_found', message: `unknown trait "${args.traitId}"` };
@@ -351,8 +337,7 @@ export async function rollbackTrait(
   db: Db,
   args: { traitId: string; expectedRevision: number; targetRevision: number },
 ): Promise<TraitWriteResult> {
-  return db.transaction(async (tx): Promise<TraitWriteResult> => {
-    await tx.execute(acquireControlPlaneLockSql);
+  return withControlPlane(db, async (tx): Promise<TraitWriteResult> => {
     const now = new Date();
     const trait = await loadTraitRow(tx, args.traitId);
     if (!trait) return { kind: 'not_found', message: `unknown trait "${args.traitId}"` };
@@ -429,8 +414,7 @@ export async function forkSubjectTrait(
   if (args.subjectId === 'general') {
     return { kind: 'forbidden', message: 'general bindings are structurally locked (P1-1)' };
   }
-  return db.transaction(async (tx): Promise<TraitWriteResult> => {
-    await tx.execute(acquireControlPlaneLockSql);
+  return withControlPlane(db, async (tx): Promise<TraitWriteResult> => {
     const now = new Date();
     const subjectRow = await loadSubjectRow(tx, args.subjectId);
     if (!subjectRow) return { kind: 'not_found', message: `unknown subject "${args.subjectId}"` };
@@ -495,18 +479,12 @@ export async function forkSubjectTrait(
           eq(subject_trait_binding.trait_kind, args.kind),
         ),
       );
-    const nextSubjectRevision = subjectRow.revision + 1;
-    await tx
-      .update(subject)
-      .set({ revision: nextSubjectRevision, updated_at: now })
-      .where(eq(subject.id, args.subjectId));
-    await tx.insert(subject_control_journal).values({
-      subject_id: args.subjectId,
-      revision: nextSubjectRevision,
+    await commitSubjectRevision(tx, {
+      subjectId: args.subjectId,
+      fromRevision: subjectRow.revision,
       action: 'fork',
       detail: { kind: args.kind, from_trait_id: trait.id, to_trait_id: newTraitId },
-      actor: 'owner',
-      created_at: now,
+      now,
     });
     return { kind: 'ok', traitId: newTraitId, revision: 0, forked: true };
   });
@@ -526,8 +504,7 @@ export async function rebindSubjectTrait(
   if (args.subjectId === 'general') {
     return { kind: 'forbidden', message: 'general bindings are structurally locked (P1-1)' };
   }
-  return db.transaction(async (tx): Promise<TraitWriteResult> => {
-    await tx.execute(acquireControlPlaneLockSql);
+  return withControlPlane(db, async (tx): Promise<TraitWriteResult> => {
     const now = new Date();
     const subjectRow = await loadSubjectRow(tx, args.subjectId);
     if (!subjectRow) return { kind: 'not_found', message: `unknown subject "${args.subjectId}"` };
@@ -575,18 +552,12 @@ export async function rebindSubjectTrait(
           eq(subject_trait_binding.trait_kind, args.kind),
         ),
       );
-    const nextSubjectRevision = subjectRow.revision + 1;
-    await tx
-      .update(subject)
-      .set({ revision: nextSubjectRevision, updated_at: now })
-      .where(eq(subject.id, args.subjectId));
-    await tx.insert(subject_control_journal).values({
-      subject_id: args.subjectId,
-      revision: nextSubjectRevision,
+    await commitSubjectRevision(tx, {
+      subjectId: args.subjectId,
+      fromRevision: subjectRow.revision,
       action: 'rebind',
       detail: { kind: args.kind, from_trait_id: fromTraitId, to_trait_id: args.targetTraitId },
-      actor: 'owner',
-      created_at: now,
+      now,
     });
     return { kind: 'ok', traitId: args.targetTraitId, revision: target.revision, forked: false };
   });
@@ -598,8 +569,7 @@ export async function resetTraitToSeed(
   db: Db,
   args: { traitId: string; expectedRevision: number },
 ): Promise<TraitWriteResult> {
-  return db.transaction(async (tx): Promise<TraitWriteResult> => {
-    await tx.execute(acquireControlPlaneLockSql);
+  return withControlPlane(db, async (tx): Promise<TraitWriteResult> => {
     const now = new Date();
     const trait = await loadTraitRow(tx, args.traitId);
     if (!trait) return { kind: 'not_found', message: `unknown trait "${args.traitId}"` };

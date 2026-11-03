@@ -154,7 +154,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'knowledge',
-    file: 'src/capabilities/practice/jobs/embed_backfill.ts',
+    file: 'src/capabilities/practice/question-bank/jobs/embed_backfill.ts',
     marker: '.update(knowledge)',
     role: 'maintenance',
     note: 'Embedding maintenance writes derived search columns only.',
@@ -226,10 +226,17 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/notes/server/sections.ts',
+    file: 'src/capabilities/notes/server/artifact-body-commit.ts',
     marker: '.update(artifact)',
     role: 'event-native-by-caller',
-    note: 'Section body/history CAS and full body_blocks_edit snapshot share the transaction, version and timestamp.',
+    note: 'Sole note body commit on the caller transaction: locked read, version CAS UPDATE, backlink sync, full body_blocks_edit snapshot and optional lifecycle event from one after-state and one watermarked timestamp.',
+  },
+  {
+    table: 'artifact',
+    file: 'src/capabilities/notes/server/note-long-check.ts',
+    marker: '.update(artifact)',
+    role: 'event-native-by-caller',
+    note: 'Long-check marker attrs updates are version-guarded and paired with set_attrs lifecycle events at the update timestamp; the revision body goes through artifact-body-commit.',
   },
   {
     table: 'artifact',
@@ -250,7 +257,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     file: 'src/capabilities/notes/jobs/note_generate.ts',
     marker: '.update(artifact)',
     role: 'event-native-by-caller',
-    note: 'Generation status/body updates emit same-tx lifecycle/full body snapshots with exact row timestamps.',
+    note: 'Generation status/attrs updates emit same-tx lifecycle events with exact row timestamps; body writes go through artifact-body-commit.',
   },
   {
     table: 'artifact',
@@ -322,14 +329,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     file: 'src/kernel/records/question-block-transitions.ts',
     marker: '.update(question_block)',
     role: 'event-native-by-caller',
-    note: 'Accepted import, ignore and revert transitions pair status/links/version with the lifecycle event in the caller transaction; submitted keeps event then guarded projection.',
-  },
-  {
-    table: 'question_block',
-    file: 'src/capabilities/ingestion/server/assessment-capture.ts',
-    marker: '.update(question_block)',
-    role: 'event-native-by-caller',
-    note: 'Native activation pairs imported block links/status/version with the matching lifecycle event in its settlement transaction; parity is covered by parity-writers-c3.db.test.ts.',
+    note: 'Accepted import, auto/native enrollment (optional version CAS), ignore and revert transitions pair status/links/version with the lifecycle event in the caller transaction; submitted keeps event then guarded projection.',
   },
   {
     table: 'question_block',
@@ -355,7 +355,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'item_calibration',
-    file: 'src/capabilities/practice/server/fixed-anchor.ts',
+    file: 'src/capabilities/practice/question-bank/server/fixed-anchor.ts',
     marker: '.insert(item_calibration)',
     role: 'off-path-writer',
     note: 'fixed-anchor upsert (INSERT + onConflictDoUpdate; OFF-path sole writer — 方案 A keeps it imperative).',

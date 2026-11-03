@@ -6,16 +6,15 @@ import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/struc
 import type { Db, Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
-import { learning_session, question_block, source_document } from '@/db/schema';
+import { learning_session, question_block } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
 import { assertFromState } from '@/kernel/learning-session-guard';
-import {
-  USAGE_POLICY_PROVENANCE_KEY,
-  resolveSessionDerivationPolicy,
-} from '@/kernel/read-models/usage-policy';
+import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
-import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx/omission';
+import type { DocxExternalRefOmissionFacts } from './docx/omission';
+import { writeIngestionSessionBirth } from './session/birth';
+import { recordSourcePackageAttachError } from './session/source-document-provenance';
 
 // LearningSession.Ingestion.* — Phase 1c.1 Step 5 evolution of the ADR-0005
 // single-owner ingestion-session module. Writes to `learning_session(type='ingestion')`
@@ -729,7 +728,7 @@ export async function commitImport(tx: Db | Tx, sessionId: string): Promise<void
 export type InitiateUploadParams = {
   assetIds: string[];
   // 'docx' is the visual line for docx page images; the text line has its own
-  // owner (docx-ingestion.ts).
+  // owner (docx/text-session-lifecycle.ts).
   entrypoint: 'vision_single' | 'vision_paper' | 'docx';
   // YUK-1404 — already resolved and validated by the API route. Omitted/null
   // means no explicit signal: provenance keeps only entrypoint so the derived
@@ -760,73 +759,15 @@ export async function initiateUpload(
   params: InitiateUploadParams,
 ): Promise<{ sessionId: string; sourceDocumentId: string }> {
   return db.transaction(async (tx) => {
-    const sourceDocumentId = createId();
-    const sessionId = createId();
-    const now = new Date();
-    // Dynamic import avoids a circular dependency at module load time.
-    const { source_document } = await import('@/db/schema');
-    const omission = params.externalRefOmission;
-    const omissionWarnings = omission ? [EXTERNAL_REF_OMISSION_NOTICE] : [];
-    await tx.insert(source_document).values({
-      id: sourceDocumentId,
-      title: null,
-      source_asset_ids: params.assetIds,
-      body_md: null,
-      // YUK-1404 — key presence means an explicit learner choice; absence means
-      // unknown (omitted request or legacy row). Writing only non-null ids keeps
-      // the derived fallback available, while an id that later stops resolving
-      // pins notation to null instead of guessing.
-      provenance: {
-        entrypoint: params.entrypoint,
-        ...(params.learnerSelectedSubjectId
-          ? { learner_selected_subject_id: params.learnerSelectedSubjectId }
-          : {}),
-        // YUK-1408 — explicit consent on the same record; absence = 'allow'.
-        ...(params.derivationPolicy
-          ? {
-              [USAGE_POLICY_PROVENANCE_KEY]: {
-                derivation_policy: params.derivationPolicy,
-              },
-            }
-          : {}),
-        // Same provenance shape as the text-line owner, so audits read uniformly.
-        ...(omission
-          ? {
-              docx_external_ref_omission: {
-                input_sha256: omission.inputSha256,
-                converter_input_sha256: omission.converterInputSha256,
-                omitted: omission.omissions,
-                learner_notice: EXTERNAL_REF_OMISSION_NOTICE,
-              },
-            }
-          : {}),
-      } as Record<string, unknown>,
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-    await tx.insert(learning_session).values({
-      id: sessionId,
-      type: 'ingestion',
-      source_document_id: sourceDocumentId,
-      source_asset_ids: params.assetIds,
-      status: 'uploaded',
+    const { sessionId, sourceDocumentId } = await writeIngestionSessionBirth(tx, {
+      sourceAssetIds: params.assetIds,
+      uploadedAssetCount: params.assetIds.length,
       entrypoint: params.entrypoint,
-      error_message: null,
-      warnings: omissionWarnings,
-      started_at: now,
-      created_at: now,
-      updated_at: now,
-      version: 0,
+      learnerSelectedSubjectId: params.learnerSelectedSubjectId,
+      derivationPolicy: params.derivationPolicy,
+      externalRefOmission: params.externalRefOmission,
+      now: new Date(),
     });
-
-    await writeJobEvent(tx, {
-      business_table: SESSION_TABLE,
-      business_id: sessionId,
-      event_type: 'ingestion.uploaded',
-      payload: { asset_count: params.assetIds.length, entrypoint: params.entrypoint },
-    });
-
     return { sessionId, sourceDocumentId };
   });
 }
@@ -856,20 +797,7 @@ export async function markSessionPackageFailed(
   if (['extracted', 'partial', 'reviewed', 'imported'].includes(session.status)) {
     if (session.source_document_id) {
       try {
-        const [doc] = await db
-          .select({ provenance: source_document.provenance })
-          .from(source_document)
-          .where(eq(source_document.id, session.source_document_id))
-          .limit(1);
-        await db
-          .update(source_document)
-          .set({
-            provenance: {
-              ...((doc?.provenance as Record<string, unknown> | null) ?? {}),
-              source_package_attach_error: msg.slice(0, 500),
-            },
-          })
-          .where(eq(source_document.id, session.source_document_id));
+        await recordSourcePackageAttachError(db, session.source_document_id, msg);
       } catch {
         // Best-effort marker; the attach error still propagates.
       }

@@ -6,6 +6,7 @@ import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import type { SuggestionKind } from '@/kernel/capability-contract-schemas';
 import { writeEvent } from '@/kernel/events';
+import { COPILOT_REPLY_ACTION } from '@/kernel/events/copilot-actions';
 import { ApiError } from '@/kernel/http';
 import { wakeHubSyncAfterCommit } from '@/server/boss/hub-sync-wake';
 import { acceptAiProposal } from '@/server/proposals/actions';
@@ -19,7 +20,6 @@ const TEACH_MESSAGE_ACTION = 'experimental:teach_message';
 // Under the single-session merge, a Copilot ask_check turn writes
 // `experimental:copilot_reply` (not a teach_message), so the resolver and
 // validator accept both; legacy teach_message anchoring must not regress.
-const COPILOT_REPLY_ACTION = 'experimental:copilot_reply';
 const ANCHOR_ACTIONS = [TEACH_MESSAGE_ACTION, COPILOT_REPLY_ACTION] as const;
 
 /**

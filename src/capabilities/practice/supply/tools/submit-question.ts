@@ -62,8 +62,11 @@ import {
 } from '@/server/questions/submit-question';
 import {
   dispatchPendingVerifyIntents,
+  embedQuestionTextForIngest,
+  mergeExactQuestionDuplicateKnowledgeIds,
+  questionEmbedStamp,
   writeVerifyDispatchIntent,
-} from '../../server/verify-dispatch-outbox';
+} from '../../question-bank/public';
 
 export type {
   EditQuestionInputT,
@@ -83,8 +86,6 @@ export {
 
 import { SupplyTraceV1, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { embedQuestionTextForIngest, questionEmbedStamp } from '../../jobs/embed_backfill';
-import { mergeExactQuestionDuplicateKnowledgeIds } from '../../server/quiz/content-fingerprint';
 import {
   claimHttpSourceDuplicate,
   findVectorNearDuplicate,

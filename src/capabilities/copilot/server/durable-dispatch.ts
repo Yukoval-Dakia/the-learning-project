@@ -12,6 +12,7 @@ import {
 } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
+import { COPILOT_ASK_ACTIONS } from '@/kernel/events/copilot-actions';
 import { writeJobEvent } from '@/kernel/job-events';
 import type { ReviewAnswerAttachment } from '@/kernel/tools/review-answer';
 import { ConfirmationCommand, type ConfirmationCommandT } from '../confirmation-contract';
@@ -370,6 +371,9 @@ async function acquireCopilotSessionQueueLock(tx: Tx, sessionId: string): Promis
   );
 }
 
+// Inlined as SQL literals, not bind params, so the statement text stays byte-identical.
+const COPILOT_ASK_ACTIONS_SQL = sql.raw(COPILOT_ASK_ACTIONS.map((a) => `'${a}'`).join(', '));
+
 /**
  * Pick the oldest non-terminal accepted turn for a session. The session lock and
  * SQL ordering make this a single-winner operation; dispatch_seq stays in SQL
@@ -386,7 +390,7 @@ export async function readCopilotSessionHead(
     WHERE q.business_table = ${COPILOT_RUN_TABLE}
       AND q.event_type = ${COPILOT_RUN_EVENTS.QUEUED}
       AND (q.payload->>'session_id') = ${sessionId}
-      AND ask.action IN ('experimental:copilot_user_ask', 'experimental:copilot_chip_trigger')
+      AND ask.action IN (${COPILOT_ASK_ACTIONS_SQL})
       AND NOT EXISTS (
         SELECT 1 FROM job_events t
         WHERE t.business_table = q.business_table AND t.business_id = q.business_id

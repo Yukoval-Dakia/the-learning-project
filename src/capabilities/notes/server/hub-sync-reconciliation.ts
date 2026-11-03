@@ -6,6 +6,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 
 import { sql } from 'drizzle-orm';
+import {
+  ACTIVE_SESSION_INTERVAL,
+  listActiveEditorSessions,
+} from '@/capabilities/notes/server/artifacts/presence/pg';
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 // Shared with the nightly job without an import cycle.
 import {
@@ -390,11 +394,7 @@ export async function finalizeHubSync(
 
     await hooks.afterCursorLock?.();
 
-    const editorRows = await tx.execute<{ session_id: string }>(sql`
-      select session_id from artifact_edit_session
-      where artifact_id = ${claim.artifactId}
-        and clock_timestamp() - last_heartbeat_at <= interval '30 seconds'
-    `);
+    const activeEditors = await listActiveEditorSessions(tx, claim.artifactId);
 
     const fenceMatches =
       cursor !== undefined &&
@@ -413,7 +413,7 @@ export async function finalizeHubSync(
       return 'cancelled';
     }
 
-    if (editorRows.length > 0) return deferClaimedCursor(tx, claim, 'active_editor');
+    if (activeEditors.length > 0) return deferClaimedCursor(tx, claim, 'active_editor');
     if (hub.version !== desired.observedArtifactVersion) {
       return deferClaimedCursor(tx, claim, 'artifact_version_changed');
     }
@@ -537,7 +537,7 @@ async function deferClaimedCursor(
   // loop; a version change retries immediately because the trigger re-dirtied it.
   const nextAttempt =
     reason === 'active_editor'
-      ? sql`clock_timestamp() + interval '30 seconds'`
+      ? sql`clock_timestamp() + ${ACTIVE_SESSION_INTERVAL}`
       : sql`clock_timestamp()`;
   await tx.execute(sql`
     update hub_sync_reconciliation
@@ -883,30 +883,6 @@ export async function repairHubSyncCoverage(
 
 // Guard against a pathological coverage set spinning the nightly page loop.
 const MAX_NIGHTLY_REPAIR_PAGES = 10_000;
-
-// Far above the 30s active window, so only truly abandoned sessions are reaped.
-const ABANDONED_EDIT_SESSION_TTL = sql`interval '1 hour'`;
-
-/**
- * Best-effort cleanup of abandoned edit sessions. Runs from the nightly job, not
- * gated by HUB_SYNC_MODE, so rows are still reaped while the reconciler is off. A
- * sweep failure is logged, never thrown.
- */
-export async function sweepAbandonedEditSessions(db: Db): Promise<void> {
-  try {
-    await db.execute(sql`
-      delete from artifact_edit_session
-      where last_heartbeat_at < clock_timestamp() - ${ABANDONED_EDIT_SESSION_TTL}
-    `);
-  } catch (err) {
-    console.error(
-      JSON.stringify({
-        event: 'hub_sync_abandoned_session_sweep_failed',
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
-  }
-}
 
 /**
  * Claim → compute → finalize up to maxArtifacts. Wake, recovery, and nightly

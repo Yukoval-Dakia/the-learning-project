@@ -16,7 +16,7 @@ import { artifact, knowledge, learning_item, learning_record, question } from '@
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { lockPlacementSupplyScopes } from '@/kernel/placement';
+import { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
 import {
   asPlainRecord,
   ensureAcceptOnly,

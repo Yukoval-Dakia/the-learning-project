@@ -442,7 +442,7 @@ DROP TRIGGER IF EXISTS hub_sync_knowledge_dirty ON knowledge;
 DROP TRIGGER IF EXISTS hub_sync_knowledge_edge_dirty ON knowledge_edge;
 ```
 
-重建 = 重跑 `drizzle/0071` 的 `CREATE TRIGGER` 段（函数体仍在，无需重建）+ 跑一次 nightly repair（`runHubAutoSyncNightly`）补齐停用期间遗漏的 coverage。停用期间 abandoned `artifact_edit_session` 的清扫**不受 `off` 或 dormancy 影响**——它在 nightly 的 `beforeEligibility` 与 mode 门之前无条件跑（`sweepAbandonedEditSessions`），presence 卫生不该受 reconciler mode 或资格门控制。
+重建 = 重跑 `drizzle/0071` 的 `CREATE TRIGGER` 段（函数体仍在，无需重建）+ 跑一次 nightly repair（`runHubAutoSyncNightly`）补齐停用期间遗漏的 coverage。停用期间 abandoned `artifact_edit_session` 的清扫**不受 `off` 或 dormancy 影响**——它在 nightly 的 `beforeEligibility` 与 mode 门之前无条件跑（presence owner 的 `reapAbandonedEditSessions`，`src/capabilities/notes/server/artifacts/presence/pg.ts`），presence 卫生不该受 reconciler mode 或资格门控制。
 
 **Restore 语义（R3）**：`hub_sync_reconciliation` 走 `BACKUP_EXCLUDED_TABLES`（非 FK_ORDER）——restore 重插 `artifact` 时 `hub_sync_artifact_dirty` 逐行 fan-out 重建每个 live hub 的 pending 游标（`O(atomics×hubs)` 的一次性 churn，单用户规模可忽略），nightly repair 兜底 coverage；故 restore 后无需手工补游标。
 
@@ -460,7 +460,7 @@ YUK-861 对 Verify、Notes、Memory 三条 durable handoff 做了架构 closeout
 
 | owner | 事实与提交边界 | receipt / recovery |
 |---|---|---|
-| Verify (`src/capabilities/practice/server/verify-dispatch-outbox.ts`) | draft 与 `writeVerifyDispatchIntent()` 同一 transaction；`dispatchPendingVerifyIntents()` 锁 pending intent，并用 `fromPgBossDrizzleTx(tx)` enqueue | enqueue 与 per-question/verifier completion 同一 transaction；失败保留 intent，`recoverOrphanVerifyDispatches()` 只恢复 verify |
+| Verify (`src/capabilities/practice/question-bank/server/verify-dispatch-outbox.ts`) | draft 与 `writeVerifyDispatchIntent()` 同一 transaction；`dispatchPendingVerifyIntents()` 锁 pending intent，并用 `fromPgBossDrizzleTx(tx)` enqueue | enqueue 与 per-question/verifier completion 同一 transaction；失败保留 intent，`recoverOrphanVerifyDispatches()` 只恢复 verify |
 | Notes (`src/capabilities/notes/server/note-handoff.ts`) | artifact transaction 写 append-only intent；queue send 在 commit 后发生 | exact returned job ID 或 exact `getJobById()` readback 确认 receipt 后写 completion；`hub_sync_recovery` 作为共享 floor，claim/result recovery 仍由 Notes 自己拥有 |
 | Memory (`src/capabilities/agency/server/memory/memory-reconcile-handoff*.ts`) | DB transaction 只写 marker/intent/completion/cursor；Mem0 lookup/SDK 与 pg-boss 在 transaction 外 | 上游 provider truth 由 fence、`add_started` 和 resolution 约束；下游一个 batch job 的 exact receipt 被物化为共享 job/digest 的多条 per-memory completion；严格 `observe|write|recover|drain` 与 append-only bounded cursor 保持 Memory-owned |
 

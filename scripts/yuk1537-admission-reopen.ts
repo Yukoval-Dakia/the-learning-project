@@ -10,11 +10,11 @@ import {
   ADMISSION_FAMILY,
   admissionJobId,
   lockAdmissionGroup,
-} from '@/capabilities/practice/server/admission/enqueue';
+} from '@/capabilities/practice/question-bank/server/admission/enqueue';
 import {
   parseQuestionAdmissionSolveModelOutput,
   questionAdmissionSolveTaskSpec,
-} from '@/capabilities/practice/tasks/question-admission-solve';
+} from '@/capabilities/practice/question-bank/tasks/question-admission-solve';
 import {
   LEGACY_QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNITS,
