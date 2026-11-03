@@ -251,6 +251,19 @@ async function dispatchReturnStock(
   return tallyByStatus(results, results.length);
 }
 
+// 对比缺口是附加来源：读取失败只丢这一路，覆盖缺口照常派发。
+async function discoverContrastTargetsIsolated(db: Db): Promise<QuestionSupplyTarget[]> {
+  try {
+    return await discoverConfusableContrastTargets(db);
+  } catch (err) {
+    console.error(
+      '[question_supply_nightly] confusable contrast discovery failed; dispatching coverage gaps only',
+      err,
+    );
+    return [];
+  }
+}
+
 async function runSupplyDiscoveryAndDispatch(
   db: Db,
   deps: DepsOverride,
@@ -263,7 +276,7 @@ async function runSupplyDiscoveryAndDispatch(
   });
   // 易混对比缺口与覆盖缺口同表排序，共用 per-run 硬顶与 dispatcher cooldown。
   // 稳定排序：同优先级保持覆盖缺口在前。
-  const targets = [...coverageTargets, ...(await discoverConfusableContrastTargets(db))].sort(
+  const targets = [...coverageTargets, ...(await discoverContrastTargetsIsolated(db))].sort(
     (a, b) => b.priority - a.priority,
   );
   if (targets.length === 0) return emptyTally();

@@ -338,7 +338,7 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
 以下路径整块归功能线。架构线的任何切片都不要求在功能线落位之前改动它们：
 
 - `practice/server/question-supply/*`：web-supply、placement-starter*、plan-executor、dispatcher、refill、target-discovery 等。
-- `practice/jobs/{supply_execute,question_supply_nightly,source_verify*,question_admission_run}.ts`，以及 `quiz_gen*`、`supply_planner`、`confusable_contrast_nightly`、`jyeoo_staged_asset_reap`。
+- `practice/jobs/` 根目录余项：`quiz_gen*`、`supply_planner`、`jyeoo_staged_asset_reap`。`supply_execute`、`question_supply_nightly` 已在 `practice/supply/jobs/`，`source_verify*`、`question_admission_run` 已在 `practice/question-bank/jobs/`；`confusable_contrast_nightly` 已删除，对比缺口并入 `question_supply_nightly` 的缺口发现。
 - `server/tools/submit-question.ts` 的供题候选路径，以及 `file-bank-gap`、`jyeoo-fetch-candidates`、`web-fetch-candidates`、`generate-question-candidate`、`question-author`、`store-sourced-question`。
 - `server/{placement-starter-recovery,supply-plan-operation,web-sourcing-operation,question-generation-grounding}.ts`，供题相关 tasks，`api/quiz-gen-trigger*`。
 
