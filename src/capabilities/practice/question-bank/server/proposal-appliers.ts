@@ -244,8 +244,8 @@ export async function acceptVariantQuestionProposal(
   // W2 — gate who writes the mistake_variant ROW (the flag is read ONCE outside the tx so a
   // mid-tx env flip can't split the decision). ON → projection write-through; OFF → imperative.
 
-  // Decision lock first, as dismiss and retract take it, so a racing decision cannot land beside
-  // this accept; domain locks follow.
+  // Decision lock first, as dismiss and retract take it, so a racing rate (accept or dismiss)
+  // cannot land beside this accept; domain locks follow.
   const concurrentRate = await db.transaction(async (tx) => {
     await acquireProposalDecisionLock(tx, proposalId);
     const decided = await readRate(tx);
