@@ -19,6 +19,12 @@ import {
 import type { CopilotCorrectionContract } from './correction-contract';
 import { resolveCorrectionReply } from './correction-contract';
 import { stripCopilotInternalComments } from './prose-stream';
+import {
+  CopilotRecordClaimSchema,
+  RECORD_GROUNDING_FALLBACK_REPLY,
+  evaluateCopilotRecordGrounding,
+  extractRecordGrounding,
+} from './record-grounding';
 import { buildCopilotToolResultSnapshot } from './tool-result-snapshot';
 import {
   type PresentPrimaryViewInput,
@@ -128,6 +134,10 @@ export const CopilotReplyFinalizationReceiptSchema = z
     correction: z.enum(['normal', 'clarify', 'corrected']),
     proposal_disclosure: z.enum(['none', 'server_composed']),
     primary_view: z.enum(['absent', 'retained', 'dropped']),
+    // YUK-1419 — ReadReplyGrounding outcome + the model-declared claims it was
+    // reached from. Optional: receipts predating the contract carry neither.
+    record_grounding: z.enum(['none', 'verified', 'downgraded']).optional(),
+    record_claims: z.array(CopilotRecordClaimSchema).max(16).optional(),
   })
   .strict();
 
@@ -169,6 +179,12 @@ export interface CreateCopilotReplyFinalizerOptions {
     kind: string;
     id: string;
   }) => Promise<{ kind: string; id: string } | null>;
+  /**
+   * YUK-1419 — whether the session-anchored learner_state snapshot actually
+   * reached the model (context history entry or resume turn_context), so
+   * `learner_state` grounding citations can be honoured.
+   */
+  learnerStateDelivered: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -402,8 +418,9 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       const resolvedNomination = nomination
         ? await resolvePrimaryViewNomination(nomination, trace, options.resolveArtifactReference)
         : undefined;
+      const groundingEnvelope = extractRecordGrounding(legacyPresented.text);
       const presented = {
-        text: legacyPresented.text,
+        text: groundingEnvelope.text,
         ...(resolvedNomination ? { primaryView: resolvedNomination } : {}),
       };
       const correction = resolveCorrectionReply(
@@ -413,6 +430,41 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       );
       const disclosure = proposalDisclosure(trace);
       const fixed = applyProposalDisclosure(correction.reply, disclosure);
+      // YUK-1419 — ReadReplyGrounding: every personal-record claim must bind a
+      // real receipt from this turn's trace or the delivered learner_state
+      // snapshot. Server-composed replies (authoritative / clarify) never cite.
+      const grounding =
+        options.authoritativeReply !== undefined || correction.kind === 'clarify'
+          ? ({ kind: 'none' } as const)
+          : evaluateCopilotRecordGrounding({
+              declaredClaims: groundingEnvelope.claims,
+              replyText: correction.reply,
+              learnerStateDelivered: options.learnerStateDelivered,
+              trace,
+            });
+      if (grounding.kind === 'rejected') {
+        const replyText = applyProposalDisclosure(RECORD_GROUNDING_FALLBACK_REPLY, disclosure);
+        return {
+          replyText,
+          preparedReply: { text: replyText },
+          accepted: true,
+          receipt: {
+            protocol_version: 2,
+            assurance: 'execution_trace_bound',
+            root_task_run_id: options.rootTaskRunId,
+            candidate_sha256: candidateSha,
+            reply_sha256: sha256Text(replyText),
+            trace_sha256: startTraceSha,
+            trace_call_count: trace.length,
+            observed_completed_tool_use_ids: observedCompletedToolUseIds(),
+            correction: options.authoritativeReply?.correction ?? correction.kind,
+            proposal_disclosure: disclosure ? 'server_composed' : 'none',
+            primary_view: successfulControls.length > 0 ? 'dropped' : 'absent',
+            record_grounding: 'downgraded',
+            ...(grounding.claims.length > 0 ? { record_claims: [...grounding.claims] } : {}),
+          },
+        };
+      }
       if (
         traceVersion !== startVersion ||
         digestTrace(trace) !== startTraceSha ||
@@ -434,6 +486,8 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         proposal_disclosure: disclosure ? 'server_composed' : 'none',
         primary_view:
           successfulControls.length > 0 ? (primaryView ? 'retained' : 'dropped') : 'absent',
+        record_grounding: grounding.kind === 'verified' ? 'verified' : 'none',
+        ...(grounding.kind === 'verified' ? { record_claims: [...grounding.claims] } : {}),
       };
       return {
         replyText: fixed,

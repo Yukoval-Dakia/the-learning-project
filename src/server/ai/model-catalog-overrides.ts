@@ -101,6 +101,18 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
     },
   },
   openrouter: {
+    'qwen/qwen3.7-flash': {
+      when: 'missing',
+      reason:
+        'The models.dev openrouter bucket carries no per-model facts. YUK-1419 dev acceptance lane; tool-loop verified in the 2026-11-03 dev runs recorded in the audit acceptance file.',
+      facts: {
+        baseUrl: 'https://openrouter.ai/api/v1',
+        toolCalling: true,
+        reasoning: true,
+        inputModalities: ['text'],
+        vision: false,
+      },
+    },
     'typesafe/jev-1.13': {
       when: 'missing',
       reason:

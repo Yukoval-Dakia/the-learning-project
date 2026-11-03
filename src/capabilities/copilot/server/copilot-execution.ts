@@ -300,6 +300,16 @@ export function createCopilotExecutionOwner(
       correctionContract: input.correction_contract,
       ...(authoritativeReply ? { authoritativeReply } : {}),
       resolveArtifactReference: (ref) => resolveLivePrimaryViewArtifact(db, ref),
+      // YUK-1419 — honor `learner_state` grounding citations only when the
+      // snapshot genuinely reached the model: the pinned context history entry
+      // (cold/replay channel) or a non-empty header in resume turn_context.
+      learnerStateDelivered:
+        input.conversation_history.some(
+          (turn) => turn.role === 'context' && turn.text.length > 0,
+        ) ||
+        (!answerOnly &&
+          policy.resumeSessionId !== undefined &&
+          (input.learner_state_header?.length ?? 0) > 0),
     });
 
     const surface = input.surface;
