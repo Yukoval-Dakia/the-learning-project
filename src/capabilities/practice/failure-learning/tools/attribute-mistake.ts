@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { makePracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 import {
@@ -7,6 +6,7 @@ import {
   getFailureAttemptWithReasoningTraceById,
 } from '@/kernel/read-models/failure-attempts';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import type { DomainTool, ToolContext } from '../../tools/types';
 import { createFailureLearning } from '../server/failure-learning';
 
@@ -82,7 +82,7 @@ async function attributeMistakeExecute(
   const input = AttributeMistakeInputSchema.parse(raw);
   const failureLearning = createFailureLearning({
     db: ctx.db,
-    runTaskFn: makePracticeTaskRunFn(ctx.db, {
+    runTaskFn: makeRunTaskFn(ctx.db, {
       signal: ctx.signal,
       parentTaskRunId: ctx.taskRunId,
       ...(ctx.providerSessionDeadlineAt !== undefined

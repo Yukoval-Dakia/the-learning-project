@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 import type { SubjectProfile } from '@/subjects/profile';
-import { parseTaskOutput } from './parse-output';
 
 // teaching_quality VerifyCheck (YUK-578) — an independent judge from the closed-book
 // QuizVerifyTask. Reads only question data (prompt/reference/rubric/choices), no

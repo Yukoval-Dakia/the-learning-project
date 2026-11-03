@@ -38,8 +38,8 @@ import { taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 import { writeToolCallLog } from '@/kernel/tools/call-evidence';
+import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
-import type { PracticeTaskRunFn } from '../../../server/task-runtime';
 import {
   QuestionAdmissionSolveInput,
   type QuestionAdmissionSolveInputT,
@@ -717,7 +717,7 @@ async function authorKeyAccepts(
 
 async function runSolvePass(
   db: Db,
-  runTask: PracticeTaskRunFn,
+  runTask: BoundRunTaskTextFn,
   subjectProfile: SubjectProfile | undefined,
   payload: QuestionAdmissionSolveInputT,
   repairBudget: { remaining: number },
@@ -765,7 +765,7 @@ export async function runDualSolve(
   db: Db,
   definition: QuestionAdmissionDefinition,
   deps: {
-    runTask: PracticeTaskRunFn;
+    runTask: BoundRunTaskTextFn;
     subjectProfile?: SubjectProfile;
     /** OPEN owner decision：异源与否由配置决定（默认同一配置模型、独立上下文）。 */
     solver2?: { provider?: Provider; model?: string } | null;
@@ -991,7 +991,7 @@ export async function runSourceCrosscheck(
   db: Db,
   definition: QuestionAdmissionDefinition,
   keys: Map<string, AdmissionKey>,
-  deps: { runTask: PracticeTaskRunFn; subjectProfile?: SubjectProfile },
+  deps: { runTask: BoundRunTaskTextFn; subjectProfile?: SubjectProfile },
 ): Promise<SourceCrosscheckResult | null> {
   if (definition.source_answers.length === 0 || keys.size === 0) return null;
   const payload = QuestionAdmissionSourceCrosscheckInput.parse({

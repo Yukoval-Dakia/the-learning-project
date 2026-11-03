@@ -10,12 +10,12 @@
 // core; this module owns the async signal/LLM/sampler path.
 
 import type { Db, Tx } from '@/db/client';
+import { type BoundRunTaskTextFn, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import {
   DEFAULT_TEMPERATURE,
   MEM0_PRIOR_CAP,
   type SelectionPolicyConfig,
 } from '../../server/selection-constants';
-import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from '../../server/task-runtime';
 import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { planNonDueSelection } from './non-due-selection-plan';
 import { applyL3LearningMixGuard, learningMixContextFromInputs } from './post-filter';
@@ -47,7 +47,7 @@ type DbLike = Db | Tx;
 // ───────────────────────────────────────────────────────────────────────────
 
 /** runTask 投影（只取 .text）——DI 便于 mock（测试不命中 live endpoint）。 */
-export type RunTaskFn = PracticeTaskRunFn;
+export type RunTaskFn = BoundRunTaskTextFn;
 
 /** Read-only learner-memory prior loader. One invocation per L2 orchestration at most. */
 export type LoadMemoryPriorFn = () => Promise<readonly string[]>;
@@ -459,7 +459,7 @@ const defaultLoadMemoryPrior = async (
 
 /** 默认 production runTask（动态 import 避免 server-only 模块进 unit graph）。 */
 async function defaultRunTaskFn(db: Db): Promise<RunTaskFn> {
-  return makePracticeTaskTextRunFn(db);
+  return makeRunTaskTextFn(db);
 }
 
 // ───────────────────────────────────────────────────────────────────────────

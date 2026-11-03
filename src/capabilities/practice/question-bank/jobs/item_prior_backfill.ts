@@ -14,8 +14,8 @@
 
 import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
+import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
-import type { PracticeTaskRunFn } from '../../server/task-runtime';
 import {
   type ItemPriorBackfillResult,
   type ItemPriorMethod,
@@ -30,7 +30,7 @@ export type {
 } from '../server/item-prior-durable-operation';
 
 type DepsOverride = {
-  runTaskFn?: PracticeTaskRunFn;
+  runTaskFn?: BoundRunTaskTextFn;
   /** 每轮最多标定多少题（防一次 job 打爆 LLM 预算）。default 25。 */
   maxPerRun?: number;
   /**

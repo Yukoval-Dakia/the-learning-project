@@ -3,8 +3,8 @@ import {
   SourceGroundingVerifyOutput,
   type SourceGroundingVerifyOutputT,
 } from '@/core/schema/source-grounding';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 import type { SubjectProfile } from '@/subjects/profile';
-import { parseTaskOutput } from '../../tasks/parse-output';
 
 // Source-grounding verifier: asks only whether the 题面 really comes from the
 // attached image. It exists to catch VLM hallucination on image_candidate

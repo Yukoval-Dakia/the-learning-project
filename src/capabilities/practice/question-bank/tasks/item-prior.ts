@@ -7,8 +7,8 @@ import {
   LLASA_ABILITY_TIERS,
   LLASA_STUDENTS_PER_TIER,
 } from '@/core/schema/item_prior';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 import type { SubjectProfile } from '@/subjects/profile';
-import { parseTaskOutput } from '../../tasks/parse-output';
 
 // ADR-0035 慢热阶段① — 给新题估冷启先验难度 b（logit 尺度）。直接主观打分与真实
 // 难度几乎无关（r≈0），所以 prompt 强制先抽教学特征（认知步骤 / 前置知识 / 典型

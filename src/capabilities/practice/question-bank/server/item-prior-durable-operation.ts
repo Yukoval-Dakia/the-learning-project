@@ -14,12 +14,8 @@ import type { Db, Tx } from '@/db/client';
 import { item_calibration, knowledge, question } from '@/db/schema';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { applyItemPrior } from '@/kernel/records/item-calibration';
+import { type BoundRunTaskTextFn, type RunTaskCallCtx, makeRunTaskFn } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
-import {
-  type PracticeTaskCallCtx,
-  type PracticeTaskRunFn,
-  makePracticeTaskRunFn,
-} from '../../server/task-runtime';
 import { MAX_REPS } from './item-prior-limits';
 
 // 冷启锚方法开关：'feature'（默认，ItemPriorTask feature→b，source=
@@ -237,10 +233,10 @@ export function itemPriorRepIdentity(
  * 全部失败 → aggregateItemPriorRepDrafts throw → 调用方按单题失败处理。
  */
 async function runRetainedFeatureReps(
-  runTaskFn: PracticeTaskRunFn,
+  runTaskFn: BoundRunTaskTextFn,
   work: ItemPriorPreparedWork,
 ): Promise<ItemPriorDraftT> {
-  const ctx: PracticeTaskCallCtx = { subjectProfile: work.subjectProfile };
+  const ctx: RunTaskCallCtx = { subjectProfile: work.subjectProfile };
   if (work.repCount <= 1) {
     const runResult = await runTaskFn('ItemPriorTask', work.input, ctx);
     return parseItemPriorDraft('feature', runResult.text);
@@ -266,7 +262,7 @@ async function runRetainedFeatureReps(
  */
 export async function calibrateItemPriorQuestion(
   db: Db | Tx,
-  runTaskFn: PracticeTaskRunFn,
+  runTaskFn: BoundRunTaskTextFn,
   candidate: ItemPriorCandidateFrozen,
   nameById: ReadonlyMap<string, string>,
   params: ItemPriorExecutionParams,
@@ -398,7 +394,7 @@ export interface ItemPriorStagedItem {
 
 export interface ItemPriorRepExecutionDeps {
   readonly effects: Pick<ItemPriorPaidEffectAdapter, 'reserveRep' | 'completeRep'>;
-  readonly runTaskFn: PracticeTaskRunFn;
+  readonly runTaskFn: BoundRunTaskTextFn;
 }
 
 /** Deterministic parse seam over a completed receipt's immutable text. */
@@ -681,7 +677,7 @@ export async function runItemPriorBackfillOperation(
     method: ItemPriorMethod;
     reps: number;
     maxPerRun?: number;
-    runTaskFn?: PracticeTaskRunFn;
+    runTaskFn?: BoundRunTaskTextFn;
   },
 ): Promise<ItemPriorBackfillResult> {
   const maxPerRun = deps.maxPerRun ?? DEFAULT_MAX_PER_RUN;
@@ -691,7 +687,7 @@ export async function runItemPriorBackfillOperation(
   result.considered = candidates.length;
   if (candidates.length === 0) return result;
 
-  const runTaskFn = deps.runTaskFn ?? makePracticeTaskRunFn(db);
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   const nameById = await resolveItemPriorKnowledgeNames(db, candidates);
 
   for (const c of candidates) {

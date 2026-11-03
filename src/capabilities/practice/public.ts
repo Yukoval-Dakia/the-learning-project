@@ -6,6 +6,9 @@ import { loadReviewDueReader } from './scheduling/public';
 // Compatibility export; shared read models consume their owner, kernel/events,
 // directly so initialization does not re-enter the practice runtime barrel.
 export type { EffectiveTruth } from '@/kernel/events';
+// The seed-root anchor regex is owned by the kernel placement-scope read model; settlement
+// code in src/server/assessment still reads it from this seam.
+export { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 // Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
 // bundle on the @kernel + @db chain with no SDK import.
 export { issueAssessment } from '@/kernel/records/assessment-issuance';
@@ -158,10 +161,6 @@ export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
 // practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
-// The seed-root anchor regex is owned by placement-scope but consumed from server/*;
-// re-export it here so consumers stay on the public seam.
-export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
-export type { PracticeTaskRunFn } from './server/task-runtime';
 export {
   DEDUP_OVERLAP_THRESHOLD,
   claimHttpSourceDuplicate,
