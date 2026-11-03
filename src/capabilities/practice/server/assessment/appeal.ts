@@ -10,8 +10,8 @@ import {
   EvaluateSubmissionError,
   activateSubmissionCandidate,
   createFormalModelExecutor,
-} from '../judge/evaluate-submission';
-import { evaluateAttempt } from '../judge/evaluation-authority';
+  evaluateAttempt,
+} from '../../grading/public';
 
 export async function createNativeAppeal(
   database: Db,

@@ -7,7 +7,7 @@ import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
-import { loadCommittedInterventionDiagnosticAttempt } from '../../server/intervention-diagnostics';
+import { loadCommittedInterventionDiagnosticAttempt } from '../../grading/public';
 import { QuestionParamsSchema } from '../api/question-contracts';
 import { loadQuestionDetail } from './question-detail';
 

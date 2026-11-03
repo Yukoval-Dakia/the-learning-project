@@ -108,7 +108,7 @@ const OWNER_RULES: ReadonlyArray<readonly [Owner, RegExp]> = [
   ],
   [
     'grading',
-    /^server\/judge\/|^server\/judge-|^server\/evaluate-submission|^server\/recorded-model-executor|^jobs\/judge_|^api\/judge-run-status|^tasks\/(judges|jev-typed|assessment-rubric|assessment-rule|source-grounding-verify)/,
+    /^server\/judge\/|^server\/judge-|^server\/evaluate-submission|^server\/recorded-model-executor|^jobs\/(judge_|model_slice_admission_run)|^api\/judge-run-status|^tasks\/(judges|jev-typed|assessment-rubric|assessment-rule|source-grounding-verify)/,
   ],
   [
     'failure-learning',
@@ -140,7 +140,7 @@ const OWNER_RULES: ReadonlyArray<readonly [Owner, RegExp]> = [
   ],
   [
     'question-bank',
-    /^server\/admission\/|^server\/quiz\/verify-|^server\/(verify-dispatch-outbox|reference-solution|learning-content-validation)|^server\/custom-block-preview\/|^jobs\/(quiz_verify|variant_verify|model_slice_admission_run|reference_answer_backfill|answer_class_backfill)|^tasks\/(question-admission-solve|quiz-verify|variant-verify)/,
+    /^server\/admission\/|^server\/quiz\/verify-|^server\/(verify-dispatch-outbox|reference-solution|learning-content-validation)|^server\/custom-block-preview\/|^jobs\/(quiz_verify|variant_verify|reference_answer_backfill|answer_class_backfill)|^tasks\/(question-admission-solve|quiz-verify|variant-verify)/,
   ],
   [
     'question-bank',

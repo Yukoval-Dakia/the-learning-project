@@ -4,7 +4,7 @@ import type { CustomBlockT } from '@/core/schema/assessment/presentation';
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import type { AssessmentAssetLoader } from '@/kernel/records/assessment-assets';
-import { createAssessmentAssetLoader } from '../../../server/assets';
+import { createAssessmentAssetLoader } from '../../../grading/public';
 import { customBlocksOf, isValidEntry, verifyCode } from '../../../ui/blocks/custom-sandbox';
 import type { AdmissionResultReceipt, FrozenAdmissionInput } from '../admission/receipt';
 import {

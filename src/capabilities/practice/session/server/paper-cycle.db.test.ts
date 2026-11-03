@@ -37,8 +37,8 @@ import {
   submitPaperFixture as submitPaperSlot,
 } from '../../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import * as evaluationService from '../../server/judge/evaluate-submission';
-import { createRecordedModelExecutor } from '../../server/judge/recorded-model-executor';
+import * as evaluationService from '../../grading/server/judge/evaluate-submission';
+import { createRecordedModelExecutor } from '../../grading/server/judge/recorded-model-executor';
 import { autosaveAnswerDraft, freezeAnswerDraft } from './answer-draft';
 import { readPaperAssessmentBinding } from './assessment/paper-issuance';
 import { getPaperDetail } from './paper-detail';

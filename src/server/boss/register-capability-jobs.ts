@@ -122,8 +122,7 @@ export async function registerCapabilityJobs(
   await practice.installDailyReviewPlanFacts();
   await practice.installInterventionAuthorStages();
   await practice.installInterventionDiagnosticLeaves();
-  const { installModelAdmissionPins } = await import('@/server/assessment/model-admission-pins');
-  await installModelAdmissionPins();
+  await practice.installModelAdmissionPins();
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
     .filter((d) => d.load || d.backend === 'dbos');

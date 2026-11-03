@@ -41,7 +41,7 @@ export const LIVE_NON_CALLER_CLASSIFICATIONS = {
     'Retained as a registered compatibility task while production failure attribution invokes AttributionRerankTask after deterministic candidate retrieval.',
   // Typed lane: the kind arrives per frozen scoring unit via ModelExecutorRequest.executor.task_kind
   // (a dynamic expression, not a static runTask site). The single typed runner entry is
-  // src/server/assessment/jev-model-executor.ts → runTypedPrimitiveTask.
+  // src/capabilities/practice/grading/server/jev-model-executor.ts → runTypedPrimitiveTask.
   JevScoringDecisionTask:
     'Typed-execution task served by runTypedPrimitiveTask (OpenRouter decisions endpoint); its kind is selected per frozen scoring unit via executor.task_kind in jev-model-executor.ts — a dynamic arg the runner-scan cannot resolve statically.',
 } as const;

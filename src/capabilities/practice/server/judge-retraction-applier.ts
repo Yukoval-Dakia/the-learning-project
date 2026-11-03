@@ -141,8 +141,7 @@ async function applyManualAssertCorrection(
     expectedHead: { effectiveEvaluationId: string | null; generation: number };
   },
 ): Promise<{ correctedEvaluationId: string; disposition: string }> {
-  const { evaluateAttempt } = await import('./judge/evaluation-authority');
-  const { activateSubmissionCandidate } = await import('./judge/evaluate-submission');
+  const { activateSubmissionCandidate, evaluateAttempt } = await import('../grading/public');
 
   const [original] = await db
     .select()

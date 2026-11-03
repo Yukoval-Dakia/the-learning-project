@@ -7,7 +7,7 @@ import {
   placementSchemaFailure,
 } from '@/kernel/placement-starter-outcome';
 import type { SubjectProfile } from '@/subjects/profile';
-import { assertGeneratedQuestionHasJudgeContract } from '../judge/question-contract';
+import { assertGeneratedQuestionHasJudgeContract } from '../../grading/public';
 
 // output JSON parse + judge-contract assertion. The gate itself is
 // the SHARED assertGeneratedQuestionHasJudgeContract (question-contract.ts) —

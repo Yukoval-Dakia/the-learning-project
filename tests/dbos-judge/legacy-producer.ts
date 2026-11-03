@@ -1,7 +1,7 @@
 // Compiled against a sealed, real pre-0118 source tree by cutover.db.test.ts.
 import { z } from 'zod';
 import { CreateSubmissionBodySchema } from '@/capabilities/practice/api/assessment-contracts';
-import { dispatchNativeAttempt } from '@/capabilities/practice/server/assessment/durable-attempt';
+import { dispatchNativeAttempt } from '@/capabilities/practice/grading/server/assessment/durable-attempt';
 import { NativeJudgePendingSubmitInput } from '@/core/schema/event/judge-pending-events';
 import { db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';

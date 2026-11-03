@@ -1,9 +1,9 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { vi } from 'vitest';
-import { commitFormalAttempt } from '@/capabilities/practice/server/assessment/attempt';
-import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
-import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
+import { commitFormalAttempt } from '@/capabilities/practice/grading/server/assessment/attempt';
+import * as evaluationService from '@/capabilities/practice/grading/server/judge/evaluate-submission';
+import { createRecordedModelExecutor } from '@/capabilities/practice/grading/server/judge/recorded-model-executor';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
 import { artifact, evaluation, knowledge, question } from '@/db/schema';

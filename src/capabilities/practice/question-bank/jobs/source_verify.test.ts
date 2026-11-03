@@ -15,7 +15,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SourceGroundingVerifyResult } from '@/capabilities/practice/server/judge/source-grounding-verify';
+import type { SourceGroundingVerifyResult } from '@/capabilities/practice/grading/server/judge/source-grounding-verify';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import {
   event,

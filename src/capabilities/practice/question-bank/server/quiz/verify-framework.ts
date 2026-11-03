@@ -1,10 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { TaskTextResult } from '@/ai/task-result';
-import {
-  type JudgeAnswerParams,
-  runSemanticJudge,
-} from '@/capabilities/practice/server/judge/question-contract';
+import { type JudgeAnswerParams, runSemanticJudge } from '@/capabilities/practice/grading/public';
 import { type RepairLevel, parseJsonObjectLoose } from '@/core/json-extract';
 import { isObjectiveAnswerKind } from '@/core/schema/answer-class';
 // Pluggable verification-check config for question admission.
@@ -647,7 +644,7 @@ async function runIndependentSolutionInternal(
     try {
       const imageFetchFn =
         opts.imageFetchFn ??
-        (await import('@/capabilities/practice/server/judge/steps-judge')).defaultImageFetch;
+        (await import('@/capabilities/practice/grading/public')).defaultImageFetch;
       images = await imageFetchFn(promptImageRefs, opts.db);
     } catch (err) {
       return {

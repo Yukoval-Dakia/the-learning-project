@@ -1,7 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, expect, it } from 'vitest';
-import { writeJudgeReceipt } from '@/capabilities/practice/server/judge-operational';
-import { readJudgeRunPermanent } from '@/capabilities/practice/server/judge-run-observation';
+import { writeJudgeReceipt } from '@/capabilities/practice/grading/server/judge-operational';
+import { readJudgeRunPermanent } from '@/capabilities/practice/grading/server/judge-run-observation';
 import { JudgeOperationalEvent } from '@/core/schema/event/judge-operational-events';
 import { event } from '@/db/schema';
 import { lockJudgeRun } from '@/kernel/locks/grading';

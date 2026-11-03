@@ -10,16 +10,18 @@
 
 import { eq } from 'drizzle-orm';
 import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/failure-learning/public';
+import {
+  normalizeReviewSubmitActivityRef,
+  previewFormalAttempt,
+  questionKnowledgeIdsForJudge,
+  ratingFromCoarseOutcome,
+} from '@/capabilities/practice/grading/public';
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/scheduling/server/rating-advisor';
-import { normalizeReviewSubmitActivityRef } from '@/capabilities/practice/server/activity-ref';
-import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
-import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import { previewFormalAttempt } from '../../server/assessment/attempt';
 import { ReviewAdviceBodySchema } from '../api/review-planning-contracts';
 
 export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSignal) {

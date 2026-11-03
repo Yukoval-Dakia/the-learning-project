@@ -389,7 +389,7 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
         eq(event.action, 'experimental:assessment_activation'),
         eq(event.action, 'experimental:assessment_settlement'),
         eq(event.action, 'correct'),
-        // The FSRS review-queue clearing write (src/capabilities/practice/api/submit.ts)
+        // The FSRS review-queue clearing write (src/capabilities/practice/grading/api/submit.ts)
         // uses a DISTINCT action='review', not 'attempt'. It directly moves
         // review_due_count (the header's "今日待复习" headline), so a pure-review
         // session with no fresh 'attempt' rows must still trip the invalidation —
