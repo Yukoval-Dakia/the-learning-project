@@ -12,10 +12,10 @@
 //     selectionOutcome 时才挂 .is-right/.is-wrong；paper 作答全程 feedback='none'。
 
 import './response.css';
+import { Check } from 'lucide-react';
 import { useCallback, useRef } from 'react';
 
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { displayOptionContent } from './display-option-content';
 import type { ChoiceOption } from './response-types';
 
@@ -151,39 +151,39 @@ export function ChoiceSetResponse({
           ]
             .filter(Boolean)
             .join(' ');
+          // The option button is the list item itself, keyed by its stable option id (the old
+          // unkeyed fragment around it fell back to index keys). Nothing under it holds local state.
           return (
-            <>
-              {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: role 随 mode 动态（single→radio 带 aria-checked，multi→原生 button 带 aria-pressed），biome 静态判据识别不到条件 role。 */}
-              <button
-                type="button"
-                key={opt.id}
-                data-option-id={opt.id}
-                className={cls}
-                disabled={disabled}
-                role={mode === 'single' ? 'radio' : undefined}
-                aria-checked={mode === 'single' ? isSel : undefined}
-                aria-pressed={mode === 'multi' ? isSel : undefined}
-                onClick={() => (mode === 'single' ? selectSingle(opt.id) : toggleMulti(opt.id))}
-              >
-                {mode === 'multi' && (
-                  <span className="rs-opt-box" aria-hidden="true">
-                    {isSel && <LoomIcon name="check" size={10} />}
-                  </span>
-                )}
-                <span className="rs-opt-k">{opt.label}</span>
-                <span className="rs-opt-t">
-                  <MathMarkdown notation={notation}>
-                    {displayOptionContent(opt.text_md, opt.label)}
-                  </MathMarkdown>
+            // biome-ignore lint/a11y/useAriaPropsSupportedByRole: role 随 mode 动态（single→radio 带 aria-checked，multi→原生 button 带 aria-pressed），biome 静态判据识别不到条件 role。
+            <button
+              type="button"
+              key={opt.id}
+              data-option-id={opt.id}
+              className={cls}
+              disabled={disabled}
+              role={mode === 'single' ? 'radio' : undefined}
+              aria-checked={mode === 'single' ? isSel : undefined}
+              aria-pressed={mode === 'multi' ? isSel : undefined}
+              onClick={() => (mode === 'single' ? selectSingle(opt.id) : toggleMulti(opt.id))}
+            >
+              {mode === 'multi' && (
+                <span className="rs-opt-box" aria-hidden="true">
+                  {isSel && <Check size={14} strokeWidth={3} />}
                 </span>
-              </button>
-            </>
+              )}
+              <span className="rs-opt-k">{opt.label}</span>
+              <span className="rs-opt-t">
+                <MathMarkdown notation={notation}>
+                  {displayOptionContent(opt.text_md, opt.label)}
+                </MathMarkdown>
+              </span>
+            </button>
           );
         })}
       </div>
       {mode === 'multi' && clearable && !disabled && value !== null && value.length > 0 && (
         <div className="rs-opts-foot">
-          <button type="button" className="rs-clear" onClick={() => onChange([])}>
+          <button type="button" className="rs-clear un-hit" onClick={() => onChange([])}>
             清除选择（{value.length}）
           </button>
         </div>

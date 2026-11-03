@@ -1,8 +1,13 @@
-// Admin subject/trait result → HTTP decisions, shared by the Hono routes and the Start
-// front door. Stale carries currentRevision so the UI knows to refetch; a conflict omits
+// Admin subject/trait result → HTTP decisions for server/admin-control-request.ts, plus
+// the Hono adapter that renders those outcomes. Stale carries currentRevision so the UI knows to refetch; a conflict omits
 // it because retrying cannot help.
 
-import { canonicalResourceResponse } from '@/kernel/http';
+import type { Db } from '@/db/client';
+import { canonicalResourceResponse, errorResponse } from '@/kernel/http';
+import type {
+  AdminControlReadRequest,
+  AdminControlWriteRequest,
+} from '../server/admin-control-request';
 import type { ControlWriteResult } from '../server/subject-control-write';
 import type { TraitWriteResult } from '../server/trait-write';
 
@@ -103,40 +108,49 @@ export function parseTraitJournalLimit(
   return { ok: true, limit: Math.min(requested, TRAIT_JOURNAL_MAX_LIMIT) };
 }
 
-function outcomeResponse<T, S extends object>(outcome: AdminWriteHttpOutcome<T, S>): Response {
-  return outcome.ok
-    ? Response.json(outcome.body, { status: 200 })
-    : Response.json(outcome.body, { status: outcome.status });
-}
+type RenderableOutcome =
+  | { ok: true; body: unknown; canonical?: TraitWriteCanonical }
+  | { ok: false; status: number; body: unknown };
 
-export function traitResultResponse(result: TraitWriteResult): Response {
-  return outcomeResponse(traitWriteHttpOutcome(result));
-}
-
-/** Edit/fork answer as a canonical resource: 201 + Location when a fork was created. */
-export async function canonicalTraitResultResponse(result: TraitWriteResult): Promise<Response> {
-  const outcome = traitWriteHttpOutcome(result);
-  const response = outcomeResponse(outcome);
-  if (!outcome.ok) return response;
+/** Canonical trait writes answer 201 + Location when a fork was created. */
+async function adminRequestResponse(outcome: RenderableOutcome): Promise<Response> {
+  if (!outcome.ok) return Response.json(outcome.body, { status: outcome.status });
+  const response = Response.json(outcome.body, { status: 200 });
+  if (!outcome.canonical) return response;
   return canonicalResourceResponse(response, {
-    outcome: outcome.created ? 'created' : 'existing',
-    location: outcome.location,
+    outcome: outcome.canonical.created ? 'created' : 'existing',
+    location: outcome.canonical.location,
   });
 }
 
-export function controlResultResponse(result: ControlWriteResult): Response {
-  return outcomeResponse(controlWriteHttpOutcome(result));
-}
-
-export async function readJsonBody(
-  req: Request,
-): Promise<{ ok: true; value: unknown } | { ok: false; response: Response }> {
-  try {
-    return { ok: true, value: await req.json() };
-  } catch {
-    return {
-      ok: false,
-      response: Response.json({ error: 'request body must be valid JSON' }, { status: 400 }),
-    };
-  }
+/**
+ * Hono adapter for the admin control requests. Query values follow URLSearchParams.get
+ * (first value wins); `optional` bodies read empty as absent so validate stays a pure check.
+ */
+export function adminControlRoute(
+  db: Db,
+  operation: (
+    db: Db,
+    request: AdminControlReadRequest & AdminControlWriteRequest,
+  ) => Promise<RenderableOutcome>,
+  body: 'json' | 'optional' = 'json',
+) {
+  return async (req: Request, params: Record<string, string> = {}): Promise<Response> => {
+    try {
+      const query: Record<string, string> = {};
+      for (const [key, value] of new URL(req.url).searchParams) {
+        if (!Object.hasOwn(query, key)) query[key] = value;
+      }
+      const readBody =
+        body === 'json'
+          ? () => req.json()
+          : async () => {
+              const text = await req.text();
+              return text.trim().length > 0 ? JSON.parse(text) : undefined;
+            };
+      return await adminRequestResponse(await operation(db, { params, query, readBody }));
+    } catch (err) {
+      return errorResponse(err);
+    }
+  };
 }

@@ -7,6 +7,7 @@
 // startBossWorker returned, and a signal in that tail would exit 1 while jobs were already running.
 
 import { capabilities } from '@/capabilities';
+import { assertProposalKindsOwned } from '@/kernel/manifest';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { getRunningBoss } from '@/server/boss/client';
 import { installBootShutdownHandler } from '@/server/boss/shutdown';
@@ -24,7 +25,8 @@ export async function bootWorker(options: BootWorkerOptions = {}): Promise<void>
     options.startupTailWaitMs,
   );
 
-  // This process does not go through server/index.ts, so it loads the tool inventory itself.
+  // This process does not go through server/index.ts, so it checks the full root and loads the tool inventory itself.
+  assertProposalKindsOwned(capabilities);
   await registerCapabilityTools(capabilities);
   console.log('[worker] capability tools registered');
 
