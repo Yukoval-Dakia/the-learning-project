@@ -116,25 +116,19 @@ export function isObserved(p: Pick<MasteryProjection, 'provenance'>): boolean {
 /**
  * YUK-559 (S1 / C9) — the LIVE knowledge_edge relation_type set the A5/A6 soft layer
  * borrows from: `related_to` (A5 symmetric), `prerequisite` + `derived_from` (A6 directed).
- * `contrasts_with` is deliberately absent (reverse signal → poisons firm-up). SINGLE SOURCE —
- * both the live projection load ({@link loadEdgesForProjection}) and the shadow sweep
- * (`kg_borrow_shadow_sweep`) consume this so their admitted relation set can never drift apart.
+ * `contrasts_with` is deliberately absent (reverse signal → poisons firm-up).
  */
-export const PROJECTION_EDGE_RELATION_TYPES = [
-  'related_to',
-  'prerequisite',
-  'derived_from',
-] as const;
+const PROJECTION_EDGE_RELATION_TYPES = ['related_to', 'prerequisite', 'derived_from'] as const;
 
 /**
  * YUK-559 (S1 / C9) — the borrow epsilon: a |θ̃ − θ̂| at or below this is treated as "no move"
- * (float noise, not a real borrow). SINGLE SOURCE shared by the live soft layer
- * ({@link applyKgSoftLayer}) and the shadow sweep so their move/borrow thresholds can't diverge.
+ * (float noise, not a real borrow). Shared by the moved-mean stamp and the borrow detection in
+ * {@link applyKgSoftLayer}.
  */
-export const BORROW_EPS = 1e-9;
+const BORROW_EPS = 1e-9;
 
 /** A raw typed knowledge_edge row feeding the borrow projection split. */
-export interface ProjectionEdgeRow {
+interface ProjectionEdgeRow {
   from_id: string;
   to_id: string;
   relation_type: string;
@@ -149,10 +143,9 @@ export interface ProjectionEdgeRow {
  *   - `prerequisite` → {@link DirectedEdge} {from: prereq, to: dependent} (A6, prereq→dependent).
  *   - `derived_from` → {@link DirectedEdge} {from: to (base), to: from (derived)} — orientation
  *     FLIPPED vs prerequisite ("from 派生自 to" ⇒ base `to` is the prereq-like node, ADR-0010).
- * Any other relation_type is dropped. Both the live load and the shadow sweep consume this ⇒
- * their split logic can never drift apart. Pure.
+ * Any other relation_type is dropped. Pure.
  */
-export function splitProjectionEdgeRows(rows: ProjectionEdgeRow[]): {
+function splitProjectionEdgeRows(rows: ProjectionEdgeRow[]): {
   symmetric: SymmetricEdge[];
   directed: DirectedEdge[];
 } {
@@ -379,7 +372,6 @@ async function applyKgSoftLayer(
   // 4. Rewrite the surfaced θ̂ (MEAN ONLY) for requested KCs, and append borrowed
   //    entries for requested-but-unobserved KCs that borrowed a non-trivial θ̃.
   const PRIOR_MEAN = 0;
-  // BORROW_EPS is the exported module const (C9 single source, shared with the shadow sweep).
   const borrowedIds: string[] = [];
   for (const id of requestedIds) {
     const tilde = thetaTilde.get(id);
@@ -390,7 +382,7 @@ async function applyKgSoftLayer(
       // YUK-559 (S1) — preserve the pre-move raw θ̂ so a neighbour-dominated weak
       // observation stays inspectable. Only stamp theta_hat_raw when the mean actually
       // moved beyond the shared BORROW_EPS threshold (|θ̃ − θ̂| > BORROW_EPS) — the same
-      // "did it move?" test the borrow detection (below) and the shadow sweep use (C9).
+      // "did it move?" test the borrow detection (below) uses.
       // A strict θ̃ ≠ θ̂ would spuriously stamp on GMRF dense-solve FP noise / a sub-eps κ
       // ridge pull, polluting the raw field for clients that inspect it. An unmoved observed
       // KC keeps the field absent (flag-off never reaches here → absent on the byte-identical path).
@@ -473,9 +465,8 @@ async function loadEdgesForProjection(
         ),
       ),
     );
-  // C9 single source — the split + orientation-normalise lives in splitProjectionEdgeRows
-  // (shared with the shadow sweep). A5 symmetric (related_to), A6 directed (prerequisite +
-  // orientation-flipped derived_from); contrasts_with is excluded by the relation-type filter.
+  // A5 symmetric (related_to), A6 directed (prerequisite + orientation-flipped derived_from);
+  // contrasts_with is excluded by the relation-type filter.
   return splitProjectionEdgeRows(edgeRows);
 }
 

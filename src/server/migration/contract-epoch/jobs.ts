@@ -50,7 +50,6 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   projection_oracle_sweep: 'drain',
   subject_profile_audit_nightly: 'drain',
   merge_attribution_sweep: 'drain',
-  kg_borrow_shadow_sweep: 'drain',
   hub_auto_sync_nightly: 'drain',
   hub_sync_mutation_wake: 'drain',
   hub_sync_recovery: 'drain',
