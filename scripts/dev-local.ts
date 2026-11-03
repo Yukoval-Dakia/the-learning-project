@@ -105,15 +105,18 @@ if (allowTestDb) {
   // would make older worktrees' `compose up` recreate the container under everyone. It only
   // takes effect on restart, so restart now only when no other client is connected.
   const DEV_MAX_CONNECTIONS = 300;
-  const psqlValue = (sql: string) =>
-    spawnSync('docker', composeDev(psql(['-d', 'postgres', '-Atc', sql])), {
+  // undefined on any psql failure: a failed read must never look like "nobody connected".
+  const psqlValue = (sql: string): string | undefined => {
+    const out = spawnSync('docker', composeDev(psql(['-d', 'postgres', '-Atc', sql])), {
       encoding: 'utf8',
       env: process.env,
-    }).stdout?.trim();
+    });
+    return out.status === 0 ? out.stdout.trim() : undefined;
+  };
   function ensureDevMaxConnections(): void {
-    const current = Number(psqlValue('SHOW max_connections'));
+    const current = Number(psqlValue('SHOW max_connections') ?? Number.NaN);
     if (!Number.isFinite(current) || current >= DEV_MAX_CONNECTIONS) return;
-    run(
+    const altered = run(
       'docker',
       composeDev(
         psql([
@@ -126,11 +129,16 @@ if (allowTestDb) {
         ]),
       ),
     );
-    const others = Number(
-      psqlValue(
-        "SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()",
-      ),
+    if (altered.status !== 0) {
+      console.warn(
+        '[dev-local] could not save max_connections on the dev Postgres; leaving it as is.',
+      );
+      return;
+    }
+    const othersRaw = psqlValue(
+      "SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()",
     );
+    const others = othersRaw === undefined ? Number.NaN : Number(othersRaw);
     if (others === 0) {
       run('docker', composeDev(['restart', 'postgres-dev']));
       run('docker', composeDev(['up', '-d', '--wait', 'postgres-dev']));
@@ -141,7 +149,7 @@ if (allowTestDb) {
     }
     console.warn(
       `[dev-local] dev Postgres max_connections is ${current}; ${DEV_MAX_CONNECTIONS} is saved and applies on its next restart. ` +
-        `${others} other connection(s) are open now, so it was not restarted. When the other worktrees' dev servers are stopped: ` +
+        `${Number.isNaN(others) ? 'Other connections could not be counted' : `${others} other connection(s) are open now`}, so it was not restarted. When the other worktrees' dev servers are stopped: ` +
         '`docker compose -f docker-compose.dev.yml --profile dev restart postgres-dev`.',
     );
   }
