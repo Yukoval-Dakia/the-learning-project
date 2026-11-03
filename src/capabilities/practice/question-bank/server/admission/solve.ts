@@ -55,6 +55,11 @@ import {
 // 输入 hash 直接使用 core 的完整规范化算法。
 import type { Provider } from '../quiz/verify-framework';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
+import {
+  type KnowledgeCandidate,
+  type SolutionPriorRecordT,
+  buildSolutionPriorRecord,
+} from './solution-prior';
 
 export type { Provider } from '../quiz/verify-framework';
 
@@ -100,6 +105,8 @@ export interface DualSolveResult {
       typical_wrong: { item_ids?: string[]; text?: string; reason_md?: string }[];
     }
   >;
+  /** Merged solution-method prior of both blind solves; null when neither gave a usable one. */
+  solution_prior: SolutionPriorRecordT | null;
 }
 
 /** 部分失败不丢已付费收据：ok:false 时 receipts 仍带上已完成的 solve。 */
@@ -769,18 +776,27 @@ export async function runDualSolve(
     subjectProfile?: SubjectProfile;
     /** OPEN owner decision：异源与否由配置决定（默认同一配置模型、独立上下文）。 */
     solver2?: { provider?: Provider; model?: string } | null;
+    /** Knowledge points the prior may link prerequisites to (names + ids only). */
+    knowledgeCandidates?: readonly KnowledgeCandidate[];
   },
 ): Promise<DualSolveOutcome> {
   const parts = solverParts(definition);
+  const knowledgeCandidates = [...(deps.knowledgeCandidates ?? [])];
   // solve lane 剥离一切印出判分/答案文本（rule_reference.statement_md 只进
   // crosscheck）—— 否则对全 rule_reference 判据的存量题，两次"盲"解都在
   // 看答案，agreement 证明不了任何东西。
   const unitsA = solverUnits(definition, 0, { exposePrinted: false });
-  const payloadA = QuestionAdmissionSolveInput.parse({ mode: 'solve', parts, units: unitsA });
+  const payloadA = QuestionAdmissionSolveInput.parse({
+    mode: 'solve',
+    parts,
+    units: unitsA,
+    knowledge_candidates: knowledgeCandidates,
+  });
   const payloadB = QuestionAdmissionSolveInput.parse({
     mode: 'solve',
     parts,
     units: solverUnits(definition, 1, { exposePrinted: false }),
+    knowledge_candidates: knowledgeCandidates,
   });
 
   const repairBudget = { remaining: 1 };
@@ -949,6 +965,13 @@ export async function runDualSolve(
       solve_a: first.receipt,
       solve_b: second.receipt,
       probe_candidates: probeCandidates,
+      solution_prior: buildSolutionPriorRecord({
+        rawA: first.output.prior,
+        rawB: second.output.prior,
+        partIds: parts.map((part) => part.part_id),
+        candidates: knowledgeCandidates,
+        taskRunIds: [first.receipt.task_run_id, second.receipt.task_run_id],
+      }),
     },
   };
 }

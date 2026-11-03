@@ -12,6 +12,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -204,6 +205,37 @@ export const question_admission_verification = pgTable(
       sql`${t.outcome} IN ('passed','suspended','failed')`,
     ),
     check('question_admission_verification_generation_ck', sql`${t.generation} >= 0`),
+  ],
+);
+
+/**
+ * 题目解法先验（YUK-1771）：准入双解顺带产出的方法、关键步、易错机理、前置知识与
+ * 难度先验，按 (revision, part) 冻结。先验含解法，与参考答案同属私有面：不进入任何
+ * 作答前的下发载荷，学习者侧只能在判定可见后经 attempt 读取。
+ * 写一次：BEFORE UPDATE trigger 拒绝改写。
+ */
+export const question_solution_prior = pgTable(
+  'question_solution_prior',
+  {
+    revision_id: text('revision_id').notNull(),
+    part_id: text('part_id').notNull(),
+    prior_version: text('prior_version').notNull(),
+    prior: jsonb('prior').$type<JsonObject>().notNull(),
+    /** 只有一个 solver 给出合法先验（或回填的单次解）时为 true，难度不确定度只含自报部分。 */
+    single_solver: boolean('single_solver').notNull(),
+    origin: text('origin', { enum: ['admission', 'backfill'] }).notNull(),
+    /** 产出这份先验的付费 run；成本以这些 run 为准，不另拆分。 */
+    task_run_ids: jsonb('task_run_ids').$type<string[]>().notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.revision_id, t.part_id] }),
+    foreignKey({
+      columns: [t.revision_id],
+      foreignColumns: [question_revision.revision_id],
+      name: 'question_solution_prior_revision_fk',
+    }),
+    check('question_solution_prior_origin_ck', sql`${t.origin} IN ('admission','backfill')`),
   ],
 );
 

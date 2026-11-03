@@ -42,6 +42,7 @@ import {
   runCalibrationProbes,
 } from './calibrate';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
+import type { KnowledgeCandidate, SolutionPriorRecordT } from './solution-prior';
 import {
   type AdmissionKey,
   type AdmissionSolveReceipt,
@@ -78,6 +79,8 @@ export interface QuestionAdmissionOptions {
    * registry 配置的模型 + 隔离上下文；给出时经 ctx.override 路由。
    */
   solver2?: { provider?: Provider; model?: string } | null;
+  /** Live knowledge points offered to the solution prior (YUK-1771). */
+  knowledgeCandidates?: readonly KnowledgeCandidate[];
   policyId?: string;
   now?: Date;
 }
@@ -125,6 +128,8 @@ export interface QuestionAdmissionResult {
     solve_receipts: AdmissionSolveReceipt[];
     crosscheck_receipt?: AdmissionSolveReceipt;
   };
+  /** Solution-method prior from the dual solve; publication freezes it on the revision. */
+  solution_prior?: SolutionPriorRecordT;
 }
 
 function defaultRuleFor(
@@ -296,6 +301,9 @@ export async function runQuestionAdmission(
       runTask,
       subjectProfile: options.subjectProfile,
       solver2: options.solver2 ?? null,
+      ...(options.knowledgeCandidates != null
+        ? { knowledgeCandidates: options.knowledgeCandidates }
+        : {}),
     });
     if (!outcome.ok) {
       // infra / receipt 密封失败 —— 如实 pending，不伪判、不铸键；已付费的
@@ -614,7 +622,7 @@ export async function runQuestionAdmission(
     }
   }
   const allAdmitted = definition.units.every((unit) => unitResult(unit).status === 'admitted');
-  return finalize(
+  const result = finalize(
     definition,
     policyId,
     now,
@@ -628,6 +636,9 @@ export async function runQuestionAdmission(
       resolved: resolvedContract,
     },
   );
+  return solve.solution_prior != null
+    ? { ...result, solution_prior: solve.solution_prior }
+    : result;
 }
 
 function finalize(
