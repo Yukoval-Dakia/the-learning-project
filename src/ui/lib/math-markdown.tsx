@@ -211,15 +211,16 @@ export function isKatexNotation(notation?: string | null): boolean {
 // after the closing one, so a currency amount such as `$5` or `$5 到 $10` is never a formula.
 const CODE_SPANS = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g;
 const DELIMITED_FORMULA =
-  /(?<!\\)\\\((?:(?!\n\s*\n)[^`])+?\\\)|(?<!\\)\\\[(?:(?!\n\s*\n)[^`])+?\\\]|(?<!\\)\$\$(?:(?!\n\s*\n)[^`$])+?\$\$/;
+  /(?<!\\)\\\((?:(?!\n\s*\n)[^`])+?\\\)|(?<!\\)\\\[(?:(?!\n\s*\n)[^`])+?\\\]|(?<!\\)\$\$(?:(?!\n\s*\n)(?:\\.|[^`$\\]))+?\$\$/;
 const TIGHT_DOLLAR_FORMULA =
   /(?<![\\$])\$(?![\s$])[^$\n`]*?[^\s\\$]\$(?![\d$])|(?<![\\$])\$[^\s\\$]\$(?![\d$])/;
 
 // In fallback mode remark-math would still read every other dollar pair, with looser rules than the
 // check above: `求 $x$，报名费 $5 到 $10` would turn `$5 到 $` into a formula. So before parsing,
-// every dollar outside an accepted span (code, `$$…$$`, a tight `$…$`) is escaped to a literal.
+// every dollar outside an accepted span (code, `$$…$$` — escaped characters such as `\$` allowed
+// inside —, a tight `$…$`) is escaped to a literal.
 const FALLBACK_DOLLARS = new RegExp(
-  `(${CODE_SPANS.source})|((?<!\\\\)\\$\\$(?:(?!\\n\\s*\\n)[^\`$])+?\\$\\$)|(${TIGHT_DOLLAR_FORMULA.source})|(?<!\\\\)\\$`,
+  `(${CODE_SPANS.source})|((?<!\\\\)\\$\\$(?:(?!\\n\\s*\\n)(?:\\\\.|[^\`$\\\\]))+?\\$\\$)|(${TIGHT_DOLLAR_FORMULA.source})|(?<!\\\\)\\$`,
   'g',
 );
 
