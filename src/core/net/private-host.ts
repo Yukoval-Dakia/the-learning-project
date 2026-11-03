@@ -218,7 +218,7 @@ export function isBlockedHostLiteral(hostname: string): boolean {
 
 /**
  * Static browser-safe verdict: valid http(s) URL, no credentials, no blocked literal
- * host. Never throws; the server's assertPublicHttpUrl adds DNS validation.
+ * host. Never throws; literal-host checks only — DNS resolution is out of scope.
  */
 export function isPublicHttpUrl(url: string): boolean {
   let parsed: URL;

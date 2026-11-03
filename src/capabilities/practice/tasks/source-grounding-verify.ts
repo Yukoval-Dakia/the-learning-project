@@ -7,8 +7,8 @@ import type { SubjectProfile } from '@/subjects/profile';
 import { parseTaskOutput } from './parse-output';
 
 // Source-grounding verifier: asks only whether the 题面 really comes from the
-// attached image. It exists to catch VLM hallucination on the image_candidate
-// extraction path, where a self-consistent 题面 + 答案 can be unrelated to the
+// attached image. It exists to catch VLM hallucination on image_candidate
+// extraction, where a self-consistent 题面 + 答案 can be unrelated to the
 // source; grading text alone would call it correct.
 function buildSourceGroundingVerifyPrompt(profile: SubjectProfile): string {
   return `你是题目来源核验器（source grounding verifier）。给你一张来源图片（这道题据称从中抽取）和一道题的 { prompt_md（题面）, reference_md（参考答案，可能为 null）, image_present }。图片会附在 user message 中。
@@ -37,7 +37,7 @@ export const sourceGroundingVerifyTaskSpec = {
   definition: {
     kind: 'SourceGroundingVerifyTask',
     description:
-      'YUK-230 — Source-grounding verification for image-sourced questions. Single vision LLM call re-reads the source image and decides whether the question 题面 actually appears in / derives from it (grounded boolean), catching VLM extraction hallucination on the image_candidate accept path. Distinct from multimodal_direct (answer judging).',
+      'YUK-230 — Source-grounding verification for image-sourced questions. Single vision LLM call re-reads the source image and decides whether the question 题面 actually appears in / derives from it (grounded boolean), catching VLM extraction hallucination on the image_candidate path. Distinct from multimodal_direct (answer judging).',
     structuredOutputSchema: SourceGroundingVerifyOutput,
     defaultProvider: 'xiaomi',
     // Same vision model and 90s single-call budget as the multimodal judges, but no

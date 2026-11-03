@@ -102,7 +102,7 @@ export function learningItemPlanPreviewOf(change: unknown): LearningItemPlanPrev
 
 // YUK-229 — image_candidate 专属卡的显示投影。source_url 是候选来源页/图片直链，
 // source_title 是来源标题，summary_md 是 AI 对该图题的摘要（题文预览）。图字节永不
-//在 payload；accept 才是唯一 VLM 抽图触发（proposal.ts §image_candidate）。
+//在 payload；该 kind 已退役，此投影只为遗留 pending 行提供正常展示。
 export interface ImageCandidateView {
   sourceUrl: string;
   sourceTitle: string;
@@ -621,14 +621,6 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
               )}
               {acceptButtonLabel}
             </Button>
-          )}
-          {/* YUK-229 — accept 是唯一 VLM 抽图触发（proposal.ts §image_candidate）。定性
-              前置提示（不显预估金额），作为 accept 旁的明确 affordance，非点击后弹窗。 */}
-          {p.kind === 'image_candidate' && (
-            <span className="ib-cost-note">
-              <Sparkles size={12} aria-hidden="true" />
-              接受将执行一次付费 VLM 抽图
-            </span>
           )}
           {isEdge && !isArchiveEdge && (
             <>

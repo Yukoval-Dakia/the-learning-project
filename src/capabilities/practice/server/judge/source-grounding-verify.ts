@@ -50,7 +50,7 @@ export interface RunSourceGroundingVerifyParams {
   db: Db;
   prompt_md: string;
   reference_md: string | null;
-  /** The source_asset row id the question was extracted from (image_candidate accept). */
+  /** The source_asset row id the question was extracted from (image_candidate materialized rows). */
   sourceAssetId: string;
   subjectProfile: SubjectProfile;
   runTaskFn?: SourceGroundingRunTaskFn;

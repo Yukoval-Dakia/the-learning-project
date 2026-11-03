@@ -427,15 +427,7 @@ export const ingestionCapability = defineCapability({
             ),
         },
       },
-      {
-        kind: 'image_candidate',
-        accept: {
-          load: () =>
-            import('./server/proposal-accept-applier').then(
-              (module) => module.imageCandidateProposalAcceptApplier,
-            ),
-        },
-      },
+      { kind: 'image_candidate' },
       {
         kind: 'record_links',
         accept: {
