@@ -93,9 +93,9 @@ function asErrorDetail(error: unknown): string {
 /**
  * Read-only grounding-gate preparation path.
  *
- * Deliberately reuses the production candidate selection. Two policy differences from the
- * nightly writer: every eligible cell is returned (no top-3 cut, so the blind set can be
- * sampled), and incomplete evidence packets are excluded. Nothing is written here.
+ * Deliberately reuses the production candidate selection. The only policy difference from
+ * the nightly writer is that every eligible cell is returned (no top-3 cut), so the blind
+ * set can be sampled. Nothing is written here.
  */
 export async function collectGroundingGateCandidates(
   db: Db,
@@ -134,7 +134,6 @@ export async function collectGroundingGateCandidates(
     masteryByKnowledgeId,
     now,
     limit: null,
-    requireCompleteEvidencePackets: true,
     imageFetchFn,
   });
   const exclusions: GroundingGateExclusion[] = selection.exclusions.map((exclusion) => {

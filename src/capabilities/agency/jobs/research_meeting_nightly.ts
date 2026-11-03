@@ -75,6 +75,11 @@ export interface ResearchMeetingResult {
   reconciled: number;
   /** probe outcomes skipped this run (dangling / malformed / unreadable conjecture ref). */
   reconcile_skipped: number;
+  /**
+   * Cells dropped before induction because a sample lacked its prompt or cause. Counts
+   * only the salience batches actually enriched (selection stops once top-K is settled).
+   */
+  incomplete_evidence_excluded: number;
   /** total Opus cost across the run's inductions, USD. */
   cost_usd: number | null;
   /**
@@ -95,6 +100,7 @@ const ResearchMeetingResultSchema = z
     pending_before: z.number().int().nonnegative(),
     reconciled: z.number().int().nonnegative(),
     reconcile_skipped: z.number().int().nonnegative(),
+    incomplete_evidence_excluded: z.number().int().nonnegative().default(0),
     cost_usd: z.number().nonnegative().nullable(),
     // Empty runs have no trigger/scan anchor; the `''` sentinel persists so redelivery
     // can return the exact result.
@@ -421,6 +427,9 @@ async function runResearchMeetingNightlyClaimed(
     }
   }
   const pendingBefore = selection.pendingConjectureCount;
+  const incompleteEvidenceExcluded = selection.exclusions.filter(
+    (exclusion) => exclusion.reason === 'invalid_evidence_packet',
+  ).length;
   const preparedTopCells = selection.candidates;
 
   // Empty or ungrounded night: zero candidates means the propose half has nothing to
@@ -436,6 +445,7 @@ async function runResearchMeetingNightlyClaimed(
       pending_before: pendingBefore,
       reconciled: reconcileResult.reconciled,
       reconcile_skipped: reconcileResult.skipped,
+      incomplete_evidence_excluded: incompleteEvidenceExcluded,
       cost_usd: 0,
       trigger_event_id: '',
     };
@@ -560,6 +570,7 @@ async function runResearchMeetingNightlyClaimed(
     pending_before: pendingBefore,
     reconciled: reconcileResult.reconciled,
     reconcile_skipped: reconcileResult.skipped,
+    incomplete_evidence_excluded: incompleteEvidenceExcluded,
     cost_usd: costUsd,
     trigger_event_id: triggerEventId,
   };
@@ -654,6 +665,7 @@ async function runResearchMeetingNightlyClaimed(
         conjectures_abstained: abstained,
         cells_failed: cellsFailed,
         pending_before: pendingBefore,
+        incomplete_evidence_excluded: incompleteEvidenceExcluded,
       },
       caused_by_event_id: triggerEventId,
       cost_micro_usd: null,
