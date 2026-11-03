@@ -926,7 +926,8 @@ function PlacementQuestionCard({
   const autosave = useResponseDraftAutosave({ save: saveDraft, holdOnConflict: true });
   const { flush: flushDraft, hold: holdDraft, resume: resumeDraft, isHeld: isDraftHeld } = autosave;
   const flushOnPagehide = useCallback(() => flushDraft({ keepalive: true }), [flushDraft]);
-  const attachPagehide = usePagehideTransition(flushOnPagehide);
+  // YUK-1719 — the same keepalive flush also runs when the page turns hidden.
+  const attachPagehide = usePagehideTransition(flushOnPagehide, true, flushOnPagehide);
   // The card's root owns two things while it is on the page: the keepalive draft flush
   // on pagehide, and the exit-save it lends the parent's exit button. A new card (next
   // question) registers its own; this card only clears the slot if it still owns it.

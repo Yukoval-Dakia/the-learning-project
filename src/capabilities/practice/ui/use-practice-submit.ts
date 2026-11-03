@@ -690,25 +690,9 @@ export function usePracticeSubmit({
   // save (YUK-1487). Armed by the answering root below.
   const { flush: flushDraft } = autosave;
   const flushOnPagehide = useCallback(() => flushDraft({ keepalive: true }), [flushDraft]);
-  const attachPagehide = usePagehideTransition(flushOnPagehide);
-  // YUK-1497 — iOS may kill a backgrounded tab without pagehide: flush the same way when the page
-  // is hidden. Same owner node as the pagehide listener.
-  const attachPagehideFlush = useCallback(
-    (node: HTMLElement | null) => {
-      const detachPagehide = attachPagehide(node);
-      if (!node) return detachPagehide;
-      const owner = node.ownerDocument;
-      const onVisibility = () => {
-        if (owner.visibilityState === 'hidden') void flushOnPagehide();
-      };
-      owner.addEventListener('visibilitychange', onVisibility);
-      return () => {
-        detachPagehide?.();
-        owner.removeEventListener('visibilitychange', onVisibility);
-      };
-    },
-    [attachPagehide, flushOnPagehide],
-  );
+  // YUK-1497 / YUK-1719 — iOS may kill a backgrounded tab without pagehide: the same keepalive
+  // flush also runs when the page turns hidden. One owner node arms both listeners.
+  const attachPagehideFlush = usePagehideTransition(flushOnPagehide, true, flushOnPagehide);
   // Latest edited draft, written synchronously by every edit handler (never during render).
   // A handler captured by an older render — e.g. EvidenceComposer finishing an upload after
   // an await — must build on this, not on its render's answer, or it would hand autosave a
