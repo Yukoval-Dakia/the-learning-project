@@ -160,7 +160,7 @@ export interface IssuanceState {
     response_set: ResponseSetT;
     group_evidence: GroupEvidenceT[];
   }>;
-  /** 最新已接收提交的判分进度（与 judge_run 轮询同一投影）；无 durable 判分 run = 缺省。 */
+  /** 最新已接收提交的判分进度（与 judge_run 轮询同一投影，同步/异步同形）；未判完 = 缺省。 */
   settled?: Awaited<ReturnType<typeof readNativeJudgeSettled>>;
 }
 

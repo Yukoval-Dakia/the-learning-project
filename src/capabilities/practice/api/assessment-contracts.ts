@@ -197,7 +197,8 @@ export const JudgeRunStatusResponseSchema = z.discriminatedUnion('status', [
 
 /**
  * 最新已接收提交的判分进度。terminal 与 poll 首个永久快照同一投影（申诉/重判/撤回后取
- * 生效判）；pending 给出与 202 回执同源的轮询坐标。没有 durable 判分 run 时缺省。
+ * 生效判），同步判分与 durable 判分同形；pending 给出与 202 回执同源的轮询坐标。尚未判完
+ * 或判分记录不可读时缺省。
  */
 export const IssuanceJudgeSettledSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('terminal'), run: JudgeRunStatusResponseSchema }),

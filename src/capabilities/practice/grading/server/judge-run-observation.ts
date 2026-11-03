@@ -30,6 +30,7 @@ import {
   NativeJudgeResolutionPayload,
   reconstructDoneFromDomainEvents,
   reconstructDoneFromNativeCompletion,
+  reconstructDoneFromSyncAttempt,
 } from './judge-run-payload';
 import {
   JUDGE_RUN_TABLE,
@@ -418,19 +419,32 @@ export function createJudgeRunStatusReader(port: ObservationPort) {
 /**
  * Recovery read for an accepted native submission: permanent evidence only (no engine
  * observation, no writes). A run the poll would still report as queued/started is handed back
- * as poll coordinates; no durable run yields undefined.
+ * as poll coordinates. A synchronously judged submission has no run; it settles through the
+ * same terminal projection under its derived run id, which the client never polls.
  */
 export async function readNativeJudgeSettled(
   database: Db | Tx,
   submissionId: string,
 ): Promise<z.infer<typeof IssuanceJudgeSettledSchema> | undefined> {
   const runId = nativeJudgeRunId(submissionId);
-  const state = await readJudgeRunPermanent(database, runId);
+  const durable = await readJudgeRunPermanent(database, runId);
+  const state = durable.kind === 'absent' ? await readSyncJudged(database, submissionId) : durable;
   const terminal = permanentDto(runId, state);
   if (terminal) return { kind: 'terminal', run: terminal };
   return state.kind === 'pending'
     ? { kind: 'pending', run_id: runId, poll_url: judgeRunPollUrl(runId) }
     : undefined;
+}
+async function readSyncJudged(
+  database: Db | Tx,
+  submissionId: string,
+): Promise<PermanentJudgeState> {
+  const result = JudgeRunTerminalResultSchema.safeParse(
+    await reconstructDoneFromSyncAttempt(database, submissionId),
+  );
+  return result.success
+    ? { kind: 'resolved', activity: 'terminal', result: result.data }
+    : { kind: 'absent' };
 }
 export const readJudgeRunStatus = createJudgeRunStatusReader({
   observe: observeJudgeDelivery,
