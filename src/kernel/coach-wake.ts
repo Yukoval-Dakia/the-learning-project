@@ -1,6 +1,6 @@
-// The coach_daily queue contract and its on-return obligation. Agency mounts the
-// handler; Practice's learner_return_wake enqueues through here, so the queue name,
-// singleton key and window cannot drift between the mount and the producer.
+// The coach_daily on-return obligation. Practice's learner_return_wake enqueues through
+// here, so the singleton key and window have one owner. Agency's manifest keeps the job
+// name as a literal for the task census; the two must match.
 
 import { desc, eq } from 'drizzle-orm';
 import type { Db } from '@/db/client';
