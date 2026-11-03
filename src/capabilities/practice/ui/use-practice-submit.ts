@@ -497,6 +497,84 @@ export function usePracticeSubmit({
   // 正合「卡在同一误区」信号意图。反馈卡里 length>0 才渲染。
   const timelineEvents = q ? toAttemptTimelineEvents(q.timeline) : [];
   const issuanceId = `iss_stream_${item.id}`;
+  // YUK-1051 — 202-pending 轮询：同一次 submission 的 run 继续查询（poll_url 纯读 GET），
+  // 终态 done → 用回传的终态判词揭晓反馈卡（与同步回执同一渲染路径）；failed → 诚实
+  // 告知「作答已存住，会自动补判」，可先行推进（solo 202 可继续，不阻塞流）。
+  // YUK-1483: the poller reports each run's terminal state once (onSettled); the
+  // feedback is claimed there, not by an effect watching the snapshot.
+  const onPendingSettled = useCallback(
+    (settled: JudgeRunPollingState) => {
+      if (settled.status !== 'done') return;
+      const r = settled.result;
+      if (r?.status === 'review_required') {
+        setCommittedPreview({
+          route: 'durable',
+          coarse_outcome: 'unsupported',
+          confidence: 0,
+          feedback_md: typeof r.feedback_md === 'string' ? r.feedback_md : '',
+          suggested_rating: null,
+        });
+        setAutoCommitted(false);
+        setAutoCommitJudgeEventId(null);
+        setPendingRun(null);
+        addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
+        return;
+      }
+      const outcome =
+        r && typeof r.coarse_outcome === 'string' && r.coarse_outcome in VERDICT_OF
+          ? (r.coarse_outcome as keyof typeof VERDICT_OF)
+          : null;
+      const partial = outcome === 'partial_unknown' ? PartialUnknownFeedback.safeParse(r) : null;
+      if (partial && !partial.success) {
+        setCommittedPreview({
+          route: 'durable',
+          coarse_outcome: 'unsupported',
+          confidence: 0,
+          feedback_md: '',
+          suggested_rating: null,
+        });
+        setRating(null);
+        setAutoCommitted(true);
+        setAutoCommitJudgeEventId(null);
+        setPendingRun(null);
+        addToast('作答已保存，但部分判定信息不完整，请稍后查看。', 'info', 'clock');
+        return;
+      }
+      const fr =
+        outcome === 'partial_unknown' || r?.final_rating === null
+          ? null
+          : r &&
+              typeof r.final_rating === 'string' &&
+              ['again', 'hard', 'good'].includes(r.final_rating)
+            ? (r.final_rating as Rating)
+            : 'hard';
+      if (outcome) {
+        setCommittedPreview({
+          route: typeof r?.route === 'string' && r.route ? r.route : 'durable',
+          coarse_outcome: outcome,
+          ...(partial?.success ? { partial_units: partial.data.partial_units } : {}),
+          confidence: typeof r?.confidence === 'number' ? r.confidence : 0,
+          feedback_md: typeof r?.feedback_md === 'string' ? r.feedback_md : '',
+          suggested_rating: fr,
+        });
+        setRating(fr);
+        setAutoCommitted(true);
+        committedAppealKind.current = r?.assessment ? 'evaluation' : 'judge';
+        setAutoCommitJudgeEventId(
+          r?.assessment
+            ? (r.assessment.effective_evaluation_id ?? r.assessment.candidate_id)
+            : typeof r?.judge_event_id === 'string'
+              ? r.judge_event_id
+              : null,
+        );
+      }
+      setPendingRun(null);
+    },
+    [addToast],
+  );
+
+  // YUK-1729 — the issuance whose recovered judge outcome this visit already applied.
+  const settledApplied = useRef<string | null>(null);
   // YUK-1484 — issuing is a write, so it is a command, not a query: nothing may re-run it
   // on retry, focus, reconnect, invalidation, remount or StrictMode. The issuance
   // placeholder owns it (attachIssuance): when it attaches, this visit reads its issuance
@@ -542,7 +620,27 @@ export function usePracticeSubmit({
       let detached = false;
       request.then(
         (state) => {
-          if (!detached) setIssuance({ mode, state, error: null });
+          if (detached) return;
+          setIssuance({ mode, state, error: null });
+          // YUK-1729 — a refresh after submitting: the issuance read carries the submission's
+          // judge outcome. Once per issuance per visit (a re-attach reuses this resolved read
+          // and must not replay an older outcome over this visit's own result). pending →
+          // keep polling the run; terminal → the same settle path the 202 poll ends in. A
+          // terminal run is never polled (a synchronous run id has no status route).
+          const settled = state.settled;
+          if (!settled || settledApplied.current === issuanceId) return;
+          settledApplied.current = issuanceId;
+          if (settled.kind === 'pending') {
+            setPendingRun({ runId: settled.run_id, pollUrl: settled.poll_url });
+            return;
+          }
+          onPendingSettled({
+            status: settled.run.status,
+            result: settled.run.result,
+            error: null,
+            polls: 0,
+            settled: true,
+          });
         },
         (error: unknown) => {
           if (!detached) setIssuance({ mode, state: null, error });
@@ -552,7 +650,7 @@ export function usePracticeSubmit({
         detached = true;
       };
     },
-    [q, issuanceId, issuanceMode, getIssuanceState, issueAssessment],
+    [q, issuanceId, issuanceMode, getIssuanceState, issueAssessment, onPendingSettled],
   );
   // The command's settled result for the current mode; null while it is in flight.
   const issued = issuance?.mode === issuanceMode ? issuance : null;
@@ -950,81 +1048,6 @@ export function usePracticeSubmit({
     }
   }
 
-  // YUK-1051 — 202-pending 轮询：同一次 submission 的 run 继续查询（poll_url 纯读 GET），
-  // 终态 done → 用回传的终态判词揭晓反馈卡（与同步回执同一渲染路径）；failed → 诚实
-  // 告知「作答已存住，会自动补判」，可先行推进（solo 202 可继续，不阻塞流）。
-  // YUK-1483: the poller reports each run's terminal state once (onSettled); the
-  // feedback is claimed there, not by an effect watching the snapshot.
-  const onPendingSettled = useCallback(
-    (settled: JudgeRunPollingState) => {
-      if (settled.status !== 'done') return;
-      const r = settled.result;
-      if (r?.status === 'review_required') {
-        setCommittedPreview({
-          route: 'durable',
-          coarse_outcome: 'unsupported',
-          confidence: 0,
-          feedback_md: typeof r.feedback_md === 'string' ? r.feedback_md : '',
-          suggested_rating: null,
-        });
-        setAutoCommitted(false);
-        setAutoCommitJudgeEventId(null);
-        setPendingRun(null);
-        addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
-        return;
-      }
-      const outcome =
-        r && typeof r.coarse_outcome === 'string' && r.coarse_outcome in VERDICT_OF
-          ? (r.coarse_outcome as keyof typeof VERDICT_OF)
-          : null;
-      const partial = outcome === 'partial_unknown' ? PartialUnknownFeedback.safeParse(r) : null;
-      if (partial && !partial.success) {
-        setCommittedPreview({
-          route: 'durable',
-          coarse_outcome: 'unsupported',
-          confidence: 0,
-          feedback_md: '',
-          suggested_rating: null,
-        });
-        setRating(null);
-        setAutoCommitted(true);
-        setAutoCommitJudgeEventId(null);
-        setPendingRun(null);
-        addToast('作答已保存，但部分判定信息不完整，请稍后查看。', 'info', 'clock');
-        return;
-      }
-      const fr =
-        outcome === 'partial_unknown' || r?.final_rating === null
-          ? null
-          : r &&
-              typeof r.final_rating === 'string' &&
-              ['again', 'hard', 'good'].includes(r.final_rating)
-            ? (r.final_rating as Rating)
-            : 'hard';
-      if (outcome) {
-        setCommittedPreview({
-          route: typeof r?.route === 'string' && r.route ? r.route : 'durable',
-          coarse_outcome: outcome,
-          ...(partial?.success ? { partial_units: partial.data.partial_units } : {}),
-          confidence: typeof r?.confidence === 'number' ? r.confidence : 0,
-          feedback_md: typeof r?.feedback_md === 'string' ? r.feedback_md : '',
-          suggested_rating: fr,
-        });
-        setRating(fr);
-        setAutoCommitted(true);
-        committedAppealKind.current = r?.assessment ? 'evaluation' : 'judge';
-        setAutoCommitJudgeEventId(
-          r?.assessment
-            ? (r.assessment.effective_evaluation_id ?? r.assessment.candidate_id)
-            : typeof r?.judge_event_id === 'string'
-              ? r.judge_event_id
-              : null,
-        );
-      }
-      setPendingRun(null);
-    },
-    [addToast],
-  );
   const pendingPoll = useJudgeRunPolling({
     runId: pendingRun?.runId ?? null,
     pollUrl: pendingRun?.pollUrl ?? null,
