@@ -13,7 +13,6 @@
     "question-bank -> supply",
     "question-bank -> face",
     "failure-learning -> grading",
-    "failure-learning -> question-bank",
     "failure-learning -> face",
     "session -> grading",
     "session -> face",
