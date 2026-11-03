@@ -187,6 +187,13 @@ export const advisoryLockRegistry = {
     keyPrefix: 'placement-supply:v1:',
     suffixFields: ['knowledgeId'],
   },
+  supplySpendDay: {
+    family: 'supply-spend-day',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'supply-spend:v1:',
+    suffixFields: ['day'],
+  },
   questionServingCommand: {
     family: 'serving-command',
     encoding: 'hashtextextended',

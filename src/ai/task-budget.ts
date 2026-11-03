@@ -12,6 +12,8 @@ export interface TaskBudgetOverride {
    */
   readonly maxIterations?: number | 'unbounded';
   readonly timeoutMs?: number;
+  /** Caller money cap in USD. It only lowers the configured maxCost, never raises it. */
+  readonly maxCost?: number;
 }
 
 /**
@@ -46,9 +48,17 @@ export function createTaskBudgetReaders<const Catalog extends TaskCatalog>(tasks
     if (!Number.isFinite(timeout) || timeout <= 0 || timeout >= STUCK_RUN_THRESHOLD_MS) {
       throw new RangeError(`Task timeout must be positive and below ${STUCK_RUN_THRESHOLD_MS}ms`);
     }
+    const callerMaxCost = explicit?.maxCost;
+    if (callerMaxCost !== undefined && !(Number.isFinite(callerMaxCost) && callerMaxCost >= 0)) {
+      throw new RangeError('Caller maxCost must be a finite non-negative USD amount');
+    }
+    const configuredMaxCost = configured?.maxCost ?? defaults.maxCost;
     return Object.freeze({
       maxIterations: explicit?.maxIterations ?? configured?.maxIterations ?? defaults.maxIterations,
-      maxCost: configured?.maxCost ?? defaults.maxCost,
+      maxCost:
+        callerMaxCost === undefined
+          ? configuredMaxCost
+          : Math.min(callerMaxCost, configuredMaxCost),
       transientRetries: configured?.transientRetries ?? defaults.transientRetries,
       timeout,
       timeoutSource,
@@ -61,7 +71,7 @@ export function createTaskBudgetReaders<const Catalog extends TaskCatalog>(tasks
     const typed = def.execution === 'typed';
     return {
       maxIterations: !typed,
-      maxCost: typed,
+      maxCost: typed || def.enforceMaxCost === true,
       transientRetries: true,
       timeout: true,
     };

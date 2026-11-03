@@ -101,6 +101,7 @@ export const sourcingTaskSpec = {
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 8, timeout: 120_000 },
+    enforceMaxCost: true,
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: [],
