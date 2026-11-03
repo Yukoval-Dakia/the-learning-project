@@ -370,6 +370,12 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
               (module) => module.questionEditProposalAcceptApplier,
             ),
         },
+        dismiss: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.questionEditProposalDismissApplier,
+            ),
+        },
         retract: {
           load: () =>
             import('./server/proposal-accept-applier').then(

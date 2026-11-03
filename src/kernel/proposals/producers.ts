@@ -370,7 +370,7 @@ export async function writeBlockMergeProposal(
       // for downstream inbox cooldown-signal folding, NOT a pre-write suppressor:
       // writeAiProposal does not hard-suppress a second write, so a re-run of the
       // auto_enroll pass on the same session can write a duplicate proposal. That is
-      // acceptable — accept-side existingAcceptRate idempotency + mergeQuestions
+      // acceptable — accept-side rate idempotency (runProposalAccept) + mergeQuestions
       // draft-only soft-reject prevent any double-merge (§5 dedup (2)).
       cooldown_key: `block_merge:${input.ingestion_session_id}:${input.primary_block_id}:${[...input.merge_block_ids].sort().join(',')}`,
       // suggestion_kind intentionally OMITTED → resolveSuggestionKind defaults to

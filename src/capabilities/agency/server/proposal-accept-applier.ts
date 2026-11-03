@@ -4,18 +4,11 @@ import type {
   ProposalAcceptApplier,
   ProposalAcceptInput,
   ProposalAcceptResult,
-  ProposalDismissInput,
+  ProposalDismissApplier,
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
-import {
-  acquireProposalDecisionLock,
-  findExistingRateEvent,
-  writeProposalRateEvent,
-} from '@/kernel/proposals/applier-helpers';
-import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/kernel/proposals/signals';
+import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
+import { runProposalDismiss } from '@/kernel/proposals/decision-protocol';
 import { createLearningIntentNote } from '@/kernel/records/learning-intent-note-birth';
 import { type BossDispatch, dispatchNoteGeneration } from '@/kernel/records/note-handoff-protocol';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
@@ -36,29 +29,13 @@ type AgencyAcceptRuntime = AgencyApplierOpts &
   };
 
 export const {
-  agencyProposalDismissApplier,
   completionProposalRetractApplier,
   goalScopeProposalRetractApplier,
   learningItemProposalRetractApplier,
   relearnProposalRetractApplier,
-} = createAgencyProposalLifecycle({
-  acquireProposalDecisionLock,
-  findExistingRateEvent,
-  writeProposalRateEvent,
-  recordDismissSignal: (db, input: ProposalDismissInput) =>
-    recordProposalDecisionSignal(
-      db,
-      {
-        ...input.proposal,
-        kind: input.proposal.payload.kind,
-        target: input.proposal.payload.target,
-      } as ProposalInboxRow,
-      'dismiss',
-      input.user_note,
-    ),
-});
+} = createAgencyProposalLifecycle({ findExistingRateEvent });
 
-function inboxView(input: ProposalAcceptInput): ProposalInboxRow {
+function inboxView(input: Pick<ProposalAcceptInput, 'proposal'>): ProposalInboxRow {
   const { proposal } = input;
   return {
     ...proposal,
@@ -128,18 +105,21 @@ export const relearnProposalAcceptApplier: ProposalAcceptApplier = async (db, in
     ),
   );
 
-export const goalScopeProposalAcceptApplier: ProposalAcceptApplier = async (db, input) => {
-  const proposal = inboxView(input);
-  const result = await acceptGoalScopeProposal(db as Db, input.proposalId, proposal, {
-    user_note: input.user_note,
-  });
-  if (result.idempotent) {
-    await ensureProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
-  } else {
-    await recordProposalDecisionSignal(db as Db, proposal, 'accept', input.user_note);
-  }
-  return wrap(result);
-};
+export const goalScopeProposalAcceptApplier: ProposalAcceptApplier = async (db, input) =>
+  wrap(
+    await acceptGoalScopeProposal(db as Db, input.proposalId, inboxView(input), {
+      user_note: input.user_note,
+    }),
+  );
+
+export const agencyProposalDismissApplier: ProposalDismissApplier = async (db, input) => ({
+  kind: input.proposal.payload.kind,
+  result: await runProposalDismiss(db as Db, input.proposalId, {
+    proposal: inboxView(input),
+    userNote: input.user_note,
+    signal: 'in_transaction',
+  }),
+});
 
 export const conjectureProposalAcceptApplier: ProposalAcceptApplier = async (db, input, runtime) =>
   wrap(
