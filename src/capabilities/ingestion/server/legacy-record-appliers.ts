@@ -14,21 +14,19 @@ import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/busi
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, learning_record, question } from '@/db/schema';
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
-import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
 import {
-  acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
-  existingAcceptRate,
   requiredString,
 } from '@/kernel/proposals/applier-helpers';
-import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/kernel/proposals/signals';
+  type ProposalAcceptEffectOutcome,
+  type RecordedProposalRate,
+  runProposalAccept,
+} from '@/kernel/proposals/decision-protocol';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { createPendingLearningItem } from '@/kernel/records/learning-items';
@@ -170,101 +168,86 @@ export async function acceptRecordLinksProposal(
   const recordId = requiredString(change.record_id, 'record_id', proposalId);
   const links = parseRecordLinks(change, proposalId);
 
-  const replayAccepted = async (existingRate: { id: string }): Promise<RecordLinksAcceptResult> => {
-    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-    return {
+  const { result } = await runProposalAccept(db, proposalId, {
+    proposal,
+    userNote: opts.user_note,
+    signal: 'after_commit',
+    replay: async (rate: RecordedProposalRate): Promise<RecordLinksAcceptResult> => ({
       kind: 'record_links',
-      rate_event_id: existingRate.id,
+      rate_event_id: rate.id,
       record_id: recordId,
       applied_links: links.length,
       idempotent: true,
-    };
-  };
-
-  // Cheap short-circuit; the transaction re-checks under the decision lock.
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) return replayAccepted(existingRate);
-
-  const record = (
-    await db
-      .select()
-      .from(learning_record)
-      .where(and(eq(learning_record.id, recordId), isNull(learning_record.archived_at)))
-      .limit(1)
-  )[0];
-  if (!record) throw new ApiError('not_found', `record ${recordId} not found`, 404);
-  for (const link of links) {
-    await assertTargetExists(db, link.target_kind, link.target_id);
-  }
-
-  const now = new Date();
-  const rateEventId = newId();
-  const knowledgeIds = [
-    ...new Set([
-      ...record.knowledge_ids,
-      ...links.filter((link) => link.target_kind === 'knowledge').map((link) => link.target_id),
-    ]),
-  ];
-  const questionId =
-    record.question_id ?? links.find((link) => link.target_kind === 'question')?.target_id ?? null;
-  const learningItemId =
-    record.learning_item_id ??
-    links.find((link) => link.target_kind === 'learning_item')?.target_id ??
-    null;
-  const artifactId =
-    record.artifact_id ?? links.find((link) => link.target_kind === 'artifact')?.target_id ?? null;
-  const payload = {
-    ...asPlainRecord(record.payload),
-    accepted_record_links: [
-      ...(Array.isArray(asPlainRecord(record.payload).accepted_record_links)
-        ? (asPlainRecord(record.payload).accepted_record_links as unknown[])
-        : []),
-      ...links.map((link) => ({ ...link, proposal_id: proposalId })),
-    ],
-  };
-
-  const concurrentAccept = await db.transaction(async (tx) => {
-    // Same lock as the generic dismiss: a racing decision is seen here, not written beside.
-    await acquireProposalDecisionLock(tx, proposalId);
-    const decided = await existingAcceptRate(tx, proposalId);
-    if (decided) return decided;
-    await updateLearningRecord(tx, recordId, {
-      processing_status: 'actioned',
-      knowledge_ids: knowledgeIds,
-      question_id: questionId,
-      learning_item_id: learningItemId,
-      artifact_id: artifactId,
-      payload,
-      version: record.version,
-    });
-    await writeEvent(tx, {
-      id: rateEventId,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'rate',
-      subject_kind: 'event',
-      subject_id: proposalId,
-      outcome: 'success',
-      payload: {
-        rating: 'accept',
-        record_id: recordId,
-        applied_links: links,
-        ...(opts.user_note ? { user_note: opts.user_note } : {}),
-      },
-      caused_by_event_id: proposalId,
-      created_at: now,
-    });
-    return null;
+    }),
+    prepare: async () => {
+      const record = (
+        await db
+          .select()
+          .from(learning_record)
+          .where(and(eq(learning_record.id, recordId), isNull(learning_record.archived_at)))
+          .limit(1)
+      )[0];
+      if (!record) throw new ApiError('not_found', `record ${recordId} not found`, 404);
+      for (const link of links) {
+        await assertTargetExists(db, link.target_kind, link.target_id);
+      }
+      return record;
+    },
+    effect: async (
+      { tx, writeRate },
+      record,
+    ): Promise<ProposalAcceptEffectOutcome<RecordLinksAcceptResult>> => {
+      const knowledgeIds = [
+        ...new Set([
+          ...record.knowledge_ids,
+          ...links.filter((link) => link.target_kind === 'knowledge').map((link) => link.target_id),
+        ]),
+      ];
+      const questionId =
+        record.question_id ??
+        links.find((link) => link.target_kind === 'question')?.target_id ??
+        null;
+      const learningItemId =
+        record.learning_item_id ??
+        links.find((link) => link.target_kind === 'learning_item')?.target_id ??
+        null;
+      const artifactId =
+        record.artifact_id ??
+        links.find((link) => link.target_kind === 'artifact')?.target_id ??
+        null;
+      const payload = {
+        ...asPlainRecord(record.payload),
+        accepted_record_links: [
+          ...(Array.isArray(asPlainRecord(record.payload).accepted_record_links)
+            ? (asPlainRecord(record.payload).accepted_record_links as unknown[])
+            : []),
+          ...links.map((link) => ({ ...link, proposal_id: proposalId })),
+        ],
+      };
+      await updateLearningRecord(tx, recordId, {
+        processing_status: 'actioned',
+        knowledge_ids: knowledgeIds,
+        question_id: questionId,
+        learning_item_id: learningItemId,
+        artifact_id: artifactId,
+        payload,
+        version: record.version,
+      });
+      const rateEventId = await writeRate({
+        payload: { record_id: recordId, applied_links: links },
+      });
+      return {
+        status: 'accepted',
+        result: {
+          kind: 'record_links',
+          rate_event_id: rateEventId,
+          record_id: recordId,
+          applied_links: links.length,
+        },
+      };
+    },
   });
-  if (concurrentAccept) return replayAccepted(concurrentAccept);
-
-  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-  return {
-    kind: 'record_links',
-    rate_event_id: rateEventId,
-    record_id: recordId,
-    applied_links: links.length,
-  };
+  return result;
 }
 
 function parseRecordPromotionTarget(value: unknown, proposalId: string): RecordPromotionTarget {
@@ -320,192 +303,179 @@ export async function acceptRecordPromotionProposal(
   const target = parseRecordPromotionTarget(change.target, proposalId);
   const draft = asPlainRecord(change.draft);
 
-  const replayAccepted = async (existingRate: {
-    id: string;
-    payload: unknown;
-  }): Promise<RecordPromotionAcceptResult> => {
-    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-    return {
+  const { result } = await runProposalAccept(db, proposalId, {
+    proposal,
+    userNote: opts.user_note,
+    signal: 'after_commit',
+    replay: async (rate: RecordedProposalRate): Promise<RecordPromotionAcceptResult> => ({
       kind: 'record_promotion',
-      rate_event_id: existingRate.id,
+      rate_event_id: rate.id,
       record_id: recordId,
       materialized_kind: target,
       materialized_id: String(
-        (existingRate.payload as { materialized_id?: unknown }).materialized_id ?? '',
+        (rate.payload as { materialized_id?: unknown }).materialized_id ?? '',
       ),
       idempotent: true,
-    };
-  };
-
-  // Cheap short-circuit; the transaction re-checks under the decision lock.
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) return replayAccepted(existingRate);
-
-  const record = (
-    await db
-      .select()
-      .from(learning_record)
-      .where(and(eq(learning_record.id, recordId), isNull(learning_record.archived_at)))
-      .limit(1)
-  )[0];
-  if (!record) throw new ApiError('not_found', `record ${recordId} not found`, 404);
-
-  const now = new Date();
-  const rateEventId = newId();
-  const materializedId = newId();
-  const knowledgeIds = draftKnowledgeIds(draft, record.knowledge_ids);
-  const title = draftString(draft, 'title', record.title ?? record.content_md.slice(0, 80));
-  const content = draftString(
-    draft,
-    'content',
-    draftString(draft, 'content_md', record.content_md),
-  );
-  const payload = {
-    ...asPlainRecord(record.payload),
-    accepted_record_promotion: {
-      proposal_id: proposalId,
-      target,
-      materialized_id: materializedId,
+    }),
+    prepare: async () => {
+      const record = (
+        await db
+          .select()
+          .from(learning_record)
+          .where(and(eq(learning_record.id, recordId), isNull(learning_record.archived_at)))
+          .limit(1)
+      )[0];
+      if (!record) throw new ApiError('not_found', `record ${recordId} not found`, 404);
+      return record;
     },
-  };
-
-  const concurrentAccept = await db.transaction(async (tx) => {
-    // Decision lock first, then the placement-supply scopes (the question_draft accept order).
-    await acquireProposalDecisionLock(tx, proposalId);
-    const decided = await existingAcceptRate(tx, proposalId);
-    if (decided) return decided;
-    if (target === 'question') {
-      await lockPlacementSupplyScopes(tx, knowledgeIds);
-      await tx.insert(question).values(
-        withAnswerClass({
-          id: materializedId,
-          kind: 'short_answer',
-          prompt_md: draftString(draft, 'prompt_md', content),
-          reference_md:
-            typeof draft.reference_md === 'string' && draft.reference_md.length > 0
-              ? draft.reference_md
-              : null,
-          knowledge_ids: knowledgeIds,
-          difficulty: typeof draft.difficulty === 'number' ? draft.difficulty : 3,
-          source: 'dreaming',
-          source_ref: proposalId,
-          draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
-          created_by: {
-            by: 'ai',
-            task_kind: 'record_promotion',
-            propose_event_id: proposalId,
-          } as never,
-          created_at: now,
-          updated_at: now,
-        }),
+    effect: async (
+      { tx, writeRate },
+      record,
+    ): Promise<ProposalAcceptEffectOutcome<RecordPromotionAcceptResult>> => {
+      const now = new Date();
+      const rateEventId = newId();
+      const materializedId = newId();
+      const knowledgeIds = draftKnowledgeIds(draft, record.knowledge_ids);
+      const title = draftString(draft, 'title', record.title ?? record.content_md.slice(0, 80));
+      const content = draftString(
+        draft,
+        'content',
+        draftString(draft, 'content_md', record.content_md),
       );
+      const payload = {
+        ...asPlainRecord(record.payload),
+        accepted_record_promotion: {
+          proposal_id: proposalId,
+          target,
+          materialized_id: materializedId,
+        },
+      };
 
-      // Every reachable accept path must mint the new contract. Dreaming content is
-      // AI-proposed but user-accepted, so it carries manual provenance; the accept is
-      // the human verification gate.
-      await publishQuestionGroupFromRow(tx, {
-        rootId: materializedId,
-        admission: {
-          state: SCORING_ADMISSION_STATE.ADMITTED,
-          evidence: {
-            marking_provenance: MARKING_RULE_PROVENANCE.MANUAL,
-            verification: {
-              structural_check_passed: true,
-              independent_verification: {
-                passed: true,
-                verifier: 'human',
-                verified_at: now.toISOString(),
+      // The kernel took the decision lock first; the placement-supply scopes follow (the
+      // question_draft accept order).
+      if (target === 'question') {
+        await lockPlacementSupplyScopes(tx, knowledgeIds);
+        await tx.insert(question).values(
+          withAnswerClass({
+            id: materializedId,
+            kind: 'short_answer',
+            prompt_md: draftString(draft, 'prompt_md', content),
+            reference_md:
+              typeof draft.reference_md === 'string' && draft.reference_md.length > 0
+                ? draft.reference_md
+                : null,
+            knowledge_ids: knowledgeIds,
+            difficulty: typeof draft.difficulty === 'number' ? draft.difficulty : 3,
+            source: 'dreaming',
+            source_ref: proposalId,
+            draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
+            created_by: {
+              by: 'ai',
+              task_kind: 'record_promotion',
+              propose_event_id: proposalId,
+            } as never,
+            created_at: now,
+            updated_at: now,
+          }),
+        );
+
+        // Every reachable accept path must mint the new contract. Dreaming content is
+        // AI-proposed but user-accepted, so it carries manual provenance; the accept is
+        // the human verification gate.
+        await publishQuestionGroupFromRow(tx, {
+          rootId: materializedId,
+          admission: {
+            state: SCORING_ADMISSION_STATE.ADMITTED,
+            evidence: {
+              marking_provenance: MARKING_RULE_PROVENANCE.MANUAL,
+              verification: {
+                structural_check_passed: true,
+                independent_verification: {
+                  passed: true,
+                  verifier: 'human',
+                  verified_at: now.toISOString(),
+                },
               },
+              model_slice: null,
             },
-            model_slice: null,
           },
-        },
-        availability: QUESTION_AVAILABILITY.GENERAL_POOL,
-        actorRef: 'legacy-record-accept:question',
-        now,
-      });
-    } else if (target === 'learning_item') {
-      await createPendingLearningItem(
-        tx,
-        {
-          id: materializedId,
-          source: 'ai_dream',
-          source_ref: proposalId,
-          title,
-          content,
-          knowledge_ids: knowledgeIds,
-          primary_artifact_id: null,
-          parent_learning_item_id: null,
-        },
-        now,
-      );
-    } else {
-      // Insert and return the full row, then emit artifact_create in the same tx from
-      // the materialized row so every strict snapshot column has a real value. The
-      // body_blocks schema check runs at this seam; undefined keeps the NULL default.
-      const bodyBlocks = draftBodyBlocks(draft, proposalId);
-      const [insertedArtifact] = await tx
-        .insert(artifact)
-        .values({
-          id: materializedId,
-          type: 'note_long',
-          title,
-          knowledge_ids: knowledgeIds,
-          intent_source: 'from_dream',
-          source: 'ai_dream',
-          source_ref: proposalId,
-          generation_status: 'ready',
-          ...(bodyBlocks !== undefined ? { body_blocks: bodyBlocks } : {}),
-          created_at: now,
-          updated_at: now,
-        })
-        .returning();
-      await emitArtifactCreateEvent(tx, {
-        row: artifactRowToCreateSnapshot(insertedArtifact),
-        actorKind: 'agent',
-        actorRef: 'record_promotion',
-        causedByEventId: rateEventId,
-        createdAt: now,
-      });
-    }
+          availability: QUESTION_AVAILABILITY.GENERAL_POOL,
+          actorRef: 'legacy-record-accept:question',
+          now,
+        });
+      } else if (target === 'learning_item') {
+        await createPendingLearningItem(
+          tx,
+          {
+            id: materializedId,
+            source: 'ai_dream',
+            source_ref: proposalId,
+            title,
+            content,
+            knowledge_ids: knowledgeIds,
+            primary_artifact_id: null,
+            parent_learning_item_id: null,
+          },
+          now,
+        );
+      } else {
+        // Insert and return the full row, then emit artifact_create in the same tx from
+        // the materialized row so every strict snapshot column has a real value. The
+        // body_blocks schema check runs at this seam; undefined keeps the NULL default.
+        const bodyBlocks = draftBodyBlocks(draft, proposalId);
+        const [insertedArtifact] = await tx
+          .insert(artifact)
+          .values({
+            id: materializedId,
+            type: 'note_long',
+            title,
+            knowledge_ids: knowledgeIds,
+            intent_source: 'from_dream',
+            source: 'ai_dream',
+            source_ref: proposalId,
+            generation_status: 'ready',
+            ...(bodyBlocks !== undefined ? { body_blocks: bodyBlocks } : {}),
+            created_at: now,
+            updated_at: now,
+          })
+          .returning();
+        await emitArtifactCreateEvent(tx, {
+          row: artifactRowToCreateSnapshot(insertedArtifact),
+          actorKind: 'agent',
+          actorRef: 'record_promotion',
+          causedByEventId: rateEventId,
+          createdAt: now,
+        });
+      }
 
-    await updateLearningRecord(tx, recordId, {
-      processing_status: 'actioned',
-      question_id: target === 'question' ? materializedId : record.question_id,
-      learning_item_id: target === 'learning_item' ? materializedId : record.learning_item_id,
-      artifact_id: target === 'artifact' ? materializedId : record.artifact_id,
-      payload,
-      version: record.version,
-    });
-
-    await writeEvent(tx, {
-      id: rateEventId,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'rate',
-      subject_kind: 'event',
-      subject_id: proposalId,
-      outcome: 'success',
-      payload: {
-        rating: 'accept',
-        record_id: recordId,
-        materialized_kind: target,
-        materialized_id: materializedId,
-        ...(opts.user_note ? { user_note: opts.user_note } : {}),
-      },
-      caused_by_event_id: proposalId,
-      created_at: now,
-    });
-    return null;
+      await updateLearningRecord(tx, recordId, {
+        processing_status: 'actioned',
+        question_id: target === 'question' ? materializedId : record.question_id,
+        learning_item_id: target === 'learning_item' ? materializedId : record.learning_item_id,
+        artifact_id: target === 'artifact' ? materializedId : record.artifact_id,
+        payload,
+        version: record.version,
+      });
+      await writeRate({
+        id: rateEventId,
+        created_at: now,
+        payload: {
+          record_id: recordId,
+          materialized_kind: target,
+          materialized_id: materializedId,
+        },
+      });
+      return {
+        status: 'accepted',
+        result: {
+          kind: 'record_promotion',
+          rate_event_id: rateEventId,
+          record_id: recordId,
+          materialized_kind: target,
+          materialized_id: materializedId,
+        },
+      };
+    },
   });
-  if (concurrentAccept) return replayAccepted(concurrentAccept);
-
-  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-  return {
-    kind: 'record_promotion',
-    rate_event_id: rateEventId,
-    record_id: recordId,
-    materialized_kind: target,
-    materialized_id: materializedId,
-  };
+  return result;
 }

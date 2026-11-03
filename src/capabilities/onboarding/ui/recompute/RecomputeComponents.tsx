@@ -2,8 +2,9 @@
 // recompute-profile.jsx). The simulated Beta-binomial math is REPLACED by the real
 // re-derivation (recompute-core → src/core/recompute). Read-only; renders the verify bar,
 // per-KC chips, the bit-for-bit ledger, the drift detail, and the honesty footnote.
+// M3E presentation in recompute.css (docs/design/2026-11-03-last-old-ui-m3e.md).
 
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { Check, CircleAlert, CircleCheck, Lock, RefreshCw, Zap } from 'lucide-react';
 import { type RcKcVerdict, type RcMaturitySummary, type RcSummary, rcFmt } from './recompute-core';
 import { type RcState, useRecompute } from './useRecompute';
 
@@ -11,7 +12,7 @@ import { type RcState, useRecompute } from './useRecompute';
 export function RcOffline() {
   return (
     <span className="rc-offline" title="只在此设备核对显示结果">
-      <LoomIcon name="bolt" size={11} />
+      <Zap size={11} aria-hidden="true" />
       本地核对
     </span>
   );
@@ -30,7 +31,7 @@ export function RcKcChip({ state, kind }: { state: RcState; kind: RcKcVerdict['k
   if (kind === 'drift') {
     return (
       <span className="rc-chip rc-x">
-        <LoomIcon name="alert" size={11} />
+        <CircleAlert size={11} aria-hidden="true" />
         显示待同步
       </span>
     );
@@ -38,7 +39,7 @@ export function RcKcChip({ state, kind }: { state: RcState; kind: RcKcVerdict['k
   // match (poly) or preview (libm)
   return (
     <span className="rc-chip rc-ok">
-      <LoomIcon name="check" size={11} />
+      <Check size={11} aria-hidden="true" />
       {kind === 'preview' ? '已初步核对' : '已核对'}
     </span>
   );
@@ -57,13 +58,13 @@ function RcRerunButton({
   return (
     <button
       type="button"
-      className="rc-rerun"
+      className="rc-rerun un-hit"
       disabled={state === 'running'}
       aria-label={accessibleLabel}
       title={accessibleLabel}
       onClick={onClick}
     >
-      <LoomIcon name="refresh" size={14} />
+      <RefreshCw size={14} aria-hidden="true" />
     </button>
   );
 }
@@ -82,20 +83,20 @@ export function RcVerify({
   onToggleDetail: () => void;
   onRerun: () => void;
 }) {
-  const icon =
+  const StateIcon =
     state === 'match'
-      ? 'checkCircle'
+      ? CircleCheck
       : state === 'drift'
-        ? 'alert'
+        ? CircleAlert
         : state === 'preview'
-          ? 'bolt'
-          : 'refresh';
+          ? Zap
+          : RefreshCw;
   const resolved = state === 'match' || state === 'drift' || state === 'preview';
 
   return (
     <div className={`rc-verify rc-state-${state}`}>
       <span className="rc-verify-icon">
-        <LoomIcon name={icon} size={18} />
+        <StateIcon size={18} aria-hidden="true" />
       </span>
       <div className="rc-verify-text">
         {state === 'running' && <div className="rc-verify-title">正在核对学习画像…</div>}
@@ -134,7 +135,7 @@ export function RcVerify({
       </div>
       {resolved && (
         <div className="rc-verify-act">
-          <button type="button" className="rc-detail-toggle" onClick={onToggleDetail}>
+          <button type="button" className="rc-detail-toggle un-hit" onClick={onToggleDetail}>
             {detailOpen ? '收起明细' : '查看核对明细'}
           </button>
           <RcRerunButton state={state} label="重新核对学习画像" onClick={onRerun} />
@@ -171,12 +172,12 @@ export function RcLedgerTable({ verdicts }: { verdicts: RcKcVerdict[] }) {
             <span className="rc-eq">
               {v.kind === 'drift' ? (
                 <span className="rc-eq-x">
-                  <LoomIcon name="alert" size={12} />
+                  <CircleAlert size={12} aria-hidden="true" />
                   不符
                 </span>
               ) : (
                 <span className="rc-eq-ok">
-                  <LoomIcon name="check" size={12} />
+                  <Check size={12} aria-hidden="true" />
                   一致
                 </span>
               )}
@@ -228,7 +229,7 @@ export function RcDriftDetail({
 export function RcBoundaryNote() {
   return (
     <div className="rc-boundary">
-      <LoomIcon name="lock" size={13} />
+      <Lock size={13} aria-hidden="true" />
       <span>
         核对过程<b>只读</b>，不会改动任何学习记录。它只检查当前显示是否能由已有作答得到，
         不会重新判题或改写历史。区间较宽、依据不足或尚未作答都仍会如实显示；“已核对”只表示
@@ -285,14 +286,12 @@ export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
   const medianMatch = Object.is(summary.dMedian, summary.sMedian);
   const mismatchCount = Number(!firmMatch) + Number(!medianMatch);
   const medianLabels = formatMedianDrift(summary.sMedian, summary.dMedian);
+  const StateIcon = state === 'match' ? CircleCheck : state === 'drift' ? CircleAlert : RefreshCw;
 
   return (
     <div className={`rc-cal rc-state-${state}`}>
       <span className="rc-cal-icon">
-        <LoomIcon
-          name={state === 'match' ? 'checkCircle' : state === 'drift' ? 'alert' : 'refresh'}
-          size={18}
-        />
+        <StateIcon size={18} aria-hidden="true" />
       </span>
       <div className="rc-cal-text">
         {state === 'running' && <div className="rc-cal-title">正在核对判断可靠度…</div>}
@@ -307,7 +306,7 @@ export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
               <span className="rc-cal-figs">
                 <span className="rc-cal-fig">
                   <b className="mono">判断较可信 {dFirm}</b>
-                  <LoomIcon name="check" size={11} />
+                  <Check size={11} aria-hidden="true" />
                 </span>
               </span>
               · <RcOffline />

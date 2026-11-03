@@ -1,7 +1,5 @@
-import { newId } from '@/core/ids';
 import { NotePatch } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
-import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import type {
   ProposalAcceptApplier,
@@ -11,18 +9,17 @@ import type {
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
 import {
-  acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
-  existingAcceptRate,
   findExistingRateEvent,
   requiredString,
 } from '@/kernel/proposals/applier-helpers';
-import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/kernel/proposals/signals';
+  type ProposalAcceptEffectOutcome,
+  type RecordedProposalRate,
+  runProposalAccept,
+} from '@/kernel/proposals/decision-protocol';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   NOTE_REFINE_ACCEPT_ACTOR,
   persistNoteRefineApply,
@@ -86,92 +83,75 @@ async function acceptNoteUpdateProposal(
     );
   }
 
-  const replayAccepted = async (existingRate: {
-    id: string;
-    payload: unknown;
-  }): Promise<NoteUpdateAcceptResult> => {
-    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-    const payload = existingRate.payload as {
-      materialized_apply_event_id?: unknown;
-      materialized_artifact_version?: unknown;
-    };
-    return {
-      kind: 'note_update',
-      rate_event_id: existingRate.id,
-      artifact_id: artifactId,
-      apply_event_id:
-        typeof payload.materialized_apply_event_id === 'string'
-          ? payload.materialized_apply_event_id
-          : null,
-      artifact_version:
-        typeof payload.materialized_artifact_version === 'number'
-          ? payload.materialized_artifact_version
-          : null,
-      idempotent: true,
-    };
-  };
-
-  // Cheap short-circuit; the transaction re-checks under the decision lock.
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) return replayAccepted(existingRate);
-
-  const now = new Date();
-  const rateEventId = newId();
-  let applyEventId: string | null = null;
-  let artifactVersion: number | null = null;
-  const concurrentAccept = await db.transaction(async (tx) => {
-    // Same lock as dismiss and retract, taken before the artifact row, so a racing
-    // decision on this proposal is seen here instead of landing beside this accept.
-    await acquireProposalDecisionLock(tx, proposalId);
-    const decided = await existingAcceptRate(tx, proposalId);
-    if (decided) return decided;
-    const applyResult = await persistNoteRefineApply({
-      db: tx,
-      artifactId,
-      patch: patchParsed.data,
-      triggerEventId: proposalId,
-      actorRef: NOTE_REFINE_ACCEPT_ACTOR,
-      now,
-    });
-    if (applyResult.status !== 'applied') {
-      throw new ApiError(
-        'conflict',
-        `note_update proposal ${proposalId} could not apply patch (${applyResult.status})`,
-        409,
-      );
-    }
-    applyEventId = applyResult.event_id ?? null;
-    artifactVersion = applyResult.artifact_version ?? null;
-    await writeEvent(tx, {
-      id: rateEventId,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'rate',
-      subject_kind: 'event',
-      subject_id: proposalId,
-      outcome: 'success',
-      payload: {
-        rating: 'accept',
-        materialized_artifact_id: artifactId,
-        materialized_apply_event_id: applyEventId,
-        materialized_artifact_version: artifactVersion,
-        ...(opts.user_note ? { user_note: opts.user_note } : {}),
-      },
-      caused_by_event_id: proposalId,
-      created_at: now,
-    });
-    await recordProposalDecisionSignal(tx, proposal, 'accept', opts.user_note);
-    return null;
+  const { result } = await runProposalAccept(db, proposalId, {
+    proposal,
+    userNote: opts.user_note,
+    signal: 'in_transaction',
+    replay: async (rate: RecordedProposalRate): Promise<NoteUpdateAcceptResult> => {
+      const payload = rate.payload as {
+        materialized_apply_event_id?: unknown;
+        materialized_artifact_version?: unknown;
+      };
+      return {
+        kind: 'note_update',
+        rate_event_id: rate.id,
+        artifact_id: artifactId,
+        apply_event_id:
+          typeof payload.materialized_apply_event_id === 'string'
+            ? payload.materialized_apply_event_id
+            : null,
+        artifact_version:
+          typeof payload.materialized_artifact_version === 'number'
+            ? payload.materialized_artifact_version
+            : null,
+        idempotent: true,
+      };
+    },
+    // The kernel takes the decision lock before this effect touches the artifact row, so a
+    // racing decision on this proposal is seen instead of landing beside this accept.
+    effect: async ({
+      tx,
+      writeRate,
+    }): Promise<ProposalAcceptEffectOutcome<NoteUpdateAcceptResult>> => {
+      const now = new Date();
+      const applyResult = await persistNoteRefineApply({
+        db: tx,
+        artifactId,
+        patch: patchParsed.data,
+        triggerEventId: proposalId,
+        actorRef: NOTE_REFINE_ACCEPT_ACTOR,
+        now,
+      });
+      if (applyResult.status !== 'applied') {
+        throw new ApiError(
+          'conflict',
+          `note_update proposal ${proposalId} could not apply patch (${applyResult.status})`,
+          409,
+        );
+      }
+      const applyEventId = applyResult.event_id ?? null;
+      const artifactVersion = applyResult.artifact_version ?? null;
+      const rateEventId = await writeRate({
+        created_at: now,
+        payload: {
+          materialized_artifact_id: artifactId,
+          materialized_apply_event_id: applyEventId,
+          materialized_artifact_version: artifactVersion,
+        },
+      });
+      return {
+        status: 'accepted',
+        result: {
+          kind: 'note_update',
+          rate_event_id: rateEventId,
+          artifact_id: artifactId,
+          apply_event_id: applyEventId,
+          artifact_version: artifactVersion,
+        },
+      };
+    },
   });
-  if (concurrentAccept) return replayAccepted(concurrentAccept);
-
-  return {
-    kind: 'note_update',
-    rate_event_id: rateEventId,
-    artifact_id: artifactId,
-    apply_event_id: applyEventId,
-    artifact_version: artifactVersion,
-  };
+  return result;
 }
 
 export const noteUpdateProposalAcceptApplier: ProposalAcceptApplier = async (db, input) => {

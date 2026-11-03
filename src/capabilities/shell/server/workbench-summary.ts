@@ -69,12 +69,17 @@ async function countPendingAttribution(db: Db): Promise<number> {
   return rows.filter((row) => row.cause === null).length;
 }
 
-async function countKnowledge(db: Db): Promise<number> {
+// Subject roots (`seed:<subject>:root`) are written by every install's migrate, not by the
+// learner, so they must not count as learner knowledge for the cold-start decision.
+async function countKnowledge(db: Db): Promise<{ all: number; learner: number }> {
   const [row] = await db
-    .select({ count: sql<number>`count(*)::int` })
+    .select({
+      all: sql<number>`count(*)::int`,
+      learner: sql<number>`(count(*) filter (where ${knowledge.id} not like 'seed:%:root'))::int`,
+    })
     .from(knowledge)
     .where(isNull(knowledge.archived_at));
-  return row?.count ?? 0;
+  return { all: row?.all ?? 0, learner: row?.learner ?? 0 };
 }
 
 interface PersistedColdStartPresence extends Record<string, unknown> {
@@ -221,7 +226,7 @@ export async function loadWorkbenchSummary(
   const coldStart = buildColdStartState({
     active_goal: goalState.count > 0,
     goal_history: persistedPresence.goal_history,
-    knowledge: knowledgeCount > 0,
+    knowledge: knowledgeCount.learner > 0,
     question: persistedPresence.question,
     source_material: persistedPresence.source_material,
     artifact: persistedPresence.artifact,
@@ -238,7 +243,7 @@ export async function loadWorkbenchSummary(
       due_count: dueCount,
       due_count_scope: 'actionable_queue_sample',
       pending_attribution_count: pendingAttributionCount,
-      knowledge_count: knowledgeCount,
+      knowledge_count: knowledgeCount.all,
       goal_count: goalState.count,
     },
     cold_start: coldStart,

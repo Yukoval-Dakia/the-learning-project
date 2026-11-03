@@ -1,26 +1,22 @@
 // Proposal accept appliers for ingestion. block_merge lives here. The shared
 // dispatch only routes here.
 
-import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
-import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import {
-  acquireProposalDecisionLock,
-  ensureAcceptOnly,
-  existingAcceptRate,
-} from '@/kernel/proposals/applier-helpers';
+import { ensureAcceptOnly } from '@/kernel/proposals/applier-helpers';
 import {
   assertBlockMergeAdmission,
   blockMergeAdmissionError,
   evaluateBlockMergeAdmission,
   loadBlockMergeAdmissionContext,
 } from '@/kernel/proposals/block-merge-admission';
-import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/kernel/proposals/signals';
+  type ProposalAcceptEffectOutcome,
+  type RecordedProposalRate,
+  SkippedProposalDecision,
+  runProposalAccept,
+} from '@/kernel/proposals/decision-protocol';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 // Accept reuses the mergeQuestions primitive; no auto-merge path exists.
 import { mergeQuestions } from './block-structured-edit';
 
@@ -49,9 +45,9 @@ export interface BlockMergeAcceptResult {
  * Accepts a block_merge proposal by reusing mergeQuestions. AI only proposes; the
  * merge runs here on explicit user accept.
  *
- * The merge (a savepoint inside mergeQuestions) and the rate event commit in one
- * transaction that first takes the proposal decision lock, the same lock the generic
- * dismiss takes, so a racing accept or dismiss cannot write a second rate.
+ * The merge (a savepoint inside mergeQuestions) and the rate event commit in the
+ * kernel decision transaction, under the lock the generic dismiss takes, so a racing
+ * accept or dismiss cannot write a second rate.
  *
  * Any skipped result means the proposal is stale: no rate event or decision signal,
  * just a stale notice. A block that left draft after the read returns the same
@@ -80,110 +76,91 @@ export async function acceptBlockMergeProposal(
   // is unvalidated and may repeat ids or name the primary.
   const effectiveMergeIds = [...new Set(mergeBlockIds)].filter((id) => id !== primaryBlockId);
 
-  const replayAccepted = async (existingRate: { id: string }): Promise<BlockMergeAcceptResult> => {
-    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-    return {
-      kind: 'block_merge',
-      rate_event_id: existingRate.id,
-      primary_block_id: primaryBlockId,
-      merged_count: effectiveMergeIds.length,
-      idempotent: true,
-    };
-  };
-
-  // An existing accept rate means the merge already ran; do not merge again. A
-  // non-accept decision throws 409. The transaction re-checks under the decision lock.
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) return replayAccepted(existingRate);
-
-  // Admission is proven on the stored rows: same document, ordered adjacent pages,
-  // deterministic continuity, no conflicting question number; model confidence never
-  // counts. The merge is irreversible, so accept requires confirm_lossy. The proof
-  // re-runs on locked rows inside mergeQuestions, which is authoritative.
-  //
-  // A block that already left draft answers stale, not 409: no rate or decision,
-  // proposal stays pending. Other proof failures throw 409.
   const admissionInput = {
     primaryBlockId,
     mergeBlockIds,
     ingestionSessionId: change.ingestion_session_id,
   };
-  const admissionCtx = await loadBlockMergeAdmissionContext(db, [primaryBlockId, ...mergeBlockIds]);
-  const verdict = evaluateBlockMergeAdmission(admissionInput, admissionCtx);
-  if (verdict.reason === 'not_draft') {
-    return {
-      kind: 'block_merge',
-      primary_block_id: primaryBlockId,
-      stale: true,
-      skip_reason: 'skipped:not_draft',
-    };
-  }
-  if (!verdict.eligible) {
-    throw blockMergeAdmissionError(verdict);
-  }
-
-  if (opts.confirm_lossy !== true) {
-    throw new ApiError('confirm_required', '合并后无法撤销', 409, undefined, {
-      affected_block_count: verdict.affectedBlockCount,
-    });
-  }
-
-  const rateEventId = newId();
-  const outcome = await db.transaction(async (tx) => {
-    await acquireProposalDecisionLock(tx, proposalId);
-    const decided = await existingAcceptRate(tx, proposalId);
-    if (decided) return { status: 'decided', rate: decided } as const;
-
-    const merge = await mergeQuestions(tx, {
-      actorRef: 'proposal:accept',
-      // Accepting is a user action, so the edit event is attributed to the user.
-      actorKind: 'user',
-      primaryBlockId,
-      mergeBlockIds,
-      // Re-check under the row locks, before any write; a throw rolls back with no
-      // mutation. Non-draft rows are soft-rejected by the draft guard first.
-      admission: async ({ tx: mergeTx }) => {
-        await assertBlockMergeAdmission(mergeTx, admissionInput);
-      },
-    });
-    // Any soft reject means stale: no rate event and no decision signal.
-    if (merge.status !== 'written') return { status: 'stale', reason: merge.status } as const;
-
-    const now = new Date();
-    await writeEvent(tx, {
-      id: rateEventId,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'rate',
-      subject_kind: 'event',
-      subject_id: proposalId,
-      outcome: 'success',
-      payload: {
-        rating: 'accept',
-        primary_block_id: primaryBlockId,
-        merged_block_ids: effectiveMergeIds,
-        ...(opts.user_note ? { user_note: opts.user_note } : {}),
-      },
-      caused_by_event_id: proposalId,
-      created_at: now,
-    });
-    return { status: 'written' } as const;
-  });
-  if (outcome.status === 'decided') return replayAccepted(outcome.rate);
-  if (outcome.status === 'stale') {
-    return {
-      kind: 'block_merge',
-      primary_block_id: primaryBlockId,
-      stale: true,
-      skip_reason: outcome.reason,
-    };
-  }
-
-  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-  return {
+  const staleResult = (skipReason: string): BlockMergeAcceptResult => ({
     kind: 'block_merge',
-    rate_event_id: rateEventId,
     primary_block_id: primaryBlockId,
-    merged_count: effectiveMergeIds.length,
-  };
+    stale: true,
+    skip_reason: skipReason,
+  });
+
+  // An existing accept rate means the merge already ran; do not merge again. A
+  // non-accept decision throws 409.
+  const { result } = await runProposalAccept(db, proposalId, {
+    proposal,
+    userNote: opts.user_note,
+    signal: 'after_commit',
+    replay: async (rate: RecordedProposalRate): Promise<BlockMergeAcceptResult> => ({
+      kind: 'block_merge',
+      rate_event_id: rate.id,
+      primary_block_id: primaryBlockId,
+      merged_count: effectiveMergeIds.length,
+      idempotent: true,
+    }),
+    // Admission is proven on the stored rows: same document, ordered adjacent pages,
+    // deterministic continuity, no conflicting question number; model confidence never
+    // counts. The merge is irreversible, so accept requires confirm_lossy. The proof
+    // re-runs on locked rows inside mergeQuestions, which is authoritative.
+    //
+    // A block that already left draft answers stale, not 409: no rate or decision,
+    // proposal stays pending. Other proof failures throw 409.
+    prepare: async () => {
+      const admissionCtx = await loadBlockMergeAdmissionContext(db, [
+        primaryBlockId,
+        ...mergeBlockIds,
+      ]);
+      const verdict = evaluateBlockMergeAdmission(admissionInput, admissionCtx);
+      if (verdict.reason === 'not_draft') {
+        return new SkippedProposalDecision(staleResult('skipped:not_draft'));
+      }
+      if (!verdict.eligible) {
+        throw blockMergeAdmissionError(verdict);
+      }
+      if (opts.confirm_lossy !== true) {
+        throw new ApiError('confirm_required', '合并后无法撤销', 409, undefined, {
+          affected_block_count: verdict.affectedBlockCount,
+        });
+      }
+      return undefined;
+    },
+    effect: async ({
+      tx,
+      writeRate,
+    }): Promise<ProposalAcceptEffectOutcome<BlockMergeAcceptResult>> => {
+      const merge = await mergeQuestions(tx, {
+        actorRef: 'proposal:accept',
+        // Accepting is a user action, so the edit event is attributed to the user.
+        actorKind: 'user',
+        primaryBlockId,
+        mergeBlockIds,
+        // Re-check under the row locks, before any write; a throw rolls back with no
+        // mutation. Non-draft rows are soft-rejected by the draft guard first.
+        admission: async ({ tx: mergeTx }) => {
+          await assertBlockMergeAdmission(mergeTx, admissionInput);
+        },
+      });
+      // Any soft reject means stale: no rate event and no decision signal.
+      if (merge.status !== 'written') {
+        return { status: 'skipped', result: staleResult(merge.status) };
+      }
+
+      const rateEventId = await writeRate({
+        payload: { primary_block_id: primaryBlockId, merged_block_ids: effectiveMergeIds },
+      });
+      return {
+        status: 'accepted',
+        result: {
+          kind: 'block_merge',
+          rate_event_id: rateEventId,
+          primary_block_id: primaryBlockId,
+          merged_count: effectiveMergeIds.length,
+        },
+      };
+    },
+  });
+  return result;
 }

@@ -12,6 +12,7 @@ import { assessment_submission, evaluation, evaluation_effective_head, event } f
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { lockJudgeRun } from '@/kernel/locks/grading';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import {
   type JudgeExecution,
   authorizeJudgeSend,
@@ -312,11 +313,11 @@ export async function executeNativeAttempt(
       subject_kind: 'question',
       subject_id: input.question_id,
       outcome: null,
-      caused_by_event_id: `evt_assessment_${input.submission_id}`,
+      caused_by_event_id: assessmentAttemptEventId(input.submission_id),
       payload: NativeJudgeResolutionPayload.parse({
         version: 1,
         status,
-        attempt_event_id: `evt_assessment_${input.submission_id}`,
+        attempt_event_id: assessmentAttemptEventId(input.submission_id),
         judge_event_id: null,
         ...(status === 'effective' &&
         (input.user_rating ?? ratingFromCoarseOutcome(prepared.candidate.result.coarse_outcome))

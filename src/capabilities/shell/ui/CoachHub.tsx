@@ -29,7 +29,7 @@
 // lucide icons, scoped coach-m3e.css. Queries, view switching and the report maths are unchanged.
 
 import { useQuery } from '@tanstack/react-query';
-import { ChevronRight, History, type LucideIcon, RotateCcw, Target, Zap } from 'lucide-react';
+import { ChevronRight, RotateCcw, Target, Zap } from 'lucide-react';
 import { type KeyboardEvent, type ReactNode, useRef, useState } from 'react';
 import { apiJson } from '@/ui/lib/api';
 import { ToastHost } from '@/ui-next/feedback/ToastHost';
@@ -129,13 +129,6 @@ const VIEW_LEDE: Record<CoachView, ReactNode> = {
   efficacy: <span>这里比较你最近和过去的表现，只给方向，不把小样本变化说成精确进步。</span>,
 };
 
-// The tab icons, as lucide glyphs (COACH_VIEWS keeps the old icon names as its vocabulary).
-const VIEW_ICON: Record<CoachView, LucideIcon> = {
-  activity: RotateCcw,
-  calibration: Target,
-  efficacy: History,
-};
-
 // 复盘中枢外壳 —— 三视图分段切换，绝不合并。默认视图 = 成效趋势（DEFAULT_COACH_VIEW）。
 export default function CoachHub({
   navigate,
@@ -195,7 +188,7 @@ export default function CoachHub({
             <h1 className="ch-title">Coach 复盘中枢</h1>
             <div className="ch-tabs" role="tablist" aria-label="复盘视图">
               {COACH_VIEWS.map((v) => {
-                const Icon = VIEW_ICON[v.id];
+                const Icon = v.icon;
                 return (
                   <button
                     key={v.id}

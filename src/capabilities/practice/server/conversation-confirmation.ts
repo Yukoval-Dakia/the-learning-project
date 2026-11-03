@@ -20,6 +20,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { CreateAttemptBodySchema } from '../api/contracts';
 import {
@@ -371,7 +372,7 @@ export async function readConversationConfirmation(db: Db | Tx, occurrenceId: st
         : pending.length
           ? ('pending' as const)
           : candidates.some((c) => c.status === 'completed') &&
-              receipts.some((r) => r.id === `evt_assessment_${original.submission_id}`)
+              receipts.some((r) => r.id === assessmentAttemptEventId(original.submission_id))
             ? ('review_required' as const)
             : ('failed_pending' as const),
     submission: original ?? null,

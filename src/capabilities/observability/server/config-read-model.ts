@@ -50,8 +50,6 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   MISCONCEPTION_PROMOTE_ENABLED: 'src/capabilities/agency/server/misconception-promote.ts',
   MISCONCEPTION_HARD_CONFIRM_ENABLED: 'src/capabilities/agency/server/misconception-promote.ts',
   QUESTION_SUPPLY_REFILL_ENABLED: 'src/capabilities/practice/supply/server/refill.ts',
-  CONFUSABLE_CONTRAST_ENABLED:
-    'src/capabilities/practice/supply/server/confusable-contrast-discovery.ts',
   JUDGE_CALIBRATION_SAMPLING_ENABLED:
     'src/capabilities/practice/grading/jobs/judge_calibration_sample.ts',
   WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: 'src/capabilities/ingestion/server/workflow-judge-config.ts',
@@ -102,6 +100,11 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   KC_DEDUP_MAX_PAIRS: 'src/capabilities/knowledge/server/dedup-flags.ts',
   TAGGING_MATCH_THRESHOLD: 'src/kernel/read-models/knowledge-similarity.ts',
   BACKUP_IMPORT_MAX_BYTES: 'src/capabilities/observability/api/backup-import.ts',
+  TASK_FAILURE_ALERT_CONSECUTIVE: 'src/capabilities/observability/server/task-failure-alerts.ts',
+  TASK_FAILURE_ALERT_WINDOW_HOURS: 'src/capabilities/observability/server/task-failure-alerts.ts',
+  TASK_FAILURE_ALERT_RATE: 'src/capabilities/observability/server/task-failure-alerts.ts',
+  TASK_FAILURE_ALERT_MIN_RUNS: 'src/capabilities/observability/server/task-failure-alerts.ts',
+  TASK_FAILURE_ALERT_STALE_DAYS: 'src/capabilities/observability/server/task-failure-alerts.ts',
   AI_PROVIDER_ATTEMPT_ADMISSION_MODE: 'src/server/ai/provider-attempt-admission-config.ts',
   AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: 'src/server/ai/provider-attempt-admission-config.ts',
   AI_PROVIDER_SESSION_ADMISSION_MODE: 'src/server/ai/provider-session-admission-policy.ts',

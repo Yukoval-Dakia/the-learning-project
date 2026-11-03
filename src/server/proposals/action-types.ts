@@ -1,12 +1,9 @@
-import type { EnqueueVariantVerifyFn } from '@/capabilities/practice/public';
 import type { ActivityRefT } from '@/core/schema/activity';
 import type { RelationTypeSchemaT } from '@/core/schema/event/blocks';
 import type { ProposalCorrectedPayload, ProposalLifecycleResult } from '@/kernel/proposals';
 
 export type AcceptAiProposalResult = ProposalLifecycleResult;
 export type DismissAiProposalResult = ProposalLifecycleResult;
-
-type EnqueueLearningIntentNoteFn = (artifactId: string) => Promise<boolean>;
 
 export interface RetractAiProposalResult extends ProposalLifecycleResult {
   kind: 'retracted';
@@ -15,8 +12,6 @@ export interface RetractAiProposalResult extends ProposalLifecycleResult {
 
 export type AcceptAiProposalOpts = {
   user_note?: string;
-  enqueueVariantVerify?: EnqueueVariantVerifyFn;
-  enqueueLearningIntentNote?: EnqueueLearningIntentNoteFn;
 } & (
   | {
       decision?: 'accept';

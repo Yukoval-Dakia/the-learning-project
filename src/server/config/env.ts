@@ -27,7 +27,6 @@ const server = {
   // Retry cap honoured by the in-process pi adapter (was the SDK subprocess env).
   CLAUDE_CODE_MAX_RETRIES: optionalString,
   CLAUDE_CODE_OAUTH_TOKEN: optionalString,
-  CONFUSABLE_CONTRAST_ENABLED: optionalString,
   COPILOT_NUDGE_DAILY_MAX: optionalString,
   COPILOT_NUDGE_ENABLED: optionalString,
   COPILOT_NUDGE_EXPIRES_HOURS: optionalString,

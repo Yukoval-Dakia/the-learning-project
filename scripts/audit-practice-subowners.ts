@@ -90,7 +90,7 @@ const OWNER_RULES: ReadonlyArray<readonly [Owner, RegExp]> = [
   ],
   [
     'supply',
-    /^server\/question-supply\/|^server\/(supply-plan-operation|web-sourcing-operation|question-generation-grounding)|^jobs\/(supply_|quiz_gen|question_supply_nightly|confusable_contrast_nightly|jyeoo_staged_asset_reap)|^server\/tools\/(file-bank-gap|jyeoo-fetch|web-fetch|generate-question-candidate|question-author|submit-question|store-sourced-question)|^server\/quiz\/(sourcing-sequence|fewshot-retrieve|quiz-gen-)|^api\/quiz-gen-trigger|^tasks\/(sourcing|supply-planning|quiz-generation|quiz-planning|question-author|solution-generation)/,
+    /^server\/question-supply\/|^server\/(supply-plan-operation|web-sourcing-operation|question-generation-grounding)|^jobs\/(supply_|quiz_gen|question_supply_nightly|jyeoo_staged_asset_reap)|^server\/tools\/(file-bank-gap|jyeoo-fetch|web-fetch|generate-question-candidate|question-author|submit-question|store-sourced-question)|^server\/quiz\/(sourcing-sequence|fewshot-retrieve|quiz-gen-)|^api\/quiz-gen-trigger|^tasks\/(sourcing|supply-planning|quiz-generation|quiz-planning|question-author|solution-generation)/,
   ],
 ];
 

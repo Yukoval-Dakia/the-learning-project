@@ -1,6 +1,6 @@
 // judge-calibration sampling config. All knobs are env-overridable; the kill
-// switch is a SEPARATE opt-in using the shared flag grammar (cron stays
-// registered, handler no-ops, zero spend).
+// switch is a SEPARATE opt-in using the shared flag grammar (an enqueued run
+// no-ops with zero spend while it is off).
 
 import { canonicalProviderName } from '@/ai/task-spec';
 import { type ConfigValue, getConfig } from '@/core/config/store';
@@ -10,7 +10,7 @@ import type { JudgeCalibrationConfig } from '../server/judge-calibration-sample-
 export const JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV = 'JUDGE_CALIBRATION_SAMPLING_ENABLED';
 
 export const JUDGE_CALIBRATION_DEFAULTS: Pick<JudgeCalibrationConfig, 'batchMax' | 'windowDays'> = {
-  // Per-cron-tick cost gate: default 20 single-shot re-judge calls per run,
+  // Per-run cost gate: default 20 single-shot re-judge calls per run,
   // env-adjustable up to the 50 clamp below (the clamp IS the hard ceiling — keep
   // it near the documented default so a misconfigured env var cannot starve the
   // shared Max rate limit; the unique index on sampled events kills retry

@@ -1,13 +1,4 @@
 {
-  "CONFUSABLE_CONTRAST_ENABLED": {
-    "kind": "env",
-    "literals": ["true", "1"],
-    "case_insensitive": true,
-    "polarity": "opt-in",
-    "reader_marker": "getConfigFlag('CONFUSABLE_CONTRAST_ENABLED')",
-    "file": "src/capabilities/practice/supply/server/confusable-contrast-discovery.ts",
-    "notes": "dark-ship confusable-contrast supply. Opt-in/default OFF; parsed via shared parseFlag."
-  },
   "MISCONCEPTION_PROMOTE_ENABLED": {
     "kind": "env",
     "literals": ["true", "1"],

@@ -3,8 +3,7 @@
 // 仿 ADR-0038 plan-then-gate：LLM 只产出需求计划（补哪个知识点、什么题型、多少道、
 // 偏好哪条获取路线、为什么）；SupplyPlanV1 由确定性机器门验证（schema、活
 // knowledge_id、词表、去重、预算声明），拒绝则 ≤2 轮有界重生成，仍不过 fail closed
-// （当晚零需求事件，扫描器照常兜底）。E3 executor 未落地前，接受的需求逐项 emit
-// manual 留痕。
+// （当晚零需求事件，扫描器照常兜底）。接受的计划逐项写需求事件并入队 supply_execute。
 //
 // Handler 只喂原始信号（知识树、每 KC 可用题数、掌握信号、placement claim、jyeoo
 // 预算），不喂扫描器的结论——planner 的需求必须独立形成，shadow 对比才有信号价值。
@@ -54,7 +53,7 @@ export const supplyPlanTaskSpec = {
   definition: {
     kind: 'SupplyPlanTask',
     description:
-      'YUK-987 supply planner (985/E2): the demand-layer agent. Nightly reads raw pool signals (knowledge frontier + per-KC availability + mastery + pending placement claims + jyeoo budget) and emits a SupplyPlanV1 demand plan — which knowledge cells need how many questions of what kind/band via which route preference. The deterministic machine gate (supply-plan-gate.ts: schema + live knowledge ids + vocabulary + dedupe + budget declaration) accepts or rejects; bounded regeneration (≤2), fail-closed. Accepted items emit manual demand events until the E3 executor lands; scanner stays the safety net.',
+      'YUK-987 supply planner (985/E2): the demand-layer agent. Nightly reads raw pool signals (knowledge frontier + per-KC availability + mastery + pending placement claims + jyeoo budget) and emits a SupplyPlanV1 demand plan — which knowledge cells need how many questions of what kind/band via which route preference. The deterministic machine gate (supply-plan-gate.ts: schema + live knowledge ids + vocabulary + dedupe + budget declaration) accepts or rejects; bounded regeneration (≤2), fail-closed. Accepted items emit demand events and the accepted plan is enqueued to supply_execute (deterministic executor); scanner stays the safety net.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 4, timeout: 90_000 },

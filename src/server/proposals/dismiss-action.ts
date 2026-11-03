@@ -1,16 +1,10 @@
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
 import { getProposalLifecycleOperation } from '@/kernel/proposals';
-import {
-  acquireProposalDecisionLock,
-  findExistingRateEvent,
-  writeProposalRateEvent,
-} from '@/kernel/proposals/applier-helpers';
+import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
+import { runProposalDismiss } from '@/kernel/proposals/decision-protocol';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
-import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/kernel/proposals/signals';
+import { ensureProposalDecisionSignal } from '@/kernel/proposals/signals';
 import type { DismissAiProposalOpts, DismissAiProposalResult } from './action-types';
 import { ownerInput, proposalLifecycleRegistry, requireProposal } from './lifecycle-context';
 
@@ -62,17 +56,10 @@ async function dispatchDismiss(
     return result.result;
   }
 
-  return db.transaction(async (tx) => {
-    await acquireProposalDecisionLock(tx, proposal.id);
-    const rate = await writeProposalRateEvent(tx, proposal.id, 'dismiss', opts.user_note);
-    if (!rate.idempotent) {
-      await recordProposalDecisionSignal(tx, proposal, 'dismiss', opts.user_note);
-    }
-    return {
-      kind: 'dismissed',
-      rate_event_id: rate.rate_event_id,
-      ...(rate.idempotent ? { idempotent: true } : {}),
-    };
+  return runProposalDismiss(db, proposal.id, {
+    proposal,
+    userNote: opts.user_note,
+    signal: 'in_transaction',
   });
 }
 

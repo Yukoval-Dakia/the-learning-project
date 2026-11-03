@@ -1,19 +1,18 @@
 // Accepting a `goal_scope` proposal materializes the `goal` row and writes the `rate`
-// (rating='accept') event in one transaction. The goal id is the proposal's
+// (rating='accept') event in the kernel decision transaction. The goal id is the proposal's
 // `target.subject_id` (reserved by the producer), so accept is deterministic and
 // idempotent. Scope/title/sequence_hint are read off the possibly edited proposed_change.
 //
 // dismiss writes only the rate event (agency dismiss applier, same decision lock as this
 // accept). retract tombstones the goal to 'dormant' (proposal-retract-goal.ts).
 
-import { and, eq } from 'drizzle-orm';
-
-import { newId } from '@/core/ids';
-import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
-import { acquireProposalDecisionLock } from '@/kernel/proposals/applier-helpers';
+import {
+  type ProposalAcceptEffectOutcome,
+  type RecordedProposalRate,
+  runProposalAccept,
+} from '@/kernel/proposals/decision-protocol';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { materializeAcceptedGoal } from '@/kernel/records/goal-commands';
 import { resolveKnownSubjectId } from '@/subjects/profile';
@@ -82,72 +81,42 @@ export async function acceptGoalScopeProposal(
       ? change.sequence_hint
       : 0;
 
-  // Idempotency: an accept rate event already exists → goal row is materialized.
-  const replayDecided = async (reader: Db | Tx): Promise<GoalScopeAcceptResult | null> => {
-    const existingRate = (
-      await reader
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
-        .limit(1)
-    )[0];
-    if (!existingRate) return null;
-    const ratePayload = existingRate.payload as { rating?: string };
-    if (ratePayload.rating !== 'accept') {
-      throw new ApiError(
-        'conflict',
-        `proposal ${proposalId} already decided as ${ratePayload.rating}`,
-        409,
-      );
-    }
-    return {
+  // A recorded accept means the goal row is already materialized.
+  const { result } = await runProposalAccept(db, proposalId, {
+    proposal,
+    userNote: opts.user_note,
+    signal: 'after_commit',
+    replay: async (rate: RecordedProposalRate): Promise<GoalScopeAcceptResult> => ({
       kind: 'goal_scope',
-      rate_event_id: existingRate.id,
+      rate_event_id: rate.id,
       goal_id: goalId,
       idempotent: true,
-    };
-  };
-
-  // Cheap short-circuit; the transaction re-checks under the decision lock.
-  const replayed = await replayDecided(db);
-  if (replayed) return replayed;
-
-  const now = new Date();
-  const rateEventId = newId();
-  const concurrentAccept = await db.transaction(async (tx) => {
-    await acquireProposalDecisionLock(tx, proposalId);
-    const decided = await replayDecided(tx);
-    if (decided) return decided;
-    // Write the accept `rate` event FIRST so the goal fold sees the chained accept in
-    // the same tx and projects status='active'.
-    await writeEvent(tx, {
-      id: rateEventId,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'rate',
-      subject_kind: 'event',
-      subject_id: proposalId,
-      outcome: 'success',
-      payload: {
-        rating: 'accept',
-        materialized_goal_id: goalId,
-        ...(opts.user_note ? { user_note: opts.user_note } : {}),
-      },
-      caused_by_event_id: proposalId,
-      created_at: now,
-    });
-    await materializeAcceptedGoal(tx, {
-      id: goalId,
-      title,
-      subject_id: subjectId,
-      scope_knowledge_ids: scopeKnowledgeIds,
-      sequence_hint: sequenceHint,
-      proposalId,
-      now,
-    });
-    return null;
+    }),
+    effect: async ({
+      tx,
+      writeRate,
+    }): Promise<ProposalAcceptEffectOutcome<GoalScopeAcceptResult>> => {
+      const now = new Date();
+      // Write the accept `rate` event FIRST so the goal fold sees the chained accept in
+      // the same tx and projects status='active'.
+      const rateEventId = await writeRate({
+        created_at: now,
+        payload: { materialized_goal_id: goalId },
+      });
+      await materializeAcceptedGoal(tx, {
+        id: goalId,
+        title,
+        subject_id: subjectId,
+        scope_knowledge_ids: scopeKnowledgeIds,
+        sequence_hint: sequenceHint,
+        proposalId,
+        now,
+      });
+      return {
+        status: 'accepted',
+        result: { kind: 'goal_scope', rate_event_id: rateEventId, goal_id: goalId },
+      };
+    },
   });
-  if (concurrentAccept) return concurrentAccept;
-
-  return { kind: 'goal_scope', rate_event_id: rateEventId, goal_id: goalId };
+  return result;
 }

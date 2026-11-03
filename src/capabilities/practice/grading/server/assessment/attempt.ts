@@ -15,6 +15,7 @@ import {
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { lockAssessmentAttemptCapture } from '@/kernel/locks/grading';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import {
   EvaluateSubmissionError,
   activateSubmissionCandidate,
@@ -206,7 +207,7 @@ export async function recordFormalAttemptCapture(
   candidateId: string | null,
   capture: FormalAttemptCapture = {},
 ) {
-  const attemptId = `evt_assessment_${submission.submission_id}`;
+  const attemptId = assessmentAttemptEventId(submission.submission_id);
   await lockAssessmentAttemptCapture(tx, attemptId);
   const [existing] = await tx.select({ id: event.id }).from(event).where(eq(event.id, attemptId));
   if (existing) return;
@@ -316,7 +317,7 @@ export async function commitFormalAttempt(
       422,
     );
   }
-  const attemptId = `evt_assessment_${submission.submission_id}`;
+  const attemptId = assessmentAttemptEventId(submission.submission_id);
   const capture = options.capture ?? {};
   const record = async (tx: Tx) => {
     if (options.judgeExecution) await requireJudgeRunOpen(tx, options.judgeExecution);
