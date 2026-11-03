@@ -1083,51 +1083,67 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
   }
 }
 
-/** Write rate=dismiss; idempotent when the proposal is already rated. */
-export async function dismissProposal(db: Db, proposalId: string): Promise<void> {
-  // Idempotent on already-rated: skip if a rate event exists.
-  const existing = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'rate'),
-        eq(event.subject_kind, 'event'),
-        eq(event.caused_by_event_id, proposalId),
-      ),
-    )
-    .limit(1);
-  if (existing.length > 0) return;
+/** Write rate=dismiss; idempotent when the proposal is already dismissed. */
+export async function dismissProposal(
+  db: Db,
+  proposalId: string,
+): Promise<{ idempotent: boolean }> {
+  // Same row lock as acceptProposal, so a dismiss racing an in-flight accept sees its rate
+  // instead of writing a second one; the rate check only counts under that lock.
+  return db.transaction(async (tx) => {
+    const locked = await tx.execute(sql`SELECT id FROM event WHERE id = ${proposalId} FOR UPDATE`);
+    if (locked.length === 0) {
+      throw new Error(`proposal not found: ${proposalId}`);
+    }
 
-  // Guard against dismissing an arbitrary event id; only proposals may be rated.
-  const proposeRows = await db
-    .select({ id: event.id, action: event.action, subject_kind: event.subject_kind })
-    .from(event)
-    .where(eq(event.id, proposalId))
-    .limit(1);
-  if (proposeRows.length === 0) {
-    throw new Error(`proposal not found: ${proposalId}`);
-  }
-  const proposeRow = proposeRows[0];
-  const isProposal =
-    proposeRow.action === 'propose' || proposeRow.action.startsWith('experimental:knowledge_');
-  if (!isProposal) {
-    throw new Error(`event ${proposalId} is not a proposal (action='${proposeRow.action}')`);
-  }
+    const [existing] = await tx
+      .select({ payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'rate'),
+          eq(event.subject_kind, 'event'),
+          eq(event.caused_by_event_id, proposalId),
+        ),
+      )
+      .limit(1);
+    if (existing) {
+      const rating = (existing.payload as { rating?: string }).rating;
+      if (rating === 'dismiss') return { idempotent: true };
+      throw new ApiError(
+        'conflict',
+        `proposal ${proposalId} already decided as ${rating ?? 'unknown'}`,
+        409,
+      );
+    }
 
-  await writeEvent(db, {
-    id: newId(),
-    session_id: null,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'rate',
-    subject_kind: 'event',
-    subject_id: proposalId,
-    outcome: 'success',
-    payload: { rating: 'dismiss' },
-    caused_by_event_id: proposalId,
-    task_run_id: null,
-    cost_micro_usd: null,
-    created_at: new Date(),
+    // Guard against dismissing an arbitrary event id; only proposals may be rated.
+    const [proposeRow] = await tx
+      .select({ action: event.action })
+      .from(event)
+      .where(eq(event.id, proposalId))
+      .limit(1);
+    const isProposal =
+      proposeRow.action === 'propose' || proposeRow.action.startsWith('experimental:knowledge_');
+    if (!isProposal) {
+      throw new Error(`event ${proposalId} is not a proposal (action='${proposeRow.action}')`);
+    }
+
+    await writeEvent(tx, {
+      id: newId(),
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: { rating: 'dismiss' },
+      caused_by_event_id: proposalId,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(),
+    });
+    return { idempotent: false };
   });
 }

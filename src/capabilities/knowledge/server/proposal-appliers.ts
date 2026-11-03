@@ -80,16 +80,18 @@ export const knowledgeEdgeProposalAcceptApplier: ProposalAcceptApplier = async (
 
 export const knowledgeNodeProposalDismissApplier: ProposalDismissApplier = async (db, input) => {
   const ownerDb = db as Db;
-  await dismissProposal(ownerDb, input.proposalId);
-  await ownerRuntime.recordProposalDecisionSignal(
-    ownerDb,
-    signalProposal(input.proposal),
-    'dismiss',
-    input.user_note,
-  );
+  const { idempotent } = await dismissProposal(ownerDb, input.proposalId);
+  if (!idempotent) {
+    await ownerRuntime.recordProposalDecisionSignal(
+      ownerDb,
+      signalProposal(input.proposal),
+      'dismiss',
+      input.user_note,
+    );
+  }
   return {
     kind: input.proposal.payload.kind,
-    result: { kind: 'dismissed', rate_event_id: null },
+    result: { kind: 'dismissed', rate_event_id: null, ...(idempotent ? { idempotent: true } : {}) },
   };
 };
 
