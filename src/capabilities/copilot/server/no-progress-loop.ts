@@ -1,4 +1,9 @@
-// Same-question tool calls that add no evidence stop the loop. A settled
+// A repeated identical call — the same signature again, or the same tool
+// returning the identical result — ends the loop for lack of new evidence.
+// Overlapping reads across different tools are normal and do not count.
+// Once the loop closes, further root tool calls are denied so the model
+// writes its answer from the evidence already collected; a model that keeps
+// calling anyway is hard-stopped after a few denials. A settled
 // non-mutating call anchors the closing window whether the read returned
 // evidence or failed, so an error-only chain stops before the hard timeout.
 // Turns, tool counts and spend stay uncapped (the 45 minute recovery window
@@ -20,7 +25,7 @@ import { getQuestionTimeline } from '@/kernel/read-models/question-activity';
 export const NO_PROGRESS_BUDGET_LANDING_MARGIN_MS = 60_000;
 
 const BLOCK_REASON =
-  'same tool call already settled with no new evidence; stop and answer from what was collected';
+  'more tool calls are returning no new evidence; stop and answer from what was collected';
 const BUDGET_BLOCK_REASON =
   'execution window is closing; stop and answer from the evidence already collected';
 const HELP_FAULT_BLOCK_REASON =
@@ -104,10 +109,10 @@ function budgetLandingDue(state: BudgetLanding): boolean {
   return state.window === 'closing' && state.anchor === 'ready';
 }
 
-interface CallSlot {
-  readonly fingerprint: string;
-  readonly generation: number;
-}
+/** Blocked calls delivered while closed before the next one terminates the
+ *  loop. Gives the model room to write its answer without buying an
+ *  unbounded denial loop. */
+const SOFT_DENIAL_LIMIT = 3;
 
 const ID_KEYS: Record<string, EvidenceKind> = {
   evaluation_id: 'evaluation',
@@ -268,12 +273,15 @@ function disputeReasonOf(record: Record<string, unknown>): string | undefined {
 }
 
 /**
- * One copilot turn's tool loop. The same args are not executed again. A read
- * that adds no ids only stalls: the model can still answer. Another tool call
- * after that stall is the stop. A mutation bumps the generation so one
- * following read of the same args may observe the write. Inside the closing
- * window, the next root tool stops once any non-mutating call has settled,
- * including a call that only failed.
+ * One copilot turn's tool loop. The same args are not executed again: a
+ * repeat of a settled signature closes the loop, and so does the same tool
+ * returning the identical result. Once closed, root tool calls are denied —
+ * the model sees the denial and answers from collected evidence — and only
+ * escalate to a hard stop after SOFT_DENIAL_LIMIT denials; help faults
+ * terminate immediately since the provider cannot answer anyway. A mutation
+ * bumps the generation so one following read of the same args may observe
+ * the write. Inside the closing window, the next root tool is denied once
+ * any non-mutating call has settled, including a call that only failed.
  */
 export function createNoProgressLoop(): {
   beforeToolCall: PiBeforeToolCall;
@@ -282,10 +290,10 @@ export function createNoProgressLoop(): {
   closure(): NoProgressClosure | undefined;
 } {
   let phase: Phase = { status: 'collecting' };
-  let stalled = false;
+  let softDenials = 0;
   let generation = 0;
   let budget: BudgetLanding = { window: 'open', anchor: 'waiting' };
-  const slots = new Map<string, CallSlot>();
+  const settledAtGeneration = new Map<string, number>();
   const seenFingerprints = new Set<string>();
   const known = new Set<string>();
   const evidence: EvidenceFact[] = [];
@@ -309,54 +317,51 @@ export function createNoProgressLoop(): {
     }
   }
 
+  function denyReasonFor(reason: NoProgressCloseReason): string {
+    if (reason === 'budget_landing') return BUDGET_BLOCK_REASON;
+    if (reason.startsWith('help_')) return HELP_FAULT_BLOCK_REASON;
+    return BLOCK_REASON;
+  }
+
+  function deny(reason: NoProgressCloseReason): { block: true; terminate?: true; reason: string } {
+    const soft = !reason.startsWith('help_') && softDenials < SOFT_DENIAL_LIMIT;
+    softDenials += 1;
+    return {
+      block: true,
+      ...(soft ? {} : { terminate: true }),
+      reason: denyReasonFor(reason),
+    };
+  }
+
   const beforeToolCall: PiBeforeToolCall = (call, args) => {
     if (call.agentType !== undefined) return undefined;
-    if (phase.status === 'closed') {
-      return {
-        block: true,
-        terminate: true,
-        reason: phase.reason.startsWith('help_') ? HELP_FAULT_BLOCK_REASON : BLOCK_REASON,
-      };
-    }
+    if (phase.status === 'closed') return deny(phase.reason);
     const signature = signatureOf(call.name, args);
-    const slot = slots.get(signature);
-    if (slot && slot.generation === generation) {
-      if (stalled) {
-        close('no_progress');
-        return { block: true, terminate: true, reason: BLOCK_REASON };
-      }
-      stalled = true;
-      return { block: true, reason: BLOCK_REASON };
-    }
-    if (stalled) {
+    if (settledAtGeneration.get(signature) === generation) {
       close('no_progress');
-      return { block: true, terminate: true, reason: BLOCK_REASON };
+      return deny('no_progress');
     }
     if (budgetLandingDue(budget)) {
       close('budget_landing');
-      return { block: true, terminate: true, reason: BUDGET_BLOCK_REASON };
+      return deny('budget_landing');
     }
     return undefined;
   };
 
   const afterToolCall: PiAfterToolCall = (observation) => {
     if (observation.call.agentType !== undefined || observation.interrupted) return undefined;
-    if (phase.status === 'closed') return { terminate: true };
     const tool = domainToolName(observation.call.name);
     const payload = parsePayload(observation.isError ? observation.error : observation.output);
     const fingerprint = fingerprintOf(payload);
     const incoming = collectFacts(payload, tool);
     const substantive = incoming.filter((fact) => fact.kind !== 'tool_summary');
     const novel = substantive.filter((fact) => !known.has(factKey(fact)));
-    const repeatedFingerprint = seenFingerprints.has(fingerprint);
-    const noNewEvidence = substantive.length > 0 && novel.length === 0;
+    const fingerprintKey = `${tool}\n${fingerprint}`;
+    const repeatedFingerprint = seenFingerprints.has(fingerprintKey);
     const settled = classifyRootCall(tool, observation.isError);
     if (settled.kind === 'mutation' && settled.applied) generation += 1;
-    slots.set(signatureOf(observation.call.name, observation.args), {
-      fingerprint,
-      generation,
-    });
-    seenFingerprints.add(fingerprint);
+    settledAtGeneration.set(signatureOf(observation.call.name, observation.args), generation);
+    seenFingerprints.add(fingerprintKey);
     if (settled.kind === 'read') armBudgetAnchor();
     remember(novel.length > 0 ? incoming : incoming.filter((fact) => fact.kind === 'tool_summary'));
     if (incoming.length === 0) {
@@ -369,7 +374,9 @@ export function createNoProgressLoop(): {
         },
       ]);
     }
-    if (repeatedFingerprint || noNewEvidence) stalled = true;
+    if (phase.status === 'closed') {
+      return phase.reason.startsWith('help_') ? { terminate: true } : undefined;
+    }
     if (observation.isError) {
       const fault = readHelpProviderFault(observation.error);
       if (fault) {
@@ -377,6 +384,10 @@ export function createNoProgressLoop(): {
         return { terminate: true };
       }
     }
+    // The tool just paid for a call that returned exactly what an earlier
+    // call of the same tool already produced. Close the loop; the denial on
+    // the next root call tells the model to answer from what it has.
+    if (repeatedFingerprint) close('no_progress');
     return undefined;
   };
 
@@ -561,59 +572,27 @@ function helpFaultOfReason(reason: NoProgressCloseReason): HelpProviderFault | u
   return undefined;
 }
 
-function factLine(fact: EvidenceFact): string {
-  const detail = fact.detail ? `：${fact.detail}` : '';
-  return `- ${fact.tool} · ${fact.kind} ${fact.id}${detail}`;
-}
-
+/**
+ * Learner-facing seal note appended to the model's own answer. It carries no
+ * internal ids, tool names or operation names — the evidence list stays in
+ * `NoProgressClosure.evidence` and the actionable entry in `fallback`, both
+ * for the server's own settlement and correction-filing use only.
+ */
 export function renderNoProgressClosure(
   closure: NoProgressClosure,
   fallback: VerifiedFallback,
 ): string {
-  const lines = closure.evidence.slice(0, 20).map((fact) => factLine(fact));
-  const evidence = lines.length > 0 ? lines.join('\n') : '- 这次还没有可引用的工具结果。';
   const helpFault = helpFaultOfReason(closure.reason);
   const why = helpFault
     ? helpExitLead(helpFault)
     : closure.reason === 'budget_landing'
       ? '这次运行快到时间上限，先把已经拿到的内容交给你，不再继续查。'
       : '同样的查询没有带来新证据，所以停在这里，不再重复查。';
-  const disputeFacts = closure.evidence.filter(
-    (fact) =>
-      fact.kind === 'evaluation' ||
-      fact.kind === 'judge_event' ||
-      fact.kind === 'attempt' ||
-      fact.kind === 'outcome' ||
-      fact.kind === 'dispute',
-  );
-  const dispute =
-    disputeFacts.length > 0
-      ? disputeFacts
-          .slice(0, 8)
-          .map((fact) => factLine(fact))
-          .join('\n')
-      : '- 这次没有形成一条可以单独申诉的判词。';
   const next =
     fallback.kind === 'grading_correction'
-      ? [
-          `可执行入口 ${fallback.operation}`,
-          `评价 ${fallback.evaluationId}`,
-          fallback.attemptEventId ? `作答 ${fallback.attemptEventId}` : null,
-          '接受后按冻结作答重判，不改写原来的评价。',
-          fallback.dispute === 'explicit'
-            ? '这条回复封存进同一笔结算后才会提交纠错提案；封存失败则不提交。'
-            : '这次只给出入口，不自动提交申诉。',
-        ]
-          .filter((part): part is string => part !== null)
-          .join('\n')
-      : [
-          '可以在这次对话里直接继续，说明下一步要看哪一题或哪一次作答。',
-          fallback.questionId ? `题目 ${fallback.questionId}` : null,
-          fallback.attemptEventIds.length > 0
-            ? `作答 ${fallback.attemptEventIds.slice(0, 4).join('、')}`
-            : null,
-        ]
-          .filter((part): part is string => part !== null)
-          .join('\n');
-  return [why, '', '已有证据', evidence, '', '争议', dispute, '', '下一步', next].join('\n');
+      ? fallback.dispute === 'explicit'
+        ? '已经按这次对话里说明的判词异议登记了一条判分复核提案；接受后按冻结作答重判，不改写原来的评价。'
+        : '如果对这次判分有疑问，直接在这条对话里说明，可以发起一次判分复核：复核按冻结作答重判，不改写原来的评价。'
+      : '可以在这次对话里直接继续，说明下一步要看哪一题或哪一次作答。';
+  return [why, '', '下一步', next].join('\n');
 }
