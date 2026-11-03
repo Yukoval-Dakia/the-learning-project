@@ -101,6 +101,8 @@ describe('variant_question proposal lifecycle', () => {
     return { proposalId, mistakeVariantId: mvId };
   }
 
+  // @invariant concurrency: a second variant_question accept replays the first one, with one question row and the variant still pointing at it
+  // @fails-if the replay materializes another question row or returns a question id other than the first accept's
   it('accept idempotent: second accept returns the same materialized id without duplicating', async () => {
     await seedParentQuestion('q_parent');
     const { proposalId, mistakeVariantId } = await seedVariantQuestionProposal();

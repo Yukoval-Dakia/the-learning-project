@@ -90,6 +90,8 @@ describe('learning_item proposal lifecycle', () => {
     return { proposalId: proposal.proposal_id };
   }
 
+  // @invariant concurrency: a repeated learning_item accept replays the recorded accept and re-enqueues note generation only for artifacts still pending
+  // @fails-if the replay re-materializes the hierarchy or re-enqueues a note artifact that is already ready
   it('idempotent re-accept re-enqueues only note artifacts that are still pending', async () => {
     const { proposalId } = await seedLearningItemProposal({ withLong: true });
     const firstEnqueue = vi.fn(async (_artifactId: string) => true);
