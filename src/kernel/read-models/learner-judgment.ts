@@ -547,7 +547,16 @@ export async function readLearnerJudgments(
       activity = new Map();
     }
     batch.items = ids.map((id) =>
-      judgment(id, mastery, retention, asOf, scheduling, durations, nonKcIds, activity.get(id) ?? null),
+      judgment(
+        id,
+        mastery,
+        retention,
+        asOf,
+        scheduling,
+        durations,
+        nonKcIds,
+        activity.get(id) ?? null,
+      ),
     );
     return batch;
   };

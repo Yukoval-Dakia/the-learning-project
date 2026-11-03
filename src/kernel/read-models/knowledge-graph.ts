@@ -1,12 +1,15 @@
 // Complete knowledge-graph reads for notes hub curation and existing consumers.
-// loadTreeSnapshot preserves the original tree read: knowledge_mastery join, mastery
-// overlay, effective-domain walk, optional subject filter, 5000-row cap with a
+// loadTreeSnapshot preserves the original tree read shape: mastery from the
+// mastery_state projection, the any-event activity clock from the event spine
+// (YUK-1778 — the deprecated knowledge_mastery view is no longer read),
+// effective-domain walk, optional subject filter, 5000-row cap with a
 // truncation warn. listKnowledgeMeshEdges preserves the default listKnowledgeEdges
 // row set, ordering, 500-edge truncation, and cursor encoding.
 
-import { desc, eq, isNull, sql } from 'drizzle-orm';
+import { desc, isNull } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema';
+import { knowledge, knowledge_edge } from '@/db/schema';
+import { lastKnowledgeActivityAt } from '@/kernel/read-models/knowledge-activity';
 import { matchesSubjectDomain } from '@/kernel/read-models/knowledge-tree';
 import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { normalizeSubjectKey, resolveKnownSubjectId } from '@/subjects/profile';
@@ -58,9 +61,9 @@ export function warnIfTreeSnapshotTruncated(
 }
 
 export async function loadTreeSnapshot(db: Db, subject?: string): Promise<KnowledgeNode[]> {
-  // Mastery comes from the mastery_state projection, not the deprecated
-  // knowledge_mastery success-rate view. last_active_at is an orthogonal any-event
-  // timeline, so it still reads the view.
+  // Mastery comes from the mastery_state projection; the any-event activity
+  // clock derives from the event spine (YUK-1778) — the deprecated
+  // knowledge_mastery view is no longer read.
   const baseRows = await db
     .select({
       id: knowledge.id,
@@ -69,10 +72,9 @@ export async function loadTreeSnapshot(db: Db, subject?: string): Promise<Knowle
       parent_id: knowledge.parent_id,
       archived_at: knowledge.archived_at,
       role: knowledge.role,
-      last_active_at: sql<Date>`COALESCE(${knowledge_mastery.last_active_at}, ${knowledge.created_at})`,
+      created_at: knowledge.created_at,
     })
     .from(knowledge)
-    .leftJoin(knowledge_mastery, eq(knowledge_mastery.knowledge_id, knowledge.id))
     .where(isNull(knowledge.archived_at))
     // Include synthetic:* rows: internal consumers need the seed scaffolding;
     // learner-facing exclusion happens at the API projection boundary.
@@ -83,10 +85,16 @@ export async function loadTreeSnapshot(db: Db, subject?: string): Promise<Knowle
   warnIfTreeSnapshotTruncated(baseRows.length);
 
   // Absent nodes -> mastery null / evidence 0 / no last_evidence_at.
-  const projection = await getMasteryProjection(
-    db,
-    baseRows.map((r) => r.id),
-  );
+  const [projection, activity] = await Promise.all([
+    getMasteryProjection(
+      db,
+      baseRows.map((r) => r.id),
+    ),
+    lastKnowledgeActivityAt(
+      db,
+      baseRows.map((r) => r.id),
+    ),
+  ]);
   const rows: KnowledgeRow[] = baseRows.map((r) => {
     const proj = projection.get(r.id);
     return {
@@ -104,7 +112,9 @@ export async function loadTreeSnapshot(db: Db, subject?: string): Promise<Knowle
       low_confidence: proj?.low_confidence ?? false,
       evidence_count: proj?.evidence_count ?? 0,
       last_evidence_at: proj?.last_outcome_at ?? null,
-      last_active_at: r.last_active_at,
+      // The retired view coalesced no-event nodes to knowledge.created_at; the
+      // public tree contract keeps that non-null shape.
+      last_active_at: activity.get(r.id) ?? r.created_at,
     };
   });
 
