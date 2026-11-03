@@ -22899,6 +22899,13 @@ export interface operations {
                         }[];
                         /** Format: date-time */
                         checked_at: string;
+                        config_incomplete: {
+                            missing: string[];
+                            /** @enum {string} */
+                            process: "api" | "worker";
+                            /** Format: date-time */
+                            seen_at: string;
+                        }[];
                         thresholds: {
                             consecutive_failures: number;
                             failure_rate_above: number;

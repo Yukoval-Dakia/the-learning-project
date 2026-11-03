@@ -31,4 +31,12 @@ export const TaskFailureAlertsResponseSchema = z.object({
     stale_after_days: z.number().int(),
   }),
   alerts: z.array(TaskFailureAlertSchema),
+  /** Processes running without a required setting; names only, never values. */
+  config_incomplete: z.array(
+    z.object({
+      process: z.enum(['api', 'worker']),
+      missing: z.array(z.string()).min(1),
+      seen_at: z.string().datetime(),
+    }),
+  ),
 });
