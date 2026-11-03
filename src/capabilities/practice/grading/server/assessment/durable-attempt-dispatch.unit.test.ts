@@ -56,6 +56,19 @@ vi.mock('./attempt', () => ({
   recordFormalAttemptCapture: vi.fn(() => {
     throw new Error('replay must not recapture');
   }),
+  scopeHasModelExecutor: (scope: {
+    revision: {
+      execution_plan: {
+        assignments: Array<{ executor: { kind: string }; scoring_unit_ids: string[] }>;
+      };
+    };
+    scopedUnitIds: Set<string>;
+  }) =>
+    scope.revision.execution_plan.assignments.some(
+      (a) =>
+        a.executor.kind === 'model_executor' &&
+        a.scoring_unit_ids.some((id) => scope.scopedUnitIds.has(id)),
+    ),
 }));
 vi.mock('@/kernel/events', () => ({
   writeEvent: vi.fn(() => {
