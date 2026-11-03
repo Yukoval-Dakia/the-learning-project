@@ -8,15 +8,16 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event as eventTable } from '@/db/schema';
+import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
 import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 import { listActiveMisconceptionsForKcs } from '@/kernel/read-models/failure-learning-context';
 import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
+import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 // stale-const 收口（v2①）：defaultSubjectProfile 冻结常量 → 活 registry
 // resolveSubjectProfile（每次调用求值，owner 编辑 general 即跟随）。
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
-import { type PracticeTaskRunFn, practiceCostUsdToMicroUsd } from '../../server/task-runtime';
 import {
   type MisconceptionCauseSource,
   misconceptionToCandidate,
@@ -41,7 +42,7 @@ export interface RunAttributionAndWriteJudgeEventParams {
   db: Db;
   attemptEventId: string; // was mistakeId + expectedVersion
   input: AttributionInput;
-  runTaskFn: PracticeTaskRunFn;
+  runTaskFn: BoundRunTaskTextFn;
   subjectProfile?: SubjectProfile;
   /**
    * Optional: knowledge ids the judge referenced. Defaults to []. Used to populate
@@ -108,7 +109,7 @@ export async function runAttributionAndWriteJudgeEvent(
   // the durable record. OCR #6: ALSO write a best-effort `failed_retryable`
   // ledger row for the copilot `attribute_mistake` caller, which does NOT rethrow
   // and so has no other observability for a retryable failure.
-  let result: Awaited<ReturnType<PracticeTaskRunFn>>;
+  let result: Awaited<ReturnType<BoundRunTaskTextFn>>;
   // promoted misconception nodes fetched for the candidate pool are
   // ALSO the extra allowed ids for the post-LLM validation below (hoisted so
   // stage B sees them). Empty day-one (promote flag off / no KC match).
@@ -318,7 +319,7 @@ export async function runAttributionAndWriteJudgeEvent(
         },
         caused_by_event_id: params.attemptEventId,
         task_run_id: result.task_run_id ?? null,
-        cost_micro_usd: practiceCostUsdToMicroUsd(result.cost_usd),
+        cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
         created_at: new Date(),
       });
       return true;

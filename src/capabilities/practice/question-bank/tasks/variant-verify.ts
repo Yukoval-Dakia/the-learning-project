@@ -1,8 +1,8 @@
 import { causeTaxonomyList } from '@/ai/cause-prompt';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { VariantVerificationResult, type VariantVerificationResultT } from '@/core/schema/business';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 import type { SubjectProfile } from '@/subjects/profile';
-import { parseTaskOutput } from '../../tasks/parse-output';
 
 function buildVariantVerifyPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}变式题质检员。输入 { parent_question: { id, prompt_md, reference_md, knowledge_ids }, variant_question: { id, prompt_md, reference_md, knowledge_ids, difficulty }, original_cause: { primary_category, analysis_md, source }, original_attempt: { wrong_answer_md } }。

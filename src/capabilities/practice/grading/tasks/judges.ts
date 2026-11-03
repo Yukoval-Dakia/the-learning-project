@@ -9,8 +9,8 @@ import {
   LlmFallbackOutput,
   type LlmFallbackOutputT,
 } from '@/core/capability/judges/unit_dimension/types';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 import type { SubjectProfile } from '@/subjects/profile';
-import { parseTaskOutput } from '../../tasks/parse-output';
 
 function buildSemanticJudgePrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}答案判分器。输入 { question, answer }，question 包含 prompt_md、reference_md、rubric_json、required_points、acceptable_answers、keywords。

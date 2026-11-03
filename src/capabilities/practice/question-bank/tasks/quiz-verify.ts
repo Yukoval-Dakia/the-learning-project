@@ -1,7 +1,7 @@
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { QuizVerificationResult, type QuizVerificationResultT } from '@/core/schema/quiz_gen';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 import type { SubjectProfile } from '@/subjects/profile';
-import { parseTaskOutput } from '../../tasks/parse-output';
 
 // Search-grounded QuizGen — QuizVerifyTask, single-shot closed-book verifier.
 //

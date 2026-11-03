@@ -40,7 +40,7 @@ import {
   readQuestionServing,
 } from '@/kernel/read-models/question-serving';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
-import { getPracticeBoss } from '../../server/queue-runtime';
+import { getStartedBoss } from '@/server/boss/client';
 import {
   ADMISSION_FAMILY,
   type AdmissionJobData,
@@ -418,7 +418,7 @@ async function dispatchReverifyAdmission(
     // The deterministic job already ran to completion (or the publish-event row
     // is absent) — a manual re-dispatch onto the same family queue replays the
     // paid_effect claim under the same locks; identical base never re-pays.
-    const boss = await getPracticeBoss();
+    const boss = await getStartedBoss();
     const jobData = {
       admission_version: QUESTION_ADMISSION_CONTRACT_VERSION,
       question_id: args.groupId,
@@ -480,7 +480,7 @@ async function executeRecheckSource(
     accepted: true,
     detail: { job_id: jobId },
     afterCommit: async () => {
-      const boss = await getPracticeBoss();
+      const boss = await getStartedBoss();
       await sendJobIdempotent(
         db,
         boss,
@@ -607,7 +607,7 @@ async function ensureCommandDispatched(
     if (command === 'recheck_source') {
       const jobId = recheckJobId(eventId);
       if (await bossJobExists(db, jobId)) return;
-      const boss = await getPracticeBoss();
+      const boss = await getStartedBoss();
       await sendJobIdempotent(
         db,
         boss,

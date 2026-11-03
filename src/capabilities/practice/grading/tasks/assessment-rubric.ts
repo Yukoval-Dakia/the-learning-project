@@ -10,7 +10,7 @@ import {
   AssessmentRubricDecision,
   type AssessmentRubricDecisionT,
 } from '@/core/schema/assessment/model-decision';
-import { parseTaskOutput } from '../../tasks/parse-output';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 
 export const assessmentRubricTaskSpec = {
   ownership: 'owned',

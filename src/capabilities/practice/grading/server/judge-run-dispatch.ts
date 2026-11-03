@@ -24,9 +24,9 @@ import { event, job_events } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { lockJudgeRun } from '@/kernel/locks/grading';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 import { checkRateLimit, refundRateLimit } from '@/kernel/request-rate-limit';
 import { observeBossJob } from '@/server/boss/job-observation';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '../../server/placement-scope';
 import { JUDGE_RUN_QUEUE } from './judge-durable-config';
 import {
   type JudgeLegacySender,

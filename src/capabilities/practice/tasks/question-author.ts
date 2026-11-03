@@ -1,9 +1,12 @@
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { QuestionAuthorDraft, type QuestionAuthorDraftT } from '@/core/schema/question_author';
+import {
+  CANONICAL_QUESTION_KINDS,
+  rubricGuidanceSection,
+} from '@/kernel/generation-prompt-support';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 import type { SubjectProfile } from '@/subjects/profile';
-import { CANONICAL_QUESTION_KINDS, rubricGuidanceSection } from './generation-prompt-support';
-import { parseTaskOutput } from './parse-output';
 
 // QuestionAuthorTask prompt (ADR-0031, quiz C→A lane B). Single-shot structured
 // output, deliberately not the QuizGenTask agent loop — the copilot orchestrates,

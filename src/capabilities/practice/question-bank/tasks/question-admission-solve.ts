@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { BlankAnswerShape } from '@/core/schema/assessment/blank-answer-shape';
-import { parseTaskOutput } from '../../tasks/parse-output';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 
 // Admission solve task: one typed task, two blind prompt modes.
 //

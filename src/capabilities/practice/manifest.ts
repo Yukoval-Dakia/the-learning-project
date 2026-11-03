@@ -65,23 +65,7 @@ export const practiceCapability = defineCapability({
       ...fromOwnerParts((part) => part.events?.actions),
     ],
   },
-  subscriptions: {
-    handlers: [
-      {
-        // YUK-1664 — admission verdicts and source_verify suspends both land on
-        // the declared assessment_publish action; the handler re-checks the
-        // hold through the same paid-effect command path (auto ledger key).
-        id: 'practice.serving-recheck',
-        version: 1,
-        actions: ['experimental:assessment_publish'],
-        load: () =>
-          import('./server/serving-recheck-subscription').then(
-            (m) => m.buildServingRecheckSubscriber,
-          ),
-      },
-      ...fromOwnerParts((part) => part.subscriptions?.handlers),
-    ],
-  },
+  subscriptions: { handlers: fromOwnerParts((part) => part.subscriptions?.handlers) },
   api: {
     // M2-T1 (YUK-316)：18 条路由全部带 load 懒加载 thunk（M1 配方）。[id]/[sid]
     // 段由 server/app.ts 的 toHonoPath 转 :id/:sid 并把捕获参数透传 handler。

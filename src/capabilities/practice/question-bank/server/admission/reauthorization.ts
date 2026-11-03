@@ -13,16 +13,14 @@ import {
 import { FrozenAdmissionInput } from '@/capabilities/practice/question-bank/server/admission/receipt';
 import { resolveQuestionAdmissionPolicyId } from '@/capabilities/practice/question-bank/server/admission/run-admission';
 import {
-  type getPracticeBoss,
-  practiceBossTransaction,
-} from '@/capabilities/practice/server/queue-runtime';
-import {
   type PaidEffectVoidAuthorization,
   computePaidEffectIdentity,
 } from '@/core/migration/paid-effect-protocol';
 import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import type { Db, Tx } from '@/db/client';
 import { voidPaidEffectWithSuccessor } from '@/db/paid-effect-store';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
+import type { getStartedBoss } from '@/server/boss/client';
 
 export const ADMISSION_VOID_ACTOR_REF = 'owner:yuk1547-approved-reopen';
 const ENQUEUE_SUBSCRIBER_ID = 'practice.question-admission-enqueue';
@@ -52,7 +50,7 @@ export interface AdmissionVoidEval {
   ghostJobIds: string[];
 }
 
-type PracticeBoss = Awaited<ReturnType<typeof getPracticeBoss>>;
+type PracticeBoss = Awaited<ReturnType<typeof getStartedBoss>>;
 
 /**
  * Freeze the successor's FrozenAdmissionInput exactly the way the job derives
@@ -453,7 +451,7 @@ export async function releaseAdmissionVoidSuccessor(
       expected_admission_generation: generation,
       dispatch_generation: control.generation,
     } satisfies AdmissionJobData,
-    { id: frozen.jobId, db: practiceBossTransaction(tx) },
+    { id: frozen.jobId, db: fromPgBossDrizzleTx(tx) },
   );
   if (queued === null) {
     throw new Error(`bound job ${frozen.jobId} already exists; inspect instead of replaying`);
