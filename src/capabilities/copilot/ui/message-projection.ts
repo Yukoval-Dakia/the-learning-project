@@ -1,10 +1,17 @@
+import { BLOCK_PLACE_PATTERN, serializeBlockFence } from '@/core/schema/blocks';
 import { DerivationPolicy, type DerivationPolicyT } from '@/core/schema/derivation-policy';
+import { BLOCK_DRAFT_FENCE_INFO, blockFence } from '@/ui/components/blocks/block-fence';
 import { parseCopilotPrimaryView } from '../primary-view-contract';
 import { parseConfirmation } from './confirmation';
 import { mergePublicProse, parsePublicProse } from './public-prose';
 import type { ReplayChatMessage, ReplaySkillContext, ReplayTurn } from './replay';
 import { parseSkillContext, parseSkillTurn } from './skill-lifecycle';
-import type { CopilotRunView, CopilotSubtaskView, CopilotToolCallRecord } from './subtask-events';
+import type {
+  CopilotRunBlock,
+  CopilotRunView,
+  CopilotSubtaskView,
+  CopilotToolCallRecord,
+} from './subtask-events';
 
 export type ToolCallRecord = CopilotToolCallRecord;
 
@@ -12,6 +19,8 @@ export interface ChatMessage extends Omit<ReplayChatMessage, 'tool_calls'> {
   streaming?: boolean;
   subtasks?: CopilotSubtaskView[];
   tool_calls?: ToolCallRecord[];
+  /** Client-only, while streaming: pictures being drawn, at their stream positions (YUK-1548). */
+  stream_blocks?: CopilotRunBlock[];
   /** Client-only stable correlation for an accepted server-owned run. */
   run_id?: string;
   /** Client-only correlation while the 202 boundary is still ambiguous. */
@@ -111,6 +120,8 @@ export function projectDurableCopilotMessage(
     subtasks: view.subtasks,
     public_prose: publicProse,
     ...(view.toolCalls && view.toolCalls.length > 0 ? { tool_calls: view.toolCalls } : {}),
+    // The terminal reply carries its own fences; stream blocks never outlive the stream.
+    stream_blocks: terminal ? undefined : view.blocks,
   };
   if (!terminal) return { ...base, text: view.replyText || previous.text, streaming: true };
   const reply = projectCopilotReply(
@@ -129,6 +140,77 @@ export function projectDurableCopilotMessage(
   );
   // A failed run with neither text nor a public failure status (legacy rows): state the outcome.
   return reply ?? { ...base, text: '这次没有完成回答。', streaming: false };
+}
+
+// ── Streaming blocks (YUK-1548 §5) ──────────────────────────────────────────────────────────
+// While a reply streams, its pictures are written into the draft text as fences, so the Markdown
+// stays one tree and the shared renderer draws them: a ready block as its stored fence, a block
+// still being drawn as the UI-only draft fence. A block the text places with `![alt](block:<ref>)`
+// moves there; any other block sits where it appeared in the stream.
+
+const CODE_OR_PLACE = new RegExp(
+  `(\`\`\`[\\s\\S]*?\`\`\`|~~~[\\s\\S]*?~~~|\`[^\`\\n]*\`)|${BLOCK_PLACE_PATTERN.source}`,
+  'g',
+);
+/** A `![…](block:…` the stream has not finished yet; dropped until it completes. */
+const OPEN_PLACE_TAIL = /!\[[^\]\n]{0,400}(?:\]\([^)\n]{0,90})?$/;
+const FENCE_LINE = /^(?:```|~~~)/gm;
+
+function draftFenceOf(block: CopilotRunBlock, alt?: string): string {
+  return blockFence(
+    BLOCK_DRAFT_FENCE_INFO,
+    JSON.stringify({
+      title: block.title ?? alt,
+      kind: block.kind,
+      receivedBytes: block.receivedBytes,
+      retrying: block.status === 'retrying' || undefined,
+    }),
+  );
+}
+
+function fenceOf(block: CopilotRunBlock, alt?: string): string {
+  return block.block ? `\n\n${serializeBlockFence(block.block)}\n\n` : draftFenceOf(block, alt);
+}
+
+/** An anchor inside an open code fence would land in the code; it moves after the text instead. */
+function safeAnchor(text: string, anchor: number): number {
+  const at = Math.min(Math.max(0, anchor), text.length);
+  const fences = text.slice(0, at).match(FENCE_LINE)?.length ?? 0;
+  return fences % 2 === 0 ? at : text.length;
+}
+
+export function composeStreamingReply(
+  text: string,
+  blocks: readonly CopilotRunBlock[] | undefined,
+): string {
+  const source = text.replace(OPEN_PLACE_TAIL, '');
+  if (!blocks || blocks.length === 0) return source;
+  const placedRefs = new Set<string>();
+  for (const match of source.matchAll(CODE_OR_PLACE)) {
+    if (match[2]) placedRefs.add(match[2]);
+  }
+  // Anchored blocks first, from the end, so earlier offsets stay valid.
+  let composed = source;
+  const anchored = blocks
+    .filter((block) => !(block.ref && placedRefs.has(block.ref)))
+    .map((block) => ({ block, at: safeAnchor(source, block.anchor) }))
+    .sort((a, b) => b.at - a.at);
+  for (const { block, at } of anchored) {
+    composed = `${composed.slice(0, at)}${fenceOf(block)}${composed.slice(at)}`;
+  }
+  if (placedRefs.size === 0) return composed;
+  const byRef = new Map(blocks.filter((block) => block.ref).map((block) => [block.ref, block]));
+  return composed.replace(
+    CODE_OR_PLACE,
+    (match: string, code: string | undefined, ref?: string) => {
+      if (code !== undefined || !ref) return match;
+      const alt = match.slice(2, match.lastIndexOf(']('));
+      const block = byRef.get(ref);
+      return block
+        ? fenceOf(block, alt)
+        : blockFence(BLOCK_DRAFT_FENCE_INFO, JSON.stringify({ title: alt }));
+    },
+  );
 }
 
 export function copilotRunReplyMessageId(runId: string): string {
