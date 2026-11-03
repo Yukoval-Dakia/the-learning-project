@@ -337,7 +337,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     void leaveProbe('/today');
   };
   const shellExit =
-    phase === 'terminal' || phase === 'nogoal' || phase === 'ended'
+    phase === 'terminal' || phase === 'nogoal' || phase === 'needsubject' || phase === 'ended'
       ? () => navigate('/today')
       : exitProbe;
 
