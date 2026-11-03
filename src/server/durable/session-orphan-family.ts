@@ -1,7 +1,7 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
-import { learning_session, session_orphan_tick } from '@/db/schema';
+import { session_orphan_tick } from '@/db/schema';
 
 export const sessionOrphanFamilySchema = z.enum([
   'prune_orphan_conversation_sessions',
@@ -101,6 +101,11 @@ export const sessionOrphanTickSchema = z
       ctx.addIssue({ code: 'custom', message: 'Invalid saved legacy identity' });
   });
 export type SessionOrphanTick = z.infer<typeof sessionOrphanTickSchema>;
+/** The family's session owner decides which sessions are orphans as of the frozen cutoff. */
+export type SessionOrphanCandidateSelector = (
+  tx: Tx,
+  cutoff: string,
+) => Promise<SessionOrphanTick['candidates']>;
 export type Counts = SessionOrphanKey & {
   candidates: number;
   abandoned: number;
@@ -241,7 +246,11 @@ export function requireMember(saved: SessionOrphanTick, sessionId: string) {
     throw new SessionOrphanContractError('Row is outside the exact frozen family tick');
   return candidate;
 }
-export async function admitTick(db: Db, request: SessionOrphanRequest): Promise<SessionOrphanTick> {
+export async function admitTick(
+  db: Db,
+  request: SessionOrphanRequest,
+  selectCandidates: SessionOrphanCandidateSelector,
+): Promise<SessionOrphanTick> {
   const key = sessionOrphanKey(request);
   return db.transaction(
     async (tx) => {
@@ -274,49 +283,7 @@ export async function admitTick(db: Db, request: SessionOrphanRequest): Promise<
         request.source.kind === 'dbos'
           ? phase === 'dbos'
           : phase === 'pg-boss' && clock?.ready === true;
-      let candidates: z.infer<typeof candidatesSchema> = [];
-      if (authorized) {
-        switch (request.family) {
-          case 'prune_orphan_conversation_sessions':
-            candidates = await tx
-              .select({
-                sessionId: learning_session.id,
-                selectedStartedAt: sql<string>`${learning_session.started_at}::text`,
-                selectedVersion: learning_session.version,
-              })
-              .from(learning_session)
-              .where(
-                and(
-                  eq(learning_session.type, 'conversation'),
-                  inArray(learning_session.status, ['active', 'idle']),
-                  sql`${learning_session.started_at} < ${cutoff}::timestamptz`,
-                ),
-              )
-              .orderBy(learning_session.id);
-            break;
-          case 'prune_orphan_placement_sessions':
-            candidates = await tx
-              .select({
-                sessionId: learning_session.id,
-                selectedStartedAt: sql<string>`${learning_session.started_at}::text`,
-                selectedVersion: learning_session.version,
-              })
-              .from(learning_session)
-              .where(
-                and(
-                  eq(learning_session.type, 'placement'),
-                  eq(learning_session.status, 'started'),
-                  sql`${learning_session.started_at} < ${cutoff}::timestamptz`,
-                ),
-              )
-              .orderBy(learning_session.id);
-            break;
-          default: {
-            const exhaustive: never = request.family;
-            throw new SessionOrphanContractError(String(exhaustive));
-          }
-        }
-      }
+      const candidates = authorized ? await selectCandidates(tx, cutoff) : [];
       parseSessionOrphan(candidatesSchema, candidates);
       await tx.insert(session_orphan_tick).values({
         family: key.family,

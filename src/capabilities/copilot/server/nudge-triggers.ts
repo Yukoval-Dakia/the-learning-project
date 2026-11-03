@@ -7,9 +7,10 @@ import { type AnyColumn, type SQL, and, desc, eq, inArray, or, sql } from 'drizz
 import { alias } from 'drizzle-orm/pg-core';
 import type { NudgePayloadT } from '@/core/schema/event/nudge-events';
 import type { Db, Tx } from '@/db/client';
-import { evaluation, event, learning_session, question_block, source_document } from '@/db/schema';
+import { evaluation, event, question_block, source_document } from '@/db/schema';
 import { type CorrectionStatus, getCorrectionStatuses } from '@/kernel/events';
 import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
+import { isInActivePracticeSession } from '@/kernel/read-models/practice-session-open';
 import type { NudgeConfig } from './nudge-config';
 
 export const NUDGE_ACTION = 'experimental:copilot_nudge';
@@ -55,20 +56,6 @@ export type NudgeDecision =
 /** Asia/Shanghai（固定 UTC+8，无 DST）当日谓词：col 的 Shanghai 日 === now 的 Shanghai 日。 */
 function sameShanghaiDay(col: AnyColumn | SQL, now: Date): SQL {
   return sql`(${col} AT TIME ZONE 'Asia/Shanghai')::date = (${now.toISOString()}::timestamptz AT TIME ZONE 'Asia/Shanghai')::date`;
-}
-
-/** 当前是否有 open practice session（per-type open 态白名单）。 */
-export async function isInActivePracticeSession(db: Db | Tx): Promise<boolean> {
-  const rows = await db
-    .select({ one: sql<number>`1` })
-    .from(learning_session)
-    .where(
-      sql`(${learning_session.type} = 'tutor' AND ${learning_session.status} = 'active')
-        OR (${learning_session.type} = 'review' AND ${learning_session.status} = 'started')
-        OR (${learning_session.type} = 'placement' AND ${learning_session.status} = 'started')`,
-    )
-    .limit(1);
-  return rows.length > 0;
 }
 
 function isUnsupportedAttemptPayload(payload: unknown): boolean {

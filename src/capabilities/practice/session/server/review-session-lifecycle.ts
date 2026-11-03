@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { event, learning_session } from '@/db/schema';
@@ -49,6 +49,28 @@ export type OrphanReviewCandidate = {
 export type OrphanReviewResult =
   | { kind: 'abandoned'; fromVersion: number; toVersion: number }
   | { kind: 'skipped'; reason: 'missing' | 'terminal' | 'reopened' | 'not-old' };
+
+/** Orphan eligibility for the platform sweep tick: live review sessions started before its cutoff, in id order. */
+export async function selectOrphanReviewCandidates(
+  tx: Tx,
+  cutoff: string,
+): Promise<OrphanReviewCandidate[]> {
+  return tx
+    .select({
+      sessionId: learning_session.id,
+      selectedStartedAt: sql<string>`${learning_session.started_at}::text`,
+      selectedVersion: learning_session.version,
+    })
+    .from(learning_session)
+    .where(
+      and(
+        eq(learning_session.type, 'review'),
+        inArray(learning_session.status, ['started', 'paused']),
+        sql`${learning_session.started_at} < ${cutoff}::timestamptz`,
+      ),
+    )
+    .orderBy(learning_session.id);
+}
 
 /** Caller retains the row lock through its receipt commit. Version is evidence, not a CAS. */
 export async function abandonOrphanReviewSession(

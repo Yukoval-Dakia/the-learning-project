@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 import { getConfigFlag } from '@/core/config/store';
 import type { Db, Tx } from '@/db/client';
@@ -241,9 +241,36 @@ async function applyPlacementSessionTransitionTx(
 }
 
 export class PlacementOrphanStateError extends Error {}
+export type OrphanPlacementCandidate = {
+  sessionId: string;
+  selectedStartedAt: string;
+  selectedVersion: number;
+};
 export type OrphanPlacementResult =
   | { kind: 'abandoned'; fromVersion: number; toVersion: number }
   | { kind: 'skipped'; reason: 'missing' | 'terminal' | 'not-old' };
+
+/** Orphan eligibility for the platform sweep tick: started placements older than its cutoff, in id order. */
+export async function selectOrphanPlacementCandidates(
+  tx: Tx,
+  cutoff: string,
+): Promise<OrphanPlacementCandidate[]> {
+  return tx
+    .select({
+      sessionId: learning_session.id,
+      selectedStartedAt: sql<string>`${learning_session.started_at}::text`,
+      selectedVersion: learning_session.version,
+    })
+    .from(learning_session)
+    .where(
+      and(
+        eq(learning_session.type, 'placement'),
+        eq(learning_session.status, 'started'),
+        sql`${learning_session.started_at} < ${cutoff}::timestamptz`,
+      ),
+    )
+    .orderBy(learning_session.id);
+}
 
 export async function abandonOrphanPlacementTx(
   tx: Tx,

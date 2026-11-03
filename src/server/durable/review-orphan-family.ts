@@ -1,12 +1,14 @@
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
 import { z } from 'zod';
-import { abandonOrphanReviewSession } from '@/capabilities/practice/public';
+import {
+  abandonOrphanReviewSession,
+  selectOrphanReviewCandidates,
+} from '@/capabilities/practice/public';
 import type { Db, Tx } from '@/db/client';
 import {
-  learning_session,
   review_orphan_control,
   review_orphan_disposition,
   review_orphan_receipt,
@@ -147,23 +149,7 @@ async function admitTick(db: Db, input: ReviewOrphanTickInput): Promise<SavedTic
       input.kind === 'dbos'
         ? phase === 'dbos'
         : phase === 'pg-boss' && clock?.legacy_ready === true;
-    const candidates = authorized
-      ? await tx
-          .select({
-            sessionId: learning_session.id,
-            selectedStartedAt: sql<string>`${learning_session.started_at}::text`,
-            selectedVersion: learning_session.version,
-          })
-          .from(learning_session)
-          .where(
-            and(
-              eq(learning_session.type, 'review'),
-              inArray(learning_session.status, ['started', 'paused']),
-              sql`${learning_session.started_at} < ${cutoff}::timestamptz`,
-            ),
-          )
-          .orderBy(learning_session.id)
-      : [];
+    const candidates = authorized ? await selectOrphanReviewCandidates(tx, cutoff) : [];
     await tx.insert(review_orphan_tick).values({
       tick_id: id,
       backend: input.kind,

@@ -14,6 +14,7 @@ export {
   PlacementOrphanStateError,
   abandonOrphanPlacementTx,
   placementProbeEnabled,
+  selectOrphanPlacementCandidates,
 } from './server/placement-session-lifecycle';
 export { releaseHeldPlacement } from './server/session-operations/placement-held-release';
 export { selectNextPlacementQuestion } from './server/session-operations/placement-next';
