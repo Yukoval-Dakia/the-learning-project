@@ -725,9 +725,16 @@ export async function getIssuanceState(
       ? submissions.length === 0
       : !submissionGroups.has(draftRow.evaluation_group_ref));
 
-  const settled = submissions[0]
-    ? await readNativeJudgeSettled(db, submissions[0].submission_id)
-    : undefined;
+  // The verdict is an add-on: an unreadable judge record must not hide the question and draft,
+  // so it degrades to "submitted" (no settled) the way the poll read degrades to unavailable.
+  let settled: Awaited<ReturnType<typeof readNativeJudgeSettled>>;
+  if (submissions[0]) {
+    try {
+      settled = await readNativeJudgeSettled(db, submissions[0].submission_id);
+    } catch (err) {
+      console.error('[getIssuanceState] settled verdict unreadable; omitting', err);
+    }
+  }
 
   return {
     issuance,
