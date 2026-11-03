@@ -90,14 +90,6 @@
       "count": 1
     },
     {
-      "path": "src/capabilities/practice/jobs/rejudge.ts",
-      "count": 1
-    },
-    {
-      "path": "src/capabilities/practice/server/assessment/appeal.ts",
-      "count": 3
-    },
-    {
       "path": "src/capabilities/shell/server/teaching-brief-ack.ts",
       "count": 1
     },
@@ -147,7 +139,7 @@
     },
     {
       "path": "src/server/durable/judge-family.ts",
-      "count": 3
+      "count": 2
     },
     {
       "path": "src/server/durable/producer-fence-lock.ts",

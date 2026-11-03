@@ -158,8 +158,6 @@ PATCH /api/admin/config   # x-internal-token
 | `COPILOT_NUDGE_ENABLED` | app、worker | `false` | `registry` |
 | `COPILOT_NUDGE_DAILY_MAX` | app、worker | `3` | `registry` |
 | `COPILOT_NUDGE_EXPIRES_HOURS` | app、worker | `24` | `registry` |
-| `COPILOT_NUDGE_STREAK_N` | app、worker | `3` | `registry` |
-| `COPILOT_NUDGE_KC_COOLDOWN_HOURS` | app、worker | `24` | `registry` |
 | `PLACEMENT_PROBE_ENABLED` | app、worker | `false`；compose 强制项，DB 写入返回 409 | `registry`；`src/server/config/write.ts` |
 | `PROJECTION_IS_WRITER_ITEM_CALIBRATION` | app、worker | `false`；env 只认字面 `1` 为 true | `registry` |
 | `SELECTION_POLICY` | app、worker | `softmax_mfi`；只接受 `legacy`/`softmax_mfi` | `registry` |

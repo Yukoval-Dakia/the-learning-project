@@ -1,8 +1,9 @@
 // T-RA — pre-submit RatingAdvisor preview route.
 //
-// Stores the frozen submission and candidate, returns the derived advisory, and
-// deliberately avoids activation/FSRS writes: the committed review rating stays
-// user-controlled through /api/review/submit.
+// Stores the frozen submission and candidate and returns the derived advisory. When the
+// caller sends `commit` and the verdict is automatic and rated, the same request records and
+// settles the attempt through createAttempt; otherwise nothing past the candidate is written
+// and the learner commits, with their own rating, through createAttempt.
 //
 // Cause resolution lives in `resolveAdviceCauseForQuestion()` so this route and
 // submit share one read policy. It scans a recent-attempt window rather than the
@@ -15,6 +16,7 @@ import {
   previewFormalAttempt,
   questionKnowledgeIdsForJudge,
   ratingFromCoarseOutcome,
+  requestReviewAnswer,
 } from '@/capabilities/practice/grading/public';
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/scheduling/server/rating-advisor';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
@@ -71,6 +73,32 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
     subjectProfile,
   });
 
+  // The practice page applies the same split: an open answer or one without a suggested rating
+  // keeps its learner confidence and rating step.
+  const commit =
+    body.commit && automatic_commit && suggestedRating !== null
+      ? await requestReviewAnswer(
+          db,
+          async () => ({
+            ...body.commit,
+            question_id: questionId,
+            assessment: body.assessment,
+            activation_intent,
+            rating: suggestedRating,
+            auto_rate: true,
+            response_md: body.response_md,
+            answer_image_refs: body.answer_image_refs,
+          }),
+          // No abort signal: the original is already accepted, and a reload that stopped the
+          // commit half-way would leave it accepted but never recorded or settled.
+          {},
+        )
+      : null;
+  // activation_intent keeps createAttempt off the durable divert.
+  if (commit?.kind === 'pending') {
+    throw new ApiError('corrupt_state', 'advice commit was diverted to durable judging', 500);
+  }
+
   return {
     activity_ref: identity.activity_ref,
     question_id: questionId,
@@ -94,5 +122,6 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
       suggested_rating: suggestedRating,
     },
     advice,
+    ...(commit ? { committed: commit.body } : {}),
   };
 }

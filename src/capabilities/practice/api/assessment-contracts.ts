@@ -117,6 +117,94 @@ export const SubmissionCreatedSchema = z.object({
   issuance_id: z.string().min(1),
 });
 
+// ---------- judge_run 轮询读面 ----------
+
+/**
+ * 终态 DONE 判词 payload 的结构化形（judge_run handler 写、poll/SSE 回填读）。字段
+ * 全 optional + passthrough：不同判分路由携不同子集（coarse_outcome/score/feedback），
+ * 且 already_persisted 恢复路径可能只带最小集——passthrough 保 forward-compat。
+ */
+export const JudgeRunTerminalResultSchema = z
+  .object({
+    attempt_event_id: z.string(),
+    status: z.enum(['effective', 'review_required']).optional(),
+    assessment: z
+      .object({
+        submission_id: z.string(),
+        evaluation_group_id: z.string(),
+        candidate_id: z.string(),
+        original_evaluation_id: z.string().nullable().optional(),
+        effective_evaluation_id: z.string().nullable().optional(),
+      })
+      .passthrough()
+      .optional(),
+    judge_event_id: z.string().nullable().optional(),
+    outcome: z.string().optional(),
+    final_rating: z.string().optional(),
+    route: z.string().nullable().optional(),
+    coarse_outcome: z.string().optional(),
+    score: z.number().nullable().optional(),
+    // W5 #Tunnw — `score` is uninterpretable without its meaning (steps / unit_dimension carry
+    // different score semantics), and `evidence_json` is what a client renders to SHOW the
+    // judge's reasoning. Both were dropped from the terminal contract, so SSE/poll consumers —
+    // and the crash-recovery path, which can only return what this contract carries — saw a
+    // bare number with no way to explain it.
+    score_meaning: z.string().optional(),
+    evidence_json: z.unknown().optional(),
+    confidence: z.number().optional(),
+    feedback_md: z.string().optional(),
+    capability_ref: z.object({ id: z.string(), version: z.string() }).optional(),
+    telemetry: z.unknown().optional(),
+    /** The override this handler REQUESTED — not necessarily the lane that executed (#Tunn0). */
+    provider_override: z.string().nullable().optional(),
+    // W5 #Tunn0 — the RESOLVED execution lane, read off the invoker's `kind:'invoked'`
+    // provenance. With a global AI_PROVIDER_OVERRIDE set, a run executes on a non-default lane
+    // while `provider_override` is null, so same-lane calibration keyed on the latter
+    // mis-attributes every run. These three are the execution truth.
+    provider: z.string().optional(),
+    model: z.string().optional(),
+    task_run_id: z.string().optional(),
+    /** W5 — verdict landed, but derived writes were skipped (newer evidence already existed). */
+    late_arrival: z.boolean().optional(),
+    already_persisted: z.boolean().optional(),
+  })
+  .passthrough();
+
+/**
+ * poll-tier `GET /api/jobs/judge_run/[id]/status` 响应 schema。放在无 DB 依赖的
+ * wire 契约模块（非 route 文件）以便 manifest 静态导入。
+ *
+ * #13 — `result` 与 `status` 的耦合由 **discriminated union 在 schema 里表达**（旧形是
+ * 平铺 object + 注释约定，schema 允许 `status:'queued'` 携非 null result，codegen/客户端
+ * 看不到这条不变量）：
+ * - `status:'done'` → result 是结构化判词；**仍 nullable**，因为 route 对畸形/legacy
+ * DONE payload 做 safeParse 降级（#7 现在会 warn 记录），那一路诚实地报 done+null，
+ * 不该被契约判违规。
+ * - `queued|started|failed` → result 恒 null（无判词可给）。
+ */
+export const JudgeRunStatusResponseSchema = z.discriminatedUnion('status', [
+  z.object({
+    run_id: z.string(),
+    status: z.literal('done'),
+    result: JudgeRunTerminalResultSchema.nullable(),
+  }),
+  z.object({
+    run_id: z.string(),
+    status: z.enum(['queued', 'started', 'failed']),
+    result: z.null(),
+  }),
+]);
+
+/**
+ * 最新已接收提交的判分进度。terminal 与 poll 首个永久快照同一投影（申诉/重判/撤回后取
+ * 生效判），同步判分与 durable 判分同形；pending 给出与 202 回执同源的轮询坐标。尚未判完
+ * 或判分记录不可读时缺省。
+ */
+export const IssuanceJudgeSettledSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('terminal'), run: JudgeRunStatusResponseSchema }),
+  z.object({ kind: z.literal('pending'), run_id: z.string(), poll_url: z.string() }),
+]);
+
 // ---------- 发题状态快照（pending 恢复读面） ----------
 
 export const IssuanceStateSchema = z.object({
@@ -141,6 +229,7 @@ export const IssuanceStateSchema = z.object({
       group_evidence: z.array(GroupEvidence),
     }),
   ),
+  settled: IssuanceJudgeSettledSchema.optional(),
 });
 
 export const IssuanceParamsSchema = z.object({ id: z.string().min(1) });

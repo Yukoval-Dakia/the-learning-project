@@ -1,12 +1,13 @@
 // Native appeals evaluate the immutable original and activate a new candidate.
 // Historical queued requests receive a durable held receipt, never a fresh score.
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { rejudgeNativeAppeal } from '../server/assessment/appeal';
+import { lockRejudgeAppeal } from '@/kernel/locks/settlement';
+import { rejudgeNativeAppeal } from '../server/appeal';
 
 export interface RejudgeJobInput {
   appeal_event_id: string;
@@ -47,7 +48,7 @@ export async function handleRejudge(db: Db, input: RejudgeJobInput): Promise<Rej
   if (appeal.subject_kind === 'evaluation') return rejudgeNativeAppeal(db, appeal);
 
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${appeal.id}, 0))`);
+    await lockRejudgeAppeal(tx, appeal.id);
     if (await appealAlreadyResolved(tx, appeal.id)) {
       return { status: 'skipped' as const, reason: 'already_resolved' };
     }

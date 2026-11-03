@@ -75,7 +75,7 @@ panel 设计中仍然成立的思想，折进新例会作为主席裁决面的�
 
 ### D5 现有链路逐一处置
 
-三脑并入白板；coach_daily 计划产出先由主席决定接上 canonical stream 证明 parity 后退役为白板「规划分析」成员；coach_weekly 改周盘点；A02 BKT 夜链删除（零消费者）；A47 对比需求迁入普通供题执行器；A38 停夜写、信号暂不入板；A25 按 D4；A27 nudge/chip 改 typed 动作 + 执行回执并补 native wrong-streak producer；A29 memory brief 保留为事件驱动并缩到真实 consumer scope；供题/校准/结构维护/运维 cron 保留为批处理；Copilot 会话不在本设计范围。完整映射表与每条的理由、保留边界见草案 §6——凡与审计裁决不一致处以草案的理由为准，S13 DELETE/SIMPLIFY 对象随 consumer 迁入新路径的 PR 删除，不做独立大扫除。
+三脑并入白板；coach_daily 计划产出先由主席决定接上 canonical stream 证明 parity 后退役为白板「规划分析」成员；coach_weekly 改周盘点；A02 BKT 夜链删除（零消费者）；A47 对比需求迁入普通供题执行器；A38 停夜写、信号暂不入板；A25 按 D4；A27 nudge/chip 改 typed 动作 + 执行回执；连错提醒已退役（YUK-1727，协调线依据 Owner 设计原则裁定），「同一知识点连续失败」这一事实改由 `src/kernel/read-models/learner-activity.ts` 的 `loadLongestFailureStreak` 提供给 agent——legacy review 行的知识点口径只读 `referenced_knowledge_ids`，不再优先 `fsrs_subject_ids`，这只影响历史行（review 自 YUK-956 起已无生产写入方）；A29 memory brief 保留为事件驱动并缩到真实 consumer scope；供题/校准/结构维护/运维 cron 保留为批处理；Copilot 会话不在本设计范围。完整映射表与每条的理由、保留边界见草案 §6——凡与审计裁决不一致处以草案的理由为准，S13 DELETE/SIMPLIFY 对象随 consumer 迁入新路径的 PR 删除，不做独立大扫除。
 
 ### D6 有用性按链预注册度量
 
@@ -99,7 +99,7 @@ panel 设计中仍然成立的思想，折进新例会作为主席裁决面的�
 
 ## 分阶段交付（对齐 AGENTS.md 交付阶段）
 
-1. **帮助靠谱（W1）**：白板投影 + finding 事件类型（只读管理页）；T1/T3/T4 接通，补 wrong-streak producer；主席只做可拒绝的短诊断/探针决定；nudge/chip 改 typed 动作；失败面与 YUK-1409 合流。
+1. **帮助靠谱（W1）**：白板投影 + finding 事件类型（只读管理页）；T1/T3/T4 接通；连错提醒已退役（YUK-1727），连续失败事实由 `loadLongestFailureStreak` 供 agent 读取（见 D5）；主席只做可拒绝的短诊断/探针决定；nudge/chip 改 typed 动作；失败面与 YUK-1409 合流。
 2. **按真实时间安排（W2）**：主席接管今日安排（canonical stream + parity 证明后退役 coach_daily）；T2/T5/T6 接通；A47 迁普通供题、A38 停夜写、A02 删除、A25 完成 census 后删除。
 3. **说清不知道并检验（W3）**：finding 全面携带 confidence/unknown 与「不知道什么」；白板成为「系统对我会不会的判断」的唯一解释面；猜想→探针→独立检查闭环在白板可追；expected_effect 进对照集。
 

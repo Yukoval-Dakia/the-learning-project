@@ -267,7 +267,11 @@ edge-evidence 版 SHA-256
 - **provider**：`op-kind → sorted attempt → lane`。
 - 小边：probe-question → conjecture-fold → proposal_decision → probe-serve-cap（answerProbe
   follow-up 投放）；proposal_decision → misc → probe-serve-cap（conjecture 接受，
-  conjecture-accept.ts；接受不取 probe-question / conjecture-fold，与作答同向）；write_quiz →
+  conjecture-accept.ts；接受不取 probe-question / conjecture-fold，与作答同向）；探针链共用
+  一条全序 `probe-question → 已存在探针题行 FOR UPDATE → conjecture-fold → proposal_decision →
+  misc → probe-serve-cap → 本事务新插入题行`：answerProbe 在 probe-question 后锁题行
+  （probe-lifecycle.ts:648），发布订阅 `servePublishedProbe` 先锁题行（:207）再取
+  probe-serve-cap（:209），probe-serve-cap 之后各路径只锁本事务新插入、他人不可见的题行；write_quiz →
   proposal_decision(sorted)；proposal_decision → knowledge:create（learning_item
   接受，learning-intent.ts）；proposal_decision → placement-supply（record_promotion
   接受，legacy-record-appliers.ts；variant_question 接受，question-bank proposal-appliers.ts）；note_refine effect → product；paper-native →
@@ -303,11 +307,9 @@ edge-evidence 版 SHA-256
    `<kind>:<cooldownKey>`、scope 变量等模板已证、实例域 unknown。
 6. **行锁全图与跨 backend 等待**：`control` 表行锁 → tick 已按行锁介导边
    登记（§4 durable）；行锁互等全图与跨 backend session/xact 混合形态未证，
-   无 DB 运行证据。已见一处同题行锁介导 2-环未修：answerProbe 持探针题行
-   FOR UPDATE（probe-lifecycle.ts:641）后在 follow-up 投放取 probe-serve-cap，
-   发布订阅 `servePublishedProbe` 持 probe-serve-cap（:200）后经
-   `issueAssessment` 取同题行 FOR UPDATE（assessment-issuance.ts:404）
-   ——YUK-1730。
+   无 DB 运行证据。探针题行与 probe-serve-cap 的同题 2-环已按 §4 探针链全序
+   消除：发布订阅改为先锁题行再取 probe-serve-cap，与 answerProbe 同向
+   （YUK-1730，静态推演，无 DB 运行证据）。
 
 ## 6. session-helper 连接纪律（`withinSessionAdvisoryLock`）
 
