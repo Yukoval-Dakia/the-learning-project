@@ -343,10 +343,12 @@ type CopilotExecutionSettlement<T> =
   | { outcome: 'settled'; value: T }
   | { outcome: 'already_terminal'; events: TerminalProjectionEvent[] };
 
-/** One non-terminal progress frame the execution owner may publish mid-run. */
+/** One non-terminal progress frame the execution owner may publish mid-run.
+ *  `block_draft` is a writer-internal latest-wins slot — flushed as `step`. */
 export type CopilotRunProgressEvent =
   | { kind: 'delta'; text: string }
-  | { kind: 'step'; payload: Record<string, unknown> };
+  | { kind: 'step'; payload: Record<string, unknown> }
+  | { kind: 'block_draft'; payload: Record<string, unknown> };
 
 /**
  * Publish live progress under the settlement lock. A queued delta/step is
@@ -389,6 +391,7 @@ export async function publishCopilotRunProgressEvent(
       event_type: progress.kind === 'delta' ? COPILOT_RUN_EVENTS.DELTA : COPILOT_RUN_EVENTS.STEP,
       payload: progress.kind === 'delta' ? { text: progress.text } : progress.payload,
     });
+    // (block_draft slots never reach here — the writer flushes them as steps.)
     return true;
   });
   if (published && progress.kind === 'delta') onDeltaAccepted?.(progress.text);

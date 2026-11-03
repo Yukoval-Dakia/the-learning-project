@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { AfterToolCallResult } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
+import { BLOCK_PLACE_PATTERN, serializeBlockFence } from '@/core/schema/blocks';
 import type { PiAfterToolCall, PiBeforeToolCall, PiHookBridge } from '@/core/tool-call-contract';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 
@@ -60,60 +61,9 @@ export function sealCommittedPresentationReply(
   };
 }
 
-export const PRIMARY_VIEW_MARKER_START = '<!--primary_view';
-const PRIMARY_VIEW_MARKER_RE = /<!--primary_view:([\s\S]*?)-->/g;
-
-export function extractPrimaryView(
-  text: string,
-  opts: { taskRunId: string },
-): { text: string; primaryView?: CopilotPrimaryView } {
-  let primaryView: CopilotPrimaryView | undefined;
-  let sawMarker = false;
-  let sawMalformed = false;
-  const tryParse = (jsonText: string): CopilotPrimaryView | undefined => {
-    try {
-      const parsed = PresentPrimaryViewOutputSchema.safeParse(JSON.parse(jsonText));
-      if (parsed.success) return parsed.data;
-    } catch {
-      // fall through to malformed handling
-    }
-    sawMalformed = true;
-    return undefined;
-  };
-
-  let working = text;
-  const lastStart = working.lastIndexOf(PRIMARY_VIEW_MARKER_START);
-  if (lastStart !== -1) {
-    const tail = working.slice(lastStart).match(/^<!--primary_view:([\s\S]*)-->\s*$/);
-    if (tail) {
-      sawMarker = true;
-      primaryView = tryParse(tail[1] as string);
-      working = working.slice(0, lastStart);
-    }
-  }
-  const earlier: CopilotPrimaryView[] = [];
-  const stripped = working.replace(PRIMARY_VIEW_MARKER_RE, (_match, jsonText: string) => {
-    sawMarker = true;
-    const parsed = tryParse(jsonText);
-    if (parsed) earlier.push(parsed);
-    return '';
-  });
-  if (!primaryView && earlier.length > 0) primaryView = earlier.at(-1);
-  let cleaned = stripped;
-  const dangling = cleaned.lastIndexOf(PRIMARY_VIEW_MARKER_START);
-  if (dangling !== -1) {
-    sawMarker = true;
-    sawMalformed = true;
-    cleaned = cleaned.slice(0, dangling);
-  }
-  if (sawMalformed) {
-    console.warn('[copilot-reply-finalization] malformed primary_view marker; dropping it', {
-      task_run_id: opts.taskRunId,
-    });
-  }
-  cleaned = sawMarker ? cleaned.trimEnd() : cleaned;
-  return primaryView ? { text: cleaned, primaryView } : { text: cleaned };
-}
+// YUK-1548 — extractPrimaryView (the retired <!--primary_view:--> marker) was
+// deleted in slice 1; nomination only ever comes from the present_primary_view
+// tool result bound to the trace below.
 
 export const CopilotReplyFinalizationReceiptSchema = z
   .object({
@@ -128,6 +78,15 @@ export const CopilotReplyFinalizationReceiptSchema = z
     correction: z.enum(['normal', 'clarify', 'corrected']),
     proposal_disclosure: z.enum(['none', 'server_composed']),
     primary_view: z.enum(['absent', 'retained', 'dropped']),
+    /** YUK-1548 §5 — block placement receipt (only when compose_block ran). */
+    blocks: z
+      .object({
+        placed: z.number().int().min(0),
+        appended: z.number().int().min(0),
+        dropped: z.number().int().min(0),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -378,12 +337,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         throw new Error('cannot seal an incomplete tool trace');
       }
       const candidateSha = sha256Text(terminalText);
-      const legacyPresented = extractPrimaryView(
-        options.authoritativeReply?.reply ?? terminalText,
-        {
-          taskRunId: options.rootTaskRunId,
-        },
-      );
+      const presentedText = options.authoritativeReply?.reply ?? terminalText;
       const successfulControls = trace.filter(
         (entry) =>
           entry.root_call &&
@@ -403,7 +357,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         ? await resolvePrimaryViewNomination(nomination, trace, options.resolveArtifactReference)
         : undefined;
       const presented = {
-        text: legacyPresented.text,
+        text: presentedText,
         ...(resolvedNomination ? { primaryView: resolvedNomination } : {}),
       };
       const correction = resolveCorrectionReply(
@@ -412,7 +366,46 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         stripCopilotInternalComments,
       );
       const disclosure = proposalDisclosure(trace);
-      const fixed = applyProposalDisclosure(correction.reply, disclosure);
+      const withDisclosure = applyProposalDisclosure(correction.reply, disclosure);
+      // YUK-1548 §5 — resolve `![alt](block:<ref>)` placements against the
+      // successful root compose_block calls bound to this trace, substitute
+      // canonical tlp-block fences, and append never-placed blocks in order.
+      const readyBlocks = trace
+        .filter(
+          (entry) =>
+            entry.root_call &&
+            entry.status === 'succeeded' &&
+            entry.domain_executed === true &&
+            domainToolName(entry.tool_name) === 'compose_block',
+        )
+        .flatMap((entry) => {
+          const output = entry.domain_output as
+            | { status?: string; ref?: string; block?: unknown }
+            | undefined;
+          return output?.status === 'ready' && typeof output.ref === 'string'
+            ? [{ ref: output.ref, block: output.block }]
+            : [];
+        });
+      const blocksByRef = new Map(readyBlocks.map((b) => [b.ref, b.block]));
+      const placedRefs = new Set<string>();
+      let dropped = 0;
+      const withPlaced = withDisclosure.replace(BLOCK_PLACE_PATTERN, (_match, ref: string) => {
+        if (!blocksByRef.has(ref)) {
+          dropped += 1;
+          return '';
+        }
+        placedRefs.add(ref);
+        return `\n\n${serializeBlockFence(blocksByRef.get(ref) as never)}\n\n`;
+      });
+      const appended = readyBlocks.filter((b) => !placedRefs.has(b.ref));
+      const appendedFences = appended
+        .map((b) => serializeBlockFence(b.block as never))
+        .join('\n\n');
+      const fixed = appendedFences ? `${withPlaced.trimEnd()}\n\n${appendedFences}` : withPlaced;
+      const blocksReceipt =
+        readyBlocks.length > 0 || dropped > 0
+          ? { placed: placedRefs.size, appended: appended.length, dropped }
+          : undefined;
       if (
         traceVersion !== startVersion ||
         digestTrace(trace) !== startTraceSha ||
@@ -434,6 +427,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         proposal_disclosure: disclosure ? 'server_composed' : 'none',
         primary_view:
           successfulControls.length > 0 ? (primaryView ? 'retained' : 'dropped') : 'absent',
+        ...(blocksReceipt ? { blocks: blocksReceipt } : {}),
       };
       return {
         replyText: fixed,

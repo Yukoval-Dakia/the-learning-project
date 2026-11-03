@@ -43,6 +43,21 @@ export function projectCopilotActivity(
     case 'prose_delta':
     case 'spawn_budget':
       return null;
+    case 'block_draft':
+      return {
+        step_kind: 'block_draft',
+        tool_use_id: activity.toolUseId,
+        received_bytes: activity.receivedBytes,
+        ...(activity.blockKind ? { kind: activity.blockKind } : {}),
+        ...(activity.title ? { title: activity.title } : {}),
+      };
+    case 'block_ready':
+      return {
+        step_kind: 'block_ready',
+        tool_use_id: activity.toolUseId,
+        ref: activity.ref,
+        block: activity.block,
+      };
     case 'subtask': {
       const { step_kind, subtask_id, label, status, error } = activity.event;
       return {
