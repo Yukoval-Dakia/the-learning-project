@@ -215,6 +215,22 @@ const DELIMITED_FORMULA =
 const TIGHT_DOLLAR_FORMULA =
   /(?<![\\$])\$(?![\s$])[^$\n`]*?[^\s\\$]\$(?![\d$])|(?<![\\$])\$[^\s\\$]\$(?![\d$])/;
 
+// In fallback mode remark-math would still read every other dollar pair, with looser rules than the
+// check above: `求 $x$，报名费 $5 到 $10` would turn `$5 到 $` into a formula. So before parsing,
+// every dollar outside an accepted span (code, `$$…$$`, a tight `$…$`) is escaped to a literal.
+const FALLBACK_DOLLARS = new RegExp(
+  `(${CODE_SPANS.source})|((?<!\\\\)\\$\\$(?:(?!\\n\\s*\\n)[^\`$])+?\\$\\$)|(${TIGHT_DOLLAR_FORMULA.source})|(?<!\\\\)\\$`,
+  'g',
+);
+
+function escapeLooseDollars(source: string): string {
+  return source.replace(
+    FALLBACK_DOLLARS,
+    (match: string, code?: string, display?: string, tight?: string) =>
+      code !== undefined || display !== undefined || tight !== undefined ? match : '\\$',
+  );
+}
+
 export function looksLikeMath(source: string): boolean {
   if (!source.includes('$') && !source.includes('\\(') && !source.includes('\\[')) return false;
   const prose = source.replace(CODE_SPANS, ' ');
@@ -250,7 +266,8 @@ export function MathMarkdown({
 }: MathMarkdownProps): ReactElement {
   // A resolved subject notation decides; only an unresolved one (null / absent) falls back to
   // the formula check above.
-  const isKatex = isKatexNotation(notation) || (notation == null && looksLikeMath(children));
+  const fallback = notation == null && looksLikeMath(children);
+  const isKatex = isKatexNotation(notation) || fallback;
   // Read the module cache so an already-warm math mount (or any SSR render, where
   // the cache is warmed at module eval) renders synchronously with no fallback
   // frame; a cold browser mount reads null and the subscription loads the chunk.
@@ -261,7 +278,10 @@ export function MathMarkdown({
   );
 
   const active = isKatex && mathPlugins ? mathPlugins : NO_MATH_PLUGINS;
-  const source = active === NO_MATH_PLUGINS ? children : normalizeMathDelimiters(children);
+  const source =
+    active === NO_MATH_PLUGINS
+      ? children
+      : normalizeMathDelimiters(fallback ? escapeLooseDollars(children) : children);
   return (
     <MarkdownRenderer
       {...divProps}
