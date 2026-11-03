@@ -6,7 +6,7 @@
 // - author_question / image_candidate / ingest_existing → not auto-dispatched; emit
 // status='manual' for a user or copilot to pick up.
 
-import { and, desc, eq, gte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
@@ -139,20 +139,32 @@ async function recentDispatchExists(
   fingerprint: string,
   cooldownDays: number,
 ): Promise<boolean> {
+  return (await recentlyDispatchedFingerprints(db, [fingerprint], cooldownDays)).has(fingerprint);
+}
+
+/**
+ * 同一 cooldown 判据的批量形态：返回 `fingerprints` 中在窗内真派过的那些。
+ * 夜扫在截取 per-run 硬顶之前用它剔除冷却中的目标，冷却目标不占名额。
+ */
+export async function recentlyDispatchedFingerprints(
+  db: Db | Tx,
+  fingerprints: readonly string[],
+  cooldownDays: number,
+): Promise<Set<string>> {
+  if (cooldownDays <= 0 || fingerprints.length === 0) return new Set();
   const cutoff = new Date(Date.now() - cooldownDays * 24 * 60 * 60 * 1000);
   const rows = await db
-    .select({ id: event.id })
+    .selectDistinct({ fingerprint: sql<string>`${event.payload}->>'fingerprint'` })
     .from(event)
     .where(
       and(
         eq(event.action, 'experimental:question_supply'),
         gte(event.created_at, cutoff),
-        sql`${event.payload}->>'fingerprint' = ${fingerprint}`,
+        inArray(sql`${event.payload}->>'fingerprint'`, [...new Set(fingerprints)]),
         sql`${event.payload}->>'status' = 'dispatched'`,
       ),
-    )
-    .limit(1);
-  return rows.length > 0;
+    );
+  return new Set(rows.map((row) => row.fingerprint));
 }
 
 const LIVE_SUPPLY_JOB_STATES: ReadonlySet<string> = new Set(['created', 'retry', 'active']);

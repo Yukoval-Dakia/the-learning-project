@@ -9,9 +9,9 @@
 //
 // ── 红线：成本 ───────────────────────────────────────────────────────────────
 // 这个 cron 让付费获取（Tavily web 找题 + LLM 生成/验证）**自动**发生。唯一的防 job-spam
-// 闸是 dispatcher 的 7d query-based fingerprint cooldown（recentDispatchExists）：同一未满足
-// 缺口在 7 天窗内只真派一次后台 job，其余扫描命中 cooldown → status='skipped'，不再
-// boss.send。本 job **依赖** dispatcher 这层 cooldown 作为成本护栏——绝不在此处绕过
+// 闸是 dispatcher 的 7d query-based fingerprint cooldown：同一未满足缺口在 7 天窗内只真派
+// 一次后台 job；其余扫描在截取 per-run 硬顶前即被剔除（计入 coolingDown，不写派发事件），
+// dispatcher 派发时仍按同一判据复查。本 job **依赖** dispatcher 这层 cooldown 作为成本护栏——绝不在此处绕过
 // dispatcher 直发队列。本 job 无自身 cron，由夜间 orchestrator 在标定链（item_prior →
 // recalibration）之后触发，让缺口判定读到 firm 过的 b_calib（manifest.ts 的 dependsOn
 // 硬边即此保证）。
@@ -30,6 +30,7 @@ import {
   inFlightSupplyCount,
 } from '@/capabilities/practice/public';
 import { discoverConfusableContrastTargets } from '@/capabilities/practice/supply/server/confusable-contrast-discovery';
+import { recentlyDispatchedFingerprints } from '@/capabilities/practice/supply/server/dispatcher';
 import { runInventoryShadowDualRead } from '@/capabilities/practice/supply/server/inventory-projection';
 import {
   type QuestionSupplyTarget,
@@ -76,27 +77,34 @@ type DepsOverride = {
 const DEFAULT_MAX_PER_RUN = 25;
 
 export interface QuestionSupplyNightlyResult {
-  /** discoverSupplyTargets 发现的供给目标**总数**（缺口数，per-run cap 之前）。 */
+  /** 发现的供给目标**总数**（覆盖 + 对比缺口，冷却过滤与 per-run cap 之前）。 */
   discovered: number;
-  /** 本轮实际进入派发的目标数（= min(discovered, maxPerRun)，硬顶后）。 */
+  /** 截取前因同指纹在 cooldown 窗内已派过而剔除的目标数（不占名额、不写事件）。 */
+  coolingDown: number;
+  /** 本轮实际进入派发的目标数（= min(discovered − coolingDown, maxPerRun)）。 */
   considered: number;
-  /** per-run cap 截掉、留待下轮的目标数（discovered − considered）。 */
+  /** per-run cap 截掉、留待下轮的目标数（discovered − coolingDown − considered）。 */
   deferred: number;
   /** 真派到后台队列的目标数（status='dispatched'）。 */
   dispatched: number;
   /** 无后台队列、留给人工/UI 的目标数（status='manual'）。 */
   manual: number;
-  /** cooldown / 无锚等被跳过的目标数（status='skipped'）。 */
+  /** 派发时被跳过的目标数（status='skipped'：无锚，或截取后才进入 cooldown 的竞态）。 */
   skipped: number;
   /** 派发抛错的目标数（status='failed'）。 */
   failed: number;
 }
 
-function tallyByStatus(results: DispatchResult[], discovered: number): QuestionSupplyNightlyResult {
+function tallyByStatus(
+  results: DispatchResult[],
+  discovered: number,
+  coolingDown = 0,
+): QuestionSupplyNightlyResult {
   const out: QuestionSupplyNightlyResult = {
     discovered,
+    coolingDown,
     considered: results.length,
-    deferred: Math.max(0, discovered - results.length),
+    deferred: Math.max(0, discovered - coolingDown - results.length),
     dispatched: 0,
     manual: 0,
     skipped: 0,
@@ -121,11 +129,12 @@ function tallyByStatus(results: DispatchResult[], discovered: number): QuestionS
   return out;
 }
 
-function emptyTally(discovered = 0): QuestionSupplyNightlyResult {
+function emptyTally(discovered = 0, coolingDown = 0): QuestionSupplyNightlyResult {
   return {
     discovered,
+    coolingDown,
     considered: 0,
-    deferred: discovered,
+    deferred: discovered - coolingDown,
     dispatched: 0,
     manual: 0,
     skipped: 0,
@@ -280,12 +289,21 @@ async function runSupplyDiscoveryAndDispatch(
     (a, b) => b.priority - a.priority,
   );
   if (targets.length === 0) return emptyTally();
-  // per-run 硬顶：targets 已按 priority 降序，slice top-N 即派最高
-  // 优先级的 N 个，其余留下轮（截掉的目标不 dispatch ⇒ 无 fingerprint 落库 ⇒ 无 cooldown 副作用）。
-  const dispatchTargets = targets.slice(0, deps.maxPerRun ?? DEFAULT_MAX_PER_RUN);
-  if (dispatchTargets.length === 0) return emptyTally(targets.length);
+  // 先剔除冷却中的目标再截取：冷却目标派发时只会 skipped，不该占 per-run 名额挤掉
+  // 低优先级缺口。dispatcher 派发时仍按同一判据复查。
+  const cooling = await recentlyDispatchedFingerprints(
+    db,
+    targets.map((target) => target.fingerprint),
+    deps.dispatchDeps?.cooldownDays ?? SUPPLY_DISPATCH_COOLDOWN_DAYS,
+  );
+  const eligible = targets.filter((target) => !cooling.has(target.fingerprint));
+  const coolingDown = targets.length - eligible.length;
+  // per-run 硬顶：eligible 保持 priority 降序，slice top-N 即派最高优先级的 N 个，其余留下轮
+  // （截掉的目标不 dispatch ⇒ 无 fingerprint 落库 ⇒ 无 cooldown 副作用）。
+  const dispatchTargets = eligible.slice(0, deps.maxPerRun ?? DEFAULT_MAX_PER_RUN);
+  if (dispatchTargets.length === 0) return emptyTally(targets.length, coolingDown);
   const results = await dispatchSupplyTargets(db, dispatchTargets, deps.dispatchDeps);
-  return tallyByStatus(results, targets.length);
+  return tallyByStatus(results, targets.length, coolingDown);
 }
 
 /**
