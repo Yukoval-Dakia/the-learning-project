@@ -20,7 +20,11 @@ import {
 } from '@/core/schema/business';
 import { artifact } from '@/db/schema';
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
-import { htmlContainsAssessment } from '@/kernel/learning-content';
+import {
+  assessmentBindings,
+  containsAnswerKeyAttributes,
+  htmlContainsAssessment,
+} from '@/kernel/learning-content';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { emitArtifactLifecycleEvent } from '../artifacts/mutation-events';
 
@@ -78,23 +82,20 @@ function normalizedBindingText(value: string): string {
     .toLocaleLowerCase();
 }
 
-function tagAttribute(tag: string, name: string): string | undefined {
-  const match = tag.match(new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i'));
-  return match?.[1] ?? match?.[2];
-}
-
-function assessmentBindings(html: string): Array<{ id: string; answer: string | undefined }> {
-  return (html.match(/<[^>]*\bdata-copilot-question-id\s*=\s*(?:"[^"]*"|'[^']*')[^>]*>/gi) ?? [])
-    .map((tag) => ({
-      id: tagAttribute(tag, 'data-copilot-question-id') ?? '',
-      answer: tagAttribute(tag, 'data-copilot-answer'),
-    }))
-    .filter((binding) => binding.id.length > 0);
-}
-
+// YUK-1763 — the answer key lives ONLY in the manifest (and from there in
+// attrs.answer_key, served by /api/artifacts/[id]/answer-key on explicit
+// learner request). The HTML carries per-question identity bindings
+// (data-copilot-question-id) but never answers: no data-copilot-answer /
+// data-answer / data-correct attributes, so nothing in the served DOM can be
+// read or brute-forced before the learner chooses to reveal.
 function assertManifestMatchesHtml(html: string, validation: ContentValidationInput): void {
   const normalizedHtml = normalizedBindingText(html);
   const bindings = assessmentBindings(html);
+  if (containsAnswerKeyAttributes(html)) {
+    throw new Error(
+      'assessed artifact HTML must not embed answer keys: remove every data-copilot-answer / data-answer / data-correct attribute (and any answer-revealing markup); declare each answer once in content_validation.questions[].reference_md',
+    );
+  }
   const manifestIds = new Set(validation.questions.map((question) => question.id));
   const bindingIds = new Set(bindings.map((binding) => binding.id));
   if (
@@ -111,7 +112,6 @@ function assertManifestMatchesHtml(html: string, validation: ContentValidationIn
     if (
       !binding ||
       reference.length === 0 ||
-      normalizedBindingText(binding.answer ?? '') !== reference ||
       !normalizedHtml.includes(normalizedBindingText(question.prompt_md)) ||
       !(question.choices_md ?? []).every((choice) =>
         normalizedHtml.includes(normalizedBindingText(choice)),
@@ -122,13 +122,23 @@ function assertManifestMatchesHtml(html: string, validation: ContentValidationIn
   }
 }
 
+interface StoredAssessment {
+  /** Persisted in attrs.content_validation — the independent validation verdict trail. */
+  validation: Record<string, unknown>;
+  /** Persisted in attrs.answer_key — the server-held answer the reveal route serves. */
+  answerKey: Array<{ id: string; reference_md: string }>;
+}
+
 async function validateArtifactContent(
   ctx: ToolContext,
   html: string,
   input: ContentValidationInput | undefined,
-): Promise<Record<string, unknown> | undefined> {
+): Promise<StoredAssessment | undefined> {
   if (!input) {
     if (htmlContainsAssessment(html)) {
+      // htmlContainsAssessment's structural markers cover data-copilot-answer /
+      // data-answer / data-correct, so answer-bearing HTML always lands in the
+      // manifest branch below, where assertManifestMatchesHtml rejects it.
       throw new Error('learning content manifest is required for assessed artifact HTML');
     }
     return undefined;
@@ -147,8 +157,14 @@ async function validateArtifactContent(
       throw new Error('learning content validation failed');
     }
     return {
-      ...result,
-      html_sha256: createHash('sha256').update(html).digest('hex'),
+      validation: {
+        ...result,
+        html_sha256: createHash('sha256').update(html).digest('hex'),
+      },
+      answerKey: input.questions.map((question) => ({
+        id: question.id,
+        reference_md: question.reference_md ?? '',
+      })),
     };
   } catch (error) {
     if (error instanceof Error && error.message === 'learning content validation failed') {
@@ -187,7 +203,7 @@ async function executeAuthorArtifact(
   rawInput: AuthorArtifactInput,
 ): Promise<AuthorArtifactOutput> {
   const input = AuthorArtifactInputSchema.parse(rawInput);
-  const validation = await validateArtifactContent(ctx, input.html, input.content_validation);
+  const assessment = await validateArtifactContent(ctx, input.html, input.content_validation);
 
   const now = new Date();
   const artifactId = `art_${createId()}`;
@@ -200,7 +216,9 @@ async function executeAuthorArtifact(
     html: input.html,
     ...(input.summary !== undefined ? { summary: input.summary } : {}),
     origin: 'copilot_author_artifact',
-    ...(validation ? { content_validation: validation } : {}),
+    ...(assessment
+      ? { content_validation: assessment.validation, answer_key: assessment.answerKey }
+      : {}),
   });
 
   // Row shape follows writeToolQuizArtifact (tool-quiz-core.ts) column-for-
@@ -264,7 +282,7 @@ async function executeAuthorArtifact(
 export const authorArtifactTool: DomainTool<AuthorArtifactInput, AuthorArtifactOutput> = {
   name: 'author_artifact',
   description:
-    'Create a NEW persistent interactive learning artifact (type=interactive) from a complete self-contained HTML document you write yourself (inline CSS/JS, no external network dependencies — it renders inside a sandbox). For assessed content, wrap every question in an element with data-copilot-question-id matching its manifest id and data-copilot-answer matching reference_md; provide content_validation with every question, declared answer, all options, rubric, and subject_id. The server requires the HTML bindings and manifest to be complete and independently validates each item before writing. Non-assessment controls such as search, filters, and sliders need no manifest. If validation fails, repair the draft and call again. Provide a clear title and knowledge_ids. Returns the artifact_id for later update_artifact calls.',
+    'Create a NEW persistent interactive learning artifact (type=interactive) from a complete self-contained HTML document you write yourself (inline CSS/JS, no external network dependencies — it renders inside a sandbox). For assessed content, wrap every question in an element with data-copilot-question-id matching its manifest id, and NEVER put the answer key in the HTML: no data-copilot-answer / data-answer / data-correct attributes, no answer map in JS, no correct-answer highlighting — the page must not grade or reveal correctness itself. Provide content_validation with every question, its declared answer (reference_md), all options, rubric, and subject_id; the server stores the answer key and reveals it only through its answer-key endpoint on explicit learner request, so build the page as practice (learner picks an answer; the worked answer is revealed outside the page). The server requires the HTML bindings and manifest to be complete and independently validates each item before writing. Non-assessment controls such as search, filters, and sliders need no manifest. If validation fails, repair the draft and call again. Provide a clear title and knowledge_ids. Returns the artifact_id for later update_artifact calls.',
   effect: 'write',
   inputSchema: AuthorArtifactInputSchema,
   outputSchema: AuthorArtifactOutputSchema,
@@ -301,7 +319,7 @@ async function executeUpdateArtifact(
   rawInput: UpdateArtifactInput,
 ): Promise<UpdateArtifactOutput> {
   const input = UpdateArtifactInputSchema.parse(rawInput);
-  const validation = await validateArtifactContent(ctx, input.html, input.content_validation);
+  const assessment = await validateArtifactContent(ctx, input.html, input.content_validation);
   const now = new Date();
 
   // The mirror event remains the rollback/observability trail; this transaction
@@ -335,14 +353,19 @@ async function executeUpdateArtifact(
     }
 
     // Merge-parse: replace html, preserve summary/origin + any catchall keys.
-    const { content_validation: _staleValidation, ...preservedAttrs } = row.attrs as Record<
-      string,
-      unknown
-    >;
+    // Replacing HTML invalidates prior evidence AND drops the stale answer key —
+    // the new document's manifest (if assessed) re-mints both.
+    const {
+      content_validation: _staleValidation,
+      answer_key: _staleAnswerKey,
+      ...preservedAttrs
+    } = row.attrs as Record<string, unknown>;
     const attrs = InteractiveArtifactAttrs.parse({
       ...preservedAttrs,
       html: input.html,
-      ...(validation ? { content_validation: validation } : {}),
+      ...(assessment
+        ? { content_validation: assessment.validation, answer_key: assessment.answerKey }
+        : {}),
     });
 
     const nextVersion = row.version + 1;
@@ -397,7 +420,7 @@ async function executeUpdateArtifact(
 export const updateArtifactTool: DomainTool<UpdateArtifactInput, UpdateArtifactOutput> = {
   name: 'update_artifact',
   description:
-    'Update an EXISTING interactive artifact with a full replacement HTML document, not a diff. Assessed content requires every question element to carry data-copilot-question-id and data-copilot-answer matching a complete content_validation manifest; replacing HTML always invalidates prior evidence. Non-assessment controls need no manifest. Bumps artifact.version and appends a history entry; pass change_summary for the timeline. Only works on type=interactive artifacts.',
+    'Update an EXISTING interactive artifact with a full replacement HTML document, not a diff. Assessed content requires every question element to carry data-copilot-question-id matching a complete content_validation manifest, and the HTML must contain NO answer key — no data-copilot-answer / data-answer / data-correct attributes, no answer map in JS, no correct-answer highlighting; answers live only in content_validation.questions[].reference_md, stored server-side and revealed only through the answer-key endpoint on explicit learner request. Replacing HTML always invalidates prior evidence. Non-assessment controls need no manifest. Bumps artifact.version and appends a history entry; pass change_summary for the timeline. Only works on type=interactive artifacts.',
   effect: 'write',
   inputSchema: UpdateArtifactInputSchema,
   outputSchema: UpdateArtifactOutputSchema,

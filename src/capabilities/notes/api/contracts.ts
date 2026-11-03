@@ -185,6 +185,20 @@ export const ArtifactBacklinksResponseSchema = z.object({
   rows: z.array(ArtifactBacklinkSchema),
 });
 
+// YUK-1763 — explicit answer reveal for assessed interactive artifacts. The
+// answer key is stored server-side (attrs.answer_key, or derived from legacy
+// stored HTML bindings) and reaches the learner ONLY through this response,
+// never inside the served artifact HTML.
+export const ArtifactAnswerKeyResponseSchema = z.object({
+  artifact_id: z.string(),
+  answers: z.array(
+    z.object({
+      id: z.string(),
+      reference_md: z.string(),
+    }),
+  ),
+});
+
 export const ArtifactCorrectionStatusSchema = z.discriminatedUnion('state', [
   z.object({
     state: z.literal('active'),

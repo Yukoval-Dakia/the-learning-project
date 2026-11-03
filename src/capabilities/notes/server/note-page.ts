@@ -19,6 +19,7 @@ import type {
 import { InteractiveArtifactAttrs } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
+import { stripInteractiveAnswerAttributes } from '@/kernel/learning-content';
 import { bodyBlocksToNoteSections } from '@/kernel/read-models/note-sections';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
@@ -133,10 +134,15 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
   const profile = await resolveSubjectProfileForKnowledgeIds(db, knowledgeIds);
 
   // 6. interactive payload — attrs is opaque jsonb, so this is the read barrier.
+  // YUK-1763 — answers never ship to the browser: strip any data-copilot-answer
+  // attributes legacy stored HTML still carries (current authoring rejects them
+  // outright, so this is serve-time defense for pre-existing rows only).
   let interactive: NotePage['interactive'] = null;
   if (note.type === 'interactive') {
     const parsed = InteractiveArtifactAttrs.safeParse(note.attrs);
-    if (parsed.success) interactive = { html: parsed.data.html };
+    if (parsed.success) {
+      interactive = { html: stripInteractiveAnswerAttributes(parsed.data.html) };
+    }
   }
 
   return {
