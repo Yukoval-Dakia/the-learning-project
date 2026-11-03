@@ -3,7 +3,7 @@
 // event identities themselves; callers keep the transaction scope and their
 // acquisition order.
 import { sql } from 'drizzle-orm';
-import type { Db, Tx } from '@/db/client';
+import type { Tx } from '@/db/client';
 
 /** One native appeal identity: concurrent requests read or write the same row. */
 export async function lockNativeAppeal(tx: Tx, appealId: string): Promise<void> {
@@ -16,7 +16,7 @@ export async function lockEvaluationCorrection(tx: Tx, correctionId: string): Pr
 }
 
 /** One native resolution identity; write is first-wins under the lock. */
-export async function lockNativeResolution(tx: Db | Tx, resolutionId: string): Promise<void> {
+export async function lockNativeResolution(tx: Tx, resolutionId: string): Promise<void> {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${resolutionId}))`);
 }
 

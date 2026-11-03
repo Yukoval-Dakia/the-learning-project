@@ -178,7 +178,7 @@ function isPermanentRejudgeConflict(error: unknown): boolean {
 
 export async function rejudgeNativeAppeal(database: Db, appeal: typeof event.$inferSelect) {
   const resolutionId = `evt_native_resolution_${canonicalHash(appeal.id)}`;
-  const record = async (tx: Db | Tx, disposition: string, evaluationId?: string) => {
+  const record = async (tx: Tx, disposition: string, evaluationId?: string) => {
     // Used with the activation transaction, or alone for an explicit held result.
     await lockNativeResolution(tx, resolutionId);
     const [existing] = await tx
