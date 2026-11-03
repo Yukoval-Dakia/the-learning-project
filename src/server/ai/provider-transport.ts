@@ -37,6 +37,12 @@ import { sanitizeProviderErrorText } from './provider-error-evidence';
  *   execution timer or the session deadline; every other abort stays unclassified.
  * - `last_transport_error` is neutral raw evidence; `last_failure` requires a
  *   classified timeout layer or substantive non-abort evidence.
+ * - `requests` keeps the MOST RECENT records: failure evidence lives at the
+ *   tail, so `requests.at(-1)` stays the chronologically last request even
+ *   after earlier records dropped out (`requests_dropped` still counts them).
+ * - `loop: 'root'` is recorded only when positively attributed: the adapter's
+ *   root stream wrapper marks its own fetch before it begins, and the mark is
+ *   consumed by the next `beginFetch`; a nested loop's fetches stay unmarked.
  */
 
 const MAX_REQUEST_RECORDS = 32;
@@ -59,6 +65,8 @@ interface MutableBudgetReceipt {
 
 interface MutableRequestRecord {
   seq: number;
+  /** 'root' only when the issuing loop was positively attributed at begin. */
+  loop?: 'root';
   /** Incremented per `dispatch()` — >0 means this call rode our dispatcher. */
   dispatches: number;
   handlerApi?: 'modern' | 'legacy';
@@ -117,6 +125,8 @@ export class ProviderTransportCollector {
   private lastTransportError: ProviderTransportEvidence['last_transport_error'];
   private lastFailure: ProviderTransportEvidence['last_failure'];
   private readonly abortInitiators: TransportAbortMarker[] = [];
+  /** One-shot loop attribution consumed by the next `beginFetch`. */
+  private pendingLoop: 'root' | undefined;
   /** Lanes observed over ALL requests — survives `records` truncation. */
   private readonly lanesSeen = new Set<TransportLane>();
 
@@ -166,6 +176,16 @@ export class ProviderTransportCollector {
     return this.abortInitiators.map((marker) => marker.kind);
   }
 
+  /**
+   * Loop attribution for the NEXT `beginFetch`: the adapter's root stream
+   * wrapper marks its own fetches so terminal evidence can tell the root
+   * loop's request from a nested loop's. Consumed once; the caller clears it
+   * so a mark whose fetch never reached `beginFetch` cannot leak onwards.
+   */
+  noteFetchLoop(loop: 'root' | undefined): void {
+    this.pendingLoop = loop;
+  }
+
   /** The exact bound the lifecycle armed — min(task budget, deadline remaining). */
   noteExecutionTimeoutMs(timeoutMs: number): void {
     this.budget.execution_timeout_ms = timeoutMs;
@@ -194,17 +214,21 @@ export class ProviderTransportCollector {
     this.requestsSeen += 1;
     const record: MutableRequestRecord = {
       seq: this.seq,
+      ...(this.pendingLoop !== undefined ? { loop: this.pendingLoop } : {}),
       dispatches: 0,
       fetchInvokedAt: now(),
       state: 'in_flight',
     };
+    this.pendingLoop = undefined;
     this.seq += 1;
     this.stateCounts.in_flight += 1;
-    if (this.records.length < MAX_REQUEST_RECORDS) {
-      this.records.push(record);
-    } else {
+    // Tail window: the oldest record drops out so `at(-1)` remains the
+    // chronologically last request — failure evidence lives at the end.
+    if (this.records.length >= MAX_REQUEST_RECORDS) {
+      this.records.shift();
       this.requestsDropped += 1;
     }
+    this.records.push(record);
     return record;
   }
 
@@ -360,6 +384,7 @@ export class ProviderTransportCollector {
             : undefined;
       return {
         seq: record.seq,
+        ...(record.loop !== undefined ? { loop: record.loop } : {}),
         ...(lane !== undefined ? { lane } : {}),
         ...(record.handlerApi !== undefined ? { handler_api: record.handlerApi } : {}),
         fetch_invoked_at: record.fetchInvokedAt,

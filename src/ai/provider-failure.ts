@@ -65,10 +65,13 @@ export function classifyProviderFailure(input: {
 
   const initiators = (input.transport?.abort_initiators ?? []).map((marker) => marker.kind);
   // Rollups (last_failure, send_state) can survive an earlier recovered request;
-  // only the request that was live at termination is probative.
+  // only the request that was live at termination is probative — and only when
+  // the terminating (root) loop issued it: a nested loop's tail request cannot
+  // be the root's terminal cause.
   const lastRequest = input.transport?.requests.at(-1);
+  const terminalRequest = lastRequest?.loop === 'root' ? lastRequest : undefined;
   const timedOut =
-    lastRequest?.timeout_layer !== undefined ||
+    terminalRequest?.timeout_layer !== undefined ||
     initiators.some((kind) => kind === 'execution_timeout' || kind === 'session_deadline');
   if (timedOut) return { category: 'timeout', ...retry };
   // budget_timeout is the lifecycle's armed-timer identity; a caller-driven
@@ -88,7 +91,7 @@ export function classifyProviderFailure(input: {
     // Positive provider evidence only: a verified transport failure is a
     // connection-class drop; a provider stream-error terminal is provider-side.
     // A local loop death after clean requests stays unclassified.
-    if (lastRequest?.error !== undefined) {
+    if (terminalRequest?.error !== undefined) {
       return { category: 'connection', ...retry };
     }
     if (input.streamErrorTerminal) return { category: 'provider_error', ...retry };
