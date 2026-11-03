@@ -16,6 +16,7 @@ import {
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
+import { resolveQuestionRenderNotation } from '@/kernel/read-models/subject-resolution';
 import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { getIssuanceState, readJudgeRunPermanent } from '../../grading/public';
 import { PlacementQuestionSchema, type PlacementUnresolvedItem } from '../api/placement-contracts';
@@ -185,6 +186,7 @@ export async function placementAssessmentProgress(tx: Tx, sessionId: string) {
       questionId: receipt.questionId,
       score: receipt.score,
       scoreKind: receipt.scoreKind,
+      notation: await resolveQuestionRenderNotation(tx, receipt.questionId),
       assessment: {
         ...receipt,
         state,
@@ -330,6 +332,7 @@ export async function ensurePlacementAssessment(
       });
       return PlacementQuestionSchema.parse({
         ...selection,
+        notation: await resolveQuestionRenderNotation(tx, selection.questionId),
         assessment: {
           ...receipt,
           state: await getIssuanceState(tx, receipt.issuance_id),
