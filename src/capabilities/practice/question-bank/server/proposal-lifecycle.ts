@@ -12,6 +12,7 @@ import type {
 import { requireLaterProposalCorrection } from '@/kernel/proposals/types';
 
 interface PracticeLifecycleRuntime {
+  acquireProposalDecisionLock: (tx: Tx, proposalId: string) => Promise<void>;
   findExistingRateEvent: (
     tx: Tx,
     proposalId: string,
@@ -66,6 +67,8 @@ export function createPracticeProposalLifecycle(runtime: PracticeLifecycleRuntim
     variantQuestionProposalDismissApplier: async (db, input) => {
       const ownerDb = db as Db;
       const rate = await ownerDb.transaction(async (tx) => {
+        // Same decision lock as the variant accept, so a dismiss and an accept serialize.
+        await runtime.acquireProposalDecisionLock(tx, input.proposalId);
         const rate = await runtime.writeProposalRateEvent(
           tx,
           input.proposalId,
