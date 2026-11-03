@@ -1,11 +1,11 @@
 import { eq } from 'drizzle-orm';
-import { REJUDGE_SINGLETON_SECONDS } from '../jobs/rejudge-config';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { CreateAppealBodySchema } from '../../api/contracts';
+import { REJUDGE_SINGLETON_SECONDS } from '../jobs/rejudge-config';
 import { createNativeAppeal } from './appeal';
 
 /**

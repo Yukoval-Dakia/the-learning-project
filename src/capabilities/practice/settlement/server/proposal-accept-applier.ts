@@ -1,5 +1,7 @@
 // judge_retraction accept 的组合根薄壳：把 ProposalAcceptApplier 的
 // (input, runtime) 形参折成 acceptJudgeRetractionProposal 的实参。
+
+import type { Db } from '@/db/client';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   type ProposalAcceptApplier,
@@ -11,7 +13,6 @@ import {
   type JudgeRetractionApplierOpts,
   acceptJudgeRetractionProposal,
 } from './judge-retraction-applier';
-import type { Db } from '@/db/client';
 
 function inboxView(input: { proposal: ProposalAcceptInput['proposal'] }): ProposalInboxRow {
   const { proposal } = input;
