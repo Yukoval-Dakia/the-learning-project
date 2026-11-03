@@ -33743,7 +33743,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Fenced: maintenance window or contract epoch mismatch */
+            /** @description Fenced (maintenance window or contract epoch mismatch) or a required setting is missing */
             503: {
                 headers: {
                     [name: string]: unknown;
