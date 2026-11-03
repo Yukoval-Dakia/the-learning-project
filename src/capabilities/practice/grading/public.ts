@@ -108,7 +108,7 @@ export { ratingFromCoarseOutcome } from './server/judge-rating';
 export { readJudgeRunPermanent } from './server/judge-run-observation';
 export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
 export { installModelAdmissionPins } from './server/model-admission-pins';
-export { isJudgeRunPending, durablePendingResponse } from './server/review-answer-response';
+export { durablePendingResponse, isJudgeRunPending } from './server/review-answer-response';
 export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-operation';
 
 export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =
