@@ -10,10 +10,11 @@
 //     accept 提示，不替代服务端校验）。
 
 import './response.css';
+import { Camera, CircleAlert } from 'lucide-react';
 import { useRef, useState } from 'react';
 
 import { type UploadedAsset, uploadAsset } from '@/ui/lib/assets';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { Button } from '@/ui-next/public';
 
 import { AttachmentStrip } from './AttachmentStrip';
 import { type EvidenceAttachment, evidenceKindFromMime } from './response-types';
@@ -156,7 +157,7 @@ export function EvidenceComposer({
         slotLabels={slotLabels}
       />
       {!disabled && (
-        <div style={showAddButton ? { marginTop: 'var(--s-3)' } : undefined}>
+        <div className={showAddButton ? 'rs-attach-add' : undefined}>
           <input
             ref={fileRef}
             id={inputId}
@@ -169,21 +170,22 @@ export function EvidenceComposer({
             onChange={(e) => void onFiles(e.target.files)}
           />
           {showAddButton && (
-            <button
-              type="button"
-              className="rs-attach-addbtn btn btn-ghost btn-sm"
+            <Button
+              variant="ghost"
+              size="sm"
+              className="rs-attach-addbtn"
               disabled={uploading}
               onClick={() => fileRef.current?.click()}
             >
-              <LoomIcon name="camera" size={14} />
+              <Camera size={18} aria-hidden="true" />
               {uploading ? '上传中…' : '添加附件'}
-            </button>
+            </Button>
           )}
         </div>
       )}
       {uploadError && (
-        <div className="rs-ev-pending" role="alert" style={{ color: 'var(--again-ink)' }}>
-          <LoomIcon name="alert" size={13} /> {uploadError}
+        <div className="rs-ev-pending rs-ev-error" role="alert">
+          <CircleAlert size={16} aria-hidden="true" /> {uploadError}
         </div>
       )}
     </div>

@@ -1,12 +1,15 @@
 // YUK-1051 — 整页证据查看 modal（本组件族唯一新增 modal，preflight §2）。
 // focus-trap / Escape / 关闭后焦点还到触发元素——全部复用既有 useFocusTrap
 // （CopilotDrawer 同一套）；无 opacity-gated 入场（红线）。
+// The layer is portalled to <body>, outside every page scope, so the scrim carries its own
+// ui-next / M3 scope and the dialog the M3 role bridge.
 
 import './response.css';
+import { X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
-import { IconBtn } from '@/ui/primitives/IconBtn';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
+import { IconButton } from '@/ui-next/public';
 
 import { AssetEvidencePreview } from './AssetEvidencePreview';
 import type { EvidenceKind } from './response-types';
@@ -29,6 +32,8 @@ export function EvidenceLightbox({ open, onClose, assetId, kind, label }: Eviden
           useFocusTrap 的 Escape 处理（同族 modal 先例），不把遮罩当可聚焦控件。 */}
       <div
         className="rs-lightbox-scrim"
+        data-ui-next=""
+        data-un-m3e="practice-foundation"
         onClick={(e) => {
           if (e.target === e.currentTarget) onClose();
         }}
@@ -37,7 +42,7 @@ export function EvidenceLightbox({ open, onClose, assetId, kind, label }: Eviden
             showModal()/close()，与 CSS 驱动 + portal + useFocusTrap 模式不兼容（同
             PfCoach/CopilotDrawer 先例）。 */}
         <div
-          className="rs-lightbox"
+          className="rs-lightbox un-m3e-bridge"
           role="dialog"
           aria-modal="true"
           aria-label={label ?? '证据查看'}
@@ -45,7 +50,12 @@ export function EvidenceLightbox({ open, onClose, assetId, kind, label }: Eviden
         >
           <div className="rs-lightbox-head">
             <span className="rs-lightbox-title">{label ?? '证据'}</span>
-            <IconBtn icon="close" size={16} title="关闭" onClick={onClose} />
+            <IconButton
+              className="un-m3e-control"
+              label="关闭"
+              icon={<X size={24} />}
+              onClick={onClose}
+            />
           </div>
           <div className="rs-lightbox-body">
             <AssetEvidencePreview assetId={assetId} kind={kind} label={label} variant="inline" />

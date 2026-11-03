@@ -5,7 +5,7 @@
 // 保存 / 保存失败·重试」chip 由本组件承载（同文案、同重试交互），新面统一用它。
 
 import './response.css';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { Check, CircleAlert, Clock } from 'lucide-react';
 
 export type SaveState = 'idle' | 'saving' | 'saved' | 'error' | 'conflict';
 
@@ -29,8 +29,13 @@ const STATE_COPY: Record<SaveState, string> = {
 export function SaveStateChip({ state, onRetry, retrying, label }: SaveStateChipProps) {
   if (state === 'error' && onRetry) {
     return (
-      <button type="button" className="rs-save is-error" onClick={onRetry} disabled={retrying}>
-        <LoomIcon name="alert" size={12} />
+      <button
+        type="button"
+        className="rs-save is-error un-hit"
+        onClick={onRetry}
+        disabled={retrying}
+      >
+        <CircleAlert size={16} aria-hidden="true" />
         {retrying ? '重试中…' : (label ?? STATE_COPY.error)}
       </button>
     );
@@ -39,12 +44,13 @@ export function SaveStateChip({ state, onRetry, retrying, label }: SaveStateChip
     <span
       className={`rs-save${state === 'saving' ? ' is-saving' : ''}${state === 'conflict' ? ' is-conflict' : ''}${state === 'error' ? ' is-error' : ''}`}
     >
-      <LoomIcon
-        name={
-          state === 'saved' || state === 'idle' ? 'check' : state === 'saving' ? 'clock' : 'alert'
-        }
-        size={12}
-      />
+      {state === 'saved' || state === 'idle' ? (
+        <Check size={16} aria-hidden="true" />
+      ) : state === 'saving' ? (
+        <Clock size={16} aria-hidden="true" />
+      ) : (
+        <CircleAlert size={16} aria-hidden="true" />
+      )}
       {label ?? STATE_COPY[state]}
     </span>
   );

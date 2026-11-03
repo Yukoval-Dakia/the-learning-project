@@ -4,7 +4,7 @@
 // 纯 UI：只编辑每个 EvidenceAttachment.slot_ids（null = 整组）；持久化由宿主的
 // 草稿/提交契约带走（paper 面把绑定范围展开成各 slot 草稿的 image_refs）。
 
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { Layers } from 'lucide-react';
 
 import { AssetEvidencePreview } from './AssetEvidencePreview';
 import type { EvidenceAttachment } from './response-types';
@@ -33,7 +33,7 @@ export function EvaluationGroupPanel({
   return (
     <div className="rs-group" data-testid="evaluation-group-panel">
       <div className="rs-group-h">
-        <LoomIcon name="layers" size={13} />
+        <Layers size={16} aria-hidden="true" />
         证据归属 · 默认整页绑定全组
       </div>
       {attachments.map((att, i) => {
@@ -51,8 +51,8 @@ export function EvaluationGroupPanel({
           onAttachmentChange(att.asset_id, { ...att, slot_ids: slotIds });
         };
         return (
-          <div key={att.asset_id} style={{ marginTop: 'var(--s-2)' }}>
-            <div className="rs-attach-item" style={{ display: 'inline-flex' }}>
+          <div key={att.asset_id} className="rs-group-item">
+            <div className="rs-attach-item">
               <AssetEvidencePreview
                 assetId={att.asset_id}
                 kind={att.kind}
@@ -65,7 +65,7 @@ export function EvaluationGroupPanel({
             <div className="rs-group-slots" role="group" aria-label={`${name} 的关联题目`}>
               <button
                 type="button"
-                className="rs-group-slot"
+                className="rs-group-slot un-hit"
                 aria-pressed={wholeGroup}
                 disabled={disabled}
                 onClick={() => onAttachmentChange(att.asset_id, { ...att, slot_ids: null })}
@@ -76,7 +76,7 @@ export function EvaluationGroupPanel({
                 <button
                   type="button"
                   key={s.id}
-                  className="rs-group-slot"
+                  className="rs-group-slot un-hit"
                   aria-pressed={!wholeGroup && bound.has(s.id)}
                   disabled={disabled}
                   onClick={() => toggleSlot(s.id)}

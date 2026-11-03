@@ -4,8 +4,18 @@
 // 只在 feedback release 后由 outcome 出现。paper 作答全程只渲 lifecycle，不传
 // releasedOutcome —— 「缓冲反馈」由类型层守住。
 
+import {
+  Check,
+  CircleAlert,
+  Clock,
+  Layers,
+  type LucideIcon,
+  Minus,
+  Pencil,
+  Undo2,
+  X,
+} from 'lucide-react';
 import type { JudgeResultV2T } from '@/core/schema/capability';
-import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 
 import {
   COARSE_OUTCOME_META,
@@ -14,13 +24,13 @@ import {
   type SubmissionLifecycle,
 } from './response-types';
 
-const LIFECYCLE_ICON: Record<SubmissionLifecycle, LoomIconName> = {
-  draft: 'pencil',
-  submitted_pending: 'clock',
-  group_tentative: 'layers',
-  needs_review: 'alert',
-  effective: 'check',
-  superseded: 'reverse',
+const LIFECYCLE_ICON: Record<SubmissionLifecycle, LucideIcon> = {
+  draft: Pencil,
+  submitted_pending: Clock,
+  group_tentative: Layers,
+  needs_review: CircleAlert,
+  effective: Check,
+  superseded: Undo2,
 };
 
 export interface SlotResultBadgeProps {
@@ -43,11 +53,14 @@ export function SlotResultBadge({
   if (lifecycle === 'effective' && releasedOutcome) {
     const om = COARSE_OUTCOME_META[releasedOutcome];
     return (
-      <span className={`badge tone-${om.tone}`} title={anchorTitle}>
-        <LoomIcon
-          name={om.tone === 'good' ? 'check' : om.tone === 'again' ? 'close' : 'minus'}
-          size={12}
-        />
+      <span className="rs-badge" data-tone={om.tone} title={anchorTitle}>
+        {om.tone === 'good' ? (
+          <Check size={14} aria-hidden="true" />
+        ) : om.tone === 'again' ? (
+          <X size={14} aria-hidden="true" />
+        ) : (
+          <Minus size={14} aria-hidden="true" />
+        )}
         {releasedOutcome === 'partial_unknown' && partialUnits?.length
           ? `部分正确（${partialUnits
               .map((unit) => `${unit.correct_count}/${unit.total_count}`)
@@ -56,9 +69,10 @@ export function SlotResultBadge({
       </span>
     );
   }
+  const LifecycleIcon = LIFECYCLE_ICON[lifecycle];
   return (
-    <span className={`badge tone-${meta.tone}`} title={anchorTitle}>
-      <LoomIcon name={LIFECYCLE_ICON[lifecycle]} size={12} />
+    <span className="rs-badge" data-tone={meta.tone} title={anchorTitle}>
+      <LifecycleIcon size={14} aria-hidden="true" />
       {meta.label}
     </span>
   );
