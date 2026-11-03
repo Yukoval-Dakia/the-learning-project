@@ -7,6 +7,7 @@ import { useCallback, useSyncExternalStore } from 'react';
 import type { BlockV1T } from '@/core/schema/blocks';
 import { BlockFailure, BlockFrame, BlockPlaceholder } from './BlockFrame';
 import {
+  diagramUsesOwnColors,
   getDiagramRender,
   getDiagramTheme,
   getServerDiagramRender,
@@ -20,7 +21,13 @@ type DiagramBlockT = Extract<BlockV1T, { kind: 'diagram' }>;
 
 export function DiagramBlock({ block }: { block: DiagramBlockT }): ReactElement {
   const { source, alt } = block;
-  const theme = useSyncExternalStore(subscribeDiagramTheme, getDiagramTheme, getServerDiagramTheme);
+  const pageTheme = useSyncExternalStore(
+    subscribeDiagramTheme,
+    getDiagramTheme,
+    getServerDiagramTheme,
+  );
+  const ownColors = diagramUsesOwnColors(source);
+  const theme = ownColors ? 'light' : pageTheme;
   const subscribe = useCallback(
     (listener: () => void) => subscribeDiagram(theme, source, listener),
     [theme, source],
@@ -31,7 +38,7 @@ export function DiagramBlock({ block }: { block: DiagramBlockT }): ReactElement 
   return (
     <BlockFrame kind="diagram" caption={block.caption} busy={render.status === 'pending'}>
       {render.status === 'ready' ? (
-        <div className="un-blk-canvas">
+        <div className={ownColors ? 'un-blk-canvas un-blk-paper' : 'un-blk-canvas'}>
           <SvgImage src={render.src} alt={alt} width={render.width} height={render.height} />
         </div>
       ) : render.status === 'failed' ? (

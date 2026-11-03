@@ -1,4 +1,9 @@
-import { BLOCK_PLACE_PATTERN, serializeBlockFence } from '@/core/schema/blocks';
+import {
+  BLOCK_PLACE_PATTERN,
+  BLOCK_REF_PATTERN,
+  BLOCK_REF_SCHEME,
+  serializeBlockFence,
+} from '@/core/schema/blocks';
 import { DerivationPolicy, type DerivationPolicyT } from '@/core/schema/derivation-policy';
 import { BLOCK_DRAFT_FENCE_INFO, blockFence } from '@/ui/components/blocks/block-fence';
 import { parseCopilotPrimaryView } from '../primary-view-contract';
@@ -181,36 +186,50 @@ function safeAnchor(text: string, anchor: number): number {
 
 export function composeStreamingReply(
   text: string,
-  blocks: readonly CopilotRunBlock[] | undefined,
+  blocks: readonly CopilotRunBlock[] = [],
 ): string {
   const source = text.replace(OPEN_PLACE_TAIL, '');
-  if (!blocks || blocks.length === 0) return source;
-  const placedRefs = new Set<string>();
-  for (const match of source.matchAll(CODE_OR_PLACE)) {
-    if (match[2]) placedRefs.add(match[2]);
-  }
-  // Anchored blocks first, from the end, so earlier offsets stay valid.
-  let composed = source;
-  const anchored = blocks
-    .filter((block) => !(block.ref && placedRefs.has(block.ref)))
-    .map((block) => ({ block, at: safeAnchor(source, block.anchor) }))
-    .sort((a, b) => b.at - a.at);
-  for (const { block, at } of anchored) {
-    composed = `${composed.slice(0, at)}${fenceOf(block)}${composed.slice(at)}`;
-  }
-  if (placedRefs.size === 0) return composed;
+  if (!source.includes(BLOCK_REF_SCHEME) && blocks.length === 0) return source;
   const byRef = new Map(blocks.filter((block) => block.ref).map((block) => [block.ref, block]));
-  return composed.replace(
-    CODE_OR_PLACE,
-    (match: string, code: string | undefined, ref?: string) => {
-      if (code !== undefined || !ref) return match;
-      const alt = match.slice(2, match.lastIndexOf(']('));
-      const block = byRef.get(ref);
-      return block
-        ? fenceOf(block, alt)
-        : blockFence(BLOCK_DRAFT_FENCE_INFO, JSON.stringify({ title: alt }));
-    },
-  );
+  const matches = [...source.matchAll(CODE_OR_PLACE)].filter((match) => match[2]);
+  const textRefs = new Set(matches.map((match) => match[2]));
+  // A placement the text wrote with a ref that does not resolve (written before the block was
+  // ready, or a made-up token) takes the next block no real ref claims, in stream order: the
+  // picture shows once, where the text put it, and stays there when it turns ready.
+  const adoptable = blocks.filter((block) => !(block.ref && textRefs.has(block.ref)));
+  const placed = new Set<CopilotRunBlock>();
+  const edits: { at: number; remove: number; insert: string }[] = [];
+  for (const match of matches) {
+    const ref = match[2] as string;
+    const alt = match[0].slice(2, match[0].lastIndexOf(']('));
+    const stand = byRef.get(ref) ?? adoptable.find((block) => !placed.has(block));
+    let insert = '';
+    if (stand) {
+      placed.add(stand);
+      insert = fenceOf(stand, alt);
+    } else if (BLOCK_REF_PATTERN.test(ref)) {
+      // A real ref whose ready frame has not arrived yet.
+      insert = blockFence(BLOCK_DRAFT_FENCE_INFO, JSON.stringify({ title: alt }));
+    }
+    // Anything else can never resolve; the server drops it at commit too.
+    edits.push({ at: match.index ?? 0, remove: match[0].length, insert });
+  }
+  for (const block of blocks) {
+    if (placed.has(block)) continue;
+    let at = safeAnchor(source, block.anchor);
+    // Never split a placement the text wrote.
+    const inside = edits.find(
+      (edit) => edit.remove > 0 && at > edit.at && at < edit.at + edit.remove,
+    );
+    if (inside) at = inside.at + inside.remove;
+    edits.push({ at, remove: 0, insert: fenceOf(block) });
+  }
+  // Apply from the end so earlier offsets stay valid.
+  let composed = source;
+  for (const edit of edits.sort((a, b) => b.at - a.at)) {
+    composed = `${composed.slice(0, edit.at)}${edit.insert}${composed.slice(edit.at + edit.remove)}`;
+  }
+  return composed;
 }
 
 export function copilotRunReplyMessageId(runId: string): string {

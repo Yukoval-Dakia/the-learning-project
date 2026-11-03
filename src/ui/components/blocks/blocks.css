@@ -20,6 +20,8 @@
 
   & .un-blk-canvas {
     display: grid;
+    /* One shrinkable track: long draft titles ellipsise instead of overflowing the card. */
+    grid-template-columns: minmax(0, 1fr);
     place-items: center;
     min-height: 120px;
     padding: var(--un-sp-4);

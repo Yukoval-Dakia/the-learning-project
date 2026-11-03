@@ -56,6 +56,15 @@ export function getServerDiagramTheme(): DiagramTheme {
   return 'light';
 }
 
+/**
+ * A source that paints its own nodes (`style … fill:` / `classDef … fill:`) was coloured for paper:
+ * redrawn with dark-theme ink its labels would sit light-on-pastel. Such a diagram keeps the light
+ * palette and is shown on a paper card in both themes, like a figure.
+ */
+export function diagramUsesOwnColors(source: string): boolean {
+  return /^\s*(?:style|classDef)\b[^\n]*\bfill\s*:/m.test(source);
+}
+
 // ── Mermaid config ───────────────────────────────────────────────────────────────────────────
 // System CJK fonts only: the page measures labels with this stack, and the <img> draws them with
 // the same installed fonts. A webfont would be measured in the page but missing inside the image.
