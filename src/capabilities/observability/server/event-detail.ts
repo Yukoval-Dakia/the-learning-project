@@ -6,6 +6,7 @@ import { ApiError } from '@/kernel/http';
 import {
   INTERACTIVE_ARTIFACT_TOOL_NAMES,
   redactInteractiveArtifactToolInput,
+  stripInteractiveAnswerAttributes,
 } from '@/kernel/learning-content';
 import {
   EventCorrectionBodySchema,
@@ -55,7 +56,37 @@ function eventDto(envelope: EnvelopedEvent): Record<string, unknown> {
       };
     }
   }
+  // The artifact create / lifecycle events carry the stored artifact attrs, whose
+  // `html` holds the same answer attributes (row.attrs.html / attrs.html).
+  if (
+    envelope.action === 'experimental:artifact_create' ||
+    envelope.action === 'experimental:artifact_lifecycle'
+  ) {
+    dto.payload = stripArtifactAttrsHtml(dto.payload);
+  }
   return dto;
+}
+
+function stripAttrsHtml(attrs: unknown): unknown {
+  if (attrs === null || typeof attrs !== 'object' || Array.isArray(attrs)) return attrs;
+  const record = attrs as Record<string, unknown>;
+  return typeof record.html === 'string'
+    ? { ...record, html: stripInteractiveAnswerAttributes(record.html) }
+    : record;
+}
+
+function stripArtifactAttrsHtml(payload: unknown): unknown {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+  const record = payload as Record<string, unknown>;
+  const next: Record<string, unknown> = { ...record };
+  if ('attrs' in record) next.attrs = stripAttrsHtml(record.attrs);
+  const row = record.row;
+  if (row !== null && typeof row === 'object' && !Array.isArray(row)) {
+    const rowRecord = row as Record<string, unknown>;
+    next.row =
+      'attrs' in rowRecord ? { ...rowRecord, attrs: stripAttrsHtml(rowRecord.attrs) } : rowRecord;
+  }
+  return next;
 }
 
 export async function readEventDetail(db: Db | Tx, eventId: string): Promise<EventDetail> {

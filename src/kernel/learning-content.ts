@@ -67,8 +67,10 @@ export const INTERACTIVE_ARTIFACT_TOOL_NAMES: ReadonlySet<string> = new Set([
   'update_artifact',
 ]);
 
+// The name must not be preceded by a name character, so `<div/data-answer=…>` and
+// `"x"data-correct=…` (both parsed as attributes by browsers) are caught too.
 const ANSWER_KEY_ATTRIBUTE_PATTERN =
-  /\sdata-(?:copilot-)?answer\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)|\sdata-correct\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
+  /(?<![\w-])data-(?:(?:copilot-)?answer|correct)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
 
 /**
  * Remove answer-key attributes from stored interactive HTML at serve time.
