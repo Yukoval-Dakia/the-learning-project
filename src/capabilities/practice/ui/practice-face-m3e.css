@@ -294,6 +294,9 @@
   /* ═══ Retro (复盘) ═══ */
   & .pf-retro {
     display: grid;
+    /* One shrinkable track: an implicit auto track sizes to the widest nowrap child and
+       pushes the retro past the viewport on phones. */
+    grid-template-columns: minmax(0, 1fr);
     gap: 24px;
     min-width: 0;
   }
@@ -400,6 +403,7 @@
      only rendered while open, so nothing hidden is reachable). */
   & .pf-retro-list {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     padding: 4px;
     border-radius: 24px;
     background: var(--un-md-sys-color-surface-container-lowest);
