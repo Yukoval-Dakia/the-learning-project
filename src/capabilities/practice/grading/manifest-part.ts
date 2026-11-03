@@ -8,18 +8,15 @@ import {
   IssuanceParamsSchema,
   IssuanceStateSchema,
   IssueAssessmentBodySchema,
+  JudgeRunStatusResponseSchema,
   SaveResponseDraftBodySchema,
   SaveResponseDraftResponseSchema,
   StudyReferenceResponseSchema,
   SubmissionCreatedSchema,
 } from '../api/assessment-contracts';
 import { AttemptResponseSchema, CreateAttemptBodySchema } from '../api/contracts';
-// YUK-594 (durable judge main path, W1) — judge_run poll-tier status + 202-pending schemas
-// (live in the db-free judge-run-status module so this eager import stays db-light).
-import {
-  JudgeDurablePendingResponseSchema,
-  JudgeRunStatusResponseSchema,
-} from './server/judge-run-status';
+// The 202-pending schema lives in the db-free judge-run-status module so this eager import stays db-light.
+import { JudgeDurablePendingResponseSchema } from './server/judge-run-status';
 
 export const gradingManifestPart: Omit<CapabilityManifest, 'name' | 'description'> = {
   // YUK-573 — judge 校准观测事件归属（report-only）：sample = 每条复判对照一行

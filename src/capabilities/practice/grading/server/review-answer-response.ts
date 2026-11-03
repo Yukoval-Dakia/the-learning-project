@@ -1,13 +1,13 @@
 import type { CreateAttemptBody } from '../../api/contracts';
 import { ratingFromCoarseOutcome } from './judge-rating';
-import { JUDGE_RUN_TABLE } from './judge-run-status';
+import { JUDGE_RUN_TABLE, judgeRunPollUrl } from './judge-run-status';
 import type { ReviewAnswerResult } from './review-operation';
 
 // Both transports expose the same accepted attempt and durable-pending JSON projection.
 export function projectReviewAnswerResponse(body: CreateAttemptBody, result: ReviewAnswerResult) {
   if (result.kind === 'pending') {
     const eventsUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(result.run_id)}/events`;
-    const pollUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(result.run_id)}/status`;
+    const pollUrl = judgeRunPollUrl(result.run_id);
     return {
       kind: 'pending' as const,
       body: {

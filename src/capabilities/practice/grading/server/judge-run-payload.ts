@@ -14,9 +14,9 @@ import {
   resolveVerdictForAttempt,
   resolveVerdictsForNativeAttempts,
 } from '@/kernel/read-models/assessment-verdict';
+import { JudgeRunTerminalResultSchema } from '../../api/assessment-contracts';
 import { projectEvaluationToJudgeResult } from './judge/evaluation-authority';
 import { ratingFromCoarseOutcome } from './judge-rating';
-import { JudgeRunTerminalResultSchema } from './judge-run-status';
 
 export const NativeJudgeResolutionPayload = JudgeRunTerminalResultSchema.extend({
   version: z.literal(1),
@@ -215,51 +215,17 @@ export async function reconstructDoneFromDomainEvents(
     const [anchor] = attempt.caused_by_event_id
       ? await db.select().from(event).where(eq(event.id, attempt.caused_by_event_id))
       : [];
-    const resolved = anchor
-      ? (await resolveVerdictsForNativeAttempts(db, [anchor])).get(anchor.id)
-      : null;
-    const effective = resolved?.effective;
-    const [activation] =
-      resolved && effective
-        ? await db
-            .select({ payload: event.payload })
-            .from(event)
-            .where(
-              and(
-                eq(event.action, 'experimental:assessment_activation'),
-                eq(event.subject_id, resolved.evaluation_group_id),
-                sql`${event.payload}->>'evaluation_id' = ${effective.evaluation_id}`,
-              ),
-            )
-            .orderBy(desc(event.created_at), desc(event.id))
-            .limit(1)
-        : [];
-    const explicitRating = activation?.payload.user_rating;
-    const currentRating =
-      explicitRating === 'again' || explicitRating === 'hard' || explicitRating === 'good'
-        ? explicitRating
-        : effective
-          ? ratingFromCoarseOutcome(effective.verdict.verdict)
-          : null;
+    const projected = await projectNativeAttemptVerdict(db, anchor);
     const assessment = attempt.payload.assessment;
     return {
       ...attempt.payload,
-      ...(effective?.scoring_basis
-        ? {
-            ...projectEvaluationToJudgeResult(
-              EvaluationRecord.parse(effective.row),
-              effective.scoring_basis,
-            ),
-            status: 'effective',
-            final_rating: currentRating ?? undefined,
-          }
-        : { status: 'review_required', coarse_outcome: 'unsupported', score: null }),
+      ...projected.verdict,
       ...(assessment && typeof assessment === 'object'
         ? {
             assessment: {
               ...assessment,
-              original_evaluation_id: resolved?.original_evaluation_id ?? null,
-              effective_evaluation_id: effective?.evaluation_id ?? null,
+              original_evaluation_id: projected.original_evaluation_id,
+              effective_evaluation_id: projected.effective_evaluation_id,
             },
           }
         : {}),
@@ -362,6 +328,86 @@ export async function reconstructDoneFromDomainEvents(
     ...(evidenceJson !== undefined ? { evidence_json: evidenceJson } : {}),
     ...(capabilityRef !== undefined ? { capability_ref: capabilityRef } : {}),
     ...(route !== undefined ? { route } : {}),
+  };
+}
+
+type EventRow = typeof event.$inferSelect;
+
+/**
+ * A native attempt's current verdict as terminal judge fields (appeal, rejudge and retraction
+ * resolve to the effective evaluation). Durable resolution replay and the synchronous recovery
+ * read both project through here so the two settled shapes cannot drift.
+ */
+async function projectNativeAttemptVerdict(db: Db | Tx, anchor: EventRow | undefined) {
+  const resolved = anchor
+    ? (await resolveVerdictsForNativeAttempts(db, [anchor])).get(anchor.id)
+    : undefined;
+  const effective = resolved?.effective;
+  const [activation] =
+    resolved && effective
+      ? await db
+          .select({ payload: event.payload })
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'experimental:assessment_activation'),
+              eq(event.subject_id, resolved.evaluation_group_id),
+              sql`${event.payload}->>'evaluation_id' = ${effective.evaluation_id}`,
+            ),
+          )
+          .orderBy(desc(event.created_at), desc(event.id))
+          .limit(1)
+      : [];
+  const explicitRating = activation?.payload.user_rating;
+  const currentRating =
+    explicitRating === 'again' || explicitRating === 'hard' || explicitRating === 'good'
+      ? explicitRating
+      : effective
+        ? ratingFromCoarseOutcome(effective.verdict.verdict)
+        : null;
+  return {
+    resolved,
+    verdict: effective?.scoring_basis
+      ? {
+          ...projectEvaluationToJudgeResult(
+            EvaluationRecord.parse(effective.row),
+            effective.scoring_basis,
+          ),
+          status: 'effective' as const,
+          final_rating: currentRating ?? undefined,
+        }
+      : { status: 'review_required' as const, coarse_outcome: 'unsupported', score: null },
+    original_evaluation_id: resolved?.original_evaluation_id ?? null,
+    effective_evaluation_id: effective?.evaluation_id ?? null,
+  };
+}
+
+/**
+ * Terminal payload for a native submission judged synchronously (no durable run). The attempt
+ * anchor is written in the same transaction that records review_required or activates the
+ * candidate, so its presence is the synchronous response's "judged" fact. Returns null before
+ * that commit, or while paper feedback is still withheld.
+ */
+export async function reconstructDoneFromSyncAttempt(database: Db | Tx, submissionId: string) {
+  const [anchor] = await database
+    .select()
+    .from(event)
+    .where(eq(event.id, `evt_assessment_${submissionId}`));
+  if (!anchor) return null;
+  const projected = await projectNativeAttemptVerdict(database, anchor);
+  const resolved = projected.resolved;
+  if (!resolved?.original_evaluation_id || (!resolved.original && !resolved.effective)) return null;
+  return {
+    attempt_event_id: anchor.id,
+    judge_event_id: null,
+    ...projected.verdict,
+    assessment: {
+      submission_id: submissionId,
+      evaluation_group_id: resolved.evaluation_group_id,
+      candidate_id: resolved.original_evaluation_id,
+      original_evaluation_id: projected.original_evaluation_id,
+      effective_evaluation_id: projected.effective_evaluation_id,
+    },
   };
 }
 

@@ -30,6 +30,7 @@ import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { seedHistoricalAssessmentIssuance } from '../../../../../tests/fixtures/historical-assessment-issuance';
 
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { JudgeRunTerminalResultSchema } from '../../api/assessment-contracts';
 import { GET as pollStatus } from '../api/judge-run-status-route';
 import { createAttempt } from '../api/submit';
 import { RECONCILE_STALL_MS, reconcileStalledJudgeAttempts } from '../jobs/judge_pending_reconcile';
@@ -50,7 +51,6 @@ import * as dispatch from './judge-run-dispatch';
 import { readJudgeRunPermanent } from './judge-run-observation';
 import type { NativeJudgeRunJobData } from './judge-run-payload';
 import { NativeJudgeResolutionPayload, reconstructDoneFromDomainEvents } from './judge-run-payload';
-import { JudgeRunTerminalResultSchema } from './judge-run-status';
 
 async function fixture(knowledgeIds: string[] = []) {
   const db = testDb();
