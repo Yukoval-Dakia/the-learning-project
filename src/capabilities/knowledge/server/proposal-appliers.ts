@@ -49,13 +49,12 @@ async function acceptKnowledgeProposal(
     };
   }
 
-  const result = await acceptProposal(db, proposalId);
-  await ownerRuntime.recordProposalDecisionSignal(
-    db,
-    signalProposal(proposal),
-    'accept',
-    input.user_note,
-  );
+  // The decision template owns the rate write, the decision lock and the
+  // after-commit signal; the applier only supplies the signal source and note.
+  const result = await acceptProposal(db, proposalId, {
+    proposal: signalProposal(proposal),
+    userNote: input.user_note,
+  });
   return { kind, result: { kind, result } };
 }
 
@@ -79,19 +78,14 @@ export const knowledgeEdgeProposalAcceptApplier: ProposalAcceptApplier = async (
 };
 
 export const knowledgeNodeProposalDismissApplier: ProposalDismissApplier = async (db, input) => {
-  const ownerDb = db as Db;
-  const { idempotent } = await dismissProposal(ownerDb, input.proposalId, input.user_note);
-  if (!idempotent) {
-    await ownerRuntime.recordProposalDecisionSignal(
-      ownerDb,
-      signalProposal(input.proposal),
-      'dismiss',
-      input.user_note,
-    );
-  }
+  const { idempotent, rate_event_id } = await dismissProposal(
+    db as Db,
+    input.proposalId,
+    input.user_note,
+  );
   return {
     kind: input.proposal.payload.kind,
-    result: { kind: 'dismissed', rate_event_id: null, ...(idempotent ? { idempotent: true } : {}) },
+    result: { kind: 'dismissed', rate_event_id, ...(idempotent ? { idempotent: true } : {}) },
   };
 };
 

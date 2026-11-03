@@ -244,6 +244,82 @@ async function assertBlocksOnGlobalLockHoldingNoAdvisory<T>(
 }
 
 /**
+ * Like {@link assertBlocksOnGlobalLockHoldingNoAdvisory}, but for the proposal accept
+ * path: while the tx waits on G it may hold exactly the proposal_decision advisory and
+ * the propose event row FOR UPDATE (RowShareLock on `event`), which the shared decision
+ * template acquires before the merge's G — mutation rows (question/knowledge) must stay
+ * unlocked.
+ */
+async function assertBlocksOnGlobalLockHoldingDecisionLock<T>(
+  contended: () => Promise<T>,
+): Promise<T> {
+  const url = process.env.TEST_DATABASE_URL;
+  if (!url) throw new Error('TEST_DATABASE_URL not set — globalSetup did not run');
+  const holder = postgres(url, { max: 1 });
+  let release: (() => void) | undefined;
+  let drain = async () => {};
+  try {
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let acquired!: () => void;
+    const acquiredP = new Promise<void>((r) => {
+      acquired = r;
+    });
+    const holdTx = holder.begin(async (s) => {
+      await s.unsafe(GLOBAL_LOCK_SQL);
+      acquired();
+      await released;
+    });
+    drain = async () => {
+      await Promise.allSettled([holdTx]);
+    };
+    await acquiredP;
+
+    let settled = false;
+    const contendedP = contended().finally(() => {
+      settled = true;
+    });
+    drain = async () => {
+      await Promise.allSettled([holdTx, contendedP]);
+    };
+    await new Promise((r) => setTimeout(r, LOCK_PROBE_MS));
+    expect(settled).toBe(false);
+
+    const rows = (await testDb().execute(sql`
+      SELECT w.pid,
+             (SELECT count(*)::int FROM pg_locks g
+                WHERE g.pid = w.pid AND g.locktype = 'advisory' AND g.granted) AS granted_advisory,
+             (SELECT count(*)::int FROM pg_locks g
+                WHERE g.pid = w.pid AND g.granted
+                  AND g.locktype = 'relation'
+                  AND g.mode <> 'AccessShareLock'
+                  AND g.relation <> 'event'::regclass::oid) AS granted_mutation_rel
+        FROM pg_locks w
+       WHERE w.locktype = 'advisory' AND NOT w.granted
+         AND w.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+    `)) as unknown as Array<{
+      pid: number;
+      granted_advisory: number;
+      granted_mutation_rel: number;
+    }>;
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const row of rows) {
+      expect(row.granted_advisory).toBe(1);
+      expect(row.granted_mutation_rel).toBe(0);
+    }
+
+    release?.();
+    await holdTx;
+    return await contendedP;
+  } finally {
+    release?.();
+    await drain();
+    await holder.end({ timeout: 5 });
+  }
+}
+
+/**
  * Like {@link assertBlocksOnGlobalLock}, but proves the G-FIRST order for a caller that
  * LEGITIMATELY holds per-entity idempotency ADVISORY locks before G (the revert endpoint holds
  * copilot_revert + session-selection). So it does NOT require zero advisory locks; it requires
@@ -473,7 +549,7 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
       },
       reasoning: 'Verify real merge acceptance lock order against learning-state writers.',
     });
-    const result = await assertBlocksOnGlobalLockHoldingNoAdvisory(() =>
+    const result = await assertBlocksOnGlobalLockHoldingDecisionLock(() =>
       acceptProposal(testDb(), proposal),
     );
     expect(result).toEqual({ kind: 'merge_applied', into_id: into, archived_ids: [from] });

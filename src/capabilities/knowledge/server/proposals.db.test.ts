@@ -1336,9 +1336,8 @@ describe('acceptProposal — high-tier mutations', () => {
   });
 
   // Codex P1-F — concurrent double-accept must not produce duplicate
-  // knowledge nodes / duplicate rate=accept events. assertNotAlreadyRated +
-  // mutation apply must share a transaction with SELECT … FOR UPDATE on the
-  // propose event row, otherwise both callers pass the pre-check and apply.
+  // knowledge nodes / duplicate rate=accept events. The shared decision lock
+  // serializes both accepts; the second one replays the recorded rate.
   it('concurrent double-accept: exactly one apply succeeds', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'seed:yuwen:shici', domain: 'yuwen' });
@@ -1358,10 +1357,10 @@ describe('acceptProposal — high-tier mutations', () => {
 
     const fulfilled = results.filter((r) => r.status === 'fulfilled');
     const rejected = results.filter((r) => r.status === 'rejected');
-    // Exactly one succeeds; the other sees the rate event already written and
-    // throws not-pending.
-    expect(fulfilled).toHaveLength(1);
-    expect(rejected).toHaveLength(1);
+    // Both settle: the loser waits on the decision lock, then replays the
+    // recorded accept instead of applying a second time.
+    expect(rejected).toHaveLength(0);
+    expect(fulfilled).toHaveLength(2);
 
     // Exactly one new knowledge node from this proposal (not two).
     // proposed_by_ai=true filters out the seed knowledge nodes.

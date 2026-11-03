@@ -8,7 +8,11 @@ import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { getCorrectionStatus, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { acquireProposalDecisionLock, findExistingRateEvent } from './applier-helpers';
+import {
+  type ExistingRateDecision,
+  acquireProposalDecisionLock,
+  findExistingRateEvent,
+} from './applier-helpers';
 import {
   type ProposalSignalSource,
   ensureProposalDecisionSignal,
@@ -23,6 +27,8 @@ export type ProposalSignalTiming = 'in_transaction' | 'after_commit';
 export interface ProposalRateWrite {
   /** Pre-minted id, for same-transaction rows that cite the rate as caused_by. */
   readonly id?: string;
+  /** The rating this write records; defaults to the plan's requested rating. */
+  readonly rating?: ExistingRateDecision;
   /** Shared clock with the owner's same-transaction events; defaults to now. */
   readonly created_at?: Date;
   /** Owner fields stored beside `rating` and the learner's `user_note`. */
@@ -60,6 +66,13 @@ export interface ProposalAcceptPlan<TResult, TPrepared> {
   readonly proposal: ProposalSignalSource;
   readonly userNote?: string;
   readonly signal: ProposalSignalTiming;
+  /**
+   * The decision this accept requests. The replay condition is "the recorded
+   * rating equals this one"; a different recorded decision is a 409. Defaults to
+   * 'accept' — owners with multi-decision accepts (knowledge_edge reverse /
+   * change_type) pass the requested rating here.
+   */
+  readonly rating?: ExistingRateDecision;
   /** Public result rebuilt from the recorded accept rate; the kernel reconciles the signal first. */
   replay(rate: RecordedProposalRate): Promise<TResult>;
   /**
@@ -110,7 +123,7 @@ function correctedAccept(proposalId: string, state: string): ApiError {
 async function writeRateEvent(
   tx: Tx,
   proposalId: string,
-  rating: 'accept' | 'dismiss',
+  rating: ExistingRateDecision,
   userNote: string | undefined,
   rate: ProposalRateWrite = {},
 ): Promise<string> {
@@ -141,6 +154,7 @@ export async function runProposalAccept<TResult, TPrepared = undefined>(
   proposalId: string,
   plan: ProposalAcceptPlan<TResult, TPrepared>,
 ): Promise<ProposalAcceptRun<TResult>> {
+  const requestedRating: ExistingRateDecision = plan.rating ?? 'accept';
   const replayed = async (rate: RecordedProposalRate): Promise<ProposalAcceptRun<TResult>> => {
     await ensureProposalDecisionSignal(db, plan.proposal, 'accept', plan.userNote);
     return { outcome: 'replayed', result: await plan.replay(rate) };
@@ -149,12 +163,12 @@ export async function runProposalAccept<TResult, TPrepared = undefined>(
   // Cheap short-circuit; the transaction re-checks under the decision lock.
   const recorded = await findExistingRateEvent(db, proposalId);
   if (recorded) {
-    if (recorded.decision !== 'accept') throw conflictWith(proposalId, recorded);
+    if (recorded.decision !== requestedRating) throw conflictWith(proposalId, recorded);
     return replayed(recorded);
   }
 
   const acceptable = (locked: LockedDecision): LockedDecision => {
-    if (locked.status === 'decided' && locked.rate.decision !== 'accept') {
+    if (locked.status === 'decided' && locked.rate.decision !== requestedRating) {
       throw conflictWith(proposalId, locked.rate);
     }
     if (locked.status === 'corrected') throw correctedAccept(proposalId, locked.state);
@@ -182,7 +196,13 @@ export async function runProposalAccept<TResult, TPrepared = undefined>(
           if (rateWrites > 1) {
             throw new Error(`accept effect for proposal ${proposalId} wrote a second rate`);
           }
-          return writeRateEvent(tx, proposalId, 'accept', plan.userNote, rate);
+          return writeRateEvent(
+            tx,
+            proposalId,
+            rate?.rating ?? requestedRating,
+            plan.userNote,
+            rate,
+          );
         },
       },
       prepared,

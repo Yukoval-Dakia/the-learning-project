@@ -273,7 +273,12 @@ edge-evidence 版 SHA-256
   （probe-lifecycle.ts:648），发布订阅 `servePublishedProbe` 先锁题行（:207）再取
   probe-serve-cap（:209），probe-serve-cap 之后各路径只锁本事务新插入、他人不可见的题行；write_quiz →
   proposal_decision(sorted)；proposal_decision → knowledge:create（learning_item
-  接受，learning-intent.ts）；proposal_decision → placement-supply（record_promotion
+  接受，learning-intent.ts）；proposal_decision → 提议事件行 FOR UPDATE → [merge 时
+  G → knowledge 行/knowledge_edge advisory]（knowledge_node / knowledge_mutation 接受，
+  capabilities/knowledge/server/proposals.ts；驳回只到 proposal_decision；stale 回滚
+  marker 走 proposal_decision → 提议事件行）；proposal_decision → knowledge 端点行
+  FOR UPDATE NOWAIT → knowledge_edge advisory（knowledge_edge 接受/reverse/change_type
+  与 supersede，edge-proposal-accept.ts）；proposal_decision → placement-supply（record_promotion
   接受，legacy-record-appliers.ts；variant_question 接受，question-bank proposal-appliers.ts）；proposal_decision →
   submit/save request（`hashtext(request_id)`）→ 草稿/题目行（edit_request 接受经写守卫，裁决锁是这些
   事务的第一把锁）；note_refine effect → product；paper-native →
