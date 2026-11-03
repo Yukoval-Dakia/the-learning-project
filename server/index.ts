@@ -191,7 +191,7 @@ async function startInProcessWorker(): Promise<void> {
 async function reportConfigCompletenessBeforeServe(): Promise<void> {
   const [{ db }, { reportConfigCompleteness }] = await Promise.all([
     import('@/db/client'),
-    import('@/server/config/config-completeness'),
+    import('@/kernel/config-completeness'),
   ]);
   await reportConfigCompleteness(db, 'api');
 }

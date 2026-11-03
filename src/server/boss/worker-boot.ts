@@ -34,7 +34,7 @@ export async function bootWorker(options: BootWorkerOptions = {}): Promise<void>
   const [{ db }, { startBossWorker }, { reportConfigCompleteness }] = await Promise.all([
     import('@/db/client'),
     import('@/server/boss/start-worker'),
-    import('@/server/config/config-completeness'),
+    import('@/kernel/config-completeness'),
   ]);
   await reportConfigCompleteness(db, 'worker');
   try {

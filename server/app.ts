@@ -6,6 +6,7 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
+import { checkConfigCompleteness } from '@/kernel/config-completeness';
 import {
   ApiRouteContractError,
   type CapabilityManifest,
@@ -14,7 +15,6 @@ import {
   validateComposition,
 } from '@/kernel/manifest';
 import { generateOpenApiDocument } from '@/kernel/openapi';
-import { missingRequiredConfig } from '@/server/config/config-completeness';
 import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
@@ -191,7 +191,7 @@ export function buildHonoApp(
   // so a release that drops one fails its readiness probe instead of reaching a learner.
   app.get('/api/ready', async (c) => {
     const gate = await epochGate();
-    const missingConfig = missingRequiredConfig();
+    const { missing: missingConfig } = checkConfigCompleteness();
     const ready = gate.runnable && missingConfig.length === 0;
     return c.json(
       {
