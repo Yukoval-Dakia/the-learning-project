@@ -442,10 +442,7 @@ function assertNoShadowedRoutes(capabilities: readonly CapabilityManifest[]): vo
 const knownProposalKinds: ReadonlySet<string> = new Set(aiProposalKinds);
 const acceptSupportedKindSet: ReadonlySet<string> = new Set(acceptSupportedProposalKinds);
 
-/**
- * 组合期校验：包名及各类声明（含 UI page）全局唯一，冲突即抛错；每个 proposal kind
- * 恰好一个 owner，且声明了 accept ⟺ 强度不是 C。
- */
+/** 完整组合根才能判定：词表里每个 proposal kind 都有 owner 声明。 */
 // Completeness needs the whole composition root; validateComposition also runs on partial roots in tests.
 export function assertProposalKindsOwned(capabilities: CapabilityManifest[]): void {
   const owned = new Set(
@@ -458,6 +455,10 @@ export function assertProposalKindsOwned(capabilities: CapabilityManifest[]): vo
   }
 }
 
+/**
+ * 组合期校验：包名及各类声明（含 UI page）全局唯一，冲突即抛错；声明的 proposal kind
+ * 在词表内、至多一个 owner，且声明了 accept ⟺ 强度不是 C。完整性见 assertProposalKindsOwned。
+ */
 export function validateComposition(capabilities: CapabilityManifest[]): void {
   const names = new Set<string>();
   for (const cap of capabilities) {
