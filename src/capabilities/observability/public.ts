@@ -28,6 +28,11 @@ export {
   EventDetailResponseSchema,
   EventParamsSchema,
 } from './api/event-contracts';
+export {
+  controlWriteHttpOutcome,
+  parseTraitJournalLimit,
+  traitWriteHttpOutcome,
+} from './api/subjects-write-http';
 export type {
   AdminConfigCatalogModelRow,
   AdminConfigProviderAuth,
