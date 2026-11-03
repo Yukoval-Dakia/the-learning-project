@@ -6,6 +6,9 @@
 // (domain reply first, public REPLY/DONE or FAILED projection second) so a
 // projection failure is repairable without re-running paid work. Live progress
 // publishes only while no cancel request and no committed outcome marker exist.
+// The pre-start cancelled terminal is shared with API Stop, so its marker and
+// FAILED frame come from `writeCancelledBeforeStartTerminal` in
+// copilot-run-cancellation.
 //
 // The execution owner feeds its final outcome in here; it never appends terminal
 // job_events itself.
@@ -21,7 +24,9 @@ import { writeCopilotReply } from '@/capabilities/copilot/server/conversation-wr
 import { DURABLE_COPILOT_EXECUTION_BUDGET } from '@/capabilities/copilot/server/copilot-execution';
 import {
   type PersistCopilotRunCancellationArgs,
+  type WriteJobEventFn,
   persistCopilotRunCancellationMarker,
+  writeCancelledBeforeStartTerminal,
 } from '@/capabilities/copilot/server/copilot-run-cancellation';
 import { acquireCopilotExecutionSettlementLock } from '@/capabilities/copilot/server/copilot-run-coordination';
 import { selectActorRef } from '@/capabilities/copilot/server/copilot-run-input';
@@ -40,7 +45,7 @@ import {
   type CopilotRunJobData,
   withCopilotDurableDispatchLock,
 } from '@/capabilities/copilot/server/durable-dispatch';
-import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
+import { durableCheckpointPayload } from '@/capabilities/copilot/server/materializing-tools';
 import { parseCopilotModeState } from '@/capabilities/copilot/server/mode-completion';
 import {
   CopilotPrimaryViewSchema,
@@ -48,12 +53,7 @@ import {
 } from '@/capabilities/copilot/server/reply-finalization';
 import type { CopilotPrimaryView } from '@/capabilities/copilot/server/turns';
 import type { Db, Tx } from '@/db/client';
-import { event, job_events } from '@/db/schema';
-import {
-  COPILOT_ASK_ACTIONS,
-  COPILOT_CHIP_TRIGGER_ACTION,
-  COPILOT_USER_ASK_ACTION,
-} from '@/kernel/events/copilot-actions';
+import { job_events } from '@/db/schema';
 import { writeJobEvent } from '@/kernel/job-events';
 import {
   type BossJobObservation,
@@ -104,8 +104,6 @@ interface FailedTerminalProjection {
   publicProse?: CopilotPublicProse;
 }
 
-type WriteJobEventFn = (tx: Db | Tx, input: Parameters<typeof writeJobEvent>[1]) => Promise<number>;
-
 type ClaimCopilotExecutionFenceResult =
   | { outcome: 'claimed' }
   | { outcome: 'existing' }
@@ -144,18 +142,9 @@ export async function markCopilotRunStarted(
       .orderBy(asc(job_events.id));
     if (hasCopilotSettlementTerminal(events)) return { outcome: 'terminal', events };
     if (hasCancelRequest(events)) {
-      await persistPreExecutionCancellation(tx, runId);
-      await options.beforeCancelled?.(tx);
-      await write(tx, {
-        business_table: COPILOT_RUN_TABLE,
-        business_id: runId,
-        event_type: COPILOT_RUN_EVENTS.FAILED,
-        payload: {
-          reason: 'cancelled',
-          cancelled_before_start: true,
-          ...(await cancellationPublicPayload(tx, runId)),
-          ...(await durableCheckpointPayload(tx, runId)),
-        },
+      await writeCancelledBeforeStartTerminal(tx, runId, {
+        beforeTerminal: options.beforeCancelled,
+        writeJobEventFn: write,
       });
       return { outcome: 'cancelled' };
     }
@@ -200,18 +189,9 @@ export async function claimCopilotExecutionFence(
       return { outcome: 'existing' };
     }
     if (hasCancelRequest(events)) {
-      await persistPreExecutionCancellation(tx, runId);
-      await options.beforeCancelled?.(tx);
-      await write(tx, {
-        business_table: COPILOT_RUN_TABLE,
-        business_id: runId,
-        event_type: COPILOT_RUN_EVENTS.FAILED,
-        payload: {
-          reason: 'cancelled',
-          cancelled_before_start: true,
-          ...(await cancellationPublicPayload(tx, runId)),
-          ...(await durableCheckpointPayload(tx, runId)),
-        },
+      await writeCancelledBeforeStartTerminal(tx, runId, {
+        beforeTerminal: options.beforeCancelled,
+        writeJobEventFn: write,
       });
       return { outcome: 'cancelled' };
     }
@@ -223,28 +203,6 @@ export async function claimCopilotExecutionFence(
       payload: { execution_fence: 'at_most_once' },
     });
     return { outcome: 'claimed' };
-  });
-}
-
-async function cancellationPublicPayload(tx: Tx, runId: string): Promise<Record<string, unknown>> {
-  const marker = await findPersistedDurableReply(tx, runId);
-  return marker?.publicProse ? { public_prose: marker.publicProse, reply_md: marker.replyMd } : {};
-}
-
-async function persistPreExecutionCancellation(tx: Tx, runId: string): Promise<void> {
-  await acquireCopilotExecutionSettlementLock(tx, runId);
-  const [ask] = await tx
-    .select({ sessionId: event.session_id, action: event.action })
-    .from(event)
-    .where(eq(event.id, runId))
-    .limit(1);
-  if (!ask?.sessionId || !(COPILOT_ASK_ACTIONS as readonly string[]).includes(ask.action)) return;
-  if (await findPersistedDurableReply(tx, runId)) return;
-  await persistCopilotRunCancellationMarker(tx, {
-    runId,
-    sessionId: ask.sessionId,
-    actorRef: ask.action === COPILOT_CHIP_TRIGGER_ACTION ? 'agent:copilot_chip' : 'agent:copilot',
-    checkpointSafe: ask.action === COPILOT_USER_ASK_ACTION,
   });
 }
 
@@ -276,34 +234,6 @@ async function withinExistingOrNewTransaction<T>(
   run: (tx: Tx) => Promise<T>,
 ): Promise<T> {
   return isRootDb(database) ? database.transaction(run) : run(database);
-}
-
-/**
- * Revert-anchor policy shared by live output and repair: only an ask-only turn with
- * no materializing tool call gets `checkpoint_event_id`; a failed probe suppresses
- * the anchor instead of guessing.
- */
-async function durableCheckpointPayload(
-  db: Db | Tx,
-  runId: string,
-): Promise<Record<string, string>> {
-  let turnMaterialized: boolean;
-  try {
-    const [root] = await db
-      .select({ action: event.action })
-      .from(event)
-      .where(eq(event.id, runId))
-      .limit(1);
-    if (root?.action !== COPILOT_USER_ASK_ACTION) return {};
-    turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [runId])).has(runId);
-  } catch (probeErr) {
-    console.error('[copilot_run] materializing-tool probe failed; suppressing revert anchor', {
-      runId,
-      error: probeErr,
-    });
-    turnMaterialized = true;
-  }
-  return turnMaterialized ? {} : { checkpoint_event_id: runId };
 }
 
 /**
