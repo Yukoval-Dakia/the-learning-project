@@ -10,7 +10,7 @@ import { JudgeKind as JudgeKindSchema, Rubric } from '@/core/schema/business';
 import type { SubjectProfile } from '@/subjects/profile';
 
 // `JudgeKind` is the bare union declared in the judges barrel
-// (`@/capabilities/practice/server/judge`). Re-declaring the type-only alias here — instead of
+// (`@/capabilities/practice/grading/server/judge`). Re-declaring the type-only alias here — instead of
 // importing it — keeps this leaf free of any value edge to the barrel. Kept in
 // lockstep with the barrel's `JudgeKind` union.
 export type JudgeRoute =

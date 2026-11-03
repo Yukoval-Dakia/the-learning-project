@@ -1,7 +1,7 @@
 // 作答与判分 owner 的稳定业务操作。practice 内其它 owner 只经本文件引用本 owner
 // （`pnpm audit:practice-subowners`）；根 `public.ts` 按名字转出。
-// 根 barrel 的静态加载链经过这里（迁移 bundle 不得引入 SDK）：静态导出只放原本就在该链上的
-// 模块；作答复习、DBOS judge 投递与对账这几条链只在调用时加载。
+// 根 barrel 的静态加载链经过这里（迁移 bundle 不得引入 SDK）：静态导出只放不带 provider SDK
+// 的模块；作答复习、DBOS judge 投递与对账这几条链只在调用时加载。
 
 export { readJudgeCalibrationConfig } from './jobs/judge-calibration-config';
 export { normalizeReviewSubmitActivityRef } from './server/activity-ref';

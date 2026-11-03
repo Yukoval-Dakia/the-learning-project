@@ -35,7 +35,7 @@ import { AssessmentAttemptCapture } from '../assessment/capture';
 
 /**
  * The frozen judge input — byte-for-byte the `submit` block of `JudgeRunJobData`
- * (capabilities/practice/jobs/judge_run.ts). Deliberately loose: the worker re-validates
+ * (capabilities/practice/grading/jobs/judge_run.ts). Deliberately loose: the worker re-validates
  * each part with its owning schema; re-declaring those trees here would be the double-write
  * `judge-run-payload.ts` exists to avoid. Stored verbatim so the sweeper re-enqueues it
  * unchanged and a recovered run judges the face the learner actually answered.

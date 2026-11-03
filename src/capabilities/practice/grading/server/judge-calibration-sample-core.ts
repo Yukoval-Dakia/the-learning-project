@@ -38,13 +38,13 @@ export const JUDGE_CALIBRATION_RUN_SUMMARY_ACTION = 'experimental:judge_calibrat
 export const JUDGE_CALIBRATION_ACTOR = 'judge_calibration';
 
 // The LLM-backed judge routes worth double-judging (MF4① whitelist). Consumes
-// the canonical `MODEL_BACKED_JUDGE_ROUTES` predicate (@/capabilities/practice/server/judge,
+// the canonical `MODEL_BACKED_JUDGE_ROUTES` predicate (@/capabilities/practice/grading/server/judge,
 // route-resolve.ts) instead of a locally-owned duplicate —
 // fixed a drift where this module's own copy omitted `unit_dimension` (its
 // LLM fallback route), silently excluding it from calibration sampling.
 // The routes whose invoker dispatch threads student_image_refs (photo answers).
 // OCR minor (PR #1056): this used to be a locally-owned Set duplicating the
-// canonical `IMAGE_CONSUMING_JUDGE_ROUTES` (@/capabilities/practice/server/judge,
+// canonical `IMAGE_CONSUMING_JUDGE_ROUTES` (@/capabilities/practice/grading/server/judge,
 // route-resolve.ts) — same double-write drift risk as the MODEL_BACKED_ROUTES
 // fix above. Consume the shared predicate instead of a local copy.
 const VISION_ROUTES: Set<string> = IMAGE_CONSUMING_JUDGE_ROUTES;

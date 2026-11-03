@@ -2,7 +2,7 @@ import type { z } from 'zod';
 
 import type { Provider } from '@/ai/registry';
 // the route resolver now lives in the dependency-light
-// leaf `@/capabilities/practice/server/judge/route-resolve` (see that file's header for the build
+// leaf `@/capabilities/practice/grading/server/judge/route-resolve` (see that file's header for the build
 // regression it fixes). Re-exported below so this module's public surface is
 // unchanged; existing importers keep working.
 import {
@@ -262,7 +262,7 @@ function nonEmpty(values: string[] | undefined): string[] {
   return (values ?? []).map((v) => v.trim()).filter((v) => v.length > 0);
 }
 
-// `resolveQuestionJudgeRoute` moved to `@/capabilities/practice/server/judge/route-resolve` (F0,
+// `resolveQuestionJudgeRoute` moved to `@/capabilities/practice/grading/server/judge/route-resolve` (F0,
 // PR #309 round-3) and is re-exported at the top of this file. The private
 // helpers it used (`parseRoute` / `isPreferred`) moved with it.
 
