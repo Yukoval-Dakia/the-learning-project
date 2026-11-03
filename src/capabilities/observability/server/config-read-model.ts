@@ -50,8 +50,6 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   MISCONCEPTION_PROMOTE_ENABLED: 'src/capabilities/agency/server/misconception-promote.ts',
   MISCONCEPTION_HARD_CONFIRM_ENABLED: 'src/capabilities/agency/server/misconception-promote.ts',
   QUESTION_SUPPLY_REFILL_ENABLED: 'src/capabilities/practice/supply/server/refill.ts',
-  CONFUSABLE_CONTRAST_ENABLED:
-    'src/capabilities/practice/supply/server/confusable-contrast-discovery.ts',
   JUDGE_CALIBRATION_SAMPLING_ENABLED:
     'src/capabilities/practice/grading/jobs/judge_calibration_sample.ts',
   WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: 'src/capabilities/ingestion/server/workflow-judge-config.ts',

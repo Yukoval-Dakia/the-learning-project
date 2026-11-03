@@ -17,7 +17,7 @@ import { event } from '@/db/schema';
 export const JUDGE_CALIBRATION_MIN_N = 5;
 const RECENT_SAMPLES_LIMIT = 20;
 const RECENT_RUNS_LIMIT = 10;
-/** Bound the sample scan; nightly batches accumulate indefinitely. */
+/** Bound the sample scan; sampled batches accumulate indefinitely. */
 const SAMPLE_WINDOW_DAYS = 90;
 
 const SAMPLE_ACTION = 'experimental:judge_calibration_sample';

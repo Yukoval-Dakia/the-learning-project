@@ -1,18 +1,13 @@
-// Confusable-pair contrast-question supply discovery.
-// Scans the confusable_with misconception mesh and emits one supply target per confusable
-// KC pair: the learner repeatedly confuses A and B, no contrast item probes that boundary,
-// so acquire one through quiz_gen. This source does not pick practice order, call the LLM,
-// or insert questions; dispatcher.ts owns dispatch and the paid-acquisition throttle.
+// Confusable-pair contrast gaps, one of the gap sources question_supply_nightly merges with
+// the coverage scan. Scans the confusable_with misconception mesh and emits one supply target
+// per confusable KC pair: the learner repeatedly confuses A and B and no contrast item probes
+// that boundary. Targets route like any objective gap (route-planner objectiveOnly) and share
+// the nightly per-run cap and the dispatcher's fingerprint cooldown.
 // Constraints:
-// - dark behind CONFUSABLE_CONTRAST_ENABLED (default off): flag-off is a no-op;
-// - emits targets only and never enqueues quiz_gen directly;
-// - edge confidence never feeds priority or difficulty; a generated contrast item takes
-// an independent b-anchor (ItemPriorTask) and never inherits edge confidence;
-// - propose-only: quiz_gen persists drafts (draft_status='draft'), never auto-active;
-// minSourceTier=3 keeps the route preference on quiz_gen instead of sourcing_web or
-// author_question.
+// - emits targets only; dispatcher.ts owns dispatch and the paid-acquisition throttle;
+// - edge confidence never feeds priority or difficulty; an acquired contrast item takes
+// an independent b-anchor (ItemPriorTask) and never inherits edge confidence.
 
-import { getConfigFlag } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { loadConfusablePairs } from '@/kernel/read-models/confusables';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
@@ -25,41 +20,26 @@ import {
   type DifficultyBand,
   type QuestionSupplyTarget,
   type SupplyGapKind,
-  type SupplyRoute,
   computePriority,
   targetFingerprint,
 } from './target-discovery';
 
-/**
- * Dark-ship flag, default off. Read per call so tests can toggle it and each process sees
- * its own env. Off means discoverConfusableContrastTargets is a no-op.
- */
-export function confusableContrastEnabled(): boolean {
-  // DB > env > code default (false).
-  return getConfigFlag('CONFUSABLE_CONTRAST_ENABLED');
-}
-
 // A contrast/discrimination item is naturally OBJECTIVE (present A and B, ask to
-// distinguish) → 'choice'. The objectiveOnly constraint preserves the runtime kind
-// gate; route-planner keeps this gap's explicit quiz_gen-only route preference.
+// distinguish) → 'choice'; the objectiveOnly constraint carries the runtime kind gate.
 const CONFUSABLE_CONTRAST_KIND = 'choice';
 
 const GAP_KIND: SupplyGapKind = 'confusable_contrast';
-// near band + tier-3 (generation-level) so planSupplyRoutes falls through to routePreference.
 const DIFFICULTY_BAND: DifficultyBand = 'near';
 const MIN_SOURCE_TIER = 3 as const;
-const ROUTE_PREFERENCE: SupplyRoute[] = ['quiz_gen'];
 
 /**
  * Read-only discovery: load the confusable mesh → emit one target per pair (priority desc).
- * No-op when the flag is off; zero writes and zero LLM calls.
+ * Zero writes and zero LLM calls; an empty mesh yields [].
  */
 export async function discoverConfusableContrastTargets(
   db: Db,
   makeId: () => string = () => Math.random().toString(36).slice(2),
 ): Promise<QuestionSupplyTarget[]> {
-  if (!confusableContrastEnabled()) return []; // dark — flag OFF NO-OP.
-
   const pairs = await loadConfusablePairs(db);
   if (pairs.length === 0) return [];
 
@@ -100,7 +80,7 @@ export async function discoverConfusableContrastTargets(
       difficultyBand: DIFFICULTY_BAND,
       desiredCount: 1,
       minSourceTier: MIN_SOURCE_TIER,
-      routePreference: ROUTE_PREFERENCE,
+      routePreference: [],
       // Priority is the fixed gap base demand; edge confidence never feeds it. Confidence
       // appears only as a qualitative tag in the human-readable reason.
       priority: computePriority(GAP_KIND, 0),

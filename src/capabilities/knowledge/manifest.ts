@@ -221,16 +221,6 @@ export const knowledgeCapability = defineCapability({
         load: () =>
           import('./jobs/projection_oracle_sweep').then((m) => m.buildProjectionOracleSweepHandler),
       },
-      {
-        // Flag-independent shadow of the dark A5/A6 layer. It computes what a flip would
-        // change and emits one summary event, so there is data before the flags move.
-        name: 'kg_borrow_shadow_sweep',
-        schedule: { cron: '0 5 * * 1', tz: 'Asia/Shanghai' },
-        eligibility: nightlyEligibility('deterministic'),
-        queue: 'llm',
-        load: () =>
-          import('./jobs/kg_borrow_shadow_sweep').then((m) => m.buildKgBorrowShadowSweepHandler),
-      },
     ],
   },
   // Proposal kinds owned here. `archive` is produced by this package and has no

@@ -50,7 +50,6 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   projection_oracle_sweep: 'drain',
   subject_profile_audit_nightly: 'drain',
   merge_attribution_sweep: 'drain',
-  kg_borrow_shadow_sweep: 'drain',
   hub_auto_sync_nightly: 'drain',
   hub_sync_mutation_wake: 'drain',
   hub_sync_recovery: 'drain',
@@ -90,7 +89,6 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   // fail-closed default ('fenced').
   embed_backfill: 'translate',
   kc_dedup_nightly: 'translate',
-  confusable_contrast_nightly: 'translate',
   // 对话/提案型任务的 payload 引用题面/答题上下文（旧形态）。
   copilot_run: 'translate',
   session_summary: 'translate',

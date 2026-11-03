@@ -2,7 +2,7 @@
 // Shared by the retained pg-boss handler (the real consumer) and the unregistered DBOS
 // candidate.
 // 1. JUDGE_CALIBRATION_SAMPLING_ENABLED defaults off and is read every run: disabled means
-// zero spend and zero events; the cron stays registered.
+// zero spend and zero events for an enqueued run.
 // 2. The bare provider pre-flight runs outside a swallowing try/catch: a dead second lane
 // must fail the whole run, not silently reroute or write observations.
 // 3. The paid batch stays in the retained core: per-item isolation, duplicate mapping, and

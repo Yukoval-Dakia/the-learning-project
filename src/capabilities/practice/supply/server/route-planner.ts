@@ -5,9 +5,8 @@
 // 1. compositeParentOnly -> quiz_gen only (the only producer of parent+part rows);
 // 2. needsImage -> image candidate, then ingest, then web;
 // 3. minSourceTier <= 2 -> web first, then ingest, then authoring;
-// 4. confusable_contrast with an explicit preference keeps quiz_gen;
-// 5. objectiveOnly -> web or authoring;
-// 6. otherwise target.routePreference, then [author_question, sourcing_web].
+// 4. objectiveOnly -> web or authoring;
+// 5. otherwise target.routePreference, then [author_question, sourcing_web].
 // The tier constraint precedes objectiveOnly because grounded high-trust evidence is the
 // harder requirement.
 
@@ -18,9 +17,7 @@ import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
  *
  * 判据顺序见文件头。`target.routePreference` 由扫描器据 subject profile 的
  * `sourcingRoutePreference` 播种（见 target-discovery.ts seedRoutePreference）——只有在
- * 没有更硬的约束（图/高可信源/客观题）触发时才用它；唯一例外是
- * `confusable_contrast`，其显式 routePreference 在通用 objectiveOnly 分支前生效，
- * 以保留 quiz_gen 辨析题生成路线。
+ * 没有更硬的约束（图/高可信源/客观题）触发时才用它。
  *
  * (Supply-Agent/1) — jyeoo_fetch 路由的机器面（queue/handler/dispatcher
  * 分支）已退役：producer 经济学（无法按 KC 定向 + 40题/日预算）与逐目标派发根本
@@ -44,9 +41,6 @@ export function planSupplyRoutes(target: QuestionSupplyTarget): SupplyRoute[] {
   }
   if (target.minSourceTier <= 2) {
     return ['sourcing_web', 'ingest_existing', 'author_question'];
-  }
-  if (target.gapKind === 'confusable_contrast' && target.routePreference.length > 0) {
-    return target.routePreference;
   }
   if (target.constraints.objectiveOnly) {
     return ['sourcing_web', 'author_question'];

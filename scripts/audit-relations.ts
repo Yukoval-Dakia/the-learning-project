@@ -241,7 +241,7 @@ const MISCONCEPTION_CONSUMER_REGISTRY: ConsumerEntry[] = [
     marker: "eq(misconception_edge.relation_type, 'confusable_with')",
     surface: 'recommendation',
     evidence:
-      'misconception-confusable-read loadConfusablePairs reads confusable_with 边 by type → confusable-contrast-discovery 发对比题供给目标（dark-ship CONFUSABLE_CONTRAST_ENABLED 默认 OFF，但 type-specific 读 wired-in-source = LIVE-in-code，同 A5/A6 mastery-projection dark-ship 先例）。',
+      'misconception-confusable-read loadConfusablePairs reads confusable_with 边 by type → confusable-contrast-discovery 发对比题供给目标，由 question_supply_nightly 与覆盖缺口合并派发（type-specific 读 wired-in-source = LIVE-in-code）。',
   },
   // observed_in：故意无 specialized 条目（provenance evidence-ptr，零 type-differentiated
   // 学习消费）→ misconception 宇宙的预期死边候选（类比 applied_in）。

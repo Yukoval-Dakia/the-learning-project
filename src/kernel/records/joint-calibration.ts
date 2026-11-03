@@ -38,7 +38,7 @@ import { difficulty_calibration_evidence, event, item_calibration, question } fr
 // ─────────────────────────────────────────────────────────────────────────────
 // 模型判分路由级复判一致率（A4 w_e 的 agreement 因子）。
 //
-// 从 nightly sampler 写的 experimental:judge_calibration_sample 事件按 bit 一致率
+// 从 judge_calibration_sample job 写的 experimental:judge_calibration_sample 事件按 bit 一致率
 // 聚合，排除 same_lane 自一致样本。样本 < MIN_N → null（批时落默认 0.6）。payload
 // 形状归 practice sampler 所有；这里只做最小只读聚合，不拉 observability 依赖
 // （capability 边界）。

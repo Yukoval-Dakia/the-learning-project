@@ -1,4 +1,4 @@
-// judge_calibration_sample pg-boss handler (report-only, dark-ship).
+// judge_calibration_sample pg-boss handler (report-only, enqueued on demand; no schedule).
 //
 // Thin retained handler: the whole execution contract lives in
 // ../server/calibration-sample-durable-operation.ts, which this handler remains
@@ -7,9 +7,9 @@
 //
 // Family contract:
 //
-//   1. Kill switch JUDGE_CALIBRATION_SAMPLING_ENABLED — default OFF. The cron
-//      stays registered; the handler early-returns unless the shared runtime-flag
-//      grammar enables it. Zero spend, zero events.
+//   1. Kill switch JUDGE_CALIBRATION_SAMPLING_ENABLED — default OFF. An enqueued
+//      job early-returns unless the shared runtime-flag grammar enables it. Zero
+//      spend, zero events.
 //
 //   2. Batch-level lane pre-flight — resolveTaskProvider is called BARE
 //      (outside the paid-batch error hook, which only reports batch failures).

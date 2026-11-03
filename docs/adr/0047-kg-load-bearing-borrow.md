@@ -99,6 +99,7 @@ A5/A6 都 ship 成软层：**只移 surfaced `theta_hat`（能力后验均值）
   1. **A5 解规模界定**（RP8）——`solveDense` O(n³)/O(n²) 跑在整个 requested 集上，全树请求 n≈5000 ⇒ 每次树读 ~10¹¹ flops，是**可扩展性悬崖**。已落 **分量守卫**（`smoothThetaByComponent` 按 `related_to` 连通分量分块求解——GMRF precision 块对角 ⇒ 逐分量解与整解逐分量一致的纯重排；超界分量 `GRAPH_SMOOTH_COMPONENT_CAP`=256 fail-safe-to-no-smoothing + 单点 warn）。cap 值 / 将来稀疏 CG solver vs per-request 局部化的取舍 = owner 决策。
   2. **provenance audit 升 hard-gate**（`audit:mastery-provenance` 从 report-only → `--strict` CI gate），9 caller 全过审。
   3. **shadow 数据 ≥N 周**——`kg_borrow_shadow_sweep`（S3）dark 期就产「翻 A5/A6 会改多少 θ、多少 KC 借、分量多大」的分布，**按 `a5_only` / `a6_only` / `joint` 三 variant 归因**（共享单次 A5 稠密解：a5_only=smoothed θ̃、a6_only=propagate(裸 θ̂)、joint=propagate(smoothed θ̃)），owner 分别审每 flag 边际 + 联合的背离分布。
+     **2026-11-03（YUK-1739）：** 周 cron `kg_borrow_shadow_sweep` 已退役（flag 未翻、事件无读者）。提出翻 flag 时须按同一三 variant 口径现算这份分布，随翻 flag 的变更一起提交。
 - **A6**：gated on A6 验证闸（owner 定；最小为「传播方向在合成 KG + attempt 序列上正确」+ 不与 B3 frontier 既有 0.7 gate 双压制重复计）。
 - **A13**：emit 埋点 N 周 → owner 从 `risk_delta` 分布定阈 → 才考虑下游消费（选题 gating 单拎）。
 
@@ -112,7 +113,7 @@ A5/A6 都 ship 成软层：**只移 surfaced `theta_hat`（能力后验均值）
 
 ### 10. n=1 admissibility（litmus）
 
-A5/A6/A13 都只吃：**单学习者自身 θ̂/outcome**（mastery_state）+ **KG `edge.weight`（owner/LLM 供给的固定先验）** + **owner 固定 λ/κ/λ_down/λ_up/base/decay 常量**。无 a/slip/guess/φ/discrimination 任何跨被试参数。**λ 等必须保持 owner 供给**——「从数据学」需跨人方差 → inadmissible（红线）。`GRAPH_SMOOTH_COMPONENT_CAP` / `SHADOW_BORROW_COMPONENT_CAP`（=256）是**未经数据校准的保守结构初值**（非拟合 item 参数），同 litmus。
+A5/A6/A13 都只吃：**单学习者自身 θ̂/outcome**（mastery_state）+ **KG `edge.weight`（owner/LLM 供给的固定先验）** + **owner 固定 λ/κ/λ_down/λ_up/base/decay 常量**。无 a/slip/guess/φ/discrimination 任何跨被试参数。**λ 等必须保持 owner 供给**——「从数据学」需跨人方差 → inadmissible（红线）。`GRAPH_SMOOTH_COMPONENT_CAP`（=256；shadow sweep 的同值 cap 已随 `kg_borrow_shadow_sweep` 退役）是**未经数据校准的保守结构初值**（非拟合 item 参数），同 litmus。
 
 ### 11. F′（θ̃ 进借用 band，1PL ICC）— owner 选项，前置链（不默认采）
 

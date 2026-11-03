@@ -1,7 +1,6 @@
 // 作答与判分 owner 的 manifest 片段，由根 `manifest.ts` 组合。
 import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import type { CapabilityManifest } from '@/kernel/manifest';
-import { nightlyEligibility } from '@/kernel/nightly-eligibility';
 import {
   CreateSubmissionBodySchema,
   IssuanceCreatedSchema,
@@ -180,18 +179,15 @@ export const gradingManifestPart: Omit<CapabilityManifest, 'name' | 'description
             (m) => m.buildModelSliceAdmissionRunHandler,
           ),
       },
-      // YUK-573 — judge 校准不同意率采样（report-only，dark-ship）。kill switch
-      // JUDGE_CALIBRATION_SAMPLING_ENABLED 默认 OFF（cron 保持注册，handler no-op，
-      // 零 spend）。复判走第二 lane（per-call ctx.override=anthropic-sub，绝不翻
-      // 全局 AI_PROVIDER_OVERRIDE）。cron 06:10 Asia/Shanghai：夜间避开 owner
-      // 交互期减 Max 订阅 rate-limit 争用（S2）。queue:'agent'（EXPIRE_AGENT=
-      // 7200s）：批内 ≤BATCH_MAX（默认 20）次 LLM 复判调用，是多次调用批任务，
-      // 非单-shot 'llm' 档。幂等由 MF8 partial unique index（drizzle/0059）DB 层
-      // 强制，expire 窗重投递安全。
+      // YUK-573 — judge 校准不同意率采样（report-only）。付费 job，按需入队、无
+      // schedule（同 model_slice_admission_run）；kill switch
+      // JUDGE_CALIBRATION_SAMPLING_ENABLED 默认 OFF 时入队也 no-op、零 spend。复判走
+      // 第二 lane（per-call ctx.override=anthropic-sub，绝不翻全局 AI_PROVIDER_OVERRIDE）。
+      // queue:'agent'（EXPIRE_AGENT=7200s）：批内 ≤BATCH_MAX（默认 20）次 LLM 复判调用，
+      // 是多次调用批任务，非单-shot 'llm' 档。幂等由 MF8 partial unique index
+      // （drizzle/0059）DB 层强制，expire 窗重投递安全。
       {
         name: 'judge_calibration_sample',
-        schedule: { cron: '10 6 * * *', tz: 'Asia/Shanghai' },
-        eligibility: nightlyEligibility('deterministic', { usesModel: true }),
         queue: 'agent',
         load: () =>
           import('./jobs/judge_calibration_sample').then(

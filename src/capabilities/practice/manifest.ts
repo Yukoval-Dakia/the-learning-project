@@ -169,8 +169,8 @@ export const practiceCapability = defineCapability({
           import('./jobs/jyeoo_staged_asset_reap').then((m) => m.buildJyeooStagedAssetReapHandler),
       },
       // YUK-987 (985/E2) — 供给需求层 planner agent。LLM 产出 SupplyPlanV1 需求计划，机器门
-      // （schema/活KC/词表/去重/预算声明，supply-plan-gate.ts）校验后逐项 emit manual 需求
-      // 留痕（E3 executor 未落地）。05:50 cron：在 recalibration 固化（DAG 04:50 起）之后、
+      // （schema/活KC/词表/去重/预算声明，supply-plan-gate.ts）校验后逐项写需求事件，并把
+      // accepted plan 入队 supply_execute（确定性 executor）。05:50 cron：在 recalibration 固化（DAG 04:50 起）之后、
       // question_supply_nightly（DAG ~06:00）之前。与 DAG 无硬边是设计使然：扫描器安全网必须
       // 能在 planner 失败/空计划时照常派发缺口（planner 不得拖死安全网）；反向也无边——
       // planner 读原始信号而非扫描器结论，需求独立形成，同 job 内跑 discoverSupplyTargets
@@ -181,23 +181,6 @@ export const practiceCapability = defineCapability({
         eligibility: nightlyEligibility('deterministic', { usesModel: true }),
         queue: 'llm',
         load: () => import('./jobs/supply_planner').then((m) => m.buildSupplyPlannerHandler),
-      },
-      // YUK-533 (ADR-0036 RT1 consumer) — confusable-contrast supply discovery + dispatch.
-      // Scans the confusable_with misconception mesh → one supply target per confusable KC
-      // pair → quiz_gen propose-only drafts. DARK behind CONFUSABLE_CONTRAST_ENABLED (discovery
-      // NO-OPs flag-off). cron 06:20 Asia/Shanghai: the last supply lane, right after
-      // question_supply_nightly (06:00), in a clear slot. queue=llm: the dispatched quiz_gen
-      // jobs are LLM-heavy, same DLQ/retry bucket. **成本护栏**：依赖 dispatcher 的 7d
-      // fingerprint cooldown + 本 job 的 per-run cap，绝不绕 dispatcher 直发付费队列。
-      {
-        name: 'confusable_contrast_nightly',
-        schedule: { cron: '20 6 * * *', tz: 'Asia/Shanghai' },
-        eligibility: nightlyEligibility('deterministic', { usesModel: true }),
-        queue: 'llm',
-        load: () =>
-          import('./jobs/confusable_contrast_nightly').then(
-            (m) => m.buildConfusableContrastNightlyHandler,
-          ),
       },
       // YUK-1560 删除 axis_state_nightly 夜写及 batch writer；learner_axis_state 只保留历史行（merge 时 rename/freeze）。
       ...fromOwnerParts((part) => part.jobs?.handlers),

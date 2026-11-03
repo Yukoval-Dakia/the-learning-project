@@ -142,10 +142,8 @@ export interface QuizGenJobData {
   // YUK-533 — the full KC set a multi-KC supply target carries (the confusable A↔B pair).
   // knowledge_id stays the PRIMARY attribution anchor (knowledgeIds[0]); knowledge_ids
   // carries the whole pair so a contrast/discrimination item can probe the A-vs-B boundary.
-  // phase-deferred: contrast-aware generation (consuming this field to write a discrimination
-  // question) is a flag-flip increment — the dispatcher forwards it now (dark behind
-  // CONFUSABLE_CONTRAST_ENABLED) so the seam is data-complete; the handler does not yet read
-  // it. Context: src/capabilities/practice/supply/server/confusable-contrast-discovery.ts.
+  // The dispatcher forwards it for any multi-KC target that routes to quiz_gen; the handler
+  // does not yet read it (contrast-aware generation is not built).
   knowledge_ids?: string[];
   supply_trace?: SupplyTraceV1T;
 }
