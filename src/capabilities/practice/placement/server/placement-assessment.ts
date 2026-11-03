@@ -15,6 +15,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
 import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { getIssuanceState, readJudgeRunPermanent } from '../../grading/public';
 import { PlacementQuestionSchema, type PlacementUnresolvedItem } from '../api/placement-contracts';
@@ -86,7 +87,7 @@ export async function placementAssessmentProgress(tx: Tx, sessionId: string) {
       and(
         eq(event.session_id, sessionId),
         eq(event.subject_kind, 'question'),
-        inArray(event.action, ['review', 'attempt', 'experimental:assessment_attempt']),
+        inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
       ),
     );
   const answeredIds = new Set(answered.map((row) => row.questionId));
@@ -420,7 +421,7 @@ export async function readPlacementUnresolvedItems(
       and(
         eq(event.session_id, sessionId),
         eq(event.subject_kind, 'question'),
-        inArray(event.action, ['review', 'attempt', 'experimental:assessment_attempt']),
+        inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
       ),
     );
   const answeredIds = new Set(answered.map((row) => row.questionId));

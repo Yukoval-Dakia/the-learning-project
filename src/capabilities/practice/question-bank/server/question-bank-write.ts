@@ -30,6 +30,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events/index';
 import { assertKnowledgeIdsExist } from '@/kernel/read-models/knowledge-validate';
+import { QUESTION_ATTEMPT_ACTIONS } from '@/kernel/read-models/learner-activity';
 import { deriveAnswerClassForValues } from '@/kernel/records/answer-class-write';
 import {
   archiveGroupLifecycle,
@@ -74,7 +75,7 @@ export async function countQuestionAssociations(
       .from(event)
       .where(
         and(
-          inArray(event.action, ['attempt', 'experimental:assessment_attempt']),
+          inArray(event.action, [...QUESTION_ATTEMPT_ACTIONS]),
           eq(event.subject_kind, 'question'),
           eq(event.subject_id, questionId),
         ),

@@ -1,7 +1,7 @@
 // Copilot learner-state header (session-anchored, assemble-once).
 //
 // Deterministic (no-LLM) code-read projection — 今日 due count, 活跃 goal, top-2
-// 误区, θ̂/mastery band, 昨夜交班摘要 — hard-capped at
+// 误区, 同一知识点连错, θ̂/mastery band, 昨夜交班摘要 — hard-capped at
 // LEARNER_STATE_HEADER_BUDGET.maxChars (a char cap, not tokens; CJK near the ceiling
 // can run ~400-1000 tokens).
 //
@@ -15,7 +15,7 @@
 // ingesting it back would be circular).
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { A5_BANDS, masteryBandView } from '@/core/mastery-band';
 import type { LearnerJudgmentBatch } from '@/core/schema/learner-judgment';
 import type { Db, Tx } from '@/db/client';
@@ -29,6 +29,11 @@ import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-go
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import {
+  type KnowledgeFailureStreak,
+  LEARNER_ANSWER_ACTIONS,
+  loadLongestFailureStreak,
+} from '@/kernel/read-models/learner-activity';
 import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
 import {
@@ -49,6 +54,9 @@ export const LEARNER_STATE_HEADER_ACTION = 'experimental:copilot_learner_state_h
 // Recent failure attempts scanned when ranking the top-2 误区. Bounded — this only
 // runs on (re)assembly, not per turn.
 const FAILURE_SCAN_LIMIT = 40;
+
+// Shortest same-knowledge failure run worth a header line.
+const FAILURE_STREAK_HEADER_MIN = 3;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -76,6 +84,7 @@ export interface LearnerStateProjection {
   meanTheta: number | null;
   judgmentSentence?: string | null;
   overnightSentence: string | null;
+  failureStreak?: KnowledgeFailureStreak | null;
 }
 
 /** The cached block (persisted in the header cache event payload). */
@@ -151,6 +160,9 @@ export function assembleLearnerStateHeaderMd(
   if (p.activeGoalTitle) lines.push(`当前目标：${p.activeGoalTitle}`);
   if (p.topCauseCategories.length > 0) {
     lines.push(`近期高频误区：${p.topCauseCategories.slice(0, 2).join('、')}`);
+  }
+  if (p.failureStreak && p.failureStreak.count >= FAILURE_STREAK_HEADER_MIN) {
+    lines.push(`连续答错：${p.failureStreak.knowledge_name}（${p.failureStreak.count} 次）`);
   }
   if (p.masterySummary) {
     const theta = p.meanTheta === null ? '' : `（θ̂≈${p.meanTheta.toFixed(1)}）`;
@@ -312,6 +324,7 @@ export interface ReadProjectionDeps {
   listActiveGoalsFn?: (db: DbLike) => Promise<{ title: string; scope_knowledge_ids: string[] }[]>;
   getFailureAttemptsFn?: (db: DbLike) => Promise<FailureAttempt[]>;
   getMasteryProjectionFn?: (db: DbLike, ids: string[]) => Promise<Map<string, MasteryProjection>>;
+  loadFailureStreakFn?: (db: DbLike) => Promise<KnowledgeFailureStreak | null>;
 }
 
 export async function readLearnerStateProjection(
@@ -328,12 +341,15 @@ export async function readLearnerStateProjection(
     deps.getFailureAttemptsFn ??
     ((d: DbLike) => getFailureAttempts(d, { limit: FAILURE_SCAN_LIMIT }));
 
+  const loadFailureStreak = deps.loadFailureStreakFn ?? loadLongestFailureStreak;
+
   const overnightSentencePromise = readOvernightHandoffSentence(db, loadOvernightDigest);
-  const [summary, goals, failures, overnightSentence] = await Promise.all([
+  const [summary, goals, failures, overnightSentence, failureStreak] = await Promise.all([
     loadSummary(db),
     loadGoals(db),
     loadFailures(db),
     overnightSentencePromise,
+    loadFailureStreak(db),
   ]);
   const activeGoal = goals[0] ?? null;
   const topCauseCategories = rankTopCauseCategories(failures, 2);
@@ -359,6 +375,7 @@ export async function readLearnerStateProjection(
     meanTheta,
     judgmentSentence,
     overnightSentence,
+    failureStreak,
   };
 }
 
@@ -373,8 +390,16 @@ function maxIso(a: string | null, b: string | null): string | null {
   return a > b ? a : b;
 }
 
-/** One grouped MAX(created_at) query for the four invalidation categories
- *  (attempt + review folded together — see readLearnerStateWatermarks). */
+// "New practice activity" for header invalidation: any learner answer, plus the
+// native grading lifecycle and corrections, all folded into attempt_at.
+const PRACTICE_WATERMARK_ACTIONS = [
+  ...LEARNER_ANSWER_ACTIONS,
+  'experimental:assessment_activation',
+  'experimental:assessment_settlement',
+  'correct',
+] as const;
+
+/** One grouped MAX(created_at) query for the three invalidation categories. */
 export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerStateWatermarks> {
   const rows = await db
     .select({
@@ -384,17 +409,7 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
     .from(event)
     .where(
       or(
-        eq(event.action, 'attempt'),
-        eq(event.action, 'experimental:assessment_attempt'),
-        eq(event.action, 'experimental:assessment_activation'),
-        eq(event.action, 'experimental:assessment_settlement'),
-        eq(event.action, 'correct'),
-        // The FSRS review-queue clearing write (src/capabilities/practice/grading/api/submit.ts)
-        // uses a DISTINCT action='review', not 'attempt'. It directly moves
-        // review_due_count (the header's "今日待复习" headline), so a pure-review
-        // session with no fresh 'attempt' rows must still trip the invalidation —
-        // folded into attempt_at below.
-        eq(event.action, 'review'),
+        inArray(event.action, [...PRACTICE_WATERMARK_ACTIONS]),
         and(eq(event.action, 'experimental:dreaming_scan'), eq(event.outcome, 'success')),
         eq(event.action, 'rate'),
       ),
@@ -406,18 +421,10 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
     return at ? new Date(at).toISOString() : null;
   };
   return {
-    // Fold 'review' into attempt_at: "new attempt event" invalidation means "new
-    // practice activity", and FSRS review is practice activity (distinct action,
-    // same intent). Folding keeps the three-field watermark shape; this is a
-    // same-intent union, not a new invalidation category.
-    attempt_at: [
-      'attempt',
-      'review',
-      'experimental:assessment_attempt',
-      'experimental:assessment_activation',
-      'experimental:assessment_settlement',
-      'correct',
-    ].reduce<string | null>((latest, action) => maxIso(latest, iso(action)), null),
+    attempt_at: PRACTICE_WATERMARK_ACTIONS.reduce<string | null>(
+      (latest, action) => maxIso(latest, iso(action)),
+      null,
+    ),
     dreaming_at: iso('experimental:dreaming_scan'),
     proposal_decision_at: iso('rate'),
   };

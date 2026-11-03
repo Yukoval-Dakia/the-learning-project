@@ -10,6 +10,11 @@ import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-ev
 import type { Db, Tx } from '@/db/client';
 import { evaluation, event, job_events, judge_run_control } from '@/db/schema';
 import {
+  type IssuanceJudgeSettledSchema,
+  JudgeRunStatusResponseSchema,
+  JudgeRunTerminalResultSchema,
+} from '../../api/assessment-contracts';
+import {
   type JudgeWorkflowObservation,
   observeJudgeDelivery,
   observeUnmappedJudgeRun,
@@ -25,12 +30,13 @@ import {
   NativeJudgeResolutionPayload,
   reconstructDoneFromDomainEvents,
   reconstructDoneFromNativeCompletion,
+  reconstructDoneFromSyncAttempt,
 } from './judge-run-payload';
 import {
   JUDGE_RUN_TABLE,
-  JudgeRunStatusResponseSchema,
-  JudgeRunTerminalResultSchema,
   deriveJudgeRunStatus,
+  judgeRunPollUrl,
+  nativeJudgeRunId,
   terminalJudgeRunResult,
 } from './judge-run-status';
 
@@ -333,6 +339,7 @@ type ObservationPort = {
   observe: typeof observeJudgeDelivery;
   observeUnmapped: typeof observeUnmappedJudgeRun;
 };
+/** The poll's terminal projection; the issuance recovery read returns the same value. */
 function permanentDto(runId: string, state: PermanentJudgeState): JudgeStatusDto | null {
   if (state.kind === 'resolved') return { run_id: runId, status: 'done', result: state.result };
   if (state.kind === 'manual' || state.kind === 'unmapped')
@@ -407,6 +414,37 @@ export function createJudgeRunStatusReader(port: ObservationPort) {
       return { kind: 'unavailable', reason: 'domain_read' };
     }
   };
+}
+
+/**
+ * Recovery read for an accepted native submission: permanent evidence only (no engine
+ * observation, no writes). A run the poll would still report as queued/started is handed back
+ * as poll coordinates. A synchronously judged submission has no run; it settles through the
+ * same terminal projection under its derived run id, which the client never polls.
+ */
+export async function readNativeJudgeSettled(
+  database: Db | Tx,
+  submissionId: string,
+): Promise<z.infer<typeof IssuanceJudgeSettledSchema> | undefined> {
+  const runId = nativeJudgeRunId(submissionId);
+  const durable = await readJudgeRunPermanent(database, runId);
+  const state = durable.kind === 'absent' ? await readSyncJudged(database, submissionId) : durable;
+  const terminal = permanentDto(runId, state);
+  if (terminal) return { kind: 'terminal', run: terminal };
+  return state.kind === 'pending'
+    ? { kind: 'pending', run_id: runId, poll_url: judgeRunPollUrl(runId) }
+    : undefined;
+}
+async function readSyncJudged(
+  database: Db | Tx,
+  submissionId: string,
+): Promise<PermanentJudgeState> {
+  const result = JudgeRunTerminalResultSchema.safeParse(
+    await reconstructDoneFromSyncAttempt(database, submissionId),
+  );
+  return result.success
+    ? { kind: 'resolved', activity: 'terminal', result: result.data }
+    : { kind: 'absent' };
 }
 export const readJudgeRunStatus = createJudgeRunStatusReader({
   observe: observeJudgeDelivery,

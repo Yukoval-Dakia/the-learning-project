@@ -49,7 +49,6 @@ export {
   memoryReconcileHandoffMode,
 } from './server/memory/memory-reconcile-handoff';
 export {
-  MEMORY_BRIEF_REGEN_QUEUE,
   MEMORY_BRIEF_SWEEP_QUEUE,
   MEMORY_EVENT_INGEST_QUEUE,
   MEMORY_INFRA_SCHEDULES,
