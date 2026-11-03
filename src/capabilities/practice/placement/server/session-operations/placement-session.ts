@@ -116,7 +116,16 @@ export async function startPlacementProbe(
   // A goal whose subject has no content KC yet resolves to [] and continues: selection finds
   // nothing, so the cold path below plants this subject's starter anchor and dispatches its
   // supply. Only a probe with no goal subject and no explicit set has nothing to place against.
-  if (knowledgeIds.length === 0 && !requestedGoal?.subjectId) {
+  if (knowledgeIds.length === 0 && requestedGoal && !requestedGoal.subjectId) {
+    // A cross-subject goal is allowed to exist; placement needs a subject, so the page guides
+    // the learner to pick one instead of showing an error.
+    throw new ApiError(
+      'placement_goal_needs_subject',
+      'this goal has no subject; choose a subject for it before placement',
+      422,
+    );
+  }
+  if (knowledgeIds.length === 0 && !requestedGoal) {
     throw new ApiError(
       'validation_error',
       'placement requires a goalId (with a resolvable scope) or an explicit knowledgeIds set',
