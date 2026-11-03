@@ -99,7 +99,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | `lockEventCorrectionsAll` / `lockEventCorrectionSource` | `src/kernel/events/correction-lock.ts` | 与上表 corrections:all、source 共用注册表键，语句仍是 `hashtextextended(key, 0)` xact。`writeEvents` 在有修正目标时先取 corrections:all，再按已排序 target 取 source。`review-answer-consumer` 在 copilot execution settlement 之后取 source |
 | `acquireSortedAdvisoryLocks` | `src/db/learning-state-lock.ts` | `hashtext(<ns>:<id>)` sorted，consistent-ordering 原语 |
 | `withinSessionAdvisoryLock` | `src/db/session-advisory-lock.ts` | reserved conn `pg_try_advisory_lock`+retry 至 deadline；`begin`/`savepoint` 补丁到持锁连接，inner tx 全部跑在同一 backend；finally unlock+release |
-| `acquireProposalDecisionLock` | `src/kernel/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0。通用驳回与撤回在事务第一步取；note_update、block_merge、record_links、record_promotion、learning_item、completion、relearn、goal_scope 的接受同样第一步取，锁后在同一事务内重查 rate，再取领域锁 |
+| `acquireProposalDecisionLock` | `src/kernel/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0。通用驳回与撤回、variant_question 的专属驳回在事务第一步取；note_update、block_merge、record_links、record_promotion、learning_item、completion、relearn、goal_scope、conjecture、variant_question 的接受同样第一步取，锁后在同一事务内重查 rate，再取领域锁 |
 | `withProposalGateLock` | `src/kernel/proposals/signals.ts` | `<kind>:<cooldown_key>` 多键 sorted xact gate；Db 开真 tx、Tx 内联 |
 | `lockPaidEffectControlFamily` / `lockEntityGate` | `src/db/paid-effect-control.ts` / `paid-effect-store.ts` | paid-effect family/entity 锁（只读盘点） |
 | `lockProducerFenceInstaller` 等 | `src/server/durable/*` | durable family install/control/tick |
@@ -135,7 +135,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | 15 | proposal-decision | proposal_decision:<proposalId> | hashtextextended:0 | transaction | xact | 3 | write-quiz, conjecture-fold |
 | 16 | proposal-signal | <kind>:<cooldown_key> | hashtextextended:0 | transaction | xact | 2 |  |
 | 17 | write-quiz | write_quiz:<taskRunId> | hashtextextended:0 | transaction | xact | 1 |  |
-| 18 | misconception | misc:<misconceptionId> | hashtext | transaction | xact | 2 |  |
+| 18 | misconception | misc:<misconceptionId> | hashtext | transaction | xact | 2 | proposal-decision |
 | 19 | intervention-instance | intervention:<interventionId>:<version> | hashtextextended:0 | transaction | xact | 4 | learning-state:write, intervention-corrections-all |
 | 20 | intervention-corrections-all | intervention:corrections:all | hashtextextended:0 | transaction | xact | 5 | intervention-instance, learning-state:write |
 | 21 | intervention-source | intervention:source:<sourceEventId> | hashtextextended:0 | transaction | xact | 5 | intervention-corrections-all, copilot-execution-settlement |
@@ -182,7 +182,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | 62 | copilot-revert | copilot_revert:<checkpointEventId> | hashtextextended:0 | transaction | xact | 1 |  |
 | 63 | copilot-session-selection | copilot:session-selection | hashtext | transaction | xact | 1 |  |
 | 64 | research-meeting-execution | research_meeting_execution:<executionId> | hashtextextended:0 | transaction | xact | 1 |  |
-| 65 | probe-serve-cap | 4064403 | int-literal | transaction | xact | 2 |  |
+| 65 | probe-serve-cap | 4064403 | int-literal | transaction | xact | 2 | probe-question, conjecture-fold, proposal-decision, misconception |
 | 66 | probe-question | hte(<probeQuestionId>, 0) | hashtextextended:0 | transaction | xact | 3 |  |
 | 67 | conjecture-fold | hte(<conjectureEventId>, 1) | hashtextextended:1 | transaction | xact | 1 | probe-question |
 | 68 | probe-result-claim | hte(<probeResultEventId>, 0) | hashtextextended:0 | transaction | xact | 1 |  |
@@ -265,10 +265,12 @@ edge-evidence 版 SHA-256
   `family-control → per-tick` 同段拼接撤回。
 - **paid-effect**：`control → identity row → gate → control row`（pinned，文件注释）。
 - **provider**：`op-kind → sorted attempt → lane`。
-- 小边：probe-question → conjecture-fold → proposal_decision；write_quiz →
+- 小边：probe-question → conjecture-fold → proposal_decision → probe-serve-cap（answerProbe
+  follow-up 投放）；proposal_decision → misc → probe-serve-cap（conjecture 接受，
+  conjecture-accept.ts；接受不取 probe-question / conjecture-fold，与作答同向）；write_quiz →
   proposal_decision(sorted)；proposal_decision → knowledge:create（learning_item
   接受，learning-intent.ts）；proposal_decision → placement-supply（record_promotion
-  接受，legacy-record-appliers.ts）；note_refine effect → product；paper-native →
+  接受，legacy-record-appliers.ts；variant_question 接受，question-bank proposal-appliers.ts）；note_refine effect → product；paper-native →
   attempt-claim；G → attempt-claim（capture 路径）；appeal-claim(request) →
   group（appeal.ts:24→41）；激活 tx 内 `group → resolution-claim`（record
   回调，settle `fsrs:*` 条件插入其间，dyn）；review-answer → group；
@@ -301,7 +303,11 @@ edge-evidence 版 SHA-256
    `<kind>:<cooldownKey>`、scope 变量等模板已证、实例域 unknown。
 6. **行锁全图与跨 backend 等待**：`control` 表行锁 → tick 已按行锁介导边
    登记（§4 durable）；行锁互等全图与跨 backend session/xact 混合形态未证，
-   无 DB 运行证据。
+   无 DB 运行证据。已见一处同题行锁介导 2-环未修：answerProbe 持探针题行
+   FOR UPDATE（probe-lifecycle.ts:641）后在 follow-up 投放取 probe-serve-cap，
+   发布订阅 `servePublishedProbe` 持 probe-serve-cap（:200）后经
+   `issueAssessment` 取同题行 FOR UPDATE（assessment-issuance.ts:404）
+   ——YUK-1730。
 
 ## 6. session-helper 连接纪律（`withinSessionAdvisoryLock`）
 
