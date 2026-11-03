@@ -2,7 +2,7 @@
 // Shared operations own hydration; this adapter owns JSON and responses.
 
 import { db } from '@/db/client';
-import { canonicalResourceResponse, errorResponse } from '@/kernel/http';
+import { errorResponse } from '@/kernel/http';
 import { SUBJECT_TRAIT_KINDS, type SubjectTraitKind } from '@/subjects/trait-schemas';
 import {
   RebindSubjectTraitBodySchema as BindingBody,
@@ -13,7 +13,11 @@ import {
   forkSubjectTrait,
   rebindSubjectTrait,
 } from '../server/trait-control-operations';
-import { readJsonBody, traitResultResponse } from './subjects-write-http';
+import {
+  canonicalTraitResultResponse,
+  readJsonBody,
+  traitResultResponse,
+} from './subjects-write-http';
 
 function parseParams(
   params: Record<string, string>,
@@ -51,12 +55,7 @@ export async function PUT(req: Request, params: Record<string, string>): Promise
       expectedTraitRevision: parsed.data.expectedTraitRevision,
       payload: parsed.data.payload,
     });
-    const response = traitResultResponse(result);
-    if (result.kind !== 'ok' && result.kind !== 'noop') return response;
-    return canonicalResourceResponse(response, {
-      outcome: result.kind === 'ok' && result.forked ? 'created' : 'existing',
-      location: `/api/admin/traits/${encodeURIComponent(result.traitId)}/journal`,
-    });
+    return canonicalTraitResultResponse(result);
   } catch (err) {
     return errorResponse(err);
   }
@@ -77,12 +76,7 @@ export async function FORK(req: Request, params: Record<string, string>): Promis
       kind: p.kind,
       expectedSubjectRevision: parsed.data.expectedSubjectRevision,
     });
-    const response = traitResultResponse(result);
-    if (result.kind !== 'ok' && result.kind !== 'noop') return response;
-    return canonicalResourceResponse(response, {
-      outcome: result.kind === 'ok' && result.forked ? 'created' : 'existing',
-      location: `/api/admin/traits/${encodeURIComponent(result.traitId)}/journal`,
-    });
+    return canonicalTraitResultResponse(result);
   } catch (err) {
     return errorResponse(err);
   }
