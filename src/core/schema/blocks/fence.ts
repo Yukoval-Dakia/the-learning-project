@@ -2,7 +2,6 @@
 // ref scheme. `BlockV1` JSON inside a fenced code block whose info string is
 // `tlp-block`; identical in chat reply_md, note codeBlock and material content_md.
 
-import { createHash } from 'node:crypto';
 import { BlockV1, type BlockV1T } from './block';
 
 export const TLP_BLOCK_FENCE_INFO = 'tlp-block' as const;
@@ -25,16 +24,6 @@ export function canonicalBlockJson(value: unknown): string {
     return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalBlockJson(v)}`).join(',')}}`;
   }
   return JSON.stringify(value) ?? 'null';
-}
-
-/** `sha256:<64hex>` of the canonical JSON — the block's frozen identity. */
-export function blockDigest(block: BlockV1T): `sha256:${string}` {
-  return `sha256:${createHash('sha256').update(canonicalBlockJson(block), 'utf8').digest('hex')}`;
-}
-
-/** Content-derived compose ref: `blk_` + first 32 hex of the block digest. */
-export function blockRefForDigest(digest: `sha256:${string}`): `blk_${string}` {
-  return `blk_${digest.slice('sha256:'.length, 'sha256:'.length + 32)}`;
 }
 
 /** The canonical fenced form stored in Markdown. */

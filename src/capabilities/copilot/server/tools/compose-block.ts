@@ -15,11 +15,10 @@ import {
   type BlockKind,
   type BlockSurface,
   type BlockV1T,
-  blockDigest,
-  blockRefForDigest,
   canonicalBlockJson,
 } from '@/core/schema/blocks';
 import { tool_call_log } from '@/db/schema';
+import { blockDigest, blockRefForDigest } from '@/kernel/blocks/digest';
 import { lintMermaidSource } from '@/kernel/blocks/mermaid-lint';
 import { parseMermaidSource } from '@/kernel/blocks/mermaid-validate';
 import { rebuildSvgFigure } from '@/kernel/blocks/svg-rebuild';
@@ -71,16 +70,6 @@ const ComposeBlockOutput = z.object({
     .optional(),
 });
 type ComposeBlockOutputT = z.infer<typeof ComposeBlockOutput>;
-
-/** Surface comes from the server-side caller, never from input. */
-function resolveBlockSurface(ctx: ToolContext): BlockSurface {
-  const ref = ctx.callerActor.ref;
-  if (ref.startsWith('ingestion_agent:') || ctx.scope?.kind === 'ingestion_session') {
-    return 'question_material';
-  }
-  if (ref.includes('note')) return 'note';
-  return 'chat';
-}
 
 function invalid(issues: BlockIssueT[]): ComposeBlockOutputT {
   return { status: 'invalid', issues };
@@ -166,128 +155,139 @@ async function verifyFigureAssetRef(
   return null;
 }
 
-export const composeBlockTool: DomainTool<ComposeBlockInputT, ComposeBlockOutputT> = {
-  name: 'compose_block',
-  description:
-    'Compose one generative-UI block for the reply. Mandatory channel for diagrams and figures — never write tlp-block fences yourself. Pass one block object; invalid input returns typed issues (code/path/line/expected) to repair and resubmit. On ready, place the block in prose with the returned place string `![alt](block:ref)`. A figure returns its raster under images for visual self-check before you cite it.',
-  effect: 'write',
-  inputSchema: ComposeBlockInput,
-  outputSchema: ComposeBlockOutput,
-  costClass: 'local',
-  mirrorEvent: 'never',
-  async execute(ctx, input): Promise<ComposeBlockOutputT> {
-    const surface = resolveBlockSurface(ctx);
-    const parsed = BlockInputV1.safeParse(input.block);
-    if (!parsed.success) {
-      return invalid(
-        parsed.error.issues.slice(0, 12).map((issue) => ({
-          code: 'shape_invalid',
-          path: `/${issue.path.join('/')}`,
-          detail: issue.message,
-        })),
-      );
-    }
-    const block = parsed.data;
-    if (!BLOCK_SURFACE_KINDS[surface].includes(block.kind)) {
-      return invalid([
-        {
-          code: 'kind_not_allowed_on_surface',
-          path: '/kind',
-          detail: `kind '${block.kind}' is not allowed on the '${surface}' surface`,
-          expected: [...BLOCK_SURFACE_KINDS[surface]],
-        },
-      ]);
-    }
-    if (!BLOCK_IMPLEMENTED_KINDS.includes(block.kind)) {
-      return invalid([
-        {
-          code: 'kind_not_allowed_on_surface',
-          path: '/kind',
-          detail: `kind '${block.kind}' is not supported by this build yet (diagram and figure ship first)`,
-          expected: [...BLOCK_IMPLEMENTED_KINDS],
-        },
-      ]);
-    }
-    if ((await readyBlocksThisRun(ctx)) >= BLOCKS_PER_REPLY_MAX) {
-      return {
-        status: 'unavailable',
-        issues: [
-          {
-            code: 'too_large',
-            path: '',
-            detail: `a reply carries at most ${BLOCKS_PER_REPLY_MAX} ready blocks`,
-          },
-        ],
-      };
-    }
-
-    let stored: BlockV1T;
-    let images: ToolImageOutput[] | undefined;
-    switch (block.kind) {
-      case 'diagram': {
-        const { issues } = await validateDiagram(block);
-        if (issues.length > 0) return invalid(issues);
-        stored = block;
-        break;
+/**
+ * The surface is bound at mount time by the capability that registers the
+ * tool — never derived from the caller ref or the input. Each surface owns
+ * its own registered instance.
+ */
+export function createComposeBlockTool(
+  surface: BlockSurface,
+): DomainTool<ComposeBlockInputT, ComposeBlockOutputT> {
+  return {
+    name: 'compose_block',
+    description:
+      'Compose one generative-UI block for the reply. Mandatory channel for diagrams and figures — never write tlp-block fences yourself. Pass one block object; invalid input returns typed issues (code/path/line/expected) to repair and resubmit. On ready, place the block in prose with the returned place string `![alt](block:ref)`. A figure returns its raster under images for visual self-check before you cite it.',
+    effect: 'write',
+    inputSchema: ComposeBlockInput,
+    outputSchema: ComposeBlockOutput,
+    costClass: 'local',
+    mirrorEvent: 'never',
+    async execute(ctx, input): Promise<ComposeBlockOutputT> {
+      const parsed = BlockInputV1.safeParse(input.block);
+      if (!parsed.success) {
+        return invalid(
+          parsed.error.issues.slice(0, 12).map((issue) => ({
+            code: 'shape_invalid',
+            path: `/${issue.path.join('/')}`,
+            detail: issue.message,
+          })),
+        );
       }
-      case 'figure': {
-        if (block.svg != null && block.asset != null) {
-          return invalid([shapeIssue('/svg', 'exactly one of svg / asset is required')]);
-        }
-        if (block.svg == null && block.asset == null) {
-          return invalid([shapeIssue('/svg', 'exactly one of svg / asset is required')]);
-        }
-        if (block.svg != null) {
-          const composed = await composeFigureAsset(ctx, block.svg);
-          if (!composed.ok) return invalid(composed.issues);
-          const { svg: _svg, ...rest } = block;
-          stored = { ...rest, asset: composed.asset };
-          images = composed.images;
-        } else {
-          const assetIssue = await verifyFigureAssetRef(
-            ctx,
-            block.asset as {
-              asset_id: string;
-              digest: string;
-            },
-          );
-          if (assetIssue) return invalid([assetIssue]);
-          const { svg: _svg, ...rest } = block;
-          stored = { ...rest, asset: block.asset } as BlockV1T;
-        }
-        break;
-      }
-      default:
+      const block = parsed.data;
+      if (!BLOCK_SURFACE_KINDS[surface].includes(block.kind)) {
         return invalid([
           {
             code: 'kind_not_allowed_on_surface',
             path: '/kind',
-            detail: `kind '${(block as { kind: string }).kind}' is not handled`,
+            detail: `kind '${block.kind}' is not allowed on the '${surface}' surface`,
+            expected: [...BLOCK_SURFACE_KINDS[surface]],
           },
         ]);
-    }
+      }
+      if (!BLOCK_IMPLEMENTED_KINDS.includes(block.kind)) {
+        return invalid([
+          {
+            code: 'kind_not_allowed_on_surface',
+            path: '/kind',
+            detail: `kind '${block.kind}' is not supported by this build yet (diagram and figure ship first)`,
+            expected: [...BLOCK_IMPLEMENTED_KINDS],
+          },
+        ]);
+      }
+      if ((await readyBlocksThisRun(ctx)) >= BLOCKS_PER_REPLY_MAX) {
+        return {
+          status: 'unavailable',
+          issues: [
+            {
+              code: 'too_large',
+              path: '',
+              detail: `a reply carries at most ${BLOCKS_PER_REPLY_MAX} ready blocks`,
+            },
+          ],
+        };
+      }
 
-    const canonicalBytes = new TextEncoder().encode(canonicalBlockJson(stored)).byteLength;
-    if (canonicalBytes > BLOCK_CANONICAL_MAX_BYTES) {
-      return invalid([
-        { code: 'too_large', path: '', detail: 'canonical block JSON exceeds 64 KiB' },
-      ]);
-    }
-    const digest = blockDigest(stored);
-    const ref = blockRefForDigest(digest);
-    return {
-      status: 'ready',
-      ref,
-      kind: stored.kind as BlockKind,
-      digest,
-      block: stored,
-      place: `![${stored.alt}](${BLOCK_REF_SCHEME}${ref})`,
-      ...(images ? { images } : {}),
-    };
-  },
-  summarize(input, output) {
-    const kind = (input.block as { kind?: string } | undefined)?.kind ?? '?';
-    const codes = output.issues?.map((issue) => issue.code).join(',');
-    return `compose_block ${kind}: ${output.status}${codes ? ` (${codes})` : ''}`;
-  },
-};
+      let stored: BlockV1T;
+      let images: ToolImageOutput[] | undefined;
+      switch (block.kind) {
+        case 'diagram': {
+          const { issues } = await validateDiagram(block);
+          if (issues.length > 0) return invalid(issues);
+          stored = block;
+          break;
+        }
+        case 'figure': {
+          if (block.svg != null && block.asset != null) {
+            return invalid([shapeIssue('/svg', 'exactly one of svg / asset is required')]);
+          }
+          if (block.svg == null && block.asset == null) {
+            return invalid([shapeIssue('/svg', 'exactly one of svg / asset is required')]);
+          }
+          if (block.svg != null) {
+            const composed = await composeFigureAsset(ctx, block.svg);
+            if (!composed.ok) return invalid(composed.issues);
+            const { svg: _svg, ...rest } = block;
+            stored = { ...rest, asset: composed.asset };
+            images = composed.images;
+          } else {
+            const assetIssue = await verifyFigureAssetRef(
+              ctx,
+              block.asset as {
+                asset_id: string;
+                digest: string;
+              },
+            );
+            if (assetIssue) return invalid([assetIssue]);
+            const { svg: _svg, ...rest } = block;
+            stored = { ...rest, asset: block.asset } as BlockV1T;
+          }
+          break;
+        }
+        default:
+          return invalid([
+            {
+              code: 'kind_not_allowed_on_surface',
+              path: '/kind',
+              detail: `kind '${(block as { kind: string }).kind}' is not handled`,
+            },
+          ]);
+      }
+
+      const canonicalBytes = new TextEncoder().encode(canonicalBlockJson(stored)).byteLength;
+      if (canonicalBytes > BLOCK_CANONICAL_MAX_BYTES) {
+        return invalid([
+          { code: 'too_large', path: '', detail: 'canonical block JSON exceeds 64 KiB' },
+        ]);
+      }
+      const digest = blockDigest(stored);
+      const ref = blockRefForDigest(digest);
+      return {
+        status: 'ready',
+        ref,
+        kind: stored.kind as BlockKind,
+        digest,
+        block: stored,
+        place: `![${stored.alt}](${BLOCK_REF_SCHEME}${ref})`,
+        ...(images ? { images } : {}),
+      };
+    },
+    summarize(input, output) {
+      const kind = (input.block as { kind?: string } | undefined)?.kind ?? '?';
+      const codes = output.issues?.map((issue) => issue.code).join(',');
+      return `compose_block ${kind}: ${output.status}${codes ? ` (${codes})` : ''}`;
+    },
+  };
+}
+
+/** Copilot chat surface instance (the only surface in slice 1). */
+export const composeBlockTool = createComposeBlockTool('chat');

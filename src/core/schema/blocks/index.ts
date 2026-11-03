@@ -22,8 +22,6 @@ export {
   BLOCK_REF_PATTERN,
   BLOCK_REF_SCHEME,
   TLP_BLOCK_FENCE_INFO,
-  blockDigest,
-  blockRefForDigest,
   canonicalBlockJson,
   parseBlockFence,
   serializeBlockFence,
