@@ -7,12 +7,12 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import type { NudgeKindT } from '@/core/schema/event/nudge-events';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { isInActivePracticeSession } from '@/kernel/read-models/practice-session-open';
 import {
   INTERRUPT_SENSITIVE_KINDS,
   NUDGE_ACTION,
   NUDGE_DISMISSED_ACTION,
   NUDGE_OPENED_ACTION,
-  isInActivePracticeSession,
 } from './nudge-triggers';
 
 /** GET /nudges 返回的单条 nudge（UI badge 只需 id + kind + headline）。 */

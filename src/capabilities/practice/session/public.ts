@@ -9,6 +9,7 @@ export { readPaperList } from './server/papers-list';
 export { getPracticeList } from './server/practice-read';
 export {
   abandonOrphanReviewSession,
+  selectOrphanReviewCandidates,
   startReviewSession,
   // 练习流直接推进会话状态，不经路由层的冻结卷重开，所以与下方同名操作分开命名。
   transitionReviewSession as transitionReviewSessionState,

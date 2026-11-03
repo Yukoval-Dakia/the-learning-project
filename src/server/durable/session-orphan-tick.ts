@@ -4,6 +4,7 @@
 import {
   ConversationOrphanStateError,
   abandonOrphanConversationTx,
+  selectOrphanConversationCandidates,
 } from '@/capabilities/copilot/public';
 import type { Db } from '@/db/client';
 import { session_orphan_receipt } from '@/db/schema';
@@ -15,7 +16,9 @@ import {
 import {
   type Counts,
   type SessionOrphanBoundaryHook,
+  type SessionOrphanCandidateSelector,
   SessionOrphanContractError,
+  type SessionOrphanFamily,
   type SessionOrphanOutcome,
   type SessionOrphanRequest,
   type SessionOrphanSummary,
@@ -103,6 +106,21 @@ async function commitRow(
     { isolationLevel: 'read committed' },
   );
 }
+// Loaded before the admission transaction, so a cold module load never runs under its locks.
+async function loadCandidateSelector(
+  family: SessionOrphanFamily,
+): Promise<SessionOrphanCandidateSelector> {
+  switch (family) {
+    case 'prune_orphan_conversation_sessions':
+      return selectOrphanConversationCandidates;
+    case 'prune_orphan_placement_sessions':
+      return (await import('@/capabilities/practice/public')).selectOrphanPlacementCandidates;
+    default: {
+      const exhaustive: never = family;
+      throw new SessionOrphanContractError(String(exhaustive));
+    }
+  }
+}
 async function gateTickEpoch(db: Db, request: SessionOrphanRequest): Promise<void> {
   if (request.source.kind === 'dbos') return waitForRunnableEpoch(db);
   const verdict = gateContractEpoch(await readContractEpoch(db));
@@ -117,9 +135,10 @@ export async function runSessionOrphanTick(
   const request = parseSessionOrphan(sessionOrphanRequestSchema, raw);
   const key = sessionOrphanKey(request);
   await gateTickEpoch(db, request);
+  const selectCandidates = await loadCandidateSelector(request.family);
   let saved: SessionOrphanTick;
   try {
-    saved = await admitTick(db, request);
+    saved = await admitTick(db, request, selectCandidates);
   } catch (error) {
     if (error instanceof SessionOrphanContractError) throw error;
     const inspected = await inspectSessionOrphanAdmission(db, request);
@@ -128,7 +147,7 @@ export async function runSessionOrphanTick(
     if (inspected.kind === 'committed') saved = inspected.tick;
     else {
       try {
-        saved = await admitTick(db, request);
+        saved = await admitTick(db, request, selectCandidates);
       } catch (admissionError) {
         if (admissionError instanceof SessionOrphanContractError) throw admissionError;
         const second = await inspectSessionOrphanAdmission(db, request);
