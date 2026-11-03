@@ -3,19 +3,45 @@ import { ratingFromCoarseOutcome } from './judge-rating';
 import { JUDGE_RUN_TABLE, judgeRunPollUrl } from './judge-run-status';
 import type { ReviewAnswerResult } from './review-operation';
 
+/** The 202 receipt of an original accepted onto the durable lane (createAttempt and advice). */
+export function projectJudgeRunPending(runId: string) {
+  return {
+    run_id: runId,
+    verdict: 'pending' as const,
+    backfill: {
+      channel: 'sse' as const,
+      url: `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/events`,
+      poll_url: judgeRunPollUrl(runId),
+    },
+  };
+}
+
+export type JudgeRunPending = ReturnType<typeof projectJudgeRunPending>;
+
+/** The 202 receipt is told apart by its `verdict` value, never by which keys a body carries. */
+export function isJudgeRunPending(body: object): body is JudgeRunPending {
+  return (body as { verdict?: unknown }).verdict === 'pending';
+}
+
+/**
+ * Explicit divert marker on the 202. A wrapper that keys on it (createAttemptResource) cannot
+ * mistake an unrelated future 202 for a pending-judge body that has no `review_event`.
+ */
+export const DURABLE_DIVERT_HEADER = 'x-durable-divert';
+export const DURABLE_DIVERT_JUDGE = 'judge';
+
+/** Hono shape of the 202 receipt, shared by createAttempt and advice. */
+export function durablePendingResponse(body: JudgeRunPending): Response {
+  return Response.json(body, {
+    status: 202,
+    headers: { Location: body.backfill.url, [DURABLE_DIVERT_HEADER]: DURABLE_DIVERT_JUDGE },
+  });
+}
+
 // Both transports expose the same accepted attempt and durable-pending JSON projection.
 export function projectReviewAnswerResponse(body: CreateAttemptBody, result: ReviewAnswerResult) {
   if (result.kind === 'pending') {
-    const eventsUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(result.run_id)}/events`;
-    const pollUrl = judgeRunPollUrl(result.run_id);
-    return {
-      kind: 'pending' as const,
-      body: {
-        run_id: result.run_id,
-        verdict: 'pending' as const,
-        backfill: { channel: 'sse' as const, url: eventsUrl, poll_url: pollUrl },
-      },
-    };
+    return { kind: 'pending' as const, body: projectJudgeRunPending(result.run_id) };
   }
   const committed = result.committed;
   const judged = committed.candidate.result;

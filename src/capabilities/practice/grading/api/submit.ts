@@ -1,35 +1,12 @@
 // Compatibility HTTP adapter; domain admission and submission live in review-operation.
 import { db } from '@/db/client';
 import { canonicalResourceResponse, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
-import type { projectReviewAnswerResponse } from '../server/review-answer-response';
+import {
+  DURABLE_DIVERT_HEADER,
+  DURABLE_DIVERT_JUDGE,
+  durablePendingResponse,
+} from '../server/review-answer-response';
 import { requestReviewAnswer } from '../server/review-operation';
-
-/**
- * EXPLICIT marker for "this response is a durable-judge divert". `createAttemptResource`
- * used to key on the bare `status === 202`, which silently assumes every 202 this route can
- * ever produce is a pending-judge body with no `review_event`; the day another 202 appears
- * for an unrelated reason, that heuristic hands the client a raw body and skips the resource
- * wrapper. A named header is a discriminant that cannot be reached by accident.
- */
-export const DURABLE_DIVERT_HEADER = 'x-durable-divert';
-export const DURABLE_DIVERT_JUDGE = 'judge';
-
-/** The 202-pending contract body returned when a submit diverts to the durable lane. */
-export type DurableJudgePendingResponse = Extract<
-  ReturnType<typeof projectReviewAnswerResponse>,
-  { kind: 'pending' }
->['body'];
-
-/** Preserve the HTTP status and headers around the shared pending JSON. */
-function durablePendingResponse(responseBody: DurableJudgePendingResponse): Response {
-  return Response.json(responseBody, {
-    status: 202,
-    headers: {
-      Location: responseBody.backfill.url,
-      [DURABLE_DIVERT_HEADER]: DURABLE_DIVERT_JUDGE,
-    },
-  });
-}
 
 export async function createAttempt(req: Request): Promise<Response> {
   try {

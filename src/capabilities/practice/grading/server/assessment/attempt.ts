@@ -28,7 +28,7 @@ import { submissionWasAssisted } from './assistance';
 import { type SaveSubmissionRequest, saveSubmission } from './submit';
 
 /** The frozen issuance, revision and issued scoring units an original is judged against. */
-async function readFormalAttemptScope(
+export async function readFormalAttemptScope(
   database: Db | Tx,
   entry: GradingEntryPoint,
   questionId: string,

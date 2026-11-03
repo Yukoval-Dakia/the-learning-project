@@ -221,6 +221,7 @@ export async function reconstructDoneFromDomainEvents(
     return {
       ...attempt.payload,
       ...projected.verdict,
+      judge_lane: 'durable',
       ...(assessment && typeof assessment === 'object'
         ? {
             assessment: {
@@ -402,6 +403,7 @@ export async function reconstructDoneFromSyncAttempt(database: Db | Tx, submissi
     attempt_event_id: anchor.id,
     judge_event_id: null,
     ...projected.verdict,
+    judge_lane: 'sync',
     assessment: {
       submission_id: submissionId,
       evaluation_group_id: resolved.evaluation_group_id,
@@ -428,6 +430,7 @@ export async function reconstructDoneFromNativeCompletion(
     attempt_event_id: anchor.id,
     judge_event_id: null,
     status: 'effective',
+    judge_lane: 'durable',
     ...projectEvaluationToJudgeResult(
       EvaluationRecord.parse(resolved.effective.row),
       resolved.effective.scoring_basis,

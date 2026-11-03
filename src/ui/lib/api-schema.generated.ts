@@ -19024,6 +19024,8 @@ export interface operations {
                                     feedback_md?: string;
                                     final_rating?: string;
                                     judge_event_id?: string | null;
+                                    /** @enum {string} */
+                                    judge_lane?: "durable" | "sync";
                                     late_arrival?: boolean;
                                     model?: string;
                                     outcome?: string;
@@ -19747,6 +19749,8 @@ export interface operations {
                             feedback_md?: string;
                             final_rating?: string;
                             judge_event_id?: string | null;
+                            /** @enum {string} */
+                            judge_lane?: "durable" | "sync";
                             late_arrival?: boolean;
                             model?: string;
                             outcome?: string;
@@ -24295,6 +24299,8 @@ export interface operations {
                                                 feedback_md?: string;
                                                 final_rating?: string;
                                                 judge_event_id?: string | null;
+                                                /** @enum {string} */
+                                                judge_lane?: "durable" | "sync";
                                                 late_arrival?: boolean;
                                                 model?: string;
                                                 outcome?: string;
@@ -25671,6 +25677,8 @@ export interface operations {
                                                     feedback_md?: string;
                                                     final_rating?: string;
                                                     judge_event_id?: string | null;
+                                                    /** @enum {string} */
+                                                    judge_lane?: "durable" | "sync";
                                                     late_arrival?: boolean;
                                                     model?: string;
                                                     outcome?: string;
@@ -26661,6 +26669,8 @@ export interface operations {
                                                 feedback_md?: string;
                                                 final_rating?: string;
                                                 judge_event_id?: string | null;
+                                                /** @enum {string} */
+                                                judge_lane?: "durable" | "sync";
                                                 late_arrival?: boolean;
                                                 model?: string;
                                                 outcome?: string;
@@ -34857,6 +34867,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    accept_pending?: boolean;
                     activity_ref?: {
                         id: string;
                         /** @enum {string} */
@@ -35148,6 +35159,25 @@ export interface operations {
                         };
                         question_id: string;
                         submission_id: string;
+                    };
+                };
+            };
+            /** @description Successful response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        backfill: {
+                            /** @enum {string} */
+                            channel: "sse";
+                            poll_url: string;
+                            url: string;
+                        };
+                        run_id: string;
+                        /** @enum {string} */
+                        verdict: "pending";
                     };
                 };
             };

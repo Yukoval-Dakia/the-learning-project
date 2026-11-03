@@ -108,12 +108,15 @@ export { ratingFromCoarseOutcome } from './server/judge-rating';
 export { readJudgeRunPermanent } from './server/judge-run-observation';
 export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
 export { installModelAdmissionPins } from './server/model-admission-pins';
+export { isJudgeRunPending, durablePendingResponse } from './server/review-answer-response';
 export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-operation';
 
 export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =
   async (...args) => (await import('./server/review-operation')).submitReviewAnswer(...args);
 export const requestReviewAnswer: typeof import('./server/review-operation').requestReviewAnswer =
   async (...args) => (await import('./server/review-operation')).requestReviewAnswer(...args);
+export const divertReviewAnswer: typeof import('./server/review-operation').divertReviewAnswer =
+  async (...args) => (await import('./server/review-operation')).divertReviewAnswer(...args);
 export {
   APPEAL_EXECUTION_BINDING_ACTION,
   AppealExecutionBinding,

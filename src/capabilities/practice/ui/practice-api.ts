@@ -283,7 +283,11 @@ export function projectQuestionDeleteResponse(
   };
 }
 
-type ReviewAdviceWire = ApiOperationJsonResponse<'previewReviewAdvice'>;
+// The 200 advice body; the 202 durable-judge receipt answers only an `accept_pending` request.
+type ReviewAdviceWire = Extract<
+  ApiOperationJsonResponse<'previewReviewAdvice'>,
+  { judge: unknown }
+>;
 export type JudgePreview = ReviewAdviceWire['judge'];
 // YUK-1729 — the learner capture an automatic verdict commits with in the same advice request.
 export type AdviceCommit = NonNullable<ApiOperationRequestBody<'previewReviewAdvice'>['commit']>;
@@ -310,6 +314,9 @@ export async function getAdvice(
       ...(commit ? { commit } : {}),
     },
   });
+  // This request never sends `accept_pending`, so the server cannot answer with the 202 receipt.
+  if ('verdict' in response)
+    throw new Error('advice answered with a durable-judge receipt it was not asked for');
   return response;
 }
 
