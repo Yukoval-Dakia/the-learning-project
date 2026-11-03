@@ -15,7 +15,7 @@
 // ingesting it back would be circular).
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { A5_BANDS, masteryBandView } from '@/core/mastery-band';
 import type { LearnerJudgmentBatch } from '@/core/schema/learner-judgment';
 import type { Db, Tx } from '@/db/client';
@@ -29,6 +29,7 @@ import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-go
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
 import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
 import {
@@ -373,8 +374,16 @@ function maxIso(a: string | null, b: string | null): string | null {
   return a > b ? a : b;
 }
 
-/** One grouped MAX(created_at) query for the four invalidation categories
- *  (attempt + review folded together — see readLearnerStateWatermarks). */
+// "New practice activity" for header invalidation: any learner answer, plus the
+// native grading lifecycle and corrections, all folded into attempt_at.
+const PRACTICE_WATERMARK_ACTIONS = [
+  ...LEARNER_ANSWER_ACTIONS,
+  'experimental:assessment_activation',
+  'experimental:assessment_settlement',
+  'correct',
+] as const;
+
+/** One grouped MAX(created_at) query for the three invalidation categories. */
 export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerStateWatermarks> {
   const rows = await db
     .select({
@@ -384,17 +393,7 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
     .from(event)
     .where(
       or(
-        eq(event.action, 'attempt'),
-        eq(event.action, 'experimental:assessment_attempt'),
-        eq(event.action, 'experimental:assessment_activation'),
-        eq(event.action, 'experimental:assessment_settlement'),
-        eq(event.action, 'correct'),
-        // The FSRS review-queue clearing write (src/capabilities/practice/grading/api/submit.ts)
-        // uses a DISTINCT action='review', not 'attempt'. It directly moves
-        // review_due_count (the header's "今日待复习" headline), so a pure-review
-        // session with no fresh 'attempt' rows must still trip the invalidation —
-        // folded into attempt_at below.
-        eq(event.action, 'review'),
+        inArray(event.action, [...PRACTICE_WATERMARK_ACTIONS]),
         and(eq(event.action, 'experimental:dreaming_scan'), eq(event.outcome, 'success')),
         eq(event.action, 'rate'),
       ),
@@ -406,18 +405,10 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
     return at ? new Date(at).toISOString() : null;
   };
   return {
-    // Fold 'review' into attempt_at: "new attempt event" invalidation means "new
-    // practice activity", and FSRS review is practice activity (distinct action,
-    // same intent). Folding keeps the three-field watermark shape; this is a
-    // same-intent union, not a new invalidation category.
-    attempt_at: [
-      'attempt',
-      'review',
-      'experimental:assessment_attempt',
-      'experimental:assessment_activation',
-      'experimental:assessment_settlement',
-      'correct',
-    ].reduce<string | null>((latest, action) => maxIso(latest, iso(action)), null),
+    attempt_at: PRACTICE_WATERMARK_ACTIONS.reduce<string | null>(
+      (latest, action) => maxIso(latest, iso(action)),
+      null,
+    ),
     dreaming_at: iso('experimental:dreaming_scan'),
     proposal_decision_at: iso('rate'),
   };

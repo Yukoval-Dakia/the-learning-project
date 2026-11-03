@@ -15,6 +15,7 @@ import {
 } from '@/core/daily-review-plan';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
 
 type DbLike = Db | Tx;
 
@@ -38,7 +39,7 @@ export async function readQuestionPace(db: DbLike, now: Date = new Date()): Prom
     .where(
       and(
         eq(event.actor_kind, 'user'),
-        inArray(event.action, ['attempt', 'review', 'experimental:assessment_attempt']),
+        inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
         eq(event.subject_kind, 'question'),
         gte(event.created_at, since),
       ),
