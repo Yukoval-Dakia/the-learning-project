@@ -1,6 +1,6 @@
-/* Today (/today) legacy pieces that still render on the old base: the overnight digest and cost
-   summary, and the starting-profile band. The inbox moved to M3E (YUK-1473, inbox-m3e.css), so
-   its rules left this file. */
+/* Today (/today) legacy pieces that still render on the old base: the overnight digest chips and
+   the starting-profile band. The inbox (inbox-m3e.css) and the coach blocks, including the cost
+   summary (coach-shared-m3e.css), moved to M3E (YUK-1473), so their rules left this file. */
 
 /* ---- YUK-520 (A1 夜窗 digest) — 最小交班缕（计数 chips + 下钻 CTA） ---- */
 .digest-chips {
@@ -10,46 +10,6 @@
 }
 .digest-foot {
   margin-top: var(--s-3);
-}
-
-.overnight-cost {
-  margin-top: var(--s-3);
-  min-width: 0;
-  font-size: var(--fs-meta);
-  overflow-wrap: anywhere;
-}
-.overnight-cost p {
-  margin-block: var(--s-2);
-}
-.overnight-cost-currencies,
-.overnight-cost-details {
-  display: grid;
-  gap: var(--s-3);
-  list-style: none;
-  padding: 0;
-}
-.overnight-cost-currencies ul {
-  padding-inline-start: var(--s-4);
-}
-.overnight-cost-detail {
-  border-top: 1px solid var(--line);
-  padding-top: var(--s-3);
-}
-.overnight-cost-provider {
-  font-weight: 500;
-}
-.overnight-cost-usage {
-  display: grid;
-  gap: var(--s-2);
-  margin: 0;
-}
-.overnight-cost .overnight-cost-usage > div {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--s-3);
-}
-.overnight-cost .overnight-cost-usage dd {
-  margin: 0;
 }
 
 /* ── YUK-476 · /today 起始画像卡片（ProfileBand）──────────────────────────

@@ -24,16 +24,18 @@
 //     Coach-engine surfaces (Coach brief -> ReviewPlanTask two-stage
 //     pipeline + ADR-0025 goal strand) not yet exposed to this page. No mock.
 //     Phase-deferred context: docs/design/2026-06-04-u0-decisions.md D5.
+//
+// YUK-1473 — M3E presentation (docs/design/2026-11-03-coach-m3e.md): ui-next root + role bridge,
+// lucide icons, scoped coach-m3e.css. Queries, view switching and the report maths are unchanged.
 
 import { useQuery } from '@tanstack/react-query';
+import { ChevronRight, History, type LucideIcon, RotateCcw, Target, Zap } from 'lucide-react';
 import { type KeyboardEvent, type ReactNode, useRef, useState } from 'react';
 import { apiJson } from '@/ui/lib/api';
-import { EmptyState } from '@/ui/primitives/EmptyState';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { SectionLabel } from '@/ui/primitives/SectionLabel';
-import { SkLines } from '@/ui/primitives/SkLines';
-import { Stateful } from '@/ui/primitives/Stateful';
+import { ToastHost } from '@/ui-next/feedback/ToastHost';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { UiNextRoot } from '@/ui-next/public';
+import { AreaEmpty, AreaGate, type AreaStatus } from './AreaGate';
 import {
   type CoachCalibrationBadge,
   type CoachCalibrationReader,
@@ -42,6 +44,7 @@ import {
 import { COACH_VIEWS, type CoachView, DEFAULT_COACH_VIEW, VIEW_QUERY } from './coach-hub-view';
 import { browserTimeZone, weeklyReviewPath } from './coach-weekly';
 import { type CoachEffectivenessReader, EffectivenessTrendPanel } from './EffectivenessTrendPanel';
+import './coach-m3e.css';
 
 interface WeeklyResponse {
   window: { days: number; from: number; to: number; time_zone: string };
@@ -86,6 +89,12 @@ const CAUSE_LABELS: Record<string, string> = {
 
 // Activity KPIs render their authoritative values directly; intermediate count-up
 // integers would be indistinguishable from real report facts.
+function kpiText(value: number | null, decimals: number): string | number {
+  if (value === null) return '—';
+  if (decimals > 0) return value.toFixed(decimals);
+  return Math.round(value);
+}
+
 export function CoachKpi({
   label,
   value,
@@ -99,15 +108,15 @@ export function CoachKpi({
   prefix?: string;
   decimals?: number;
 }) {
-  const shown = value === null ? '—' : decimals > 0 ? value.toFixed(decimals) : Math.round(value);
+  const shown = kpiText(value, decimals);
   return (
-    <div className="coach-kpi">
-      <div className="coach-kpi-n serif tnum">
+    <div className="ch-kpi">
+      <span className="ch-kpi-l">{label}</span>
+      <strong className="ch-kpi-n">
         {prefix}
         {shown}
-        {unit && value !== null ? <span className="coach-kpi-u">{unit}</span> : null}
-      </div>
-      <div className="coach-kpi-l meta">{label}</div>
+        {unit && value !== null ? <span className="ch-kpi-u">{unit}</span> : null}
+      </strong>
     </div>
   );
 }
@@ -118,6 +127,13 @@ const VIEW_LEDE: Record<CoachView, ReactNode> = {
   activity: <span>这里汇总你在所选时间内练了多少、完成了多少，以及答题结果。</span>,
   calibration: <span>这里看系统对各知识点掌握状态的判断有多可靠；依据不足时会明确标出。</span>,
   efficacy: <span>这里比较你最近和过去的表现，只给方向，不把小样本变化说成精确进步。</span>,
+};
+
+// The tab icons, as lucide glyphs (COACH_VIEWS keeps the old icon names as its vocabulary).
+const VIEW_ICON: Record<CoachView, LucideIcon> = {
+  activity: RotateCcw,
+  calibration: Target,
+  efficacy: History,
 };
 
 // 复盘中枢外壳 —— 三视图分段切换，绝不合并。默认视图 = 成效趋势（DEFAULT_COACH_VIEW）。
@@ -169,67 +185,81 @@ export default function CoachHub({
   };
 
   return (
-    <main className="page view coach-loom coachhub">
-      <div className="page-head coachhub-head">
-        <div className="eyebrow">
-          复盘 · <span>{VIEW_QUERY[view]}</span>
-        </div>
-        <div className="page-head-row">
-          <h1 className="page-title serif">Coach 复盘中枢</h1>
-          <div className="coachhub-tabs" role="tablist" aria-label="复盘视图">
-            {COACH_VIEWS.map((v) => (
-              <button
-                key={v.id}
-                ref={(node) => {
-                  tabRefs.current[v.id] = node;
-                }}
-                id={`coach-tab-${v.id}`}
-                type="button"
-                role="tab"
-                aria-selected={view === v.id}
-                aria-controls={`coach-panel-${v.id}`}
-                tabIndex={view === v.id ? 0 : -1}
-                className={view === v.id ? 'coachhub-tab on' : 'coachhub-tab'}
-                onClick={() => selectView(v.id)}
-                onKeyDown={(event) => onViewKeyDown(event, v.id)}
-              >
-                <LoomIcon name={v.icon} size={15} />
-                {v.label}
-              </button>
-            ))}
+    <UiNextRoot className="ch-page">
+      <main className="ch-main un-m3e-bridge">
+        <header className="ch-head">
+          <p className="ch-kicker">
+            复盘 · <span>{VIEW_QUERY[view]}</span>
+          </p>
+          <div className="ch-head-row">
+            <h1 className="ch-title">Coach 复盘中枢</h1>
+            <div className="ch-tabs" role="tablist" aria-label="复盘视图">
+              {COACH_VIEWS.map((v) => {
+                const Icon = VIEW_ICON[v.id];
+                return (
+                  <button
+                    key={v.id}
+                    ref={(node) => {
+                      tabRefs.current[v.id] = node;
+                    }}
+                    id={`coach-tab-${v.id}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={view === v.id}
+                    aria-controls={`coach-panel-${v.id}`}
+                    tabIndex={view === v.id ? 0 : -1}
+                    className="ch-tab un-hit"
+                    onClick={() => selectView(v.id)}
+                    onKeyDown={(event) => onViewKeyDown(event, v.id)}
+                  >
+                    <Icon size={16} aria-hidden="true" />
+                    {v.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
-        <p className="page-lead">{VIEW_LEDE[view]}</p>
-      </div>
+          <p className="ch-lead">{VIEW_LEDE[view]}</p>
+        </header>
 
-      <section
-        id={`coach-panel-${view}`}
-        role="tabpanel"
-        aria-labelledby={`coach-tab-${view}`}
-        className="coachhub-panel"
-      >
-        {view === 'activity' && <CoachActivityView navigate={hubGo} readWeekly={readWeekly} />}
-        {view === 'calibration' && (
-          <CoachCalibrationView
-            navigate={hubGo}
-            readCalibration={readCalibration}
-            MaturityBadge={CalibrationMaturityBadge}
-          />
-        )}
-        {view === 'efficacy' && (
-          <EffectivenessTrendPanel
-            navigate={hubGo}
-            embedded
-            readEffectiveness={readEffectiveness}
-          />
-        )}
-      </section>
-    </main>
+        <section
+          id={`coach-panel-${view}`}
+          role="tabpanel"
+          aria-labelledby={`coach-tab-${view}`}
+          className="ch-panel"
+        >
+          {view === 'activity' && <CoachActivityView navigate={hubGo} readWeekly={readWeekly} />}
+          {view === 'calibration' && (
+            <CoachCalibrationView
+              navigate={hubGo}
+              readCalibration={readCalibration}
+              MaturityBadge={CalibrationMaturityBadge}
+            />
+          )}
+          {view === 'efficacy' && (
+            <EffectivenessTrendPanel
+              navigate={hubGo}
+              embedded
+              readEffectiveness={readEffectiveness}
+            />
+          )}
+        </section>
+      </main>
+      <ToastHost />
+    </UiNextRoot>
   );
 }
 
+// 链式三元被 OCR flag（项目规则禁嵌套三元）——同一顺序的 if/else：载入 → 出错 → 空窗 → 有数据。
+function activityStatus(isLoading: boolean, isError: boolean, windowIsEmpty: boolean): AreaStatus {
+  if (isLoading) return 'loading';
+  if (isError) return 'error';
+  if (windowIsEmpty) return 'empty';
+  return 'ok';
+}
+
 // 活动量视图 = 原 CoachPage 周报，逻辑零改（query / Stateful / CoachReport 逐字保留）。只把自己的
-// page-head 让给复盘中枢壳；时间窗 seg 下沉到 coachhub-subhead（设计 CoachActivity 形态）。
+// page-head 让给复盘中枢壳；时间窗 seg 下沉到 ch-subhead（设计 CoachActivity 形态）。
 function CoachActivityView({
   navigate,
   readWeekly,
@@ -255,40 +285,42 @@ function CoachActivityView({
     q.data.totals.cost_usd === 0 &&
     q.data.top_causes.length === 0 &&
     q.data.top_knowledge.length === 0;
-  const status = q.isLoading ? 'loading' : q.isError ? 'error' : windowIsEmpty ? 'empty' : 'ok';
+  const status = activityStatus(q.isLoading, q.isError, windowIsEmpty);
 
   return (
     <>
-      <div className="coachhub-subhead">
-        <fieldset className="seg" aria-label="时间窗 · 周报">
+      <div className="ch-subhead">
+        {/* A pure view filter (a read, no write): plain toggle buttons with aria-pressed, so the
+            window only changes on a click, exactly as before. */}
+        <fieldset className="ch-seg" aria-label="时间窗 · 周报">
           {WINDOW_OPTIONS.map((opt) => (
             <button
               key={opt.days}
               type="button"
               aria-pressed={days === opt.days}
-              className={days === opt.days ? 'on' : ''}
+              className="ch-seg-opt un-hit"
               onClick={() => setDays(opt.days)}
             >
               {opt.label}
             </button>
           ))}
         </fieldset>
-        <span className="meta">「周报」= 近 {days} 天的活动量，不是整个 Coach。</span>
+        <span className="ch-note">「周报」= 近 {days} 天的活动量，不是整个 Coach。</span>
       </div>
 
-      <Stateful
+      <AreaGate
         status={status}
         onRetry={() => q.refetch()}
         errorText="分析数据加载失败。"
-        skeleton={
-          <LoomCard pad>
-            <SkLines rows={4} />
-          </LoomCard>
+        loading={
+          <div className="ch-card">
+            <SkeletonLines rows={4} label="正在读取活动量" />
+          </div>
         }
-        empty={<EmptyState icon="target" title="窗口内无数据" text="该时间窗内还没有复习记录。" />}
+        empty={<AreaEmpty icon={Target} title="窗口内无数据" text="该时间窗内还没有复习记录。" />}
       >
         {q.data ? <CoachReport key={days} data={q.data} navigate={navigate} /> : null}
-      </Stateful>
+      </AreaGate>
     </>
   );
 }
@@ -310,168 +342,195 @@ export function CoachReport({
   const maxFail = Math.max(1, ...top_knowledge.map((k) => k.failure_count));
 
   return (
-    <>
-      <div className="coach-kpis stagger">
+    <div className="ch-report">
+      <div className="ch-kpis">
         <CoachKpi label="复习次数" value={totals.reviews} />
         <CoachKpi label="正确率" value={correctRate} unit="%" />
         <CoachKpi label="新增错题" value={totals.failures} />
         <CoachKpi label="AI 成本" value={totals.cost_usd} prefix="$" decimals={3} />
       </div>
 
-      <div className="coach-grid">
-        <LoomCard pad>
-          <div className="card-head">
-            <span className="card-icon">
-              <LoomIcon name="review" size={18} />
-            </span>
-            <div className="card-title">评分分布</div>
-            <span className="meta" style={{ marginLeft: 'auto' }}>
-              {distTotal} 次
-            </span>
+      <div className="ch-grid">
+        <section className="ch-card" aria-labelledby="ch-h-dist">
+          <div className="ch-card-head">
+            <RotateCcw size={18} aria-hidden="true" className="ch-card-ic" />
+            <h2 id="ch-h-dist" className="ch-card-title">
+              评分分布
+            </h2>
+            <span className="ch-card-aside">{distTotal} 次</span>
           </div>
           {distTotal > 0 && (
-            <div className="dist-bar">
+            <div className="ch-dist-bar">
               <span
-                className="dist-seg tone-again"
+                className="ch-dist-seg"
+                data-tone="again"
                 style={{ width: `${(ratings.again / distTotal) * 100}%` }}
               />
               <span
-                className="dist-seg tone-hard"
+                className="ch-dist-seg"
+                data-tone="hard"
                 style={{ width: `${(ratings.hard / distTotal) * 100}%` }}
               />
               <span
-                className="dist-seg tone-good"
+                className="ch-dist-seg"
+                data-tone="good"
                 style={{ width: `${(ratings.good / distTotal) * 100}%` }}
               />
               <span
-                className="dist-seg tone-easy"
+                className="ch-dist-seg"
+                data-tone="easy"
                 style={{ width: `${(ratings.easy / distTotal) * 100}%` }}
               />
             </div>
           )}
-          <div className="dist-legend">
+          <div className="ch-legend">
             <span>
-              <span className="dist-key tone-again" />
-              不会 <b className="mono">{ratings.again}</b>
+              <i data-tone="again" />
+              不会 <b className="un-num">{ratings.again}</b>
             </span>
             <span>
-              <span className="dist-key tone-hard" />
-              勉强 <b className="mono">{ratings.hard}</b>
+              <i data-tone="hard" />
+              勉强 <b className="un-num">{ratings.hard}</b>
             </span>
             <span>
-              <span className="dist-key tone-good" />
-              会了 <b className="mono">{ratings.good}</b>
+              <i data-tone="good" />
+              会了 <b className="un-num">{ratings.good}</b>
             </span>
             <span>
-              <span className="dist-key tone-easy" />
-              熟练 <b className="mono">{ratings.easy}</b>
+              <i data-tone="easy" />
+              熟练 <b className="un-num">{ratings.easy}</b>
             </span>
           </div>
-        </LoomCard>
+        </section>
 
-        <LoomCard pad>
-          <div className="card-head">
-            <span className="card-icon">
-              <LoomIcon name="bolt" size={18} />
-            </span>
-            <div className="card-title">归因分布</div>
-            <span className="meta" style={{ marginLeft: 'auto' }}>
-              只读
-            </span>
+        <section className="ch-card" aria-labelledby="ch-h-cause">
+          <div className="ch-card-head">
+            <Zap size={18} aria-hidden="true" className="ch-card-ic" />
+            <h2 id="ch-h-cause" className="ch-card-title">
+              归因分布
+            </h2>
+            <span className="ch-card-aside">只读</span>
           </div>
           {top_causes.length === 0 ? (
-            <p className="meta">尚无归因数据。</p>
+            <p className="ch-note">尚无归因数据。</p>
           ) : (
-            <div className="cause-list">
+            <div className="ch-bars">
               {top_causes.map((c) => (
-                <div key={c.category} className="cause-row">
-                  <span className="cause-name">
+                <div key={c.category} className="ch-bar-row">
+                  <span className="ch-bar-name">
                     {/* YUK-1018 — misc_ id 显示 misconception title；词表 id 走 CAUSE_LABELS。 */}
                     {c.category_label ?? CAUSE_LABELS[c.category] ?? c.category}
                   </span>
-                  <div className="cause-track">
+                  <div className="ch-bar-track">
                     <span
                       style={{ width: `${causeTotal > 0 ? (c.count / causeTotal) * 100 : 0}%` }}
                     />
                   </div>
-                  <span className="mono cause-n">
+                  <span className="ch-bar-n un-num">
                     {causeTotal > 0 ? Math.round((c.count / causeTotal) * 100) : 0}%
                   </span>
                 </div>
               ))}
             </div>
           )}
-        </LoomCard>
+        </section>
       </div>
 
-      <SectionLabel>逐日复习量</SectionLabel>
-      <LoomCard pad>
-        <p className="meta">正确率只统计已判分作答；部分正确单列，未判分不计入正确率。</p>
-        <div className="stack-chart">
+      <section className="ch-card" aria-labelledby="ch-h-daily">
+        <div className="ch-card-head">
+          <h2 id="ch-h-daily" className="ch-card-title">
+            逐日复习量
+          </h2>
+        </div>
+        <div className="ch-daily-meta">
+          <p className="ch-note">正确率只统计已判分作答；部分正确单列，未判分不计入正确率。</p>
+          <div className="ch-legend">
+            <span>
+              <i data-tone="good" />对
+            </span>
+            <span>
+              <i data-tone="again" />错
+            </span>
+            <span>
+              <i data-tone="hard" />
+              部分正确
+            </span>
+            <span>
+              <i data-tone="none" />
+              未判分
+            </span>
+          </div>
+        </div>
+        <div className="ch-stack">
           {daily.map((d) => {
             const wrong = d.incorrect;
             return (
-              <div key={d.date} className="stack-col">
-                <div className="stack-bars" style={{ height: 140 }}>
+              <div key={d.date} className="ch-stack-col">
+                <span className="ch-stack-total un-num">{d.count}</span>
+                <div className="ch-stack-bars" style={{ height: 140 }}>
                   <span
-                    className="stack-seg tone-good"
+                    className="ch-stack-seg"
+                    data-tone="good"
                     style={{ height: `${(d.correct / maxDay) * 140}px` }}
                     title={`对 ${d.correct}`}
                   />
                   <span
-                    className="stack-seg tone-again"
+                    className="ch-stack-seg"
+                    data-tone="again"
                     style={{ height: `${(wrong / maxDay) * 140}px` }}
                     title={`错 ${wrong}`}
                   />
                   <span
-                    className="stack-seg"
-                    style={{ height: `${(d.partial / maxDay) * 140}px`, background: 'var(--hard)' }}
+                    className="ch-stack-seg"
+                    data-tone="hard"
+                    style={{ height: `${(d.partial / maxDay) * 140}px` }}
                     title={`部分正确 ${d.partial}`}
                   />
                   <span
-                    className="stack-seg"
-                    style={{
-                      height: `${(d.ungraded / maxDay) * 140}px`,
-                      background: 'var(--ink-3)',
-                    }}
+                    className="ch-stack-seg"
+                    data-tone="none"
+                    style={{ height: `${(d.ungraded / maxDay) * 140}px` }}
                     title={`未判分 ${d.ungraded}`}
                   />
                 </div>
-                <span className="stack-x meta">{d.date.slice(5)}</span>
-                <span className="stack-total mono">{d.count}</span>
+                <span className="ch-stack-x un-num">{d.date.slice(5)}</span>
               </div>
             );
           })}
         </div>
-      </LoomCard>
+      </section>
 
-      <SectionLabel>失败排行 · 按知识点</SectionLabel>
-      <LoomCard pad>
+      <section className="ch-card" aria-labelledby="ch-h-fail">
+        <div className="ch-card-head">
+          <h2 id="ch-h-fail" className="ch-card-title">
+            失败排行 · 按知识点
+          </h2>
+        </div>
         {top_knowledge.length === 0 ? (
-          <p className="meta">窗口内没有新增错题。</p>
+          <p className="ch-note">窗口内没有新增错题。</p>
         ) : (
-          top_knowledge.map((k) => (
-            <button
-              key={k.id}
-              type="button"
-              className="fail-row"
-              onClick={() => navigate(`/knowledge/${k.id}`)}
-            >
-              {/* de-wenyan: top_knowledge rows carry no subject/domain field, so
-                  drop the hardcoded serif and use the neutral default font. */}
-              <span className="fail-name">{k.name}</span>
-              <div className="fail-track">
-                <span
-                  className="tone-again"
-                  style={{ width: `${(k.failure_count / maxFail) * 100}%` }}
-                />
-              </div>
-              <span className="mono fail-n">{k.failure_count} 次</span>
-              <LoomIcon name="arrow" size={14} className="thread-arrow" />
-            </button>
-          ))
+          <div className="ch-fail-list">
+            {top_knowledge.map((k) => (
+              <button
+                key={k.id}
+                type="button"
+                className="ch-fail-row"
+                onClick={() => navigate(`/knowledge/${k.id}`)}
+              >
+                <span className="ch-fail-name">{k.name}</span>
+                <span className="ch-bar-track">
+                  <span
+                    data-tone="again"
+                    style={{ width: `${(k.failure_count / maxFail) * 100}%` }}
+                  />
+                </span>
+                <span className="ch-bar-n un-num">{k.failure_count} 次</span>
+                <ChevronRight size={16} aria-hidden="true" className="ch-fail-go" />
+              </button>
+            ))}
+          </div>
         )}
-      </LoomCard>
-    </>
+      </section>
+    </div>
   );
 }
