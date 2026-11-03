@@ -405,7 +405,6 @@ async function reviewBindingCoordinates(
   return issued;
 }
 
-/** Runs in the authenticated chat acceptance transaction, before any model execution. */
 /**
  * POST /api/attempts for both doors: a missing or malformed body reaches the schema as null.
  * Callers keep only transport shaping (the Hono 202 divert headers, Start JSON).
@@ -424,6 +423,7 @@ export async function requestReviewAnswer(
   return projectReviewAnswerResponse(parsed.data, result);
 }
 
+/** Runs in the authenticated chat acceptance transaction, before any model execution. */
 export async function captureReviewAnswerBinding(
   database: Tx,
   input: {
