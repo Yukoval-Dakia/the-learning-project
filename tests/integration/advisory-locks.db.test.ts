@@ -534,6 +534,8 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
     expect(new Set(rows.map((r) => r.subject_id))).toEqual(new Set([kcA, kcB]));
   });
 
+  // @invariant concurrency: a merge accept takes G before any mutation row lock, so it cannot deadlock against other learning-state writers
+  // @fails-if the accept locks knowledge rows while waiting on G (order inversion vs merge sweeps / settle writers)
   it('accepted merge waits for the global lock before locking knowledge rows', async () => {
     const from = newId();
     const into = newId();

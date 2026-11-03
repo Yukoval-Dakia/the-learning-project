@@ -1338,6 +1338,8 @@ describe('acceptProposal — high-tier mutations', () => {
   // Codex P1-F — concurrent double-accept must not produce duplicate
   // knowledge nodes / duplicate rate=accept events. The shared decision lock
   // serializes both accepts; the second one replays the recorded rate.
+  // @invariant concurrency: a double-accept applies exactly once — one node, one accept rate
+  // @fails-if the decision lock or the locked rate re-check is lost and both callers apply
   it('concurrent double-accept: exactly one apply succeeds', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'seed:yuwen:shici', domain: 'yuwen' });
