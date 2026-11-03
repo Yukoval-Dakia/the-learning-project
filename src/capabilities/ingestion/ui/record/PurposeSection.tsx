@@ -74,7 +74,6 @@ function ImpactDetails({ impact }: { impact: PurposeImpact }) {
                   <strong>{sinkWords[row.sink]}</strong>
                   <span>{repairWords[row.state]}</span>
                 </div>
-                <p>{row.detail}</p>
               </li>
             ))}
           </ul>
@@ -114,7 +113,8 @@ function ImpactDetails({ impact }: { impact: PurposeImpact }) {
                   <span>当时用途：{policyWords[row.source_policy]}</span>
                   <span>历史费用状态：{paidStateWords[row.paid_state] ?? '未知'}</span>
                 </div>
-                {row.application_error && <p>{row.application_error}</p>}
+                {/* The stored error is raw server text; the learner gets that it failed, not the text. */}
+                {row.application_error && <p>这次处理没有成功应用。</p>}
               </li>
             ))}
           </ul>
