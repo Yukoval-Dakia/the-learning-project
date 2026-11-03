@@ -34824,6 +34824,14 @@ export interface operations {
                         };
                         submission_id?: string;
                     };
+                    commit?: {
+                        latency_ms?: number | null;
+                        reasoning_trace?: string | null;
+                        /** @default [] */
+                        referenced_knowledge_ids?: string[];
+                        session_id?: string | null;
+                        stream_item_id?: string | null;
+                    };
                     mistake_id?: string;
                     question_id?: string;
                     /** @default  */
@@ -34857,6 +34865,74 @@ export interface operations {
                         };
                         automatic_commit: boolean;
                         candidate_id: string;
+                        committed?: {
+                            assessment: {
+                                activation_intent: {
+                                    evaluation_id: string;
+                                    expected_effective_id: string | null;
+                                    expected_generation: number;
+                                };
+                                candidate_id: string;
+                                /** @enum {string|null} */
+                                effect: "applied" | "ineligible" | "failed_pending" | "idempotent_replay" | null;
+                                evaluation_group_id: string;
+                                submission_id: string;
+                            };
+                            judge: (({
+                                auto_rated: boolean;
+                                capability_ref: {
+                                    id: string;
+                                    version: string;
+                                };
+                                /** @enum {string} */
+                                coarse_outcome: "correct" | "partial" | "incorrect" | "unsupported";
+                                confidence: number;
+                                evidence_json: {
+                                    [key: string]: unknown;
+                                };
+                                feedback_md: string;
+                                judge_event_id: string | null;
+                                route: string;
+                                score: number | null;
+                                /** @enum {string|null} */
+                                suggested_rating: "again" | "hard" | "good" | null;
+                                telemetry?: unknown;
+                            } & {
+                                [key: string]: unknown;
+                            }) | ({
+                                auto_rated: boolean;
+                                capability_ref: {
+                                    id: string;
+                                    version: string;
+                                };
+                                /** @enum {string} */
+                                coarse_outcome: "partial_unknown";
+                                confidence: number;
+                                evidence_json: {
+                                    [key: string]: unknown;
+                                };
+                                feedback_md: string;
+                                judge_event_id: string | null;
+                                partial_units: {
+                                    correct_count: number;
+                                    scoring_unit_id: string;
+                                    total_count: number;
+                                }[];
+                                route: string;
+                                /** @enum {string|null} */
+                                score: null;
+                                /** @enum {string|null} */
+                                suggested_rating: "again" | "hard" | "good" | null;
+                                telemetry?: unknown;
+                            } & {
+                                [key: string]: unknown;
+                            })) | null;
+                            review_event: {
+                                id: string;
+                            };
+                            /** @enum {string} */
+                            status: "effective" | "review_required";
+                        };
                         evaluation_group_id: string;
                         judge: {
                             capability_ref: {
