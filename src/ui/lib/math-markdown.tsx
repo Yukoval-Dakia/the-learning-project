@@ -204,6 +204,40 @@ export function isKatexNotation(notation?: string | null): boolean {
   return notation === 'katex' || notation === 'latex';
 }
 
+// YUK-1761 — content with no resolved subject notation (null / not passed) still renders math when
+// the source plainly contains a formula. Same guards as normalizeMathDelimiters: code spans and
+// fences are skipped, and a formula never crosses a blank line or a backtick. A single-dollar span
+// counts only in the tight (pandoc) form: no space just inside either dollar and no digit right
+// after the closing one, so a currency amount such as `$5` or `$5 到 $10` is never a formula.
+const CODE_SPANS = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g;
+const DELIMITED_FORMULA =
+  /(?<!\\)\\\((?:(?!\n\s*\n)[^`])+?\\\)|(?<!\\)\\\[(?:(?!\n\s*\n)[^`])+?\\\]|(?<!\\)\$\$(?:(?!\n\s*\n)(?:\\.|[^`$\\]))+?\$\$/;
+const TIGHT_DOLLAR_FORMULA =
+  /(?<![\\$])\$(?![\s$])[^$\n`]*?[^\s\\$]\$(?![\d$])|(?<![\\$])\$[^\s\\$]\$(?![\d$])/;
+
+// In fallback mode remark-math would still read every other dollar pair, with looser rules than the
+// check above: `求 $x$，报名费 $5 到 $10` would turn `$5 到 $` into a formula. So before parsing,
+// every dollar outside an accepted span (code, `$$…$$` — escaped characters such as `\$` allowed
+// inside —, a tight `$…$`) is escaped to a literal.
+const FALLBACK_DOLLARS = new RegExp(
+  `(${CODE_SPANS.source})|((?<!\\\\)\\$\\$(?:(?!\\n\\s*\\n)(?:\\\\.|[^\`$\\\\]))+?\\$\\$)|(${TIGHT_DOLLAR_FORMULA.source})|(?<!\\\\)\\$`,
+  'g',
+);
+
+function escapeLooseDollars(source: string): string {
+  return source.replace(
+    FALLBACK_DOLLARS,
+    (match: string, code?: string, display?: string, tight?: string) =>
+      code !== undefined || display !== undefined || tight !== undefined ? match : '\\$',
+  );
+}
+
+export function looksLikeMath(source: string): boolean {
+  if (!source.includes('$') && !source.includes('\\(') && !source.includes('\\[')) return false;
+  const prose = source.replace(CODE_SPANS, ' ');
+  return DELIMITED_FORMULA.test(prose) || TIGHT_DOLLAR_FORMULA.test(prose);
+}
+
 /**
  * Shared markdown renderer. Applied wherever LaTeX math may appear in user-facing
  * content: review prompt / reference / feedback; note section body; teaching turn text.
@@ -231,7 +265,10 @@ export function MathMarkdown({
   remarkRehypeOptions,
   ...divProps
 }: MathMarkdownProps): ReactElement {
-  const isKatex = isKatexNotation(notation);
+  // A resolved subject notation decides; only an unresolved one (null / absent) falls back to
+  // the formula check above.
+  const fallback = notation == null && looksLikeMath(children);
+  const isKatex = isKatexNotation(notation) || fallback;
   // Read the module cache so an already-warm math mount (or any SSR render, where
   // the cache is warmed at module eval) renders synchronously with no fallback
   // frame; a cold browser mount reads null and the subscription loads the chunk.
@@ -242,7 +279,10 @@ export function MathMarkdown({
   );
 
   const active = isKatex && mathPlugins ? mathPlugins : NO_MATH_PLUGINS;
-  const source = active === NO_MATH_PLUGINS ? children : normalizeMathDelimiters(children);
+  const source =
+    active === NO_MATH_PLUGINS
+      ? children
+      : normalizeMathDelimiters(fallback ? escapeLooseDollars(children) : children);
   return (
     <MarkdownRenderer
       {...divProps}
