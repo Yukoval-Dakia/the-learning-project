@@ -134,7 +134,6 @@ export async function collectGroundingGateCandidates(
     masteryByKnowledgeId,
     now,
     limit: null,
-    requireCompleteEvidencePackets: true,
     imageFetchFn,
   });
   const exclusions: GroundingGateExclusion[] = selection.exclusions.map((exclusion) => {
