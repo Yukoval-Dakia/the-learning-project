@@ -14,13 +14,27 @@
 //
 // 纯视图逻辑（合成根识别 / ⑥映射 / 分桶 / 轨迹几何）抽在 effectiveness-trend-view.ts（DB-free,
 // unit 覆盖）；本文件只做 React 装配。
+//
+// YUK-1473 — M3E presentation (docs/design/2026-11-03-coach-m3e.md): ui-next Button / SkeletonLines,
+// lucide icons, scoped coach-m3e.css; series colours read M3 roles. Query, drill state and every
+// trend mapping are unchanged.
 
 import { useQuery } from '@tanstack/react-query';
+import {
+  ArrowLeft,
+  ChevronRight,
+  Hash,
+  Layers,
+  Network,
+  RefreshCw,
+  Target,
+  TriangleAlert,
+} from 'lucide-react';
 import { useState } from 'react';
 import { resolveSubjectRenderModelForDomain } from '@/ui/lib/subject';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { SkLines } from '@/ui/primitives/SkLines';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button } from '@/ui-next/public';
+import { AreaEmpty } from './AreaGate';
 import {
   type EffectivenessTrendResponse,
   type EffectivenessTrendSeries,
@@ -45,6 +59,7 @@ import {
   summarizeOverview,
   trajGeometry,
 } from './effectiveness-trend-view';
+import './coach-m3e.css';
 
 // p(L) 四分相对参照档（仅定性，绝不当精确分）。
 const BANDS = ['萌芽', '成长', '稳固', '精熟'];
@@ -76,7 +91,10 @@ function EffConfTag({
 }) {
   const cls = confidenceClass(direction, confidence);
   return (
-    <span className={`eff-conf ${cls}${mini ? ' mini' : ''}`} title={confidenceLabel(cls).full}>
+    <span
+      className={`ef-conf ${cls}${mini ? ' ef-conf-mini' : ''}`}
+      title={confidenceLabel(cls).full}
+    >
       {confTagText(cls, spanEvidence, mini)}
     </span>
   );
@@ -94,7 +112,7 @@ function EffDirChip({
 }) {
   const m = directionMeta(direction);
   return (
-    <span className={`eff-dirchip tone-${m.tone}${lg ? ' lg' : ''}`}>
+    <span className={`ef-dir${lg ? ' ef-dir-lg' : ''}`} data-tone={m.tone}>
       {m.glyph} {prefix}
       {m.label}
     </span>
@@ -126,9 +144,7 @@ function EffTrajectory({
 
   // 退化态：θ̂/p(L) 全空 → 不画假线，改走活动量代理（handoff 故障/退化态约束）。
   if (g.n === 0) {
-    return (
-      <div className="eff-traj-degenerate meta">活动 {series.activity_count} 次 · 无掌握度轨迹</div>
-    );
+    return <div className="ef-traj-degenerate">活动 {series.activity_count} 次 · 无掌握度轨迹</div>;
   }
 
   const innerH = h - 2 * padY;
@@ -138,7 +154,9 @@ function EffTrajectory({
 
   return (
     <svg
-      className={`eff-traj is-${trend.direction}${tender ? ' is-tender' : ''}`}
+      className="ef-traj"
+      data-dir={trend.direction}
+      data-tender={tender || undefined}
       viewBox={`0 0 ${w} ${h}`}
       preserveAspectRatio="none"
       role="img"
@@ -146,23 +164,23 @@ function EffTrajectory({
     >
       {showBands &&
         [0, 0.5, 1].map((p) => (
-          <line key={p} className="eff-traj-grid" x1={padX} y1={yOf(p)} x2={w - padX} y2={yOf(p)} />
+          <line key={p} className="ef-traj-grid" x1={padX} y1={yOf(p)} x2={w - padX} y2={yOf(p)} />
         ))}
-      {g.n >= 2 && <path className="eff-traj-band" d={g.bandPath} />}
+      {g.n >= 2 && <path className="ef-traj-band" d={g.bandPath} />}
       {g.n === 1 && (
         <line
-          className="eff-traj-errbar"
+          className="ef-traj-errbar"
           x1={last.x}
           y1={yOf(Math.min(1, v0 + last.half))}
           x2={last.x}
           y2={yOf(Math.max(0, v0 - last.half))}
         />
       )}
-      {g.n >= 2 && <path className="eff-traj-line" d={g.linePath} />}
+      {g.n >= 2 && <path className="ef-traj-line" d={g.linePath} />}
       {g.pts.map((q, i) => (
         <circle
           key={q.x}
-          className={`eff-traj-dot${i === g.n - 1 ? ' last' : ''}`}
+          className={`ef-traj-dot${i === g.n - 1 ? ' ef-traj-dot-last' : ''}`}
           cx={q.x}
           cy={q.y}
           r={i === g.n - 1 ? 3.4 : 2}
@@ -183,33 +201,34 @@ function EffOverview({ series }: { series: EffectivenessTrendSeries[] }) {
   ];
   const tot = o.total || 1;
   return (
-    <LoomCard pad className="eff-overview-card">
-      <div className="eff-dirbar">
+    <section className="ch-card ef-overview" aria-label="方向分布">
+      <div className="ch-dist-bar">
         {segs.map(([d, n]) =>
           n > 0 ? (
             <span
               key={d}
-              className={`eff-dirbar-seg is-${d}`}
+              className="ch-dist-seg"
+              data-dir={d}
               style={{ width: `${(n / tot) * 100}%` }}
               title={`${directionMeta(d).label} ${n}`}
             />
           ) : null,
         )}
       </div>
-      <div className="eff-legend">
+      <div className="ch-legend">
         {segs.map(([d, n]) => (
           <span key={d}>
-            <i className={`is-${d}`} />
-            {directionMeta(d).label} <b className="mono">{n}</b>
+            <i data-dir={d} />
+            {directionMeta(d).label} <b className="un-num">{n}</b>
           </span>
         ))}
       </div>
-      <p className="eff-overview-note meta">
-        本窗共 {o.total} 个入选的显著变化知识点 · <b className="mono">{o.firm}</b> 条方向较可靠，
-        <b className="mono">{o.tender}</b>{' '}
+      <p className="ch-note">
+        本窗共 {o.total} 个入选的显著变化知识点 · <b className="un-num">{o.firm}</b> 条方向较可靠，
+        <b className="un-num">{o.tender}</b>{' '}
         条仍需更多记录。这里只展示全局排序后的有限子集，不代表全部知识点。
       </p>
-    </LoomCard>
+    </section>
   );
 }
 
@@ -217,11 +236,11 @@ function EffOverview({ series }: { series: EffectivenessTrendSeries[] }) {
 function EffSubjectWholeRow({ label, whole }: { label: string; whole: EffectivenessTrendSeries }) {
   const { trend } = whole;
   return (
-    <div className="eff-subj is-whole">
-      <div className="eff-subj-head">
-        <span className="eff-subj-name serif">{label}</span>
-        <span className="eff-subj-wholetag">
-          <LoomIcon name="layers" size={12} />
+    <div className="ef-subj ef-subj-whole">
+      <div className="ef-subj-head">
+        <span className="ef-subj-name">{label}</span>
+        <span className="ef-wholetag">
+          <Layers size={13} aria-hidden="true" />
           整科概览
         </span>
         <EffDirChip direction={trend.direction} prefix="整科" lg />
@@ -231,13 +250,9 @@ function EffSubjectWholeRow({ label, whole }: { label: string; whole: Effectiven
           spanEvidence={trend.span_evidence}
         />
       </div>
-      <div className="eff-subj-wholeviz">
+      <div className="ef-wholeviz">
         <EffTrajectory series={whole} w={300} h={56} showBands />
-        <div className="eff-subj-wholeside">
-          <span className="eff-subj-wholehint meta">
-            积累到更多知识点记录后，这里会展开更细的趋势。
-          </span>
-        </div>
+        <p className="ch-note">积累到更多知识点记录后，这里会展开更细的趋势。</p>
       </div>
     </div>
   );
@@ -250,12 +265,16 @@ function EffMovedKc({ kc, onDrill }: { kc: EffectivenessTrendSeries; onDrill: ()
   return (
     <button
       type="button"
-      className={`eff-moved is-${kc.trend.direction}${tender ? ' is-tender' : ''}`}
+      className="ef-moved"
+      data-dir={kc.trend.direction}
+      data-tender={tender || undefined}
       onClick={onDrill}
     >
-      <span className="eff-moved-top">
-        <span className={`eff-moved-glyph tone-${m.tone}`}>{m.glyph}</span>
-        <span className="eff-moved-name">{kc.name ?? '未命名知识点'}</span>
+      <span className="ef-moved-top">
+        <span className="ef-glyph" data-tone={m.tone} aria-hidden="true">
+          {m.glyph}
+        </span>
+        <span className="ef-moved-name">{kc.name ?? '未命名知识点'}</span>
         <EffConfTag
           direction={kc.trend.direction}
           confidence={kc.trend.confidence}
@@ -292,20 +311,16 @@ function EffSubjectRow({
   const settledTotal = settled.holding + settled.insufficient;
 
   return (
-    <div className={`eff-subj${uncategorized ? ' is-uncat' : ''}`}>
-      <div className="eff-subj-head">
+    <div className="ef-subj" data-uncat={uncategorized || undefined}>
+      <div className="ef-subj-head">
         <button
           type="button"
-          className="eff-subj-name-btn"
+          className="ef-subj-name-btn"
           onClick={() => onDrill(rollup.effective_domain)}
         >
-          {uncategorized && (
-            <span className="eff-subj-uncat-ic">
-              <LoomIcon name="hash" size={15} />
-            </span>
-          )}
-          <span className="eff-subj-name serif">{label}</span>
-          <span className="eff-subj-count mono">{rollup.kc_count} 个知识点</span>
+          {uncategorized && <Hash size={16} aria-hidden="true" className="ef-uncat-ic" />}
+          <span className="ef-subj-name">{label}</span>
+          <span className="ef-count un-num">{rollup.kc_count} 个知识点</span>
         </button>
         <EffDirChip direction={rollup.direction} prefix="整科" lg />
         <EffConfTag
@@ -313,16 +328,18 @@ function EffSubjectRow({
           confidence={rollup.confidence}
           spanEvidence={rollup.activity_count}
         />
-        <button
-          type="button"
-          className="eff-subj-drill"
+        <Button
+          size="sm"
+          variant="secondary"
+          className="ef-drill"
           onClick={() => onDrill(rollup.effective_domain)}
         >
-          展开知识点 <LoomIcon name="chevronDown" size={14} />
-        </button>
+          展开知识点
+          <ChevronRight size={16} aria-hidden="true" />
+        </Button>
       </div>
-      <div className="eff-subj-moved">
-        <span className="eff-subj-moved-l meta">本期动了的</span>
+      <div className="ef-subj-moved">
+        <span className="ch-note ef-moved-l">本期动了的</span>
         {moved.length > 0 ? (
           moved.map((k) => (
             <EffMovedKc
@@ -332,17 +349,17 @@ function EffSubjectRow({
             />
           ))
         ) : (
-          <span className="eff-subj-nomove meta">这科最近没有明显上升或回落的知识点</span>
+          <span className="ch-note ef-nomove">这科最近没有明显上升或回落的知识点</span>
         )}
         {settledTotal > 0 && (
           <button
             type="button"
-            className="eff-subj-settled"
+            className="ef-settled"
             onClick={() => onDrill(rollup.effective_domain)}
             title="默认折叠，点开看入选项"
           >
             +{settled.holding} 持平 · {settled.insufficient} 数据不足{' '}
-            <span className="eff-subj-settled-x">默认折叠</span>
+            <span className="ef-settled-x">默认折叠</span>
           </button>
         )}
       </div>
@@ -373,10 +390,10 @@ function EffSparkRow({
   // KC id 可能含 `:`（如 seed:wenyan:root）→ encodeURIComponent。
   const href = `/knowledge/${encodeURIComponent(kc.knowledge_id)}`;
   return (
-    <div className={`eff-row is-${kc.trend.direction}${tender ? ' is-tender' : ''}`}>
-      <div className="eff-row-main">
-        <div className="eff-row-top">
-          <span className="eff-row-name">{kc.name ?? '未命名知识点'}</span>
+    <div className="ef-row" data-dir={kc.trend.direction} data-tender={tender || undefined}>
+      <div className="ef-row-main">
+        <div className="ef-row-top">
+          <span className="ef-row-name">{kc.name ?? '未命名知识点'}</span>
           <EffDirChip direction={kc.trend.direction} prefix="相对" />
           <EffConfTag
             direction={kc.trend.direction}
@@ -384,20 +401,20 @@ function EffSparkRow({
             spanEvidence={kc.trend.span_evidence}
           />
         </div>
-        <p className="eff-row-note">{rowNote(kc)}</p>
-        <div className="eff-row-foot">
-          <button type="button" className="eff-linkbtn" onClick={() => navigate(href)}>
-            <LoomIcon name="knowledge" size={13} />
+        <p className="ef-row-note">{rowNote(kc)}</p>
+        <div className="ef-row-foot">
+          <Button size="sm" variant="quiet" onClick={() => navigate(href)}>
+            <Network size={14} aria-hidden="true" />
             看图谱
-          </button>
+          </Button>
         </div>
       </div>
-      <div className="eff-row-viz">
+      <div className="ef-row-viz">
         <EffTrajectory series={kc} w={188} h={66} showBands />
-        <div className="eff-row-axis">
-          <span className="mono">{kc.points.length <= 1 ? '首次' : '起'}</span>
-          <span className="eff-row-axis-bands">{BANDS.join(' ‹ ')}</span>
-          <span className="mono">现在</span>
+        <div className="ef-row-axis">
+          <span>{kc.points.length <= 1 ? '首次' : '起'}</span>
+          <span className="ef-row-bands">{BANDS.join(' ‹ ')}</span>
+          <span>现在</span>
         </div>
       </div>
     </div>
@@ -413,16 +430,16 @@ function RollupScreen({
   onDrill: (domain: string | null) => void;
 }) {
   return (
-    <section className="eff-vizsec">
-      <div className="eff-vizhead">
-        <div className="eff-vizhead-l">
-          <div className="card-title">方向与轨迹 · 按科目查看</div>
-          <span className="meta">
-            先看科目整体，再展开最近有变化的知识点。记录较少时，科目整体通常比单个知识点更稳定。
-          </span>
-        </div>
+    <section className="ef-sec" aria-labelledby="ef-h-rollup">
+      <div className="ef-sec-head">
+        <h2 id="ef-h-rollup" className="ch-card-title">
+          方向与轨迹 · 按科目查看
+        </h2>
+        <p className="ch-note">
+          先看科目整体，再展开最近有变化的知识点。记录较少时，科目整体通常比单个知识点更稳定。
+        </p>
       </div>
-      <div className="eff-rollup">
+      <div className="ef-list">
         {data.aggregate.by_subject.map((rollup) => (
           <EffSubjectRow
             key={rollup.effective_domain ?? UNCAT_KEY}
@@ -452,33 +469,31 @@ function DrilldownScreen({
   const { whole, kcs } = partitionSubjectSeries(rows);
   const label = subjectLabel(domain);
   return (
-    <section className="eff-vizsec">
-      <div className="eff-vizhead">
-        <div className="eff-vizhead-l">
-          <button type="button" className="eff-back" onClick={onBack}>
-            <LoomIcon name="arrowL" size={14} />
-            返回科目
-          </button>
-          <div className="card-title">
-            {label} · 显著变化知识点{' '}
-            <span className="eff-vizhead-sub meta">最多 {data.metadata.notable_limit} 个</span>
-          </div>
-        </div>
+    <section className="ef-sec" aria-labelledby="ef-h-drill">
+      <div className="ef-sec-head">
+        <Button size="sm" variant="quiet" className="ef-back" onClick={onBack}>
+          <ArrowLeft size={16} aria-hidden="true" />
+          返回科目
+        </Button>
+        <h2 id="ef-h-drill" className="ch-card-title">
+          {label} · 显著变化知识点{' '}
+          <span className="ch-note">最多 {data.metadata.notable_limit} 个</span>
+        </h2>
       </div>
       {whole && <EffSubjectWholeRow label={label} whole={whole} />}
       {kcs.length > 0 ? (
-        <div className="eff-rows">
+        <div className="ef-list">
           {kcs.map((kc) => (
             <EffSparkRow key={kc.knowledge_id} kc={kc} navigate={navigate} />
           ))}
         </div>
       ) : (
         !whole && (
-          <div className="eff-reserve">
-            <LoomIcon name="layers" size={18} />
+          <div className="ef-reserve">
+            <Layers size={18} aria-hidden="true" />
             <div>
-              <div className="eff-reserve-t">这科还没有更细的知识点趋势</div>
-              <div className="eff-reserve-s">继续练习后，这里会逐步展开。</div>
+              <p className="ef-reserve-t">这科还没有更细的知识点趋势</p>
+              <p className="ch-note">继续练习后，这里会逐步展开。</p>
             </div>
           </div>
         )
@@ -490,40 +505,43 @@ function DrilldownScreen({
 // ── 空态 / 故障态（认识论诚实：不画假线 / 不回落全 0）─────────────────────────
 function EffEmpty({ navigate }: { navigate: (to: string) => void }) {
   return (
-    <div className="eff-empty">
-      <span className="eff-empty-ic">
-        <LoomIcon name="target" size={26} />
-      </span>
-      <div className="eff-empty-t serif">还没有成效数据</div>
-      <p className="eff-empty-s">
-        成效是「相对过去的你」。现在还没有一条作答记录长出趋势 —— 没有起点，就画不出方向。去练几道，
-        这里会长出每块的涨 / 保持 / 退。<b>我不会先画一条假的上升线，也不画一条 0 值平线。</b>
-      </p>
-      <button type="button" className="eff-cta" onClick={() => navigate('/practice')}>
-        <LoomIcon name="layers" size={15} />
-        去练几道
-      </button>
-    </div>
+    <AreaEmpty
+      icon={Target}
+      title="还没有成效数据"
+      text={
+        <>
+          成效是「相对过去的你」。现在还没有一条作答记录长出趋势 ——
+          没有起点，就画不出方向。去练几道， 这里会长出每块的涨 / 保持 / 退。
+          <b>我不会先画一条假的上升线，也不画一条 0 值平线。</b>
+        </>
+      }
+      action={
+        <Button variant="primary" onClick={() => navigate('/practice')}>
+          <Layers size={16} aria-hidden="true" />
+          去练几道
+        </Button>
+      }
+    />
   );
 }
 
 function EffError({ onRetry }: { onRetry: () => void }) {
   return (
-    <div className="eff-error" role="alert">
-      <span className="eff-error-ic">
-        <LoomIcon name="alert" size={22} />
+    <div className="ef-error" role="alert">
+      <span className="ef-error-ic" aria-hidden="true">
+        <TriangleAlert size={20} />
       </span>
-      <div className="eff-error-body">
-        <div className="eff-error-t">成效数据暂时取不到</div>
-        <p className="eff-error-s">
+      <div className="ef-error-body">
+        <p className="ef-error-t">成效数据暂时取不到</p>
+        <p className="ch-note">
           这次没能加载趋势。<b>不会把加载失败显示成「全部 0」或「全部持平」</b>，
           以免把「暂时读不到」误成「没有变化」。请稍后重试。
         </p>
       </div>
-      <button type="button" className="eff-cta secondary" onClick={onRetry}>
-        <LoomIcon name="refresh" size={15} />
+      <Button variant="secondary" onClick={onRetry}>
+        <RefreshCw size={16} aria-hidden="true" />
         重试
-      </button>
+      </Button>
     </div>
   );
 }
@@ -541,16 +559,14 @@ function PanelShell({
   if (embedded) return <>{children}</>;
   return (
     <>
-      <div className="page-head">
-        <div className="eyebrow">复盘 · 成效趋势</div>
-        <div className="page-head-row">
-          <h1 className="page-title serif">成效趋势</h1>
-        </div>
-        <p className="page-lead">
+      <header className="ch-head">
+        <p className="ch-kicker">复盘 · 成效趋势</p>
+        <h1 className="ch-title">成效趋势</h1>
+        <p className="ch-lead">
           成效答「相对上次，我涨了吗」—— 和过去的你比，不和任何标准比。慢热期只信相对方向，
           绝对数字别太当真；退步也如实说，不替你美化。
         </p>
-      </div>
+      </header>
       {children}
     </>
   );
@@ -573,9 +589,9 @@ export function EffectivenessTrendPanel({
   if (q.isLoading) {
     return (
       <PanelShell embedded={embedded}>
-        <LoomCard pad>
-          <SkLines rows={5} />
-        </LoomCard>
+        <div className="ch-card">
+          <SkeletonLines rows={5} label="正在读取成效趋势" />
+        </div>
       </PanelShell>
     );
   }
@@ -598,17 +614,19 @@ export function EffectivenessTrendPanel({
   const data = q.data;
   return (
     <PanelShell embedded={embedded}>
-      <EffOverview series={data.series} />
-      {drill === null ? (
-        <RollupScreen data={data} onDrill={(domain) => setDrill({ domain })} />
-      ) : (
-        <DrilldownScreen
-          data={data}
-          domain={drill.domain}
-          navigate={navigate}
-          onBack={() => setDrill(null)}
-        />
-      )}
+      <div className="ef">
+        <EffOverview series={data.series} />
+        {drill === null ? (
+          <RollupScreen data={data} onDrill={(domain) => setDrill({ domain })} />
+        ) : (
+          <DrilldownScreen
+            data={data}
+            domain={drill.domain}
+            navigate={navigate}
+            onBack={() => setDrill(null)}
+          />
+        )}
+      </div>
     </PanelShell>
   );
 }

@@ -1,0 +1,459 @@
+/* Shared coach blocks (YUK-1473), M3E presentation: the empty state, the teaching brief (为你而备),
+   the prep-desk conjecture cards, the probe answer cards and the overnight cost summary. They
+   render on Today (inside its [data-ui-next] root) and the empty state also on /coach. Each block
+   root carries .un-m3e-bridge, so the --un-* colour aliases read the Google M3 roles in both places.
+   Design record: docs/design/2026-11-03-coach-m3e.md (T3 no shadows on cards, M1 motion only on
+   change, A2 hit areas). */
+
+[data-ui-next] {
+  /* ═══ Empty and quiet states ═══ */
+  & .cs-empty {
+    display: grid;
+    justify-items: center;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-7) var(--un-sp-5);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-sunk);
+    text-align: center;
+  }
+
+  & .cs-empty-ic {
+    display: grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    margin-bottom: var(--un-sp-1);
+    border-radius: var(--un-r-3);
+    background: var(--un-md-sys-color-secondary-container);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .cs-empty-t {
+    color: var(--un-text-1);
+    font: 600 var(--un-fs-4) / 1.3 var(--un-font-sans);
+  }
+
+  & .cs-empty-s {
+    max-width: 36em;
+    margin-bottom: var(--un-sp-2);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .cs-empty-s b {
+    color: var(--un-text-2);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .cs-quiet {
+    padding: var(--un-sp-2) 0;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  /* ═══ Pieces shared by the brief, conjecture and probe cards ═══ */
+  & .cs-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--un-md-sys-color-primary);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  /* The question the team is about to ask: a quoted block, never a flip card. */
+  & .cs-probe {
+    display: grid;
+    gap: var(--un-sp-1);
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-md-sys-color-surface-container-low);
+  }
+
+  & .cs-probe-md {
+    color: var(--un-text-1);
+    line-height: var(--un-lh-ui);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  & .cs-evidence {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-1);
+  }
+
+  & .cs-ev {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 24px;
+    padding: 2px var(--un-sp-2);
+    border-radius: var(--un-r-1);
+    background: var(--un-md-sys-color-surface-container-high);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .cs-acts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+  }
+
+  /* On touch, .un-hit grows each small button to a 44px tap area. When an action row wraps, a
+     tight row gap lets a lower button's tap area cover the one above (不太像 over 对，往这个方向想,
+     both writes). Keep wrapped rows far enough apart that tap areas never overlap. */
+  @media (pointer: coarse) {
+    & .cs-acts {
+      row-gap: var(--un-sp-4);
+    }
+  }
+
+  & .cs-error {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--un-critical);
+    font-size: var(--un-fs-1);
+  }
+
+  /* ═══ 为你而备 · teaching brief ═══ */
+  /* Same spacing as Today's own panels (src/ui-next/today/today.css .un-today-panel). */
+  & .bf-wrap {
+    min-width: 0;
+    margin-block: var(--un-sp-5);
+  }
+
+  & .bf-card {
+    display: grid;
+    min-width: 0;
+    padding: var(--un-sp-5);
+    border-radius: 24px;
+    background: var(--un-md-sys-color-surface-container-lowest);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-md-sys-color-outline-variant);
+  }
+
+  & .bf-head {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-3);
+    margin-bottom: var(--un-sp-2);
+  }
+
+  & .bf-head-ic {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--un-r-3);
+    background: var(--un-md-sys-color-secondary-container);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .bf-title {
+    color: var(--un-text-1);
+    font: 600 22px / 1.4 var(--un-font-sans);
+  }
+
+  & .bf-block {
+    display: grid;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-4) 0;
+    border-top: var(--un-hairline) solid var(--un-md-sys-color-outline-variant);
+  }
+
+  & .bf-block:last-child {
+    padding-bottom: 0;
+  }
+
+  /* A real h3, set at label density. :focus (not :focus-visible): the ring must show on the
+     programmatic focus a forward advance moves here, which often follows a mouse click. */
+  & .bf-block-title {
+    width: fit-content;
+    border-radius: 4px;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .bf-block-title:focus {
+    outline: 2px solid var(--un-md-sys-color-primary);
+    outline-offset: 2px;
+  }
+
+  & .bf-claim {
+    min-width: 0;
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    line-height: var(--un-lh-ui);
+    overflow-wrap: anywhere;
+  }
+
+  & .bf-basis {
+    min-width: 0;
+    color: var(--un-text-2);
+    overflow-wrap: anywhere;
+  }
+
+  & .bf-edit {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .bf-edit label {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .bf-edit textarea {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 5.5rem;
+    padding: var(--un-sp-3);
+    border: 1px solid var(--un-md-sys-color-outline);
+    border-radius: var(--un-md-sys-shape-medium);
+    background: var(--un-md-sys-color-surface-container-lowest);
+    color: var(--un-text-1);
+    line-height: var(--un-lh-ui);
+    resize: vertical;
+  }
+
+  & .bf-edit textarea:focus-visible {
+    outline: 2px solid var(--un-md-sys-color-primary);
+    outline-offset: -1px;
+  }
+
+  & .bf-done {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .bf-reveal {
+    margin-top: var(--un-sp-1);
+  }
+
+  /* 当前结果: status icon + text (never colour alone). Neutral unless confirmed or failed. */
+  & .bf-outcome {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    color: var(--un-text-2);
+    line-height: var(--un-lh-ui);
+  }
+
+  & .bf-outcome > svg {
+    flex: none;
+  }
+
+  & .bf-outcome[data-status="confirmed"] {
+    color: var(--un-positive);
+  }
+
+  & .bf-outcome[data-status="failed"] {
+    color: var(--un-critical);
+  }
+
+  /* ═══ 备课猜想 · conjecture cards ═══ */
+  & .pc-list {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+
+  & .pc-card {
+    display: grid;
+    gap: var(--un-sp-3);
+    min-width: 0;
+    padding: var(--un-sp-4);
+    border-radius: 20px;
+    background: var(--un-md-sys-color-surface-container-lowest);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-md-sys-color-outline-variant);
+  }
+
+  & .pc-claim {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    line-height: var(--un-lh-ui);
+    overflow-wrap: anywhere;
+  }
+
+  & .pc-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+  }
+
+  & .pc-recur {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  /* ═══ 待你试做 · probe answer cards ═══ */
+  & .pq-list {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+
+  & .pq-card {
+    display: grid;
+    gap: var(--un-sp-3);
+    min-width: 0;
+    padding: var(--un-sp-4);
+    border-radius: 20px;
+    background: var(--un-md-sys-color-surface-container-low);
+  }
+
+  & .pq-probe {
+    display: grid;
+    gap: var(--un-sp-1);
+  }
+
+  & .pq-verdict {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-2) var(--un-sp-3);
+    padding: var(--un-sp-2) var(--un-sp-2) var(--un-sp-2) var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-md-sys-color-surface-container-high);
+    color: var(--un-text-1);
+  }
+
+  & .pq-verdict[data-verdict="retired"] {
+    background: var(--un-positive-soft);
+    color: var(--un-positive);
+  }
+
+  & .pq-verdict[data-verdict="evidence_for"] {
+    background: var(--un-caution-soft);
+    color: var(--un-caution);
+  }
+
+  & .pq-verdict[data-verdict="confirmed"] {
+    background: var(--un-md-sys-color-secondary-container);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .pq-verdict-txt {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  & .pq-verdict-txt > svg {
+    flex: none;
+  }
+
+  & .pq-error {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--un-critical);
+    font-size: var(--un-fs-1);
+  }
+
+  /* ═══ 昨日 AI 用量与费用 ═══ */
+  & .oc {
+    min-width: 0;
+    margin-top: var(--un-sp-3);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    overflow-wrap: anywhere;
+  }
+
+  & .oc-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    box-shadow: inset 0 0 0 1px var(--un-md-sys-color-outline-variant);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+    transition: background-color var(--un-t-small) var(--un-ease-glide);
+  }
+
+  & .oc-toggle:hover {
+    background: var(--un-md-sys-color-surface-container-high);
+  }
+
+  & .oc-toggle[aria-expanded="true"] {
+    background: var(--un-md-sys-color-secondary-container);
+    box-shadow: none;
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .oc-chev {
+    transition: transform var(--un-t-small) var(--un-ease-glide);
+  }
+
+  & .oc-toggle[aria-expanded="true"] .oc-chev {
+    transform: rotate(180deg);
+  }
+
+  & .oc-panel {
+    display: grid;
+    gap: var(--un-sp-2);
+    margin-top: var(--un-sp-3);
+  }
+
+  & .oc-panel[hidden] {
+    display: none;
+  }
+
+  & .oc-currencies {
+    display: grid;
+    gap: var(--un-sp-1);
+  }
+
+  & .oc-currencies ul {
+    padding-left: var(--un-sp-4);
+    list-style: disc;
+  }
+
+  & .oc-details {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .oc-detail {
+    display: grid;
+    gap: 2px;
+    padding: var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: var(--un-md-sys-color-surface-container-low);
+  }
+
+  & .oc-provider {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .oc-usage {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px var(--un-sp-4);
+  }
+
+  & .oc-usage > div {
+    display: flex;
+    gap: var(--un-sp-1);
+  }
+
+  & .oc-usage dt {
+    color: var(--un-text-3);
+  }
+
+  & .oc-quiet {
+    color: var(--un-text-3);
+  }
+}
