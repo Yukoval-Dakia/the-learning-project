@@ -110,7 +110,7 @@ export async function evaluateNudgeTrigger(
     if (fusedRows.length > 0) return { fire: false, reason: 'dismiss_fused' };
   }
 
-  // 静默窗 backstop 观测位：冻结进 payload 作为开口时的审计位；读侧另行重算当前态。
+  // 开口时是否在练习中：只冻结进 payload 作审计位，读侧不据此过滤或延迟呈现。
   const inActiveSession = await isInActivePracticeSession(db);
 
   // session 显示名 = source_document.title（可空；learning_session 无 name 列）；空则降级。

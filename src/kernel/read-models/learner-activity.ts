@@ -4,15 +4,31 @@
 
 import { and, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { event, knowledge, learning_record, question, question_revision } from '@/db/schema';
+import {
+  evaluation,
+  event,
+  knowledge,
+  learning_record,
+  question,
+  question_revision,
+} from '@/db/schema';
+import { getCorrectionStatuses } from '@/kernel/events';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
-import { nativeAttemptOutcome, resolveVerdictsForNativeAttempts } from './assessment-verdict';
+import {
+  nativeAttemptOutcome,
+  resolveVerdictsForAttempts,
+  resolveVerdictsForNativeAttempts,
+} from './assessment-verdict';
 import { batchResolveSubjectIds } from './subject-resolution';
 
 type DbLike = Db | Tx;
+type EventRow = typeof event.$inferSelect;
+type AnswerOutcome = 'success' | 'failure' | 'partial';
 
 const NATIVE_ATTEMPT_ACTION = 'experimental:assessment_attempt';
 const RECORD_CAPTURE_ACTION = 'experimental:record_capture';
+/** Native attempt anchor id: `evt_assessment_<submission_id>`. */
+const ASSESSMENT_ATTEMPT_ID_PREFIX = 'evt_assessment_';
 
 /** The learner answered a question: legacy attempt/review rows or a native attempt anchor. */
 export const LEARNER_ANSWER_ACTIONS = ['attempt', 'review', NATIVE_ATTEMPT_ACTION] as const;
@@ -50,8 +66,8 @@ export async function loadLastLearnerEventAt(db: DbLike, before?: Date): Promise
 export async function loadNativeAttemptOutcomes(
   db: DbLike,
   eventIds: string[],
-): Promise<Map<string, 'success' | 'failure' | 'partial'>> {
-  const out = new Map<string, 'success' | 'failure' | 'partial'>();
+): Promise<Map<string, AnswerOutcome>> {
+  const out = new Map<string, AnswerOutcome>();
   if (eventIds.length === 0) return out;
   const rows = await db
     .select()
@@ -78,8 +94,9 @@ const FAILURE_STREAK_SCAN_LIMIT = 200;
 
 /**
  * The knowledge point with the longest current run of failed answers. Answers with
- * no right/wrong bit (pending, self-reported, unsupported) are skipped; a success or
- * partial ends the run. Only the newest FAILURE_STREAK_SCAN_LIMIT answers are read.
+ * no right/wrong bit (pending, self-reported, unsupported) and contested answers
+ * (judge corrected, or an appeal filed) are skipped; a success or partial ends the
+ * run. Only the newest FAILURE_STREAK_SCAN_LIMIT answers are read.
  */
 export async function loadLongestFailureStreak(db: DbLike): Promise<KnowledgeFailureStreak | null> {
   const rows = await db
@@ -97,12 +114,18 @@ export async function loadLongestFailureStreak(db: DbLike): Promise<KnowledgeFai
     .limit(FAILURE_STREAK_SCAN_LIMIT);
   if (rows.length === 0) return null;
   const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, rows);
+  const legacyOutcomes = await loadLegacyAnswerOutcomes(db, rows);
+  const contested = await loadContestedAttemptIds(
+    db,
+    rows.map((row) => row.id),
+  );
 
   const runs = new Map<string, { count: number; ended: boolean }>();
   for (const row of rows) {
+    if (contested.has(row.id)) continue;
     const native = row.action === NATIVE_ATTEMPT_ACTION ? nativeVerdicts.get(row.id) : undefined;
     if (row.action === NATIVE_ATTEMPT_ACTION && !native) continue;
-    const outcome = native ? nativeAttemptOutcome(native) : row.outcome;
+    const outcome = native ? nativeAttemptOutcome(native) : legacyOutcomes.get(row.id);
     if (outcome !== 'success' && outcome !== 'failure' && outcome !== 'partial') continue;
     const knowledgeIds = native
       ? native.knowledge_ids
@@ -135,6 +158,138 @@ export async function loadLongestFailureStreak(db: DbLike): Promise<KnowledgeFai
   return node
     ? { knowledge_id: best.knowledgeId, knowledge_name: node.name, count: best.count }
     : null;
+}
+
+// Keep each id list under the event-query parameter cap.
+const ID_CHUNK = 64;
+
+function chunked<T>(items: T[]): T[][] {
+  const out: T[][] = [];
+  for (let offset = 0; offset < items.length; offset += ID_CHUNK)
+    out.push(items.slice(offset, offset + ID_CHUNK));
+  return out;
+}
+
+/**
+ * Outcome of legacy attempt/review rows. The event row keeps its first outcome
+ * after a rejudge, so the effective judge wins when it says right/wrong;
+ * unsupported answers are left out.
+ */
+async function loadLegacyAnswerOutcomes(
+  db: DbLike,
+  rows: EventRow[],
+): Promise<Map<string, AnswerOutcome>> {
+  const out = new Map<string, AnswerOutcome>();
+  const legacy = rows.filter((row) => row.action !== NATIVE_ATTEMPT_ACTION);
+  if (legacy.length === 0) return out;
+  const ids = legacy.map((row) => row.id);
+  const verdicts = await resolveVerdictsForAttempts(db, ids);
+  for (const row of legacy) {
+    if (isUnsupportedAttemptPayload(row.payload)) continue;
+    const effective = verdicts.get(row.id)?.effective?.verdict.coarse_outcome;
+    if (effective === 'unsupported') continue;
+    const outcome =
+      effective === 'correct'
+        ? 'success'
+        : effective === 'incorrect'
+          ? 'failure'
+          : effective === 'partial'
+            ? 'partial'
+            : row.outcome;
+    if (outcome === 'success' || outcome === 'failure' || outcome === 'partial')
+      out.set(row.id, outcome);
+  }
+  return out;
+}
+
+function isUnsupportedAttemptPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false;
+  const value = payload as { unsupported_judge?: unknown; judge?: { coarse_outcome?: unknown } };
+  return value.unsupported_judge === true || value.judge?.coarse_outcome === 'unsupported';
+}
+
+/**
+ * Answers whose verdict is contested: a judge event that is no longer active or
+ * carries an appeal (found through subject_id, then caused_by, like the verdict
+ * resolver), or a native attempt whose evaluation carries a grading-correction
+ * appeal. Any appeal ever filed counts, so a contested answer never feeds a streak.
+ */
+async function loadContestedAttemptIds(db: DbLike, attemptIds: string[]): Promise<Set<string>> {
+  const attemptIdSet = new Set(attemptIds);
+  const attemptByJudge = new Map<string, string>();
+  for (const chunk of chunked(attemptIds)) {
+    const judgeColumns = {
+      id: event.id,
+      subjectId: event.subject_id,
+      causedById: event.caused_by_event_id,
+    };
+    const isJudge = and(eq(event.action, 'judge'), eq(event.subject_kind, 'event'));
+    const [bySubject, byCause] = await Promise.all([
+      db
+        .select(judgeColumns)
+        .from(event)
+        .where(and(isJudge, inArray(event.subject_id, chunk))),
+      db
+        .select(judgeColumns)
+        .from(event)
+        .where(and(isJudge, inArray(event.caused_by_event_id, chunk))),
+    ]);
+    for (const judge of [...bySubject, ...byCause]) {
+      const attemptId = attemptIdSet.has(judge.subjectId) ? judge.subjectId : judge.causedById;
+      if (attemptId && attemptIdSet.has(attemptId)) attemptByJudge.set(judge.id, attemptId);
+    }
+  }
+
+  const contested = new Set<string>();
+  for (const chunk of chunked([...attemptByJudge.keys()])) {
+    for (const [judgeId, status] of await getCorrectionStatuses(db, chunk)) {
+      const attemptId = attemptByJudge.get(judgeId);
+      if (status.state !== 'active' && attemptId) contested.add(attemptId);
+    }
+    const appeals = await db
+      .select({ subjectId: event.subject_id })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:appeal_request'),
+          eq(event.subject_kind, 'event'),
+          inArray(event.subject_id, chunk),
+        ),
+      );
+    for (const appeal of appeals) {
+      const attemptId = attemptByJudge.get(appeal.subjectId);
+      if (attemptId) contested.add(attemptId);
+    }
+  }
+
+  const submissionIds = attemptIds
+    .filter((id) => id.startsWith(ASSESSMENT_ATTEMPT_ID_PREFIX))
+    .map((id) => id.slice(ASSESSMENT_ATTEMPT_ID_PREFIX.length));
+  const submissionByEvaluation = new Map<string, string>();
+  for (const chunk of chunked(submissionIds)) {
+    const evaluations = await db
+      .select({ evaluationId: evaluation.evaluation_id, submissionId: evaluation.submission_id })
+      .from(evaluation)
+      .where(inArray(evaluation.submission_id, chunk));
+    for (const row of evaluations) submissionByEvaluation.set(row.evaluationId, row.submissionId);
+  }
+  for (const chunk of chunked([...submissionByEvaluation.keys()])) {
+    const appeals = await db
+      .select({ subjectId: event.subject_id })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:appeal_request'),
+          eq(event.subject_kind, 'evaluation'),
+          inArray(event.subject_id, chunk),
+        ),
+      );
+    for (const appeal of appeals) {
+      const submissionId = submissionByEvaluation.get(appeal.subjectId);
+      if (submissionId) contested.add(`${ASSESSMENT_ATTEMPT_ID_PREFIX}${submissionId}`);
+    }
+  }
+  return contested;
 }
 
 export interface LearningEventRef {
