@@ -828,7 +828,7 @@ export { EvaluationContractError };
 
 /** Activation and the entry's immutable receipt share one transaction. */
 export async function activateSubmissionCandidate(
-  database: Db,
+  database: Db | Tx,
   intent: ActivateEvaluationRequestT,
   options: {
     actorRef: string;

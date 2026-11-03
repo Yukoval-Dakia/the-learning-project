@@ -1,6 +1,6 @@
 // Owns judge_retraction accept: evaluation appeal/rejudge/assert, and legacy judge-event retract.
 
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 
 import { canonicalHash } from '@/core/migration/canonical';
 import {
@@ -11,18 +11,22 @@ import {
   projectIssuedScoringBasis,
 } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { evaluation, event, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
   asPlainRecord,
   ensureAcceptOnly,
-  existingAcceptRate,
   requiredString,
-  writeProposalRateEvent,
 } from '@/kernel/proposals/applier-helpers';
+import {
+  type ProposalAcceptEffectOutcome,
+  type ProposalAcceptRun,
+  type RecordedProposalRate,
+  runProposalAccept,
+} from '@/kernel/proposals/decision-protocol';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
-import { recordProposalDecisionSignal } from '@/kernel/proposals/signals';
 // Narrow applier options: settlement depends on the kernel proposal engine, not
 // question-bank's applier options (which mix in enqueueVariantVerify). The
 // dispatch shell's AcceptAiProposalOpts stays structurally assignable.
@@ -69,20 +73,6 @@ async function defaultEnqueueRejudge(appealEventId: string): Promise<void> {
     { appeal_event_id: appealEventId },
     { singletonKey: appealEventId, singletonSeconds: REJUDGE_SINGLETON_SECONDS },
   );
-}
-
-async function findProposalCorrectionEvent(db: Db, proposalId: string) {
-  const [row] = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'experimental:appeal_request'),
-        eq(event.caused_by_event_id, proposalId),
-      ),
-    )
-    .limit(1);
-  return row?.id ?? null;
 }
 
 async function writeCorrectionResolution(
@@ -138,7 +128,7 @@ function permanentAssertFailureDisposition(error: unknown): string | null {
 
 /** assert 路径：人工判定 → manual_assert candidate → CAS 激活 + resolution 事件。 */
 async function applyManualAssertCorrection(
-  db: Db,
+  db: Db | Tx,
   input: {
     proposalId: string;
     evaluationId: string;
@@ -303,6 +293,45 @@ async function applyManualAssertCorrection(
   return { correctedEvaluationId: candidateId, disposition };
 }
 
+type ParsedRetractionTarget =
+  | { lane: 'event'; judgeEventId: string }
+  | {
+      lane: 'evaluation';
+      evaluationId: string;
+      correctionKind: 'rejudge' | 'assert';
+      expectedEffectiveId: string | null;
+      expectedGeneration: number;
+      assertedVerdicts: { scoring_unit_id: string; verdict: 'correct' | 'incorrect' }[];
+    };
+
+function eventCorrectionEventId(proposalId: string, judgeEventId: string): string {
+  return `evt_event_correction_${canonicalHash({ proposal: proposalId, target: judgeEventId, kind: 'retract' })}`;
+}
+
+/** The latest terminal outcome written against a committed correction request. */
+async function findLatestCorrectionResolution(
+  db: Db,
+  correctionEventId: string,
+): Promise<{ disposition?: string; evaluationId?: string } | null> {
+  const [row] = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_appeal_resolution'),
+        eq(event.caused_by_event_id, correctionEventId),
+      ),
+    )
+    .orderBy(desc(event.created_at))
+    .limit(1);
+  if (!row) return null;
+  const payload = asPlainRecord(row.payload);
+  return {
+    disposition: typeof payload.disposition === 'string' ? payload.disposition : undefined,
+    evaluationId: typeof payload.evaluation_id === 'string' ? payload.evaluation_id : undefined,
+  };
+}
+
 export async function acceptJudgeRetractionProposal(
   db: Db,
   proposalId: string,
@@ -319,7 +348,7 @@ export async function acceptJudgeRetractionProposal(
         ? proposal.payload.reason_md
         : '';
 
-  // ── native evaluation 目标：rejudge（异步）或 assert（同步人工判定激活）。
+  let parsed: ParsedRetractionTarget;
   if (target.subject_kind === 'evaluation') {
     const evaluationId = requiredString(change.evaluation_id, 'evaluation_id', proposalId);
     const correctionKind = change.correction_kind === 'assert' ? 'assert' : 'rejudge';
@@ -358,138 +387,247 @@ export async function acceptJudgeRetractionProposal(
         );
       }
     }
-
-    const existingRate = await existingAcceptRate(db, proposalId);
-    const existingCorrection = await findProposalCorrectionEvent(db, proposalId);
-
-    const { requestEvaluationCorrection } = await import('./appeal');
-    const correctionEventId =
-      existingCorrection ??
-      (await requestEvaluationCorrection(db, {
-        evaluation_id: evaluationId,
-        reason_md: reasonMd,
-        proposal_event_id: proposalId,
-        expected_effective_id: expectedEffectiveId,
-        expected_generation: expectedGeneration,
-      }));
-
-    if (correctionKind === 'rejudge') {
-      // P1 review — durable correction event / accept rate 都不是投递证明：
-      // crash/throw 可能把 job 留在未投态。任何路径都先补一遍 singleton
-      // enqueue —— 60s 窗口内 send 返回 null 不产生 dup job；窗口外的
-      // dup job 由 handler 的 appealAlreadyResolved + activation CAS 幂等
-      // 兜底 —— 之后才判定 done。顺序：correction event → enqueue → rate。
-      const enqueue = opts.enqueueRejudge ?? defaultEnqueueRejudge;
-      await enqueue(correctionEventId);
-      if (existingRate && existingCorrection) {
-        return {
-          kind: 'judge_retraction',
-          rate_event_id: existingRate.id,
-          correction_event_id: existingCorrection,
-          disposition: 'already_applied',
-          idempotent: true,
-        };
-      }
-      const rate = existingRate
-        ? { rate_event_id: existingRate.id, rate_at: existingRate.created_at }
-        : await writeProposalRateEvent(db, proposalId, 'accept', opts.user_note);
-      await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-      return {
-        kind: 'judge_retraction',
-        rate_event_id: rate.rate_event_id,
-        correction_event_id: correctionEventId,
-        disposition: 'queued_rejudge',
-      };
-    }
-
-    // assert —— asserted_verdicts 已在上方解析校验，producer 也预校验过覆盖。
-    // assert 幂等：manual_assert 的 evaluation_key（correction:<proposalId>）在
-    // evaluateSubmission 里按 intent_digest 重放同一 candidate；activation CAS
-    // 以 proposal 冻结期望比对 —— head 已动则 conflict（非变异性），命中已激
-    // 活则 already_effective；resolution 事件按确定性 id 只写一次。
-    let outcome: { correctedEvaluationId: string; disposition: string };
-    try {
-      outcome = await applyManualAssertCorrection(db, {
-        proposalId,
-        evaluationId,
-        correctionEventId,
-        reasonMd,
-        assertedVerdicts,
-        expectedHead: {
-          effectiveEvaluationId: expectedEffectiveId,
-          generation: expectedGeneration,
-        },
-      });
-    } catch (error) {
-      // accept rate 必须写在效果之后：确定性校验失败时提案保持 pending。
-      // correction request 已提交，补终态 resolution，不让 appeal 无结论。
-      const disposition = permanentAssertFailureDisposition(error);
-      if (disposition) {
-        await writeCorrectionResolution(db, {
-          correctionEventId,
-          evaluationSubjectId: evaluationId,
-          disposition,
-        });
-      }
-      throw error;
-    }
-    const rate = existingRate
-      ? { rate_event_id: existingRate.id, rate_at: existingRate.created_at }
-      : await writeProposalRateEvent(db, proposalId, 'accept', opts.user_note);
-    await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-    return {
-      kind: 'judge_retraction',
-      rate_event_id: rate.rate_event_id,
-      correction_event_id: correctionEventId,
-      ...(outcome.correctedEvaluationId
-        ? { corrected_evaluation_id: outcome.correctedEvaluationId }
-        : {}),
-      disposition: outcome.disposition,
+    parsed = {
+      lane: 'evaluation',
+      evaluationId,
+      correctionKind,
+      expectedEffectiveId,
+      expectedGeneration,
+      assertedVerdicts,
+    };
+  } else {
+    parsed = {
+      lane: 'event',
+      judgeEventId: requiredString(change.judge_event_id, 'judge_event_id', proposalId),
     };
   }
 
-  // ── legacy judge-event 目标：CorrectEvent(retract) → 既有纠偏投影。
-  const judgeEventId = requiredString(change.judge_event_id, 'judge_event_id', proposalId);
-  const [judgeEvent] = await db.select().from(event).where(eq(event.id, judgeEventId)).limit(1);
-  if (judgeEvent?.action !== 'judge') {
-    throw new ApiError(
-      'evidence_ref_must_be_judge_event',
-      'target event is not a judge event',
-      422,
-    );
-  }
-  const correctionEventId = `evt_event_correction_${canonicalHash({ proposal: proposalId, target: judgeEventId, kind: 'retract' })}`;
-  await db.transaction(async (tx) => {
-    const existing = await tx
-      .select({ id: event.id })
-      .from(event)
-      .where(eq(event.id, correctionEventId))
-      .limit(1);
-    if (existing.length === 0) {
-      await writeEvent(tx, {
-        id: correctionEventId,
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'correct',
-        subject_kind: 'event',
-        subject_id: judgeEventId,
-        outcome: 'success',
-        payload: {
-          correction_kind: 'retract',
-          reason_md: reasonMd || 'judge_retraction proposal accepted',
-          affected_refs: [{ kind: 'event', id: judgeEventId }],
-        },
-        caused_by_event_id: proposalId,
-      });
+  let run: ProposalAcceptRun<JudgeRetractionAcceptResult>;
+  try {
+    run = await runProposalAccept(db, proposalId, {
+      proposal,
+      userNote: opts.user_note,
+      signal: 'after_commit',
+      replay: async (rate: RecordedProposalRate): Promise<JudgeRetractionAcceptResult> => {
+        const ratePayload = asPlainRecord(rate.payload);
+        if (parsed.lane === 'event') {
+          return {
+            kind: 'judge_retraction',
+            rate_event_id: rate.id,
+            correction_event_id: eventCorrectionEventId(proposalId, parsed.judgeEventId),
+            disposition: 'retracted',
+            idempotent: true,
+          };
+        }
+        const correctionEventId =
+          typeof ratePayload.correction_event_id === 'string'
+            ? ratePayload.correction_event_id
+            : (await import('./appeal')).evaluationCorrectionEventId(
+                parsed.evaluationId,
+                proposalId,
+              );
+        if (parsed.correctionKind === 'assert') {
+          // Rates written before this decision template carry only `rating`; recover
+          // the public result from the resolution the accept committed beside it.
+          let correctedEvaluationId =
+            typeof ratePayload.corrected_evaluation_id === 'string'
+              ? ratePayload.corrected_evaluation_id
+              : undefined;
+          let disposition =
+            typeof ratePayload.disposition === 'string' ? ratePayload.disposition : undefined;
+          if (correctedEvaluationId === undefined || disposition === undefined) {
+            const resolution = await findLatestCorrectionResolution(db, correctionEventId);
+            correctedEvaluationId ??= resolution?.evaluationId;
+            disposition ??= resolution?.disposition;
+          }
+          return {
+            kind: 'judge_retraction',
+            rate_event_id: rate.id,
+            correction_event_id: correctionEventId,
+            ...(correctedEvaluationId ? { corrected_evaluation_id: correctedEvaluationId } : {}),
+            disposition: disposition ?? 'already_applied',
+            idempotent: true,
+          };
+        }
+        return {
+          kind: 'judge_retraction',
+          rate_event_id: rate.id,
+          correction_event_id: correctionEventId,
+          disposition: 'already_applied',
+          idempotent: true,
+        };
+      },
+      prepare: async () => {
+        // The judge event row is immutable evidence; validate before the decision tx.
+        if (parsed.lane !== 'event') return;
+        const [judgeEvent] = await db
+          .select()
+          .from(event)
+          .where(eq(event.id, parsed.judgeEventId))
+          .limit(1);
+        if (judgeEvent?.action !== 'judge') {
+          throw new ApiError(
+            'evidence_ref_must_be_judge_event',
+            'target event is not a judge event',
+            422,
+          );
+        }
+      },
+      // The kernel holds the proposal decision lock for this whole transaction. The
+      // assert lane reaches activation, which acquires the learning-state write
+      // lock G before the group lock; G therefore goes first here so the effect
+      // keeps the documented G → group → rows order instead of group → G.
+      effect: async ({
+        tx,
+        writeRate,
+      }): Promise<ProposalAcceptEffectOutcome<JudgeRetractionAcceptResult>> => {
+        if (parsed.lane === 'event') {
+          const correctionEventId = eventCorrectionEventId(proposalId, parsed.judgeEventId);
+          // Deterministic id: a previously committed retract of the same target
+          // inserts nothing (writeEvent dedups on id conflict).
+          await writeEvent(tx, {
+            id: correctionEventId,
+            actor_kind: 'user',
+            actor_ref: 'self',
+            action: 'correct',
+            subject_kind: 'event',
+            subject_id: parsed.judgeEventId,
+            outcome: 'success',
+            payload: {
+              correction_kind: 'retract',
+              reason_md: reasonMd || 'judge_retraction proposal accepted',
+              affected_refs: [{ kind: 'event', id: parsed.judgeEventId }],
+            },
+            caused_by_event_id: proposalId,
+          });
+          const rateEventId = await writeRate({
+            payload: {
+              correction_event_id: correctionEventId,
+              correction_kind: 'retract',
+              disposition: 'retracted',
+            },
+          });
+          return {
+            status: 'accepted',
+            result: {
+              kind: 'judge_retraction',
+              rate_event_id: rateEventId,
+              correction_event_id: correctionEventId,
+              disposition: 'retracted',
+            },
+          };
+        }
+
+        if (parsed.correctionKind === 'assert') await acquireLearningStateWriteLock(tx);
+        const { requestEvaluationCorrection } = await import('./appeal');
+        const correctionEventId = await requestEvaluationCorrection(tx, {
+          evaluation_id: parsed.evaluationId,
+          reason_md: reasonMd,
+          proposal_event_id: proposalId,
+          expected_effective_id: parsed.expectedEffectiveId,
+          expected_generation: parsed.expectedGeneration,
+        });
+
+        if (parsed.correctionKind === 'rejudge') {
+          const rateEventId = await writeRate({
+            payload: {
+              correction_event_id: correctionEventId,
+              correction_kind: 'rejudge',
+              disposition: 'queued_rejudge',
+            },
+          });
+          return {
+            status: 'accepted',
+            result: {
+              kind: 'judge_retraction',
+              rate_event_id: rateEventId,
+              correction_event_id: correctionEventId,
+              disposition: 'queued_rejudge',
+            },
+          };
+        }
+
+        // assert 幂等：manual_assert 的 evaluation_key（correction:<proposalId>）在
+        // evaluateSubmission 里按 intent_digest 重放同一 candidate；activation CAS
+        // 以 proposal 冻结期望比对 —— head 已动则 conflict（非变异性），命中已激
+        // 活则 already_effective；resolution 事件按确定性 id 只写一次。
+        const outcome = await applyManualAssertCorrection(tx, {
+          proposalId,
+          evaluationId: parsed.evaluationId,
+          correctionEventId,
+          reasonMd,
+          assertedVerdicts: parsed.assertedVerdicts,
+          expectedHead: {
+            effectiveEvaluationId: parsed.expectedEffectiveId,
+            generation: parsed.expectedGeneration,
+          },
+        });
+        const rateEventId = await writeRate({
+          payload: {
+            correction_event_id: correctionEventId,
+            correction_kind: 'assert',
+            disposition: outcome.disposition,
+            corrected_evaluation_id: outcome.correctedEvaluationId,
+          },
+        });
+        return {
+          status: 'accepted',
+          result: {
+            kind: 'judge_retraction',
+            rate_event_id: rateEventId,
+            correction_event_id: correctionEventId,
+            corrected_evaluation_id: outcome.correctedEvaluationId,
+            disposition: outcome.disposition,
+          },
+        };
+      },
+    });
+  } catch (error) {
+    // accept rate 必须写在效果之后：确定性校验失败时提案保持 pending。
+    // correction request 在裁决事务里随失败回滚；补偿按迁移前的独立事务语义
+    // 单独提交同一幂等请求 + 终态 resolution，不让已落 appeal 无结论。
+    const disposition = permanentAssertFailureDisposition(error);
+    if (disposition && parsed.lane === 'evaluation' && parsed.correctionKind === 'assert') {
+      try {
+        const { requestEvaluationCorrection } = await import('./appeal');
+        const correctionEventId = await requestEvaluationCorrection(db, {
+          evaluation_id: parsed.evaluationId,
+          reason_md: reasonMd,
+          proposal_event_id: proposalId,
+          expected_effective_id: parsed.expectedEffectiveId,
+          expected_generation: parsed.expectedGeneration,
+        });
+        await writeCorrectionResolution(db, {
+          correctionEventId,
+          evaluationSubjectId: parsed.evaluationId,
+          disposition,
+        });
+      } catch (compensationError) {
+        console.warn('[acceptJudgeRetractionProposal] failed-resolution compensation degraded', {
+          proposal_id: proposalId,
+          error:
+            compensationError instanceof Error
+              ? compensationError.message
+              : String(compensationError),
+        });
+      }
     }
-  });
-  const rate = await writeProposalRateEvent(db, proposalId, 'accept', opts.user_note);
-  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-  return {
-    kind: 'judge_retraction',
-    rate_event_id: rate.rate_event_id,
-    correction_event_id: correctionEventId,
-    disposition: 'retracted',
-    idempotent: rate.idempotent,
-  };
+    throw error;
+  }
+
+  if (
+    run.outcome === 'accepted' &&
+    parsed.lane === 'evaluation' &&
+    parsed.correctionKind === 'rejudge' &&
+    run.result.correction_event_id
+  ) {
+    // Post-commit by contract: the singleton send is a delivery hint, not part of
+    // the decision. A rejected accept never reaches here; a replayed one does not re-enqueue.
+    try {
+      await (opts.enqueueRejudge ?? defaultEnqueueRejudge)(run.result.correction_event_id);
+    } catch (err) {
+      console.error('[acceptJudgeRetractionProposal] enqueue rejudge failed after commit', err);
+    }
+  }
+  return run.result;
 }

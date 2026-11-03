@@ -85,8 +85,15 @@ export async function createNativeAppeal(
  * `experimental:appeal_request` → rejudgeNativeAppeal → CAS 激活链执行。
  * 幂等键含 proposal 事件 id —— 每个 proposal 至多加挂一个纠错请求。
  */
+export function evaluationCorrectionEventId(evaluationId: string, proposalEventId: string): string {
+  return `evt_eval_correction_${canonicalHash({
+    evaluation_id: evaluationId,
+    proposal: proposalEventId,
+  })}`;
+}
+
 export async function requestEvaluationCorrection(
-  database: Db,
+  database: Db | Tx,
   input: {
     evaluation_id: string;
     reason_md?: string;
@@ -102,10 +109,7 @@ export async function requestEvaluationCorrection(
   },
 ) {
   const reason = input.reason_md ?? '';
-  const correctionId = `evt_eval_correction_${canonicalHash({
-    evaluation_id: input.evaluation_id,
-    proposal: input.proposal_event_id,
-  })}`;
+  const correctionId = evaluationCorrectionEventId(input.evaluation_id, input.proposal_event_id);
   return database.transaction(async (tx) => {
     await lockEvaluationCorrection(tx, correctionId);
     const [existing] = await tx.select().from(event).where(eq(event.id, correctionId)).limit(1);

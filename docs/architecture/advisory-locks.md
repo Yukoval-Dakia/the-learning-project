@@ -276,7 +276,11 @@ edge-evidence 版 SHA-256
   接受，learning-intent.ts）；proposal_decision → placement-supply（record_promotion
   接受，legacy-record-appliers.ts；variant_question 接受，question-bank proposal-appliers.ts）；proposal_decision →
   submit/save request（`hashtext(request_id)`）→ 草稿/题目行（edit_request 接受经写守卫，裁决锁是这些
-  事务的第一把锁）；note_refine effect → product；paper-native →
+  事务的第一把锁）；proposal_decision → `hashtext(evt_eval_correction_<hash>)` → group
+  （judge_retraction evaluation 接受；assert 子路径在效果内先取 G：
+  proposal_decision → G → correction-claim → group → 行锁 → fsrs:* → ability_global，
+  rejudge 子路径不取 G）；proposal_decision → corrections:all → source
+  （judge_retraction event 目标接受）；note_refine effect → product；paper-native →
   attempt-claim；G → attempt-claim（capture 路径）；appeal-claim(request) →
   group（appeal.ts:24→41）；激活 tx 内 `group → resolution-claim`（record
   回调，settle `fsrs:*` 条件插入其间，dyn）；review-answer → group；
