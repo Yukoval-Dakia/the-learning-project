@@ -94,6 +94,8 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   JYEOO_SPAWN_MAX_STDERR_BYTES: 'src/capabilities/practice/supply/server/jyeoo-supply-config.ts',
   JYEOO_DAILY_FETCH_BUDGET: 'src/capabilities/practice/supply/server/jyeoo-budget.ts',
   SUPPLY_NIGHTLY_SPEND_CAP_USD: 'src/capabilities/practice/supply/server/spend-gate.ts',
+  PLACEMENT_STARTER_CLAIM_CAP_USD: 'src/capabilities/practice/supply/server/spend-gate.ts',
+  PLACEMENT_STARTER_DAILY_CLAIMS: 'src/capabilities/practice/supply/server/spend-gate.ts',
   EXTRACT_OCR_ENGINE: 'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts',
   DOCX_CONVERT_ENGINE: 'src/capabilities/ingestion/server/docx/convert.ts',
   KC_DEDUP_DISTANCE_MAX: 'src/capabilities/knowledge/server/dedup-flags.ts',

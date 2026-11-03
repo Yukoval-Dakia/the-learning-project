@@ -19,6 +19,7 @@ import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessmen
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import { placementStarterAttemptId } from './placement-starter-identity';
 import { markPlacementStarterClaimTerminal } from './placement-starter-store';
+import { starterClaimHasRoom } from './spend-gate';
 
 export const PLACEMENT_VERIFY_POLL_MS = 2_000;
 export const PLACEMENT_ATTEMPT_LEASE_MS = 20 * 60_000;
@@ -277,9 +278,13 @@ export async function acquirePlacementAttempt(
     if (claim.max_paid_attempts !== 3 || input.deliveryNo > claim.max_paid_attempts) {
       throw new PlacementStarterAdmissionError('placement paid delivery exceeds claim policy');
     }
-    // Only the original quiz_gen policy has a money cap. A sourcing_web claim records unknown
-    // cost honestly but has no budget for it to protect, so unknown/limit never refuse delivery.
-    if (claim.budget_limit_micro_usd !== null) {
+    // A sourcing_web claim is capped by the starter bucket, which counts an unknown cost at its
+    // reservation instead of refusing on it. The original quiz_gen policy keeps its own rule.
+    if (claim.supply_route === 'sourcing_web') {
+      if (!(await starterClaimHasRoom(tx, claim.id, 'delivery'))) {
+        throw new PlacementStarterBudgetExhaustedError('placement starter budget exhausted');
+      }
+    } else if (claim.budget_limit_micro_usd !== null) {
       if (claim.known_cost_micro_usd === null) {
         throw new PlacementStarterUnknownCostError('placement starter cost is unknown');
       }
@@ -1242,17 +1247,20 @@ export async function finishPlacementAttempt(
         jobId: placement_starter_claim.pg_boss_job_id,
         knownCost: placement_starter_claim.known_cost_micro_usd,
         budgetLimit: placement_starter_claim.budget_limit_micro_usd,
+        route: placement_starter_claim.supply_route,
       })
       .from(placement_starter_claim)
       .where(eq(placement_starter_claim.id, attempt.claimId))
       .for('update');
-    // Unknown cost only revokes authority under a money cap; an uncapped sourcing_web claim
-    // records unknown spend and still settles its delivery.
+    // Unknown cost revokes authority only under the quiz_gen money cap; a sourcing_web claim
+    // counts unknown spend at its reservation and still settles its delivery.
     if (
       !claimRow ||
       !['running', 'verifying'].includes(claimRow.status) ||
       claimRow.jobId !== attempt.pgBossJobId ||
-      (claimRow.knownCost === null && claimRow.budgetLimit !== null)
+      (claimRow.route !== 'sourcing_web' &&
+        claimRow.knownCost === null &&
+        claimRow.budgetLimit !== null)
     ) {
       throw new PlacementStarterStaleAuthorityError('placement claim authority lost');
     }

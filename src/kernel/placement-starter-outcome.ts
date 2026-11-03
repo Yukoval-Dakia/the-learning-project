@@ -121,6 +121,15 @@ export const PlacementStarterOutcomeSchema = z.discriminatedUnion('state', [
     next_action: z.literal('wait_for_supply'),
     failure_reason: PlacementStarterFailureSchema.nullable(),
   }),
+  // Not started today: the day's starter claims are used up. Nothing failed; the claim is
+  // offered again from retry_after, and the learner can bring their own questions meanwhile.
+  ClaimBinding.extend({
+    state: z.literal('deferred'),
+    next_action: z.literal('upload_own_questions'),
+    failure_reason: z.null(),
+    deferred_reason: z.literal('starter_budget_exhausted'),
+    retry_after: z.string().datetime({ offset: true }),
+  }),
   ClaimBinding.extend({
     state: z.literal('satisfied'),
     next_action: z.literal('continue_placement'),

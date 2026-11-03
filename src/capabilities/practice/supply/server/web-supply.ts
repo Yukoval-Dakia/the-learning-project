@@ -53,6 +53,7 @@ import {
   admitNightlySourcingRun,
   holdNightlyRouteFallback,
   settleNightlySourcingRun,
+  starterSourcingRunCapMicroUsd,
 } from './spend-gate';
 import type { RunWebFetchCandidatesParams, RunWebFetchCandidatesResult } from './web-candidates';
 
@@ -696,22 +697,29 @@ export async function resumeWebSupply(
 }
 
 /**
- * Money cap of one sourcing run: the lower of the gap's declared budget and the task cap,
- * cut to what tonight's supply budget still allows when the nightly scan admitted the unit.
+ * Money cap of one sourcing run: the lower of the gap's declared budget and the task cap, cut
+ * to what the spend gate still allows: the claim's acquisition share for a placement starter,
+ * tonight's free budget for a unit the nightly scan admitted.
  */
 async function admitSourcingRun(
   db: Db,
   trace: SupplyTraceV1T | undefined,
+  placementClaimId: string | undefined,
 ): Promise<{ capUsd: number; nightly: boolean }> {
   const declared = trace?.max_budget_micro_usd;
   const ceilingUsd = Math.min(
     resolveTaskBudget('SourcingTask').maxCost,
     declared == null ? Number.POSITIVE_INFINITY : declared / 1_000_000,
   );
+  const ceilingMicroUsd = Math.round(ceilingUsd * 1_000_000);
+  if (placementClaimId) {
+    const cap = await starterSourcingRunCapMicroUsd(db, placementClaimId, ceilingMicroUsd);
+    return { capUsd: cap / 1_000_000, nightly: false };
+  }
   if (!trace) return { capUsd: ceilingUsd, nightly: false };
   const admission = await admitNightlySourcingRun(db, {
     targetId: trace.target_id,
-    runCeilingMicroUsd: Math.round(ceilingUsd * 1_000_000),
+    runCeilingMicroUsd: ceilingMicroUsd,
   });
   return admission.gated
     ? { capUsd: admission.runCapMicroUsd / 1_000_000, nightly: true }
@@ -768,7 +776,7 @@ export async function runWebSupply(params: {
           : null;
   // Admitted before the acquisition fence: a failed admission must not leave an
   // 'acquiring' state that reads as an unknown paid outcome.
-  const sourcingRun = refusal ? null : await admitSourcingRun(db, trace);
+  const sourcingRun = refusal ? null : await admitSourcingRun(db, trace, placementClaimId);
   const reason = refusal ?? (sourcingRun?.capUsd === 0 ? 'budget_exhausted' : null);
   let state = State.parse({
     version: 1,

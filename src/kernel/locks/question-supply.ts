@@ -22,8 +22,12 @@ export async function lockIngestSource(tx: Tx, source: string): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`ingest-source:${source}`}))`);
 }
 
-/** One learner day's supply spend ledger. Taken first in its own short transaction, never nested. */
-export async function lockSupplySpendDay(tx: Tx, day: string): Promise<void> {
-  const key = deriveHashtextExtendedLockKey(advisoryLockRegistry.supplySpendDay, { day });
+/** One supply spend bucket's learner-day ledger; acquisition order is in advisory-locks.md. */
+export async function lockSupplySpendDay(
+  tx: Tx,
+  bucket: 'nightly' | 'starter',
+  day: string,
+): Promise<void> {
+  const key = deriveHashtextExtendedLockKey(advisoryLockRegistry.supplySpendDay, { bucket, day });
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 }

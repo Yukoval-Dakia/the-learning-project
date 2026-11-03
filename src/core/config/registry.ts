@@ -514,6 +514,24 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envParse: numberEnv,
     tier: 'A',
   },
+  PLACEMENT_STARTER_CLAIM_CAP_USD: {
+    // 单个定位起始题 claim 的 USD 上限，claim 创建（或首次派发）时写入 budget_limit_micro_usd；
+    // 已派出的 claim 保留自己的上限。判定点 supply/server/spend-gate.ts。
+    schema: z.number().min(0),
+    codeDefault: 0.5,
+    envName: 'PLACEMENT_STARTER_CLAIM_CAP_USD',
+    envParse: numberEnv,
+    tier: 'A',
+  },
+  PLACEMENT_STARTER_DAILY_CLAIMS: {
+    // 每个学习日（Asia/Shanghai）最多派发的起始题 claim 数；0 = 当天不派（kill switch）。
+    // 超出时 claim 留在 pending_dispatch，定位读面返回 starter_budget_exhausted。
+    schema: z.number().int().min(0),
+    codeDefault: 3,
+    envName: 'PLACEMENT_STARTER_DAILY_CLAIMS',
+    envParse: nonNegIntEnv,
+    tier: 'A',
+  },
   // ── 引擎/资源上限 ─────────────────────────────────────────────────────────
   EXTRACT_OCR_ENGINE: {
     schema: z.enum(['glm', 'tencent']),

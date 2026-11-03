@@ -24500,6 +24500,22 @@ export interface operations {
                             subject_id: string;
                         } | {
                             claim_id: string;
+                            /** @enum {string} */
+                            deferred_reason: "starter_budget_exhausted";
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "upload_own_questions";
+                            /** Format: date-time */
+                            retry_after: string;
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "deferred";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
                             /** @enum {string|null} */
                             failure_reason: null;
                             goal_id: string;
@@ -24732,6 +24748,22 @@ export interface operations {
                             session_id: string;
                             /** @enum {string} */
                             state: "pending";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            /** @enum {string} */
+                            deferred_reason: "starter_budget_exhausted";
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "upload_own_questions";
+                            /** Format: date-time */
+                            retry_after: string;
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "deferred";
                             subject_id: string;
                         } | {
                             claim_id: string;
@@ -25124,6 +25156,22 @@ export interface operations {
                                 session_id: string;
                                 /** @enum {string} */
                                 state: "pending";
+                                subject_id: string;
+                            } | {
+                                claim_id: string;
+                                /** @enum {string} */
+                                deferred_reason: "starter_budget_exhausted";
+                                /** @enum {string|null} */
+                                failure_reason: null;
+                                goal_id: string;
+                                /** @enum {string} */
+                                next_action: "upload_own_questions";
+                                /** Format: date-time */
+                                retry_after: string;
+                                semantic_goal_revision_id: string;
+                                session_id: string;
+                                /** @enum {string} */
+                                state: "deferred";
                                 subject_id: string;
                             } | {
                                 claim_id: string;
@@ -25875,6 +25923,22 @@ export interface operations {
                                 subject_id: string;
                             } | {
                                 claim_id: string;
+                                /** @enum {string} */
+                                deferred_reason: "starter_budget_exhausted";
+                                /** @enum {string|null} */
+                                failure_reason: null;
+                                goal_id: string;
+                                /** @enum {string} */
+                                next_action: "upload_own_questions";
+                                /** Format: date-time */
+                                retry_after: string;
+                                semantic_goal_revision_id: string;
+                                session_id: string;
+                                /** @enum {string} */
+                                state: "deferred";
+                                subject_id: string;
+                            } | {
+                                claim_id: string;
                                 /** @enum {string|null} */
                                 failure_reason: null;
                                 goal_id: string;
@@ -26114,6 +26178,22 @@ export interface operations {
                             session_id: string;
                             /** @enum {string} */
                             state: "pending";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            /** @enum {string} */
+                            deferred_reason: "starter_budget_exhausted";
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "upload_own_questions";
+                            /** Format: date-time */
+                            retry_after: string;
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "deferred";
                             subject_id: string;
                         } | {
                             claim_id: string;
@@ -26862,6 +26942,22 @@ export interface operations {
                             session_id: string;
                             /** @enum {string} */
                             state: "pending";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            /** @enum {string} */
+                            deferred_reason: "starter_budget_exhausted";
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "upload_own_questions";
+                            /** Format: date-time */
+                            retry_after: string;
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "deferred";
                             subject_id: string;
                         } | {
                             claim_id: string;
