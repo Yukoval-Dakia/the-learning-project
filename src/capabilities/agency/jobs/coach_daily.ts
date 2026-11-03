@@ -1,6 +1,7 @@
 // coach_daily pg-boss handler: builds the Coach allowlist MCP bridge, runs
 // `CoachTask`, and writes trigger + scan events (`experimental:trigger_coach_scan` /
-// `experimental:coach_scan`).
+// `experimental:coach_scan`). Enqueued on learner return when the plan is stale
+// (`@/kernel/coach-wake`), not by the nightly DAG.
 
 import type { Job } from 'pg-boss';
 // The complete run assembly (inbox before/after diff, trigger + scan provenance events,

@@ -6,8 +6,8 @@
 expires_at。存储零新表：骑乘 event(action='experimental:agent_note')（U0 D10 /
 AF §4）。用户面只有只读观察窗（/agent-notes 页 + today 块）。
 
-- jobs/ — dreaming_nightly（03:15 agent 档）/ coach_daily（03:45 llm 档，成功后
-  链式 boss.send review_plan）/
+- jobs/ — dreaming_nightly（03:15 agent 档）/ coach_daily（llm 档，不在夜链：学习者回来且
+  计划过期时由 learner_return_wake 经 kernel/coach-wake 入队）/
   goal_scope_propose_nightly（03:50 llm 档，sibling goal_scope_dedup）
 - server/goals/ — accept / queries / scope（goal scope 提议的读写与验收）
 - server/notes.ts — writeAgentNote / readAgentNotes / readAllAgentNotes

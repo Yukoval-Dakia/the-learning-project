@@ -5,6 +5,7 @@ import {
   INTERVENTION_PREPARATION_FAILED_ACTION,
   INTERVENTION_SETTLED_ACTION,
 } from '@/core/schema/intervention';
+import { COACH_DAILY_QUEUE } from '@/kernel/coach-wake';
 import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { nightlyEligibility } from '@/kernel/nightly-eligibility';
@@ -23,7 +24,7 @@ import { CreateGoalBody, GoalSchema } from './api/goal-contracts';
 export const agencyCapability = defineCapability({
   name: 'agency',
   description:
-    '能动编排：夜间链路（dreaming / coach / maintenance 路径维护）+ goal scope 提议 + ' +
+    '能动编排：夜间链路（dreaming / maintenance 路径维护）+ 回访唤醒的 coach + goal scope 提议 + ' +
     'AI 内部协调信道 agent-notes（hints not facts，用户侧只读观察窗）。',
   events: {
     actions: [
@@ -166,11 +167,9 @@ export const agencyCapability = defineCapability({
         load: () => import('./jobs/dreaming_nightly').then((m) => m.buildDreamingNightlyHandler),
       },
       {
-        // DAG 成员（根）：coach_daily 读在线 mastery/session 态，无 in-scope 夜链上游。
-        // cron 移除，orchestrator 起步即触发。
-        name: 'coach_daily',
-        dependsOn: [],
-        eligibility: nightlyEligibility('reflection'),
+        // 不在夜间 DAG：学习者回来且计划过期时由 learner_return_wake 经 kernel 端口按义务入队
+        // （每 24h 槽至多一次，见 kernel/coach-wake.ts）。
+        name: COACH_DAILY_QUEUE,
         queue: 'llm',
         load: () => import('./jobs/coach_daily').then((m) => m.buildCoachDailyHandler),
       },
