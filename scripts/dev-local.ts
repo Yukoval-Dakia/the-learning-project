@@ -100,6 +100,51 @@ if (allowTestDb) {
     DEV_DB.user,
     ...args,
   ];
+  // Every worktree's API and worker pools share this container. The limit lives in the
+  // volume (ALTER SYSTEM), not in docker-compose.dev.yml: changing the service definition
+  // would make older worktrees' `compose up` recreate the container under everyone. It only
+  // takes effect on restart, so restart now only when no other client is connected.
+  const DEV_MAX_CONNECTIONS = 300;
+  const psqlValue = (sql: string) =>
+    spawnSync('docker', composeDev(psql(['-d', 'postgres', '-Atc', sql])), {
+      encoding: 'utf8',
+      env: process.env,
+    }).stdout?.trim();
+  function ensureDevMaxConnections(): void {
+    const current = Number(psqlValue('SHOW max_connections'));
+    if (!Number.isFinite(current) || current >= DEV_MAX_CONNECTIONS) return;
+    run(
+      'docker',
+      composeDev(
+        psql([
+          '-d',
+          'postgres',
+          '-v',
+          'ON_ERROR_STOP=1',
+          '-c',
+          `ALTER SYSTEM SET max_connections = ${DEV_MAX_CONNECTIONS}`,
+        ]),
+      ),
+    );
+    const others = Number(
+      psqlValue(
+        "SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()",
+      ),
+    );
+    if (others === 0) {
+      run('docker', composeDev(['restart', 'postgres-dev']));
+      run('docker', composeDev(['up', '-d', '--wait', 'postgres-dev']));
+      console.log(
+        `[dev-local] dev Postgres max_connections ${current} -> ${psqlValue('SHOW max_connections')}`,
+      );
+      return;
+    }
+    console.warn(
+      `[dev-local] dev Postgres max_connections is ${current}; ${DEV_MAX_CONNECTIONS} is saved and applies on its next restart. ` +
+        `${others} other connection(s) are open now, so it was not restarted. When the other worktrees' dev servers are stopped: ` +
+        '`docker compose -f docker-compose.dev.yml --profile dev restart postgres-dev`.',
+    );
+  }
   const up = run('docker', composeDev(['up', '-d', '--wait', 'postgres-dev']));
   if (up.status !== 0) {
     console.error(
@@ -107,6 +152,7 @@ if (allowTestDb) {
     );
     process.exit(up.status ?? 1);
   }
+  ensureDevMaxConnections();
   // One database per worktree inside the shared container. Create it via the postgres
   // maintenance DB when absent (the loom_dev role is a superuser); pg_database is
   // checked first so re-runs and parallel worktrees stay no-ops for each other.
@@ -192,6 +238,8 @@ const env: NodeJS.ProcessEnv = {
   API_PORT: devPort,
   // The dev worker renders worksheets against this dev server, not the TEST app.
   WORKSHEET_RENDER_APP_ORIGIN: devOrigin,
+  // Several worktrees' API + worker pools share one dev Postgres; keep each process small.
+  DB_POOL_MAX: process.env.DB_POOL_MAX ?? '5',
 };
 
 // RW_FRONTDOOR=dev serves the Start front door through the Vite dev server inside the API

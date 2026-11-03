@@ -1,4 +1,5 @@
 import { PgBoss } from 'pg-boss';
+import { DB_POOL_OVERRIDE } from '@/db/pool';
 
 import { getServerEnv, resolveBossAutomationMode } from '@/server/config/env';
 
@@ -50,7 +51,8 @@ export function createBoss(): PgBoss {
   const env = getServerEnv();
   const connectionString = env.DATABASE_URL;
   // Tests recreate the singleton per file. The default pool exhausts the
-  // testcontainer connection cap, so cap at 2 there. Production keeps the default.
+  // testcontainer connection cap, so cap at 2 there. DB_POOL_MAX (dev:local) caps it the
+  // same way as the drizzle pool; production sets neither and keeps the default.
   const isVitest = Boolean(env.VITEST);
   // disabled turns off schedule, supervise, migrate, and instance registration.
   // Enabled passes no flags, so the library defaults stay. Do not infer this
@@ -64,7 +66,7 @@ export function createBoss(): PgBoss {
     ...(automation === 'disabled'
       ? { schedule: false, supervise: false, migrate: false, registerInstance: false }
       : {}),
-    ...(isVitest ? { max: 2 } : {}),
+    ...(isVitest ? { max: 2 } : DB_POOL_OVERRIDE ? { max: DB_POOL_OVERRIDE } : {}),
   });
   return bossState.instance;
 }
