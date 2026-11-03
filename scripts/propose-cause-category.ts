@@ -1,7 +1,7 @@
 // YUK-1016 / 454-B — owner 手动加错因类目的小入口。
 //
 // 与 LLM 复发提议共用同一落地路径：写 `cause_category` proposal event
-// （source='owner'）→ 收件箱 accept → acceptCauseCategoryProposal INSERT
+// （source='owner'）→ 收件箱 accept → causeCategoryProposalAcceptApplier INSERT
 // cause_category_overlay。owner 不在 DB 里直写词表——proposal 边界保留
 // human-vet 语义（自己提、自己审、留证据链）。
 //

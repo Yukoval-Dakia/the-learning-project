@@ -24453,6 +24453,7 @@ export interface operations {
                                 };
                                 submission_id: string;
                             };
+                            notation?: string | null;
                             questionId: string;
                             score: number;
                             /** @enum {string} */
@@ -25829,6 +25830,7 @@ export interface operations {
                                     };
                                     submission_id: string;
                                 };
+                                notation?: string | null;
                                 questionId: string;
                                 score: number;
                                 /** @enum {string} */
@@ -26819,6 +26821,7 @@ export interface operations {
                                 };
                                 submission_id: string;
                             };
+                            notation?: string | null;
                             questionId: string;
                             score: number;
                             /** @enum {string} */
