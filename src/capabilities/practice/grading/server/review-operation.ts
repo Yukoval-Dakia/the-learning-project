@@ -17,16 +17,28 @@ import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { ApiError } from '@/kernel/http';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from '../../api/contracts';
 import { validatePlacementSubmission } from '../../placement/public';
-import { normalizeReviewSubmitActivityRef } from './activity-ref';
-import { commitFormalAttempt } from './assessment/attempt';
-import type { NativeAttemptDispatchPort } from './assessment/native-attempt-dispatch-port';
+import { type ReviewSubmitIdentityInput, normalizeReviewSubmitActivityRef } from './activity-ref';
+import {
+  type FormalAttemptCapture,
+  commitFormalAttempt,
+  readFormalAttemptScope,
+  scopeHasModelExecutor,
+} from './assessment/attempt';
+import type {
+  NativeAttemptDispatchOptions,
+  NativeAttemptDispatchPort,
+} from './assessment/native-attempt-dispatch-port';
 import { judgeDurableEnabled } from './judge-durable-config';
-import { projectReviewAnswerResponse } from './review-answer-response';
+import { projectJudgeRunPending, projectReviewAnswerResponse } from './review-answer-response';
 
 type QuestionRow = typeof question.$inferSelect;
 
+type SubmitTarget = ReviewSubmitIdentityInput &
+  Pick<CreateAttemptBody, 'assessment' | 'session_id'>;
+type SubmitAssessment = NonNullable<CreateAttemptBody['assessment']>;
+
 interface ValidatedSubmit {
-  body: CreateAttemptBody;
+  body: SubmitTarget;
   now: Date;
   questionId: string;
   q: QuestionRow;
@@ -34,7 +46,7 @@ interface ValidatedSubmit {
 
 async function validateSubmit(
   database: Db,
-  body: CreateAttemptBody,
+  body: SubmitTarget,
   now: Date,
 ): Promise<ValidatedSubmit> {
   const identity = normalizeReviewSubmitActivityRef(body);
@@ -236,6 +248,55 @@ export type ReviewAnswerResult =
   | { kind: 'pending'; run_id: string }
   | { kind: 'committed'; committed: Awaited<ReturnType<typeof commitFormalAttempt>> };
 
+function confirmationUnbound(
+  container: string | null | undefined,
+  context: ReviewAnswerContext,
+): boolean {
+  return (
+    !!container?.startsWith('conversation-confirmation:') &&
+    (container !== `conversation-confirmation:${context.confirmationOccurrenceId}` ||
+      !context.authorize)
+  );
+}
+
+function durableRuntimeEnabled(context: ReviewAnswerContext): boolean {
+  return context.durableEnabled ?? (judgeDurableEnabled() && shouldEnqueueBackgroundJobs());
+}
+
+/** One durable dispatch for both doors; null selects the caller's synchronous path. */
+async function dispatchDurableOriginal(
+  database: Db,
+  validated: ValidatedSubmit,
+  assessment: SubmitAssessment,
+  options: Omit<NativeAttemptDispatchOptions, 'requireUnassistedModelEvidence'>,
+  context: ReviewAnswerContext,
+): Promise<string | null> {
+  const dispatch =
+    context.dispatchNativeAttempt ??
+    (await import('./assessment/durable-attempt')).dispatchNativeAttempt;
+  const dispatchOriginal = () =>
+    dispatch(
+      database,
+      validated.questionId,
+      { ...assessment, now: validated.now },
+      {
+        ...options,
+        requireUnassistedModelEvidence:
+          validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      },
+    );
+  const authorize = context.authorize;
+  // Dispatch makes an accepted durable obligation. Stop/retraction wait for this
+  // bounded admission, while the existing worker keeps ownership after acceptance.
+  return authorize
+    ? await database.transaction(async (tx) => {
+        await authorize(tx);
+        context.signal?.throwIfAborted();
+        return dispatchOriginal();
+      })
+    : await dispatchOriginal();
+}
+
 /**
  * Submit an authorized learner original. Network callers own authentication and
  * parsing; model tool arguments are never authority for a learner submission.
@@ -255,12 +316,7 @@ export async function submitReviewAnswer(
         .select()
         .from(assessment_issuance)
         .where(eq(assessment_issuance.issuance_id, body.assessment.issuance_id));
-      if (
-        issued?.container_occurrence_ref?.startsWith('conversation-confirmation:') &&
-        (issued.container_occurrence_ref !==
-          `conversation-confirmation:${context.confirmationOccurrenceId}` ||
-          !context.authorize)
-      )
+      if (confirmationUnbound(issued?.container_occurrence_ref, context))
         throw new ApiError(
           'confirmation_unbound',
           'confirmation requires its conversation authorization',
@@ -281,36 +337,23 @@ export async function submitReviewAnswer(
       claimedDiagnostic = validated;
     }
     context.signal?.throwIfAborted();
-    if (!body.self_report && !body.activation_intent) {
-      const dispatch =
-        context.dispatchNativeAttempt ??
-        (await import('./assessment/durable-attempt')).dispatchNativeAttempt;
-      const dispatchOptions = {
-        enabled:
-          (context.durableEnabled ?? (judgeDurableEnabled() && shouldEnqueueBackgroundJobs())) &&
-          (await sessionAdmitsDurableDivert(database, body.session_id ?? null)),
-        capture: body,
-        userRating: body.auto_rate ? undefined : body.rating,
-        requireUnassistedModelEvidence:
-          validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-      };
-      const dispatchOriginal = () =>
-        dispatch(
-          database,
-          validated.questionId,
-          { ...assessment, now: validated.now },
-          dispatchOptions,
-        );
-      const authorize = context.authorize;
-      // Dispatch makes an accepted durable obligation. Stop/retraction wait for this
-      // bounded admission, while the existing worker keeps ownership after acceptance.
-      const runId = authorize
-        ? await database.transaction(async (tx) => {
-            await authorize(tx);
-            context.signal?.throwIfAborted();
-            return dispatchOriginal();
-          })
-        : await dispatchOriginal();
+    const runtimeDurable = durableRuntimeEnabled(context);
+    // A sealed candidate (activation_intent) calls no model: with the lane off there is no
+    // paid run to replay, so only the plain original needs the dispatch replay check.
+    if (!body.self_report && (runtimeDurable || !body.activation_intent)) {
+      const runId = await dispatchDurableOriginal(
+        database,
+        validated,
+        assessment,
+        {
+          enabled:
+            runtimeDurable && (await sessionAdmitsDurableDivert(database, body.session_id ?? null)),
+          capture: body,
+          userRating: body.auto_rate ? undefined : body.rating,
+          activationIntent: body.activation_intent,
+        },
+        context,
+      );
       if (runId !== null) {
         retainDiagnosticClaim = true;
         return { kind: 'pending', run_id: runId };
@@ -351,6 +394,53 @@ export async function submitReviewAnswer(
     throw err;
   }
 }
+/** An answer another entry (advice) accepted and hands over for automatic grading. */
+export type ReviewAnswerHandover = ReviewSubmitIdentityInput &
+  FormalAttemptCapture & { assessment: SubmitAssessment };
+
+/**
+ * Advice's door to the durable lane. A model-scored original goes through the same validation
+ * and dispatch as submitReviewAnswer, rated automatically by the worker; the 202 receipt is
+ * returned. Null leaves the answer to the caller's synchronous path: no model executor in the
+ * issued scope (nothing is written), or the lane is off and no run was accepted earlier.
+ */
+export async function divertReviewAnswer(database: Db, handover: ReviewAnswerHandover) {
+  const questionId = normalizeReviewSubmitActivityRef(handover).question_id;
+  const scope = await readFormalAttemptScope(
+    database,
+    'durable_judge_run',
+    questionId,
+    handover.assessment.issuance_id,
+  );
+  if (!scopeHasModelExecutor(scope)) return null;
+  if (confirmationUnbound(scope.issuance.container_occurrence_ref, {}))
+    throw new ApiError(
+      'confirmation_unbound',
+      'confirmation requires its conversation authorization',
+      409,
+    );
+  const validated = await validateSubmit(database, handover, new Date());
+  if (validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE)
+    throw new ApiError(
+      'conflict',
+      `intervention diagnostic ${questionId} must be judged by its one-shot submission`,
+      409,
+    );
+  const runtimeDurable = durableRuntimeEnabled({});
+  const runId = await dispatchDurableOriginal(
+    database,
+    validated,
+    handover.assessment,
+    {
+      enabled:
+        runtimeDurable && (await sessionAdmitsDurableDivert(database, handover.session_id ?? null)),
+      capture: handover,
+    },
+    {},
+  );
+  return runId === null ? null : projectJudgeRunPending(runId);
+}
+
 /**
  * POST /api/attempts for both doors: a missing or malformed body reaches the schema as null.
  * Callers keep only transport shaping (the Hono 202 divert headers, Start JSON).
@@ -358,13 +448,13 @@ export async function submitReviewAnswer(
 export async function requestReviewAnswer(
   database: Db,
   readBody: () => Promise<unknown>,
-  context: Pick<ReviewAnswerContext, 'signal'>,
+  context: Pick<ReviewAnswerContext, 'signal' | 'durableEnabled'>,
 ) {
   const parsed = CreateAttemptBodySchema.safeParse(await readBody().catch(() => null));
   if (!parsed.success) {
     const message = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
     throw new ApiError('validation_error', message, 400);
   }
-  const result = await submitReviewAnswer(database, parsed.data, { signal: context.signal });
+  const result = await submitReviewAnswer(database, parsed.data, context);
   return projectReviewAnswerResponse(parsed.data, result);
 }

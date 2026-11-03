@@ -114,6 +114,8 @@ export const submitReviewAnswer: typeof import('./server/review-operation').subm
   async (...args) => (await import('./server/review-operation')).submitReviewAnswer(...args);
 export const requestReviewAnswer: typeof import('./server/review-operation').requestReviewAnswer =
   async (...args) => (await import('./server/review-operation')).requestReviewAnswer(...args);
+export const divertReviewAnswer: typeof import('./server/review-operation').divertReviewAnswer =
+  async (...args) => (await import('./server/review-operation')).divertReviewAnswer(...args);
 export {
   APPEAL_EXECUTION_BINDING_ACTION,
   AppealExecutionBinding,

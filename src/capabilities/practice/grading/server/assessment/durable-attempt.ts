@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
-import { EvaluationProvenance } from '@/core/schema/assessment';
+import { type ActivateEvaluationIntentT, EvaluationProvenance } from '@/core/schema/assessment';
 import type { JudgeReservation } from '@/core/schema/event/judge-operational-events';
 import {
   JudgePendingAttemptPayload,
@@ -40,6 +40,7 @@ import {
   prepareFormalAttemptSubmission,
   type previewFormalAttempt,
   recordFormalAttemptCapture,
+  scopeHasModelExecutor,
 } from './attempt';
 import type { SaveSubmissionRequest } from './submit';
 
@@ -54,6 +55,8 @@ export async function dispatchNativeAttempt(
     enabled: boolean;
     capture: FormalAttemptCapture;
     userRating?: 'again' | 'hard' | 'good';
+    /** A candidate an earlier synchronous preview sealed: the worker activates exactly it. */
+    activationIntent?: ActivateEvaluationIntentT;
     requireUnassistedModelEvidence?: boolean;
   },
   deps: JudgeRunEnqueueDeps = {},
@@ -72,7 +75,11 @@ export async function dispatchNativeAttempt(
     submission_id: submission.submission_id,
     evaluation_group_id: submission.evaluation_group_id,
     submitted_at: submission.submitted_at,
-    expected_head: { expected_effective_id: null, expected_generation: 0 },
+    expected_head: {
+      expected_effective_id: options.activationIntent?.expected_effective_id ?? null,
+      expected_generation: options.activationIntent?.expected_generation ?? 0,
+    },
+    candidate_id: options.activationIntent?.evaluation_id,
     user_rating: options.userRating,
     require_unassisted_model_evidence: !!options.requireUnassistedModelEvidence,
   } satisfies Omit<NativeJudgePendingSubmitInputT, 'capture'>;
@@ -103,11 +110,7 @@ export async function dispatchNativeAttempt(
     }
     return { run_id: runId, caller: payload.caller, submit: payload.submit };
   };
-  const hasModel = prepared.revision.execution_plan.assignments.some(
-    (a) =>
-      a.executor.kind === 'model_executor' &&
-      a.scoring_unit_ids.some((id) => prepared.scopedUnitIds.has(id)),
-  );
+  const hasModel = scopeHasModelExecutor(prepared);
   let token: number | undefined;
   let job: NativeJudgeRunJobData | null;
   let fresh = false;
@@ -122,6 +125,24 @@ export async function dispatchNativeAttempt(
       if (!options.enabled || !hasModel) return null;
       if (control.phase !== 'pg-boss' && control.phase !== 'dbos')
         throw new ApiError('judge_draining', 'Judge admissions are temporarily draining', 503);
+      // Same refusal the synchronous commit gives, before an anchor the worker could never settle.
+      if (options.activationIntent) {
+        const [sealed] = await tx
+          .select({ id: evaluation.evaluation_id })
+          .from(evaluation)
+          .where(
+            and(
+              eq(evaluation.evaluation_id, options.activationIntent.evaluation_id),
+              eq(evaluation.submission_id, submission.submission_id),
+            ),
+          );
+        if (!sealed)
+          throw new ApiError(
+            'candidate_not_found',
+            'commit requires a previously sealed candidate',
+            409,
+          );
+      }
       token = admitJudgeRun(deps);
       const input = NativeJudgePendingSubmitInput.parse({
         ...identity,
@@ -375,6 +396,10 @@ export async function executeNativeAttempt(
       now: submission.submitted_at,
     },
     {
+      activationIntent:
+        input.candidate_id === undefined
+          ? undefined
+          : { evaluation_id: input.candidate_id, ...input.expected_head },
       expectedHead: input.expected_head,
       userRating: input.user_rating,
       capture: input.capture,

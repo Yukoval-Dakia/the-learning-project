@@ -60,6 +60,11 @@ export const ReviewAdviceBodySchema = z.object({
   // Present = the caller hands over this attempt's commit capture, so an automatic verdict is
   // recorded and settled in this request. Absent = preview only; the caller commits separately.
   commit: CreateAttemptCaptureSchema.optional(),
+  // With `commit`: the caller can render a durable-judge receipt. A model-scored answer is then
+  // queued and rated by the worker, and the response is createAttempt's 202 pending body
+  // ({ run_id, verdict: 'pending', backfill }) instead of a verdict. Deterministic answers are
+  // unaffected. Absent = the model judges inside this request, as before.
+  accept_pending: z.boolean().optional(),
 });
 
 const LegacyReviewAdviceJudgeSchema = z.object({

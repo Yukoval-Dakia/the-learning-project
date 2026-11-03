@@ -3,7 +3,9 @@
 // Stores the frozen submission and candidate and returns the derived advisory. When the
 // caller sends `commit` and the verdict is automatic and rated, the same request records and
 // settles the attempt through createAttempt; otherwise nothing past the candidate is written
-// and the learner commits, with their own rating, through createAttempt.
+// and the learner commits, with their own rating, through createAttempt. A caller that also
+// sends `accept_pending` hands a model-scored answer to the durable lane instead: no model runs
+// here and the response is createAttempt's 202 pending receipt.
 //
 // Cause resolution lives in `resolveAdviceCauseForQuestion()` so this route and
 // submit share one read policy. It scans a recent-attempt window rather than the
@@ -12,6 +14,7 @@
 import { eq } from 'drizzle-orm';
 import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/failure-learning/public';
 import {
+  divertReviewAnswer,
   normalizeReviewSubmitActivityRef,
   previewFormalAttempt,
   questionKnowledgeIdsForJudge,
@@ -47,6 +50,16 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
       `intervention diagnostic ${questionId} must be judged by its one-shot submission`,
       409,
     );
+  }
+
+  if (body.commit && body.accept_pending) {
+    const pending = await divertReviewAnswer(db, {
+      ...body.commit,
+      question_id: questionId,
+      assessment: body.assessment,
+      response_md: body.response_md,
+    });
+    if (pending) return pending;
   }
 
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(
@@ -90,11 +103,11 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
             answer_image_refs: body.answer_image_refs,
           }),
           // No abort signal: the original is already accepted, and a reload that stopped the
-          // commit half-way would leave it accepted but never recorded or settled.
-          {},
+          // commit half-way would leave it accepted but never recorded or settled. Every unit is
+          // deterministic here, so the durable divert can never apply.
+          { durableEnabled: false },
         )
       : null;
-  // activation_intent keeps createAttempt off the durable divert.
   if (commit?.kind === 'pending') {
     throw new ApiError('corrupt_state', 'advice commit was diverted to durable judging', 500);
   }

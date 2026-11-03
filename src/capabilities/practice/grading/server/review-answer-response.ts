@@ -3,19 +3,23 @@ import { ratingFromCoarseOutcome } from './judge-rating';
 import { JUDGE_RUN_TABLE, judgeRunPollUrl } from './judge-run-status';
 import type { ReviewAnswerResult } from './review-operation';
 
+/** The 202 receipt of an original accepted onto the durable lane (createAttempt and advice). */
+export function projectJudgeRunPending(runId: string) {
+  return {
+    run_id: runId,
+    verdict: 'pending' as const,
+    backfill: {
+      channel: 'sse' as const,
+      url: `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/events`,
+      poll_url: judgeRunPollUrl(runId),
+    },
+  };
+}
+
 // Both transports expose the same accepted attempt and durable-pending JSON projection.
 export function projectReviewAnswerResponse(body: CreateAttemptBody, result: ReviewAnswerResult) {
   if (result.kind === 'pending') {
-    const eventsUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(result.run_id)}/events`;
-    const pollUrl = judgeRunPollUrl(result.run_id);
-    return {
-      kind: 'pending' as const,
-      body: {
-        run_id: result.run_id,
-        verdict: 'pending' as const,
-        backfill: { channel: 'sse' as const, url: eventsUrl, poll_url: pollUrl },
-      },
-    };
+    return { kind: 'pending' as const, body: projectJudgeRunPending(result.run_id) };
   }
   const committed = result.committed;
   const judged = committed.candidate.result;
