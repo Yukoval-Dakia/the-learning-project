@@ -144,14 +144,17 @@ export async function acceptVariantQuestionProposal(
     );
   }
 
-  // Already-accepted idempotency: a rate event exists.
-  const existingRateRows = await db
-    .select()
-    .from(event)
-    .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
-    .limit(1);
-  const existingRate = existingRateRows[0];
-  if (existingRate) {
+  const readRate = async (reader: Db | Tx) =>
+    (
+      await reader
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
+        .limit(1)
+    )[0];
+  const replayDecided = async (
+    existingRate: typeof event.$inferSelect,
+  ): Promise<VariantQuestionAcceptResult> => {
     const ratePayload = existingRate.payload as { rating?: string };
     if (ratePayload.rating !== 'accept') {
       throw new ApiError(
@@ -184,7 +187,11 @@ export async function acceptVariantQuestionProposal(
       mistake_variant_id: existingMv.id,
       idempotent: true,
     };
-  }
+  };
+
+  // Already-accepted idempotency fast path; the transaction re-checks under the decision lock.
+  const existingRate = await readRate(db);
+  if (existingRate) return replayDecided(existingRate);
 
   const proposedChange = proposal.payload.proposed_change as {
     source_question_id?: string;
@@ -237,7 +244,12 @@ export async function acceptVariantQuestionProposal(
   // W2 — gate who writes the mistake_variant ROW (the flag is read ONCE outside the tx so a
   // mid-tx env flip can't split the decision). ON → projection write-through; OFF → imperative.
 
-  await db.transaction(async (tx) => {
+  // Decision lock first, as dismiss and retract take it, so a racing decision cannot land beside
+  // this accept; domain locks follow.
+  const concurrentRate = await db.transaction(async (tx) => {
+    await acquireProposalDecisionLock(tx, proposalId);
+    const decided = await readRate(tx);
+    if (decided) return decided;
     await lockPlacementSupplyScopes(tx, proposedChange.knowledge_ids ?? []);
     // lock the draft mistake_variant row FOR UPDATE before the new
     // question + rate event + ROW write. projectMistakeVariantGuarded has no version-CAS (the table
@@ -332,7 +344,9 @@ export async function acceptVariantQuestionProposal(
       throw new Error(`Variant ${mv.id} needs canonical projection migration`);
     }
     await projectMistakeVariantGuarded(tx, mv.id);
+    return null;
   });
+  if (concurrentRate) return replayDecided(concurrentRate);
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
 

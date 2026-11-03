@@ -99,7 +99,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | `lockEventCorrectionsAll` / `lockEventCorrectionSource` | `src/kernel/events/correction-lock.ts` | 与上表 corrections:all、source 共用注册表键，语句仍是 `hashtextextended(key, 0)` xact。`writeEvents` 在有修正目标时先取 corrections:all，再按已排序 target 取 source。`review-answer-consumer` 在 copilot execution settlement 之后取 source |
 | `acquireSortedAdvisoryLocks` | `src/db/learning-state-lock.ts` | `hashtext(<ns>:<id>)` sorted，consistent-ordering 原语 |
 | `withinSessionAdvisoryLock` | `src/db/session-advisory-lock.ts` | reserved conn `pg_try_advisory_lock`+retry 至 deadline；`begin`/`savepoint` 补丁到持锁连接，inner tx 全部跑在同一 backend；finally unlock+release |
-| `acquireProposalDecisionLock` | `src/kernel/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0。通用驳回与撤回在事务第一步取；note_update、block_merge、record_links、record_promotion、learning_item、completion、relearn、goal_scope、conjecture 的接受同样第一步取，锁后在同一事务内重查 rate，再取领域锁 |
+| `acquireProposalDecisionLock` | `src/kernel/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0。通用驳回与撤回在事务第一步取；note_update、block_merge、record_links、record_promotion、learning_item、completion、relearn、goal_scope、conjecture、variant_question 的接受同样第一步取，锁后在同一事务内重查 rate，再取领域锁 |
 | `withProposalGateLock` | `src/kernel/proposals/signals.ts` | `<kind>:<cooldown_key>` 多键 sorted xact gate；Db 开真 tx、Tx 内联 |
 | `lockPaidEffectControlFamily` / `lockEntityGate` | `src/db/paid-effect-control.ts` / `paid-effect-store.ts` | paid-effect family/entity 锁（只读盘点） |
 | `lockProducerFenceInstaller` 等 | `src/server/durable/*` | durable family install/control/tick |
@@ -270,7 +270,7 @@ edge-evidence 版 SHA-256
   conjecture-accept.ts；接受不取 probe-question / conjecture-fold，与作答同向）；write_quiz →
   proposal_decision(sorted)；proposal_decision → knowledge:create（learning_item
   接受，learning-intent.ts）；proposal_decision → placement-supply（record_promotion
-  接受，legacy-record-appliers.ts）；note_refine effect → product；paper-native →
+  接受，legacy-record-appliers.ts；variant_question 接受，question-bank proposal-appliers.ts）；note_refine effect → product；paper-native →
   attempt-claim；G → attempt-claim（capture 路径）；appeal-claim(request) →
   group（appeal.ts:24→41）；激活 tx 内 `group → resolution-claim`（record
   回调，settle `fsrs:*` 条件插入其间，dyn）；review-answer → group；
