@@ -17,11 +17,16 @@ import { useWorkbenchClient } from './workbench-client';
 // never ×N), and all *_md render as PLAIN TEXT (no markdown renderer), mirroring
 // PrepDeskCard / ProbeAnswerCard.
 
-import { type QueryClient, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useRef, useState } from 'react';
 import { learnerLocalDay } from '@/core/learner-day';
 import { CONJECTURE_CLAIM_MAX_CHARS } from '@/core/schema/proposal';
 import { scopedPracticeHref } from '@/ui/lib/routes';
+import {
+  invalidateAfterProposalDecision,
+  invalidateAfterTeachingBriefAck,
+  queryKeys,
+} from '@/ui/lib/write-invalidation';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
@@ -56,21 +61,6 @@ function outcomeIcon(status: TeachingBrief['current_outcome']['status']): LoomIc
   return 'sparkle'; // awaiting_decision / awaiting_answer / evidence_for
 }
 
-// The three read surfaces whose counts move when a brief advances or retires: the brief
-// itself (re-projects to the next state / candidate / null), the overnight digest ribbon,
-// and the 待你试做 probe queue. decide() and acknowledge() share this so the invalidation
-// set stays in one place (mirrors PrepDeskConjectures' set).
-async function invalidateBriefSurfaces(qc: QueryClient): Promise<void> {
-  // A precise typed return (not the former `Promise<unknown>`); `await` collapses the
-  // three void invalidations to void. (`Promise<void[]>` would trip biome's
-  // noConfusingVoidType, whose `undefined[]` autofix doesn't typecheck.)
-  await Promise.all([
-    qc.invalidateQueries({ queryKey: ['teaching-brief'] }),
-    qc.invalidateQueries({ queryKey: ['overnight-digest'] }),
-    qc.invalidateQueries({ queryKey: ['prep-desk-probes'] }),
-  ]);
-}
-
 // YUK-710 — the client-side brief_seen suppression key. It MUST be `brief_id × learner-local day`
 // (the SAME grain as the server's idempotency + the report's funnel), never brief_id alone: a tab
 // left open across the Asia/Shanghai midnight must re-report the SAME brief on the new day (else that
@@ -88,7 +78,7 @@ export function nextBriefSeenState(
 export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void }) {
   const qc = useQueryClient();
   const client = useWorkbenchClient();
-  const q = useQuery({ queryKey: ['teaching-brief'], queryFn: client.getTeachingBrief });
+  const q = useQuery({ queryKey: queryKeys.teachingBrief, queryFn: client.getTeachingBrief });
   const brief = q.data?.brief ?? null;
   const status = statefulStatus(q.isLoading, q.isError);
 
@@ -278,8 +268,9 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
       } else {
         await client.decideProposal(brief.prepared_action.proposal_id, decision);
       }
-      // accept → re-project to probe_ready; dismiss → next candidate or null.
-      await invalidateBriefSurfaces(qc);
+      // accept → re-project to probe_ready; dismiss → next candidate or null. Brief findings
+      // are conjecture proposals (shell/server/teaching-brief.ts).
+      await invalidateAfterProposalDecision(qc, { kind: 'conjecture' });
     } catch (error) {
       // Contract §7 — keep the current brief, do NOT optimistically advance; allow retry.
       // Redacted diagnostic only (decision + error, never brief/claim/answer payload),
@@ -317,8 +308,8 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     try {
       await client.ackTeachingBriefOutcome(brief.current_outcome.probe_result_event_id);
       // The acked result loses eligibility server-side; re-project to the next candidate
-      // or the quiet null (same surfaces as decide).
-      await invalidateBriefSurfaces(qc);
+      // or the quiet null.
+      await invalidateAfterTeachingBriefAck(qc);
     } catch (error) {
       // Contract §7 — keep the current outcome brief, do NOT optimistically dismiss; allow
       // retry. Redacted diagnostic only (never brief/claim/answer payload).

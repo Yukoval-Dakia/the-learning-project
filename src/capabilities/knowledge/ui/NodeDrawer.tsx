@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
+import { invalidateAfterProposalDecision, queryKeys } from '@/ui/lib/write-invalidation';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { Button, ChipToggle, IconButton } from '@/ui-next/public';
 
@@ -190,7 +191,7 @@ export function NodeDrawer({
       }),
     onSuccess: () => {
       setTarget('');
-      void qc.invalidateQueries({ queryKey: ['knowledge-edges'] });
+      void qc.invalidateQueries({ queryKey: queryKeys.knowledgeEdges });
     },
   });
 
@@ -400,10 +401,9 @@ export function NodeDrawer({
                     nameOf={(kid) => nodes.find((n) => n.id === kid)?.name ?? '未命名知识点'}
                     onDecide={async (decision) => {
                       await decideEdgeProposal(p.id, decision);
-                      // M4-T5 (YUK-318)：服务端 pending 过滤生效——invalidate 后
-                      // 已决行自然退出，无需向宿主上报 decided 集合。
-                      void qc.invalidateQueries({ queryKey: ['knowledge-edges'] });
-                      void qc.invalidateQueries({ queryKey: ['knowledge-edge-proposals'] });
+                      // M4-T5 (YUK-318)：服务端 pending 过滤生效——刷新后已决行自然退出；
+                      // 同时刷新侧栏收件箱计数等裁决影响到的读面。
+                      void invalidateAfterProposalDecision(qc, { kind: 'knowledge_edge' });
                     }}
                   />
                 ))}

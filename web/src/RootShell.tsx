@@ -14,6 +14,7 @@ import {
   type ConfirmationDraftClient,
 } from '@/capabilities/practice/ui-public';
 import { useWorkbenchClient } from '@/capabilities/shell/ui-public';
+import { queryKeys } from '@/ui/lib/write-invalidation';
 import { CommandPalette, type CommandPaletteProps } from '@/ui/shell/CommandPalette';
 import { NAV, type NavItem, activeFromPath, isSection } from '@/ui/shell/nav-config';
 import { ShellMain } from '@/ui/shell/ShellMain';
@@ -170,7 +171,7 @@ export function RootShell({
   // key ['workbench-summary'] → React Query 去重，不增请求）。无数据时 undefined
   // → 侧栏不渲 count（不 fabricate 假数字）。
   const { getWorkbenchSummary } = useWorkbenchClient();
-  const summaryQ = useQuery({ queryKey: ['workbench-summary'], queryFn: getWorkbenchSummary });
+  const summaryQ = useQuery({ queryKey: queryKeys.workbenchSummary, queryFn: getWorkbenchSummary });
   const inboxCount = summaryQ.data?.proposals.decision_total;
   const inboxCountUncertain = summaryQ.data?.proposals.has_more === true;
 
