@@ -19,6 +19,7 @@ import {
   getStartOvernightDigest,
   getStartProposalInbox,
   getStartRecentAiChanges,
+  getStartTaskFailureAlerts,
   getStartTeachingBrief,
   getStartTodayCost,
   getStartWorkbenchSummary,
@@ -82,6 +83,8 @@ export const startWorkbenchClient: WorkbenchClient = {
     ),
 };
 
+// Shared by the today system notice and the admin home.
+export const startTaskFailureAlertsClient = () => getStartTaskFailureAlerts(transport);
 export const startKnowledgeFrontierClient = () => getStartKnowledgeFrontier(transport);
 export const startKnowledgeReviewDueClient = () => getStartKnowledgeReviewDue(transport);
 

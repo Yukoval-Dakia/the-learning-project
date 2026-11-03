@@ -9,6 +9,7 @@ import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, event } from '@/db/schema';
 import { countProposalsInWindow } from '@/kernel/proposals/inbox';
 import { listNoteRefineChanges } from '@/kernel/read-models/note-refine-changes';
+import { isTaskFailureOutcome } from '@/kernel/records/ai-attempt-facts';
 import {
   type DegradedScanRow,
   type OvernightDigest,
@@ -69,10 +70,6 @@ async function countNoteChangesInWindow(db: DbLike, from: Date, to: Date): Promi
 }
 
 // Raw failure rows; separate from loadRunRows because the sample needs error_message.
-//
-// status='failure' is the only terminal failure writer; exclude non-failures:
-// error_retried (a retried attempt is not the final outcome) and reconciled_stuck
-// (sweeper convergence is not a task failure).
 async function loadErrorRunRows(db: DbLike, from: Date, to: Date): Promise<RunErrorRow[]> {
   const rows = await db
     .select({
@@ -83,9 +80,7 @@ async function loadErrorRunRows(db: DbLike, from: Date, to: Date): Promise<RunEr
     .from(ai_task_runs)
     .where(
       and(
-        eq(ai_task_runs.status, 'failure'),
-        sql`${ai_task_runs.finish_reason} IS DISTINCT FROM 'error_retried'`,
-        sql`${ai_task_runs.finish_reason} IS DISTINCT FROM 'reconciled_stuck'`,
+        isTaskFailureOutcome(ai_task_runs.status, ai_task_runs.finish_reason),
         gte(ai_task_runs.finished_at, from),
         lt(ai_task_runs.finished_at, to),
       ),
