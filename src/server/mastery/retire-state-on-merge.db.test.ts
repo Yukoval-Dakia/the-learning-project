@@ -6,6 +6,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { initialFsrsState } from '@/core/fsrs';
+import { initialCandidateState } from '@/core/scheduling/candidate';
 import { db } from '@/db/client';
 import {
   kc_typed_state,
@@ -16,9 +17,8 @@ import {
 import { retireKcTypedStateOnMerge } from '@/kernel/records/kc-typed-state';
 import { retireLearnerAxisStateOnMerge } from '@/kernel/records/learner-axis-state';
 import { retireMasteryStateOnMerge } from '@/kernel/records/mastery-state';
+import { retireFsrsStateOnMerge } from '@/kernel/records/scheduling-state';
 import { resetDb } from '../../../tests/helpers/db';
-import { initialCandidateState } from '../fsrs/candidate';
-import { retireFsrsStateOnMerge } from '../fsrs/state';
 
 // Legacy FSRS JSON is opaque to identity rename; no complete Card is required.
 const MINIMAL_FSRS = { stability: 1, difficulty: 5, reps: 0, lapses: 0, state: 0 } as never;

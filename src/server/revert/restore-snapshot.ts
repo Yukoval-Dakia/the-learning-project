@@ -12,7 +12,7 @@ import type { Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { mastery_state, material_fsrs_state } from '@/db/schema';
 import { upsertMasteryState } from '@/kernel/records/mastery-state';
-import { upsertFsrsState } from '@/server/fsrs/state';
+import { upsertFsrsState } from '@/kernel/records/scheduling-state';
 
 /** A bare-number θ̂ before has no other columns, so the call refuses and writes nothing. */
 export type RestoreSnapshotResult =

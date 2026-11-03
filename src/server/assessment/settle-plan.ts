@@ -7,6 +7,11 @@ import { and, eq, inArray } from 'drizzle-orm';
 
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/capabilities/practice/public';
 import { canonicalHash } from '@/core/migration/canonical';
+import {
+  CandidateFactSchema,
+  candidateObservations,
+  sealCandidateFact,
+} from '@/core/scheduling/candidate';
 import type { ExecutionPlanT, ResponseSpecT, ScoringBasisT } from '@/core/schema/assessment';
 import {
   EvaluationProvenance,
@@ -23,12 +28,7 @@ import type { Tx } from '@/db/client';
 import { event, question, question_revision } from '@/db/schema';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import type { AbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
-import {
-  CandidateFactSchema,
-  candidateObservations,
-  sealCandidateFact,
-} from '@/server/fsrs/candidate';
-import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
+import { selectedForgettingEngine } from '@/kernel/scheduling';
 import type { ActivationSettleInput } from './activate';
 import { loadAssessmentLearningScope } from './learning-scope';
 import {

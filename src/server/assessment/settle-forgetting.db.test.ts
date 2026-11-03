@@ -9,6 +9,13 @@ import { executeGetReviewDue } from '@/capabilities/practice/scheduling/tools/qu
 import { replay } from '@/core/forgetting';
 import { initialFsrsState } from '@/core/fsrs';
 import { canonicalHash } from '@/core/migration/canonical';
+import {
+  CandidateReplayInputSchema,
+  SealedCandidateInputSchema,
+  initialCandidateState,
+  projectCandidateDue,
+  sealCandidateFact,
+} from '@/core/scheduling/candidate';
 import { AggregateOutcome, ScoringUnitResult } from '@/core/schema/assessment/judgment';
 import { StateSnapshotExperimental } from '@/core/schema/event/state-snapshot';
 import { CandidateStateSchema, SchedulingStateSchema } from '@/core/schema/scheduling-state';
@@ -32,26 +39,22 @@ import {
 } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
-  CandidateReplayInputSchema,
-  SealedCandidateInputSchema,
-  initialCandidateState,
-  projectCandidateDue,
-  sealCandidateFact,
-} from '@/server/fsrs/candidate';
-import {
   enrollFsrsStateIfAbsent,
   getFsrsRetrievabilityByIds,
   initialSchedulingState,
   upsertFsrsState,
-} from '@/server/fsrs/state';
+} from '@/kernel/records/scheduling-state';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { activateEvaluation, insertInitialEvaluationHead } from './activate';
 import {
   ASSESSMENT_SETTLEMENT_ACTION,
   candidateStateForRead,
+  installSchedulingCandidateRebuild,
   learningSettlement,
   withdrawCapturedOccurrence,
 } from './settle';
+
+installSchedulingCandidateRebuild();
 
 const NOW = new Date('2026-09-26T00:00:00Z');
 const ADMITTED_EVIDENCE = {

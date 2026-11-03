@@ -41,7 +41,8 @@ import {
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { resolveAbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
-import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
+import { installCandidateStateRebuild } from '@/kernel/records/scheduling-state';
+import { selectedForgettingEngine } from '@/kernel/scheduling';
 import type { ActivationEffect, ActivationSettleInput } from './activate';
 import { recordFaultyItemInferences } from './faulty-item-inference';
 import { type ApplyOutcome, type SettlementObservers, executePlan } from './settle-apply';
@@ -77,6 +78,11 @@ export const ASSESSMENT_SETTLEMENT_VERSION = 1 as const;
 /** Read-only legacy conversion. Historical receipts and the stored projection are never rewritten. */
 export async function candidateStateForRead(tx: Tx, subject: FsrsSubject, now: Date) {
   return readCandidateStateForRead(tx, subject, now, rederiveSettlementPlan);
+}
+
+/** Every host that resolves scheduling projections under the candidate engine calls this before serving. */
+export function installSchedulingCandidateRebuild(): void {
+  installCandidateStateRebuild(candidateStateForRead);
 }
 
 /** Persist both the replaced side and the effective side. A consumer must not infer either. */

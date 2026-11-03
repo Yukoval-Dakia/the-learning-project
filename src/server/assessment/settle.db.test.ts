@@ -770,6 +770,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     },
   );
 
+  // @invariant grading: a later FSRS trace from a non-settlement writer stops settlement as failed_pending with a replay_required event
+  // @fails-if settlement silently applies on top of the later non-settlement FSRS write instead of recording replay_required
   it('非结算 writer 的更晚痕迹 ⇒ failed_pending + replay_required 事件（不静默追加）', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const t1 = new Date('2026-09-20T00:00:00Z');
@@ -782,7 +784,7 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     const db = testDb();
     const { initialFsrsState } = await import('@/core/fsrs');
     const init = initialFsrsState(new Date('2026-09-25T00:00:00Z'));
-    const { upsertFsrsState } = await import('@/server/fsrs/state');
+    const { upsertFsrsState } = await import('@/kernel/records/scheduling-state');
     await upsertFsrsState(db, {
       subject_kind: 'knowledge',
       subject_id: 'kc_a',

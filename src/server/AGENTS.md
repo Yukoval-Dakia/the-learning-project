@@ -11,7 +11,6 @@
 | `config/` | 运行时配置水合与管理面配置读写 |
 | `durable/` | DBOS durable 层：判分、孤儿会话回收、付费副作用控制等 workflow family |
 | `events/` | 事件因果级联遍历 + 进程级 LISTEN 连接；`events/subscriptions/` 是 capability 事件订阅的注册与派发挂载 |
-| `fsrs/` | FSRS 调度状态与引擎选择 |
 | `http/` | HTTP 错误与 provider 会话截止时间 helper |
 | `mastery/` | 难度重校准与个性化难度 |
 | `migration/` | 迁移捕获与应用；`migration/contract-epoch/` 是契约 epoch 规则与 pg-boss 生产者 fence |

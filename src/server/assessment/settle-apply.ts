@@ -7,17 +7,17 @@ import { sql } from 'drizzle-orm';
 
 import { writeAttemptSnapshotBrackets } from '@/capabilities/practice/public';
 import { scheduleReview } from '@/core/fsrs';
-import { type SchedulingState, isCandidateState } from '@/core/schema/scheduling-state';
-import type { Tx } from '@/db/client';
-import { getMasteryState } from '@/kernel/read-models/mastery-state';
-import { updateThetaForAttempt } from '@/kernel/records/mastery-state';
 import {
   candidateObservations,
   candidateRetention,
   rebuildCandidate,
-} from '@/server/fsrs/candidate';
-import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
-import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+} from '@/core/scheduling/candidate';
+import { type SchedulingState, isCandidateState } from '@/core/schema/scheduling-state';
+import type { Tx } from '@/db/client';
+import { getMasteryState } from '@/kernel/read-models/mastery-state';
+import { updateThetaForAttempt } from '@/kernel/records/mastery-state';
+import { getFsrsState, upsertFsrsState } from '@/kernel/records/scheduling-state';
+import { selectedForgettingEngine } from '@/kernel/scheduling';
 import { recordDifficultyCalibrationEvidence } from '@/server/mastery/calibration-evidence';
 import {
   type FamilyFoldRecord,

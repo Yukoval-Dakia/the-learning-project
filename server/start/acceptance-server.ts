@@ -17,6 +17,8 @@ const [{ installPracticeHostOperations }, { installModelAdmissionPins }] = await
 ]);
 await installPracticeHostOperations();
 await installModelAdmissionPins();
+const { installSchedulingCandidateRebuild } = await import('@/server/assessment/settle');
+installSchedulingCandidateRebuild();
 const [{ buildAdminConfigRuntimeFacts }, { setAdminConfigRuntimeFacts }] = await Promise.all([
   import('@/server/config/admin-config-facts'),
   import('@/capabilities/observability/public'),

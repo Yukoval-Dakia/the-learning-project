@@ -11,6 +11,16 @@
 import { and, eq, gte, or, sql } from 'drizzle-orm';
 
 import { settlementReversions } from '@/core/assessment-settlement-liveness';
+import {
+  type CandidateReplayInput,
+  type SealedCandidateInput,
+  type candidateObservations,
+  candidatePointsForAdmission,
+  initialCandidateState,
+  rebuildCandidate,
+  sealCandidateFact,
+  validateCandidateInput,
+} from '@/core/scheduling/candidate';
 import type { KcObservation } from '@/core/schema/assessment';
 import { EvaluationProvenance } from '@/core/schema/assessment';
 import type { KcEvidenceApply, KcWrongCauseT } from '@/core/schema/assessment/kc-mastery-evidence';
@@ -24,16 +34,6 @@ import {
   question_revision,
 } from '@/db/schema';
 import type { AbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
-import {
-  type CandidateReplayInput,
-  type SealedCandidateInput,
-  type candidateObservations,
-  candidatePointsForAdmission,
-  initialCandidateState,
-  rebuildCandidate,
-  sealCandidateFact,
-  validateCandidateInput,
-} from '@/server/fsrs/candidate';
 import type { FamilyFoldRecord } from '@/server/mastery/personalized-difficulty';
 import type { ActivationSettleInput } from './activate';
 

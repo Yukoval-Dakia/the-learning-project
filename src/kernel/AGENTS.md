@@ -11,6 +11,7 @@
 | `events/` | event envelope 的完整读写 API、修正投影（corrections / effective-truth）和 deterministic scope tagging；唯一 event INSERT owner |
 | `tools/` | DomainTool 契约（types / allowlists / budgets / context-throttle），central registry 与 capability tool 共享 |
 | `read-models/` | 跨 capability 只读投影（failure attempts、failure-learning knowledge context、question activity、cause policy、knowledge tree/subject 解析、questions 列表、daily review plan inputs、intervention preparation stage、note section projection） |
+| `scheduling.ts` + `records/scheduling-state.ts` | 遗忘引擎选择（`FORGETTING_ENGINE`）与保持率读数；`material_fsrs_state` 唯一存取（读投影、enroll/upsert/退役/merge，锁序不变）。写入调用方仍只有结算等既有 owner（ADR-0037）。候选引擎重建由结算经 `installSchedulingCandidateRebuild()` 在 API / worker / acceptance 启动时安装；未安装时只在候选引擎需要重建的分支抛 `HostOperationNotInstalledError`，默认 `fsrs` 引擎不受影响 |
 | `records/mastery-state.ts` | 在线 mastery 诊断的完整 attempt 更新、显式 upsert 与单 KC merge retirement；跨面结算、恢复和 merge 编排仍归调用方 |
 | `records/intervention-diagnostic-materialize.ts` | 干预诊断题物料化与退役：题行谱系、草稿/准入门、一次性发布、当日流安置（锁在 `locks/intervention-diagnostic-delivery.ts`）。Agency 在干预事务内调用；Practice 在 worker 启动时绑定当日流日期、判分活动与题目排程入学/退役 |
 | `records/intervention-package-author.ts` | 干预题目包的一次准备尝试：准备态守卫、科目档案、付费作者阶段、再次守卫、付费复检阶段、确定性校验。Practice 只提供两个付费阶段 |
@@ -22,7 +23,7 @@
 | `cost.ts` / `canonical-json.ts` | 共享数值与序列化 helper |
 | `object-storage.ts` | 共享 R2/S3 对象 I/O：完整 client 接口、SDK 命令/响应适配与 lazy singleton；不拥有资产引用、数据库事务或付费策略 |
 | `http.ts` | 公共 HTTP helper（公共件，非契约） |
-| `judge.ts` / `placement.ts` / `placement-persistence.ts` / `scheduling.ts` | 根目录过渡门面：只 re-export 现有消费者实际使用的符号，不得新增符号。`judge.ts` 只剩 ingestion / agency 用到的 6 个判题入口 |
+| `judge.ts` / `placement.ts` / `placement-persistence.ts` | 根目录过渡门面：只 re-export 现有消费者实际使用的符号，不得新增符号。`judge.ts` 只剩 ingestion / agency 用到的 6 个判题入口 |
 | `manifest.unit.test.ts` / `composition.unit.test.ts` | 契约与组合唯一性校验 |
 
 ## CONVENTIONS
