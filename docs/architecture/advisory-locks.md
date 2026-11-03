@@ -99,7 +99,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | `lockEventCorrectionsAll` / `lockEventCorrectionSource` | `src/kernel/events/correction-lock.ts` | 与上表 corrections:all、source 共用注册表键，语句仍是 `hashtextextended(key, 0)` xact。`writeEvents` 在有修正目标时先取 corrections:all，再按已排序 target 取 source。`review-answer-consumer` 在 copilot execution settlement 之后取 source |
 | `acquireSortedAdvisoryLocks` | `src/db/learning-state-lock.ts` | `hashtext(<ns>:<id>)` sorted，consistent-ordering 原语 |
 | `withinSessionAdvisoryLock` | `src/db/session-advisory-lock.ts` | reserved conn `pg_try_advisory_lock`+retry 至 deadline；`begin`/`savepoint` 补丁到持锁连接，inner tx 全部跑在同一 backend；finally unlock+release |
-| `acquireProposalDecisionLock` | `src/kernel/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0，键来自 `advisoryLockRegistry.proposalDecision`。接受与驳回经 `src/kernel/proposals/decision-protocol.ts` 的裁决模板在事务第一步取，锁后在同一事务内重查 rate 与更正状态，再由 owner 效果取领域锁；模板覆盖通用驳回、agency/variant_question/question_draft 专属驳回，以及 note_update、block_merge、record_links、record_promotion、learning_item、completion、relearn、goal_scope、conjecture、variant_question、question_draft、question_edit、cause_category 的接受；edit_request 路径的 supply save/submit 各自提交，它们的每个写事务第一步经模板给的写守卫取同一把锁重查（embedding 请求前另开一个只取锁重查的短事务，请求期间不持锁），submit 过闸后 question_edit 的撤回与驳回拒绝。撤回仍在自己事务第一步直接取；knowledge 三类的接受与驳回尚未迁到模板，目前不取这把锁（用提议事件行 `FOR UPDATE`） |
+| `acquireProposalDecisionLock` | `src/kernel/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0，键来自 `advisoryLockRegistry.proposalDecision`。接受与驳回经 `src/kernel/proposals/decision-protocol.ts` 的裁决模板在事务第一步取，锁后在同一事务内重查 rate 与更正状态，再由 owner 效果取领域锁；模板覆盖通用驳回、agency/variant_question/question_draft 专属驳回，以及 note_update、block_merge、record_links、record_promotion、learning_item、completion、relearn、goal_scope、conjecture、variant_question、question_draft、question_edit、cause_category、judge_retraction 的接受，以及 knowledge_node、knowledge_mutation、knowledge_edge 的接受与驳回；edit_request 路径的 supply save/submit 各自提交，它们的每个写事务第一步经模板给的写守卫取同一把锁重查（embedding 请求前另开一个只取锁重查的短事务，请求期间不持锁），submit 过闸后 question_edit 的撤回与驳回拒绝。撤回仍在自己事务第一步直接取；提议类别已全部经模板裁决 |
 | `withProposalGateLock` | `src/kernel/proposals/signals.ts` | `<kind>:<cooldown_key>` 多键 sorted xact gate；Db 开真 tx、Tx 内联 |
 | `lockPaidEffectControlFamily` / `lockEntityGate` | `src/db/paid-effect-control.ts` / `paid-effect-store.ts` | paid-effect family/entity 锁（只读盘点） |
 | `lockProducerFenceInstaller` 等 | `src/server/durable/*` | durable family install/control/tick |
@@ -225,7 +225,7 @@ edge-evidence 版 SHA-256
 证，§5 逐一标注——不得把边集当作完整排序或无环证明使用。
 
 - **learning spine**：`G → fsrs:<kind>:<id>(sorted) → mastery:ability_global(sorted)`；
-  merge accept：`event row FOR UPDATE → G → knowledge rows → knowledge_edge(sorted) →
+  merge accept：`proposal_decision → event row FOR UPDATE → G → knowledge rows → knowledge_edge(sorted) →
   retire 命名空间`（dyn：applyX 内 retire 顺序按 mutation 分支分发）。
 - **assessment group spine**：`G → group(xact pair) → evaluation/submission/
   effective_head/group-root 行锁 → fsrs:* → ability_global`（activate.ts:225-235 起；
@@ -273,7 +273,12 @@ edge-evidence 版 SHA-256
   （probe-lifecycle.ts:648），发布订阅 `servePublishedProbe` 先锁题行（:207）再取
   probe-serve-cap（:209），probe-serve-cap 之后各路径只锁本事务新插入、他人不可见的题行；write_quiz →
   proposal_decision(sorted)；proposal_decision → knowledge:create（learning_item
-  接受，learning-intent.ts）；proposal_decision → placement-supply（record_promotion
+  接受，learning-intent.ts）；proposal_decision → 提议事件行 FOR UPDATE → [merge 时
+  G → knowledge 行/knowledge_edge advisory]（knowledge_node / knowledge_mutation 接受，
+  capabilities/knowledge/server/proposals.ts；驳回只到 proposal_decision；stale 回滚
+  marker 走 proposal_decision → 提议事件行）；proposal_decision → knowledge 端点行
+  FOR UPDATE NOWAIT → knowledge_edge advisory（knowledge_edge 接受/reverse/change_type
+  与 supersede，edge-proposal-accept.ts）；proposal_decision → placement-supply（record_promotion
   接受，legacy-record-appliers.ts；variant_question 接受，question-bank proposal-appliers.ts）；proposal_decision →
   submit/save request（`hashtext(request_id)`）→ 草稿/题目行（edit_request 接受经写守卫，裁决锁是这些
   事务的第一把锁）；proposal_decision → `hashtext(evt_eval_correction_<hash>)` → group

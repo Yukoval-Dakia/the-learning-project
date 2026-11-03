@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createServer as createNetServer } from 'node:net';
 import { config } from 'dotenv';
 import { CODE_CONTRACT_EPOCH } from '@/server/migration/contract-epoch/rules';
@@ -256,6 +257,14 @@ const env: NodeJS.ProcessEnv = {
   WORKSHEET_RENDER_APP_ORIGIN: devOrigin,
   // Several worktrees' API + worker pools share one dev Postgres; keep each process small.
   DB_POOL_MAX: process.env.DB_POOL_MAX ?? '5',
+  // Bank search signs gap evidence that the worker verifies, so both processes need one value
+  // that survives restarts; on the dev database it is derived from the worktree's database
+  // name (an empty value counts as unset). Never derived under DEV_ALLOW_TEST_DB: that key is
+  // guessable, and against TEST's data it would let a token holder forge paid gap filings.
+  BANK_GAP_EVIDENCE_SECRET: allowTestDb
+    ? process.env.BANK_GAP_EVIDENCE_SECRET
+    : process.env.BANK_GAP_EVIDENCE_SECRET ||
+      createHash('sha256').update(`loom-dev-bank-gap:${DEV_DB.database}`).digest('hex'),
 };
 
 // RW_FRONTDOOR=dev serves the Start front door through the Vite dev server inside the API

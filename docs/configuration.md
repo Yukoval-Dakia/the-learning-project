@@ -36,7 +36,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | --- | --- | --- | --- |
 | `INTERNAL_TOKEN` | app（`/api/*`） | 必填非空，否则 API 启动失败；`/api/health`、`/api/ready` 豁免 | `src/server/config/env.ts`；`server/app.ts` |
 | `JUDGE_PROVENANCE_SECRET` | app | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时 provenance 签发/校验关闭；worker 不读 | `src/capabilities/practice/grading/server/judge/preview-provenance-token.ts`；`.env.example` |
-| `BANK_GAP_EVIDENCE_SECRET` | app、worker | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时一律视为未设：`search_bank` 不签 MAC，`file_bank_gap` 拒绝 filing | `src/capabilities/practice/question-bank/tools/bank-search.ts`；`src/capabilities/practice/server/tools/file-bank-gap.ts` |
+| `BANK_GAP_EVIDENCE_SECRET` | app、worker（必须同值；`openssl rand -hex 32` 生成；`dev:local` 未设时按本 worktree 库名派生一个稳定值，只限 dev 库，`DEV_ALLOW_TEST_DB=1` 时不派生） | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时一律视为未设：`search_bank` 不签 MAC，`file_bank_gap` 拒绝 filing | `src/capabilities/practice/question-bank/tools/bank-search.ts`；`src/capabilities/practice/server/tools/file-bank-gap.ts` |
 
 ### AI provider 与模型选择
 
