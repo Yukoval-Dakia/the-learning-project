@@ -22,6 +22,7 @@ import * as schema from '@/db/schema';
 import { source_asset } from '@/db/schema';
 import type { R2Client } from '@/kernel/object-storage';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { installSchedulingCandidateRebuild } from '@/server/assessment/settle';
 import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
@@ -625,6 +626,7 @@ async function runScoreCanary(options: Map<string, string>): Promise<number> {
 
 export async function runCli(argv: string[] = process.argv.slice(2)): Promise<number> {
   const { command, options } = parseArgs(argv);
+  installSchedulingCandidateRebuild();
   if (command === 'inspect') return runInspect(options);
   if (command === 'shadow') return runShadow(options);
   if (command === 'review-intervention') return runReviewIntervention(options);

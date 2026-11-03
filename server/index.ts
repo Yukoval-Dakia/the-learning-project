@@ -110,6 +110,11 @@ async function installPracticeOperationsBeforeServe(): Promise<void> {
   await installPracticeHostOperations();
 }
 
+async function installSchedulingCandidateRebuildBeforeServe(): Promise<void> {
+  const { installSchedulingCandidateRebuild } = await import('@/server/assessment/settle');
+  installSchedulingCandidateRebuild();
+}
+
 // YUK-1007 — admin config 读面的运行时事实注入（providers[] / infra schedules /
 // runtime 常量 / consumer-effective 值）。组合根（本进程）聚合一切真相源后经
 // observability/public setter 注入**工厂**：route 每请求重调，跟随 env/热加载
@@ -185,6 +190,7 @@ void (async () => {
   await hydrateModelCatalogBeforeServe();
   await registerToolsBeforeServe();
   await installPracticeOperationsBeforeServe();
+  await installSchedulingCandidateRebuildBeforeServe();
   await recoverToolOperationsBeforeServe();
   await injectAdminConfigFactsBeforeServe();
   await injectAdminConfigWriterBeforeServe();

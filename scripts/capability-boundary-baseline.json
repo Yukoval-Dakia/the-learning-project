@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 128,
+      "total": 125,
       "byOwnerPair": {
         "agency -> ai": 13,
         "agency -> boss": 7,
@@ -15,7 +15,6 @@
         "ingestion -> boss": 6,
         "knowledge -> ai": 3,
         "knowledge -> boss": 2,
-        "knowledge -> fsrs": 1,
         "knowledge -> projections": 2,
         "knowledge -> proposals": 1,
         "notes -> ai": 6,
@@ -24,7 +23,6 @@
         "practice -> ai": 38,
         "practice -> assessment": 1,
         "practice -> boss": 12,
-        "practice -> fsrs": 2,
         "practice -> questions": 1,
         "shell -> boss": 1,
         "shell -> proposals": 1

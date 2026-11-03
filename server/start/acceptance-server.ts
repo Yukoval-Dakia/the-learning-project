@@ -13,6 +13,8 @@ requireApiInternalToken(env);
 const port = resolveApiPort(env.API_PORT);
 const { installPracticeHostOperations } = await import('@/capabilities/practice/public');
 await installPracticeHostOperations();
+const { installSchedulingCandidateRebuild } = await import('@/server/assessment/settle');
+installSchedulingCandidateRebuild();
 const [{ buildAdminConfigRuntimeFacts }, { setAdminConfigRuntimeFacts }] = await Promise.all([
   import('@/server/config/admin-config-facts'),
   import('@/capabilities/observability/public'),

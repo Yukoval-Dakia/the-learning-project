@@ -35,7 +35,7 @@ import { retireLearnerAxisStateOnMerge } from '@/kernel/records/learner-axis-sta
 import { retireMasteryStateOnMerge } from '@/kernel/records/mastery-state';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { rewireMisconceptionEdgesForKnowledgeMerge } from '@/kernel/records/misconception-edges';
-import { retireFsrsStateOnMerge } from '@/server/fsrs/state';
+import { retireFsrsStateOnMerge } from '@/kernel/records/scheduling-state';
 import { normalizeSubjectKey, sanitizeProposedNodeDomain } from '@/subjects/profile';
 import {
   archiveKnowledgeEdgeFromEvents,
