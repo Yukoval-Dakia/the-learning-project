@@ -6,6 +6,9 @@ import { loadReviewDueReader } from './scheduling/public';
 // Compatibility export; shared read models consume their owner, kernel/events,
 // directly so initialization does not re-enter the practice runtime barrel.
 export type { EffectiveTruth } from '@/kernel/events';
+// Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
+// bundle on the @kernel + @db chain with no SDK import.
+export { issueAssessment } from '@/kernel/records/assessment-issuance';
 export { IssueAssessmentBodySchema } from './api/assessment-contracts';
 export {
   type FailureLearningBossSend,
@@ -13,6 +16,80 @@ export {
   type VariantProposalResult,
   proposeFailureVariant,
 } from './failure-learning/public';
+export {
+  type AnswerInput,
+  type CalibrationSampleDispatch,
+  type ContractAttemptInput,
+  type ContractAttemptOutcome,
+  type ContractGradingRef,
+  EVALUATION_ENTRY_POINTS,
+  type EntryPointDisposition,
+  type EvaluateAttemptInput,
+  type EvaluateAttemptOutcome,
+  EvaluateSubmissionError,
+  type EvaluateSubmissionRequest,
+  type EvaluateSubmissionResult,
+  type GradingEntryPoint,
+  IMAGE_CONSUMING_JUDGE_ROUTES,
+  JUDGE_DBOS_QUEUE,
+  JUDGE_DBOS_WORKFLOW,
+  JUDGE_RUN_EVENTS,
+  JUDGE_RUN_TABLE,
+  type JevModelExecutorSpec,
+  type JudgeAnswerParams,
+  type JudgeAnswerResult,
+  type JudgeEngineInventoryT,
+  type JudgeInvokerOutput,
+  type JudgeKind,
+  type JudgeQuestionRow,
+  type JudgeResult,
+  type JudgeRoute,
+  type JudgeRouteQuestionRow,
+  type JudgeRouterInput,
+  MODEL_BACKED_JUDGE_ROUTES,
+  type MultimodalDirectImageFetchFn,
+  type MultimodalDirectRunTaskFn,
+  type NativeAttemptDispatchOptions,
+  type NativeAttemptDispatchPort,
+  type ReviewAnswerContext,
+  type ReviewAnswerResult,
+  buildLegacyJudgeHandler,
+  calibrationSampleDispatchSchema,
+  commitFormalAttempt,
+  createDefaultJudgeInvoker,
+  defaultImageFetch,
+  evaluateAttempt,
+  evaluateSubmission,
+  executeJudgeWorkflow,
+  getIssuanceState,
+  inspectDbosJudgeInventory,
+  installInterventionDiagnosticLeaves,
+  installModelAdmissionPins,
+  isModelBackedJudgeRoute,
+  judgeAnswer,
+  judgeDeliveryInput,
+  judgeLegacyJobId,
+  judgeRouter,
+  judgeRouterV2,
+  previewFormalAttempt,
+  projectIssuanceResult,
+  projectReviewAnswerResponse,
+  readJudgeRunStatus,
+  readPermanentJudgeRun,
+  reconcileJudgeAttempts,
+  recordFormalAttemptCapture,
+  recordJudgeOperationalReceipt,
+  reserveJudgeOperationalDelivery,
+  resolveQuestionJudgeRoute,
+  revealFrozenStudyReference,
+  runMultimodalDirectJudge,
+  saveResponseDraft,
+  saveSubmission,
+  sealJudgeEngineInventory,
+  submitReviewAnswer,
+  validateJudgeEngineInventory,
+  withdrawCapturedOccurrence,
+} from './grading/public';
 export type { QuizGenJobData } from './jobs/quiz_gen';
 export {
   DEFAULT_MAX_PER_RUN,
@@ -77,16 +154,7 @@ export {
   scheduleReview,
   updatePracticeStreamItem,
 } from './scheduling/public';
-// Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
-// bundle on the @kernel + @db chain with no SDK import.
-export { issueAssessment } from './server/assessment/issue';
-export { projectIssuanceResult } from './server/assessment/issue-response';
-export { getIssuanceState, saveResponseDraft, saveSubmission } from './server/assessment/submit';
 export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
-export {
-  type CalibrationSampleDispatch,
-  calibrationSampleDispatchSchema,
-} from './server/calibration-sample-store';
 // practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
@@ -118,7 +186,7 @@ export async function installPracticeHostOperations(): Promise<void> {
     import('@/kernel/read-models/review-due'),
     import('@/kernel/tools/learning-content-validation'),
     import('@/kernel/records/conversation-confirmation-assessment'),
-    import('./server/review-operation'),
+    import('./grading/public'),
     loadReviewDueReader(),
     loadLearningContentValidator(),
     import('./server/conversation-confirmation'),
@@ -136,69 +204,10 @@ export async function installPracticeHostOperations(): Promise<void> {
   });
 }
 
-export async function installInterventionDiagnosticLeaves(): Promise<void> {
-  const [{ installInterventionDiagnosticLeaves: install }, { interventionDiagnosticLeaves }] =
-    await Promise.all([
-      import('@/kernel/records/intervention-diagnostic-materialize'),
-      import('./server/intervention-diagnostics'),
-    ]);
-  install(interventionDiagnosticLeaves);
-}
-
 export { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
 export type { PlacementVerificationAuthority, SupplyTraceV1T } from '@/kernel/supply-contracts';
 export { withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
 export { type CreateAttemptBody, CreateAttemptBodySchema } from './api/contracts';
-// explicit operations used by scripts and integration consumers.
-export {
-  commitFormalAttempt,
-  previewFormalAttempt,
-  recordFormalAttemptCapture,
-} from './server/assessment/attempt';
-export type {
-  NativeAttemptDispatchOptions,
-  NativeAttemptDispatchPort,
-} from './server/assessment/native-attempt-dispatch-port';
-// explicit judging contract consumed by the stable kernel facade.
-export type { AnswerInput, JudgeResult } from './server/judge';
-export {
-  type ContractAttemptInput,
-  type ContractAttemptOutcome,
-  type ContractGradingRef,
-  EVALUATION_ENTRY_POINTS,
-  type EntryPointDisposition,
-  type EvaluateAttemptInput,
-  type EvaluateAttemptOutcome,
-  EvaluateSubmissionError,
-  type EvaluateSubmissionRequest,
-  type EvaluateSubmissionResult,
-  type GradingEntryPoint,
-  IMAGE_CONSUMING_JUDGE_ROUTES,
-  type JevModelExecutorSpec,
-  type JudgeAnswerParams,
-  type JudgeAnswerResult,
-  type JudgeInvokerOutput,
-  type JudgeKind,
-  type JudgeQuestionRow,
-  type JudgeRoute,
-  type JudgeRouteQuestionRow,
-  type JudgeRouterInput,
-  MODEL_BACKED_JUDGE_ROUTES,
-  type MultimodalDirectImageFetchFn,
-  type MultimodalDirectRunTaskFn,
-  createDefaultJudgeInvoker,
-  defaultImageFetch,
-  evaluateAttempt,
-  evaluateSubmission,
-  isModelBackedJudgeRoute,
-  judgeAnswer,
-  judgeRouter,
-  judgeRouterV2,
-  resolveQuestionJudgeRoute,
-  runMultimodalDirectJudge,
-} from './server/judge';
-export { withdrawCapturedOccurrence } from './server/judge/evaluate-submission';
-export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
 // public ports repointed from central deep imports.
 export type { DispatchResult, PlacementCostComponentKind } from './supply/public';
 // Jyeoo agent-tool public surface: candidate fetch shared with the CLI and deterministic
@@ -240,8 +249,6 @@ export {
 // server/worker mark it external, so only migrate is affected. scripts/supply-execute.ts
 // imports the deep path directly.
 
-export { projectReviewAnswerResponse } from './server/review-answer-response';
-export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-operation';
 export {
   MEM0_PRIOR_BLOCK_CHAR_CAP,
   MEM0_PRIOR_CAP,
@@ -253,56 +260,9 @@ export { loadCoverageLattice, submitQuestionTool } from './supply/public';
 // store_sourced_question is folded into submit_question (the old tool is no longer
 // registered or granted); the function-level compat export remains.
 
-export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =
-  async (...args) => (await import('./server/review-operation')).submitReviewAnswer(...args);
-
-export async function readJudgeRunStatus(database: import('@/db/client').Db, runId: string) {
-  return (await import('./server/judge-run-observation')).readJudgeRunStatus(database, runId);
-}
-export async function reconcileJudgeAttempts(
-  ...args: Parameters<typeof import('./jobs/judge_pending_reconcile').reconcileStalledJudgeAttempts>
-) {
-  return (await import('./jobs/judge_pending_reconcile')).reconcileStalledJudgeAttempts(...args);
-}
-export async function buildLegacyJudgeHandler(
-  ...args: Parameters<typeof import('./jobs/judge_run').buildJudgeRunHandler>
-) {
-  return (await import('./jobs/judge_run')).buildJudgeRunHandler(...args);
-}
-export async function recordJudgeOperationalReceipt(
-  ...args: Parameters<typeof import('./server/judge-operational').writeJudgeReceipt>
-) {
-  return (await import('./server/judge-operational')).writeJudgeReceipt(...args);
-}
-export async function readPermanentJudgeRun(
-  ...args: Parameters<typeof import('./server/judge-run-observation').readJudgeRunPermanent>
-) {
-  return (await import('./server/judge-run-observation')).readJudgeRunPermanent(...args);
-}
-export async function executeJudgeWorkflow(
-  ...args: Parameters<typeof import('./jobs/judge_run').runJudgeWorkflowDelivery>
-) {
-  return (await import('./jobs/judge_run')).runJudgeWorkflowDelivery(...args);
-}
-
-export const reserveJudgeOperationalDelivery: typeof import('./server/judge-operational').reserveJudgeDelivery =
-  async (...args) => (await import('./server/judge-operational')).reserveJudgeDelivery(...args);
-
 export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
 export { CreateReviewSessionBody } from './api/contracts';
 export { createPracticeAppeal } from './server/appeal-operation';
-export { revealFrozenStudyReference } from './server/assessment/study-context';
-// Judge engine identity and census belong to practice; the shared host consumes this seam.
-export {
-  JUDGE_DBOS_QUEUE,
-  JUDGE_DBOS_WORKFLOW,
-  type JudgeEngineInventoryT,
-  inspectDbosJudgeInventory,
-  judgeDeliveryInput,
-  judgeLegacyJobId,
-  sealJudgeEngineInventory,
-  validateJudgeEngineInventory,
-} from './server/judge-engine-client';
 export const recoverWebSupplies: typeof import('./supply/public').recoverWebSupplies = async (
   ...args
 ) => (await import('./supply/public')).recoverWebSupplies(...args);

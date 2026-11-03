@@ -20,11 +20,14 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { CreateAttemptBodySchema } from '../api/contracts';
-import { recordAssistanceExposure } from './assessment/assistance';
-import { issueAssessment } from './assessment/issue';
-import { getIssuanceState, saveSubmission } from './assessment/submit';
-import { submitReviewAnswer } from './review-operation';
+import {
+  getIssuanceState,
+  recordAssistanceExposure,
+  saveSubmission,
+  submitReviewAnswer,
+} from '../grading/public';
 
 const Binding = z
   .object({

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { activateSubmissionCandidate } from '@/capabilities/practice/server/judge/evaluate-submission';
+import { activateSubmissionCandidate } from '@/capabilities/practice/grading/server/judge/evaluate-submission';
 import { projectPracticeIssuance } from '@/core/schema/assessment';
 import type { FigureRefT } from '@/core/schema/structured_question';
 import {

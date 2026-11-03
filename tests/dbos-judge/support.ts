@@ -1,9 +1,9 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq, sql } from 'drizzle-orm';
+import { dispatchNativeAttempt } from '@/capabilities/practice/grading/server/assessment/durable-attempt';
+import type { JudgeRunEnqueueDeps } from '@/capabilities/practice/grading/server/judge-run-dispatch';
+import { readJudgeRunPermanent } from '@/capabilities/practice/grading/server/judge-run-observation';
 import { judgeDeliveryInput } from '@/capabilities/practice/public';
-import { dispatchNativeAttempt } from '@/capabilities/practice/server/assessment/durable-attempt';
-import type { JudgeRunEnqueueDeps } from '@/capabilities/practice/server/judge-run-dispatch';
-import { readJudgeRunPermanent } from '@/capabilities/practice/server/judge-run-observation';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import {

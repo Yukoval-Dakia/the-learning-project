@@ -8,9 +8,9 @@ import { promisify } from 'node:util';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { z } from 'zod';
-import { evaluateSubmission } from '@/capabilities/practice/server/judge/evaluate-submission';
-import { disposeJudgeRun } from '@/capabilities/practice/server/judge-operational';
-import { readJudgeRunPermanent } from '@/capabilities/practice/server/judge-run-observation';
+import { evaluateSubmission } from '@/capabilities/practice/grading/server/judge/evaluate-submission';
+import { disposeJudgeRun } from '@/capabilities/practice/grading/server/judge-operational';
+import { readJudgeRunPermanent } from '@/capabilities/practice/grading/server/judge-run-observation';
 import { canonicalHash } from '@/core/migration/canonical';
 import { ModelUnitOutcome } from '@/core/schema/assessment';
 import { AssessmentRuleDecision } from '@/core/schema/assessment/model-decision';
@@ -331,9 +331,9 @@ afterAll(async () => {
     'tests/dbos-judge/support.ts',
     '.cache/yuk1356-judge-worker.cjs',
     'src/server/durable/judge-worker.ts',
-    'src/capabilities/practice/server/judge/evaluate-submission.ts',
-    'src/capabilities/practice/server/judge/recorded-model-executor.ts',
-    'src/server/assessment/pi-model-executor.ts',
+    'src/capabilities/practice/grading/server/judge/evaluate-submission.ts',
+    'src/capabilities/practice/grading/server/judge/recorded-model-executor.ts',
+    'src/capabilities/practice/grading/server/pi-model-executor.ts',
     'src/kernel/events/events.ts',
     'pnpm-lock.yaml',
     'node_modules/@dbos-inc/dbos-sdk/package.json',

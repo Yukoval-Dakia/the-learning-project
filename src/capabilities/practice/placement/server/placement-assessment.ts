@@ -15,9 +15,8 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { issueAssessment } from '../../server/assessment/issue';
-import { getIssuanceState } from '../../server/assessment/submit';
-import { readJudgeRunPermanent } from '../../server/judge-run-observation';
+import { issueAssessment } from '@/kernel/records/assessment-issuance';
+import { getIssuanceState, readJudgeRunPermanent } from '../../grading/public';
 import { PlacementQuestionSchema, type PlacementUnresolvedItem } from '../api/placement-contracts';
 import { type SelectPlacementItemInput, selectNextPlacementItem } from './placement-select';
 
@@ -492,7 +491,7 @@ export async function validatePlacementSubmission(
   database: import('@/db/client').Db,
   questionId: string,
   sessionId: string | null | undefined,
-  input: import('../../server/assessment/submit').SaveSubmissionRequest,
+  input: import('../../grading/public').SaveSubmissionRequest,
 ) {
   const [issuance] = await database
     .select({ container: assessment_issuance.container_occurrence_ref })

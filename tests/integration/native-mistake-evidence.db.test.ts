@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MistakeListResponseSchema } from '@/capabilities/ingestion/api/contracts';
 import { ingestionCapability } from '@/capabilities/ingestion/manifest';
 import { readMistakes } from '@/capabilities/ingestion/public';
-import { commitFormalAttempt } from '@/capabilities/practice/server/assessment/attempt';
-import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
-import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
+import { commitFormalAttempt } from '@/capabilities/practice/grading/server/assessment/attempt';
+import * as evaluationService from '@/capabilities/practice/grading/server/judge/evaluate-submission';
+import { createRecordedModelExecutor } from '@/capabilities/practice/grading/server/judge/recorded-model-executor';
 import type {
   GroupEvidenceT,
   ModelExecutorRequest,

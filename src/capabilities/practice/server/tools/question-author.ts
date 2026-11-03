@@ -29,8 +29,8 @@ import type { ToolContext } from '@/kernel/tools/types';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
+import { assertGeneratedQuestionHasJudgeContract } from '../../grading/public';
 import { parseQuestionAuthorOutput } from '../../tasks/question-author';
-import { assertGeneratedQuestionHasJudgeContract } from '../judge/question-contract';
 import {
   bindGeneratedQuestion,
   canonicalSourceContentHash,

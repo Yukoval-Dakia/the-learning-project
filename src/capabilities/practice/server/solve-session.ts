@@ -29,15 +29,15 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subje
 import { createAssessmentLearningRecord } from '@/kernel/records/queries';
 import { hasPriorSolutionExposure } from '@/kernel/records/study-reference';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
-import { recordAssistanceExposure } from './assessment/assistance';
-import { commitFormalAttempt } from './assessment/attempt';
+import type { SaveSubmissionRequest } from '../grading/public';
 import {
+  commitFormalAttempt,
+  createAssessmentAssetLoader,
   loadFrozenStudyContext,
   loadFrozenStudyImages,
+  recordAssistanceExposure,
   revealFrozenStudyReference,
-} from './assessment/study-context';
-import type { SaveSubmissionRequest } from './assessment/submit';
-import { createAssessmentAssetLoader } from './assets';
+} from '../grading/public';
 import { groundHintExplanation } from './hint-explanation';
 import * as Tutor from './tutor-session';
 export type RunTaskFn = (

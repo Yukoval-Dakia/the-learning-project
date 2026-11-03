@@ -3,11 +3,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type SaveSubmissionRequest,
   saveSubmission,
-} from '@/capabilities/practice/server/assessment/submit';
+} from '@/capabilities/practice/grading/server/assessment/submit';
 import {
   type EvaluateSubmissionRequest,
   evaluateSubmission,
-} from '@/capabilities/practice/server/judge/evaluate-submission';
+} from '@/capabilities/practice/grading/server/judge/evaluate-submission';
 import {
   type ModelUnitOutcomeT,
   type SubmissionRecordT,

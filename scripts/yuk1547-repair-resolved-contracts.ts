@@ -134,7 +134,7 @@ async function main() {
   const [{ db }, repair, { installModelAdmissionPins }] = await Promise.all([
     import('@/db/client'),
     import('@/capabilities/practice/question-bank/server/admission/resolved-repair'),
-    import('@/server/assessment/model-admission-pins'),
+    import('@/capabilities/practice/public'),
   ]);
   await installModelAdmissionPins();
   const groupIds = entries.map((entry) => entry.group_id);

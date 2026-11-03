@@ -9,7 +9,7 @@ import { AttemptQuestionSnapshot } from '../schema/question-evidence-snapshot';
 // 「complete」必须建立在【被识别且自洽】的冻结输入与判词上，不接受
 // 存在性检查：
 //   - durable 冻结输入：镜像生产契约 FrozenQuestionSnapshotSchema
-//     （src/capabilities/practice/server/judge-run-payload.ts:103–119）。
+//     （src/capabilities/practice/grading/server/judge-run-payload.ts:103–119）。
 //     core 不得 import capability，故在此逐字段镜像。
 //   - attempt/review 事件快照：直接用 core 的 AttemptQuestionSnapshot。
 //   - 判词：直接用 core 的 JudgeResultV2 判别式域（coarse_outcome × score

@@ -16,8 +16,8 @@ export const EXPECTED_GRADING_ENTRIES = [
   'ingestion_grading',
   'advice_preview',
 ] as const;
-const AUTHORITY = 'src/capabilities/practice/server/judge/evaluation-authority.ts';
-const FORMAL_ATTEMPT = 'src/capabilities/practice/server/assessment/attempt.ts';
+const AUTHORITY = 'src/capabilities/practice/grading/server/judge/evaluation-authority.ts';
+const FORMAL_ATTEMPT = 'src/capabilities/practice/grading/server/assessment/attempt.ts';
 const FORMAL_BRIDGES = ['previewFormalAttempt', 'commitFormalAttempt'] as const;
 
 function unwrap(expression: ts.Expression): ts.Expression {

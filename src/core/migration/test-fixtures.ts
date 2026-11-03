@@ -111,7 +111,7 @@ export const SNAPSHOT = AttemptQuestionSnapshot.parse({
 
 /**
  * 真实 durable pending 输入的冻结 snapshot（FrozenQuestionSnapshot 结构，见
- * src/capabilities/practice/server/judge-run-payload.ts）。
+ * src/capabilities/practice/grading/server/judge-run-payload.ts）。
  */
 export const FROZEN_DURABLE_SNAPSHOT = {
   kind: 'short_answer',

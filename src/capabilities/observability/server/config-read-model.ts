@@ -45,14 +45,15 @@ export type AdminConfigValue = ConfigValue | null;
  * 实际未读属于维护 bug，走常规 review 修正。
  */
 export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
-  JUDGE_DURABLE_ENABLED: 'src/capabilities/practice/server/judge-durable-config.ts',
-  JUDGE_FALLBACK_PROVIDER: 'src/capabilities/practice/server/judge-durable-config.ts',
+  JUDGE_DURABLE_ENABLED: 'src/capabilities/practice/grading/server/judge-durable-config.ts',
+  JUDGE_FALLBACK_PROVIDER: 'src/capabilities/practice/grading/server/judge-durable-config.ts',
   MISCONCEPTION_PROMOTE_ENABLED: 'src/capabilities/agency/server/misconception-promote.ts',
   MISCONCEPTION_HARD_CONFIRM_ENABLED: 'src/capabilities/agency/server/misconception-promote.ts',
   QUESTION_SUPPLY_REFILL_ENABLED: 'src/capabilities/practice/supply/server/refill.ts',
   CONFUSABLE_CONTRAST_ENABLED:
     'src/capabilities/practice/supply/server/confusable-contrast-discovery.ts',
-  JUDGE_CALIBRATION_SAMPLING_ENABLED: 'src/capabilities/practice/jobs/judge_calibration_sample.ts',
+  JUDGE_CALIBRATION_SAMPLING_ENABLED:
+    'src/capabilities/practice/grading/jobs/judge_calibration_sample.ts',
   WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: 'src/capabilities/ingestion/server/workflow-judge-config.ts',
   WORKFLOW_JUDGE_OBSERVE_ENABLED: 'src/capabilities/ingestion/server/workflow-judge-config.ts',
   WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD:
@@ -83,10 +84,13 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   AI_RATE_LIMIT_MAX: 'src/kernel/request-rate-limit.ts',
   AI_RATE_LIMIT_WINDOW_MS: 'src/kernel/request-rate-limit.ts',
   CLAUDE_CODE_MAX_RETRIES: 'src/server/ai/pi-agent-adapter.ts',
-  JUDGE_CALIBRATION_BATCH_MAX: 'src/capabilities/practice/jobs/judge-calibration-config.ts',
-  JUDGE_CALIBRATION_WINDOW_DAYS: 'src/capabilities/practice/jobs/judge-calibration-config.ts',
-  JUDGE_CALIBRATION_REJUDGE_PROVIDER: 'src/capabilities/practice/jobs/judge-calibration-config.ts',
-  JUDGE_CALIBRATION_REJUDGE_MODEL: 'src/capabilities/practice/jobs/judge-calibration-config.ts',
+  JUDGE_CALIBRATION_BATCH_MAX: 'src/capabilities/practice/grading/jobs/judge-calibration-config.ts',
+  JUDGE_CALIBRATION_WINDOW_DAYS:
+    'src/capabilities/practice/grading/jobs/judge-calibration-config.ts',
+  JUDGE_CALIBRATION_REJUDGE_PROVIDER:
+    'src/capabilities/practice/grading/jobs/judge-calibration-config.ts',
+  JUDGE_CALIBRATION_REJUDGE_MODEL:
+    'src/capabilities/practice/grading/jobs/judge-calibration-config.ts',
   JYEOO_RS_BINARY: 'src/capabilities/practice/supply/server/jyeoo-supply-config.ts',
   JYEOO_SPAWN_TIMEOUT_MS: 'src/capabilities/practice/supply/server/jyeoo-supply-config.ts',
   JYEOO_BACKFILL_TIMEOUT_MS: 'src/capabilities/practice/supply/server/jyeoo-supply-config.ts',
