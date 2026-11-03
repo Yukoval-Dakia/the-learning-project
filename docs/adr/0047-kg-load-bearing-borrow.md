@@ -113,7 +113,7 @@ A5/A6 都 ship 成软层：**只移 surfaced `theta_hat`（能力后验均值）
 
 ### 10. n=1 admissibility（litmus）
 
-A5/A6/A13 都只吃：**单学习者自身 θ̂/outcome**（mastery_state）+ **KG `edge.weight`（owner/LLM 供给的固定先验）** + **owner 固定 λ/κ/λ_down/λ_up/base/decay 常量**。无 a/slip/guess/φ/discrimination 任何跨被试参数。**λ 等必须保持 owner 供给**——「从数据学」需跨人方差 → inadmissible（红线）。`GRAPH_SMOOTH_COMPONENT_CAP` / `SHADOW_BORROW_COMPONENT_CAP`（=256）是**未经数据校准的保守结构初值**（非拟合 item 参数），同 litmus。
+A5/A6/A13 都只吃：**单学习者自身 θ̂/outcome**（mastery_state）+ **KG `edge.weight`（owner/LLM 供给的固定先验）** + **owner 固定 λ/κ/λ_down/λ_up/base/decay 常量**。无 a/slip/guess/φ/discrimination 任何跨被试参数。**λ 等必须保持 owner 供给**——「从数据学」需跨人方差 → inadmissible（红线）。`GRAPH_SMOOTH_COMPONENT_CAP`（=256；shadow sweep 的同值 cap 已随 `kg_borrow_shadow_sweep` 退役）是**未经数据校准的保守结构初值**（非拟合 item 参数），同 litmus。
 
 ### 11. F′（θ̃ 进借用 band，1PL ICC）— owner 选项，前置链（不默认采）
 
