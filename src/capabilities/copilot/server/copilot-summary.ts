@@ -67,8 +67,8 @@ export interface CopilotSummary {
 
 // Only claims the summary can verify from its own reads: a due review queue
 // exists only when review_due_count > 0; otherwise state the missing plan only.
-const COACH_PLACEHOLDER_FOCUS_WITH_QUEUE = '昨晚 Coach 还没出新计划，先按到期的复习队列开始即可。';
-const COACH_PLACEHOLDER_FOCUS_NO_QUEUE = '昨晚 Coach 还没出新计划。';
+const COACH_PLACEHOLDER_FOCUS_WITH_QUEUE = 'Coach 还没出新计划，先按到期的复习队列开始即可。';
+const COACH_PLACEHOLDER_FOCUS_NO_QUEUE = 'Coach 还没出新计划。';
 
 const LEARNER_PROPOSAL_SUMMARIES: Readonly<Record<string, string>> = {
   knowledge_node: '有一项知识点建议待你查看。',

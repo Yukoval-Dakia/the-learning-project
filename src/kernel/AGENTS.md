@@ -12,6 +12,7 @@
 | `tools/` | DomainTool 契约（types / allowlists / budgets / context-throttle），central registry 与 capability tool 共享 |
 | `read-models/` | 跨 capability 只读投影（failure attempts、failure-learning knowledge context、question activity、cause policy、knowledge tree/subject 解析、目标定位范围与种子根锚点 `placement-scope`、questions 列表、daily review plan inputs、intervention preparation stage、note section projection、练习会话打开态 `practice-session-open`、学习者作答/学习活动集合与学科解析及最长连错 `learner-activity`） |
 | `memory-brief-regen.ts` | memory brief regen 队列契约：队列名、`memory.regen.<scope>` singleton key 与槽长（`subject:*` 4 小时，其余 6 分钟）；Agency 挂 handler，Agency 与 Practice 都经 `enqueueMemoryBriefRegen` 入队 |
+| `coach-wake.ts` | coach_daily 队列契约与回访义务：队列名、过期判定（24h 内无 `experimental:trigger_coach_scan` 且此后有允许推导的学习活动）、`coach.wake` 24h singleton 槽；Agency 挂 handler，Practice 的 `learner_return_wake` 经 `enqueueCoachIfDue` 入队 |
 | `scheduling.ts` + `records/scheduling-state.ts` | 遗忘引擎选择（`FORGETTING_ENGINE`）与保持率读数；`material_fsrs_state` 唯一存取（读投影、enroll/upsert/退役/merge，锁序不变）。写入调用方仍只有结算等既有 owner（ADR-0037）。候选引擎重建由结算经 `installSchedulingCandidateRebuild()` 在 API / worker / acceptance 启动时安装；未安装时只在候选引擎需要重建的分支抛 `HostOperationNotInstalledError`，默认 `fsrs` 引擎不受影响 |
 | `records/mastery-state.ts` | 在线 mastery 诊断的完整 attempt 更新、显式 upsert 与单 KC merge retirement；跨面结算、恢复和 merge 编排仍归调用方 |
 | `records/intervention-diagnostic-materialize.ts` | 干预诊断题物料化与退役：题行谱系、草稿/准入门、一次性发布、当日流安置（锁在 `locks/intervention-diagnostic-delivery.ts`）。Agency 在干预事务内调用；Practice 在 worker 启动时绑定当日流日期、判分活动与题目排程入学/退役 |
