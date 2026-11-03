@@ -434,6 +434,7 @@ function buildQueryOptions(
     // timer derivation (provider-transport.ts).
     providerTimeoutMs: providerHttpTimeoutMs(budget.timeout),
     transportEvidence,
+    ...(declaredDef.enforceMaxCost === true ? { maxBudgetUsd: budget.maxCost } : {}),
   };
   // YUK-923 — per-run modelBinding effort wins over the task-kind declaration.
   const reasoningEffort = ctx.modelBinding?.effort ?? declaredDef.reasoningEffort;
