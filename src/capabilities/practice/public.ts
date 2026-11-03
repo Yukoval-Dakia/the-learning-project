@@ -12,7 +12,6 @@ export { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope'
 // Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
 // bundle on the @kernel + @db chain with no SDK import.
 export { issueAssessment } from '@/kernel/records/assessment-issuance';
-export { IssueAssessmentBodySchema } from './api/assessment-contracts';
 export {
   type FailureLearningBossSend,
   type ProposeFailureVariantInput,
@@ -75,13 +74,14 @@ export {
   judgeRouter,
   judgeRouterV2,
   previewFormalAttempt,
-  projectIssuanceResult,
-  projectReviewAnswerResponse,
   readJudgeRunStatus,
   readPermanentJudgeRun,
   reconcileJudgeAttempts,
   recordFormalAttemptCapture,
   recordJudgeOperationalReceipt,
+  requestAssessmentIssuance,
+  requestResponseDraftSave,
+  requestReviewAnswer,
   reserveJudgeOperationalDelivery,
   resolveQuestionJudgeRoute,
   revealFrozenStudyReference,
@@ -89,7 +89,6 @@ export {
   saveResponseDraft,
   saveSubmission,
   sealJudgeEngineInventory,
-  submitReviewAnswer,
   validateJudgeEngineInventory,
   withdrawCapturedOccurrence,
 } from './grading/public';
@@ -206,7 +205,6 @@ export async function installPracticeHostOperations(): Promise<void> {
 export { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
 export type { PlacementVerificationAuthority, SupplyTraceV1T } from '@/kernel/supply-contracts';
 export { withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
-export { type CreateAttemptBody, CreateAttemptBodySchema } from './api/contracts';
 // public ports repointed from central deep imports.
 export type { DispatchResult, PlacementCostComponentKind } from './supply/public';
 // Jyeoo agent-tool public surface: candidate fetch shared with the CLI and deterministic
@@ -259,8 +257,6 @@ export { loadCoverageLattice, submitQuestionTool } from './supply/public';
 // store_sourced_question is folded into submit_question (the old tool is no longer
 // registered or granted); the function-level compat export remains.
 
-export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
-export { CreateReviewSessionBody } from './api/contracts';
 export { createPracticeAppeal } from './server/appeal-operation';
 export const recoverWebSupplies: typeof import('./supply/public').recoverWebSupplies = async (
   ...args
@@ -275,7 +271,6 @@ export const runQuestionSupplyNightly: typeof import('./supply/public').runQuest
 export const recoverHeldServingRechecks: typeof import('./question-bank/public').recoverHeldServingRechecks =
   async (...args) => (await import('./question-bank/public')).recoverHeldServingRechecks(...args);
 export {
-  CreatePlacementSessionBodySchema,
   PlacementOrphanStateError,
   type PlacementProfileResponse,
   UpdatePlacementSessionBodySchema,

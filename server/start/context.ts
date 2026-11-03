@@ -52,8 +52,6 @@ import type {
   getPaperDetail,
   getPracticeStream,
   previewReviewAdvice,
-  projectIssuanceResult,
-  projectReviewAnswerResponse,
   readDraftReviewDetail,
   readJudgeRunStatus,
   readPaperList,
@@ -64,10 +62,12 @@ import type {
   readWorksheetExport,
   recomposePracticeStream,
   releaseHeldPlacement,
+  requestAssessmentIssuance,
+  requestResponseDraftSave,
+  requestReviewAnswer,
   restorePracticeQuestion,
   revealFrozenStudyReference,
   runPracticeServingAction,
-  saveResponseDraft,
   selectNextPlacementQuestion,
   startPlacementProbe,
   transitionPlacementSession,
@@ -234,12 +234,12 @@ export type FrontdoorContext = {
     id: string;
     body: string;
   }) => Promise<Awaited<ReturnType<typeof updatePracticeStreamItem>>>;
-  createIssuance: (body: string) => Promise<ReturnType<typeof projectIssuanceResult>>;
+  createIssuance: (body: string) => ReturnType<typeof requestAssessmentIssuance>;
   readIssuanceState: (issuanceId: string) => Promise<Awaited<ReturnType<typeof getIssuanceState>>>;
   saveResponseDraft: (input: {
     issuanceId: string;
     body: string;
-  }) => Promise<Extract<Awaited<ReturnType<typeof saveResponseDraft>>, { status: 'saved' }>>;
+  }) => ReturnType<typeof requestResponseDraftSave>;
   readJudgeRunStatus: (
     runId: string,
   ) => Promise<Extract<Awaited<ReturnType<typeof readJudgeRunStatus>>, { kind: 'found' }>['value']>;
@@ -265,7 +265,7 @@ export type FrontdoorContext = {
   submitPlacementAnswer: (
     body: string,
     signal: AbortSignal,
-  ) => Promise<ReturnType<typeof projectReviewAnswerResponse>['body']>;
+  ) => Promise<Awaited<ReturnType<typeof requestReviewAnswer>>['body']>;
   readSubjects: () => Promise<{ subjects: LearnerSubjectRow[] }>;
   createSubject: (
     displayName: string,

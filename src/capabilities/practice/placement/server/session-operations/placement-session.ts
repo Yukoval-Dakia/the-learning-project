@@ -4,8 +4,9 @@
 // preference, two-phase first-item selection, Transaction A (starter
 // materialization + session start), the paid-claim dispatch loop's failure
 // contract, the locked question-serving transaction, and the repeatable-read
-// side reads (starter outcomes, unresolved items). api/* keeps Request
-// parsing, schema validation, and Response/deprecation shaping.
+// side reads (starter outcomes, unresolved items). The start body is parsed
+// here behind the flag gate so the Hono route and Start front door share it;
+// api/* keeps Request reading and Response/deprecation shaping.
 // Moved verbatim from api/placement-{start,end,session-detail}.ts — every
 // transaction boundary, catch contract, lock, and read isolation is unchanged.
 
@@ -24,6 +25,7 @@ import {
   materializePlacementStartersForGoal,
   readPlacementStarterOutcomes,
 } from '../../../supply/public';
+import { CreatePlacementSessionBodySchema } from '../../api/placement-contracts';
 import {
   noItemField,
   placementNoItem,
@@ -41,13 +43,6 @@ import * as Placement from '../placement-session-lifecycle';
 
 // ---------- start probe (POST /api/placement/start + /api/placement-sessions) ----------
 
-export interface StartPlacementProbeInput {
-  goalId?: string | null;
-  knowledgeIds?: readonly string[];
-  leanings?: readonly string[];
-  pace?: string | null;
-}
-
 export interface PlacementProbeStart {
   sessionId: string;
   knowledgeIds: string[];
@@ -58,16 +53,39 @@ export interface PlacementProbeStart {
   no_item?: ReturnType<typeof placementNoItem>;
 }
 
+async function parsePlacementStartBody(readBody: () => Promise<unknown>) {
+  let raw: unknown;
+  try {
+    raw = await readBody();
+  } catch {
+    throw new ApiError('validation_error', 'request body must be valid JSON', 400);
+  }
+  const parsed = CreatePlacementSessionBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new ApiError(
+      'validation_error',
+      parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+      400,
+    );
+  }
+  return parsed.data;
+}
+
 export async function startPlacementProbe(
-  loadInput: () => Promise<StartPlacementProbeInput>,
+  readBody: () => Promise<unknown>,
 ): Promise<PlacementProbeStart> {
   // Dark-ship gate: the whole placement entrypoint is unreachable until the flag flips.
   if (!Placement.placementProbeEnabled()) {
     throw new ApiError('not_found', 'placement probe is not enabled', 404);
   }
 
-  // The entry gate precedes HTTP parsing, as in the original route.
-  const { goalId, knowledgeIds: explicit, leanings, pace } = await loadInput();
+  // The entry gate precedes body parsing, as in the original route.
+  const {
+    goalId,
+    knowledgeIds: explicit,
+    leanings,
+    pace,
+  } = await parsePlacementStartBody(readBody);
 
   let knowledgeIds: string[] = [...(explicit ?? [])];
   let requestedGoal:
