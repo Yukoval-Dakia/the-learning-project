@@ -14,6 +14,7 @@ import {
   validateComposition,
 } from '@/kernel/manifest';
 import { generateOpenApiDocument } from '@/kernel/openapi';
+import { missingRequiredConfig } from '@/server/config/config-completeness';
 import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
@@ -186,17 +187,22 @@ export function buildHonoApp(
   // 运维/发布链路用 ready 做 matched app/worker 启动判据（grounding §15）。
   // 与 health 同豁免 token（探测面；泄露的只是 epoch 态，同 health 的 ok:true
   // 级别信息）。fenced → 503（ready 语义本身就是「不可服务」）。
+  // A missing required setting (names only, never values) also makes the process not ready,
+  // so a release that drops one fails its readiness probe instead of reaching a learner.
   app.get('/api/ready', async (c) => {
     const gate = await epochGate();
+    const missingConfig = missingRequiredConfig();
+    const ready = gate.runnable && missingConfig.length === 0;
     return c.json(
       {
-        ok: gate.runnable,
+        ok: ready,
         epoch: gate.epoch ?? null,
         state: gate.state ?? null,
         code_epoch: gate.codeEpoch ?? null,
-        reason: gate.reason ?? null,
+        reason: gate.reason ?? (missingConfig.length > 0 ? 'config_incomplete' : null),
+        missing_config: missingConfig,
       },
-      gate.runnable ? 200 : 503,
+      ready ? 200 : 503,
     );
   });
   // YUK-624：TokenGate 的轻量验证端点。它位于 /api/* middleware 之后，

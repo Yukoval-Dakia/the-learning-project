@@ -31,10 +31,12 @@ export async function bootWorker(options: BootWorkerOptions = {}): Promise<void>
   console.log('[worker] capability tools registered');
 
   // After loadEnv. Importing the client earlier throws when DATABASE_URL is still unset.
-  const [{ db }, { startBossWorker }] = await Promise.all([
+  const [{ db }, { startBossWorker }, { reportConfigCompleteness }] = await Promise.all([
     import('@/db/client'),
     import('@/server/boss/start-worker'),
+    import('@/server/config/config-completeness'),
   ]);
+  await reportConfigCompleteness(db, 'worker');
   try {
     // Stored before startBossWorker marks the boss started, so getStartup() is set
     // before the boss is visible.
