@@ -446,6 +446,18 @@ const acceptSupportedKindSet: ReadonlySet<string> = new Set(acceptSupportedPropo
  * 组合期校验：包名及各类声明（含 UI page）全局唯一，冲突即抛错；每个 proposal kind
  * 恰好一个 owner，且声明了 accept ⟺ 强度不是 C。
  */
+// Completeness needs the whole composition root; validateComposition also runs on partial roots in tests.
+export function assertProposalKindsOwned(capabilities: CapabilityManifest[]): void {
+  const owned = new Set(
+    capabilities.flatMap((cap) => (cap.proposals?.kinds ?? []).map((d) => d.kind)),
+  );
+  for (const kind of aiProposalKinds) {
+    if (!owned.has(kind)) {
+      throw new Error(`proposal kind '${kind}' has no owner declaration`);
+    }
+  }
+}
+
 export function validateComposition(capabilities: CapabilityManifest[]): void {
   const names = new Set<string>();
   for (const cap of capabilities) {
@@ -593,11 +605,6 @@ export function validateComposition(capabilities: CapabilityManifest[]): void {
           }; the core strength table and the owner accept declaration must agree`,
         );
       }
-    }
-  }
-  for (const kind of aiProposalKinds) {
-    if (!kindOwner.has(kind)) {
-      throw new Error(`proposal kind '${kind}' has no owner declaration`);
     }
   }
   const copilotToolOwners = new Map<string, string>();
