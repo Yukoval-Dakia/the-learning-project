@@ -1,0 +1,393 @@
+/* The six-step hint ladder (HintLadder) inside the practice page's hint drawer, M3E presentation
+   (YUK-1473, docs/design/2026-11-03-last-old-ui-m3e.md). The drawer portals into its own
+   practice-studio UiNextRoot, so colours read Google M3 roles; the drawer panel is
+   surface-container-lowest, so cards sit on surface-container-low. "Full solution" and "not
+   independent" read caution (no M3 role), a failed step reads error-container, a hand-back reads
+   positive. Motion only on change: a new card fades in once and the busy ring turns while a
+   step is being fetched; neither runs under reduced motion. */
+
+[data-ui-next] .un-hl {
+  margin-top: 8px;
+  color: var(--un-md-sys-color-on-surface);
+}
+
+/* ── Autonomy rail: six stops H0…H5, position only (never clickable) ── */
+[data-ui-next] .un-hl-rail {
+  margin-bottom: 16px;
+}
+[data-ui-next] .un-hl-rail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 12px;
+}
+[data-ui-next] .un-hl-rail-l {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-label-large-size);
+  font-weight: var(--un-md-sys-typescale-label-large-weight);
+  line-height: var(--un-md-sys-typescale-label-large-line-height);
+}
+[data-ui-next] .un-hl-rail-l svg {
+  align-self: center;
+  flex: none;
+}
+[data-ui-next] .un-hl-rail-r {
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: 13px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+[data-ui-next] .un-hl-stops {
+  display: flex;
+  align-items: flex-start;
+}
+[data-ui-next] .un-hl-stop {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+[data-ui-next] .un-hl-stop::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: -50%;
+  width: 100%;
+  height: 2px;
+  background: var(--un-md-sys-color-outline-variant);
+}
+[data-ui-next] .un-hl-stop:first-child::before {
+  display: none;
+}
+[data-ui-next] .un-hl-stop.reached::before {
+  background: var(--un-md-sys-color-primary);
+}
+[data-ui-next] .un-hl-dot {
+  position: relative;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--un-md-sys-color-outline);
+  border-radius: var(--un-md-sys-shape-full);
+  background: var(--un-md-sys-color-surface-container-lowest);
+  transition:
+    background-color var(--un-t-small) var(--un-ease-glide),
+    border-color var(--un-t-small) var(--un-ease-glide),
+    box-shadow var(--un-t-small) var(--un-ease-glide);
+}
+[data-ui-next] .un-hl-stop.reached .un-hl-dot {
+  border-color: var(--un-md-sys-color-primary);
+}
+/* The current stop is filled and haloed: a shape change, not colour alone. */
+[data-ui-next] .un-hl-stop.current .un-hl-dot {
+  border-color: var(--un-md-sys-color-primary);
+  background: var(--un-md-sys-color-primary);
+  box-shadow: 0 0 0 4px var(--un-md-sys-color-secondary-container);
+}
+/* The full solution is a square stop: it is a different kind of step. */
+[data-ui-next] .un-hl-stop.is-full .un-hl-dot {
+  border-radius: 4px;
+}
+[data-ui-next] .un-hl-stop.current.is-full .un-hl-dot {
+  border-color: var(--un-caution);
+  background: var(--un-caution);
+  box-shadow: 0 0 0 4px var(--un-caution-soft);
+}
+[data-ui-next] .un-hl-stop-l {
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+}
+[data-ui-next] .un-hl-stop.current .un-hl-stop-l {
+  color: var(--un-md-sys-color-primary);
+  font-weight: 700;
+}
+[data-ui-next] .un-hl-stop.current.is-full .un-hl-stop-l {
+  color: var(--un-caution);
+}
+
+/* ── Stage cards (only up to the current step) ── */
+[data-ui-next] .un-hl-card {
+  margin-bottom: 8px;
+  padding: 12px 16px 14px;
+  border-radius: var(--un-md-sys-shape-large);
+  background: var(--un-md-sys-color-surface-container-low);
+}
+[data-ui-next] .un-hl-card.full {
+  background: var(--un-caution-soft);
+}
+[data-ui-next] .un-hl-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-bottom: 8px;
+}
+[data-ui-next] .un-hl-badge {
+  padding: 2px 8px;
+  border-radius: var(--un-md-sys-shape-small);
+  background: var(--un-md-sys-color-secondary-container);
+  color: var(--un-md-sys-color-on-secondary-container);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+[data-ui-next] .un-hl-card.full .un-hl-badge {
+  background: var(--un-md-sys-color-surface-container-lowest);
+  color: var(--un-caution);
+}
+[data-ui-next] .un-hl-gives {
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: var(--un-md-sys-typescale-body-medium-line-height);
+}
+[data-ui-next] .un-hl-noindep {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--un-caution);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+[data-ui-next] .un-hl-body {
+  color: var(--un-md-sys-color-on-surface);
+  font-size: var(--un-md-sys-typescale-body-large-size);
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+[data-ui-next] .un-hl-fallback-line {
+  margin: 0 0 6px;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: var(--un-md-sys-typescale-body-medium-line-height);
+}
+
+/* ── Status boxes: no help available, fetching, failed, confirm gate, handed back ── */
+[data-ui-next] :is(.un-hl-unavail, .un-hl-loading, .un-hl-fail, .un-hl-confirm, .un-hl-returned) {
+  margin-bottom: 8px;
+  padding: 12px 16px;
+  border-radius: var(--un-md-sys-shape-large);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: 1.6;
+}
+[data-ui-next] .un-hl-unavail {
+  background: var(--un-md-sys-color-surface-container-high);
+}
+[data-ui-next] .un-hl-unavail-msg {
+  margin: 0;
+  color: var(--un-md-sys-color-on-surface);
+}
+[data-ui-next] .un-hl-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px dashed var(--un-md-sys-color-outline-variant);
+  background: var(--un-md-sys-color-surface-container-low);
+  color: var(--un-md-sys-color-on-surface-variant);
+}
+[data-ui-next] .un-hl-spin {
+  box-sizing: border-box;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--un-md-sys-color-primary);
+  border-top-color: transparent;
+  border-radius: var(--un-md-sys-shape-full);
+}
+[data-ui-next] .un-hl-fail {
+  background: var(--un-md-sys-color-error-container);
+  color: var(--un-md-sys-color-on-error-container);
+}
+[data-ui-next] .un-hl-confirm {
+  background: var(--un-caution-soft);
+  color: var(--un-md-sys-color-on-surface);
+}
+[data-ui-next] :is(.un-hl-fail-msg, .un-hl-confirm-msg) {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+[data-ui-next] :is(.un-hl-fail-msg, .un-hl-confirm-msg) svg {
+  flex: none;
+  margin-top: 2px;
+}
+[data-ui-next] .un-hl-confirm-msg svg,
+[data-ui-next] .un-hl-confirm-msg b {
+  color: var(--un-caution);
+}
+[data-ui-next] .un-hl-confirm-msg b {
+  font-weight: 600;
+}
+[data-ui-next] .un-hl-returned {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--un-positive-soft);
+  color: var(--un-positive);
+  font-weight: 500;
+}
+[data-ui-next] .un-hl-returned svg {
+  flex: none;
+}
+[data-ui-next] .un-hl-status {
+  margin: 0 0 8px;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: var(--un-md-sys-typescale-body-medium-line-height);
+}
+
+/* ── Action rows: next step (filled) · full solution (outlined, caution) · hand back ── */
+[data-ui-next] .un-hl-acts-wrap {
+  margin-top: 12px;
+}
+[data-ui-next] .un-hl-next-note {
+  margin: 0 0 8px;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: var(--un-md-sys-typescale-body-medium-line-height);
+}
+[data-ui-next] :is(.un-hl-acts, .un-hl-fail-acts, .un-hl-confirm-acts) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+[data-ui-next] :is(.un-hl-fail-acts, .un-hl-confirm-acts) {
+  margin-top: 12px;
+}
+[data-ui-next] button:is(.un-hl-advance, .un-hl-jump, .un-hl-escape) {
+  position: relative;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  max-width: 100%;
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--un-md-sys-shape-full);
+  background: transparent;
+  font-family: var(--un-font-sans);
+  font-size: var(--un-md-sys-typescale-label-large-size);
+  font-weight: var(--un-md-sys-typescale-label-large-weight);
+  line-height: var(--un-md-sys-typescale-label-large-line-height);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: background-color var(--un-t-feedback) linear;
+}
+[data-ui-next] button:is(.un-hl-advance, .un-hl-jump, .un-hl-escape) svg {
+  flex: none;
+}
+[data-ui-next] button.un-hl-advance {
+  padding-inline: 16px 24px;
+  background: var(--un-md-sys-color-primary);
+  color: var(--un-md-sys-color-on-primary);
+}
+[data-ui-next] button.un-hl-advance:hover:not(:disabled) {
+  background: color-mix(
+    in srgb,
+    var(--un-md-sys-color-on-primary) var(--un-md-sys-state-hover),
+    var(--un-md-sys-color-primary)
+  );
+}
+[data-ui-next] button.un-hl-jump {
+  border-color: var(--un-md-sys-color-outline-variant);
+  color: var(--un-caution);
+}
+[data-ui-next] button.un-hl-jump:hover:not(:disabled) {
+  background: var(--un-caution-soft);
+}
+[data-ui-next] button.un-hl-escape {
+  margin-left: auto;
+  border-color: var(--un-md-sys-color-outline-variant);
+  color: var(--un-md-sys-color-on-surface-variant);
+}
+[data-ui-next] button.un-hl-escape:hover:not(:disabled) {
+  background: color-mix(
+    in srgb,
+    var(--un-md-sys-color-on-surface-variant) var(--un-md-sys-state-hover),
+    transparent
+  );
+}
+[data-ui-next] button:is(.un-hl-advance, .un-hl-jump, .un-hl-escape):focus-visible {
+  outline: var(--un-md-comp-focus-width) solid var(--un-md-sys-color-primary);
+  outline-offset: 3px;
+}
+[data-ui-next] button:is(.un-hl-advance, .un-hl-jump, .un-hl-escape):disabled {
+  border-color: color-mix(
+    in srgb,
+    var(--un-md-sys-color-on-surface) var(--un-md-sys-state-disabled-container),
+    transparent
+  );
+  background: transparent;
+  color: color-mix(
+    in srgb,
+    var(--un-md-sys-color-on-surface) var(--un-md-sys-state-disabled-content),
+    transparent
+  );
+  cursor: default;
+}
+/* Inside the red failure box the outlined buttons keep their own surface so they stay legible. */
+[data-ui-next] .un-hl-fail button:is(.un-hl-jump, .un-hl-escape) {
+  background: var(--un-md-sys-color-surface-container-lowest);
+}
+[data-ui-next] .un-hl-empty-s {
+  margin: 8px 0 0;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* Wrapping button rows keep tappable targets apart on touch screens (A2). */
+@media (pointer: coarse) {
+  [data-ui-next] :is(.un-hl-acts, .un-hl-fail-acts, .un-hl-confirm-acts) {
+    gap: 12px;
+  }
+}
+
+/* Motion (M1): only when a card appears or a step is being fetched. */
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next] .un-hl-card {
+    animation: un-hl-in var(--un-t-small) var(--un-ease-glide);
+  }
+  [data-ui-next] .un-hl-spin {
+    animation: un-hl-spin 0.8s linear infinite;
+  }
+  @keyframes un-hl-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes un-hl-spin {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-ui-next] :is(.un-hl-dot, .un-hl-advance, .un-hl-jump, .un-hl-escape) {
+    transition: none;
+  }
+}

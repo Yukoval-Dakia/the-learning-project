@@ -4,18 +4,7 @@
 // its invalidation are unchanged.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  ArrowLeft,
-  ArrowRight,
-  ChevronDown,
-  Lock,
-  type LucideIcon,
-  Moon,
-  Search,
-  Sparkles,
-  User,
-  Zap,
-} from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronDown, Lock, type LucideIcon, Search } from 'lucide-react';
 import { useState } from 'react';
 import { ApiError } from '@/ui/lib/api';
 import { affectedRefsForCorrection } from '@/ui/lib/event-corrections';
@@ -39,14 +28,6 @@ import {
 } from './event-detail-model';
 import './event-detail-m3e.css';
 
-// actorMeta icon names → lucide (an unknown actor is 系统 with the bolt, as before).
-const ACTOR_ICON: Record<string, LucideIcon> = {
-  today: User,
-  sparkle: Sparkles,
-  moon: Moon,
-  bolt: Zap,
-};
-
 /** Badge tone (good / hard / again / info / coral / neutral) → ui-next tone role. */
 const TONE_ROLE: Record<string, string> = {
   good: 'positive',
@@ -63,7 +44,7 @@ function toneRole(tone: string): string {
 
 function ActorTag({ kind }: { kind: string }) {
   const actor = actorMeta(kind);
-  const Icon = ACTOR_ICON[actor.icon] ?? Zap;
+  const Icon = actor.icon;
   return (
     <span className="ed-actor">
       <Icon size={14} aria-hidden="true" />

@@ -1,8 +1,9 @@
 // YUK-354 (A2) — 解题会话「6 阶 hint 强度梯」组件。
 //
-// 形态 PORT 自 docs/design/loom-refresh/project/screen-hint-ladder.jsx（`.ladder-*` 视觉）
-// + data-hint-ladder.jsx（阶语义），用项目原语（LoomIcon）+ 真 solve/hint API 重建状态机，
+// 阶语义来自 docs/design/loom-refresh/project/data-hint-ladder.jsx，用真 solve/hint API 重建状态机，
 // 不引设计源的 window 全局 / demo 模拟。落在做题页的解题提示抽屉 body 内（solo/SoloCoach.tsx）。
+// M3E 呈现（YUK-1473）：样式在 hint-ladder.css，图标是 lucide；设计记录
+// docs/design/2026-11-03-last-old-ui-m3e.md。
 //
 // 强度梯映射：H0-H4 = 既有 solveHint(question.id, sid, stageIdx)（hint_index 0-4，单调 +1
 // 推进，与旧流 hints.length 递增同序 → 后端行为零变更）；H5 完整解 = question.reference_md
@@ -13,10 +14,10 @@
 // 必经确认门（中性诚实告知后果，不羞辱）；④ 失败态可重试、不静默吞、不自动跳级；⑤ 完整解未
 // 就绪 → H5 显式不可用 + 诚实空态，前几阶仍可起跑；⑥ 会话不计入判分（壳 note 保留）。
 
+import { Check, ChevronDown, CircleAlert, Eye, Layers, RefreshCw, Undo2 } from 'lucide-react';
 import { useState } from 'react';
 
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
 
 import {
   FULL_STAGE_INDEX,
@@ -29,6 +30,7 @@ import {
 } from './hint-ladder';
 import type { QuestionDetail, SolveHintFallbackHelp } from './practice-api';
 import { usePracticeClient } from './practice-client';
+import './hint-ladder.css';
 
 // YUK-1409 — 一阶拿到的内容：AI 现生成的提示，或 AI 失败时服务端给的固定帮助（fallback）。
 type StageHint = { kind: 'ai'; text: string } | { kind: 'fallback'; help: SolveHintFallbackHelp };
@@ -174,9 +176,9 @@ export function HintLadder({
 
   if (returned) {
     return (
-      <div className="ladder">
-        <div className="ladder-returned">
-          <LoomIcon name="check" size={16} />
+      <div className="un-hl">
+        <div className="un-hl-returned">
+          <Check size={18} aria-hidden="true" />
           控制交还给你了 —— 回到题面自己作答。需要时再叫我。
         </div>
       </div>
@@ -186,23 +188,23 @@ export function HintLadder({
   const atFull = revealedFull;
 
   return (
-    <div className="ladder">
+    <div className="un-hl">
       {/* 自主程度轨 —— 6 阶离散刻度，恒可见（位置可见 + 强度爬升可感知）。
           rail 仅作位置指示，不可点跳：推进只经下方「再给一阶」(+1) / 逃生口，守单调不跳级。 */}
-      <div className="ladder-rail">
-        <div className="ladder-rail-head">
-          <span className="ladder-rail-l">
-            <LoomIcon name="layers" size={13} />
+      <div className="un-hl-rail">
+        <div className="un-hl-rail-head">
+          <span className="un-hl-rail-l">
+            <Layers size={16} aria-hidden="true" />
             自主程度 · {LADDER_RANGE_LABEL}
           </span>
-          <span className="ladder-rail-r">{positionLabel(reached, revealedFull)}</span>
+          <span className="un-hl-rail-r">{positionLabel(reached, revealedFull)}</span>
         </div>
-        <div className="ladder-stops">
+        <div className="un-hl-stops">
           {HINT_LADDER.map((s, i) => {
             const isReached = atFull ? true : i <= reached;
             const isCurrent = atFull ? s.isFull : i === reached;
             const cls = [
-              'ladder-stop',
+              'un-hl-stop',
               isReached ? 'reached' : '',
               isCurrent ? 'current' : '',
               s.isFull ? 'is-full' : '',
@@ -216,8 +218,8 @@ export function HintLadder({
                 title={`${s.key} · ${s.label} — ${s.gives}`}
                 aria-label={`第 ${s.key} 阶（${s.label}）：${s.gives}${isCurrent ? ' · 当前' : ''}`}
               >
-                <span className="ladder-dot" />
-                <span className="ladder-stop-l">{s.key}</span>
+                <span className="un-hl-dot" />
+                <span className="un-hl-stop-l">{s.key}</span>
               </div>
             );
           })}
@@ -233,15 +235,15 @@ export function HintLadder({
 
       {/* 完整解卡（H5，reveal 后）—— 非独立完成 badge + 参考正文。 */}
       {revealedFull && fullAvailable && fullBody !== null && (
-        <div className="ladder-card full">
-          <div className="ladder-card-top">
-            <span className="ladder-badge">{HINT_LADDER[FULL_STAGE_INDEX].label}</span>
-            <span className="ladder-noindep">
-              <LoomIcon name="alert" size={12} />
+        <div className="un-hl-card full">
+          <div className="un-hl-card-top">
+            <span className="un-hl-badge">{HINT_LADDER[FULL_STAGE_INDEX].label}</span>
+            <span className="un-hl-noindep">
+              <CircleAlert size={14} aria-hidden="true" />
               非独立完成
             </span>
           </div>
-          <div className="ladder-body">
+          <div className="un-hl-body">
             {/* YUK-1005 — H5 full solution render through markdown+KaTeX like the rest
                 of the question faces；YUK-1051 起正文可来自按需拉取（fetchedFull）。 */}
             <MathMarkdown notation={question.notation}>{fullBody}</MathMarkdown>
@@ -249,31 +251,35 @@ export function HintLadder({
         </div>
       )}
 
-      {fullError && <p role="status">{fullError}</p>}
+      {fullError && (
+        <p className="un-hl-status" role="status">
+          {fullError}
+        </p>
+      )}
       {loading && (
-        <div className="ladder-loading">
-          <span className="ladder-spin" />
+        <div className="un-hl-loading">
+          <span className="un-hl-spin" />
           正在想下一阶提示…
         </div>
       )}
 
       {/* YUK-1409 — AI 暂时给不出、也没有替代材料：中性说明 + 重试同一阶 / 跳过（不是错误态）。 */}
       {unavailable && !loading && (
-        <div className="ladder-unavail" role="status">
-          <p className="ladder-unavail-msg">{unavailable.text}</p>
-          <div className="ladder-fail-acts">
+        <div className="un-hl-unavail" role="status">
+          <p className="un-hl-unavail-msg">{unavailable.text}</p>
+          <div className="un-hl-fail-acts">
             <button
               type="button"
-              className="ladder-advance"
+              className="un-hl-advance un-hit"
               onClick={() => void advance(unavailable.stage)}
             >
-              <LoomIcon name="refresh" size={13} />
+              <RefreshCw size={18} aria-hidden="true" />
               重试这一阶
             </button>
             {unavailable.canSkip && (
               <button
                 type="button"
-                className="ladder-escape"
+                className="un-hl-escape un-hit"
                 onClick={() => setUnavailable(null)}
                 style={{ marginLeft: 0 }}
               >
@@ -286,32 +292,36 @@ export function HintLadder({
 
       {/* 失败态：当前阶可重试，不静默吞、不自动跳级；另给逃生口 + 交还控制两条出路。 */}
       {failAt >= 0 && !loading && (
-        <div className="ladder-fail">
-          <div className="ladder-fail-msg">
-            <LoomIcon name="alert" size={14} />
+        <div className="un-hl-fail">
+          <div className="un-hl-fail-msg">
+            <CircleAlert size={18} aria-hidden="true" />
             这一阶（{HINT_LADDER[failAt]?.key}）没生成出来 ——
             不是装作好了，是真没成。可以重试，或换条路。
           </div>
-          <div className="ladder-fail-acts">
-            <button type="button" className="ladder-advance" onClick={() => void advance(failAt)}>
-              <LoomIcon name="refresh" size={13} />
+          <div className="un-hl-fail-acts">
+            <button
+              type="button"
+              className="un-hl-advance un-hit"
+              onClick={() => void advance(failAt)}
+            >
+              <RefreshCw size={18} aria-hidden="true" />
               重试这一阶
             </button>
             {fullAvailable && (
               <button
                 type="button"
-                className="ladder-jump"
+                className="un-hl-jump un-hit"
                 onClick={() => {
                   setFailAt(-1);
                   setConfirmFull(true);
                 }}
               >
-                <LoomIcon name="eye" size={14} />
+                <Eye size={18} aria-hidden="true" />
                 直接看完整解
               </button>
             )}
-            <button type="button" className="ladder-escape" onClick={returnToAnswer}>
-              <LoomIcon name="undo" size={14} />
+            <button type="button" className="un-hl-escape un-hit" onClick={returnToAnswer}>
+              <Undo2 size={18} aria-hidden="true" />
               我自己来
             </button>
           </div>
@@ -320,24 +330,24 @@ export function HintLadder({
 
       {/* H5 非独立确认门：reveal 完整解前，中性诚实地告知后果，确认后才展示（不羞辱、无惩罚）。 */}
       {confirmFull && (
-        <div className="ladder-confirm">
-          <div className="ladder-confirm-msg">
-            <LoomIcon name="alert" size={14} />
+        <div className="un-hl-confirm">
+          <div className="un-hl-confirm-msg">
+            <CircleAlert size={18} aria-hidden="true" />
             看完整解 = 这题记为<b>非独立完成</b>。中间阶可以跳过 —— 确认要直接看吗？
           </div>
-          <div className="ladder-confirm-acts">
+          <div className="un-hl-confirm-acts">
             <button
               type="button"
-              className="ladder-jump"
+              className="un-hl-jump un-hit"
               disabled={fetchingFull}
               onClick={() => void revealFull()}
             >
-              <LoomIcon name="eye" size={14} />
+              <Eye size={18} aria-hidden="true" />
               {fetchingFull ? '取完整解…' : '确认 · 看完整解'}
             </button>
             <button
               type="button"
-              className="ladder-escape"
+              className="un-hl-escape un-hit"
               onClick={() => setConfirmFull(false)}
               style={{ marginLeft: 0 }}
             >
@@ -349,41 +359,45 @@ export function HintLadder({
 
       {/* 动作行：再给一阶（+1）· 直接看完整解（逃生口，任意阶一步可达）· 我自己来（交还控制）。 */}
       {!loading && failAt < 0 && !unavailable && !confirmFull && !atFull && (
-        <div className="ladder-acts-wrap">
+        <div className="un-hl-acts-wrap">
           {next && (
-            <p className="ladder-next-note">
+            <p className="un-hl-next-note">
               下一阶 · {next.key} {next.label}：{next.gives}
             </p>
           )}
-          <div className="ladder-acts">
+          <div className="un-hl-acts">
             {next && (
               <button
                 type="button"
-                className="ladder-advance"
+                className="un-hl-advance un-hit"
                 onClick={() => void advance(reached + 1)}
               >
-                <LoomIcon name="chevronDown" size={14} />
+                <ChevronDown size={18} aria-hidden="true" />
                 {reached < 0 ? '给我第一阶' : '再给一阶'} · {next.key} {next.label}
               </button>
             )}
             {fullAvailable ? (
-              <button type="button" className="ladder-jump" onClick={() => setConfirmFull(true)}>
-                <LoomIcon name="eye" size={14} />
+              <button
+                type="button"
+                className="un-hl-jump un-hit"
+                onClick={() => setConfirmFull(true)}
+              >
+                <Eye size={18} aria-hidden="true" />
                 直接看完整解
               </button>
             ) : (
-              <button type="button" className="ladder-jump" disabled aria-disabled="true">
-                <LoomIcon name="eye" size={14} />
+              <button type="button" className="un-hl-jump un-hit" disabled aria-disabled="true">
+                <Eye size={18} aria-hidden="true" />
                 完整解暂不可用
               </button>
             )}
-            <button type="button" className="ladder-escape" onClick={returnToAnswer}>
-              <LoomIcon name="undo" size={14} />
+            <button type="button" className="un-hl-escape un-hit" onClick={returnToAnswer}>
+              <Undo2 size={18} aria-hidden="true" />
               我自己来 · 交还控制
             </button>
           </div>
           {!fullAvailable && (
-            <p className="ladder-empty-s">
+            <p className="un-hl-empty-s">
               这道题暂时没有可展示的完整解（自动生成失败或尚未就绪）。前几阶提示仍可用，或回题面自己作答。
             </p>
           )}
@@ -392,19 +406,19 @@ export function HintLadder({
 
       {/* reveal 完整解后：回作答 + 诚实的「仍不懂」去向（非死路）。 */}
       {!loading && atFull && (
-        <div className="ladder-acts-wrap">
-          <div className="ladder-acts">
+        <div className="un-hl-acts-wrap">
+          <div className="un-hl-acts">
             <button
               type="button"
-              className="ladder-escape"
+              className="un-hl-escape un-hit"
               onClick={returnToAnswer}
               style={{ marginLeft: 0 }}
             >
-              <LoomIcon name="undo" size={14} />
+              <Undo2 size={18} aria-hidden="true" />
               回到自己作答
             </button>
           </div>
-          <p className="ladder-empty-s">
+          <p className="un-hl-empty-s">
             看完仍不懂？回到题面把思路写进作答框试一遍，判错会进错题、之后在复习里再遇到它。
           </p>
         </div>
@@ -427,28 +441,28 @@ function HintStageCard({
     // 不展示失败原因与耗时；服务端附带的说明（disclosure_md）必须展示。
     const isReference = hint.help.kind === 'reference';
     return (
-      <div className={isReference ? 'ladder-card full' : 'ladder-card'}>
-        <div className="ladder-card-top">
-          <span className="ladder-badge">
+      <div className={isReference ? 'un-hl-card full' : 'un-hl-card'}>
+        <div className="un-hl-card-top">
+          <span className="un-hl-badge">
             {stage.key} · {isReference ? '参考解答' : '固定的下一步'}
           </span>
           {isReference && (
-            <span className="ladder-noindep">
-              <LoomIcon name="alert" size={12} />
+            <span className="un-hl-noindep">
+              <CircleAlert size={14} aria-hidden="true" />
               非独立完成
             </span>
           )}
         </div>
-        <p className="ladder-fallback-line">
+        <p className="un-hl-fallback-line">
           {isReference
             ? 'AI 提示暂时不可用，先给你这道题的参考解答'
             : 'AI 提示暂时不可用，先给你一个固定的下一步'}
         </p>
-        <div className="ladder-body">
+        <div className="un-hl-body">
           <MathMarkdown notation={notation}>{hint.help.text_md}</MathMarkdown>
         </div>
         {hint.help.disclosure_md && (
-          <div className="ladder-empty-s">
+          <div className="un-hl-empty-s">
             <MathMarkdown notation={notation}>{hint.help.disclosure_md}</MathMarkdown>
           </div>
         )}
@@ -457,14 +471,14 @@ function HintStageCard({
   }
   const body = hint.text;
   return (
-    <div className="ladder-card">
-      <div className="ladder-card-top">
-        <span className="ladder-badge">
+    <div className="un-hl-card">
+      <div className="un-hl-card-top">
+        <span className="un-hl-badge">
           {stage.key} · {stage.weight}
         </span>
-        <span className="ladder-gives">{stage.label}</span>
+        <span className="un-hl-gives">{stage.label}</span>
       </div>
-      <div className="ladder-body">
+      <div className="un-hl-body">
         {/* AI-generated hint text can carry the same $…$ notation as the stem. */}
         <MathMarkdown notation={notation}>{body}</MathMarkdown>
       </div>

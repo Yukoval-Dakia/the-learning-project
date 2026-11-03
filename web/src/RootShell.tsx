@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { notifyManager, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   type ComponentProps,
   type ReactNode,
@@ -15,10 +15,9 @@ import {
 } from '@/capabilities/practice/ui-public';
 import { useWorkbenchClient } from '@/capabilities/shell/ui-public';
 import { queryKeys } from '@/ui/lib/write-invalidation';
-import { CommandPalette, type CommandPaletteProps } from '@/ui/shell/CommandPalette';
-import { NAV, type NavItem, activeFromPath, isSection } from '@/ui/shell/nav-config';
-import { ShellMain } from '@/ui/shell/ShellMain';
 import { StudioNavigation } from '@/ui-next/practice-studio/StudioShell';
+import { CommandPalette, type CommandPaletteProps } from './CommandPalette';
+import { NAV, type NavItem, activeFromPath, isSection } from './nav-config';
 
 // S13 (YUK-335 批次丙) — 主题持久化 key，与 design app.jsx:86 / 既有
 // ThemeToggle primitive 同 key（'loom-theme'），互不打架。
@@ -89,10 +88,34 @@ function subscribeCompanionLayout(notify: () => void): () => void {
   };
 }
 
-// 与 copilot useCopilotNudges 的 query key 相同。RootShell 只挂一个不取数的观察者读
-// 现有缓存快照：轮询（60s）与 dismiss/opened 失效仍由学习伙伴里的那个 query 负责，
-// 这里不另起第二个轮询。
+// 与 copilot useCopilotNudges 的 query key 相同。RootShell 不挂 query 观察者，只订阅
+// QueryCache 读这条缓存的条数（同 react-query 自己的 useIsFetching 写法）：轮询（60s）与
+// dismiss/opened 失效仍由学习伙伴里的那个 query 负责，这里不发请求、不另起轮询，也就没有
+// 「No queryFn was passed」的报错。
 const COPILOT_NUDGES_KEY = ['copilot', 'nudges'] as const;
+
+function readServerNudgeCount(): number {
+  return 0;
+}
+
+interface ShellMainProps {
+  blockedByModal: boolean;
+  children: ReactNode;
+}
+
+/**
+ * 主内容区的模态隔离边界。
+ *
+ * 移动导航打开时，视觉 scrim 之外还必须让页面退出读屏树与键盘顺序；关闭后
+ * React 会同时移除两项属性，恢复原有交互。
+ */
+function ShellMain({ blockedByModal, children }: ShellMainProps) {
+  return (
+    <div className="main" aria-hidden={blockedByModal ? true : undefined} inert={blockedByModal}>
+      {children}
+    </div>
+  );
+}
 
 // M5-T3 (YUK-321) — 根壳：全路由共享一个学习伙伴实例（裁决 c：组件归
 // copilot 包，路由耦合只存在于本壳层）。
@@ -159,13 +182,21 @@ export function RootShell({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Copilot nudge 角标：读现有 nudges query 的缓存快照（见 COPILOT_NUDGES_KEY）。
-  const nudgeCountQ = useQuery<{ nudges: unknown[] }, Error, number>({
-    queryKey: COPILOT_NUDGES_KEY,
-    enabled: false,
-    select: (data) => data.nudges.length,
-  });
-  const copilotNudgeCount = nudgeCountQ.data ?? 0;
+  // Copilot nudge 角标：读现有 nudges query 的缓存条数（见 COPILOT_NUDGES_KEY）。
+  const queryClient = useQueryClient();
+  const subscribeNudges = useCallback(
+    (notify: () => void) => queryClient.getQueryCache().subscribe(notifyManager.batchCalls(notify)),
+    [queryClient],
+  );
+  const readNudgeCount = useCallback(
+    () => queryClient.getQueryData<{ nudges: unknown[] }>(COPILOT_NUDGES_KEY)?.nudges.length ?? 0,
+    [queryClient],
+  );
+  const copilotNudgeCount = useSyncExternalStore(
+    subscribeNudges,
+    readNudgeCount,
+    readServerNudgeCount,
+  );
 
   // 收件箱待办 count：复用 workbench summary proposals.decision_total（与 TodayPage 同 query
   // key ['workbench-summary'] → React Query 去重，不增请求）。无数据时 undefined

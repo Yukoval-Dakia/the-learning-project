@@ -1,4 +1,6 @@
 // M0 (YUK-313) 单用户 token 门；YUK-624 补齐服务端验证、401 re-gate 与可操作表单。
+// M3E 呈现（YUK-1473，docs/design/2026-11-03-last-old-ui-m3e.md）：门在外壳之外渲染，所以
+// 根 main 自己带 ui-next 作用域与 M3 标记；样式在 token-gate.css。
 
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, type ReactNode, useState, useSyncExternalStore } from 'react';
@@ -10,7 +12,8 @@ import {
   subscribeAuthInvalidation,
   validateInternalToken,
 } from '@/ui/lib/api';
-import { Button } from '@/ui/primitives/Button';
+import { Button } from '@/ui-next/public';
+import './token-gate.css';
 
 type GateState = 'checking' | 'gate' | 'authed';
 
@@ -127,11 +130,14 @@ export function TokenGate({ children }: { children: ReactNode }) {
 
   if (state === 'checking') {
     return (
-      <main className="page view" style={{ maxWidth: 420, margin: '15vh auto' }} aria-busy="true">
-        <h1 className="page-title serif">Loom</h1>
-        <output className="page-lead" style={{ display: 'block' }}>
-          正在验证已保存的访问令牌…
-        </output>
+      <main
+        data-ui-next=""
+        data-un-m3e="practice-foundation"
+        className="un-root un-tg"
+        aria-busy="true"
+      >
+        <h1 className="un-tg-title">Loom</h1>
+        <output className="un-tg-lead">正在验证已保存的访问令牌…</output>
       </main>
     );
   }
@@ -158,11 +164,11 @@ function TokenForm({
   };
 
   return (
-    <main className="page view" style={{ maxWidth: 420, margin: '15vh auto' }}>
-      <h1 className="page-title serif">Loom</h1>
-      <p className="page-lead">输入访问令牌继续。验证通过后，仅保存在此浏览器。</p>
-      <form onSubmit={submit} aria-busy={pending}>
-        <label htmlFor="loom-internal-token" className="meta" style={{ display: 'block' }}>
+    <main data-ui-next="" data-un-m3e="practice-foundation" className="un-root un-tg">
+      <h1 className="un-tg-title">Loom</h1>
+      <p className="un-tg-lead">输入访问令牌继续。验证通过后，仅保存在此浏览器。</p>
+      <form className="un-tg-form" onSubmit={submit} aria-busy={pending}>
+        <label htmlFor="loom-internal-token" className="un-tg-label">
           访问令牌
         </label>
         <input
@@ -175,18 +181,18 @@ function TokenForm({
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? 'token-gate-error' : undefined}
           placeholder="粘贴访问令牌"
-          className="field-input"
-          style={{ marginTop: 6, boxSizing: 'border-box' }}
+          className="un-tg-input"
         />
         {error && (
-          <p id="token-gate-error" role="alert" style={{ color: 'var(--again)', marginTop: 8 }}>
+          <p id="token-gate-error" role="alert" className="un-tg-error">
             {error}
           </p>
         )}
         <Button
           type="submit"
+          variant="primary"
+          className="un-m3e-control un-tg-submit"
           disabled={!draft.trim() || pending}
-          style={{ width: '100%', marginTop: 12 }}
         >
           {pending ? '正在验证…' : '进入 Loom'}
         </Button>

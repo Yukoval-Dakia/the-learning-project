@@ -1,199 +1,442 @@
-/* Loom · #41 Reproducible Diagnostic Profile — verify layer styles.
-   复用 loom 设计系统 primitive(card/pill/band/icon)。新元素只有:
-   重算控件 · verified ✓ / mismatch ✗ 指示 · 离线芯片 · 逐位详情 / 漂移对比。
-   语义色:✓ 用 good(沙绿,信任 payoff) · ✗ 用 hard(赭黄,冷静提示,不报警红)。 */
+/* Loom · #41 Reproducible Diagnostic Profile — the verify layer (RecomputeComponents), M3E
+   presentation (YUK-1473, docs/design/2026-11-03-last-old-ui-m3e.md). It renders inside the
+   /profile and /coach roots, both under the shell's M3 scope, so colours read Google M3 roles.
+   ✓ uses positive and ✗ caution (no M3 role for either; calm, never error red). Motion only on
+   change: the one-turn icon spin when a check starts, the detail reveal, the band shimmer. */
 
-/* ── 重算 / 核对条 · 4 状态都落这条 ─────────────────────────── */
-.rc-verify {
+/* ── Verify bar · all four states ─────────────────────────────── */
+[data-ui-next] .rc-verify {
   display: flex;
   align-items: center;
-  gap: var(--s-3);
-  padding: var(--s-3) var(--s-3) var(--s-4);
-  margin: calc(-1 * var(--s-2)) 0 var(--s-2);
-  border-bottom: 1px solid var(--line);
-  transition: background var(--dur-base) var(--ease-out);
+  gap: 12px;
+  padding: 12px 12px 16px;
+  margin: -8px 0 8px;
+  border-bottom: 1px solid var(--un-md-sys-color-outline-variant);
+  border-radius: var(--un-md-sys-shape-medium) var(--un-md-sys-shape-medium) 0 0;
+  transition: background-color var(--un-t-small) var(--un-ease-glide);
 }
-.rc-verify-icon {
+[data-ui-next] .rc-verify-icon,
+[data-ui-next] .rc-cal-icon {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   flex: none;
-  border-radius: var(--r-2);
-  background: var(--paper-sunk);
-  color: var(--coral);
-  border: 1px solid var(--line);
-  transition: all var(--dur-base) var(--ease-out);
+  border-radius: var(--un-md-sys-shape-full);
+  background: var(--un-md-sys-color-surface-container-high);
+  color: var(--un-md-sys-color-on-surface-variant);
+  transition:
+    background-color var(--un-t-small) var(--un-ease-glide),
+    color var(--un-t-small) var(--un-ease-glide);
 }
-.rc-verify-text {
+[data-ui-next] .rc-verify-text,
+[data-ui-next] .rc-cal-text {
   flex: 1 1 auto;
   min-width: 0;
 }
-.rc-verify-title {
-  font-size: var(--fs-body);
-  font-weight: 600;
-  color: var(--ink);
+[data-ui-next] .rc-verify-title,
+[data-ui-next] .rc-cal-title {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  color: var(--un-md-sys-color-on-surface);
+  font-size: var(--un-md-sys-typescale-title-medium-size);
+  font-weight: 500;
+  line-height: var(--un-md-sys-typescale-title-medium-line-height);
 }
-.rc-verify-sub {
-  font-size: var(--fs-caption);
-  color: var(--ink-3);
-  margin-top: 2px;
+[data-ui-next] .rc-verify-sub,
+[data-ui-next] .rc-cal-sub {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: 5px;
-  line-height: var(--lh-snug);
+  align-items: center;
+  gap: 4px 6px;
+  margin-top: 2px;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: var(--un-md-sys-typescale-body-medium-line-height);
+  overflow-wrap: anywhere;
 }
-.rc-verify-sub b {
-  color: var(--ink-2);
+[data-ui-next] .rc-verify-sub b,
+[data-ui-next] .rc-cal-sub b,
+[data-ui-next] .rc-verify-title b,
+[data-ui-next] .rc-cal-title b {
+  color: var(--un-md-sys-color-on-surface);
   font-weight: 600;
 }
-.rc-verify-act {
+[data-ui-next] :is(.rc-verify, .rc-cal, .rc-detail) .mono {
+  font-family: var(--un-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+[data-ui-next] .rc-verify-act {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--s-2);
+  gap: 8px;
   flex: none;
 }
-
-.rc-tick {
-  color: var(--good-ink);
+[data-ui-next] .rc-tick {
+  color: var(--un-positive);
   font-weight: 700;
 }
 
-/* idle (A) — latent invite */
-.rc-verify.rc-state-idle .rc-verify-icon {
-  color: var(--coral);
+/* idle (A) — a quiet invitation */
+[data-ui-next] .rc-verify.rc-state-idle .rc-verify-icon {
+  color: var(--un-md-sys-color-primary);
 }
 
-/* running (B) — near-instant flash, not a spinner-wait */
-.rc-verify.rc-state-running .rc-verify-icon {
-  color: var(--ink-3);
-  animation: rc-spin 0.54s linear;
+/* match (C) — the trust payoff */
+[data-ui-next] .rc-verify.rc-state-match {
+  background: color-mix(in srgb, var(--un-positive-soft) 60%, transparent);
 }
-@keyframes rc-spin {
-  to {
-    transform: rotate(360deg);
-  }
+[data-ui-next] :is(.rc-verify.rc-state-match .rc-verify-icon, .rc-cal.rc-state-match .rc-cal-icon) {
+  background: var(--un-positive-soft);
+  color: var(--un-positive);
 }
 
-/* match (C) — trust payoff, gentle sage */
-.rc-verify.rc-state-match {
-  background: color-mix(in oklab, var(--good-soft) 55%, transparent);
+/* drift (D) — calm and honest, never alarm red */
+[data-ui-next] .rc-verify.rc-state-drift {
+  background: color-mix(in srgb, var(--un-caution-soft) 60%, transparent);
 }
-.rc-verify.rc-state-match .rc-verify-icon {
-  background: var(--good-soft);
-  color: var(--good-ink);
-  border-color: var(--good-line);
-}
-
-/* drift (D) — calm ochre, readable & honest, never alarm-red */
-.rc-verify.rc-state-drift {
-  background: color-mix(in oklab, var(--hard-soft) 60%, transparent);
-}
-.rc-verify.rc-state-drift .rc-verify-icon {
-  background: var(--hard-soft);
-  color: var(--hard-ink);
-  border-color: var(--hard-line);
+[data-ui-next] :is(.rc-verify.rc-state-drift .rc-verify-icon, .rc-cal.rc-state-drift .rc-cal-icon) {
+  background: var(--un-caution-soft);
+  color: var(--un-caution);
 }
 
-/* offline chip — emphasise pure on-device */
-.rc-offline {
+/* Offline chip — the check runs on this device only */
+[data-ui-next] .rc-offline {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--ink-3);
-  background: var(--paper-sunk);
-  border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  padding: 1px 7px;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--un-md-sys-shape-small);
+  background: var(--un-md-sys-color-surface-container-high);
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: 13px;
+  line-height: 18px;
   white-space: nowrap;
 }
-.rc-offline svg {
-  color: var(--coral);
+[data-ui-next] .rc-offline svg {
+  color: var(--un-md-sys-color-primary);
 }
 
-/* detail toggle + re-run */
-.rc-detail-toggle {
+/* Detail toggle (text button) + re-run (icon button) */
+[data-ui-next] .rc-detail-toggle {
+  min-height: 40px;
+  padding: 0 12px;
   border: 0;
-  background: none;
-  cursor: pointer;
-  font-size: var(--fs-caption);
-  color: var(--coral);
-  padding: 4px 8px;
-  border-radius: var(--r-2);
-  font-family: inherit;
+  border-radius: var(--un-md-sys-shape-full);
+  background: transparent;
+  color: var(--un-md-sys-color-primary);
+  font-family: var(--un-font-sans);
+  font-size: var(--un-md-sys-typescale-label-large-size);
+  font-weight: var(--un-md-sys-typescale-label-large-weight);
+  line-height: var(--un-md-sys-typescale-label-large-line-height);
   white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--un-t-feedback) linear;
 }
-.rc-detail-toggle:hover {
-  color: var(--coral-hover);
-  background: var(--coral-soft);
+[data-ui-next] .rc-detail-toggle:hover {
+  background: color-mix(
+    in srgb,
+    var(--un-md-sys-color-primary) var(--un-md-sys-state-hover),
+    transparent
+  );
 }
-.rc-rerun {
+[data-ui-next] .rc-rerun {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 40px;
+  height: 40px;
   flex: none;
-  border: 1px solid var(--line);
-  background: var(--paper-raised);
-  color: var(--ink-3);
-  border-radius: var(--r-2);
+  padding: 0;
+  border: 0;
+  border-radius: var(--un-md-sys-shape-full);
+  background: transparent;
+  color: var(--un-md-sys-color-on-surface-variant);
   cursor: pointer;
-  transition: all var(--dur-fast) var(--ease-out);
+  transition: background-color var(--un-t-feedback) linear;
 }
-.rc-rerun:hover {
-  color: var(--coral);
-  border-color: var(--coral-line);
-  background: var(--coral-soft);
+[data-ui-next] .rc-rerun:hover:not(:disabled) {
+  background: color-mix(
+    in srgb,
+    var(--un-md-sys-color-on-surface-variant) var(--un-md-sys-state-hover),
+    transparent
+  );
+}
+[data-ui-next] .rc-rerun:disabled {
+  color: color-mix(
+    in srgb,
+    var(--un-md-sys-color-on-surface) var(--un-md-sys-state-disabled-content),
+    transparent
+  );
+  cursor: default;
+}
+[data-ui-next] :is(.rc-detail-toggle, .rc-rerun):focus-visible {
+  outline: var(--un-md-comp-focus-width) solid var(--un-md-sys-color-primary);
+  outline-offset: var(--un-md-comp-focus-offset);
 }
 
-/* ── per-KC 指示芯片 ─────────────────────────────────────── */
-.rc-chip {
+/* ── Per-KC chips ─────────────────────────────────────────────── */
+[data-ui-next] .rc-chip {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: var(--ls-wide);
-  border-radius: var(--r-pill);
-  padding: 1px 7px;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--un-md-sys-shape-small);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
   white-space: nowrap;
 }
-.rc-chip.rc-ok {
-  color: var(--good-ink);
-  background: var(--good-soft);
-  border: 1px solid var(--good-line);
+[data-ui-next] .rc-chip.rc-ok {
+  background: var(--un-positive-soft);
+  color: var(--un-positive);
 }
-.rc-chip.rc-x {
-  color: var(--hard-ink);
-  background: var(--hard-soft);
-  border: 1px solid var(--hard-line);
+[data-ui-next] .rc-chip.rc-x {
+  background: var(--un-caution-soft);
+  color: var(--un-caution);
 }
-.rc-chip.rc-na {
-  color: var(--ink-4);
-  background: var(--paper-sunk);
-  border: 1px solid var(--line);
+[data-ui-next] .rc-chip.rc-na {
+  background: var(--un-md-sys-color-surface-container-high);
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-weight: 400;
+}
+
+/* A drifted knowledge-point row on /profile: a caution edge, not a colour wash alone */
+[data-ui-next] .un-ob-kc.rc-kc-drift {
+  margin: 0 -8px;
+  padding-right: 8px;
+  padding-left: 8px;
+  border-radius: var(--un-md-sys-shape-small);
+  background: color-mix(in srgb, var(--un-caution-soft) 45%, transparent);
+  box-shadow: inset 3px 0 0 var(--un-caution);
+}
+
+/* ── Detail panel · ledger → re-derived value (C) ─────────────── */
+[data-ui-next] .rc-detail {
+  margin-top: 12px;
+  padding: 16px;
+  border-radius: var(--un-md-sys-shape-large);
+  background: var(--un-md-sys-color-surface-container-low);
+}
+[data-ui-next] .rc-ledger {
+  display: flex;
+  flex-direction: column;
+}
+[data-ui-next] .rc-ledger-head,
+[data-ui-next] .rc-ledger-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) 72px minmax(0, 0.9fr) 64px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 4px;
+}
+[data-ui-next] .rc-ledger-head {
+  border-bottom: 1px solid var(--un-md-sys-color-outline-variant);
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: 13px;
   font-weight: 500;
+  line-height: 18px;
+}
+[data-ui-next] .rc-ledger-row {
+  border-bottom: 1px solid var(--un-md-sys-color-outline-variant);
+  color: var(--un-md-sys-color-on-surface);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: var(--un-md-sys-typescale-body-medium-line-height);
+}
+[data-ui-next] .rc-ledger-row:last-child {
+  border-bottom: 0;
+}
+[data-ui-next] .rc-ledger-name {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+[data-ui-next] .rc-num {
+  text-align: right;
+  color: var(--un-md-sys-color-on-surface-variant);
+}
+[data-ui-next] .rc-eq {
+  text-align: right;
+}
+[data-ui-next] .rc-eq-ok,
+[data-ui-next] .rc-eq-x {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+[data-ui-next] .rc-eq-ok {
+  color: var(--un-positive);
+}
+[data-ui-next] .rc-eq-x {
+  color: var(--un-caution);
 }
 
-/* drifted row highlight (calm, ochre hairline) */
-.un-ob-kc.rc-kc-drift {
-  background: color-mix(in oklab, var(--hard-soft) 38%, transparent);
-  box-shadow: inset 2px 0 0 var(--hard-line);
-  border-radius: var(--r-2);
-  padding-left: var(--s-2);
-  padding-right: var(--s-2);
-  margin: 0 calc(-1 * var(--s-2));
+/* ── Drift detail (D) · shown vs re-derived ───────────────────── */
+[data-ui-next] .rc-drift-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+[data-ui-next] .rc-drift-kc {
+  color: var(--un-md-sys-color-on-surface);
+  font-size: var(--un-md-sys-typescale-title-medium-size);
+  font-weight: 500;
+  line-height: var(--un-md-sys-typescale-title-medium-line-height);
+  overflow-wrap: anywhere;
+}
+[data-ui-next] .rc-drift-tag {
+  padding: 2px 8px;
+  border-radius: var(--un-md-sys-shape-small);
+  background: var(--un-caution-soft);
+  color: var(--un-caution);
+  font-size: 13px;
+  line-height: 18px;
+}
+[data-ui-next] .rc-drift-table {
+  display: flex;
+  overflow-x: auto;
+  border: 1px solid var(--un-md-sys-color-outline-variant);
+  border-radius: var(--un-md-sys-shape-medium);
+  background: var(--un-md-sys-color-surface-container-lowest);
+}
+[data-ui-next] .rc-drift-col {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+[data-ui-next] .rc-drift-col + .rc-drift-col {
+  border-left: 1px solid var(--un-md-sys-color-outline-variant);
+}
+[data-ui-next] .rc-drift-col.rc-drift-labels {
+  flex: 0 0 auto;
+  min-width: 84px;
+  background: var(--un-md-sys-color-surface-container-low);
+}
+[data-ui-next] .rc-drift-col > span {
+  padding: 8px 12px;
+  color: var(--un-md-sys-color-on-surface);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: var(--un-md-sys-typescale-body-medium-line-height);
+}
+[data-ui-next] .rc-drift-col > span + span,
+[data-ui-next] .rc-drift-h {
+  border-bottom: 1px solid var(--un-md-sys-color-outline-variant);
+}
+[data-ui-next] .rc-drift-col > span:last-child {
+  border-bottom: 0;
+}
+[data-ui-next] .rc-drift-col > .rc-drift-h {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: 13px;
+  line-height: 18px;
+}
+[data-ui-next] .rc-drift-labels > span:not(.rc-drift-h) {
+  color: var(--un-md-sys-color-on-surface-variant);
+}
+[data-ui-next] .rc-drift-col > .rc-drift-server {
+  color: var(--un-md-sys-color-on-surface-variant);
+  text-decoration: line-through;
+  text-decoration-color: var(--un-caution);
+}
+[data-ui-next] .rc-drift-col > .rc-drift-device {
+  color: var(--un-positive);
+  font-weight: 600;
+}
+[data-ui-next] .rc-drift-note {
+  margin: 12px 0 0;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: 1.7;
+  text-wrap: pretty;
+}
+[data-ui-next] .rc-drift-note b {
+  color: var(--un-md-sys-color-on-surface);
+  font-weight: 600;
 }
 
-/* running shimmer over band tracks — "觉得是瞬时" */
+/* ── Honest-boundary footnote ─────────────────────────────────── */
+[data-ui-next] .rc-boundary {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--un-md-sys-color-outline-variant);
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: 13px;
+  line-height: 1.7;
+  text-wrap: pretty;
+}
+[data-ui-next] .rc-boundary svg {
+  flex: none;
+  margin-top: 4px;
+}
+[data-ui-next] .rc-boundary b {
+  color: var(--un-md-sys-color-on-surface);
+  font-weight: 600;
+}
+
+/* ── Calibration-maturity badge (/profile, /coach) ────────────── */
+[data-ui-next] .rc-cal {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 24px;
+  padding: 12px 16px;
+  border-radius: var(--un-md-sys-shape-large);
+  background: var(--un-md-sys-color-surface-container-low);
+  transition: background-color var(--un-t-small) var(--un-ease-glide);
+}
+[data-ui-next] .rc-cal.rc-state-match {
+  background: color-mix(
+    in srgb,
+    var(--un-positive-soft) 55%,
+    var(--un-md-sys-color-surface-container-low)
+  );
+}
+[data-ui-next] .rc-cal.rc-state-drift {
+  background: color-mix(
+    in srgb,
+    var(--un-caution-soft) 60%,
+    var(--un-md-sys-color-surface-container-low)
+  );
+}
+[data-ui-next] .rc-cal-figs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+[data-ui-next] .rc-cal-fig {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--un-md-sys-shape-small);
+  background: var(--un-positive-soft);
+  color: var(--un-positive);
+}
+[data-ui-next] .rc-cal-sub .rc-cal-fig b {
+  color: inherit;
+}
+
+/* ── Motion: only when a check starts or the detail opens (M1) ── */
 @media (prefers-reduced-motion: no-preference) {
-  [data-rc="running"] .un-ob-band-track::after {
+  [data-ui-next] .rc-verify.rc-state-running .rc-verify-icon svg,
+  [data-ui-next] .rc-cal.rc-state-running .rc-cal-icon svg {
+    animation: rc-spin 0.54s linear;
+  }
+  [data-ui-next] .rc-detail {
+    animation: rc-reveal var(--un-t-small) var(--un-ease-glide);
+  }
+  [data-ui-next] [data-rc="running"] .un-ob-band-track::after {
     content: "";
     position: absolute;
     inset: 0;
@@ -201,10 +444,25 @@
     background: linear-gradient(
       90deg,
       transparent,
-      color-mix(in oklab, var(--paper-raised) 75%, transparent),
+      color-mix(in srgb, var(--un-md-sys-color-surface-container-lowest) 75%, transparent),
       transparent
     );
-    animation: rc-shimmer 0.54s var(--ease-out);
+    animation: rc-shimmer 0.54s var(--un-ease-glide);
+  }
+  @keyframes rc-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes rc-reveal {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
   @keyframes rc-shimmer {
     to {
@@ -212,300 +470,39 @@
     }
   }
 }
-
-/* ── detail panel · 账本 → 重导值 (C) ───────────────────────── */
-.rc-detail {
-  margin-top: var(--s-3);
-  padding: var(--s-3);
-  background: var(--paper-sunk);
-  border: 1px solid var(--line);
-  border-radius: var(--r-3);
-  animation: rc-reveal var(--dur-base) var(--ease-out);
-}
-@keyframes rc-reveal {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
+@media (prefers-reduced-motion: reduce) {
+  [data-ui-next]
+    :is(.rc-verify, .rc-verify-icon, .rc-cal, .rc-cal-icon, .rc-detail-toggle, .rc-rerun) {
+    transition: none;
   }
 }
 
-.rc-ledger {
-  display: flex;
-  flex-direction: column;
-}
-.rc-ledger-head,
-.rc-ledger-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) 72px minmax(0, 0.9fr) 64px;
-  gap: var(--s-2);
-  align-items: center;
-  padding: 6px 4px;
-}
-.rc-ledger-head {
-  font-size: 10px;
-  letter-spacing: var(--ls-wide);
-  color: var(--ink-4);
-  border-bottom: 1px solid var(--line);
-  text-transform: none;
-}
-.rc-ledger-row {
-  border-bottom: 1px solid var(--line-soft);
-  font-size: var(--fs-caption);
-}
-.rc-ledger-row:last-child {
-  border-bottom: 0;
-}
-.rc-ledger-name {
-  color: var(--ink);
-  font-weight: 500;
-}
-.rc-num {
-  text-align: right;
-  color: var(--ink-2);
-}
-.rc-num.mono,
-.rc-ledger-head .rc-num {
-  font-family: var(--font-mono);
-}
-.rc-eq {
-  text-align: right;
-}
-.rc-eq-ok,
-.rc-eq-x {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 10px;
-  font-weight: 600;
-}
-.rc-eq-ok {
-  color: var(--good-ink);
-}
-.rc-eq-x {
-  color: var(--hard-ink);
-}
-
-/* ── drift detail (D) · 显示 vs 重导 ──────────────────────── */
-.rc-drift-head {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  margin-bottom: var(--s-3);
-}
-.rc-drift-kc {
-  font-size: var(--fs-body);
-  font-weight: 600;
-  color: var(--ink);
-}
-.rc-drift-tag {
-  font-size: 10px;
-  letter-spacing: var(--ls-wide);
-  color: var(--hard-ink);
-  background: var(--hard-soft);
-  border: 1px solid var(--hard-line);
-  border-radius: var(--r-pill);
-  padding: 1px 9px;
-}
-.rc-drift-table {
-  display: flex;
-  gap: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  overflow: hidden;
-  background: var(--paper-raised);
-}
-.rc-drift-col {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-}
-.rc-drift-col + .rc-drift-col {
-  border-left: 1px solid var(--line-soft);
-}
-.rc-drift-col.rc-drift-labels {
-  flex: 0 0 auto;
-  min-width: 84px;
-  background: var(--paper-sunk);
-}
-.rc-drift-col > span {
-  padding: 6px 12px;
-  font-size: var(--fs-caption);
-}
-.rc-drift-h {
-  font-size: 10px;
-  letter-spacing: var(--ls-wide);
-  color: var(--ink-4);
-  border-bottom: 1px solid var(--line-soft);
-  min-height: 26px;
-  display: flex;
-  align-items: center;
-}
-.rc-drift-labels > span:not(.rc-drift-h) {
-  color: var(--ink-3);
-  border-bottom: 1px solid var(--line-soft);
-}
-.rc-drift-labels > span:last-child {
-  border-bottom: 0;
-}
-.rc-drift-col > span + span {
-  border-bottom: 1px solid var(--line-soft);
-}
-.rc-drift-col > span:last-child {
-  border-bottom: 0;
-}
-.rc-drift-server {
-  color: var(--ink-3);
-  text-decoration: line-through;
-  text-decoration-color: var(--hard-line);
-}
-.rc-drift-device {
-  color: var(--good-ink);
-  font-weight: 600;
-}
-.rc-drift-note {
-  margin-top: var(--s-3);
-  font-size: var(--fs-caption);
-  color: var(--ink-2);
-  line-height: var(--lh-prose);
-  text-wrap: pretty;
-}
-.rc-drift-note b {
-  color: var(--ink);
-  font-weight: 600;
-}
-
-/* ── honest-boundary footnote ─────────────────────────────── */
-.rc-boundary {
-  display: flex;
-  gap: 8px;
-  margin-top: var(--s-3);
-  padding-top: var(--s-3);
-  border-top: 1px dashed var(--line);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  line-height: var(--lh-prose);
-  text-wrap: pretty;
-}
-.rc-boundary svg {
-  flex: none;
-  margin-top: 2px;
-  color: var(--ink-4);
-}
-.rc-boundary b {
-  color: var(--ink-3);
-  font-weight: 600;
-}
-
-/* ── calibration-maturity 卡 · profile 级徽章 ───────────────── */
-.rc-cal {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  margin: var(--s-3) 0 var(--s-5);
-  padding: var(--s-3) var(--s-4);
-  border: 1px solid var(--line);
-  border-radius: var(--r-3);
-  background: var(--paper-raised);
-  box-shadow: var(--shadow-1);
-}
-.rc-cal.rc-state-match {
-  background: color-mix(in oklab, var(--good-soft) 45%, var(--paper-raised));
-  border-color: var(--good-line);
-}
-.rc-cal.rc-state-drift {
-  background: color-mix(in oklab, var(--hard-soft) 50%, var(--paper-raised));
-  border-color: var(--hard-line);
-}
-.rc-cal-icon {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  flex: none;
-  border-radius: var(--r-2);
-  background: var(--paper-sunk);
-  border: 1px solid var(--line);
-  color: var(--ink-3);
-}
-.rc-cal.rc-state-match .rc-cal-icon {
-  background: var(--good-soft);
-  border-color: var(--good-line);
-  color: var(--good-ink);
-}
-.rc-cal.rc-state-drift .rc-cal-icon {
-  background: var(--hard-soft);
-  border-color: var(--hard-line);
-  color: var(--hard-ink);
-}
-.rc-cal.rc-state-running .rc-cal-icon {
-  animation: rc-spin 0.54s linear;
-}
-.rc-cal-text {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.rc-cal-title {
-  font-size: var(--fs-body);
-  font-weight: 600;
-  color: var(--ink);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.rc-cal-sub {
-  font-size: var(--fs-caption);
-  color: var(--ink-3);
-  margin-top: 2px;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
-  line-height: var(--lh-snug);
-}
-.rc-cal-sub b {
-  color: var(--ink-2);
-  font-weight: 600;
-}
-.rc-cal-figs {
-  display: inline-flex;
-  gap: 6px;
-}
-.rc-cal-fig {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 7px;
-  border-radius: var(--r-pill);
-  background: var(--good-soft);
-  border: 1px solid var(--good-line);
-  color: var(--good-ink);
-}
-.rc-cal-fig svg {
-  color: var(--good-ink);
-}
-
-/* ── responsive ──────────────────────────────────────────── */
+/* ── Narrow (≤ 720px) ─────────────────────────────────────────── */
 @media (max-width: 720px) {
-  .rc-verify {
+  [data-ui-next] .rc-verify,
+  [data-ui-next] .rc-cal {
     flex-wrap: wrap;
   }
-  .rc-verify-act {
+  [data-ui-next] .rc-verify-act {
     width: 100%;
     justify-content: flex-end;
   }
-  .rc-ledger-head {
+  [data-ui-next] .rc-ledger-head {
     display: none;
   }
-  .rc-ledger-row {
-    grid-template-columns: 1fr auto;
+  [data-ui-next] .rc-ledger-row {
+    grid-template-columns: minmax(0, 1fr) auto;
     grid-auto-rows: auto;
-    gap: 4px 10px;
+    gap: 4px 12px;
   }
-  .rc-ledger-name {
+  [data-ui-next] .rc-ledger-name {
     grid-column: 1 / -1;
+  }
+}
+
+/* Wrapping action and chip rows keep tappable targets apart on touch screens. */
+@media (pointer: coarse) {
+  [data-ui-next] .rc-verify-act {
+    gap: 12px;
   }
 }
