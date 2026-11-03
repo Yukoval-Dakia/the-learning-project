@@ -22,14 +22,14 @@
 
 [data-ui-next] :where(.un-read[data-read="compact"]) {
   --un-read-fs: var(--un-fs-2);
-  --un-read-lh: 1.7;
-  --un-read-gap: 0.7em;
-  --un-read-gap-section: 1.6em;
-  /* Chat replies pick heading levels freely (### / #### are common), so even the bottom of the
-     scale stays clearly above body text. */
-  --un-read-h1: 1.32em;
-  --un-read-h2: 1.24em;
-  --un-read-h3: 1.16em;
+  --un-read-lh: 1.8;
+  --un-read-gap: 0.95em;
+  --un-read-gap-section: 1.9em;
+  /* A clear step per level (about 1.2×): chat replies pick heading levels freely (### / #### are
+     common), so the bottom of the scale still stands above body text. */
+  --un-read-h1: 1.72em;
+  --un-read-h2: 1.44em;
+  --un-read-h3: 1.22em;
   --un-read-h4: 1.08em;
 }
 
@@ -152,7 +152,7 @@
   border-collapse: collapse;
   font-size: var(--un-read-small-fs);
   font-variant-numeric: tabular-nums;
-  line-height: var(--un-lh-ui);
+  line-height: var(--un-read-table-lh);
 }
 [data-ui-next] :where(.un-read) :where(th, td) {
   padding: var(--un-read-cell-pad);

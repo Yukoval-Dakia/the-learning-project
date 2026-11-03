@@ -20,11 +20,66 @@ let mathPluginsPromise: Promise<MathPlugins> | null = null;
 // Plugin code, not user state: a module-level cache and listener set are SSR-safe.
 const mathPluginListeners = new Set<() => void>();
 
+type MdNode = {
+  type: string;
+  value?: string;
+  children?: MdNode[];
+  position?: { start: { offset?: number } };
+  data?: unknown;
+};
+
+/**
+ * `$$…$$` written on one line inside its own paragraph is, to remark-math, inline math — so a
+ * formula the author set apart (the quadratic formula on its own line) came out in text style,
+ * fractions squeezed small. A paragraph that holds nothing but one `$$`-delimited formula becomes
+ * a display formula, the same node remark-math builds for a fenced `$$` block. Single-dollar
+ * formulas stay inline wherever they are: the author chose the inline form.
+ */
+function remarkLoneDisplayMath() {
+  return (tree: MdNode, file: { value?: unknown }) => {
+    const source = String(file.value ?? '');
+    const walk = (node: MdNode) => {
+      const children = node.children;
+      if (!children) return;
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i];
+        const only = child?.type === 'paragraph' && child.children?.length === 1 ? child.children[0] : undefined;
+        const start = only?.position?.start.offset;
+        if (only?.type === 'inlineMath' && start !== undefined && source.startsWith('$$', start)) {
+          const value = only.value ?? '';
+          children[i] = {
+            type: 'math',
+            value,
+            position: child.position,
+            data: {
+              hName: 'pre',
+              hChildren: [
+                {
+                  type: 'element',
+                  tagName: 'code',
+                  properties: { className: ['language-math', 'math-display'] },
+                  children: [{ type: 'text', value }],
+                },
+              ],
+            },
+          };
+        } else if (child) {
+          walk(child);
+        }
+      }
+    };
+    walk(tree);
+  };
+}
+
 function cacheMathPlugins(
   remarkMath: MathPlugins['remarkPlugins'][number],
   rehypeKatex: MathPlugins['rehypePlugins'][number],
 ): MathPlugins {
-  loadedMathPlugins = { remarkPlugins: [remarkMath], rehypePlugins: [rehypeKatex] };
+  loadedMathPlugins = {
+    remarkPlugins: [remarkMath, remarkLoneDisplayMath],
+    rehypePlugins: [rehypeKatex],
+  };
   return loadedMathPlugins;
 }
 
