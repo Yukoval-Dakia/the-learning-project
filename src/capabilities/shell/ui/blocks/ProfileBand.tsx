@@ -1,13 +1,15 @@
+// Today's 学习画像与依据 panel (M3E: today.css .un-today-panel; YUK-1713 moved its loading /
+// error switch to AreaGate). Query, preview limit and every navigation target are unchanged.
 import { useQuery } from '@tanstack/react-query';
 import type { PlacementProfile, PlacementProfileClient } from '@/capabilities/onboarding/ui-public';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
-import { SkLines } from '@/ui/primitives/SkLines';
-import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button } from '@/ui-next/public';
+import { AreaGate, type AreaStatus } from '../AreaGate';
 
 const PREVIEW_KC_LIMIT = 3;
 
-function queryStatus(isLoading: boolean, isError: boolean, hasData: boolean): StatefulStatus {
+function queryStatus(isLoading: boolean, isError: boolean, hasData: boolean): AreaStatus {
   if (isError && !hasData) return 'error';
   if (isLoading && !hasData) return 'loading';
   return 'ok';
@@ -123,16 +125,18 @@ export function ProfileBand({
       <h2>学习画像与依据</h2>
       <p className="un-today-meta">{goal.title}</p>
       {q.isError && q.data !== undefined && (
-        <p role="status">画像更新失败，下面保留上次读取的记录。</p>
+        <p role="status" className="td-stale">
+          画像更新失败，下面保留上次读取的记录。
+        </p>
       )}
-      <Stateful
+      <AreaGate
         status={queryStatus(q.isLoading, q.isError, q.data !== undefined)}
         onRetry={() => void q.refetch()}
         errorText="学习画像暂不可用，不能据此判断你的掌握情况。"
-        skeleton={<SkLines rows={3} />}
+        loading={<SkeletonLines rows={3} label="正在读取学习画像" />}
       >
         {q.data && <ProfileBandBody data={q.data} goalId={goal.id} navigate={navigate} />}
-      </Stateful>
+      </AreaGate>
     </section>
   );
 }

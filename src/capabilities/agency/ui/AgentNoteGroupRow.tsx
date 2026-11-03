@@ -1,7 +1,8 @@
-// One grouped observation on the full /agent-notes page, M3E presentation (YUK-1473). Same data,
-// derivations and links as AgentNoteGroupCard, which stays as the Today board's legacy piece until
-// Today moves. Read-only: the only actions are evidence links. Styles in agent-notes-m3e.css;
-// design record docs/design/2026-11-03-inbox-agent-notes-events-m3e.md.
+// One grouped observation, M3E presentation (YUK-1473): the full /agent-notes page and, since
+// YUK-1713, the Today board (AgentNotesBoard), which replaced the old AgentNoteGroupCard (same
+// data, derivations and links). Read-only: the only actions are evidence links. Styles in
+// agent-notes-m3e.css; design records docs/design/2026-11-03-inbox-agent-notes-events-m3e.md and
+// docs/design/2026-11-03-today-finish-m3e.md.
 
 import {
   ArrowRight,

@@ -1,4 +1,24 @@
+// YUK-1713 / YUK-1473 — Today (/today), M3E presentation: the overnight band, the AI failure
+// flags, the cost card, the week heat and the page frame moved off the old base. Styles in
+// today-m3e.css; design record docs/design/2026-11-03-today-finish-m3e.md. Queries, keys,
+// counts, navigation targets and the cold-start gate are unchanged.
+
 import { useQuery } from '@tanstack/react-query';
+import {
+  ArrowRight,
+  ChevronDown,
+  CircleAlert,
+  Eye,
+  FileQuestion,
+  FileText,
+  GraduationCap,
+  Inbox,
+  type LucideIcon,
+  Moon,
+  Sparkles,
+  Target,
+  Zap,
+} from 'lucide-react';
 import { useState } from 'react';
 import type {
   AgentNoteClient,
@@ -9,14 +29,10 @@ import type { ColdStart } from '@/capabilities/onboarding/ui-public';
 import { describeCosts } from '@/ui/lib/cost-presentation';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { queryKeys } from '@/ui/lib/write-invalidation';
-import { Btn } from '@/ui/primitives/Btn';
-import { LoomBadge } from '@/ui/primitives/LoomBadge';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
-import { SectionLabel } from '@/ui/primitives/SectionLabel';
-import { SkLines } from '@/ui/primitives/SkLines';
-import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button } from '@/ui-next/public';
 import { TodayHeader } from '@/ui-next/today/TodayHeader';
+import { AreaGate, type AreaStatus } from './AreaGate';
 import { AiChangesStrip } from './blocks/AiChangesStrip';
 import { KpiRow } from './blocks/KpiRow';
 import { type PlacementProfileReader, ProfileBand } from './blocks/ProfileBand';
@@ -29,7 +45,7 @@ import { ProbeAnswers } from './ProbeAnswers';
 import { TeachingBriefBand } from './TeachingBrief';
 import type { OvernightDigest, WorkbenchSummary } from './workbench-api';
 import { useWorkbenchClient } from './workbench-client';
-import './shell.css';
+import './today-m3e.css';
 
 // agency / onboarding 的读函数与组件由路由壳（Start
 // server/start/routes/today.tsx）注入；shell 只编排页面，不 value-import 它们。
@@ -49,7 +65,7 @@ interface Thread {
   sub: string;
   cta: string;
   badge: string;
-  icon: LoomIconName;
+  icon: 'review' | 'inbox';
   tone: 'coral' | 'info' | 'good' | 'hard' | 'neutral';
   route: string;
 }
@@ -175,74 +191,85 @@ function CostRibbon() {
   const t = q.data?.today;
   const cost = describeCosts(t?.by_currency ?? []);
   const isEmpty = t !== undefined && t.ledger_rows === 0 && t.tool_calls === 0;
-  const status: StatefulStatus = q.isLoading
-    ? 'loading'
-    : q.isError
-      ? 'error'
-      : isEmpty
-        ? 'empty'
-        : 'ok';
+  const status = costStatus(q.isLoading, q.isError, isEmpty);
   return (
-    <LoomCard pad>
-      <div className="card-head">
-        <span className="card-icon">
-          <LoomIcon name="bolt" size={18} />
+    <section className="td-card">
+      <div className="td-card-head">
+        <span className="td-card-ic" aria-hidden="true">
+          <Zap size={18} />
         </span>
-        <div className="card-title">今日 AI 成本</div>
+        <h3 className="td-card-title">今日 AI 成本</h3>
       </div>
-      <Stateful
+      <AreaGate
         status={status}
         onRetry={() => void q.refetch()}
         errorText="成本服务暂不可用。"
-        skeleton={<SkLines rows={1} />}
-        empty={<div className="quiet-empty">今日尚无 AI 花费。</div>}
+        loading={<SkeletonLines rows={1} label="正在读取今日 AI 成本" />}
+        empty={<p className="td-quiet">今日尚无 AI 花费。</p>}
       >
         {t && (
-          <>
-            <div className="cost-top">
-              <div className="cost-amt serif tnum">{cost.amount}</div>
-            </div>
-            <div className="cost-foot">{cost.note}</div>
-            <div className="cost-tasks">
+          <div className="td-cost">
+            <p className="td-cost-amt un-num">{cost.amount}</p>
+            <p className="td-cost-note">{cost.note}</p>
+            <div className="td-chips">
               {t.by_task.map((row) => {
                 const taskCost = describeCosts(row.by_currency);
                 return (
-                  <span key={row.task_kind} className="chip" title={taskCost.note}>
+                  <span key={row.task_kind} className="td-chip" title={taskCost.note}>
                     <span>{aiTaskLabel(row.task_kind)}</span>{' '}
-                    <b className="mono">{taskCost.amount}</b>
+                    <b className="un-num">{taskCost.amount}</b>
                   </span>
                 );
               })}
             </div>
-            <div className="cost-foot nowrap-meta">
+            <p className="td-quiet un-num">
               共 {t.by_task.reduce((sum, row) => sum + row.calls, 0)} 次 AI 工作
-            </div>
-          </>
+            </p>
+          </div>
         )}
-      </Stateful>
-    </LoomCard>
+      </AreaGate>
+    </section>
   );
+}
+
+// The cost card's state, in the order it always had: loading → error → empty → content.
+function costStatus(isLoading: boolean, isError: boolean, isEmpty: boolean): AreaStatus {
+  if (isLoading) return 'loading';
+  if (isError) return 'error';
+  if (isEmpty) return 'empty';
+  return 'ok';
 }
 
 // YUK-520 (A1 夜窗 digest) — 最小交班缕（富叙事缕本期 DEFER，先把数据 + 空夜态通电）。
 // 设计参考 docs/design/loom-refresh/project/screen-today-handoff.jsx（HandoffThread / 空夜态）
-// + handoff-band.jsx：本期最小化为 LoomCard + 计数 chips + 空夜态，按 Loom primitives 落地
-// （不整文件 PORT）。富叙事缕（MasteryBand / 团队复盘 / 追溯 / narrative_threads）二期补。
+// + handoff-band.jsx：本期最小化为一张卡 + 计数 chips + 空夜态（不整文件 PORT；YUK-1713 起为
+// M3E 呈现）。富叙事缕（MasteryBand / 团队复盘 / 追溯 / narrative_threads）二期补。
 //
 // 红线（YUK-520 ②⑤）：空夜态（has_overnight_activity===false）是一等态，与加载中/失败显式可
 // 区分，**绝不落回 ColdStart**——本带是 workbench 块的子组件（仅在非空证据态渲染），其空夜
-// 分支只渲染 quiet-empty，永不触发冷开屏。additive 叠加，不动既有 hero/今日之线/双列/热力。
+// 分支只渲染安静的一行说明，永不触发冷开屏。additive 叠加，不动既有 hero/今日之线/双列/热力。
 
 // 链式三元会被 OCR flag（项目规则禁嵌套/链式三元）——用 if/else 函数算状态。
-function statefulStatus(isLoading: boolean, isError: boolean): StatefulStatus {
+function statefulStatus(isLoading: boolean, isError: boolean): Exclude<AreaStatus, 'empty'> {
   if (isLoading) return 'loading';
   if (isError) return 'error';
   return 'ok';
 }
 
+type DigestIcon = 'sparkle' | 'doc' | 'inbox' | 'teach' | 'eye';
+
+// The digest's icon names (kept as data) → lucide.
+const DIGEST_ICON: Record<DigestIcon, LucideIcon> = {
+  sparkle: Sparkles,
+  doc: FileText,
+  inbox: Inbox,
+  teach: GraduationCap,
+  eye: Eye,
+};
+
 interface DigestChip {
   key: string;
-  icon: LoomIconName;
+  icon: DigestIcon;
   label: string;
   count: number;
 }
@@ -287,22 +314,23 @@ function useOvernightDigest() {
 // digest'] query (via useOvernightDigest) as OvernightDigestBand → react-query dedupes it
 // (zero extra network). Silent degrade: it renders null — no skeleton, no error surface —
 // until real degraded facts exist; the red strip is a cross-cutting flag, not a primary
-// surface. Reuses the module-level learnerFailureSummary / aiTaskLabel (unchanged) and the
-// exact original degraded-row JSX (LoomBadge tone="again" + alert icon), just relocated.
+// surface. Reuses the module-level learnerFailureSummary / aiTaskLabel (unchanged). M3E: one
+// critical-tone line per failed task kind; the plain-language reason, once only a hover title,
+// is now visible text so touch users can read it too.
 function DegradedKindsFlags() {
   const q = useOvernightDigest();
   const d = q.data;
   if (!d || d.degraded_kinds.length === 0) return null;
   return (
-    <div className="digest-chips tb-degraded-flags">
+    <div className="td-flags">
       {d.degraded_kinds.map((dk) => (
-        <LoomBadge
-          key={dk.task_kind}
-          tone="again"
-          title={learnerFailureSummary(dk.recent_error_messages)}
-        >
-          <LoomIcon name="alert" size={12} /> {aiTaskLabel(dk.task_kind)}失败 {dk.error_count} 次
-        </LoomBadge>
+        <p key={dk.task_kind} className="td-flag">
+          <CircleAlert size={16} aria-hidden="true" className="td-flag-ic" />
+          <span className="td-flag-t">
+            {aiTaskLabel(dk.task_kind)}失败 {dk.error_count} 次
+          </span>
+          <span className="td-flag-s">{learnerFailureSummary(dk.recent_error_messages)}</span>
+        </p>
       ))}
     </div>
   );
@@ -342,81 +370,77 @@ export function OvernightDigestBand({ navigate }: { navigate: (to: string) => vo
   const hasActivity = !!d?.has_overnight_activity;
   const hasProbes = activeProbes.length > 0;
   return (
-    <>
-      <SectionLabel>夜链 · 交班</SectionLabel>
-      <LoomCard pad>
-        <div className="card-head">
-          <span className="card-icon accent">
-            <LoomIcon name="moon" size={18} />
+    <section className="td-night">
+      <h2 className="un-today-section-title">夜链 · 交班</h2>
+      <div className="td-card">
+        <div className="td-card-head">
+          <span className="td-card-ic" data-tone="accent" aria-hidden="true">
+            <Moon size={18} />
           </span>
-          <div className="card-title">昨夜 AI 替你做了什么</div>
+          <h3 className="td-card-title">昨夜 AI 替你做了什么</h3>
         </div>
-        <Stateful
+        <AreaGate
           status={status}
           onRetry={() => void q.refetch()}
           errorText="夜链交班暂不可用。"
-          skeleton={<SkLines rows={2} />}
+          loading={<SkeletonLines rows={2} label="正在读取昨夜交班" />}
         >
           {/* degraded_kinds red flags moved to <DegradedKindsFlags/> (position 1, [裁决 1]).
               A quiet night (no overnight activity) shows the calm empty line. A served probe
               is NOT overnight activity, so it never suppresses this line — it renders in its
               own sibling below, independent of this digest query's state. */}
           {d && !hasActivity && (
-            <div className="quiet-empty">
+            <p className="td-quiet">
               昨夜没有需要交班的活动 —— 团队会在你持续学习后，开始为你做夜间复盘。
-            </div>
+            </p>
           )}
           {d && hasActivity && (
             <>
               <button
                 type="button"
-                className={`chip chip-toggle${activityOpen ? ' is-open' : ''}`}
+                className="td-toggle un-hit"
                 onClick={() => setActivityOpen((o) => !o)}
                 aria-expanded={activityOpen}
               >
-                <LoomIcon name="moon" size={14} /> 昨夜 AI 还替你做了这些
-                <LoomIcon name="chevronDown" size={13} className="pd-chev" />
+                <Moon size={14} aria-hidden="true" /> 昨夜 AI 还替你做了这些
+                <ChevronDown size={14} aria-hidden="true" className="td-chev" />
               </button>
               {activityOpen && (
-                <div className="prep-desk-expand">
-                  <div className="digest-chips">
+                <div className="td-reveal">
+                  <div className="td-chips">
                     {chips.map((c) =>
                       c.key === 'conjectures' ? (
                         // 备课猜想 chip → toggle the inline 备课台 panel (§3 pull-not-push).
                         <button
                           key={c.key}
                           type="button"
-                          className={`chip chip-toggle${conjOpen ? ' is-open' : ''}`}
+                          className="td-toggle un-hit"
                           onClick={() => setConjOpen((o) => !o)}
                           aria-expanded={conjOpen}
                         >
-                          <LoomIcon name={c.icon} size={14} /> {c.label}{' '}
-                          <b className="mono">{c.count}</b>
-                          <LoomIcon name="chevronDown" size={13} className="pd-chev" />
+                          <DigestGlyph name={c.icon} /> {c.label}{' '}
+                          <b className="un-num">{c.count}</b>
+                          <ChevronDown size={14} aria-hidden="true" className="td-chev" />
                         </button>
                       ) : (
-                        <span key={c.key} className="chip">
-                          <LoomIcon name={c.icon} size={14} /> {c.label}{' '}
-                          <b className="mono">{c.count}</b>
+                        <span key={c.key} className="td-chip">
+                          <DigestGlyph name={c.icon} /> {c.label}{' '}
+                          <b className="un-num">{c.count}</b>
                         </span>
                       ),
                     )}
                   </div>
                   {conjOpen && (
-                    <div className="prep-desk-expand">
+                    <div className="td-reveal">
                       <PrepDeskConjectures />
                     </div>
                   )}
                   {canDecide && (
-                    <div className="digest-foot">
-                      <Btn
-                        size="sm"
-                        variant="secondary"
-                        iconEnd="arrow"
-                        onClick={() => navigate('/inbox')}
-                      >
+                    <div className="td-foot">
+                      <Button size="sm" variant="secondary" onClick={() => navigate('/inbox')}>
                         去裁决
-                      </Btn>
+                        <ArrowRight size={16} aria-hidden="true" />
+                      </Button>
                     </div>
                   )}
                 </div>
@@ -424,34 +448,39 @@ export function OvernightDigestBand({ navigate }: { navigate: (to: string) => vo
             </>
           )}
           {d && <OvernightCostSummary cost={d.cost} window={d.window} />}
-        </Stateful>
-      </LoomCard>
+        </AreaGate>
+      </div>
       {hasProbes && (
-        <div className="probe-queue">
+        <div className="td-probes">
           {/* 待你试做 —— served probes to answer. Driven by its own ['prep-desk-probes']
-              query and rendered as an independent sibling (NOT inside the digest Stateful or
+              query and rendered as an independent sibling (NOT inside the digest AreaGate or
               the activity disclosure), so it stays one-click reachable whenever a probe is
               served — even while the overnight digest is loading or errored (YUK-707 round-2
               [major]). Answering the last one auto-collapses this. */}
           <button
             type="button"
-            className={`chip chip-toggle${probeOpen ? ' is-open' : ''}`}
+            className="td-toggle un-hit"
             onClick={() => setProbeOpen((o) => !o)}
             aria-expanded={probeOpen}
           >
-            <LoomIcon name="quiz" size={14} /> 待你试做{' '}
-            <b className="mono">{activeProbes.length}</b>
-            <LoomIcon name="chevronDown" size={13} className="pd-chev" />
+            <FileQuestion size={14} aria-hidden="true" /> 待你试做{' '}
+            <b className="un-num">{activeProbes.length}</b>
+            <ChevronDown size={14} aria-hidden="true" className="td-chev" />
           </button>
           {probeOpen && (
-            <div className="prep-desk-expand">
+            <div className="td-reveal">
               <ProbeAnswers />
             </div>
           )}
         </div>
       )}
-    </>
+    </section>
   );
+}
+
+function DigestGlyph({ name }: { name: DigestIcon }) {
+  const Icon = DIGEST_ICON[name];
+  return <Icon size={14} aria-hidden="true" />;
 }
 
 function ThreadCard({ th, navigate }: { th: Thread; navigate: (to: string) => void }) {
@@ -464,7 +493,7 @@ function ThreadCard({ th, navigate }: { th: Thread; navigate: (to: string) => vo
       <span>{th.sub}</span>
       <span className="un-today-task-action">
         {th.cta}
-        <LoomIcon name="arrow" size={18} />
+        <ArrowRight size={18} aria-hidden="true" />
       </span>
     </button>
   );
@@ -491,124 +520,118 @@ export default function TodayPage({
     enabled: summaryQ.data?.cold_start.is_empty === false,
   });
 
-  const summaryStatus: StatefulStatus = summaryQ.isLoading
-    ? 'loading'
-    : summaryQ.isError
-      ? 'error'
-      : 'ok';
+  const summaryStatus = statefulStatus(summaryQ.isLoading, summaryQ.isError);
   const s = summaryQ.data;
   const threads = s ? deriveThreads(s) : [];
 
   // YUK-621：冷启动只认服务端聚合后的「所有学习证据皆空」。没有 active goal
-  // 仍可正常查看题库、复习、历史与提议；loading / error 继续走 Stateful。
+  // 仍可正常查看题库、复习、历史与提议；loading / error 继续走 AreaGate。
   if (s?.cold_start.is_empty) {
     return <ColdStart navigate={navigate} />;
   }
 
   return (
-    <main
-      data-ui-next=""
-      data-un-m3e="practice-foundation"
-      className="un-root un-today-page today-page today-loom"
-    >
+    <main data-ui-next="" data-un-m3e="practice-foundation" className="un-root un-today-page">
       <TodayHeader navigate={navigate} onCompanion={() => openCopilot()} />
 
-      <Stateful
-        status={summaryStatus}
-        onRetry={() => void summaryQ.refetch()}
-        errorText="工作台聚合暂不可用。"
-        skeleton={<SkLines rows={4} />}
-      >
-        {s && (
-          <>
-            {/* YUK-707 · workbench 位置 1 — degraded_kinds 红旗上提，永在 brief 之前直显
+      <div className="td-flow un-m3e-bridge">
+        <AreaGate
+          status={summaryStatus}
+          onRetry={() => void summaryQ.refetch()}
+          errorText="工作台聚合暂不可用。"
+          loading={<SkeletonLines rows={4} label="正在读取今日工作台" />}
+        >
+          {s && (
+            <>
+              {/* YUK-707 · workbench 位置 1 — degraded_kinds 红旗上提，永在 brief 之前直显
                 ([裁决 1])；无 degraded 事实时渲 null。 */}
-            <DegradedKindsFlags />
+              <DegradedKindsFlags />
 
-            {/* YUK-707 · workbench 位置 2 — 唯一「为你而备」主 handoff 交付，default-visible
+              {/* YUK-707 · workbench 位置 2 — 唯一「为你而备」主 handoff 交付，default-visible
                 ([裁决 主]，contract §0/§5）。navigate 供 YUK-709 confirmed → KC-scoped
                 practice 的 CTA 跳转。 */}
-            <TeachingBriefBand navigate={navigate} />
+              <TeachingBriefBand navigate={navigate} />
 
-            {/* YUK-520 (A1) — 最小交班缕：workbench 块（今日之线 layer ①）。仅在非冷启
+              {/* YUK-520 (A1) — 最小交班缕：workbench 块（今日之线 layer ①）。仅在非冷启
                 （cold_start=false）渲染，空夜态永不落 ColdStart。YUK-707 起降级为 brief 之下
                 的二级折叠盘（[裁决 5]），保留全部夜间活动事实。 */}
-            <OvernightDigestBand navigate={navigate} />
+              <OvernightDigestBand navigate={navigate} />
 
-            <KpiRow
-              kpi={s.kpi}
-              proposalsDecisionTotal={s.proposals.decision_total}
-              proposalsHasMore={s.proposals.has_more}
-              navigate={navigate}
-            />
-
-            {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。
-                无 active goal 时只省略画像，不影响其余工作台。 */}
-            {s.active_goal && (
-              <ProfileBand
-                goal={s.active_goal}
+              <KpiRow
+                kpi={s.kpi}
+                proposalsDecisionTotal={s.proposals.decision_total}
+                proposalsHasMore={s.proposals.has_more}
                 navigate={navigate}
-                getPlacementProfile={getPlacementProfile}
               />
-            )}
 
-            <LearningIntentComposer
-              initialTopic={s.active_goal?.title ?? ''}
-              pendingCount={s.proposals.by_kind.learning_item ?? 0}
-              navigate={navigate}
-            />
+              {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。
+                无 active goal 时只省略画像，不影响其余工作台。 */}
+              {s.active_goal && (
+                <ProfileBand
+                  goal={s.active_goal}
+                  navigate={navigate}
+                  getPlacementProfile={getPlacementProfile}
+                />
+              )}
 
-            {threads.length > 0 && (
-              <>
-                <h2 className="un-today-section-title">接下来做什么</h2>
-                <div className="un-today-tasks">
-                  {threads.map((th) => (
-                    <ThreadCard key={th.id} th={th} navigate={navigate} />
-                  ))}
+              <LearningIntentComposer
+                initialTopic={s.active_goal?.title ?? ''}
+                pendingCount={s.proposals.by_kind.learning_item ?? 0}
+                navigate={navigate}
+              />
+
+              {threads.length > 0 && (
+                <>
+                  <h2 className="un-today-section-title">接下来做什么</h2>
+                  <div className="un-today-tasks">
+                    {threads.map((th) => (
+                      <ThreadCard key={th.id} th={th} navigate={navigate} />
+                    ))}
+                  </div>
+                </>
+              )}
+
+              <h2 className="un-today-section-title">继续学习与检查改动</h2>
+              <div className="un-today-columns">
+                <div className="un-today-column">
+                  <SessionsStrip sessions={s.active_sessions} now={now} navigate={navigate} />
+                  <AiChangesStrip now={now} />
                 </div>
-              </>
-            )}
+                <div className="un-today-column">
+                  <ProposalStrip proposals={s.proposals} navigate={navigate} />
+                  <CostRibbon />
+                </div>
+              </div>
+            </>
+          )}
+        </AreaGate>
 
-            <h2 className="un-today-section-title">继续学习与检查改动</h2>
-            <div className="un-today-columns">
-              <div className="un-today-column">
-                <SessionsStrip sessions={s.active_sessions} now={now} navigate={navigate} />
-                <AiChangesStrip now={now} />
+        <AgentNotesBoard
+          notes={notesQ.data?.rows ?? []}
+          status={statefulStatus(notesQ.isLoading, notesQ.isError)}
+          now={now}
+          onRetry={() => void notesQ.refetch()}
+          onNavigate={navigate}
+        />
+
+        {s && (
+          <section className="td-week">
+            <h2 className="un-today-section-title">过去 7 天</h2>
+            <div className="td-card">
+              <div className="td-card-head">
+                <span className="td-card-ic" data-tone="accent" aria-hidden="true">
+                  <Target size={18} />
+                </span>
+                <h3 className="td-card-title">7 天活动热力</h3>
+                <span className="td-card-aside td-chip un-num">
+                  共 {s.week_heat.reduce((acc, d) => acc + d.count, 0)} 次活动
+                </span>
               </div>
-              <div className="un-today-column">
-                <ProposalStrip proposals={s.proposals} navigate={navigate} />
-                <CostRibbon />
-              </div>
+              <WeekHeat heat={s.week_heat} />
             </div>
-          </>
+          </section>
         )}
-      </Stateful>
-
-      <AgentNotesBoard
-        notes={notesQ.data?.rows ?? []}
-        status={notesQ.isLoading ? 'loading' : notesQ.isError ? 'error' : 'ok'}
-        now={now}
-        onRetry={() => void notesQ.refetch()}
-        onNavigate={navigate}
-      />
-
-      {s && (
-        <>
-          <h2 className="un-today-section-title">过去 7 天</h2>
-          <LoomCard pad>
-            <div className="card-head">
-              <span className="card-icon accent">
-                <LoomIcon name="target" size={18} />
-              </span>
-              <div className="card-title">7 天活动热力</div>
-              <span className="badge tone-neutral" style={{ marginLeft: 'auto' }}>
-                共 {s.week_heat.reduce((acc, d) => acc + d.count, 0)} 次活动
-              </span>
-            </div>
-            <WeekHeat heat={s.week_heat} />
-          </LoomCard>
-        </>
-      )}
+      </div>
     </main>
   );
 }

@@ -1,7 +1,10 @@
 import type { z } from 'zod';
-import type { LoomBadgeTone } from '@/ui/primitives/LoomBadge';
 import type { LoomIconName } from '@/ui/primitives/LoomIcon';
 import type { EventDetailResponseSchema } from '../api/event-contracts';
+
+// Tone vocabulary of the event and correction labels (was LoomBadgeTone, the old badge's tone
+// set; the badge left with Today's move to M3E, YUK-1713). EventDetailPage maps it to ui-next roles.
+type LoomBadgeTone = 'neutral' | 'coral' | 'info' | 'good' | 'hard' | 'again';
 
 export type EventDetailResponse = z.infer<typeof EventDetailResponseSchema>;
 export type EventDetailRow = EventDetailResponse['event'];
