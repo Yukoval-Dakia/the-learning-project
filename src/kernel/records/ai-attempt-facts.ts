@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { type SQL, type SQLWrapper, and, eq, sql } from 'drizzle-orm';
 import type { AiTaskUsage, AttemptCostBasis, AttemptCostTruth } from '@/ai/task-result';
 import { newId as createId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
@@ -101,6 +101,19 @@ async function insertCostLedger(
     pgboss_job_id: entry.pgboss_job_id ?? null,
     occurred_at: entry.occurred_at ?? new Date(),
   });
+}
+
+/**
+ * An ai_task_runs row that is a task's real failure outcome. Two finish reasons ride on
+ * status='failure' without being one: error_retried (a later attempt carries the
+ * outcome) and reconciled_stuck (sweeper convergence after the writer vanished).
+ * Caller cancellation and timeouts are written as plain 'error' and cannot be told
+ * apart here.
+ */
+export function isTaskFailureOutcome(status: SQLWrapper, finishReason: SQLWrapper): SQL {
+  return sql`(${status} = 'failure'
+    and ${finishReason} is distinct from 'error_retried'
+    and ${finishReason} is distinct from 'reconciled_stuck')`;
 }
 
 export interface AiTaskRunFinishEntry {

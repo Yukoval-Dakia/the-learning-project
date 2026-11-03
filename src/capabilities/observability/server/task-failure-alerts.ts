@@ -3,6 +3,10 @@
 //   consecutive — failures since the kind's last success reach N (latest failure not stale);
 //   rate        — inside the window, terminal runs ≥ MIN_RUNS and failure share > RATE.
 // A kind with an active consecutive alert does not also raise a rate alert.
+// "Failure" is isTaskFailureOutcome: retried attempts and sweeper-converged rows are
+// neither failures nor successes, so they are invisible to both rules — a retry that
+// ends in success resets the streak, one that ends in failure counts once. Run order
+// is finished_at, so a concurrent success that finishes last still ends a streak.
 //
 // Alert ids are deterministic and double as the event id, so recording is
 // write-once per episode: a consecutive episode is keyed by its first failed run
@@ -16,6 +20,7 @@ import { learnerLocalDay } from '@/core/learner-day';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvents } from '@/kernel/events';
+import { isTaskFailureOutcome } from '@/kernel/records/ai-attempt-facts';
 
 export const TASK_FAILURE_ALERT_EVENT_ACTION = 'experimental:task_failure_alert';
 
@@ -113,28 +118,29 @@ export async function evaluateTaskFailureAlerts(
 
   const streakRows = await db.execute<StreakRow>(sql`
     with last_success as (
-      select task_kind, max(started_at) as at
+      select task_kind, max(finished_at) as at
       from ai_task_runs
-      where status = 'success' and started_at <= ${now.toISOString()}::timestamptz
+      where status = 'success' and finished_at <= ${now.toISOString()}::timestamptz
       group by task_kind
     )
     select
       r.task_kind,
       count(*)::int as failures,
-      min(r.started_at) as first_failure_at,
-      max(r.started_at) as last_failure_at,
-      (array_agg(r.id order by r.started_at asc, r.id asc))[1] as first_failure_run_id,
-      (array_agg(r.id order by r.started_at desc, r.id desc))[1] as latest_run_id,
-      (array_agg(r.finish_reason order by r.started_at desc, r.id desc))[1] as latest_finish_reason,
+      min(r.finished_at) as first_failure_at,
+      max(r.finished_at) as last_failure_at,
+      (array_agg(r.id order by r.finished_at asc, r.id asc))[1] as first_failure_run_id,
+      (array_agg(r.id order by r.finished_at desc, r.id desc))[1] as latest_run_id,
+      (array_agg(r.finish_reason order by r.finished_at desc, r.id desc))[1]
+        as latest_finish_reason,
       max(ls.at) as last_success_at
     from ai_task_runs r
     left join last_success ls on ls.task_kind = r.task_kind
-    where r.status = 'failure'
-      and r.started_at <= ${now.toISOString()}::timestamptz
-      and (ls.at is null or r.started_at > ls.at)
+    where ${isTaskFailureOutcome(sql`r.status`, sql`r.finish_reason`)}
+      and r.finished_at <= ${now.toISOString()}::timestamptz
+      and (ls.at is null or r.finished_at > ls.at)
     group by r.task_kind
     having count(*) >= ${thresholds.consecutive_failures}
-      and max(r.started_at) >= ${staleCutoff.toISOString()}::timestamptz
+      and max(r.finished_at) >= ${staleCutoff.toISOString()}::timestamptz
   `);
 
   const alerts: TaskFailureAlert[] = streakRows.map((row) => ({
@@ -151,24 +157,27 @@ export async function evaluateTaskFailureAlerts(
   }));
   const streakKinds = new Set(alerts.map((alert) => alert.task_kind));
 
+  // Window membership stays on started_at (attempts launched in the window), the
+  // column ai_task_runs_status_idx covers; ordering inside it is finished_at.
+  const failed = isTaskFailureOutcome(sql`status`, sql`finish_reason`);
   const windowRows = await db.execute<WindowRow>(sql`
     select
       task_kind,
       count(*)::int as runs,
-      (count(*) filter (where status = 'failure'))::int as failures,
-      max(started_at) filter (where status = 'failure') as last_failure_at,
-      (array_agg(id order by started_at desc, id desc) filter (where status = 'failure'))[1]
+      (count(*) filter (where ${failed}))::int as failures,
+      max(finished_at) filter (where ${failed}) as last_failure_at,
+      (array_agg(id order by finished_at desc, id desc) filter (where ${failed}))[1]
         as latest_run_id,
-      (array_agg(finish_reason order by started_at desc, id desc)
-        filter (where status = 'failure'))[1] as latest_finish_reason,
-      max(started_at) filter (where status = 'success') as last_success_at
+      (array_agg(finish_reason order by finished_at desc, id desc) filter (where ${failed}))[1]
+        as latest_finish_reason,
+      max(finished_at) filter (where status = 'success') as last_success_at
     from ai_task_runs
-    where status in ('success', 'failure')
+    where (status = 'success' or ${failed})
       and started_at >= ${windowStart.toISOString()}::timestamptz
       and started_at <= ${now.toISOString()}::timestamptz
     group by task_kind
     having count(*) >= ${thresholds.min_runs_in_window}
-      and (count(*) filter (where status = 'failure'))::float8 / count(*)
+      and (count(*) filter (where ${failed}))::float8 / count(*)
         > ${thresholds.failure_rate_above}
   `);
 
