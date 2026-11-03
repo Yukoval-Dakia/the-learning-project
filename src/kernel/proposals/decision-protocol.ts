@@ -1,11 +1,12 @@
 // The one decision transaction for proposal accepts and dismisses. The kernel owns
-// the decision lock, the rate re-check under it, the single rate event and the
-// decision signal; owners supply only their domain effect. Lock order is fixed:
-// proposal_decision first, owner domain locks inside the effect.
+// the decision lock, the re-check under it of the recorded rate and of the
+// proposal's correction state, the single rate event and the decision signal;
+// owners supply only their domain effect. Lock order is fixed: proposal_decision
+// first, owner domain locks inside the effect.
 
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
-import { writeEvent } from '@/kernel/events';
+import { getCorrectionStatus, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { acquireProposalDecisionLock, findExistingRateEvent } from './applier-helpers';
 import {
@@ -59,6 +60,11 @@ export interface ProposalAcceptPlan<TResult, TPrepared> {
    * Returning SkippedProposalDecision ends the accept without a rate or signal.
    */
   prepare?(): Promise<TPrepared | SkippedProposalDecision<TResult>>;
+  /**
+   * The owner's prepare commits its own writes, so the decision is also re-checked under
+   * the lock before prepare runs, not only in the decision transaction.
+   */
+  readonly recheckBeforePrepare?: true;
   /** Owner domain effect inside the decision transaction, after the kernel re-checks. */
   effect(
     ctx: ProposalAcceptEffectContext,
@@ -77,6 +83,26 @@ function conflictWith(proposalId: string, decided: RecordedProposalRate): ApiErr
     `proposal ${proposalId} already decided as ${decided.decision}`,
     409,
   );
+}
+
+type LockedDecision =
+  | { readonly status: 'open' }
+  | { readonly status: 'decided'; readonly rate: RecordedProposalRate }
+  | { readonly status: 'corrected'; readonly state: string };
+
+// A retraction that committed while this decision waited for the lock must stop it, the
+// same as a retraction seen before the decision started.
+async function readDecisionUnderLock(tx: Tx, proposalId: string): Promise<LockedDecision> {
+  await acquireProposalDecisionLock(tx, proposalId);
+  const decided = await findExistingRateEvent(tx, proposalId);
+  if (decided) return { status: 'decided', rate: decided };
+  const correction = await getCorrectionStatus(tx, proposalId);
+  if (correction.state !== 'active') return { status: 'corrected', state: correction.state };
+  return { status: 'open' };
+}
+
+function correctedAccept(proposalId: string, state: string): ApiError {
+  return new ApiError('conflict', `proposal ${proposalId} is ${state} and cannot be accepted`, 409);
 }
 
 async function writeRateEvent(
@@ -125,18 +151,27 @@ export async function runProposalAccept<TResult, TPrepared = undefined>(
     return replayed(recorded);
   }
 
+  const acceptable = (locked: LockedDecision): LockedDecision => {
+    if (locked.status === 'decided' && locked.rate.decision !== 'accept') {
+      throw conflictWith(proposalId, locked.rate);
+    }
+    if (locked.status === 'corrected') throw correctedAccept(proposalId, locked.state);
+    return locked;
+  };
+
+  if (plan.recheckBeforePrepare) {
+    const locked = acceptable(await db.transaction((tx) => readDecisionUnderLock(tx, proposalId)));
+    if (locked.status === 'decided') return replayed(locked.rate);
+  }
+
   const prepared = plan.prepare ? await plan.prepare() : (undefined as TPrepared);
   if (prepared instanceof SkippedProposalDecision) {
     return { outcome: 'skipped', result: prepared.result };
   }
 
   const settled = await db.transaction(async (tx) => {
-    await acquireProposalDecisionLock(tx, proposalId);
-    const decided = await findExistingRateEvent(tx, proposalId);
-    if (decided) {
-      if (decided.decision !== 'accept') throw conflictWith(proposalId, decided);
-      return { status: 'decided', rate: decided } as const;
-    }
+    const locked = acceptable(await readDecisionUnderLock(tx, proposalId));
+    if (locked.status === 'decided') return locked;
 
     let rateWrites = 0;
     const outcome = await plan.effect(
@@ -191,12 +226,13 @@ export async function runProposalDismiss(
   plan: ProposalDismissPlan,
 ): Promise<ProposalDismissedResult> {
   const settled = await db.transaction(async (tx) => {
-    await acquireProposalDecisionLock(tx, proposalId);
-    const decided = await findExistingRateEvent(tx, proposalId);
-    if (decided) {
-      if (decided.decision !== 'dismiss') throw conflictWith(proposalId, decided);
-      return { rateEventId: decided.id, idempotent: true } as const;
+    const locked = await readDecisionUnderLock(tx, proposalId);
+    if (locked.status === 'decided') {
+      if (locked.rate.decision !== 'dismiss') throw conflictWith(proposalId, locked.rate);
+      return { rateEventId: locked.rate.id, idempotent: true } as const;
     }
+    // Same answer the dispatcher gives a proposal already retracted before the dismiss.
+    if (locked.status === 'corrected') return { rateEventId: null, idempotent: true } as const;
     const rateEventId = await writeRateEvent(tx, proposalId, 'dismiss', plan.userNote);
     if (plan.effect) await plan.effect(tx);
     if (plan.signal === 'in_transaction') {
