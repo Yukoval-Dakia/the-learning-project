@@ -1360,7 +1360,7 @@ async function runCli(): Promise<void> {
   ).length;
 
   // --- dependency facts -----------------------------------------------------
-  const { snapshot } = collectDependencySnapshot(projectRoot);
+  const { snapshot, report: dependencyReport } = collectDependencySnapshot(projectRoot);
   const baselinePath = 'scripts/capability-boundary-baseline.json';
   const baseline = parseBaseline(
     readFileSync(resolve(projectRoot, baselinePath), 'utf8'),
@@ -1484,7 +1484,11 @@ async function runCli(): Promise<void> {
     },
     dependency: {
       totals: {
-        capabilityToServer: snapshot.debts.capabilityToServer.total,
+        // The 531 ceiling is a separate gate from the decrease-only ledger and was pinned on the
+        // full capability -> server count, so it keeps counting the platform ai/boss edges that
+        // the ledger leaves out.
+        capabilityToServer:
+          snapshot.debts.capabilityToServer.total + dependencyReport.platformCapabilityToServer,
         serverToCapabilityDeep: snapshot.debts.serverToCapabilityDeep.total,
         crossCapabilityValue: snapshot.debts.crossCapabilityValue.total,
       },
