@@ -14,6 +14,7 @@ import type { RetentionReading } from '@/core/schema/scheduling-state';
 import type { Db, Tx } from '@/db/client';
 import { event, material_fsrs_state } from '@/db/schema';
 import { HostOperationNotInstalledError } from '@/kernel/host-operation';
+import { lastKnowledgeActivityAt } from '@/kernel/read-models/knowledge-activity';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { resolveSchedulingProjection } from '@/kernel/records/scheduling-state';
 import { retrievabilityForKc, selectedForgettingEngine } from '@/kernel/scheduling';
@@ -233,6 +234,9 @@ function judgment(
   scheduling: ComponentRead<SchedulingReviewFact>,
   durations: ReadonlyMap<string, number | null> | null,
   nonKcIds: ReadonlySet<string> = new Set(),
+  // YUK-1778 — any-event activity clock from the event spine; null when the
+  // derivation found nothing (or was not run for this read path).
+  activity: Date | null = null,
 ): LearnerJudgment {
   const entry = mastery.kind === 'available' ? mastery.values.get(id) : undefined;
   const memory = retention.kind === 'available' ? retention.values.get(id) : undefined;
@@ -291,6 +295,10 @@ function judgment(
     p_correct_now: effectivePfa,
     ability_claim: claim,
     retention: itemRetention,
+    evidence_timing: {
+      last_outcome_at: entry?.last_outcome_at ?? null,
+      last_activity_at: activity,
+    },
     review_timing: reviewTiming({ asOf, ability, retention: itemRetention, claim, ...basis }),
     retention_forecast: unknown('incumbent_port_exposes_current_retention_only'),
     uncertainty: {
@@ -466,6 +474,9 @@ export async function readLearnerJudgments(
       mastery = unknown('mastery_component_unavailable');
     }
     const unread = unknown('retention_source_not_injected');
+    // The injected read stays a partial source override: no extra DB access,
+    // so the any-event clock stays null (the practice clock still comes from
+    // the injected mastery entries).
     batch.items = ids.map((id) => judgment(id, mastery, unread, asOf, unread, null));
     return batch;
   }
@@ -526,8 +537,17 @@ export async function readLearnerJudgments(
       }
     }
     const retention = retentionRead(scheduling);
+    // YUK-1778 — the any-event activity clock rides the same snapshot in its
+    // own savepoint; a failed derivation degrades to per-item null (display
+    // clock, fail-soft) instead of aborting the ability/retention readings.
+    let activity: ReadonlyMap<string, Date> = new Map();
+    try {
+      activity = await tx.transaction((part) => lastKnowledgeActivityAt(part, ids));
+    } catch {
+      activity = new Map();
+    }
     batch.items = ids.map((id) =>
-      judgment(id, mastery, retention, asOf, scheduling, durations, nonKcIds),
+      judgment(id, mastery, retention, asOf, scheduling, durations, nonKcIds, activity.get(id) ?? null),
     );
     return batch;
   };
