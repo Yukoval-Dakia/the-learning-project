@@ -48,6 +48,7 @@ import {
 } from './blocks/PresentationBlocks';
 import type { PfToast } from './PracticeFacePage';
 import {
+  KEEPALIVE_MAX_BODY_BYTES,
   type PaperDetail,
   type PaperSlot,
   allocateKeepaliveBudget,
@@ -1192,6 +1193,9 @@ function PaperVisit({
     return chained && acked !== undefined ? acked + 1 : acked;
   };
 
+  // YUK-1719 — keepalive draft bytes this page still has in flight (granted by a flush and not
+  // yet settled). The browser's ~64KB keepalive budget is shared page-wide.
+  const keepaliveBytesInFlight = useRef(0);
   // Single flush path for exit and pagehide. Fires every not-yet-fired debounce so its draft
   // joins the in-flight set; with includeInFlight it also re-issues a save for slots whose
   // POST is still open (pagehide teardown may cancel the original). keepalive keeps the PUT
@@ -1232,22 +1236,31 @@ function PaperVisit({
     // keepalive bodies share ONE page-level budget, so allocate it cumulatively across the
     // batch: slots that don't fit fall back to a normal (best-effort) fetch rather than
     // making the later fetch() throw and lose their drafts. Non-keepalive flushes skip this.
+    // YUK-1719 — the budget is the page's, not this batch's: a close runs hidden first and
+    // pagehide right after, so subtract what earlier keepalive drafts still hold in flight, or
+    // pagehide's in-flight resend could overrun 64KB and fail while the hidden copies go out.
+    const bodySizes = opts.keepalive
+      ? dirty.map((d) =>
+          paperAnswerDraftBodyBytes(artifactId, {
+            session_id: sessionRef.current ?? '',
+            question_id: d.questionId,
+            part_ref: d.partRef,
+            answer_md: d.answer,
+            image_refs: evidenceIdsForSlot(evidenceRef.current, d.key),
+            assessment: nativePayloadFor(d.key),
+            expected_save_epoch: draftEpoch(d.key, d.chained),
+          }),
+        )
+      : [];
     const keepaliveFlags = opts.keepalive
       ? allocateKeepaliveBudget(
-          dirty.map((d) =>
-            paperAnswerDraftBodyBytes(artifactId, {
-              session_id: sessionRef.current ?? '',
-              question_id: d.questionId,
-              part_ref: d.partRef,
-              answer_md: d.answer,
-              image_refs: evidenceIdsForSlot(evidenceRef.current, d.key),
-              assessment: nativePayloadFor(d.key),
-              expected_save_epoch: draftEpoch(d.key, d.chained),
-            }),
-          ),
+          bodySizes,
+          KEEPALIVE_MAX_BODY_BYTES - keepaliveBytesInFlight.current,
         )
       : dirty.map(() => false);
     dirty.forEach((d, i) => {
+      const reserved = keepaliveFlags[i] ? bodySizes[i] : 0;
+      keepaliveBytesInFlight.current += reserved;
       void runSave(
         d.key,
         d.questionId,
@@ -1256,7 +1269,9 @@ function PaperVisit({
         keepaliveFlags[i],
         undefined,
         d.chained,
-      );
+      ).finally(() => {
+        keepaliveBytesInFlight.current -= reserved;
+      });
     });
   };
 
