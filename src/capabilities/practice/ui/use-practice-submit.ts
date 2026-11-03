@@ -405,6 +405,22 @@ function withKey(set: ReadonlySet<string>, key: string, on: boolean): ReadonlySe
   return next;
 }
 
+// YUK-1729 — a recovered terminal verdict that still needs the learner's rating step. Same split
+// as onPendingSettled: review_required, partial_unknown, or an explicit null final rating.
+type RecoveredTerminalRun = Extract<
+  NonNullable<IssuanceState['settled']>,
+  { kind: 'terminal' }
+>['run'];
+function verdictNeedsLearnerRating(run: RecoveredTerminalRun): boolean {
+  const r = run.result;
+  return (
+    run.status === 'done' &&
+    (r?.status === 'review_required' ||
+      r?.coarse_outcome === 'partial_unknown' ||
+      r?.final_rating === null)
+  );
+}
+
 export function usePracticeSubmit({
   item,
   sessionId,
@@ -643,6 +659,13 @@ export function usePracticeSubmit({
             return;
           }
           settledApplied.current = issuanceId;
+          // A verdict the learner still has to rate (review_required, partial unknown, no
+          // rating) is not restored as a settled card: that card's commit needs this visit's own
+          // preview and activation intent. Replay advice instead, back into the rating step.
+          if (settled.kind === 'terminal' && verdictNeedsLearnerRating(settled.run)) {
+            setRecoverIssuance(issuanceId);
+            return;
+          }
           if (settled.kind === 'pending') {
             setPendingRun({ runId: settled.run_id, pollUrl: settled.poll_url });
             return;
