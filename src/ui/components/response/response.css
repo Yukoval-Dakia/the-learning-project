@@ -1,669 +1,878 @@
-/* YUK-1051 — 通用 response 组件族样式（.rs- 前缀）。
+/* YUK-1051 / YUK-1473 — the shared answer controls (.rs- prefix), in M3E.
  *
- * 规则（preflight §2）：
- *   - 只用现有 tokens/primitives；.rs- 前缀，不覆盖既有类名。
- *   - question-bank 红线：不做 opacity-gated 入场（只过渡 hover/focus，
- *     绝不拿 opacity 0→1 门控可见性）。
- *   - §6.4 视觉语言：对错色只在 feedback release 后由宿主挂 .is-right/.is-wrong；
- *     paper 作答全程只有中性的 .is-sel 选中态（缓冲反馈）。
+ * Every consumer renders them inside an M3E-marked [data-ui-next] root (the app shell is one), so
+ * the rules read the Google M3 roles (--un-md-sys-*) directly; the lightbox, portalled to <body>,
+ * carries its own scope. The single-question studio's look is the reference (its scoped copies
+ * in renderers.css folded in here): sizes, spacing and line heights keep their px values; colour,
+ * shape and type families follow the roles. Design record:
+ * docs/design/2026-11-03-response-controls-m3e.md.
+ *
+ *   - No opacity-gated entrance (question-bank red line): only hover / focus / state changes move,
+ *     and every transition reads a --un-t-* token, which reduced motion zeroes.
+ *   - §6.4: right / wrong colours appear only after feedback release, when the host puts
+ *     .is-right / .is-wrong on the picked option; answering shows the neutral .is-sel only.
+ *   - Choice states never rely on colour alone: selected = filled container + inner ring (and a
+ *     checked box for multi), right = solid double-weight edge + filled letter, wrong = dashed edge
+ *     + ringed letter. Badges carry their text and icon.
  */
 
-/* ── 单/多选 ─────────────────────────────────────────────── */
-.rs-opts {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  margin-top: var(--s-5);
-}
-.rs-opt {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s-3);
-  width: 100%;
-  text-align: left;
-  border: 1px solid var(--line);
-  background: var(--paper-raised);
-  border-radius: var(--r-2);
-  padding: var(--s-3) var(--s-4);
-  cursor: pointer;
-  font: inherit;
-  color: var(--ink-2);
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out);
-}
-.rs-opt:hover:not(:disabled) {
-  border-color: var(--ink-5);
-}
-.rs-opt:disabled {
-  cursor: default;
-}
-.rs-opt:focus-visible {
-  outline: none;
-  border-color: var(--coral);
-  box-shadow: var(--shadow-focus);
-}
-.rs-opt-k {
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-  flex: none;
-  min-width: 18px;
-}
-.rs-opt-t {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--fs-body-lg);
-  line-height: var(--lh-prose);
-  color: var(--ink);
-}
-/* 多选选中记号：勾选框式 chip（区别于单选纯描边），仍无对错语义。 */
-.rs-opt-box {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  border: 1.5px solid var(--line-strong);
-  border-radius: 4px;
-  align-self: center;
-  display: inline-grid;
-  place-items: center;
-  color: transparent;
-}
-.rs-opt.is-sel {
-  border-color: var(--coral);
-  background: var(--coral-soft);
-  box-shadow: var(--shadow-focus);
-}
-.rs-opt.is-sel .rs-opt-k {
-  color: var(--coral-ink);
-}
-.rs-opt.is-sel .rs-opt-box {
-  border-color: var(--coral-fill);
-  background: var(--coral-fill);
-  color: var(--on-coral-fill);
-}
-/* graded —— color IS judgment，只在 release 后出现（§6.4）。 */
-.rs-opt.is-right {
-  border-color: var(--good-line);
-  background: var(--good-soft);
-  box-shadow: none;
-}
-.rs-opt.is-right .rs-opt-k {
-  color: var(--good-ink);
-}
-.rs-opt.is-wrong {
-  border-color: var(--again-line);
-  background: var(--again-soft);
-  box-shadow: none;
-}
-.rs-opt.is-wrong .rs-opt-k {
-  color: var(--again-ink);
-}
-.rs-opts-foot {
-  margin-top: var(--s-2);
-  display: flex;
-  justify-content: flex-end;
-}
-.rs-clear {
-  border: 0;
-  background: transparent;
-  color: var(--ink-4);
-  font-size: var(--fs-meta);
-  font-family: var(--font-mono);
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: var(--r-1);
-}
-.rs-clear:hover {
-  color: var(--ink-2);
-  background: var(--paper-sunk);
+[data-ui-next] {
+  /* ── Single / multi choice ─────────────────────────────── */
+  & .rs-opts {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    margin-top: 20px;
+  }
+  & .rs-opt {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    width: 100%;
+    min-height: 64px;
+    padding: 14px 18px;
+    border: 1px solid var(--un-md-sys-color-outline);
+    border-radius: var(--un-md-sys-shape-medium);
+    background: var(--un-md-sys-color-surface-container-lowest);
+    box-shadow: none;
+    color: var(--un-md-sys-color-on-surface);
+    font-family: var(--un-font-sans);
+    font-size: 16px;
+    line-height: 1.65;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      border-color var(--un-t-feedback) var(--un-ease-glide),
+      background-color var(--un-t-feedback) var(--un-ease-glide),
+      box-shadow var(--un-t-feedback) var(--un-ease-glide);
+  }
+  & .rs-opt:hover:not(:disabled) {
+    border-color: var(--un-md-sys-color-primary);
+  }
+  & .rs-opt:disabled {
+    cursor: default;
+    opacity: 1;
+    color: var(--un-md-sys-color-on-surface);
+  }
+  & .rs-opt-k {
+    display: grid;
+    place-items: center;
+    flex: 0 0 24px;
+    width: 24px;
+    height: 28px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 15px;
+    font-weight: 600;
+  }
+  & .rs-opt-t {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--un-md-sys-color-on-surface);
+    font-size: 17px;
+    line-height: 1.7;
+  }
+  & .rs-opt-t .katex-display {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  /* Multi-pick box: an M3 checkbox, so multi reads apart from single without colour. */
+  & .rs-opt-box {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    align-self: center;
+    box-sizing: border-box;
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--un-md-sys-color-on-surface-variant);
+    border-radius: 2px;
+    color: transparent;
+  }
+  & .rs-opt.is-sel {
+    border-color: var(--un-md-sys-color-primary);
+    background: var(--un-md-sys-color-secondary-container);
+    box-shadow: inset 0 0 0 1px var(--un-md-sys-color-primary);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+  & .rs-opt.is-sel .rs-opt-box {
+    border-color: var(--un-md-sys-color-primary);
+    background: var(--un-md-sys-color-primary);
+    color: var(--un-md-sys-color-on-primary);
+  }
+  /* graded — colour is the judgement, and only after release (§6.4). */
+  & .rs-opt.is-right {
+    border-color: var(--un-positive);
+    background: var(--un-positive-soft);
+    box-shadow: inset 0 0 0 1px var(--un-positive);
+  }
+  & .rs-opt.is-wrong {
+    border-color: var(--un-caution);
+    border-style: dashed;
+    background: var(--un-caution-soft);
+    box-shadow: none;
+  }
+  & .rs-opt:is(.is-right, .is-wrong) .rs-opt-k {
+    height: 24px;
+    border-radius: var(--un-md-sys-shape-full);
+  }
+  & .rs-opt.is-right .rs-opt-k {
+    background: var(--un-positive);
+    color: var(--un-md-sys-color-surface-container-lowest);
+  }
+  & .rs-opt.is-wrong .rs-opt-k {
+    box-shadow: inset 0 0 0 1.5px var(--un-caution);
+    color: var(--un-caution);
+  }
+  & .rs-opt.is-right .rs-opt-box {
+    border-color: var(--un-positive);
+    background: var(--un-positive);
+    color: var(--un-md-sys-color-surface-container-lowest);
+  }
+  & .rs-opt.is-wrong .rs-opt-box {
+    border-color: var(--un-caution);
+    color: var(--un-caution);
+  }
+  & .rs-opts-foot {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 8px;
+  }
+  /* 清除选择: an M3 text button. */
+  & .rs-clear {
+    min-height: 40px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: var(--un-md-sys-shape-full);
+    background: transparent;
+    color: var(--un-md-sys-color-primary);
+    font-size: var(--un-md-sys-typescale-label-large-size);
+    font-weight: var(--un-md-sys-typescale-label-large-weight);
+    line-height: var(--un-md-sys-typescale-label-large-line-height);
+    letter-spacing: var(--un-md-sys-typescale-label-large-tracking);
+    cursor: pointer;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+  & .rs-clear:hover {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-primary) var(--un-md-sys-state-hover),
+      transparent
+    );
+  }
+
+  /* ── Text / numeric / formula (raw text kept; preview is derived) ── */
+  & .rs-textwrap {
+    margin-top: 20px;
+  }
+  /* The answer fields share one outlined field: the studio's (12px corners, outline edge, low
+     container fill, the app's 3px focus ring). */
+  & :is(.rs-textarea, .rs-match-select, .rs-order-pos) {
+    min-height: 48px;
+    padding: 12px 16px;
+    border: 1px solid var(--un-md-sys-color-outline);
+    border-radius: var(--un-md-sys-shape-medium);
+    background: var(--un-md-sys-color-surface-container-low);
+    color: var(--un-md-sys-color-on-surface);
+    font: inherit;
+  }
+  & :is(.rs-textarea, .rs-match-select, .rs-order-pos):focus-visible {
+    outline: 3px solid var(--un-md-sys-color-primary);
+    outline-offset: 3px;
+    box-shadow: none;
+  }
+  & :is(.rs-textarea, .rs-match-select, .rs-order-pos):disabled {
+    background: var(--un-md-sys-color-surface-container-high);
+    color: var(--un-md-sys-color-on-surface-variant);
+  }
+  & .rs-textarea {
+    box-sizing: border-box;
+    width: 100%;
+    resize: vertical;
+  }
+  & .rs-textarea::placeholder {
+    color: var(--un-md-sys-color-on-surface-variant);
+    opacity: 1;
+  }
+  & .rs-preview {
+    margin-top: 8px;
+    padding: 12px 16px;
+    border: 1px dashed var(--un-md-sys-color-outline-variant);
+    border-radius: var(--un-md-sys-shape-small);
+    background: var(--un-md-sys-color-surface-container-low);
+    color: var(--un-md-sys-color-on-surface);
+    overflow-wrap: anywhere;
+  }
+  & .rs-preview .katex-display {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  & .rs-preview-label {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 16px;
+  }
+
+  /* ── Matching (native select per left item; full keyboard) ── */
+  & .rs-match {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 20px;
+  }
+  & .rs-match-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    border: 1px solid var(--un-md-sys-color-outline-variant);
+    border-radius: var(--un-md-sys-shape-medium);
+    background: var(--un-md-sys-color-surface-container-lowest);
+  }
+  & .rs-match-left {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--un-md-sys-color-on-surface);
+    font-size: 15px;
+    line-height: 1.7;
+  }
+  & .rs-match-select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* ── Ordering (move buttons / position field) ──────────── */
+  & .rs-order {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 20px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  /* Wraps the controls under the text once the row is too narrow for both. */
+  & .rs-order-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    padding: 8px 12px;
+    border: 1px solid var(--un-md-sys-color-outline-variant);
+    border-radius: var(--un-md-sys-shape-medium);
+    background: var(--un-md-sys-color-surface-container-low);
+    color: var(--un-md-sys-color-on-surface);
+  }
+  & .rs-order-idx {
+    flex: none;
+    width: 20px;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  & .rs-order-t {
+    flex: 1 1 10em;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--un-md-sys-color-on-surface);
+    font-size: 15px;
+    line-height: 1.7;
+  }
+  & .rs-order-ctrls {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 4px;
+    margin-inline-start: auto;
+  }
+  /* ↑ / ↓: M3 standard icon buttons. */
+  & .rs-order-move {
+    display: inline-grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--un-md-sys-shape-full);
+    background: transparent;
+    color: var(--un-md-sys-color-on-surface-variant);
+    cursor: pointer;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+  & .rs-order-move:hover:not(:disabled) {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-surface-variant) var(--un-md-sys-state-hover),
+      transparent
+    );
+  }
+  & .rs-order-move:disabled {
+    opacity: 1;
+    color: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-surface) var(--un-md-sys-state-disabled-content),
+      transparent
+    );
+    cursor: default;
+  }
+  & .rs-order-pos {
+    width: 44px;
+    text-align: center;
+  }
+
+  /* ── Attachment strip (input-chip style: thumb, scope, trailing remove) ── */
+  & .rs-attach {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  & .rs-attach-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    min-width: 0;
+    padding: 4px;
+    border: 1px solid var(--un-md-sys-color-outline-variant);
+    border-radius: var(--un-md-sys-shape-small);
+    background: var(--un-md-sys-color-surface-container-low);
+    color: var(--un-md-sys-color-on-surface);
+  }
+  & .rs-attach-thumb {
+    display: block;
+    width: 64px;
+    height: 48px;
+    border: 1px solid var(--un-md-sys-color-outline-variant);
+    border-radius: var(--un-md-sys-shape-extra-small);
+    object-fit: cover;
+  }
+  & .rs-attach-zoom {
+    padding: 0;
+    border: 0;
+    border-radius: var(--un-md-sys-shape-extra-small);
+    background: transparent;
+    cursor: zoom-in;
+  }
+  & .rs-attach-file {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 4px 6px;
+    overflow-wrap: anywhere;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 13px;
+  }
+  & .rs-attach-file > svg {
+    flex: none;
+  }
+  & .rs-attach-bind {
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 13px;
+  }
+  & .rs-attach-x {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--un-md-sys-shape-full);
+    background: transparent;
+    color: var(--un-md-sys-color-on-surface-variant);
+    cursor: pointer;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+  & .rs-attach-x:hover:not(:disabled) {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-surface) var(--un-md-sys-state-hover),
+      transparent
+    );
+    color: var(--un-md-sys-color-on-surface);
+  }
+  & .rs-attach-x:disabled {
+    opacity: 1;
+    color: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-surface) var(--un-md-sys-state-disabled-content),
+      transparent
+    );
+    cursor: default;
+  }
+  & .rs-attach-add {
+    margin-top: 12px;
+  }
+
+  /* ── Media evidence (image inline / audio-video controls / PDF download only) ── */
+  & .rs-ev-img {
+    display: block;
+    max-width: 100%;
+    border: 1px solid var(--un-md-sys-color-outline-variant);
+    border-radius: var(--un-md-sys-shape-small);
+  }
+  & .rs-ev-audio,
+  & .rs-ev-video {
+    display: block;
+    width: 100%;
+    max-width: 420px;
+  }
+  /* Download link: drawn as an M3 outlined button. */
+  & .rs-ev-download {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    box-sizing: border-box;
+    max-width: 100%;
+    min-height: 40px;
+    padding: 8px 16px;
+    border: 1px solid var(--un-md-sys-color-outline);
+    border-radius: var(--un-md-sys-shape-full);
+    background: transparent;
+    color: var(--un-md-sys-color-primary);
+    font-size: var(--un-md-sys-typescale-label-large-size);
+    font-weight: var(--un-md-sys-typescale-label-large-weight);
+    line-height: var(--un-md-sys-typescale-label-large-line-height);
+    overflow-wrap: anywhere;
+    text-decoration: none;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+  & .rs-ev-download > svg {
+    flex: none;
+  }
+  & .rs-ev-download:hover {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-primary) var(--un-md-sys-state-hover),
+      transparent
+    );
+  }
+  & .rs-ev-text {
+    max-height: 200px;
+    margin: 0;
+    padding: 8px 12px;
+    overflow: auto;
+    border: 1px solid var(--un-md-sys-color-outline-variant);
+    border-radius: var(--un-md-sys-shape-small);
+    background: var(--un-md-sys-color-surface-container-low);
+    color: var(--un-md-sys-color-on-surface);
+    font-size: 14px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  & .rs-ev-pending {
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 13px;
+  }
+  /* Upload failure is an error, not a judgement: error container. */
+  & .rs-ev-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    border-radius: var(--un-md-sys-shape-small);
+    background: var(--un-md-sys-color-error-container);
+    color: var(--un-md-sys-color-on-error-container);
+    font-size: 14px;
+    line-height: 20px;
+  }
+  & .rs-ev-error > svg {
+    flex: none;
+    margin-top: 2px;
+  }
+
+  /* ── Question figure / shared material (same asset the grader sees) ── */
+  & .rs-fig {
+    margin: 16px 0;
+    padding: 12px;
+    border: 1px solid var(--un-md-sys-color-outline-variant);
+    border-radius: var(--un-md-sys-shape-large);
+    background: var(--un-md-sys-color-surface-container-low);
+  }
+  & .rs-fig-body {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: var(--un-md-sys-shape-small);
+    background: transparent;
+    cursor: zoom-in;
+  }
+  & .rs-fig-cap {
+    margin-top: 8px;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 13px;
+    line-height: 1.7;
+    text-align: center;
+  }
+  & .rs-fig-zoom {
+    margin-top: 4px;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 12px;
+    text-align: center;
+  }
+
+  /* ── Evidence viewer (the one modal of this family; focus trap / Esc / restore) ── */
+  &.rs-lightbox-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: var(--un-scrim);
+  }
+  & .rs-lightbox {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    max-width: min(960px, 92vw);
+    max-height: 88vh;
+    overflow: hidden;
+    border-radius: 28px;
+    background: var(--un-md-sys-color-surface-container-high);
+    color: var(--un-md-sys-color-on-surface);
+  }
+  & .rs-lightbox-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 8px 4px 24px;
+  }
+  & .rs-lightbox-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--un-md-sys-color-on-surface);
+    font-size: var(--un-md-sys-typescale-title-medium-size);
+    font-weight: 500;
+    line-height: var(--un-md-sys-typescale-title-medium-line-height);
+    letter-spacing: var(--un-md-sys-typescale-title-medium-tracking);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  & .rs-lightbox-body {
+    display: grid;
+    place-items: center;
+    padding: 8px 24px 24px;
+    overflow: auto;
+  }
+  & .rs-lightbox-body img {
+    max-width: 100%;
+    max-height: 72vh;
+    border-radius: var(--un-md-sys-shape-small);
+  }
+
+  /* ── Optional self-confidence (per question; observe-only) ── */
+  & .rs-confidence {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin-top: 16px;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 14px;
+  }
+  & .rs-confidence-q {
+    color: var(--un-md-sys-color-on-surface);
+  }
+  & .rs-confidence-scale {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  & :is(.rs-confidence-btn, .rs-confidence-skip) {
+    min-width: 40px;
+    min-height: 40px;
+    border: 1px solid var(--un-md-sys-color-outline);
+    border-radius: var(--un-md-sys-shape-full);
+    background: transparent;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      background-color var(--un-t-feedback) var(--un-ease-glide),
+      border-color var(--un-t-feedback) var(--un-ease-glide),
+      color var(--un-t-feedback) var(--un-ease-glide);
+  }
+  & :is(.rs-confidence-btn, .rs-confidence-skip):hover:not(:disabled) {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-surface-variant) var(--un-md-sys-state-hover),
+      transparent
+    );
+    color: var(--un-md-sys-color-on-surface);
+  }
+  /* Picked score: filled container and heavier figure, not a hue alone. */
+  & .rs-confidence-btn.is-selected,
+  & .rs-confidence-btn.is-selected:hover:not(:disabled) {
+    border-color: transparent;
+    background: var(--un-md-sys-color-secondary-container);
+    color: var(--un-md-sys-color-on-secondary-container);
+    font-weight: 700;
+  }
+  & :is(.rs-confidence-btn, .rs-confidence-skip):disabled {
+    opacity: 1;
+    border-color: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-surface) var(--un-md-sys-state-disabled-container),
+      transparent
+    );
+    color: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-surface) var(--un-md-sys-state-disabled-content),
+      transparent
+    );
+    cursor: default;
+  }
+  & .rs-confidence-skip {
+    padding-inline: 12px;
+    font-size: 13px;
+  }
+  & .rs-confidence-hint {
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 12px;
+  }
+
+  /* ── Save state (saved only after the server ack) ──────── */
+  & .rs-save {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    line-height: var(--un-md-sys-typescale-body-medium-line-height);
+    white-space: nowrap;
+  }
+  & .rs-save > svg {
+    flex: none;
+  }
+  & .rs-save:is(.is-error, .is-conflict) {
+    box-sizing: border-box;
+    padding: 0 12px;
+    border-radius: var(--un-md-sys-shape-small);
+  }
+  & .rs-save.is-error {
+    background: var(--un-md-sys-color-error-container);
+    color: var(--un-md-sys-color-on-error-container);
+  }
+  & .rs-save.is-conflict {
+    background: var(--un-md-sys-color-secondary-container);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+  & button.rs-save.is-error {
+    border: 0;
+    font: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+  & button.rs-save.is-error:hover:not(:disabled) {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-error-container) var(--un-md-sys-state-hover),
+      var(--un-md-sys-color-error-container)
+    );
+  }
+  & button.rs-save.is-error:disabled {
+    opacity: 1;
+    cursor: default;
+  }
+
+  /* ── Slot status badge (lifecycle, then the released outcome) ── */
+  & .rs-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    box-sizing: border-box;
+    max-width: 100%;
+    min-height: 24px;
+    padding: 2px 8px;
+    border-radius: var(--un-md-sys-shape-small);
+    background: var(--un-md-sys-color-surface-container-high);
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 16px;
+    overflow-wrap: anywhere;
+  }
+  & .rs-badge > svg {
+    flex: none;
+  }
+  & .rs-badge[data-tone="info"] {
+    background: var(--un-md-sys-color-secondary-container);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+  & .rs-badge[data-tone="good"] {
+    background: var(--un-positive-soft);
+    color: var(--un-positive);
+  }
+  & .rs-badge:is([data-tone="hard"], [data-tone="again"]) {
+    background: var(--un-caution-soft);
+    color: var(--un-caution);
+  }
+
+  /* ── Evaluation-group panel (which questions a page of evidence counts for) ── */
+  & .rs-group {
+    margin-top: 16px;
+    padding: 12px 16px;
+    border-radius: var(--un-md-sys-shape-large);
+    background: var(--un-md-sys-color-surface-container-low);
+  }
+  & .rs-group-h {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--un-md-sys-color-on-surface);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 20px;
+  }
+  & .rs-group-h > svg {
+    flex: none;
+  }
+  & .rs-group-item {
+    margin-top: 8px;
+  }
+  & .rs-group-slots {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  /* Scope chips: M3 filter chips, with a check when picked. */
+  & .rs-group-slot {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    box-sizing: border-box;
+    min-height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--un-md-sys-color-outline);
+    border-radius: var(--un-md-sys-shape-small);
+    background: transparent;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-label-large-size);
+    font-weight: var(--un-md-sys-typescale-label-large-weight);
+    cursor: pointer;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+  & .rs-group-slot:hover:not(:disabled) {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-surface-variant) var(--un-md-sys-state-hover),
+      transparent
+    );
+  }
+  & .rs-group-slot[aria-pressed="true"] {
+    border-color: transparent;
+    background: var(--un-md-sys-color-secondary-container);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+  /* Empty alternative text: aria-pressed stays the state the screen reader hears. */
+  & .rs-group-slot[aria-pressed="true"]::before {
+    content: "✓" / "";
+  }
+  & .rs-group-slot:disabled {
+    opacity: 1;
+    color: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-surface) var(--un-md-sys-state-disabled-content),
+      transparent
+    );
+    cursor: default;
+  }
+  & .rs-group-note {
+    margin-top: 8px;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
+  /* ── Slot field wrapper (one answer slot under the stem) ── */
+  & .rs-slotfield {
+    min-width: 0;
+    margin-top: 16px;
+  }
+  & .rs-slotfield-label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    margin-bottom: 4px;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 13px;
+  }
+
+  /* ── Focus: the app's ring on every tappable control (3px primary, 3px out) ── */
+  &
+    :is(
+      .rs-opt,
+      .rs-clear,
+      .rs-order-move,
+      .rs-attach-x,
+      .rs-attach-zoom,
+      .rs-ev-download,
+      .rs-fig-body,
+      .rs-confidence-btn,
+      .rs-confidence-skip,
+      button.rs-save,
+      .rs-group-slot
+    ):focus-visible {
+    outline: 3px solid var(--un-md-sys-color-primary);
+    outline-offset: 3px;
+    box-shadow: none;
+  }
 }
 
-/* ── 文本 / 数值 / 公式（原文保留 + 派生预览） ───────────────── */
-.rs-textwrap {
-  margin-top: var(--s-5);
-}
-.rs-textarea {
-  width: 100%;
-  box-sizing: border-box;
-  resize: vertical;
-  border: 1px solid var(--line);
-  background: var(--paper-raised);
-  border-radius: var(--r-2);
-  padding: var(--s-3) var(--s-4);
-  font: inherit;
-  font-size: var(--fs-body);
-  line-height: var(--lh-prose);
-  color: var(--ink);
-}
-.rs-textarea:focus-visible {
-  outline: none;
-  border-color: var(--coral);
-  box-shadow: var(--shadow-focus);
-}
-.rs-textarea:disabled {
-  background: var(--paper-sunk);
-  color: var(--ink-3);
-}
-.rs-preview {
-  margin-top: var(--s-2);
-  border: 1px dashed var(--line-strong);
-  background: var(--paper-sunk);
-  border-radius: var(--r-2);
-  padding: var(--s-3) var(--s-4);
-}
-.rs-preview-label {
-  display: block;
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  letter-spacing: var(--ls-wide);
-  margin-bottom: 4px;
-}
-
-/* ── 配对（选择 + 键盘；select 原生全键盘可达） ───────────────── */
-.rs-match {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  margin-top: var(--s-5);
-}
-.rs-match-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: var(--s-3);
-  align-items: center;
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  background: var(--paper-raised);
-  padding: var(--s-2) var(--s-3);
-}
-.rs-match-left {
-  font-size: var(--fs-body);
-  line-height: var(--lh-prose);
-  color: var(--ink);
-  min-width: 0;
-}
-.rs-match-select {
-  width: 100%;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-2);
-  background: var(--paper);
-  padding: 6px 8px;
-  font: inherit;
-  font-size: var(--fs-caption);
-  color: var(--ink-2);
-}
-.rs-match-select:focus-visible {
-  outline: none;
-  border-color: var(--coral);
-  box-shadow: var(--shadow-focus);
-}
-
-/* ── 排序（键盘上下移动 / 序号编辑） ────────────────────────── */
-.rs-order {
-  list-style: none;
-  margin: var(--s-5) 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-}
-.rs-order-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  border: 1px solid var(--line);
-  background: var(--paper-raised);
-  border-radius: var(--r-2);
-  padding: var(--s-2) var(--s-3);
-}
-.rs-order-idx {
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-  width: 20px;
-  flex: none;
-  text-align: right;
-}
-.rs-order-t {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--fs-body);
-  line-height: var(--lh-prose);
-  color: var(--ink);
-}
-.rs-order-ctrls {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-}
-.rs-order-move {
-  border: 1px solid var(--line);
-  background: var(--paper);
-  border-radius: var(--r-1);
-  color: var(--ink-3);
-  width: 26px;
-  height: 26px;
-  display: inline-grid;
-  place-items: center;
-  cursor: pointer;
-  padding: 0;
-}
-.rs-order-move:hover:not(:disabled) {
-  border-color: var(--ink-5);
-  color: var(--ink);
-}
-.rs-order-move:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.rs-order-move:focus-visible {
-  outline: none;
-  border-color: var(--coral);
-  box-shadow: var(--shadow-focus);
-}
-.rs-order-pos {
-  width: 44px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-1);
-  background: var(--paper);
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-2);
-  text-align: center;
-  padding: 3px 4px;
-}
-.rs-order-pos:focus-visible {
-  outline: none;
-  border-color: var(--coral);
-  box-shadow: var(--shadow-focus);
-}
-
-/* ── 附件条（整页证据 / 作答附件） ──────────────────────────── */
-.rs-attach {
-  display: flex;
-  gap: var(--s-2);
-  flex-wrap: wrap;
-  margin-top: var(--s-3);
-}
-.rs-attach-item {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  background: var(--paper-sunk);
-  padding: 4px;
-  gap: 6px;
-}
-.rs-attach-thumb {
-  width: 64px;
-  height: 48px;
-  object-fit: cover;
-  border-radius: var(--r-1);
-  border: 1px solid var(--line);
-  display: block;
-}
-.rs-attach-file {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-  padding: 4px 6px;
-}
-.rs-attach-x {
-  position: absolute;
-  top: -7px;
-  right: -7px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: 1px solid var(--line-strong);
-  background: var(--paper-raised);
-  color: var(--ink-3);
-  display: inline-grid;
-  place-items: center;
-  cursor: pointer;
-  padding: 0;
-}
-.rs-attach-x:hover {
-  color: var(--again-ink);
-  border-color: var(--again-line);
-}
-.rs-attach-x:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
-}
-.rs-attach-bind {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-}
-
-/* ── 媒体证据预览（D10：image inline / audio-video 控件 / PDF 下载-only） ── */
-.rs-ev {
-  display: block;
-}
-.rs-ev-img {
-  max-width: 100%;
-  border-radius: var(--r-2);
-  border: 1px solid var(--line);
-  display: block;
-}
-.rs-ev-audio,
-.rs-ev-video {
-  width: 100%;
-  max-width: 420px;
-  display: block;
-}
-.rs-ev-download {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px dashed var(--line-strong);
-  background: var(--paper-sunk);
-  border-radius: var(--r-2);
-  padding: 6px 10px;
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-  text-decoration: none;
-}
-.rs-ev-download:hover {
-  border-color: var(--ink-5);
-  color: var(--ink);
-}
-.rs-ev-text {
-  margin: 0;
-  max-height: 200px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: var(--fs-caption);
-  line-height: var(--lh-prose);
-  color: var(--ink-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  background: var(--paper-sunk);
-  padding: var(--s-2) var(--s-3);
-}
-.rs-ev-pending {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-}
-
-/* ── 题目图表 / 共享材料（判分与学生所见同版资产） ────────────── */
-.rs-fig {
-  margin: var(--s-4) 0;
-  border: 1px solid var(--line);
-  border-radius: var(--r-3);
-  background: var(--paper-sunk);
-  padding: var(--s-3);
-}
-.rs-fig-body {
-  display: block;
-  width: 100%;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  cursor: zoom-in;
-}
-.rs-fig-body:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
-  border-radius: var(--r-2);
-}
-.rs-fig-img {
-  display: block;
-  max-width: 100%;
-  margin: 0 auto;
-  border-radius: var(--r-2);
-}
-.rs-fig-cap {
-  margin-top: var(--s-2);
-  font-size: var(--fs-meta);
-  line-height: var(--lh-prose);
-  color: var(--ink-3);
-  text-align: center;
-}
-.rs-fig-zoom {
-  margin-top: 4px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  text-align: center;
-}
-
-/* ── 整页证据查看 modal（唯一新增 modal；focus-trap / Esc / restore） ── */
-.rs-lightbox-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 70;
-  background: rgba(31, 30, 29, 0.5);
-  display: grid;
-  place-items: center;
-  padding: var(--s-6);
-}
-.rs-lightbox {
-  max-width: min(960px, 92vw);
-  max-height: 88vh;
-  display: flex;
-  flex-direction: column;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: var(--r-3);
-  box-shadow: var(--shadow-3);
-}
-.rs-lightbox-head {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  padding: var(--s-3) var(--s-4);
-  border-bottom: 1px solid var(--line);
-}
-.rs-lightbox-title {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.rs-lightbox-body {
-  overflow: auto;
-  padding: var(--s-4);
-  display: grid;
-  place-items: center;
-}
-.rs-lightbox-body img {
-  max-width: 100%;
-  max-height: 72vh;
-  border-radius: var(--r-2);
-}
-
-/* ── 202-pending 卡（作答已存、判分在后台） ─────────────────────
-   刻意中性（info，非对错色）——pending 不是判定结果，只是「在排队」。 */
-.rs-pending {
-  margin-top: var(--s-5);
-  border: 1px solid color-mix(in oklab, var(--info) 30%, transparent);
-  background: var(--info-soft);
-  border-radius: var(--r-3);
-  padding: var(--s-4) var(--s-5);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-}
-.rs-pending-text {
-  font-size: var(--fs-body);
-  line-height: var(--lh-prose);
-  color: var(--ink-2);
-  margin: 0;
-}
-
-/* ── optional self-confidence (per question; observe-only) ───────── */
-.rs-confidence {
-  margin-top: var(--s-4);
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--s-2) var(--s-3);
-  color: var(--ink-3);
-  font-size: var(--fs-caption);
-}
-.rs-confidence-q {
-  color: var(--ink-2);
-}
-.rs-confidence-scale {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-1);
-}
-.rs-confidence-btn,
-.rs-confidence-skip {
-  min-width: 34px;
-  min-height: 34px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  background: var(--paper);
-  color: var(--ink-2);
-  font: inherit;
-  cursor: pointer;
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-.rs-confidence-btn:hover,
-.rs-confidence-skip:hover {
-  border-color: var(--coral-line);
-  color: var(--ink);
-}
-.rs-confidence-btn.is-selected {
-  border-color: var(--coral-line);
-  background: var(--coral-soft);
-  color: var(--ink);
-  font-weight: 650;
-}
-.rs-confidence-skip {
-  width: auto;
-  padding-inline: var(--s-2);
-  font-size: var(--fs-micro);
-}
-.rs-confidence-hint {
-  color: var(--ink-4);
-  font-size: var(--fs-micro);
-}
-
-/* ── 保存状态 chip（D11：saved 仅在 server ack 之后；generation 可见） ── */
-.rs-save {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-.rs-save.is-saving {
-  color: var(--info-ink);
-}
-.rs-save.is-error {
-  color: var(--again-ink);
-}
-button.rs-save.is-error {
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  padding: var(--s-1) 0;
-  min-height: 24px;
-}
-button.rs-save.is-error:not(:disabled):hover {
-  color: var(--ink-2);
-  text-decoration: underline;
-}
-button.rs-save.is-error:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
-  border-radius: var(--r-1);
-}
-.rs-save.is-conflict {
-  color: var(--hard-ink);
-}
-
-/* ── 联合判分组面板（整页证据绑定子集编辑） ────────────────────── */
-.rs-group {
-  margin-top: var(--s-4);
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  background: var(--paper-sunk);
-  padding: var(--s-3) var(--s-4);
-}
-.rs-group-h {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  letter-spacing: var(--ls-wide);
-}
-.rs-group-slots {
-  display: flex;
-  gap: var(--s-2);
-  flex-wrap: wrap;
-  margin-top: var(--s-2);
-}
-.rs-group-slot {
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-pill);
-  background: var(--paper-raised);
-  color: var(--ink-3);
-  font-size: var(--fs-meta);
-  font-family: inherit;
-  padding: 3px 10px;
-  cursor: pointer;
-}
-.rs-group-slot[aria-pressed="true"] {
-  border-color: var(--coral);
-  background: var(--coral-soft);
-  color: var(--coral-ink);
-}
-.rs-group-slot:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
-}
-.rs-group-note {
-  margin-top: var(--s-2);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  line-height: var(--lh-prose);
-}
-
-/* ── slot field 包装（题面下的单个作答槽） ────────────────────── */
-.rs-slotfield {
-  margin-top: var(--s-4);
-}
-.rs-slotfield-label {
-  display: block;
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  letter-spacing: var(--ls-wide);
-  margin-bottom: 4px;
+/* The page's narrow layout (the studio's 600px step). */
+@media (max-width: 599px) {
+  [data-ui-next] .rs-opt {
+    min-height: 60px;
+    padding: 12px;
+    gap: 10px;
+  }
+  [data-ui-next] .rs-opt-k {
+    flex-basis: 20px;
+    width: 20px;
+  }
+  [data-ui-next].rs-lightbox-scrim {
+    padding: 16px;
+  }
 }
 
 @media (max-width: 720px) {
-  .rs-match-row {
-    grid-template-columns: 1fr;
+  [data-ui-next] .rs-match-row {
+    grid-template-columns: minmax(0, 1fr);
   }
-  .rs-attach-thumb {
+  [data-ui-next] .rs-attach-thumb {
     width: 52px;
     height: 40px;
+  }
+}
+
+/* Touch: rows that wrap keep their 44px hit areas apart. */
+@media (pointer: coarse) {
+  [data-ui-next] :is(.rs-attach, .rs-confidence, .rs-group-slots) {
+    gap: 12px;
+  }
+  [data-ui-next] .rs-order-row {
+    row-gap: 12px;
   }
 }

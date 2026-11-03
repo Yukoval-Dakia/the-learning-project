@@ -5,10 +5,10 @@
 // clamp 到 [1, N]）。移动经 aria-live polite 播报（「『甲』移到第 2 位」）。
 
 import './response.css';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useId, useRef, useState } from 'react';
 
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
 
 import { moveOrderedItem, moveOrderedItemTo } from './response-types';
 
@@ -109,7 +109,7 @@ export function OrderingResponse({
               <span className="rs-order-ctrls">
                 <button
                   type="button"
-                  className="rs-order-move"
+                  className="rs-order-move un-hit"
                   disabled={disabled || idx === 0}
                   aria-label={`上移「${text}」`}
                   ref={(el) => {
@@ -118,16 +118,16 @@ export function OrderingResponse({
                   }}
                   onClick={() => move(id, 'up')}
                 >
-                  <LoomIcon name="chevronDown" size={13} style={{ transform: 'rotate(180deg)' }} />
+                  <ChevronUp size={20} aria-hidden="true" />
                 </button>
                 <button
                   type="button"
-                  className="rs-order-move"
+                  className="rs-order-move un-hit"
                   disabled={disabled || idx === orderedIds.length - 1}
                   aria-label={`下移「${text}」`}
                   onClick={() => move(id, 'down')}
                 >
-                  <LoomIcon name="chevronDown" size={13} />
+                  <ChevronDown size={20} aria-hidden="true" />
                 </button>
                 <input
                   className="rs-order-pos"

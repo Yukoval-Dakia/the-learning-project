@@ -7,10 +7,10 @@
 //   - 不做录音 / 编辑器 / 代码执行；不承诺 PDF 缩略图。
 
 import './response.css';
+import { Download, FileText, Mic, Video } from 'lucide-react';
 import { useCallback, useSyncExternalStore } from 'react';
 
 import { useAssetObject } from '@/ui/lib/assets';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
 
 import { type EvidenceKind, evidenceKindFromMime } from './response-types';
 
@@ -67,7 +67,7 @@ export function AssetEvidencePreview({
       return (
         <button
           type="button"
-          style={{ border: 0, background: 'transparent', padding: 0, cursor: 'zoom-in' }}
+          className="rs-attach-zoom un-hit"
           aria-label={`放大查看${name}`}
           onClick={() => onExpand(assetId)}
         >
@@ -79,10 +79,10 @@ export function AssetEvidencePreview({
   }
   // thumb 模式下非图片一律文件 chip（附件条里不塞播放器/下载链）。
   if (variant === 'thumb') {
-    const icon = effectiveKind === 'audio' ? 'mic' : effectiveKind === 'video' ? 'record' : 'doc';
+    const FileIcon = effectiveKind === 'audio' ? Mic : effectiveKind === 'video' ? Video : FileText;
     return (
       <span className="rs-attach-file">
-        <LoomIcon name={icon} size={13} />
+        <FileIcon size={16} aria-hidden="true" />
         {name}
       </span>
     );
@@ -101,8 +101,8 @@ export function AssetEvidencePreview({
     return <TextEvidence url={resolved.url} name={name} />;
   }
   return (
-    <a className="rs-ev-download" href={resolved.url} download={name}>
-      <LoomIcon name="download" size={13} />
+    <a className="rs-ev-download un-hit" href={resolved.url} download={name}>
+      <Download size={16} aria-hidden="true" />
       {effectiveKind === 'pdf' ? `${name}（PDF · 下载查看）` : `${name}（下载）`}
     </a>
   );
@@ -191,8 +191,8 @@ function TextEvidence({ url, name }: { url: string; name: string }) {
   );
   if (failed) {
     return (
-      <a className="rs-ev-download" href={url} download={name}>
-        <LoomIcon name="download" size={13} />
+      <a className="rs-ev-download un-hit" href={url} download={name}>
+        <Download size={16} aria-hidden="true" />
         {name}（下载）
       </a>
     );
