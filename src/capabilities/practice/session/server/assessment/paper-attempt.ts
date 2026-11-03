@@ -7,6 +7,7 @@ import { answer, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { lockPaperNativeSlot } from '@/kernel/locks/practice-session';
 import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import type { SaveSubmissionRequest } from '../../../grading/public';
 import {
   commitFormalAttempt,
@@ -111,7 +112,7 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
       input.assessment,
     );
     const submission = prepared.submission;
-    const attemptId = `evt_assessment_${submission.submission_id}`;
+    const attemptId = assessmentAttemptEventId(submission.submission_id);
     const [existing] = await tx
       .select({ id: answer.id })
       .from(answer)
@@ -140,7 +141,7 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
     return { prepared, answerId: frozen.answerId };
   });
   const submission = prepared.submission;
-  const attemptId = `evt_assessment_${submission.submission_id}`;
+  const attemptId = assessmentAttemptEventId(submission.submission_id);
   // Validate the immutable original before replaying the current head. A later
   // correction (or retraction) must never reactivate the original candidate.
   const currentVerdict = await resolveVerdictForGroup(db, slot.evaluation_group_id);

@@ -6,6 +6,7 @@ import type {
   EventSubscriptionHandlerFactory,
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { getStartedBoss } from '@/server/boss/client';
 import {
   type FailureLearningBossSend,
@@ -38,7 +39,7 @@ export async function handleFailureLearningAttemptDelivery(
     const attemptEventId =
       source?.action === 'experimental:assessment_activation' &&
       typeof source.payload.submission_id === 'string'
-        ? `evt_assessment_${source.payload.submission_id}`
+        ? assessmentAttemptEventId(source.payload.submission_id)
         : source?.action === 'experimental:assessment_feedback_released' &&
             source.subject_kind === 'event' &&
             source.payload.attempt_event_id === source.subject_id

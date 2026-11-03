@@ -1,6 +1,6 @@
 # src/capabilities/agency — 能动编排
 
-> 夜间链路（dreaming / coach / maintenance / research meeting）+ goal scope 提议 + agent-notes。agent-notes 是 AI 内部协调信道（hints not facts），用户侧只读观察窗。
+> 夜间链路（dreaming / maintenance / research meeting）+ 学习者回访时按需唤醒的 coach + goal scope 提议 + agent-notes。agent-notes 是 AI 内部协调信道（hints not facts），用户侧只读观察窗。
 
 ## WHERE TO LOOK
 | 文件 | 职责 |

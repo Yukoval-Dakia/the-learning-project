@@ -18,6 +18,7 @@ import type { Db } from '@/db/client';
 import { evaluation } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeEvaluationCorrectionProposal } from '@/kernel/proposals/producers';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
 const ProposeGradingCorrectionInputSchema = z
@@ -122,7 +123,7 @@ async function executeProposeGradingCorrection(
       correction_kind: input.correction_kind,
       asserted_verdicts: input.asserted_verdicts,
       observed,
-      attempt_event_id: `evt_assessment_${row.submission_id}`,
+      attempt_event_id: assessmentAttemptEventId(row.submission_id),
       reason_md: input.reason_md,
       evidence_refs: (input.evidence_event_ids ?? []).map((id) => ({
         kind: 'event' as const,

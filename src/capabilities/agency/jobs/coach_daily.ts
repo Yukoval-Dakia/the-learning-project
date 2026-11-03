@@ -1,6 +1,7 @@
 // coach_daily pg-boss handler: builds the Coach allowlist MCP bridge, runs
 // `CoachTask`, and writes trigger + scan events (`experimental:trigger_coach_scan` /
-// `experimental:coach_scan`).
+// `experimental:coach_scan`). Enqueued on learner return when the plan is stale
+// (`@/kernel/coach-wake`), not by the nightly DAG.
 
 import type { Job } from 'pg-boss';
 // The complete run assembly (inbox before/after diff, trigger + scan provenance events,
@@ -228,6 +229,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
   const deriveWeakPoints =
     deps.deriveWeakPointsFn ??
     ((db: Db, input: { now: Date }) => deriveActionableWeakPoints(db, input));
+  // Run-log contract value kept verbatim from the nightly era; the trigger is now the return wake.
   const triggerActorRef = 'nightly_coach';
   const objective = COACH_DAILY_OBJECTIVE;
 
