@@ -134,9 +134,9 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
   const profile = await resolveSubjectProfileForKnowledgeIds(db, knowledgeIds);
 
   // 6. interactive payload — attrs is opaque jsonb, so this is the read barrier.
-  // YUK-1763 — answers never ship to the browser: strip any data-copilot-answer
-  // attributes legacy stored HTML still carries (current authoring rejects them
-  // outright, so this is serve-time defense for pre-existing rows only).
+  // YUK-1763 — answers never ship to the browser: stored HTML from the (now
+  // surface-removed, YUK-1769) authoring tools may still carry answer-key
+  // attributes; strip them at serve time. No data migration — every read strips.
   let interactive: NotePage['interactive'] = null;
   if (note.type === 'interactive') {
     const parsed = InteractiveArtifactAttrs.safeParse(note.attrs);

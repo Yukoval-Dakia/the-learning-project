@@ -881,19 +881,6 @@
     ]
   },
   {
-    "path": "/api/artifacts/:id/answer-key",
-    "methods": [
-      {
-        "method": "GET",
-        "summary": "查看 assessed 互动 artifact 的服务端答案（YUK-1763 看答案 reveal）",
-        "query": [],
-        "contentType": null,
-        "bodyExample": null,
-        "notes": ":id 为 interactive artifact id；答案只存服务端 attrs.answer_key（legacy 行从存储 HTML 的 data-copilot-answer 绑定派生），页面 HTML 不携带任何答案；非 interactive 返回 400，不存在/已归档返回 404"
-      }
-    ]
-  },
-  {
     "path": "/api/questions",
     "methods": [
       {

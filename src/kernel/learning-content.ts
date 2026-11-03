@@ -55,35 +55,47 @@ export function htmlContainsAssessment(html: string): boolean {
   return structuralMarker.test(html) || visibleMarker.test(extractVisibleHtmlText(html));
 }
 
-// YUK-1763 — the assessed interactive artifact answer-key boundary. The answer
-// key never ships to the browser: authoring rejects answer-bearing attributes,
-// and the serve path strips any that legacy stored HTML still carries.
+// YUK-1763 — the interactive artifact answer-key serve boundary. The
+// artifact-authoring tools wrote answers into stored HTML (`data-copilot-answer`)
+// and into tool-call payloads (html + content_validation manifest); those tools
+// are being removed from the Copilot surface (YUK-1769), so the invariant lives
+// at every serve seam: nothing browser-facing may carry an answer key.
 
-const ANSWER_ATTRIBUTE_NAME = 'data-copilot-answer';
+/** Tool names whose args carry interactive-artifact HTML and the answer manifest. */
+export const INTERACTIVE_ARTIFACT_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'author_artifact',
+  'update_artifact',
+]);
 
-function tagAttribute(tag: string, name: string): string | undefined {
-  const match = tag.match(new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i'));
-  return match?.[1] ?? match?.[2];
-}
+const ANSWER_KEY_ATTRIBUTE_PATTERN =
+  /\sdata-(?:copilot-)?answer\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)|\sdata-correct\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
 
-/** Question bindings in assessed artifact HTML: data-copilot-question-id (+ any legacy answer). */
-export function assessmentBindings(
-  html: string,
-): Array<{ id: string; answer: string | undefined }> {
-  return (html.match(/<[^>]*\bdata-copilot-question-id\s*=\s*(?:"[^"]*"|'[^']*')[^>]*>/gi) ?? [])
-    .map((tag) => ({
-      id: tagAttribute(tag, 'data-copilot-question-id') ?? '',
-      answer: tagAttribute(tag, ANSWER_ATTRIBUTE_NAME),
-    }))
-    .filter((binding) => binding.id.length > 0);
-}
-
-/** True when the HTML carries any answer-key attribute. Assessed authoring rejects this. */
-export function containsAnswerKeyAttributes(html: string): boolean {
-  return /\bdata-(?:copilot-answer|answer|correct)\s*=/.test(html);
-}
-
-/** Remove data-copilot-answer attributes from stored HTML at serve time (legacy rows). */
+/**
+ * Remove answer-key attributes from stored interactive HTML at serve time.
+ * Covers `data-copilot-answer`, `data-answer` and `data-correct` with any
+ * attribute-name casing and double/single/unquoted values; adjacent names like
+ * `data-answers=` or `data-correct-format=` do not match (a value must follow
+ * the exact name). Question bindings (`data-copilot-question-id`) stay.
+ */
 export function stripInteractiveAnswerAttributes(html: string): string {
-  return html.replace(/\sdata-copilot-answer\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+  return html.replace(ANSWER_KEY_ATTRIBUTE_PATTERN, '');
+}
+
+/**
+ * Redact an artifact-authoring tool's args at browser-facing seams: strip
+ * answer attributes from the HTML and drop the answer manifest wholesale
+ * (reference_md IS the answer key). Server-side storage is untouched — only
+ * the served projection changes.
+ */
+export function redactInteractiveArtifactToolInput(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const redacted: Record<string, unknown> = { ...input };
+  if (typeof redacted.html === 'string') {
+    redacted.html = stripInteractiveAnswerAttributes(redacted.html);
+  }
+  if (redacted.content_validation !== undefined) {
+    redacted.content_validation = { redacted: 'answer_manifest' };
+  }
+  return redacted;
 }

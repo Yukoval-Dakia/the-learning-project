@@ -4,6 +4,10 @@ import type { Db, Tx } from '@/db/client';
 import { type EnvelopedEvent, getEventById, getEventChain, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
+  INTERACTIVE_ARTIFACT_TOOL_NAMES,
+  redactInteractiveArtifactToolInput,
+} from '@/kernel/learning-content';
+import {
   EventCorrectionBodySchema,
   type EventCorrectionResponseSchema,
   EventDetailResponseSchema,
@@ -24,11 +28,34 @@ function parseEventId(eventId: string): string {
 
 // Keep every envelope field, including passthrough, and make date/undefined explicit.
 function eventDto(envelope: EnvelopedEvent): Record<string, unknown> {
-  return Object.fromEntries(
+  const dto = Object.fromEntries(
     Object.entries({ ...envelope, created_at: envelope.created_at.toISOString() }).filter(
       ([, value]) => value !== undefined,
     ),
   );
+  // YUK-1763 — the tool_use mirror payload carries the authoring tool's FULL
+  // args (html with answer attributes + the answer manifest); the event detail
+  // page renders payloads verbatim, so redact before serving. Storage untouched.
+  if (envelope.action === 'tool_use') {
+    const payload = envelope.payload;
+    if (
+      payload !== null &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as Record<string, unknown>).tool_name === 'string' &&
+      INTERACTIVE_ARTIFACT_TOOL_NAMES.has((payload as Record<string, unknown>).tool_name as string)
+    ) {
+      const record = payload as Record<string, unknown>;
+      const args = record.args;
+      dto.payload = {
+        ...record,
+        ...(args !== null && typeof args === 'object' && !Array.isArray(args)
+          ? { args: redactInteractiveArtifactToolInput(args as Record<string, unknown>) }
+          : {}),
+      };
+    }
+  }
+  return dto;
 }
 
 export async function readEventDetail(db: Db | Tx, eventId: string): Promise<EventDetail> {

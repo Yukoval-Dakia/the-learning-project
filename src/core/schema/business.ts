@@ -1219,19 +1219,6 @@ export const InteractiveArtifactAttrs = z
     html: z.string().min(1),
     summary: z.string().max(500).optional(),
     origin: z.string().optional(), // 'copilot_author_artifact'
-    // YUK-1763 — server-held answer key for assessed artifacts. The HTML never
-    // carries answers; /api/artifacts/[id]/answer-key reveals these on explicit
-    // learner request. Written only by author/update_artifact from the validated
-    // content_validation manifest; count cap is generous (the tool manifest caps 5).
-    answer_key: z
-      .array(
-        z.object({
-          id: z.string().min(1).max(120),
-          reference_md: z.string().min(1).max(12_000),
-        }),
-      )
-      .max(50)
-      .optional(),
   })
   .catchall(z.unknown());
 export type InteractiveArtifactAttrsT = z.infer<typeof InteractiveArtifactAttrs>;

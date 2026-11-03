@@ -7,7 +7,6 @@ import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
   ArtifactAiChangeParamsSchema,
   ArtifactAiChangesResponseSchema,
-  ArtifactAnswerKeyResponseSchema,
   ArtifactBacklinksResponseSchema,
   ArtifactCorrectionStateResponseSchema,
   ArtifactIdParamsSchema,
@@ -138,18 +137,6 @@ export const notesCapability = defineCapability({
         successStatus: 200,
         pagination: 'none',
         load: () => import('./api/backlinks').then((m) => m.GET),
-      },
-      {
-        // YUK-1763 — explicit 「看答案」 reveal for assessed interactive artifacts;
-        // the only serve point for the server-held answer key.
-        method: 'GET',
-        path: '/api/artifacts/[id]/answer-key',
-        operationId: 'getArtifactAnswerKey',
-        request: { params: ArtifactIdParamsSchema },
-        responses: { 200: ArtifactAnswerKeyResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        pagination: 'none',
-        load: () => import('./api/answer-key').then((m) => m.GET),
       },
       {
         method: 'GET',
