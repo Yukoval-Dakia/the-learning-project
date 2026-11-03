@@ -362,19 +362,6 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
             ),
         },
       },
-      // YUK-1407 — judge_retraction accept applier 落地：evaluation 目标走既有
-      // appeal/rejudge/CAS 激活 + settlement replay 链（可逆，不回写原评价）；
-      // legacy judge-event 目标写 CorrectEvent(retract)。结算 owner 落位前，它的
-      // 登记跟着装载入口 proposal-accept-applier 走（设计 §3.1）。
-      {
-        kind: 'judge_retraction',
-        accept: {
-          load: () =>
-            import('./server/proposal-accept-applier').then(
-              (module) => module.judgeRetractionProposalAcceptApplier,
-            ),
-        },
-      },
       {
         kind: 'question_edit',
         accept: {

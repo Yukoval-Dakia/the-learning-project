@@ -21,6 +21,7 @@ import {
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import type { Db, Tx } from '@/db/client';
 import { event, judge_run_control } from '@/db/schema';
+import { lockJudgeRun } from '@/kernel/locks/grading';
 import { lockProducerFenceInstaller } from './producer-fence-lock';
 
 export const JUDGE_FAMILY = 'judge_run';
@@ -440,7 +441,7 @@ export async function mapJudgePendingOwnership(
       target.backend !== (control.phase === 'draining-pg-boss' ? 'dbos' : 'pg-boss')
     )
       throw new Error('Judge import target requires the next drained epoch');
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${input.runId}))`);
+    await lockJudgeRun(tx, input.runId);
     const [pending] = await tx
       .select()
       .from(event)

@@ -67,11 +67,8 @@ import {
   snapshotAssessmentLearningScope,
   withdrawCapturedOccurrence,
 } from '@/server/assessment/runtime';
-import {
-  authorizeConfirmationCorrection,
-  bindAppealExecution,
-  reservedEvaluationAttempt,
-} from '../../../server/assessment/appeal-execution';
+import { authorizeConfirmationCorrection } from '../../../settlement/public';
+import { bindAppealExecution, reservedEvaluationAttempt } from '../assessment/appeal-execution';
 import { createJevModelExecutor } from '../jev-model-executor';
 import {
   type JudgeExecution,
