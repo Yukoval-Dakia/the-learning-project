@@ -1,5 +1,5 @@
 // YUK-523 — Coach 复盘中枢三视图段切容器的纯配置（tab 列表 / 视图标识 / 默认视图 / eyebrow query）。
-// 纯数据，零 React、零 DB → unit 车道。视图 lede 含 JSX，留在 CoachHub.tsx。
+// 纯数据（图标是 lucide 组件引用），零 DB → unit 车道。视图 lede 含 JSX，留在 CoachHub.tsx。
 //
 // 三个正交视图（同屏段切、绝不合并）：
 //   ① activity    — FSRS 复习活动报表（现有，逻辑零改）。答「练了多少、对了几道」。
@@ -10,7 +10,7 @@
 // 逐字 PORT 自设计 docs/design/loom-refresh/project/screen-coach-hub.jsx 的
 // COACH_VIEWS / VIEW_QUERY / 默认视图（useState("efficacy")）。
 
-import type { LoomIconName } from '@/ui/primitives/LoomIcon';
+import { History, type LucideIcon, RotateCcw, Target } from 'lucide-react';
 
 export type CoachView = 'activity' | 'calibration' | 'efficacy';
 
@@ -20,15 +20,15 @@ export const DEFAULT_COACH_VIEW: CoachView = 'efficacy';
 export interface CoachViewTab {
   id: CoachView;
   label: string;
-  icon: LoomIconName;
+  icon: LucideIcon;
   /** 「正交」对（calibration 横截面 ⟂ efficacy 纵向）；activity 不参与正交叙事。 */
   ortho: boolean;
 }
 
 export const COACH_VIEWS: readonly CoachViewTab[] = [
-  { id: 'activity', label: '活动量', icon: 'review', ortho: false },
-  { id: 'calibration', label: '校准诊断', icon: 'target', ortho: true },
-  { id: 'efficacy', label: '成效趋势', icon: 'history', ortho: true },
+  { id: 'activity', label: '活动量', icon: RotateCcw, ortho: false },
+  { id: 'calibration', label: '校准诊断', icon: Target, ortho: true },
+  { id: 'efficacy', label: '成效趋势', icon: History, ortho: true },
 ];
 
 // eyebrow 尾串（COACH · 复盘中枢 · <这串>）。设计 mock 的端点串替换成真实读模型端点。

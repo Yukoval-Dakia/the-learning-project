@@ -1,0 +1,260 @@
+/* ⌘K command palette (CommandPalette), M3E presentation (YUK-1473,
+   docs/design/2026-11-03-last-old-ui-m3e.md). It renders inside RootShell's practice-studio root,
+   so colours read Google M3 roles: a surface-container-high dialog over a scrim, a search row,
+   one-line list items (selected = secondary-container), a quiet footer.
+   The list stays unpositioned on purpose: CommandPalette keeps the selected row in view from its
+   offsetTop, which is measured against the dialog, as before. */
+
+[data-ui-next] .un-cmdk-scrim {
+  position: fixed;
+  inset: 0;
+  /* Above the shell's sheets and the evidence / figure lightboxes (≤ 70), as before. */
+  z-index: 90;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 16px 16px;
+  background: rgb(0 0 0 / 0.32);
+}
+
+[data-ui-next] button.un-cmdk-dismiss {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+[data-ui-next] .un-cmdk {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 600px;
+  max-height: min(520px, 76dvh);
+  overflow: hidden;
+  border-radius: 24px;
+  background: var(--un-md-sys-color-surface-container-high);
+  color: var(--un-md-sys-color-on-surface);
+  box-shadow: var(--un-md-sys-elevation-1);
+  font-family: var(--un-font-sans);
+}
+
+[data-ui-next] .un-cmdk:focus-visible {
+  outline: none;
+}
+
+/* ── Search row ── */
+[data-ui-next] .un-cmdk-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 0 16px 0 20px;
+  border-bottom: 1px solid var(--un-md-sys-color-outline-variant);
+  color: var(--un-md-sys-color-on-surface-variant);
+}
+
+/* The field shows focus by its row: the divider turns primary and thickens (shape, not colour
+   alone), so the auto-focused input needs no extra ring. */
+[data-ui-next] .un-cmdk-head:focus-within {
+  border-bottom-color: var(--un-md-sys-color-primary);
+  box-shadow: inset 0 -1px 0 var(--un-md-sys-color-primary);
+}
+
+[data-ui-next] .un-cmdk-head svg {
+  flex: none;
+}
+
+[data-ui-next] .un-cmdk-head input {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--un-md-sys-color-on-surface);
+  font-family: inherit;
+  font-size: var(--un-md-sys-typescale-body-large-size);
+  line-height: var(--un-md-sys-typescale-body-large-line-height);
+  letter-spacing: var(--un-md-sys-typescale-body-large-tracking);
+}
+
+[data-ui-next] .un-cmdk-head input:focus,
+[data-ui-next] .un-cmdk-head input:focus-visible {
+  outline: none;
+}
+
+[data-ui-next] .un-cmdk-head input::placeholder {
+  color: var(--un-md-sys-color-on-surface-variant);
+}
+
+[data-ui-next] .un-cmdk-head kbd {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--un-md-sys-color-outline-variant);
+  border-radius: var(--un-md-sys-shape-small);
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-family: var(--un-font-sans);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* ── Results ── */
+[data-ui-next] .un-cmdk-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+}
+
+[data-ui-next] .un-cmdk-group {
+  padding: 12px 16px 6px;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-label-large-size);
+  font-weight: var(--un-md-sys-typescale-label-large-weight);
+  line-height: var(--un-md-sys-typescale-label-large-line-height);
+}
+
+[data-ui-next] button.un-cmdk-row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: var(--un-md-sys-shape-large);
+  background: transparent;
+  color: var(--un-md-sys-color-on-surface);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--un-t-feedback) linear;
+}
+
+/* Hover moves the selection (onMouseEnter), so the selected look is also the hover look. */
+[data-ui-next] button.un-cmdk-row.on {
+  background: var(--un-md-sys-color-secondary-container);
+  color: var(--un-md-sys-color-on-secondary-container);
+}
+
+[data-ui-next] .un-cmdk-ic {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  color: var(--un-md-sys-color-on-surface-variant);
+}
+
+[data-ui-next] .un-cmdk-row.on .un-cmdk-ic {
+  color: var(--un-md-sys-color-on-secondary-container);
+}
+
+[data-ui-next] .un-cmdk-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--un-md-sys-typescale-body-large-size);
+  line-height: var(--un-md-sys-typescale-body-large-line-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-ui-next] .un-cmdk-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: var(--un-md-sys-typescale-body-medium-line-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-ui-next] .un-cmdk-row.on .un-cmdk-meta {
+  color: var(--un-md-sys-color-on-secondary-container);
+}
+
+/* The arrow marks the row Enter opens; it only appears on the selected row. */
+[data-ui-next] .un-cmdk-go {
+  flex: none;
+  opacity: 0;
+  transition: opacity var(--un-t-feedback) linear;
+}
+
+[data-ui-next] .un-cmdk-row.on .un-cmdk-go {
+  opacity: 1;
+}
+
+[data-ui-next] .un-cmdk-empty {
+  padding: 32px 16px;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: var(--un-md-sys-typescale-body-medium-line-height);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+[data-ui-next] .un-cmdk-foot {
+  padding: 10px 20px;
+  border-top: 1px solid var(--un-md-sys-color-outline-variant);
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* Keyboard hints only where there is a keyboard to use them (N5: hidden on touch). */
+@media (pointer: coarse) {
+  [data-ui-next] .un-cmdk-head kbd,
+  [data-ui-next] .un-cmdk-foot {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  [data-ui-next] .un-cmdk-scrim {
+    padding: 8px;
+  }
+
+  [data-ui-next] .un-cmdk {
+    max-height: min(560px, calc(100dvh - 16px));
+    border-radius: var(--un-md-sys-shape-large);
+  }
+}
+
+/* Opening is the one change worth showing: the scrim fades and the dialog rises a little. */
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next] .un-cmdk-scrim {
+    animation: un-cmdk-fade var(--un-t-small) var(--un-ease-glide) both;
+  }
+
+  [data-ui-next] .un-cmdk {
+    animation: un-cmdk-rise var(--un-t-ui) var(--un-ease-glide) both;
+  }
+
+  @keyframes un-cmdk-fade {
+    from {
+      opacity: 0;
+    }
+  }
+
+  @keyframes un-cmdk-rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-ui-next] :is(.un-cmdk-row, .un-cmdk-go) {
+    transition: none;
+  }
+}

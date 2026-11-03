@@ -1,0 +1,104 @@
+/* Access-token gate (TokenGate), M3E presentation (YUK-1473,
+   docs/design/2026-11-03-last-old-ui-m3e.md). The gate renders before the shell, so its <main> is
+   its own [data-ui-next] root with the practice-foundation M3 roles; nothing here reaches outside
+   that root. One narrow column on a full-height surface; no motion. */
+
+[data-ui-next].un-tg {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 420px);
+  justify-content: center;
+  align-content: start;
+  min-height: 100dvh;
+  margin: 0;
+  padding: 15vh 16px 48px;
+  background: var(--un-md-sys-color-surface);
+  color: var(--un-md-sys-color-on-surface);
+  font: 400 16px / 1.6 var(--un-font-sans);
+}
+
+[data-ui-next] .un-tg-title {
+  margin: 0;
+  color: var(--un-md-sys-color-on-surface);
+  font: 600 32px / 1.25 var(--un-font-sans);
+}
+
+[data-ui-next] .un-tg-lead {
+  display: block;
+  margin: 8px 0 28px;
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-body-large-size);
+  line-height: 1.7;
+  text-wrap: pretty;
+}
+
+[data-ui-next] .un-tg-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+[data-ui-next] .un-tg-label {
+  color: var(--un-md-sys-color-on-surface-variant);
+  font-size: var(--un-md-sys-typescale-label-large-size);
+  font-weight: var(--un-md-sys-typescale-label-large-weight);
+  line-height: var(--un-md-sys-typescale-label-large-line-height);
+}
+
+[data-ui-next] .un-tg-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 56px;
+  padding: 0 16px;
+  border: 1px solid var(--un-md-sys-color-outline);
+  border-radius: var(--un-md-sys-shape-medium);
+  background: var(--un-md-sys-color-surface-container-lowest);
+  color: var(--un-md-sys-color-on-surface);
+  font: inherit;
+  transition: border-color var(--un-t-feedback) linear;
+}
+
+[data-ui-next] .un-tg-input::placeholder {
+  color: var(--un-md-sys-color-on-surface-variant);
+}
+
+[data-ui-next] .un-tg-input:hover:not(:disabled) {
+  border-color: var(--un-md-sys-color-on-surface);
+}
+
+[data-ui-next] .un-tg-input:focus-visible {
+  outline: var(--un-md-comp-focus-width) solid var(--un-md-sys-color-primary);
+  outline-offset: 3px;
+  border-color: var(--un-md-sys-color-primary);
+}
+
+[data-ui-next] .un-tg-input[aria-invalid="true"] {
+  border-color: var(--un-md-sys-color-on-error-container);
+}
+
+[data-ui-next] .un-tg-input:disabled {
+  background: var(--un-md-sys-color-surface-container-low);
+  border-color: var(--un-md-sys-color-outline-variant);
+  color: var(--un-md-sys-color-on-surface-variant);
+}
+
+[data-ui-next] .un-tg-error {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--un-md-sys-shape-medium);
+  background: var(--un-md-sys-color-error-container);
+  color: var(--un-md-sys-color-on-error-container);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: var(--un-md-sys-typescale-body-medium-line-height);
+  overflow-wrap: anywhere;
+}
+
+[data-ui-next] button.un-tg-submit {
+  width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-ui-next] .un-tg-input {
+    transition: none;
+  }
+}

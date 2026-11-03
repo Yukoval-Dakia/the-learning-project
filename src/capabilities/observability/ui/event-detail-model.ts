@@ -1,5 +1,5 @@
+import { type LucideIcon, Moon, Sparkles, User, Zap } from 'lucide-react';
 import type { z } from 'zod';
-import type { LoomIconName } from '@/ui/primitives/LoomIcon';
 import type { EventDetailResponseSchema } from '../api/event-contracts';
 
 // Tone vocabulary of the event and correction labels (was LoomBadgeTone, the old badge's tone
@@ -51,11 +51,11 @@ const SUBJECT_LABELS: Record<string, string> = {
   proposal: '建议',
 };
 
-const ACTOR_META: Record<string, { label: string; icon: LoomIconName }> = {
-  user: { label: '你', icon: 'today' },
-  agent: { label: 'AI', icon: 'sparkle' },
-  cron: { label: '定时任务', icon: 'moon' },
-  system: { label: '系统', icon: 'bolt' },
+const ACTOR_META: Record<string, { label: string; icon: LucideIcon }> = {
+  user: { label: '你', icon: User },
+  agent: { label: 'AI', icon: Sparkles },
+  cron: { label: '定时任务', icon: Moon },
+  system: { label: '系统', icon: Zap },
 };
 
 const CORRECTION_META: Record<CorrectionState, { label: string; tone: LoomBadgeTone }> = {
@@ -80,8 +80,8 @@ export function subjectLabel(kind: string): string {
   return SUBJECT_LABELS[kind] ?? '学习对象';
 }
 
-export function actorMeta(kind: string): { label: string; icon: LoomIconName } {
-  return ACTOR_META[kind] ?? { label: '系统', icon: 'bolt' };
+export function actorMeta(kind: string): { label: string; icon: LucideIcon } {
+  return ACTOR_META[kind] ?? { label: '系统', icon: Zap };
 }
 
 export function correctionMeta(state: CorrectionState): { label: string; tone: LoomBadgeTone } {

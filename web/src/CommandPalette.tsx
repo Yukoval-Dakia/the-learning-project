@@ -10,15 +10,16 @@
 //     token），title=name route=/knowledge/${id}。
 //
 // 路由耦合只经调用方注入的 navigate prop（RootShell 经 router.history.push）——
-// 本组件不 import 任何路由库。.cmdk-* 样式由 globals.css（§App shell 端口，
-// palette.css L9-74）就位。
+// 本组件不 import 任何路由库。M3E 呈现（YUK-1473）：样式在 command-palette.css，图标是
+// lucide；设计记录 docs/design/2026-11-03-last-old-ui-m3e.md。
 
 import { useQuery } from '@tanstack/react-query';
+import { ArrowRight, type LucideIcon, Network, Search } from 'lucide-react';
 import { Fragment, useCallback, useMemo, useState } from 'react';
 import { type KnowledgeTreeNode, getTree } from '@/capabilities/knowledge/ui-public';
-import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { COMMAND_PALETTE_PLACEHOLDER, SEARCH_PAGE_ITEMS } from './nav-config';
+import './command-palette.css';
 
 export interface CommandPaletteProps {
   readTree?: typeof getTree;
@@ -33,7 +34,7 @@ export interface CommandPaletteProps {
 // 单条可索引结果行。group 是分组标题（页面 / 知识节点）；hay 是分词过滤的检索串。
 interface PaletteRow {
   group: string;
-  icon: LoomIconName;
+  icon: LucideIcon;
   title: string;
   meta: string;
   route: string;
@@ -59,7 +60,7 @@ function pageRows(): PaletteRow[] {
 function knowledgeRows(nodes: KnowledgeTreeNode[]): PaletteRow[] {
   return nodes.map((n) => ({
     group: '知识节点',
-    icon: 'knowledge',
+    icon: Network,
     title: n.name,
     meta: n.effective_domain ?? n.domain ?? '',
     route: `/knowledge/${n.id}`,
@@ -184,32 +185,16 @@ function OpenCommandPalette({
 
   let lastGroup: string | null = null;
   return (
-    // .cmdk-scrim 是定位 + flex 居中容器（无 role）；点击关闭由一个铺满的真
+    // .un-cmdk-scrim 是定位 + flex 居中容器（无 role）；点击关闭由一个铺满的真
     // <button> 承载（键盘可达，沿 CopilotDrawer/PfSolo scrim 先例），避免 div+onClick
-    // 的 a11y 漏洞。.cmdk 是真 dialog（role=dialog），esc / Tab-trap / autofocus 由
+    // 的 a11y 漏洞。.un-cmdk 是真 dialog（role=dialog），esc / Tab-trap / autofocus 由
     // input onKeyDown + useFocusTrap 覆盖。
-    <div className="cmdk-scrim">
-      <button
-        type="button"
-        aria-label="关闭搜索"
-        onClick={onClose}
-        style={{
-          position: 'absolute',
-          inset: 0,
-          border: 0,
-          padding: 0,
-          background: 'transparent',
-          cursor: 'default',
-        }}
-      />
+    <div className="un-cmdk-scrim">
+      <button type="button" className="un-cmdk-dismiss" aria-label="关闭搜索" onClick={onClose} />
       <div
-        className="cmdk"
-        // F10 (Codex #401)：面板必须层叠在铺满的关闭 scrim button 之上。scrim button
-        // 是 position:absolute inset:0（z-index auto 的 positioned 元素），而 .cmdk 本身
-        // 无 position/z-index——静止后会被 button 反盖，点 input/结果行先命中 button →
-        // onClose，面板只剩键盘可用。relative + z-index:1 把面板抬到 button 之上；button
-        // 仍铺在面板后方，点居中面板外的暗边距照常关闭（与设计 scrim-to-close 一致）。
-        style={{ position: 'relative', zIndex: 1 }}
+        // 面板必须层叠在铺满的关闭按钮之上（command-palette.css 给它 relative + z-index），
+        // 否则点输入框 / 结果行会先命中关闭按钮；面板外的暗边距照常关闭。
+        className="un-cmdk"
         // biome-ignore lint/a11y/useSemanticElements: native <dialog> 需 imperative
         // showModal()/close() API，与受控 open prop + scrim/focus-trap 模式不兼容
         // （同 CopilotDrawer / PfSolo）。
@@ -219,8 +204,8 @@ function OpenCommandPalette({
         tabIndex={-1}
         ref={trapRef}
       >
-        <div className="cmdk-head">
-          <LoomIcon name="search" size={16} />
+        <div className="un-cmdk-head">
+          <Search size={22} aria-hidden="true" />
           <input
             value={q}
             onChange={(e) => changeQuery(e.target.value)}
@@ -230,12 +215,12 @@ function OpenCommandPalette({
           />
           <kbd>esc</kbd>
         </div>
-        <div className="cmdk-list">
-          {results.length === 0 && <div className="cmdk-empty">没有匹配「{q}」的结果。</div>}
+        <div className="un-cmdk-list">
+          {results.length === 0 && <div className="un-cmdk-empty">没有匹配「{q}」的结果。</div>}
           {results.map((r, i) => {
             const head =
               r.group !== lastGroup ? (
-                <div className="cmdk-group" key={`g${r.group}`}>
+                <div className="un-cmdk-group" key={`g${r.group}`}>
                   {r.group}
                 </div>
               ) : null;
@@ -246,23 +231,23 @@ function OpenCommandPalette({
                 <button
                   type="button"
                   ref={i === sel ? selectedRowRef : undefined}
-                  className={`cmdk-row${i === sel ? ' on' : ''}`}
+                  className={`un-cmdk-row${i === sel ? ' on' : ''}`}
                   data-sel={i === sel ? '1' : '0'}
                   onMouseEnter={() => setSel(i)}
                   onClick={() => pick(r)}
                 >
-                  <span className="cmdk-ic">
-                    <LoomIcon name={r.icon} size={15} />
+                  <span className="un-cmdk-ic">
+                    <r.icon size={20} aria-hidden="true" />
                   </span>
-                  <span className="cmdk-title">{r.title}</span>
-                  {r.meta ? <span className="cmdk-meta mono">{r.meta}</span> : null}
-                  <LoomIcon name="arrow" size={13} className="cmdk-go" />
+                  <span className="un-cmdk-title">{r.title}</span>
+                  {r.meta ? <span className="un-cmdk-meta">{r.meta}</span> : null}
+                  <ArrowRight size={18} aria-hidden="true" className="un-cmdk-go" />
                 </button>
               </Fragment>
             );
           })}
         </div>
-        <div className="cmdk-foot mono">↑↓ 选择 · ↵ 打开 · esc 关闭</div>
+        <div className="un-cmdk-foot">↑↓ 选择 · ↵ 打开 · esc 关闭</div>
       </div>
     </div>
   );

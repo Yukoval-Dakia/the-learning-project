@@ -3,7 +3,7 @@
 // 设计基准 docs/design/loom-refresh/project/data.jsx（KIND_META / REL_LABEL）：
 // 设计稿只列 12 kind；defer / archive / judge_retraction / image_candidate /
 // question_draft / question_edit 按同一 tone 语系补全（hard=节奏类、neutral=归档、
-// coral=内容生成/修订类），icon 取自 LoomIcon 既有名。
+// coral=内容生成/修订类）；icon 是图标名，inbox-look.ts 的 kindIcon 映射成 lucide。
 
 import { acceptSupportedProposalKinds } from '@/core/schema/proposal';
 import {

@@ -9,7 +9,17 @@
 // and never render a blank chip (red-line: unknown key → label=raw kind,
 // neutral tone, generic icon).
 
-import type { LoomIconName } from '@/ui/primitives/LoomIcon';
+import {
+  CircleAlert,
+  FileQuestion,
+  type LucideIcon,
+  MessageSquare,
+  Moon,
+  RefreshCw,
+  Sparkles,
+  Tag,
+  Target,
+} from 'lucide-react';
 
 // Signal tone drives the avatar tri-color, the signal chip, and the filter dot.
 // Mirrors the FSRS/attribution palette via the .tone-chip-<tone> class layer.
@@ -17,7 +27,7 @@ export type SignalTone = 'hard' | 'info' | 'good' | 'coral' | 'neutral';
 
 export interface AgentMeta {
   label: string;
-  icon: LoomIconName;
+  icon: LucideIcon;
 }
 
 export interface SignalMeta {
@@ -30,17 +40,16 @@ export interface SignalMeta {
 //     others (attribution/copilot/tagging) are near-term (YUK-293) or existing
 //     read-side agents that may become writers.
 //   - target_agents enum (notes.ts): 'dreaming' | 'maintenance' | 'coach'.
-// All icon names are verified present in LoomIcon's ICONS table.
 export const AGENT_META: Record<string, AgentMeta> = {
   // source_task_kind values
-  quiz_verify: { label: '出题校验', icon: 'quiz' },
-  attribution: { label: '错因归因', icon: 'mistakes' },
-  copilot: { label: 'Copilot', icon: 'copilot' },
-  tagging: { label: '打标', icon: 'tag' },
+  quiz_verify: { label: '出题校验', icon: FileQuestion },
+  attribution: { label: '错因归因', icon: CircleAlert },
+  copilot: { label: 'Copilot', icon: MessageSquare },
+  tagging: { label: '打标', icon: Tag },
   // target_agents enum values
-  dreaming: { label: '夜间推理', icon: 'moon' },
-  maintenance: { label: '维护', icon: 'refresh' },
-  coach: { label: '教练', icon: 'target' },
+  dreaming: { label: '夜间推理', icon: Moon },
+  maintenance: { label: '维护', icon: RefreshCw },
+  coach: { label: '教练', icon: Target },
 };
 
 // signal_kind is an open vocabulary; these are the kinds the codebase emits or
@@ -57,7 +66,7 @@ export const SIGNAL_META: Record<string, SignalMeta> = {
 // Fallback-safe lookups. Unknown kind → raw kind as label + neutral defaults,
 // so an unrecognised agent/signal still renders (never blank, never throws).
 export function agentMeta(kind: string): AgentMeta {
-  return AGENT_META[kind] ?? { label: '其他 AI 工作', icon: 'sparkle' };
+  return AGENT_META[kind] ?? { label: '其他 AI 工作', icon: Sparkles };
 }
 
 export function signalMeta(kind: string): SignalMeta {

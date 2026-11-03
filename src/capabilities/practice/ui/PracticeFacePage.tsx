@@ -10,7 +10,6 @@ import { createPortal } from 'react-dom';
 import { PracticeListHeader } from '@/ui-next/practice-studio/PracticeQueue';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { prefersReducedMotion, useSharedMorph } from '@/ui-next/public';
-import './practice-face.css';
 import './practice-face-m3e.css';
 import './practice-paper-m3e.css';
 
