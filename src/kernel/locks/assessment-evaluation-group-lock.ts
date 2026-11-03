@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 
-import type { Db, Tx } from '@/db/client';
+import type { Tx } from '@/db/client';
 import { advisoryLockRegistry, deriveHashtextPairLockNamespace } from '@/kernel/locks/registry';
 
 /** Session-lock namespace for model callers that hold the group across a model run. */
@@ -14,7 +14,7 @@ export const ASSESSMENT_EVALUATION_GROUP_LOCK_NAMESPACE = deriveHashtextPairLock
  * write lock take it first.
  */
 export async function lockAssessmentEvaluationGroup(
-  tx: Db | Tx,
+  tx: Tx,
   evaluationGroupId: string,
 ): Promise<void> {
   await tx.execute(

@@ -6,7 +6,7 @@ import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { rejudgeNativeAppeal } from '../server/assessment/appeal';
+import { rejudgeNativeAppeal } from '../server/appeal';
 
 export interface RejudgeJobInput {
   appeal_event_id: string;

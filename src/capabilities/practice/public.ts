@@ -157,7 +157,7 @@ export {
   scheduleReview,
   updatePracticeStreamItem,
 } from './scheduling/public';
-export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
+export { writeAttemptSnapshotBrackets } from './settlement/public';
 // practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
@@ -185,7 +185,7 @@ export async function installPracticeHostOperations(): Promise<void> {
     import('@/kernel/read-models/review-due'),
     import('@/kernel/tools/learning-content-validation'),
     import('@/kernel/records/conversation-confirmation-assessment'),
-    import('./grading/public'),
+    import('./settlement/public'),
     loadReviewDueReader(),
     loadLearningContentValidator(),
     import('./server/conversation-confirmation'),
@@ -261,7 +261,7 @@ export { loadCoverageLattice, submitQuestionTool } from './supply/public';
 
 export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
 export { CreateReviewSessionBody } from './api/contracts';
-export { createPracticeAppeal } from './server/appeal-operation';
+export { createPracticeAppeal } from './settlement/public';
 export const recoverWebSupplies: typeof import('./supply/public').recoverWebSupplies = async (
   ...args
 ) => (await import('./supply/public')).recoverWebSupplies(...args);

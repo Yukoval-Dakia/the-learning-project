@@ -90,11 +90,11 @@
       "count": 1
     },
     {
-      "path": "src/capabilities/practice/jobs/rejudge.ts",
+      "path": "src/capabilities/practice/settlement/jobs/rejudge.ts",
       "count": 1
     },
     {
-      "path": "src/capabilities/practice/server/assessment/appeal.ts",
+      "path": "src/capabilities/practice/settlement/server/appeal.ts",
       "count": 3
     },
     {

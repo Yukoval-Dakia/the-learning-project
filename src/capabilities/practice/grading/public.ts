@@ -110,12 +110,12 @@ export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-op
 
 export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =
   async (...args) => (await import('./server/review-operation')).submitReviewAnswer(...args);
-export const captureReviewAnswerBinding: typeof import('./server/review-operation').captureReviewAnswerBinding =
-  async (...args) =>
-    (await import('./server/review-operation')).captureReviewAnswerBinding(...args);
-export const consumeReviewAnswerBinding: typeof import('./server/review-operation').consumeReviewAnswerBinding =
-  async (...args) =>
-    (await import('./server/review-operation')).consumeReviewAnswerBinding(...args);
+export {
+  APPEAL_EXECUTION_BINDING_ACTION,
+  AppealExecutionBinding,
+  appealExecutionBindingId,
+} from './server/assessment/appeal-execution';
+export type { ReviewAnswerReceipt } from './tools/submit-review-answer';
 
 export async function installInterventionDiagnosticLeaves(): Promise<void> {
   const [{ installInterventionDiagnosticLeaves: install }, { interventionDiagnosticLeaves }] =
