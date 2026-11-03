@@ -3,7 +3,6 @@
 // 静态导出会进入根 barrel 的静态加载链；会话读写与开测入口保持按需加载。
 
 export {
-  CreatePlacementSessionBodySchema,
   type PlacementProfileResponse,
   UpdatePlacementSessionBodySchema,
 } from './api/placement-contracts';

@@ -8,35 +8,12 @@
 // so no placement session is ever created and the live paths are untouched (the flag's only
 // effect). Flipping it on is the cold-start first-session go-live decision.
 
-import {
-  ApiError,
-  canonicalResourceResponse,
-  deprecatedRouteResponse,
-  errorResponse,
-} from '@/kernel/http';
+import { canonicalResourceResponse, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { startPlacementProbe } from '../server/session-operations/placement-session';
-import { CreatePlacementSessionBodySchema } from './placement-contracts';
 
 export async function createPlacementSession(req: Request): Promise<Response> {
   try {
-    const result = await startPlacementProbe(async () => {
-      let raw: unknown;
-      try {
-        raw = await req.json();
-      } catch {
-        throw new ApiError('validation_error', 'request body must be valid JSON', 400);
-      }
-      const parsed = CreatePlacementSessionBodySchema.safeParse(raw);
-      if (!parsed.success) {
-        throw new ApiError(
-          'validation_error',
-          parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
-          400,
-        );
-      }
-      return parsed.data;
-    });
-    return Response.json(result);
+    return Response.json(await startPlacementProbe(() => req.json()));
   } catch (err) {
     return errorResponse(err);
   }
