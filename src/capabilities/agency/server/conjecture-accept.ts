@@ -41,6 +41,7 @@ import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
+  acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,
@@ -98,8 +99,10 @@ export async function acceptConjectureProposal(
   // Idempotency: a prior accept rate event short-circuits (409s on a non-accept prior
   // decision via existingAcceptRate). No second rate event, no second CORE write — re-accept
   // returns the recorded corrected_by_owner verbatim.
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) {
+  const replayAccepted = async (existingRate: {
+    id: string;
+    payload: unknown;
+  }): Promise<ConjectureAcceptResult> => {
     await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
     const ratePayload = existingRate.payload as { corrected_by_owner?: boolean };
     return {
@@ -110,7 +113,11 @@ export async function acceptConjectureProposal(
       weakness_confirmed: false,
       idempotent: true,
     };
-  }
+  };
+
+  // Cheap short-circuit; the transaction re-checks under the decision lock.
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) return replayAccepted(existingRate);
 
   // All newly accepted conjectures must carry a frozen DiagnosticSpec, both structured
   // probe specs and a passing independent-review audit. Optionality in the proposal JSON
@@ -231,7 +238,13 @@ export async function acceptConjectureProposal(
   //
   // Still no FSRS / review / learning-item state. A minted misconception is SOFT-track
   // (source='soft', dark flag) — an AI prior the owner agreed with, NOT a confirmed weakness.
-  await db.transaction(async (tx) => {
+  const concurrentAccept = await db.transaction(async (tx) => {
+    // Same lock dismiss, retract and answerProbe take. Accept never takes a probe-question
+    // or conjecture-fold lock, so decision → misc → probe-serve agrees with answerProbe's
+    // probe-question → fold → decision → probe-serve.
+    await acquireProposalDecisionLock(tx, proposalId);
+    const decided = await existingAcceptRate(tx, proposalId);
+    if (decided) return decided;
     await writeEvent(tx, {
       id: rateEventId,
       actor_kind: 'user',
@@ -299,8 +312,8 @@ export async function acceptConjectureProposal(
     // the owner never gets an accept record without its probe. serveProbeOnce's internal
     // db.transaction nests as a SAVEPOINT, and its pg_advisory_xact_lock is transaction-
     // scoped, so the cap-serialize guarantee holds across the whole accept. serveProbeOnce
-    // writes ONLY the draft question row (no FSRS / attempt / θ̂). The existingRate
-    // short-circuit above means a probe is served at most once per conjecture.
+    // writes ONLY the draft question row (no FSRS / attempt / θ̂). The rate re-check under
+    // the decision lock means a probe is served at most once per conjecture.
     //
     // `cap_reached` is a normal RETURN, so it does NOT self-abort the tx. Throw instead:
     // committing the rate anchor + promotion with no probe strands an accepted-without-probe
@@ -322,7 +335,9 @@ export async function acceptConjectureProposal(
         409,
       );
     }
+    return null;
   });
+  if (concurrentAccept) return replayAccepted(concurrentAccept);
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
 
