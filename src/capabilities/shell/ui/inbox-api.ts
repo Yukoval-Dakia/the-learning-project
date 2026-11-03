@@ -49,12 +49,9 @@ export function kindMeta(kind: string): KindMeta {
   return KIND_META[kind] ?? { label: kind, icon: 'inbox', tone: 'neutral' };
 }
 
-// M4 review fix (YUK-319, codex P2)：dispatchAccept 对 defer / archive /
-// judge_retraction 未实现 accept（400 unsupported_proposal_kind，归 YUK-44）；
-// 卡片对这三个 kind 不渲 Accept CTA，只留忽略（dismiss kind-无关，安全）。
-// 注意 legacy knowledge 事件可派生出 archive kind 进收件箱，门控不能省。
-// 集合真身在 core（acceptSupportedProposalKinds），与 dispatchAccept 的漂移
-// 由 inbox-meta.unit.test.ts 分区钉测拦住。
+// dispatchAccept 对没有 accept applier 的 kind 返回 400 unsupported_proposal_kind；
+// 卡片对它们不渲 Accept CTA，只留忽略（dismiss 与 kind 无关）。legacy knowledge 事件
+// 可派生出 archive kind 进收件箱，门控不能省。集合真身在 core（acceptSupportedProposalKinds）。
 const acceptSupported: ReadonlySet<string> = new Set(acceptSupportedProposalKinds);
 
 export function isAcceptSupported(kind: string): boolean {
