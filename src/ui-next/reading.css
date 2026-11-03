@@ -1,0 +1,201 @@
+/*
+ * Reading (YUK-1548) — the one typography for rendered rich text: note bodies, question stems and
+ * materials, companion replies. A surface opts in with `class="un-read"` on the rendered markdown
+ * container; `data-read="compact"` is the denser rhythm for narrow panels (the companion).
+ *
+ * Every selector here is `[data-ui-next] :where(…)` — the same weight as the base reset in
+ * tokens.css (loaded before this file, so these win over it) and above the app's global element
+ * rules — so any surface class rule (`[data-ui-next] .x …`: a clamp, an inline option, a print size)
+ * still wins without !important. Values come from the --un-read-* tokens; the layout blocks (step card, callout,
+ * comparison table, tabs, timeline, formula card) reuse the same tokens instead of new ones.
+ */
+
+[data-ui-next] :where(.un-read) {
+  font-size: var(--un-read-fs);
+  line-height: var(--un-read-lh);
+  overflow-wrap: break-word;
+  /* CJK ↔ Latin: a quarter-em gap between scripts where supported; strict CJK line breaking. */
+  text-autospace: normal;
+  line-break: strict;
+  hanging-punctuation: allow-end;
+}
+
+[data-ui-next] :where(.un-read[data-read="compact"]) {
+  --un-read-fs: var(--un-fs-2);
+  --un-read-lh: 1.7;
+  --un-read-gap: 0.7em;
+  --un-read-gap-section: 1.6em;
+  /* Chat replies pick heading levels freely (### / #### are common), so even the bottom of the
+     scale stays clearly above body text. */
+  --un-read-h1: 1.32em;
+  --un-read-h2: 1.24em;
+  --un-read-h3: 1.16em;
+  --un-read-h4: 1.08em;
+}
+
+/* Flow: one gap between any two blocks. */
+[data-ui-next] :where(.un-read) > :where(* + *) {
+  margin-top: var(--un-read-gap);
+}
+
+/* Headings: a size step per level, a larger gap above than below, so a heading binds to its text. */
+[data-ui-next] :where(.un-read) :where(h1, h2, h3, h4) {
+  color: var(--un-text-1);
+  font-weight: var(--un-fw-semibold);
+  line-height: var(--un-read-heading-lh);
+  letter-spacing: var(--un-ls-tight);
+  text-wrap: balance;
+}
+[data-ui-next] :where(.un-read) :where(h1) {
+  font-size: var(--un-read-h1);
+}
+[data-ui-next] :where(.un-read) :where(h2) {
+  font-size: var(--un-read-h2);
+}
+[data-ui-next] :where(.un-read) :where(h3) {
+  font-size: var(--un-read-h3);
+}
+[data-ui-next] :where(.un-read) :where(h4) {
+  font-size: var(--un-read-h4);
+}
+[data-ui-next] :where(.un-read) > :where(* + h1, * + h2, * + h3) {
+  margin-top: var(--un-read-gap-section);
+}
+[data-ui-next] :where(.un-read) > :where(* + h4) {
+  margin-top: calc(var(--un-read-gap-section) * 0.75);
+}
+[data-ui-next] :where(.un-read) > :where(h1, h2, h3, h4) + :where(*) {
+  margin-top: var(--un-read-gap-heading);
+}
+
+/* Lists. */
+[data-ui-next] :where(.un-read) :where(ul, ol) {
+  padding-inline-start: var(--un-read-indent);
+}
+[data-ui-next] :where(.un-read) :where(ul) {
+  list-style: disc;
+}
+[data-ui-next] :where(.un-read) :where(ol) {
+  list-style: decimal;
+}
+[data-ui-next] :where(.un-read) :where(ul ul) {
+  list-style: circle;
+}
+[data-ui-next] :where(.un-read) :where(li + li, li > ul, li > ol) {
+  margin-top: var(--un-read-gap-item);
+}
+[data-ui-next] :where(.un-read) :where(li)::marker {
+  color: var(--un-text-3);
+}
+[data-ui-next] :where(.un-read) :where(li > p + p) {
+  margin-top: var(--un-read-gap-item);
+}
+[data-ui-next] :where(.un-read) :where(.contains-task-list) {
+  padding-inline-start: 0;
+  list-style: none;
+}
+
+/* Quote, rule, links, emphasis. */
+[data-ui-next] :where(.un-read) :where(blockquote) {
+  padding-inline-start: 0.9em;
+  border-inline-start: 3px solid var(--un-read-quote-rule);
+  color: var(--un-text-2);
+}
+[data-ui-next] :where(.un-read) :where(blockquote > * + *) {
+  margin-top: var(--un-read-gap);
+}
+[data-ui-next] :where(.un-read) :where(hr) {
+  height: 0;
+  margin-block: var(--un-read-gap-section);
+  border: 0;
+  border-top: var(--un-hairline) solid var(--un-read-rule);
+}
+[data-ui-next] :where(.un-read) :where(a) {
+  color: var(--un-accent-strong);
+  text-decoration: underline;
+  text-decoration-thickness: from-font;
+  text-underline-offset: 0.2em;
+}
+[data-ui-next] :where(.un-read) :where(strong, b) {
+  font-weight: var(--un-fw-semibold);
+}
+
+/* Code. */
+[data-ui-next] :where(.un-read) :where(code) {
+  padding: 0.1em 0.36em;
+  border-radius: 0.3em;
+  background: var(--un-read-code-bg);
+  font-family: var(--un-font-mono);
+  font-size: var(--un-read-code-fs);
+}
+[data-ui-next] :where(.un-read) :where(pre) {
+  overflow-x: auto;
+  padding: 0.85em 1em;
+  border-radius: var(--un-read-radius);
+  background: var(--un-read-code-bg);
+  font-family: var(--un-font-mono);
+  font-size: var(--un-read-code-fs);
+  line-height: 1.6;
+  white-space: pre;
+}
+[data-ui-next] :where(.un-read) :where(pre code) {
+  padding: 0;
+  background: none;
+  font-size: 1em;
+}
+
+/* Tables: scroll sideways instead of squeezing, small text, rules between rows only. */
+[data-ui-next] :where(.un-read) :where(table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: var(--un-read-small-fs);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--un-lh-ui);
+}
+[data-ui-next] :where(.un-read) :where(th, td) {
+  padding: var(--un-read-cell-pad);
+  border-bottom: var(--un-hairline) solid var(--un-read-rule);
+  text-align: start;
+  vertical-align: top;
+}
+[data-ui-next] :where(.un-read) :where(th) {
+  background: var(--un-read-code-bg);
+  color: var(--un-text-1);
+  font-weight: var(--un-fw-semibold);
+  white-space: nowrap;
+}
+/* A formula in a cell keeps together (KaTeX would break after a relation like `>`). */
+[data-ui-next] :where(.un-read) :where(th, td) :where(.katex) {
+  white-space: nowrap;
+}
+
+/* Formulas. */
+[data-ui-next] :where(.un-read) :where(.katex) {
+  font-size: 1.08em;
+  letter-spacing: normal;
+}
+[data-ui-next] :where(.un-read) :where(.katex-display) {
+  margin-block: var(--un-read-gap);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.2em;
+}
+[data-ui-next] :where(.un-read) :where(.katex-display > .katex) {
+  font-size: 1.12em;
+}
+
+/* Media and footnotes. */
+[data-ui-next] :where(.un-read) :where(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--un-read-radius);
+}
+[data-ui-next] :where(.un-read) :where(.footnotes) {
+  margin-top: var(--un-read-gap-section);
+  padding-top: var(--un-read-gap);
+  border-top: var(--un-hairline) solid var(--un-read-rule);
+  color: var(--un-text-3);
+  font-size: var(--un-read-small-fs);
+}

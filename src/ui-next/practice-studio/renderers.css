@@ -184,9 +184,8 @@
   box-shadow: none;
 }
 [data-ui-next] .un-st-support .un-cp-md {
+  /* Size and rhythm come from the reading layer (YUK-1548); see .un-cp-rich-text below. */
   color: var(--st-ink);
-  font-size: 14px;
-  line-height: 1.75;
 }
 [data-ui-next] .un-st-support .un-cp-today {
   background: transparent;
@@ -372,41 +371,11 @@
   margin: 10px 0 0;
 }
 
+/* YUK-1548 — the rich-text rhythm comes from the shared reading layer (src/ui-next/reading.css);
+   the studio only sets its size and line height through the reading tokens. */
 [data-ui-next] .un-st-support .un-cp-rich-text {
-  font-size: 15px;
-  line-height: 1.8;
-  overflow-wrap: anywhere;
-}
-[data-ui-next] .un-st-support .un-cp-rich-text :is(h1, h2, h3, h4) {
-  font-family: var(--un-font-sans);
-  color: var(--st-ink);
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1.5;
-  margin: 24px 0 10px;
-}
-[data-ui-next] .un-st-support .un-cp-rich-text > :first-child {
-  margin-top: 0;
-}
-[data-ui-next] .un-st-support .un-cp-rich-text :is(p, ul, ol, blockquote) {
-  margin-block: 12px;
-}
-[data-ui-next] .un-st-support .un-cp-rich-text li + li {
-  margin-top: 8px;
-}
-[data-ui-next] .un-st-support .un-cp-rich-text :is(ul, ol) {
-  padding-inline-start: 24px;
-}
-[data-ui-next] .un-st-support .un-cp-rich-text blockquote {
-  margin-inline: 0;
-  padding-inline-start: 16px;
-  border-inline-start: 3px solid var(--st-line);
-  color: var(--st-muted);
-}
-[data-ui-next] .un-st-support .un-cp-rich-text a {
-  color: var(--st-accent);
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  --un-read-fs: 15px;
+  --un-read-lh: 1.8;
 }
 [data-ui-next] .un-st-support .un-cp-rich-text .katex-display,
 [data-ui-next] .un-st-support .un-cp-table-scroll {
@@ -466,13 +435,4 @@
   padding: 8px 12px;
   font-size: 12px;
   color: var(--st-muted);
-}
-[data-ui-next] .un-st-support .un-cp-rich-text .footnotes {
-  margin-top: 24px;
-  padding-top: 12px;
-  border-top: 1px solid var(--st-line);
-  font-size: 13px;
-}
-[data-ui-next] .un-st-support .un-cp-rich-text .task-list-item {
-  list-style: none;
 }

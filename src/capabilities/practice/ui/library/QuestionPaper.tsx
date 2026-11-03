@@ -48,7 +48,7 @@ export function QuestionPaper({
           </button>
         )}
       </div>
-      <MathMarkdown className="qd-stem" notation={detail.notation}>
+      <MathMarkdown className="qd-stem un-read" notation={detail.notation}>
         {detail.prompt_md.trim() || '（这道题没有文字题面）'}
       </MathMarkdown>
       <QuestionFigures detail={detail} />

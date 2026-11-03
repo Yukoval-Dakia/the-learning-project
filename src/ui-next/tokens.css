@@ -86,6 +86,31 @@
   --un-hairline: 1px;
   --un-w-prose: 680px;
 
+  /* Reading (YUK-1548): one rhythm for rendered rich text — notes, question stems, companion
+     replies — and for the layout blocks built on it (step card, callout, comparison table, tabs,
+     timeline, formula card). Sizes are em-relative to --un-read-fs so a block or a denser surface
+     only resets the body size and line height (see [data-read="compact"] in reading.css). */
+  --un-read-fs: var(--un-fs-3);
+  --un-read-lh: var(--un-lh-prose);
+  --un-read-measure: var(--un-w-prose);
+  --un-read-gap: 0.8em; /* between paragraphs, lists, tables, code, formulas */
+  --un-read-gap-item: 0.3em; /* between list items */
+  --un-read-gap-section: 1.7em; /* above a section heading */
+  --un-read-gap-heading: 0.5em; /* below a heading */
+  --un-read-h1: 1.5em;
+  --un-read-h2: 1.24em;
+  --un-read-h3: 1.06em;
+  --un-read-h4: 1em;
+  --un-read-heading-lh: var(--un-lh-tight);
+  --un-read-indent: 1.5em; /* list and quote indent */
+  --un-read-code-fs: 0.88em;
+  --un-read-code-bg: var(--un-bg-sunk);
+  --un-read-small-fs: 0.88em; /* table cells, footnotes, captions */
+  --un-read-cell-pad: 0.5em 0.75em;
+  --un-read-radius: var(--un-r-1);
+  --un-read-rule: var(--un-line);
+  --un-read-quote-rule: var(--un-line-strong);
+
   /* Motion (T4): feedback, small UI, interface, panel; two curves plus a soft spring for flights. */
   --un-t-feedback: 90ms;
   --un-t-small: 200ms;
