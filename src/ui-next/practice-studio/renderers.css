@@ -384,16 +384,12 @@
   overflow-y: hidden;
   padding-block: 8px;
 }
+/* Cell size, padding and row height come from the reading layer; the studio sets only its colours. */
 [data-ui-next] .un-st-support .un-cp-table-scroll table {
   width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
 }
 [data-ui-next] .un-st-support .un-cp-table-scroll :is(th, td) {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--st-line);
-  text-align: start;
-  vertical-align: top;
+  border-bottom-color: var(--st-line);
 }
 [data-ui-next] .un-st-support .un-cp-table-scroll th {
   font-weight: 600;

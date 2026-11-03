@@ -43,7 +43,10 @@ function remarkLoneDisplayMath() {
       if (!children) return;
       for (let i = 0; i < children.length; i++) {
         const child = children[i];
-        const only = child?.type === 'paragraph' && child.children?.length === 1 ? child.children[0] : undefined;
+        const only =
+          child?.type === 'paragraph' && child.children?.length === 1
+            ? child.children[0]
+            : undefined;
         const start = only?.position?.start.offset;
         if (only?.type === 'inlineMath' && start !== undefined && source.startsWith('$$', start)) {
           const value = only.value ?? '';

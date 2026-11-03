@@ -23,14 +23,15 @@
 [data-ui-next] :where(.un-read[data-read="compact"]) {
   --un-read-fs: var(--un-fs-2);
   --un-read-lh: 1.8;
-  --un-read-gap: 0.95em;
-  --un-read-gap-section: 1.9em;
+  --un-read-gap: 1.05em;
+  --un-read-gap-item: 0.65em;
+  --un-read-gap-section: 2.1em;
   /* A clear step per level (about 1.2×): chat replies pick heading levels freely (### / #### are
      common), so the bottom of the scale still stands above body text. */
-  --un-read-h1: 1.72em;
-  --un-read-h2: 1.44em;
-  --un-read-h3: 1.22em;
-  --un-read-h4: 1.08em;
+  --un-read-h1: 1.8em;
+  --un-read-h2: 1.52em;
+  --un-read-h3: 1.3em;
+  --un-read-h4: 1.14em;
 }
 
 /* Flow: one gap between any two blocks. */
@@ -58,14 +59,15 @@
 [data-ui-next] :where(.un-read) :where(h4) {
   font-size: var(--un-read-h4);
 }
-[data-ui-next] :where(.un-read) > :where(* + h1, * + h2, * + h3) {
+[data-ui-next] :where(.un-read) > :where(* + h1, * + h2, * + h3, * + h4) {
   margin-top: var(--un-read-gap-section);
-}
-[data-ui-next] :where(.un-read) > :where(* + h4) {
-  margin-top: calc(var(--un-read-gap-section) * 0.75);
 }
 [data-ui-next] :where(.un-read) > :where(h1, h2, h3, h4) + :where(*) {
   margin-top: var(--un-read-gap-heading);
+}
+/* A subheading straight under its heading still reads as a new line of the outline. */
+[data-ui-next] :where(.un-read) > :where(h1, h2, h3, h4) + :where(h2, h3, h4) {
+  margin-top: var(--un-read-gap);
 }
 
 /* Lists. */
