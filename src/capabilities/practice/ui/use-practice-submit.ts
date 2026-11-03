@@ -40,6 +40,7 @@ import {
   isSubmitPending,
 } from './practice-api';
 import { type PracticeClient, usePracticeClient } from './practice-client';
+import { verdictNeedsLearnerRating } from './submit-recovery';
 
 export type Rating = 'again' | 'hard' | 'good';
 type IssuanceMode = 'auto_score' | 'manual';
@@ -403,22 +404,6 @@ function withKey(set: ReadonlySet<string>, key: string, on: boolean): ReadonlySe
   if (on) next.add(key);
   else next.delete(key);
   return next;
-}
-
-// YUK-1729 — a recovered terminal verdict that still needs the learner's rating step. Same split
-// as onPendingSettled: review_required, partial_unknown, or an explicit null final rating.
-type RecoveredTerminalRun = Extract<
-  NonNullable<IssuanceState['settled']>,
-  { kind: 'terminal' }
->['run'];
-function verdictNeedsLearnerRating(run: RecoveredTerminalRun): boolean {
-  const r = run.result;
-  return (
-    run.status === 'done' &&
-    (r?.status === 'review_required' ||
-      r?.coarse_outcome === 'partial_unknown' ||
-      r?.final_rating === null)
-  );
 }
 
 export function usePracticeSubmit({
