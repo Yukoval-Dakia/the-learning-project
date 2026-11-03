@@ -1,10 +1,15 @@
-import type { ProposalDecisionInputT, ProposalDecisionResourceT } from '@/core/schema/proposal';
+import {
+  ProposalDecisionInput,
+  type ProposalDecisionInputT,
+  type ProposalDecisionResourceT,
+} from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { getCorrectionStatus } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import type { ProposalLifecycleResult } from '@/kernel/proposals';
 import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
 import { getProposalInboxRow } from '@/kernel/proposals/inbox';
+import { wakeHubSyncAfterCommit } from '@/server/boss/hub-sync-wake';
 import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
 
 function conflict(proposalId: string, existingDecision: string): ApiError {
@@ -196,4 +201,33 @@ export async function createProposalDecision(
     idempotent,
     result,
   };
+}
+
+/**
+ * The whole decision request for both front doors: validation, the decision, and
+ * the post-commit hub-sync wake. Callers only shape transport (status, Location).
+ */
+export async function commitProposalDecisionRequest(
+  db: Db,
+  rawProposalId: unknown,
+  rawInput: unknown,
+): Promise<ProposalDecisionResourceT> {
+  const proposalId = typeof rawProposalId === 'string' ? rawProposalId.trim() : '';
+  if (!proposalId) {
+    throw new ApiError('validation_error', 'proposal id is required', 400);
+  }
+  const parsed = ProposalDecisionInput.safeParse(rawInput);
+  if (!parsed.success) {
+    throw new ApiError(
+      'validation_error',
+      parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; '),
+      400,
+    );
+  }
+  const resource = await createProposalDecision(db, proposalId, parsed.data);
+  // Accepting a KC/edge proposal mutates topology; the trigger already dirtied every
+  // live hub, so the wake is fire-and-forget and swallows its own errors. A soft-stale
+  // block_merge accept commits nothing (decision_event_id null), so it skips the wake.
+  if (resource.decision_event_id !== null) void wakeHubSyncAfterCommit();
+  return resource;
 }
