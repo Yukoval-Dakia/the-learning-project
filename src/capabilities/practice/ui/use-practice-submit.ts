@@ -644,10 +644,10 @@ export function usePracticeSubmit({
             return;
           }
           settledApplied.current = issuanceId;
-          // A verdict the learner still has to rate (review_required, partial unknown, no
-          // rating) is not restored as a settled card: that card's commit needs this visit's own
-          // preview and activation intent. Replay advice instead, back into the rating step.
-          if (settled.kind === 'terminal' && verdictNeedsLearnerRating(settled.run)) {
+          if (
+            settled.kind === 'terminal' &&
+            verdictNeedsLearnerRating(settled.run.status, settled.run.result)
+          ) {
             setRecoverIssuance(issuanceId);
             return;
           }
@@ -1069,11 +1069,23 @@ export function usePracticeSubmit({
     }
   }
 
+  // YUK-1729 — a polled verdict the learner must rate also goes through the advice replay.
+  const onPolledSettled = useCallback(
+    (settled: JudgeRunPollingState) => {
+      if (verdictNeedsLearnerRating(settled.status, settled.result)) {
+        setPendingRun(null);
+        setRecoverIssuance(issuanceId);
+        return;
+      }
+      onPendingSettled(settled);
+    },
+    [issuanceId, onPendingSettled],
+  );
   const pendingPoll = useJudgeRunPolling({
     runId: pendingRun?.runId ?? null,
     pollUrl: pendingRun?.pollUrl ?? null,
     readStatus: readJudgeRunStatus,
-    onSettled: onPendingSettled,
+    onSettled: onPolledSettled,
   });
 
   // commit 接受显式 rating + autoRate：客观题自动流不依赖手动 `rating` state（直接用 judge 的
@@ -1203,8 +1215,7 @@ export function usePracticeSubmit({
     }
   };
 
-  // YUK-1729 — the capture an automatic verdict commits with inside the advice request (the same
-  // fields commit() sends). Latency only for a live answer; a recovery replay leaves it out.
+  // YUK-1729 — commit() capture sent with advice; a recovery replay leaves latency out.
   const adviceCommit = (withLatency: boolean): AdviceCommit => ({
     session_id: sessionId ?? null,
     stream_item_id: item.id,
