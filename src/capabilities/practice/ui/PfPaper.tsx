@@ -1297,17 +1297,26 @@ function PaperVisit({
   // acked + 1 (draftEpoch) so the older in-flight text cannot win. Then pause the session.
   // YUK-1483: armed by the paper header's ref (always mounted with the visit); it is
   // re-armed with this render's closure on each commit, so it flushes the latest drafts.
-  const attachPagehide = usePagehideTransition(() => {
-    stopTimingSegment();
-    // Guard the flush so a throw can't skip the session pause — the orphan sweep is the only
-    // other backstop for a session left open on teardown.
-    try {
-      flushDirtySlots({ keepalive: true, includeInFlight: true });
-    } catch (err) {
-      console.error('[PfPaper] pagehide flush failed', err);
-    }
-    return pauseCurrentSession(true);
-  });
+  const attachPagehide = usePagehideTransition(
+    () => {
+      stopTimingSegment();
+      // Guard the flush so a throw can't skip the session pause — the orphan sweep is the only
+      // other backstop for a session left open on teardown.
+      try {
+        flushDirtySlots({ keepalive: true, includeInFlight: true });
+      } catch (err) {
+        console.error('[PfPaper] pagehide flush failed', err);
+      }
+      return pauseCurrentSession(true);
+    },
+    true,
+    () => {
+      // YUK-1719 — hidden (app switch, tab switch) may be the last event before the process
+      // dies: send every unfired debounce now with keepalive. No pause and no in-flight resend;
+      // the learner may come back, and pagehide still resends in-flight saves on a real unload.
+      flushDirtySlots({ keepalive: true });
+    },
+  );
 
   // YUK-1488 — in-app navigation (sidebar, palette, back) unmounts the visit without pagehide
   // or the exit button. Send, once and with a normal fetch, every slot that still has an
