@@ -41,7 +41,7 @@ import {
   currentModelPins,
   modelSliceIdFor,
   registerModelAdmissionSlice,
-} from '../grading/server/model-slice-registry';
+} from '../grading/public';
 import { createAdmissionRunExecutor } from '../server/judge/evaluate-submission';
 
 /**

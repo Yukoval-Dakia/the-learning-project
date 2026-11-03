@@ -1,6 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
+import * as Review from '@/capabilities/practice/session/server/review-session-lifecycle';
 import { learning_session } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 

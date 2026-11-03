@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { queryReviewDue } from '@/capabilities/practice/server/due-list';
-import { executeGetReviewDue } from '@/capabilities/practice/server/tools/question-context';
+import { queryReviewDue } from '@/capabilities/practice/scheduling/server/due-list';
+import { executeGetReviewDue } from '@/capabilities/practice/scheduling/tools/question-context';
 import {
   prefetchProbeSelection,
   selectProbeFromPrefetch,

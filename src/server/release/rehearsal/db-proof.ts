@@ -5,9 +5,9 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
+import { FK_ORDER } from '@/capabilities/observability/public';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { Db } from '@/db/client';
-import { FK_ORDER } from '@/server/export/constants';
 
 /** Operational tables. They are not the backup payload. */
 const OPERATIONAL_TABLES = [

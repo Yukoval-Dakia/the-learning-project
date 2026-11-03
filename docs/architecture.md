@@ -9,7 +9,7 @@
 - **app**：`server/index.ts`（`pnpm build:server` → `dist/server.cjs`），`@hono/node-server` 监听 `API_PORT`（默认 8787，`src/server/config/env.ts` 的 `resolveApiPort`）。启动关键步骤：`loadEnv` → 科目 / 配置 / 模型目录水合 → capability tools 注册 → `recoverToolOperationsOnBoot` → admin config 注入 → `startListenLoop` → serve。
 - **worker**：`scripts/worker.ts`（`pnpm build:worker` → `dist/worker.cjs`）。`bootWorker()`（`src/server/boss/worker-boot.ts`）先注册 tools，再调 `startBossWorker` 挂 pg-boss、capability jobs、夜间 orchestrator 与 DBOS。worker 不启动 HTTP，也不开 LISTEN loop（`scripts/worker.ts` 注释）。
 - **migrate**：`scripts/migrate.ts` → `dist/migrate.cjs`，以 `node dist/migrate.cjs` 在 app / worker 之前跑 Drizzle migration。
-- **dev**：`pnpm dev:local`（`scripts/dev-local.ts`）spawn 三进程：`rw:api`（`tsx watch server/index.ts`，脚本自带 `RW_WORKER=1`，dev-local 另设 `RW_FRONTDOOR=1`，页面同源在 :8787）、`rw:web`（`vite build --watch --config server/start/vite.config.ts`，重建 `dist/start`，API 随新产物重启；dev-local 启动前先跑一次 `pnpm build:start`）、`worker:dev`（`tsx scripts/worker.ts`）。因此 dev 里 app 进程与独立 worker 都会消费队列。
+- **dev**：`pnpm dev:local`（`scripts/dev-local.ts`）spawn 两进程：`rw:api`（`tsx watch server/index.ts`，脚本自带 `RW_WORKER=1`，dev-local 另设 `RW_FRONTDOOR=dev`：Vite dev server 以 middleware 模式跑在 API 进程内，页面同源在 :8788（`DEV_PORT`，只绑 127.0.0.1，`DEV_HOST` 可改）并支持 HMR，`server/dev-frontdoor.ts` 用与生产前门相同的 request context 调 Hono app，不需要 `build:start`）、`worker:dev`（`tsx scripts/worker.ts`）。因此 dev 里 app 进程与独立 worker 都会消费队列。
 - **prod**：`docker-compose.yml` 的 `migrate` / `app`（`node dist/server.cjs`，镜像 target `runner`）/ `worker`（`node dist/worker.cjs`，target `worker`，额外带 headless Chromium 供 `worksheet_render`）/ `postgres`（pgvector）/ `mem0-init` / `cloudflared`。app 与 worker 共用 `DATABASE_URL`；worker 是 mem0 SQLite history 的唯一写者。
 - **静态面**：未设 `RW_FRONTDOOR=1` 时 app 只服务 Hono API；设了（镜像内默认设）则走 `server/frontdoor.ts` 的 Start 前门（需要 `dist/start` 构建产物），见下文。
 
@@ -312,7 +312,7 @@ DDL 唯一真相源是 `src/db/schema.ts`（单文件、按段注释）；本节
 - `answer` / `learning_session` / `event`。
 - 观测与费用：`ai_task_runs` / `tool_call_log` / `tool_operation` / `cost_ledger` / `provider_attempt` / `job_events`。
 
-**读模型 vs 投影表**：`QuestionActivitySummary` 与周报（`loadWeeklyReview` 按窗口聚合 event，`src/capabilities/practice/server/review-weekly.ts`）是即时读模型、不落表；p(L) 诊断在 `mastery_state`、FSRS 调度在 `material_fsrs_state`（随 `action='review'` 同事务写），都是物理投影表。
+**读模型 vs 投影表**：`QuestionActivitySummary` 与周报（`loadWeeklyReview` 按窗口聚合 event，`src/capabilities/practice/scheduling/server/review-weekly.ts`）是即时读模型、不落表；p(L) 诊断在 `mastery_state`、FSRS 调度在 `material_fsrs_state`（随 `action='review'` 同事务写），都是物理投影表。
 
 **已 DROP，只作迁移背景**：`mistake`（改由 attempt event 表达，`outcome='failure'` 即错题视图）、`judgment` + `user_appeal`（改由 judge event）、`dreaming_proposal`（改由 propose event）、`review_event`、`ingestion_session`。`MemoryItem` / `MaintenanceSuggestion` 从未建表；记忆 brief 落 `memory_brief_note`。
 

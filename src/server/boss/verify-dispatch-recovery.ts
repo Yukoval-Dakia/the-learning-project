@@ -1,12 +1,12 @@
 import type { Job, PgBoss } from 'pg-boss';
 import {
   type EnqueueVerifyFn,
+  recoverHeldServingRechecks,
   recoverOrphanVerifyDispatches,
   recoverWebSupplies,
 } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
-
-export const VERIFY_DISPATCH_RECOVERY_QUEUE = 'verify_dispatch_recover';
+import { VERIFY_DISPATCH_RECOVERY_QUEUE } from './queue-names';
 
 export function buildVerifyDispatchRecoveryHandler(
   db: Db,
@@ -17,6 +17,10 @@ export function buildVerifyDispatchRecoveryHandler(
     // Lost-delivery fallback only: web demands normally advance on their question's publication
     // (practice.web-supply-observe). This sweep also drains orphan verify intents.
     await recoverWebSupplies(db, { enqueue });
+    // YUK-1664 — recovery pass for the system's serving recheck: bounded to 50
+    // held groups, it picks up holds that predate the result-event
+    // subscription and any delivery the bus lost.
+    await recoverHeldServingRechecks(db);
   };
 }
 

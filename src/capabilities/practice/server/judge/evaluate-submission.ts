@@ -64,13 +64,13 @@ import {
   withdrawCapturedOccurrence,
 } from '@/server/assessment/runtime';
 import { lookupGroupSubjects } from '@/kernel/read-models/model-admission';
-import { createJevModelExecutor } from '../../grading/server/jev-model-executor';
 import {
+  createJevModelExecutor,
+  createPiModelExecutor,
+  createRubricModelExecutor,
   currentModelPins,
   gradingSliceMatchesLivePin,
-} from '../../grading/server/model-slice-registry';
-import { createPiModelExecutor } from '../../grading/server/pi-model-executor';
-import { createRubricModelExecutor } from '../../grading/server/rubric-model-executor';
+} from '../../grading/public';
 import {
   authorizeConfirmationCorrection,
   bindAppealExecution,

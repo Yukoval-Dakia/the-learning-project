@@ -103,7 +103,8 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | `withProposalGateLock` | `src/kernel/proposals/signals.ts` | `<kind>:<cooldown_key>` 多键 sorted xact gate；Db 开真 tx、Tx 内联 |
 | `lockPaidEffectControlFamily` / `lockEntityGate` | `src/db/paid-effect-control.ts` / `paid-effect-store.ts` | paid-effect family/entity 锁（只读盘点） |
 | `lockProducerFenceInstaller` 等 | `src/server/durable/*` | durable family install/control/tick |
-| `withinComposePaidWorkLock` | `practice/server/compose-paid-work-lock.ts` | `stream:compose-paid:<date>` session |
+| `withinComposePaidWorkLock` | `practice/scheduling/server/compose-paid-work-lock.ts` | `stream:compose-paid:<date>` session |
+| `lockPracticeStreamPartition` / `lockPracticeStreamScope` | `src/kernel/locks/practice-stream.ts` | 练习流 xact：每日流 `stream:compose:<date>`、按需会话 `stream:session:<sessionId>`、作用域 `stream:scope:<date>:<knowledgeId>`。取锁顺序仍在 `stream-store.ts`（scope → session partition） |
 | `acquireControlPlaneLockSql` | `server/subjects/control-plane-lock.ts` | int 597001 |
 
 ## 3. 族表（81）
@@ -138,8 +139,8 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | 20 | intervention-corrections-all | intervention:corrections:all | hashtextextended:0 | transaction | xact | 5 | intervention-instance, learning-state:write |
 | 21 | intervention-source | intervention:source:<sourceEventId> | hashtextextended:0 | transaction | xact | 5 | intervention-corrections-all, copilot-execution-settlement |
 | 22 | intervention-deliver | intervention:deliver:<questionId> | hashtext | transaction | xact | 1 |  |
-| 23 | stream-compose | stream:compose:<date> | hashtext | transaction | xact | 3 | intervention-deliver |
-| 24 | stream-session-partition | stream:session:<sessionId> | hashtext | transaction | xact | 2 | stream-scope |
+| 23 | stream-compose | stream:compose:<date> | hashtext | transaction | xact | 2 | intervention-deliver |
+| 24 | stream-session-partition | stream:session:<sessionId> | hashtext | transaction | xact | 1 | stream-scope |
 | 25 | stream-scope | stream:scope:<date>:<knowledgeId> | hashtext | transaction | xact | 1 |  |
 | 26 | stream-compose-paid | stream:compose-paid:<date> | hashtext | session | session-try-until-deadline | 2 |  |
 | 27 | producer-fence-install | pgboss:producer-fence:install:v1 | hashtextextended:0 | transaction | xact | 5 |  |

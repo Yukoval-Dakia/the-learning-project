@@ -45,14 +45,14 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { readAutomaticIssuanceServingDecisions } from '@/kernel/records/assessment-issuance';
-import { snapshotAssessmentLearningScope } from '../judge/evaluate-submission';
-import { snapshotIssuanceAssistance } from './assistance';
 import {
   issuanceRowToContract,
+  readAutomaticIssuanceServingDecisions,
   readObservedAdmissionGeneration,
   revisionRowToContract,
-} from './issue';
+} from '@/kernel/records/assessment-issuance';
+import { snapshotAssessmentLearningScope } from '../judge/evaluate-submission';
+import { snapshotIssuanceAssistance } from './assistance';
 
 /** 提交 receipt 事件 action 名。 */
 export const ASSESSMENT_SUBMISSION_ACTION = 'experimental:assessment_submission';

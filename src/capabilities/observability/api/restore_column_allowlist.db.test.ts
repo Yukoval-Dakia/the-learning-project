@@ -22,11 +22,16 @@
 import { zipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { knowledge } from '@/db/schema';
-import { SCHEMA_VERSION } from '@/server/export/constants';
+import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
+import { setBackupConfigHydrator } from '../server/backup/config-hydrator';
+import { SCHEMA_VERSION } from '../server/backup/constants';
 import { GET } from './backup-export';
 import { POST } from './backup-import';
+
+// Production injects this in server/index.ts; the restore route fails closed without it.
+setBackupConfigHydrator(hydrateConfigFromDb);
 
 const r2 = memR2();
 vi.mock('@/kernel/object-storage', () => ({

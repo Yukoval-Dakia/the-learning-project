@@ -1,4 +1,4 @@
-// worker 60s 周期全量科目装配 reconcile（承重路径，不是兜底；写面在提交后即时重装）。
+// worker 与 API 进程各 60s 周期全量科目装配 reconcile（承重路径，不是兜底；写面在提交后即时重装）。
 // unref 不阻退出；返回句柄供 shutdown clearInterval。
 
 import { type Db, db as defaultDb } from '@/db/client';

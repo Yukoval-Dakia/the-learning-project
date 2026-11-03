@@ -13,7 +13,7 @@
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { setFixedAnchors } from '../server/fixed-anchor';
-import { FixedAnchorBodySchema } from './review-planning-contracts';
+import { FixedAnchorBodySchema } from './calibration-anchors-contracts';
 
 export async function POST(req: Request): Promise<Response> {
   try {

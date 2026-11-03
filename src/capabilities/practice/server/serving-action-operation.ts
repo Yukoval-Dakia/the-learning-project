@@ -12,7 +12,7 @@ export async function runPracticeServingAction(
   if (!parsedParams.success) {
     throw new ApiError(
       'validation_error',
-      'expected /api/questions/[id]/serving-actions/[reverify|recheck_source|release_verify_hold]',
+      'expected /api/questions/[id]/serving-actions/release_verify_hold — reverify and recheck_source run automatically now',
       400,
     );
   }

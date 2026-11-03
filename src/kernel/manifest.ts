@@ -400,6 +400,44 @@ export function projectDagMembers(
   return members;
 }
 
+const isPathParamSegment = (segment: string) => /^\[[^\]]+\]$/.test(segment);
+
+/** True when every request `later` matches is already matched by `earlier`. */
+function routePathShadows(earlier: readonly string[], later: readonly string[]): boolean {
+  return (
+    earlier.length === later.length &&
+    earlier.every((segment, index) => segment === later[index] || isPathParamSegment(segment))
+  );
+}
+
+/**
+ * Hono runs same-method handlers in registration order (capability order, then each
+ * manifest's route order), so an earlier `/x/[id]` answers every request meant for a later
+ * `/x/stream`. Fail composition instead of silently shadowing the later route.
+ */
+function assertNoShadowedRoutes(capabilities: readonly CapabilityManifest[]): void {
+  type Registered = { capability: string; index: number; route: ApiRouteDecl; segments: string[] };
+  const describe = ({ capability, index, route }: Registered) =>
+    `'${route.operationId ?? '<no operationId>'}' ${route.method} ${route.path} (capability '${capability}', routes[${index}])`;
+  const registered: Registered[] = [];
+  for (const cap of capabilities) {
+    for (const [index, route] of (cap.api?.routes ?? []).entries()) {
+      const current = { capability: cap.name, index, route, segments: route.path.split('/') };
+      const shadowing = registered.find(
+        (earlier) =>
+          earlier.route.method === route.method &&
+          routePathShadows(earlier.segments, current.segments),
+      );
+      if (shadowing) {
+        throw new Error(
+          `api route ${describe(shadowing)} is registered before ${describe(current)} and matches every request for it; register the more specific route first`,
+        );
+      }
+      registered.push(current);
+    }
+  }
+}
+
 /** 组合期校验：包名及各类声明（含 UI page）全局唯一，冲突即抛错。 */
 export function validateComposition(capabilities: CapabilityManifest[]): void {
   const names = new Set<string>();
@@ -496,6 +534,7 @@ export function validateComposition(capabilities: CapabilityManifest[]): void {
       }
     }
   }
+  assertNoShadowedRoutes(capabilities);
   const jobOwner = new Map<string, string>();
   for (const cap of capabilities) {
     for (const job of cap.jobs?.handlers ?? []) {

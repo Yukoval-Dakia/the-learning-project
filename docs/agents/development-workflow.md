@@ -20,15 +20,14 @@ ignored local files after the merge. Do not reintroduce another lane's task stat
 ## Local processes
 
 ```bash
-pnpm dev:local        # Postgres + API/Start 前门 :8787 + Start 重建 watcher + worker
+pnpm dev:local        # 唯一入口：起 dev Postgres(:5434，与 TEST 隔离)+迁移+API/Start 前门 :8788(Vite HMR)+worker；打开 http://127.0.0.1:8788/
 pnpm dev              # alias for dev:local
-pnpm rw:api           # Hono API
-pnpm rw:web           # Start 构建 watcher（重建 dist/start）
+pnpm rw:api           # Hono API（设 RW_FRONTDOOR=dev 才带 Vite 前门；dev:local 已设）
 pnpm worker:dev       # standalone pg-boss worker
 pnpm build            # Start + server/worker/migrate bundles
 ```
 
-Development requires the API, web app, and standalone worker. `RW_WORKER=1`
+Development requires the API (which hosts the Vite front door) and the standalone worker. `RW_WORKER=1`
 is only a fallback; run the standalone worker.
 
 ## Local validation commands
@@ -112,6 +111,7 @@ pnpm audit:api-client
 pnpm audit:tool-params
 pnpm audit:capability-boundaries
 pnpm audit:architecture-deepening
+pnpm audit:practice-subowners
 pnpm audit:profile
 pnpm audit:learner-copy
 pnpm audit:no-learning-styles
@@ -206,7 +206,7 @@ the unit/DB lanes; only verified docs-only changes skip them. Each lane computes
 files and direct unmocked DB imports in unit files. The audit lanes run exactly the
 commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition,
 question-writers, API-contract, API-client, tool-params,
-capability-boundary, architecture-deepening, profile, learner-copy, no-learning-styles,
+capability-boundary, architecture-deepening, practice-subowners, profile, learner-copy, no-learning-styles,
 structured-judge, test-policy, task-census, draft-status (insert and pool-read), strict
 flags, hub-sync-writers, provider-lanes, model-source, advisory-locks, relations and
 mastery-provenance.

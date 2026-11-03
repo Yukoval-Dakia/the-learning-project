@@ -4,6 +4,7 @@ import { SECURITY_HEADERS } from './app';
 import { createStartAdminControlReader } from './start/admin-control-reader';
 import type { FrontdoorContext } from './start/context';
 import { cancelStartCopilotRun } from './start/copilot-cancel-run-operation';
+import { sendStartCopilotChat } from './start/copilot-chat-operation';
 import { revertStartCopilotCheckpoint } from './start/copilot-checkpoint-revert-operation';
 import {
   dismissStartCopilotNudge,
@@ -104,6 +105,7 @@ export function createFrontdoorContext(api: Hono): FrontdoorContext {
   const context: FrontdoorContext = {
     api,
     acceptTeachingChip: acceptStartTeachingChip,
+    sendCopilotChat: sendStartCopilotChat,
     revertCopilotCheckpoint: revertStartCopilotCheckpoint,
     cancelCopilotRun: cancelStartCopilotRun,
     readCopilotTurns: readStartCopilotTurns,
@@ -177,13 +179,27 @@ export function createFrontdoorContext(api: Hono): FrontdoorContext {
   return context;
 }
 
-export async function createFrontdoor(api: Hono) {
-  const entry = await import('../dist/start/server/server.js');
+export type StartEntryFetch = (
+  request: Request,
+  options: { context: FrontdoorContext },
+) => Response | Promise<Response>;
+
+// Shared by the built front door and the Vite dev front door (server/dev-frontdoor.ts) so both
+// reach the Hono app through the same request context and security headers.
+export function buildFrontdoor(
+  api: Hono,
+  entryFetch: StartEntryFetch,
+  publicRoot: string = START_CLIENT_ROOT,
+) {
   const context = createFrontdoorContext(api);
   const frontdoor = new Hono();
   frontdoor.use('*', SECURITY_HEADERS);
-  for (const path of ROOT_PUBLIC_FILES)
-    frontdoor.get(path, serveStatic({ root: START_CLIENT_ROOT }));
-  frontdoor.all('*', (c) => entry.default.fetch(c.req.raw, { context }));
+  for (const path of ROOT_PUBLIC_FILES) frontdoor.get(path, serveStatic({ root: publicRoot }));
+  frontdoor.all('*', (c) => entryFetch(c.req.raw, { context }));
   return (request: Request) => frontdoor.fetch(request);
+}
+
+export async function createFrontdoor(api: Hono) {
+  const entry = await import('../dist/start/server/server.js');
+  return buildFrontdoor(api, (request, options) => entry.default.fetch(request, options));
 }

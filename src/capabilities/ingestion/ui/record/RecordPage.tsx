@@ -59,7 +59,7 @@ export default function RecordPage({ navigate, getQuery, setQuery }: RecordPageP
 
   return (
     <UiNextRoot className="rc-page">
-      <main className="rc-main" ref={holdMain}>
+      <main className="rc-main un-m3e-bridge" ref={holdMain}>
         <header className="rc-head">
           <div className="rc-head-text">
             <h1 className="rc-title">把题放进来</h1>

@@ -12,11 +12,11 @@ import {
 } from '@/db/schema';
 import { issueSoloFixture } from '../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { recordSelectionObservation } from '../scheduling/server/selection-observations';
 import {
   activateSubmissionCandidate,
   evaluateSubmission,
 } from '../server/judge/evaluate-submission';
-import { recordSelectionObservation } from '../server/selection-observations';
 import { createAttempt } from './submit';
 
 beforeEach(resetDb);

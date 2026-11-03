@@ -27,13 +27,13 @@ import {
   question,
   question_group_lifecycle,
 } from '@/db/schema';
+import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { issueHistoricalSoloFixture } from '../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runJudgeRun } from '../jobs/judge_run';
-import { issueAssessment } from '../server/assessment/issue';
 import * as evaluationService from '../server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '../server/judge/recorded-model-executor';
 import { fenceJudgeUnitClaim } from '../server/judge-operational';
