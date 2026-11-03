@@ -13,7 +13,7 @@ import {
 import { enqueueMemoryBriefRegen } from '@/kernel/memory-brief-regen';
 import { REFLECTION_BRIEF_SCOPE_KEYS } from '@/kernel/nightly-eligibility';
 import {
-  BRIEF_ACTIVITY_ACTIONS,
+  LEARNING_ACTIVITY_ACTIONS,
   resolveLearningEventSubjects,
 } from '@/kernel/read-models/learner-activity';
 import { latestPurposeWithdrawal } from '@/kernel/read-models/purpose-change';
@@ -398,9 +398,9 @@ export function buildMemoryEventIngestHandler(
       // Core learning events never tag `subject:*` in affected_scopes, so the
       // fan-out above cannot refresh a per-subject brief. Resolve the event to its
       // canonical subject and enqueue that scope, moving freshness from the nightly
-      // sweep to minutes. The 6-minute singleton collapses bursts. Best-effort: a
+      // sweep to hours. The subject singleton slot collapses bursts. Best-effort: a
       // bridge failure must not make the ingest job retry; the sweep backstops it.
-      if ((BRIEF_ACTIVITY_ACTIONS as readonly string[]).includes(row.action)) {
+      if ((LEARNING_ACTIVITY_ACTIONS as readonly string[]).includes(row.action)) {
         try {
           const subjectByEventId = await resolveLearningEventSubjects(db, [row], 'default_subject');
           const subjectId = subjectByEventId.get(row.id);

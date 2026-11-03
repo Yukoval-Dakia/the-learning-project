@@ -6,6 +6,7 @@ import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event, learning_record, question, question_revision } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
+import { nativeAttemptOutcome, resolveVerdictsForNativeAttempts } from './assessment-verdict';
 import { batchResolveSubjectIds } from './subject-resolution';
 
 type DbLike = Db | Tx;
@@ -25,9 +26,6 @@ export const LEARNING_ACTIVITY_ACTIONS = [
 /** Answers without `review`: the question delete warning counts attempts only. */
 export const QUESTION_ATTEMPT_ACTIONS = ['attempt', NATIVE_ATTEMPT_ACTION] as const;
 
-/** Learning activity as the subject memory brief still reads it: no native attempts. */
-export const BRIEF_ACTIVITY_ACTIONS = ['attempt', 'review', RECORD_CAPTURE_ACTION] as const;
-
 /** Newest learner-made, derivation-allowed learning activity, optionally strictly before `before`. */
 export async function loadLastLearnerEventAt(db: DbLike, before?: Date): Promise<Date | null> {
   const [row] = await db
@@ -42,6 +40,31 @@ export async function loadLastLearnerEventAt(db: DbLike, before?: Date): Promise
       ),
     );
   return asDate(row?.at);
+}
+
+/**
+ * Graded outcome of native attempt anchors, whose event row stores outcome null.
+ * Pending, self-reported and unsupported verdicts carry no right/wrong bit and are
+ * left out.
+ */
+export async function loadNativeAttemptOutcomes(
+  db: DbLike,
+  eventIds: string[],
+): Promise<Map<string, 'success' | 'failure' | 'partial'>> {
+  const out = new Map<string, 'success' | 'failure' | 'partial'>();
+  if (eventIds.length === 0) return out;
+  const rows = await db
+    .select()
+    .from(event)
+    .where(and(inArray(event.id, eventIds), eq(event.action, NATIVE_ATTEMPT_ACTION)));
+  if (rows.length === 0) return out;
+  const verdicts = await resolveVerdictsForNativeAttempts(db, rows);
+  for (const [eventId, verdict] of verdicts) {
+    const outcome = nativeAttemptOutcome(verdict);
+    if (outcome === 'success' || outcome === 'failure' || outcome === 'partial')
+      out.set(eventId, outcome);
+  }
+  return out;
 }
 
 export interface LearningEventRef {

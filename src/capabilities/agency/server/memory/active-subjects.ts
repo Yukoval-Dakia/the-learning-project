@@ -9,7 +9,8 @@ import type { Db } from '@/db/client';
 import { event, memory_brief_note } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import {
-  BRIEF_ACTIVITY_ACTIONS,
+  LEARNING_ACTIVITY_ACTIONS,
+  loadNativeAttemptOutcomes,
   resolveLearningEventSubjects,
 } from '@/kernel/read-models/learner-activity';
 import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
@@ -111,7 +112,9 @@ export async function listActiveSubjectsSinceRefresh(
       created_at: event.created_at,
     })
     .from(event)
-    .where(and(inArray(event.action, [...BRIEF_ACTIVITY_ACTIONS]), gt(event.created_at, scanFloor)))
+    .where(
+      and(inArray(event.action, [...LEARNING_ACTIVITY_ACTIONS]), gt(event.created_at, scanFloor)),
+    )
     .orderBy(sql`${event.created_at} DESC`)) as QualifyingEventRow[];
 
   if (rows.length === 0) return [];
@@ -212,7 +215,7 @@ export async function loadSubjectBriefEvents(
     .from(event)
     .where(
       and(
-        inArray(event.action, [...BRIEF_ACTIVITY_ACTIONS]),
+        inArray(event.action, [...LEARNING_ACTIVITY_ACTIONS]),
         gt(event.created_at, floor),
         eventAllowsDerivationSql(),
       ),
@@ -237,7 +240,15 @@ export async function loadSubjectBriefEvents(
     });
     if (out.length >= BRIEF_REFRESH_BUDGET.maxEventsPerBrief) break;
   }
-  return out;
+  // The brief writer judges weakness vs. progress from outcome; native attempts
+  // store none on the event, so read their effective verdict.
+  const nativeOutcomes = await loadNativeAttemptOutcomes(
+    db,
+    out.filter((e) => e.outcome === null).map((e) => e.id),
+  );
+  return out.map((e) =>
+    e.outcome === null ? { ...e, outcome: nativeOutcomes.get(e.id) ?? null } : e,
+  );
 }
 
 /**

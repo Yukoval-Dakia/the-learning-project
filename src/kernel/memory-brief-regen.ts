@@ -5,6 +5,10 @@
 export const MEMORY_BRIEF_REGEN_QUEUE = 'memory_brief_regen';
 
 const REGEN_SINGLETON_SECONDS = 6 * 60;
+// Every practice answer reaches a subject brief, and each regen is one paid LLM
+// call. pg-boss keeps one job per key per slot, so a subject regenerates at most
+// six times a day.
+const SUBJECT_REGEN_SINGLETON_SECONDS = 4 * 60 * 60;
 
 export async function enqueueMemoryBriefRegen(
   boss: { send(name: string, data: object, options?: object): Promise<string | null> },
@@ -19,7 +23,9 @@ export async function enqueueMemoryBriefRegen(
     now ? { scope_key: scopeKey, now: now.toISOString() } : { scope_key: scopeKey },
     {
       singletonKey: `memory.regen.${scopeKey}`,
-      singletonSeconds: REGEN_SINGLETON_SECONDS,
+      singletonSeconds: scopeKey.startsWith('subject:')
+        ? SUBJECT_REGEN_SINGLETON_SECONDS
+        : REGEN_SINGLETON_SECONDS,
       singletonNextSlot: true,
     },
   );
