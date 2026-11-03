@@ -49,6 +49,13 @@ export class SkippedProposalDecision<TResult> {
   constructor(readonly result: TResult) {}
 }
 
+/**
+ * First call inside each transaction a prepare step commits on its own. It takes the
+ * decision lock there and throws once the proposal is dismissed or retracted; a recorded
+ * accept passes, so the owner's idempotent writes replay.
+ */
+export type ProposalWriteGuard = (tx: Tx) => Promise<void>;
+
 export interface ProposalAcceptPlan<TResult, TPrepared> {
   readonly proposal: ProposalSignalSource;
   readonly userNote?: string;
@@ -59,12 +66,7 @@ export interface ProposalAcceptPlan<TResult, TPrepared> {
    * Owner preflight outside the decision transaction, after the replay fast path.
    * Returning SkippedProposalDecision ends the accept without a rate or signal.
    */
-  prepare?(): Promise<TPrepared | SkippedProposalDecision<TResult>>;
-  /**
-   * The owner's prepare commits its own writes, so the decision is also re-checked under
-   * the lock before prepare runs, not only in the decision transaction.
-   */
-  readonly recheckBeforePrepare?: true;
+  prepare?(guardWrite: ProposalWriteGuard): Promise<TPrepared | SkippedProposalDecision<TResult>>;
   /** Owner domain effect inside the decision transaction, after the kernel re-checks. */
   effect(
     ctx: ProposalAcceptEffectContext,
@@ -159,12 +161,10 @@ export async function runProposalAccept<TResult, TPrepared = undefined>(
     return locked;
   };
 
-  if (plan.recheckBeforePrepare) {
-    const locked = acceptable(await db.transaction((tx) => readDecisionUnderLock(tx, proposalId)));
-    if (locked.status === 'decided') return replayed(locked.rate);
-  }
-
-  const prepared = plan.prepare ? await plan.prepare() : (undefined as TPrepared);
+  const guardWrite: ProposalWriteGuard = async (tx) => {
+    acceptable(await readDecisionUnderLock(tx, proposalId));
+  };
+  const prepared = plan.prepare ? await plan.prepare(guardWrite) : (undefined as TPrepared);
   if (prepared instanceof SkippedProposalDecision) {
     return { outcome: 'skipped', result: prepared.result };
   }

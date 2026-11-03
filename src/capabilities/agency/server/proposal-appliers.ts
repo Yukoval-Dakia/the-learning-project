@@ -7,7 +7,8 @@
 //     （unsupported_proposal_kind）。归属声明与 applier 存在性解耦。
 //
 // import 环 gate：本文件不得 import producers/writer/actions（含 type-only）；
-// 共享 helper 一律走 @/kernel/proposals/applier-helpers。
+// 裁决事务走 @/kernel/proposals/decision-protocol，其余共享 helper 走
+// @/kernel/proposals/applier-helpers。
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 

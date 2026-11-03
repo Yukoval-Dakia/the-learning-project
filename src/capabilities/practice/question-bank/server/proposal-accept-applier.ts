@@ -19,10 +19,12 @@ import {
   acceptQuestionEditProposal,
   acceptVariantQuestionProposal,
   dismissQuestionDraftProposal,
+  editRequestAcceptApplied,
 } from './proposal-appliers';
 import { createPracticeProposalLifecycle } from './proposal-lifecycle';
 
 export const {
+  questionEditProposalDismissApplier,
   questionEditProposalRetractApplier,
   variantQuestionProposalDismissApplier,
   variantQuestionProposalRetractApplier,
@@ -30,6 +32,7 @@ export const {
   findExistingRateEvent,
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
+  editRequestAcceptApplied,
 });
 
 function inboxView(input: { proposal: ProposalAcceptInput['proposal'] }): ProposalInboxRow {

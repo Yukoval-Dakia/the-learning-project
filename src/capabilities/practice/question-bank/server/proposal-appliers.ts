@@ -9,10 +9,11 @@
 // - judge_retraction → acceptJudgeRetractionProposal（judge-retraction-applier.ts；
 // evaluation 目标走 appeal/rejudge/CAS 激活，legacy judge-event 目标写 CorrectEvent）。
 // import 环 gate：本文件不得 import producers/writer/actions（含 type-only）；
-// 共享 helper 一律走 @/kernel/proposals/applier-helpers。
+// 裁决事务走 @/kernel/proposals/decision-protocol，其余共享 helper 走
+// @/kernel/proposals/applier-helpers。
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import {
   LEGACY_DRAFT_STATUS,
@@ -952,9 +953,50 @@ export async function acceptCauseCategoryProposal(
 // {question_id, ops?, document?, draft_ref?, expected_revision?,
 // expected_draft_version?}。accept = 经同一 ops → draft → submit gate：
 // 1. saveDraftEdit（request_id = proposal-accept:<id> —— 重放幂等）；
-// 2. submitDraftQuestion（同 request_id —— CAS/去重/publish 唯一 seam）；
-// 3. rate(accept) 事件 + proposal decision 信号（与旧路径同生命周期）。
+// 2. submitDraftQuestion（request_id = proposal-submit:<id> —— CAS/去重/publish 唯一 seam）；
+// 3. 裁决事务写 structure-edit 审计 + rate(accept)，提交后记信号。
 // CAS 冲突（revision 已动 / draft 版本已动）⇒ 409，proposal 保留 pending。
+// save/submit 自己提交，submit 还可能在事务外调 embedding，所以不进裁决事务：
+// 两者的每个写事务先经模板的写守卫取裁决锁重查；submit 一旦过闸，撤回与驳回
+// 都拒绝（editRequestAcceptApplied），裁决只能由这次接受写完。
+
+function editRequestSubmitId(proposalId: string): string {
+  return `proposal-submit:${proposalId}`;
+}
+
+type SubmitOutcome = { status: string; published?: boolean };
+
+/** Withheld before any revision was minted: the accept fails without a decision. */
+function withheldUnpublished<T extends SubmitOutcome>(
+  submitted: T,
+): submitted is Extract<T, { published: false }> {
+  return submitted.status === 'withheld' && submitted.published === false;
+}
+
+/** Every other submit outcome takes the accept on to its decision. */
+function submitPassedAcceptGate(submitted: SubmitOutcome): boolean {
+  return submitted.status !== 'conflict' && !withheldUnpublished(submitted);
+}
+
+/**
+ * Whether an edit_request accept has already applied the edit through supply. The caller
+ * holds the decision lock, which the submit transaction also held while writing its receipt.
+ */
+export async function editRequestAcceptApplied(tx: Tx, proposalId: string): Promise<boolean> {
+  const [row] = await tx
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:question_draft_submit'),
+        sql`${event.payload} ->> 'request_id' = ${editRequestSubmitId(proposalId)}`,
+      ),
+    )
+    .orderBy(desc(event.created_at))
+    .limit(1);
+  const receipt = (row?.payload as { receipt?: SubmitOutcome } | undefined)?.receipt;
+  return receipt != null && submitPassedAcceptGate(receipt);
+}
 
 interface UnifiedEditRequest {
   question_id?: string | null;
@@ -991,9 +1033,7 @@ async function acceptUnifiedQuestionEditRequest(
         idempotent: true,
       };
     },
-    // 编辑与提交在 supply 自己的事务里提交，所以执行前也先在裁决锁下重查一次。
-    recheckBeforePrepare: true,
-    prepare: async () => {
+    prepare: async (guardWrite) => {
       const { saveDraftEdit, EditQuestionInput } = await import('../../supply/public');
       const { submitDraftQuestion } = await import('../../supply/public');
       const now = new Date();
@@ -1034,6 +1074,7 @@ async function acceptUnifiedQuestionEditRequest(
           ),
         );
       const serviceCtx = {
+        beforeWrite: guardWrite,
         actorRef,
         actorKind: 'user' as const,
         sessionId: source?.sessionId ?? null,
@@ -1069,7 +1110,7 @@ async function acceptUnifiedQuestionEditRequest(
           ...(editRequest.expected_revision !== undefined
             ? { expected_revision: editRequest.expected_revision }
             : {}),
-          request_id: `proposal-submit:${proposalId}`,
+          request_id: editRequestSubmitId(proposalId),
         },
         serviceCtx,
       );
@@ -1083,11 +1124,7 @@ async function acceptUnifiedQuestionEditRequest(
       // 未发布的 withheld（conversion 未决 / 死 KC / 组级 blocker）= accept 失败：
       // 不落 structure-edit/accept 事件，如实返回原因。「已发布但 admission
       // withheld/pending（verify 在途）」不同 —— revision 已铸，照常落事件。
-      if (
-        submitted.status === 'withheld' &&
-        'published' in submitted &&
-        submitted.published === false
-      ) {
+      if (withheldUnpublished(submitted)) {
         throw new ApiError(
           'unprocessable_entity',
           `submit_question withheld (not published): ${submitted.detail}`,
