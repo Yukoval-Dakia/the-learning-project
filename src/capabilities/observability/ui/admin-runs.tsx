@@ -1,22 +1,25 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { type CSSProperties, useMemo, useState } from 'react';
-import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
-import { Button } from '@/ui/primitives/Button';
-import { Card } from '@/ui/primitives/Card';
-import { PageHeader } from '@/ui/primitives/PageHeader';
+import { RefreshCw } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button, Chip, type ChipTone } from '@/ui-next/public';
 import type { AdminRunDto, AdminRunTimelineEventDto } from '../public';
 import { type AdminReadClient, httpAdminClient } from './admin-client';
 import {
-  AdminLinks,
+  ADMIN_LINKS,
+  AdminError,
+  AdminFrame,
+  AdminHead,
+  AdminKpi,
+  AdminKpis,
+  AdminLoading,
+  AdminNav,
+  AdminPanel,
+} from './admin-frame';
+import {
   type AdminSurfaceProps,
-  ErrorCard,
-  Kpi,
-  LoadingCard,
   formatMoney,
   formatTime,
-  mutedTextStyle,
-  sectionHeadStyle,
-  sectionTitleStyle,
   shortId,
   statusTone,
 } from './observability-shared';
@@ -56,20 +59,20 @@ function formatDuration(ms: number | null): string {
   return `${Math.round(ms / 60_000)}m`;
 }
 
-export function timelineTone(event: Pick<TimelineEvent, 'type' | 'label' | 'outcome'>): BadgeTone {
-  if (event.type === 'tool_call') return 'info';
+export function timelineTone(event: Pick<TimelineEvent, 'type' | 'label' | 'outcome'>): ChipTone {
+  if (event.type === 'tool_call') return 'accent';
   if (event.type === 'cost_ledger') {
-    return event.outcome === 'error' || event.outcome === 'failure' ? 'again' : 'coral';
+    return event.outcome === 'error' || event.outcome === 'failure' ? 'critical' : 'caution';
   }
   if (event.type === 'run_finished') {
-    if (event.label === 'success') return 'good';
-    if (event.label === 'failure') return 'again';
+    if (event.label === 'success') return 'positive';
+    if (event.label === 'failure') return 'critical';
     if (
       event.outcome === 'failure' ||
       event.outcome === 'error' ||
       event.outcome === 'tool_error'
     ) {
-      return 'again';
+      return 'critical';
     }
   }
   return 'neutral';
@@ -87,6 +90,12 @@ export function failedWindowNote(failed: number, shown: number, totalRuns: numbe
   return `${failed} / ${shown} in current window · ${totalRuns} total runs`;
 }
 
+const COPY_LABEL: Record<'idle' | 'copied' | 'failed', string> = {
+  idle: '复制错误摘要',
+  copied: '已复制',
+  failed: '复制失败，请手动选择',
+};
+
 function RunOutcomeSummary({ run }: { run: AdminRunRow }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const errorSummary = shortErrorSummary(run.error_message);
@@ -103,22 +112,18 @@ function RunOutcomeSummary({ run }: { run: AdminRunRow }) {
   };
 
   return (
-    <div style={outcomeSummaryStyle}>
-      <div style={badgeRowStyle}>
-        <Badge tone={statusTone(run.status)}>结果：{statusLabel(run.status)}</Badge>
-        <Badge tone="neutral">结束原因：{finishReason}</Badge>
+    <div className="adm-outcome">
+      <div className="adm-chip-row">
+        <Chip tone={statusTone(run.status)}>结果：{statusLabel(run.status)}</Chip>
+        <Chip>结束原因：{finishReason}</Chip>
       </div>
       {errorSummary && (
-        <div style={errorSummaryRowStyle}>
-          <code aria-label="错误摘要" style={errorSummaryStyle}>
+        <div className="adm-err-summary">
+          <code aria-label="错误摘要" className="adm-err-code">
             {errorSummary}
           </code>
           <Button variant="quiet" size="sm" onClick={() => void copyError()}>
-            {copyState === 'copied'
-              ? '已复制'
-              : copyState === 'failed'
-                ? '复制失败，请手动选择'
-                : '复制错误摘要'}
+            {COPY_LABEL[copyState]}
           </Button>
         </div>
       )}
@@ -187,235 +192,153 @@ export function AdminRunsSurface({
   };
 
   return (
-    <main className="page wide">
-      <PageHeader
+    <AdminFrame>
+      <AdminNav links={ADMIN_LINKS} current="/admin/runs" navigate={navigate} />
+      <AdminHead
+        kicker="管理 · 运行证据"
         title="AI 任务运行记录"
-        eyebrow="管理 · 运行证据"
-        sub="查看 AI 任务的状态、费用、工具调用和结束原因。"
-      >
-        <AdminLinks navigate={navigate} />
-        <Button variant="secondary" icon="refresh" onClick={refreshRuns}>
-          刷新
-        </Button>
-      </PageHeader>
+        lead="查看 AI 任务的状态、费用、工具调用和结束原因。"
+        actions={
+          <Button onClick={refreshRuns}>
+            <RefreshCw size={16} aria-hidden="true" />
+            刷新
+          </Button>
+        }
+      />
 
-      <div className="kpi-strip">
-        <Kpi label="运行记录" value={runs.length} note={`${runs.length} / ${totalRuns} 条`} />
-        <Kpi
+      <AdminKpis>
+        <AdminKpi label="运行记录" value={runs.length} note={`${runs.length} / ${totalRuns} 条`} />
+        <AdminKpi
           label="失败"
           value={totals.failed}
           note={failedWindowNote(totals.failed, runs.length, totalRuns)}
         />
-        <Kpi label="运行中" value={totals.running} note="尚未结束" />
-        <Kpi
+        <AdminKpi label="运行中" value={totals.running} note="尚未结束" />
+        <AdminKpi
           label="费用"
           value={formatMoney(totals.spend)}
           note={`${totals.toolCalls} 次工具调用`}
         />
-      </div>
+      </AdminKpis>
 
-      {runsQ.isLoading && <LoadingCard label="runs" />}
-      {runsQ.error && <ErrorCard error={runsQ.error} />}
+      {runsQ.isLoading && <AdminLoading label="runs 加载中" />}
+      {runsQ.error && <AdminError error={runsQ.error} />}
 
       {!runsQ.isLoading && !runsQ.error && (
-        <div className="admin-two-column">
-          <Card pad="lg">
-            <div style={sectionHeadStyle}>
-              <h2 style={sectionTitleStyle}>最近运行</h2>
-              <div style={badgeRowStyle}>
-                <Badge tone="neutral">
+        <div className="adm-split">
+          <AdminPanel
+            id="adm-runs-list"
+            title="最近运行"
+            flush
+            aside={
+              <>
+                <Chip>
                   {runs.length} / {totalRuns}
-                </Badge>
-                {isTruncated && <Badge tone="info">limit {shownLimit}</Badge>}
-              </div>
-            </div>
-            <div style={tableWrapStyle}>
-              <table style={tableStyle}>
+                </Chip>
+                {isTruncated && <Chip tone="accent">limit {shownLimit}</Chip>}
+              </>
+            }
+          >
+            <div className="adm-table-scroll">
+              <table className="adm-table">
                 <thead>
                   <tr>
-                    <th style={thStyle}>任务</th>
-                    <th style={thStyle}>状态</th>
-                    <th style={thStyle}>费用</th>
-                    <th style={thStyle}>工具调用</th>
-                    <th style={thStyle}>开始时间</th>
+                    <th scope="col">任务</th>
+                    <th scope="col">状态</th>
+                    <th scope="col" className="adm-num">
+                      费用
+                    </th>
+                    <th scope="col" className="adm-num">
+                      工具调用
+                    </th>
+                    <th scope="col">开始时间</th>
                   </tr>
                 </thead>
                 <tbody>
                   {runs.map((run) => (
-                    <tr key={run.id}>
-                      <td style={tdStyle}>
+                    <tr key={run.id} data-selected={selectedRunId === run.id ? '' : undefined}>
+                      <td>
                         <button
                           type="button"
+                          className="adm-run-pick un-hit"
+                          aria-current={selectedRunId === run.id ? 'true' : undefined}
                           onClick={() => selectRun(run.id)}
-                          style={{
-                            ...rowButtonStyle,
-                            color: selectedRunId === run.id ? 'var(--coral)' : 'var(--ink)',
-                          }}
                         >
-                          <span>{taskLabel(run.task_kind)}</span>
-                          <code>{shortId(run.id)}</code>
+                          <span className="adm-run-task">{taskLabel(run.task_kind)}</span>
+                          <code className="adm-mono adm-quiet">{shortId(run.id)}</code>
                         </button>
                       </td>
-                      <td style={tdStyle}>
-                        <Badge tone={statusTone(run.status)}>{statusLabel(run.status)}</Badge>
+                      <td>
+                        <Chip tone={statusTone(run.status)}>{statusLabel(run.status)}</Chip>
                       </td>
-                      <td style={tdStyle}>{formatMoney(run.cost_usd)}</td>
-                      <td style={tdStyle}>{run.tool_call_count}</td>
-                      <td style={tdStyle}>{formatTime(run.started_at)}</td>
+                      <td className="adm-num adm-mono">{formatMoney(run.cost_usd)}</td>
+                      <td className="adm-num adm-mono">{run.tool_call_count}</td>
+                      <td className="adm-mono adm-quiet">{formatTime(run.started_at)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </Card>
+          </AdminPanel>
 
-          <Card pad="lg">
-            <div style={sectionHeadStyle}>
-              <h2 style={sectionTitleStyle}>Timeline</h2>
-              {detailQ.data?.run && (
-                <Badge tone={statusTone(detailQ.data.run.status)}>
+          <AdminPanel
+            id="adm-run-timeline"
+            title="Timeline"
+            aside={
+              detailQ.data?.run && (
+                <Chip tone={statusTone(detailQ.data.run.status)}>
                   {statusLabel(detailQ.data.run.status)}
-                </Badge>
-              )}
-            </div>
-            {detailQ.isLoading && <p style={mutedTextStyle}>运行时间线加载中…</p>}
-            {detailQ.error && <ErrorCard error={detailQ.error} />}
+                </Chip>
+              )
+            }
+          >
+            {detailQ.isLoading && <SkeletonLines rows={4} label="运行时间线加载中" />}
+            {detailQ.error && <AdminError error={detailQ.error} />}
             {staleRunId && (
-              <p style={warningTextStyle}>
+              <p className="adm-warn">
                 运行记录 {shortId(staleRunId)} 刷新后已离开当前列表，已展示最新记录。
               </p>
             )}
             {detailQ.data && (
-              <div style={timelineStyle}>
-                <div style={metaGridStyle}>
+              <div className="adm-timeline">
+                <div className="adm-run-meta">
                   <span>run {shortId(detailQ.data.run.id)}</span>
                   <span>job {detailQ.data.run.pgboss_job_ids.join(', ') || 'none'}</span>
                   <span>{formatDuration(detailQ.data.run.duration_ms)}</span>
                   <span>{formatMoney(detailQ.data.run.cost_usd)}</span>
                 </div>
                 <RunOutcomeSummary key={detailQ.data.run.id} run={detailQ.data.run} />
-                {detailQ.data.timeline.map((event, index) => (
-                  <div key={`${event.type}-${event.id ?? index}`} style={timelineRowStyle}>
-                    <Badge tone={timelineTone(event)}>
-                      {TIMELINE_TYPE_LABEL[event.type] ?? '运行事件'}
-                    </Badge>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={timelineLabelStyle}>
-                        {event.label}
-                        {event.pgboss_job_id && <code> · {event.pgboss_job_id}</code>}
+                <ol className="adm-events">
+                  {detailQ.data.timeline.map((event, index) => (
+                    <li key={`${event.type}-${event.id ?? index}`} className="adm-event">
+                      <span className="adm-event-type">
+                        <Chip tone={timelineTone(event)}>
+                          {TIMELINE_TYPE_LABEL[event.type] ?? '运行事件'}
+                        </Chip>
+                      </span>
+                      <div className="adm-event-body">
+                        <div className="adm-event-label">
+                          {event.label}
+                          {event.pgboss_job_id && (
+                            <code className="adm-mono adm-quiet"> · {event.pgboss_job_id}</code>
+                          )}
+                        </div>
+                        <div className="adm-event-meta">
+                          {formatTime(event.at)}
+                          {typeof event.latency_ms === 'number' && ` · ${event.latency_ms}ms`}
+                          {typeof event.cost === 'number' && ` · ${formatMoney(event.cost)}`}
+                          {typeof event.tokens_in === 'number' &&
+                            ` · tokens ${event.tokens_in}/${event.tokens_out}`}
+                        </div>
                       </div>
-                      <div style={timelineMetaStyle}>
-                        {formatTime(event.at)}
-                        {typeof event.latency_ms === 'number' && ` · ${event.latency_ms}ms`}
-                        {typeof event.cost === 'number' && ` · ${formatMoney(event.cost)}`}
-                        {typeof event.tokens_in === 'number' &&
-                          ` · tokens ${event.tokens_in}/${event.tokens_out}`}
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                    </li>
+                  ))}
+                </ol>
               </div>
             )}
-          </Card>
+          </AdminPanel>
         </div>
       )}
-    </main>
+    </AdminFrame>
   );
 }
-
-const badgeRowStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'flex-end',
-  gap: 6,
-  flexWrap: 'wrap',
-};
-const tableWrapStyle: CSSProperties = { overflowX: 'auto' };
-const tableStyle: CSSProperties = { width: '100%', borderCollapse: 'collapse', fontSize: 13 };
-const thStyle: CSSProperties = {
-  textAlign: 'left',
-  padding: '0 10px 8px 0',
-  color: 'var(--ink-4)',
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-  fontWeight: 500,
-};
-const tdStyle: CSSProperties = {
-  borderTop: '1px solid var(--line-soft)',
-  padding: '10px 10px 10px 0',
-  verticalAlign: 'top',
-  color: 'var(--ink-2)',
-};
-const rowButtonStyle: CSSProperties = {
-  display: 'inline-flex',
-  flexDirection: 'column',
-  gap: 2,
-  alignItems: 'flex-start',
-  padding: 0,
-  background: 'transparent',
-  border: 0,
-  cursor: 'pointer',
-  textAlign: 'left',
-};
-const warningTextStyle: CSSProperties = {
-  margin: '0 0 var(--s-3)',
-  color: 'var(--ink)',
-  fontSize: 14,
-  lineHeight: 1.5,
-};
-const timelineStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 10 };
-const metaGridStyle: CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-  gap: 8,
-  color: 'var(--ink-3)',
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-  marginBottom: 6,
-};
-const outcomeSummaryStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 8,
-  marginBottom: 6,
-  padding: '10px 0',
-  borderTop: '1px solid var(--line-soft)',
-};
-const errorSummaryRowStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'flex-start',
-  justifyContent: 'space-between',
-  gap: 8,
-  flexWrap: 'wrap',
-};
-const errorSummaryStyle: CSSProperties = {
-  minWidth: 0,
-  flex: '1 1 260px',
-  color: 'var(--again-ink)',
-  background: 'var(--again-soft)',
-  border: '1px solid var(--again-line)',
-  borderRadius: 'var(--r-2)',
-  padding: '8px 10px',
-  overflowWrap: 'anywhere',
-  whiteSpace: 'normal',
-  userSelect: 'text',
-};
-const timelineRowStyle: CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '116px minmax(0, 1fr)',
-  gap: 12,
-  alignItems: 'start',
-  padding: '10px 0',
-  borderTop: '1px solid var(--line-soft)',
-};
-const timelineLabelStyle: CSSProperties = {
-  color: 'var(--ink)',
-  fontWeight: 500,
-  overflowWrap: 'anywhere',
-};
-const timelineMetaStyle: CSSProperties = {
-  color: 'var(--ink-4)',
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-  marginTop: 3,
-};

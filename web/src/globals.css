@@ -855,103 +855,8 @@ ol {
 }
 
 /* ------------------------------------------------------------ */
-/* /today — KPI strip + lanes + cost ribbon                      */
+/* /today — lanes + cost ribbon                                  */
 /* ------------------------------------------------------------ */
-
-.kpi-strip {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--s-3);
-  margin-bottom: var(--s-6);
-}
-.kpi {
-  background: var(--paper-raised);
-  border: 1px solid var(--line);
-  border-radius: var(--r-3);
-  padding: 14px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  text-align: left;
-  font-family: inherit;
-}
-.kpi.kpi-clickable {
-  cursor: pointer;
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out),
-    transform var(--dur-fast) var(--ease-out);
-  text-decoration: none;
-  color: inherit;
-}
-.kpi.kpi-clickable:hover {
-  border-color: var(--coral-line);
-  background: var(--paper-tint);
-}
-.kpi.kpi-clickable:active {
-  transform: scale(0.99);
-}
-.kpi .kpi-num {
-  font-family: var(--font-serif);
-  font-size: 30px;
-  font-weight: 500;
-  line-height: 1.1;
-  color: var(--ink);
-  letter-spacing: var(--ls-tight);
-}
-.kpi .kpi-num small {
-  font-size: 16px;
-  color: var(--ink-4);
-  margin-left: 4px;
-  font-weight: 400;
-}
-.kpi .kpi-label {
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-  letter-spacing: var(--ls-wide);
-}
-.kpi .kpi-trend {
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--ink-3);
-  margin-top: 2px;
-}
-.kpi .kpi-trend.up {
-  color: var(--good-ink);
-}
-.kpi .kpi-trend.down {
-  color: var(--again-ink);
-}
-
-/* ------------------------------------------------------------ */
-/* /admin — observability surfaces                              */
-/* ------------------------------------------------------------ */
-
-.admin-two-column {
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
-  gap: var(--s-4);
-  align-items: start;
-}
-.admin-two-column > * {
-  min-width: 0;
-}
-.admin-bar-row {
-  display: grid;
-  grid-template-columns: minmax(120px, 0.7fr) minmax(160px, 1fr) minmax(92px, auto);
-  gap: 10px;
-  align-items: center;
-  font-size: 13px;
-}
-.admin-sample-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  font-size: var(--fs-caption);
-}
-.admin-sample-grid > * {
-  overflow-wrap: anywhere;
-}
 
 .inbox-strip {
   display: flex;
@@ -1339,21 +1244,6 @@ ol {
 @media (max-width: 759.98px) {
   .page {
     padding: 20px 14px 40px;
-  }
-  .kpi-strip {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .admin-two-column {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .admin-bar-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-  .admin-bar-track {
-    grid-column: 1 / -1;
-  }
-  .admin-sample-grid {
-    grid-template-columns: minmax(0, 1fr);
   }
   .lanes {
     grid-template-columns: 1fr;
@@ -3677,7 +3567,6 @@ progress {
  * These overrides keep the v2.2 shapes while restoring the home
  * gradient and the layered paper/ink texture the mock relies on.
  * ============================================================ */
-.kpi,
 .lane,
 .loom-card,
 .tree-node,
@@ -5301,50 +5190,13 @@ button.chip.is-on:hover {
   font-size: clamp(26px, 3.4vw, var(--fs-h1));
 }
 
-/* ---- KPI row (loom.css L251-256 + screens.css L201-202) ----
-   Scoped .kpi overrides nothing on the legacy bare .kpi block. */
+/* ---- KPI row (loom.css L251-256 + screens.css L201-202) ---- */
 .today-loom .kpi-row {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: var(--s-4);
 }
-.today-loom .kpi {
-  padding: var(--s-5);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  position: relative;
-  overflow: hidden;
-  cursor: pointer;
-  transition:
-    transform var(--dur-base) var(--ease-out),
-    box-shadow var(--dur-base) var(--ease-out),
-    border-color var(--dur-base) var(--ease-out);
-}
-.today-loom .kpi:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-2);
-  border-color: var(--line-strong);
-}
-.today-loom .kpi .kpi-label {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  letter-spacing: var(--ls-wide);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.today-loom .kpi .kpi-val {
-  font-family: var(--font-serif);
-  font-size: var(--fs-display);
-  font-weight: 500;
-  /* YUK-297 R7: optical tightening (was --ls-tight ≈ -0.015em) so big serif
-     figures read as set type, not raw digits. */
-  letter-spacing: -0.02em;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
+
 /* YUK-297 R7: same numeral tightening for the other large figures in the today
    surface. .item-stat .s-n / .mistake-count .mc-n from the design refine pass
    are NOT added here — those selectors don't exist in the production TSX (grep-
@@ -5354,31 +5206,6 @@ button.chip.is-on:hover {
 .today-loom .cost-amt {
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
-}
-.today-loom .kpi .kpi-val .unit {
-  font-size: var(--fs-h4);
-  color: var(--ink-4);
-  margin-left: 2px;
-}
-.today-loom .kpi .kpi-foot {
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.today-loom .kpi .kpi-go {
-  position: absolute;
-  top: var(--s-4);
-  right: var(--s-4);
-  color: var(--ink-5);
-  transition:
-    transform var(--dur-base) var(--ease-out),
-    color var(--dur-base) var(--ease-out);
-}
-.today-loom .kpi:hover .kpi-go {
-  transform: translateX(3px);
-  color: var(--coral);
 }
 
 /* ---- SectionLabel (loom.css L240-243) ----
@@ -5527,9 +5354,6 @@ button.chip.is-on:hover {
   .today-loom .kpi-row {
     grid-template-columns: repeat(2, 1fr);
     gap: var(--s-3);
-  }
-  .today-loom .kpi .kpi-val {
-    font-size: var(--fs-h1);
   }
 }
 @media (max-width: 560px) {
