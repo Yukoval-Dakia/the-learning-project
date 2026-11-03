@@ -59,6 +59,15 @@ export const CreateAttemptBodySchema = z.union(
 
 export type CreateAttemptBody = z.infer<typeof CreateAttemptBodySchema>;
 
+/** The learner capture an entry needs when it commits the attempt on the caller's behalf. */
+export const CreateAttemptCaptureSchema = CreateAttemptBodyBaseSchema.pick({
+  session_id: true,
+  stream_item_id: true,
+  reasoning_trace: true,
+  latency_ms: true,
+  referenced_knowledge_ids: true,
+});
+
 export const FsrsStateWireSchema = z
   .object({
     due: z.string().datetime(),
@@ -135,7 +144,7 @@ const LegacyAttemptResponseSchema = z.object({
   judge: AttemptJudgeResponseSchema.nullable(),
 });
 
-const FormalAttemptResponseSchema = z.object({
+export const FormalAttemptResponseSchema = z.object({
   status: z.enum(['effective', 'review_required']),
   assessment: z.object({
     submission_id: z.string(),
