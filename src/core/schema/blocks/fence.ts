@@ -8,8 +8,12 @@ import { BlockV1, type BlockV1T } from './block';
 export const TLP_BLOCK_FENCE_INFO = 'tlp-block' as const;
 export const BLOCK_REF_SCHEME = 'block:' as const;
 export const BLOCK_REF_PATTERN = /^blk_[0-9a-f]{32}$/;
-/** `![alt](block:blk_<32hex>)` — draft-text placement syntax (never persisted). */
-export const BLOCK_PLACE_PATTERN = /!\[[^\]]{0,400}\]\(block:(blk_[0-9a-f]{32})\)/g;
+/**
+ * `![alt](block:<ref>)` — draft-text placement syntax. Deliberately tolerant
+ * of the ref token: any `block:` image ref that fails lookup is dropped at
+ * commit (draft refs must never persist), not left as a literal.
+ */
+export const BLOCK_PLACE_PATTERN = /!\[[^\]]{0,400}\]\(block:([A-Za-z0-9_-]{1,80})\)/g;
 
 /** Deterministic JSON (sorted keys) — the bytes the digest is computed over. */
 export function canonicalBlockJson(value: unknown): string {

@@ -33,17 +33,30 @@ async function loadMermaid(): Promise<MermaidModule> {
     const dom = new JSDOM('<!doctype html><html><body></body></html>', {
       pretendToBeVisual: true,
     });
-    // mermaid + DOMPurify resolve browser globals at import time.
-    const g = globalThis as Record<string, unknown>;
-    g.window = dom.window;
-    g.document = dom.window.document;
-    g.navigator = dom.window.navigator;
-    g.DOMParser = dom.window.DOMParser;
-    g.Element = dom.window.Element;
-    g.Node = dom.window.Node;
-    g.HTMLElement = dom.window.HTMLElement;
-    g.SVGElement = dom.window.SVGElement;
-    g.HTMLIFrameElement = dom.window.HTMLIFrameElement;
+    // mermaid + DOMPurify resolve browser globals at import time. Node >=21
+    // exposes a getter-only `navigator`; define it instead of assigning.
+    const globals: Record<string, unknown> = {
+      window: dom.window,
+      document: dom.window.document,
+      navigator: dom.window.navigator,
+      DOMParser: dom.window.DOMParser,
+      Element: dom.window.Element,
+      Node: dom.window.Node,
+      HTMLElement: dom.window.HTMLElement,
+      SVGElement: dom.window.SVGElement,
+      HTMLIFrameElement: dom.window.HTMLIFrameElement,
+    };
+    for (const [name, value] of Object.entries(globals)) {
+      try {
+        Object.defineProperty(globalThis, name, {
+          value,
+          configurable: true,
+          writable: true,
+        });
+      } catch {
+        (globalThis as Record<string, unknown>)[name] = value;
+      }
+    }
     const mermaid = (await import('mermaid')).default as unknown as MermaidModule;
     mermaid.initialize({
       startOnLoad: false,
