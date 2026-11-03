@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { helpCost } from '@/ai/help-latency';
 import type {
   HelpExplanationEvidence,
-  SealedHelpExplanationReplay,
+  SealedHelpExplanationReceipt,
 } from '@/ai/help-reply-grounding';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
@@ -37,13 +37,13 @@ export async function loadHelpExplanationEvidence(
   };
 }
 
-export async function persistHelpExplanationReplay(
+export async function persistHelpExplanationReceipt(
   db: Db,
   input: {
     sessionId?: string | null;
     subjectKind: string;
     subjectId: string;
-    replay: SealedHelpExplanationReplay;
+    receipt: SealedHelpExplanationReceipt;
   },
 ): Promise<void> {
   await writeEvent(db, {
@@ -51,11 +51,11 @@ export async function persistHelpExplanationReplay(
     session_id: input.sessionId ?? null,
     actor_kind: 'agent',
     actor_ref: 'agent:copilot',
-    action: 'experimental:help_explanation_replay',
+    action: 'experimental:help_explanation_receipt',
     subject_kind: input.subjectKind,
     subject_id: input.subjectId,
-    outcome: input.replay.verdict === 'fail' ? 'failure' : 'success',
-    payload: { reply_grounding: input.replay },
-    task_run_id: input.replay.task_run_id,
+    outcome: 'success',
+    payload: { reply_grounding: input.receipt },
+    task_run_id: input.receipt.task_run_id,
   });
 }
