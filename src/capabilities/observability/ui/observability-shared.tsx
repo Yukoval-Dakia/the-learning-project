@@ -1,6 +1,5 @@
 import type { CSSProperties } from 'react';
-import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
-import { Card } from '@/ui/primitives/Card';
+import type { ChipTone } from '@/ui-next/public';
 
 export interface AdminSurfaceProps {
   navigate: (to: string) => void;
@@ -33,49 +32,15 @@ export function shortId(id: string): string {
   return id.slice(0, 10);
 }
 
-export function statusTone(status: string): BadgeTone {
-  if (status === 'success') return 'good';
-  if (status === 'failure') return 'again';
-  if (status === 'running') return 'info';
+export function statusTone(status: string): ChipTone {
+  if (status === 'success') return 'positive';
+  if (status === 'failure') return 'critical';
+  if (status === 'running') return 'accent';
   return 'neutral';
 }
 
-export function LoadingCard({ label }: { label: string }) {
-  return (
-    <Card pad="lg">
-      <p style={mutedTextStyle}>{label} 加载中...</p>
-    </Card>
-  );
-}
-
-export function ErrorCard({ error }: { error: unknown }) {
-  const message = error instanceof Error ? error.message : String(error);
-  return (
-    <Card pad="lg">
-      <Badge tone="again">error</Badge>
-      <p style={mutedTextStyle}>{message}</p>
-    </Card>
-  );
-}
-
-export function Kpi({
-  label,
-  value,
-  note,
-}: {
-  label: string;
-  value: string | number;
-  note?: string;
-}) {
-  return (
-    <div className="kpi">
-      <div className="kpi-label">{label}</div>
-      <div className="kpi-num">{value}</div>
-      {note && <div className="kpi-trend">{note}</div>}
-    </div>
-  );
-}
-
+// AdminLinks is the old-look link row; only /admin/config still renders it. The M3E admin pages
+// use AdminNav (admin-frame.tsx). It leaves together with the config page's own migration.
 function AdminLink({
   to,
   navigate,
@@ -132,27 +97,4 @@ const linkRowStyle: CSSProperties = {
   gap: 10,
   fontFamily: 'var(--font-mono)',
   fontSize: 'var(--fs-meta)',
-};
-
-export const sectionHeadStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'flex-start',
-  justifyContent: 'space-between',
-  gap: 'var(--s-3)',
-  marginBottom: 'var(--s-3)',
-};
-
-export const sectionTitleStyle: CSSProperties = {
-  margin: 0,
-  fontFamily: 'var(--font-serif)',
-  fontSize: 20,
-  fontWeight: 500,
-  letterSpacing: 'var(--ls-tight)',
-};
-
-export const mutedTextStyle: CSSProperties = {
-  margin: 0,
-  color: 'var(--ink-3)',
-  fontSize: 13,
-  lineHeight: 1.55,
 };
