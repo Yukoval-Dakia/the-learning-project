@@ -1,19 +1,8 @@
 import { inArray } from 'drizzle-orm';
 import {
-  type ConjectureEvidenceAssetRef,
-  type ConjectureHistory,
-  type EnrichedEvidenceCell,
-  type EvidenceCell,
-  type LoadedConjectureEvidenceImage,
-  type PredictionAccountability,
-  applyConjectureHistoryGate,
-  collectConjectureEvidenceAssetRefs,
-  conjectureKey,
-  enrichEvidenceCells,
-  gatherConjectureEvidence,
-  loadConjectureHistory,
-  loadPredictionAccountabilityByKey,
-  rankEvidenceCellsByAccountability,
+  type ConjectureCandidate,
+  type ConjectureImageFetchFn,
+  selectConjectureCandidates,
 } from '@/capabilities/agency/public';
 import {
   type FailureAttempt,
@@ -22,18 +11,16 @@ import {
 } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
-import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import {
   abilityReadingsByIdOrFail,
   readLearnerJudgments,
 } from '@/kernel/read-models/learner-judgment';
 
 export const GROUNDING_GATE_WINDOW_DAYS = 14;
-export const GROUNDING_GATE_ENRICH_BATCH_SIZE = 3;
 
 export interface GroundingGateCandidate {
-  cell: EnrichedEvidenceCell;
-  evidence_images: LoadedConjectureEvidenceImage[];
+  cell: ConjectureCandidate['cell'];
+  evidence_images: ConjectureCandidate['evidenceImages'];
   prior_claim_md: string | null;
 }
 
@@ -61,25 +48,9 @@ export interface GroundingGateCandidateReport {
   exclusions: GroundingGateExclusion[];
 }
 
-export type LoadGroundingEvidenceImages = (
-  db: Db,
-  refs: readonly ConjectureEvidenceAssetRef[],
-) => Promise<LoadedConjectureEvidenceImage[]>;
-
 export interface CollectGroundingGateCandidatesOptions {
   now: Date;
-  loadEvidenceImages: LoadGroundingEvidenceImages;
-}
-
-async function loadKnownConjectureKeys(db: Db): Promise<Set<string>> {
-  const rows = await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' });
-  const keys = new Set<string>();
-  for (const row of rows) {
-    if (row.payload.kind !== 'conjecture') continue;
-    const change = row.payload.proposed_change;
-    keys.add(conjectureKey(change.cause_category, change.knowledge_id));
-  }
-  return keys;
+  imageFetchFn: ConjectureImageFetchFn;
 }
 
 function isSyntheticNamespace(value: string): boolean {
@@ -114,32 +85,6 @@ async function filterSyntheticFailures(
   return { realRows, syntheticCount: rows.length - realRows.length };
 }
 
-function withReproducibleEvidence(cell: EnrichedEvidenceCell): EnrichedEvidenceCell | null {
-  const evidenceEventIds = [...new Set(cell.evidence_event_ids)];
-  if (evidenceEventIds.length < 2) return null;
-  return {
-    ...cell,
-    recurrence_count: evidenceEventIds.length,
-    evidence_event_ids: evidenceEventIds,
-  };
-}
-
-function invalidEvidencePacketDetail(cell: EnrichedEvidenceCell): string | null {
-  if (cell.samples.length === 0) return 'enrichment produced no reviewable evidence samples';
-  for (const sample of cell.samples) {
-    if (sample.question_prompt_md === null) {
-      return `attempt ${sample.attempt_event_id} is missing question_prompt_md`;
-    }
-    if (sample.cause_category === null) {
-      return `attempt ${sample.attempt_event_id} is missing an effective cause_category`;
-    }
-    if (sample.cause_source === null) {
-      return `attempt ${sample.attempt_event_id} is missing an effective cause_source`;
-    }
-  }
-  return null;
-}
-
 function asErrorDetail(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.slice(0, 500);
@@ -148,15 +93,15 @@ function asErrorDetail(error: unknown): string {
 /**
  * Read-only grounding-gate preparation path.
  *
- * Deliberately reuses the production readers/folds/gates. The only policy difference
- * from the nightly writer is that every eligible cell is returned, so the blind set
- * can be selected without a permanent top-3 cut. Nothing is written here.
+ * Deliberately reuses the production candidate selection. Two policy differences from the
+ * nightly writer: every eligible cell is returned (no top-3 cut, so the blind set can be
+ * sampled), and incomplete evidence packets are excluded. Nothing is written here.
  */
 export async function collectGroundingGateCandidates(
   db: Db,
   options: CollectGroundingGateCandidatesOptions,
 ): Promise<GroundingGateCandidateReport> {
-  const { now, loadEvidenceImages } = options;
+  const { now, imageFetchFn } = options;
   const since = new Date(now.getTime() - GROUNDING_GATE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const loadedRows = await getFailureAttemptsWithReasoningTrace(db, {
     includeReviewFailures: true,
@@ -173,103 +118,38 @@ export async function collectGroundingGateCandidates(
   ];
   // Probe-topic mastery is evidenced ability only. Insufficient evidence is
   // absent, so selection probes it as unknown instead of a cold-start prior.
-  const [judgmentBatch, knownConjectureKeys] = await Promise.all([
-    readLearnerJudgments(db, { knowledge_ids: knowledgeIds, context: 'any', as_of: new Date() }),
-    loadKnownConjectureKeys(db),
-  ]);
+  const judgmentBatch = await readLearnerJudgments(db, {
+    knowledge_ids: knowledgeIds,
+    context: 'any',
+    as_of: new Date(),
+  });
   const masteryByKnowledgeId = abilityReadingsByIdOrFail(judgmentBatch);
 
-  const rawCells = gatherConjectureEvidence({
+  // Enrichment DB failures fail the whole run. Silently dropping a batch would bias the
+  // sampled population, so only deterministic cell-local evidence/image defects become
+  // exclusions.
+  const selection = await selectConjectureCandidates(db, {
     failures,
+    reasoningTraceByAttemptId,
     masteryByKnowledgeId,
-    knownConjectureKeys,
+    now,
+    limit: null,
+    requireCompleteEvidencePackets: true,
+    imageFetchFn,
   });
-  const historyByKey: Map<string, ConjectureHistory> =
-    rawCells.length > 0 ? await loadConjectureHistory(db, rawCells) : new Map();
-  const firstHistoryGate = applyConjectureHistoryGate(rawCells, failures, historyByKey, now);
-  const accountabilityByKey: Map<string, PredictionAccountability> =
-    firstHistoryGate.cells.length > 0
-      ? await loadPredictionAccountabilityByKey(db, firstHistoryGate.cells)
-      : new Map();
-  const rankedCells = rankEvidenceCellsByAccountability(
-    firstHistoryGate.cells,
-    accountabilityByKey,
-  );
-
-  const candidates: GroundingGateCandidate[] = [];
-  const exclusions: GroundingGateExclusion[] = [];
-  let reproducibleCellCount = 0;
-  for (let offset = 0; offset < rankedCells.length; offset += GROUNDING_GATE_ENRICH_BATCH_SIZE) {
-    const batch = rankedCells.slice(offset, offset + GROUNDING_GATE_ENRICH_BATCH_SIZE);
-    // Enrichment DB failures fail the whole run. Silently dropping a batch would
-    // bias the sampled population, so only deterministic cell-local evidence/image
-    // defects become exclusions below.
-    const enriched = await enrichEvidenceCells(db, {
-      cells: batch,
-      failures,
-      reasoningTraceByAttemptId,
-    });
-    const reproducible: EnrichedEvidenceCell[] = [];
-    for (const cell of enriched) {
-      const normalized = withReproducibleEvidence(cell);
-      if (normalized) {
-        const invalidDetail = invalidEvidencePacketDetail(normalized);
-        if (invalidDetail) {
-          exclusions.push({
-            key: cell.key,
-            reason: 'invalid_evidence_packet',
-            detail: invalidDetail,
-          });
-        } else {
-          reproducible.push(normalized);
-        }
-      } else {
-        exclusions.push({ key: cell.key, reason: 'non_reproducible_evidence' });
-      }
+  const exclusions: GroundingGateExclusion[] = selection.exclusions.map((exclusion) => {
+    switch (exclusion.reason) {
+      case 'invalid_evidence_packet':
+        return { key: exclusion.key, reason: exclusion.reason, detail: exclusion.detail };
+      case 'evidence_image_unavailable':
+        return {
+          key: exclusion.key,
+          reason: exclusion.reason,
+          detail: asErrorDetail(exclusion.error),
+        };
+      default:
+        return { key: exclusion.key, reason: exclusion.reason };
     }
-    reproducibleCellCount += reproducible.length;
-
-    const secondHistoryGate = applyConjectureHistoryGate(reproducible, failures, historyByKey, now);
-    const secondGateKeys = new Set(secondHistoryGate.cells.map((cell) => cell.key));
-    for (const cell of reproducible) {
-      if (!secondGateKeys.has(cell.key)) {
-        exclusions.push({ key: cell.key, reason: 'lifecycle_gate_after_enrichment' });
-      }
-    }
-    const imageResults = await Promise.allSettled(
-      secondHistoryGate.cells.map(async (cell) => {
-        const refs = collectConjectureEvidenceAssetRefs(cell);
-        const evidenceImages = await loadEvidenceImages(db, refs);
-        return { cell, evidenceImages };
-      }),
-    );
-    for (const [index, result] of imageResults.entries()) {
-      const cell = secondHistoryGate.cells[index];
-      if (!cell) throw new Error(`grounding gate image result missing cell at index ${index}`);
-      if (result.status === 'fulfilled') {
-        candidates.push({
-          cell,
-          evidence_images: result.value.evidenceImages,
-          prior_claim_md: secondHistoryGate.priorClaimMdByKey.get(cell.key) ?? null,
-        });
-      } else {
-        exclusions.push({
-          key: cell.key,
-          reason: 'evidence_image_unavailable',
-          detail: asErrorDetail(result.reason),
-        });
-      }
-    }
-  }
-
-  const candidateByKey = new Map(candidates.map((candidate) => [candidate.cell.key, candidate]));
-  const rankedCandidates = rankEvidenceCellsByAccountability(
-    candidates.map((candidate) => candidate.cell),
-    accountabilityByKey,
-  ).map((cell) => {
-    const candidate = candidateByKey.get(cell.key);
-    if (!candidate) throw new Error(`grounding gate candidate missing for ${cell.key}`);
-    return candidate;
   });
 
   return {
@@ -277,12 +157,16 @@ export async function collectGroundingGateCandidates(
     since,
     recent_failure_count: realRows.length,
     synthetic_failure_count: syntheticCount,
-    raw_cell_count: rawCells.length,
-    lifecycle_eligible_count: rankedCells.length,
-    reproducible_cell_count: reproducibleCellCount,
-    eligible_count: rankedCandidates.length,
-    pending_conjecture_count: knownConjectureKeys.size,
-    candidates: rankedCandidates,
+    raw_cell_count: selection.rawCellCount,
+    lifecycle_eligible_count: selection.lifecycleEligibleCount,
+    reproducible_cell_count: selection.reproducibleCellCount,
+    eligible_count: selection.candidates.length,
+    pending_conjecture_count: selection.pendingConjectureCount,
+    candidates: selection.candidates.map((candidate) => ({
+      cell: candidate.cell,
+      evidence_images: candidate.evidenceImages,
+      prior_claim_md: candidate.priorClaimMd,
+    })),
     exclusions,
   };
 }

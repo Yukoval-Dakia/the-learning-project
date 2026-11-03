@@ -1,15 +1,13 @@
 // Nightly 教研例会 (research-meeting) propose handler.
 //
-// Thin candidate-picker + dedup gate + a bounded parallel producer batch (NOT an MCP
-// tool-agent loop). The job is the SINGLE proposer of conjectures: it calls
-// induceConjecture (the Opus self-consistency orchestrator) + writeAiProposal directly.
+// Bounded parallel producer batch (NOT an MCP tool-agent loop). The job is the SINGLE
+// proposer of conjectures: it calls induceConjecture (the Opus self-consistency
+// orchestrator) + writeAiProposal directly.
 //
-// Per run: PRE-LLM reads (recent failures with reasoning traces, per-KC mastery, pending
-// cause×KC keys) → deterministic evidence gathering + owner-decision/terminal history gate
-// (30-day dismiss cooldown; terminal reopen needs two fresh failures) → prediction-
-// accountability re-rank → salience-order grounding (KC name, subject identity, first-hand
-// attempt evidence) → per grounded top-K cell induceConjecture → probe package →
-// writeAiProposal.
+// Per run: PRE-LLM reads (recent failures with reasoning traces, per-KC mastery) →
+// candidate selection, owned by conjecture `selectConjectureCandidates` (evidence
+// gathering, history gate, accountability re-rank, grounding, evidence images) → per
+// selected top-K cell induceConjecture → probe package → writeAiProposal.
 //
 // Failure asymmetry: shared PRE-LLM reads run OUTSIDE the per-cell swallow, so a throw is a
 // retryable DB fault that propagates. Candidate-local grounding/image failures refill from
@@ -21,28 +19,12 @@
 // baseline_p_at_induction; accept/edit remains with the owner.
 
 import { createHash } from 'node:crypto';
-import { eq, inArray, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
-import type {
-  ConjectureEvidenceAssetRef,
-  EnrichedEvidenceCell,
-  EvidenceCell,
-  LoadedConjectureEvidenceImage,
-} from '@/capabilities/agency/server/conjecture/evidence';
-import {
-  CONJECTURE_RECURRENCE_FLOOR,
-  collectConjectureEvidenceAssetRefs,
-  conjectureKey,
-  gatherConjectureEvidence,
-} from '@/capabilities/agency/server/conjecture/evidence';
-import { enrichEvidenceCells } from '@/capabilities/agency/server/conjecture/evidence-enrichment';
-import {
-  type ConjectureHistory,
-  type LoadConjectureHistoryFn,
-  applyConjectureHistoryGate,
-  loadConjectureHistory,
-} from '@/capabilities/agency/server/conjecture/history';
+import { selectConjectureCandidates } from '@/capabilities/agency/server/conjecture/candidate-selection';
+import type { EnrichedEvidenceCell } from '@/capabilities/agency/server/conjecture/evidence';
+import { RESEARCH_MEETING_SAMPLES } from '@/capabilities/agency/server/conjecture/evidence-images';
 import {
   ConjectureInductionOperationalError,
   type ConjectureInductionTaskKind,
@@ -57,10 +39,9 @@ import {
 } from '@/capabilities/agency/server/conjecture/reconciliation-execution';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
-import { event, source_asset } from '@/db/schema';
+import { event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { defaultImageFetch } from '@/kernel/judge';
-import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { type WriteAiProposalInput, writeAiProposal } from '@/kernel/proposals/writer';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttemptsWithReasoningTrace } from '@/kernel/read-models/failure-attempts';
@@ -70,22 +51,9 @@ import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { writeRetryableAiFailureLedger } from '../server/ai-runtime';
-import {
-  type PredictionAccountability,
-  loadPredictionAccountabilityByKey,
-  rankEvidenceCellsByAccountability,
-} from '../server/conjecture/accountability';
 
 /** Structural per-run propose cap (top-K salient cells → at most K conjectures). */
 export const RESEARCH_MEETING_MAX_CONJECTURES = 3;
-/** N self-consistency samples per conjecture (Opus agreement tally). */
-export const RESEARCH_MEETING_SAMPLES = 3;
-/** Fail closed instead of silently dropping pixels from unusually image-heavy evidence. */
-export const RESEARCH_MEETING_MAX_IMAGES_PER_CELL = 60;
-/** Base64 transport bytes across all self-consistency requests for one cell. */
-export const RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL = 24 * 1024 * 1024;
-/** Decoded pixels across all self-consistency requests for one cell. */
-export const RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL = 40_000_000;
 /** Recency window for the failure scan. */
 export const RESEARCH_MEETING_WINDOW_DAYS = 14;
 
@@ -153,26 +121,12 @@ type LoadCompletedRunResultFn = (
 type InduceConjectureFn = typeof induceConjecture;
 type GetFailureAttemptsWithTraceFn = typeof getFailureAttemptsWithReasoningTrace;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
-type EnrichEvidenceCellsFn = typeof enrichEvidenceCells;
 type WriteRetryableAiFailureLedgerFn = (
   db: DbLike,
   taskKind: string,
   options?: { throwOnError?: boolean },
 ) => Promise<void>;
 type ResolveSubjectProfileFn = typeof resolveSubjectProfile;
-type LoadEvidenceImagesFn = (
-  db: Db,
-  refs: readonly ConjectureEvidenceAssetRef[],
-) => Promise<LoadedConjectureEvidenceImage[]>;
-type LoadPredictionAccountabilityFn = (
-  db: Db,
-  cells: readonly EvidenceCell[],
-) => Promise<Map<string, PredictionAccountability>>;
-
-interface PreparedConjectureCell {
-  cell: EnrichedEvidenceCell;
-  evidenceImages: LoadedConjectureEvidenceImage[];
-}
 
 function conjectureCellEventId(
   prefix: 'conjecture_abstained' | 'conjecture_proposal',
@@ -288,14 +242,8 @@ export interface ResearchMeetingDeps extends ResearchMeetingReconciliationDeps {
   /** Trace-bearing failure reader; the reasoning_trace rides in the wrapper. */
   getFailureAttemptsWithTraceFn?: GetFailureAttemptsWithTraceFn;
   getMasteryProjectionFn?: GetMasteryProjectionFn;
-  /** PRE-LLM grounding read (KC name + subject + first-hand samples). */
-  enrichEvidenceCellsFn?: EnrichEvidenceCellsFn;
   /** First dedup base: cause×KC keys with a PENDING conjecture. */
   loadKnownConjectureKeysFn?: (db: Db) => Promise<Set<string>>;
-  /** Owner decisions + terminal lifecycle for tonight's candidate identities. */
-  loadConjectureHistoryFn?: LoadConjectureHistoryFn;
-  /** Correction-aware score history folded by cause×KC identity. */
-  loadPredictionAccountabilityFn?: LoadPredictionAccountabilityFn;
   /** injected runner — defaults to the real db-bound runTask. */
   runTaskFn?: TaskTextRunFn;
   induceConjectureFn?: InduceConjectureFn;
@@ -308,21 +256,6 @@ export interface ResearchMeetingDeps extends ResearchMeetingReconciliationDeps {
   loadCompletedRunResultFn?: LoadCompletedRunResultFn;
   writeRetryableAiFailureLedgerFn?: WriteRetryableAiFailureLedgerFn;
   resolveSubjectProfileFn?: ResolveSubjectProfileFn;
-  /** Resolve every referenced asset to real image bytes before multimodal induction. */
-  loadEvidenceImagesFn?: LoadEvidenceImagesFn;
-}
-
-/** Pending-conjecture dedup before the owner-decision/terminal history gate. */
-async function defaultLoadKnownConjectureKeys(db: Db): Promise<Set<string>> {
-  const rows = await listProposalInboxRows(db, { status: 'pending', kind: 'conjecture' });
-  const keys = new Set<string>();
-  for (const row of rows) {
-    if (row.payload.kind === 'conjecture') {
-      const change = row.payload.proposed_change;
-      keys.add(conjectureKey(change.cause_category, change.knowledge_id));
-    }
-  }
-  return keys;
 }
 
 /**
@@ -331,274 +264,6 @@ async function defaultLoadKnownConjectureKeys(db: Db): Promise<Set<string>> {
  */
 function makeDefaultRunTaskFn(db: Db): TaskTextRunFn {
   return makeRunTaskFn(db);
-}
-
-const RUNNER_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
-const TRANSCODABLE_IMAGE_MIME_TYPES = new Set(['image/bmp']);
-
-function base64TransportBytes(rawBytes: number): number {
-  return Math.ceil(rawBytes / 3) * 4;
-}
-
-interface EvidenceImageMetadata {
-  id: string;
-  mime_type: string;
-  byte_size: number;
-  width: number | null;
-  height: number | null;
-}
-
-function decodeUncompressedBmp(bytes: Buffer): {
-  data: Buffer;
-  width: number;
-  height: number;
-} {
-  if (bytes.length < 54 || bytes.toString('ascii', 0, 2) !== 'BM') {
-    throw new Error('invalid BMP header');
-  }
-  const pixelOffset = bytes.readUInt32LE(10);
-  const dibSize = bytes.readUInt32LE(14);
-  const width = bytes.readInt32LE(18);
-  const signedHeight = bytes.readInt32LE(22);
-  const planes = bytes.readUInt16LE(26);
-  const bitsPerPixel = bytes.readUInt16LE(28);
-  const compression = bytes.readUInt32LE(30);
-  if (
-    dibSize < 40 ||
-    width <= 0 ||
-    signedHeight === 0 ||
-    planes !== 1 ||
-    ![24, 32].includes(bitsPerPixel) ||
-    compression !== 0
-  ) {
-    throw new Error('unsupported BMP encoding');
-  }
-  const height = Math.abs(signedHeight);
-  const pixels = width * height;
-  if (!Number.isSafeInteger(pixels) || pixels > RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL) {
-    throw new Error('BMP decoded-pixel limit exceeded');
-  }
-  const rowStride = Math.floor((bitsPerPixel * width + 31) / 32) * 4;
-  if (pixelOffset + rowStride * height > bytes.length) throw new Error('truncated BMP pixels');
-  const channelsIn = bitsPerPixel / 8;
-  const rgba = Buffer.allocUnsafe(pixels * 4);
-  for (let y = 0; y < height; y++) {
-    const sourceY = signedHeight > 0 ? height - 1 - y : y;
-    const rowStart = pixelOffset + sourceY * rowStride;
-    for (let x = 0; x < width; x++) {
-      const source = rowStart + x * channelsIn;
-      const target = (y * width + x) * 4;
-      rgba[target] = bytes[source + 2];
-      rgba[target + 1] = bytes[source + 1];
-      rgba[target + 2] = bytes[source];
-      // BI_RGB 32-bit's fourth byte is reserved rather than a reliable alpha channel.
-      rgba[target + 3] = 255;
-    }
-  }
-  return { data: rgba, width, height };
-}
-
-export function planConjectureEvidenceImageLoad(
-  refs: readonly ConjectureEvidenceAssetRef[],
-  metadata: readonly EvidenceImageMetadata[],
-): {
-  loadableRefs: ConjectureEvidenceAssetRef[];
-  transcodeAssetIds: string[];
-} {
-  const byId = new Map(metadata.map((row) => [row.id, row]));
-  const missing = [...new Set(refs.map((ref) => ref.asset_id))].filter((id) => !byId.has(id));
-  if (missing.length > 0) {
-    throw new Error(`conjecture evidence image metadata missing: ${missing.join(', ')}`);
-  }
-
-  const loadableRefs: ConjectureEvidenceAssetRef[] = [];
-  const transcodeAssetIds = new Set<string>();
-  const countedAssetIds = new Set<string>();
-  let totalTransportBytes = 0;
-  let totalPixels = 0;
-  for (const ref of refs) {
-    const row = byId.get(ref.asset_id) as EvidenceImageMetadata;
-    if (
-      !RUNNER_IMAGE_MIME_TYPES.has(row.mime_type) &&
-      !TRANSCODABLE_IMAGE_MIME_TYPES.has(row.mime_type)
-    ) {
-      throw new Error(
-        `conjecture evidence asset ${ref.asset_id} has unsupported MIME: ${row.mime_type}`,
-      );
-    }
-    if (!RUNNER_IMAGE_MIME_TYPES.has(row.mime_type)) transcodeAssetIds.add(ref.asset_id);
-    loadableRefs.push(ref);
-    // One R2 object recurring across attempts is still one byte/pixel allocation.
-    // Occurrence refs stay expanded for semantic ordering, but safety accounting follows
-    // unique assets.
-    if (!countedAssetIds.has(ref.asset_id)) {
-      countedAssetIds.add(ref.asset_id);
-      // Each unique image block is sent once per self-consistency request.
-      totalTransportBytes += base64TransportBytes(row.byte_size) * RESEARCH_MEETING_SAMPLES;
-      if (row.width !== null && row.height !== null) {
-        if (
-          !Number.isInteger(row.width) ||
-          !Number.isInteger(row.height) ||
-          row.width <= 0 ||
-          row.height <= 0
-        ) {
-          throw new Error(
-            `conjecture evidence asset ${ref.asset_id} has invalid dimensions: ${row.width}x${row.height}`,
-          );
-        }
-        if (row.width > RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL / row.height) {
-          throw new Error(
-            `conjecture evidence asset ${ref.asset_id} has more pixels than the safety limit`,
-          );
-        }
-        totalPixels += row.width * row.height * RESEARCH_MEETING_SAMPLES;
-      }
-    }
-  }
-  if (totalTransportBytes > RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL) {
-    throw new Error(
-      `conjecture evidence images total ${totalTransportBytes} base64 bytes; max is ${RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL}`,
-    );
-  }
-  if (totalPixels > RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL) {
-    throw new Error(
-      `conjecture evidence images total ${totalPixels} pixels; max is ${RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL}`,
-    );
-  }
-  return { loadableRefs, transcodeAssetIds: [...transcodeAssetIds] };
-}
-
-export async function defaultLoadEvidenceImages(
-  db: Db,
-  refs: readonly ConjectureEvidenceAssetRef[],
-  imageFetchFn: typeof defaultImageFetch = defaultImageFetch,
-): Promise<LoadedConjectureEvidenceImage[]> {
-  if (refs.length === 0) return [];
-  if (refs.length > RESEARCH_MEETING_MAX_IMAGES_PER_CELL) {
-    throw new Error(
-      `conjecture evidence has ${refs.length} images; max is ${RESEARCH_MEETING_MAX_IMAGES_PER_CELL}`,
-    );
-  }
-  const assetIds = [...new Set(refs.map((ref) => ref.asset_id))];
-  const metadata = await db
-    .select({
-      id: source_asset.id,
-      mime_type: source_asset.mime_type,
-      byte_size: source_asset.byte_size,
-      width: source_asset.width,
-      height: source_asset.height,
-    })
-    .from(source_asset)
-    .where(inArray(source_asset.id, assetIds));
-  const { loadableRefs, transcodeAssetIds } = planConjectureEvidenceImageLoad(refs, metadata);
-  if (loadableRefs.length === 0) return [];
-  // Download/base64 each R2 object once; the same diagram can recur across attempts.
-  const uniqueAssetIds = [...new Set(loadableRefs.map((ref) => ref.asset_id))];
-  const fetched = await imageFetchFn(uniqueAssetIds, db);
-  // `defaultImageFetch` preserves input order but skips missing DB/R2 rows. A partial
-  // packet would let the model compare text against the wrong image index, so fail the
-  // cell rather than guessing which asset was absent.
-  if (fetched.length !== uniqueAssetIds.length) {
-    throw new Error(
-      `conjecture evidence image load incomplete: expected ${uniqueAssetIds.length}, got ${fetched.length}`,
-    );
-  }
-  const metadataById = new Map(metadata.map((row) => [row.id, row]));
-  const transcodeIds = new Set(transcodeAssetIds);
-  const fetchedByAssetId = new Map<string, { data: string; mediaType: string }>();
-  let sharpModule: typeof import('sharp') | null = null;
-  let actualTransportBytes = 0;
-  let actualPixels = 0;
-  for (const [index, assetId] of uniqueAssetIds.entries()) {
-    const image = fetched[index];
-    const expected = metadataById.get(assetId);
-    if (!expected || image.mediaType !== expected.mime_type) {
-      throw new Error(`conjecture evidence image MIME changed after preflight for ${assetId}`);
-    }
-    const sourceBytes = Buffer.from(image.data, 'base64');
-    let prepared: { data: string; mediaType: string };
-    let decodedPixels: number;
-    if (transcodeIds.has(assetId)) {
-      sharpModule ??= await import('sharp');
-      const bmp = image.mediaType === 'image/bmp' ? decodeUncompressedBmp(sourceBytes) : undefined;
-      if (
-        bmp !== undefined &&
-        ((expected.width !== null && expected.width !== bmp.width) ||
-          (expected.height !== null && expected.height !== bmp.height))
-      ) {
-        throw new Error(
-          `conjecture evidence BMP dimensions changed after preflight for ${assetId}`,
-        );
-      }
-      if (bmp === undefined) {
-        throw new Error(`conjecture evidence image decoder missing for ${assetId}`);
-      }
-      const png = await sharpModule
-        .default(bmp.data, {
-          raw: { width: bmp.width, height: bmp.height, channels: 4 },
-        })
-        .png()
-        .toBuffer();
-      decodedPixels = bmp.width * bmp.height;
-      prepared = {
-        data: png.toString('base64'),
-        mediaType: 'image/png',
-      };
-    } else {
-      if (!RUNNER_IMAGE_MIME_TYPES.has(image.mediaType)) {
-        throw new Error(`conjecture evidence image MIME unsupported for ${assetId}`);
-      }
-      sharpModule ??= await import('sharp');
-      const decoded = await sharpModule
-        .default(sourceBytes, {
-          animated: true,
-          failOn: 'error',
-          limitInputPixels: RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL,
-        })
-        .metadata();
-      const width = decoded.width;
-      const height = decoded.pageHeight ?? decoded.height;
-      const pages = decoded.pages ?? 1;
-      if (
-        width === undefined ||
-        height === undefined ||
-        !Number.isInteger(width) ||
-        !Number.isInteger(height) ||
-        !Number.isInteger(pages) ||
-        width <= 0 ||
-        height <= 0 ||
-        pages <= 0
-      ) {
-        throw new Error(`conjecture evidence image dimensions unreadable for ${assetId}`);
-      }
-      decodedPixels = width * height * pages;
-      prepared = image;
-    }
-    actualTransportBytes += Buffer.byteLength(prepared.data, 'utf8') * RESEARCH_MEETING_SAMPLES;
-    actualPixels += decodedPixels * RESEARCH_MEETING_SAMPLES;
-    if (actualTransportBytes > RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL) {
-      throw new Error(
-        `conjecture evidence images total ${actualTransportBytes} actual base64 bytes; max is ${RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL}`,
-      );
-    }
-    if (actualPixels > RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL) {
-      throw new Error(
-        `conjecture evidence images total ${actualPixels} actual pixels; max is ${RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL}`,
-      );
-    }
-    fetchedByAssetId.set(assetId, prepared);
-  }
-  return uniqueAssetIds.map((assetId) => {
-    const image = fetchedByAssetId.get(assetId);
-    if (!image) throw new Error(`conjecture evidence prepared image missing ${assetId}`);
-    return {
-      asset_id: assetId,
-      occurrences: loadableRefs
-        .filter((ref) => ref.asset_id === assetId)
-        .map(({ attempt_event_id, source }) => ({ attempt_event_id, source })),
-      ...image,
-    };
-  });
 }
 
 /** Assemble the propose-only conjecture payload (deterministic cell facts + LLM draft). */
@@ -681,12 +346,6 @@ async function runResearchMeetingNightlyClaimed(
   const getFailureAttemptsWithTraceFn =
     deps.getFailureAttemptsWithTraceFn ?? getFailureAttemptsWithReasoningTrace;
   const getMasteryProjectionFn = deps.getMasteryProjectionFn ?? getMasteryProjection;
-  const enrichEvidenceCellsFn = deps.enrichEvidenceCellsFn ?? enrichEvidenceCells;
-  const loadKnownConjectureKeysFn =
-    deps.loadKnownConjectureKeysFn ?? defaultLoadKnownConjectureKeys;
-  const loadConjectureHistoryFn = deps.loadConjectureHistoryFn ?? loadConjectureHistory;
-  const loadPredictionAccountabilityFn =
-    deps.loadPredictionAccountabilityFn ?? loadPredictionAccountabilityByKey;
   const induceConjectureFn = deps.induceConjectureFn ?? induceConjecture;
   const writeAiProposalFn = deps.writeAiProposalFn ?? writeAiProposal;
   const writeEventFn = deps.writeEventFn ?? writeEvent;
@@ -697,7 +356,6 @@ async function runResearchMeetingNightlyClaimed(
   const writeRetryableAiFailureLedgerFn =
     deps.writeRetryableAiFailureLedgerFn ?? writeRetryableAiFailureLedger;
   const resolveSubjectProfileFn = deps.resolveSubjectProfileFn ?? resolveSubjectProfile;
-  const loadEvidenceImagesFn = deps.loadEvidenceImagesFn ?? defaultLoadEvidenceImages;
   const runTaskFn = deps.runTaskFn ?? makeDefaultRunTaskFn(db);
   const persistCompletionOnly = async (result: ResearchMeetingResult): Promise<void> => {
     await runInTransactionFn(db, async (tx) => {
@@ -742,36 +400,40 @@ async function runResearchMeetingNightlyClaimed(
   const kcIds = [...new Set(failures.flatMap((f) => f.referenced_knowledge_ids))];
   const masteryByKnowledgeId =
     kcIds.length > 0 ? await getMasteryProjectionFn(db, kcIds) : new Map();
-  const knownConjectureKeys = await loadKnownConjectureKeysFn(db);
 
-  // ── Deterministic 取证 + accountability upper-bound order ──
-  const gatheredCells = gatherConjectureEvidence({
+  // ── Candidate selection (still OUTSIDE the per-cell swallow — a throw is retryable) ──
+  const selection = await selectConjectureCandidates(db, {
     failures,
+    reasoningTraceByAttemptId,
     masteryByKnowledgeId,
-    knownConjectureKeys,
+    now,
+    limit: RESEARCH_MEETING_MAX_CONJECTURES,
+    imageFetchFn: defaultImageFetch,
+    loadKnownConjectureKeysFn: deps.loadKnownConjectureKeysFn,
   });
-  const historyByKey =
-    gatheredCells.length > 0
-      ? await loadConjectureHistoryFn(db, gatheredCells)
-      : new Map<string, ConjectureHistory>();
-  const historyGate = applyConjectureHistoryGate(gatheredCells, failures, historyByKey, now);
-  const accountabilityByKey =
-    historyGate.cells.length > 0
-      ? await loadPredictionAccountabilityFn(db, historyGate.cells)
-      : new Map<string, PredictionAccountability>();
-  const cells = rankEvidenceCellsByAccountability(historyGate.cells, accountabilityByKey);
+  for (const exclusion of selection.exclusions) {
+    if (exclusion.reason === 'evidence_image_unavailable') {
+      console.error(
+        '[research_meeting_nightly] excluding candidate with unloadable evidence images',
+        exclusion.key,
+        exclusion.error,
+      );
+    }
+  }
+  const pendingBefore = selection.pendingConjectureCount;
+  const preparedTopCells = selection.candidates;
 
-  // Empty-night early return: zero cells means the propose half has nothing to anchor.
-  // Skip trigger + scan; persist only the execution completion guard so a redelivery
-  // cannot reconcile or discover new work twice.
+  // Empty or ungrounded night: zero candidates means the propose half has nothing to
+  // anchor. Skip trigger + scan; persist only the execution completion guard so a
+  // redelivery cannot reconcile or discover new work twice.
   // MUST stay AFTER the reconcile call above: settlement is never skipped.
-  if (cells.length === 0) {
+  if (preparedTopCells.length === 0) {
     const idleResult: ResearchMeetingResult = {
       considered: 0,
       conjectures_created: 0,
       conjectures_abstained: 0,
       cells_failed: 0,
-      pending_before: knownConjectureKeys.size,
+      pending_before: pendingBefore,
       reconciled: reconcileResult.reconciled,
       reconcile_skipped: reconcileResult.skipped,
       cost_usd: 0,
@@ -779,117 +441,6 @@ async function runResearchMeetingNightlyClaimed(
     };
     await persistCompletionOnly(idleResult);
     return idleResult;
-  }
-
-  // ── PRE-LLM grounding read (still OUTSIDE the per-cell swallow) ──
-  // Enrich in bounded salience batches and refill from lower-ranked cells when mutable or
-  // missing question context leaves a candidate ungrounded. Raw recurrence is only an
-  // UPPER BOUND: after enrichment validates the immutable evidence ids, re-apply
-  // accountability to the reproducible count before the final top-K cut.
-  const preparedCandidates: PreparedConjectureCell[] = [];
-  const reproduciblePriorClaimMdByKey = new Map<string, string>();
-  let cellOffset = 0;
-  while (cellOffset < cells.length) {
-    const batchSize = Math.min(RESEARCH_MEETING_MAX_CONJECTURES, cells.length - cellOffset);
-    const batch = cells.slice(cellOffset, cellOffset + batchSize);
-    cellOffset += batch.length;
-    const enriched = await enrichEvidenceCellsFn(db, {
-      cells: batch,
-      failures,
-      reasoningTraceByAttemptId,
-    });
-    const reproducibleCells: EnrichedEvidenceCell[] = [];
-    for (const cell of enriched) {
-      // Recurrence is a claim about reproducible historical context, not the raw attempt
-      // tally. Enrichment validates every attempt and keeps all reproducible ids even
-      // though prompt text samples are capped.
-      const evidenceEventIds = [...new Set(cell.evidence_event_ids)];
-      if (evidenceEventIds.length < CONJECTURE_RECURRENCE_FLOOR) continue;
-      reproducibleCells.push({
-        ...cell,
-        recurrence_count: evidenceEventIds.length,
-        evidence_event_ids: evidenceEventIds,
-      });
-    }
-    // A terminal conjecture may clear the raw two-fresh-failures gate before enrichment
-    // removes a missing/mutated attempt. Re-run the lifecycle gate over only reproducible
-    // ids so older pre-terminal evidence cannot substitute for post-terminal failures.
-    const reproducibleHistoryGate = applyConjectureHistoryGate(
-      reproducibleCells,
-      failures,
-      historyByKey,
-      now,
-    );
-    for (const [key, priorClaimMd] of reproducibleHistoryGate.priorClaimMdByKey) {
-      reproduciblePriorClaimMdByKey.set(key, priorClaimMd);
-    }
-    const preparedBatch = await Promise.all(
-      reproducibleHistoryGate.cells.map(
-        async (reproducibleCell): Promise<PreparedConjectureCell | null> => {
-          try {
-            const imageRefs = collectConjectureEvidenceAssetRefs(reproducibleCell);
-            const evidenceImages = await loadEvidenceImagesFn(db, imageRefs);
-            return { cell: reproducibleCell, evidenceImages };
-          } catch (err) {
-            // A deterministic bad/missing asset must not occupy one of the permanent top-K slots.
-            // Continue in salience order so a lower candidate can still be inducted tonight.
-            console.error(
-              '[research_meeting_nightly] excluding candidate with unloadable evidence images',
-              reproducibleCell.key,
-              err,
-            );
-            return null;
-          }
-        },
-      ),
-    );
-    preparedCandidates.push(
-      ...preparedBatch.filter(
-        (candidate): candidate is PreparedConjectureCell => candidate !== null,
-      ),
-    );
-    if (preparedCandidates.length >= RESEARCH_MEETING_MAX_CONJECTURES) {
-      const preparedKeys = new Set(preparedCandidates.map((candidate) => candidate.cell.key));
-      // Unprocessed cells retain their raw recurrence count as an upper bound, so this
-      // early stop can only enrich an extra batch — never skip a validated top-K cell.
-      const bestPossibleTopKeys = rankEvidenceCellsByAccountability<EvidenceCell>(
-        [...preparedCandidates.map((candidate) => candidate.cell), ...cells.slice(cellOffset)],
-        accountabilityByKey,
-      )
-        .slice(0, RESEARCH_MEETING_MAX_CONJECTURES)
-        .map((candidate) => candidate.key);
-      if (bestPossibleTopKeys.every((key) => preparedKeys.has(key))) break;
-    }
-  }
-  const preparedByKey = new Map(
-    preparedCandidates.map((candidate) => [candidate.cell.key, candidate] as const),
-  );
-  const preparedTopCells = rankEvidenceCellsByAccountability(
-    preparedCandidates.map((candidate) => candidate.cell),
-    accountabilityByKey,
-  )
-    .slice(0, RESEARCH_MEETING_MAX_CONJECTURES)
-    .map((cell) => {
-      const prepared = preparedByKey.get(cell.key);
-      if (!prepared) {
-        throw new Error(`research_meeting_nightly: prepared candidate missing for ${cell.key}`);
-      }
-      return prepared;
-    });
-  if (preparedTopCells.length === 0) {
-    const ungroundedResult: ResearchMeetingResult = {
-      considered: 0,
-      conjectures_created: 0,
-      conjectures_abstained: 0,
-      cells_failed: 0,
-      pending_before: knownConjectureKeys.size,
-      reconciled: reconcileResult.reconciled,
-      reconcile_skipped: reconcileResult.skipped,
-      cost_usd: 0,
-      trigger_event_id: '',
-    };
-    await persistCompletionOnly(ungroundedResult);
-    return ungroundedResult;
   }
 
   // Anchor the run (provenance for each proposal + the scan subject). The trigger write
@@ -905,6 +456,7 @@ async function runResearchMeetingNightlyClaimed(
       async ({
         cell,
         evidenceImages,
+        priorClaimMd,
       }): Promise<{
         cell: EnrichedEvidenceCell;
         induced: InduceConjectureResult | null;
@@ -916,7 +468,6 @@ async function runResearchMeetingNightlyClaimed(
         cost_usd: number | null;
       }> => {
         let induced: InduceConjectureResult;
-        const priorClaimMd = reproduciblePriorClaimMdByKey.get(cell.key);
         try {
           induced = await induceConjectureFn({
             cells: [cell],
@@ -1006,7 +557,7 @@ async function runResearchMeetingNightlyClaimed(
     conjectures_created: created,
     conjectures_abstained: abstained,
     cells_failed: cellsFailed,
-    pending_before: knownConjectureKeys.size,
+    pending_before: pendingBefore,
     reconciled: reconcileResult.reconciled,
     reconcile_skipped: reconcileResult.skipped,
     cost_usd: costUsd,
@@ -1029,7 +580,7 @@ async function runResearchMeetingNightlyClaimed(
       payload: {
         window_days: RESEARCH_MEETING_WINDOW_DAYS,
         candidate_cells: preparedTopCells.length,
-        pending_conjectures: knownConjectureKeys.size,
+        pending_conjectures: pendingBefore,
       },
       // Run anchor/provenance only; keep the event but skip Mem0 + brief regeneration.
       ingest_at: now,
@@ -1102,7 +653,7 @@ async function runResearchMeetingNightlyClaimed(
         conjectures_created: created,
         conjectures_abstained: abstained,
         cells_failed: cellsFailed,
-        pending_before: knownConjectureKeys.size,
+        pending_before: pendingBefore,
       },
       caused_by_event_id: triggerEventId,
       cost_micro_usd: null,
