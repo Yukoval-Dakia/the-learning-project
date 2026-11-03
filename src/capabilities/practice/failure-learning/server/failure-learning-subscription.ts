@@ -6,7 +6,7 @@ import type {
   EventSubscriptionHandlerFactory,
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
-import { getPracticeBoss } from '../../server/queue-runtime';
+import { getStartedBoss } from '@/server/boss/client';
 import {
   type FailureLearningBossSend,
   enqueueAttributionFollowup,
@@ -29,7 +29,7 @@ export async function handleFailureLearningAttemptDelivery(
 ): Promise<EventSubscriptionOutcome> {
   let send = deps.bossSend;
   if (!send) {
-    const boss = await getPracticeBoss();
+    const boss = await getStartedBoss();
     send = boss.send.bind(boss) as FailureLearningBossSend;
   }
 

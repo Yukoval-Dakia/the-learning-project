@@ -20,7 +20,7 @@ ignored local files after the merge. Do not reintroduce another lane's task stat
 ## Local processes
 
 ```bash
-pnpm dev:local        # 唯一入口：起 dev Postgres(:5434，与 TEST 隔离)+本 worktree 独立库(loom_dev_<name>_<hash>)+迁移+API/Start 前门(自动选 8788 起空闲端口，Vite HMR)+worker；打开打印的地址；全新 dev 库自带 7 道已准入的种子题（`devseed:q:*`，固定答案、无需模型即可判分，仅 dev 库）；重置本 worktree 库：`pnpm dev:reset`（不要 down -v，卷里有全部 worktree 的库）
+pnpm dev:local        # 唯一入口：起 dev Postgres(:5434，与 TEST 隔离)+本 worktree 独立库(loom_dev_<name>_<hash>)+迁移（与生产同一个 `scripts/migrate.ts`，含内置学科 reconcile）+API/Start 前门(自动选 8788 起空闲端口，Vite HMR)+worker；打开打印的地址；全新 dev 库自带 7 道已准入的种子题（`devseed:q:*`，固定答案、无需模型即可判分，仅 dev 库）；重置本 worktree 库：`pnpm dev:reset`（不要 down -v，卷里有全部 worktree 的库）
 pnpm dev:reset        # 只删本 worktree 的 dev 库；下次 dev:local 重建+迁移+播种
 pnpm dev              # alias for dev:local
 pnpm rw:api           # Hono API（设 RW_FRONTDOOR=dev 才带 Vite 前门；dev:local 已设）
@@ -136,6 +136,14 @@ no writes; `scripts/embed-inventory.ts`).
 （必须使用生成的 operations）这条不变量，并同时检查 public/ui-public access seam 与三张架构债
 ratchet（capability→server、server→capability deep、cross-capability value/SCC）。
 机器可读报告用 `pnpm audit:capability-boundaries --json`。
+
+capability→server 不统计目标为 `src/server/ai` 与 `src/server/boss` 的边：Owner 2026-11-03
+「ai/boss 属于平台依赖，不算债」——每个 capability 都按设计调用 AI runner 与任务队列。这两类 pair
+不进台账和 ratchet，只在报告的「平台依赖（不计入 ratchet）」小节（`--json` 为
+`dependencyReport.platformCapabilityToServer*`）照常列出数字；其余 server 模块的 pair 仍只降不升。
+`audit:architecture-deepening` 的 531 天花板是另一道独立 gate，仍按含 ai/boss 的全量比较。
+ai/boss 没有规定的对外入口（无 barrel/public 文件，AGENTS.md 与 lint 也无入口规则），所以不约束
+capability 深入它们内部文件。
 
 `scripts/capability-boundary-baseline.json` 只记当前上限：三类债务的 `total`、`byOwnerPair`
 与 `crossCapabilityValue.nontrivialSccs`，不存变更历史或批准记录（批准与理由写在 PR / Linear）。

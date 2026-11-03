@@ -1,22 +1,19 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { CSSProperties } from 'react';
-import { Badge } from '@/ui/primitives/Badge';
-import { Button } from '@/ui/primitives/Button';
-import { Card } from '@/ui/primitives/Card';
-import { PageHeader } from '@/ui/primitives/PageHeader';
+import { RefreshCw } from 'lucide-react';
+import { Button, Chip } from '@/ui-next/public';
 import { type AdminReadClient, httpAdminClient } from './admin-client';
 import {
-  AdminLinks,
-  type AdminSurfaceProps,
-  ErrorCard,
-  Kpi,
-  LoadingCard,
-  formatTime,
-  mutedTextStyle,
-  sectionHeadStyle,
-  sectionTitleStyle,
-  shortId,
-} from './observability-shared';
+  ADMIN_LINKS,
+  AdminError,
+  AdminFrame,
+  AdminHead,
+  AdminKpi,
+  AdminKpis,
+  AdminLoading,
+  AdminNav,
+  AdminPanel,
+} from './admin-frame';
+import { type AdminSurfaceProps, formatTime, shortId } from './observability-shared';
 
 export function AdminFailuresSurface({
   navigate,
@@ -34,87 +31,91 @@ export function AdminFailuresSurface({
   const top = clusters[0];
 
   return (
-    <main className="page wide">
-      <PageHeader
-        title="Failures"
-        eyebrow="ADMIN · failure clusters"
-        sub="按 `finish_reason` 与 error message 前缀聚类失败样本，先看重复失败而不是逐条翻日志。"
-      >
-        <AdminLinks navigate={navigate} />
-        <Button
-          variant="secondary"
-          icon="refresh"
-          onClick={() => {
-            void queryClient.invalidateQueries({ queryKey: ['admin-failures'] });
-          }}
-        >
-          刷新
-        </Button>
-      </PageHeader>
+    <AdminFrame>
+      <AdminNav links={ADMIN_LINKS} current="/admin/failures" navigate={navigate} />
+      <AdminHead
+        kicker="ADMIN · failure clusters"
+        title="失败记录"
+        lead="按 `finish_reason` 与 error message 前缀聚类失败样本，先看重复失败而不是逐条翻日志。"
+        actions={
+          <Button
+            onClick={() => {
+              void queryClient.invalidateQueries({ queryKey: ['admin-failures'] });
+            }}
+          >
+            <RefreshCw size={16} aria-hidden="true" />
+            刷新
+          </Button>
+        }
+      />
 
-      <div className="kpi-strip">
-        <Kpi
+      <AdminKpis>
+        <AdminKpi
           label="failed runs"
           value={totalFailures}
           note={`in latest ${failureWindow} failed-run window`}
         />
-        <Kpi label="clusters" value={clusters.length} note="reason + prefix" />
-        <Kpi label="top count" value={top?.count ?? 0} note={top?.finish_reason ?? 'none'} />
-        <Kpi
+        <AdminKpi label="clusters" value={clusters.length} note="reason + prefix" />
+        <AdminKpi label="top count" value={top?.count ?? 0} note={top?.finish_reason ?? 'none'} />
+        <AdminKpi
           label="samples"
           value={clusters.reduce((sum, cluster) => sum + cluster.samples.length, 0)}
           note="shown"
         />
-      </div>
+      </AdminKpis>
 
-      {failuresQ.isLoading && <LoadingCard label="failures" />}
-      {failuresQ.error && <ErrorCard error={failuresQ.error} />}
+      {failuresQ.isLoading && <AdminLoading label="failures 加载中" />}
+      {failuresQ.error && <AdminError error={failuresQ.error} />}
 
       {failuresQ.data && (
-        <div style={clusterListStyle}>
-          {clusters.map((cluster) => (
-            <Card key={cluster.key} pad="lg">
-              <div style={sectionHeadStyle}>
-                <div style={{ minWidth: 0 }}>
-                  <h2 style={sectionTitleStyle}>{cluster.error_prefix}</h2>
-                  <p style={mutedTextStyle}>
-                    latest {formatTime(cluster.latest_at)} · {cluster.samples.length} samples shown
-                  </p>
-                </div>
-                <Badge tone="again">
+        <div className="adm-stack">
+          {clusters.map((cluster, index) => (
+            <AdminPanel
+              key={cluster.key}
+              // Cluster keys hold raw error text, so the heading id is positional.
+              id={`adm-fail-${index}`}
+              title={cluster.error_prefix}
+              titleClassName="adm-mono"
+              flush
+              sub={`latest ${formatTime(cluster.latest_at)} · ${cluster.samples.length} samples shown`}
+              aside={
+                <Chip tone="critical">
                   {cluster.finish_reason} · {cluster.count}
-                </Badge>
+                </Chip>
+              }
+            >
+              <div className="adm-table-scroll">
+                <table className="adm-table adm-table-compact">
+                  <thead>
+                    <tr>
+                      <th scope="col">run</th>
+                      <th scope="col">task</th>
+                      <th scope="col">model</th>
+                      <th scope="col">started</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cluster.samples.map((sample) => (
+                      <tr key={sample.id}>
+                        <td className="adm-mono">{shortId(sample.id)}</td>
+                        <td>{sample.task_kind}</td>
+                        <td className="adm-mono">{sample.model}</td>
+                        <td className="adm-mono adm-quiet">{formatTime(sample.started_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <div className="admin-sample-grid">
-                {cluster.samples.map((sample) => (
-                  <div key={sample.id} style={sampleStyle}>
-                    <code>{shortId(sample.id)}</code>
-                    <span>{sample.task_kind}</span>
-                    <span>{sample.model}</span>
-                    <span>{formatTime(sample.started_at)}</span>
-                  </div>
-                ))}
-              </div>
-            </Card>
+            </AdminPanel>
           ))}
           {clusters.length === 0 && (
-            <Card pad="lg">
-              <Badge tone="good">clear</Badge>
-              <p style={mutedTextStyle}>No failed AI task runs in the latest window.</p>
-            </Card>
+            <div className="adm-panel adm-clear">
+              <Chip tone="positive">clear</Chip>
+              <p className="adm-empty">No failed AI task runs in the latest window.</p>
+            </div>
           )}
         </div>
       )}
-    </main>
+    </AdminFrame>
   );
 }
-
-const clusterListStyle: CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '1fr',
-  gap: 'var(--s-4)',
-};
-const sampleStyle: CSSProperties = {
-  display: 'contents',
-  color: 'var(--ink-3)',
-};

@@ -6,7 +6,7 @@ import { ResponseOption, type ResponseSlotT } from '@/core/schema/assessment/res
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
-import { makeRunTaskFn } from '../../server/task-runtime';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { BankVerificationSchema } from '../tasks/bank-search-semantic';
 import { resolveBankRefs } from './bank-ref';
 import type { BankRequirement, BankSemanticHit, BankTaskReceipt } from './bank-requirements';

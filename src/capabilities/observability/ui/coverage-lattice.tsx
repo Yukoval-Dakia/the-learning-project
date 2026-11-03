@@ -13,13 +13,21 @@
 // should#1：header 声明本蓝图边界（scanCoverageGaps 四规则的 KC 池覆盖，非全量并集）。
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { CSSProperties, ReactNode } from 'react';
-import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
-import { Button } from '@/ui/primitives/Button';
-import { Card } from '@/ui/primitives/Card';
-import { PageHeader } from '@/ui/primitives/PageHeader';
-import { Stateful } from '@/ui/primitives/Stateful';
+import { RefreshCw } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { Button, Chip, type ChipTone } from '@/ui-next/public';
 import { type AdminReadClient, httpAdminClient } from './admin-client';
+import {
+  ADMIN_LINKS_NO_CONFIG,
+  AdminArea,
+  AdminFrame,
+  AdminHead,
+  AdminKpi,
+  AdminKpis,
+  AdminNav,
+  AdminPanel,
+  adminAreaStatus,
+} from './admin-frame';
 
 type CoverageLatticeResponse = Awaited<ReturnType<AdminReadClient['getCoverage']>>;
 type SubjectCoverage = CoverageLatticeResponse['subjects'][number];
@@ -54,22 +62,13 @@ export function coverageScanStateLabel(state: CoverageScanState): string {
   return 'clear';
 }
 
-function coverageScanStateTone(state: CoverageScanState): BadgeTone {
-  if (state === 'failed') return 'again';
-  if (state === 'scanning') return 'info';
-  if (state === 'healthy') return 'good';
-  if (state === 'degraded') return 'coral';
+function coverageScanStateTone(state: CoverageScanState): ChipTone {
+  if (state === 'failed') return 'critical';
+  if (state === 'scanning') return 'accent';
+  if (state === 'healthy') return 'positive';
+  if (state === 'degraded') return 'caution';
   return 'neutral';
 }
-
-const NAV: Array<{ to: string; label: string }> = [
-  { to: '/admin/runs', label: 'runs' },
-  { to: '/admin/cost', label: 'cost' },
-  { to: '/admin/failures', label: 'failures' },
-  { to: '/admin/subjects', label: 'subjects' },
-  { to: '/admin/coverage-lattice', label: 'coverage' },
-  { to: '/admin/conjecture-scores', label: 'conjecture' },
-];
 
 function formatTime(value: string | null): string {
   if (!value) return '—';
@@ -95,15 +94,15 @@ function daysAgo(value: string | null, now: number): string {
 // MF3 —— 池级判词单格：✓ / gap / 未评估·空池（null）。
 function verdictCell(value: boolean | null, gapLabel: string): ReactNode {
   if (value === null) {
-    return <Badge tone="neutral">未评估·空池</Badge>;
+    return <Chip>未评估·空池</Chip>;
   }
-  return value ? <span style={okMarkStyle}>✓</span> : <Badge tone="again">{gapLabel}</Badge>;
+  return value ? <span className="adm-ok">✓</span> : <Chip tone="critical">{gapLabel}</Chip>;
 }
 
-function gapTone(gapKind: string): BadgeTone {
-  if (gapKind === 'frontier_zero') return 'again';
-  if (gapKind === 'diagnostic') return 'coral';
-  if (gapKind === 'source_quality') return 'info';
+function gapTone(gapKind: string): ChipTone {
+  if (gapKind === 'frontier_zero') return 'critical';
+  if (gapKind === 'diagnostic') return 'caution';
+  if (gapKind === 'source_quality') return 'accent';
   return 'neutral';
 }
 
@@ -116,16 +115,16 @@ function GapActivityNote({
   cooldownDays: number;
 }) {
   if (!activity || activity.lastActivityAt === null) {
-    return <span style={mutedMetaStyle}>无派发记录</span>;
+    return <span className="adm-gap-meta">无派发记录</span>;
   }
   const now = Date.now();
   return (
-    <span style={mutedMetaStyle}>
+    <span className="adm-gap-meta">
       {activity.lastStatus ?? 'activity'} · {daysAgo(activity.lastActivityAt, now)}
       {activity.inCooldown && activity.cooldownUntil && (
         <>
           {' · '}
-          <span style={cooldownStyle}>cooldown→{formatTime(activity.cooldownUntil)}</span>
+          <span className="adm-cooldown">cooldown→{formatTime(activity.cooldownUntil)}</span>
         </>
       )}
       {!activity.inCooldown &&
@@ -138,25 +137,25 @@ function GapActivityNote({
 // MF3 —— 一条缺口渲成「从属触发规则的获取请求」，非 column-aligned 矩阵行。
 function GapRow({ gap, cooldownDays }: { gap: LatticeGap; cooldownDays: number }) {
   return (
-    <div style={gapRowStyle}>
-      <Badge tone={gapTone(gap.gapKind)}>{gap.gapKind}</Badge>
-      <div style={{ minWidth: 0 }}>
+    <li className="adm-gap">
+      <Chip tone={gapTone(gap.gapKind)}>{gap.gapKind}</Chip>
+      <div className="adm-gap-body">
         {gap.scaffold ? (
           // frontier_zero：坐标是硬编脚手架常量，非扫描依据 → 置灰。
-          <div style={scaffoldWantsStyle}>
+          <div className="adm-wants" data-scaffold="">
             default scaffold · not scanned · ×{gap.desiredCount} · p{gap.priority.toFixed(2)}
           </div>
         ) : (
-          <div style={wantsStyle}>
+          <div className="adm-wants">
             wants: {gap.kind}/{gap.difficultyBand}/tier{gap.minSourceTier} · ×{gap.desiredCount} · p
             {gap.priority.toFixed(2)}
           </div>
         )}
-        <div style={gapMetaLineStyle}>
+        <div className="adm-gap-meta-line">
           <GapActivityNote activity={gap.lastActivity} cooldownDays={cooldownDays} />
         </div>
       </div>
-    </div>
+    </li>
   );
 }
 
@@ -181,45 +180,36 @@ export function AdminCoverageLatticeSurface({
     isError: q.isError,
   });
 
-  const link = (to: string, label: string) => (
-    <a
-      key={to}
-      href={to}
-      onClick={(e) => {
-        e.preventDefault();
-        navigate(to);
-      }}
-    >
-      {label}
-    </a>
-  );
-
   return (
-    <main className="page wide">
-      <PageHeader
-        title="Coverage Lattice"
-        eyebrow="ADMIN · question supply"
-        sub="覆盖 scanCoverageGaps 四规则（frontier / source-quality / diagnostic / format）的 KC 池级覆盖，非供给系统全量缺口并集（confusable 误区网另计）。每次打开跑一次实时扫描。"
-      >
-        <div style={linkRowStyle}>{NAV.map((n) => link(n.to, n.label))}</div>
-        <Button
-          variant="secondary"
-          icon="refresh"
-          // CodeRabbit (PR #732): 手动 rescan 每次触发一次 3N-5N 串行活扫描，须给点击态反馈。
-          // q.isFetching 覆盖首载 + 手动 rescan 的后台 refetch（isLoading 只覆盖首载）——扫描期
-          // 禁用按钮 + 显式「扫描中…」文案，避免用户误以为无效而重复点击。保持 MF2 no-refetchInterval。
-          disabled={q.isFetching}
-          onClick={() => {
-            void queryClient.invalidateQueries({ queryKey: ['admin-coverage-lattice'] });
-          }}
-        >
-          {q.isFetching ? '扫描中…' : '重新扫描'}
-        </Button>
-      </PageHeader>
+    <AdminFrame>
+      <AdminNav
+        links={ADMIN_LINKS_NO_CONFIG}
+        current="/admin/coverage-lattice"
+        navigate={navigate}
+      />
+      <AdminHead
+        kicker="ADMIN · question supply"
+        title="供题覆盖"
+        lead="覆盖 scanCoverageGaps 四规则（frontier / source-quality / diagnostic / format）的 KC 池级覆盖，非供给系统全量缺口并集（confusable 误区网另计）。每次打开跑一次实时扫描。"
+        actions={
+          <Button
+            // CodeRabbit (PR #732): 手动 rescan 每次触发一次 3N-5N 串行活扫描，须给点击态反馈。
+            // q.isFetching 覆盖首载 + 手动 rescan 的后台 refetch（isLoading 只覆盖首载）——扫描期
+            // 禁用按钮 + 显式「扫描中…」文案，避免用户误以为无效而重复点击。保持 MF2 no-refetchInterval。
+            disabled={q.isFetching}
+            onClick={() => {
+              void queryClient.invalidateQueries({ queryKey: ['admin-coverage-lattice'] });
+            }}
+          >
+            <RefreshCw size={16} aria-hidden="true" />
+            {q.isFetching ? '扫描中…' : '重新扫描'}
+          </Button>
+        }
+      />
 
       {data && (
-        <div className="kpi-strip">
-          <Kpi
+        <AdminKpis>
+          <AdminKpi
             label="active KCs"
             value={data.totals.activeKcs}
             note={
@@ -228,84 +218,82 @@ export function AdminCoverageLatticeSurface({
                 : `${data.subjects.length} subjects`
             }
           />
-          <Kpi
+          <AdminKpi
             label="KCs with gaps"
             value={data.totals.kcsWithGaps}
-            note={
-              scanState === 'unscanned'
-                ? 'not evaluated'
-                : data.totals.kcsWithGaps
-                  ? 'needs supply'
-                  : 'clear'
-            }
+            note={kcsWithGapsNote(scanState, data.totals.kcsWithGaps)}
           />
-          <Kpi
+          <AdminKpi
             label="gaps"
             value={data.totals.totalGaps}
             note={
               scanState === 'unscanned' ? 'not scanned' : gapKindSummary(data.totals.gapsByKind)
             }
           />
-          <Kpi
+          <AdminKpi
             label="scan"
             value={`${data.scan_ms}ms`}
             note={`${coverageScanStateLabel(scanState)} · ${formatTime(data.generated_at)}`}
           />
-        </div>
+        </AdminKpis>
       )}
 
-      <Stateful
-        status={q.isLoading ? 'loading' : q.isError ? 'error' : 'ok'}
+      <AdminArea
+        status={adminAreaStatus(q)}
         onRetry={() => void q.refetch()}
         errorText="coverage lattice 加载失败。"
-        skeleton={
-          <Card pad="lg">
-            <p style={mutedTextStyle}>覆盖细目扫描中...</p>
-          </Card>
-        }
+        loadingLabel="覆盖细目扫描中"
       >
         {data && data.subjects.length === 0 && (
-          <Card pad="lg">
-            <Badge tone={coverageScanStateTone(scanState)}>
-              {coverageScanStateLabel(scanState)}
-            </Badge>
-            <p style={mutedTextStyle}>
+          <div className="adm-panel adm-clear">
+            <Chip tone={coverageScanStateTone(scanState)}>{coverageScanStateLabel(scanState)}</Chip>
+            <p className="adm-empty">
               {scanState === 'unscanned'
                 ? '当前没有 active-goal 知识点范围；本次未评估覆盖度，不能据此判定为健康。'
                 : '当前扫描范围内没有可展示的知识点。'}
             </p>
-          </Card>
+          </div>
         )}
-        {data?.subjects.map((subject) => (
-          <Card key={subject.subjectId} pad="lg">
-            <div style={sectionHeadStyle}>
-              <h2 style={sectionTitleStyle}>{subject.displayName ?? subject.subjectId}</h2>
-              <Badge tone="neutral">
+        {data?.subjects.map((subject, index) => (
+          <AdminPanel
+            key={subject.subjectId}
+            id={`adm-cov-${index}`}
+            title={subject.displayName ?? subject.subjectId}
+            flush
+            aside={
+              <Chip>
                 {subject.kcs.filter((k) => k.gaps.length > 0).length} / {subject.kcs.length} with
                 gaps
-              </Badge>
-            </div>
-            <div style={tableWrapStyle}>
-              <table style={tableStyle}>
+              </Chip>
+            }
+          >
+            <div className="adm-table-scroll">
+              <table className="adm-table adm-table-lattice">
                 <thead>
                   <tr>
-                    <th style={thStyle}>KC</th>
-                    <th style={thStyle}>depth</th>
-                    <th style={thStyle}>src</th>
-                    <th style={thStyle}>diag</th>
-                    <th style={thStyle}>fmt</th>
-                    <th style={thStyle}>θ̂</th>
-                    <th style={thStyle}>ev</th>
-                    <th style={thStyle}>gaps</th>
+                    <th scope="col">KC</th>
+                    <th scope="col">depth</th>
+                    <th scope="col">src</th>
+                    <th scope="col">diag</th>
+                    <th scope="col">fmt</th>
+                    <th scope="col" className="adm-num">
+                      θ̂
+                    </th>
+                    <th scope="col" className="adm-num">
+                      ev
+                    </th>
+                    <th scope="col" className="adm-num">
+                      gaps
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {subject.kcs.map((kc) => (
                     <tr key={kc.knowledgeId}>
-                      <td style={tdStyle}>
-                        <code>{kc.knowledgeId}</code>
+                      <td className="adm-kc">
+                        <code className="adm-mono">{kc.knowledgeId}</code>
                         {kc.gaps.length > 0 && (
-                          <div style={gapListStyle}>
+                          <ul className="adm-gaps">
                             {kc.gaps.map((gap) => (
                               <GapRow
                                 key={gap.fingerprint}
@@ -313,46 +301,42 @@ export function AdminCoverageLatticeSurface({
                                 cooldownDays={data.cooldown_days}
                               />
                             ))}
-                          </div>
+                          </ul>
                         )}
                       </td>
-                      <td style={tdStyle}>
+                      <td>
                         {kc.depthMet ? (
-                          <span style={okMarkStyle}>
+                          <span className="adm-ok">
                             {kc.usableCount}/{data.coverage_depth_threshold}
                           </span>
                         ) : (
-                          <Badge tone="again">
+                          <Chip tone="critical">
                             {kc.usableCount}/{data.coverage_depth_threshold}
-                          </Badge>
+                          </Chip>
                         )}
                       </td>
-                      <td style={tdStyle}>{verdictCell(kc.hasHighTier, 'gap')}</td>
-                      <td style={tdStyle}>{verdictCell(kc.hasNearThetaAnchor, 'gap')}</td>
-                      <td style={tdStyle}>{verdictCell(kc.formatDiverse, 'gap')}</td>
-                      <td style={tdStyle}>{kc.thetaHat.toFixed(2)}</td>
-                      <td style={tdStyle}>{kc.evidenceCount}</td>
-                      <td style={tdStyle}>{kc.gaps.length || '—'}</td>
+                      <td>{verdictCell(kc.hasHighTier, 'gap')}</td>
+                      <td>{verdictCell(kc.hasNearThetaAnchor, 'gap')}</td>
+                      <td>{verdictCell(kc.formatDiverse, 'gap')}</td>
+                      <td className="adm-num adm-mono">{kc.thetaHat.toFixed(2)}</td>
+                      <td className="adm-num adm-mono">{kc.evidenceCount}</td>
+                      <td className="adm-num adm-mono">{kc.gaps.length || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </Card>
+          </AdminPanel>
         ))}
-      </Stateful>
-    </main>
+      </AdminArea>
+    </AdminFrame>
   );
 }
 
-function Kpi({ label, value, note }: { label: string; value: string | number; note?: string }) {
-  return (
-    <div className="kpi">
-      <div className="kpi-label">{label}</div>
-      <div className="kpi-num">{value}</div>
-      {note && <div className="kpi-trend">{note}</div>}
-    </div>
-  );
+/** The `KCs with gaps` note: not evaluated → needs supply → clear (same order as before). */
+function kcsWithGapsNote(scanState: CoverageScanState, kcsWithGaps: number): string {
+  if (scanState === 'unscanned') return 'not evaluated';
+  return kcsWithGaps ? 'needs supply' : 'clear';
 }
 
 function gapKindSummary(byKind: Record<string, number>): string {
@@ -363,79 +347,3 @@ function gapKindSummary(byKind: Record<string, number>): string {
     .map(([k, n]) => `${k}:${n}`)
     .join(' · ');
 }
-
-// Style authority = the sibling admin chrome（镜像 observability.tsx / subjects.tsx inline tokens）。
-const linkRowStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 10,
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-};
-const sectionHeadStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'flex-start',
-  justifyContent: 'space-between',
-  gap: 'var(--s-3)',
-  marginBottom: 'var(--s-3)',
-};
-const sectionTitleStyle: CSSProperties = {
-  margin: 0,
-  fontFamily: 'var(--font-serif)',
-  fontSize: 20,
-  fontWeight: 500,
-  letterSpacing: 'var(--ls-tight)',
-};
-const tableWrapStyle: CSSProperties = { overflowX: 'auto' };
-const tableStyle: CSSProperties = { width: '100%', borderCollapse: 'collapse', fontSize: 13 };
-const thStyle: CSSProperties = {
-  textAlign: 'left',
-  padding: '0 10px 8px 0',
-  color: 'var(--ink-4)',
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-  fontWeight: 500,
-};
-const tdStyle: CSSProperties = {
-  borderTop: '1px solid var(--line-soft)',
-  padding: '10px 10px 10px 0',
-  verticalAlign: 'top',
-  color: 'var(--ink-2)',
-};
-const okMarkStyle: CSSProperties = { color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' };
-const gapListStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 6,
-  marginTop: 8,
-};
-const gapRowStyle: CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'minmax(0, max-content) minmax(0, 1fr)',
-  gap: 10,
-  alignItems: 'start',
-};
-const wantsStyle: CSSProperties = {
-  color: 'var(--ink-2)',
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-  overflowWrap: 'anywhere',
-};
-const scaffoldWantsStyle: CSSProperties = {
-  ...wantsStyle,
-  color: 'var(--ink-4)',
-  fontStyle: 'italic',
-};
-const gapMetaLineStyle: CSSProperties = { marginTop: 2 };
-const mutedMetaStyle: CSSProperties = {
-  color: 'var(--ink-4)',
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-};
-const cooldownStyle: CSSProperties = { color: 'var(--coral)' };
-const mutedTextStyle: CSSProperties = {
-  margin: 0,
-  color: 'var(--ink-3)',
-  fontSize: 13,
-  lineHeight: 1.55,
-};

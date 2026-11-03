@@ -1,125 +1,199 @@
-.li-intent-card {
-  display: grid;
-  gap: var(--s-4);
-}
+/* 下一条学习主线 (LearningIntentComposer on /today; YUK-1713), M3E presentation. The section root
+   carries .un-m3e-bridge, so every --un-* role below reads the Google M3 roles of the Today root.
+   Same white panel as Today's other panels (24px radius, hairline, no shadow: T3). Design record:
+   docs/design/2026-11-03-today-finish-m3e.md. */
 
-.li-intent-copy {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--s-3);
-}
-
-.li-intent-help {
-  margin: var(--s-1) 0 0;
-}
-
-.li-intent-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--s-2);
-}
-
-.li-intent-existing {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-3);
-  padding: var(--s-3);
-  color: var(--ink-2);
-  background: var(--hard-soft);
-  border: 1px solid var(--hard-line);
-  border-radius: var(--r-2);
-}
-
-.li-intent-input {
-  min-width: 0;
-  min-height: 42px;
-  padding: 0 var(--s-3);
-  color: var(--ink);
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  font: inherit;
-}
-
-.li-intent-input:focus-visible {
-  outline: 2px solid var(--coral);
-  outline-offset: 2px;
-}
-
-.li-intent-input:disabled {
-  color: var(--muted);
-  background: var(--paper-sunk);
-}
-
-.li-intent-error {
-  padding: var(--s-2) var(--s-3);
-  color: var(--coral-ink);
-  background: var(--coral-soft);
-  border-radius: var(--r-2);
-  font-size: 0.9rem;
-}
-
-.li-intent-preview {
-  display: grid;
-  gap: var(--s-3);
-  padding-top: var(--s-4);
-  border-top: 1px solid var(--line);
-}
-
-.li-intent-preview-head,
-.li-intent-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-3);
-}
-
-.li-intent-hub {
-  margin-top: var(--s-1);
-  font-size: 1.2rem;
-}
-
-.li-intent-summary {
-  margin: 0;
-  color: var(--ink-2);
-}
-
-.li-intent-steps {
-  display: grid;
-  gap: var(--s-2);
-  margin: 0;
-  padding-left: 1.4rem;
-}
-
-.li-intent-steps li {
-  padding-left: var(--s-1);
-}
-
-.li-intent-steps b,
-.li-intent-steps span {
-  display: block;
-}
-
-.li-intent-steps span {
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 0.88rem;
-}
-
-.li-intent-steps .is-long::marker {
-  color: var(--coral);
-}
-
-@media (max-width: 640px) {
-  .li-intent-form {
-    grid-template-columns: 1fr;
+[data-ui-next] {
+  & .li-intent {
+    min-width: 0;
   }
 
-  .li-intent-preview-head,
-  .li-intent-actions,
-  .li-intent-existing {
+  & .li-intent-card {
+    display: grid;
+    gap: var(--un-sp-4);
+    min-width: 0;
+    padding: var(--un-sp-5);
+    border-radius: 24px;
+    background: var(--un-md-sys-color-surface-container-lowest);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-md-sys-color-outline-variant);
+  }
+
+  & .li-intent-copy {
+    display: flex;
     align-items: flex-start;
-    flex-direction: column;
+    gap: var(--un-sp-3);
+    min-width: 0;
+  }
+
+  & .li-intent-ic {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--un-r-3);
+    background: var(--un-md-sys-color-secondary-container);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .li-intent-title {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    font-weight: var(--un-fw-semibold);
+    line-height: var(--un-lh-tight);
+  }
+
+  & .li-intent-help {
+    margin-top: var(--un-sp-1);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .li-intent-existing {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-caution-soft);
+    color: var(--un-text-1);
+  }
+
+  & .li-intent-existing > p {
+    flex: 1 1 240px;
+    min-width: 0;
+  }
+
+  /* The topic field and its submit button; Enter submits through the form. */
+  & .li-intent-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--un-sp-2);
+  }
+
+  & .li-intent-input {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 48px;
+    padding: 0 var(--un-sp-4);
+    border: 1px solid var(--un-md-sys-color-outline);
+    border-radius: var(--un-md-sys-shape-medium);
+    background: var(--un-md-sys-color-surface-container-lowest);
+    color: var(--un-text-1);
+    font: inherit;
+    transition: border-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .li-intent-input::placeholder {
+    color: var(--un-text-3);
+  }
+
+  & .li-intent-input:hover:not(:disabled) {
+    border-color: var(--un-md-sys-color-on-surface);
+  }
+
+  & .li-intent-input:focus-visible {
+    border-color: var(--un-md-sys-color-primary);
+    outline: 2px solid var(--un-md-sys-color-primary);
+    outline-offset: -1px;
+  }
+
+  & .li-intent-input:disabled {
+    border-color: var(--un-md-sys-color-outline-variant);
+    background: var(--un-md-sys-color-surface-container-low);
+    color: var(--un-text-disabled);
+  }
+
+  & .li-intent-error {
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: var(--un-critical-soft);
+    color: var(--un-critical);
+    font-size: var(--un-fs-1);
+  }
+
+  /* The generated plan, waiting for confirmation in the inbox. */
+  & .li-intent-preview {
+    display: grid;
+    gap: var(--un-sp-3);
+    padding-top: var(--un-sp-4);
+    border-top: var(--un-hairline) solid var(--un-md-sys-color-outline-variant);
+  }
+
+  & .li-intent-preview-head,
+  & .li-intent-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-3);
+  }
+
+  & .li-intent-kicker {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .li-intent-hub {
+    margin-top: 2px;
+    color: var(--un-text-1);
+    font-size: var(--un-fs-4);
+    font-weight: var(--un-fw-semibold);
+    line-height: var(--un-lh-tight);
+    overflow-wrap: anywhere;
+  }
+
+  & .li-intent-summary {
+    color: var(--un-text-2);
+    overflow-wrap: anywhere;
+  }
+
+  & .li-intent-steps {
+    display: grid;
+    gap: var(--un-sp-2);
+    padding-left: 1.4rem;
+    list-style: decimal;
+  }
+
+  & .li-intent-steps li {
+    padding-left: var(--un-sp-1);
+    overflow-wrap: anywhere;
+  }
+
+  & .li-intent-steps li::marker {
+    color: var(--un-text-3);
+  }
+
+  & .li-intent-steps .is-long::marker {
+    color: var(--un-md-sys-color-primary);
+  }
+
+  & .li-intent-steps b,
+  & .li-intent-steps span {
+    display: block;
+  }
+
+  & .li-intent-steps b {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .li-intent-steps span {
+    margin-top: 2px;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  @media (max-width: 640px) {
+    & .li-intent-card {
+      padding: var(--un-sp-4);
+    }
+
+    & .li-intent-form {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 }

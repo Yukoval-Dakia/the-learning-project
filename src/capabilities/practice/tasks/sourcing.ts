@@ -1,8 +1,11 @@
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { SourcingTaskOutput, type SourcingTaskOutputT } from '@/core/schema/sourcing';
+import {
+  CANONICAL_QUESTION_KINDS,
+  rubricGuidanceSection,
+} from '@/kernel/generation-prompt-support';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 import type { SubjectProfile } from '@/subjects/profile';
-import { CANONICAL_QUESTION_KINDS, rubricGuidanceSection } from './generation-prompt-support';
-import { parseTaskOutput } from './parse-output';
 
 // SourcingTask — tool-calling agent that finds EXISTING practice questions on the
 // web and restructures them, recording each origin URL as per-question provenance.

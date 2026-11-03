@@ -15,7 +15,7 @@ import { LEARNING_EVENT_ACTIONS } from '@/kernel/nightly-eligibility';
 import { loadActivityTier } from '@/kernel/read-models/activity-tier';
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
 import { streamLocalDate } from '@/kernel/stream-date';
-import { getPracticeBoss } from '../../server/queue-runtime';
+import { getStartedBoss } from '@/server/boss/client';
 import { composeNightly } from './stream-store';
 
 export const LEARNER_RETURN_WAKE_QUEUE = 'learner_return_wake';
@@ -36,7 +36,7 @@ export function buildLearnerReturnWakeSubscriber(db: Db): EventSubscriptionHandl
     if (!row || !WAKE_ACTIONS.has(row.action)) {
       return { status: 'skipped', reason: 'not a learning event' };
     }
-    const boss = await getPracticeBoss();
+    const boss = await getStartedBoss();
     await boss.send(
       LEARNER_RETURN_WAKE_QUEUE,
       { eventId: delivery.sourceEventId },
@@ -75,7 +75,7 @@ export function buildLearnerReturnWakeHandler(
     }
     const subjectId = await wakeSubjectId(db, row);
     if (!subjectId) return;
-    const boss = await getPracticeBoss();
+    const boss = await getStartedBoss();
     const scopeKey = `subject:${subjectId}`;
     await boss.send(
       MEMORY_BRIEF_REGEN_QUEUE,

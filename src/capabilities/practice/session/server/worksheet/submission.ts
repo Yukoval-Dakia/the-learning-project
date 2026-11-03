@@ -1,5 +1,5 @@
 import type { Db } from '@/db/client';
-import { getPracticeBoss } from '../../../server/queue-runtime';
+import { getStartedBoss } from '@/server/boss/client';
 import { WORKSHEET_RENDER_QUEUE } from '../../jobs/worksheet-render-queue';
 import {
   type CreateWorksheetExportRequest,
@@ -10,7 +10,7 @@ import {
 
 /** Request rendering for an already committed export; submission owns recovery and errors. */
 async function enqueueWorksheetRender(exportToken: string): Promise<void> {
-  const boss = await getPracticeBoss();
+  const boss = await getStartedBoss();
   await boss.send(WORKSHEET_RENDER_QUEUE, { export_token: exportToken });
 }
 

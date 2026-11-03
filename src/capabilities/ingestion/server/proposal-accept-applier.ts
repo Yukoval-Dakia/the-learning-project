@@ -5,12 +5,7 @@ import type {
   ProposalAcceptResult,
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
-import { ensureAcceptOnly } from '@/kernel/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
-import {
-  type ImageCandidateAcceptDeps,
-  acceptImageCandidateProposal,
-} from './image-candidate-accept';
 import {
   type LegacyRecordApplierOpts,
   acceptRecordLinksProposal,
@@ -18,10 +13,7 @@ import {
 } from './legacy-record-appliers';
 import { type IngestionApplierOpts, acceptBlockMergeProposal } from './proposal-appliers';
 
-type IngestionAcceptRuntime = IngestionApplierOpts &
-  LegacyRecordApplierOpts & {
-    imageCandidateDeps?: ImageCandidateAcceptDeps;
-  };
+type IngestionAcceptRuntime = IngestionApplierOpts & LegacyRecordApplierOpts;
 
 function inboxView(input: ProposalAcceptInput): ProposalInboxRow {
   const { proposal } = input;
@@ -61,23 +53,6 @@ export const blockMergeProposalAcceptApplier: ProposalAcceptApplier = async (db,
       runtimeOptions(input, runtime),
     ),
   );
-
-export const imageCandidateProposalAcceptApplier: ProposalAcceptApplier = async (
-  db,
-  input,
-  runtime,
-) => {
-  const options = runtimeOptions(input, runtime);
-  ensureAcceptOnly('image_candidate', options);
-  return wrap(
-    await acceptImageCandidateProposal(
-      db as Db,
-      input.proposalId,
-      inboxView(input),
-      options.imageCandidateDeps,
-    ),
-  );
-};
 
 export const recordLinksProposalAcceptApplier: ProposalAcceptApplier = async (db, input, runtime) =>
   wrap(

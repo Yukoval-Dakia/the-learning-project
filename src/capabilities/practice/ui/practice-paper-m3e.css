@@ -1,0 +1,486 @@
+/* Practice page (/practice; YUK-1473): M3E presentation of the paper-answering view (PfPaper):
+   top bar, buffered-feedback line, question index, the question sheet, the draft-conflict panel,
+   the set-aside draft, the 记下你的思路 field, the 交卷 bar and its hint line. The paper root is a
+   .un-m3e-bridge inside the M3E page root, so ui-next primitives read the Google M3 roles. The
+   answer controls inside the sheet (src/ui/components/response/*) keep their own styles.
+   Design record: docs/design/2026-11-03-practice-paper-m3e.md (T1 semantic tokens, T3 no shadows
+   on cards, M1 motion only on change, A2 hit areas). §6.4 buffered feedback: nothing on this page
+   uses a right / wrong colour while answering. */
+
+[data-ui-next] .pface-root {
+  & .pf-pp {
+    display: grid;
+    /* One shrinkable track: an implicit auto track sizes to the widest nowrap child and pushes
+       the page past the viewport on phones. */
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+    min-width: 0;
+  }
+
+  /* ═══ Top bar: the way out, the paper's title, the save state ═══ */
+  & .pf-pp-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2) var(--un-sp-4);
+    min-width: 0;
+  }
+
+  & .pf-pp-top > .un-btn {
+    margin-inline-start: calc(-1 * var(--un-sp-3));
+  }
+
+  & .pf-pp-title {
+    flex: 1 1 16em;
+    min-width: 0;
+    color: var(--un-md-sys-color-on-surface);
+    font-size: var(--un-md-sys-typescale-headline-small-size);
+    font-weight: var(--un-md-sys-typescale-headline-small-weight);
+    line-height: var(--un-md-sys-typescale-headline-small-line-height);
+    letter-spacing: var(--un-md-sys-typescale-headline-small-tracking);
+    overflow-wrap: anywhere;
+  }
+
+  & .pf-pp-top > .rs-save {
+    flex: none;
+  }
+
+  /* Buffered feedback: a quiet line, never a semantic colour. */
+  & .pf-pp-buffer {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--un-sp-3);
+    padding: 12px 16px;
+    border-radius: var(--un-md-sys-shape-large);
+    background: var(--un-md-sys-color-surface-container-low);
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    line-height: var(--un-md-sys-typescale-body-medium-line-height);
+    overflow-wrap: anywhere;
+  }
+
+  & .pf-pp-buffer-ico {
+    flex: none;
+    margin-top: 2px;
+  }
+
+  & .pf-pp-note {
+    margin: 0;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    line-height: var(--un-md-sys-typescale-body-medium-line-height);
+  }
+
+  /* ═══ Question index: one neutral 40px button per question ═══
+     Current = secondary container; answered = a small ink dot under the number (no colour). */
+  & .pf-pp-index {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-2);
+  }
+
+  & .pf-pp-pip {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--un-md-sys-shape-full);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-md-sys-color-outline-variant);
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-label-large-size);
+    font-weight: var(--un-md-sys-typescale-label-large-weight);
+    font-variant-numeric: tabular-nums;
+    transition: background-color var(--un-t-feedback) ease-out;
+  }
+
+  & .pf-pp-pip:hover {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-surface) var(--un-md-sys-state-hover),
+      transparent
+    );
+  }
+
+  & .pf-pp-pip:focus-visible {
+    outline: var(--un-md-comp-focus-width) solid var(--un-md-sys-color-secondary);
+    outline-offset: var(--un-md-comp-focus-offset);
+  }
+
+  & .pf-pp-pip.answered {
+    color: var(--un-md-sys-color-on-surface);
+  }
+
+  /* ::before, because .un-hit owns ::after for the touch area. */
+  & .pf-pp-pip.answered::before {
+    content: "";
+    position: absolute;
+    bottom: 5px;
+    left: 50%;
+    width: 4px;
+    height: 4px;
+    border-radius: var(--un-md-sys-shape-full);
+    background: currentColor;
+    transform: translateX(-50%);
+  }
+
+  & .pf-pp-pip.current {
+    background: var(--un-md-sys-color-secondary-container);
+    box-shadow: none;
+    color: var(--un-md-sys-color-on-secondary-container);
+    font-weight: 600;
+  }
+
+  /* ═══ The question sheet ═══ */
+  & .pf-pp-sheet {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--un-sp-3);
+    min-width: 0;
+    padding: 28px;
+    border-radius: 24px;
+    background: var(--un-md-sys-color-surface-container-lowest);
+    color: var(--un-md-sys-color-on-surface);
+    overflow-wrap: anywhere;
+  }
+
+  & .pf-pp-qno {
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .pf-pp-qno > b {
+    margin-inline-end: 2px;
+    color: var(--un-md-sys-color-on-surface);
+    font: 600 20px / 1.4 var(--un-font-sans);
+  }
+
+  & .pf-pp-stem {
+    color: var(--un-md-sys-color-on-surface);
+    font-size: 18px;
+    line-height: 1.8;
+  }
+
+  & .pf-pp-material {
+    min-width: 0;
+  }
+
+  /* ═══ Draft conflict / handed in elsewhere: secondary container, both versions on white ═══ */
+  & .pf-pp-conflict {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--un-sp-3);
+    padding: 16px 20px;
+    border-radius: var(--un-md-sys-shape-large);
+    background: var(--un-md-sys-color-secondary-container);
+    color: var(--un-md-sys-color-on-secondary-container);
+    --pf-pp-quiet-ink: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-secondary-container) 80%,
+      transparent
+    );
+  }
+
+  & .pf-pp-conflict-msg {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--un-sp-2);
+    margin: 0;
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    line-height: 1.6;
+  }
+
+  & .pf-pp-conflict-ico {
+    flex: none;
+    margin-top: 2px;
+  }
+
+  & .pf-pp-conflict-cmp {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    gap: var(--un-sp-3);
+  }
+
+  & .pf-pp-conflict-side {
+    display: grid;
+    align-content: start;
+    gap: var(--un-sp-1);
+    min-width: 0;
+    padding: 12px 16px;
+    border-radius: var(--un-md-sys-shape-medium);
+    background: var(--un-md-sys-color-surface-container-lowest);
+    color: var(--un-md-sys-color-on-surface);
+    --pf-pp-quiet-ink: var(--un-md-sys-color-on-surface-variant);
+  }
+
+  & .pf-pp-conflict-text {
+    max-height: 12em;
+    margin: 0;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  & .pf-pp-conflict-text[data-empty] {
+    color: var(--un-md-sys-color-on-surface-variant);
+  }
+
+  /* Small print. Its ink follows the panel it sits on (--pf-pp-quiet-ink). */
+  & .pf-pp-quiet {
+    margin: 0;
+    color: var(--pf-pp-quiet-ink, var(--un-md-sys-color-on-surface-variant));
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    line-height: var(--un-md-sys-typescale-body-medium-line-height);
+  }
+
+  & .pf-pp-conflict-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2) var(--un-sp-3);
+  }
+
+  /* ═══ Your own text after keeping the server's version: a tonal disclosure ═══ */
+  & .pf-pp-discarded {
+    padding: 0 16px;
+    border-radius: var(--un-md-sys-shape-large);
+    background: var(--un-md-sys-color-surface-container-low);
+    color: var(--un-md-sys-color-on-surface-variant);
+  }
+
+  & .pf-pp-discarded[open] {
+    padding-bottom: 12px;
+  }
+
+  & .pf-pp-discarded > summary {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    min-height: 48px;
+    list-style: none;
+    cursor: pointer;
+    color: var(--un-md-sys-color-on-surface);
+    font-size: var(--un-md-sys-typescale-label-large-size);
+    font-weight: var(--un-md-sys-typescale-label-large-weight);
+  }
+
+  & .pf-pp-discarded > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  & .pf-pp-discarded > summary::after {
+    content: "+" / "";
+    margin-inline-start: auto;
+    font-size: 20px;
+    font-weight: 400;
+  }
+
+  & .pf-pp-discarded[open] > summary::after {
+    content: "−" / "";
+  }
+
+  & .pf-pp-discarded > :not(summary) {
+    display: block;
+    margin: 0 0 var(--un-sp-2);
+  }
+
+  /* ═══ 记下你的思路: a text button that opens an outlined field ═══ */
+  & .pf-pp-trace-toggle {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+    margin-inline-start: -12px;
+    padding: 0 12px;
+    border-radius: var(--un-md-sys-shape-full);
+    color: var(--un-md-sys-color-primary);
+    font-size: var(--un-md-sys-typescale-label-large-size);
+    font-weight: var(--un-md-sys-typescale-label-large-weight);
+    transition: background-color var(--un-t-feedback) ease-out;
+  }
+
+  & .pf-pp-trace-toggle:hover {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-primary) var(--un-md-sys-state-hover),
+      transparent
+    );
+  }
+
+  & .pf-pp-trace-toggle:focus-visible {
+    outline: var(--un-md-comp-focus-width) solid var(--un-md-sys-color-secondary);
+    outline-offset: var(--un-md-comp-focus-offset);
+  }
+
+  & .pf-pp-trace-field textarea {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-height: 88px;
+    padding: 12px 16px;
+    border: var(--un-hairline) solid var(--un-md-sys-color-outline);
+    border-radius: var(--un-md-sys-shape-medium);
+    background: var(--un-md-sys-color-surface-container-lowest);
+    color: var(--un-md-sys-color-on-surface);
+    font: inherit;
+    resize: vertical;
+  }
+
+  & .pf-pp-trace-field textarea::placeholder {
+    color: var(--un-md-sys-color-on-surface-variant);
+  }
+
+  /* A text field shows focus on any focus, as a 2px primary outline (no ring around it). */
+  & .pf-pp-trace-field textarea:focus {
+    border-color: var(--un-md-sys-color-primary);
+    outline: 0;
+    box-shadow: inset 0 0 0 1px var(--un-md-sys-color-primary);
+  }
+
+  /* ═══ The 交卷 bar ═══ */
+  & .pf-pp-foot {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2) var(--un-sp-3);
+    padding: 12px 16px;
+    border-radius: var(--un-md-sys-shape-large);
+    background: var(--un-md-sys-color-surface-container-high);
+    overflow: hidden;
+  }
+
+  /* Outlined buttons: the page root strips button shadows, so the outline is set here. */
+  & .pf-pp .un-btn-secondary {
+    background: transparent;
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-md-sys-color-outline);
+  }
+
+  & .pf-pp .un-btn-secondary:hover:not(:disabled) {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-primary) var(--un-md-sys-state-hover),
+      transparent
+    );
+  }
+
+  & .pf-pp .un-btn > svg {
+    flex: none;
+  }
+
+  & .pf-pp-count {
+    margin-inline-start: auto;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  & .pf-pp-confirm {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2) var(--un-sp-3);
+    min-width: 0;
+  }
+
+  & .pf-pp-confirm-q {
+    color: var(--un-md-sys-color-on-surface);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    font-weight: 500;
+  }
+
+  /* Handing in: a thin line along the top of the bar while the paper is being sent and graded. */
+  & .pf-pp-foot[data-busy]::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 3px;
+    background: color-mix(in srgb, var(--un-md-sys-color-primary) 40%, transparent);
+  }
+
+  & .pf-pp-hint {
+    margin-top: -8px;
+    padding-inline: 16px;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    line-height: var(--un-md-sys-typescale-body-medium-line-height);
+    overflow-wrap: anywhere;
+  }
+
+  /* On touch, .un-hit grows each small control to a 44px tap area. When these rows wrap, keep the
+     rows far enough apart that one control's tap area never covers the one above (A2). */
+  @media (pointer: coarse) {
+    & .pf-pp-index {
+      gap: var(--un-sp-3);
+    }
+
+    & .pf-pp-top,
+    & .pf-pp-conflict-actions,
+    & .pf-pp-foot,
+    & .pf-pp-confirm {
+      row-gap: var(--un-sp-4);
+    }
+  }
+
+  @media (max-width: 640px) {
+    & .pf-pp-title {
+      font-size: 22px;
+      line-height: 1.4;
+    }
+
+    & .pf-pp-sheet {
+      padding: 20px 16px;
+      border-radius: 20px;
+    }
+
+    & .pf-pp-stem {
+      font-size: 17px;
+    }
+
+    & .pf-pp-conflict {
+      padding: 16px;
+    }
+
+    /* Prev / next share the first row, the count the next, 交卷 a full row of its own. */
+    & .pf-pp-foot > .un-btn-secondary {
+      flex: 1 1 calc(50% - var(--un-sp-3));
+    }
+
+    & .pf-pp-count {
+      flex: 1 1 100%;
+      margin-inline-start: 0;
+    }
+
+    & .pf-pp-foot > .un-btn-primary,
+    & .pf-pp-confirm,
+    & .pf-pp-confirm-q {
+      flex: 1 1 100%;
+    }
+
+    & .pf-pp-confirm > .un-btn {
+      flex: 1 1 0;
+    }
+  }
+}
+
+/* The hand-in line moves only while something is happening, and not under reduced motion (M1). */
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next] .pface-root .pf-pp-foot[data-busy]::before {
+    background:
+      linear-gradient(90deg, transparent, var(--un-md-sys-color-primary) 50%, transparent) 0 0 / 40%
+      100% no-repeat color-mix(in srgb, var(--un-md-sys-color-primary) 24%, transparent);
+    animation: pf-pp-busy 1.4s linear infinite;
+  }
+
+  @keyframes pf-pp-busy {
+    from {
+      background-position: -40% 0;
+    }
+
+    to {
+      background-position: 140% 0;
+    }
+  }
+}

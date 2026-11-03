@@ -185,61 +185,26 @@ export const ProposalDecisionResource = z.union([
 ]);
 export type ProposalDecisionResourceT = z.infer<typeof ProposalDecisionResource>;
 
-// dispatchAccept（src/server/proposals/actions.ts）为这些 kind 实现了 accept
-// applier；只有 defer / archive 走 default 分支抛 unsupported_proposal_kind
-// 400。UI（ProposalCard）据此门控 Accept CTA；增删 accept kind 时保持
-// 「本集合 ∪ 未实现 kind === aiProposalKinds」不漂移。judge_retraction 的
-// 接受面在 practice proposal-appliers（判分纠错走 appeal/rejudge/CAS 激活 +
-// settlement replay；legacy judge-event → CorrectEvent）。
-export const acceptSupportedProposalKinds = [
-  'knowledge_node',
-  'knowledge_edge',
-  'knowledge_mutation',
-  'learning_item',
-  'note_update',
-  'variant_question',
-  'completion',
-  'relearn',
-  'record_links',
-  'record_promotion',
-  'goal_scope',
-  'block_merge',
-  'image_candidate',
-  'question_draft',
-  // Active-question structured node edit.
-  'question_edit',
-  // Conjecture accept/edit/reject applier (acceptConjectureProposal).
-  // accept = calibration anchor (NOT confirmed); edit → mem0 CORE; reject →
-  // digest. Never writes FSRS (ND-5).
-  'conjecture',
-  // cause_category_overlay 写路径 = accept applier（audit:schema 要求的唯一
-  // INSERT 边界）。
-  'cause_category',
-  // 判分纠错提案（evaluation 目标走 appeal/rejudge/CAS 激活链；legacy
-  // judge-event 目标写 CorrectEvent）。人审 accept，不自动执行。
-  'judge_retraction',
-] as const satisfies readonly AiProposalKindT[];
-
 // ───────────────────────────────────────────────────────────────────────────
-// 出手强度轴（ADR-0039 A 档 strength tier）— 与 accept-applier 轴
-// (acceptSupportedProposalKinds) 正交的第三轴。三档语义：
+// 出手强度轴（ADR-0039 strength tier）。三档语义：
 //   A — reserved auto-apply tier. No proposal kind currently uses it: destructive
 //       lifecycle changes require an explicit user decision.
 //   B — propose（pending 入收件箱，人审 accept）。默认档，绝大多数 kind 在此。
-//   C — observe-only（仅折叠到 AI 观察面，无 Accept CTA）。恰好是「无 accept
-//       applier」的三 kind：dispatchAccept 对它们抛 unsupported_proposal_kind。
+//   C — observe-only（仅折叠到 AI 观察面，无 Accept CTA）。
 //
-// 红线（防双 SoT 漂移）：C 档集合 ⟺
-// `aiProposalKinds ∖ acceptSupportedProposalKinds`（当前 = {defer, archive}）
-// 恒等。强度轴 ≠ accept-applier 轴 ≠ tone 视觉轴（KIND_META.tone），三轴勿耦合。
+// 本表是「能否接受」的唯一真相：C 档 ⟺ 没有 accept applier。
+// acceptSupportedProposalKinds 由本表派生；validateComposition 在组合期强制
+// owner manifest 的 accept 声明与之一致。强度轴与 tone 视觉轴（KIND_META.tone）无关。
 export type AiProposalStrength = 'A' | 'B' | 'C';
 
 export const aiProposalKindStrength = {
   // Completion changes learning-item lifecycle state, so it stays human-reviewed.
   completion: 'B',
-  // C — observe-only（恒 ⟺ aiProposalKinds ∖ acceptSupportedProposalKinds）。
+  // C — observe-only.
   defer: 'C',
   archive: 'C',
+  // Retired: no producer and no accept applier; legacy rows stay readable.
+  image_candidate: 'C',
   // 判分纠错：人审 accept 才生效（B 档），绝不自动执行。
   judge_retraction: 'B',
   // B — propose（默认档）。
@@ -258,7 +223,6 @@ export const aiProposalKindStrength = {
   record_promotion: 'B',
   goal_scope: 'B',
   block_merge: 'B',
-  image_candidate: 'B',
   question_draft: 'B',
   question_edit: 'B',
   conjecture: 'B',
@@ -269,6 +233,11 @@ export const aiProposalKindStrength = {
 export function kindStrength(kind: AiProposalKindT): AiProposalStrength {
   return aiProposalKindStrength[kind];
 }
+
+// Accept dispatch returns 400 unsupported_proposal_kind for every kind outside this set.
+export const acceptSupportedProposalKinds: readonly AiProposalKindT[] = aiProposalKinds.filter(
+  (kind) => aiProposalKindStrength[kind] !== 'C',
+);
 
 export const ProposalEvidenceRef = z.object({
   kind: z.enum(['event', 'question', 'knowledge', 'artifact', 'record']),

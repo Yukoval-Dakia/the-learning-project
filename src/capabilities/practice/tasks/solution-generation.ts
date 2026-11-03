@@ -1,7 +1,7 @@
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { SolutionGenerateOutput, type SolutionGenerateOutputT } from '@/core/schema/solution';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 import type { SubjectProfile } from '@/subjects/profile';
-import { parseTaskOutput } from './parse-output';
 
 // Solve-tutor reference-solution generator: independently solves a bare ingested
 // question and emits a structured reference_solution (expected_signals +

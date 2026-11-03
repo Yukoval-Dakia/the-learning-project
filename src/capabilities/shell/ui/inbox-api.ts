@@ -1,5 +1,5 @@
 // M4-T6 (YUK-319/YUK-318)：收件箱 ui 数据层——统一 /api/proposals 的 wire
-// 类型、kind 元数据（aiProposalKinds 全量；对账见 inbox-meta.unit.test.ts）与决策 callers。
+// 类型、kind 元数据（aiProposalKinds 全量）与决策 callers。
 // 设计基准 docs/design/loom-refresh/project/data.jsx（KIND_META / REL_LABEL）：
 // 设计稿只列 12 kind；defer / archive / judge_retraction / image_candidate /
 // question_draft / question_edit 按同一 tone 语系补全（hard=节奏类、neutral=归档、
@@ -49,12 +49,9 @@ export function kindMeta(kind: string): KindMeta {
   return KIND_META[kind] ?? { label: kind, icon: 'inbox', tone: 'neutral' };
 }
 
-// M4 review fix (YUK-319, codex P2)：dispatchAccept 对 defer / archive /
-// judge_retraction 未实现 accept（400 unsupported_proposal_kind，归 YUK-44）；
-// 卡片对这三个 kind 不渲 Accept CTA，只留忽略（dismiss kind-无关，安全）。
-// 注意 legacy knowledge 事件可派生出 archive kind 进收件箱，门控不能省。
-// 集合真身在 core（acceptSupportedProposalKinds），与 dispatchAccept 的漂移
-// 由 inbox-meta.unit.test.ts 分区钉测拦住。
+// dispatchAccept 对没有 accept applier 的 kind 返回 400 unsupported_proposal_kind；
+// 卡片对它们不渲 Accept CTA，只留忽略（dismiss 与 kind 无关）。legacy knowledge 事件
+// 可派生出 archive kind 进收件箱，门控不能省。集合真身在 core（acceptSupportedProposalKinds）。
 const acceptSupported: ReadonlySet<string> = new Set(acceptSupportedProposalKinds);
 
 export function isAcceptSupported(kind: string): boolean {

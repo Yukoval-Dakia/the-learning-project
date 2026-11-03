@@ -1,0 +1,1161 @@
+/* 收件箱 (/inbox; YUK-1473), M3E presentation. Design record:
+   docs/design/2026-11-03-inbox-agent-notes-events-m3e.md. Design language:
+   docs/design/2026-10-07-ui-visual-direction.md (T1 semantic tokens, T3 glass only on floating
+   layers, M1 motion only on change, A2 hit areas). The main column carries .un-m3e-bridge, so every
+   --un-* role below reads the Google M3 roles. Tones: info → accent (primary), coral → secondary,
+   good / hard / again → positive / caution / critical. */
+
+[data-ui-next].ib-page {
+  background: var(--un-md-sys-color-surface);
+  color: var(--un-md-sys-color-on-surface);
+}
+
+[data-ui-next].ib-page {
+  /* ═══ Page frame ═══ */
+  & .ib-main {
+    display: grid;
+    align-content: start;
+    gap: var(--un-sp-6);
+    width: min(860px, 100%);
+    margin: 0 auto;
+    padding: var(--un-sp-7) var(--un-sp-6) calc(var(--un-sp-8) + var(--un-sp-7));
+  }
+
+  & .ib-head {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .ib-title {
+    color: var(--un-text-1);
+    font: 600 32px / 1.25 var(--un-font-sans);
+  }
+
+  & .ib-lead {
+    max-width: 44em;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-2);
+  }
+
+  /* ═══ Shared pieces ═══ */
+  & .ib-kicker {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .ib-tag {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 5px;
+    height: 22px;
+    padding: 0 var(--un-sp-2);
+    border-radius: 6px;
+    background: var(--un-bg-sunk);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  & .ib-tag[data-tone="accent"] {
+    background: var(--un-accent-soft);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .ib-tag[data-tone="secondary"] {
+    background: color-mix(in srgb, var(--un-md-sys-color-secondary) 14%, transparent);
+    color: var(--un-md-sys-color-secondary);
+  }
+
+  & .ib-tag[data-tone="positive"] {
+    background: var(--un-positive-soft);
+    color: var(--un-positive);
+  }
+
+  & .ib-tag[data-tone="caution"] {
+    background: var(--un-caution-soft);
+    color: var(--un-caution);
+  }
+
+  & .ib-tag[data-tone="critical"] {
+    background: var(--un-critical-soft);
+    color: var(--un-critical);
+  }
+
+  /* 「AI 建议」 marks authorship, not a status: an outline in the accent ink. */
+  & .ib-tag-ai {
+    background: transparent;
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+    color: var(--un-accent-ink);
+  }
+
+  & .ib-tag-dashed {
+    background: transparent;
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+    color: var(--un-text-3);
+  }
+
+  & .ib-tag-outline {
+    background: transparent;
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+    color: var(--un-text-2);
+  }
+
+  & .ib-acts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-1);
+  }
+
+  /* On touch, .un-hit grows each small button to a 44px tap area. When an action row wraps, a
+     tight row gap lets a lower button's tap area cover the one above (e.g. 忽略 over 接受, both
+     writes). Keep wrapped rows far enough apart that tap areas never overlap. */
+  @media (pointer: coarse) {
+    & .ib-acts {
+      row-gap: var(--un-sp-4);
+      column-gap: var(--un-sp-2);
+    }
+  }
+
+  & .ib-btn-critical {
+    color: var(--un-critical);
+  }
+
+  & .ib-note {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--un-sp-1) var(--un-sp-3);
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    line-height: var(--un-lh-ui);
+  }
+
+  & .ib-note-btn {
+    color: var(--un-accent-strong);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .ib-empty {
+    display: grid;
+    justify-items: center;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-7) var(--un-sp-4);
+    text-align: center;
+  }
+
+  & .ib-empty-icon {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    margin-bottom: var(--un-sp-1);
+    border-radius: var(--un-r-2);
+    background: var(--un-positive-soft);
+    color: var(--un-positive);
+  }
+
+  & .ib-empty-title {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .ib-empty-text {
+    max-width: 36em;
+    margin-bottom: var(--un-sp-2);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-2);
+  }
+
+  /* ═══ Tiers ═══ */
+  & .ib-tier {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+
+  & .ib-tier-head {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--un-sp-3);
+    padding-bottom: var(--un-sp-2);
+    border-bottom: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .ib-tier-mark {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-2);
+    font: 600 var(--un-fs-2) / 1 var(--un-font-mono);
+  }
+
+  & .ib-tier-head[data-tone="positive"] .ib-tier-mark {
+    background: var(--un-positive-soft);
+    color: var(--un-positive);
+  }
+
+  & .ib-tier-head[data-tone="secondary"] .ib-tier-mark {
+    background: var(--un-accent-soft);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .ib-tier-text {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  & .ib-tier-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--un-sp-2);
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    font-weight: var(--un-fw-semibold);
+    line-height: var(--un-lh-tight);
+  }
+
+  & .ib-tier-count {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-regular);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .ib-tier-sub {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  /* ── A · circuit breaker ── */
+  & .ib-breaker {
+    display: flex;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    line-height: var(--un-lh-ui);
+  }
+
+  & .ib-breaker[data-state="tripped"] {
+    background: var(--un-caution-soft);
+    color: var(--un-text-1);
+  }
+
+  & .ib-breaker-ic {
+    flex: none;
+    margin-top: 2px;
+    color: var(--un-positive);
+  }
+
+  & .ib-breaker[data-state="tripped"] .ib-breaker-ic {
+    color: var(--un-caution);
+  }
+
+  & .ib-breaker-text {
+    display: grid;
+    gap: var(--un-sp-2);
+    min-width: 0;
+  }
+
+  & .ib-breaker-text b {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .ib-breaker-meter {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    color: var(--un-text-3);
+  }
+
+  & .ib-breaker-track {
+    flex: none;
+    width: 96px;
+    height: 4px;
+    overflow: hidden;
+    border-radius: 2px;
+    background: var(--un-bg-hover);
+  }
+
+  & .ib-breaker-fill {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--un-positive);
+  }
+
+  & .ib-breaker[data-state="tripped"] .ib-breaker-fill {
+    background: var(--un-caution);
+  }
+
+  /* ── A · auto-applied ── */
+  & .ib-aa-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--un-sp-2);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    line-height: var(--un-lh-ui);
+  }
+
+  & .ib-aa-banner svg {
+    flex: none;
+    margin-top: 2px;
+    color: var(--un-accent-ink);
+  }
+
+  & .ib-aa-banner b {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .ib-aa-list {
+    overflow: hidden;
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  & .ib-aa {
+    display: flex;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-4);
+    transition: opacity var(--un-t-small) var(--un-ease-glide);
+  }
+
+  & .ib-aa:not(:first-child) {
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .ib-aa[data-state="consumed"],
+  & .ib-aa[data-state="reverted"] {
+    opacity: 0.7;
+  }
+
+  & .ib-aa-ic {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: var(--un-r-1);
+    background: var(--un-positive-soft);
+    color: var(--un-positive);
+  }
+
+  & .ib-aa[data-state="consumed"] .ib-aa-ic {
+    background: var(--un-bg-sunk);
+    color: var(--un-text-3);
+  }
+
+  & .ib-aa-body {
+    display: grid;
+    flex: 1;
+    gap: var(--un-sp-2);
+    min-width: 0;
+  }
+
+  & .ib-aa-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+  }
+
+  & .ib-aa-title {
+    min-width: 0;
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-semibold);
+    overflow-wrap: anywhere;
+  }
+
+  & .ib-aa-text {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-aa-trace {
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    line-height: var(--un-lh-ui);
+  }
+
+  & .ib-aa-trace code {
+    font-family: var(--un-font-mono);
+    color: var(--un-text-2);
+  }
+
+  & .ib-aa-window {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-right: var(--un-sp-2);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-aa-window[data-state="live"] {
+    color: var(--un-positive);
+  }
+
+  & .ib-aa-window[data-state="consumed"] {
+    color: var(--un-caution);
+  }
+
+  & .ib-aa-trace-btn {
+    margin-left: auto;
+  }
+
+  /* ── B · lanes ── */
+  & .ib-lane {
+    display: grid;
+    gap: var(--un-sp-3);
+    margin-top: var(--un-sp-2);
+  }
+
+  & .ib-lane-head {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-2);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .ib-lane-ic {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: var(--un-bg-sunk);
+    color: var(--un-text-2);
+  }
+
+  & .ib-lane-ic[data-tone="accent"] {
+    background: var(--un-accent-soft);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .ib-lane-ic[data-tone="secondary"] {
+    background: color-mix(in srgb, var(--un-md-sys-color-secondary) 14%, transparent);
+    color: var(--un-md-sys-color-secondary);
+  }
+
+  & .ib-lane-ic[data-tone="positive"] {
+    background: var(--un-positive-soft);
+    color: var(--un-positive);
+  }
+
+  & .ib-lane-ic[data-tone="caution"] {
+    background: var(--un-caution-soft);
+    color: var(--un-caution);
+  }
+
+  & .ib-lane-count {
+    min-width: 20px;
+    padding: 1px 6px;
+    border-radius: var(--un-r-3);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+    text-align: center;
+  }
+
+  & .ib-lane-cards {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+
+  /* ── Proposal card ── */
+  & .ib-prop {
+    display: grid;
+    gap: var(--un-sp-3);
+    /* AI evidence text can carry long unbroken tokens; let it wrap instead of widening the page
+       at phone width (YUK-1478). Inherited by everything in the card. */
+    min-width: 0;
+    overflow-wrap: anywhere;
+    transition: opacity var(--un-t-small) var(--un-ease-glide);
+  }
+
+  & .ib-prop .katex-display {
+    overflow-x: auto;
+  }
+
+  & .ib-prop[data-resolved] {
+    opacity: 0.55;
+  }
+
+  /* A decided card keeps its place but loses its write buttons (they are locked as well). */
+  & .ib-prop[data-resolved] .ib-prop-acts {
+    display: none;
+  }
+
+  & .ib-prop-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+  }
+
+  & .ib-prop-title {
+    flex: 1;
+    min-width: 0;
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    font-weight: var(--un-fw-semibold);
+    line-height: var(--un-lh-tight);
+  }
+
+  & .ib-stamp {
+    margin-left: auto;
+  }
+
+  & .ib-prop-reason {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-2);
+    line-height: var(--un-lh-prose);
+  }
+
+  /* YUK-264: opaque ids in reason_md fold into a readable reference; the raw id stays in the
+     hover title (and is copied on click). Smaller, quieter, never competing with the prose. */
+  & .ib-rawid {
+    padding: 0 5px;
+    border-radius: 5px;
+    background: var(--un-bg-sunk);
+    color: var(--un-text-3);
+    font-family: var(--un-font-mono);
+    font-size: var(--un-fs-1);
+    word-break: break-all;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .ib-rawid:hover {
+    background: var(--un-bg-hover);
+    color: var(--un-text-2);
+  }
+
+  & .ib-prop-summary {
+    display: grid;
+    gap: var(--un-sp-1);
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-prop-summary > div {
+    display: grid;
+    grid-template-columns: minmax(80px, max-content) minmax(0, 1fr);
+    gap: var(--un-sp-3);
+  }
+
+  & .ib-prop-summary dt {
+    color: var(--un-text-3);
+  }
+
+  & .ib-prop-summary dd {
+    color: var(--un-text-1);
+  }
+
+  /* learning_item plan */
+  & .ib-plan {
+    display: grid;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+  }
+
+  & .ib-plan-hub {
+    display: grid;
+    gap: 2px;
+  }
+
+  & .ib-plan-title {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .ib-plan-sum {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-plan-steps {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .ib-plan-steps li {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--un-sp-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-plan-steps li > span:last-child {
+    display: grid;
+    gap: 1px;
+  }
+
+  & .ib-plan-steps small {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-plan-dot {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    margin-top: 7px;
+    border-radius: 50%;
+    background: var(--un-accent);
+  }
+
+  & .ib-plan-dot[data-kind="long"] {
+    background: var(--un-caution);
+  }
+
+  /* image_candidate: summary next to the source figure; one column on phones. */
+  & .ib-ic {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+  }
+
+  & .ib-ic-col {
+    display: grid;
+    align-content: start;
+    gap: var(--un-sp-2);
+    min-width: 0;
+  }
+
+  & .ib-md {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    line-height: var(--un-lh-prose);
+  }
+
+  & .ib-md ul {
+    padding-left: 1.2em;
+    list-style: disc;
+  }
+
+  & .ib-md ol {
+    padding-left: 1.4em;
+    list-style: decimal;
+  }
+
+  & .ib-ic-md-img,
+  & .ib-ic-note {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-ic-figure {
+    display: grid;
+    gap: var(--un-sp-1);
+  }
+
+  & .ib-ic-img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  & .ib-ic-caption {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-ic-reveal {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-1);
+    padding: var(--un-sp-3);
+    border: var(--un-hairline) dashed var(--un-line-strong);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-raised);
+  }
+
+  & .ib-ic-source-title {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .ib-ic-source-url {
+    color: var(--un-text-3);
+    font-family: var(--un-font-mono);
+    font-size: var(--un-fs-1);
+  }
+
+  /* block_merge preview: keep ← merged in, with the irreversible confirmation below. */
+  & .ib-merge {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: var(--un-sp-2);
+  }
+
+  & .ib-merge-block {
+    display: grid;
+    align-content: start;
+    gap: var(--un-sp-1);
+    min-width: 0;
+    padding: var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+  }
+
+  & .ib-merge-into {
+    background: transparent;
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+  }
+
+  & .ib-merge-text {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    line-height: var(--un-lh-ui);
+  }
+
+  & .ib-merge-part {
+    display: grid;
+    gap: 3px;
+  }
+
+  & .ib-merge-part:not(:first-of-type) {
+    margin-top: var(--un-sp-2);
+    padding-top: var(--un-sp-2);
+    border-top: var(--un-hairline) dashed var(--un-line);
+  }
+
+  & .ib-merge-part > b {
+    color: var(--un-text-3);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .ib-merge-structure {
+    display: grid;
+    gap: 2px;
+    margin-top: var(--un-sp-1);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-merge-structure b {
+    color: var(--un-text-3);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .ib-merge-note {
+    margin-top: var(--un-sp-1);
+    color: var(--un-text-4);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-merge-join {
+    display: grid;
+    place-items: center;
+    color: var(--un-text-4);
+  }
+
+  & .ib-merge-reason {
+    display: flex;
+    grid-column: 1 / -1;
+    align-items: center;
+    gap: 6px;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  /* Inline math in merge-card text: keep markdown paragraphs inline with their label. */
+  & .ib-merge-math,
+  & .ib-merge-math p {
+    display: inline;
+    margin: 0;
+  }
+
+  & .ib-confirm {
+    display: grid;
+    gap: var(--un-sp-1);
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-1);
+    background: var(--un-critical-soft);
+    color: var(--un-text-1);
+    font-size: var(--un-fs-1);
+    line-height: var(--un-lh-ui);
+  }
+
+  & .ib-confirm b {
+    color: var(--un-critical);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  /* knowledge_edge preview */
+  & .ib-edge {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+  }
+
+  & .ib-edge-node {
+    padding: 2px var(--un-sp-2);
+    border-radius: 6px;
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+    color: var(--un-text-1);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .ib-edge-arrow {
+    flex: none;
+    color: var(--un-text-4);
+  }
+
+  /* Foot: decisions on the left, confidence and cost on the right (below on phones). */
+  & .ib-prop-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2) var(--un-sp-3);
+  }
+
+  & .ib-prop-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-3);
+    margin-left: auto;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-conf {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  & .ib-conf-track {
+    width: 54px;
+    height: 4px;
+    overflow: hidden;
+    border-radius: 2px;
+    background: var(--un-bg-hover);
+  }
+
+  & .ib-conf-track > span {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--un-accent);
+  }
+
+  /* 改关系: each chip is an immediate write, so wrapped rows keep tap areas apart on touch. */
+  & .ib-rel-pick {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-1);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  & .ib-rel-legend {
+    float: left;
+    margin-right: var(--un-sp-2);
+    padding: 0;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  @media (pointer: coarse) {
+    & .ib-rel-pick {
+      row-gap: var(--un-sp-5);
+      column-gap: var(--un-sp-3);
+    }
+  }
+
+  /* Evidence */
+  & .ib-evidence {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-2);
+    padding-top: var(--un-sp-3);
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .ib-ev {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    min-height: 26px;
+    padding: 2px var(--un-sp-2);
+    border-radius: 6px;
+    background: var(--un-bg-sunk);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    text-align: left;
+  }
+
+  & .ib-ev-ic {
+    flex: none;
+    color: var(--un-text-3);
+  }
+
+  & .ib-ev-text {
+    min-width: 0;
+  }
+
+  & .ib-ev-go {
+    flex: none;
+    color: var(--un-accent-ink);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .ib-ev-link {
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .ib-ev-link:hover {
+    background: var(--un-bg-hover);
+  }
+
+  /* Evidence chips wrap as well; on touch their tap areas must not share rows. */
+  @media (pointer: coarse) {
+    & .ib-evidence {
+      row-gap: var(--un-sp-4);
+    }
+  }
+
+  /* ── C · folded observation records ── */
+  & .ib-fold {
+    overflow: hidden;
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  & .ib-fold-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-3);
+    width: 100%;
+    padding: var(--un-sp-3) var(--un-sp-4);
+    text-align: left;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .ib-fold-bar:hover {
+    background: var(--un-bg-hover);
+  }
+
+  /* .ib-fold clips an outside ring, so the bar draws its ring inside. */
+  & .ib-fold-bar:focus-visible {
+    outline-offset: -2px;
+    border-radius: var(--un-r-2);
+  }
+
+  & .ib-fold-ic {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-2);
+  }
+
+  & .ib-fold-text {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  & .ib-fold-t {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .ib-fold-s {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-fold-chev {
+    flex: none;
+    margin-left: auto;
+    color: var(--un-text-4);
+    transition: transform var(--un-t-small) var(--un-ease-glide);
+  }
+
+  & .ib-fold[data-open="true"] .ib-fold-chev {
+    transform: rotate(180deg);
+  }
+
+  & .ib-fold-body {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-3) var(--un-sp-4) var(--un-sp-4);
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .ib-fold-list {
+    display: grid;
+    width: 100%;
+  }
+
+  & .ib-fold-row {
+    display: flex;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-3) 0;
+  }
+
+  & .ib-fold-row:not(:first-child) {
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .ib-fold-row-ic {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: var(--un-bg-sunk);
+    color: var(--un-text-3);
+  }
+
+  & .ib-fold-row-body {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  & .ib-fold-row-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--un-sp-2);
+  }
+
+  & .ib-fold-row-title {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .ib-fold-row-state {
+    color: var(--un-text-4);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-fold-row-text {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    line-height: var(--un-lh-ui);
+    overflow-wrap: anywhere;
+  }
+
+  /* The ui-next base resets paragraphs and lists; give markdown its rhythm back. */
+  & .ib-md p + p,
+  & .ib-md p + ul,
+  & .ib-md p + ol,
+  & .ib-md ul + p,
+  & .ib-md ol + p {
+    margin-top: var(--un-sp-2);
+  }
+
+  /* ═══ Narrow screens ═══ */
+  @media (max-width: 720px) {
+    & .ib-main {
+      gap: var(--un-sp-5);
+      padding: var(--un-sp-5) var(--un-sp-4) calc(var(--un-sp-8) + var(--un-sp-7));
+    }
+
+    & .ib-title {
+      font-size: 26px;
+    }
+
+    & .ib-prop-title {
+      flex-basis: 100%;
+    }
+
+    & .ib-prop-meta {
+      width: 100%;
+      margin-left: 0;
+    }
+
+    & .ib-merge {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    & .ib-merge-join {
+      transform: rotate(90deg);
+    }
+
+    & .ib-aa-trace-btn {
+      margin-left: 0;
+    }
+  }
+
+  @media (max-width: 560px) {
+    & .ib-ic {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+}
+
+/* Motion only on change (M1/M3): opening the folded records fades them in once. Keyframes exist
+   only when the user has not asked for reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next].ib-page .ib-fold-body,
+  [data-ui-next].ib-page .ib-confirm,
+  [data-ui-next].ib-page .ib-aa-trace {
+    animation: ib-fade-in var(--un-t-small) var(--un-ease-glide);
+  }
+
+  @keyframes ib-fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+}

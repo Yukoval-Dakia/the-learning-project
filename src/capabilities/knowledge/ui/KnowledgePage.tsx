@@ -24,6 +24,7 @@ import {
   listSubjectChoices,
   subjectContentPropsForDomain,
 } from '@/ui/lib/subject';
+import { queryKeys } from '@/ui/lib/write-invalidation';
 import { ToastHost } from '@/ui-next/feedback/ToastHost';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
@@ -159,11 +160,11 @@ export default function KnowledgePage({
     enabled: subjectQuery !== undefined,
   });
   const edgesQ = useQuery({
-    queryKey: ['knowledge-edges', subjectQuery],
+    queryKey: [...queryKeys.knowledgeEdges, subjectQuery],
     queryFn: () => getEdges(subjectQuery),
   });
   const edgePropsQ = useQuery({
-    queryKey: ['knowledge-edge-proposals'],
+    queryKey: queryKeys.knowledgeEdgeProposals,
     queryFn: getEdgeProposals,
   });
   // A5 S2 (YUK-354)：learnable_frontier 横幅读模型。

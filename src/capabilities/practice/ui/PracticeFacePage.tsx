@@ -4,13 +4,15 @@
 // 理由与判定）。路由耦合走 props 注入（壳层规则，server/start/routes/）。
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Check, CircleAlert, Clock, Layers, type LucideIcon, Sparkles } from 'lucide-react';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ErrorState } from '@/ui/primitives/ErrorState';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { PracticeListHeader } from '@/ui-next/practice-studio/PracticeQueue';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { prefersReducedMotion, useSharedMorph } from '@/ui-next/public';
 import './practice-face.css';
+import './practice-face-m3e.css';
+import './practice-paper-m3e.css';
 
 import { PfPaper } from './PfPaper';
 import { PfRetro } from './PfRetro';
@@ -58,6 +60,28 @@ const SCOPE_MISMATCH_ERROR = new Error('练习范围与请求不一致，请重�
 
 /** If the next question's text is still not read after this long, move on and let it load there. */
 const NEXT_READY_FALLBACK_MS = 8000;
+
+/** The toast icon names callers pass (addToast's third argument); anything else shows sparkles. */
+const TOAST_ICON = new Map<string, LucideIcon>([
+  ['alert', CircleAlert],
+  ['check', Check],
+  ['clock', Clock],
+  ['layers', Layers],
+]);
+
+function ToastIcon({ name }: { name?: string }) {
+  const Icon = TOAST_ICON.get(name ?? '') ?? Sparkles;
+  return <Icon size={16} aria-hidden="true" className="pf-toast-ico" />;
+}
+
+/**
+ * The page root's look per view. The question page lays out its own width and padding, as in the
+ * loft; the list, a paper and the retro are M3E pages.
+ */
+function pageClass(kind: Mode['kind']): string {
+  if (kind === 'solo') return 'pface-loom pface-next';
+  return 'un-root un-pq-page pface-loom';
+}
 
 function replaceConfirmedItem(view: StreamView | undefined, confirmed: StreamItem) {
   if (!view) return view;
@@ -768,25 +792,20 @@ export default function PracticeFacePage({
     );
   }
 
+  const m3ePage = mode.kind !== 'solo';
   return (
-    // The single-question page (纸面) lays out its own width and padding, as in the loft; the list,
-    // paper and retro views keep the shared page padding.
     <main
       id="main-content"
-      data-ui-next={mode.kind === 'list' ? '' : undefined}
-      data-un-m3e={mode.kind === 'list' ? 'practice-foundation' : undefined}
-      className={
-        mode.kind === 'solo'
-          ? 'pface-loom pface-next'
-          : mode.kind === 'list'
-            ? 'un-root un-pq-page pface-loom'
-            : 'page wide pface-loom'
-      }
+      data-ui-next={m3ePage ? '' : undefined}
+      data-un-m3e={m3ePage ? 'practice-foundation' : undefined}
+      className={pageClass(mode.kind)}
     >
       <div className="pface-root" ref={attachHost}>
-        <div aria-live="assertive">
+        <div aria-live="assertive" className="pf-failure un-m3e-bridge">
           {actionFailure && (
-            <ErrorState text={actionFailure.message} onRetry={actionFailure.retry} compact />
+            <div className="pf-m3-error">
+              <RetryLine message={actionFailure.message} onRetry={actionFailure.retry} />
+            </div>
           )}
         </div>
         {/* One root per view (a question, the list, a paper): its ref callback lands the shared
@@ -809,8 +828,8 @@ export default function PracticeFacePage({
         <div data-ui-next="" data-un-m3e="practice-studio" className="un-st un-st-portal">
           <div className="pf-toasts" aria-live="polite">
             {toasts.map((t) => (
-              <div key={t.id} className={`pf-toast${t.tone === 'info' ? ' t-info' : ''}`}>
-                <LoomIcon name={(t.icon as never) ?? 'sparkle'} size={15} className="ico" />
+              <div key={t.id} className="pf-toast" data-tone={t.tone}>
+                <ToastIcon name={t.icon} />
                 <span>{t.text}</span>
               </div>
             ))}

@@ -14,24 +14,35 @@
 // framed as "the question the team is about to ask", never a graded flashcard.
 // Image answers reuse the shared uploadAsset/useAssetUrl (→ /api/assets), same as the
 // practice answer flow; a photo-only answer is allowed (the route gates it server-side).
+//
+// YUK-1473 — M3E presentation (docs/design/2026-11-03-coach-m3e.md): ui-next Button /
+// SkeletonLines, lucide icons, coach-shared-m3e.css. The composer is wrapped as is; answer state,
+// submit, verdict, dismiss and their invalidation are unchanged.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Check, CircleAlert, Sparkles, Target } from 'lucide-react';
 import { useState } from 'react';
 // YUK-1051 — probe 作答区换成通用 EvidenceComposer（文字原文 + 附件证据一个组件；
 // 上传失败不丢同批已成功的纪律在组件内）。conjecture 裁决语义不变。
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
 import type { EvidenceAttachment } from '@/ui/components/response/response-types';
-import { Btn } from '@/ui/primitives/Btn';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { SkLines } from '@/ui/primitives/SkLines';
-import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-
+import {
+  invalidateAfterProbeAnswer,
+  invalidateAfterProbeVerdictDismissed,
+  queryKeys,
+} from '@/ui/lib/write-invalidation';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button } from '@/ui-next/public';
+import { AreaGate, type AreaStatus } from './AreaGate';
 import type { PrepDeskProbeWire, ProbeAnswerVerdict } from './probe-answer-api';
 import { useWorkbenchClient } from './workbench-client';
+import './coach-shared-m3e.css';
 
-function statefulStatus(loading: boolean, error: boolean): StatefulStatus {
-  return loading ? 'loading' : error ? 'error' : 'ok';
+// 链式三元被 OCR flag（项目规则禁嵌套三元）——同一顺序的 if/else：载入 → 出错 → 有数据。
+function statefulStatus(loading: boolean, error: boolean): AreaStatus {
+  if (loading) return 'loading';
+  if (error) return 'error';
+  return 'ok';
 }
 
 const JUDGE_FAILURE_MESSAGE = '判题失败，请稍后重试';
@@ -39,29 +50,29 @@ const JUDGE_FAILURE_MESSAGE = '判题失败，请稍后重试';
 function VerdictMessage({ verdict }: { verdict: ProbeAnswerVerdict['resolution'] }) {
   if (verdict === 'retired') {
     return (
-      <span className="pa-verdict-txt">
-        <LoomIcon name="check" size={14} /> 答对了 —— 这条猜想排除了。
+      <span className="pq-verdict-txt">
+        <Check size={16} aria-hidden="true" /> 答对了 —— 这条猜想排除了。
       </span>
     );
   }
   if (verdict === 'evidence_for') {
     return (
-      <span className="pa-verdict-txt">
-        <LoomIcon name="target" size={14} /> 这次表现与猜想一致，但还需要独立复验。
+      <span className="pq-verdict-txt">
+        <Target size={16} aria-hidden="true" /> 这次表现与猜想一致，但还需要独立复验。
       </span>
     );
   }
   if (verdict === 'confirmed') {
     return (
-      <span className="pa-verdict-txt">
-        <LoomIcon name="target" size={14} /> 这块确实卡了 —— 教研团会据此为你备练。
+      <span className="pq-verdict-txt">
+        <Target size={16} aria-hidden="true" /> 这块确实卡了 —— 教研团会据此为你备练。
       </span>
     );
   }
   if (verdict === 'inconclusive') {
     return (
-      <span className="pa-verdict-txt">
-        <LoomIcon name="check" size={14} /> 这次答错了，但不是这条猜想里的错误；不会据此下结论。
+      <span className="pq-verdict-txt">
+        <Check size={16} aria-hidden="true" /> 这次答错了，但不是这条猜想里的错误；不会据此下结论。
       </span>
     );
   }
@@ -70,25 +81,25 @@ function VerdictMessage({ verdict }: { verdict: ProbeAnswerVerdict['resolution']
 
 export function ProbeAnswers() {
   const { getActiveProbes } = useWorkbenchClient();
-  const q = useQuery({ queryKey: ['prep-desk-probes'], queryFn: getActiveProbes });
+  const q = useQuery({ queryKey: queryKeys.prepDeskProbes, queryFn: getActiveProbes });
   const probes = q.data?.probes ?? [];
 
   return (
-    <div className="probe-answers">
-      <Stateful
+    <div className="pq un-m3e-bridge">
+      <AreaGate
         status={statefulStatus(q.isLoading, q.isError)}
         onRetry={() => void q.refetch()}
         errorText="待你试做暂不可用。"
-        skeleton={<SkLines rows={2} />}
+        loading={<SkeletonLines rows={2} label="正在读取待你试做" />}
       >
         {probes.length > 0 && (
-          <div className="pa-list">
+          <div className="pq-list">
             {probes.map((p) => (
               <ProbeAnswerCard key={p.probe_question_id} probe={p} />
             ))}
           </div>
         )}
-      </Stateful>
+      </AreaGate>
     </div>
   );
 }
@@ -133,14 +144,13 @@ export function ProbeAnswerCard({
       resolution = res.resolution;
       setVerdict(res.resolution);
       // YUK-707 · [裁决 2] — a recorded verdict re-projects the teaching brief to its
-      // outcome state. Invalidate it so a mounted brief advances in place; no-op when the
-      // brief isn't on screen. (['prep-desk-probes'] stays on onDismiss, unchanged.)
-      void qc.invalidateQueries({ queryKey: ['teaching-brief'] });
+      // outcome state; the probe queue waits for onDismiss.
+      void invalidateAfterProbeAnswer(qc);
     } catch {
       // An actually ungradable judge result or network failure stays retryable.
       // A gradable unrelated error returns the recorded `inconclusive` verdict above.
       // YUK-911 — exactly ONE live region carries this failure (the role="alert"
-      // .pa-error below); no second polite/status region may double-announce it.
+      // .pq-error below); no second polite/status region may double-announce it.
       setError(JUDGE_FAILURE_MESSAGE);
       onFailed?.();
     } finally {
@@ -154,24 +164,24 @@ export function ProbeAnswerCard({
   function onDismiss() {
     // The answered probe now has a probe_result → leaves the 待你试做 queue (and drops
     // the entry-point count) on refetch.
-    void qc.invalidateQueries({ queryKey: ['prep-desk-probes'] });
+    void invalidateAfterProbeVerdictDismissed(qc);
   }
 
   return (
-    <LoomCard pad className="pa-card">
-      <div className="pa-probe">
-        <div className="pa-probe-lbl">
-          <LoomIcon name="sparkle" size={13} /> 团队问你的一道题
-        </div>
-        <div className="pa-probe-md">{probe.prompt_md}</div>
+    <article className="pq-card un-m3e-bridge">
+      <div className="pq-probe">
+        <p className="cs-kicker">
+          <Sparkles size={14} aria-hidden="true" /> 团队问你的一道题
+        </p>
+        <div className="cs-probe-md">{probe.prompt_md}</div>
       </div>
 
       {verdict ? (
-        <output className={`pa-verdict pa-verdict-${verdict}`}>
+        <output className="pq-verdict" data-verdict={verdict}>
           <VerdictMessage verdict={verdict} />
-          <Btn size="sm" variant="ghost" onClick={onDismiss}>
+          <Button size="sm" variant="ghost" onClick={onDismiss}>
             知道了
-          </Btn>
+          </Button>
         </output>
       ) : (
         <>
@@ -188,24 +198,24 @@ export function ProbeAnswerCard({
             accept="image/*"
             onUploadingChange={setUploading}
           />
-          <div className="pa-actions">
-            <Btn
+          <div className="cs-acts">
+            <Button
               size="sm"
               variant="primary"
               disabled={!hasAnswer || submitting || uploading}
               onClick={() => void onSubmit()}
             >
               {submitting ? '判分中…' : '提交作答'}
-            </Btn>
+            </Button>
           </div>
           {error && (
-            <div className="pa-error" role="alert">
-              <LoomIcon name="alert" size={13} className="pa-error-icon" />
+            <div className="pq-error" role="alert">
+              <CircleAlert size={14} aria-hidden="true" />
               {error}
             </div>
           )}
         </>
       )}
-    </LoomCard>
+    </article>
   );
 }

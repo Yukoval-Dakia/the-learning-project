@@ -28,7 +28,7 @@ import {
   repairMergeAttributionForFromId,
   writeKnowledgeProposeEvent,
 } from '@/capabilities/knowledge/server/proposals';
-import { POST as submitPOST } from '@/capabilities/practice/api/submit';
+import { POST as submitPOST } from '@/capabilities/practice/grading/api/submit';
 import { mergeExactQuestionDuplicateKnowledgeIds } from '@/capabilities/practice/public';
 import { initialFsrsState } from '@/capabilities/practice/scheduling/server/fsrs';
 import { newId } from '@/core/ids';
@@ -45,8 +45,8 @@ import {
   updateThetaForAttempt,
   upsertMasteryState,
 } from '@/kernel/records/mastery-state';
+import { retireFsrsStateOnMerge, upsertFsrsState } from '@/kernel/records/scheduling-state';
 import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
-import { retireFsrsStateOnMerge, upsertFsrsState } from '@/server/fsrs/state';
 import { backfillKnowledgeGenesis } from '../../scripts/backfill-genesis-events';
 import { issueSoloFixture } from '../fixtures/assessment-solo';
 import { nativeSoloHttpFixture } from '../fixtures/native-solo-http';

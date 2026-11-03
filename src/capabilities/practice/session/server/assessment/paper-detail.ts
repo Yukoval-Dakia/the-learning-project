@@ -21,8 +21,7 @@ import {
   readAutomaticIssuanceServingDecisions,
   revisionRowToContract,
 } from '@/kernel/records/assessment-issuance';
-import { projectFrozenStudyContext } from '../../../server/assessment/study-context';
-import { projectEvaluationToJudgeResult } from '../../../server/judge/evaluation-authority';
+import { projectEvaluationToJudgeResult, projectFrozenStudyContext } from '../../../grading/public';
 import type { PaperDetailResult, PaperDetailSection, PaperDetailSlot } from '../paper-detail';
 import { resolveKnowledgeNames } from '../practice-read';
 import type { PaperAssessmentBindingT } from './paper-issuance';

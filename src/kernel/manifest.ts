@@ -2,6 +2,7 @@
 // 第二实例原则加入；组合根见 src/capabilities/index.ts（静态、类型检查）。
 
 import { type ZodTypeAny, z } from 'zod';
+import { acceptSupportedProposalKinds, aiProposalKinds } from '@/core/schema/proposal';
 import { type JobDagMemberInput, type JobDependencyDecl, validateJobDag } from './job-dag';
 import type { NightlyEligibilityFn } from './nightly-eligibility';
 import type {
@@ -200,7 +201,7 @@ export interface CapabilityManifest {
   api?: { routes: ApiRouteDecl[] };
   /** 本包的 pg-boss job 面（M4 第一实例）：注册由组合根收集挂载 */
   jobs?: { handlers: JobDecl[] };
-  /** 本包拥有的 proposal kinds（M4 第一实例）：组合期查全局唯一 + 与 schema 枚举对账 */
+  /** 本包拥有的 proposal kinds：组合期查全局唯一、完整覆盖 aiProposalKinds、accept 与强度表一致 */
   proposals?: { kinds: ProposalKindDecl[] };
   /** 本包拥有的 DomainTools：组合期查全局唯一，启动期由组合根聚合器完整注册 */
   copilotTools?: { tools: CopilotToolDecl[] };
@@ -438,7 +439,26 @@ function assertNoShadowedRoutes(capabilities: readonly CapabilityManifest[]): vo
   }
 }
 
-/** 组合期校验：包名及各类声明（含 UI page）全局唯一，冲突即抛错。 */
+const knownProposalKinds: ReadonlySet<string> = new Set(aiProposalKinds);
+const acceptSupportedKindSet: ReadonlySet<string> = new Set(acceptSupportedProposalKinds);
+
+/** 完整组合根才能判定：词表里每个 proposal kind 都有 owner 声明。 */
+// Completeness needs the whole composition root; validateComposition also runs on partial roots in tests.
+export function assertProposalKindsOwned(capabilities: CapabilityManifest[]): void {
+  const owned = new Set(
+    capabilities.flatMap((cap) => (cap.proposals?.kinds ?? []).map((d) => d.kind)),
+  );
+  for (const kind of aiProposalKinds) {
+    if (!owned.has(kind)) {
+      throw new Error(`proposal kind '${kind}' has no owner declaration`);
+    }
+  }
+}
+
+/**
+ * 组合期校验：包名及各类声明（含 UI page）全局唯一，冲突即抛错；声明的 proposal kind
+ * 在词表内、至多一个 owner，且声明了 accept ⟺ 强度不是 C。完整性见 assertProposalKindsOwned。
+ */
 export function validateComposition(capabilities: CapabilityManifest[]): void {
   const names = new Set<string>();
   for (const cap of capabilities) {
@@ -571,6 +591,21 @@ export function validateComposition(capabilities: CapabilityManifest[]): void {
         );
       }
       kindOwner.set(decl.kind, cap.name);
+      if (!knownProposalKinds.has(decl.kind)) {
+        throw new Error(
+          `proposal kind '${decl.kind}' declared by '${cap.name}' is not in aiProposalKinds`,
+        );
+      }
+      const acceptSupported = acceptSupportedKindSet.has(decl.kind);
+      if ((decl.accept !== undefined) !== acceptSupported) {
+        throw new Error(
+          `proposal kind '${decl.kind}' (${cap.name}) ${
+            acceptSupported
+              ? 'is not strength C but declares no accept'
+              : 'is strength C but declares accept'
+          }; the core strength table and the owner accept declaration must agree`,
+        );
+      }
     }
   }
   const copilotToolOwners = new Map<string, string>();

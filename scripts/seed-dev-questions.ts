@@ -21,7 +21,7 @@ import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { knowledge, question } from '@/db/schema';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
-import { enrollFsrsStateIfAbsent, initialSchedulingState } from '@/server/fsrs/state';
+import { enrollFsrsStateIfAbsent, initialSchedulingState } from '@/kernel/records/scheduling-state';
 import { DEV_DATABASE_PATTERN } from './dev-worktree-db';
 import { assertProdFence } from './seed-synthetic';
 

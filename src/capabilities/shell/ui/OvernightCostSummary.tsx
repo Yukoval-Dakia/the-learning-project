@@ -1,6 +1,9 @@
+// YUK-1473 — M3E presentation (docs/design/2026-11-03-coach-m3e.md): a disclosure button with a
+// lucide chevron and the shared coach-shared-m3e.css. Formatting and every figure are unchanged.
+import { ChevronDown } from 'lucide-react';
 import { useId, useState } from 'react';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import type { OvernightDigest } from './workbench-api';
+import './coach-shared-m3e.css';
 
 type CostDetail = OvernightDigest['cost']['details'][number];
 
@@ -44,8 +47,8 @@ function usage(value: number | null, missing: number): string {
 
 function CostDetailRow({ detail }: { detail: CostDetail }) {
   return (
-    <li className="overnight-cost-detail">
-      <div className="overnight-cost-provider">
+    <li className="oc-detail">
+      <div className="oc-provider">
         {detail.provider} · {detail.model ?? '模型未知'}
       </div>
       <p>
@@ -57,7 +60,7 @@ function CostDetailRow({ detail }: { detail: CostDetail }) {
       <p>
         用量：{usageLabels[detail.usage_basis]} · 单位：{detail.usage_unit ?? '未知'}
       </p>
-      <dl className="overnight-cost-usage">
+      <dl className="oc-usage">
         <div>
           <dt>输入</dt>
           <dd>{usage(detail.usage_input, detail.missing_input_records)}</dd>
@@ -88,29 +91,29 @@ export function OvernightCostSummary({ cost, window }: Pick<OvernightDigest, 'co
   const [open, setOpen] = useState(false);
   const panelId = useId();
   return (
-    <section className="overnight-cost" aria-label="昨日 AI 用量与费用">
+    <section className="oc un-m3e-bridge" aria-label="昨日 AI 用量与费用">
       <button
         type="button"
-        className={`chip chip-toggle${open ? ' is-open' : ''}`}
+        className="oc-toggle un-hit"
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setOpen((value) => !value)}
       >
         昨日 AI 用量与费用
-        <LoomIcon name="chevronDown" size={13} className="pd-chev" />
+        <ChevronDown size={14} aria-hidden="true" className="oc-chev" />
       </button>
-      <div id={panelId} hidden={!open} className="prep-desk-expand">
+      <div id={panelId} hidden={!open} className="oc-panel">
         <p>
           北京时间 {dateTime.format(new Date(window.from))} 至{' '}
           {dateTime.format(new Date(window.to))}
           （不含结束时刻），包含前台与后台活动。
         </p>
         {cost.records === 0 ? (
-          <p className="quiet-empty">昨日暂无费用记录，不代表实际费用为零。</p>
+          <p className="oc-quiet">昨日暂无费用记录，不代表实际费用为零。</p>
         ) : (
           <>
             <p>{cost.records} 条费用记录；记录数不等于实际请求数。</p>
-            <ul className="overnight-cost-currencies">
+            <ul className="oc-currencies">
               {cost.by_currency.map((row) => (
                 <li key={row.currency}>
                   <strong>{currencyLabel(row.currency)}</strong>
@@ -138,7 +141,7 @@ export function OvernightCostSummary({ cost, window }: Pick<OvernightDigest, 'co
               ))}
             </ul>
             <p>金额按币种分别列出，已知金额不含未知费用；估算不是账单，也不代表订阅额度扣减。</p>
-            <ul className="overnight-cost-details" aria-label="费用与用量明细">
+            <ul className="oc-details" aria-label="费用与用量明细">
               {cost.details.map((detail) => (
                 <CostDetailRow
                   key={JSON.stringify([

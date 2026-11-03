@@ -17,6 +17,7 @@ import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { acquireProposalDecisionLock } from '@/kernel/proposals/applier-helpers';
 import { writeLearningItemProposal } from '@/kernel/proposals/producers';
 import { createKnowledgeNodeFromEvents } from '@/kernel/records/knowledge-node-birth';
 import type { CreateLearningIntentNoteFn } from '@/kernel/records/learning-intent-note-birth';
@@ -436,9 +437,9 @@ async function readProposal(db: Db, proposalId: string): Promise<ProposalEventRo
   return { id: row.id, payload: row.payload as ProposalEventRow['payload'] };
 }
 
-async function assertNotAlreadyRated(db: Db, proposalId: string): Promise<void> {
+async function assertNotAlreadyRated(tx: Tx, proposalId: string): Promise<void> {
   const { event } = await import('@/db/schema');
-  const rows = await db
+  const rows = await tx
     .select({ id: event.id })
     .from(event)
     .where(
@@ -461,14 +462,14 @@ async function assertNotAlreadyRated(db: Db, proposalId: string): Promise<void> 
  * Materializes a proposal: 1 hub LearningItem + N atomic LearningItems (parent-linked) +
  * paired hub artifact + N atomic artifact stubs (body_blocks=null, generation_status='pending'),
  * then writes a rate event chained to the proposal. Caller enqueues note_generate jobs after
- * this returns. All DB writes happen in a single transaction.
+ * this returns. All DB writes happen in a single transaction, which first takes the proposal
+ * decision lock (shared with dismiss and retract) and only then checks for an existing rate.
  */
 export async function acceptLearningIntent(
   params: AcceptLearningIntentParams,
 ): Promise<LearningIntentMaterializeResult> {
   const { createKnowledgeNode, createNote, db, proposalId } = params;
   const proposal = await readProposal(db, proposalId);
-  await assertNotAlreadyRated(db, proposalId);
 
   const {
     hub,
@@ -488,6 +489,8 @@ export async function acceptLearningIntent(
   const rateEventId = newId();
 
   return db.transaction(async (tx) => {
+    await acquireProposalDecisionLock(tx, proposalId);
+    await assertNotAlreadyRated(tx, proposalId);
     const createdKnowledgeIds: string[] = [];
     const tempIdToRealId = new Map<string, string>();
     let rootKnowledgeId = knowledge_node_id;

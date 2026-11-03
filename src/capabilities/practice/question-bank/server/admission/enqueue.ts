@@ -5,6 +5,7 @@ import { QUESTION_ADMISSION_CONTRACT_VERSION } from '@/core/question-admission-p
 import { declaredShapesAllSupported } from '@/core/schema/assessment/blank-answer-compare';
 import type { Db, Tx } from '@/db/client';
 import { lockPaidEffectControlFamily, readPaidEffectControl } from '@/db/paid-effect-control';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
 import {
   lockEventDerivationSources,
@@ -12,7 +13,7 @@ import {
 } from '@/kernel/events/derivation-policy';
 import { writeEvent } from '@/kernel/events/index';
 import type { EventSubscriptionDelivery, EventSubscriptionOutcome } from '@/kernel/manifest';
-import { getPracticeBoss, practiceBossTransaction } from '../../../server/queue-runtime';
+import { getStartedBoss } from '@/server/boss/client';
 
 export const ADMISSION_FAMILY = 'question_admission_run';
 export const AdmissionJobData = z.object({
@@ -170,7 +171,7 @@ export async function enqueuePublishedQuestionAdmission(
   db: Db,
   delivery: EventSubscriptionDelivery,
 ): Promise<EventSubscriptionOutcome> {
-  const boss = await getPracticeBoss();
+  const boss = await getStartedBoss();
   return db.transaction(async (tx) => {
     await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
     const [source] = await tx.select().from(event).where(eq(event.id, delivery.sourceEventId));
@@ -265,7 +266,7 @@ export async function enqueuePublishedQuestionAdmission(
         source_event_id: source.id,
         ...(usageSourceId ? { usage_source_event_id: usageSourceId } : {}),
       } satisfies AdmissionJobData,
-      { id, db: practiceBossTransaction(tx) },
+      { id, db: fromPgBossDrizzleTx(tx) },
     );
     if (enqueued === null)
       return { status: 'skipped', reason: `admission job already exists: ${id}` };

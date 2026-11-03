@@ -134,7 +134,6 @@ import {
 } from '@/capabilities/practice/question-bank/server/admission/reauthorization';
 import { resolveQuestionAdmissionPolicyId } from '@/capabilities/practice/question-bank/server/admission/run-admission';
 import { QUESTION_ADMISSION_TASK_KIND } from '@/capabilities/practice/question-bank/server/admission/solve';
-import { getPracticeBoss } from '@/capabilities/practice/server/queue-runtime';
 import {
   QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_POLICY_ID,
@@ -142,6 +141,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { lockPaidEffectControlFamily, readPaidEffectControl } from '@/db/paid-effect-control';
 import { type TaskNativeReasoningParams, resolveTaskBinding } from '@/server/ai/providers';
+import { getStartedBoss } from '@/server/boss/client';
 
 const TASK_KIND = QUESTION_ADMISSION_TASK_KIND;
 const FAMILY = ADMISSION_FAMILY;
@@ -531,7 +531,7 @@ export function parseProviderHttpError(text: string | null | undefined): HttpEvi
 // ─── db boot ─────────────────────────────────────────────────────────────────
 
 let dbHandle: Db | undefined;
-let bossHandle: Awaited<ReturnType<typeof getPracticeBoss>> | undefined;
+let bossHandle: Awaited<ReturnType<typeof getStartedBoss>> | undefined;
 let configEpoch = 0;
 async function dbBoot(): Promise<Db> {
   const { db } = await import('@/db/client');
@@ -1542,7 +1542,7 @@ function authorizedSpec(entry: ReleasedGroup): {
  */
 async function authorizedRelease(
   db: Db,
-  boss: Awaited<ReturnType<typeof getPracticeBoss>>,
+  boss: Awaited<ReturnType<typeof getStartedBoss>>,
   entry: ReleasedGroup,
   auth: AuthorizedManifest['authorization'],
 ): Promise<AdmissionVoidRelease & { sentAt?: string }> {
@@ -1959,7 +1959,7 @@ async function drive(opts: {
     if (bindingFailures.length > 0) {
       throw new Error(`authorized binding failures: ${bindingFailures.join('; ')}`);
     }
-    bossHandle = await getPracticeBoss();
+    bossHandle = await getStartedBoss();
   }
   const sentIds = opts.sentIdsPath ? await readJson<string[]>(opts.sentIdsPath) : [];
   // The --sent overlap guard holds for every manifest item EXCEPT authorized

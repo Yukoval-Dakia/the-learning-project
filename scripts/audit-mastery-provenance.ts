@@ -26,7 +26,7 @@ const ALLOWLIST_PATH = join(__dirname, 'audit-mastery-provenance-allowlist.json'
 // consumers here or they stay outside the reverse-check.
 export const TRACKED_CONSUMERS: readonly string[] = [
   'src/capabilities/agency/jobs/research_meeting_nightly.ts',
-  'src/capabilities/practice/server/mastery-progress-signal.ts',
+  'src/capabilities/practice/grading/server/mastery-progress-signal.ts',
   'src/capabilities/knowledge/server/node-page.ts',
   'src/capabilities/knowledge/server/frontier-read.ts',
   'src/kernel/read-models/learnable-frontier.ts',

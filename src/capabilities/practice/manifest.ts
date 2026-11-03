@@ -1,29 +1,9 @@
 import { QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION } from '@/core/schema/event';
-import {
-  API_ERROR_RESPONSES,
-  ApiErrorResponseSchema,
-  ApiIdParamsSchema,
-} from '@/kernel/http-contracts';
+import { API_ERROR_RESPONSES, ApiErrorResponseSchema } from '@/kernel/http-contracts';
 import { type CapabilityManifest, defineCapability } from '@/kernel/manifest';
 import { nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
-import {
-  CreateSubmissionBodySchema,
-  IssuanceCreatedSchema,
-  IssuanceParamsSchema,
-  IssuanceStateSchema,
-  IssueAssessmentBodySchema,
-  SaveResponseDraftBodySchema,
-  SaveResponseDraftResponseSchema,
-  StudyReferenceResponseSchema,
-  SubmissionCreatedSchema,
-} from './api/assessment-contracts';
-import {
-  AppealResponseSchema,
-  AttemptResponseSchema,
-  CreateAppealBodySchema,
-  CreateAttemptBodySchema,
-} from './api/contracts';
+import { AppealResponseSchema, CreateAppealBodySchema } from './api/contracts';
 import { CoverageLatticeResponseSchema } from './api/coverage-lattice-contracts';
 import {
   QuizGenTriggerAcceptedSchema,
@@ -44,12 +24,6 @@ import { gradingManifestPart } from './grading/manifest-part';
 import { placementManifestPart } from './placement/manifest-part';
 import { questionBankManifestPart } from './question-bank/manifest-part';
 import { schedulingManifestPart } from './scheduling/manifest-part';
-// YUK-594 (durable judge main path, W1) — judge_run poll-tier status + 202-pending schemas
-// (live in the db-free judge-run-status module so this eager import stays db-light).
-import {
-  JudgeDurablePendingResponseSchema,
-  JudgeRunStatusResponseSchema,
-} from './server/judge-run-status';
 import { sessionManifestPart } from './session/manifest-part';
 import { settlementManifestPart } from './settlement/manifest-part';
 import { supplyManifestPart } from './supply/manifest-part';
@@ -77,93 +51,26 @@ export const practiceCapability = defineCapability({
   name: 'practice',
   description:
     '练习消费侧：作答、判分、错因学习、针对性变式、FSRS 传感器、卷（paper）机制与会话编排。',
-  // YUK-573 — judge 校准观测事件归属（report-only）：sample = 每条复判对照一行
-  // （caused_by = 原 judge event，MF8 partial unique index 唯一化）；run_summary =
-  // 每次 run 一行（mass-skip 自曝面）。写者只有 judge_calibration_sample job。
   events: {
     actions: [
       'experimental:confirmation_assessment',
       'experimental:confirmation_original',
-      // Canonical learner response fact. Failure Learning subscribes to this
-      // owner event instead of coupling every producer to a queue name.
-      'attempt',
-      // Canonical learner review publisher (api/submit.ts). Declaring its
-      // ownership lets other capabilities consume reviews through the durable
-      // event-subscription kernel instead of polling Practice internals.
-      'review',
-      // Canonical judge publisher (submit + rejudge); Agency consumes trusted
-      // verdicts for intervention settlement.
-      'judge',
       // Native head transitions are the authoritative trigger for diagnostic consumers.
       'experimental:assessment_activation',
       'experimental:assessment_publish',
-      'experimental:assessment_attempt',
-      // 未作答录入与记录捕获写这个事件。声明放在练习侧，回来唤醒才能订阅，
-      // 只挂练习的组合也不会报 undeclared action。
-      'experimental:record_capture',
-      'experimental:judge_calibration_sample',
-      'experimental:judge_calibration_run_summary',
       'experimental:hint_request',
-      'experimental:mastery_progress',
-      // YUK-777 A2 — durable judge 面「作答已录、判词未落」的不可变证据。写者只有 submit
-      // 面的 enqueueDurableJudge；消费者是 judge_pending_reconcile sweeper 与 submit 的
-      // late-arrival guard（server/judge-run-dispatch.ts）。
-      'experimental:judge_pending_attempt',
       // Inference only: repeated independent wrongs against independent corrects
       // on other admitted questions of the same KC. Not a serving hold.
       QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION,
       ...fromOwnerParts((part) => part.events?.actions),
     ],
   },
-  subscriptions: {
-    handlers: [
-      {
-        // YUK-1664 — admission verdicts and source_verify suspends both land on
-        // the declared assessment_publish action; the handler re-checks the
-        // hold through the same paid-effect command path (auto ledger key).
-        id: 'practice.serving-recheck',
-        version: 1,
-        actions: ['experimental:assessment_publish'],
-        load: () =>
-          import('./server/serving-recheck-subscription').then(
-            (m) => m.buildServingRecheckSubscriber,
-          ),
-      },
-      ...fromOwnerParts((part) => part.subscriptions?.handlers),
-    ],
-  },
+  subscriptions: { handlers: fromOwnerParts((part) => part.subscriptions?.handlers) },
   api: {
     // M2-T1 (YUK-316)：18 条路由全部带 load 懒加载 thunk（M1 配方）。[id]/[sid]
     // 段由 server/app.ts 的 toHonoPath 转 :id/:sid 并把捕获参数透传 handler。
     // 注：/api/practice/[id]/answer 实际是 POST（P2a 声明误写 PUT，壳与包从来是 POST）。
     routes: [
-      {
-        method: 'POST',
-        path: '/api/attempts',
-        operationId: 'createAttempt',
-        request: { body: CreateAttemptBodySchema },
-        // YUK-594 — createAttemptResource passes a 202-pending divert through (see submit.ts).
-        responses: {
-          201: AttemptResponseSchema,
-          202: JudgeDurablePendingResponseSchema,
-          ...API_ERROR_RESPONSES,
-        },
-        successStatus: [201, 202],
-        load: () => import('./api/submit').then((m) => m.createAttemptResource),
-      },
-      {
-        // YUK-594 (durable judge main path, W1) — poll-tier status snapshot for a
-        // durable judge_run (D2 three-tier backfill: SSE + poll + replay). Read-only
-        // Permanent native completion/disposition precedes engine observation. The 202-pending
-        // contract's poll_url points here (submit.ts enqueueDurableJudge).
-        method: 'GET',
-        path: '/api/jobs/judge_run/[id]/status',
-        operationId: 'getJudgeRunStatus',
-        request: { params: ApiIdParamsSchema },
-        responses: { 200: JudgeRunStatusResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/judge-run-status-route').then((m) => m.GET),
-      },
       {
         method: 'POST',
         path: '/api/appeals',
@@ -231,67 +138,6 @@ export const practiceCapability = defineCapability({
         successStatus: 202,
         load: () => import('./api/quiz-gen-trigger').then((m) => m.POST),
       },
-      // YUK-1052 — 统一发题/提交/自动保存（issueAssessment + saveSubmission +
-      // D11 pinned-issuance 自动保存）。preselected ≠ issued：只有本路由实际
-      // 落 assessment_issuance 行才算发题（不可变 revision/材料/呈现顺序绑定）。
-      {
-        method: 'POST',
-        path: '/api/issuances',
-        operationId: 'createIssuance',
-        request: { body: IssueAssessmentBodySchema },
-        responses: {
-          200: IssuanceCreatedSchema,
-          201: IssuanceCreatedSchema,
-          ...API_ERROR_RESPONSES,
-        },
-        successStatus: [200, 201],
-        load: () => import('./api/assessment-route').then((m) => m.createIssuance),
-      },
-      {
-        // pending 恢复读面：issuance + live draft + 已接收提交。
-        method: 'GET',
-        path: '/api/issuances/[id]',
-        operationId: 'getIssuance',
-        request: { params: IssuanceParamsSchema },
-        responses: { 200: IssuanceStateSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/assessment-route').then((m) => m.getIssuance),
-      },
-      {
-        // D11 服务端自动保存：全练习面（solo/paper/placement）在 pinned
-        // issuance 上自动保存；ack 只在落库后产生（saved 200）。
-        method: 'POST',
-        path: '/api/issuances/[id]/responses',
-        operationId: 'saveResponseDraft',
-        request: { params: IssuanceParamsSchema, body: SaveResponseDraftBodySchema },
-        responses: { 200: SaveResponseDraftResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/assessment-route').then((m) => m.saveDraft),
-      },
-      {
-        // 正式提交：同 (group,idempotency_key) 幂等 —— 一致 replay(200) /
-        // 不同 conflict(409)；submission 绑定不可变 revision（不回取 latest）。
-        method: 'POST',
-        path: '/api/submissions',
-        operationId: 'createSubmission',
-        request: { body: CreateSubmissionBodySchema },
-        responses: {
-          200: SubmissionCreatedSchema,
-          201: SubmissionCreatedSchema,
-          ...API_ERROR_RESPONSES,
-        },
-        successStatus: [200, 201],
-        load: () => import('./api/assessment-route').then((m) => m.createSubmission),
-      },
-      {
-        method: 'POST',
-        path: '/api/issuances/[id]/reference-reveals',
-        operationId: 'revealStudyReference',
-        request: { params: IssuanceParamsSchema },
-        responses: { 200: StudyReferenceResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        load: () => import('./api/assessment-route').then((m) => m.revealStudyReference),
-      },
       // Coverage facts are computed by Practice's supply scanner, so Practice owns their read:
       // scanCoverageGaps pool rules plus supply-event activity. Read-only, no LLM.
       {
@@ -327,31 +173,6 @@ export const practiceCapability = defineCapability({
         batchSize: 1,
         load: () => import('./jobs/rejudge').then((m) => m.buildRejudgeHandler),
       },
-      // YUK-594 (durable judge main path, W1) — durable judge_run（异步为主路径）。
-      // YUK-870 (F3.5b) — 注册自中央渐缩簿收编：includeMetadata:true 读
-      // retryCount 驱动跨 provider lane 决策（D9），2s polling 与原中央行等价。
-      {
-        name: 'judge_run',
-        backend: 'dbos',
-        queue: 'llm',
-        pollingIntervalSeconds: 2,
-        batchSize: 1,
-        includeMetadata: true,
-      },
-      // YUK-777 A3 — durable judge 的 domain-state-scan reconcile sweeper。扫「作答已录、
-      // 判词未落」的 pending attempt，经同一 rate-limited 入队面重投 judge_run。自身不做
-      // LLM 调用（付费发生在 judge_run），故 fast 层。
-      {
-        name: 'judge_pending_reconcile',
-        backend: 'dbos',
-        schedule: {
-          cron: '50 * * * *',
-          tz: 'Asia/Shanghai',
-          singletonKey: 'judge_pending_reconcile-sweep',
-          singletonSeconds: 60 * 60,
-        },
-        queue: 'fast',
-      },
       // YUK-986 (Supply-Agent/1) — jyeoo staged 图片资产回收。jyeoo_fetch_candidates
       // 即期持久化候选图片（origin='jyeoo_staged'），未提交候选的孤儿资产每日回收
       // （宽限 24h）。无 LLM、无外部调用，fast 层。
@@ -366,20 +187,6 @@ export const practiceCapability = defineCapability({
         queue: 'fast',
         load: () =>
           import('./jobs/jyeoo_staged_asset_reap').then((m) => m.buildJyeooStagedAssetReapHandler),
-      },
-      // YUK-1496 C2（G3 模型判分准入，migration 线）— 留出题准入 run：冻结
-      // 留出题集（每科 ≥30、带独立参考分）过生产同源判分端口，逐题 agreement
-      // / severe error 落事件证据；阈值全过且非 dry run 才登记已准入切片。
-      // 付费 job（真实模型调用），由 lead 在周预算内触发；无 schedule。
-      {
-        name: 'model_slice_admission_run',
-        queue: 'llm',
-        pollingIntervalSeconds: 2,
-        batchSize: 1,
-        load: () =>
-          import('./jobs/model_slice_admission_run').then(
-            (m) => m.buildModelSliceAdmissionRunHandler,
-          ),
       },
       // YUK-987 (985/E2) — 供给需求层 planner agent。LLM 产出 SupplyPlanV1 需求计划，机器门
       // （schema/活KC/词表/去重/预算声明，supply-plan-gate.ts）校验后逐项 emit manual 需求
@@ -413,24 +220,6 @@ export const practiceCapability = defineCapability({
           ),
       },
       // YUK-1560 删除 axis_state_nightly 夜写及 batch writer；learner_axis_state 只保留历史行（merge 时 rename/freeze）。
-      // YUK-573 — judge 校准不同意率采样（report-only，dark-ship）。kill switch
-      // JUDGE_CALIBRATION_SAMPLING_ENABLED 默认 OFF（cron 保持注册，handler no-op，
-      // 零 spend）。复判走第二 lane（per-call ctx.override=anthropic-sub，绝不翻
-      // 全局 AI_PROVIDER_OVERRIDE）。cron 06:10 Asia/Shanghai：夜间避开 owner
-      // 交互期减 Max 订阅 rate-limit 争用（S2）。queue:'agent'（EXPIRE_AGENT=
-      // 7200s）：批内 ≤BATCH_MAX（默认 20）次 LLM 复判调用，是多次调用批任务，
-      // 非单-shot 'llm' 档。幂等由 MF8 partial unique index（drizzle/0059）DB 层
-      // 强制，expire 窗重投递安全。
-      {
-        name: 'judge_calibration_sample',
-        schedule: { cron: '10 6 * * *', tz: 'Asia/Shanghai' },
-        eligibility: nightlyEligibility('deterministic', { usesModel: true }),
-        queue: 'agent',
-        load: () =>
-          import('./jobs/judge_calibration_sample').then(
-            (m) => m.buildJudgeCalibrationSampleHandler,
-          ),
-      },
       ...fromOwnerParts((part) => part.jobs?.handlers),
     ],
   },
@@ -441,11 +230,6 @@ export const practiceCapability = defineCapability({
   // ADR-0032 D6-B 的 propose_question_edit 则属于 Copilot base surface。
   copilotTools: {
     tools: [
-      {
-        name: 'submit_review_answer',
-        load: () =>
-          import('./server/tools/submit-review-answer').then((m) => m.submitReviewAnswerTool),
-      },
       {
         name: 'generate_question_candidate',
         load: () =>

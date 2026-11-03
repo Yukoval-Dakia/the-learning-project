@@ -21,22 +21,30 @@ import { useWorkbenchClient } from './workbench-client';
 // deferred — the decide route does not yet thread `corrected_payload`, and the mem0
 // CORE writer is a no-op until a later task (conjecture-accept.ts). The post-accept
 // probe 作答区 is slice-2.
+//
+// YUK-1473 — M3E presentation (docs/design/2026-11-03-coach-m3e.md): ui-next Button / Chip /
+// SkeletonLines, lucide icons, coach-shared-m3e.css. Query, decide, invalidation and the inline
+// error handling are unchanged.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { GraduationCap, History, Link2, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { PROBE_SLOTS_FULL_CODE } from '@/core/schema/conjecture';
 
 import { ApiError } from '@/ui/lib/api';
-import { Btn } from '@/ui/primitives/Btn';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { SkLines } from '@/ui/primitives/SkLines';
-import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
+import { invalidateAfterProposalDecision, queryKeys } from '@/ui/lib/write-invalidation';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button, Chip } from '@/ui-next/public';
+import { AreaGate, type AreaStatus } from './AreaGate';
 import { type ProposalEvidenceRefWire, dedupeEvidence, evidenceReadable } from './inbox-api';
 import type { PrepDeskConjectureWire } from './prep-desk-api';
+import './coach-shared-m3e.css';
 
-function statefulStatus(loading: boolean, error: boolean): StatefulStatus {
-  return loading ? 'loading' : error ? 'error' : 'ok';
+// 链式三元被 OCR flag（项目规则禁嵌套三元）——同一顺序的 if/else：载入 → 出错 → 有数据。
+function statefulStatus(loading: boolean, error: boolean): AreaStatus {
+  if (loading) return 'loading';
+  if (error) return 'error';
+  return 'ok';
 }
 
 // YUK-711 — accepting a conjecture serves its probe; when the ≤3 active-probe cap is
@@ -57,7 +65,7 @@ export function PrepDeskConjectures() {
   const client = useWorkbenchClient();
   const qc = useQueryClient();
   const q = useQuery({
-    queryKey: ['prep-desk-conjectures'],
+    queryKey: queryKeys.prepDeskConjectures,
     queryFn: client.getPrepDeskConjectures,
   });
   const [deciding, setDeciding] = useState<Record<string, boolean>>({});
@@ -75,13 +83,9 @@ export function PrepDeskConjectures() {
     });
     try {
       await client.decideProposal(id, decision);
-      // The conjecture leaves the pending set; refresh both the panel and the
-      // /today 备课猜想 count chip that gates this panel's entry point.
-      await qc.invalidateQueries({ queryKey: ['prep-desk-conjectures'] });
-      await qc.invalidateQueries({ queryKey: ['overnight-digest'] });
-      // Accepting a conjecture serves a probe → refresh the 待你试做 queue so the new
-      // probe appears without a manual reload (codex review-784).
-      await qc.invalidateQueries({ queryKey: ['prep-desk-probes'] });
+      // Refreshes this panel, the /today count chip, the 待你试做 queue (an accepted
+      // conjecture serves a probe) and the sidebar inbox count.
+      await invalidateAfterProposalDecision(qc, { kind: 'conjecture' });
     } catch (err) {
       // A failed decision must NOT silently vanish (CodeRabbit review-782): keep
       // the card and surface a retry affordance instead of an unhandled rejection.
@@ -97,18 +101,18 @@ export function PrepDeskConjectures() {
   }
 
   return (
-    <div className="prep-desk">
-      <Stateful
+    <div className="pc un-m3e-bridge">
+      <AreaGate
         status={statefulStatus(q.isLoading, q.isError)}
         onRetry={() => void q.refetch()}
         errorText="备课暂不可用。"
-        skeleton={<SkLines rows={3} />}
+        loading={<SkeletonLines rows={3} label="正在读取备课猜想" />}
       >
         {conjectures.length === 0 ? (
           // (b) calm empty state — never an "all caught up!" achievement nag.
-          <div className="prep-desk-empty">教研团暂无新猜想 —— 你继续学，它会接着为你备。</div>
+          <p className="cs-quiet">教研团暂无新猜想 —— 你继续学，它会接着为你备。</p>
         ) : (
-          <div className="prep-desk-list">
+          <div className="pc-list">
             {conjectures.map((c) => (
               <PrepDeskCard
                 key={c.id}
@@ -121,7 +125,7 @@ export function PrepDeskConjectures() {
             ))}
           </div>
         )}
-      </Stateful>
+      </AreaGate>
     </div>
   );
 }
@@ -145,41 +149,39 @@ function PrepDeskCard({
   );
 
   return (
-    <LoomCard pad className="prep-desk-card">
-      <div className="pd-head">
-        <span className="card-icon accent">
-          <LoomIcon name="teach" size={18} />
-        </span>
-        <span className="pd-eyebrow">教研团的猜想 · 为你而备</span>
-      </div>
+    <article className="pc-card">
+      <p className="cs-kicker">
+        <GraduationCap size={16} aria-hidden="true" />
+        教研团的猜想 · 为你而备
+      </p>
 
       {/* claim — framed as a hypothesis, not a measurement or a confirmed weakness. */}
-      <p className="pd-claim serif">{c.claim}</p>
+      <p className="pc-claim">{c.claim}</p>
 
-      <div className="pd-meta">
+      <div className="pc-meta">
         {/* recurrence_count — the one wired number; a failure-cell count, not a probability. */}
-        <span className="pd-recur">
-          <LoomIcon name="history" size={12} /> {`反复出现 ${c.recurrence_count} 次`}
+        <span className="pc-recur">
+          <History size={14} aria-hidden="true" /> {`反复出现 ${c.recurrence_count} 次`}
         </span>
-        {c.discriminating && <span className="pd-tag">尝试区分这一猜想的题</span>}
-        {c.corrected_by_owner && <span className="pd-tag pd-corrected">你改过</span>}
+        {c.discriminating && <Chip>尝试区分这一猜想的题</Chip>}
+        {c.corrected_by_owner && <Chip tone="accent">你改过</Chip>}
       </div>
 
       {/* §4 tripwire — the UNRUN probe, framed as "about to ask", NOT a flashcard. */}
-      <div className="pd-probe">
-        <div className="pd-probe-lbl">
-          <LoomIcon name="sparkle" size={13} /> 团队正要问你的一道题
-        </div>
-        <div className="pd-probe-md">{c.probe_md}</div>
+      <div className="cs-probe">
+        <p className="cs-kicker">
+          <Sparkles size={14} aria-hidden="true" /> 团队正要问你的一道题
+        </p>
+        <div className="cs-probe-md">{c.probe_md}</div>
       </div>
 
       {evidence.length > 0 && (
-        <div className="pd-evidence">
+        <div className="cs-evidence">
           {evidence.map((de, i) => {
             const r = evidenceReadable(de.ref);
             return (
-              <span key={`${de.ref.kind}-${de.ref.id}-${i}`} className="pd-ev-chip">
-                <LoomIcon name="link" size={11} /> {r.text}
+              <span key={`${de.ref.kind}-${de.ref.id}-${i}`} className="cs-ev">
+                <Link2 size={12} aria-hidden="true" /> {r.text}
                 {de.count > 1 ? ` ×${de.count}` : ''}
               </span>
             );
@@ -188,19 +190,19 @@ function PrepDeskCard({
       )}
 
       {/* §3 — accept = acknowledge the DIRECTION, never "加进复习"; reject = 不太像. */}
-      <div className="pd-actions">
-        <Btn size="sm" variant="primary" disabled={deciding} onClick={onAccept}>
+      <div className="cs-acts">
+        <Button size="sm" variant="primary" disabled={deciding} onClick={onAccept}>
           对，往这个方向想
-        </Btn>
-        <Btn size="sm" variant="ghost" disabled={deciding} onClick={onReject}>
+        </Button>
+        <Button size="sm" variant="ghost" disabled={deciding} onClick={onReject}>
           不太像
-        </Btn>
+        </Button>
         {failedMessage && (
-          <span className="pd-error" role="alert">
+          <span className="cs-error" role="alert">
             {failedMessage}
           </span>
         )}
       </div>
-    </LoomCard>
+    </article>
   );
 }

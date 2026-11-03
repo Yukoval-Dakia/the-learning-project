@@ -148,6 +148,7 @@ reuses the same database and only applies new migrations. Docker/OrbStack must b
 - **Guard:** `dev:local` refuses to start if the database target is TEST's (port 5433/5544 or
   database `loom`). The only override is `DEV_ALLOW_TEST_DB=1`, which prints a warning banner and
   runs the dev API and worker against TEST's data and jobs — do not use it casually.
+- **Builtin subjects:** migrations run through the production entry `scripts/migrate.ts`, so every start also runs the subject-root seed and the builtin subject/trait reconcile (4 subjects, 24 traits); both are idempotent, so older dev databases are filled on their next start.
 - **Seed questions:** a fresh dev DB starts with 7 admitted math questions (ids `devseed:q:*`, fixed answer keys graded without any model call) so the question bank, practice and today pages have content; re-running adds nothing. Dev DB only — never with `DEV_ALLOW_TEST_DB=1`.
 - **Reset the dev DB:** `pnpm dev:reset` drops **only the current worktree's** database (the
   next `pnpm dev:local` recreates, migrates and re-seeds it). Never

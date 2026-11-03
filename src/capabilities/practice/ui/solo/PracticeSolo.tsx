@@ -2,7 +2,7 @@
 import { type Ref, useCallback, useId, useState } from 'react';
 import type { PracticeIssuanceDtoT } from '@/core/schema/assessment';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
-import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
+import { FoldList } from '@/ui-next/primitives/FoldList';
 import type { ChipTone } from '@/ui-next/public';
 import type { AttemptTimelineEvent } from '../attempt-timeline-adapter';
 import type { StreamItem } from '../practice-api';
@@ -86,7 +86,7 @@ function AttemptHistory({
         作答记录
       </h2>
       {/* Newest 3 show; the rest fold behind 「全部 N 条」 (owner 2026-10-18, design doc L5). */}
-      <CollapsibleList
+      <FoldList
         items={events}
         className="un-ps-history"
         toggleClassName="un-ps-history-toggle"

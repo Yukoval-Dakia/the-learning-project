@@ -53,9 +53,9 @@ export interface JudgeRetractionAcceptResult {
 }
 
 async function defaultEnqueueRejudge(appealEventId: string): Promise<void> {
-  const { getPracticeBoss } = await import('./queue-runtime');
+  const { getStartedBoss } = await import('@/server/boss/client');
   const { REJUDGE_SINGLETON_SECONDS } = await import('../jobs/rejudge-config');
-  const boss = await getPracticeBoss();
+  const boss = await getStartedBoss();
   await boss.send(
     'rejudge',
     { appeal_event_id: appealEventId },
@@ -141,8 +141,7 @@ async function applyManualAssertCorrection(
     expectedHead: { effectiveEvaluationId: string | null; generation: number };
   },
 ): Promise<{ correctedEvaluationId: string; disposition: string }> {
-  const { evaluateAttempt } = await import('./judge/evaluation-authority');
-  const { activateSubmissionCandidate } = await import('./judge/evaluate-submission');
+  const { activateSubmissionCandidate, evaluateAttempt } = await import('../grading/public');
 
   const [original] = await db
     .select()

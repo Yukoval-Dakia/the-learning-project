@@ -1,12 +1,29 @@
-import { useWorkbenchClient } from './workbench-client';
 // M4-T6 (YUK-319/YUK-318)：提议卡（设计稿 screen-mistakes.jsx ProposalCard
 // L60-124）。偏差（真 wire 适配，design pre-flight 预批）：
 // ①SubjectTag 不渲——科目轴 M5 随 effective_domain 派生收编；
-// ②「改关系」从即点即换改为 inline seg 展开 5 关系再选（真 decide 不可反复试）；
+// ②「改关系」从即点即换改为 inline 展开 5 关系再选（真 decide 不可反复试）；
 // ③evidence 渲多枚——真 evidence_refs 是数组，设计稿演示单枚。
 // 裁决在卡内 async（busy per-card），错误经 onError 上抛页级 toast；
 // resolved 留痕 map 由 InboxPage 持有（设计稿同构）。
+// M3E 呈现（YUK-1473）：ui-next Card / Button / ChipButton + lucide，样式在 inbox-m3e.css；
+// 设计记录 docs/design/2026-11-03-inbox-agent-notes-events-m3e.md。裁决逻辑未动。
 
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  Archive,
+  ArrowLeftRight,
+  ArrowRight,
+  Check,
+  FileQuestion,
+  FileText,
+  Image,
+  Link2,
+  type LucideIcon,
+  Network,
+  RefreshCw,
+  Sparkles,
+  X,
+} from 'lucide-react';
 import { useState } from 'react';
 // Type-only (erased at compile time — does NOT pull react-markdown into the main bundle,
 // the deferred loader still owns the runtime import).
@@ -15,11 +32,10 @@ import { isPublicHttpUrl } from '@/core/net/private-host';
 import { ApiError } from '@/ui/lib/api';
 import { DeferredMarkdownRenderer } from '@/ui/lib/deferred-markdown-renderer';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { Btn } from '@/ui/primitives/Btn';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
-import { type SuggestionKind, SuggestionKindTag } from '@/ui/primitives/SuggestionKindTag';
-
+import { invalidateAfterProposalDecision } from '@/ui/lib/write-invalidation';
+import { Card } from '@/ui-next/primitives/Card';
+import { ChipButton } from '@/ui-next/primitives/Chip';
+import { Button } from '@/ui-next/public';
 import {
   type ProposalDecision,
   type ProposalEvidenceRefWire,
@@ -32,13 +48,15 @@ import {
   kindMeta,
   splitReasonIds,
 } from './inbox-api';
+import { inboxTone, kindIcon } from './inbox-look';
+import { useWorkbenchClient } from './workbench-client';
 
-const EV_ICON: Record<string, LoomIconName> = {
-  event: 'sparkle',
-  question: 'quiz',
-  knowledge: 'knowledge',
-  artifact: 'doc',
-  record: 'record',
+const EV_ICON: Record<string, LucideIcon> = {
+  event: Sparkles,
+  question: FileQuestion,
+  knowledge: Network,
+  artifact: FileText,
+  record: FileText,
 };
 
 interface LearningItemPlanPreview {
@@ -84,7 +102,7 @@ export function learningItemPlanPreviewOf(change: unknown): LearningItemPlanPrev
 
 // YUK-229 — image_candidate 专属卡的显示投影。source_url 是候选来源页/图片直链，
 // source_title 是来源标题，summary_md 是 AI 对该图题的摘要（题文预览）。图字节永不
-//在 payload；accept 才是唯一 VLM 抽图触发（proposal.ts §image_candidate）。
+//在 payload；该 kind 已退役，此投影只为遗留 pending 行提供正常展示。
 export interface ImageCandidateView {
   sourceUrl: string;
   sourceTitle: string;
@@ -119,7 +137,7 @@ export function imageCandidateViewOf(change: unknown): ImageCandidateView | null
 // 其余 markdown（含链接 <a>，不自动取回）沿用默认渲染。
 const IC_MARKDOWN_COMPONENTS: Components = {
   img: ({ alt, src }) => (
-    <span className="ic-md-img" data-testid="ic-md-img-block">
+    <span className="ib-ic-md-img" data-testid="ic-md-img-block">
       [图片：{alt || (typeof src === 'string' ? src : '') || '未命名'}]
     </span>
   ),
@@ -134,42 +152,42 @@ function ImageFigureColumn({ view }: { view: ImageCandidateView }) {
 
   if (loadable && revealed) {
     return (
-      <figure className="ic-figure">
+      <figure className="ib-ic-figure">
         <img
-          className="ic-img"
+          className="ib-ic-img"
           src={view.imgSrc ?? undefined}
           alt={view.sourceTitle || '候选来源原图'}
           referrerPolicy="no-referrer"
           loading="lazy"
           onError={() => setImgFailed(true)}
         />
-        {view.sourceTitle && <figcaption className="ic-caption">{view.sourceTitle}</figcaption>}
+        {view.sourceTitle && <figcaption className="ib-ic-caption">{view.sourceTitle}</figcaption>}
       </figure>
     );
   }
 
   if (loadable) {
     return (
-      <div className="ic-reveal">
-        {view.sourceTitle && <b className="ic-source-title">{view.sourceTitle}</b>}
-        <button type="button" className="ic-reveal-btn" onClick={() => setRevealed(true)}>
-          <LoomIcon name="image" size={13} />
+      <div className="ib-ic-reveal">
+        {view.sourceTitle && <b className="ib-ic-source-title">{view.sourceTitle}</b>}
+        <Button size="sm" variant="ghost" onClick={() => setRevealed(true)}>
+          <Image size={14} aria-hidden="true" />
           显示原图预览
-        </button>
-        <span className="ic-reveal-note">原图由外部来源提供，点击后才从来源加载</span>
+        </Button>
+        <span className="ib-ic-note">原图由外部来源提供，点击后才从来源加载</span>
       </div>
     );
   }
 
   return (
-    <div className="ic-fallback">
-      <span className="ic-fallback-note">
+    <div className="ib-ic-reveal">
+      <span className="ib-ic-note">
         {view.imgSrc === null && view.sourceUrl
           ? '来源地址非公开图片直链，不内联加载，仅显示来源信息：'
           : '无法内联加载原图，仅显示来源信息：'}
       </span>
-      {view.sourceTitle && <b className="ic-source-title">{view.sourceTitle}</b>}
-      {view.sourceUrl && <span className="ic-source-url">{view.sourceUrl}</span>}
+      {view.sourceTitle && <b className="ib-ic-source-title">{view.sourceTitle}</b>}
+      {view.sourceUrl && <span className="ib-ic-source-url">{view.sourceUrl}</span>}
     </div>
   );
 }
@@ -181,19 +199,19 @@ function ImageFigureColumn({ view }: { view: ImageCandidateView }) {
 // 自动加载——用户显式点「显示原图预览」才设 src，把被动探测降为主动行为。onError 仍降级。
 function ImageCandidateCard({ view }: { view: ImageCandidateView }) {
   return (
-    <div className="proposal-image-candidate">
-      <div className="ic-col ic-col-summary">
-        <span className="ic-col-label">题文摘要</span>
+    <div className="ib-ic">
+      <div className="ib-ic-col">
+        <span className="ib-kicker">题文摘要</span>
         {view.summaryMd ? (
-          <DeferredMarkdownRenderer className="ic-summary-md" components={IC_MARKDOWN_COMPONENTS}>
+          <DeferredMarkdownRenderer className="ib-md" components={IC_MARKDOWN_COMPONENTS}>
             {view.summaryMd}
           </DeferredMarkdownRenderer>
         ) : (
-          <span className="ic-empty">（无题文摘要）</span>
+          <span className="ib-ic-note">（无题文摘要）</span>
         )}
       </div>
-      <div className="ic-col ic-col-figure">
-        <span className="ic-col-label">原图对照</span>
+      <div className="ib-ic-col">
+        <span className="ib-kicker">原图对照</span>
         <ImageFigureColumn view={view} />
       </div>
     </div>
@@ -215,22 +233,21 @@ function EvidenceChip({
   // S7 (YUK-335)：去重后 count>1 时把数量并进文案（「源自 N 次 AI 判定事件」式），
   // 单枚保持原句不动。
   const label = curatedLabel ?? (count > 1 ? text.replace('一', String(count)) : text);
+  const EvIcon = EV_ICON[er.kind] ?? FileText;
   const content = (
     <>
-      <span className="er-ic">
-        <LoomIcon name={EV_ICON[er.kind] ?? 'record'} size={13} />
-      </span>
-      <span className="er-text">{label}</span>
+      <EvIcon size={13} aria-hidden="true" className="ib-ev-ic" />
+      <span className="ib-ev-text">{label}</span>
     </>
   );
 
   // A missing detail route is display-only evidence, not a disabled action.
-  if (!route) return <span className="evidence-readable">{content}</span>;
+  if (!route) return <span className="ib-ev">{content}</span>;
 
   return (
-    <button type="button" className="evidence-readable" onClick={() => navigate(route)}>
+    <button type="button" className="ib-ev ib-ev-link un-hit" onClick={() => navigate(route)}>
       {content}
-      <span className="er-go">查看 →</span>
+      <span className="ib-ev-go">查看 →</span>
     </button>
   );
 }
@@ -246,7 +263,7 @@ type MergeBlockPreview = NonNullable<
 function MergeText({ text, notation }: { text: string; notation: string | null }) {
   if (!notation) return <>{text}</>;
   return (
-    <MathMarkdown notation={notation} className="merge-math">
+    <MathMarkdown notation={notation} className="ib-merge-math">
       {text}
     </MathMarkdown>
   );
@@ -262,12 +279,12 @@ function BlockStructure({
   const subMore = (block.sub_question_count ?? 0) - block.sub_questions.length;
   const optMore = (block.option_count ?? 0) - block.options.length;
   if (block.sub_question_count === null && block.option_count === null) {
-    return <div className="merge-structure-note">这道题的小问和选项还没整理出来</div>;
+    return <div className="ib-merge-note">这道题的小问和选项还没整理出来</div>;
   }
   return (
     <>
       {block.sub_questions.length > 0 && (
-        <ul className="merge-structure">
+        <ul className="ib-merge-structure">
           {block.sub_questions.map((sub) => (
             <li key={`${sub.label}\u0000${sub.excerpt}`}>
               <b>{sub.label}</b> <MergeText text={sub.excerpt} notation={notation} />
@@ -275,9 +292,9 @@ function BlockStructure({
           ))}
         </ul>
       )}
-      {subMore > 0 && <div className="merge-structure-note">还有 {subMore} 个小问</div>}
+      {subMore > 0 && <div className="ib-merge-note">还有 {subMore} 个小问</div>}
       {block.options.length > 0 && (
-        <ul className="merge-structure">
+        <ul className="ib-merge-structure">
           {block.options.map((option) => (
             <li key={`${option.label}\u0000${option.text}`}>
               <b>{option.label}</b> <MergeText text={option.text} notation={notation} />
@@ -285,7 +302,7 @@ function BlockStructure({
           ))}
         </ul>
       )}
-      {optMore > 0 && <div className="merge-structure-note">还有 {optMore} 个选项</div>}
+      {optMore > 0 && <div className="ib-merge-note">还有 {optMore} 个选项</div>}
     </>
   );
 }
@@ -295,6 +312,18 @@ function BlockStructure({
 // attached, never on later re-renders: background updates cannot pull focus back.
 function focusWhenShown(node: HTMLButtonElement | null) {
   node?.focus();
+}
+
+// Confidence shown on the card: none for conjectures; else the payload's, else a block merge's
+// proposed_change confidence (early returns instead of a chained ternary).
+function confidenceOf(
+  p: ProposalInboxRow,
+  change: ProposalInboxRow['payload']['proposed_change'],
+): number | null {
+  if (p.kind === 'conjecture') return null;
+  if (typeof p.payload.confidence === 'number') return p.payload.confidence;
+  if (p.kind === 'block_merge' && typeof change?.confidence === 'number') return change.confidence;
+  return null;
 }
 
 export interface ProposalCardProps {
@@ -307,16 +336,10 @@ export interface ProposalCardProps {
   onError: (msg: string) => void;
 }
 
-export function ProposalCard({
-  p,
-  index,
-  resolved,
-  navigate,
-  onResolve,
-  onError,
-}: ProposalCardProps) {
+export function ProposalCard({ p, resolved, navigate, onResolve, onError }: ProposalCardProps) {
   const meta = kindMeta(p.kind);
   const client = useWorkbenchClient();
+  const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [pickingRel, setPickingRel] = useState(false);
   // Block merges are irreversible: accept first asks for an explicit confirmation.
@@ -342,6 +365,9 @@ export function ProposalCard({
       }
       setConfirmingMerge(false);
       onResolve(p.id, label);
+      // The decided card stays put; refresh what the decision changed elsewhere (sidebar count,
+      // 待你试做, digest, and the proposal kind's own reads) without waiting on it here.
+      void invalidateAfterProposalDecision(qc, { kind: p.kind });
     } catch (err) {
       // The server refuses an unconfirmed merge; show the confirmation instead of an error.
       if (err instanceof ApiError && err.status === 409 && err.code === 'confirm_required') {
@@ -385,14 +411,7 @@ export function ProposalCard({
   const edgeFrom = isEdge ? change?.from_knowledge_id : undefined;
   const edgeTo = isEdge ? change?.to_knowledge_id : undefined;
   const rel = change?.relation_type;
-  const confidence =
-    p.kind === 'conjecture'
-      ? null
-      : typeof p.payload.confidence === 'number'
-        ? p.payload.confidence
-        : p.kind === 'block_merge' && typeof change?.confidence === 'number'
-          ? change.confidence
-          : null;
+  const confidence = confidenceOf(p, change);
   const learningPlan =
     p.kind === 'learning_item' ? learningItemPlanPreviewOf(p.payload.proposed_change) : null;
   const imageCandidate =
@@ -405,29 +424,30 @@ export function ProposalCard({
           .map((block) => [block.id, block.label] as const)
       : [],
   );
+  const CardIcon = kindIcon(cardIcon);
 
   return (
-    <LoomCard
-      pad
-      className={`proposal${resolved ? ' resolved' : ''}`}
-      style={{ animationDelay: `${index * 50}ms` }}
-    >
-      <div className="proposal-head">
-        <span className={`kind-tag tone-chip-${cardTone}`}>
-          <LoomIcon name={cardIcon as LoomIconName} size={12} />
+    <Card as="article" className="ib-prop" data-resolved={resolved ? '' : undefined}>
+      <div className="ib-prop-head">
+        <span className="ib-tag" data-tone={inboxTone(cardTone)}>
+          <CardIcon size={13} aria-hidden="true" />
           {cardLabel}
         </span>
-        <span className="ai-tag">
-          <LoomIcon name="sparkle" size={12} />
+        <span className="ib-tag ib-tag-ai">
+          <Sparkles size={12} aria-hidden="true" />
           AI 建议
         </span>
-        {/* YUK-617 mode-1 — 修正类建议标签（suggestion_kind=corrective 不计接受率）。primitive 内部
-            对非 corrective 早返回 null，故 proactive/缺失不渲染。字段已在 wire（BaseProposal 顶层）。 */}
-        <SuggestionKindTag kind={p.payload.suggestion_kind as SuggestionKind | undefined} />
-        {p.presentation?.title && <span className="proposal-title">{p.presentation.title}</span>}
+        {/* YUK-617 mode-1 — 修正类建议标签（suggestion_kind=corrective 不计接受率）；
+            proactive / 缺失不渲染。字段已在 wire（BaseProposal 顶层）。 */}
+        {p.payload.suggestion_kind === 'corrective' && (
+          <span className="ib-tag ib-tag-dashed" title="修正类建议不计入接受率">
+            修正
+          </span>
+        )}
+        {p.presentation?.title && <span className="ib-prop-title">{p.presentation.title}</span>}
         {resolved && (
-          <span className="badge tone-good resolved-stamp" style={{ marginLeft: 'auto' }}>
-            <LoomIcon name="check" size={12} />
+          <span className="ib-tag ib-stamp" data-tone="positive">
+            <Check size={13} aria-hidden="true" />
             {resolved}
           </span>
         )}
@@ -435,13 +455,13 @@ export function ProposalCard({
 
       {/* YUK-264：reason_md 的不透明 ID 不再露在正文；已加载的题块显示位置身份，
           其他引用折叠为通用标签，原 ID 只保留在 hover title 供追溯。 */}
-      <div className="proposal-body">
+      <div className="ib-prop-reason">
         {splitReasonIds(p.payload.reason_md).map((seg) =>
           seg.raw ? (
             <button
               type="button"
               key={seg.start}
-              className="ev-rawid"
+              className="ib-rawid"
               title={`复制引用 ${seg.text}`}
               onClick={() => {
                 // navigator.clipboard is missing over the plain-HTTP LAN address.
@@ -463,7 +483,7 @@ export function ProposalCard({
       </div>
 
       {p.presentation && p.presentation.change_summary.length > 0 && (
-        <dl className="proposal-change-summary">
+        <dl className="ib-prop-summary">
           {p.presentation.change_summary.map((item) => (
             <div key={`${item.label}:${item.value}`}>
               <dt>{item.label}</dt>
@@ -474,17 +494,17 @@ export function ProposalCard({
       )}
 
       {learningPlan && (
-        <div className="proposal-learning-plan">
-          <div className="proposal-learning-hub">
-            <span className="meta">学习主线</span>
-            <b className="serif">{learningPlan.hubTitle}</b>
-            {learningPlan.summary && <span>{learningPlan.summary}</span>}
+        <div className="ib-plan">
+          <div className="ib-plan-hub">
+            <span className="ib-kicker">学习主线</span>
+            <b className="ib-plan-title">{learningPlan.hubTitle}</b>
+            {learningPlan.summary && <span className="ib-plan-sum">{learningPlan.summary}</span>}
           </div>
           {learningPlan.steps.length > 0 && (
-            <ol>
+            <ol className="ib-plan-steps">
               {learningPlan.steps.map((step) => (
                 <li key={`${step.kind}:${step.title}:${step.intent ?? ''}`}>
-                  <span className={`proposal-plan-dot ${step.kind}`} />
+                  <span className="ib-plan-dot" data-kind={step.kind} aria-hidden="true" />
                   <span>
                     <b>{step.title}</b>
                     {step.intent && <small>{step.intent}</small>}
@@ -499,21 +519,21 @@ export function ProposalCard({
       {imageCandidate && <ImageCandidateCard view={imageCandidate} />}
 
       {mergePreview?.primary && mergePreview.merged.length > 0 && (
-        <div className="merge-preview">
-          <div className="merge-block">
-            <div className="merge-label">保留这道 · {mergePreview.primary.label}</div>
-            <div className="merge-text">
+        <div className="ib-merge">
+          <div className="ib-merge-block">
+            <p className="ib-kicker">保留这道 · {mergePreview.primary.label}</p>
+            <div className="ib-merge-text">
               <MergeText text={mergePreview.primary.excerpt} notation={mergePreview.notation} />
             </div>
             <BlockStructure block={mergePreview.primary} notation={mergePreview.notation} />
           </div>
-          <div className="merge-join" aria-hidden="true">
-            <LoomIcon name="arrow" size={16} />
+          <div className="ib-merge-join" aria-hidden="true">
+            <ArrowRight size={16} />
           </div>
-          <div className="merge-block merge-into">
-            <div className="merge-label">并进来的 {mergePreview.merged.length} 道</div>
+          <div className="ib-merge-block ib-merge-into">
+            <p className="ib-kicker">并进来的 {mergePreview.merged.length} 道</p>
             {mergePreview.merged.map((block) => (
-              <div className="merge-text merge-text-part" key={block.id}>
+              <div className="ib-merge-text ib-merge-part" key={block.id}>
                 <b>{block.label}</b>
                 <div>
                   <MergeText text={block.excerpt} notation={mergePreview.notation} />
@@ -523,8 +543,8 @@ export function ProposalCard({
             ))}
           </div>
           {mergePreview.continuity_label && (
-            <div className="merge-reason">
-              <LoomIcon name="sparkle" size={12} />
+            <div className="ib-merge-reason">
+              <Sparkles size={12} aria-hidden="true" />
               连续依据：{mergePreview.continuity_label}
             </div>
           )}
@@ -532,61 +552,61 @@ export function ProposalCard({
       )}
 
       {isEdge && edgeFrom && edgeTo && (
-        <div className="edge-preview nowrap-meta">
-          <span className={`badge ${isArchiveEdge ? 'tone-again' : 'tone-info'}`}>
-            <LoomIcon name={isArchiveEdge ? 'archive' : 'link'} size={12} />
+        <div className="ib-edge">
+          <span className="ib-tag" data-tone={isArchiveEdge ? 'critical' : 'accent'}>
+            {isArchiveEdge ? (
+              <Archive size={12} aria-hidden="true" />
+            ) : (
+              <Link2 size={12} aria-hidden="true" />
+            )}
             {edgeOperationLabel}
           </span>
-          <span className="rel-pill">{(rel && REL_LABEL[rel]) || rel || '关系'}</span>
-          <span className="chip chip-k mono">
+          <span className="ib-tag ib-tag-outline">{(rel && REL_LABEL[rel]) || rel || '关系'}</span>
+          <span className="ib-edge-node">
             {p.presentation?.knowledge_edge?.from_label ?? edgeFrom.slice(0, 8)}
           </span>
-          <LoomIcon name="arrow" size={14} />
-          <span className="chip chip-k mono">
+          <ArrowRight size={14} aria-hidden="true" className="ib-edge-arrow" />
+          <span className="ib-edge-node">
             {p.presentation?.knowledge_edge?.to_label ?? edgeTo.slice(0, 8)}
           </span>
         </div>
       )}
 
       {confirmingMerge && !resolved && (
-        <div className="merge-confirm" role="alert">
+        <div className="ib-confirm" role="alert">
           <b>合并后无法撤销</b>
           <span>并进来的题会成为保留那道题的一部分，之后不能再拆开。</span>
-          <div className="merge-confirm-actions">
-            <Btn
+          <div className="ib-acts">
+            <Button
               ref={focusWhenShown}
               size="sm"
-              variant="again"
-              icon="check"
+              className="ib-btn-critical"
               disabled={locked}
               onClick={() => void decide('accept', acceptedLabel, { confirmLossy: true })}
             >
+              <Check size={14} aria-hidden="true" />
               确认合并
-            </Btn>
-            <Btn
+            </Button>
+            <Button
               size="sm"
               variant="ghost"
               disabled={locked}
               onClick={() => setConfirmingMerge(false)}
             >
               先不合并
-            </Btn>
+            </Button>
           </div>
         </div>
       )}
 
-      <div className="proposal-foot">
-        <div
-          className="proposal-actions"
-          style={{ display: 'flex', gap: 'var(--s-2)', flexWrap: 'wrap' }}
-        >
+      <div className="ib-prop-foot">
+        <div className="ib-acts ib-prop-acts">
           {/* M4 review fix (codex P2)：defer/archive/judge_retraction 的 accept
               在 dispatchAccept 是 400（unsupported_proposal_kind），不渲 CTA。 */}
           {isAcceptSupported(p.kind) && !confirmingMerge && (
-            <Btn
+            <Button
               size="sm"
-              variant={isArchiveEdge ? 'again' : 'good'}
-              icon={isArchiveEdge ? 'archive' : 'check'}
+              className={isArchiveEdge ? 'ib-btn-critical' : undefined}
               disabled={locked || archiveTargetMissing}
               onClick={() =>
                 p.kind === 'block_merge'
@@ -594,90 +614,82 @@ export function ProposalCard({
                   : void decide('accept', acceptedLabel)
               }
             >
+              {isArchiveEdge ? (
+                <Archive size={14} aria-hidden="true" />
+              ) : (
+                <Check size={14} aria-hidden="true" />
+              )}
               {acceptButtonLabel}
-            </Btn>
-          )}
-          {/* YUK-229 — accept 是唯一 VLM 抽图触发（proposal.ts §image_candidate）。定性
-              前置提示（不显预估金额），作为 accept 旁的明确 affordance，非点击后弹窗。 */}
-          {p.kind === 'image_candidate' && (
-            <span className="image-candidate-cost-note">
-              <LoomIcon name="sparkle" size={12} />
-              接受将执行一次付费 VLM 抽图
-            </span>
+            </Button>
           )}
           {isEdge && !isArchiveEdge && (
             <>
-              <Btn
+              <Button
                 size="sm"
                 variant="ghost"
-                icon="reverse"
                 disabled={locked}
                 onClick={() => void decide('reverse', '已改方向')}
               >
+                <ArrowLeftRight size={14} aria-hidden="true" />
                 改方向
-              </Btn>
-              <Btn
+              </Button>
+              <Button
                 size="sm"
                 variant="ghost"
-                icon="refresh"
                 disabled={locked}
+                aria-expanded={pickingRel}
                 onClick={() => setPickingRel((v) => !v)}
               >
+                <RefreshCw size={14} aria-hidden="true" />
                 改关系
-              </Btn>
+              </Button>
             </>
           )}
-          <Btn
+          <Button
             size="sm"
             variant="ghost"
-            icon="close"
             disabled={locked}
             onClick={() => void decide('dismiss', isArchiveEdge ? '已保留' : '已忽略')}
           >
+            <X size={14} aria-hidden="true" />
             {isArchiveEdge ? '保留关系' : '忽略'}
-          </Btn>
+          </Button>
         </div>
-        <div className="meta-row">
+        <div className="ib-prop-meta">
           {confidence !== null && (
-            <span className="conf-bar">
-              <span className="meta">置信</span>
-              <span className="conf-track">
+            <span className="ib-conf">
+              <span>置信</span>
+              <span className="ib-conf-track" aria-hidden="true">
                 <span style={{ width: `${Math.round(confidence * 100)}%` }} />
               </span>
-              <span className="meta tnum">{Math.round(confidence * 100)}%</span>
+              <span className="un-num">{Math.round(confidence * 100)}%</span>
             </span>
           )}
           {p.cost_micro_usd != null && (
-            <span className="meta">${(p.cost_micro_usd / 1e6).toFixed(4)}</span>
+            <span className="un-num">${(p.cost_micro_usd / 1e6).toFixed(4)}</span>
           )}
         </div>
       </div>
 
       {pickingRel && !resolved && !isArchiveEdge && (
-        <div
-          className="seg"
-          role="tablist"
-          aria-label="改为关系类型"
-          style={{ marginTop: 'var(--s-2)' }}
-        >
+        <fieldset className="ib-rel-pick">
+          <legend className="ib-rel-legend">改为关系类型</legend>
           {Object.entries(REL_LABEL).map(([k, label]) => (
-            <button
-              type="button"
+            <ChipButton
               key={k}
-              role="tab"
-              aria-selected={rel === k}
-              className={rel === k ? 'on' : ''}
+              tone={rel === k ? 'accent' : 'neutral'}
+              aria-current={rel === k ? 'true' : undefined}
               disabled={locked}
               onClick={() => void decide('change_type', '已改关系', { newRelationType: k })}
             >
               {label.split(' ')[0]}
-            </button>
+            </ChipButton>
           ))}
-        </div>
+        </fieldset>
       )}
 
       {p.payload.evidence_refs.length > 0 && (
-        <div className="proposal-evidence">
+        <div className="ib-evidence">
           {/* S7 (YUK-335)：同 readable 文案去重 + 计数，避免 N 枚一模一样的灰 chip。 */}
           {dedupeEvidence(p.payload.evidence_refs, p.presentation?.evidence_labels).map(
             ({ ref, count }) => (
@@ -692,6 +704,6 @@ export function ProposalCard({
           )}
         </div>
       )}
-    </LoomCard>
+    </Card>
   );
 }

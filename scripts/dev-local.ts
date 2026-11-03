@@ -140,8 +140,12 @@ if (allowTestDb) {
     if (create.status !== 0) process.exit(create.status ?? 1);
     console.log(`[dev-local] created worktree database ${DEV_DB.database}`);
   }
-  // Existing volume: only pending migrations apply.
-  const migrate = run('pnpm', ['db:migrate:local'], devDbEnv);
+  // The production migrate entry, not bare drizzle-kit: its post-migration steps (subject-root
+  // seed, builtin subject/trait reconcile) are idempotent, so existing dev databases catch up too.
+  const migrate = run('pnpm', ['exec', 'tsx', 'scripts/migrate.ts'], {
+    ...devDbEnv,
+    DATABASE_URL: databaseUrl,
+  });
   if (migrate.status !== 0) process.exit(migrate.status ?? 1);
   // A fresh dev DB only carries the implicit legacy epoch, which fences every request (503).
   // Dev has no cutover to rehearse, so mark the code's epoch active once (idempotent).

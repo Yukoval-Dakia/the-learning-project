@@ -46,6 +46,18 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
   subscriptions: {
     handlers: [
       {
+        // Admission verdicts and source_verify suspends both land on the declared
+        // assessment_publish action; the handler re-checks the hold through the same
+        // paid-effect command path (auto ledger key).
+        id: 'practice.serving-recheck',
+        version: 1,
+        actions: ['experimental:assessment_publish'],
+        load: () =>
+          import('./server/serving-recheck-subscription').then(
+            (m) => m.buildServingRecheckSubscriber,
+          ),
+      },
+      {
         id: 'practice.question-admission-enqueue',
         version: 1,
         actions: ['experimental:assessment_publish'],
@@ -254,7 +266,7 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
       },
       // YUK-489 (P4a) — reference-answer backfill. P3 decoupled cold-start-bridge ③
       // (reference generation) from KC tagging: a prompt-only OCR question persists
-      // with reference_md IS NULL (auto-enroll / image-candidate-accept). This job
+      // with reference_md IS NULL (auto-enroll). This job
       // fills those nulls nightly + independently, REUSING generateReferenceSolution
       // (no new task). Trigger = reference_md IS NULL AND ≥1 knowledge_id (resolvable
       // subject); no-knowledge_id rows are skipped. cron 05:20 Asia/Shanghai is

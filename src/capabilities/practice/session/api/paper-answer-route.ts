@@ -8,7 +8,7 @@ import { db } from '@/db/client';
 import { answer, learning_session } from '@/db/schema';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { LegacyPaperAnswerDraftBodySchema } from '../../api/paper-contracts';
-import { saveResponseDraft } from '../../server/assessment/submit';
+import { saveResponseDraft } from '../../grading/public';
 import { autosaveAnswerDraft } from '../server/answer-draft';
 import {
   assertIssuedPaperSlotsRenderable,

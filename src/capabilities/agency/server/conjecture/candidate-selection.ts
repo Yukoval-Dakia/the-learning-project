@@ -1,6 +1,6 @@
 // Research-meeting candidate selection: the one owner of the order
 // gather → history gate → accountability rank → batched enrichment →
-// reproducible-evidence filter → second history gate → image load → final rank.
+// reproducible + complete-evidence filter → second history gate → image load → final rank.
 // Read-only: no transaction, no lock; callers own durability and execution locks.
 
 import type { Db } from '@/db/client';
@@ -54,8 +54,6 @@ export interface SelectConjectureCandidatesInput {
    * `null` enriches every lifecycle-eligible cell and returns all of them.
    */
   limit: number | null;
-  /** Exclude cells whose enriched samples lack prompt/cause context instead of passing them on. */
-  requireCompleteEvidencePackets?: boolean;
   imageFetchFn: ConjectureImageFetchFn;
   loadKnownConjectureKeysFn?: (db: Db) => Promise<Set<string>>;
 }
@@ -158,9 +156,9 @@ export async function selectConjectureCandidates(
         recurrence_count: evidenceEventIds.length,
         evidence_event_ids: evidenceEventIds,
       };
-      const invalidDetail = input.requireCompleteEvidencePackets
-        ? invalidEvidencePacketDetail(reproducible)
-        : null;
+      // A sample without its prompt or cause cannot ground a claim; drop the cell here so
+      // it never reaches paid induction and a lower-ranked cell can take its slot.
+      const invalidDetail = invalidEvidencePacketDetail(reproducible);
       if (invalidDetail) {
         exclusions.push({
           key: cell.key,

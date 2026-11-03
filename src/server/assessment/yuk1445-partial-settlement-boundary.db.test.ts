@@ -4,8 +4,8 @@
 
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { evaluateSubmission } from '@/capabilities/practice/server/judge/evaluate-submission';
-import { projectEvaluationToJudgeResult } from '@/capabilities/practice/server/judge/evaluation-authority';
+import { evaluateSubmission } from '@/capabilities/practice/grading/server/judge/evaluate-submission';
+import { projectEvaluationToJudgeResult } from '@/capabilities/practice/grading/server/judge/evaluation-authority';
 import {
   EvaluationRecord,
   ExecutionPlan,

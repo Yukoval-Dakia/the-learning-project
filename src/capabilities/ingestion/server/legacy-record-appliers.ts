@@ -18,6 +18,7 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
 import {
+  acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
   existingAcceptRate,
@@ -169,8 +170,7 @@ export async function acceptRecordLinksProposal(
   const recordId = requiredString(change.record_id, 'record_id', proposalId);
   const links = parseRecordLinks(change, proposalId);
 
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) {
+  const replayAccepted = async (existingRate: { id: string }): Promise<RecordLinksAcceptResult> => {
     await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
     return {
       kind: 'record_links',
@@ -179,7 +179,11 @@ export async function acceptRecordLinksProposal(
       applied_links: links.length,
       idempotent: true,
     };
-  }
+  };
+
+  // Cheap short-circuit; the transaction re-checks under the decision lock.
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) return replayAccepted(existingRate);
 
   const record = (
     await db
@@ -219,7 +223,11 @@ export async function acceptRecordLinksProposal(
     ],
   };
 
-  await db.transaction(async (tx) => {
+  const concurrentAccept = await db.transaction(async (tx) => {
+    // Same lock as the generic dismiss: a racing decision is seen here, not written beside.
+    await acquireProposalDecisionLock(tx, proposalId);
+    const decided = await existingAcceptRate(tx, proposalId);
+    if (decided) return decided;
     await updateLearningRecord(tx, recordId, {
       processing_status: 'actioned',
       knowledge_ids: knowledgeIds,
@@ -246,7 +254,9 @@ export async function acceptRecordLinksProposal(
       caused_by_event_id: proposalId,
       created_at: now,
     });
+    return null;
   });
+  if (concurrentAccept) return replayAccepted(concurrentAccept);
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
   return {
@@ -310,8 +320,10 @@ export async function acceptRecordPromotionProposal(
   const target = parseRecordPromotionTarget(change.target, proposalId);
   const draft = asPlainRecord(change.draft);
 
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) {
+  const replayAccepted = async (existingRate: {
+    id: string;
+    payload: unknown;
+  }): Promise<RecordPromotionAcceptResult> => {
     await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
     return {
       kind: 'record_promotion',
@@ -323,7 +335,11 @@ export async function acceptRecordPromotionProposal(
       ),
       idempotent: true,
     };
-  }
+  };
+
+  // Cheap short-circuit; the transaction re-checks under the decision lock.
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) return replayAccepted(existingRate);
 
   const record = (
     await db
@@ -353,7 +369,11 @@ export async function acceptRecordPromotionProposal(
     },
   };
 
-  await db.transaction(async (tx) => {
+  const concurrentAccept = await db.transaction(async (tx) => {
+    // Decision lock first, then the placement-supply scopes (the question_draft accept order).
+    await acquireProposalDecisionLock(tx, proposalId);
+    const decided = await existingAcceptRate(tx, proposalId);
+    if (decided) return decided;
     if (target === 'question') {
       await lockPlacementSupplyScopes(tx, knowledgeIds);
       await tx.insert(question).values(
@@ -476,7 +496,9 @@ export async function acceptRecordPromotionProposal(
       caused_by_event_id: proposalId,
       created_at: now,
     });
+    return null;
   });
+  if (concurrentAccept) return replayAccepted(concurrentAccept);
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
   return {

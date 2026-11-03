@@ -1,0 +1,668 @@
+/* Practice page (/practice; YUK-1473): M3E presentation of the paper shelf (练习卷), the paper
+   retro (复盘), the page's failure line and its toasts. The list header, queue and the
+   single-question studio live in src/ui-next/practice-studio/; the paper-answering view is in
+   practice-paper-m3e.css. The shelf and the retro sit in a .un-m3e-bridge, so ui-next primitives
+   read the Google M3 roles of the page root. Design record:
+   docs/design/2026-11-03-practice-face-m3e.md (T1 semantic tokens, T3 no shadows on cards,
+   M1 motion only on change, A2 hit areas). */
+
+[data-ui-next] .pface-root {
+  /* ═══ Shared: quiet state panel, failure strip ═══ */
+  & .pf-m3-state {
+    display: grid;
+    gap: var(--un-sp-3);
+    justify-items: start;
+    margin: 0;
+    padding: 24px;
+    border-radius: 20px;
+    background: var(--un-md-sys-color-surface-container-low);
+    color: var(--un-md-sys-color-on-surface-variant);
+    overflow-wrap: anywhere;
+  }
+
+  & .pf-m3-state h2 {
+    color: var(--un-md-sys-color-on-surface);
+    font: 600 20px / 1.4 var(--un-font-sans);
+  }
+
+  /* ═══ Distribution bar (shelf cards and retro hero) ═══
+     Right / partial / wrong as three tones of the judgment palette; the legend says the same in
+     words, so colour is never the only signal. Wrong is caution, never error (R4). */
+  & .pf-dist-bar {
+    display: flex;
+    gap: 2px;
+    height: 8px;
+    border-radius: var(--un-md-sys-shape-full);
+    overflow: hidden;
+    background: var(--un-md-sys-color-surface-container-highest);
+  }
+
+  & .pf-dist-bar > span {
+    display: block;
+    height: 100%;
+  }
+
+  & .pf-dist-bar > [data-seg="good"] {
+    background: var(--un-positive);
+  }
+
+  & .pf-dist-bar > [data-seg="hard"] {
+    background: color-mix(in srgb, var(--un-caution) 50%, transparent);
+  }
+
+  & .pf-dist-bar > [data-seg="again"] {
+    background: var(--un-caution);
+  }
+
+  & .pf-dist-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px var(--un-sp-2);
+    margin: 0;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .pf-dist-legend [data-seg="good"] {
+    color: var(--un-positive);
+  }
+
+  & .pf-dist-legend [data-seg="again"] {
+    color: var(--un-caution);
+  }
+
+  /* ═══ Shelf (练习卷) ═══ */
+  & .pf-shelf {
+    display: grid;
+    gap: 32px;
+    min-width: 0;
+  }
+
+  & .pf-shelf-filter {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 var(--un-sp-2);
+  }
+
+  & .pf-shelf-filter-l {
+    margin-right: var(--un-sp-1);
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-label-large-size);
+    font-weight: var(--un-md-sys-typescale-label-large-weight);
+  }
+
+  & .pf-shelf-n {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.72;
+  }
+
+  & .pf-shelf-h2 {
+    margin: 0 0 16px;
+    color: var(--un-md-sys-color-on-surface);
+    font: 600 20px / 1.4 var(--un-font-sans);
+  }
+
+  & .pf-shelf-h2-n {
+    margin-left: var(--un-sp-1);
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .pf-shelf-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr));
+    gap: 16px;
+  }
+
+  /* One paper: a white panel with a hairline, no shadow (T3). */
+  & .pf-paper {
+    display: flex;
+    flex-direction: column;
+    gap: var(--un-sp-3);
+    min-width: 0;
+    padding: 20px 24px;
+    border-radius: var(--un-md-sys-shape-large);
+    background: var(--un-md-sys-color-surface-container-lowest);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-md-sys-color-outline-variant);
+    overflow-wrap: anywhere;
+  }
+
+  & .pf-paper-top {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--un-sp-3);
+  }
+
+  & .pf-paper-src {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--un-md-sys-shape-full);
+    background: var(--un-md-sys-color-surface-container-high);
+    color: var(--un-md-sys-color-on-surface-variant);
+  }
+
+  & .pf-paper-src[data-tone="accent"] {
+    background: var(--un-md-sys-color-secondary-container);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .pf-paper-src[data-tone="info"] {
+    color: var(--un-md-sys-color-primary);
+  }
+
+  & .pf-paper-head {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  & .pf-paper-title {
+    color: var(--un-md-sys-color-on-surface);
+    font: 600 18px / 1.4 var(--un-font-sans);
+  }
+
+  & .pf-paper[data-state="gen"] .pf-paper-title {
+    color: var(--un-md-sys-color-on-surface-variant);
+  }
+
+  & .pf-paper-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 6px;
+    margin: 4px 0 0;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    line-height: var(--un-md-sys-typescale-body-medium-line-height);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .pf-paper-count {
+    flex: none;
+    margin: 0;
+    text-align: right;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 12px;
+  }
+
+  & .pf-paper-count b {
+    display: block;
+    color: var(--un-md-sys-color-on-surface);
+    font: 600 24px / 1.2 var(--un-font-sans);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .pf-paper-know {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  & .pf-paper-know .un-chip {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  & .pf-paper-prog {
+    display: grid;
+    gap: 6px;
+  }
+
+  & .pf-paper-prog-label {
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .pf-bar {
+    height: 6px;
+    border-radius: var(--un-md-sys-shape-full);
+    overflow: hidden;
+    background: var(--un-md-sys-color-surface-container-highest);
+  }
+
+  & .pf-bar > span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--un-md-sys-color-primary);
+  }
+
+  & .pf-dist-row {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-4);
+  }
+
+  & .pf-dist {
+    display: grid;
+    flex: 1 1 auto;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  & .pf-dist-score {
+    flex: none;
+    margin: 0;
+    text-align: right;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 12px;
+  }
+
+  & .pf-dist-score b {
+    display: block;
+    color: var(--un-md-sys-color-on-surface);
+    font: 600 24px / 1.2 var(--un-font-sans);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .pf-paper-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-2) var(--un-sp-4);
+    margin-top: auto;
+    padding-top: var(--un-sp-3);
+    border-top: var(--un-hairline) solid var(--un-md-sys-color-outline-variant);
+  }
+
+  & .pf-paper-when {
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* On touch, .un-hit grows each small control to a 44px tap area. When these rows wrap, keep the
+     rows far enough apart that one control's tap area never covers the one above (A2). */
+  @media (pointer: coarse) {
+    & .pf-shelf-filter,
+    & .pf-paper-foot,
+    & .pf-retro-top,
+    & .pf-m3-error .un-retry {
+      row-gap: var(--un-sp-4);
+    }
+  }
+
+  /* ═══ Retro (复盘) ═══ */
+  & .pf-retro {
+    display: grid;
+    /* One shrinkable track: an implicit auto track sizes to the widest nowrap child and
+       pushes the retro past the viewport on phones. */
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    min-width: 0;
+  }
+
+  & .pf-retro-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2) var(--un-sp-4);
+  }
+
+  & .pf-retro-title {
+    flex: 1 1 16em;
+    min-width: 0;
+    color: var(--un-md-sys-color-on-surface);
+    font-size: var(--un-md-sys-typescale-headline-small-size);
+    font-weight: var(--un-md-sys-typescale-headline-small-weight);
+    line-height: var(--un-md-sys-typescale-headline-small-line-height);
+    letter-spacing: var(--un-md-sys-typescale-headline-small-tracking);
+    overflow-wrap: anywhere;
+  }
+
+  & .pf-retro-hero {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 32px;
+    padding: 24px;
+    border-radius: 24px;
+    background: var(--un-md-sys-color-surface-container-low);
+  }
+
+  & .pf-retro-score {
+    margin: 0;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    white-space: nowrap;
+  }
+
+  & .pf-retro-score > b {
+    display: block;
+    color: var(--un-md-sys-color-on-surface);
+    font: 600 56px / 1 var(--un-font-sans);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .pf-retro-score > b > span {
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 28px;
+    font-weight: 400;
+  }
+
+  & .pf-retro-score > span {
+    display: block;
+    margin-top: var(--un-sp-2);
+  }
+
+  & .pf-retro-dist {
+    display: grid;
+    gap: var(--un-sp-2);
+    min-width: 0;
+  }
+
+  & .pf-dist-bar-lg {
+    height: 10px;
+  }
+
+  /* The paper's summary: one tonal panel (secondary container), not a card with a shadow. */
+  & .pf-retro-summary {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--un-sp-4);
+    padding: 20px 24px;
+    border-radius: 24px;
+    background: var(--un-md-sys-color-secondary-container);
+    color: var(--un-md-sys-color-on-secondary-container);
+  }
+
+  & .pf-retro-ava {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--un-md-sys-shape-full);
+    background: var(--un-md-sys-color-surface-container-lowest);
+    color: var(--un-md-sys-color-primary);
+  }
+
+  & .pf-retro-summary-text {
+    margin: 0;
+    font-size: var(--un-md-sys-typescale-body-large-size);
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+  }
+
+  & .pf-retro-summary-meta {
+    margin: var(--un-sp-2) 0 0;
+    color: color-mix(in srgb, var(--un-md-sys-color-on-secondary-container) 72%, transparent);
+    font-size: 12px;
+  }
+
+  /* Per question: a white list with hairline dividers; each head opens its row (A1: the body is
+     only rendered while open, so nothing hidden is reachable). */
+  & .pf-retro-list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    padding: 4px;
+    border-radius: 24px;
+    background: var(--un-md-sys-color-surface-container-lowest);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-md-sys-color-outline-variant);
+  }
+
+  & .pf-rq + .pf-rq {
+    border-top: var(--un-hairline) solid var(--un-md-sys-color-outline-variant);
+  }
+
+  & .pf-rq-head {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-3);
+    width: 100%;
+    min-height: 56px;
+    padding: 12px 20px;
+    border-radius: 20px;
+    text-align: left;
+    color: var(--un-md-sys-color-on-surface);
+    transition: background-color var(--un-t-feedback) ease-out;
+  }
+
+  & .pf-rq-head:hover {
+    background: color-mix(
+      in srgb,
+      var(--un-md-sys-color-on-surface) var(--un-md-sys-state-hover),
+      transparent
+    );
+  }
+
+  & .pf-rq-head:focus-visible {
+    outline: var(--un-md-comp-focus-width) solid var(--un-md-sys-color-secondary);
+    outline-offset: calc(-1 * var(--un-md-comp-focus-width));
+  }
+
+  & .pf-rq-n {
+    flex: none;
+    width: 24px;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .pf-rq-stem {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  & .pf-rq-head > :is(.un-chip, .pf-rq-chev) {
+    flex: none;
+  }
+
+  & .pf-rq-chev {
+    color: var(--un-md-sys-color-on-surface-variant);
+  }
+
+  & .pf-rq-head[aria-expanded="false"] .pf-rq-chev {
+    transform: rotate(-90deg);
+  }
+
+  & .pf-rq-body {
+    display: grid;
+    gap: var(--un-sp-3);
+    padding: 0 20px 20px calc(20px + 24px + var(--un-sp-3));
+  }
+
+  & .pf-rq-row {
+    display: grid;
+    grid-template-columns: 4.5em minmax(0, 1fr);
+    align-items: start;
+    gap: 4px var(--un-sp-3);
+    color: var(--un-md-sys-color-on-surface);
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+  }
+
+  & .pf-rq-label {
+    padding-top: 2px;
+    color: var(--un-md-sys-color-on-surface-variant);
+    font-size: 13px;
+    font-weight: var(--un-md-sys-typescale-label-large-weight);
+  }
+
+  & .pf-rq-none,
+  & .pf-rq-note {
+    color: var(--un-md-sys-color-on-surface-variant);
+  }
+
+  & .pf-rq-note {
+    margin: 0;
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+  }
+
+  & .pf-retro-foot {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-3);
+  }
+
+  /* A failed action or read: error container, the plain message and its retry (M14). */
+  & .pf-m3-error .un-retry {
+    flex-wrap: wrap;
+    gap: var(--un-sp-2) var(--un-sp-4);
+    margin: 0;
+    padding: 12px 12px 12px 20px;
+    border-radius: 16px;
+    background: var(--un-md-sys-color-error-container);
+    color: var(--un-md-sys-color-on-error-container);
+    font-size: var(--un-md-sys-typescale-body-medium-size);
+    line-height: var(--un-md-sys-typescale-body-medium-line-height);
+    overflow-wrap: anywhere;
+  }
+
+  & .pf-m3-error .un-retry > span {
+    flex: 1 1 16em;
+    min-width: 0;
+  }
+
+  & .pf-m3-error .un-retry-btn {
+    min-height: 40px;
+    padding: 0 16px;
+    border-radius: var(--un-md-sys-shape-full);
+    color: var(--un-md-sys-color-on-error-container);
+    font-size: var(--un-md-sys-typescale-label-large-size);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    transition: background-color var(--un-t-feedback) ease-out;
+  }
+
+  & .pf-m3-error .un-retry-btn:hover {
+    background: color-mix(in srgb, var(--un-md-sys-color-on-error-container) 8%, transparent);
+  }
+
+  & .pf-failure > .pf-m3-error {
+    margin-bottom: var(--un-sp-5);
+  }
+
+  /* The question page's root has no padding of its own (its .un-st-page carries it), so the strip
+     takes the same column and inset as that page (studio.css) instead of touching the edges. */
+  & .pf-failure > .pf-m3-error:where(.pface-next *) {
+    max-width: 1040px;
+    margin: 24px auto 0;
+    padding-inline: 32px;
+  }
+
+  @media (max-width: 1199px) {
+    & .pf-failure > .pf-m3-error:where(.pface-next *) {
+      margin-top: 20px;
+      padding-inline: 24px;
+    }
+  }
+
+  @media (max-width: 599px) {
+    & .pf-failure > .pf-m3-error:where(.pface-next *) {
+      margin-top: 18px;
+      padding-inline: 16px;
+    }
+  }
+
+  @media (max-width: 640px) {
+    & .pf-paper {
+      padding: 16px;
+    }
+
+    & .pf-retro-hero {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 20px;
+      padding: 20px;
+    }
+
+    & .pf-retro-score > b {
+      font-size: 44px;
+    }
+
+    & .pf-retro-summary {
+      padding: 16px;
+    }
+
+    & .pf-rq-head {
+      padding-inline: 12px;
+    }
+
+    & .pf-rq-body {
+      padding: 0 12px 16px;
+    }
+
+    & .pf-rq-row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next] .pface-root .pf-rq-chev {
+    transition: transform var(--un-t-small) var(--un-ease-glide);
+  }
+}
+
+/* ═══ Toasts (portal on <body>, inside its own M3E scope) ═══
+   A floating layer, so it is the one place with elevation. The project has no inverse-surface
+   role yet, so it reads surface-container-highest with level-1 elevation. The bottom offset that
+   clears the mobile bar is set in src/ui-next/practice-studio/renderers.css. */
+[data-ui-next].un-st-portal .pf-toasts {
+  position: fixed;
+  right: 24px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--un-sp-2);
+  max-width: calc(100vw - 32px);
+}
+
+[data-ui-next].un-st-portal .pf-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--un-sp-3);
+  box-sizing: border-box;
+  max-width: 360px;
+  padding: 14px 16px;
+  border-radius: var(--un-md-sys-shape-extra-small);
+  background: var(--un-md-sys-color-surface-container-highest);
+  box-shadow: var(--un-md-sys-elevation-1);
+  color: var(--un-md-sys-color-on-surface);
+  font-size: var(--un-md-sys-typescale-body-medium-size);
+  line-height: var(--un-md-sys-typescale-body-medium-line-height);
+  overflow-wrap: anywhere;
+}
+
+[data-ui-next].un-st-portal .pf-toast-ico {
+  flex: none;
+  margin-top: 2px;
+  color: var(--un-md-sys-color-primary);
+}
+
+[data-ui-next].un-st-portal .pf-toast[data-tone="info"] .pf-toast-ico {
+  color: var(--un-md-sys-color-secondary);
+}
+
+/* A toast arriving is a change: it rises in once. No motion under reduced motion (M1, M3). */
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next].un-st-portal .pf-toast {
+    animation: pf-m3-toast-in var(--un-t-small) var(--un-ease-glide) both;
+  }
+
+  @keyframes pf-m3-toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}

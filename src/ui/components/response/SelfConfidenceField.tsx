@@ -5,8 +5,8 @@
 //   **observe-only**：只作分析采集，绝不进 θ̂ / FSRS / 判分。
 //   optional / 零强制：未自评 = null（键缺席），可随时「不评」清空。
 //
-// 视觉复用**已冻结**的 .rs-confidence* 设计（response.css，设计师稿）：本组件不改
-// 类名、不改结构、不加新颜色系统，只把同一段 DOM 抽成受控组件并补键盘可达性
+// 视觉在 response.css 的 .rs-confidence*（M3E 角色）；结构与类名沿用原设计稿，本组件只把
+// 同一段 DOM 抽成受控组件并补键盘可达性
 // （组内方向键移动焦点，Enter/Space 选择；镜像 ChoiceSetResponse 的键盘先例）。
 //
 // 与 ChoiceSetResponse 一致：裸 <button> 承载卡片式布局，ARIA 用 aria-pressed
@@ -73,7 +73,7 @@ export function SelfConfidenceField({
             <button
               type="button"
               key={score}
-              className={`rs-confidence-btn${selected === score ? ' is-selected' : ''}`}
+              className={`rs-confidence-btn un-hit${selected === score ? ' is-selected' : ''}`}
               aria-label={`把握 ${score} 分（共 5 分）`}
               aria-pressed={selected === score}
               disabled={disabled}
@@ -84,7 +84,7 @@ export function SelfConfidenceField({
           ))}
           <button
             type="button"
-            className="rs-confidence-skip"
+            className="rs-confidence-skip un-hit"
             aria-pressed={selected === null}
             disabled={disabled}
             onClick={() => onChange(null)}

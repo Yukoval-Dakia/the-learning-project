@@ -16,25 +16,43 @@ import { useWorkbenchClient } from './workbench-client';
 // DOM (including attributes), evidence is prose-only provenance (never "N 条证据",
 // never ×N), and all *_md render as PLAIN TEXT (no markdown renderer), mirroring
 // PrepDeskCard / ProbeAnswerCard.
+//
+// YUK-1473 — M3E presentation (docs/design/2026-11-03-coach-m3e.md): ui-next Button /
+// SkeletonLines, lucide icons, coach-shared-m3e.css. Every state reconcile, ref, focus request,
+// brief_seen report, decide / acknowledge call and invalidation is unchanged.
 
-import { type QueryClient, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  Check,
+  CircleAlert,
+  CircleCheck,
+  GraduationCap,
+  Link2,
+  type LucideIcon,
+  RotateCcw,
+  Sparkles,
+} from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
 import { learnerLocalDay } from '@/core/learner-day';
 import { CONJECTURE_CLAIM_MAX_CHARS } from '@/core/schema/proposal';
 import { scopedPracticeHref } from '@/ui/lib/routes';
-import { Btn } from '@/ui/primitives/Btn';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
-import { SkLines } from '@/ui/primitives/SkLines';
-import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
+import {
+  invalidateAfterProposalDecision,
+  invalidateAfterTeachingBriefAck,
+  queryKeys,
+} from '@/ui/lib/write-invalidation';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button } from '@/ui-next/public';
+import { AreaGate, type AreaStatus } from './AreaGate';
 import { dedupeEvidence, evidenceReadable } from './inbox-api';
 import { ProbeAnswerCard } from './ProbeAnswers';
 import type { PrepDeskProbeWire } from './probe-answer-api';
 import type { TeachingBrief } from './teaching-brief-api';
 import { reportBriefInteraction } from './teaching-brief-interaction-api';
+import './coach-shared-m3e.css';
 
 // 链式三元被 OCR flag（项目规则禁链式三元）——用 if/else 函数算状态。
-function statefulStatus(isLoading: boolean, isError: boolean): StatefulStatus {
+function statefulStatus(isLoading: boolean, isError: boolean): AreaStatus {
   if (isLoading) return 'loading';
   if (isError) return 'error';
   return 'ok';
@@ -50,25 +68,10 @@ const STATE_RANK: Record<TeachingBrief['state'], number> = {
   outcome_retired: 2,
 };
 
-function outcomeIcon(status: TeachingBrief['current_outcome']['status']): LoomIconName {
-  if (status === 'confirmed') return 'check';
-  if (status === 'retired') return 'checkCircle';
-  return 'sparkle'; // awaiting_decision / awaiting_answer / evidence_for
-}
-
-// The three read surfaces whose counts move when a brief advances or retires: the brief
-// itself (re-projects to the next state / candidate / null), the overnight digest ribbon,
-// and the 待你试做 probe queue. decide() and acknowledge() share this so the invalidation
-// set stays in one place (mirrors PrepDeskConjectures' set).
-async function invalidateBriefSurfaces(qc: QueryClient): Promise<void> {
-  // A precise typed return (not the former `Promise<unknown>`); `await` collapses the
-  // three void invalidations to void. (`Promise<void[]>` would trip biome's
-  // noConfusingVoidType, whose `undefined[]` autofix doesn't typecheck.)
-  await Promise.all([
-    qc.invalidateQueries({ queryKey: ['teaching-brief'] }),
-    qc.invalidateQueries({ queryKey: ['overnight-digest'] }),
-    qc.invalidateQueries({ queryKey: ['prep-desk-probes'] }),
-  ]);
+function outcomeIcon(status: TeachingBrief['current_outcome']['status']): LucideIcon {
+  if (status === 'confirmed') return Check;
+  if (status === 'retired') return CircleCheck;
+  return Sparkles; // awaiting_decision / awaiting_answer / evidence_for
 }
 
 // YUK-710 — the client-side brief_seen suppression key. It MUST be `brief_id × learner-local day`
@@ -88,7 +91,7 @@ export function nextBriefSeenState(
 export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void }) {
   const qc = useQueryClient();
   const client = useWorkbenchClient();
-  const q = useQuery({ queryKey: ['teaching-brief'], queryFn: client.getTeachingBrief });
+  const q = useQuery({ queryKey: queryKeys.teachingBrief, queryFn: client.getTeachingBrief });
   const brief = q.data?.brief ?? null;
   const status = statefulStatus(q.isLoading, q.isError);
 
@@ -278,8 +281,9 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
       } else {
         await client.decideProposal(brief.prepared_action.proposal_id, decision);
       }
-      // accept → re-project to probe_ready; dismiss → next candidate or null.
-      await invalidateBriefSurfaces(qc);
+      // accept → re-project to probe_ready; dismiss → next candidate or null. Brief findings
+      // are conjecture proposals (shell/server/teaching-brief.ts).
+      await invalidateAfterProposalDecision(qc, { kind: 'conjecture' });
     } catch (error) {
       // Contract §7 — keep the current brief, do NOT optimistically advance; allow retry.
       // Redacted diagnostic only (decision + error, never brief/claim/answer payload),
@@ -317,8 +321,8 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     try {
       await client.ackTeachingBriefOutcome(brief.current_outcome.probe_result_event_id);
       // The acked result loses eligibility server-side; re-project to the next candidate
-      // or the quiet null (same surfaces as decide).
-      await invalidateBriefSurfaces(qc);
+      // or the quiet null.
+      await invalidateAfterTeachingBriefAck(qc);
     } catch (error) {
       // Contract §7 — keep the current outcome brief, do NOT optimistically dismiss; allow
       // retry. Redacted diagnostic only (never brief/claim/answer payload).
@@ -337,49 +341,45 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     brief !== null && brief.basis.summary_md.trim() === brief.finding.claim_md.trim();
 
   return (
-    <div className="tb-band-wrap" ref={bandWrapRef}>
+    <div className="bf-wrap un-m3e-bridge" ref={bandWrapRef}>
       {/* aria-live region persists across state changes; announced once per forward move. */}
-      <div className="tb-live visually-hidden" aria-live="polite">
+      <div className="un-sr-only" aria-live="polite">
         {liveMsg}
       </div>
-      <Stateful
+      <AreaGate
         status={status}
         onRetry={() => void q.refetch()}
         errorText="教研简报暂不可用。"
-        skeleton={
-          <div aria-busy="true" aria-label="正在载入教研简报">
-            <SkLines rows={4} />
-          </div>
-        }
+        loading={<SkeletonLines rows={4} label="正在载入教研简报" />}
       >
         {brief === null ? (
           // Quiet null (contract §6.5): a calm night, NOT "全部完成" / streak / achievement.
-          <div className="tb-quiet quiet-empty">教研团暂无需要交付的新判断。</div>
+          <p className="cs-quiet">教研团暂无需要交付的新判断。</p>
         ) : (
-          <LoomCard pad className="prep-desk-card">
-            <div className="card-head">
-              <span className="card-icon accent">
-                <LoomIcon name="teach" size={18} />
+          <section className="bf-card" aria-labelledby="tb-title">
+            <div className="bf-head">
+              <span className="bf-head-ic" aria-hidden="true">
+                <GraduationCap size={20} />
               </span>
-              <h2 id="tb-title" className="card-title">
+              <h2 id="tb-title" className="bf-title">
                 为你而备
               </h2>
             </div>
 
             {/* 发现 — a falsifiable hypothesis, never "你的弱点就是…" (contract §2.2). */}
-            <section className="tb-block" aria-labelledby="tb-h-finding">
-              <h3 id="tb-h-finding" className="tb-block-title">
+            <section className="bf-block" aria-labelledby="tb-h-finding">
+              <h3 id="tb-h-finding" className="bf-block-title">
                 教研团正在跟进的判断
               </h3>
-              <p className="tb-claim serif">{brief.finding.claim_md}</p>
+              <p className="bf-claim">{brief.finding.claim_md}</p>
               {brief.finding.tested_claim_md && (
-                <p className="tb-basis">
+                <p className="bf-basis">
                   这道探针检验的是你改写前的判断：{brief.finding.tested_claim_md}
                 </p>
               )}
               {brief.prepared_action.kind === 'review_finding' &&
                 (editingClaim ? (
-                  <div className="tb-claim-edit">
+                  <div className="bf-edit">
                     <label htmlFor="tb-claim-edit">改写后的判断</label>
                     <textarea
                       id="tb-claim-edit"
@@ -395,8 +395,8 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                         requestAnimationFrame(() => editClaimTriggerRef.current?.focus());
                       }}
                     />
-                    <div className="tb-actions">
-                      <Btn
+                    <div className="cs-acts">
+                      <Button
                         size="sm"
                         variant="primary"
                         disabled={
@@ -407,8 +407,8 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                         onClick={() => void decide('accept', claimDraft.trim())}
                       >
                         保存并验证
-                      </Btn>
-                      <Btn
+                      </Button>
+                      <Button
                         size="sm"
                         variant="ghost"
                         disabled={deciding}
@@ -419,16 +419,16 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                         }}
                       >
                         取消
-                      </Btn>
+                      </Button>
                       {failed && (
-                        <span className="tb-error" role="alert">
+                        <span className="cs-error" role="alert">
                           操作失败，请重试
                         </span>
                       )}
                     </div>
                   </div>
                 ) : (
-                  <Btn
+                  <Button
                     ref={editClaimTriggerRef}
                     size="sm"
                     variant="ghost"
@@ -443,27 +443,27 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                     }}
                   >
                     改写判断
-                  </Btn>
+                  </Button>
                 ))}
             </section>
 
             {/* 依据 — summary + prose-only provenance chips (one per ref, no ×N, no ids). */}
-            <section className="tb-block" aria-labelledby="tb-h-basis">
-              <h3 id="tb-h-basis" className="tb-block-title">
+            <section className="bf-block" aria-labelledby="tb-h-basis">
+              <h3 id="tb-h-basis" className="bf-block-title">
                 为什么这么判断
               </h3>
-              <p className="tb-basis">
+              <p className="bf-basis">
                 {basisSummaryIsClaim ? '相关学习依据如下。' : brief.basis.summary_md}
               </p>
-              <div className="tb-evidence">
+              <div className="cs-evidence">
                 {dedupeEvidence(brief.basis.evidence_trace).map(({ ref }, i) => {
                   // Reuse the inbox readable label; IGNORE route (prose-only, never <a>).
                   // key is the index — no raw id ever reaches the DOM (contract §8.2).
                   const readable = evidenceReadable({ kind: ref.kind, id: ref.id });
                   return (
                     // biome-ignore lint/suspicious/noArrayIndexKey: index key is deliberate — raw ids must never touch the DOM.
-                    <span key={i} className="pd-ev-chip">
-                      <LoomIcon name="link" size={11} /> {readable.text}
+                    <span key={i} className="cs-ev">
+                      <Link2 size={12} aria-hidden="true" /> {readable.text}
                     </span>
                   );
                 })}
@@ -471,12 +471,12 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
             </section>
 
             {/* 已经为你备好 — branch on prepared_action.kind (§5). */}
-            <section className="tb-block" aria-labelledby="tb-h-prepared">
+            <section className="bf-block" aria-labelledby="tb-h-prepared">
               <h3
                 id="tb-h-prepared"
                 ref={preparedHeadingRef}
                 tabIndex={-1}
-                className="tb-block-title"
+                className="bf-block-title"
               >
                 已经为你备好
               </h3>
@@ -515,12 +515,12 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
             </section>
 
             {/* 当前结果 — reconciliation conclusion + status icon (never colour alone). */}
-            <section className="tb-block" aria-labelledby="tb-h-outcome">
+            <section className="bf-block" aria-labelledby="tb-h-outcome">
               <h3
                 id="tb-h-outcome"
                 ref={outcomeHeadingRef}
                 tabIndex={-1}
-                className="tb-block-title"
+                className="bf-block-title"
               >
                 当前结果
               </h3>
@@ -529,20 +529,37 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
                 // server brief is unchanged on fail-closed 422, so surface the failure here
                 // (the answer card's inline alert already announces it; this is the visual
                 // state change the acceptance requires).
-                <div className="tb-outcome tb-outcome-failed">
-                  <LoomIcon name="alert" size={14} />
+                <div className="bf-outcome" data-status="failed">
+                  <CircleAlert size={16} aria-hidden="true" />
                   <span>判题失败，请稍后重试</span>
                 </div>
               ) : (
-                <div className={`tb-outcome tb-outcome-${brief.current_outcome.status}`}>
-                  <LoomIcon name={outcomeIcon(brief.current_outcome.status)} size={14} />
-                  <span>{brief.current_outcome.summary_md}</span>
-                </div>
+                <OutcomeLine
+                  status={brief.current_outcome.status}
+                  summary={brief.current_outcome.summary_md}
+                />
               )}
             </section>
-          </LoomCard>
+          </section>
         )}
-      </Stateful>
+      </AreaGate>
+    </div>
+  );
+}
+
+// 当前结果 line: the status icon + the summary (never colour alone); outcomeIcon picks the glyph.
+function OutcomeLine({
+  status,
+  summary,
+}: {
+  status: TeachingBrief['current_outcome']['status'];
+  summary: string;
+}) {
+  const Icon = outcomeIcon(status);
+  return (
+    <div className="bf-outcome" data-status={status}>
+      <Icon size={16} aria-hidden="true" />
+      <span>{summary}</span>
     </div>
   );
 }
@@ -561,11 +578,11 @@ function AckDismiss({
 }) {
   return (
     <>
-      <Btn size="sm" variant="ghost" disabled={acking} onClick={onAcknowledge}>
+      <Button size="sm" variant="ghost" disabled={acking} onClick={onAcknowledge}>
         知道了
-      </Btn>
+      </Button>
       {ackFailed && (
-        <span className="tb-error" role="alert">
+        <span className="cs-error" role="alert">
           操作失败，请重试
         </span>
       )}
@@ -608,22 +625,22 @@ function PreparedBlock({
     return (
       <>
         {/* the UNRUN probe the team is about to ask — preview text, not an answer box. */}
-        <div className="pd-probe">
-          <div className="pd-probe-lbl">
-            <LoomIcon name="sparkle" size={13} /> 团队正要问你的一道题
-          </div>
-          <div className="pd-probe-md">{brief.prepared_action.probe_preview_md}</div>
+        <div className="cs-probe">
+          <p className="cs-kicker">
+            <Sparkles size={14} aria-hidden="true" /> 团队正要问你的一道题
+          </p>
+          <div className="cs-probe-md">{brief.prepared_action.probe_preview_md}</div>
         </div>
         {/* accept = acknowledge the VERIFICATION direction, never "确认弱点" / "加进复习". */}
-        <div className="tb-actions">
-          <Btn size="sm" variant="primary" disabled={deciding} onClick={onAccept}>
+        <div className="cs-acts">
+          <Button size="sm" variant="primary" disabled={deciding} onClick={onAccept}>
             就按这个方向验证
-          </Btn>
-          <Btn size="sm" variant="ghost" disabled={deciding} onClick={onReject}>
+          </Button>
+          <Button size="sm" variant="ghost" disabled={deciding} onClick={onReject}>
             不太像
-          </Btn>
+          </Button>
           {failed && (
-            <span className="tb-error" role="alert">
+            <span className="cs-error" role="alert">
               操作失败，请重试
             </span>
           )}
@@ -641,17 +658,17 @@ function PreparedBlock({
     return (
       <>
         {!revealed && (
-          <div className="pd-probe">
-            <div className="pd-probe-lbl">
-              <LoomIcon name="sparkle" size={13} /> 团队正要问你的一道题
-            </div>
-            <div className="pd-probe-md">{brief.prepared_action.prompt_md}</div>
+          <div className="cs-probe">
+            <p className="cs-kicker">
+              <Sparkles size={14} aria-hidden="true" /> 团队正要问你的一道题
+            </p>
+            <div className="cs-probe-md">{brief.prepared_action.prompt_md}</div>
           </div>
         )}
-        <div className="tb-actions">
+        <div className="cs-acts">
           {/* reveal the single shared answer card in place (§5.2 · [裁决 3]) — not a
               rebuilt answer flow, not the full multi-probe queue. */}
-          <Btn
+          <Button
             size="sm"
             variant="primary"
             aria-expanded={revealed}
@@ -659,10 +676,10 @@ function PreparedBlock({
             onClick={onReveal}
           >
             现在就试做这道题
-          </Btn>
+          </Button>
         </div>
         {revealed && (
-          <div id="tb-probe-reveal" className="prep-desk-expand">
+          <div id="tb-probe-reveal" className="bf-reveal">
             <ProbeAnswerCard probe={probeWire} onFailed={onProbeFailed} />
           </div>
         )}
@@ -681,12 +698,11 @@ function PreparedBlock({
     const { knowledge_id, probe_result_event_id } = brief.prepared_action;
     return (
       <>
-        <p className="tb-prepared-done">这道判别题已作答，判断得到支持。</p>
-        <div className="tb-actions">
-          <Btn
+        <p className="bf-done">这道判别题已作答，判断得到支持。</p>
+        <div className="cs-acts">
+          <Button
             size="sm"
             variant="primary"
-            icon="review"
             onClick={() => {
               // YUK-710 — clicking proves today's open; record the seen first (across-midnight
               // guard: a tab visible over the day boundary would otherwise write this new-day action
@@ -704,8 +720,9 @@ function PreparedBlock({
               navigate(scopedPracticeHref(knowledge_id));
             }}
           >
+            <RotateCcw size={16} aria-hidden="true" />
             针对这个点练一组
-          </Btn>
+          </Button>
           <AckDismiss acking={acking} ackFailed={ackFailed} onAcknowledge={onAcknowledge} />
         </div>
       </>
@@ -719,16 +736,17 @@ function PreparedBlock({
     const preliminary = brief.current_outcome.status === 'evidence_for';
     return (
       <>
-        <p className="tb-prepared-done">
+        <p className="bf-done">
           {preliminary
             ? '这道判别题已作答；仍需独立复验，不会据此直接安排专项练习。'
             : '这道判别题已作答，这条判断已排除。'}
         </p>
-        <div className="tb-actions">
+        <div className="cs-acts">
           {!preliminary && (
-            <Btn size="sm" variant="primary" icon="review" onClick={() => navigate('/practice')}>
+            <Button size="sm" variant="primary" onClick={() => navigate('/practice')}>
+              <RotateCcw size={16} aria-hidden="true" />
               回到今日练习
-            </Btn>
+            </Button>
           )}
           <AckDismiss acking={acking} ackFailed={ackFailed} onAcknowledge={onAcknowledge} />
         </div>

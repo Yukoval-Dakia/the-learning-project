@@ -8,9 +8,7 @@ const ALLOWLIST_PATH = 'scripts/audit-learner-copy-allowlist.json';
 // Only surfaces learners see directly. Admin/observability keep diagnostic terms; API clients,
 // comments, and identifiers are out of scope. Add new learner surfaces explicitly here.
 export const LEARNER_COPY_FILES = [
-  'src/ui/shell/AppTopbar.tsx',
   'src/capabilities/onboarding/ui/usage-receipt.tsx',
-  'src/ui/primitives/CollapsibleList.tsx',
   'src/capabilities/ingestion/ui/record/AgentLines.tsx',
   'src/capabilities/ingestion/ui/record/AskReply.tsx',
   'src/capabilities/ingestion/ui/record/BlockLine.tsx',
@@ -91,8 +89,7 @@ export const LEARNER_COPY_FILES = [
   'src/capabilities/onboarding/ui/recompute/RecomputeComponents.tsx',
   'src/capabilities/agency/ui/page.tsx',
   'src/capabilities/agency/ui/AgentNotesBoard.tsx',
-  'src/capabilities/agency/ui/AgentNoteCard.tsx',
-  'src/capabilities/agency/ui/AgentNoteGroupCard.tsx',
+  'src/capabilities/agency/ui/AgentNoteGroupRow.tsx',
   'src/capabilities/agency/ui/meta.ts',
   'src/capabilities/observability/ui/EventDetailPage.tsx',
   'src/capabilities/knowledge/ui/KnowledgePage.tsx',

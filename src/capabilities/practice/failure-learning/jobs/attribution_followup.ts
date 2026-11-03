@@ -1,10 +1,7 @@
 import type { Job } from 'pg-boss';
-import { getPracticeBoss } from '@/capabilities/practice/server/queue-runtime';
-import {
-  type PracticeTaskRunFn,
-  makePracticeTaskRunFn,
-} from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
+import { type BoundRunTaskTextFn, makeRunTaskFn } from '@/server/ai/runner-fn';
+import { getStartedBoss } from '@/server/boss/client';
 import { createFailureLearning } from '../server/failure-learning';
 import {
   type FailureLearningBossSend,
@@ -15,7 +12,7 @@ import {
 
 export type AttributionFollowupJobData = FailureLearningJobData;
 
-export type RunTaskFn = PracticeTaskRunFn;
+export type RunTaskFn = BoundRunTaskTextFn;
 export type EnqueueVariantGenFn = (attemptEventId: string) => Promise<void>;
 
 type DepsOverride = {
@@ -24,7 +21,7 @@ type DepsOverride = {
 };
 
 async function defaultEnqueueVariantGen(attemptEventId: string): Promise<void> {
-  const boss = await getPracticeBoss();
+  const boss = await getStartedBoss();
   await enqueueVariantGen(boss.send.bind(boss) as FailureLearningBossSend, attemptEventId);
 }
 
@@ -77,7 +74,7 @@ export function buildAttributionFollowupHandler(
   db: Db,
   deps: DepsOverride = {},
 ): (jobs: Job<AttributionFollowupJobData>[]) => Promise<void> {
-  const runTaskFn = deps.runTaskFn ?? makePracticeTaskRunFn(db);
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   const enqueueVariant = deps.enqueueVariantGen ?? defaultEnqueueVariantGen;
   return async (jobs) => {
     for (const job of jobs) {

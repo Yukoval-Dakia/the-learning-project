@@ -13,12 +13,10 @@ import {
 import type { RetentionReading } from '@/core/schema/scheduling-state';
 import type { Db, Tx } from '@/db/client';
 import { event, material_fsrs_state } from '@/db/schema';
+import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
-import {
-  resolveSchedulingProjection,
-  retrievabilityForKc,
-  selectedForgettingEngine,
-} from '@/kernel/scheduling';
+import { resolveSchedulingProjection } from '@/kernel/records/scheduling-state';
+import { retrievabilityForKc, selectedForgettingEngine } from '@/kernel/scheduling';
 import { type MasteryProjection, getMasteryProjection } from './mastery-projection';
 import {
   type SchedulingReviewFact,
@@ -381,7 +379,8 @@ async function loadSchedulingReviewFacts(
         state_readable: true,
         last_review_event_id: eventId,
       });
-    } catch {
+    } catch (err) {
+      if (err instanceof HostOperationNotInstalledError) throw err;
       values.set(raw.subject_id, {
         reading: UNREADABLE_RETENTION,
         due_at: raw.due_at,

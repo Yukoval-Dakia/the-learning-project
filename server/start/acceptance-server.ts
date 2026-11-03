@@ -3,6 +3,7 @@
 // Does not load .env, start workers/listeners for events, recover jobs, or call AI.
 import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
+import { assertProposalKindsOwned } from '@/kernel/manifest';
 import { getServerEnv, requireApiInternalToken, resolveApiPort } from '@/server/config/env';
 import { buildHonoApp } from '../app';
 import { assertComposedRoutesDeclared } from '../composed-routes';
@@ -11,14 +12,20 @@ import { createFrontdoor } from '../frontdoor';
 const env = getServerEnv();
 requireApiInternalToken(env);
 const port = resolveApiPort(env.API_PORT);
-const { installPracticeHostOperations } = await import('@/capabilities/practice/public');
+const { installPracticeHostOperations, installModelAdmissionPins } = await import(
+  '@/capabilities/practice/public'
+);
 await installPracticeHostOperations();
+await installModelAdmissionPins();
+const { installSchedulingCandidateRebuild } = await import('@/server/assessment/settle');
+installSchedulingCandidateRebuild();
 const [{ buildAdminConfigRuntimeFacts }, { setAdminConfigRuntimeFacts }] = await Promise.all([
   import('@/server/config/admin-config-facts'),
   import('@/capabilities/observability/public'),
 ]);
 setAdminConfigRuntimeFacts(buildAdminConfigRuntimeFacts);
 assertComposedRoutesDeclared(capabilities);
+assertProposalKindsOwned(capabilities);
 const fetch = await createFrontdoor(buildHonoApp(capabilities));
 const server = serve({ fetch, hostname: '127.0.0.1', port });
 

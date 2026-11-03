@@ -29,6 +29,7 @@ import { executeMemoryBrief } from '@/capabilities/copilot/public';
 import { db } from '@/db/client';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { listActiveGoals } from '@/kernel/read-models/active-goal-scope';
+import { installSchedulingCandidateRebuild } from '@/server/assessment/settle';
 import { acceptAiProposal } from '@/server/proposals/actions';
 
 const NOW = new Date();
@@ -65,6 +66,7 @@ async function step<T>(name: string, fn: () => Promise<T>): Promise<T | null> {
 }
 
 async function main() {
+  installSchedulingCandidateRebuild();
   console.log(`\n#### Layer-8 flywheel demo — loom_demo, real LLM, ${NOW.toISOString()} ####`);
 
   const gen = buildBriefGenerator({ db });

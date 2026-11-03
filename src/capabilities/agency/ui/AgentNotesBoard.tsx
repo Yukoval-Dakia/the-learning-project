@@ -1,26 +1,29 @@
 // AgentNotesBoard — the compact, read-only "AI 观察" block on /today.
 //
-// Quieter than the proposal inbox by design: a SUNK dashed panel holding a
-// log-feed with NO action buttons ("AI 间的自言自语", not "等你裁决的提案").
+// Quieter than the proposal inbox by design: a SUNK panel holding a log-feed with NO
+// decision buttons ("AI 间的自言自语", not "等你裁决的提案").
 // Caps at 3 notes; "看全部" drills into the full-screen /agent-notes view.
 // Collapse + read state is purely local (useAgentReads → localStorage).
 //
-// Empty state is a single faint line — no SectionLabel, no card — so an empty
+// Empty state is a single faint line — no section heading, no card — so an empty
 // board never occupies 版面 (the common early-stage case).
+//
+// YUK-1713 — M3E presentation: the same grouped rows as /agent-notes (AgentNoteGroupRow),
+// ui-next Button / RetryLine / SkeletonLines, styles in agent-notes-m3e.css (.ag-board*).
+// Grouping, the cap, unread counting, mark-all-read and every navigation target are unchanged.
 
+import { ArrowRight, Check, ChevronDown, Ellipsis, Eye } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { formatRelTime } from '@/ui/lib/utils';
-import { Btn } from '@/ui/primitives/Btn';
-import { ErrorState } from '@/ui/primitives/ErrorState';
-import { LoomBadge } from '@/ui/primitives/LoomBadge';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { SectionLabel } from '@/ui/primitives/SectionLabel';
-import { SkLines } from '@/ui/primitives/SkLines';
-import { AgentNoteGroupCard } from './AgentNoteGroupCard';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button } from '@/ui-next/public';
+import { AgentNoteGroupRow } from './AgentNoteGroupRow';
 import { groupAgentNotes } from './derive';
 import { agentMeta, signalMeta } from './meta';
 import type { BoardAgentNote } from './types';
 import { useAgentReads } from './useAgentReads';
+import './agent-notes-m3e.css';
 
 const COMPACT_CAP = 3;
 
@@ -39,10 +42,10 @@ export function AgentNotesBoard({ notes, status, now, onRetry, onNavigate }: Age
   // still render the block so retry is reachable.)
   if (status === 'ok' && notes.length === 0) {
     return (
-      <div className="an-empty an-scope">
-        <LoomIcon name="eye" size={13} />
+      <p className="ag-board-empty un-m3e-bridge">
+        <Eye size={14} aria-hidden="true" />
         暂时没有 AI 间的观察信号。
-      </div>
+      </p>
     );
   }
 
@@ -51,94 +54,105 @@ export function AgentNotesBoard({ notes, status, now, onRetry, onNavigate }: Age
   const unread = unreadCount(notes);
   const visible = groups.slice(0, COMPACT_CAP);
 
+  // One body at a time, in the order the board always had: loading → error → open feed →
+  // collapsed peek of the latest note → nothing (if/else instead of a nested ternary).
+  let body: ReactNode = null;
+  if (status === 'loading') {
+    body = <SkeletonLines rows={2} label="正在读取 AI 观察" />;
+  } else if (status === 'error') {
+    body = <RetryLine message="无法读取 AI 观察信号。" onRetry={onRetry} />;
+  } else if (open) {
+    body = (
+      <>
+        <div className="ag-feed">
+          {visible.map((group) => (
+            <AgentNoteGroupRow
+              key={group.key}
+              group={group}
+              unread={group.notes.some((note) => isUnread(note))}
+              now={now}
+              onNavigate={onNavigate}
+            />
+          ))}
+        </div>
+        <div className="ag-board-foot">
+          <span className="ag-quiet ag-board-note">只读旁观 · 过期信号自动消失</span>
+          {groups.length > COMPACT_CAP && (
+            <button
+              type="button"
+              className="ag-board-more un-hit"
+              onClick={() => onNavigate('/agent-notes')}
+            >
+              还有 {groups.length - COMPACT_CAP} 组 · 看全部
+              <ArrowRight size={13} aria-hidden="true" />
+            </button>
+          )}
+          {unread > 0 && (
+            <Button size="sm" variant="ghost" onClick={() => markAllRead(notes)}>
+              <Check size={16} aria-hidden="true" />
+              全部已读
+            </Button>
+          )}
+        </div>
+      </>
+    );
+  } else if (latest) {
+    body = (
+      <button type="button" className="ag-board-peek" onClick={toggleOpen}>
+        <Ellipsis size={14} aria-hidden="true" />
+        <span className="ag-board-peek-t">
+          <b>{agentMeta(latest.source_task_kind).label}</b> →{' '}
+          {agentMeta(latest.target_agents[0] ?? '').label}
+          {latest.target_agents.length > 1 ? ' 等' : ''} 提到「
+          {signalMeta(latest.signal_kind).label}」
+        </span>
+        <span className="ag-quiet">· {formatRelTime(latest.created_at, now)}</span>
+      </button>
+    );
+  }
+
   return (
-    <div className="an-scope">
-      <SectionLabel count={`${groups.length} 组 · ${notes.length} 条`}>AI 观察</SectionLabel>
-      <LoomCard pad className={`an-board${open ? ' is-open' : ''}`}>
-        <div className="an-head">
+    <section className="ag-board un-m3e-bridge">
+      <div className="ag-board-label">
+        <h2 className="un-today-section-title">AI 观察</h2>
+        <span className="ag-quiet un-num">{`${groups.length} 组 · ${notes.length} 条`}</span>
+      </div>
+      <div className="ag-board-card" data-open={open ? '1' : '0'}>
+        <div className="ag-board-head">
           <button
             type="button"
-            className="an-head-toggle"
+            className="ag-board-toggle"
             aria-expanded={open}
             onClick={toggleOpen}
           >
-            <span className="card-icon">
-              <LoomIcon name="eye" size={18} />
+            <span className="ag-board-ic" aria-hidden="true">
+              <Eye size={18} />
             </span>
-            <span className="an-head-titles">
-              <span className="card-title">AI 之间的观察</span>
-              <span className="an-sub">AI 工作间互留的协作信号 · 无需你裁决</span>
+            <span className="ag-board-titles">
+              <span className="ag-board-title">AI 之间的观察</span>
+              <span className="ag-quiet">AI 工作间互留的协作信号 · 无需你裁决</span>
             </span>
           </button>
-          <span className="an-head-spacer" />
           {unread > 0 && (
-            <LoomBadge tone="coral" dot pulse>
+            <span className="ag-tag un-num" data-tone="accent">
               {unread} 新
-            </LoomBadge>
+            </span>
           )}
-          <button type="button" className="an-open-full" onClick={() => onNavigate('/agent-notes')}>
+          <Button size="sm" variant="ghost" onClick={() => onNavigate('/agent-notes')}>
             看全部
-            <LoomIcon name="arrow" size={14} />
-          </button>
+            <ArrowRight size={14} aria-hidden="true" />
+          </Button>
           <button
             type="button"
-            className="an-chev-btn"
+            className="ag-board-chevbtn un-hit"
             aria-label={open ? '收起' : '展开'}
             onClick={toggleOpen}
           >
-            <LoomIcon name="chevronDown" size={18} className="an-chev" />
+            <ChevronDown size={18} aria-hidden="true" className="ag-board-chev" />
           </button>
         </div>
-
-        {status === 'loading' ? (
-          <SkLines rows={2} />
-        ) : status === 'error' ? (
-          <ErrorState text="无法读取 AI 观察信号。" onRetry={onRetry} compact />
-        ) : open ? (
-          <>
-            <div className="an-feed">
-              {visible.map((group) => (
-                <AgentNoteGroupCard
-                  key={group.key}
-                  group={group}
-                  unread={group.notes.some((note) => isUnread(note))}
-                  now={now}
-                  onNavigate={onNavigate}
-                />
-              ))}
-            </div>
-            <div className="an-foot">
-              <span className="meta">只读旁观 · 过期信号自动消失</span>
-              {groups.length > COMPACT_CAP && (
-                <button
-                  type="button"
-                  className="an-foot-link"
-                  onClick={() => onNavigate('/agent-notes')}
-                >
-                  还有 {groups.length - COMPACT_CAP} 组 · 看全部
-                  <LoomIcon name="arrow" size={13} />
-                </button>
-              )}
-              {unread > 0 && (
-                <Btn size="sm" variant="ghost" icon="check" onClick={() => markAllRead(notes)}>
-                  全部已读
-                </Btn>
-              )}
-            </div>
-          </>
-        ) : latest ? (
-          <button type="button" className="an-peek" onClick={toggleOpen}>
-            <LoomIcon name="dots" size={14} className="meta" />
-            <span className="an-peek-txt">
-              <b>{agentMeta(latest.source_task_kind).label}</b> →{' '}
-              {agentMeta(latest.target_agents[0] ?? '').label}
-              {latest.target_agents.length > 1 ? ' 等' : ''} 提到「
-              {signalMeta(latest.signal_kind).label}」
-            </span>
-            <span className="meta">· {formatRelTime(latest.created_at, now)}</span>
-          </button>
-        ) : null}
-      </LoomCard>
-    </div>
+        {body}
+      </div>
+    </section>
   );
 }

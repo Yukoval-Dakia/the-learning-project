@@ -87,7 +87,6 @@ const LEARNER_PROPOSAL_SUMMARIES: Readonly<Record<string, string>> = {
   archive: '有一项归档建议待你查看。',
   judge_retraction: '有一项判定撤回建议待你查看。',
   cause_category: '有一项错因分类建议待你查看。',
-  image_candidate: '有一项图题候选建议待你查看。',
   question_draft: '有一项题目草稿建议待你查看。',
   question_edit: '有一项题目修订建议待你查看。',
   conjecture: '有一项诊断判断建议待你查看。',

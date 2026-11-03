@@ -1,5 +1,5 @@
 import type { Tx } from '@/db/client';
-import { practiceBossTransaction } from '../../server/queue-runtime';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import {
   ATTRIBUTION_FOLLOWUP_QUEUE,
   type FailureLearningQueue,
@@ -20,7 +20,7 @@ export interface FailureLearningJobData {
 
 export interface FailureLearningSendOptions {
   id: string;
-  db?: ReturnType<typeof practiceBossTransaction>;
+  db?: ReturnType<typeof fromPgBossDrizzleTx>;
 }
 
 export type FailureLearningBossSend = (
@@ -50,7 +50,7 @@ async function enqueueFailureLearningJob(
     { attempt_event_id: attemptEventId },
     {
       id,
-      ...(tx ? { db: practiceBossTransaction(tx) } : {}),
+      ...(tx ? { db: fromPgBossDrizzleTx(tx) } : {}),
     },
   );
   // pg-boss returns null when this exact stable id already exists. That is a

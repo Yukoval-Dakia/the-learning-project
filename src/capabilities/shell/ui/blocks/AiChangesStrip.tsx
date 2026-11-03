@@ -3,24 +3,34 @@
 // （NoteReaderPage 先例：useMutation + invalidate）。偏差：设计稿 undone 是
 // 本地 state 演示，这里用服务器 undone 字段（invalidate 后回读）；真 wire 无
 // artifact 标题，strip-title 收敛为「{actor} 改了笔记」。
+// YUK-1713 — M3E presentation (today-m3e.css .td-card / .td-row, ui-next FoldList / Button).
+// The query, the undo mutation (per-row failed ids, invalidateAfterAiChangeUndo in onSettled)
+// and the disabled-while-pending rule are unchanged.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Check, Sparkles, Undo2 } from 'lucide-react';
 import { Fragment, useState } from 'react';
 import { formatRelTime } from '@/ui/lib/utils';
-import { Btn } from '@/ui/primitives/Btn';
-import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
-import { LoomBadge } from '@/ui/primitives/LoomBadge';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { SkLines } from '@/ui/primitives/SkLines';
-import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
+import { invalidateAfterAiChangeUndo, queryKeys } from '@/ui/lib/write-invalidation';
+import { FoldList } from '@/ui-next/primitives/FoldList';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button } from '@/ui-next/public';
+import { AreaGate, type AreaStatus } from '../AreaGate';
 
 import { useWorkbenchClient } from '../workbench-client';
+
+// Loading → error → empty → content (early returns instead of a nested ternary; same order).
+function stripStatus(isLoading: boolean, isError: boolean, isEmpty: boolean): AreaStatus {
+  if (isLoading) return 'loading';
+  if (isError) return 'error';
+  if (isEmpty) return 'empty';
+  return 'ok';
+}
 
 export function AiChangesStrip({ now }: { now: Date }) {
   const { getRecentAiChanges, undoAiChange } = useWorkbenchClient();
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ['workbench-ai-changes'], queryFn: getRecentAiChanges });
+  const q = useQuery({ queryKey: queryKeys.workbenchAiChanges, queryFn: getRecentAiChanges });
   const rows = q.data?.rows ?? [];
 
   // Which rows' undo failed. A single shared mutation's isError can't say WHICH row; a
@@ -42,85 +52,79 @@ export function AiChangesStrip({ now }: { now: Date }) {
     onError: (_e, { eventId }) => setFailedIds((s) => new Set(s).add(eventId)),
     // Drop the flag on success too, so a row that ended up reverted never keeps an error.
     onSuccess: (_data, { eventId }) => clearFailed(eventId),
-    onSettled: () => void qc.invalidateQueries({ queryKey: ['workbench-ai-changes'] }),
+    // Settled, not success: a version-conflict failure also changes what the strip and the note
+    // (reader + copilot hero block) should show.
+    onSettled: (_d, _e, { artifactId }) => void invalidateAfterAiChangeUndo(qc, { artifactId }),
   });
 
-  const status: StatefulStatus = q.isLoading
-    ? 'loading'
-    : q.isError
-      ? 'error'
-      : rows.length === 0
-        ? 'empty'
-        : 'ok';
+  const status = stripStatus(q.isLoading, q.isError, rows.length === 0);
 
   return (
-    <LoomCard pad>
-      <div className="card-head">
-        <span className="card-icon accent">
-          <LoomIcon name="undo" size={18} />
+    <section className="td-card">
+      <div className="td-card-head">
+        <span className="td-card-ic" data-tone="accent" aria-hidden="true">
+          <Undo2 size={18} />
         </span>
-        <div className="card-title">AI 改动 · 近 24h</div>
-        <span className="badge tone-neutral" style={{ marginLeft: 'auto' }}>
-          可回滚
-        </span>
+        <h3 className="td-card-title">AI 改动 · 近 24h</h3>
+        <span className="td-card-aside td-chip">可回滚</span>
       </div>
-      <Stateful
+      <AreaGate
         status={status}
         onRetry={() => void q.refetch()}
         errorText="无法读取改动记录。"
-        skeleton={<SkLines rows={2} />}
-        empty={<div className="quiet-empty">过去 24 小时没有 AI 改动。</div>}
+        loading={<SkeletonLines rows={2} label="正在读取 AI 改动" />}
+        empty={<p className="td-quiet">过去 24 小时没有 AI 改动。</p>}
       >
         {/* 最近 3 条在前，其余收进「全部 N 条」（owner 2026-10-18 折叠决定，设计 L5）。 */}
-        <CollapsibleList
+        <FoldList
           as="div"
-          className="strip-list"
+          className="td-rows"
           items={rows}
           renderItem={(c) => (
             <Fragment key={c.event_id}>
-              <div className={`strip${c.undone ? ' is-undone' : ''}`}>
-                <span className="strip-lead tone-coral">
-                  <LoomIcon name="sparkle" size={15} />
+              <div className="td-row" data-undone={c.undone ? '1' : undefined}>
+                <span className="td-row-lead" data-tone="secondary">
+                  <Sparkles size={15} aria-hidden="true" />
                 </span>
-                <div className="strip-body">
-                  <div className="strip-title">
-                    <b className="mono">{c.actor_ref}</b> 改了笔记
-                  </div>
-                  <div className="strip-sub nowrap-meta mono">
+                <div className="td-row-body">
+                  <p className="td-row-title">
+                    <b className="td-mono">{c.actor_ref}</b> 改了笔记
+                  </p>
+                  <p className="td-row-sub td-mono">
                     {c.ops_count} ops · +{c.new_blocks} blocks · v{c.previous_artifact_version}→v
                     {c.next_artifact_version} · {formatRelTime(c.created_at, now)}
-                  </div>
+                  </p>
                 </div>
-                <div className="strip-end">
+                <div className="td-row-end">
                   {c.undone ? (
-                    <LoomBadge tone="good" dot>
-                      <LoomIcon name="check" size={12} />
+                    <span className="td-done">
+                      <Check size={14} aria-hidden="true" />
                       已撤销
-                    </LoomBadge>
+                    </span>
                   ) : (
-                    <Btn
+                    <Button
                       size="sm"
                       variant="ghost"
-                      icon="undo"
                       disabled={undoM.isPending}
                       onClick={() =>
                         undoM.mutate({ artifactId: c.artifact_id, eventId: c.event_id })
                       }
                     >
+                      <Undo2 size={16} aria-hidden="true" />
                       撤销
-                    </Btn>
+                    </Button>
                   )}
                 </div>
               </div>
               {!c.undone && failedIds.has(c.event_id) && (
-                <div className="meta strip-undo-err" role="alert">
+                <p className="td-row-err" role="alert">
                   撤销失败，请重试。
-                </div>
+                </p>
               )}
             </Fragment>
           )}
         />
-      </Stateful>
-    </LoomCard>
+      </AreaGate>
+    </section>
   );
 }

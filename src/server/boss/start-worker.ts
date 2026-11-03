@@ -14,6 +14,7 @@ import {
   startModelCatalogWatch,
 } from '@/server/ai/model-catalog';
 import { resolveTaskProvider } from '@/server/ai/providers';
+import { installSchedulingCandidateRebuild } from '@/server/assessment/settle';
 import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/client';
 import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
@@ -46,6 +47,7 @@ export async function startBossWorker(
   options: StartBossWorkerOptions = {},
 ): Promise<PgBoss> {
   await initializeLaminarTracing();
+  installSchedulingCandidateRebuild();
   // Before any consumer. A maintenance marker or a mismatched epoch polls here and does not
   // start boss. A database read failure throws, same as any other boot failure.
   await waitForRunnableEpoch(db, { pollIntervalMs: options.epochPollIntervalMs });

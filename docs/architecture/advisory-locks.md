@@ -99,7 +99,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | `lockEventCorrectionsAll` / `lockEventCorrectionSource` | `src/kernel/events/correction-lock.ts` | 与上表 corrections:all、source 共用注册表键，语句仍是 `hashtextextended(key, 0)` xact。`writeEvents` 在有修正目标时先取 corrections:all，再按已排序 target 取 source。`review-answer-consumer` 在 copilot execution settlement 之后取 source |
 | `acquireSortedAdvisoryLocks` | `src/db/learning-state-lock.ts` | `hashtext(<ns>:<id>)` sorted，consistent-ordering 原语 |
 | `withinSessionAdvisoryLock` | `src/db/session-advisory-lock.ts` | reserved conn `pg_try_advisory_lock`+retry 至 deadline；`begin`/`savepoint` 补丁到持锁连接，inner tx 全部跑在同一 backend；finally unlock+release |
-| `acquireProposalDecisionLock` | `src/kernel/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0 |
+| `acquireProposalDecisionLock` | `src/kernel/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0。通用驳回与撤回在事务第一步取；note_update、block_merge、record_links、record_promotion、learning_item、completion、relearn、goal_scope 的接受同样第一步取，锁后在同一事务内重查 rate，再取领域锁 |
 | `withProposalGateLock` | `src/kernel/proposals/signals.ts` | `<kind>:<cooldown_key>` 多键 sorted xact gate；Db 开真 tx、Tx 内联 |
 | `lockPaidEffectControlFamily` / `lockEntityGate` | `src/db/paid-effect-control.ts` / `paid-effect-store.ts` | paid-effect family/entity 锁（只读盘点） |
 | `lockProducerFenceInstaller` 等 | `src/server/durable/*` | durable family install/control/tick |
@@ -124,7 +124,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | 4 | kc-typed | kc_typed:<subject_kind>:<id> | hashtext | transaction | xact | 3 |  |
 | 5 | axis-state | axis_state:<subject_kind>:<id> | hashtext | transaction | xact | 2 |  |
 | 6 | knowledge-edge | knowledge_edge:<id> | hashtext | transaction | xact | 3 | learning-state:write |
-| 7 | knowledge-create | knowledge:create:<id> | hashtext | transaction | xact | 1 |  |
+| 7 | knowledge-create | knowledge:create:<id> | hashtext | transaction | xact | 1 | proposal-decision |
 | 8 | assessment-evaluation-group | ('assessment-evaluation-group', <evaluation_group_id>) | hashtext-pair | session+transaction | xact | 10 | learning-state:write, assessment-appeal-claim, assessment-review-answer |
 | 9 | assessment-attempt-claim | evt_assessment_<submission_id> | hashtext | transaction | xact | 4 | learning-state:write, paper-native-issuance |
 | 10 | assessment-appeal-claim | evt_native_appeal_<hash> | hashtext | transaction | xact | 1 |  |
@@ -190,7 +190,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | 70 | contract-epoch-transition | contract-epoch:transition | hashtext | transaction | xact | 1 |  |
 | 71 | subject-control-plane | 597001 | int-literal | transaction | xact | 1 |  |
 | 72 | serving-command | yuk1514:serving:<eventId> | hashtextextended:0 | transaction | xact | 1 |  |
-| 73 | placement-supply | placement-supply:v1:<knowledgeId> | hashtextextended:0 | transaction | xact | 3 |  |
+| 73 | placement-supply | placement-supply:v1:<knowledgeId> | hashtextextended:0 | transaction | xact | 3 | proposal-decision |
 | 74 | memory-ingest | memory:ingest:<sourceId> | hashtextextended:0 | transaction | xact | 3 |  |
 | 75 | memory-dispatch | memory:dispatch:<sourceEventId> | hashtextextended:0 | transaction | xact | 2 |  |
 | 76 | memory-operator-request | memory:operator-request:<requestId> | hashtextextended:0 | transaction | xact | 1 |  |
@@ -266,7 +266,9 @@ edge-evidence 版 SHA-256
 - **paid-effect**：`control → identity row → gate → control row`（pinned，文件注释）。
 - **provider**：`op-kind → sorted attempt → lane`。
 - 小边：probe-question → conjecture-fold → proposal_decision；write_quiz →
-  proposal_decision(sorted)；note_refine effect → product；paper-native →
+  proposal_decision(sorted)；proposal_decision → knowledge:create（learning_item
+  接受，learning-intent.ts）；proposal_decision → placement-supply（record_promotion
+  接受，legacy-record-appliers.ts）；note_refine effect → product；paper-native →
   attempt-claim；G → attempt-claim（capture 路径）；appeal-claim(request) →
   group（appeal.ts:24→41）；激活 tx 内 `group → resolution-claim`（record
   回调，settle `fsrs:*` 条件插入其间，dyn）；review-answer → group；

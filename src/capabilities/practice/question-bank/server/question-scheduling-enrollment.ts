@@ -1,5 +1,6 @@
 import type { Tx } from '@/db/client';
 import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 import {
   type FsrsSubjectKind,
   type UpsertFsrsStateInput,
@@ -7,8 +8,7 @@ import {
   getFsrsState,
   initialSchedulingState,
   upsertFsrsState,
-} from '@/server/fsrs/state';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '../../server/placement-scope';
+} from '@/kernel/records/scheduling-state';
 
 interface SchedulingEnrollmentEvidence {
   evidenceEventId: string;

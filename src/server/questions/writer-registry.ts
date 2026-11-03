@@ -112,11 +112,6 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043', 'YUK-1047'],
     note: '块捕获三路（native capture / auto-enroll / 上传确认导入）共用的 INSERT ⇒ 同事务首版 revision。Captured originals publish and bind a frozen revision before evaluation; withheld originals stay draft without learning effects. OCR/VLM 收录：reference 缺失 ⇒ conversion_issue ⇒ withheld；学生作答走 attempt 事件，不进答案键。上传确认导入：withheld —— 判分输入可契约化，无需等 cutover。',
   },
-  'src/capabilities/ingestion/server/image-candidate-accept.ts': {
-    status: 'publisher-converged',
-    tickets: ['YUK-1043'],
-    note: 'image_candidate 接受 INSERT ⇒ 同事务首版 revision withheld —— withheld admission 正是为「结构可判分、深度 grounding 未过」准备；source_verify（含 YUK-230 多模态复查）过后再 promote。',
-  },
   'src/capabilities/ingestion/server/create-manual-mistake.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],

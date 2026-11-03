@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse } from '@babel/parser';
+import { aiProposalKindStrength, aiProposalKinds } from '../src/core/schema/proposal';
 import {
   listTreeFiles,
   readBlobs,
@@ -394,8 +395,7 @@ const CENTRAL_ACTION_FILES = [
   'src/server/proposals/owner-runtime.ts',
 ] as const;
 
-const PROPOSAL_KIND_CASE_RE =
-  /case\s+'(?:knowledge_node|knowledge_edge|knowledge_mutation|variant_question|learning_item|completion|relearn|note_update|record_links|record_promotion|goal_scope|block_merge|image_candidate|question_draft|question_edit|conjecture|defer|archive)'\s*:/;
+const PROPOSAL_KIND_CASE_RE = new RegExp(`case\\s+'(?:${aiProposalKinds.join('|')})'\\s*:`);
 
 const REGISTRY_SEMANTIC_RES = [
   /\bfunction\s+build\w*Prompt/,
@@ -1360,7 +1360,7 @@ async function runCli(): Promise<void> {
   ).length;
 
   // --- dependency facts -----------------------------------------------------
-  const { snapshot } = collectDependencySnapshot(projectRoot);
+  const { snapshot, report: dependencyReport } = collectDependencySnapshot(projectRoot);
   const baselinePath = 'scripts/capability-boundary-baseline.json';
   const baseline = parseBaseline(
     readFileSync(resolve(projectRoot, baselinePath), 'utf8'),
@@ -1473,9 +1473,7 @@ async function runCli(): Promise<void> {
     proposals: {
       declarations: proposalDeclarations,
       supportedKinds,
-      // judge_retraction now has an accept applier (practice proposal-appliers), so it leaves
-      // the producer-only set.
-      producerOnlyKinds: ['archive', 'defer'],
+      producerOnlyKinds: aiProposalKinds.filter((kind) => aiProposalKindStrength[kind] === 'C'),
     },
     providerAttemptCensus: {
       attemptTruthViolations,
@@ -1484,7 +1482,11 @@ async function runCli(): Promise<void> {
     },
     dependency: {
       totals: {
-        capabilityToServer: snapshot.debts.capabilityToServer.total,
+        // The 531 ceiling is a separate gate from the decrease-only ledger and was pinned on the
+        // full capability -> server count, so it keeps counting the platform ai/boss edges that
+        // the ledger leaves out.
+        capabilityToServer:
+          snapshot.debts.capabilityToServer.total + dependencyReport.platformCapabilityToServer,
         serverToCapabilityDeep: snapshot.debts.serverToCapabilityDeep.total,
         crossCapabilityValue: snapshot.debts.crossCapabilityValue.total,
       },

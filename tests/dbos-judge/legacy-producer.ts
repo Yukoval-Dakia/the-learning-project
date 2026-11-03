@@ -1,6 +1,10 @@
-// Compiled against a sealed, real pre-0118 source tree by cutover.db.test.ts.
+// Compiled against a sealed, real pre-0118 source tree by cutover.db.test.ts, so imports name
+// that tree's paths, not the current ones.
+
+import type { SendOptions } from 'pg-boss';
 import { z } from 'zod';
 import { CreateSubmissionBodySchema } from '@/capabilities/practice/api/assessment-contracts';
+// @ts-expect-error -- this path exists only in the sealed pre-0118 tree the test compiles against.
 import { dispatchNativeAttempt } from '@/capabilities/practice/server/assessment/durable-attempt';
 import { NativeJudgePendingSubmitInput } from '@/core/schema/event/judge-pending-events';
 import { db } from '@/db/client';
@@ -67,7 +71,7 @@ async function main() {
         { enabled: true, capture: command.capture },
         {
           boss: {
-            send: (name, data, options) =>
+            send: (name: string, data: unknown, options?: SendOptions) =>
               boss.send(name, z.record(z.string(), z.unknown()).parse(data), options),
           },
         },

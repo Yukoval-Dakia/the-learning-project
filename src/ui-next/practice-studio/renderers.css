@@ -29,14 +29,12 @@
   font-size: 12px;
   color: var(--st-muted);
 }
-[data-ui-next] .un-st-question .un-blk-opts-list,
-[data-ui-next] .un-st-page .rs-opts {
+[data-ui-next] .un-st-question .un-blk-opts-list {
   display: grid;
   grid-template-columns: 1fr;
   gap: 10px;
 }
-[data-ui-next] .un-st-question .un-blk-opt,
-[data-ui-next] .un-st-page .rs-opt {
+[data-ui-next] .un-st-question .un-blk-opt {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -53,8 +51,7 @@
   text-align: left;
   box-shadow: none;
 }
-[data-ui-next] .un-st-question .un-blk-opt-mark,
-[data-ui-next] .un-st-page .rs-opt-k {
+[data-ui-next] .un-st-question .un-blk-opt-mark {
   display: grid;
   place-items: center;
   flex: 0 0 24px;
@@ -67,6 +64,9 @@
   font-weight: 600;
   border-radius: 0;
 }
+/* The native answer controls (src/ui/components/response, rs-*) carry this surface's look in their
+   own stylesheet. Only the picked state stays here: the studio keeps showing the pick after
+   grading (aria-checked / aria-pressed), where the controls' own .is-sel steps aside. */
 [data-ui-next] .un-st-question .un-blk-opt[data-on],
 [data-ui-next] .un-st-page .rs-opt[aria-checked="true"],
 [data-ui-next] .un-st-page .rs-opt[aria-pressed="true"] {
@@ -75,22 +75,18 @@
   color: var(--st-on-selected);
   box-shadow: inset 0 0 0 1px var(--st-accent);
 }
-[data-ui-next] .un-st-question .un-blk-opt:disabled,
-[data-ui-next] .un-st-page .rs-opt:disabled {
+[data-ui-next] .un-st-question .un-blk-opt:disabled {
   opacity: 1;
   color: var(--st-ink);
 }
-[data-ui-next] .un-st-question .un-blk-opt:hover:not(:disabled),
-[data-ui-next] .un-st-page .rs-opt:hover:not(:disabled) {
+[data-ui-next] .un-st-question .un-blk-opt:hover:not(:disabled) {
   border-color: var(--st-accent);
 }
-[data-ui-next] .un-st-question .un-blk-opt-text,
-[data-ui-next] .un-st-page .rs-opt-t {
+[data-ui-next] .un-st-question .un-blk-opt-text {
   min-width: 0;
   flex: 1;
 }
-[data-ui-next] .un-st-question .un-blk-opt p,
-[data-ui-next] .un-st-page .rs-opt p {
+[data-ui-next] .un-st-question .un-blk-opt p {
   margin: 0;
 }
 [data-ui-next] .un-st-question .un-blk-opts {
@@ -118,8 +114,7 @@
 [data-ui-next] .un-st-question svg {
   max-width: 100%;
 }
-[data-ui-next] .un-st-question .un-blk-blank input,
-[data-ui-next] .un-st-page .rs-input {
+[data-ui-next] .un-st-question .un-blk-blank input {
   color: var(--st-ink);
   background: var(--st-panel);
   border-color: var(--st-outline);
@@ -155,10 +150,6 @@
 }
 [data-ui-next] .un-st-page .un-ps-history li {
   min-height: 44px;
-}
-[data-ui-next] .un-st-supplement .rs-evidence,
-[data-ui-next] .un-st-supplement .rs-evidence-add {
-  font-size: 14px;
 }
 [data-ui-next] .un-st-supplement details {
   margin-top: 12px;
@@ -278,14 +269,12 @@
   [data-ui-next] .un-st-question .un-blk-text {
     font-size: 17px;
   }
-  [data-ui-next] .un-st-question .un-blk-opt,
-  [data-ui-next] .un-st-page .rs-opt {
+  [data-ui-next] .un-st-question .un-blk-opt {
     min-height: 60px;
     padding: 12px;
     gap: 10px;
   }
-  [data-ui-next] .un-st-question .un-blk-opt-mark,
-  [data-ui-next] .un-st-page .rs-opt-k {
+  [data-ui-next] .un-st-question .un-blk-opt-mark {
     flex-basis: 20px;
     width: 20px;
   }
@@ -312,34 +301,6 @@
   gap: 8px;
 }
 
-/* Native answer owners keep their behavior; every visible field belongs to this surface. */
-[data-ui-next] .un-st-page :is(.rs-textarea, .rs-match-select, .rs-order-pos) {
-  background: var(--st-soft);
-  color: var(--st-ink);
-  border: 1px solid var(--st-outline);
-  border-radius: 12px;
-  min-height: 48px;
-  padding: 12px 16px;
-  font: inherit;
-}
-[data-ui-next] .un-st-page .rs-textarea::placeholder {
-  color: var(--st-muted);
-  opacity: 1;
-}
-[data-ui-next] .un-st-page :is(.rs-textarea, .rs-match-select, .rs-order-pos):focus-visible {
-  outline: 3px solid var(--st-accent);
-  outline-offset: 3px;
-  box-shadow: none;
-}
-[data-ui-next] .un-st-page :is(.rs-textarea, .rs-match-select, .rs-order-pos):disabled {
-  background: var(--st-raised);
-  color: var(--st-muted);
-}
-[data-ui-next] .un-st-page :is(.rs-preview, .rs-order-row, .rs-attach-item) {
-  background: var(--st-soft);
-  color: var(--st-ink);
-  border-color: var(--st-line);
-}
 [data-ui-next] .un-st-support .un-cp-list-layer {
   padding: 0;
   align-content: stretch;
@@ -405,6 +366,10 @@
   color: var(--st-ink);
   font-size: 13px;
   line-height: 1.65;
+}
+
+[data-ui-next] .un-st-support .un-cp-reply-badge {
+  margin: 10px 0 0;
 }
 
 [data-ui-next] .un-st-support .un-cp-rich-text {

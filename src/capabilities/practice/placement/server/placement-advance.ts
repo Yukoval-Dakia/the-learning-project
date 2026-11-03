@@ -17,7 +17,7 @@ import { goal } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { getMasteryState } from '@/kernel/read-models/mastery-state';
-import { resolveNearbyPlacementScope } from '../../server/placement-scope';
+import { resolveNearbyPlacementScope } from '@/kernel/read-models/placement-scope';
 import type { PlacementStarterOutcome } from '../../supply/public';
 import { readPlacementStarterOutcomes } from '../../supply/public';
 import type { PlacementNoItemSchema, PlacementUnresolvedItem } from '../api/placement-contracts';

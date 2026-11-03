@@ -14,12 +14,19 @@
 // 「结构性恒空 / 不会铸出」在裁定通电后同样是错的方向。正确措辞是「待通电」。
 
 import { useQuery } from '@tanstack/react-query';
-import type { CSSProperties } from 'react';
-import { Badge } from '@/ui/primitives/Badge';
-import { Card } from '@/ui/primitives/Card';
-import { PageHeader } from '@/ui/primitives/PageHeader';
-import { Stateful } from '@/ui/primitives/Stateful';
+import { Chip } from '@/ui-next/public';
 import { type AdminReadClient, httpAdminClient } from './admin-client';
+import {
+  ADMIN_LINKS_NO_CONFIG,
+  AdminArea,
+  AdminFrame,
+  AdminHead,
+  AdminKpi,
+  AdminKpis,
+  AdminNav,
+  AdminPanel,
+  adminAreaStatus,
+} from './admin-frame';
 
 type PredictionScoreRow = Awaited<
   ReturnType<AdminReadClient['getConjectureScores']>
@@ -27,20 +34,11 @@ type PredictionScoreRow = Awaited<
 
 function resolutionTone(
   resolution: PredictionScoreRow['resolution'],
-): 'good' | 'again' | 'neutral' {
-  if (resolution === 'confirmed') return 'good';
-  if (resolution === 'evidence_for') return 'again';
+): 'positive' | 'critical' | 'neutral' {
+  if (resolution === 'confirmed') return 'positive';
+  if (resolution === 'evidence_for') return 'critical';
   return 'neutral';
 }
-const NAV: Array<{ to: string; label: string }> = [
-  { to: '/admin/runs', label: 'runs' },
-  { to: '/admin/cost', label: 'cost' },
-  { to: '/admin/failures', label: 'failures' },
-  { to: '/admin/subjects', label: 'subjects' },
-  { to: '/admin/coverage-lattice', label: 'coverage' },
-  { to: '/admin/conjecture-scores', label: 'conjecture' },
-];
-
 function formatTime(value: string | null): string {
   if (!value) return '—';
   const d = new Date(value);
@@ -70,19 +68,6 @@ export function AdminConjectureScoresSurface({
   });
   const data = q.data;
 
-  const link = (to: string, label: string) => (
-    <a
-      key={to}
-      href={to}
-      onClick={(e) => {
-        e.preventDefault();
-        navigate(to);
-      }}
-    >
-      {label}
-    </a>
-  );
-
   const scores = data?.prediction_scores ?? [];
   const typed = data?.typed_states ?? [];
   const diagnostics = data?.diagnostics;
@@ -107,28 +92,29 @@ export function AdminConjectureScoresSurface({
   // 故本页**不**在摘要下窗口级胜负判词——window skill 显式标「deferred」，逐条 skill 仅在表里原样列。
 
   return (
-    <main className="page wide">
-      <PageHeader
-        title="Conjecture Scores"
-        eyebrow="ADMIN · conjecture wire"
-        sub="备课台预测 vs 真实作答的逐条 proper-score 校准锚（夜间 research_meeting reconcile 累积）。confused-with-X 软轨态待通电，该栏暂空。"
-      >
-        <div style={linkRowStyle}>{NAV.map((n) => link(n.to, n.label))}</div>
-      </PageHeader>
+    <AdminFrame>
+      <AdminNav
+        links={ADMIN_LINKS_NO_CONFIG}
+        current="/admin/conjecture-scores"
+        navigate={navigate}
+      />
+      <AdminHead
+        kicker="ADMIN · conjecture wire"
+        title="猜想评分"
+        lead="备课台预测 vs 真实作答的逐条 proper-score 校准锚（夜间 research_meeting reconcile 累积）。confused-with-X 软轨态待通电，该栏暂空。"
+      />
 
       {/* 诚实栏（spec §6 S4）：single-point proper score，别读成准确率/窗口均值。 */}
-      <div style={honestyRowStyle}>
-        <Badge tone="neutral">
-          score_basis = {data?.score_basis ?? 'single_point'} · single-point proper score · NOT
-          accuracy · NOT window mean
-        </Badge>
-      </div>
+      <p className="adm-basis">
+        score_basis = {data?.score_basis ?? 'single_point'} · single-point proper score · NOT
+        accuracy · NOT window mean
+      </p>
 
       {data && (
-        <div className="kpi-strip">
-          <Kpi label="predictions" value={scores.length} note="scored probes" />
+        <AdminKpis>
+          <AdminKpi label="predictions" value={scores.length} note="scored probes" />
           {/* 描述性 mean Brier（越低越好，reader 自比 model vs baseline）；空数据集 dash，不把 0 当真值。 */}
-          <Kpi
+          <AdminKpi
             label="mean Brier"
             value={fmt(meanBrierModel)}
             note={
@@ -138,254 +124,170 @@ export function AdminConjectureScoresSurface({
             }
           />
           {/* window skill（真·beats-baseline 判词）DEFER 给 Rust window 聚合（ADR-0046）——本页不伪造。 */}
-          <Kpi label="window skill" value="deferred" note="window BSS · ADR-0046" />
-          <Kpi label="typed states" value={typed.length} note={`${openStates} open`} />
-        </div>
+          <AdminKpi label="window skill" value="deferred" note="window BSS · ADR-0046" />
+          <AdminKpi label="typed states" value={typed.length} note={`${openStates} open`} />
+        </AdminKpis>
       )}
 
-      {/* biome-ignore lint/a11y/useSemanticElements: output only permits phrasing content, but this status contains a Card/list. */}
-      <div role="status" aria-live="polite" aria-atomic="true">
+      {/* A div, not <output>: output only permits phrasing content, and this status holds a list. */}
+      <div className="adm-live" role="status" aria-live="polite" aria-atomic="true">
         {diagnosticWarnings.length > 0 && (
-          <Card>
-            <div style={diagnosticAlertStyle}>
-              <Badge tone="coral" dot dotStatic>
-                data quality
-              </Badge>
-              <div>
-                <strong>部分诊断行未展示</strong>
-                <ul style={diagnosticListStyle}>
-                  {diagnosticWarnings.map(([label, d]) => (
-                    <li key={label}>
-                      {label}：扫描 {d.scanned_count} 行，丢弃 {d.dropped_count} 行
-                      {d.scan_truncated ? '；已触及有界窗口，结果可能不完整' : ''}。
-                    </li>
-                  ))}
-                </ul>
-              </div>
+          <div className="adm-quality">
+            <Chip tone="caution">data quality</Chip>
+            <div>
+              <strong className="adm-quality-title">部分诊断行未展示</strong>
+              <ul className="adm-quality-list">
+                {diagnosticWarnings.map(([label, d]) => (
+                  <li key={label}>
+                    {label}：扫描 {d.scanned_count} 行，丢弃 {d.dropped_count} 行
+                    {d.scan_truncated ? '；已触及有界窗口，结果可能不完整' : ''}。
+                  </li>
+                ))}
+              </ul>
             </div>
-          </Card>
+          </div>
         )}
       </div>
 
-      <Stateful
-        status={q.isLoading ? 'loading' : q.isError ? 'error' : 'ok'}
+      <AdminArea
+        status={adminAreaStatus(q)}
         onRetry={() => void q.refetch()}
         errorText="conjecture scores 加载失败。"
-        skeleton={
-          <Card pad="lg">
-            <p style={mutedTextStyle}>加载中...</p>
-          </Card>
-        }
+        loadingLabel="加载中"
       >
         {data && (
           <>
-            <Card pad="lg">
-              <div style={sectionHeadStyle}>
-                <h2 style={sectionTitleStyle}>prediction scores</h2>
-                <Badge tone="neutral">{scores.length} 条</Badge>
-              </div>
+            <AdminPanel
+              id="adm-cj-scores"
+              title="prediction scores"
+              flush={scores.length > 0}
+              aside={<Chip>{scores.length} 条</Chip>}
+            >
               {scores.length === 0 ? (
-                <p style={mutedTextStyle}>
+                <p className="adm-empty">
                   暂无预测评分（reconcile 尚未产出 prediction_score 事件）。
                 </p>
               ) : (
-                <div style={tableWrapStyle}>
-                  <table style={tableStyle}>
+                <div className="adm-table-scroll">
+                  <table className="adm-table adm-table-mono">
                     <thead>
                       <tr>
-                        <th style={thStyle}>KC</th>
-                        <th style={thStyle}>p̂ vs base</th>
-                        <th style={thStyle}>outcome</th>
-                        <th style={thStyle}>resolution</th>
-                        <th style={thStyle}>Brier m/base</th>
-                        <th style={thStyle}>log-loss</th>
-                        <th style={thStyle}>skill</th>
-                        <th style={thStyle}>R@judge</th>
-                        <th style={thStyle}>when</th>
+                        <th scope="col">KC</th>
+                        <th scope="col">p̂ vs base</th>
+                        <th scope="col">outcome</th>
+                        <th scope="col">resolution</th>
+                        <th scope="col">Brier m/base</th>
+                        <th scope="col">log-loss</th>
+                        <th scope="col">skill</th>
+                        <th scope="col">R@judge</th>
+                        <th scope="col">when</th>
                       </tr>
                     </thead>
                     <tbody>
                       {scores.map((s) => (
                         <tr key={s.event_id}>
-                          <td style={tdStyle}>
+                          <td>
                             <code>{s.knowledge_id}</code>
                           </td>
-                          <td style={tdStyle}>
+                          <td>
                             {fmt(s.predicted_p)}{' '}
-                            <span style={mutedInline}>/ {fmt(s.baseline_p)}</span>
+                            <span className="adm-quiet">/ {fmt(s.baseline_p)}</span>
                           </td>
-                          <td style={tdStyle}>
-                            <Badge tone={s.outcome === 1 ? 'good' : 'again'}>
+                          <td>
+                            <Chip tone={s.outcome === 1 ? 'positive' : 'critical'}>
                               {s.outcome === 1 ? '答对' : '答错'}
-                            </Badge>
+                            </Chip>
                           </td>
-                          <td style={tdStyle}>
-                            <Badge tone={resolutionTone(s.resolution)}>{s.resolution}</Badge>
+                          <td>
+                            <Chip tone={resolutionTone(s.resolution)}>{s.resolution}</Chip>
                           </td>
-                          <td style={tdStyle}>
+                          <td>
                             {fmt(s.brier_model)}{' '}
-                            <span style={mutedInline}>/ {fmt(s.brier_baseline)}</span>
+                            <span className="adm-quiet">/ {fmt(s.brier_baseline)}</span>
                           </td>
-                          <td style={tdStyle}>{fmt(s.log_loss_model)}</td>
-                          <td style={tdStyle}>
+                          <td>{fmt(s.log_loss_model)}</td>
+                          <td>
                             <span
-                              style={
+                              className={
                                 s.skill_score_point !== null && s.skill_score_point > 0
-                                  ? okMarkStyle
+                                  ? 'adm-good'
                                   : undefined
                               }
                             >
                               {fmt(s.skill_score_point)}
                             </span>
                           </td>
-                          <td style={tdStyle}>
+                          <td>
                             {s.retrievability_at_judge === null
                               ? '—'
                               : fmt(s.retrievability_at_judge)}
                           </td>
-                          <td style={tdStyle}>{formatTime(s.created_at)}</td>
+                          <td className="adm-quiet">{formatTime(s.created_at)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               )}
-            </Card>
+            </AdminPanel>
 
-            <Card pad="lg">
-              <div style={sectionHeadStyle}>
-                <h2 style={sectionTitleStyle}>typed states · confused-with-X</h2>
-                <div style={sectionBadgeRowStyle}>
-                  <Badge tone="coral" dot dotStatic>
-                    本轨待通电
-                  </Badge>
-                  <Badge tone="neutral">
+            <AdminPanel
+              id="adm-cj-typed"
+              title="typed states · confused-with-X"
+              flush={typed.length > 0}
+              aside={
+                <>
+                  <Chip tone="caution">本轨待通电</Chip>
+                  <Chip>
                     {openStates} open / {typed.length}
-                  </Badge>
-                </div>
-              </div>
+                  </Chip>
+                </>
+              }
+            >
               {typed.length === 0 ? (
-                <p style={mutedTextStyle}>
+                <p className="adm-empty">
                   本轨待通电（YUK-794 执行中）：当前还没有写者能产出 confused-with-X——reconcile
                   硬编码 confused_with_kc_id=null，§修正-4 gate 要求具名 KC，诱导侧尚未产出该 KC。
                   故本栏暂空。注意：空 ≠ 「没有混淆」，只是这条轨还没通。详见 ADR-0050 §(a)。
                 </p>
               ) : (
-                <div style={tableWrapStyle}>
-                  <table style={tableStyle}>
+                <div className="adm-table-scroll">
+                  <table className="adm-table adm-table-mono">
                     <thead>
                       <tr>
-                        <th style={thStyle}>KC</th>
-                        <th style={thStyle}>confused with</th>
-                        <th style={thStyle}>lifecycle</th>
-                        <th style={thStyle}>evidence</th>
-                        <th style={thStyle}>last evidence</th>
+                        <th scope="col">KC</th>
+                        <th scope="col">confused with</th>
+                        <th scope="col">lifecycle</th>
+                        <th scope="col">evidence</th>
+                        <th scope="col">last evidence</th>
                       </tr>
                     </thead>
                     <tbody>
                       {typed.map((t) => (
                         <tr key={t.id}>
-                          <td style={tdStyle}>
+                          <td>
                             <code>{t.knowledge_id}</code>
                           </td>
-                          <td style={tdStyle}>
+                          <td>
                             {t.confused_with_kc_id ? <code>{t.confused_with_kc_id}</code> : '—'}
                           </td>
-                          <td style={tdStyle}>
-                            <Badge tone={t.lifecycle === 'open' ? 'coral' : 'good'}>
+                          <td>
+                            <Chip tone={t.lifecycle === 'open' ? 'caution' : 'positive'}>
                               {t.lifecycle}
-                            </Badge>
+                            </Chip>
                           </td>
-                          <td style={tdStyle}>{t.evidence_event_ids.length}</td>
-                          <td style={tdStyle}>{formatTime(t.last_evidence_at)}</td>
+                          <td>{t.evidence_event_ids.length}</td>
+                          <td className="adm-quiet">{formatTime(t.last_evidence_at)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               )}
-            </Card>
+            </AdminPanel>
           </>
         )}
-      </Stateful>
-    </main>
+      </AdminArea>
+    </AdminFrame>
   );
 }
-
-function Kpi({ label, value, note }: { label: string; value: string | number; note?: string }) {
-  return (
-    <div className="kpi">
-      <div className="kpi-label">{label}</div>
-      <div className="kpi-num">{value}</div>
-      {note && <div className="kpi-trend">{note}</div>}
-    </div>
-  );
-}
-
-// Style authority = sibling admin chrome（镜像 coverage-lattice.tsx inline tokens）。
-const linkRowStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 10,
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-};
-const honestyRowStyle: CSSProperties = { margin: 'var(--s-2) 0 var(--s-3)' };
-const diagnosticAlertStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'flex-start',
-  gap: 'var(--s-3)',
-  color: 'var(--ink-2)',
-  fontSize: 13,
-  lineHeight: 1.55,
-};
-const diagnosticListStyle: CSSProperties = {
-  margin: 'var(--s-1) 0 0',
-  paddingLeft: 18,
-  color: 'var(--ink-3)',
-};
-const sectionHeadStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'flex-start',
-  justifyContent: 'space-between',
-  gap: 'var(--s-3)',
-  marginBottom: 'var(--s-3)',
-};
-const sectionTitleStyle: CSSProperties = {
-  margin: 0,
-  fontFamily: 'var(--font-serif)',
-  fontSize: 20,
-  fontWeight: 500,
-  letterSpacing: 'var(--ls-tight)',
-};
-const sectionBadgeRowStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 'var(--s-2)',
-  flexWrap: 'wrap',
-};
-const tableWrapStyle: CSSProperties = { overflowX: 'auto' };
-const tableStyle: CSSProperties = { width: '100%', borderCollapse: 'collapse', fontSize: 13 };
-const thStyle: CSSProperties = {
-  textAlign: 'left',
-  padding: '0 10px 8px 0',
-  color: 'var(--ink-4)',
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-  fontWeight: 500,
-};
-const tdStyle: CSSProperties = {
-  borderTop: '1px solid var(--line-soft)',
-  padding: '10px 10px 10px 0',
-  verticalAlign: 'top',
-  color: 'var(--ink-2)',
-  fontFamily: 'var(--font-mono)',
-};
-const okMarkStyle: CSSProperties = { color: 'var(--good)', fontFamily: 'var(--font-mono)' };
-const mutedInline: CSSProperties = { color: 'var(--ink-4)' };
-const mutedTextStyle: CSSProperties = {
-  margin: 0,
-  color: 'var(--ink-3)',
-  fontSize: 13,
-  lineHeight: 1.55,
-};
