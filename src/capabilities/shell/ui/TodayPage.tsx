@@ -8,6 +8,7 @@ import type {
 import type { ColdStart } from '@/capabilities/onboarding/ui-public';
 import { describeCosts } from '@/ui/lib/cost-presentation';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
+import { queryKeys } from '@/ui/lib/write-invalidation';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -277,7 +278,7 @@ function buildDigestChips(d: OvernightDigest): DigestChip[] {
 // network) and this hook keeps their queryFn/key from drifting apart.
 function useOvernightDigest() {
   const { getOvernightDigest } = useWorkbenchClient();
-  return useQuery({ queryKey: ['overnight-digest'], queryFn: getOvernightDigest });
+  return useQuery({ queryKey: queryKeys.overnightDigest, queryFn: getOvernightDigest });
 }
 
 // YUK-707 · [裁决 1] — degraded_kinds silent-failure red flags, HOISTED out of the
@@ -325,7 +326,7 @@ export function OvernightDigestBand({ navigate }: { navigate: (to: string) => vo
   // rides its own independent query and stays a first-class sibling below (see the return).
   const [activityOpen, setActivityOpen] = useState(false);
   const q = useOvernightDigest();
-  const probesQ = useQuery({ queryKey: ['prep-desk-probes'], queryFn: getActiveProbes });
+  const probesQ = useQuery({ queryKey: queryKeys.prepDeskProbes, queryFn: getActiveProbes });
   const activeProbes = probesQ.data?.probes ?? [];
   const status = statefulStatus(q.isLoading, q.isError);
   const d = q.data;
@@ -480,7 +481,7 @@ export default function TodayPage({
   const { getWorkbenchSummary } = useWorkbenchClient();
   const now = new Date();
 
-  const summaryQ = useQuery({ queryKey: ['workbench-summary'], queryFn: getWorkbenchSummary });
+  const summaryQ = useQuery({ queryKey: queryKeys.workbenchSummary, queryFn: getWorkbenchSummary });
   // queryKey 与 /agent-notes 全量页（['agent-notes','full']，limit=50）分档，
   // 避免互相覆盖缓存。
   const notesQ = useQuery({

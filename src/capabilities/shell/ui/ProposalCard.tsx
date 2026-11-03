@@ -8,6 +8,7 @@
 // M3E 呈现（YUK-1473）：ui-next Card / Button / ChipButton + lucide，样式在 inbox-m3e.css；
 // 设计记录 docs/design/2026-11-03-inbox-agent-notes-events-m3e.md。裁决逻辑未动。
 
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Archive,
   ArrowLeftRight,
@@ -31,6 +32,7 @@ import { isPublicHttpUrl } from '@/core/net/private-host';
 import { ApiError } from '@/ui/lib/api';
 import { DeferredMarkdownRenderer } from '@/ui/lib/deferred-markdown-renderer';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { invalidateAfterProposalDecision } from '@/ui/lib/write-invalidation';
 import { Card } from '@/ui-next/primitives/Card';
 import { ChipButton } from '@/ui-next/primitives/Chip';
 import { Button } from '@/ui-next/public';
@@ -337,6 +339,7 @@ export interface ProposalCardProps {
 export function ProposalCard({ p, resolved, navigate, onResolve, onError }: ProposalCardProps) {
   const meta = kindMeta(p.kind);
   const client = useWorkbenchClient();
+  const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [pickingRel, setPickingRel] = useState(false);
   // Block merges are irreversible: accept first asks for an explicit confirmation.
@@ -362,6 +365,9 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
       }
       setConfirmingMerge(false);
       onResolve(p.id, label);
+      // The decided card stays put; refresh what the decision changed elsewhere (sidebar count,
+      // 待你试做, digest, and the proposal kind's own reads) without waiting on it here.
+      void invalidateAfterProposalDecision(qc, { kind: p.kind });
     } catch (err) {
       // The server refuses an unconfirmed merge; show the confirmation instead of an error.
       if (err instanceof ApiError && err.status === 409 && err.code === 'confirm_required') {

@@ -27,6 +27,7 @@ import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifact
 import { ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
 import { undoAiChange } from '@/ui/lib/undo-ai-change';
+import { invalidateAfterAiChangeUndo, queryKeys } from '@/ui/lib/write-invalidation';
 import { ToastHost } from '@/ui-next/feedback/ToastHost';
 import { showToast } from '@/ui-next/feedback/toast-store';
 import { ChipButton } from '@/ui-next/primitives/Chip';
@@ -241,9 +242,9 @@ export default function NoteReaderPage({
   sendBlur?: typeof editingBlur;
 }) {
   const qc = useQueryClient();
-  const noteQ = useQuery({ queryKey: ['note-page', id], queryFn: () => read(id) });
+  const noteQ = useQuery({ queryKey: queryKeys.notePage(id), queryFn: () => read(id) });
   const changesQ = useQuery({
-    queryKey: ['note-ai-changes', id],
+    queryKey: queryKeys.noteAiChanges(id),
     queryFn: () => readAiChanges(id),
   });
 
@@ -324,8 +325,8 @@ export default function NoteReaderPage({
         body_blocks: { type: 'doc', content: draft ?? [] },
       }),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['note-page', id] });
-      void qc.invalidateQueries({ queryKey: ['note-ai-changes', id] });
+      void qc.invalidateQueries({ queryKey: queryKeys.notePage(id) });
+      void qc.invalidateQueries({ queryKey: queryKeys.noteAiChanges(id) });
       setMode('read');
       setDraft(null);
       say('已保存——版本推进，refine 痕迹照常累积。');
@@ -341,8 +342,8 @@ export default function NoteReaderPage({
   const undoM = useMutation({
     mutationFn: (eventId: string) => undo(id, eventId),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['note-page', id] });
-      void qc.invalidateQueries({ queryKey: ['note-ai-changes', id] });
+      // Also refreshes the workbench AI-changes strip.
+      void invalidateAfterAiChangeUndo(qc, { artifactId: id });
       say('已还原该次 AI 修订。');
     },
     // undoAiChange raises a 409 on 'skipped:version_conflict' (a 200 that did NOT restore),

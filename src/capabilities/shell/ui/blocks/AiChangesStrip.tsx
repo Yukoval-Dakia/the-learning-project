@@ -7,6 +7,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useState } from 'react';
 import { formatRelTime } from '@/ui/lib/utils';
+import { invalidateAfterAiChangeUndo, queryKeys } from '@/ui/lib/write-invalidation';
 import { Btn } from '@/ui/primitives/Btn';
 import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
@@ -20,7 +21,7 @@ import { useWorkbenchClient } from '../workbench-client';
 export function AiChangesStrip({ now }: { now: Date }) {
   const { getRecentAiChanges, undoAiChange } = useWorkbenchClient();
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ['workbench-ai-changes'], queryFn: getRecentAiChanges });
+  const q = useQuery({ queryKey: queryKeys.workbenchAiChanges, queryFn: getRecentAiChanges });
   const rows = q.data?.rows ?? [];
 
   // Which rows' undo failed. A single shared mutation's isError can't say WHICH row; a
@@ -42,7 +43,9 @@ export function AiChangesStrip({ now }: { now: Date }) {
     onError: (_e, { eventId }) => setFailedIds((s) => new Set(s).add(eventId)),
     // Drop the flag on success too, so a row that ended up reverted never keeps an error.
     onSuccess: (_data, { eventId }) => clearFailed(eventId),
-    onSettled: () => void qc.invalidateQueries({ queryKey: ['workbench-ai-changes'] }),
+    // Settled, not success: a version-conflict failure also changes what the strip and the note
+    // (reader + copilot hero block) should show.
+    onSettled: (_d, _e, { artifactId }) => void invalidateAfterAiChangeUndo(qc, { artifactId }),
   });
 
   const status: StatefulStatus = q.isLoading

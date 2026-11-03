@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, FileText, Layers, ListChecks, Sparkles } from 'lucide-react';
 import type { NotePageClient } from '@/capabilities/notes/ui-public';
 import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
+import { queryKeys } from '@/ui/lib/write-invalidation';
 import {
   type ArtifactHero,
   type ArtifactHeroIcon,
@@ -69,7 +70,7 @@ function InteractiveArtifact({
   readNotePage: NotePageClient;
 }) {
   const page = useQuery({
-    queryKey: ['note-page', artifactRef.id],
+    queryKey: queryKeys.notePage(artifactRef.id),
     queryFn: () => readNotePage(artifactRef.id),
   });
   const html = page.data?.interactive?.html ?? null;

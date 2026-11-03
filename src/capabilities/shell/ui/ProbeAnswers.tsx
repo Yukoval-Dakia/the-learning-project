@@ -21,6 +21,11 @@ import { useState } from 'react';
 // 上传失败不丢同批已成功的纪律在组件内）。conjecture 裁决语义不变。
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
 import type { EvidenceAttachment } from '@/ui/components/response/response-types';
+import {
+  invalidateAfterProbeAnswer,
+  invalidateAfterProbeVerdictDismissed,
+  queryKeys,
+} from '@/ui/lib/write-invalidation';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -70,7 +75,7 @@ function VerdictMessage({ verdict }: { verdict: ProbeAnswerVerdict['resolution']
 
 export function ProbeAnswers() {
   const { getActiveProbes } = useWorkbenchClient();
-  const q = useQuery({ queryKey: ['prep-desk-probes'], queryFn: getActiveProbes });
+  const q = useQuery({ queryKey: queryKeys.prepDeskProbes, queryFn: getActiveProbes });
   const probes = q.data?.probes ?? [];
 
   return (
@@ -133,9 +138,8 @@ export function ProbeAnswerCard({
       resolution = res.resolution;
       setVerdict(res.resolution);
       // YUK-707 · [裁决 2] — a recorded verdict re-projects the teaching brief to its
-      // outcome state. Invalidate it so a mounted brief advances in place; no-op when the
-      // brief isn't on screen. (['prep-desk-probes'] stays on onDismiss, unchanged.)
-      void qc.invalidateQueries({ queryKey: ['teaching-brief'] });
+      // outcome state; the probe queue waits for onDismiss.
+      void invalidateAfterProbeAnswer(qc);
     } catch {
       // An actually ungradable judge result or network failure stays retryable.
       // A gradable unrelated error returns the recorded `inconclusive` verdict above.
@@ -154,7 +158,7 @@ export function ProbeAnswerCard({
   function onDismiss() {
     // The answered probe now has a probe_result → leaves the 待你试做 queue (and drops
     // the entry-point count) on refetch.
-    void qc.invalidateQueries({ queryKey: ['prep-desk-probes'] });
+    void invalidateAfterProbeVerdictDismissed(qc);
   }
 
   return (
