@@ -19,7 +19,6 @@ export {
 export {
   batchResolveEffectiveDomains,
   getEffectiveDomain,
-  resolveAllActiveKnowledgeIds,
   resolveSubjectKnowledgeIds,
 } from '@/kernel/read-models/knowledge-tree';
 export { assertKnowledgeIdsExist } from '@/kernel/read-models/knowledge-validate';

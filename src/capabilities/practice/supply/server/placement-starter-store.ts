@@ -116,7 +116,7 @@ async function resolvePlacementStarterGoalAuthorityFromRow(
   const subjectIds = [...subjects].sort();
   if (subjectIds.length === 0) {
     throw new ApiError(
-      'validation_error',
+      'placement_goal_needs_subject',
       'placement goal has no authoritative subject for starter generation',
       422,
     );
