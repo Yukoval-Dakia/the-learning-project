@@ -9,6 +9,7 @@ import {
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import type { Db, Tx } from '@/db/client';
 import { evaluation, event, job_events, judge_run_control } from '@/db/schema';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import {
   type IssuanceJudgeSettledSchema,
   JudgeRunStatusResponseSchema,
@@ -144,7 +145,7 @@ async function reduceEvidence(
         resolution.subject_id === input.question_id &&
         p.data.assessment.submission_id === input.submission_id &&
         p.data.assessment.evaluation_group_id === input.evaluation_group_id &&
-        p.data.attempt_event_id === `evt_assessment_${input.submission_id}` &&
+        p.data.attempt_event_id === assessmentAttemptEventId(input.submission_id) &&
         resolution.caused_by_event_id === p.data.attempt_event_id &&
         candidate?.submission_id === input.submission_id &&
         candidate.evaluation_group_id === input.evaluation_group_id &&
@@ -193,7 +194,7 @@ async function reduceEvidence(
             database,
             runId,
             candidate.evaluation_id,
-            `evt_assessment_${input.submission_id}`,
+            assessmentAttemptEventId(input.submission_id),
           ),
         );
         if (result.success) return { kind: 'resolved', activity: 'terminal', result: result.data };

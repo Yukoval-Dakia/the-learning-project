@@ -10,6 +10,7 @@ import type { Tx } from '@/db/client';
 import { event, question, question_group_lifecycle } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { type SettlementPlan, liveAppliedSettlements, loadSettlementEvents } from './settle-read';
 
 /** Guess, pending calibration on real use. Not a serving rule. */
@@ -163,10 +164,6 @@ function contentKcIds(ids: readonly string[], nonKc: ReadonlySet<string>): strin
   ];
 }
 
-function assessmentAttemptId(submissionId: string): string {
-  return `evt_assessment_${submissionId}`;
-}
-
 async function attemptQuestionBySubmission(
   tx: Tx,
   submissionIds: readonly string[],
@@ -266,7 +263,7 @@ export async function recordFaultyItemInferences(
     if (isCurrent) focusQuestionId = questionId;
     const groupId = groupIdByQuestion.get(questionId) ?? questionId;
     attempts.push({
-      attemptId: located?.attemptId ?? assessmentAttemptId(submissionId),
+      attemptId: located?.attemptId ?? assessmentAttemptEventId(submissionId),
       questionId,
       verdict: item.verdict,
       occurredAtMs: item.row.occurrenceMs,
@@ -277,7 +274,7 @@ export async function recordFaultyItemInferences(
   }
   const currentAttemptId =
     attemptBySubmission.get(input.plan.submissionId)?.attemptId ??
-    assessmentAttemptId(input.plan.submissionId);
+    assessmentAttemptEventId(input.plan.submissionId);
   if (!attempts.some((attempt) => attempt.attemptId === currentAttemptId)) {
     const verdict = independentJudgedVerdict(input.plan);
     const questionId =
