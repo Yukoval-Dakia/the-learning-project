@@ -137,6 +137,14 @@ no writes; `scripts/embed-inventory.ts`).
 ratchet（capability→server、server→capability deep、cross-capability value/SCC）。
 机器可读报告用 `pnpm audit:capability-boundaries --json`。
 
+capability→server 不统计目标为 `src/server/ai` 与 `src/server/boss` 的边：Owner 2026-11-03
+「ai/boss 属于平台依赖，不算债」——每个 capability 都按设计调用 AI runner 与任务队列。这两类 pair
+不进台账和 ratchet，只在报告的「平台依赖（不计入 ratchet）」小节（`--json` 为
+`dependencyReport.platformCapabilityToServer*`）照常列出数字；其余 server 模块的 pair 仍只降不升。
+`audit:architecture-deepening` 的 531 天花板是另一道独立 gate，仍按含 ai/boss 的全量比较。
+ai/boss 没有规定的对外入口（无 barrel/public 文件，AGENTS.md 与 lint 也无入口规则），所以不约束
+capability 深入它们内部文件。
+
 `scripts/capability-boundary-baseline.json` 只记当前上限：三类债务的 `total`、`byOwnerPair`
 与 `crossCapabilityValue.nontrivialSccs`，不存变更历史或批准记录（批准与理由写在 PR / Linear）。
 审计对每个 pair、每个 total 和 SCC 做两次比较，任何一项上升即失败：
