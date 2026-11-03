@@ -407,6 +407,10 @@
   line-height: 1.65;
 }
 
+[data-ui-next] .un-st-support .un-cp-reply-badge {
+  margin: 10px 0 0;
+}
+
 [data-ui-next] .un-st-support .un-cp-rich-text {
   font-size: 15px;
   line-height: 1.8;
