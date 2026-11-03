@@ -234,13 +234,6 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envParse: flagEnv,
     tier: 'A',
   },
-  CONFUSABLE_CONTRAST_ENABLED: {
-    schema: z.boolean(),
-    codeDefault: false,
-    envName: 'CONFUSABLE_CONTRAST_ENABLED',
-    envParse: flagEnv,
-    tier: 'A',
-  },
   JUDGE_CALIBRATION_SAMPLING_ENABLED: {
     schema: z.boolean(),
     codeDefault: false,

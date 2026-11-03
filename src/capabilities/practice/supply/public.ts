@@ -102,7 +102,6 @@ export {
 export const runQuestionSupplyNightly: typeof import('./jobs/question_supply_nightly').runQuestionSupplyNightly =
   async (...args) =>
     (await import('./jobs/question_supply_nightly')).runQuestionSupplyNightly(...args);
-export { discoverConfusableContrastTargets } from './server/confusable-contrast-discovery';
 export {
   dispatchPlacementStarterClaim,
   isPlacementStarterJobLive,

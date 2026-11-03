@@ -1,6 +1,7 @@
 // 供给目标发现 + 派发的夜间 job。
 //
-// 结构上仿 item_prior_backfill.ts：纯发现（discoverSupplyTargets，零写零 LLM）→
+// 结构上仿 item_prior_backfill.ts：纯发现（discoverSupplyTargets 覆盖缺口 +
+// discoverConfusableContrastTargets 易混对比缺口，零写零 LLM）→
 // 确定性缺口扫描得 QuestionSupplyTarget[] → dispatchSupplyTargets 把每个目标派到
 // 既有获取面（sourcing / quiz_gen 队列）或标 manual。出题（quiz_gen / author）+ 录入
 // （OCR）两条创建路径产生的「KC 前沿但缺题」缺口都被此夜扫兜住——无需每条创建路径埋
@@ -28,6 +29,7 @@ import {
   dispatchPracticeSupplyTargets as dispatchSupplyTargets,
   inFlightSupplyCount,
 } from '@/capabilities/practice/public';
+import { discoverConfusableContrastTargets } from '@/capabilities/practice/supply/server/confusable-contrast-discovery';
 import { runInventoryShadowDualRead } from '@/capabilities/practice/supply/server/inventory-projection';
 import {
   type QuestionSupplyTarget,
@@ -254,13 +256,18 @@ async function runSupplyDiscoveryAndDispatch(
   deps: DepsOverride,
 ): Promise<QuestionSupplyNightlyResult> {
   if (deps.returnStock) return dispatchReturnStock(db, deps);
-  const targets = await discoverSupplyTargets(db, undefined, {
+  const coverageTargets = await discoverSupplyTargets(db, undefined, {
     observeInventory: async (input, currentTargets) => {
       await runInventoryShadowDualRead(db, input, currentTargets);
     },
   });
+  // 易混对比缺口与覆盖缺口同表排序，共用 per-run 硬顶与 dispatcher cooldown。
+  // 稳定排序：同优先级保持覆盖缺口在前。
+  const targets = [...coverageTargets, ...(await discoverConfusableContrastTargets(db))].sort(
+    (a, b) => b.priority - a.priority,
+  );
   if (targets.length === 0) return emptyTally();
-  // per-run 硬顶：targets 已按 priority 降序（target-discovery.ts），slice top-N 即派最高
+  // per-run 硬顶：targets 已按 priority 降序，slice top-N 即派最高
   // 优先级的 N 个，其余留下轮（截掉的目标不 dispatch ⇒ 无 fingerprint 落库 ⇒ 无 cooldown 副作用）。
   const dispatchTargets = targets.slice(0, deps.maxPerRun ?? DEFAULT_MAX_PER_RUN);
   if (dispatchTargets.length === 0) return emptyTally(targets.length);

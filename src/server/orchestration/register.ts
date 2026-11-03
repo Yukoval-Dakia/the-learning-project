@@ -146,6 +146,7 @@ const RETIRED_BARE_CRONS = [
   'coach_weekly',
   'knowledge_edge_propose_nightly',
   'research_meeting_agent_nightly',
+  'confusable_contrast_nightly',
 ] as const;
 
 async function unscheduleRetiredCrons(boss: PgBoss): Promise<void> {

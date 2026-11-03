@@ -136,9 +136,9 @@ export type SupplyGapKind =
   | 'format_diversity'
   | 'placement_starter'
   // YUK-533 — a confusable KC pair (A↔B, from the confusable_with misconception mesh)
-  // lacks a contrast/discrimination item. Emitted by the parallel discovery source
-  // confusable-contrast-discovery.ts (NOT scanCoverageGaps — it scans the misconception
-  // mesh, not the single-KC coverage pool). Routes to quiz_gen (propose-only draft).
+  // lacks a contrast/discrimination item. Emitted by confusable-contrast-discovery.ts
+  // (NOT scanCoverageGaps — it scans the misconception mesh, not the single-KC coverage
+  // pool); question_supply_nightly merges both sources before the per-run cap.
   | 'confusable_contrast';
 
 // ── 纯扫描器输入（IO 加载器加载好后喂进来）─────────────────────────────────────

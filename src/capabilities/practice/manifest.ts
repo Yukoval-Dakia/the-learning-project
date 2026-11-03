@@ -182,23 +182,6 @@ export const practiceCapability = defineCapability({
         queue: 'llm',
         load: () => import('./jobs/supply_planner').then((m) => m.buildSupplyPlannerHandler),
       },
-      // YUK-533 (ADR-0036 RT1 consumer) — confusable-contrast supply discovery + dispatch.
-      // Scans the confusable_with misconception mesh → one supply target per confusable KC
-      // pair → quiz_gen propose-only drafts. DARK behind CONFUSABLE_CONTRAST_ENABLED (discovery
-      // NO-OPs flag-off). cron 06:20 Asia/Shanghai: the last supply lane, right after
-      // question_supply_nightly (06:00), in a clear slot. queue=llm: the dispatched quiz_gen
-      // jobs are LLM-heavy, same DLQ/retry bucket. **成本护栏**：依赖 dispatcher 的 7d
-      // fingerprint cooldown + 本 job 的 per-run cap，绝不绕 dispatcher 直发付费队列。
-      {
-        name: 'confusable_contrast_nightly',
-        schedule: { cron: '20 6 * * *', tz: 'Asia/Shanghai' },
-        eligibility: nightlyEligibility('deterministic', { usesModel: true }),
-        queue: 'llm',
-        load: () =>
-          import('./jobs/confusable_contrast_nightly').then(
-            (m) => m.buildConfusableContrastNightlyHandler,
-          ),
-      },
       // YUK-1560 删除 axis_state_nightly 夜写及 batch writer；learner_axis_state 只保留历史行（merge 时 rename/freeze）。
       ...fromOwnerParts((part) => part.jobs?.handlers),
     ],

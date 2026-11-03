@@ -90,7 +90,6 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   // fail-closed default ('fenced').
   embed_backfill: 'translate',
   kc_dedup_nightly: 'translate',
-  confusable_contrast_nightly: 'translate',
   // 对话/提案型任务的 payload 引用题面/答题上下文（旧形态）。
   copilot_run: 'translate',
   session_summary: 'translate',

@@ -77,6 +77,8 @@ panel 设计中仍然成立的思想，折进新例会作为主席裁决面的�
 
 三脑并入白板；coach_daily 计划产出先由主席决定接上 canonical stream 证明 parity 后退役为白板「规划分析」成员；coach_weekly 改周盘点；A02 BKT 夜链删除（零消费者）；A47 对比需求迁入普通供题执行器；A38 停夜写、信号暂不入板；A25 按 D4；A27 nudge/chip 改 typed 动作 + 执行回执；连错提醒已退役（YUK-1727，协调线依据 Owner 设计原则裁定），「同一知识点连续失败」这一事实改由 `src/kernel/read-models/learner-activity.ts` 的 `loadLongestFailureStreak` 提供给 agent——legacy review 行的知识点口径只读 `referenced_knowledge_ids`，不再优先 `fsrs_subject_ids`，这只影响历史行（review 自 YUK-956 起已无生产写入方）；A29 memory brief 保留为事件驱动并缩到真实 consumer scope；供题/校准/结构维护/运维 cron 保留为批处理；Copilot 会话不在本设计范围。完整映射表与每条的理由、保留边界见草案 §6——凡与审计裁决不一致处以草案的理由为准，S13 DELETE/SIMPLIFY 对象随 consumer 迁入新路径的 PR 删除，不做独立大扫除。
 
+**2026-11-03 落地（YUK-1739）：** A47 已并入普通缺口发现：`question_supply_nightly` 把易混对比缺口（`confusable-contrast-discovery.ts`）与覆盖缺口同表按优先级排序，共用每轮派发上限与 dispatcher 指纹冷却。独立的 `confusable_contrast_nightly`、`CONFUSABLE_CONTRAST_ENABLED` 开关和固定走 quiz_gen 的路由例外已删除；对比缺口按客观题常规路由。
+
 ### D6 有用性按链预注册度量
 
 每条链预先登记「它应改变什么动作、观察窗、最低效果」；窗口内从未改变动作的链进简化/删除流程（沿用审计波次纪律：先停 producer，drain，再删）。分母是「被引用的决定」而不是「写出的文字」。机械层现在就能量；学习层（帮助后独立检查通过率、预测封存对照）等真实使用达到预注册样本量后才启动。coach_weekly 的周回顾固定附这张盘点表。
