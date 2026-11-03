@@ -4,8 +4,10 @@ import type { ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 // 作答全程零语义色（pip 只有「已答」的中性墨点），颜色在交卷瞬间才进场。
 // 后端语义：草稿 PUT answer 自动保存；「交卷」= 未提交 slot 逐个 POST submit
 //（judge-now-show-later，visible_to_user=false 缓冲）+ session end → 可见性解锁。
+// M3E 呈现：docs/design/2026-11-03-practice-paper-m3e.md（样式 practice-paper-m3e.css）。
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, ArrowRight, Clock, Send, TriangleAlert } from 'lucide-react';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { stableStringify } from '@/core/migration/stable-stringify';
 import type { PresentationT } from '@/core/schema/assessment/presentation';
@@ -37,9 +39,7 @@ import { StimulusFigure } from '@/ui/components/response/StimulusFigure';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { Btn } from '@/ui/primitives/Btn';
-import { Card } from '@/ui/primitives/Card';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { Button } from '@/ui-next/public';
 import { boundSlots, entriesForSubmit } from './blocks/envelope';
 import {
   type EntriesUpdate,
@@ -384,14 +384,21 @@ export function PfPaper(props: PfPaperProps) {
   const [enteredAt] = useState(() => Date.now());
   const readThisEntry = detail !== null && detailQ.dataUpdatedAt >= enteredAt;
   if (detailQ.isLoading || !detailQ.isFetchedAfterMount)
-    return <p className="quiet-empty">取卷中…</p>;
+    return (
+      <p className="pf-m3-state un-m3e-bridge" role="status">
+        取卷中…
+      </p>
+    );
   if ((detailQ.isError && !readThisEntry) || !detail || slots.length === 0)
     return (
-      <div className="pfp">
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => onExit()}>
-          返回流
-        </Btn>
-        <p className="quiet-empty">卷加载失败或没有题。</p>
+      <div className="pf-pp un-m3e-bridge">
+        <div className="pf-pp-top">
+          <Button variant="ghost" onClick={() => onExit()}>
+            <ArrowLeft size={18} aria-hidden="true" />
+            返回流
+          </Button>
+        </div>
+        <p className="pf-m3-state">卷加载失败或没有题。</p>
       </div>
     );
   return (
@@ -1727,22 +1734,21 @@ function PaperVisit({
   };
 
   return (
-    <div className="pfp" data-screen-label={`卷模式 · ${artifactId}`} ref={attachVisit}>
-      <div className="pfp-top" ref={attachTop}>
-        <Btn
-          size="sm"
-          variant="ghost"
-          icon="arrowL"
-          onClick={exitPaper}
-          disabled={exiting || submitting}
-        >
+    <div
+      className="pf-pp un-m3e-bridge"
+      data-screen-label={`卷模式 · ${artifactId}`}
+      ref={attachVisit}
+    >
+      <div className="pf-pp-top" ref={attachTop}>
+        <Button variant="ghost" onClick={exitPaper} disabled={exiting || submitting}>
+          <ArrowLeft size={18} aria-hidden="true" />
           {exiting
             ? '保存中…'
             : anySaveFailed || conflictNumbers.length > 0 || !hasNativeBindings
               ? '退出'
               : '退出 · 进度保留'}
-        </Btn>
-        <span className="pfp-title">{detail.title}</span>
+        </Button>
+        <h1 className="pf-pp-title">{detail.title}</h1>
         {/* YUK-1051 — 保存状态 chip 换成组件族 SaveStateChip（同文案/同重试交互）；
             saved 仅在 server ack 后出现的纪律由组件族承载。 */}
         {hasNativeBindings && (
@@ -1757,8 +1763,8 @@ function PaperVisit({
         )}
       </div>
 
-      <div className="pfp-buffer">
-        <LoomIcon name="clock" size={14} className="ico" />
+      <div className="pf-pp-buffer">
+        <Clock size={16} aria-hidden="true" className="pf-pp-buffer-ico" />
         <span>
           {hasNativeBindings
             ? '反馈缓冲：这张卷不给即时对错——交卷后统一判分。和散题的节奏是反着的，刻意的。'
@@ -1770,12 +1776,12 @@ function PaperVisit({
 
       {/* YUK-1566 — a failed pre-submit re-read says so in the foot line and toast instead. */}
       {refreshFailed && !submitCheckFailed && (
-        <p className="quiet-empty" role="status">
+        <p className="pf-pp-note" role="status">
           刚才没能刷新这张卷，已保留你的作答，可以接着写。
         </p>
       )}
 
-      <div className="pfp-pips" role="tablist" aria-label="题目导航">
+      <div className="pf-pp-index" role="tablist" aria-label="题目导航">
         {slots.map((s, i) => {
           // YUK-1051 — pip 的「已答」中性墨点也把绑定到该 slot 的证据算上（仍零语义色）。
           const has =
@@ -1791,7 +1797,7 @@ function PaperVisit({
               key={slotKey(s)}
               role="tab"
               aria-selected={i === pos}
-              className={`pfp-pip${i === pos ? ' current' : ''}${has ? ' answered' : ''}`}
+              className={`pf-pp-pip un-hit${i === pos ? ' current' : ''}${has ? ' answered' : ''}`}
               onClick={() => goPos(i)}
             >
               {i + 1}
@@ -1800,10 +1806,10 @@ function PaperVisit({
         })}
       </div>
 
-      <Card pad="lg">
-        <div className="nowrap-meta" style={{ marginBottom: 'var(--s-2)' }}>
-          <span className="meta mono">
-            {cur.question_id.slice(0, 12)} · {pos + 1}/{slots.length}
+      <div className="pf-pp-sheet">
+        <div className="pf-pp-qhead">
+          <span className="pf-pp-qno">
+            <b>{pos + 1}</b>/{slots.length}
           </span>
         </div>
         {/* YUK-1051 — 结构化配图/共享材料与题面同版渲染（wire image_refs 恢复后）。 */}
@@ -1835,7 +1841,7 @@ function PaperVisit({
         ) : cur.assessment ? (
           <>
             {cur.assessment.practice_dto.materials.map((material) => (
-              <div key={material.material_id}>
+              <div key={material.material_id} className="pf-pp-material">
                 {material.content_md !== undefined ? (
                   <MathMarkdown notation={cur.question.notation}>
                     {material.content_md}
@@ -1852,7 +1858,7 @@ function PaperVisit({
               <MathMarkdown
                 key={face.part_id}
                 notation={cur.question.notation}
-                className="pfs-stem"
+                className="pf-pp-stem"
               >
                 {face.prompt_md}
               </MathMarkdown>
@@ -1863,16 +1869,16 @@ function PaperVisit({
             {(cur.question.image_refs ?? []).map((assetId) => (
               <StimulusFigure key={assetId} assetId={assetId} />
             ))}
-            <MathMarkdown notation={cur.question.notation} className="pfs-stem">
+            <MathMarkdown notation={cur.question.notation} className="pf-pp-stem">
               {cur.question.prompt_md}
             </MathMarkdown>
           </>
         )}
 
         {handedInElsewhere[curKey] && (
-          <div className="pfp-conflict" aria-live="polite">
-            <p className="pfp-conflict-msg">
-              <LoomIcon name="alert" size={14} className="ico" />
+          <div className="pf-pp-conflict" aria-live="polite">
+            <p className="pf-pp-conflict-msg">
+              <TriangleAlert size={16} aria-hidden="true" className="pf-pp-conflict-ico" />
               {discarded[curKey]
                 ? '这道题已经在别处交过了，下面是交过的作答，不能再改。你这次写的放在作答下方「你这次写的（已放下）」里。'
                 : '这道题已经在别处交过了，下面是交过的作答，不能再改。'}
@@ -1895,7 +1901,7 @@ function PaperVisit({
           />
         )}
         {unanswerableKeys.has(curKey) && (
-          <p className="quiet-empty" role="status">
+          <p className="pf-pp-note" role="status">
             {PAPER_MODE_UNSUPPORTED_COPY}
           </p>
         )}
@@ -2011,9 +2017,9 @@ function PaperVisit({
           shouldOfferProcessBox(isChoice) &&
           !submittedKeys.has(curKey) &&
           !exiting && (
-            <div className="pfs-trace">
+            <div className="pf-pp-trace">
               {traceOpen[curKey] ? (
-                <div className="composer pfs-trace-composer">
+                <div className="pf-pp-trace-field">
                   <textarea
                     rows={2}
                     value={trace[curKey] ?? ''}
@@ -2028,7 +2034,7 @@ function PaperVisit({
               ) : (
                 <button
                   type="button"
-                  className="pfs-trace-toggle"
+                  className="pf-pp-trace-toggle un-hit"
                   onClick={() => setTraceOpen((o) => ({ ...o, [curKey]: true }))}
                 >
                   ＋ 记下你的思路（可选）
@@ -2052,37 +2058,29 @@ function PaperVisit({
             ariaLabel={`第 ${pos + 1} 题信心自评`}
           />
         )}
-      </Card>
+      </div>
 
-      <div className="pfp-foot">
-        <Btn
-          size="sm"
-          variant="secondary"
-          icon="arrowL"
-          disabled={pos === 0}
-          onClick={() => goPos(pos - 1)}
-        >
+      <div className="pf-pp-foot" data-busy={submitting || undefined}>
+        <Button variant="secondary" disabled={pos === 0} onClick={() => goPos(pos - 1)}>
+          <ArrowLeft size={18} aria-hidden="true" />
           上一题
-        </Btn>
-        <Btn
-          size="sm"
+        </Button>
+        <Button
           variant="secondary"
-          iconEnd="arrow"
           disabled={pos === slots.length - 1}
           onClick={() => goPos(pos + 1)}
         >
           下一题
-        </Btn>
-        <span className="pfp-count tnum">
+          <ArrowRight size={18} aria-hidden="true" />
+        </Button>
+        <span className="pf-pp-count">
           已答 {answeredCount} / {slots.length}
         </span>
         {confirm ? (
-          <span className="nowrap-meta">
-            <span className="meta">还有 {unanswered} 题空着——仍要交？</span>
-            <Btn
-              size="sm"
+          <span className="pf-pp-confirm">
+            <span className="pf-pp-confirm-q">还有 {unanswered} 题空着——仍要交？</span>
+            <Button
               variant="primary"
-              icon="send"
               disabled={
                 !hasNativeBindings ||
                 submitting ||
@@ -2092,17 +2090,16 @@ function PaperVisit({
               }
               onClick={() => void submitAll()}
             >
+              <Send size={18} aria-hidden="true" />
               {submitting ? '判分中…' : '交卷'}
-            </Btn>
-            <Btn size="sm" variant="ghost" onClick={() => setConfirm(false)}>
+            </Button>
+            <Button variant="ghost" onClick={() => setConfirm(false)}>
               再看看
-            </Btn>
+            </Button>
           </span>
         ) : (
-          <Btn
-            size="sm"
+          <Button
             variant="primary"
-            icon="send"
             disabled={
               !hasNativeBindings ||
               submitting ||
@@ -2112,11 +2109,12 @@ function PaperVisit({
             }
             onClick={() => (unanswered > 0 ? setConfirm(true) : void submitAll())}
           >
+            <Send size={18} aria-hidden="true" />
             {submitting ? '判分中…' : '交卷 · 统一判分'}
-          </Btn>
+          </Button>
         )}
       </div>
-      <div className="key-hints mono" style={{ marginTop: 'var(--s-3)' }}>
+      <div className="pf-pp-hint">
         {!hasNativeBindings
           ? '历史作答保留，当前不可提交。'
           : conflictNumbers.length > 0
@@ -2153,31 +2151,33 @@ function PaperDraftConflict({
   onKeepMine: () => void;
 }) {
   const side = (label: string, text: string, files: number) => (
-    <div className="pfp-conflict-side">
-      <span className="meta">{label}</span>
+    <div className="pf-pp-conflict-side">
+      <span className="pf-pp-quiet">{label}</span>
       <AnswerText text={text} mathNotation={mathNotation} empty="还没写" />
-      {files > 0 && <span className="meta">另有 {files} 个附件</span>}
+      {files > 0 && <span className="pf-pp-quiet">另有 {files} 个附件</span>}
     </div>
   );
   return (
-    <div className="pfp-conflict" aria-live="polite">
-      <p className="pfp-conflict-msg">
-        <LoomIcon name="alert" size={14} className="ico" />
+    <div className="pf-pp-conflict" aria-live="polite">
+      <p className="pf-pp-conflict-msg">
+        <TriangleAlert size={16} aria-hidden="true" className="pf-pp-conflict-ico" />
         这道题在别处（比如上次离开时，或另一个标签页）存了另一份作答，你这次写的还没有保存。选一份留下，再接着写。
       </p>
-      <div className="pfp-conflict-cmp">
+      <div className="pf-pp-conflict-cmp">
         {side('你这次写的', mine.text, mine.files)}
         {side('服务器上的', server.text, server.files.length)}
       </div>
-      <p className="meta">用服务器上的：你这次写的会丢掉。保留我的：服务器上那一份会被替换。</p>
-      <div className="nowrap-meta">
-        <Btn size="sm" variant="secondary" onClick={onKeepServer} disabled={uploadRunning}>
+      <p className="pf-pp-quiet">
+        用服务器上的：你这次写的会丢掉。保留我的：服务器上那一份会被替换。
+      </p>
+      <div className="pf-pp-conflict-actions">
+        <Button variant="secondary" onClick={onKeepServer} disabled={uploadRunning}>
           用服务器上的
-        </Btn>
-        <Btn size="sm" variant="primary" onClick={onKeepMine} disabled={uploadRunning}>
+        </Button>
+        <Button variant="primary" onClick={onKeepMine} disabled={uploadRunning}>
           保留我的
-        </Btn>
-        {uploadRunning && <span className="meta">附件还在上传，传完再选</span>}
+        </Button>
+        {uploadRunning && <span className="pf-pp-quiet">附件还在上传，传完再选</span>}
       </div>
     </div>
   );
@@ -2195,18 +2195,18 @@ function DiscardedDraft({
   onCopy: (text: string) => void;
 }) {
   return (
-    <details className="pfp-discarded">
+    <details className="pf-pp-discarded">
       <summary>你这次写的（已放下）</summary>
       {draft.text && <AnswerText text={draft.text} mathNotation={mathNotation} />}
       {draft.files > 0 && (
-        <span className="meta">当时另有 {draft.files} 个附件，已不在这道题上</span>
+        <span className="pf-pp-quiet">当时另有 {draft.files} 个附件，已不在这道题上</span>
       )}
-      <span className="meta">只留在这一页，换到别的题就不再显示。</span>
+      <span className="pf-pp-quiet">只留在这一页，换到别的题就不再显示。</span>
       {draft.text && (
         <div>
-          <Btn size="sm" variant="ghost" onClick={() => onCopy(draft.text)}>
+          <Button variant="ghost" onClick={() => onCopy(draft.text)}>
             复制这段
-          </Btn>
+          </Button>
         </div>
       )}
     </details>
@@ -2227,12 +2227,12 @@ function AnswerText({
 }) {
   if (text && mathNotation !== undefined)
     return (
-      <MathMarkdown notation={mathNotation} className="pfp-conflict-text">
+      <MathMarkdown notation={mathNotation} className="pf-pp-conflict-text">
         {text}
       </MathMarkdown>
     );
   return (
-    <p className="pfp-conflict-text" data-empty={text ? undefined : true}>
+    <p className="pf-pp-conflict-text" data-empty={text ? undefined : true}>
       {text || empty}
     </p>
   );

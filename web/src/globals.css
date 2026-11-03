@@ -798,16 +798,6 @@ ol {
   letter-spacing: var(--ls-wide);
 }
 
-/* Section labels (mono, wide-spaced, ink-4) — reused across pages */
-.section-label {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  letter-spacing: var(--ls-wide);
-  display: block;
-  margin-bottom: var(--s-3);
-}
-
 /* slider: coral range track + thumb, replaces the native deep-black track
    (port: screens.css L277-279). */
 .slider {
@@ -1039,7 +1029,7 @@ progress {
      - dark mode reuses the existing :root[data-theme="dark"]
        + @media(prefers-color-scheme) mechanism; NO competing
        [data-theme="dark"] mirror is introduced here.
-     - bare .page / .seg / .kpi / .section-label / .page-head-row
+     - bare .page / .seg / .kpi / .page-head-row
        already exist with the project's tuned values and are
        consumed by legacy surfaces, so they are NOT redefined here
        (would cascade-override and break unredrawn surfaces).
@@ -1538,79 +1528,6 @@ button.chip:disabled:hover {
 }
 
 /* ============================================================
-   Empty / placeholder (loom.css L334-345)
-   loom bare .empty does not exist (legacy only scopes it); safe to add.
-   ============================================================ */
-.empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: var(--s-3);
-  padding: var(--s-12) var(--s-6);
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--r-4);
-  background: linear-gradient(var(--paper-sunk), var(--paper-raised));
-}
-.empty .empty-ico {
-  width: 56px;
-  height: 56px;
-  border-radius: var(--r-3);
-  display: grid;
-  place-items: center;
-  background: var(--paper-raised);
-  border: 1px solid var(--line);
-  color: var(--ink-4);
-}
-.empty .empty-title {
-  font-family: var(--font-serif);
-  font-size: var(--fs-h4);
-  font-weight: 500;
-}
-.empty .empty-text {
-  color: var(--ink-4);
-  max-width: 42ch;
-  font-size: var(--fs-caption);
-}
-.future-tag {
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  letter-spacing: var(--ls-wide);
-  color: var(--info-ink);
-  background: var(--info-soft);
-  border: 1px solid var(--info-line);
-  border-radius: var(--r-pill);
-  padding: 3px 9px;
-}
-
-/* error block (screens.css L211-214) — referenced by the loom
-   ErrorState primitive; absent from globals → added. */
-.errorstate {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  padding: var(--s-4);
-  border: 1px dashed var(--again-line);
-  border-radius: var(--r-3);
-  background: var(--again-soft);
-}
-.errorstate-ic {
-  color: var(--again);
-  flex: none;
-  display: grid;
-  place-items: center;
-}
-.errorstate-text {
-  color: var(--again-ink);
-  font-size: var(--fs-caption);
-  flex: 1;
-  min-width: 0;
-}
-.errorstate.compact {
-  padding: var(--s-3);
-}
-
-/* ============================================================
    Mobile bottom tab bar (p5.css L111-125) — distinct from the
    legacy .app-shell-bottom-tabs; loom shell uses .mobile-tabbar.
    ============================================================ */
@@ -1695,7 +1612,7 @@ button.chip:disabled:hover {
    S2 (YUK-335) — loom 页头 chrome 漏页补 port (inbox / agentnotes / pface)
    + note-reader page-title.  Same scoped strategy as .knowledge-loom /
    .today-loom / .items-loom: the legacy .page-head / .eyebrow / .page-title /
-   .page-head-row / .page-lead / .section-label / .seg globals are consumed by
+   .page-head-row / .page-lead / .seg globals are consumed by
    ~40 surfaces and MUST NOT change, so loom design values are scoped per page.
    Design source: docs/design/loom-refresh/project/loom.css.
    ═══════════════════════════════════════════════════════════════════════════ */

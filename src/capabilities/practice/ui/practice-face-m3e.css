@@ -1,7 +1,8 @@
 /* Practice page (/practice; YUK-1473): M3E presentation of the paper shelf (练习卷), the paper
    retro (复盘), the page's failure line and its toasts. The list header, queue and the
-   single-question studio live in src/ui-next/practice-studio/. The shelf and the retro sit in a
-   .un-m3e-bridge, so ui-next primitives read the Google M3 roles of the page root. Design record:
+   single-question studio live in src/ui-next/practice-studio/; the paper-answering view is in
+   practice-paper-m3e.css. The shelf and the retro sit in a .un-m3e-bridge, so ui-next primitives
+   read the Google M3 roles of the page root. Design record:
    docs/design/2026-11-03-practice-face-m3e.md (T1 semantic tokens, T3 no shadows on cards,
    M1 motion only on change, A2 hit areas). */
 
@@ -543,6 +544,28 @@
 
   & .pf-failure > .pf-m3-error {
     margin-bottom: var(--un-sp-5);
+  }
+
+  /* The question page's root has no padding of its own (its .un-st-page carries it), so the strip
+     takes the same column and inset as that page (studio.css) instead of touching the edges. */
+  & .pf-failure > .pf-m3-error:where(.pface-next *) {
+    max-width: 1040px;
+    margin: 24px auto 0;
+    padding-inline: 32px;
+  }
+
+  @media (max-width: 1199px) {
+    & .pf-failure > .pf-m3-error:where(.pface-next *) {
+      margin-top: 20px;
+      padding-inline: 24px;
+    }
+  }
+
+  @media (max-width: 599px) {
+    & .pf-failure > .pf-m3-error:where(.pface-next *) {
+      margin-top: 18px;
+      padding-inline: 16px;
+    }
   }
 
   @media (max-width: 640px) {
