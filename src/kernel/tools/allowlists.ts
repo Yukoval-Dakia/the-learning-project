@@ -105,6 +105,8 @@ export const PROPOSE_WRITE_TOOLS = [
   // only.
   'author_artifact',
   'update_artifact',
+  // YUK-1772 — read-only deterministic note check (issues list, no verdict).
+  'check_note',
   // YUK-293 — direct write to the expiring AI hint channel (not learner data,
   // not an inbox proposal). Surface grants remain narrow below.
   'write_agent_note',
@@ -248,6 +250,8 @@ export const COPILOT_TOOLS = [
   // surface gets them.
   'author_artifact',
   'update_artifact',
+  // YUK-1772 — read-only deterministic note check (issues list, no verdict).
+  'check_note',
   // YUK-1468 — Copilot 编辑面：edit_question（ops/document/validate/probe）。
   // copilot 调 save 时工具按 caller surface 自动落 question_edit proposal
   // （accept applier 走同一 ops → submit gate）；validate/probe 直出。

@@ -50,7 +50,7 @@ export const checkNoteTool: DomainTool<CheckNoteInput, CheckNoteOutput> = {
   costClass: 'local',
   mirrorEvent: 'when_user_visible',
   execute: executeCheckNote,
-  summarize(input, output) {
+  summarize(_input, output) {
     return `check_note · ${output.artifact_type} · ${output.issues.length} issue(s)`;
   },
 };
