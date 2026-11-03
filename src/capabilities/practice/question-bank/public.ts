@@ -78,10 +78,6 @@ export {
   verifyBankGapEvidenceMac,
 } from './tools/bank-search';
 
-export const acceptCauseCategoryProposal: typeof import('./server/proposal-appliers').acceptCauseCategoryProposal =
-  async (...args) =>
-    (await import('./server/proposal-appliers')).acceptCauseCategoryProposal(...args);
-
 export const materializeGeneratedQuestionParts: typeof import('./server/question-parts').materializeGeneratedQuestionParts =
   async (...args) =>
     (await import('./server/question-parts')).materializeGeneratedQuestionParts(...args);
