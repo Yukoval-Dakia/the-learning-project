@@ -20,6 +20,7 @@ export {
   ConversationOrphanStateError,
   abandonOrphanConversationTx,
   idleConversation,
+  selectOrphanConversationCandidates,
 } from './server/conversation-lifecycle';
 export { createCopilotSession, readCopilotSessions } from './server/conversation-requests';
 export { loadCopilotSummary } from './server/copilot-summary';
