@@ -12,13 +12,6 @@ export const FRONTIER_PENDING_CAP = 5;
 /** 空闲档「回来练两次」：两次练习 × 前沿每次 5 题。 */
 export const RETURN_STOCK_QUESTIONS = 10;
 
-export const LEARNING_EVENT_ACTIONS = [
-  'attempt',
-  'review',
-  'experimental:assessment_attempt',
-  'experimental:record_capture',
-] as const;
-
 export const MEMORY_BRIEF_SWEEP_JOB = 'memory_brief_sweep';
 
 export const REFLECTION_BRIEF_SCOPE_KEYS = ['global', 'meta:orchestrator_self'] as const;

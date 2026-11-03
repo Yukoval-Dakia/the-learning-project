@@ -10,6 +10,7 @@ import type {
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
 import { resolveVerdictsForNativeAttempts } from '@/kernel/read-models/assessment-verdict';
+import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
 import { getNotesBoss } from './boss-port';
 import { reserveAndEnqueueMasteryRefineEffect } from './mastery-refine-effect';
 import { collectMasteryRefineTargets } from './mastery-refine-targets';
@@ -53,7 +54,7 @@ export async function handleMasteryProgressNoteRefineDelivery(
   const attempt = await getEventById(db, attemptEventId);
   if (
     !attempt ||
-    !['attempt', 'review', 'experimental:assessment_attempt'].includes(attempt.action) ||
+    !(LEARNER_ANSWER_ACTIONS as readonly string[]).includes(attempt.action) ||
     !('subject_kind' in attempt) ||
     attempt.subject_kind !== 'question' ||
     !('subject_id' in attempt) ||
