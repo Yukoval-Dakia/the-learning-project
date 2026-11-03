@@ -1052,9 +1052,18 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               ...streamOptions,
               fetch: async (...args) => {
                 fetchCount += 1;
-                const response = await originalFetch(...args);
-                rootResponse = fetchCount === 1 ? response : undefined;
-                return response;
+                // Attribute this fetch to the root loop: `beginFetch` consumes
+                // the mark synchronously down the fetch chain, so a nested
+                // loop's requests stay unmarked. The finally clears a mark
+                // whose fetch never reached the instrumented transport.
+                collector?.noteFetchLoop('root');
+                try {
+                  const response = await originalFetch(...args);
+                  rootResponse = fetchCount === 1 ? response : undefined;
+                  return response;
+                } finally {
+                  collector?.noteFetchLoop(undefined);
+                }
               },
             }
           : streamOptions,
@@ -1179,8 +1188,13 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     const boundRootRejection = rootBoundProviderStatus(boundRootStatus);
     // The capture keeps the latest non-2xx across ALL of this query's requests
     // (retries + nested loops), so it is probative only when the request live
-    // at termination itself was non-2xx. Bind to the snapshot's last request.
-    const lastRequestStatus = options.transportEvidence?.snapshot().requests.at(-1)?.http_status;
+    // at termination itself was non-2xx. The snapshot's tail is the
+    // chronologically last request (the collector keeps the most recent
+    // records); it must additionally be one the ROOT loop issued — a nested
+    // loop's tail failure is the child's evidence, not the root's terminal
+    // cause.
+    const lastRequest = options.transportEvidence?.snapshot().requests.at(-1);
+    const lastRequestStatus = lastRequest?.loop === 'root' ? lastRequest.http_status : undefined;
     const terminalRequestStatus =
       lastRequestStatus !== undefined && lastRequestStatus >= 400 ? lastRequestStatus : undefined;
     const terminal = piTerminalResultFrame({

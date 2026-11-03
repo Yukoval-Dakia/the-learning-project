@@ -148,6 +148,12 @@ export interface TransportAbortMarker {
 export interface ProviderRequestEvidence {
   readonly seq: number;
   /**
+   * Which agent loop issued this fetch — 'root' only when positively
+   * attributed (marked by the adapter's root stream wrapper before the fetch
+   * began). Absent means a nested/child loop or unattributed; never guessed.
+   */
+  readonly loop?: 'root';
+  /**
    * Which transport actually carried this call — present once decided (the
    * dispatcher saw it → undici_agent; settled/ended without dispatch →
    * observer_fetch). Omitted while still undecided in flight.
@@ -272,6 +278,11 @@ export interface ProviderTransportEvidence {
   };
   /** Initiating-layer abort events this lifecycle recorded, in order. */
   readonly abort_initiators?: readonly TransportAbortMarker[];
+  /**
+   * The MOST RECENT request records (begin order, up to the cap) — failure
+   * evidence lives at the tail, so `requests.at(-1)` stays the chronologically
+   * last request even after earlier records dropped out.
+   */
   readonly requests: readonly ProviderRequestEvidence[];
   readonly requests_seen: number;
   readonly requests_dropped: number;
