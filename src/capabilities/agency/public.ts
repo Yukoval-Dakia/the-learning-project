@@ -42,6 +42,8 @@ export {
 // The platform boss layer mounts the memory pipeline queues; admin config reads its crons and mode.
 export type { GenerateBrief } from './server/memory/brief';
 export { buildBriefGenerator } from './server/memory/brief-writer';
+// Backup restore reopens outbox rows whose pg-boss job was lost with the queue.
+export { reopenUnstartedMemoryIngests } from './server/memory/memory-ingest-recovery-store';
 export {
   MEMORY_RECONCILE_QUEUE,
   memoryReconcileHandoffMode,
