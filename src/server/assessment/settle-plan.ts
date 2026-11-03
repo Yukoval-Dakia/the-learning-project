@@ -28,6 +28,7 @@ import type { Tx } from '@/db/client';
 import { event, question, question_revision } from '@/db/schema';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import type { AbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { selectedForgettingEngine } from '@/kernel/scheduling';
 import type { ActivationSettleInput } from './activate';
 import { loadAssessmentLearningScope } from './learning-scope';
@@ -165,7 +166,7 @@ export async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<S
     .from(event)
     .where(
       and(
-        eq(event.id, `evt_assessment_${input.submission.submission_id}`),
+        eq(event.id, assessmentAttemptEventId(input.submission.submission_id)),
         eq(event.action, 'experimental:assessment_attempt'),
       ),
     );
