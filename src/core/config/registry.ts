@@ -581,7 +581,7 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
   // ── 任务持续失败告警（observability/server/task-failure-alerts.ts 唯一判定） ──
   TASK_FAILURE_ALERT_CONSECUTIVE: {
     schema: z.number().int().min(2).max(100),
-    codeDefault: 5,
+    codeDefault: 2,
     tier: 'A',
     note: '同一 task kind 自上次成功以来连续失败达到此次数即告警',
   },
