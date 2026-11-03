@@ -1,6 +1,6 @@
 // Native appeals evaluate the immutable original and activate a new candidate.
 // Historical queued requests receive a durable held receipt, never a fresh score.
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';

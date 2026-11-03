@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import { ActivateEvaluationIntent, EvaluationProvenance } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
