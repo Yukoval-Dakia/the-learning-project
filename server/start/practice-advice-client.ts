@@ -7,6 +7,7 @@ export const startPracticeAdviceClient: PracticeClient['getAdvice'] = async (
   responseMd,
   imageRefs,
   assessment,
+  commit,
 ) =>
   JSON.parse(
     await previewStartReviewAdviceFunction({
@@ -16,6 +17,7 @@ export const startPracticeAdviceClient: PracticeClient['getAdvice'] = async (
         question_id: questionId,
         response_md: responseMd,
         ...(imageRefs.length > 0 ? { answer_image_refs: [...imageRefs] } : {}),
+        ...(commit ? { commit } : {}),
       }),
     }),
   );
