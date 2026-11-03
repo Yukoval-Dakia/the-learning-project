@@ -2,17 +2,21 @@
 // prose and validator cannot drift. Consumers: the Copilot prompt (slice 1),
 // the note-generation prompt (slice 2), the ingestion prompt (slice 3).
 
+import { z } from 'zod';
 import {
   type BlockKind,
   ChartBlock,
   DiagramBlock,
-  FigureBlock,
-  InteractiveBlock,
+  FigureBlockInput,
+  InteractiveBlockInput,
   QuestionRefBlock,
 } from './block';
 import { BLOCK_IMPLEMENTED_KINDS, BLOCK_SURFACE_KINDS, type BlockSurface } from './surfaces';
 
-const MEMBER_META: Record<BlockKind, { schema: unknown; example: unknown }> = {
+// Field lists are generated from the MODEL-FACING input schemas so the
+// catalogue matches what compose_block actually accepts (figure `svg`,
+// interactive `html`), never the asset-only stored form.
+const MEMBER_META: Record<BlockKind, { schema: z.ZodType; example: unknown }> = {
   diagram: {
     schema: DiagramBlock,
     example: {
@@ -24,7 +28,7 @@ const MEMBER_META: Record<BlockKind, { schema: unknown; example: unknown }> = {
     },
   },
   figure: {
-    schema: FigureBlock,
+    schema: FigureBlockInput,
     example: {
       v: 1,
       kind: 'figure',
@@ -34,29 +38,27 @@ const MEMBER_META: Record<BlockKind, { schema: unknown; example: unknown }> = {
     },
   },
   chart: { schema: ChartBlock, example: { v: 1, kind: 'chart', chart: 'bar' } },
-  interactive: { schema: InteractiveBlock, example: { v: 1, kind: 'interactive', title: '…' } },
+  interactive: {
+    schema: InteractiveBlockInput,
+    example: { v: 1, kind: 'interactive', title: '…' },
+  },
   question_ref: {
     schema: QuestionRefBlock,
     example: { v: 1, kind: 'question_ref', question_ids: ['q_…'], label: '再练一道' },
   },
 };
 
-function fieldLine(schema: unknown): string {
-  // toJSONSchema gives us the live field list; keep it terse for the prompt.
-  try {
-    const json = (
-      schema as { toJSONSchema?: () => { properties?: Record<string, unknown> } }
-    ).toJSONSchema?.();
-    const keys = json?.properties ? Object.keys(json.properties).join(', ') : '';
-    return keys ? `fields: ${keys}` : '';
-  } catch {
-    return '';
-  }
+function fieldLine(schema: z.ZodType): string {
+  const json = z.toJSONSchema(schema, { io: 'input' }) as {
+    properties?: Record<string, unknown>;
+  };
+  const keys = json.properties ? Object.keys(json.properties).join(', ') : '';
+  return keys ? `fields: ${keys}` : '';
 }
 
-function descriptionOf(schema: unknown): string {
-  const meta = (schema as { meta?: () => { description?: string } | undefined }).meta?.();
-  return meta?.description ?? '';
+function descriptionOf(schema: z.ZodType): string {
+  const json = z.toJSONSchema(schema) as { description?: string };
+  return json.description ?? '';
 }
 
 /**

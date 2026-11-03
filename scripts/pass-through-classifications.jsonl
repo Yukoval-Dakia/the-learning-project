@@ -543,8 +543,6 @@
 {"file": "src/core/schema/blocks/index.ts", "kind": "module", "symbol": "QuestionRefBlock", "targetModule": "src/core/schema/blocks/block.ts", "targetSymbol": "QuestionRefBlock", "class": "stable_contract"}
 {"file": "src/core/schema/blocks/index.ts", "kind": "module", "symbol": "SandboxCodeRef", "targetModule": "src/core/schema/blocks/block.ts", "targetSymbol": "SandboxCodeRef", "class": "stable_contract"}
 {"file": "src/core/schema/blocks/index.ts", "kind": "module", "symbol": "TLP_BLOCK_FENCE_INFO", "targetModule": "src/core/schema/blocks/fence.ts", "targetSymbol": "TLP_BLOCK_FENCE_INFO", "class": "stable_contract"}
-{"file": "src/core/schema/blocks/index.ts", "kind": "module", "symbol": "blockDigest", "targetModule": "src/core/schema/blocks/fence.ts", "targetSymbol": "blockDigest", "class": "stable_contract"}
-{"file": "src/core/schema/blocks/index.ts", "kind": "module", "symbol": "blockRefForDigest", "targetModule": "src/core/schema/blocks/fence.ts", "targetSymbol": "blockRefForDigest", "class": "stable_contract"}
 {"file": "src/core/schema/blocks/index.ts", "kind": "module", "symbol": "canonicalBlockJson", "targetModule": "src/core/schema/blocks/fence.ts", "targetSymbol": "canonicalBlockJson", "class": "stable_contract"}
 {"file": "src/core/schema/blocks/index.ts", "kind": "module", "symbol": "parseBlockFence", "targetModule": "src/core/schema/blocks/fence.ts", "targetSymbol": "parseBlockFence", "class": "stable_contract"}
 {"file": "src/core/schema/blocks/index.ts", "kind": "module", "symbol": "renderBlockCatalogue", "targetModule": "src/core/schema/blocks/catalogue.ts", "targetSymbol": "renderBlockCatalogue", "class": "stable_contract"}
