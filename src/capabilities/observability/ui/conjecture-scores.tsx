@@ -17,13 +17,13 @@ import { useQuery } from '@tanstack/react-query';
 import { Chip } from '@/ui-next/public';
 import { type AdminReadClient, httpAdminClient } from './admin-client';
 import {
+  ADMIN_LINKS_NO_CONFIG,
   AdminArea,
   AdminFrame,
   AdminHead,
   AdminKpi,
   AdminKpis,
   AdminNav,
-  type AdminNavLink,
   AdminPanel,
   adminAreaStatus,
 } from './admin-frame';
@@ -39,15 +39,6 @@ function resolutionTone(
   if (resolution === 'evidence_for') return 'critical';
   return 'neutral';
 }
-const NAV: AdminNavLink[] = [
-  { to: '/admin/runs', label: '运行记录' },
-  { to: '/admin/cost', label: '成本' },
-  { to: '/admin/failures', label: '失败记录' },
-  { to: '/admin/subjects', label: '学科配置' },
-  { to: '/admin/coverage-lattice', label: '供题覆盖' },
-  { to: '/admin/conjecture-scores', label: '猜想评分' },
-];
-
 function formatTime(value: string | null): string {
   if (!value) return '—';
   const d = new Date(value);
@@ -102,10 +93,14 @@ export function AdminConjectureScoresSurface({
 
   return (
     <AdminFrame>
-      <AdminNav links={NAV} current="/admin/conjecture-scores" navigate={navigate} />
+      <AdminNav
+        links={ADMIN_LINKS_NO_CONFIG}
+        current="/admin/conjecture-scores"
+        navigate={navigate}
+      />
       <AdminHead
         kicker="ADMIN · conjecture wire"
-        title="Conjecture Scores"
+        title="猜想评分"
         lead="备课台预测 vs 真实作答的逐条 proper-score 校准锚（夜间 research_meeting reconcile 累积）。confused-with-X 软轨态待通电，该栏暂空。"
       />
 

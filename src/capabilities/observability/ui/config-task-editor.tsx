@@ -2,18 +2,40 @@ import { useId, useState } from 'react';
 import { Button } from '@/ui-next/public';
 import {
   BUDGET_FIELDS,
+  type BudgetDraft,
   type ConfigProvider,
   type ConfigTask,
   type SaveConfig,
   budgetChanges,
   displayValue,
   initialBudget,
-  inputClass,
   modelChanges,
   providerUnavailable,
   resetTaskChanges,
   taskEditable,
 } from './config-model';
+
+type ConfirmKind = 'model' | 'budget' | 'reset-model' | 'reset-budget';
+
+/** The confirmation line for each pending change (same four texts, same order as before). */
+function confirmSummary(
+  confirm: ConfirmKind,
+  task: ConfigTask,
+  provider: string,
+  model: string,
+  budget: BudgetDraft,
+): string {
+  if (confirm === 'model') {
+    return `模型组合：${task.override?.provider ?? task.default_provider} / ${task.override?.model ?? task.default_model} → ${provider} / ${model}`;
+  }
+  if (confirm === 'budget') {
+    return `预算：${displayValue(task.override?.budget ?? task.default_budget)} → ${displayValue(budgetChanges(task, budget)[0])}`;
+  }
+  if (confirm === 'reset-model') {
+    return '清除该任务的 provider 与 model 覆盖，恢复默认解析；全局固定仍优先。';
+  }
+  return '清除该任务的预算覆盖，恢复代码默认预算。';
+}
 
 export function ConfigTaskEditor({
   task,
@@ -46,7 +68,7 @@ export function ConfigTaskEditor({
       : selectedModel.runnable === false
         ? '目录标记此模型当前不可运行，原配置未更改。'
         : null);
-  if (!taskEditable(task)) return <p>此任务使用专用执行通道，当前只读。</p>;
+  if (!taskEditable(task)) return <p className="adm-note">此任务使用专用执行通道，当前只读。</p>;
   async function commit() {
     if (!confirm || pending) return;
     setError(null);
@@ -68,27 +90,26 @@ export function ConfigTaskEditor({
     }
   }
   return (
-    <section aria-label={`${task.kind} 配置编辑`} className="space-y-4 bg-[var(--paper-tint)] p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="font-medium">编辑 {task.kind}</h3>
-        <Button variant="ghost" onClick={onClose} disabled={pending}>
+    <section aria-label={`${task.kind} 配置编辑`} className="adm-editor">
+      <div className="adm-editor-head">
+        <h3 className="adm-editor-title">编辑 {task.kind}</h3>
+        <Button variant="ghost" size="sm" onClick={onClose} disabled={pending}>
           取消编辑
         </Button>
       </div>
       {task.global_pin && (
-        <p>
+        <p className="adm-warn-line">
           全局固定优先：{displayValue(task.global_pin)}。任务配置会保留；运行时仍以全局固定为准。
         </p>
       )}
-      <fieldset disabled={pending || confirm !== null} className="space-y-3">
-        <legend className="font-medium">原生 provider 与模型</legend>
-        <div className="flex flex-wrap gap-4">
-          <label htmlFor={`${id}-provider`}>
-            Provider
-            <br />
+      <fieldset disabled={pending || confirm !== null} className="adm-fieldset">
+        <legend className="adm-legend">原生 provider 与模型</legend>
+        <div className="adm-field-row">
+          <label htmlFor={`${id}-provider`} className="adm-field">
+            <span className="adm-field-name">Provider</span>
             <select
               id={`${id}-provider`}
-              className={inputClass}
+              className="adm-input"
               value={provider}
               onChange={(e) => {
                 setProvider(e.target.value);
@@ -105,12 +126,11 @@ export function ConfigTaskEditor({
               ))}
             </select>
           </label>
-          <label htmlFor={`${id}-model`}>
-            模型
-            <br />
+          <label htmlFor={`${id}-model`} className="adm-field">
+            <span className="adm-field-name">模型</span>
             <select
               id={`${id}-model`}
-              className={inputClass}
+              className="adm-input"
               value={model}
               onChange={(e) => setModel(e.target.value)}
               disabled={Boolean(disabledReason)}
@@ -130,12 +150,18 @@ export function ConfigTaskEditor({
             </select>
           </label>
         </div>
-        <p className="text-[var(--ink-3)]">
+        <p className="adm-note">
           pi provider：{selected?.pi_provider ?? '不可用'} · 凭据只在服务端管理。
         </p>
-        {modelIssue && <p role="status">{modelIssue}</p>}
-        <p>目录刷新不会替换已选模型；更改 provider 后需明确选择模型并确认保存。</p>
-        <div className="flex gap-2">
+        {modelIssue && (
+          <p role="status" className="adm-warn-line">
+            {modelIssue}
+          </p>
+        )}
+        <p className="adm-note">
+          目录刷新不会替换已选模型；更改 provider 后需明确选择模型并确认保存。
+        </p>
+        <div className="adm-acts">
           <Button disabled={Boolean(modelIssue)} onClick={() => setConfirm('model')}>
             保存模型组合
           </Button>
@@ -144,17 +170,16 @@ export function ConfigTaskEditor({
           </Button>
         </div>
       </fieldset>
-      <fieldset disabled={pending || confirm !== null} className="space-y-3">
-        <legend className="font-medium">调用预算</legend>
-        <div className="flex flex-wrap gap-4">
+      <fieldset disabled={pending || confirm !== null} className="adm-fieldset">
+        <legend className="adm-legend">调用预算</legend>
+        <div className="adm-field-row">
           {BUDGET_FIELDS.map(({ key, label, min, step }) => (
-            <label key={key} htmlFor={`${id}-${key}`}>
-              {label}
-              <br />
+            <label key={key} htmlFor={`${id}-${key}`} className="adm-field">
+              <span className="adm-field-name">{label}</span>
               {task.budget_wiring[key] ? (
                 <input
                   id={`${id}-${key}`}
-                  className={`${inputClass} w-40`}
+                  className="adm-input adm-input-num"
                   type="number"
                   min={min}
                   max={key === 'timeout' ? 3599.999 : undefined}
@@ -163,13 +188,15 @@ export function ConfigTaskEditor({
                   onChange={(e) => setBudget({ ...budget, [key]: e.target.value })}
                 />
               ) : (
-                <span id={`${id}-${key}`}>未接线 · 不生效</span>
+                <span id={`${id}-${key}`} className="adm-unwired">
+                  未接线 · 不生效
+                </span>
               )}
             </label>
           ))}
         </div>
-        <p className="text-[var(--ink-3)]">{task.budget_note}</p>
-        <div className="flex gap-2">
+        <p className="adm-note">{task.budget_note}</p>
+        <div className="adm-acts">
           <Button
             onClick={() => {
               try {
@@ -189,29 +216,20 @@ export function ConfigTaskEditor({
         </div>
       </fieldset>
       {confirm && (
-        <fieldset
-          className="space-y-2 border-l-2 border-[var(--coral)] pl-3"
-          aria-label="确认配置变更"
-        >
-          <p>
-            {confirm === 'model'
-              ? `模型组合：${task.override?.provider ?? task.default_provider} / ${task.override?.model ?? task.default_model} → ${provider} / ${model}`
-              : confirm === 'budget'
-                ? `预算：${displayValue(task.override?.budget ?? task.default_budget)} → ${displayValue(budgetChanges(task, budget)[0])}`
-                : confirm === 'reset-model'
-                  ? '清除该任务的 provider 与 model 覆盖，恢复默认解析；全局固定仍优先。'
-                  : '清除该任务的预算覆盖，恢复代码默认预算。'}
-          </p>
-          <Button disabled={pending} onClick={() => void commit()}>
-            {pending ? '保存中…' : '确认变更'}
-          </Button>{' '}
-          <Button variant="ghost" disabled={pending} onClick={() => setConfirm(null)}>
-            返回修改
-          </Button>
+        <fieldset className="adm-confirm" aria-label="确认配置变更">
+          <p>{confirmSummary(confirm, task, provider, model, budget)}</p>
+          <div className="adm-acts">
+            <Button disabled={pending} onClick={() => void commit()}>
+              {pending ? '保存中…' : '确认变更'}
+            </Button>
+            <Button variant="ghost" disabled={pending} onClick={() => setConfirm(null)}>
+              返回修改
+            </Button>
+          </div>
         </fieldset>
       )}
       {error && (
-        <p role="alert" className="text-[var(--again-ink)]">
+        <p role="alert" className="adm-field-error">
           {error}
         </p>
       )}
