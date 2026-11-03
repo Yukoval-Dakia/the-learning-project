@@ -7,6 +7,11 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 import {
+  lockEvaluationCorrection,
+  lockNativeAppeal,
+  lockNativeResolution,
+} from '@/kernel/locks/settlement';
+import {
   EvaluateSubmissionError,
   activateSubmissionCandidate,
   createFormalModelExecutor,
@@ -23,7 +28,7 @@ export async function createNativeAppeal(
     key: input.idempotency_key ?? canonicalHash(reason),
   })}`;
   return database.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${appealId}))`);
+    await lockNativeAppeal(tx, appealId);
     const [existing] = await tx.select().from(event).where(eq(event.id, appealId)).limit(1);
     if (existing) {
       if (existing.payload.reason_md !== reason)
@@ -102,7 +107,7 @@ export async function requestEvaluationCorrection(
     proposal: input.proposal_event_id,
   })}`;
   return database.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${correctionId}))`);
+    await lockEvaluationCorrection(tx, correctionId);
     const [existing] = await tx.select().from(event).where(eq(event.id, correctionId)).limit(1);
     if (existing) {
       if (existing.payload.reason_md !== reason)
@@ -175,7 +180,7 @@ export async function rejudgeNativeAppeal(database: Db, appeal: typeof event.$in
   const resolutionId = `evt_native_resolution_${canonicalHash(appeal.id)}`;
   const record = async (tx: Db | Tx, disposition: string, evaluationId?: string) => {
     // Used with the activation transaction, or alone for an explicit held result.
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${resolutionId}))`);
+    await lockNativeResolution(tx, resolutionId);
     const [existing] = await tx
       .select({ id: event.id })
       .from(event)

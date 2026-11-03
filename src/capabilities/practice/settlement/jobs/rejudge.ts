@@ -6,6 +6,7 @@ import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { lockRejudgeAppeal } from '@/kernel/locks/settlement';
 import { rejudgeNativeAppeal } from '../server/appeal';
 
 export interface RejudgeJobInput {
@@ -47,7 +48,7 @@ export async function handleRejudge(db: Db, input: RejudgeJobInput): Promise<Rej
   if (appeal.subject_kind === 'evaluation') return rejudgeNativeAppeal(db, appeal);
 
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${appeal.id}, 0))`);
+    await lockRejudgeAppeal(tx, appeal.id);
     if (await appealAlreadyResolved(tx, appeal.id)) {
       return { status: 'skipped' as const, reason: 'already_resolved' };
     }
