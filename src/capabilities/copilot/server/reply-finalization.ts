@@ -180,11 +180,12 @@ export interface CreateCopilotReplyFinalizerOptions {
     id: string;
   }) => Promise<{ kind: string; id: string } | null>;
   /**
-   * YUK-1419 — whether the session-anchored learner_state snapshot actually
-   * reached the model (context history entry or resume turn_context), so
-   * `learner_state` grounding citations can be honoured.
+   * YUK-1419 — the session-anchored learner_state snapshot text actually
+   * delivered to the model (context history entry or resume turn_context),
+   * or null. Honours `learner_state` citations and is the value source for
+   * snapshot-grounded claims.
    */
-  learnerStateDelivered: boolean;
+  learnerStateText: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -439,7 +440,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
           : evaluateCopilotRecordGrounding({
               declaredClaims: groundingEnvelope.claims,
               replyText: correction.reply,
-              learnerStateDelivered: options.learnerStateDelivered,
+              learnerStateText: options.learnerStateText,
               trace,
             });
       if (grounding.kind === 'rejected') {
