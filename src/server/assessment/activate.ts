@@ -52,6 +52,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 
 export const ASSESSMENT_ACTIVATION_ACTION = 'experimental:assessment_activation';
 export const ASSESSMENT_ACTIVATION_VERSION = 1 as const;
@@ -174,9 +175,7 @@ export async function activateEvaluation(
     .where(eq(evaluation.evaluation_id, input.evaluation_id))
     .limit(1);
   if (!coordinate) return { status: 'not_found' };
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${coordinate.groupId}))`,
-  );
+  await lockAssessmentEvaluationGroup(tx, coordinate.groupId);
 
   const [withdrawal] = await tx
     .select({ id: event.id })

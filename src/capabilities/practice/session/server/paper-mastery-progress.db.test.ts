@@ -6,7 +6,7 @@
 
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MASTERY_PROGRESS_ACTION } from '@/capabilities/practice/server/mastery-progress-signal';
+import { MASTERY_PROGRESS_ACTION } from '@/capabilities/practice/grading/server/mastery-progress-signal';
 import { artifact, event, knowledge, mastery_state, question } from '@/db/schema';
 import {
   paperFixtureAssessment,
@@ -14,7 +14,7 @@ import {
   submitPaperFixture as submitPaperSlot,
 } from '../../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { prepareFormalAttemptSubmission } from '../../server/assessment/attempt';
+import { prepareFormalAttemptSubmission } from '../../grading/server/assessment/attempt';
 
 async function seedKnowledge(id: string, domain = 'yuwen'): Promise<void> {
   const now = new Date();

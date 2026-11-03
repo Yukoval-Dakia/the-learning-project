@@ -1,8 +1,11 @@
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { QuizGenOutput, type QuizGenOutputT } from '@/core/schema/quiz_gen';
+import {
+  CANONICAL_QUESTION_KINDS,
+  rubricGuidanceSection,
+} from '@/kernel/generation-prompt-support';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 import type { SubjectProfile } from '@/subjects/profile';
-import { CANONICAL_QUESTION_KINDS, rubricGuidanceSection } from './generation-prompt-support';
-import { parseTaskOutput } from './parse-output';
 
 // Search-grounded QuizGen — tool-calling agent.
 //

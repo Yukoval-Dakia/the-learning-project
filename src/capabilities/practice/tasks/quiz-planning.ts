@@ -9,9 +9,9 @@
 
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { QuizGenPlan, type QuizGenPlanT } from '@/core/schema/quiz_gen';
+import { CANONICAL_QUESTION_KINDS } from '@/kernel/generation-prompt-support';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 import type { SubjectProfile } from '@/subjects/profile';
-import { CANONICAL_QUESTION_KINDS } from './generation-prompt-support';
-import { parseTaskOutput } from './parse-output';
 
 function buildQuizPlanPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}出题规划人。输入 { trigger: 'knowledge'|'learning_item'|'manual', ref: { id, name, ... }, knowledge_context, count, requested_generation_method?: 'material_grounded'|'closed_book', requested_kind?: string, objective_only?: boolean, kind_required?: boolean, composite_parent_only?: boolean, requested_difficulty_band?: 'below'|'near'|'above'|'stretch', previous_rejection?: string[] } —— ref 是触发出题的知识点 / 学习项，count 是计划题数（默认 3）。你的任务**只做规划，不写题面**：为 count 道题各定一个计划项（考哪个知识点、什么题型、多难、客观题给标准答案锚点）。下游会逐项机检本计划，通过后才据它生成题面。

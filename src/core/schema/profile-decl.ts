@@ -73,7 +73,7 @@ export type SchedulingHintsT = z.infer<typeof SchedulingHints>;
 // ── rating policy (judge verdict → FSRS rating surface) ──────────────────────
 //
 // The coarse_outcome → FsrsRating map was previously duplicated as inline
-// copies in src/capabilities/practice/server/judge-rating.ts and
+// copies in src/capabilities/practice/grading/server/judge-rating.ts and
 // src/core/capability/schedulers/fsrs.ts. It now lives as a typed,
 // schema-validated SubjectProfile section so a subject that needs different
 // verdict semantics can declare them instead of every consumer silently

@@ -15,7 +15,7 @@ import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { SupplyTraceV1, type SupplyTraceV1T, buildSupplyTrace } from '@/kernel/supply-contracts';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import { supplyDispatchWebSearchAvailable } from '@/kernel/supply-dispatch-web-search';
-import { getPracticeBoss } from '../../server/queue-runtime';
+import { getStartedBoss } from '@/server/boss/client';
 import { planSupplyRoutes } from './route-planner';
 import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
 
@@ -199,7 +199,7 @@ export async function inFlightSupplyCount(
   if (!promise) return 0;
   const queue = AUTO_ROUTE_TO_QUEUE[promise.route];
   if (!queue) return 0;
-  const boss = await getPracticeBoss();
+  const boss = await getStartedBoss();
   const job = await boss.getJobById(queue, promise.jobId);
   if (job?.state == null || !LIVE_SUPPLY_JOB_STATES.has(job.state)) return 0;
   return promise.count;

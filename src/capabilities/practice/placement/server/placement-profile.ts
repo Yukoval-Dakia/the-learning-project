@@ -21,9 +21,9 @@ import type { Db } from '@/db/client';
 import { goal, knowledge } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
+import { resolveGoalPlacementScope } from '@/kernel/read-models/placement-scope';
 import { readLearnerAxisStates } from '@/kernel/records/learner-axis-state';
 import { loadDayOnePriors } from '../../scheduling/public';
-import { resolveGoalPlacementScope } from '../../server/placement-scope';
 import type {
   PlacementProfileKc,
   PlacementProfileResponse,

@@ -1,0 +1,672 @@
+// Durable judge dispatch protocol.
+// The answer is recorded as immutable domain evidence before any queue send; pg-boss is
+// only the retryable delivery mechanism. Keeping the pieces together stops the ordering
+// invariant from being re-derived at each call site.
+// 1. recordJudgePendingAttempt writes the pending-attempt event before the send.
+// 2. enqueueJudgeRun is the only rate-limited entry into judge_run; every producer uses it
+// so paid inference stays inside the AI budget window.
+// 3. findStalledJudgePendingAttempts / resolveQueueLiveness scan the domain log, never
+// job_events, which cannot see both halves of the send/marker crash window.
+
+import { createHash } from 'node:crypto';
+import { and, asc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
+import type { JobWithMetadata } from 'pg-boss';
+import { newId } from '@/core/ids';
+import { canonicalHash } from '@/core/migration/canonical';
+import type { JudgeReservation } from '@/core/schema/event/judge-operational-events';
+import {
+  JudgePendingAttemptPayload,
+  type JudgePendingAttemptPayloadT,
+} from '@/core/schema/event/judge-pending-events';
+import type { Db, Tx } from '@/db/client';
+import { event, job_events } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
+import { lockJudgeRun } from '@/kernel/locks/grading';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
+import { checkRateLimit, refundRateLimit } from '@/kernel/request-rate-limit';
+import { observeBossJob } from '@/server/boss/job-observation';
+import { JUDGE_RUN_QUEUE } from './judge-durable-config';
+import {
+  type JudgeLegacySender,
+  enqueueDbosJudgeDelivery,
+  enqueueLegacyJudgeDelivery,
+  judgeDeliveryInput,
+} from './judge-engine-client';
+import { acceptJudgeDelivery, readJudgeControl, rejectJudgeSend } from './judge-operational';
+import { judgeAcceptanceId } from './judge-operational-state';
+import type { JudgeRunJobData, LegacyJudgeRunJobData } from './judge-run-payload';
+import {
+  JUDGE_RUN_EVENTS,
+  JUDGE_RUN_TABLE,
+  JudgeRunRequeuedPayloadSchema,
+} from './judge-run-status';
+
+/** The reserved action name. Single source for the writer, the scan, and the guard. */
+export const JUDGE_PENDING_ATTEMPT_ACTION = 'experimental:judge_pending_attempt' as const;
+
+/**
+ * The pg-boss job id for a run handle.
+ *
+ * **pg-boss job ids are `uuid` COLUMNS.** Our run handles are cuid2s (`newId`), so passing
+ * one as `SendOptions.id` makes Postgres throw `invalid input syntax for type uuid` — i.e. W2's
+ * `boss.send(..., { id: runId })` would have failed on the very first real submit after
+ * `JUDGE_DURABLE_ENABLED` was flipped on, and `getJobById(queue, runId)` would have thrown on
+ * every liveness lookup (swallowed into `'unknown'`, so `/status` would have degraded silently
+ * rather than telling anyone). Nothing caught it because every test injects a fake boss whose
+ * `send` accepts any id — a double MORE permissive than production. Verified against real
+ * pg-boss in judge-run-dispatch-boss-contract.db.test.ts.
+ *
+ * Deriving the uuid instead of storing a mapping keeps the run handle the single identifier
+ * everything else is keyed on (the review event id, the job_events business_id, the pending
+ * attempt's `run_id`), while still giving the poll route and the sweeper a direct PK lookup.
+ * RFC 9562 UUIDv8 (custom): a sha-256 of a fixed namespace + the run handle, with the version
+ * and variant bits stamped — deterministic, and collision-resistant well past the point where
+ * anything else here would break first.
+ */
+export function judgeRunJobId(runId: string): string {
+  return durableJudgeJobId(`judge_run:${runId}`);
+}
+
+/** A fresh, deterministic pg-boss UUID for one recovery delivery. */
+export function judgeRecoveryJobId(runId: string, attempt: number): string {
+  return durableJudgeJobId(`judge_run:${runId}:recovery:${attempt}`);
+}
+
+function durableJudgeJobId(seed: string): string {
+  const hex = createHash('sha256').update(seed).digest('hex');
+  const bytes = hex.slice(0, 32).split('');
+  bytes[12] = '8'; // version 8 (custom)
+  const variantNibble = (Number.parseInt(bytes[16], 16) & 0x3) | 0x8; // variant 10xx
+  bytes[16] = variantNibble.toString(16);
+  const h = bytes.join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
+
+// ============================================================================
+// 1. Immutable answer evidence (A2)
+// ============================================================================
+
+export interface RecordJudgePendingAttemptInput {
+  /** The reserved run handle — also the id the worker will give the `review` event. */
+  runId: string;
+  sessionId: string | null;
+  questionId: string;
+  /** The question's real KC labels at answer time = the θ̂ write domain (⊇ FSRS subset). */
+  knowledgeIds: string[];
+  /** Frozen hierarchical-Elo domain rows this attempt can write. */
+  abilityGlobalIds?: string[];
+  /** The frozen judge input, stored verbatim so recovery re-judges the same inputs (D5). */
+  submit: LegacyJudgeRunJobData['submit'];
+  /** The answer instant — the ordering water mark. Also the row's `created_at`. */
+  submittedAt: Date;
+}
+
+/**
+ * Write the "answered, not yet judged" evidence row and return its event id.
+ *
+ * `created_at` is the ANSWER instant, not the insert instant: the row is a water mark for the
+ * late-arrival guard, and a wall-clock stamp taken here would order two attempts by when their
+ * request happened to reach this line rather than by when the learner answered.
+ *
+ * `ingest_at` is stamped (opt-out) for two reasons. The row is a job-plane ledger
+ * carrying a frozen judge payload, so feeding it to memory ingestion would push the whole
+ * frozen question snapshot into Mem0; and the answer reaches memory anyway through the
+ * `review` event the backfill writes. The opt-out also empties `affected_scopes`, which keeps
+ * brief scans from reading an unjudged attempt as learner evidence.
+ */
+export async function recordJudgePendingAttempt(
+  db: Db | Tx,
+  input: RecordJudgePendingAttemptInput,
+): Promise<string> {
+  const pendingEventId = newId();
+  const payload = JudgePendingAttemptPayload.parse({
+    run_id: input.runId,
+    caller: 'submit',
+    knowledge_ids: input.knowledgeIds,
+    ability_global_ids: input.abilityGlobalIds ?? [],
+    submit: {
+      body: input.submit.body,
+      question_id: input.submit.question_id,
+      subject_profile: input.submit.subject_profile,
+      question_snapshot: input.submit.question_snapshot,
+      ability_global_by_knowledge_id: input.submit.ability_global_by_knowledge_id,
+      submitted_at: input.submit.submitted_at,
+    },
+  });
+  await writeEvent(db, {
+    id: pendingEventId,
+    session_id: input.sessionId,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: JUDGE_PENDING_ATTEMPT_ACTION,
+    subject_kind: 'question',
+    subject_id: input.questionId,
+    // NULL — an unjudged attempt has no outcome. See the schema docblock: that absence is
+    // what keeps this row out of every success/failure aggregate.
+    outcome: null,
+    payload,
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: input.submittedAt,
+    ingest_at: input.submittedAt,
+  });
+  return pendingEventId;
+}
+
+// ============================================================================
+// 2. The single rate-limited enqueue face
+// ============================================================================
+
+export interface JudgeRunEnqueueDeps {
+  enqueueDbos?: typeof enqueueDbosJudgeDelivery;
+  /** test seam — default `getStartedBoss`. */
+  boss?: JudgeLegacySender;
+  /** test seam — default the real process-wide paid-AI budget gate. */
+  checkRateLimit?: () => number;
+  /** test seam — paired refund for the failed-enqueue path. */
+  refundRateLimit?: (token: number) => void;
+}
+
+/**
+ * Charge the paid-AI budget for one judge_run, returning the token to refund if it never
+ * ships. Split out from {@link enqueueJudgeRun} for the one caller that must settle ADMISSION
+ * before doing anything durable: the submit route records the learner's answer before it
+ * dispatches, and a rate-limited submit has to be refused cleanly. Leaving a recorded pending
+ * attempt behind a 429 would have the sweeper judge it minutes later — quietly turning a
+ * refusal into a deferral and letting every rejected submit through the budget after all.
+ */
+export function refundJudgeRunAdmission(token: number, deps: JudgeRunEnqueueDeps = {}): void {
+  (deps.refundRateLimit ?? refundRateLimit)(token);
+}
+
+export function admitJudgeRun(deps: JudgeRunEnqueueDeps = {}): number {
+  return (deps.checkRateLimit ?? checkRateLimit)();
+}
+
+/** Send only a retained authorization. Unknown acknowledgments retain the same slot and budget;
+ * only proven pre-send rejection permits a live admission refund.
+ */
+export async function enqueueJudgeRun(
+  job: JudgeRunJobData,
+  deps: JudgeRunEnqueueDeps = {},
+  opts: {
+    jobId?: string;
+    token?: number;
+    acceptExistingJobId?: boolean;
+    authorization?: { database: Db; reservation: JudgeReservation; sendId: string };
+  } = {},
+): Promise<string> {
+  const authorization = opts.authorization;
+  if (!authorization)
+    throw new ApiError(
+      'judge_authorization_required',
+      'Judge sends require permanent authorization',
+      503,
+    );
+  const { database, reservation, sendId } = authorization;
+  const input = judgeDeliveryInput(reservation);
+  // The final short gate confirms the authorization still belongs to this family. No lock spans send.
+  const rejected = await database.transaction(async (tx) => {
+    const control = await readJudgeControl(tx, 'share');
+    await lockJudgeRun(tx, job.run_id);
+    if (
+      control.incarnation !== reservation.ownership.incarnation ||
+      control.phase !== reservation.ownership.backend ||
+      control.epoch !== reservation.ownership.epoch
+    )
+      return 'producer_fenced' as const;
+    const [send] = await tx.select().from(event).where(eq(event.id, sendId));
+    if (
+      send?.action !== 'experimental:judge_delivery_send' ||
+      send.payload.authorization_digest !== canonicalHash(input)
+    )
+      return 'validation_rejected' as const;
+    return null;
+  });
+  if (rejected) {
+    await database.transaction(async (tx) => {
+      await lockJudgeRun(tx, job.run_id);
+      await rejectJudgeSend(tx, reservation, sendId, rejected);
+    });
+    if (opts.token !== undefined) refundJudgeRunAdmission(opts.token, deps);
+    throw new ApiError(
+      rejected === 'producer_fenced' ? 'judge_draining' : 'judge_authorization_required',
+      'Judge send rejected before contacting the engine',
+      503,
+    );
+  }
+  let rateLimitToken: number | null = null;
+  try {
+    rateLimitToken = opts.token ?? null;
+    if (reservation.ownership.backend === 'dbos') {
+      const deliveryId = await (deps.enqueueDbos ?? enqueueDbosJudgeDelivery)(input);
+      if (deliveryId !== reservation.delivery_id)
+        throw new Error('DBOS returned a different delivery identity');
+      await database.transaction(async (tx) => {
+        await lockJudgeRun(tx, job.run_id);
+        await acceptJudgeDelivery(tx, reservation, sendId, 'enqueue_ack');
+      });
+      rateLimitToken = null;
+      return deliveryId;
+    }
+    const jobId = await enqueueLegacyJudgeDelivery(job, input, deps.boss);
+    if (!jobId) {
+      throw new ApiError(
+        'durable_enqueue_failed',
+        `judge_run enqueue returned no jobId for run ${job.run_id}`,
+        503,
+      );
+    }
+    if (jobId !== reservation.delivery_id)
+      throw new Error('pg-boss returned a different delivery identity');
+    await database.transaction(async (tx) => {
+      await lockJudgeRun(tx, job.run_id);
+      await acceptJudgeDelivery(tx, reservation, sendId, 'enqueue_ack');
+    });
+    // Durable from here: the budget token was genuinely spent.
+    rateLimitToken = null;
+    return jobId;
+  } catch (err) {
+    // Timeout, connection loss and null ON CONFLICT acknowledgments all retain the send slot.
+    // Only our explicit database producer fence establishes pre-acceptance rejection.
+    const message = err instanceof Error ? err.message : '';
+    if (message.includes('judge pg-boss producer fenced:')) {
+      await database.transaction(async (tx) => {
+        await lockJudgeRun(tx, job.run_id);
+        const [accepted] = await tx
+          .select()
+          .from(event)
+          .where(eq(event.id, judgeAcceptanceId(input.reservation_id)));
+        if (!accepted) await rejectJudgeSend(tx, reservation, sendId, 'producer_fenced');
+      });
+      if (rateLimitToken !== null) (deps.refundRateLimit ?? refundRateLimit)(rateLimitToken);
+    }
+    throw err;
+  }
+}
+
+// ============================================================================
+// 3. The domain-state scan (A3) + queue liveness
+// ============================================================================
+
+/**
+ * Can this run still make progress on the queue?
+ *
+ * Deliberately TRI-state. A boolean would fold "pg-boss says this job is dead" together with
+ * "pg-boss did not answer", and those demand opposite responses: the first lets a poller stop
+ * and lets the sweeper act, while the second must change nothing — declaring a genuinely
+ * in-flight run dead is a far worse error than waiting one more cycle.
+ *
+ * `dead` also covers a null row: pg-boss prunes completed jobs on its own retention, so an
+ * absent job is either long-finished or long-gone.
+ */
+export type QueueLiveness = 'live' | 'dead' | 'unknown';
+
+/**
+ * May the automatic sweeper create a fresh delivery for this queue state?
+ *
+ * Absence/completion can represent the dispatch gaps the sweeper owns. A failed or cancelled
+ * job is deliberate terminal/DLQ evidence and is manual-only under D6; queue deadness alone must
+ * never turn that operator boundary into more paid calls.
+ */
+export type AutomaticRecoveryEligibility = 'eligible' | 'live' | 'manual' | 'unknown';
+
+export interface JudgeQueueInspection {
+  liveness: QueueLiveness;
+  eligibility: AutomaticRecoveryEligibility;
+}
+
+/**
+ * Read one pg-boss row once and derive both poll liveness and automatic-recovery eligibility.
+ * Keeping these decisions on one snapshot avoids a second queue round-trip disagreeing with the
+ * first during a status poll.
+ */
+export async function inspectJudgeQueue(
+  runId: string,
+  deps: {
+    boss?: { getJobById: (queue: string, id: string) => Promise<JobWithMetadata | null> };
+    jobId?: string;
+  } = {},
+): Promise<JudgeQueueInspection> {
+  const observation = await observeBossJob(JUDGE_RUN_QUEUE, deps.jobId ?? judgeRunJobId(runId), {
+    ...(deps.boss ? { boss: deps.boss } : {}),
+  });
+  switch (observation.kind) {
+    case 'missing':
+      return { liveness: 'dead', eligibility: 'eligible' };
+    case 'live':
+      return { liveness: 'live', eligibility: 'live' };
+    case 'settled':
+      if (observation.state === 'completed') {
+        return { liveness: 'dead', eligibility: 'eligible' };
+      }
+      console.warn(
+        `[judge_run] ${runId} pg-boss job is terminal (state=${observation.state}) — automatic recovery is manual-only`,
+      );
+      return { liveness: 'dead', eligibility: 'manual' };
+    case 'unknown':
+      console.error(
+        '[judge_run] pg-boss lookup failed while inspecting run',
+        runId,
+        observation.error,
+      );
+      return { liveness: 'unknown', eligibility: 'unknown' };
+  }
+}
+
+export async function resolveAutomaticRecoveryEligibility(
+  runId: string,
+  deps: {
+    boss?: { getJobById: (queue: string, id: string) => Promise<JobWithMetadata | null> };
+    jobId?: string;
+  } = {},
+): Promise<AutomaticRecoveryEligibility> {
+  return (await inspectJudgeQueue(runId, deps)).eligibility;
+}
+
+export async function resolveQueueLiveness(
+  runId: string,
+  deps: {
+    boss?: { getJobById: (queue: string, id: string) => Promise<JobWithMetadata | null> };
+    /** Latest recovery delivery id; absent means the original deterministic delivery. */
+    jobId?: string;
+  } = {},
+): Promise<QueueLiveness> {
+  return (await inspectJudgeQueue(runId, deps)).liveness;
+}
+
+export interface JudgeRecoveryMetadata {
+  latestDeliveryId: string | null;
+  attempts: number;
+  hasTerminalFailure: boolean;
+}
+
+/**
+ * Read the recovery marker, distinct-attempt budget, and terminal-failure evidence in one query.
+ * Distinct identity falls back to the delivery id for legacy markers that predate `attempt`.
+ */
+export async function getJudgeRecoveryMetadata(
+  db: Db,
+  runId: string,
+): Promise<JudgeRecoveryMetadata> {
+  const rows = await db
+    .select({
+      latestPayload: sql<unknown>`(
+        array_agg(${job_events.payload} order by ${job_events.id} desc)
+        filter (where ${job_events.event_type} = ${JUDGE_RUN_EVENTS.REQUEUED})
+      )[1]`,
+      attempts: sql<number>`count(distinct case
+        when ${job_events.event_type} = ${JUDGE_RUN_EVENTS.REQUEUED}
+        then coalesce(
+          ${job_events.payload}->>'attempt',
+          ${job_events.payload}->>'delivery_id',
+          ${job_events.payload}->>'job_id'
+        )
+      end)::int`,
+      terminalFailures: sql<number>`count(*) filter (
+        where ${job_events.event_type} = ${JUDGE_RUN_EVENTS.FAILED}
+      )::int`,
+    })
+    .from(job_events)
+    .where(and(eq(job_events.business_table, JUDGE_RUN_TABLE), eq(job_events.business_id, runId)));
+  const row = rows[0];
+  const parsed = JudgeRunRequeuedPayloadSchema.safeParse(row?.latestPayload);
+  if (row?.latestPayload != null && !parsed.success) {
+    console.warn('[judge_run] latest recovery marker failed its payload contract', {
+      run_id: runId,
+      error: parsed.error.message,
+    });
+  }
+  const latestDeliveryId = parsed.success
+    ? (parsed.data.delivery_id ?? parsed.data.job_id ?? null)
+    : null;
+  return {
+    latestDeliveryId,
+    attempts: row?.attempts ?? 0,
+    hasTerminalFailure: (row?.terminalFailures ?? 0) > 0,
+  };
+}
+
+/** Latest successfully recorded recovery delivery, used by poll and subsequent sweeps. */
+export async function latestJudgeRecoveryJobId(db: Db, runId: string): Promise<string | null> {
+  return (await getJudgeRecoveryMetadata(db, runId)).latestDeliveryId;
+}
+
+/**
+ * Was this run's answer recorded, whatever became of its job?
+ *
+ * The `/status` route's last-resort branch used to choose between 404 ("no such run") and
+ * `failed` ("this will never be judged") purely from `job_events`. Since the answer is now
+ * recorded before dispatch, a run can exist with neither a job nor a marker — a failed
+ * enqueue — and both of those answers would be wrong for it. One indexed containment lookup
+ * (the `event_payload_idx` GIN index) settles it.
+ */
+export async function pendingAttemptRecordedAt(db: Db, runId: string): Promise<Date | null> {
+  const rows = await db
+    .select({ createdAt: event.created_at })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION),
+        sql`${event.payload} @> ${JSON.stringify({ run_id: runId })}::jsonb`,
+      ),
+    )
+    .limit(1);
+  return rows[0]?.createdAt ?? null;
+}
+
+export async function hasPendingAttemptEvidence(db: Db, runId: string): Promise<boolean> {
+  return (await pendingAttemptRecordedAt(db, runId)) !== null;
+}
+
+export const JUDGE_RECOVERY_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+export const JUDGE_MAX_RECOVERY_ATTEMPTS = 2;
+
+export function hasAutomaticRecoveryBudgetFor(
+  recordedAt: Date | null,
+  recovery: JudgeRecoveryMetadata,
+  now = new Date(),
+): boolean {
+  return (
+    recordedAt !== null &&
+    recordedAt.getTime() > now.getTime() - JUDGE_RECOVERY_MAX_AGE_MS &&
+    recovery.attempts < JUDGE_MAX_RECOVERY_ATTEMPTS
+  );
+}
+
+/** Whether a pending run remains inside the automatic sweeper's age and attempt bounds. */
+export async function hasAutomaticRecoveryBudget(
+  db: Db,
+  runId: string,
+  now = new Date(),
+): Promise<boolean> {
+  const [recordedAt, recovery] = await Promise.all([
+    pendingAttemptRecordedAt(db, runId),
+    getJudgeRecoveryMetadata(db, runId),
+  ]);
+  return hasAutomaticRecoveryBudgetFor(recordedAt, recovery, now);
+}
+
+export interface StalledPendingAttempt {
+  pendingEventId: string;
+  payload: JudgePendingAttemptPayloadT;
+  submittedAt: Date;
+}
+
+export interface StalledPendingAttemptPage {
+  attempts: StalledPendingAttempt[];
+  /** Raw rows consumed before malformed legacy payloads were discarded. */
+  rowsRead: number;
+}
+
+/**
+ * Scan the DOMAIN log for attempts recorded before `stalledBefore` whose verdict never landed.
+ *
+ * "Verdict never landed" is `NOT EXISTS (event WHERE id = payload.run_id)`: the backfill tx
+ * writes the `review` event with that exact id, so its absence means no delivery ever
+ * committed. That question is answerable without pg-boss AND without `job_events`, which is
+ * the entire point — it holds whether the crash lost the job, lost the marker, or lost both.
+ *
+ * **The "was it judged?" test is in the WHERE clause, not applied after the LIMIT.** Pending
+ * rows are immutable and never deleted, so the judged ones accumulate forever in front of the
+ * unjudged ones. Paging the oldest N first and filtering afterwards would therefore return an
+ * empty page — and hide every genuinely stranded answer behind them — as soon as N judged
+ * attempts existed inside the recovery window. `limit` has to bound the ANSWER set, not the
+ * candidate set.
+ *
+ * `limit` bounds one sweep. A backlog drains over successive ticks instead of putting an
+ * unbounded number of paid judge jobs on the queue in a single burst.
+ */
+export async function findStalledJudgePendingAttempts(
+  db: Db,
+  args: { stalledBefore: Date; recordedAfter: Date; limit: number; offset?: number },
+): Promise<StalledPendingAttemptPage> {
+  const backfilled = alias(event, 'backfilled_attempt');
+  const terminalRun = alias(job_events, 'terminal_judge_run');
+  const rows = await db
+    .select({ id: event.id, payload: event.payload, created_at: event.created_at })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION),
+        lt(event.created_at, args.stalledBefore),
+        // Older than the recovery window: the row stays as permanent evidence, but automatic
+        // recovery stops (the caller's bound explains why).
+        gt(event.created_at, args.recordedAfter),
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(backfilled)
+            .where(eq(backfilled.id, sql`${event.payload}->>'run_id'`)),
+        ),
+        // Persisted terminal/manual decisions must be filtered BEFORE LIMIT/OFFSET. Otherwise
+        // 200 immutable rows at the front of the window make every hourly sweep restart on the
+        // same dead prefix and permanently starve a later dispatch gap. Exhausted recovery
+        // budgets remain visible once so the sweeper can persist their terminal decision too.
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(terminalRun)
+            .where(
+              and(
+                eq(terminalRun.business_table, JUDGE_RUN_TABLE),
+                eq(terminalRun.business_id, sql`${event.payload}->>'run_id'`),
+                eq(terminalRun.event_type, JUDGE_RUN_EVENTS.FAILED),
+              ),
+            ),
+        ),
+      ),
+    )
+    .orderBy(asc(event.created_at))
+    .limit(args.limit)
+    .offset(args.offset ?? 0);
+
+  const attempts = rows.flatMap((row) => {
+    const result = JudgePendingAttemptPayload.safeParse(row.payload);
+    if (!result.success) {
+      // Unreachable through `writeEvent` (the parse barrier rejects a malformed payload), so
+      // this can only be hand-edited or pre-schema data. Skip it loudly rather than throwing:
+      // one bad row must not stop the sweep from recovering every other stranded answer.
+      console.error(
+        '[judge_pending_reconcile] skipping a pending-attempt row with an unreadable payload',
+        row.id,
+        result.error.message,
+      );
+      return [];
+    }
+    return [{ pendingEventId: row.id, payload: result.data, submittedAt: row.created_at }];
+  });
+  return { attempts, rowsRead: rows.length };
+}
+
+// ============================================================================
+// 4. The evidence water mark (B2)
+// ============================================================================
+
+/**
+ * Is there evidence of a NEWER attempt on material this attempt would write?
+ *
+ * the projection-based half of the late-arrival guard reads state that a
+ * skipped run never wrote. Run B (newer, covering K1+K2) is judged late because of K2, so it
+ * skips EVERY derived write and leaves K1's `last_review` / `last_outcome_at` untouched; the
+ * older run A, covering only K1, then reads those stale projections, passes the check, and
+ * walks K1 backwards. One skip lets every older attempt behind it through.
+ *
+ * The fix is to stop asking derived state when the answer lives in immutable evidence. A
+ * pending-attempt row is written for EVERY durable attempt at submit time and is never
+ * conditional on a verdict landing, so B is visible here whether or not it wrote anything.
+ *
+ * Overlap is material overlap: the same question, any shared knowledge id, or any shared frozen
+ * hierarchical-Elo domain. Top-level containment keeps the indexed candidate lookup;
+ * domain matches additionally exclude structural-root targets in old frozen evidence.
+ */
+export async function hasNewerAttemptEvidence(
+  tx: Tx,
+  args: {
+    submittedAt: Date;
+    questionId: string;
+    knowledgeIds: string[];
+    abilityGlobalIds: string[];
+    /** This run's own pending row must not count as evidence against itself. */
+    excludeRunId: string;
+  },
+): Promise<boolean> {
+  const knowledgeOverlap =
+    args.knowledgeIds.length === 0
+      ? sql`false`
+      : sql`(${sql.join(
+          args.knowledgeIds.map(
+            (id) => sql`${event.payload} @> ${JSON.stringify({ knowledge_ids: [id] })}::jsonb`,
+          ),
+          sql` OR `,
+        )})`;
+  // Existing pending rows are immutable and can still include root-derived domains.
+  // Use their frozen KC map when present; pre-freeze rows retain recorded domains only
+  // if they contain a real KC. The same-question guard below remains independent.
+  const abilityGlobalOverlap =
+    args.abilityGlobalIds.length === 0
+      ? sql`false`
+      : sql`(${sql.join(
+          args.abilityGlobalIds.map(
+            (id) => sql`(
+              ${event.payload} @> ${JSON.stringify({ ability_global_ids: [id] })}::jsonb
+              AND EXISTS (
+                SELECT 1 FROM jsonb_array_elements_text(
+                  CASE WHEN jsonb_typeof(${event.payload}->'knowledge_ids') = 'array'
+                    THEN ${event.payload}->'knowledge_ids' ELSE '[]'::jsonb END
+                ) AS pending_kc(id)
+                WHERE btrim(pending_kc.id) <> ''
+                  AND btrim(pending_kc.id) !~ ${SYNTHETIC_SUBJECT_ROOT_RE.source}
+                  AND CASE
+                    WHEN jsonb_typeof(${event.payload} #> '{submit,ability_global_by_knowledge_id}') = 'object'
+                    THEN (${event.payload} #> '{submit,ability_global_by_knowledge_id}') ->> btrim(pending_kc.id) = ${id}
+                    ELSE true
+                  END
+              )
+            )`,
+          ),
+          sql` OR `,
+        )})`;
+  const rows = await tx
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION),
+        gt(event.created_at, args.submittedAt),
+        sql`${event.payload}->>'run_id' <> ${args.excludeRunId}`,
+        sql`(
+          ${event.payload} @> ${JSON.stringify({ submit: { question_id: args.questionId } })}::jsonb
+          OR ${knowledgeOverlap}
+          OR ${abilityGlobalOverlap}
+        )`,
+      ),
+    )
+    // The overlap predicate is applied before the cap. Non-overlapping traffic can never hide a
+    // relevant newer answer, regardless of how many other questions were submitted meanwhile.
+    .limit(1);
+  return rows.length > 0;
+}

@@ -1,9 +1,9 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createAttempt } from '@/capabilities/practice/api/submit';
+import { createAttempt } from '@/capabilities/practice/grading/api/submit';
+import { submitReviewAnswerTool } from '@/capabilities/practice/grading/tools/submit-review-answer';
 import { practiceCapability } from '@/capabilities/practice/manifest';
 import { installPracticeHostOperations } from '@/capabilities/practice/public';
-import { submitReviewAnswerTool } from '@/capabilities/practice/server/tools/submit-review-answer';
 import {
   assessment_submission,
   evaluation,

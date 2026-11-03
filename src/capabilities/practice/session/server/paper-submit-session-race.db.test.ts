@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { answer, artifact, assessment_submission, event } from '@/db/schema';
 import { seedFrozenSolveQuestion } from '../../../../../tests/fixtures/assessment-solve';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { saveResponseDraft } from '../../server/assessment/submit';
+import { saveResponseDraft } from '../../grading/server/assessment/submit';
 import { createPaperReviewSession } from '../api/paper-session-create';
 import { submitNativePaperAttempt } from './assessment/paper-attempt';
 import { readPaperAssessmentBinding } from './assessment/paper-issuance';

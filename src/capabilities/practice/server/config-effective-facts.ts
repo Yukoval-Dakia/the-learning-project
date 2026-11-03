@@ -5,7 +5,7 @@
 // server→public 入口，deep import 会被 ratchet 拦下。
 
 import type { ConfigEffectiveFacts } from '@/core/config/effective';
-import { readJudgeCalibrationConfig } from '../jobs/judge-calibration-config';
+import { judgeFallbackProvider, readJudgeCalibrationConfig } from '../grading/public';
 import { resolveSolveOverrideFromEnv } from '../question-bank/public';
 import {
   jyeooBinaryPath,
@@ -14,7 +14,6 @@ import {
   jyeooSpawnMaxStdoutBytes,
   jyeooSpawnTimeoutMs,
 } from '../supply/public';
-import { judgeFallbackProvider } from './judge-durable-config';
 
 export function practiceConfigEffectiveFacts(): ConfigEffectiveFacts {
   const calibration = readJudgeCalibrationConfig();

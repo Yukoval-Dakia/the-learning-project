@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import { and, desc, eq, inArray } from 'drizzle-orm';
-import { getIssuanceState } from '@/capabilities/practice/server/assessment/submit';
+import { getIssuanceState } from '@/capabilities/practice/grading/server/assessment/submit';
 import {
   activateSubmissionCandidate,
   evaluateSubmission,
-} from '@/capabilities/practice/server/judge/evaluate-submission';
+} from '@/capabilities/practice/grading/server/judge/evaluate-submission';
 import { createPaperReviewSession } from '@/capabilities/practice/session/api/paper-session-create';
 import {
   PaperAssessmentBinding,

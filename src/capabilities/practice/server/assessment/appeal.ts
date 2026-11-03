@@ -5,12 +5,13 @@ import type { Db, Tx } from '@/db/client';
 import { evaluation, evaluation_effective_head, event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 import {
   EvaluateSubmissionError,
   activateSubmissionCandidate,
   createFormalModelExecutor,
-} from '../judge/evaluate-submission';
-import { evaluateAttempt } from '../judge/evaluation-authority';
+  evaluateAttempt,
+} from '../../grading/public';
 
 export async function createNativeAppeal(
   database: Db,
@@ -38,9 +39,7 @@ export async function createNativeAppeal(
     if (original.status !== 'completed' || original.provenance?.source !== 'automatic') {
       throw new ApiError('not_appealable', 'a completed automatic evaluation is required', 422);
     }
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${original.evaluation_group_id}))`,
-    );
+    await lockAssessmentEvaluationGroup(tx, original.evaluation_group_id);
     const [head] = await tx
       .select()
       .from(evaluation_effective_head)
@@ -123,9 +122,7 @@ export async function requestEvaluationCorrection(
         422,
       );
     }
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${original.evaluation_group_id}))`,
-    );
+    await lockAssessmentEvaluationGroup(tx, original.evaluation_group_id);
     const [head] = await tx
       .select()
       .from(evaluation_effective_head)

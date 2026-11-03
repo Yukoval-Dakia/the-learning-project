@@ -18,7 +18,7 @@
 | `question` 表（统一题库） | ✅ 落地 (`src/db/schema.ts` L429)，被 `event(action='attempt', subject_kind='question')` 引用 |
 | `answer` 表 | ✅ 仍存在 (`src/db/schema.ts` L1535)，承载答案 payload；`vision_extracted` / `image_refs` 字段保留 |
 | `judgment` / `user_appeal` 表 | ❌ DROPped (ADR-0006 v2 / 1c.1 Step 1.4 Lane A)；判分走 `event(action='judge', subject_kind='event')`；申诉走 `POST /api/appeals` 创建 `experimental:appeal_request` event 并入队 `rejudge` job，不再产 `judge_retraction` proposal（YUK-316 D15） |
-| JudgeRouter + judge kind | 🟡 可执行 6 种：`exact` / `keyword` / `semantic` / `steps` / `unit_dimension` / `multimodal_direct`；`rubric` / `ai_flexible` 只在 schema 声明，无 runner（`src/capabilities/practice/server/judge/question-contract.ts`） |
+| JudgeRouter + judge kind | 🟡 可执行 6 种：`exact` / `keyword` / `semantic` / `steps` / `unit_dimension` / `multimodal_direct`；`rubric` / `ai_flexible` 只在 schema 声明，无 runner（`src/capabilities/practice/grading/server/judge/question-contract.ts`） |
 | `tool_quiz` artifact 类型 + standalone vs embedded | 🟡 `quiz_gen` 创建 `Artifact(type='tool_quiz')`，`tool_state.question_ids[]` 指向统一题库；embedded check 生成链已删除；完整 standalone UI / review-session tool_quiz 仍未落地 |
 | Review session | ✅ ADR-0013 已落地：`POST /api/review-sessions` 创建，`PATCH /api/review-sessions/[id]` 改 `status`（started/paused/completed/abandoned），`POST /api/attempts` 可带 `session_id`，孤儿清理由 `prune_orphan_review_sessions` 处理；due/advice/weekly 走 `/api/review/{due,advice,weekly}` |
 | 复习 = standalone tool_quiz artifact | ❌ 仍未实现；当前是 review session + `/api/review/due` + `/api/attempts` |

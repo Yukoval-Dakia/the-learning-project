@@ -1,24 +1,23 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { reconcileStalledJudgeAttempts } from '@/capabilities/practice/jobs/judge_pending_reconcile';
-import { runJudgeWorkflowDelivery } from '@/capabilities/practice/jobs/judge_run';
-import { dispatchNativeAttempt } from '@/capabilities/practice/server/assessment/durable-attempt';
-import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
-import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
-import { judgeDeliveryInput } from '@/capabilities/practice/server/judge-engine-client';
+import { reconcileStalledJudgeAttempts } from '@/capabilities/practice/grading/jobs/judge_pending_reconcile';
+import { runJudgeWorkflowDelivery } from '@/capabilities/practice/grading/jobs/judge_run';
+import { dispatchNativeAttempt } from '@/capabilities/practice/grading/server/assessment/durable-attempt';
+import * as evaluationService from '@/capabilities/practice/grading/server/judge/evaluate-submission';
+import { createRecordedModelExecutor } from '@/capabilities/practice/grading/server/judge/recorded-model-executor';
+import { judgeDeliveryInput } from '@/capabilities/practice/grading/server/judge-engine-client';
 import {
   acceptJudgeDelivery,
   authorizeJudgeSend,
   disposeJudgeRun,
   fenceJudgeUnitClaim,
-  lockJudgeRun,
   reserveJudgeDelivery,
-} from '@/capabilities/practice/server/judge-operational';
-import { projectJudgeRunNotification } from '@/capabilities/practice/server/judge-run-notification';
+} from '@/capabilities/practice/grading/server/judge-operational';
+import { projectJudgeRunNotification } from '@/capabilities/practice/grading/server/judge-run-notification';
 import {
   createJudgeRunStatusReader,
   readJudgeRunPermanent,
-} from '@/capabilities/practice/server/judge-run-observation';
+} from '@/capabilities/practice/grading/server/judge-run-observation';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
@@ -26,6 +25,7 @@ import { evaluation, event, job_events, mastery_state, material_fsrs_state } fro
 import * as domain from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import * as notificationWriter from '@/kernel/job-events';
+import { lockJudgeRun } from '@/kernel/locks/grading';
 import { resetDb, testDb } from '../helpers/db';
 import { dispatchFrozenJudge, frozenJudge, judgeEvidence, resetJudgeControl } from './support';
 

@@ -7,7 +7,7 @@ import {
   resolveVerdictsForNativeAttempts,
 } from '@/kernel/read-models/assessment-verdict';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
-import { projectFrozenStudyContext } from '../../server/assessment/study-context';
+import { projectFrozenStudyContext } from '../../grading/public';
 
 /** Content and scope for attribution come from the original issuance and submission. */
 export async function loadNativeFailureContext(db: Db | Tx, attemptEventId: string) {

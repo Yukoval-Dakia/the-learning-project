@@ -22,7 +22,7 @@
 | `model-profiles.ts` + `model-catalog.ts` + `provider-models-check.ts` + `model-catalog.snapshot.json` | ModelProfile 读取运行时 models.dev 缓存和有据例外；缺项 unknown。已有 `/models` 核对、鉴权探针和刷新锁不变。`pnpm gen:model-catalog` 只重写离线快照。自定义 provider 的模型 bucket 在 `model-catalog.ts` 刷新时从其自身 /models 合成（`mergeCustomProviderBuckets`），不进快照 |
 | `log.ts` | run / event 留痕 |
 | `provenance.ts` | source / `last_modified_by` 标记 |
-| `../../capabilities/practice/server/judge/` | Practice 判分实现；题型路由和 TaskSpec 由 Practice 拥有 |
+| `../../capabilities/practice/grading/server/judge/` | Practice 判分实现；题型路由和 TaskSpec 由 Practice 拥有 |
 | `tools/registry.ts` + `tools/register-capability-tools.ts` | 统一 Domain Tool Registry；完整 inventory 由 capability manifests 在进程启动期装配 |
 | `tools/mcp-bridge.ts` | `executeDomainToolCall` 引擎中立共享管线（`tool_call_log`/`tool_use` mirror/`beforeExecute`/`interceptInput`/cancellation）——DomainTool 执行的唯一通道 |
 | `@/ai/pi-tool-mount` | 完整 mount/options 共享声明、wire 命名与 custom AgentTool 构造；不执行 domain/remote 挂载 |

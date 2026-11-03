@@ -59,76 +59,30 @@ const COMPOSITION_FILES = new Set([
 
 /**
  * 根目录文件的迁移目标（路径相对 practice/，先命中者生效）。来源：设计证据
- * `owners.py`/`areas.py` 的映射，按设计正文 §2.1、§2.5、§3.1、§4.2、§6.3 修正。
+ * `owners.py`/`areas.py` 的映射，按设计正文 §2.1、§2.5、§3.1、§4.2、§6.3 修正。不再决定任何
+ * 根目录文件归属的规则随文件迁出删除。
  */
 const OWNER_RULES: ReadonlyArray<readonly [Owner, RegExp]> = [
   [
     'face',
     /^api\/(paper-contracts|worksheet-contracts)\.ts$|^server\/worksheet\/region-map-validate\.ts$/,
   ],
-  ['session', /^worksheet-render-queue\.ts$/],
-  ['question-bank', /^jobs\/(source_verify|question_admission_run)/],
-  ['kernel-bound', /^server\/placement-scope\.ts$|^ui\/blocks\/custom-sandbox\.ts$/],
+  ['kernel-bound', /^ui\/blocks\/custom-sandbox\.ts$/],
   ['face', /^ui\//],
-  [
-    'session',
-    /^server\/(session-operations\/review-session|review-session-lifecycle|session-summary)\.ts$/,
-  ],
-  [
-    'session',
-    /^jobs\/session_summary|^tasks\/session-summary|^api\/(review-sessions|review-session-detail|session-end|session-resources|paper-session-create)/,
-  ],
-  [
-    'grading',
-    /^server\/(judge-calibration-sample-core|calibration-sample)|^jobs\/(judge_calibration_sample|judge-calibration-config)/,
-  ],
-  [
-    'question-bank',
-    /^server\/(item-prior|fixed-anchor)|^jobs\/(item_prior_backfill|recalibration_nightly)|^tasks\/item-prior|^api\/calibration-anchors/,
-  ],
-  ['grading', /^server\/(mastery-progress-signal|judge-rating|intervention-diagnostics)\.ts$/],
-  ['question-bank', /^server\/(intervention-author|question-scheduling-enrollment)\.ts$/],
   ['settlement', /^server\/attempt-snapshot\.ts$/],
   // Area rules from areas.py, in its order.
   [
     'face',
-    /^(manifest|public|ui-public|task-public)\.ts$|^server\/(queue-runtime|task-runtime|config-effective-facts|selection-constants)\.ts$/,
+    /^(manifest|public|ui-public|task-public)\.ts$|^server\/(config-effective-facts|selection-constants)\.ts$/,
   ],
-  ['scheduling', /^server\/stream-replacement-plan/],
-  [
-    'face',
-    /^tasks\/(index|parse-output|generation-prompt-support)\.ts$|^tools\/types\.ts$|^api\/(contracts|resource-routes)\.ts$/,
-  ],
-  ['scheduling', /^api\/session-resources/],
-  ['supply', /placement-(starter|supply-lock)/],
-  ['placement', /(^|\/)placement[-_]/],
+  ['face', /^tasks\/index\.ts$|^tools\/types\.ts$|^api\/(contracts|resource-routes)\.ts$/],
   [
     'settlement',
     /^server\/(judge-retraction-applier|appeal-operation)\.ts$|^server\/assessment\/appeal|^jobs\/(rejudge|rejudge-config)|^api\/appeal\.ts$|^server\/tools\/propose-grading-correction/,
   ],
   [
-    'grading',
-    /^server\/judge\/|^server\/judge-|^server\/evaluate-submission|^server\/recorded-model-executor|^jobs\/judge_|^api\/judge-run-status|^tasks\/(judges|jev-typed|assessment-rubric|assessment-rule|source-grounding-verify)/,
-  ],
-  [
-    'failure-learning',
-    /failure-learning|^server\/(cause-|merge-attribution|lost-attribution-backfill|enqueue-wrong-streak-nudge)|^jobs\/(attribution_followup|variant_gen)|^tools\/(attribute-mistake|propose-variant)|^server\/tools\/(query-mistakes|get-attempt-context)|^tasks\/(attribution|attribute-retrieve|cause-category-propose|variant-gen)/,
-  ],
-  [
     'face',
     /^server\/(solve-|hint-explanation|tutor-session)|^api\/solve-|^tasks\/teaching-quality/,
-  ],
-  [
-    'scheduling',
-    /^server\/(stream-|stored-stream-budget|selection-|softmax-selection|non-due-selection-plan|post-filter|variant-rotation|candidate-signals|learnable-frontier|knowledge-labels|compose-paid-work-lock)|^jobs\/practice_stream_compose_nightly|^api\/stream|^tasks\/selection-orchestrator/,
-  ],
-  [
-    'session',
-    /^server\/(paper-|papers-list|practice-read|answer-draft)|^server\/assessment\/paper-|^server\/worksheet\/|^jobs\/worksheet_render|^api\/(paper|papers-|legacy-paper|worksheet)|^server\/tools\/(write-quiz|tool-quiz-core)/,
-  ],
-  [
-    'scheduling',
-    /^server\/(fsrs|rating-advisor|due-list|daily-review-plan|question-pace|review-weekly|advice-operation|day-one-priors|activity-tier|learner-return-wake)|^api\/(due|advice|weekly|review-planning-contracts)|^server\/tools\/question-context/,
   ],
   [
     'grading',
@@ -137,14 +91,6 @@ const OWNER_RULES: ReadonlyArray<readonly [Owner, RegExp]> = [
   [
     'supply',
     /^server\/question-supply\/|^server\/(supply-plan-operation|web-sourcing-operation|question-generation-grounding)|^jobs\/(supply_|quiz_gen|question_supply_nightly|confusable_contrast_nightly|jyeoo_staged_asset_reap)|^server\/tools\/(file-bank-gap|jyeoo-fetch|web-fetch|generate-question-candidate|question-author|submit-question|store-sourced-question)|^server\/quiz\/(sourcing-sequence|fewshot-retrieve|quiz-gen-)|^api\/quiz-gen-trigger|^tasks\/(sourcing|supply-planning|quiz-generation|quiz-planning|question-author|solution-generation)/,
-  ],
-  [
-    'question-bank',
-    /^server\/admission\/|^server\/quiz\/verify-|^server\/(verify-dispatch-outbox|reference-solution|learning-content-validation)|^server\/custom-block-preview\/|^jobs\/(quiz_verify|variant_verify|model_slice_admission_run|reference_answer_backfill|answer_class_backfill)|^tasks\/(question-admission-solve|quiz-verify|variant-verify)/,
-  ],
-  [
-    'question-bank',
-    /^server\/(question-|serving-action|draft-|proposal-|live-question-reference)|^server\/quiz\/|^server\/tools\/(bank-|search-bank|read-bank|check-bank|edit-question|proposal-tools)|^jobs\/embed_backfill|^api\/(question|review-draft|draft-moderation)|^tasks\/bank-search-semantic/,
   ],
 ];
 

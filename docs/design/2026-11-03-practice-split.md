@@ -232,7 +232,7 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
   | 导出 create/get/pdf/page、region-map 存档 | — | — |
 
 - **表与事件：** `learning_session`（type=review）、`answer`、`artifact`（tool_quiz）、`worksheet_export`、`worksheet_export_item`、`worksheet_region_map_page`；事件 `experimental:adaptation`、`assessment_feedback_released`。
-- **依赖：** grading 的 public（发卷、提交、作答捕获、评价可见性），question-bank 的 public（matcher 召回）。`server/assessment/issue.ts` 是纯转发壳，全文件只是对 `kernel/records/assessment-issuance` 的 re-export。`paper-issuance.ts:24` 目前仍然 `from './issue'`（取 `issueAssessment`、`readAutomaticServingDecision`、`revisionRowToContract`），由 S2 改为直接 import kernel，并删除转发壳；转发壳的全部消费方见 S2。
+- **依赖：** grading 的 public（发卷、提交、作答捕获、评价可见性），question-bank 的 public（matcher 召回）。发卷记录直接 import `kernel/records/assessment-issuance`：原 `server/assessment/issue.ts` 转发壳（全文件只是对它的 re-export）在 S4 删除，`paper-issuance`、`paper-detail`、`worksheet/export-store` 等全部消费方同片改为直连 kernel。
 - **manifest 贡献：**
   - 路由：`/api/review-sessions*`、answer-drafts、submissions、`/api/papers*`、`/api/practice/[id]`（legacy）、`/api/worksheet-exports*`。
   - 任务：`session_summary`、`worksheet_render`（`WORKSHEET_RENDER_QUEUE` 常量随本 owner 移动）。
@@ -286,7 +286,7 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
 
 - **拥有：** `learning_session(type='tutor')` 解题辅导、提示梯与讲解封存（AGENTS 中「提示」两条约束整体留在这里）、旧练习页 UI 外壳与题块渲染。
 - **manifest 贡献：** `/api/solve-sessions*`、`ui.pages`。
-- 组合：`manifest.ts` 只拼接各 owner 的 manifest 片段；`public.ts` 只对各 owner 的 public 做 `export *`。
+- 组合：`manifest.ts` 只拼接各 owner 的 manifest 片段；`public.ts` 按名字转出各 owner public 中供外部使用的符号，不用 `export *`（pass-through 台账只能给具名符号分类）。
 
 ## 3. 重写线占用部分（不安排架构线搬）
 
@@ -364,7 +364,7 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
 | | 拆分前 | 拆分后 |
 |---|---|---|
 | 要读懂的范围 | practice 全包 521 文件。due-list ↔ stream-inputs ↔ variant-rotation 的环，`review-session-lifecycle`、`practice-read`、`paper-sections` 的跨区调用，385 行的 `public.ts` | scheduling 52 文件、约 9.7k 行。跨 owner 只读 session 的 `practice-read` / `paper-sections`、grading 的 `judge-rating` 这几个稳定读操作 |
-| 要修改的 practice 文件 | 9 个：热点 `public.ts`（同期还被 #2216、#2302、#2303 改动），以及 `daily-review-plan`、`question-pace`、`softmax-selection`、`stream-budget`、`stream-composer`、`stream-inputs`、`stream-store`、`stream-view` | 8 个 scheduling 文件，加 `scheduling/public.ts`；根 `public.ts` 的 `export *` 不变 |
+| 要修改的 practice 文件 | 9 个：热点 `public.ts`（同期还被 #2216、#2302、#2303 改动），以及 `daily-review-plan`、`question-pace`、`softmax-selection`、`stream-budget`、`stream-composer`、`stream-inputs`、`stream-store`、`stream-view` | 8 个 scheduling 文件，加 `scheduling/public.ts`；根 `public.ts` 不变（外部调用方经 kernel 读模型读取，不需要新的具名转出） |
 | 跨 owner | practice、agency（coach_daily、coach task）、core | scheduling、agency、core，数量相同 |
 | 调用方是否只依赖稳定业务操作 | agency 经 kernel 读模型 `daily-review-plan` 读取（已是端口） | 不变。装入者 `installDailyReviewPlanFacts` 随 scheduling 移动 |
 
@@ -375,7 +375,7 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
 | | 拆分前 | 拆分后 |
 |---|---|---|
 | 要读懂的范围 | `assessment/` 目录混放作答、发卷、卷三类事务；`issue.ts` 只是 kernel 转发 | session（卷发卷绑定、冻结重开、交卷）；grading 只读 `prepareFormalAttemptSubmission` / `recordFormalAttemptCapture` 两个稳定操作 |
-| 要修改的 practice 文件 | 8 个：3 个 api、4 个 `assessment/*`（含 `issue.ts` 加一行转发）、`ui/PfPaper.tsx` | session 6 个：`api/{paper-answer-route,paper-session-create,review-session-detail}`、`paper-{attempt,issuance,session-transition}`。grading 0 个：S2 已把 `paper-issuance` 改为直接 import `kernel/records/assessment-issuance` 并删除 `issue.ts` 转发壳，以后要用的符号直接从 kernel 取，不再需要转发。外加 UI `PfPaper.tsx`。（注：在 `1bea01753` 上 `paper-issuance.ts:24` 仍然 `from './issue'`；只有 S2 做完之后，这一列才成立。） |
+| 要修改的 practice 文件 | 8 个：3 个 api、4 个 `assessment/*`（含 `issue.ts` 加一行转发）、`ui/PfPaper.tsx` | session 6 个：`api/{paper-answer-route,paper-session-create,review-session-detail}`、`paper-{attempt,issuance,session-transition}`。grading 0 个：S4 删除了 `issue.ts` 转发壳，`paper-issuance` 直接 import `kernel/records/assessment-issuance`，以后要用的符号直接从 kernel 取，不再需要转发。外加 UI `PfPaper.tsx`。（注：在 `1bea01753` 上 `paper-issuance.ts:24` 仍然 `from './issue'`；S2 搬迁时保留了这条 import，S4 之后这一列才成立。） |
 | practice 之外 | `core/schema/assessment/{serving-admission,slot-renderers}`、`kernel/records/assessment-issuance`、`ui/components/response/ResponseSlotField` | 不变 |
 | 跨 owner | 1 个 | session 与 face 的旧 UI，2 个 |
 
@@ -402,7 +402,7 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
 
 - **目录与边界：**
   - 子 owner 目录 `src/capabilities/practice/<owner>/{server,api,jobs,tasks,tools,ui}`，每个目录有自己的 `public.ts` 和 `manifest-part.ts`。
-  - 根 `manifest.ts` 只拼接各 owner 片段，根 `public.ts` 只做 `export * from './<owner>/public'`。保持现有懒加载包装，迁移 bundle 不得引入 SDK（`public.ts` 头注释所述约束）。
+  - 根 `manifest.ts` 只拼接各 owner 片段；根 `public.ts` 按名字转出各 owner public 中供外部使用的符号（`export { a, b } from './<owner>/public'`），不用 `export *`：pass-through 台账（`scripts/pass-through-classifications.jsonl`）只能给具名符号逐条分类，`export *` 会把 owner 的整个 public 不加区分地变成外部契约。保持现有懒加载包装，迁移 bundle 不得引入 SDK（`public.ts` 头注释所述约束）。
   - S0 在 `audit:capability-boundaries` 增加 practice 子 owner 规则：
     - 顺序表按 §0。
     - 子 owner 之间只能 import 对方的 `public.ts`。
@@ -432,7 +432,7 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
 |---|---|---|---:|---|---|---|
 | **S0 壳拆分与边界规则** | 根 `manifest.ts`、`public.ts`、`tasks/index.ts`。把错因学习、session、scheduling 三个 owner 的条目机械抽成各自的片段（文件暂不移动）；供题、判分、题库条目原地不动，避免与功能线、#2303 冲突；扩展审计规则并登记台账 | 组合根 | ~10 | #2303 合并后再做，以免 rebase 冲突 | manifest 组合前后路由、job、工具、订阅、事件 action 集合逐项一致；`public.ts` 懒加载不得退化成急加载（迁移 bundle） | 架构线 |
 | **S1 错因学习** | 错因职责区 30 个文件（24 个产品文件，6 个测试）；`proposal-appliers.ts` 只改 1 个 import（cause-overlay 改为 `kernel/read-models/cause-overlay`）；`proposal-accept-applier.ts` 中 `cause_category` 两个 applier 移出；`scripts/backfill-lost-attribution.ts` 路径更新 | failure-learning | ~36 | S0 | 订阅从已提交 attempt 同事务投递（ADR-0051），id/version 不变；`attribution_followup` → `variant_gen` 链的幂等；只做提议 | 架构线 |
-| **S2 整卷与做题会话** | session 映射的 49 个文件减去 3 个暂留契约（§4.2）；删除 `assessment/issue.ts` 转发壳：session 内 3 个消费方（`paper-issuance.ts:24`、`paper-detail.ts:23`、`worksheet/export-store.ts:45`）随片改为直接 import kernel。非 session 的 5 个产品消费方同片改为直接 import kernel，各文件的目标 owner 不变、不随本片移动：`public.ts:18` 归根组合（`issueAssessment` 改为从 kernel 转导出）；`placement-assessment.ts:19` 归 placement；`assessment/submit.ts:53`、`assessment/study-context.ts:16`、`api/assessment-route.ts:8` 归 grading；另有 `issue-response.ts:2` 的 type-only import，同片改为直接 import kernel 类型。测试消费方做机械路径更新：`solve-session-media.db.test.ts` 归 face；`assessment/material-recovery.db.test.ts`、`assessment/submission-persistence.db.test.ts`、`api/submit-durable-resource.db.test.ts` 归 grading；`src/server/assessment/{joint-input,admission}.db.test.ts` 在 practice 之外。另外还要更新 `src/server/assessment/admission.db.test.ts` 等深层测试的路径 | session | ~62 | S0；可与 S1、S3 并行 | `learning_session(type=review)` 状态机；冻结卷重开事务 `withFrozenPaperReopen`；答题卡草稿唯一索引与 save epoch；交卷逐槽幂等；`worksheet_render` 队列身份；`session_summary` best-effort 入队；孤儿清理 cron（经 public，不变） | 架构线 |
+| **S2 整卷与做题会话** | session 映射的 49 个文件减去 3 个暂留契约（§4.2）。`assessment/issue.ts` 转发壳不在本片删除：S2 只随文件搬迁 session 内的 3 个消费方（`paper-issuance`、`paper-detail`、`worksheet/export-store`），保留它们对转发壳的 import；转发壳及其全部消费方（session 3 个、placement 的 `placement-assessment`、grading 的 `assessment/{submit,study-context,issue-response}` 与 `api/assessment-route`、根 `public.ts` 的 `issueAssessment` 转出，以及测试）改为直连 `kernel/records/assessment-issuance`，在 S4 完成。测试消费方做机械路径更新。另外还要更新 `src/server/assessment/admission.db.test.ts` 等深层测试的路径 | session | ~62 | S0；可与 S1、S3 并行 | `learning_session(type=review)` 状态机；冻结卷重开事务 `withFrozenPaperReopen`；答题卡草稿唯一索引与 save epoch；交卷逐槽幂等；`worksheet_render` 队列身份；`session_summary` best-effort 入队；孤儿清理 cron（经 public，不变） | 架构线 |
 | **S3 学习安排** | 排程 + 练习流 52 个文件，减去暂留核心的 `variant-rotation`、`candidate-signals`、`activity-tier`、`day-one-priors`；`stream-date` 下沉 kernel；`api/review-planning-contracts.ts` 中的校准锚 schema 归还题库侧；深层测试路径更新（`settle-forgetting`、`recalibration`、`advisory-locks`、`admission` 四个 db test） | scheduling | ~55 | S0；可与 S1、S2 并行 | `practice_stream_item` 单写者；`compose-paid-work-lock` advisory lock；夜间组流与回来唤醒 singleton（180s）；AI 不可用回落确定性 due；refill 与夜间供题先经根 `public.ts` 下行调用（台账项），功能线落位后改 kernel 端口 | 架构线 |
 | **S4 判分** | grading 映射约 89 个文件（判分、作答、校准采样、`model_slice_admission_run`、干预诊断余项），落点是 `practice/grading/server/`（§3.1）。`model-slice-registry` 与 Jev/Rubric/Pi 执行器由迁移线 YUK-1683 先落到这里，不在 S4 范围；S4 只把 practice 内的判分文件并入同一目录。`runtime.ts` 拆成 grading 侧与 settlement 侧 | grading | ~100 | #2303 合并；迁移线 kernel 端口票先落（否则 kernel 会 value import capability）；与迁移线约定 §3.1 第 1、2 条的过渡形态 | DBOS judge 身份与旧 pg-boss 义务排空（ADR-0066）；evaluation-group 锁顺序（激活：learning-state G → group advisory → FOR UPDATE）；提交幂等；pending 对账；付费重试不重复付费 | 架构线（Tier A），迁移线审结算接缝 |
 | **R1 结算与撤回重放** | §3.1 清单 | settlement | 由迁移线定 | S4 或与 S4 同步 | 撤回闭包、重放、快照括号、FSRS 写入只经单一机制（§6.4） | 迁移线 YUK-1665 |
@@ -458,7 +458,7 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
   - `PfStream`、`PfRetro` 归 scheduling；
   - `practice-api` 按 owner 拆成客户端模块。
   这次迁移不改任何视觉或交互。
-- 新 UI（`src/ui-next/*`）只经各 owner 在根 `ui-public.ts` 上的 `export *` 消费，不受影响。
+- 新 UI（`src/ui-next/*`）只经根 `ui-public.ts` 按名字转出的入口消费，不受影响。
 
 ## 6. 取舍与待协调线裁定
 

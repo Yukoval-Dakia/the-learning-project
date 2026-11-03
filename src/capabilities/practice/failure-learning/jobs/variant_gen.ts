@@ -1,17 +1,14 @@
 import type { Job } from 'pg-boss';
-import {
-  type PracticeTaskRunFn,
-  makePracticeTaskRunFn,
-} from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
+import { type BoundRunTaskTextFn, makeRunTaskFn } from '@/server/ai/runner-fn';
 import { createFailureLearning } from '../server/failure-learning';
 import { type FailureLearningJobData, failureLearningAttemptId } from './failure-learning-jobs';
 
 export type VariantGenJobData = FailureLearningJobData;
 
 interface VariantGenHandlerDeps {
-  runTaskFn?: PracticeTaskRunFn;
+  runTaskFn?: BoundRunTaskTextFn;
 }
 
 /** Stable pg-boss payload adapter; all product semantics live in Failure Learning. */
@@ -19,7 +16,7 @@ export function buildVariantGenHandler(
   db: Db,
   deps: VariantGenHandlerDeps = {},
 ): (jobs: Job<VariantGenJobData>[]) => Promise<void> {
-  const runTaskFn = deps.runTaskFn ?? makePracticeTaskRunFn(db);
+  const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   const learning = createFailureLearning({ db, runTaskFn });
   return async (jobs) => {
     for (const job of jobs) {

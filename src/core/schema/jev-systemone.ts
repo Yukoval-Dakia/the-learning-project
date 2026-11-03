@@ -5,7 +5,7 @@
 //
 // Subject-agnostic transport contract → lives in core (same
 // directory as provider-attempt.ts). Ownership of the TASK spec stays in
-// src/capabilities/practice/tasks/jev-typed.ts; the typed runner and the
+// src/capabilities/practice/grading/tasks/jev-typed.ts; the typed runner and the
 // assessment executor import THESE schemas so no server→capability edge
 // exists (capability-boundaries baseline).
 //

@@ -26,7 +26,7 @@
 // That event does not change mastery, scheduling, or which questions are served.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 import { SchedulingStateSchema } from '@/core/schema/scheduling-state';
 import type { Tx } from '@/db/client';
@@ -40,6 +40,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 import { resolveAbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
 import { installCandidateStateRebuild } from '@/kernel/records/scheduling-state';
 import { selectedForgettingEngine } from '@/kernel/scheduling';
@@ -544,9 +545,7 @@ export async function withdrawCapturedOccurrence(
   const submissionId = original.payload.submission_id;
   if (typeof groupId !== 'string' || typeof submissionId !== 'string')
     return refuse('capture coordinates missing');
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${groupId}))`,
-  );
+  await lockAssessmentEvaluationGroup(tx, groupId);
   const [submission] = await tx
     .select()
     .from(assessment_submission)

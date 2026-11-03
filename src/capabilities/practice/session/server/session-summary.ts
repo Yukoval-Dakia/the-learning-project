@@ -5,8 +5,8 @@
 // learning_session.summary_md. The handler logs and rethrows failures so
 // pg-boss can retry; a missing summary degrades to the UI stub.
 // `getFailureAttempts` now comes from the kernel read-model directly (the
-// knowledge public seam only re-exported it); the run function is the
-// capability-local PracticeTaskRunFn port.
+// knowledge public seam only re-exported it); the run function is the platform
+// `BoundRunTaskTextFn` from `@/server/ai/runner-fn`.
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
@@ -16,8 +16,8 @@ import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verd
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
+import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import type { PracticeTaskRunFn } from '../../server/task-runtime';
 
 const NOTABLE_LIMIT = 3;
 const MODEL_STATISTIC_CLAIMS = [
@@ -52,7 +52,7 @@ export function renderSessionNumericSummary(input: {
   return `本次复习 ${input.total_reviewed} 题，${pct}% 正确${denominator}${cause}。`;
 }
 
-export type RunTaskFn = PracticeTaskRunFn;
+export type RunTaskFn = BoundRunTaskTextFn;
 
 export interface RunSessionSummaryParams {
   db: Db;

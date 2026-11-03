@@ -11,9 +11,9 @@
 
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { SupplyPlanV1, type SupplyPlanV1T } from '@/core/schema/supply_plan';
+import { CANONICAL_QUESTION_KINDS } from '@/kernel/generation-prompt-support';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 import type { SubjectProfile } from '@/subjects/profile';
-import { CANONICAL_QUESTION_KINDS } from './generation-prompt-support';
-import { parseTaskOutput } from './parse-output';
 
 function buildSupplyPlanPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}科目的供给规划人（supply planner）。每晚你读取题池的原始信号，决定**要补什么题**——产出一份需求计划 SupplyPlanV1（JSON），下游确定性机器门会逐项机检，通过后才生效。你只规划需求，不取题、不写题、不决定执行。

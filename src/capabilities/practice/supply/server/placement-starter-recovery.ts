@@ -31,7 +31,7 @@ import {
   selectNextPlacementItem,
   terminalizeLostPlacementDelivery,
 } from '@/kernel/placement';
-import { resolveGoalPlacementScope } from '../../server/placement-scope';
+import { resolveGoalPlacementScope } from '@/kernel/read-models/placement-scope';
 import { placementClaimJobQueue } from './placement-starter';
 
 /**

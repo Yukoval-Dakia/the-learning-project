@@ -24,7 +24,7 @@ import {
   issueAssessment,
   readAutomaticServingDecision,
   revisionRowToContract,
-} from '../../../server/assessment/issue';
+} from '@/kernel/records/assessment-issuance';
 import { readPaperSections } from '../paper-sections';
 
 export const PaperAssessmentBinding = z.object({
