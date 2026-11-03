@@ -29,6 +29,12 @@ export interface ProposalRateWrite {
   readonly id?: string;
   /** The rating this write records; defaults to the plan's requested rating. */
   readonly rating?: ExistingRateDecision;
+  /**
+   * Event subject override; defaults to the proposal event itself
+   * (subject_kind='event'). knowledge_edge rates keep their wider-rating
+   * RateKnowledgeEdge shape (subject_kind='knowledge_edge').
+   */
+  readonly subject?: { readonly kind: string; readonly id: string };
   /** Shared clock with the owner's same-transaction events; defaults to now. */
   readonly created_at?: Date;
   /** Owner fields stored beside `rating` and the learner's `user_note`. */
@@ -133,8 +139,8 @@ async function writeRateEvent(
     actor_kind: 'user',
     actor_ref: 'self',
     action: 'rate',
-    subject_kind: 'event',
-    subject_id: proposalId,
+    subject_kind: rate.subject?.kind ?? 'event',
+    subject_id: rate.subject?.id ?? proposalId,
     outcome: 'success',
     payload: {
       rating,
@@ -230,6 +236,11 @@ export interface ProposalDismissPlan {
   readonly proposal: ProposalSignalSource;
   readonly userNote?: string;
   readonly signal: ProposalSignalTiming;
+  /**
+   * Event subject override for the dismiss rate; defaults to the proposal event
+   * itself. knowledge_edge dismisses keep their RateKnowledgeEdge shape.
+   */
+  readonly rateSubject?: { readonly kind: string; readonly id: string };
   /** Owner domain effect after a new dismiss rate, inside the decision transaction. */
   effect?(tx: Tx): Promise<void>;
 }
@@ -253,7 +264,9 @@ export async function runProposalDismiss(
     }
     // Same answer the dispatcher gives a proposal already retracted before the dismiss.
     if (locked.status === 'corrected') return { rateEventId: null, idempotent: true } as const;
-    const rateEventId = await writeRateEvent(tx, proposalId, 'dismiss', plan.userNote);
+    const rateEventId = await writeRateEvent(tx, proposalId, 'dismiss', plan.userNote, {
+      subject: plan.rateSubject,
+    });
     if (plan.effect) await plan.effect(tx);
     if (plan.signal === 'in_transaction') {
       await recordProposalDecisionSignal(tx, plan.proposal, 'dismiss', plan.userNote);

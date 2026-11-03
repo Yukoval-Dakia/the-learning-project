@@ -119,7 +119,11 @@ export async function decideKnowledgeEdgeProposal(
     payload: {},
   };
   const proposePayload = proposeRow.payload as EdgeProposePayload;
+  const proposeSubjectId = proposeRow.subject_id;
   const edgeOp = proposePayload.edge_op ?? 'create';
+  // Edge decisions keep the RateKnowledgeEdge shape: subject_kind='knowledge_edge'
+  // (the wider-rating schema) anchored on the propose event's synthetic subject.
+  const rateSubject = { kind: 'knowledge_edge', id: proposeSubjectId } as const;
 
   const replayResult = async (rate: {
     id: string;
@@ -154,6 +158,7 @@ export async function decideKnowledgeEdgeProposal(
       proposal: signalSource,
       userNote: user_note,
       signal: 'after_commit',
+      rateSubject,
       effect: async () => {
         // A rubric-folded event has no rate row, so the decision re-check misses it.
         // Reject any non-pending status before the rate commits, or the rubric could
@@ -276,6 +281,7 @@ export async function decideKnowledgeEdgeProposal(
             const generateEventId = createId();
             const writtenRateId = await writeRate({
               id: rateEventId,
+              subject: rateSubject,
               created_at: now,
               payload: { edge_op: 'archive' },
             });
@@ -348,6 +354,7 @@ export async function decideKnowledgeEdgeProposal(
 
             const writtenRateId = await writeRate({
               id: rateEventId,
+              subject: rateSubject,
               created_at: now,
               payload: { edge_op: 'supersede' },
             });
@@ -393,6 +400,7 @@ export async function decideKnowledgeEdgeProposal(
           const generateEventId = createId();
           const writtenRateId = await writeRate({
             id: rateEventId,
+            subject: rateSubject,
             created_at: now,
             payload: {
               ...(decision === 'reverse' ? { new_direction_reversed: true } : {}),
