@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse } from '@babel/parser';
+import { aiProposalKindStrength, aiProposalKinds } from '../src/core/schema/proposal';
 import {
   listTreeFiles,
   readBlobs,
@@ -394,8 +395,7 @@ const CENTRAL_ACTION_FILES = [
   'src/server/proposals/owner-runtime.ts',
 ] as const;
 
-const PROPOSAL_KIND_CASE_RE =
-  /case\s+'(?:knowledge_node|knowledge_edge|knowledge_mutation|variant_question|learning_item|completion|relearn|note_update|record_links|record_promotion|goal_scope|block_merge|image_candidate|question_draft|question_edit|conjecture|defer|archive)'\s*:/;
+const PROPOSAL_KIND_CASE_RE = new RegExp(`case\\s+'(?:${aiProposalKinds.join('|')})'\\s*:`);
 
 const REGISTRY_SEMANTIC_RES = [
   /\bfunction\s+build\w*Prompt/,
@@ -1473,10 +1473,7 @@ async function runCli(): Promise<void> {
     proposals: {
       declarations: proposalDeclarations,
       supportedKinds,
-      // judge_retraction now has an accept applier (practice proposal-appliers), so it leaves
-      // the producer-only set. image_candidate keeps schema support for historical events;
-      // its producer and accept applier are retired, so pending leftovers are dismiss-only.
-      producerOnlyKinds: ['archive', 'defer', 'image_candidate'],
+      producerOnlyKinds: aiProposalKinds.filter((kind) => aiProposalKindStrength[kind] === 'C'),
     },
     providerAttemptCensus: {
       attemptTruthViolations,

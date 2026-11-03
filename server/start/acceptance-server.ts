@@ -3,6 +3,7 @@
 // Does not load .env, start workers/listeners for events, recover jobs, or call AI.
 import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
+import { assertProposalKindsOwned } from '@/kernel/manifest';
 import { getServerEnv, requireApiInternalToken, resolveApiPort } from '@/server/config/env';
 import { buildHonoApp } from '../app';
 import { assertComposedRoutesDeclared } from '../composed-routes';
@@ -24,6 +25,7 @@ const [{ buildAdminConfigRuntimeFacts }, { setAdminConfigRuntimeFacts }] = await
 ]);
 setAdminConfigRuntimeFacts(buildAdminConfigRuntimeFacts);
 assertComposedRoutesDeclared(capabilities);
+assertProposalKindsOwned(capabilities);
 const fetch = await createFrontdoor(buildHonoApp(capabilities));
 const server = serve({ fetch, hostname: '127.0.0.1', port });
 

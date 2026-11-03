@@ -6,13 +6,14 @@ import {
   type LegacyApiRouteAllowlist,
   assertApiRouteContractCoverage,
 } from '@/kernel/api-contract-audit';
-import { validateComposition } from '@/kernel/manifest';
+import { assertProposalKindsOwned, validateComposition } from '@/kernel/manifest';
 import { generateOpenApiDocument } from '@/kernel/openapi';
 
 const allowlistPath = resolve(process.cwd(), 'scripts/api-route-contract-legacy.json');
 const allowlist = JSON.parse(readFileSync(allowlistPath, 'utf8')) as LegacyApiRouteAllowlist;
 
 validateComposition(capabilities);
+assertProposalKindsOwned(capabilities);
 const report = assertApiRouteContractCoverage(capabilities, allowlist);
 const document = generateOpenApiDocument(capabilities);
 const pathCount = Object.keys(document.paths as Record<string, unknown>).length;

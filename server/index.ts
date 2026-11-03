@@ -6,6 +6,7 @@
 
 import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
+import { assertProposalKindsOwned } from '@/kernel/manifest';
 import { warnFlipOrder } from '@/kernel/projection-writer-policy';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
 import { resolveApiPort } from '@/server/config/env';
@@ -23,6 +24,7 @@ warnFlipOrder();
 // （trim → 空→默认 8787 → 非正整数 throw；admin config 读面 runtime 分区同源）。
 const port = resolveApiPort(env.API_PORT);
 assertComposedRoutesDeclared(capabilities);
+assertProposalKindsOwned(capabilities);
 const app = buildHonoApp(capabilities);
 
 // YUK-599（v2 §4 / v3 §2.2）— hydrate-before-serve：serve 前把 DB 六表装配水合进
