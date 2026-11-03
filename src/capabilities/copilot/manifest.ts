@@ -1,3 +1,8 @@
+import {
+  COPILOT_CHIP_TRIGGER_ACTION,
+  COPILOT_REPLY_ACTION,
+  COPILOT_USER_ASK_ACTION,
+} from '@/kernel/events/copilot-actions';
 import { API_ERROR_RESPONSES, ApiErrorResponseSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
@@ -32,9 +37,9 @@ export const copilotCapability = defineCapability({
     '今日摘要、教学 accept-chip；工具面经 copilotTools 贡献制聚合。',
   events: {
     actions: [
-      'experimental:copilot_user_ask',
-      'experimental:copilot_chip_trigger',
-      'experimental:copilot_reply',
+      COPILOT_USER_ASK_ACTION,
+      COPILOT_CHIP_TRIGGER_ACTION,
+      COPILOT_REPLY_ACTION,
       'experimental:conversation_confirmation',
       'experimental:confirmation_command',
       'experimental:confirmation_command_result',

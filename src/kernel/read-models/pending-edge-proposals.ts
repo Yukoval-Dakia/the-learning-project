@@ -1,24 +1,26 @@
-// Pending knowledge-edge propose events by event scan: not fold-rejected (rubric or
-// topology) and no chained rate. A cheap SQL form for counts and rails; unlike the
-// inbox status it ignores corrections and rating values, so producer dedup uses the
-// inbox gate (checkProposalCooldownGate) instead.
+// SQL form of the inbox 'pending' status for knowledge-edge propose events, in the
+// same order as deriveProposalStatus: the correction fold leaves the event active,
+// no rubric/topology fold reject, and the latest chained rate is not terminal.
+// Counts and rails read this; producer dedup still uses the full inbox rows
+// (checkProposalCooldownGate) because it also needs dismissed rows for cooldown.
+//
+// Known gap: rows whose payload fails the inbox's Zod parse are dropped from the
+// inbox but kept here when the endpoint fields are strings.
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, not, sql } from 'drizzle-orm';
 import { event } from '@/db/schema';
+import { eventCorrectionActiveSql } from '@/kernel/events';
+import { proposalLatestRateTerminalSql } from '@/kernel/proposals/inbox';
 
-/** WHERE clause over the unaliased `event` table; the rate check is in SQL so caps see only pending rows. */
+/** WHERE clause over the unaliased `event` table, so caps see only pending rows. */
 export function pendingEdgeProposeEventPredicate() {
   return and(
     eq(event.action, 'propose'),
     eq(event.subject_kind, 'knowledge_edge'),
+    eventCorrectionActiveSql(event.id),
     // A topology reject carries no rubric marker, so both predicates are required.
     sql`(${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'`,
     sql`(${event.payload}->'topology_verdict'->>'status') IS DISTINCT FROM 'reject'`,
-    sql`NOT EXISTS (
-      SELECT 1 FROM ${event} AS rate_event
-      WHERE rate_event.action = 'rate'
-        AND rate_event.subject_kind = 'knowledge_edge'
-        AND rate_event.caused_by_event_id = ${event.id}
-    )`,
+    not(proposalLatestRateTerminalSql(event.id)),
   );
 }

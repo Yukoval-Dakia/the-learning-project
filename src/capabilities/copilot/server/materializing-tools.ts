@@ -1,6 +1,7 @@
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import { COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
 
 // INVARIANT: a copilot turn may expose a revert checkpoint anchor only when every
 // effect of the turn is event-chain-compensable. These tools materialize state outside
@@ -46,7 +47,7 @@ export async function selectAsksWithMaterializingToolCall(
     .where(
       and(
         inArray(event.id, [...askEventIds]),
-        eq(event.action, 'experimental:copilot_user_ask'),
+        eq(event.action, COPILOT_USER_ASK_ACTION),
         or(
           sql`${event.payload} ? 'review_answer'`,
           sql`${event.payload}->'confirmation'->>'kind' = 'submit'`,

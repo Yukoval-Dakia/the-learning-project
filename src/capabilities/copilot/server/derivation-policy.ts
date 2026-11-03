@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
 import { event, job_events } from '@/db/schema';
+import { COPILOT_ASK_ACTIONS, COPILOT_CHIP_TRIGGER_ACTION } from '@/kernel/events/copilot-actions';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { type CopilotRunJobData, hashCopilotDurableInput } from './durable-dispatch';
 
@@ -25,9 +26,9 @@ export async function acceptedCopilotDerivationPolicy(
   if (
     accepted !== delivered ||
     ask.sessionId !== data.session_id ||
-    !['experimental:copilot_user_ask', 'experimental:copilot_chip_trigger'].includes(ask.action) ||
+    !(COPILOT_ASK_ACTIONS as readonly string[]).includes(ask.action) ||
     ask.payload.user_message !== data.user_message ||
-    (ask.action === 'experimental:copilot_chip_trigger' ? 'chip' : 'chat') !== data.triggered_by
+    (ask.action === COPILOT_CHIP_TRIGGER_ACTION ? 'chip' : 'chat') !== data.triggered_by
   ) {
     throw new Error('Copilot delivery does not match accepted source');
   }

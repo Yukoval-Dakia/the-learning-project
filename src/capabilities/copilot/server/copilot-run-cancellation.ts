@@ -2,6 +2,11 @@ import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
 import type { PiBeforeToolCall } from '@/core/tool-call-contract';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events, tool_operation } from '@/db/schema';
+import {
+  COPILOT_ASK_ACTIONS,
+  COPILOT_REPLY_ACTION,
+  COPILOT_USER_ASK_ACTION,
+} from '@/kernel/events/copilot-actions';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
 import type { CopilotPublicProse } from '../public-prose-contract';
@@ -312,16 +317,13 @@ export async function requestCopilotRunCancellation(
       .where(
         and(
           eq(event.id, runId),
-          inArray(event.action, [
-            'experimental:copilot_user_ask',
-            'experimental:copilot_chip_trigger',
-          ]),
+          inArray(event.action, [...COPILOT_ASK_ACTIONS]),
           eq(event.session_id, acceptance.sessionId),
         ),
       )
       .limit(1);
     if (roots.length === 0) throw new ApiError('not_found', 'copilot run not found', 404);
-    const typedAsk = roots[0]?.action === 'experimental:copilot_user_ask';
+    const typedAsk = roots[0]?.action === COPILOT_USER_ASK_ACTION;
 
     const events = await tx
       .select({
@@ -366,7 +368,7 @@ export async function requestCopilotRunCancellation(
       .from(event)
       .where(
         and(
-          eq(event.action, 'experimental:copilot_reply'),
+          eq(event.action, COPILOT_REPLY_ACTION),
           eq(event.caused_by_event_id, runId),
           inArray(event.outcome, ['success', 'failure']),
         ),

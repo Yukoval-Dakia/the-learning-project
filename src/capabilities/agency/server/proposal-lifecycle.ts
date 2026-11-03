@@ -8,27 +8,23 @@ import type {
 export type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 
 import { retractGoalScopeProposal } from './proposal-retract-goal';
-import {
-  type LearningItemRetractRuntime,
-  retractLearningItemProposal,
-} from './proposal-retract-learning-item';
+import { retractLearningItemProposal } from './proposal-retract-learning-item';
 import {
   type LearningStateRetractRuntime,
   retractCompletionProposal,
   retractRelearnProposal,
 } from './proposal-retract-learning-state';
 
-type AgencyLifecycleRuntime = LearningItemRetractRuntime &
-  LearningStateRetractRuntime & {
-    acquireProposalDecisionLock: (tx: Tx, proposalId: string) => Promise<void>;
-    recordDismissSignal: (tx: Tx, input: ProposalDismissInput) => Promise<void>;
-    writeProposalRateEvent: (
-      tx: Tx,
-      proposalId: string,
-      rating: 'accept' | 'dismiss',
-      userNote?: string,
-    ) => Promise<{ rate_event_id: string | null; idempotent?: boolean }>;
-  };
+type AgencyLifecycleRuntime = LearningStateRetractRuntime & {
+  acquireProposalDecisionLock: (tx: Tx, proposalId: string) => Promise<void>;
+  recordDismissSignal: (tx: Tx, input: ProposalDismissInput) => Promise<void>;
+  writeProposalRateEvent: (
+    tx: Tx,
+    proposalId: string,
+    rating: 'accept' | 'dismiss',
+    userNote?: string,
+  ) => Promise<{ rate_event_id: string | null; idempotent?: boolean }>;
+};
 
 export function createAgencyProposalLifecycle(runtime: AgencyLifecycleRuntime): {
   agencyProposalDismissApplier: ProposalDismissApplier;
@@ -57,8 +53,8 @@ export function createAgencyProposalLifecycle(runtime: AgencyLifecycleRuntime): 
           },
         };
       }),
-    learningItemProposalRetractApplier: (db, input) =>
-      retractLearningItemProposal(db as Tx, input, runtime),
+    learningItemProposalRetractApplier: (db, input, seams) =>
+      retractLearningItemProposal(db as Tx, input, seams),
     goalScopeProposalRetractApplier: (db, input) => retractGoalScopeProposal(db as Tx, input),
     completionProposalRetractApplier: (db, input) =>
       retractCompletionProposal(db as Tx, input, runtime),

@@ -1,3 +1,4 @@
+import { archiveProposalArtifacts } from '@/capabilities/notes/public';
 import { newId } from '@/core/ids';
 import type { ActivityRefT } from '@/core/schema/activity';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
@@ -80,14 +81,20 @@ export async function retractAiProposal(
         });
 
         if (applier) {
-          await applier(tx, {
-            proposalId,
-            proposal: ownerInput(proposal),
-            correction_at: correctionAt,
-            correction_event_id: correctionEventId,
-            reason_md: opts.reason_md,
-            affected_refs: opts.affected_refs,
-          });
+          // Owners that archive a proposal's notes take the Notes operation from the runtime
+          // instead of importing another capability.
+          await applier(
+            tx,
+            {
+              proposalId,
+              proposal: ownerInput(proposal),
+              correction_at: correctionAt,
+              correction_event_id: correctionEventId,
+              reason_md: opts.reason_md,
+              affected_refs: opts.affected_refs,
+            },
+            { archiveProposalArtifacts },
+          );
         }
 
         const recordIds = extractRecordEvidenceIds(proposal.payload.evidence_refs);

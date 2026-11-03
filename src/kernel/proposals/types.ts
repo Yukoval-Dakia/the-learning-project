@@ -128,7 +128,12 @@ export function requireLaterProposalCorrection(correctionAt: Date, updatedAt: Da
   }
 }
 
-export type ProposalRetractApplier = (db: unknown, input: ProposalRetractInput) => Promise<void>;
+export type ProposalRetractApplier = (
+  db: unknown,
+  input: ProposalRetractInput,
+  /** Composition-only runtime seams, as for accept. Never proposal data. */
+  runtime?: unknown,
+) => Promise<void>;
 
 export interface ProposalRetractDecl {
   load: () => Promise<ProposalRetractApplier>;
