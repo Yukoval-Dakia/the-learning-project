@@ -5,8 +5,6 @@
 // fields. These helpers derive those display facets from the real timestamps so
 // nothing parses a relative-time string. `now` is injected for testability.
 
-import type { ReactNode } from 'react';
-import { createElement } from 'react';
 import type { BoardAgentNote } from './types';
 
 // created_at arrives over JSON as an ISO string but is a Date in-process; accept
@@ -192,30 +190,6 @@ export function agentNoteRunLabel(
   if (/needs_review|待复核/i.test(note.summary_md)) return '等待人工复核';
   if (note.signal_kind === 'question_pool_gap') return '未进入可用题池';
   return '已记录';
-}
-
-// Light inline markdown: **bold** and `code` only (notes are 1–2 sentences).
-// Returns ReactNodes; does NOT pull in a markdown library. Unclosed tokens are
-// left as plain text (the regex only matches balanced pairs).
-export function anInlineMd(text: string): ReactNode[] {
-  const out: ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
-  let last = 0;
-  let k = 0;
-  let m: RegExpExecArray | null = re.exec(text);
-  while (m !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index));
-    const tok = m[0];
-    if (tok.startsWith('**')) {
-      out.push(createElement('b', { key: k++, className: 'an-body-b' }, tok.slice(2, -2)));
-    } else {
-      out.push(createElement('code', { key: k++, className: 'an-code' }, tok.slice(1, -1)));
-    }
-    last = m.index + tok.length;
-    m = re.exec(text);
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
 }
 
 export interface EvidenceRef {

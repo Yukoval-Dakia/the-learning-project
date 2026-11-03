@@ -1188,37 +1188,7 @@ ol {
   background: var(--coral);
 }
 
-/* /inbox — centralized proposal review from loom-design-v2.1 */
-.inbox-page {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-.inbox-inline-link {
-  display: inline-flex;
-  align-items: center;
-  margin-left: auto;
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  padding: 6px 10px;
-  background: var(--paper-raised);
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--ink-3);
-  text-decoration: none;
-}
-.inbox-inline-link:hover {
-  color: var(--coral-ink);
-  border-color: var(--coral-line);
-  background: var(--coral-soft);
-}
-.inbox-meta-line {
-  margin: 0 0 var(--s-4);
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-  letter-spacing: var(--ls-wide);
-}
+/* Section heading and edge-proposal actions, left from the v2.1 inbox; other pages still use them. */
 .section {
   margin: var(--s-8) 0 var(--s-4);
 }
@@ -1236,128 +1206,8 @@ ol {
   color: var(--ink-4);
   letter-spacing: var(--ls-wide);
 }
-.inbox-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-  margin: var(--s-8) 0 var(--s-4);
-}
-.inbox-section-head {
-  display: block;
-}
-.inbox-section-head h2 {
-  margin: 0 0 6px;
-  font-family: var(--font-serif);
-  font-size: 22px;
-  font-weight: 500;
-  letter-spacing: var(--ls-tight);
-  color: var(--ink);
-}
-.inbox-card-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-}
-.proposal-kind-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-5);
-}
-.proposal-kind-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-}
-.proposal-kind-head {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-}
-.inbox-empty {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-  line-height: 1.6;
-}
-.inbox-error {
-  margin: 0;
-  font-size: 14px;
-  color: var(--again-ink);
-}
-.inbox-card-meta {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-}
-.inbox-node-proposal {
-  background: linear-gradient(180deg, var(--info-soft) 0%, var(--paper-raised) 100%);
-  border-color: rgba(79, 110, 142, 0.28);
-}
-.proposal-generic {
-  background: var(--paper-raised);
-  border-color: var(--line);
-}
-.proposal-summary {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-2);
-  background: var(--paper);
-  padding: 8px 10px;
-}
-.proposal-summary strong {
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-  font-weight: 500;
-}
-.proposal-json {
-  margin: 0;
-  max-height: 180px;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  line-height: 1.5;
-  color: var(--ink-2);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.proposal-status-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-}
-.proposal-status-row span {
-  min-width: 0;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-.proposal-status-row span:not(:last-child)::after {
-  content: "·";
-  margin-left: 6px;
-  color: var(--line-strong);
-}
-.proposal-retract {
-  margin-left: 2px;
-}
+
 @media (max-width: 759.98px) {
-  .proposal-summary {
-    padding: 7px 8px;
-  }
-  .proposal-json {
-    max-height: 112px;
-  }
-  .proposal-actions,
   .edge-proposal .ep-actions {
     row-gap: 8px;
   }
@@ -1514,68 +1364,6 @@ ol {
   .inbox-strip-actions {
     justify-content: flex-start;
   }
-  .inbox-card-meta {
-    margin-left: 0;
-    width: 100%;
-  }
-}
-
-.ec-correction-panel {
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  background: var(--paper-raised);
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0 0 var(--s-3);
-}
-.ec-correction-head,
-.ec-correction-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.ec-correction-head a {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--coral);
-  text-decoration: none;
-}
-.ec-correction-panel textarea {
-  min-height: 72px;
-  resize: vertical;
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  background: var(--paper-sunk);
-  color: var(--ink-2);
-  padding: 8px;
-  font: inherit;
-}
-.ec-correction-actions button {
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  background: var(--paper);
-  color: var(--ink-2);
-  padding: 6px 10px;
-  cursor: pointer;
-}
-.ec-correction-actions button:disabled {
-  cursor: not-allowed;
-  color: var(--ink-5);
-  background: var(--paper-sunk);
-}
-.ec-muted,
-.ec-error {
-  margin: 0;
-  font-size: var(--fs-caption);
-}
-.ec-muted {
-  color: var(--ink-4);
-}
-.ec-error {
-  color: var(--again-ink);
 }
 
 .breadcrumb {
@@ -3204,13 +2992,6 @@ ol {
   border-color: var(--line);
 }
 
-.edge-proposal .meta-row {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-}
-
 /* ============================================================
  * Phase 2C — Active Teaching side drawer
  * 镜像 loom-design-v2.1 CopilotDrawer 的 .drawer / .drawer-head /
@@ -3854,24 +3635,6 @@ progress {
   border-left: 2px solid var(--line-soft);
 }
 
-.sug-kind {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 6px;
-  margin-left: 5px;
-  border-radius: var(--r-pill);
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  letter-spacing: var(--ls-wide);
-  vertical-align: middle;
-}
-
-.sug-kind-corrective {
-  background: var(--hard-soft);
-  color: var(--hard-ink);
-  border: 1px solid var(--hard-line);
-}
-
 .suggest-chip.is-corrective,
 .msg-action-chip.is-corrective {
   border-style: dashed !important;
@@ -3971,7 +3734,6 @@ progress {
     var(--shadow-1);
 }
 
-.inbox-node-proposal,
 .edge-proposal.tone-info,
 .session-strip .ss-row.ss-active,
 .review-session-ribbon,
@@ -4702,15 +4464,6 @@ progress {
   padding: var(--s-2) var(--s-4);
   border-top: 1px solid var(--line);
   background: var(--paper-sunk);
-}
-
-/* loom .page / .page-head / .eyebrow / .page-title collide with the
-   existing legacy port; only the loom-specific extras not already
-   present are added here. (.page-narrow, .page-lead, .page-head-row,
-   .eyebrow, .page-title, .section-label already exist OR are owned by
-   legacy → see reconciliation header.) */
-.page-narrow {
-  max-width: var(--cap-app);
 }
 
 /* ============================================================
@@ -5788,16 +5541,6 @@ button.chip.is-on:hover {
   transition:
     transform var(--dur-base) var(--ease-out),
     color var(--dur-base) var(--ease-out);
-}
-
-/* mono field label (port: screens.css L237) */
-.field-label {
-  display: block;
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-  letter-spacing: var(--ls-wide);
-  margin-bottom: var(--s-2);
 }
 
 /* ============================================================
@@ -6997,183 +6740,6 @@ button.chip.is-on:hover {
 }
 
 /* ============================================================
-   LOOM EVENTS LAYER — Wave 2 (YUK-169)
-   /events/[id] event-sourced causal chain.
-   Ported additively from loom-prototype @ f85aca6d
-   (screens-2b.css E-section). Cross-ref: screen-events.jsx
-   (ScreenEvents). Correction write path keeps its real wiring
-   (CorrectionControls); only the visual shell is loom-ified.
-
-   SCOPE: every selector lives under .events-loom (page root
-   "page events-loom"). Same scoping rationale as sessions.
-   Reused: see SESSIONS layer banner above (.card / chips /
-   .badge / chrome / .field-input / SectionLabel).
-   ============================================================ */
-
-.events-loom .page-head {
-  margin-bottom: var(--s-5);
-}
-.events-loom .eyebrow {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  letter-spacing: var(--ls-wide);
-  color: var(--ink-4);
-  text-transform: uppercase;
-}
-.events-loom .page-title {
-  margin: var(--s-2) 0;
-}
-.events-loom .page-lead {
-  color: var(--ink-3);
-  max-width: 62ch;
-}
-
-/* ── causal lanes ── */
-.events-loom .ev-lane {
-  display: flex;
-  flex-direction: column;
-}
-.events-loom .ev-lane-label {
-  letter-spacing: var(--ls-wide);
-  margin: 4px 0;
-}
-.events-loom .ev-connector {
-  width: 2px;
-  height: 22px;
-  background: var(--line-strong);
-  margin-left: 18px;
-}
-.events-loom .ev-node {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  border: 1px solid var(--line);
-  background: var(--paper-raised);
-  border-radius: var(--r-2);
-  padding: var(--s-2) var(--s-3);
-  cursor: pointer;
-  text-align: left;
-  width: fit-content;
-  max-width: 100%;
-}
-.events-loom .ev-node:hover {
-  border-color: var(--line-strong);
-  background: var(--paper-sunk);
-}
-.events-loom .ev-cause {
-  border-style: dashed;
-}
-.events-loom .ev-actor {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-}
-.events-loom .ev-actor-mini {
-  font-size: var(--fs-caption);
-  color: var(--ink-4);
-  background: var(--paper-sunk);
-  padding: 1px 6px;
-  border-radius: var(--r-1);
-}
-.events-loom .ev-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  flex: none;
-}
-
-/* ── focal event ── */
-.events-loom .ev-focal {
-  border: 1.5px solid var(--again-line);
-  background: var(--again-soft);
-  border-radius: var(--r-3);
-  padding: var(--s-4);
-  margin: 4px 0;
-}
-.events-loom .ev-focal-head {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  margin-bottom: var(--s-2);
-  flex-wrap: wrap;
-}
-.events-loom .ev-focal-title {
-  font-size: var(--fs-h4);
-  color: var(--ink);
-}
-.events-loom .raw-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: var(--s-3);
-  border: 0;
-  background: transparent;
-  color: var(--again-ink);
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: var(--r-1);
-}
-.events-loom .raw-toggle:hover {
-  background: rgba(0, 0, 0, 0.05);
-}
-.events-loom details.raw-toggle {
-  display: block;
-  width: 100%;
-}
-.events-loom details.raw-toggle > summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-}
-.events-loom .raw-payload {
-  margin-top: var(--s-3);
-  font-size: var(--fs-caption);
-  max-height: 300px;
-  overflow: auto;
-}
-
-/* ── corrections ── */
-.events-loom .corr-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  padding: var(--s-2) 0;
-  border-bottom: 1px solid var(--line-soft);
-  font-size: var(--fs-body);
-}
-.events-loom .corr-row:last-of-type {
-  border-bottom: 0;
-}
-
-/* ── correction write panel shell (wiring unchanged) ── */
-.events-loom .ec-correction-panel {
-  margin: var(--s-3) 0 var(--s-5);
-  padding: var(--s-4);
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--r-3);
-  background: var(--paper-raised);
-}
-.events-loom .ec-correction-head {
-  margin-bottom: var(--s-2);
-}
-.events-loom .ec-correction-panel textarea {
-  width: 100%;
-  margin: var(--s-2) 0;
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-}
-.events-loom .ec-correction-actions {
-  display: flex;
-  gap: var(--s-2);
-  flex-wrap: wrap;
-}
-
-/* ============================================================
    LOOM ITEMS LAYER — Wave 2 (YUK-169 / YUK-203 P5)
    /learning-items list + /learning-items/[id] detail.
    Ported additively from loom-prototype @ f85aca6d
@@ -7543,15 +7109,6 @@ button.chip.is-on:hover {
 
 /* ---- detail: kd-grid + side props (screens-2b.css L91-92, L173-183) ---- */
 
-.items-loom .field-label {
-  display: block;
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-  letter-spacing: var(--ls-wide);
-  margin-bottom: var(--s-2);
-}
-
 .items-loom .prop-field {
   padding: var(--s-3) 0;
   border-top: 1px solid var(--line);
@@ -7612,18 +7169,6 @@ button.chip.is-on:hover {
 .items-loom .origin-card {
   border-color: var(--coral-line);
 }
-.items-loom .ai-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--coral-ink);
-  background: var(--coral-soft);
-  border: 1px solid var(--coral-line);
-  border-radius: var(--r-pill);
-  padding: 3px 9px;
-}
 
 /* ---- stagger entrance (transform-only; reuses loom-rise keyframe) ---- */
 .items-loom .stagger > * {
@@ -7663,133 +7208,6 @@ button.chip.is-on:hover {
    ~40 surfaces and MUST NOT change, so loom design values are scoped per page.
    Design source: docs/design/loom-refresh/project/loom.css.
    ═══════════════════════════════════════════════════════════════════════════ */
-
-/* ---- /inbox page-head chrome (loom.css L167-172) — scoped .inbox-loom ---- */
-.inbox-loom .page-head {
-  margin-bottom: var(--s-6);
-}
-.inbox-loom .eyebrow {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  letter-spacing: var(--ls-wide);
-  margin-bottom: var(--s-2);
-  display: block;
-}
-.inbox-loom .page-title {
-  font-family: var(--font-serif);
-  font-size: var(--fs-h1);
-  font-weight: 500;
-  letter-spacing: var(--ls-tight);
-  line-height: var(--lh-tight);
-}
-.inbox-loom .page-head-row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--s-4);
-  flex-wrap: wrap;
-}
-.inbox-loom .page-lead {
-  color: var(--ink-3);
-  font-size: var(--fs-body-lg);
-  max-width: 58ch;
-  margin-top: var(--s-3);
-  line-height: var(--lh-prose);
-}
-/* SectionLabel loom flex shape (loom.css L240-243); the 4 lane headers go from
-   28px 秃标 + count 折行 → serif h2 + 横向 rule + mono count right-aligned.
-   SectionLabel.tsx already renders .rule/.count spans, so JSX is untouched.
-   margin matches the shipped today-loom / items-loom precedent (--s-8). */
-.inbox-loom .section-label {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  margin: var(--s-8) 0 var(--s-4);
-}
-.inbox-loom .section-label h2 {
-  font-family: var(--font-serif);
-  font-size: var(--fs-h3);
-  font-weight: 500;
-  letter-spacing: var(--ls-tight);
-}
-.inbox-loom .section-label .rule {
-  flex: 1;
-  height: 1px;
-  background: var(--line);
-}
-.inbox-loom .section-label .count {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  /* S2-fix (YUK-335): count 不可折成竖列（today-loom R8 同款守卫，audit「count
-     折行孤行」正是本 slice 要修的；.count 是 .rule{flex:1} 旁的 flex 子）。 */
-  flex: none;
-  white-space: nowrap;
-}
-
-/* ---- /agent-notes page-head chrome (loom.css L167-172) — scoped
-   .agentnotes-loom (globals 零命中 before this slice) ---- */
-.agentnotes-loom .page-head {
-  margin-bottom: var(--s-6);
-}
-.agentnotes-loom .eyebrow {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  letter-spacing: var(--ls-wide);
-  margin-bottom: var(--s-2);
-  display: block;
-}
-.agentnotes-loom .page-title {
-  font-family: var(--font-serif);
-  font-size: var(--fs-h1);
-  font-weight: 500;
-  letter-spacing: var(--ls-tight);
-  line-height: var(--lh-tight);
-}
-.agentnotes-loom .page-head-row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--s-4);
-  flex-wrap: wrap;
-}
-.agentnotes-loom .page-lead {
-  color: var(--ink-3);
-  font-size: var(--fs-body-lg);
-  max-width: 58ch;
-  margin-top: var(--s-3);
-  line-height: var(--lh-prose);
-}
-/* 日分组标题用 SectionLabel primitive (renders .rule/.count) — loom flex shape
-   (loom.css L240-243); JSX untouched. */
-.agentnotes-loom .section-label {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  margin: var(--s-8) 0 var(--s-4);
-}
-.agentnotes-loom .section-label h2 {
-  font-family: var(--font-serif);
-  font-size: var(--fs-h3);
-  font-weight: 500;
-  letter-spacing: var(--ls-tight);
-}
-.agentnotes-loom .section-label .rule {
-  flex: 1;
-  height: 1px;
-  background: var(--line);
-}
-.agentnotes-loom .section-label .count {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  /* S2-fix (YUK-335): /agent-notes 的 count 是双 token「N 条」——最易折行；
-     today-loom R8 同款守卫。 */
-  flex: none;
-  white-space: nowrap;
-}
 
 /* ---- /practice pface 流 page-head chrome — scoped .pface-loom (NEW class on
    <main>, grep-confirmed absent globally; .practice-loom is NOT mounted by any
@@ -8349,23 +7767,6 @@ button.chip.is-on:hover {
   border-color: var(--line);
 }
 
-/* filter-bar dot tones */
-.an-scope .an-fdot.tone-dot-hard {
-  background: var(--hard);
-}
-.an-scope .an-fdot.tone-dot-info {
-  background: var(--info);
-}
-.an-scope .an-fdot.tone-dot-good {
-  background: var(--good);
-}
-.an-scope .an-fdot.tone-dot-coral {
-  background: var(--coral);
-}
-.an-scope .an-fdot.tone-dot-neutral {
-  background: var(--ink-4);
-}
-
 /* ── board shell (Today compact block) ── */
 .an-scope .an-board {
   background: var(--paper-sunk);
@@ -8514,39 +7915,7 @@ button.chip.is-on:hover {
   }
 }
 
-.an-scope .an-note {
-  display: flex;
-  gap: var(--s-3);
-  padding: var(--s-3) 0;
-}
-
 /* left rail — avatar over a connecting thread */
-.an-scope .an-rail {
-  position: relative;
-  width: 30px;
-  flex: none;
-  display: flex;
-  justify-content: center;
-}
-.an-scope .an-rail::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--line);
-  transform: translateX(-0.5px);
-}
-.an-scope .an-note:first-child .an-rail::before {
-  top: 15px;
-}
-.an-scope .an-note:last-child .an-rail::before {
-  bottom: calc(100% - 15px);
-}
-.an-scope .an-note:only-child .an-rail::before {
-  display: none;
-}
 
 .an-scope .an-avatar {
   position: relative;
@@ -8583,37 +7952,8 @@ button.chip.is-on:hover {
 }
 /* tone-neutral falls through to the base .an-avatar surface */
 
-/* unread dot punched out against the surface (sunk board vs raised card).
-   The board's sunk surface needs a --paper-sunk ring; the full-screen page's
-   raised cards need a --paper-raised ring — default to raised, override on the
-   sunk board. */
-.an-scope .an-note[data-unread="1"] .an-avatar::after {
-  content: "";
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--coral);
-  border: 2px solid var(--paper-raised);
-}
-.an-scope .an-board .an-note[data-unread="1"] .an-avatar::after {
-  border-color: var(--paper-sunk);
-}
-
-.an-scope .an-main {
-  min-width: 0;
-  flex: 1;
-}
-
 /* routing line: source → target(s) · signal chip */
-.an-scope .an-route {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
+
 .an-scope .an-ag {
   display: inline-flex;
   align-items: center;
@@ -8638,9 +7978,7 @@ button.chip.is-on:hover {
 .an-scope .an-to {
   color: var(--ink-3);
 }
-.an-scope .an-to-sep {
-  color: var(--ink-5);
-}
+
 .an-scope .an-sig {
   margin-left: auto;
   display: inline-flex;
@@ -8672,19 +8010,6 @@ button.chip.is-on:hover {
   color: var(--ink-2);
   margin-top: 4px;
 }
-.an-scope .an-body .an-body-b {
-  color: var(--ink);
-  font-weight: 600;
-}
-.an-scope .an-code {
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--ink-2);
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: var(--r-1);
-  padding: 0 4px;
-}
 
 /* meta row — confidence · time · evidence · ttl */
 .an-scope .an-meta {
@@ -8701,14 +8026,7 @@ button.chip.is-on:hover {
   flex: none;
   white-space: nowrap;
 }
-.an-scope .an-conf {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.an-scope .an-conf .ico {
-  color: var(--ink-4);
-}
+
 .an-scope .an-evi {
   display: inline-flex;
   align-items: center;
@@ -8727,14 +8045,7 @@ button.chip.is-on:hover {
   background: var(--info-soft);
   text-decoration: underline;
 }
-.an-scope .an-evi-static {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--ink-4);
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-}
+
 .an-scope .an-ttl {
   color: var(--ink-5);
 }
@@ -8798,87 +8109,8 @@ button.chip.is-on:hover {
   color: var(--ink-5);
 }
 
-/* ── full-screen page (/agent-notes) overview + filter bar ── */
-.an-scope .an-overview {
-  margin-bottom: var(--s-2);
-}
-.an-scope .an-ov-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-4);
-  flex-wrap: wrap;
-  margin-bottom: var(--s-4);
-}
-.an-scope .an-ov-stat {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s-3);
-}
-.an-scope .an-ov-n {
-  font-size: var(--fs-h1);
-  line-height: 1;
-  color: var(--coral);
-}
-.an-scope .an-ov-lab {
-  font-size: var(--fs-body);
-  color: var(--ink-2);
-}
-.an-scope .an-filterbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-2);
-}
-.an-scope .an-fchip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  appearance: none;
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-  padding: 5px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  background: var(--paper-raised);
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-.an-scope .an-fchip b {
-  font-family: var(--font-mono);
-  color: var(--ink-4);
-}
-.an-scope .an-fchip:hover {
-  border-color: var(--line-strong);
-  color: var(--ink-2);
-}
-.an-scope .an-fchip.is-on {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: var(--paper);
-}
-.an-scope .an-fchip.is-on b {
-  color: var(--paper);
-  opacity: 0.7;
-}
-.an-scope .an-fdot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: none;
-}
-
 /* ── YUK-629 grouped observations: one topic card, expandable real runs ── */
-.an-scope .an-overview-note {
-  margin: var(--s-3) 0 0;
-}
-.an-scope .an-group-feed {
-  display: flex;
-  flex-direction: column;
-}
+
 .an-scope .an-group-card {
   padding: var(--s-4) 0;
   border-bottom: 1px solid var(--line);
@@ -8995,9 +8227,7 @@ button.chip.is-on:hover {
   .an-scope .an-sig {
     margin-left: 0;
   }
-  .an-scope .an-rail {
-    width: 26px;
-  }
+
   .an-scope .an-avatar {
     width: 26px;
     height: 26px;

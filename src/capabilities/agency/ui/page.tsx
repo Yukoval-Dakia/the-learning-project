@@ -8,22 +8,52 @@
 //
 // M0 (YUK-313, REV 2)：去旧路由库 import——capability ui 不 import 路由库，
 // 导航以 `navigate` prop 由 Start 路由壳（server/start/routes/）注入，页面保持框架无关。
+// M3E 呈现（YUK-1473）：外壳 UiNextRoot.ag-page + main.un-m3e-bridge，样式在
+// agent-notes-m3e.css，设计记录 docs/design/2026-11-03-inbox-agent-notes-events-m3e.md。
+// 查询、筛选、分组与已读逻辑未动。
 
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
-import { Btn } from '@/ui/primitives/Btn';
-import { EmptyState } from '@/ui/primitives/EmptyState';
-import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { SectionLabel } from '@/ui/primitives/SectionLabel';
-import { SkLines } from '@/ui/primitives/SkLines';
-import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { AgentNoteGroupCard } from './AgentNoteGroupCard';
+import { ArrowLeft, Check, Eye, FileQuestion } from 'lucide-react';
+import { type ReactNode, useState } from 'react';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SectionHead } from '@/ui-next/primitives/SectionHead';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button, ChipToggle, UiNextRoot } from '@/ui-next/public';
+import { AgentNoteGroupRow, signalToneRole } from './AgentNoteGroupRow';
 import { useAgentNoteClient } from './agent-note-client';
 import { type AgentNoteGroup, dayGroupOf, groupAgentNotes } from './derive';
 import { SIGNAL_META, signalMeta } from './meta';
 import type { BoardAgentNote } from './types';
 import { useAgentReads } from './useAgentReads';
+import './agent-notes-m3e.css';
+
+type BoardStatus = 'loading' | 'empty' | 'error' | 'ok';
+
+// Loading → error → empty → ok (early returns instead of a chained ternary).
+function boardStatus(q: { isLoading: boolean; error: unknown }, count: number): BoardStatus {
+  if (q.isLoading) return 'loading';
+  if (q.error) return 'error';
+  if (count === 0) return 'empty';
+  return 'ok';
+}
+
+/** One state at a time, in the order the page always had. */
+function BoardGate({
+  status,
+  onRetry,
+  empty,
+  children,
+}: {
+  status: BoardStatus;
+  onRetry: () => void;
+  empty: ReactNode;
+  children: ReactNode;
+}) {
+  if (status === 'loading') return <SkeletonLines rows={4} label="正在读取 AI 观察" />;
+  if (status === 'error') return <RetryLine message="无法读取 AI 观察信号。" onRetry={onRetry} />;
+  if (status === 'empty') return empty;
+  return children;
+}
 
 export default function AgentNotesPage({ navigate }: { navigate: (to: string) => void }) {
   const { getAgentNoteBoard } = useAgentNoteClient();
@@ -38,13 +68,7 @@ export default function AgentNotesPage({ navigate }: { navigate: (to: string) =>
 
   const all: BoardAgentNote[] = q.data?.rows ?? [];
 
-  const state: StatefulStatus = q.isLoading
-    ? 'loading'
-    : q.error
-      ? 'error'
-      : all.length === 0
-        ? 'empty'
-        : 'ok';
+  const state = boardStatus(q, all.length);
 
   // Signal counts across ALL notes (filter chips reflect the full set, not the
   // filtered subset). SIGNAL_META declaration order wins; unknown signal_kinds
@@ -74,95 +98,90 @@ export default function AgentNotesPage({ navigate }: { navigate: (to: string) =>
   }
 
   return (
-    <main className="page view agentnotes-loom an-scope">
-      <button type="button" className="back-link" onClick={() => navigate('/today')}>
-        <LoomIcon name="arrowL" size={14} />
-        今日
-      </button>
-      <div className="page-head">
-        <div className="eyebrow">
-          <span className="dot-sep">●</span>AI 协作观察 · 只读
-        </div>
-        <h1 className="page-title serif">AI 之间的观察</h1>
-        <p className="page-lead">
-          各项 AI
-          工作给彼此留的观察：谁发现了什么、想让谁去补。你只读旁观，无需裁决；过期信号会自动消失。
-        </p>
-      </div>
+    <UiNextRoot className="ag-page">
+      <main className="ag-main un-m3e-bridge">
+        <button type="button" className="ag-back" onClick={() => navigate('/today')}>
+          <ArrowLeft size={16} aria-hidden="true" />
+          今日
+        </button>
+        <header className="ag-head">
+          <h1 className="ag-title">AI 之间的观察</h1>
+          <p className="ag-lead">
+            各项 AI
+            工作给彼此留的观察：谁发现了什么、想让谁去补。你只读旁观，无需裁决；过期信号会自动消失。
+          </p>
+        </header>
 
-      <Stateful
-        status={state}
-        onRetry={() => q.refetch()}
-        errorText="无法读取 AI 观察信号。"
-        skeleton={
-          <LoomCard pad>
-            <SkLines rows={4} />
-          </LoomCard>
-        }
-        empty={
-          <EmptyState
-            icon="eye"
-            title="暂无观察信号"
-            text="AI 们目前没有互留新的观察。新的信号会在夜间推理与日常运行后出现。"
-            action={
-              <Btn variant="secondary" icon="quiz" onClick={() => navigate('/practice')}>
-                开始练习
-              </Btn>
-            }
-          />
-        }
-      >
-        <LoomCard pad className="an-overview">
-          <div className="an-ov-top">
-            <div className="an-ov-stat">
-              <span className="an-ov-n serif tnum">{all.length}</span>
-              <span className="an-ov-lab">
-                活跃观察
-                <span className="meta">
-                  {' '}
-                  · 聚合为 {allGroups.length} 个主题 · 涉及 {agentsActive} 项 AI 工作
-                </span>
+        <BoardGate
+          status={state}
+          onRetry={() => q.refetch()}
+          empty={
+            <div className="ag-empty">
+              <span className="ag-empty-icon" aria-hidden="true">
+                <Eye size={20} />
               </span>
+              <p className="ag-empty-title">暂无观察信号</p>
+              <p className="ag-empty-text">
+                AI 们目前没有互留新的观察。新的信号会在夜间推理与日常运行后出现。
+              </p>
+              <Button onClick={() => navigate('/practice')}>
+                <FileQuestion size={16} aria-hidden="true" />
+                开始练习
+              </Button>
             </div>
-            {unread > 0 && (
-              <Btn size="sm" variant="ghost" icon="check" onClick={() => markAllRead(all)}>
-                全部标为已读（{unread}）
-              </Btn>
-            )}
-          </div>
-          <div className="an-filterbar">
-            <button
-              type="button"
-              className={`an-fchip${filter === 'all' ? ' is-on' : ''}`}
-              onClick={() => setFilter('all')}
-            >
-              全部 <b className="mono">{all.length}</b>
-            </button>
-            {signalOrder.map((k) => {
-              const m = signalMeta(k);
-              return (
-                <button
-                  type="button"
-                  key={k}
-                  className={`an-fchip${filter === k ? ' is-on' : ''}`}
-                  onClick={() => setFilter(filter === k ? 'all' : k)}
-                >
-                  <span className={`an-fdot tone-dot-${m.tone}`} />
-                  {m.label} <b className="mono">{counts[k]}</b>
-                </button>
-              );
-            })}
-          </div>
-          <p className="meta an-overview-note">重复观察已合并；已过期信号会自动隐藏。</p>
-        </LoomCard>
+          }
+        >
+          <section className="ag-overview" aria-label="观察概览">
+            <div className="ag-ov-top">
+              <p className="ag-ov-stat">
+                <span className="ag-ov-n un-num">{all.length}</span>
+                <span>
+                  活跃观察
+                  <span className="ag-quiet">
+                    {' '}
+                    · 聚合为 {allGroups.length} 个主题 · 涉及 {agentsActive} 项 AI 工作
+                  </span>
+                </span>
+              </p>
+              {unread > 0 && (
+                <Button size="sm" variant="ghost" onClick={() => markAllRead(all)}>
+                  <Check size={14} aria-hidden="true" />
+                  全部标为已读（{unread}）
+                </Button>
+              )}
+            </div>
+            <fieldset className="ag-filters">
+              <legend className="ag-filters-legend">信号</legend>
+              <ChipToggle pressed={filter === 'all'} onPressedChange={() => setFilter('all')}>
+                全部 <b className="un-num">{all.length}</b>
+              </ChipToggle>
+              {signalOrder.map((k) => {
+                const m = signalMeta(k);
+                return (
+                  <ChipToggle
+                    key={k}
+                    pressed={filter === k}
+                    onPressedChange={() => setFilter(filter === k ? 'all' : k)}
+                  >
+                    <span
+                      className="ag-dot"
+                      data-tone={signalToneRole(m.tone)}
+                      aria-hidden="true"
+                    />
+                    {m.label} <b className="un-num">{counts[k]}</b>
+                  </ChipToggle>
+                );
+              })}
+            </fieldset>
+            <p className="ag-quiet">重复观察已合并；已过期信号会自动隐藏。</p>
+          </section>
 
-        {groups.map((g) => (
-          <div key={g.label}>
-            <SectionLabel count={`${g.items.length} 组`}>{g.label}</SectionLabel>
-            <LoomCard pad>
-              <div className="an-group-feed">
+          {groups.map((g, i) => (
+            <section key={g.label} className="ag-day" aria-labelledby={`ag-day-${i}`}>
+              <SectionHead id={`ag-day-${i}`} title={g.label} aside={`${g.items.length} 组`} />
+              <div className="ag-feed">
                 {g.items.map((group) => (
-                  <AgentNoteGroupCard
+                  <AgentNoteGroupRow
                     key={group.key}
                     group={group}
                     unread={group.notes.some((note) => isUnread(note))}
@@ -171,16 +190,16 @@ export default function AgentNotesPage({ navigate }: { navigate: (to: string) =>
                   />
                 ))}
               </div>
-            </LoomCard>
-          </div>
-        ))}
-        {notes.length === 0 && (
-          <div className="an-empty">
-            <LoomIcon name="eye" size={13} />
-            该类型下暂无信号。
-          </div>
-        )}
-      </Stateful>
-    </main>
+            </section>
+          ))}
+          {notes.length === 0 && (
+            <p className="ag-filter-empty">
+              <Eye size={14} aria-hidden="true" />
+              该类型下暂无信号。
+            </p>
+          )}
+        </BoardGate>
+      </main>
+    </UiNextRoot>
   );
 }
