@@ -1,18 +1,28 @@
+// /admin/config — M3E presentation inside the shared admin frame (YUK-1473,
+// docs/design/2026-11-03-admin-write-m3e.md). Presentation only: the query, the save / reset
+// routing, the committed-epoch notice and the section / search URL state are unchanged.
 import { useQuery } from '@tanstack/react-query';
+import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
-import { Button, Mascot } from '@/ui-next/public';
-import '@/ui-next/config/config.css';
-import { Stateful } from '@/ui/primitives/Stateful';
+import { Button } from '@/ui-next/public';
 import { type AdminControlClient, httpAdminControlClient } from './admin-control-client';
 import {
-  CONFIG_QUERY_KEY,
-  SECTIONS,
-  type SaveConfig,
-  configSection,
-  inputClass,
-} from './config-model';
+  ADMIN_LINKS,
+  AdminArea,
+  type AdminAreaStatus,
+  AdminFrame,
+  AdminHead,
+  AdminNav,
+} from './admin-frame';
+import { CONFIG_QUERY_KEY, SECTIONS, type SaveConfig, configSection } from './config-model';
 import { ConfigSections } from './config-sections';
-import { AdminLinks } from './observability-shared';
+
+/** `isPending ? 'loading' : !data ? 'error' : 'ok'`, written out (same order as before). */
+function configAreaStatus(q: { isPending: boolean; data: unknown }): AdminAreaStatus {
+  if (q.isPending) return 'loading';
+  if (!q.data) return 'error';
+  return 'ok';
+}
 
 export function AdminConfigSurface({
   navigate,
@@ -42,21 +52,26 @@ export function AdminConfigSurface({
     await query.refetch();
   };
   return (
-    <main data-ui-next="" data-un-m3e="practice-foundation" className="un-root un-config">
-      <header className="un-config-heading">
-        <div>
-          <h1>配置</h1>
-          <p>查看真实运行选择，按任务管理模型与输出偏好。</p>
-          <AdminLinks navigate={navigate} />
-        </div>
-        <Mascot />
-      </header>
-      <div className="un-config-toolbar">
-        <nav className="un-config-sections" aria-label="配置分区">
+    <AdminFrame>
+      <AdminNav links={ADMIN_LINKS} current="/admin/config" navigate={navigate} />
+      <AdminHead
+        kicker="ADMIN · config"
+        title="配置"
+        lead="查看真实运行选择，按任务管理模型与输出偏好。"
+        actions={
+          <Button disabled={query.isFetching} onClick={() => void query.refetch()}>
+            <RefreshCw size={16} aria-hidden="true" />
+            刷新配置快照
+          </Button>
+        }
+      />
+      <div className="adm-toolbar">
+        <nav className="adm-tabs" aria-label="配置分区">
           {SECTIONS.map((item) => (
             <button
               type="button"
               key={item.id}
+              className="adm-tab un-hit"
               aria-current={section === item.id ? 'page' : undefined}
               onClick={() => setQuery('section', item.id)}
             >
@@ -64,42 +79,42 @@ export function AdminConfigSurface({
             </button>
           ))}
         </nav>
-        <Button
-          variant="secondary"
-          disabled={query.isFetching}
-          onClick={() => void query.refetch()}
-        >
-          刷新配置快照
-        </Button>
+        <label className="adm-search">
+          <span className="adm-field-name">搜索配置</span>
+          <input
+            className="adm-input adm-search-input"
+            type="search"
+            value={search}
+            onChange={(e) => setQuery('q', e.target.value || null)}
+            placeholder="名称、模型或说明"
+          />
+        </label>
       </div>
-      <label className="block">
-        搜索配置{' '}
-        <input
-          className={inputClass}
-          type="search"
-          value={search}
-          onChange={(e) => setQuery('q', e.target.value || null)}
-          placeholder="名称、模型或说明"
-        />
-      </label>
       {committedEpoch !== null && (
-        <p role="status" className="text-[var(--good-ink)]">
+        <p role="status" className="adm-saved">
           {(query.data?.snapshot.epoch ?? -1) >= committedEpoch
             ? '配置已保存，当前进程已刷新；后续调用按新配置解析。'
             : '已保存，等待刷新。'}{' '}
           不代表 worker 已确认。
         </p>
       )}
-      {query.isError && query.data && <p role="alert">刷新失败，当前展示上次快照。请重试。</p>}
-      <Stateful
-        status={query.isPending ? 'loading' : !query.data ? 'error' : 'ok'}
+      {query.isError && query.data && (
+        <p role="alert" className="adm-warn-line">
+          刷新失败，当前展示上次快照。请重试。
+        </p>
+      )}
+      <AdminArea
+        status={configAreaStatus(query)}
+        loadingLabel="配置加载中"
         errorText={query.error instanceof Error ? query.error.message : '无法加载配置'}
         onRetry={() => void query.refetch()}
       >
         {query.data && (
           <>
             {!query.data.facts_injected && (
-              <p role="status">运行时事实尚未就绪；模型编辑暂不可用。</p>
+              <p role="status" className="adm-warn-line">
+                运行时事实尚未就绪；模型编辑暂不可用。
+              </p>
             )}
             <ConfigSections
               key={section}
@@ -111,7 +126,7 @@ export function AdminConfigSurface({
             />
           </>
         )}
-      </Stateful>
-    </main>
+      </AdminArea>
+    </AdminFrame>
   );
 }

@@ -815,45 +815,6 @@ ol {
   box-shadow: var(--shadow-1);
 }
 
-.page-head {
-  margin-bottom: var(--s-6);
-}
-.page-head .meta {
-  margin-bottom: 4px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  color: var(--ink-4);
-  letter-spacing: var(--ls-wide);
-}
-.page-head-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--s-4);
-  flex-wrap: wrap;
-}
-.page-head h1 {
-  font-family: var(--font-serif);
-  font-size: var(--fs-h1);
-  font-weight: 500;
-  line-height: var(--lh-tight);
-  letter-spacing: var(--ls-tight);
-  margin: 0;
-  color: var(--ink);
-}
-.page-head .sub {
-  margin: 6px 0 0;
-  font-size: 14.5px;
-  color: var(--ink-3);
-  line-height: 1.55;
-  max-width: 56ch;
-}
-.page-head-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
 /* ------------------------------------------------------------ */
 /* /today — lanes + cost ribbon                                  */
 /* ------------------------------------------------------------ */
@@ -5653,15 +5614,7 @@ button.chip.is-on:hover {
      .event-label (loom event chain, globals ~L7723) · tone-*.
    ============================================================ */
 
-/* ── list page-head chrome (scoped; collides w/ legacy) ── */
-.sessions-loom .page-head {
-  margin-bottom: var(--s-5);
-}
-.sessions-loom .page-head-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-}
+/* ── list header chrome (scoped; collides w/ legacy) ── */
 .sessions-loom .eyebrow {
   font-family: var(--font-mono);
   font-size: var(--fs-meta);
@@ -5897,14 +5850,6 @@ button.chip.is-on:hover {
   letter-spacing: var(--ls-wide);
   margin-bottom: var(--s-2);
   display: block;
-}
-.items-loom .page-head {
-  margin-bottom: var(--s-6);
-}
-.items-loom .page-head-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-4);
 }
 .items-loom .page-title {
   font-family: var(--font-serif);

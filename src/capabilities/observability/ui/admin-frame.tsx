@@ -1,6 +1,8 @@
-// Admin read-only pages (runs / cost / failures / coverage / conjecture; YUK-1473): the shared M3E
-// frame. Design record: docs/design/2026-11-03-admin-readonly-m3e.md. Presentation only: every
-// query, refresh and navigation stays in the page that owns it; these pieces only lay them out.
+// Admin pages (YUK-1473): the shared M3E frame for all eight /admin pages. Design records:
+// docs/design/2026-11-03-admin-readonly-m3e.md (runs / cost / failures / coverage / conjecture) and
+// docs/design/2026-11-03-admin-write-m3e.md (subjects / subject traits / config). Presentation
+// only: every query, write, refresh and navigation stays in the page that owns it; these pieces
+// only lay them out.
 import type { ReactNode } from 'react';
 import { ToastHost } from '@/ui-next/feedback/ToastHost';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
@@ -13,9 +15,19 @@ export interface AdminNavLink {
   label: string;
 }
 
-/** The pages AdminLinks led to from runs / cost / failures (same targets, same order). */
+/** The full seven-link row: runs / cost / failures / config (the old AdminLinks targets and order). */
 export const ADMIN_LINKS: readonly AdminNavLink[] = [
   { to: '/admin/config', label: '配置' },
+  { to: '/admin/runs', label: '运行记录' },
+  { to: '/admin/cost', label: '成本' },
+  { to: '/admin/failures', label: '失败记录' },
+  { to: '/admin/subjects', label: '学科配置' },
+  { to: '/admin/coverage-lattice', label: '供题覆盖' },
+  { to: '/admin/conjecture-scores', label: '猜想评分' },
+];
+
+/** The six-link row the coverage, conjecture and subjects pages always had (no 配置 link). */
+export const ADMIN_LINKS_NO_CONFIG: readonly AdminNavLink[] = [
   { to: '/admin/runs', label: '运行记录' },
   { to: '/admin/cost', label: '成本' },
   { to: '/admin/failures', label: '失败记录' },
@@ -168,16 +180,23 @@ export function AdminArea({
   loadingLabel,
   errorText,
   onRetry,
+  inline,
   children,
 }: {
   status: AdminAreaStatus;
   loadingLabel: string;
   errorText: string;
   onRetry: () => void;
+  /** Inside another panel: no card of its own around the skeleton / retry line. */
+  inline?: boolean;
   children: ReactNode;
 }) {
-  if (status === 'loading') return <AdminLoading label={loadingLabel} />;
+  if (status === 'loading') {
+    if (inline) return <SkeletonLines rows={2} label={loadingLabel} />;
+    return <AdminLoading label={loadingLabel} />;
+  }
   if (status === 'error') {
+    if (inline) return <RetryLine message={errorText} onRetry={onRetry} />;
     return (
       <div className="adm-panel adm-retry">
         <RetryLine message={errorText} onRetry={onRetry} />

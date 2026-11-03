@@ -13,20 +13,28 @@
 // 直出「名称已被占用」类 server 文案，不 refetch 重放。
 // 降级判据：UI 用 degraded !== null 判「是否降级」（review-764 NOTE：不用
 // effective !== revision——快照滞后窗口会误报 flicker）。
+//
+// 呈现：M3E 管理后台外壳（YUK-1473，docs/design/2026-11-03-admin-write-m3e.md）。只换呈现：
+// 每个写的 payload、确认步骤、忙时禁用、失效与 CAS 分流都与原来逐字相同。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { type CSSProperties, useState } from 'react';
+import { useState } from 'react';
 import { ApiError } from '@/ui/lib/api';
-import { Badge } from '@/ui/primitives/Badge';
-import { Card } from '@/ui/primitives/Card';
-import { PageHeader } from '@/ui/primitives/PageHeader';
-import { Stateful } from '@/ui/primitives/Stateful';
-
+import { Button, Chip } from '@/ui-next/public';
 import {
   type AdminControlClient,
   type TraitBindingRow,
   httpAdminControlClient,
 } from './admin-control-client';
+import {
+  AdminArea,
+  AdminFrame,
+  AdminHead,
+  AdminNav,
+  type AdminNavLink,
+  AdminPanel,
+  adminAreaStatus,
+} from './admin-frame';
 
 // ---------- CAS 分流 helper（§2.3） ----------
 
@@ -46,6 +54,16 @@ function errText(err: unknown): string {
   }
   return err instanceof Error ? err.message : String(err);
 }
+
+// The detail page's link row: same targets and order as before (back to subjects first).
+const NAV: readonly AdminNavLink[] = [
+  { to: '/admin/subjects', label: '← 学科配置' },
+  { to: '/admin/runs', label: '运行记录' },
+  { to: '/admin/cost', label: '成本' },
+  { to: '/admin/failures', label: '失败记录' },
+  { to: '/admin/coverage-lattice', label: '供题覆盖' },
+  { to: '/admin/conjecture-scores', label: '猜想评分' },
+];
 
 // ---------- 主组件 ----------
 
@@ -98,50 +116,28 @@ export function AdminSubjectTraitsSurface({
     return false;
   };
 
-  const link = (to: string, label: string) => (
-    <a
-      href={to}
-      onClick={(e) => {
-        e.preventDefault();
-        navigate(to);
-      }}
-    >
-      {label}
-    </a>
-  );
-
   return (
-    <main className="page wide">
-      <PageHeader
+    <AdminFrame>
+      <AdminNav links={NAV} current={`/admin/subjects/${subjectId}`} navigate={navigate} />
+      <AdminHead
+        kicker="ADMIN · trait 编辑面"
         title={header?.displayName ?? subjectId}
-        eyebrow="ADMIN · trait 编辑面"
-        sub={`${subjectId} · rev ${subjectRevision}${header?.version ? ` · ${header.version}` : ''}`}
-      >
-        <div style={linkRowStyle}>
-          {link('/admin/subjects', '← subjects')}
-          {link('/admin/runs', 'runs')}
-          {link('/admin/cost', 'cost')}
-          {link('/admin/failures', 'failures')}
-          {link('/admin/coverage-lattice', 'coverage')}
-          {link('/admin/conjecture-scores', 'conjecture')}
-        </div>
-      </PageHeader>
+        lead={`${subjectId} · rev ${subjectRevision}${header?.version ? ` · ${header.version}` : ''}`}
+      />
 
-      <div style={badgeRowStyle}>
-        {header && <Badge tone="neutral">{isGeneral ? 'general' : header.origin}</Badge>}
-        {retired && <Badge tone="neutral">retired</Badge>}
-        {header?.isGeneralFallback === true && <Badge tone="neutral">通用模式</Badge>}
+      <div className="adm-chip-row">
+        {header && <Chip>{isGeneral ? 'general' : header.origin}</Chip>}
+        {retired && <Chip>retired</Chip>}
+        {header?.isGeneralFallback === true && <Chip>通用模式</Chip>}
       </div>
 
       {casNotice && (
-        <Card pad="lg">
-          <p style={noticeStyle}>
-            配置已被其他会话更新，已刷新最新版本，请重新提交。
-            <button type="button" style={inlineBtnStyle} onClick={() => setCasNotice(false)}>
-              知道了
-            </button>
-          </p>
-        </Card>
+        <div className="adm-cas" role="status">
+          <p>配置已被其他会话更新，已刷新最新版本，请重新提交。</p>
+          <Button variant="ghost" size="sm" onClick={() => setCasNotice(false)}>
+            知道了
+          </Button>
+        </div>
       )}
 
       {traitsQ.isSuccess && (
@@ -159,33 +155,36 @@ export function AdminSubjectTraitsSurface({
         />
       )}
 
-      <Stateful
-        status={traitsQ.isLoading ? 'loading' : traitsQ.isError ? 'error' : 'ok'}
-        onRetry={() => void traitsQ.refetch()}
+      <AdminArea
+        status={adminAreaStatus(traitsQ)}
+        loadingLabel="trait 绑定加载中"
         errorText="trait 绑定加载失败。"
-        skeleton={
-          <Card pad="lg">
-            <p style={mutedTextStyle}>trait 绑定加载中...</p>
-          </Card>
-        }
+        onRetry={() => void traitsQ.refetch()}
       >
-        <Card pad="lg">
-          {(traitsQ.data?.bindings ?? []).map((b) => (
-            <TraitRow
-              client={client}
-              key={b.kind}
-              subjectId={subjectId}
-              subjectRevision={subjectRevision}
-              isGeneral={isGeneral}
-              binding={b}
-              nameOf={nameOf}
-              onWriteError={onWriteError}
-              onDone={invalidateAll}
-            />
-          ))}
-        </Card>
-      </Stateful>
-    </main>
+        <AdminPanel
+          id="adm-traits"
+          title="trait 绑定"
+          aside={<Chip>{(traitsQ.data?.bindings ?? []).length}</Chip>}
+          flush
+        >
+          <ul className="adm-traits">
+            {(traitsQ.data?.bindings ?? []).map((b) => (
+              <TraitRow
+                client={client}
+                key={b.kind}
+                subjectId={subjectId}
+                subjectRevision={subjectRevision}
+                isGeneral={isGeneral}
+                binding={b}
+                nameOf={nameOf}
+                onWriteError={onWriteError}
+                onDone={invalidateAll}
+              />
+            ))}
+          </ul>
+        </AdminPanel>
+      </AdminArea>
+    </AdminFrame>
   );
 }
 
@@ -247,74 +246,74 @@ function ControlRow({
   };
 
   return (
-    <Card pad="lg">
-      <div style={actionRowStyle}>
+    <AdminPanel id="adm-subject-control" title="科目操作">
+      <div className="adm-acts">
         {renaming ? (
           <>
             <input
-              style={renameInputStyle}
+              className="adm-input adm-input-name"
               value={newName}
               placeholder="新名称"
               maxLength={32}
               onChange={(e) => setNewName(e.target.value)}
               aria-label="新科目名"
             />
-            <button
-              type="button"
-              style={inlineBtnStyle}
+            <Button
+              size="sm"
               disabled={run.isPending || newName.trim().length === 0}
               onClick={() => run.mutate('rename')}
             >
               确认改名
-            </button>
-            <button type="button" style={inlineBtnStyle} onClick={() => setRenaming(false)}>
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setRenaming(false)}>
               取消
-            </button>
+            </Button>
           </>
         ) : (
-          <button type="button" style={inlineBtnStyle} onClick={() => setRenaming(true)}>
+          <Button size="sm" onClick={() => setRenaming(true)}>
             rename
-          </button>
+          </Button>
         )}
         {!isGeneral &&
           (retired ? (
-            <button type="button" style={inlineBtnStyle} onClick={() => setConfirming('restore')}>
+            <Button size="sm" onClick={() => setConfirming('restore')}>
               restore
-            </button>
+            </Button>
           ) : (
-            <button type="button" style={inlineBtnStyle} onClick={() => setConfirming('retire')}>
+            <Button size="sm" className="adm-btn-danger" onClick={() => setConfirming('retire')}>
               retire
-            </button>
+            </Button>
           ))}
         {!isGeneral && (
-          <button type="button" style={inlineBtnStyle} onClick={() => setConfirming('reset')}>
+          <Button size="sm" className="adm-btn-danger" onClick={() => setConfirming('reset')}>
             reset{isBuiltin ? '（名字随种子恢复）' : ''}
-          </button>
+          </Button>
         )}
         {isGeneral && (
-          <span style={mutedTextStyle} title="general 绑定结构性锁定（v3.2 §2.3）">
+          <span className="adm-note" title="general 绑定结构性锁定（v3.2 §2.3）">
             general：无 retire / reset（结构性锁定）
           </span>
         )}
       </div>
       {confirming && (
-        <p style={noticeStyle}>
-          {confirmText[confirming]}
-          <button
-            type="button"
-            style={inlineBtnStyle}
-            disabled={run.isPending}
-            onClick={() => run.mutate(confirming)}
-          >
-            确认
-          </button>
-          <button type="button" style={inlineBtnStyle} onClick={() => setConfirming(null)}>
-            取消
-          </button>
+        <div className="adm-confirm">
+          <p>{confirmText[confirming]}</p>
+          <div className="adm-acts">
+            <Button size="sm" disabled={run.isPending} onClick={() => run.mutate(confirming)}>
+              确认
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>
+              取消
+            </Button>
+          </div>
+        </div>
+      )}
+      {error && (
+        <p className="adm-field-error" role="alert">
+          {error}
         </p>
       )}
-      {error && <p style={errStyle}>{error}</p>}
-    </Card>
+    </AdminPanel>
   );
 }
 
@@ -347,60 +346,64 @@ function TraitRow({
   const shared = binding.sharedBy.length > 1;
 
   return (
-    <div style={traitRowStyle}>
-      <div style={traitHeadStyle}>
-        <strong style={kindStyle}>{binding.kind}</strong>
-        <code style={monoSmallStyle}>{binding.traitId}</code>
-        <Badge tone="neutral">{binding.origin}</Badge>
+    <li className="adm-trait">
+      <div className="adm-trait-head">
+        <strong className="adm-trait-kind">{binding.kind}</strong>
+        <code className="adm-mono adm-trait-id">{binding.traitId}</code>
+        <Chip>{binding.origin}</Chip>
         {binding.ownerSubjectId && (
-          <span style={mutedTextStyle}>owner: {nameOf(binding.ownerSubjectId)}</span>
+          <span className="adm-trait-meta">owner: {nameOf(binding.ownerSubjectId)}</span>
         )}
-        {binding.seedVersion && <span style={mutedTextStyle}>seed {binding.seedVersion}</span>}
-        <span style={mutedTextStyle}>rev {binding.revision}</span>
+        {binding.seedVersion && <span className="adm-trait-meta">seed {binding.seedVersion}</span>}
+        <span className="adm-trait-meta">rev {binding.revision}</span>
         {binding.degraded !== null && (
-          // 黄底徽标（doc §2.2；hard = 项目色板的黄档，review-766 P3 校正）。
-          <Badge tone="hard">
+          // 黄底徽标（doc §2.2；原 hard 黄档 → ui-next caution，review-766 P3 校正）。
+          <Chip tone="caution">
             {binding.degraded} · 实际在用 {String(binding.effectiveRevision)}
-          </Badge>
+          </Chip>
         )}
-        <span style={mutedTextStyle} title={binding.sharedBy.map((s) => nameOf(s)).join('、')}>
+        <span className="adm-trait-meta" title={binding.sharedBy.map((s) => nameOf(s)).join('、')}>
           共 {binding.sharedBy.length} 科
         </span>
-        <span style={traitActionsStyle}>
-          <button
-            type="button"
-            style={inlineBtnStyle}
+        <span className="adm-acts adm-trait-acts">
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={panel === 'edit'}
             onClick={() => setPanel(panel === 'edit' ? null : 'edit')}
           >
             编辑
-          </button>
+          </Button>
           {/* fork/换绑对 general 渲染禁用态 + 锁定 title（doc §2.3 general 特殊态；
               禁用是 UI 礼貌，422 写门才是红线）。 */}
-          <button
-            type="button"
-            style={inlineBtnStyle}
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={panel === 'fork'}
             disabled={isGeneral}
             title={isGeneral ? 'general 绑定结构性锁定（v3.2 §2.3）' : '剥离出本科副本，稍后再改'}
             onClick={() => setPanel(panel === 'fork' ? null : 'fork')}
           >
             fork
-          </button>
-          <button
-            type="button"
-            style={inlineBtnStyle}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={panel === 'rebind'}
             disabled={isGeneral}
             title={isGeneral ? 'general 绑定结构性锁定（v3.2 §2.3）' : undefined}
             onClick={() => setPanel(panel === 'rebind' ? null : 'rebind')}
           >
             换绑
-          </button>
-          <button
-            type="button"
-            style={inlineBtnStyle}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={panel === 'journal'}
             onClick={() => setPanel(panel === 'journal' ? null : 'journal')}
           >
             历史
-          </button>
+          </Button>
         </span>
       </div>
       {panel === 'edit' && (
@@ -461,7 +464,7 @@ function TraitRow({
           }}
         />
       )}
-    </div>
+    </li>
   );
 }
 
@@ -583,23 +586,23 @@ function TraitEditPanel({
   const showSharedWrite = isGeneral || shared;
 
   return (
-    <div style={panelStyle}>
+    <div className="adm-trait-panel">
       {Object.entries(binding.payload).map(([k, v]) => (
-        <label key={k} style={fieldLabelStyle}>
-          <span style={fieldNameStyle}>{k}</span>
+        <label key={k} className="adm-field">
+          <span className="adm-field-name adm-field-key">{k}</span>
           <textarea
-            style={fieldInputStyle}
+            className="adm-input adm-textarea"
             rows={typeof v === 'string' ? 2 : 5}
             value={draft[k] ?? ''}
             onChange={(e) => setDraft((p) => ({ ...p, [k]: e.target.value }))}
           />
         </label>
       ))}
-      {!own && <p style={mutedTextStyle}>保存将自动为本科 fork 一份副本（原 trait 不受影响）。</p>}
-      <div style={actionRowStyle}>
-        <button
-          type="button"
-          style={inlineBtnStyle}
+      {!own && <p className="adm-note">保存将自动为本科 fork 一份副本（原 trait 不受影响）。</p>}
+      <div className="adm-acts">
+        <Button
+          variant="primary"
+          size="sm"
           disabled={save.isPending}
           onClick={() => {
             if (needsConfirm) setConfirmMode('subject');
@@ -607,25 +610,15 @@ function TraitEditPanel({
           }}
         >
           {save.isPending ? '保存中…' : saveLabel}
-        </button>
+        </Button>
         {showSharedWrite && (
-          <button
-            type="button"
-            style={inlineBtnStyle}
-            disabled={save.isPending}
-            onClick={() => setConfirmMode('shared')}
-          >
+          <Button size="sm" disabled={save.isPending} onClick={() => setConfirmMode('shared')}>
             编辑共享面（影响 {binding.sharedBy.length} 科）
-          </button>
+          </Button>
         )}
-        <button
-          type="button"
-          style={inlineBtnStyle}
-          disabled={validate.isPending}
-          onClick={() => validate.mutate()}
-        >
+        <Button size="sm" disabled={validate.isPending} onClick={() => validate.mutate()}>
           {validate.isPending ? '预检中…' : '预检'}
-        </button>
+        </Button>
         {binding.seedVersion !== null && (
           <ResetToSeedButton
             client={client}
@@ -637,23 +630,31 @@ function TraitEditPanel({
         )}
       </div>
       {confirmMode !== null && (
-        <p style={noticeStyle}>
-          将影响绑定此 trait 的全部科目：{binding.sharedBy.map((s) => nameOf(s)).join('、')}。确认？
-          <button
-            type="button"
-            style={inlineBtnStyle}
-            disabled={save.isPending}
-            onClick={() => save.mutate(confirmMode)}
-          >
-            确认写入
-          </button>
-          <button type="button" style={inlineBtnStyle} onClick={() => setConfirmMode(null)}>
-            取消
-          </button>
+        <div className="adm-confirm">
+          <p>
+            将影响绑定此 trait 的全部科目：{binding.sharedBy.map((s) => nameOf(s)).join('、')}
+            。确认？
+          </p>
+          <div className="adm-acts">
+            <Button size="sm" disabled={save.isPending} onClick={() => save.mutate(confirmMode)}>
+              确认写入
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setConfirmMode(null)}>
+              取消
+            </Button>
+          </div>
+        </div>
+      )}
+      {validateResult && (
+        <p className="adm-note" role="status">
+          {validateResult}
         </p>
       )}
-      {validateResult && <p style={mutedTextStyle}>{validateResult}</p>}
-      {error && <p style={errStyle}>{error}</p>}
+      {error && (
+        <p className="adm-field-error" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -683,26 +684,21 @@ function ResetToSeedButton({
   });
   if (confirming) {
     return (
-      <span style={noticeStyle}>
-        恢复出厂将影响绑定此 trait 的全部 {binding.sharedBy.length} 科。
-        <button
-          type="button"
-          style={inlineBtnStyle}
-          disabled={run.isPending}
-          onClick={() => run.mutate()}
-        >
+      <span className="adm-inline-confirm">
+        <span>恢复出厂将影响绑定此 trait 的全部 {binding.sharedBy.length} 科。</span>
+        <Button size="sm" disabled={run.isPending} onClick={() => run.mutate()}>
           确认
-        </button>
-        <button type="button" style={inlineBtnStyle} onClick={() => setConfirming(false)}>
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
           取消
-        </button>
+        </Button>
       </span>
     );
   }
   return (
-    <button type="button" style={inlineBtnStyle} onClick={() => setConfirming(true)}>
+    <Button size="sm" className="adm-btn-danger" onClick={() => setConfirming(true)}>
       恢复出厂
-    </button>
+    </Button>
   );
 }
 
@@ -739,22 +735,23 @@ function ForkPanel({
     },
   });
   return (
-    <div style={panelStyle}>
-      <p style={noticeStyle}>
-        剥离后本科独立演化，不再跟随来源（{binding.traitId}）。确认 fork？
-        <button
-          type="button"
-          style={inlineBtnStyle}
-          disabled={run.isPending}
-          onClick={() => run.mutate()}
-        >
-          {run.isPending ? 'fork 中…' : '确认 fork'}
-        </button>
-        <button type="button" style={inlineBtnStyle} onClick={onCancel}>
-          取消
-        </button>
-      </p>
-      {error && <p style={errStyle}>{error}</p>}
+    <div className="adm-trait-panel">
+      <div className="adm-confirm">
+        <p>剥离后本科独立演化，不再跟随来源（{binding.traitId}）。确认 fork？</p>
+        <div className="adm-acts">
+          <Button size="sm" disabled={run.isPending} onClick={() => run.mutate()}>
+            {run.isPending ? 'fork 中…' : '确认 fork'}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onCancel}>
+            取消
+          </Button>
+        </div>
+      </div>
+      {error && (
+        <p className="adm-field-error" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -802,53 +799,63 @@ function RebindPanel({
   });
 
   return (
-    <div style={panelStyle}>
-      <Stateful
-        status={q.isLoading ? 'loading' : q.isError ? 'error' : 'ok'}
-        onRetry={() => void q.refetch()}
+    <div className="adm-trait-panel">
+      <AdminArea
+        status={adminAreaStatus(q)}
+        loadingLabel="候选加载中"
         errorText="候选加载失败。"
-        skeleton={<p style={mutedTextStyle}>候选加载中...</p>}
+        onRetry={() => void q.refetch()}
+        inline
       >
         {candidates.length === 0 ? (
-          <p style={mutedTextStyle}>本 kind 暂无其它可换绑 trait。</p>
+          <p className="adm-note">本 kind 暂无其它可换绑 trait。</p>
         ) : (
-          candidates.map((t) => (
-            <div key={t.traitId} style={actionRowStyle}>
-              <code style={monoSmallStyle}>{t.traitId}</code>
-              <Badge tone="neutral">{t.origin}</Badge>
-              <span style={mutedTextStyle}>
-                用于：
-                {t.boundBy.length === 0 ? '（未绑定）' : t.boundBy.map((s) => nameOf(s)).join('、')}
-              </span>
-              <button
-                type="button"
-                style={inlineBtnStyle}
-                disabled={run.isPending}
-                onClick={() => setPicked(t.traitId)}
+          <ul className="adm-pick-list">
+            {candidates.map((t) => (
+              <li
+                key={t.traitId}
+                className="adm-pick-row"
+                data-picked={picked === t.traitId ? '' : undefined}
               >
-                选择
-              </button>
-            </div>
-          ))
+                <code className="adm-mono adm-trait-id">{t.traitId}</code>
+                <Chip>{t.origin}</Chip>
+                <span className="adm-trait-meta">
+                  用于：
+                  {t.boundBy.length === 0
+                    ? '（未绑定）'
+                    : t.boundBy.map((s) => nameOf(s)).join('、')}
+                </span>
+                <Button
+                  size="sm"
+                  className="adm-pick-btn"
+                  disabled={run.isPending}
+                  onClick={() => setPicked(t.traitId)}
+                >
+                  选择
+                </Button>
+              </li>
+            ))}
+          </ul>
         )}
-      </Stateful>
+      </AdminArea>
       {picked && (
-        <p style={noticeStyle}>
-          改绑后沿用目标 trait（{picked}）的后续演化。确认？
-          <button
-            type="button"
-            style={inlineBtnStyle}
-            disabled={run.isPending}
-            onClick={() => run.mutate(picked)}
-          >
-            确认换绑
-          </button>
-          <button type="button" style={inlineBtnStyle} onClick={() => setPicked(null)}>
-            取消
-          </button>
+        <div className="adm-confirm">
+          <p>改绑后沿用目标 trait（{picked}）的后续演化。确认？</p>
+          <div className="adm-acts">
+            <Button size="sm" disabled={run.isPending} onClick={() => run.mutate(picked)}>
+              确认换绑
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setPicked(null)}>
+              取消
+            </Button>
+          </div>
+        </div>
+      )}
+      {error && (
+        <p className="adm-field-error" role="alert">
+          {error}
         </p>
       )}
-      {error && <p style={errStyle}>{error}</p>}
     </div>
   );
 }
@@ -888,177 +895,59 @@ function JournalPanel({
   });
 
   return (
-    <div style={panelStyle}>
-      <Stateful
-        status={q.isLoading ? 'loading' : q.isError ? 'error' : 'ok'}
-        onRetry={() => void q.refetch()}
+    <div className="adm-trait-panel">
+      <AdminArea
+        status={adminAreaStatus(q)}
+        loadingLabel="历史加载中"
         errorText="历史加载失败。"
-        skeleton={<p style={mutedTextStyle}>历史加载中...</p>}
+        onRetry={() => void q.refetch()}
+        inline
       >
-        {(q.data?.journal ?? []).map((row) => (
-          <div key={row.revision} style={actionRowStyle}>
-            <span style={monoSmallStyle}>rev {row.revision}</span>
-            <Badge tone="neutral">{row.action}</Badge>
-            <span style={mutedTextStyle}>
-              {row.actor} · {row.createdAt.slice(0, 19).replace('T', ' ')}
-            </span>
-            {row.revision !== binding.revision && (
-              <button
-                type="button"
-                style={inlineBtnStyle}
-                title="产生一条新 revision，不删除历史（rollback-forward）"
-                disabled={run.isPending}
-                onClick={() => setTarget(row.revision)}
-              >
-                回滚到此
-              </button>
-            )}
-          </div>
-        ))}
-      </Stateful>
+        <ol className="adm-pick-list">
+          {(q.data?.journal ?? []).map((row) => (
+            <li
+              key={row.revision}
+              className="adm-pick-row"
+              data-picked={target === row.revision ? '' : undefined}
+            >
+              <span className="adm-mono adm-strong">rev {row.revision}</span>
+              <Chip>{row.action}</Chip>
+              <span className="adm-trait-meta">
+                {row.actor} · {row.createdAt.slice(0, 19).replace('T', ' ')}
+              </span>
+              {row.revision !== binding.revision && (
+                <Button
+                  size="sm"
+                  className="adm-pick-btn adm-btn-danger"
+                  title="产生一条新 revision，不删除历史（rollback-forward）"
+                  disabled={run.isPending}
+                  onClick={() => setTarget(row.revision)}
+                >
+                  回滚到此
+                </Button>
+              )}
+            </li>
+          ))}
+        </ol>
+      </AdminArea>
       {target !== null && (
-        <p style={noticeStyle}>
-          回滚产生一条新 revision（git-revert 语义），不删除历史。确认回滚到 rev {target}？
-          <button
-            type="button"
-            style={inlineBtnStyle}
-            disabled={run.isPending}
-            onClick={() => run.mutate(target)}
-          >
-            确认
-          </button>
-          <button type="button" style={inlineBtnStyle} onClick={() => setTarget(null)}>
-            取消
-          </button>
+        <div className="adm-confirm">
+          <p>回滚产生一条新 revision（git-revert 语义），不删除历史。确认回滚到 rev {target}？</p>
+          <div className="adm-acts">
+            <Button size="sm" disabled={run.isPending} onClick={() => run.mutate(target)}>
+              确认
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setTarget(null)}>
+              取消
+            </Button>
+          </div>
+        </div>
+      )}
+      {error && (
+        <p className="adm-field-error" role="alert">
+          {error}
         </p>
       )}
-      {error && <p style={errStyle}>{error}</p>}
     </div>
   );
 }
-
-// ---------- inline token styles（沿 subjects.tsx 的 legacy admin chrome 权威） ----------
-
-const linkRowStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 10,
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-};
-
-const badgeRowStyle: CSSProperties = {
-  display: 'flex',
-  gap: 6,
-  margin: '0 0 12px',
-};
-
-const traitRowStyle: CSSProperties = {
-  borderTop: '1px solid var(--line-soft)',
-  padding: '10px 0',
-};
-
-const traitHeadStyle: CSSProperties = {
-  display: 'flex',
-  flexWrap: 'wrap',
-  alignItems: 'center',
-  gap: 8,
-  fontSize: 13,
-};
-
-const kindStyle: CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-  minWidth: 110,
-};
-
-const traitActionsStyle: CSSProperties = {
-  marginLeft: 'auto',
-  display: 'inline-flex',
-  gap: 6,
-};
-
-const panelStyle: CSSProperties = {
-  margin: '10px 0 4px 118px',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 8,
-};
-
-const fieldLabelStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 2,
-};
-
-const fieldNameStyle: CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-  color: 'var(--ink-4)',
-};
-
-const fieldInputStyle: CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-  padding: 6,
-  border: '1px solid var(--line-soft)',
-  borderRadius: 6,
-  background: 'transparent',
-  color: 'var(--ink-2)',
-};
-
-const actionRowStyle: CSSProperties = {
-  display: 'flex',
-  flexWrap: 'wrap',
-  alignItems: 'center',
-  gap: 8,
-};
-
-const inlineBtnStyle: CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-  padding: '3px 10px',
-  border: '1px solid var(--line-soft)',
-  borderRadius: 999,
-  background: 'transparent',
-  color: 'var(--ink-2)',
-  cursor: 'pointer',
-};
-
-const renameInputStyle: CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-  padding: '4px 10px',
-  border: '1px solid var(--line-soft)',
-  borderRadius: 999,
-  background: 'transparent',
-  color: 'var(--ink-2)',
-  width: '12em',
-};
-
-const noticeStyle: CSSProperties = {
-  margin: 0,
-  display: 'flex',
-  flexWrap: 'wrap',
-  alignItems: 'center',
-  gap: 8,
-  fontSize: 13,
-  color: 'var(--ink-2)',
-};
-
-const errStyle: CSSProperties = {
-  margin: 0,
-  fontSize: 'var(--fs-caption)',
-  color: 'var(--coral, #c0392b)',
-};
-
-const monoSmallStyle: CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-};
-
-const mutedTextStyle: CSSProperties = {
-  margin: 0,
-  color: 'var(--ink-3)',
-  fontSize: 'var(--fs-caption)',
-};

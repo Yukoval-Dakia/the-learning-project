@@ -10,16 +10,22 @@
 // 且一律经 /api/admin/*（x-internal-token gate）。design doc v1.1 §2.1 显式裁定
 // 「不在列表页放任何写按钮」。
 //
-// 壳形态：admin 页套主 app chrome（RootShell）——决策记录见
-// docs/design/2026-07-07-yuk579-coverage-lattice.md §6。
+// 呈现：M3E 管理后台外壳（YUK-1473，docs/design/2026-11-03-admin-write-m3e.md）。
 
 import { useQuery } from '@tanstack/react-query';
-import type { CSSProperties } from 'react';
-import { Badge } from '@/ui/primitives/Badge';
-import { Card } from '@/ui/primitives/Card';
-import { PageHeader } from '@/ui/primitives/PageHeader';
-import { Stateful } from '@/ui/primitives/Stateful';
+import { ChevronRight } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { Chip } from '@/ui-next/public';
 import { type AdminControlClient, httpAdminControlClient } from './admin-control-client';
+import {
+  ADMIN_LINKS_NO_CONFIG,
+  AdminArea,
+  AdminFrame,
+  AdminHead,
+  AdminNav,
+  AdminPanel,
+  adminAreaStatus,
+} from './admin-frame';
 
 // §3.5 管理枚举投影（字段对齐 api/admin-subjects.ts；R11 slim 红线不变）。
 export interface AdminSubjectRow {
@@ -32,6 +38,13 @@ export interface AdminSubjectRow {
   subjectRevision: number;
   notation: string | null;
   capabilityCount: number;
+}
+
+/** The 通用模式 cell: general itself shows —, a fallback subject a chip, the rest nothing. */
+function generalModeCell(isGeneral: boolean, isGeneralFallback: boolean | null): ReactNode {
+  if (isGeneral) return <span className="adm-quiet">—</span>;
+  if (isGeneralFallback === true) return <Chip>通用</Chip>;
+  return null;
 }
 
 export function AdminSubjectsSurface({
@@ -51,148 +64,87 @@ export function AdminSubjectsSurface({
   const link = (to: string, label: string) => (
     <a
       href={to}
+      className="adm-row-link un-hit"
+      aria-label={label}
+      title={label}
       onClick={(e) => {
         e.preventDefault();
         navigate(to);
       }}
     >
-      {label}
+      <ChevronRight size={16} aria-hidden="true" />
     </a>
   );
 
   return (
-    <main className="page wide">
-      <PageHeader
-        title="Subjects"
-        eyebrow="ADMIN · subject control plane"
-        sub="全量科目（含 general 与 retired）。行链接进 trait 编辑面；写动作全部在 detail 页经 /api/admin/*。"
-      >
-        <div style={linkRowStyle}>
-          {link('/admin/runs', 'runs')}
-          {link('/admin/cost', 'cost')}
-          {link('/admin/failures', 'failures')}
-          {link('/admin/subjects', 'subjects')}
-          {link('/admin/coverage-lattice', 'coverage')}
-          {link('/admin/conjecture-scores', 'conjecture')}
-        </div>
-      </PageHeader>
+    <AdminFrame>
+      <AdminNav links={ADMIN_LINKS_NO_CONFIG} current="/admin/subjects" navigate={navigate} />
+      <AdminHead
+        kicker="ADMIN · subject control plane"
+        title="学科配置"
+        lead="全量科目（含 general 与 retired）。行链接进 trait 编辑面；写动作全部在 detail 页经 /api/admin/*。"
+      />
 
-      <Stateful
-        status={q.isLoading ? 'loading' : q.isError ? 'error' : 'ok'}
-        onRetry={() => void q.refetch()}
+      <AdminArea
+        status={adminAreaStatus(q)}
+        loadingLabel="subjects 加载中"
         errorText="subjects 加载失败。"
-        skeleton={
-          <Card pad="lg">
-            <p style={mutedTextStyle}>subjects 加载中...</p>
-          </Card>
-        }
+        onRetry={() => void q.refetch()}
       >
-        <Card pad="lg">
-          <table style={tableStyle}>
-            <thead>
-              <tr>
-                <th style={thStyle}>名称</th>
-                <th style={thStyle}>id</th>
-                <th style={thStyle}>origin</th>
-                <th style={thStyle}>通用模式</th>
-                <th style={thStyle}>版本</th>
-                <th style={thStyle} aria-label="detail" />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => {
-                const retired = row.retiredAt !== null;
-                // origin 权威枚举只有 builtin|custom；general 徽标由 id 派生
-                // （owner review 一致性①）。
-                const isGeneral = row.id === 'general';
-                return (
-                  <tr key={row.id} style={retired ? retiredRowStyle : undefined}>
-                    <td style={tdStyle}>
-                      {row.displayName}
-                      {retired && (
-                        <span style={badgeGapStyle}>
-                          <Badge tone="neutral">retired</Badge>
+        <AdminPanel id="adm-subjects" title="全部科目" aside={<Chip>{rows.length}</Chip>} flush>
+          <div className="adm-table-scroll">
+            <table className="adm-table">
+              <thead>
+                <tr>
+                  <th scope="col">名称</th>
+                  <th scope="col">id</th>
+                  <th scope="col">origin</th>
+                  <th scope="col">通用模式</th>
+                  <th scope="col">版本</th>
+                  <th scope="col" aria-label="detail" />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => {
+                  const retired = row.retiredAt !== null;
+                  // origin 权威枚举只有 builtin|custom；general 徽标由 id 派生
+                  // （owner review 一致性①）。
+                  const isGeneral = row.id === 'general';
+                  return (
+                    <tr key={row.id} data-retired={retired ? '' : undefined}>
+                      <td>
+                        <span className="adm-subject-name">
+                          <span className="adm-strong">{row.displayName}</span>
+                          {retired && <Chip>retired</Chip>}
                         </span>
-                      )}
-                    </td>
-                    <td style={tdStyle}>
-                      <code style={monoSmallStyle}>{row.id}</code>
-                    </td>
-                    <td style={tdStyle}>
-                      <Badge tone="neutral">{isGeneral ? 'general' : row.origin}</Badge>
-                    </td>
-                    <td style={tdStyle}>
-                      {isGeneral ? (
-                        <span className="meta">—</span>
-                      ) : row.isGeneralFallback === true ? (
-                        <Badge tone="neutral">通用</Badge>
-                      ) : null}
-                    </td>
-                    <td style={tdStyle}>
-                      {row.version ? (
-                        <span style={monoSmallStyle} title={row.version}>
-                          {row.version.length > 40 ? `${row.version.slice(0, 40)}…` : row.version}
-                        </span>
-                      ) : (
-                        <span className="meta">—</span>
-                      )}
-                    </td>
-                    <td style={tdStyle}>{link(`/admin/subjects/${row.id}`, '→')}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </Card>
-      </Stateful>
-    </main>
+                      </td>
+                      <td>
+                        <code className="adm-mono">{row.id}</code>
+                      </td>
+                      <td>
+                        <Chip>{isGeneral ? 'general' : row.origin}</Chip>
+                      </td>
+                      <td>{generalModeCell(isGeneral, row.isGeneralFallback)}</td>
+                      <td>
+                        {row.version ? (
+                          <span className="adm-mono" title={row.version}>
+                            {row.version.length > 40 ? `${row.version.slice(0, 40)}…` : row.version}
+                          </span>
+                        ) : (
+                          <span className="adm-quiet">—</span>
+                        )}
+                      </td>
+                      <td className="adm-num">
+                        {link(`/admin/subjects/${row.id}`, `打开 ${row.displayName}`)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </AdminPanel>
+      </AdminArea>
+    </AdminFrame>
   );
 }
-
-// Style authority = the legacy admin chrome (no loom稿 for Subjects; plan §7.1).
-// Mirrors the sibling observability.tsx's inline token-based table styles.
-const linkRowStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 10,
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-};
-
-const tableStyle: CSSProperties = {
-  width: '100%',
-  borderCollapse: 'collapse',
-  fontSize: 13,
-};
-
-const thStyle: CSSProperties = {
-  textAlign: 'left',
-  padding: '0 10px 8px 0',
-  color: 'var(--ink-4)',
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-  fontWeight: 500,
-};
-
-const tdStyle: CSSProperties = {
-  borderTop: '1px solid var(--line-soft)',
-  padding: '10px 10px 10px 0',
-  verticalAlign: 'top',
-  color: 'var(--ink-2)',
-};
-
-const retiredRowStyle: CSSProperties = { opacity: 0.55 };
-
-const badgeGapStyle: CSSProperties = { marginLeft: 6 };
-
-const monoSmallStyle: CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-caption)',
-};
-
-const mutedTextStyle: CSSProperties = {
-  margin: 0,
-  color: 'var(--ink-3)',
-  fontSize: 13,
-  lineHeight: 1.55,
-};

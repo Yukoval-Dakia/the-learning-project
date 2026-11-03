@@ -1,32 +1,42 @@
-import { type ConfigProvider, matchesSearch, providerStatus, tableClass } from './config-model';
+import { ChevronDown } from 'lucide-react';
+import { Chip, type ChipTone } from '@/ui-next/public';
+import { type ConfigProvider, matchesSearch, providerStatus } from './config-model';
 
 type Model = NonNullable<ConfigProvider['models']>[number];
 const capability = (value: boolean | 'unknown' | undefined) =>
   value === true ? '支持' : value === false ? '不支持' : '未知';
 const amount = (value: number | null | undefined) => (value == null ? '未知' : String(value));
 
+/** The runnable line under a model id (same three texts, same order as before). */
+function runnableLabel(runnable: Model['runnable']): string {
+  if (runnable === true) return '目录允许运行';
+  if (runnable === false) return '当前不可运行';
+  return '可运行性未知';
+}
+
+/** Chip tone for the server's auth fact; the label itself still comes from providerStatus. */
+function authTone(status: string | undefined): ChipTone {
+  if (status === 'configured') return 'positive';
+  if (status === 'auth_failed') return 'critical';
+  return 'neutral';
+}
+
 function ModelFacts({ model: m }: { model: Model }) {
   return (
     <tr>
-      <th scope="row">
+      <th scope="row" className="adm-row-head">
         <code>{m.id}</code>
-        <p>
-          {m.runnable === true
-            ? '目录允许运行'
-            : m.runnable === false
-              ? '当前不可运行'
-              : '可运行性未知'}
-        </p>
+        <p className="adm-cell-sub">{runnableLabel(m.runnable)}</p>
       </th>
       <td>
         {m.api ?? '协议未知'}
-        <p>
+        <p className="adm-cell-sub">
           输入：
           {m.input?.map((value) => (value === 'unknown' ? '未知' : value)).join('、') || '未知'}
         </p>
       </td>
       <td>
-        <dl className="un-config-facts">
+        <dl className="adm-facts adm-facts-tight">
           <dt>工具调用</dt>
           <dd>{capability(m.tool_call)}</dd>
           <dt>推理</dt>
@@ -40,7 +50,7 @@ function ModelFacts({ model: m }: { model: Model }) {
         </dl>
       </td>
       <td>
-        <dl className="un-config-facts">
+        <dl className="adm-facts adm-facts-tight">
           <dt>上下文</dt>
           <dd>{amount(m.context_window_tokens)}</dd>
           <dt>输入上限</dt>
@@ -48,11 +58,11 @@ function ModelFacts({ model: m }: { model: Model }) {
           <dt>输出上限</dt>
           <dd>{amount(m.max_output_tokens)}</dd>
         </dl>
-        <p>单位：token</p>
+        <p className="adm-cell-sub">单位：token</p>
       </td>
       <td>
         {m.cost ? (
-          <dl className="un-config-facts">
+          <dl className="adm-facts adm-facts-tight">
             <dt>输入</dt>
             <dd>{amount(m.cost.input)}</dd>
             <dt>输出</dt>
@@ -87,26 +97,38 @@ export function ConfigProviderCatalog({
     ),
   );
   return (
-    <section className="un-config-catalog" aria-label="Provider 与模型目录">
-      <h2>Provider 与模型目录</h2>
-      <p>“已配置”表示凭据已配置，不保证每个模型都能调用；能力未知不等于不支持。</p>
-      <details className="un-config-catalog-note">
-        <summary>目录更新与来源：当前未提供</summary>
-        <p>
-          目录版本、拉取时间、缓存或随包兜底来源尚未提供，当前是否使用降级目录未知。配置快照的版本与读取时间不是目录版本或更新时间。
+    <section className="adm-stack" aria-label="Provider 与模型目录">
+      <div className="adm-catalog-head">
+        <h2 className="adm-section-title">Provider 与模型目录</h2>
+        <p className="adm-note">
+          “已配置”表示凭据已配置，不保证每个模型都能调用；能力未知不等于不支持。
         </p>
-        <p>API base URL、思考强度档位也未提供，不从模型名称或 SDK 默认值推测。</p>
+      </div>
+      <details className="adm-disclosure adm-catalog-note">
+        <summary className="adm-summary">
+          <ChevronDown className="adm-summary-chev" size={16} aria-hidden="true" />
+          目录更新与来源：当前未提供
+        </summary>
+        <div className="adm-disclosure-body">
+          <p>
+            目录版本、拉取时间、缓存或随包兜底来源尚未提供，当前是否使用降级目录未知。配置快照的版本与读取时间不是目录版本或更新时间。
+          </p>
+          <p>API base URL、思考强度档位也未提供，不从模型名称或 SDK 默认值推测。</p>
+        </div>
       </details>
-      {!visible.length && <p>没有匹配的 provider 或模型。</p>}
+      {!visible.length && <p className="adm-empty">没有匹配的 provider 或模型。</p>}
       {visible.map((p) => (
-        <details className="un-config-provider" key={p.name}>
-          <summary>
-            <strong>{p.name}</strong>
-            <span data-auth={p.auth?.status}>{providerStatus(p)}</span>
-            <span>{p.models ? `${p.models.length} 个目录模型` : '模型目录未知'}</span>
+        <details className="adm-disclosure adm-provider" key={p.name}>
+          <summary className="adm-summary">
+            <ChevronDown className="adm-summary-chev" size={16} aria-hidden="true" />
+            <strong className="adm-provider-name">{p.name}</strong>
+            <Chip tone={authTone(p.auth?.status)}>{providerStatus(p)}</Chip>
+            <span className="adm-provider-count">
+              {p.models ? `${p.models.length} 个目录模型` : '模型目录未知'}
+            </span>
           </summary>
-          <div className="un-config-provider-body">
-            <dl className="un-config-provider-facts">
+          <div className="adm-disclosure-body">
+            <dl className="adm-facts">
               <dt>认证方式</dt>
               <dd>{p.auth_mode}</dd>
               <dt>凭据</dt>
@@ -121,20 +143,22 @@ export function ConfigProviderCatalog({
               </dd>
             </dl>
             {p.auth?.status === 'auth_failed' && (
-              <p className="un-config-auth-error">
+              <p className="adm-auth-error">
                 认证失败 · HTTP {p.auth.http_status ?? '未知'} · 错误类型：
                 {p.auth.error_type ?? '未知'}。这里只显示已有结果，不发起认证探针。
               </p>
             )}
             {p.models?.length ? (
               <section
-                className="un-config-table-scroll"
+                className="adm-table-scroll adm-table-frame"
                 // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users need to scroll the wide capability table.
                 tabIndex={0}
                 aria-label={`${p.name} 模型能力表`}
               >
-                <table className={tableClass}>
-                  <caption>{p.name} · 全量目录能力与限额；费率单位 USD / 百万 token</caption>
+                <table className="adm-table adm-table-wide">
+                  <caption className="adm-caption">
+                    {p.name} · 全量目录能力与限额；费率单位 USD / 百万 token
+                  </caption>
                   <thead>
                     <tr>
                       <th scope="col">模型 / 可运行性</th>
@@ -152,7 +176,7 @@ export function ConfigProviderCatalog({
                 </table>
               </section>
             ) : (
-              <p>{p.models ? '目录未列出模型。' : '模型目录尚未提供。'}</p>
+              <p className="adm-note">{p.models ? '目录未列出模型。' : '模型目录尚未提供。'}</p>
             )}
           </div>
         </details>

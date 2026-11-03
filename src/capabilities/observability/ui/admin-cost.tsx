@@ -58,7 +58,7 @@ export function AdminCostSurface({
       <AdminNav links={ADMIN_LINKS} current="/admin/cost" navigate={navigate} />
       <AdminHead
         kicker="ADMIN · cost ledger"
-        title="Cost"
+        title="成本"
         lead="按日与任务汇总已报告、估算和历史口径金额；未知费用单列，不代表账户实际扣款。"
         actions={
           <Button

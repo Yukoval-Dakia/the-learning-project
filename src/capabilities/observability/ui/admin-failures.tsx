@@ -35,7 +35,7 @@ export function AdminFailuresSurface({
       <AdminNav links={ADMIN_LINKS} current="/admin/failures" navigate={navigate} />
       <AdminHead
         kicker="ADMIN · failure clusters"
-        title="Failures"
+        title="失败记录"
         lead="按 `finish_reason` 与 error message 前缀聚类失败样本，先看重复失败而不是逐条翻日志。"
         actions={
           <Button
