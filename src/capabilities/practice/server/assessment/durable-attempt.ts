@@ -11,10 +11,10 @@ import type { Db, Tx } from '@/db/client';
 import { assessment_submission, evaluation, evaluation_effective_head, event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { lockJudgeRun } from '@/kernel/locks/grading';
 import {
   type JudgeExecution,
   authorizeJudgeSend,
-  lockJudgeRun,
   readJudgeControl,
   requireJudgeRunOpen,
   reserveInitialJudgeDelivery,

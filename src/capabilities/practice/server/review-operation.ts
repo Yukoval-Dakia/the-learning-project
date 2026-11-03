@@ -17,6 +17,8 @@ import {
 } from '@/db/schema';
 import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { ApiError } from '@/kernel/http';
+import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
+import { lockReviewAnswerRetry } from '@/kernel/locks/grading';
 import {
   type BoundReviewAnswer,
   BoundReviewAnswerSchema,
@@ -413,9 +415,10 @@ export async function captureReviewAnswerBinding(
 ): Promise<BoundReviewAnswer> {
   const original = ReviewAnswerAttachmentSchema.parse(input.original);
   const issued = await reviewBindingCoordinates(database, original);
-  // The same assessment retry identity cannot acquire a second chat/session authority.
-  await database.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`review-answer:${original.assessment.evaluation_group_id}:${original.assessment.idempotency_key}`}, 0))`,
+  await lockReviewAnswerRetry(
+    database,
+    original.assessment.evaluation_group_id,
+    original.assessment.idempotency_key,
   );
   const [prior] = await database
     .select({ id: event.id })
@@ -436,9 +439,7 @@ export async function captureReviewAnswerBinding(
     );
   }
   // Match saveSubmission's group → issuance order before the assistance snapshot.
-  await database.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${original.assessment.evaluation_group_id}))`,
-  );
+  await lockAssessmentEvaluationGroup(database, original.assessment.evaluation_group_id);
   const [accepted] = await database
     .select({ id: assessment_submission.submission_id })
     .from(assessment_submission)

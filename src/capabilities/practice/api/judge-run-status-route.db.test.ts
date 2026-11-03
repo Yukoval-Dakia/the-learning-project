@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { canonicalHash } from '@/core/migration/canonical';
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import { event, job_events } from '@/db/schema';
+import { lockJudgeRun } from '@/kernel/locks/grading';
 import { dispatchFrozenJudge, resetJudgeControl } from '../../../../tests/dbos-judge/support';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import * as practice from '../public';
@@ -11,7 +12,6 @@ import {
   disposeJudgeRun,
   judgeCoordinate,
   judgeRunEnvelope,
-  lockJudgeRun,
   writeJudgeReceipt,
 } from '../server/judge-operational';
 import { judgeDispositionId } from '../server/judge-operational-state';

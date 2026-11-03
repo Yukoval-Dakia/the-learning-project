@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
   type ModelExecutorRequest,
@@ -9,6 +9,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { lockRecordedModelClaim } from '@/kernel/locks/grading';
 import { observeJudgeProcess } from '../judge-process-observer';
 
 type Executor = (
@@ -51,7 +52,7 @@ export function createRecordedModelExecutor(
     const prior = await database.transaction(async (tx) => {
       // R precedes C. The callback validates the retained run/binding with read-only queries.
       const blocked = await options.fence?.(tx, request);
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${claimId}))`);
+      await lockRecordedModelClaim(tx, claimId);
       const [claim] = await tx.select().from(event).where(eq(event.id, claimId)).limit(1);
       if (claim) {
         const originalCap =

@@ -94,44 +94,12 @@
       "count": 1
     },
     {
-      "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
-      "count": 1
-    },
-    {
-      "path": "src/capabilities/practice/jobs/model_slice_admission_run.ts",
-      "count": 2
-    },
-    {
       "path": "src/capabilities/practice/jobs/rejudge.ts",
       "count": 1
     },
     {
       "path": "src/capabilities/practice/server/assessment/appeal.ts",
-      "count": 5
-    },
-    {
-      "path": "src/capabilities/practice/server/assessment/attempt.ts",
-      "count": 1
-    },
-    {
-      "path": "src/capabilities/practice/server/assessment/submit.ts",
-      "count": 1
-    },
-    {
-      "path": "src/capabilities/practice/server/judge-operational.ts",
-      "count": 1
-    },
-    {
-      "path": "src/capabilities/practice/server/judge/evaluate-submission.ts",
-      "count": 1
-    },
-    {
-      "path": "src/capabilities/practice/server/judge/recorded-model-executor.ts",
-      "count": 1
-    },
-    {
-      "path": "src/capabilities/practice/server/review-operation.ts",
-      "count": 2
+      "count": 3
     },
     {
       "path": "src/capabilities/shell/server/teaching-brief-ack.ts",
@@ -151,7 +119,7 @@
     },
     {
       "path": "src/kernel/proposals/producers.ts",
-      "count": 2
+      "count": 1
     },
     {
       "path": "src/kernel/proposals/signals.ts",
@@ -178,15 +146,7 @@
       "count": 1
     },
     {
-      "path": "src/server/assessment/activate.ts",
-      "count": 1
-    },
-    {
       "path": "src/server/assessment/settle-apply.ts",
-      "count": 1
-    },
-    {
-      "path": "src/server/assessment/settle.ts",
       "count": 1
     },
     {

@@ -11,7 +11,6 @@ import {
   authorizeJudgeSend,
   disposeJudgeRun,
   fenceJudgeUnitClaim,
-  lockJudgeRun,
   reserveJudgeDelivery,
 } from '@/capabilities/practice/server/judge-operational';
 import { projectJudgeRunNotification } from '@/capabilities/practice/server/judge-run-notification';
@@ -26,6 +25,7 @@ import { evaluation, event, job_events, mastery_state, material_fsrs_state } fro
 import * as domain from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import * as notificationWriter from '@/kernel/job-events';
+import { lockJudgeRun } from '@/kernel/locks/grading';
 import { resetDb, testDb } from '../helpers/db';
 import { dispatchFrozenJudge, frozenJudge, judgeEvidence, resetJudgeControl } from './support';
 

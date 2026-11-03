@@ -23,6 +23,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { lockJudgeRun } from '@/kernel/locks/grading';
 import { checkRateLimit, refundRateLimit } from '@/kernel/request-rate-limit';
 import { observeBossJob } from '@/server/boss/job-observation';
 import { JUDGE_RUN_QUEUE } from './judge-durable-config';
@@ -32,12 +33,7 @@ import {
   enqueueLegacyJudgeDelivery,
   judgeDeliveryInput,
 } from './judge-engine-client';
-import {
-  acceptJudgeDelivery,
-  lockJudgeRun,
-  readJudgeControl,
-  rejectJudgeSend,
-} from './judge-operational';
+import { acceptJudgeDelivery, readJudgeControl, rejectJudgeSend } from './judge-operational';
 import { judgeAcceptanceId } from './judge-operational-state';
 import type { JudgeRunJobData, LegacyJudgeRunJobData } from './judge-run-payload';
 import {

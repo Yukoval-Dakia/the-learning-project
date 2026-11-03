@@ -54,6 +54,10 @@ import {
 } from '@/db/schema';
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
 import { ApiError } from '@/kernel/http';
+import {
+  ASSESSMENT_EVALUATION_GROUP_LOCK_NAMESPACE,
+  lockAssessmentEvaluationGroup,
+} from '@/kernel/locks/assessment-evaluation-group-lock';
 import { checkRateLimit } from '@/kernel/request-rate-limit';
 import {
   type ActivateEvaluationRequestT,
@@ -408,9 +412,7 @@ export async function evaluateSubmission(
     const execute = await database.transaction(
       async (tx): Promise<() => Promise<EvaluateSubmissionResult>> => {
         // The same group lock serializes submissions, all member evaluators and activation.
-        await tx.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${request.evaluation_group_id}))`,
-        );
+        await lockAssessmentEvaluationGroup(tx, request.evaluation_group_id);
         // ---- 冻结输入装载（锁序：group advisory → submission → 派生维度；发题事实不可变） ----
         const [requestedSubmission] = await tx
           .select()
@@ -828,7 +830,7 @@ export async function evaluateSubmission(
   return withinSessionAdvisoryLock(
     db,
     {
-      namespace: 'assessment-evaluation-group',
+      namespace: ASSESSMENT_EVALUATION_GROUP_LOCK_NAMESPACE,
       key: request.evaluation_group_id,
       busy: () => new EvaluateSubmissionError('evaluation_busy', 'evaluation group is busy; retry'),
     },

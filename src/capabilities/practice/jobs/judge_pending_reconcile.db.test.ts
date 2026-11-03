@@ -2,6 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import { event, job_events } from '@/db/schema';
+import { lockJudgeRun } from '@/kernel/locks/grading';
 import { dispatchFrozenJudge, resetJudgeControl } from '../../../../tests/dbos-judge/support';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { judgeDeliveryInput } from '../server/judge-engine-client';
@@ -9,7 +10,6 @@ import {
   acceptJudgeDelivery,
   authorizeJudgeSend,
   disposeJudgeRun,
-  lockJudgeRun,
   reserveJudgeDelivery,
 } from '../server/judge-operational';
 import { recordJudgePendingAttempt } from '../server/judge-run-dispatch';

@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import {
   type ActivateEvaluationIntentT,
   type AssessmentAttemptCaptureT,
@@ -14,6 +14,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { lockAssessmentAttemptCapture } from '@/kernel/locks/grading';
 import {
   EvaluateSubmissionError,
   activateSubmissionCandidate,
@@ -179,9 +180,7 @@ export async function recordFormalAttemptCapture(
   capture: FormalAttemptCapture = {},
 ) {
   const attemptId = `evt_assessment_${submission.submission_id}`;
-  // Pending receipts and retries share one occurrence anchor; capture is
-  // first-write-wins so retry latency cannot rewrite the attempt.
-  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${attemptId}))`);
+  await lockAssessmentAttemptCapture(tx, attemptId);
   const [existing] = await tx.select({ id: event.id }).from(event).where(eq(event.id, attemptId));
   if (existing) return;
   await writeEvent(tx, {

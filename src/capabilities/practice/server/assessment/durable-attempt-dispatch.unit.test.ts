@@ -62,9 +62,11 @@ vi.mock('@/kernel/events', () => ({
     throw new Error('replay must not write');
   }),
 }));
+vi.mock('@/kernel/locks/grading', () => ({
+  lockJudgeRun: vi.fn(async () => {}),
+}));
 vi.mock('../judge-operational', () => ({
   readJudgeControl: vi.fn(async () => ({ phase: 'pg-boss' })),
-  lockJudgeRun: vi.fn(async () => {}),
   reserveInitialJudgeDelivery: vi.fn(() => {
     throw new Error('replay must not reserve');
   }),

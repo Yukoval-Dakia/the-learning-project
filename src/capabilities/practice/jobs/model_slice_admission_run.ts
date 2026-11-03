@@ -35,6 +35,7 @@ import {
 import type { Db } from '@/db/client';
 import { event, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { withModelSliceAdmissionLock } from '@/kernel/locks/grading';
 import { lookupGroupSubjects } from '@/kernel/read-models/model-admission';
 import {
   assertModelAdmissionSliceRegistrable,
@@ -199,31 +200,6 @@ function assertFrozenQuestionParts(
         `model_slice_admission_run: item '${itemId}' part '${part.part_id}' does not match the frozen question stem of revision '${revisionId}'`,
       );
     }
-  }
-}
-
-async function withSliceAdmissionReservation<T>(
-  db: Db,
-  sliceId: string,
-  work: () => Promise<T>,
-): Promise<T | { outcome: 'lock_busy' }> {
-  const key = `model-slice-admission:${sliceId}`;
-  const reserved = await db.$client.reserve();
-  let acquired = false;
-  try {
-    const rows = await reserved<{ acquired: boolean }[]>`
-      SELECT pg_try_advisory_lock(hashtext(${key})) AS acquired
-    `;
-    acquired = rows[0]?.acquired === true;
-    if (!acquired) return { outcome: 'lock_busy' };
-    return await work();
-  } finally {
-    if (acquired) {
-      await reserved.unsafe('SELECT pg_advisory_unlock(hashtext($1))', [key]).catch((error) => {
-        console.error('[model-slice-admission] advisory unlock failed', sliceId, error);
-      });
-    }
-    reserved.release();
   }
 }
 
@@ -552,7 +528,7 @@ export async function runModelSliceAdmission(
 
   // 4) 占位之后才逐题判分。另一条 run 拿着同一切片的会话锁时，返回
   //    lock_busy，不抛、不付费。锁内再预检一次：对方可能已经登记完。
-  const reservedWork = await withSliceAdmissionReservation(db, sliceId, async () => {
+  const reservedWork = await withModelSliceAdmissionLock(db, sliceId, async () => {
     await assertModelAdmissionSliceRegistrable(db, registrationInput);
 
     // 逐题判分（生产同源端口；每题独立墙钟，细则含一次超时重试窗口）。

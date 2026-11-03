@@ -31,6 +31,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { lockJudgeRun } from '@/kernel/locks/grading';
 import { judgeDeliveryInput, judgeLegacyJobId } from './judge-engine-client';
 import {
   judgeAcceptanceId,
@@ -54,9 +55,6 @@ export class JudgeRunClosedError extends Error {
   }
 }
 export class JudgeReceiptConflict extends Error {}
-export async function lockJudgeRun(tx: Tx, runId: string) {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${runId}))`);
-}
 export async function readJudgeControl(
   database: Db | Tx,
   lock?: 'share' | 'update',

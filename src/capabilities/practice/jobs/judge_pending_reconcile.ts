@@ -9,13 +9,13 @@ import {
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { lockJudgePendingSweep, lockJudgeRun } from '@/kernel/locks/grading';
 import { observeJudgeDelivery } from '../server/judge-engine-client';
 import {
   acceptJudgeDelivery,
   authorizeJudgeSend,
   disposeJudgeRun,
   judgeOwner,
-  lockJudgeRun,
   readJudgeControl,
   reserveJudgeDelivery,
   writeJudgeReceipt,
@@ -58,7 +58,7 @@ async function selectSweep(
 ) {
   return database.transaction(async (tx) => {
     const control = await readJudgeControl(tx, 'share');
-    await tx.execute(sql`select pg_advisory_xact_lock(1356,2)`);
+    await lockJudgePendingSweep(tx);
     const id = judgeReceiptId('sweep', [args.tickId]);
     const [saved] = await tx.select().from(event).where(eq(event.id, id));
     if (saved) {

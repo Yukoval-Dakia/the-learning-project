@@ -9,7 +9,7 @@
 // Lock order: advisory(group) -> issuance row -> evaluation_group row -> draft row.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, or } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
   type AssessmentIssuanceT,
@@ -45,6 +45,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 import {
   issuanceRowToContract,
   readAutomaticIssuanceServingDecisions,
@@ -323,9 +324,7 @@ export async function saveSubmission(
 
   return await db.transaction(async (tx) => {
     // Group first: serializes first creation, member appends and candidate freezing.
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${request.evaluation_group_id}))`,
-    );
+    await lockAssessmentEvaluationGroup(tx, request.evaluation_group_id);
     const [issuance] = await tx
       .select()
       .from(assessment_issuance)
