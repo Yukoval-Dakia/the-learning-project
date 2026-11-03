@@ -9,6 +9,7 @@ import type {
 } from '@/core/schema/assessment/serving-admission';
 import type { Db, Tx } from '@/db/client';
 import { model_admission_slice, question } from '@/db/schema';
+import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -29,7 +30,7 @@ const NO_PINS: ModelPins = new Map();
 function readModelPins(hasActiveSlice: boolean): ModelPins {
   if (readPins) return readPins();
   if (!hasActiveSlice) return NO_PINS;
-  throw new Error(
+  throw new HostOperationNotInstalledError(
     'model pin reader is not installed; call installModelAdmissionPins before reading model admission',
   );
 }
