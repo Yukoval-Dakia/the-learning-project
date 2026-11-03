@@ -257,8 +257,6 @@ export { loadCoverageLattice, submitQuestionTool } from './supply/public';
 // store_sourced_question is folded into submit_question (the old tool is no longer
 // registered or granted); the function-level compat export remains.
 
-export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
-export { CreateReviewSessionBody } from './api/contracts';
 export { createPracticeAppeal } from './settlement/public';
 export const recoverWebSupplies: typeof import('./supply/public').recoverWebSupplies = async (
   ...args

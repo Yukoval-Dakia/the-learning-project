@@ -6,7 +6,6 @@ import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   type ProposalAcceptApplier,
   type ProposalAcceptInput,
-  type ProposalAcceptResult,
   toProposalLifecycleResult,
 } from '@/kernel/proposals/index';
 import {
