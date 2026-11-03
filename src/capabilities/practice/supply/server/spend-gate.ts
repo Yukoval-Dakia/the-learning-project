@@ -64,7 +64,13 @@ async function readDay(db: Db | Tx, day: string): Promise<Map<string, SpendRecor
   const rows = await db
     .select({ payload: event.payload })
     .from(event)
-    .where(and(eq(event.action, SUPPLY_SPEND_ACTION), eq(event.subject_id, day)));
+    .where(
+      and(
+        eq(event.subject_kind, 'query'),
+        eq(event.subject_id, day),
+        eq(event.action, SUPPLY_SPEND_ACTION),
+      ),
+    );
   const latest = new Map<string, SpendRecordT>();
   for (const row of rows) {
     const parsed = SpendRecord.safeParse(row.payload);
