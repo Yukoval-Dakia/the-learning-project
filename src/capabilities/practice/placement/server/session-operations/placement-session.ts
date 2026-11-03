@@ -95,7 +95,7 @@ export async function startPlacementProbe(
         scopeMode: 'explicit' | 'subject_live';
       }
     | undefined;
-  // Validate a requested goal before permissive tier-3 resolution or warm selection. This is an
+  // Validate a requested goal before scope resolution or warm selection. This is an
   // existence check only: paid-subject authority is resolved later, only on the cold path.
   if (goalId) {
     const [goalRow] = await db
@@ -113,12 +113,10 @@ export async function startPlacementProbe(
   if (knowledgeIds.length === 0 && requestedGoal) {
     knowledgeIds = await resolveGoalPlacementScope(db, requestedGoal);
   }
-  if (knowledgeIds.length === 0) {
-    // Post- this fires only in two genuinely-unresolvable cases: (a) neither a goalId nor
-    // an explicit knowledgeIds set was supplied (nothing to resolve from), or (b) a goalId WAS
-    // supplied but the entire active tree is empty (tier-3 full-tree fallback found zero active
-    // KC) — there is truly nothing to place against. A no-subject / unknown-subject goal no
-    // longer 400s as long as ANY active KC exists.
+  // A goal whose subject has no content KC yet resolves to [] and continues: selection finds
+  // nothing, so the cold path below plants this subject's starter anchor and dispatches its
+  // supply. Only a probe with no goal subject and no explicit set has nothing to place against.
+  if (knowledgeIds.length === 0 && !requestedGoal?.subjectId) {
     throw new ApiError(
       'validation_error',
       'placement requires a goalId (with a resolvable scope) or an explicit knowledgeIds set',
