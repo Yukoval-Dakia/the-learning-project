@@ -228,12 +228,20 @@ if (allowTestDb) {
   if (dbosSchema.status !== 0) process.exit(dbosSchema.status ?? 1);
   // A few admitted questions so the pages have something to serve without a model provider.
   // Runs only on this dev-DB path (never DEV_ALLOW_TEST_DB); the script re-checks the database
-  // name itself and skips questions that already exist.
-  const seed = run('pnpm', ['seed:dev-questions'], {
-    DATABASE_URL: databaseUrl,
-    SEED_SYNTHETIC_OK: '1',
-  });
-  if (seed.status !== 0) process.exit(seed.status ?? 1);
+  // name itself and skips questions that already exist. DEV_SEED=0 skips it so the cold-start
+  // and first-use flows can run on an empty learner state; it never deletes an earlier seed.
+  if (process.env.DEV_SEED === '0') {
+    console.log(
+      '[dev-local] DEV_SEED=0: not seeding questions, knowledge points or review cards. ' +
+        'Questions seeded on an earlier start stay; for an empty database run `pnpm dev:reset` first.',
+    );
+  } else {
+    const seed = run('pnpm', ['seed:dev-questions'], {
+      DATABASE_URL: databaseUrl,
+      SEED_SYNTHETIC_OK: '1',
+    });
+    if (seed.status !== 0) process.exit(seed.status ?? 1);
+  }
 }
 
 // M5-T5c (YUK-321) — gate 选项 b：双进程拓扑（app + worker）。
