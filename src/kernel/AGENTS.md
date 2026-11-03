@@ -32,7 +32,7 @@
 - `JobHandlerFactory` 参数刻意用 `any`：kernel 不 import pg-boss 类型，让 capability 包的 `buildXHandler(db)` 工厂能零适配注册（注释已说明 variance escape hatch）。
 - manifest 是**声明元数据 + 组合期校验**，不是运行时插件总线；组合根是静态数组 `src/capabilities/index.ts`。
 - proposal kind 的强度 C 档 ⟺ 没有 accept applier；退役类别留在 `aiProposalKinds` 词表里，payload 成员永久保留，驳回和撤回仍可用。由 `acceptSupportedProposalKinds` 从 core 强度表派生、`validateComposition()` 校验 owner accept 声明、完整组合根入口的 `assertProposalKindsOwned()` 校验每类恰有 owner，不靠注释维持。
-- 提议的接受与驳回走 `proposals/decision-protocol.ts`：kernel 先取 `proposal_decision` 锁，锁后重查 rate 与更正状态（已撤回的提议不能再写入接受或驳回），写唯一一条 rate 事件和裁决信号；owner 只提供领域效果，自己的领域锁在效果内、排在裁决锁之后。owner 的预备步骤若自己提交写入，每个写事务第一步调用模板给的写守卫。已迁到模板的类别不再手写这段锁、重查与 rate；judge_retraction 的接受仍手写，由迁移线后续子片迁入（清单见 `docs/architecture/advisory-locks.md`）。
+- 提议的接受与驳回走 `proposals/decision-protocol.ts`：kernel 先取 `proposal_decision` 锁，锁后重查 rate 与更正状态（已撤回的提议不能再写入接受或驳回），写唯一一条 rate 事件和裁决信号；owner 只提供领域效果，自己的领域锁在效果内、排在裁决锁之后。owner 的预备步骤若自己提交写入，每个写事务第一步调用模板给的写守卫。所有提议类别都已迁到模板，owner 不再手写这段锁、重查与 rate（清单见 `docs/architecture/advisory-locks.md`）。
 - `tools/`、`read-models/`、`records/`、`proposals/` 与 `cost.ts` 只允许依赖 `@/core/*`、`@/db/*`、`@/subjects/*`、`@/kernel/*`、`@/ai/*`、`drizzle-orm`、`zod`；禁止 import `@/server/*` 或 `@/capabilities/*`（kernel 不隐藏债务，只下沉真正共享的 seam — YUK-892）。
 - `object-storage.ts` 是 server-only 共享对象 I/O 的唯一 canonical 端口，允许直接依赖 `@aws-sdk/client-s3`；capability、server 与维护 CLI 可直接消费其既有 `R2Client`、`createR2Client`、`getR2`，不经 capability 转出。此许可仅限该文件与三符号；资产 ref、授权、锁、readback 证明、补偿/恢复与 provider/付费策略仍由原 owner 持有；浏览器不得 import；不在 kernel 根 barrel 转出。
 - 契约按「第二实例原则」扩展：jobs/proposals/copilotTools/ui 等字段在各自第一个需求包迁入时才加入。

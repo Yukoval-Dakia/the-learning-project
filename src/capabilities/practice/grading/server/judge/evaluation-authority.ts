@@ -7,7 +7,7 @@ import {
   deriveCoarseVerdict,
 } from '@/core/schema/assessment/settlement';
 import type { JudgeResultV2T } from '@/core/schema/capability';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   type EvaluateSubmissionRequest,
   type EvaluateSubmissionResult,
@@ -106,7 +106,7 @@ export interface ContractGradingRef {
 
 export interface ContractAttemptInput {
   entry: GradingEntryPoint;
-  db: Db;
+  db: Db | Tx;
   contract: ContractGradingRef;
 }
 export type EvaluateAttemptInput = ContractAttemptInput;

@@ -99,7 +99,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | `lockEventCorrectionsAll` / `lockEventCorrectionSource` | `src/kernel/events/correction-lock.ts` | 与上表 corrections:all、source 共用注册表键，语句仍是 `hashtextextended(key, 0)` xact。`writeEvents` 在有修正目标时先取 corrections:all，再按已排序 target 取 source。`review-answer-consumer` 在 copilot execution settlement 之后取 source |
 | `acquireSortedAdvisoryLocks` | `src/db/learning-state-lock.ts` | `hashtext(<ns>:<id>)` sorted，consistent-ordering 原语 |
 | `withinSessionAdvisoryLock` | `src/db/session-advisory-lock.ts` | reserved conn `pg_try_advisory_lock`+retry 至 deadline；`begin`/`savepoint` 补丁到持锁连接，inner tx 全部跑在同一 backend；finally unlock+release |
-| `acquireProposalDecisionLock` | `src/kernel/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0，键来自 `advisoryLockRegistry.proposalDecision`。接受与驳回经 `src/kernel/proposals/decision-protocol.ts` 的裁决模板在事务第一步取，锁后在同一事务内重查 rate 与更正状态，再由 owner 效果取领域锁；模板覆盖通用驳回、agency/variant_question/question_draft 专属驳回，以及 note_update、block_merge、record_links、record_promotion、learning_item、completion、relearn、goal_scope、conjecture、variant_question、question_draft、question_edit、cause_category 的接受；edit_request 路径的 supply save/submit 各自提交，它们的每个写事务第一步经模板给的写守卫取同一把锁重查（embedding 请求前另开一个只取锁重查的短事务，请求期间不持锁），submit 过闸后 question_edit 的撤回与驳回拒绝。撤回仍在自己事务第一步直接取；judge_retraction 的接受尚未迁到模板，目前不取这把锁 |
+| `acquireProposalDecisionLock` | `src/kernel/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0，键来自 `advisoryLockRegistry.proposalDecision`。接受与驳回经 `src/kernel/proposals/decision-protocol.ts` 的裁决模板在事务第一步取，锁后在同一事务内重查 rate 与更正状态，再由 owner 效果取领域锁；模板覆盖通用驳回、agency/variant_question/question_draft 专属驳回，以及 note_update、block_merge、record_links、record_promotion、learning_item、completion、relearn、goal_scope、conjecture、variant_question、question_draft、question_edit、cause_category、judge_retraction 的接受，以及 knowledge_node、knowledge_mutation、knowledge_edge 的接受与驳回；edit_request 路径的 supply save/submit 各自提交，它们的每个写事务第一步经模板给的写守卫取同一把锁重查（embedding 请求前另开一个只取锁重查的短事务，请求期间不持锁），submit 过闸后 question_edit 的撤回与驳回拒绝。撤回仍在自己事务第一步直接取；提议类别已全部经模板裁决 |
 | `withProposalGateLock` | `src/kernel/proposals/signals.ts` | `<kind>:<cooldown_key>` 多键 sorted xact gate；Db 开真 tx、Tx 内联 |
 | `lockPaidEffectControlFamily` / `lockEntityGate` | `src/db/paid-effect-control.ts` / `paid-effect-store.ts` | paid-effect family/entity 锁（只读盘点） |
 | `lockProducerFenceInstaller` 等 | `src/server/durable/*` | durable family install/control/tick |
@@ -281,7 +281,11 @@ edge-evidence 版 SHA-256
   与 supersede，edge-proposal-accept.ts）；proposal_decision → placement-supply（record_promotion
   接受，legacy-record-appliers.ts；variant_question 接受，question-bank proposal-appliers.ts）；proposal_decision →
   submit/save request（`hashtext(request_id)`）→ 草稿/题目行（edit_request 接受经写守卫，裁决锁是这些
-  事务的第一把锁）；note_refine effect → product；paper-native →
+  事务的第一把锁）；proposal_decision → `hashtext(evt_eval_correction_<hash>)` → group
+  （judge_retraction evaluation 接受；assert 子路径在效果内先取 G：
+  proposal_decision → G → correction-claim → group → 行锁 → fsrs:* → ability_global，
+  rejudge 子路径不取 G）；proposal_decision → corrections:all → source
+  （judge_retraction event 目标接受）；note_refine effect → product；paper-native →
   attempt-claim；G → attempt-claim（capture 路径）；appeal-claim(request) →
   group（appeal.ts:24→41）；激活 tx 内 `group → resolution-claim`（record
   回调，settle `fsrs:*` 条件插入其间，dyn）；review-answer → group；
