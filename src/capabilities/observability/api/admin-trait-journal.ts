@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { db } from '@/db/client';
 import { collectionPayload, errorResponse } from '@/kernel/http';
 import { getTraitJournalPage } from '../public';
+import { parseTraitJournalLimit } from './subjects-write-http';
 
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 
@@ -15,12 +16,9 @@ export async function GET(req: Request, params: Record<string, string>): Promise
       return Response.json({ error: 'trait id is required' }, { status: 400 });
     }
     const url = new URL(req.url);
-    const rawLimit = url.searchParams.get('limit');
-    const parsedLimit = rawLimit === null ? 100 : Number(rawLimit);
-    if (!Number.isInteger(parsedLimit) || parsedLimit <= 0) {
-      return Response.json({ error: 'limit must be a positive integer' }, { status: 400 });
-    }
-    const limit = Math.min(parsedLimit, 200);
+    const parsedLimit = parseTraitJournalLimit(url.searchParams.get('limit'));
+    if (!parsedLimit.ok) return Response.json(parsedLimit.body, { status: parsedLimit.status });
+    const { limit } = parsedLimit;
     const page = await getTraitJournalPage(db, parsed.data.id, {
       limit,
       cursor: url.searchParams.get('cursor') ?? undefined,

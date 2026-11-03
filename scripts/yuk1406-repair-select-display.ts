@@ -1178,6 +1178,8 @@ async function main(): Promise<number> {
   if (cli.command === 'apply') await assertNoStop(cli.stopPath);
   const { manifest, sha: manifestSha } = await loadManifest(cli.manifestPath);
   const { db } = await import('@/db/client');
+  const { installModelAdmissionPins } = await import('@/server/assessment/model-admission-pins');
+  await installModelAdmissionPins();
   const manifestGroupIds = manifest.groups.map((group) => group.group_id);
   try {
     if (cli.command === 'plan') {

@@ -34,6 +34,15 @@ const PUBLIC_ENTRYPOINTS = new Set(['public', 'ui-public']);
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
 const EDGE_UNIT = 'distinct-source-file-to-resolved-module' as const;
 const BASELINE_PATH = 'scripts/capability-boundary-baseline.json';
+/**
+ * Owner 2026-11-03: "ai/boss 属于平台依赖，不算债". Every capability reaches the AI runner and the
+ * job queue by design, so these edges are reported on their own and kept out of the
+ * capability -> server ratchet; every other server module stays decrease-only. Neither module
+ * declares an entrypoint (no barrel/public file, no import rule in AGENTS.md or lint), so deep
+ * imports into them are not constrained here.
+ */
+const PLATFORM_SERVER_MODULES: ReadonlySet<string> = new Set(['ai', 'boss']);
+const PLATFORM_SECTION_TITLE = '平台依赖（不计入 ratchet）';
 const DEBT_KINDS = [
   'capabilityToServer',
   'serverToCapabilityDeep',
@@ -90,6 +99,9 @@ export interface DependencySnapshot {
 
 export interface DependencyReport {
   semanticEdges: number;
+  /** capability -> ai/boss edges; reported only, never a ratchet ceiling. */
+  platformCapabilityToServer: number;
+  platformCapabilityToServerByOwnerPair: Record<string, number>;
   serverToCapabilityPublic: number;
   serverToCapabilityPublicByOwnerPair: Record<string, number>;
   crossCapabilityTypeOnly: number;
@@ -663,6 +675,7 @@ function summarizeDependencies(dependencies: SemanticDependency[]): {
   dependencies: SemanticDependency[];
 } {
   const capabilityToServer = new Map<string, number>();
+  const platformCapabilityToServer = new Map<string, number>();
   const serverToCapabilityDeep = new Map<string, number>();
   const serverToCapabilityPublic = new Map<string, number>();
   const crossCapabilityValue = new Map<string, number>();
@@ -671,7 +684,12 @@ function summarizeDependencies(dependencies: SemanticDependency[]): {
   for (const dependency of dependencies) {
     const { sourceLocation: source, targetLocation: target } = dependency;
     if (source.layer === 'capability' && target?.layer === 'server') {
-      increment(capabilityToServer, `${source.owner} -> ${target.module}`);
+      increment(
+        PLATFORM_SERVER_MODULES.has(target.module)
+          ? platformCapabilityToServer
+          : capabilityToServer,
+        `${source.owner} -> ${target.module}`,
+      );
     } else if (source.layer === 'server' && target?.layer === 'capability') {
       const pair = `${source.module} -> ${target.owner}`;
       if (PUBLIC_ENTRYPOINTS.has(target.entrypoint)) increment(serverToCapabilityPublic, pair);
@@ -709,6 +727,8 @@ function summarizeDependencies(dependencies: SemanticDependency[]): {
     report: {
       // Preserves the historical meaning: only capability/server-resolved edges.
       semanticEdges: dependencies.filter((dep) => dep.targetLocation !== undefined).length,
+      platformCapabilityToServer: total(platformCapabilityToServer),
+      platformCapabilityToServerByOwnerPair: sortedRecord(platformCapabilityToServer),
       serverToCapabilityPublic: total(serverToCapabilityPublic),
       serverToCapabilityPublicByOwnerPair: sortedRecord(serverToCapabilityPublic),
       crossCapabilityTypeOnly: total(crossCapabilityTypeOnly),
@@ -958,7 +978,7 @@ export function parseBaseline(text: string, source: string): DependencyBaseline 
 export type { DependencyBaseline };
 
 /**
- * Audited base->head edges: capability->server (value and type), cross-capability
+ * Audited base->head edges: capability->server (value and type, platform ai/boss excluded), cross-capability
  * value, and capability->kernel value edges. New edges are counted for the
  * report; new kernel edges are also checked for facade consumption.
  */
@@ -968,6 +988,7 @@ function auditedRatchetEdges(dependencies: readonly SemanticDependency[]): Ratch
     if (dep.sourceLocation.layer !== 'capability') continue;
     const target = dep.targetLocation;
     if (target?.layer === 'server') {
+      if (PLATFORM_SERVER_MODULES.has(target.module)) continue;
       edges.push({
         file: dep.sourceFile,
         module: dep.targetModule,
@@ -1203,6 +1224,13 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
         `>${SIZE_METRIC.hardCeiling}-line files=${regressions?.overCeilingFiles.head ?? 0} (base ${regressions?.overCeilingFiles.base ?? 0}); ` +
         'capability *-api.ts apiJson escape hatch=0.',
     );
+    const platform = result.dependencyReport;
+    console.log(
+      `${PLATFORM_SECTION_TITLE}: capability -> ai/boss=${platform.platformCapabilityToServer} — Owner 2026-11-03「ai/boss 属于平台依赖，不算债」; ai/boss declare no entrypoint, so deep imports are not constrained.`,
+    );
+    for (const [pair, count] of Object.entries(platform.platformCapabilityToServerByOwnerPair)) {
+      console.log(`  ${pair}: ${count}`);
+    }
     if (slack && !tighten) {
       console.log(
         `Debt fell below ${BASELINE_PATH}; run pnpm audit:capability-boundaries --tighten in this change to lock the decrease.`,

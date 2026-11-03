@@ -3,7 +3,10 @@ import type {
   AdminSubjectControlResult,
   TraitWriteResult,
 } from '@/capabilities/observability/public';
-import type { TraitControlReceipt } from '@/capabilities/observability/ui/admin-control-client';
+import type {
+  SubjectControlReceipt,
+  TraitControlReceipt,
+} from '@/capabilities/observability/ui/admin-control-client';
 import {
   type AdminControlClient,
   SubjectTraitsWireSchema,
@@ -24,53 +27,6 @@ function parse<T>(schema: z.ZodType<T>, input: unknown, message: string): T {
   if (!parsed.success) reject(message, 400);
   return parsed.data;
 }
-function controlReceipt(result: AdminSubjectControlResult) {
-  switch (result.kind) {
-    case 'ok':
-      return { subjectRevision: result.subjectRevision };
-    case 'noop':
-      return { subjectRevision: result.subjectRevision, noop: true as const };
-    case 'stale':
-      return reject('stale_revision', 409, {
-        message: 'stale subject revision',
-        currentRevision: result.currentRevision,
-      });
-    case 'conflict':
-      return reject(result.message, 409);
-    case 'not_found':
-      return reject(result.message, 404);
-    case 'forbidden':
-    case 'invalid':
-      return reject(result.message, 422);
-  }
-}
-function traitReceipt(result: TraitWriteResult, canonical = false): TraitControlReceipt {
-  switch (result.kind) {
-    case 'ok':
-    case 'noop':
-      return {
-        traitId: result.traitId,
-        revision: result.revision,
-        ...(result.kind === 'ok' ? { forked: result.forked } : { noop: true }),
-        status: canonical && result.kind === 'ok' && result.forked ? 201 : 200,
-        ...(canonical
-          ? { canonicalLocation: `/api/admin/traits/${encodeURIComponent(result.traitId)}/journal` }
-          : {}),
-      };
-    case 'stale':
-      return reject('stale_revision', 409, {
-        message: `stale ${result.axis} revision`,
-        currentRevision: result.currentRevision,
-      });
-    case 'not_found':
-      return reject(result.message, 404);
-    case 'forbidden':
-      return reject(result.message, 422);
-    case 'invalid':
-      return reject(result.message, 422, result.issues ? { issues: result.issues } : {});
-  }
-}
-
 // The frontdoor calls this factory from its initialized Hono module graph, after
 // auth. Start's compiled bundle must never construct its own domain graph here.
 // Db is an owned pool, not Tx: the public mutations commit and hydrate themselves.
@@ -111,6 +67,20 @@ export async function createStartAdminControlReader(options: { database?: Db } =
       subjectId: subjectId(input),
       ...parse(domain.AdminSubjectCasBodySchema, input, 'expectedRevision required'),
     });
+    const controlReceipt = (result: AdminSubjectControlResult): SubjectControlReceipt => {
+      const outcome = domain.controlWriteHttpOutcome(result);
+      if (!outcome.ok) throw Response.json(outcome.body, { status: outcome.status });
+      return outcome.body;
+    };
+    const traitReceipt = (result: TraitWriteResult, canonical = false): TraitControlReceipt => {
+      const outcome = domain.traitWriteHttpOutcome(result);
+      if (!outcome.ok) throw Response.json(outcome.body, { status: outcome.status });
+      return {
+        ...outcome.body,
+        status: canonical && outcome.created ? 201 : 200,
+        ...(canonical ? { canonicalLocation: outcome.location } : {}),
+      };
+    };
     return {
       getConfig: () =>
         boundary(() =>
@@ -146,10 +116,10 @@ export async function createStartAdminControlReader(options: { database?: Db } =
             input,
             'invalid journal query',
           );
-          const requested = query.limit === undefined ? 100 : Number(query.limit);
-          if (!Number.isInteger(requested) || requested <= 0)
-            reject('limit must be a positive integer', 400);
-          const limit = Math.min(requested, 200);
+          const parsedLimit = domain.parseTraitJournalLimit(query.limit);
+          if (!parsedLimit.ok)
+            throw Response.json(parsedLimit.body, { status: parsedLimit.status });
+          const { limit } = parsedLimit;
           const page = await withDb((db) =>
             domain.getTraitJournalPage(db, id, { limit, cursor: query.cursor }),
           );

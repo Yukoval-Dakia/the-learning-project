@@ -4,6 +4,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, job_events, tool_operation } from '@/db/schema';
 import {
   COPILOT_ASK_ACTIONS,
+  COPILOT_CHIP_TRIGGER_ACTION,
   COPILOT_REPLY_ACTION,
   COPILOT_USER_ASK_ACTION,
 } from '@/kernel/events/copilot-actions';
@@ -12,6 +13,7 @@ import { writeJobEvent } from '@/kernel/job-events';
 import type { CopilotPublicProse } from '../public-prose-contract';
 import { writeCopilotReply } from './conversation-writes';
 import { acquireCopilotExecutionSettlementLock } from './copilot-run-coordination';
+import { findPersistedDurableReply } from './copilot-run-outcome';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
@@ -22,7 +24,7 @@ import {
   readCopilotDurableAcceptanceByRunId,
   withCopilotDurableDispatchLock,
 } from './durable-dispatch';
-import { MATERIALIZING_TOOL_NAMES } from './materializing-tools';
+import { MATERIALIZING_TOOL_NAMES, durableCheckpointPayload } from './materializing-tools';
 import type { CopilotReplyFinalizationReceipt, PreparedCopilotReply } from './reply-finalization';
 import { cancelSubagentsForParentTx } from './subagent-mailbox';
 
@@ -115,6 +117,63 @@ export async function persistCopilotRunCancellationMarker(
     error,
     ...(args.checkpointSafe ? {} : { checkpointSafe: false }),
   };
+}
+
+export type WriteJobEventFn = (
+  tx: Db | Tx,
+  input: Parameters<typeof writeJobEvent>[1],
+) => Promise<number>;
+
+/**
+ * The one writer of the pre-start cancelled terminal: closing marker (once per
+ * run), then FAILED(cancelled_before_start). API Stop and the worker's two
+ * pre-fence gates all land here, so the frame is identical on every path and its
+ * public prose is read back from the persisted marker, the same source repair
+ * uses. Callers hold the dispatch lock; the
+ * settlement lock is taken here (re-entrant when API Stop already holds it).
+ */
+export async function writeCancelledBeforeStartTerminal(
+  tx: Tx,
+  runId: string,
+  options: {
+    beforeTerminal?: (tx: Tx) => Promise<void>;
+    writeJobEventFn?: WriteJobEventFn;
+  } = {},
+): Promise<void> {
+  await acquireCopilotExecutionSettlementLock(tx, runId);
+  const [ask] = await tx
+    .select({ sessionId: event.session_id, action: event.action })
+    .from(event)
+    .where(eq(event.id, runId))
+    .limit(1);
+  if (
+    ask?.sessionId &&
+    (COPILOT_ASK_ACTIONS as readonly string[]).includes(ask.action) &&
+    !(await findPersistedDurableReply(tx, runId))
+  ) {
+    await persistCopilotRunCancellationMarker(tx, {
+      runId,
+      sessionId: ask.sessionId,
+      actorRef: ask.action === COPILOT_CHIP_TRIGGER_ACTION ? 'agent:copilot_chip' : 'agent:copilot',
+      checkpointSafe: ask.action === COPILOT_USER_ASK_ACTION,
+    });
+  }
+  await options.beforeTerminal?.(tx);
+  const marker = await findPersistedDurableReply(tx, runId);
+  const write = options.writeJobEventFn ?? writeJobEvent;
+  await write(tx, {
+    business_table: COPILOT_RUN_TABLE,
+    business_id: runId,
+    event_type: COPILOT_RUN_EVENTS.FAILED,
+    payload: {
+      reason: 'cancelled',
+      cancelled_before_start: true,
+      ...(marker?.publicProse
+        ? { public_prose: marker.publicProse, reply_md: marker.replyMd }
+        : {}),
+      ...(await durableCheckpointPayload(tx, runId)),
+    },
+  });
 }
 
 export interface CopilotRunCancellationControl {
@@ -312,7 +371,7 @@ export async function requestCopilotRunCancellation(
     // A QUEUED row alone is not enough: bind the public handle back to the
     // canonical input event and its fixed conversation session.
     const roots = await tx
-      .select({ id: event.id, action: event.action })
+      .select({ id: event.id })
       .from(event)
       .where(
         and(
@@ -323,7 +382,6 @@ export async function requestCopilotRunCancellation(
       )
       .limit(1);
     if (roots.length === 0) throw new ApiError('not_found', 'copilot run not found', 404);
-    const typedAsk = roots[0]?.action === COPILOT_USER_ASK_ACTION;
 
     const events = await tx
       .select({
@@ -381,32 +439,11 @@ export async function requestCopilotRunCancellation(
     const executionStarted = events.some(
       (item) => item.event_type === COPILOT_RUN_EVENTS.EXECUTION_STARTED,
     );
-    const queued = events.find((item) => item.event_type === COPILOT_RUN_EVENTS.QUEUED);
-    const actorRef =
-      queued?.payload.triggered_by === 'chip' ? 'agent:copilot_chip' : 'agent:copilot';
     if (hasCancelRequest(events)) {
       // A pre-fence orphan request can only come from legacy/manual data: a
       // normal endpoint call writes request + terminal in this transaction.
       if (!executionStarted) {
-        const marker = await persistCopilotRunCancellationMarker(tx, {
-          runId,
-          sessionId: acceptance.sessionId,
-          actorRef,
-          checkpointSafe: typedAsk,
-        });
-        await writeJobEvent(tx, {
-          business_table: COPILOT_RUN_TABLE,
-          business_id: runId,
-          event_type: COPILOT_RUN_EVENTS.FAILED,
-          payload: {
-            reason: 'cancelled',
-            cancelled_before_start: true,
-            ...(marker.publicProse
-              ? { public_prose: marker.publicProse, reply_md: marker.replyMd }
-              : {}),
-            ...(typedAsk ? { checkpoint_event_id: runId } : {}),
-          },
-        });
+        await writeCancelledBeforeStartTerminal(tx, runId);
         return { status: 'cancelled' as const, sessionId: acceptance.sessionId };
       }
       return { status: 'already_requested' as const, sessionId: acceptance.sessionId };
@@ -426,25 +463,7 @@ export async function requestCopilotRunCancellation(
 
     // The shared dispatch lock makes this atomic with the paid-execution
     // fence: once this commits, the worker cannot enter model/tool execution.
-    const marker = await persistCopilotRunCancellationMarker(tx, {
-      runId,
-      sessionId: acceptance.sessionId,
-      actorRef,
-      checkpointSafe: typedAsk,
-    });
-    await writeJobEvent(tx, {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: runId,
-      event_type: COPILOT_RUN_EVENTS.FAILED,
-      payload: {
-        reason: 'cancelled',
-        cancelled_before_start: true,
-        ...(marker.publicProse
-          ? { public_prose: marker.publicProse, reply_md: marker.replyMd }
-          : {}),
-        ...(typedAsk ? { checkpoint_event_id: runId } : {}),
-      },
-    });
+    await writeCancelledBeforeStartTerminal(tx, runId);
     return { status: 'cancelled' as const, sessionId: acceptance.sessionId };
   });
 

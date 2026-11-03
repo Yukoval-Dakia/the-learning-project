@@ -59,3 +59,31 @@ export async function selectAsksWithMaterializingToolCall(
     ...attachments.map((row) => row.id),
   ]);
 }
+
+/**
+ * Revert-anchor policy shared by live output and repair: only an ask-only turn with
+ * no materializing tool call gets `checkpoint_event_id`; a failed probe suppresses
+ * the anchor instead of guessing.
+ */
+export async function durableCheckpointPayload(
+  db: Db | Tx,
+  runId: string,
+): Promise<Record<string, string>> {
+  let turnMaterialized: boolean;
+  try {
+    const [root] = await db
+      .select({ action: event.action })
+      .from(event)
+      .where(eq(event.id, runId))
+      .limit(1);
+    if (root?.action !== COPILOT_USER_ASK_ACTION) return {};
+    turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [runId])).has(runId);
+  } catch (probeErr) {
+    console.error('[copilot_run] materializing-tool probe failed; suppressing revert anchor', {
+      runId,
+      error: probeErr,
+    });
+    turnMaterialized = true;
+  }
+  return turnMaterialized ? {} : { checkpoint_event_id: runId };
+}
