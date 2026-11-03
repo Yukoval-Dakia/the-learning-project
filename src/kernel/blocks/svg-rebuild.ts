@@ -288,13 +288,39 @@ export function rebuildSvgFigure(source: string): SvgRebuildResult {
     out.push(`<${local}${attrs.length > 0 ? ` ${attrs.join(' ')}` : ''}>`);
   });
 
+  parser.on('comment', () => {
+    // Out-of-allowlist content is a typed issue, never silently dropped.
+    issues.push(
+      issueAt(parser, {
+        code: 'svg_element_forbidden',
+        detail: 'comments are not allowed in figures',
+      }),
+    );
+  });
+
   parser.on('text', (text) => {
     if (depth > 0) out.push(esc(text));
+    else if (text.trim() !== '') {
+      issues.push(
+        issueAt(parser, {
+          code: 'svg_parse_error',
+          detail: 'text outside the root <svg> is not allowed',
+        }),
+      );
+    }
   });
 
   parser.on('cdata', (data) => {
     // CDATA inside a figure is only ever label text; escape it like text.
     if (depth > 0) out.push(esc(data));
+    else if (data.trim() !== '') {
+      issues.push(
+        issueAt(parser, {
+          code: 'svg_parse_error',
+          detail: 'CDATA outside the root <svg> is not allowed',
+        }),
+      );
+    }
   });
 
   parser.on('closetag', (tag) => {

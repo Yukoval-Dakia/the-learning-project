@@ -209,7 +209,7 @@ export function createComposeBlockTool(
           status: 'unavailable',
           issues: [
             {
-              code: 'too_large',
+              code: 'block_limit_exceeded',
               path: '',
               detail: `a reply carries at most ${BLOCKS_PER_REPLY_MAX} ready blocks`,
             },

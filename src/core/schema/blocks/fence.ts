@@ -12,7 +12,7 @@ export const BLOCK_REF_PATTERN = /^blk_[0-9a-f]{32}$/;
  * of the ref token: any `block:` image ref that fails lookup is dropped at
  * commit (draft refs must never persist), not left as a literal.
  */
-export const BLOCK_PLACE_PATTERN = /!\[[^\]]{0,400}\]\(block:([A-Za-z0-9_-]{1,80})\)/g;
+export const BLOCK_PLACE_PATTERN = /!\[(.{0,400}?)\]\(block:([A-Za-z0-9_-]{1,80})\)/g;
 
 /** Deterministic JSON (sorted keys) — the bytes the digest is computed over. */
 export function canonicalBlockJson(value: unknown): string {

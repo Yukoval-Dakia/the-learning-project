@@ -40,12 +40,11 @@ the load-bearing repo decisions and what they supersede.
 
 ## Supersedes
 
-- **ADR-0033** (ephemeral/present-primary-view presentation intent): the
-  primary-view *nomination* mechanism stays, but as the general-purpose
-  visual-carrier story it is superseded — structured visuals now live in
-  `tlp-block` blocks bound to the tool trace, not in reply text markers or
-  ephemeral HTML. `ephemeral_html` remains for the interactive sandbox path
-  until slice 4 migrates it to `interactive` blocks + `sbh_` assets.
+- **ADR-0033** (sandboxed HTML artifact / `ephemeral_html` presentation
+  path): superseded as the carrier for structured visuals — generated
+  diagrams and figures now live in `tlp-block` blocks bound to the tool
+  trace. `ephemeral_html` remains for the interactive sandbox path until
+  slice 4 migrates it to `interactive` blocks + `sbh_` assets.
 - **ADR-0061** (copilot presentation intent control): superseded for block
   carriers — progressive `block_draft`/`block_ready` frames and commit-time
   fence substitution replace marker-in-prose presentation of generated
@@ -61,3 +60,11 @@ the load-bearing repo decisions and what they supersede.
   first `compose_block` diagram/figure call; migrate bundle excludes both.
 - Figure assets are write-once/content-addressed; unreferenced assets from
   failed runs are retained as evidence (no compensation delete).
+
+## Known limitations
+
+- The lazy jsdom/mermaid install writes browser globals (`window`,
+  `document`, `navigator`, …) onto the worker's `globalThis`, where they are
+  process-global for the life of the process. A `worker_threads` isolation
+  lane was considered and deferred; if a second consumer of globals emerges
+  or isolation evidence is required, revisit before widening mermaid use.

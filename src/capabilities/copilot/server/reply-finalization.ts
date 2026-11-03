@@ -366,7 +366,12 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         stripCopilotInternalComments,
       );
       const disclosure = proposalDisclosure(trace);
-      const withDisclosure = applyProposalDisclosure(correction.reply, disclosure);
+      // YUK-1548 — only compose_block may mint tlp-block fences. Neutralise
+      // hand-written ones before substitution (render as inert code).
+      const withDisclosure = applyProposalDisclosure(correction.reply, disclosure).replace(
+        /^[^\S\n]*```tlp-block[^\S\n]*$/gm,
+        '```text',
+      );
       // YUK-1548 §5 — resolve `![alt](block:<ref>)` placements against the
       // successful root compose_block calls bound to this trace, substitute
       // canonical tlp-block fences, and append never-placed blocks in order.
