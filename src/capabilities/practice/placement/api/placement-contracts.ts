@@ -49,6 +49,13 @@ export const PlacementQuestionSchema = z.object({
   questionId: z.string(),
   score: z.number(),
   scoreKind: z.enum(['mfi', 'klp', 'klp_grid']),
+  /**
+   * The question's subject render notation (`katex` for math), resolved on the server the
+   * same way as the question/paper detail reads. Without it the page skips math parsing and
+   * shows `$…$` source (YUK-1406). Optional on the wire type for locally built results; the
+   * backend always emits it.
+   */
+  notation: z.string().nullable().optional(),
   assessment: z.object({
     issuance_id: z.string(),
     evaluation_group_id: z.string(),
