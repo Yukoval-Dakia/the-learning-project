@@ -24,7 +24,7 @@ import { FsrsStateSchema } from '@/core/schema/event/blocks';
 import { and, eq } from 'drizzle-orm';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { writeAttemptSnapshotBrackets } from '@/capabilities/practice/server/attempt-snapshot';
+import { writeAttemptSnapshotBrackets } from '@/capabilities/practice/settlement/server/attempt-snapshot';
 import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type {

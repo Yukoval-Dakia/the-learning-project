@@ -1,5 +1,9 @@
 import type { Db } from '@/db/client';
-import { findExistingRateEvent, writeProposalRateEvent } from '@/kernel/proposals/applier-helpers';
+import {
+  acquireProposalDecisionLock,
+  findExistingRateEvent,
+  writeProposalRateEvent,
+} from '@/kernel/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import type {
   ProposalAcceptApplier,
@@ -15,7 +19,6 @@ import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
 } from '@/kernel/records/mistake-variant-facts';
-import { acceptJudgeRetractionProposal } from '../../server/judge-retraction-applier';
 import {
   type PracticeApplierOpts,
   acceptQuestionDraftProposal,
@@ -30,6 +33,7 @@ export const {
   variantQuestionProposalDismissApplier,
   variantQuestionProposalRetractApplier,
 } = createPracticeProposalLifecycle({
+  acquireProposalDecisionLock,
   findExistingRateEvent,
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
@@ -124,23 +128,6 @@ export const questionEditProposalAcceptApplier: ProposalAcceptApplier = async (
 ) =>
   wrap(
     await acceptQuestionEditProposal(
-      db as Db,
-      input.proposalId,
-      inboxView(input),
-      runtimeOptions(input, runtime),
-    ),
-  );
-
-// judge_retraction accept：判分纠错提案（evaluation 目标走
-// appeal/rejudge/CAS 激活 + settlement replay；legacy judge-event 目标写
-// CorrectEvent）。真身在 judge-retraction-applier.ts。
-export const judgeRetractionProposalAcceptApplier: ProposalAcceptApplier = async (
-  db,
-  input,
-  runtime,
-) =>
-  wrap(
-    await acceptJudgeRetractionProposal(
       db as Db,
       input.proposalId,
       inboxView(input),

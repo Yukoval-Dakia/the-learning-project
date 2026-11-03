@@ -53,6 +53,7 @@ import {
   revisionRowToContract,
 } from '@/kernel/records/assessment-issuance';
 import { snapshotAssessmentLearningScope } from '../judge/evaluate-submission';
+import { readNativeJudgeSettled } from '../judge-run-observation';
 import { snapshotIssuanceAssistance } from './assistance';
 
 /** 提交 receipt 事件 action 名。 */
@@ -159,6 +160,8 @@ export interface IssuanceState {
     response_set: ResponseSetT;
     group_evidence: GroupEvidenceT[];
   }>;
+  /** 最新已接收提交的判分进度（与 judge_run 轮询同一投影，同步/异步同形）；未判完 = 缺省。 */
+  settled?: Awaited<ReturnType<typeof readNativeJudgeSettled>>;
 }
 
 // ---------- 内部工具 ----------
@@ -639,7 +642,8 @@ export async function saveSubmission(
 
 /**
  * 单发题状态快照：issuance（冻结坐标）+ practice_dto（冻结题面重建）+
- * admission_generation_observed（发题事件读取）+ live draft + 已接收提交列表。
+ * admission_generation_observed（发题事件读取）+ live draft + 已接收提交列表 +
+ * 最新提交的判分进度（只读永久判分证据）。
  * 恢复 promise 的真相源 —— draft=null 即“服务器没有未保存草稿”。
  */
 export async function getIssuanceState(
@@ -721,6 +725,17 @@ export async function getIssuanceState(
       ? submissions.length === 0
       : !submissionGroups.has(draftRow.evaluation_group_ref));
 
+  // The verdict is an add-on: an unreadable judge record must not hide the question and draft,
+  // so it degrades to "submitted" (no settled) the way the poll read degrades to unavailable.
+  let settled: Awaited<ReturnType<typeof readNativeJudgeSettled>>;
+  if (submissions[0]) {
+    try {
+      settled = await readNativeJudgeSettled(db, submissions[0].submission_id);
+    } catch (err) {
+      console.error('[getIssuanceState] settled verdict unreadable; omitting', err);
+    }
+  }
+
   return {
     issuance,
     practice_dto,
@@ -743,6 +758,7 @@ export async function getIssuanceState(
       response_set: row.response_set,
       group_evidence: row.group_evidence,
     })),
+    ...(settled ? { settled } : {}),
   };
 }
 

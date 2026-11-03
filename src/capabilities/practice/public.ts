@@ -12,7 +12,6 @@ export { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope'
 // Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
 // bundle on the @kernel + @db chain with no SDK import.
 export { issueAssessment } from '@/kernel/records/assessment-issuance';
-export { IssueAssessmentBodySchema } from './api/assessment-contracts';
 export {
   type FailureLearningBossSend,
   type ProposeFailureVariantInput,
@@ -75,13 +74,14 @@ export {
   judgeRouter,
   judgeRouterV2,
   previewFormalAttempt,
-  projectIssuanceResult,
-  projectReviewAnswerResponse,
   readJudgeRunStatus,
   readPermanentJudgeRun,
   reconcileJudgeAttempts,
   recordFormalAttemptCapture,
   recordJudgeOperationalReceipt,
+  requestAssessmentIssuance,
+  requestResponseDraftSave,
+  requestReviewAnswer,
   reserveJudgeOperationalDelivery,
   resolveQuestionJudgeRoute,
   revealFrozenStudyReference,
@@ -89,7 +89,6 @@ export {
   saveResponseDraft,
   saveSubmission,
   sealJudgeEngineInventory,
-  submitReviewAnswer,
   validateJudgeEngineInventory,
   withdrawCapturedOccurrence,
 } from './grading/public';
@@ -157,10 +156,10 @@ export {
   scheduleReview,
   updatePracticeStreamItem,
 } from './scheduling/public';
-export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
 // practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
+export { writeAttemptSnapshotBrackets } from './settlement/public';
 export {
   DEDUP_OVERLAP_THRESHOLD,
   claimHttpSourceDuplicate,
@@ -185,7 +184,7 @@ export async function installPracticeHostOperations(): Promise<void> {
     import('@/kernel/read-models/review-due'),
     import('@/kernel/tools/learning-content-validation'),
     import('@/kernel/records/conversation-confirmation-assessment'),
-    import('./grading/public'),
+    import('./settlement/public'),
     loadReviewDueReader(),
     loadLearningContentValidator(),
     import('./server/conversation-confirmation'),
@@ -206,7 +205,6 @@ export async function installPracticeHostOperations(): Promise<void> {
 export { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
 export type { PlacementVerificationAuthority, SupplyTraceV1T } from '@/kernel/supply-contracts';
 export { withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
-export { type CreateAttemptBody, CreateAttemptBodySchema } from './api/contracts';
 // public ports repointed from central deep imports.
 export type { DispatchResult, PlacementCostComponentKind } from './supply/public';
 // Jyeoo agent-tool public surface: candidate fetch shared with the CLI and deterministic
@@ -259,9 +257,7 @@ export { loadCoverageLattice, submitQuestionTool } from './supply/public';
 // store_sourced_question is folded into submit_question (the old tool is no longer
 // registered or granted); the function-level compat export remains.
 
-export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
-export { CreateReviewSessionBody } from './api/contracts';
-export { createPracticeAppeal } from './server/appeal-operation';
+export { createPracticeAppeal } from './settlement/public';
 export const recoverWebSupplies: typeof import('./supply/public').recoverWebSupplies = async (
   ...args
 ) => (await import('./supply/public')).recoverWebSupplies(...args);
@@ -275,7 +271,6 @@ export const runQuestionSupplyNightly: typeof import('./supply/public').runQuest
 export const recoverHeldServingRechecks: typeof import('./question-bank/public').recoverHeldServingRechecks =
   async (...args) => (await import('./question-bank/public')).recoverHeldServingRechecks(...args);
 export {
-  CreatePlacementSessionBodySchema,
   PlacementOrphanStateError,
   type PlacementProfileResponse,
   UpdatePlacementSessionBodySchema,

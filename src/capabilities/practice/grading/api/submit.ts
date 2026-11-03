@@ -1,14 +1,8 @@
 // Compatibility HTTP adapter; domain admission and submission live in review-operation.
 import { db } from '@/db/client';
-import {
-  ApiError,
-  canonicalResourceResponse,
-  deprecatedRouteResponse,
-  errorResponse,
-} from '@/kernel/http';
-import { CreateAttemptBodySchema } from '../../api/contracts';
-import { projectReviewAnswerResponse } from '../server/review-answer-response';
-import { submitReviewAnswer } from '../server/review-operation';
+import { canonicalResourceResponse, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
+import type { projectReviewAnswerResponse } from '../server/review-answer-response';
+import { requestReviewAnswer } from '../server/review-operation';
 
 /**
  * EXPLICIT marker for "this response is a durable-judge divert". `createAttemptResource`
@@ -39,16 +33,7 @@ function durablePendingResponse(responseBody: DurableJudgePendingResponse): Resp
 
 export async function createAttempt(req: Request): Promise<Response> {
   try {
-    const parsed = CreateAttemptBodySchema.safeParse(await req.json().catch(() => null));
-    if (!parsed.success) {
-      const message = parsed.error.issues
-        .map((i) => `${i.path.join('.')}: ${i.message}`)
-        .join('; ');
-      throw new ApiError('validation_error', message, 400);
-    }
-    const body = parsed.data;
-    const result = await submitReviewAnswer(db, body, { signal: req.signal });
-    const response = projectReviewAnswerResponse(body, result);
+    const response = await requestReviewAnswer(db, () => req.json(), { signal: req.signal });
     if (response.kind === 'pending') return durablePendingResponse(response.body);
     return Response.json(response.body);
   } catch (err) {

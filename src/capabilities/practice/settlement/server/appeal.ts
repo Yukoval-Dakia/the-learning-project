@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import { ActivateEvaluationIntent, EvaluationProvenance } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
@@ -6,6 +6,11 @@ import { evaluation, evaluation_effective_head, event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
+import {
+  lockEvaluationCorrection,
+  lockNativeAppeal,
+  lockNativeResolution,
+} from '@/kernel/locks/settlement';
 import {
   EvaluateSubmissionError,
   activateSubmissionCandidate,
@@ -23,7 +28,7 @@ export async function createNativeAppeal(
     key: input.idempotency_key ?? canonicalHash(reason),
   })}`;
   return database.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${appealId}))`);
+    await lockNativeAppeal(tx, appealId);
     const [existing] = await tx.select().from(event).where(eq(event.id, appealId)).limit(1);
     if (existing) {
       if (existing.payload.reason_md !== reason)
@@ -102,7 +107,7 @@ export async function requestEvaluationCorrection(
     proposal: input.proposal_event_id,
   })}`;
   return database.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${correctionId}))`);
+    await lockEvaluationCorrection(tx, correctionId);
     const [existing] = await tx.select().from(event).where(eq(event.id, correctionId)).limit(1);
     if (existing) {
       if (existing.payload.reason_md !== reason)
@@ -173,9 +178,9 @@ function isPermanentRejudgeConflict(error: unknown): boolean {
 
 export async function rejudgeNativeAppeal(database: Db, appeal: typeof event.$inferSelect) {
   const resolutionId = `evt_native_resolution_${canonicalHash(appeal.id)}`;
-  const record = async (tx: Db | Tx, disposition: string, evaluationId?: string) => {
+  const record = async (tx: Tx, disposition: string, evaluationId?: string) => {
     // Used with the activation transaction, or alone for an explicit held result.
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${resolutionId}))`);
+    await lockNativeResolution(tx, resolutionId);
     const [existing] = await tx
       .select({ id: event.id })
       .from(event)

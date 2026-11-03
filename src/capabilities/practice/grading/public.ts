@@ -12,11 +12,14 @@ export {
   previewFormalAttempt,
   recordFormalAttemptCapture,
 } from './server/assessment/attempt';
-export { projectIssuanceResult } from './server/assessment/issue-response';
 export type {
   NativeAttemptDispatchOptions,
   NativeAttemptDispatchPort,
 } from './server/assessment/native-attempt-dispatch-port';
+export {
+  requestAssessmentIssuance,
+  requestResponseDraftSave,
+} from './server/assessment/request';
 export {
   loadFrozenStudyContext,
   loadFrozenStudyImages,
@@ -105,17 +108,18 @@ export { ratingFromCoarseOutcome } from './server/judge-rating';
 export { readJudgeRunPermanent } from './server/judge-run-observation';
 export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
 export { installModelAdmissionPins } from './server/model-admission-pins';
-export { projectReviewAnswerResponse } from './server/review-answer-response';
 export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-operation';
 
 export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =
   async (...args) => (await import('./server/review-operation')).submitReviewAnswer(...args);
-export const captureReviewAnswerBinding: typeof import('./server/review-operation').captureReviewAnswerBinding =
-  async (...args) =>
-    (await import('./server/review-operation')).captureReviewAnswerBinding(...args);
-export const consumeReviewAnswerBinding: typeof import('./server/review-operation').consumeReviewAnswerBinding =
-  async (...args) =>
-    (await import('./server/review-operation')).consumeReviewAnswerBinding(...args);
+export const requestReviewAnswer: typeof import('./server/review-operation').requestReviewAnswer =
+  async (...args) => (await import('./server/review-operation')).requestReviewAnswer(...args);
+export {
+  APPEAL_EXECUTION_BINDING_ACTION,
+  AppealExecutionBinding,
+  appealExecutionBindingId,
+} from './server/assessment/appeal-execution';
+export type { ReviewAnswerReceipt } from './tools/submit-review-answer';
 
 export async function installInterventionDiagnosticLeaves(): Promise<void> {
   const [{ installInterventionDiagnosticLeaves: install }, { interventionDiagnosticLeaves }] =

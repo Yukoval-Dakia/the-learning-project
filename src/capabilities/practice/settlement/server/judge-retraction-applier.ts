@@ -23,7 +23,15 @@ import {
 } from '@/kernel/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { recordProposalDecisionSignal } from '@/kernel/proposals/signals';
-import type { PracticeApplierOpts } from '../question-bank/public';
+// Narrow applier options: settlement depends on the kernel proposal engine, not
+// question-bank's applier options (which mix in enqueueVariantVerify). The
+// dispatch shell's AcceptAiProposalOpts stays structurally assignable.
+export interface JudgeRetractionApplierOpts {
+  decision?: string;
+  user_note?: string;
+  // swappable rejudge enqueue (DB tests inject a no-op or vi.fn).
+  enqueueRejudge?: (appealEventId: string) => Promise<void>;
+}
 
 // ====================================================================
 // judge_retraction accept applier（判分纠错提案的真身）
@@ -141,7 +149,7 @@ async function applyManualAssertCorrection(
     expectedHead: { effectiveEvaluationId: string | null; generation: number };
   },
 ): Promise<{ correctedEvaluationId: string; disposition: string }> {
-  const { activateSubmissionCandidate, evaluateAttempt } = await import('../grading/public');
+  const { activateSubmissionCandidate, evaluateAttempt } = await import('../../grading/public');
 
   const [original] = await db
     .select()
@@ -299,7 +307,7 @@ export async function acceptJudgeRetractionProposal(
   db: Db,
   proposalId: string,
   proposal: ProposalInboxRow,
-  opts: PracticeApplierOpts,
+  opts: JudgeRetractionApplierOpts,
 ): Promise<JudgeRetractionAcceptResult> {
   ensureAcceptOnly('judge_retraction', opts);
   const change = asPlainRecord(proposal.payload.proposed_change);
@@ -354,7 +362,7 @@ export async function acceptJudgeRetractionProposal(
     const existingRate = await existingAcceptRate(db, proposalId);
     const existingCorrection = await findProposalCorrectionEvent(db, proposalId);
 
-    const { requestEvaluationCorrection } = await import('./assessment/appeal');
+    const { requestEvaluationCorrection } = await import('./appeal');
     const correctionEventId =
       existingCorrection ??
       (await requestEvaluationCorrection(db, {

@@ -8,7 +8,5 @@ export function copilotConfigEffectiveFacts(): ConfigEffectiveFacts {
   return {
     COPILOT_NUDGE_DAILY_MAX: { value: nudge.dailyMax },
     COPILOT_NUDGE_EXPIRES_HOURS: { value: nudge.expiresHours },
-    COPILOT_NUDGE_STREAK_N: { value: nudge.streakN },
-    COPILOT_NUDGE_KC_COOLDOWN_HOURS: { value: nudge.kcCooldownHours },
   };
 }

@@ -10,14 +10,17 @@ import {
   lockEventDerivationSources,
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
+import { enqueueMemoryBriefRegen } from '@/kernel/memory-brief-regen';
 import { REFLECTION_BRIEF_SCOPE_KEYS } from '@/kernel/nightly-eligibility';
+import {
+  LEARNING_ACTIVITY_ACTIONS,
+  resolveLearningEventSubjects,
+} from '@/kernel/read-models/learner-activity';
 import { latestPurposeWithdrawal } from '@/kernel/read-models/purpose-change';
 import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
 import {
-  QUALIFYING_ACTIONS,
   listActiveSubjectsSinceRefresh,
   loadSubjectBriefEvents,
-  resolveQualifyingEventSubjects,
   selectSubjectsForRun,
   subjectScopeHasNewEvidence,
 } from './active-subjects';
@@ -78,7 +81,6 @@ const BRIEF_REFRESH_LOOKBACK_DAYS = 30;
 const SUBJECT_SCOPE_PREFIX = 'subject:';
 
 export const MEMORY_EVENT_INGEST_QUEUE = 'memory_event_ingest';
-export const MEMORY_BRIEF_REGEN_QUEUE = 'memory_brief_regen';
 export const MEMORY_BRIEF_SWEEP_QUEUE = 'memory_brief_sweep';
 // Outbox poller runs at the pg-boss cron minimum (one minute); the hourly recovery
 // sweep catches whatever a restart or an oversized burst leaves behind.
@@ -122,7 +124,6 @@ export const MEMORY_INFRA_SCHEDULES: readonly MemoryScheduleDeclaration[] = [
 ];
 
 const OUTBOX_POLL_BATCH = 50;
-const REGEN_SINGLETON_SECONDS = 6 * 60;
 // Cap the per-event brief-regen fan-out: affected scopes are unbounded, so one bulk
 // or import event could enqueue hundreds of jobs. A truncated tail is acceptable;
 // the daily sweep partially backstops scopes that already have a brief row.
@@ -227,25 +228,6 @@ export async function enqueueEventMemoryIngest(
   options?: object,
 ) {
   await boss.send(MEMORY_EVENT_INGEST_QUEUE, { event_id: eventId }, options);
-}
-
-export async function enqueueBriefRegen(
-  boss: Pick<BossLike, 'send'>,
-  scopeKey: string,
-  // Optional sweep timestamp: a never-built subject floors its reload at
-  // `now - lookbackDays`. Threading the sweep's now closes the race where an event
-  // near the edge is detected at T but ages out by regen time. Global jobs pass none.
-  now?: Date,
-) {
-  await boss.send(
-    MEMORY_BRIEF_REGEN_QUEUE,
-    now ? { scope_key: scopeKey, now: now.toISOString() } : { scope_key: scopeKey },
-    {
-      singletonKey: `memory.regen.${scopeKey}`,
-      singletonSeconds: REGEN_SINGLETON_SECONDS,
-      singletonNextSlot: true,
-    },
-  );
 }
 
 // The reconcile payload threads the extracted text and created_ms alongside the id.
@@ -401,7 +383,7 @@ export function buildMemoryEventIngestHandler(
       const regenFailures: { scope: string; reason: unknown }[] = [];
       for (const scopeKey of regenScopes) {
         try {
-          await enqueueBriefRegen(boss, scopeKey);
+          await enqueueMemoryBriefRegen(boss, scopeKey);
         } catch (err) {
           regenFailures.push({ scope: scopeKey, reason: err });
         }
@@ -416,24 +398,14 @@ export function buildMemoryEventIngestHandler(
       // Core learning events never tag `subject:*` in affected_scopes, so the
       // fan-out above cannot refresh a per-subject brief. Resolve the event to its
       // canonical subject and enqueue that scope, moving freshness from the nightly
-      // sweep to minutes. The 6-minute singleton collapses bursts. Best-effort: a
+      // sweep to hours. The subject singleton slot collapses bursts. Best-effort: a
       // bridge failure must not make the ingest job retry; the sweep backstops it.
-      if ((QUALIFYING_ACTIONS as readonly string[]).includes(row.action)) {
+      if ((LEARNING_ACTIVITY_ACTIONS as readonly string[]).includes(row.action)) {
         try {
-          const subjectByEventId = await resolveQualifyingEventSubjects(db, [
-            {
-              id: row.id,
-              action: row.action,
-              subject_kind: row.subject_kind,
-              subject_id: row.subject_id,
-              outcome: null,
-              payload: row.payload,
-              created_at: row.created_at,
-            },
-          ]);
+          const subjectByEventId = await resolveLearningEventSubjects(db, [row], 'default_subject');
           const subjectId = subjectByEventId.get(row.id);
           if (subjectId) {
-            await enqueueBriefRegen(boss, `${SUBJECT_SCOPE_PREFIX}${subjectId}`);
+            await enqueueMemoryBriefRegen(boss, `${SUBJECT_SCOPE_PREFIX}${subjectId}`);
           }
         } catch (err) {
           console.warn(
@@ -855,7 +827,7 @@ export function buildMemoryBriefSweepHandler(
       if (reflectionOff && (REFLECTION_BRIEF_SCOPE_KEYS as readonly string[]).includes(scopeKey)) {
         continue;
       }
-      await enqueueBriefRegen(boss, scopeKey);
+      await enqueueMemoryBriefRegen(boss, scopeKey);
     }
 
     // Activity-gated subject layer: subjects with evidence newer than their brief
@@ -869,7 +841,7 @@ export function buildMemoryBriefSweepHandler(
       activeSubjects,
       BRIEF_REFRESH_BUDGET.maxSubjectsPerRun,
     )) {
-      await enqueueBriefRegen(boss, subject.scopeKey, now);
+      await enqueueMemoryBriefRegen(boss, subject.scopeKey, now);
     }
   };
 }

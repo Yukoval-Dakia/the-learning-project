@@ -216,11 +216,47 @@ export function zodToJsonSchemaCompat(
 }
 
 /**
+ * Tuple arrays (`z.tuple`) compile to draft-07 `items: [...]` + `additionalItems`
+ * (or `prefixItems`). mimo-v2.6-pro rejects the whole request with 400
+ * "Invalid request parameters" when any tool carries that form (YUK-1718: every
+ * Copilot turn failed from 10-22 because search_bank / file_bank_gap gained a
+ * `range` tuple). The wire keeps a single-schema `items` with the same length
+ * bounds; argument validation still parses through the original Zod tuple.
+ */
+function flattenTupleItems(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(flattenTupleItems);
+  if (!isJsonObject(value)) return value;
+  const node = Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [key, flattenTupleItems(nested)]),
+  );
+  const tuple = Array.isArray(node.prefixItems)
+    ? node.prefixItems
+    : Array.isArray(node.items)
+      ? node.items
+      : undefined;
+  if (!tuple) return node;
+  const { prefixItems: _prefix, additionalItems: _additional, ...rest } = node;
+  const unique = tuple.filter(
+    (item, index) =>
+      tuple.findIndex((other) => JSON.stringify(other) === JSON.stringify(item)) === index,
+  );
+  const items = unique.length === 1 ? unique[0] : unique.length === 0 ? {} : { anyOf: unique };
+  return sortSchemaKeys({
+    ...rest,
+    items,
+    minItems: rest.minItems ?? tuple.length,
+    maxItems: rest.maxItems ?? tuple.length,
+  });
+}
+
+/**
  * Tool-parameters wire contract: providers reject roots without type:"object".
  * A union of object branches gets the root type; any other root is a contract
- * violation and throws instead of being masked as an empty object.
+ * violation and throws instead of being masked as an empty object. Tuple items
+ * are flattened to the single-schema form every provider accepts.
  */
-export function ensureToolParametersObjectRoot(schema: JsonObject): JsonObject {
+export function ensureToolParametersObjectRoot(input: JsonObject): JsonObject {
+  const schema = flattenTupleItems(input) as JsonObject;
   if (schema.type === 'object') return schema;
   const union = schema.anyOf ?? schema.oneOf;
   if (

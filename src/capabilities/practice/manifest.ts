@@ -3,7 +3,6 @@ import { API_ERROR_RESPONSES, ApiErrorResponseSchema } from '@/kernel/http-contr
 import { type CapabilityManifest, defineCapability } from '@/kernel/manifest';
 import { nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
-import { AppealResponseSchema, CreateAppealBodySchema } from './api/contracts';
 import { CoverageLatticeResponseSchema } from './api/coverage-lattice-contracts';
 import {
   QuizGenTriggerAcceptedSchema,
@@ -71,15 +70,6 @@ export const practiceCapability = defineCapability({
     // 段由 server/app.ts 的 toHonoPath 转 :id/:sid 并把捕获参数透传 handler。
     // 注：/api/practice/[id]/answer 实际是 POST（P2a 声明误写 PUT，壳与包从来是 POST）。
     routes: [
-      {
-        method: 'POST',
-        path: '/api/appeals',
-        operationId: 'createAppeal',
-        request: { body: CreateAppealBodySchema },
-        responses: { 201: AppealResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 201,
-        load: () => import('./api/appeal').then((m) => m.createAppealResource),
-      },
       {
         method: 'POST',
         path: '/api/solve-sessions',
@@ -162,16 +152,6 @@ export const practiceCapability = defineCapability({
         queue: 'agent',
         includeMetadata: true,
         load: () => import('./jobs/quiz_gen').then((m) => m.buildQuizGenHandler),
-      },
-      // YUK-870 (F3.5b) — rejudge 注册自中央渐缩簿收编（等价平移红线：LLM 档
-      // 1h expire + DLQ、非默认 1s polling、batchSize 1——原中央行的 inline 动态
-      // import + handleRejudge 循环 flatten 成 jobs/rejudge.ts 的标准工厂）。
-      {
-        name: 'rejudge',
-        queue: 'llm',
-        pollingIntervalSeconds: 1,
-        batchSize: 1,
-        load: () => import('./jobs/rejudge').then((m) => m.buildRejudgeHandler),
       },
       // YUK-986 (Supply-Agent/1) — jyeoo staged 图片资产回收。jyeoo_fetch_candidates
       // 即期持久化候选图片（origin='jyeoo_staged'），未提交候选的孤儿资产每日回收
@@ -261,15 +241,6 @@ export const practiceCapability = defineCapability({
       {
         name: 'file_bank_gap',
         load: () => import('./server/tools/file-bank-gap').then((m) => m.fileBankGapTool),
-      },
-      // YUK-1407 — 判分纠错提案工具（judge_retraction→evaluation）。授予
-      // copilot/dreaming/coach 三个发现疑似误判的 agent 面（allowlists.ts）。
-      {
-        name: 'propose_grading_correction',
-        load: () =>
-          import('./server/tools/propose-grading-correction').then(
-            (m) => m.proposeGradingCorrectionTool,
-          ),
       },
       ...fromOwnerParts((part) => part.copilotTools?.tools),
     ],

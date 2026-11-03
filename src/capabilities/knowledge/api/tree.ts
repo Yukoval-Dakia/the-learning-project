@@ -1,22 +1,16 @@
-import { KnowledgeTreeQuerySchema } from '@/capabilities/knowledge/api/contracts';
+import { readLearnerKnowledgeTree } from '@/capabilities/knowledge/server/learner-knowledge-request';
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
-import { loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
-import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 
 export async function GET(
   req: Request = new Request('http://localhost/api/knowledge'),
 ): Promise<Response> {
   try {
-    const parsed = KnowledgeTreeQuerySchema.safeParse({
+    const read = await readLearnerKnowledgeTree(db, {
       subject: new URL(req.url).searchParams.get('subject') ?? undefined,
     });
-    if (!parsed.success) return Response.json({ error: 'validation_error' }, { status: 400 });
-    const rows = await loadTreeSnapshot(db, parsed.data.subject);
-    // The snapshot keeps synthetic seed scaffolding for internal jobs; hide it at
-    // the learner-facing boundary.
-    const learnerRows = rows.filter((r) => isLearnerVisibleKnowledgeId(r.id));
-    return Response.json({ rows: learnerRows });
+    if (!read.ok) return Response.json({ error: 'validation_error' }, { status: 400 });
+    return Response.json({ rows: read.rows });
   } catch (err) {
     return errorResponse(err);
   }

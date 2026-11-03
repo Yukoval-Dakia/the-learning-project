@@ -8,9 +8,9 @@ import {
   material_fsrs_state,
 } from '@/db/schema';
 import * as domainEvents from '@/kernel/events';
-import { nativeAppealFixture } from '../../../../tests/fixtures/native-appeal';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { createNativeAppeal } from '../server/assessment/appeal';
+import { nativeAppealFixture } from '../../../../../tests/fixtures/native-appeal';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { createNativeAppeal } from '../server/appeal';
 import { handleRejudge } from './rejudge';
 
 beforeEach(resetDb);

@@ -6,20 +6,15 @@
 
 import { and, eq, gt, inArray, like, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
-import { event, learning_record, memory_brief_note } from '@/db/schema';
+import { event, memory_brief_note } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
-import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
+import {
+  LEARNING_ACTIVITY_ACTIONS,
+  loadNativeAttemptOutcomes,
+  resolveLearningEventSubjects,
+} from '@/kernel/read-models/learner-activity';
 import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
 import type { BriefEvent } from './brief';
-
-// Actions that count as learner work on a subject. Judge/propose/generate/rate are
-// agent-side or meta and are excluded. record_capture carries no knowledge ids in
-// its payload; its knowledge/subject lives on the linked learning_record, which we
-// join to resolve the real subject. A capture whose record is missing or empty still
-// falls back to the default subject rather than being dropped. The answered enroll
-// path writes `attempt`, already covered.
-export const QUALIFYING_ACTIONS = ['attempt', 'review', 'experimental:record_capture'] as const;
-const RECORD_CAPTURE_ACTION = 'experimental:record_capture';
 
 const DEFAULT_LOOKBACK_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -57,68 +52,6 @@ type QualifyingEventRow = {
   payload: unknown;
   created_at: Date;
 };
-
-function extractKnowledgeIds(payload: unknown): string[] {
-  // attempt/review carry referenced_knowledge_ids; capture events do not and are
-  // resolved from their linked learning_record instead.
-  if (payload && typeof payload === 'object' && 'referenced_knowledge_ids' in payload) {
-    const ids = (payload as { referenced_knowledge_ids?: unknown }).referenced_knowledge_ids;
-    if (Array.isArray(ids)) return ids.filter((id): id is string => typeof id === 'string');
-  }
-  return [];
-}
-
-/**
- * Resolve each qualifying event to a subject id. attempt/review resolve from their
- * payload knowledge ids. record_capture has none: its event subject_id is the
- * learning_record id, so use that record's knowledge_ids (or its explicit
- * subject_id). Unresolvable events fall back to the default subject.
- */
-export async function resolveQualifyingEventSubjects(
-  db: Db,
-  rows: QualifyingEventRow[],
-): Promise<Map<string, string>> {
-  // 1. Capture events reference their record by subject_id; batch-fetch once.
-  const captureRecordIds = rows
-    .filter((row) => row.action === RECORD_CAPTURE_ACTION)
-    .map((row) => row.subject_id);
-  const recordById = new Map<string, { knowledge_ids: string[]; subject_id: string | null }>();
-  if (captureRecordIds.length > 0) {
-    const recordRows = await db
-      .select({
-        id: learning_record.id,
-        knowledge_ids: learning_record.knowledge_ids,
-        subject_id: learning_record.subject_id,
-      })
-      .from(learning_record)
-      .where(inArray(learning_record.id, [...new Set(captureRecordIds)]));
-    for (const rec of recordRows) {
-      recordById.set(rec.id, { knowledge_ids: rec.knowledge_ids, subject_id: rec.subject_id });
-    }
-  }
-
-  // 2. Build each event's knowledge list for the canonical bridge. Captures borrow
-  //    their record's ids; records with only a subject_id are handled in step 3.
-  const explicitSubjectByEvent = new Map<string, string>();
-  const resolveInput = rows.map((row) => {
-    if (row.action === RECORD_CAPTURE_ACTION) {
-      const rec = recordById.get(row.subject_id);
-      if (rec) {
-        if (rec.knowledge_ids.length > 0) return { id: row.id, knowledge_ids: rec.knowledge_ids };
-        if (rec.subject_id) explicitSubjectByEvent.set(row.id, rec.subject_id);
-      }
-      return { id: row.id, knowledge_ids: [] as string[] };
-    }
-    return { id: row.id, knowledge_ids: extractKnowledgeIds(row.payload) };
-  });
-
-  // 3. Canonical resolution, then override with a record's explicit subject_id.
-  const resolved = await batchResolveSubjectIds(db, resolveInput);
-  for (const [eventId, subjectId] of explicitSubjectByEvent) {
-    resolved.set(eventId, subjectId);
-  }
-  return resolved;
-}
 
 /**
  * The floor shared by detection and regen. A built subject floors at its own
@@ -179,13 +112,15 @@ export async function listActiveSubjectsSinceRefresh(
       created_at: event.created_at,
     })
     .from(event)
-    .where(and(inArray(event.action, [...QUALIFYING_ACTIONS]), gt(event.created_at, scanFloor)))
+    .where(
+      and(inArray(event.action, [...LEARNING_ACTIVITY_ACTIONS]), gt(event.created_at, scanFloor)),
+    )
     .orderBy(sql`${event.created_at} DESC`)) as QualifyingEventRow[];
 
   if (rows.length === 0) return [];
 
   // 3. Resolve each event to a subject; unresolvable events go to the default.
-  const subjectByEventId = await resolveQualifyingEventSubjects(db, rows);
+  const subjectByEventId = await resolveLearningEventSubjects(db, rows, 'default_subject');
 
   // 4. Group by subject. Rows are newest first, so each bucket's first row sets max.
   const bySubject = new Map<string, { maxCreatedAt: Date; events: BriefEvent[] }>();
@@ -280,7 +215,7 @@ export async function loadSubjectBriefEvents(
     .from(event)
     .where(
       and(
-        inArray(event.action, [...QUALIFYING_ACTIONS]),
+        inArray(event.action, [...LEARNING_ACTIVITY_ACTIONS]),
         gt(event.created_at, floor),
         eventAllowsDerivationSql(),
       ),
@@ -289,7 +224,7 @@ export async function loadSubjectBriefEvents(
 
   if (rows.length === 0) return [];
 
-  const subjectByEventId = await resolveQualifyingEventSubjects(db, rows);
+  const subjectByEventId = await resolveLearningEventSubjects(db, rows, 'default_subject');
 
   const out: BriefEvent[] = [];
   for (const row of rows) {
@@ -305,7 +240,15 @@ export async function loadSubjectBriefEvents(
     });
     if (out.length >= BRIEF_REFRESH_BUDGET.maxEventsPerBrief) break;
   }
-  return out;
+  // The brief writer judges weakness vs. progress from outcome; native attempts
+  // store none on the event, so read their effective verdict.
+  const nativeOutcomes = await loadNativeAttemptOutcomes(
+    db,
+    out.filter((e) => e.outcome === null).map((e) => e.id),
+  );
+  return out.map((e) =>
+    e.outcome === null ? { ...e, outcome: nativeOutcomes.get(e.id) ?? null } : e,
+  );
 }
 
 /**

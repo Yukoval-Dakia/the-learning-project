@@ -1,6 +1,6 @@
 // YUK-1560 — 资格判定的读表侧。一次夜间 tick 读完共享信号，再按 job 投影。
 
-import { and, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { EMBED_VERSION } from '@/core/embed-source';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
@@ -13,15 +13,14 @@ import {
   memory_brief_note,
   question,
 } from '@/db/schema';
-import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import {
   type EligibilityDecision,
-  LEARNING_EVENT_ACTIONS,
   MEMORY_BRIEF_SWEEP_JOB,
   type NightlySignals,
   REFLECTION_BRIEF_SCOPE_KEYS,
   classifyActivityTier,
 } from '@/kernel/nightly-eligibility';
+import { loadLastLearnerEventAt } from '@/kernel/read-models/learner-activity';
 import { pendingEdgeProposeEventPredicate } from '@/kernel/read-models/pending-edge-proposals';
 import { loadReturnStockGaps } from '@/kernel/read-models/return-stock';
 
@@ -51,7 +50,7 @@ export async function loadNightlyContext(
     history,
     briefWatermark,
   ] = await Promise.all([
-    loadLastLearnerEvent(db, opts?.before),
+    loadLastLearnerEventAt(db, opts?.before),
     loadTreeWatermark(db),
     loadEmbedPending(db),
     loadReturnStockShort(db),
@@ -213,21 +212,6 @@ async function loadPendingEdgeProposalCount(db: Db): Promise<number> {
     `),
   );
   return Number(row?.n ?? 0);
-}
-
-async function loadLastLearnerEvent(db: Db, before?: Date): Promise<Date | null> {
-  const [row] = await db
-    .select({ at: sql<string | null>`max(${event.created_at})` })
-    .from(event)
-    .where(
-      and(
-        eq(event.actor_kind, 'user'),
-        inArray(event.action, [...LEARNING_EVENT_ACTIONS]),
-        eventAllowsDerivationSql(),
-        before ? lt(event.created_at, before) : undefined,
-      ),
-    );
-  return asDate(row?.at);
 }
 
 async function loadTreeWatermark(db: Db): Promise<Date | null> {

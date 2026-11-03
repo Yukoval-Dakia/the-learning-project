@@ -8,7 +8,12 @@ import {
   ScoreMeaning,
 } from '@/kernel/capability-contract-schemas';
 import { CreateSubmissionBodySchema } from '../../api/assessment-contracts';
-import { AttemptCorrectionStateSchema, FsrsStateWireSchema } from '../../api/contracts';
+import {
+  AttemptCorrectionStateSchema,
+  CreateAttemptCaptureSchema,
+  FormalAttemptResponseSchema,
+  FsrsStateWireSchema,
+} from '../../api/contracts';
 
 // The handlers deliberately accept parseInt-compatible strings (for example,
 // `20items` currently means 20). Keep that compatibility visible instead of
@@ -52,6 +57,9 @@ export const ReviewAdviceBodySchema = z.object({
   // 存在但为空，纯文本 advice 的判分路径 / wire 逐字不变；有值时 preview 与 committed
   // submit 看到同一份附件（否则预览判词与实际提交判词分叉）。
   answer_image_refs: z.array(z.string()).default([]),
+  // Present = the caller hands over this attempt's commit capture, so an automatic verdict is
+  // recorded and settled in this request. Absent = preview only; the caller commits separately.
+  commit: CreateAttemptCaptureSchema.optional(),
 });
 
 const LegacyReviewAdviceJudgeSchema = z.object({
@@ -97,6 +105,8 @@ export const ReviewAdviceResponseSchema = z.object({
     reason: z.string(),
     evidence_score: z.number().nullable(),
   }),
+  // The createAttempt body of the attempt this request committed (see `commit`).
+  committed: FormalAttemptResponseSchema.optional(),
 });
 
 export const ReviewWeeklyQuerySchema = z.object({

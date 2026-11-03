@@ -356,20 +356,6 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envParse: posIntEnv,
     tier: 'A',
   },
-  COPILOT_NUDGE_STREAK_N: {
-    schema: z.number().int().positive(),
-    codeDefault: 3,
-    envName: 'COPILOT_NUDGE_STREAK_N',
-    envParse: posIntEnv,
-    tier: 'A',
-  },
-  COPILOT_NUDGE_KC_COOLDOWN_HOURS: {
-    schema: z.number().int().positive(),
-    codeDefault: 24,
-    envName: 'COPILOT_NUDGE_KC_COOLDOWN_HOURS',
-    envParse: posIntEnv,
-    tier: 'A',
-  },
   SELECTION_POLICY: {
     schema: z.enum(['legacy', 'softmax_mfi']),
     codeDefault: 'softmax_mfi',

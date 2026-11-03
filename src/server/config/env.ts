@@ -31,8 +31,6 @@ const server = {
   COPILOT_NUDGE_DAILY_MAX: optionalString,
   COPILOT_NUDGE_ENABLED: optionalString,
   COPILOT_NUDGE_EXPIRES_HOURS: optionalString,
-  COPILOT_NUDGE_KC_COOLDOWN_HOURS: optionalString,
-  COPILOT_NUDGE_STREAK_N: optionalString,
   COPILOT_SUBAGENT_ENABLED: optionalString,
   DASHSCOPE_API_KEY: optionalString,
   DATABASE_URL: z.string().url(),
