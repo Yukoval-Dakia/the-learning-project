@@ -1,7 +1,7 @@
 // Copilot learner-state header (session-anchored, assemble-once).
 //
 // Deterministic (no-LLM) code-read projection — 今日 due count, 活跃 goal, top-2
-// 误区, θ̂/mastery band, 昨夜交班摘要 — hard-capped at
+// 误区, 同一知识点连错, θ̂/mastery band, 昨夜交班摘要 — hard-capped at
 // LEARNER_STATE_HEADER_BUDGET.maxChars (a char cap, not tokens; CJK near the ceiling
 // can run ~400-1000 tokens).
 //
@@ -29,7 +29,11 @@ import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-go
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
-import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
+import {
+  type KnowledgeFailureStreak,
+  LEARNER_ANSWER_ACTIONS,
+  loadLongestFailureStreak,
+} from '@/kernel/read-models/learner-activity';
 import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
 import {
@@ -50,6 +54,9 @@ export const LEARNER_STATE_HEADER_ACTION = 'experimental:copilot_learner_state_h
 // Recent failure attempts scanned when ranking the top-2 误区. Bounded — this only
 // runs on (re)assembly, not per turn.
 const FAILURE_SCAN_LIMIT = 40;
+
+// Shortest same-knowledge failure run worth a header line.
+const FAILURE_STREAK_HEADER_MIN = 3;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -77,6 +84,7 @@ export interface LearnerStateProjection {
   meanTheta: number | null;
   judgmentSentence?: string | null;
   overnightSentence: string | null;
+  failureStreak?: KnowledgeFailureStreak | null;
 }
 
 /** The cached block (persisted in the header cache event payload). */
@@ -152,6 +160,9 @@ export function assembleLearnerStateHeaderMd(
   if (p.activeGoalTitle) lines.push(`当前目标：${p.activeGoalTitle}`);
   if (p.topCauseCategories.length > 0) {
     lines.push(`近期高频误区：${p.topCauseCategories.slice(0, 2).join('、')}`);
+  }
+  if (p.failureStreak && p.failureStreak.count >= FAILURE_STREAK_HEADER_MIN) {
+    lines.push(`连续答错：${p.failureStreak.knowledge_name}（${p.failureStreak.count} 次）`);
   }
   if (p.masterySummary) {
     const theta = p.meanTheta === null ? '' : `（θ̂≈${p.meanTheta.toFixed(1)}）`;
@@ -313,6 +324,7 @@ export interface ReadProjectionDeps {
   listActiveGoalsFn?: (db: DbLike) => Promise<{ title: string; scope_knowledge_ids: string[] }[]>;
   getFailureAttemptsFn?: (db: DbLike) => Promise<FailureAttempt[]>;
   getMasteryProjectionFn?: (db: DbLike, ids: string[]) => Promise<Map<string, MasteryProjection>>;
+  loadFailureStreakFn?: (db: DbLike) => Promise<KnowledgeFailureStreak | null>;
 }
 
 export async function readLearnerStateProjection(
@@ -329,12 +341,15 @@ export async function readLearnerStateProjection(
     deps.getFailureAttemptsFn ??
     ((d: DbLike) => getFailureAttempts(d, { limit: FAILURE_SCAN_LIMIT }));
 
+  const loadFailureStreak = deps.loadFailureStreakFn ?? loadLongestFailureStreak;
+
   const overnightSentencePromise = readOvernightHandoffSentence(db, loadOvernightDigest);
-  const [summary, goals, failures, overnightSentence] = await Promise.all([
+  const [summary, goals, failures, overnightSentence, failureStreak] = await Promise.all([
     loadSummary(db),
     loadGoals(db),
     loadFailures(db),
     overnightSentencePromise,
+    loadFailureStreak(db),
   ]);
   const activeGoal = goals[0] ?? null;
   const topCauseCategories = rankTopCauseCategories(failures, 2);
@@ -360,6 +375,7 @@ export async function readLearnerStateProjection(
     meanTheta,
     judgmentSentence,
     overnightSentence,
+    failureStreak,
   };
 }
 

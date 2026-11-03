@@ -2,9 +2,9 @@
 // such an event belongs to, and when the learner last did any of it. Consumers
 // read these sets instead of spelling their own action lists.
 
-import { and, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { event, learning_record, question, question_revision } from '@/db/schema';
+import { event, knowledge, learning_record, question, question_revision } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import { nativeAttemptOutcome, resolveVerdictsForNativeAttempts } from './assessment-verdict';
 import { batchResolveSubjectIds } from './subject-resolution';
@@ -65,6 +65,76 @@ export async function loadNativeAttemptOutcomes(
       out.set(eventId, outcome);
   }
   return out;
+}
+
+export interface KnowledgeFailureStreak {
+  knowledge_id: string;
+  knowledge_name: string;
+  /** Consecutive failed answers on this knowledge point, newest backwards. */
+  count: number;
+}
+
+const FAILURE_STREAK_SCAN_LIMIT = 200;
+
+/**
+ * The knowledge point with the longest current run of failed answers. Answers with
+ * no right/wrong bit (pending, self-reported, unsupported) are skipped; a success or
+ * partial ends the run. Only the newest FAILURE_STREAK_SCAN_LIMIT answers are read.
+ */
+export async function loadLongestFailureStreak(db: DbLike): Promise<KnowledgeFailureStreak | null> {
+  const rows = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.actor_kind, 'user'),
+        inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
+        eq(event.subject_kind, 'question'),
+        eventAllowsDerivationSql(),
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(FAILURE_STREAK_SCAN_LIMIT);
+  if (rows.length === 0) return null;
+  const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, rows);
+
+  const runs = new Map<string, { count: number; ended: boolean }>();
+  for (const row of rows) {
+    const native = row.action === NATIVE_ATTEMPT_ACTION ? nativeVerdicts.get(row.id) : undefined;
+    if (row.action === NATIVE_ATTEMPT_ACTION && !native) continue;
+    const outcome = native ? nativeAttemptOutcome(native) : row.outcome;
+    if (outcome !== 'success' && outcome !== 'failure' && outcome !== 'partial') continue;
+    const knowledgeIds = native
+      ? native.knowledge_ids
+      : stringArrayField(row.payload, 'referenced_knowledge_ids');
+    for (const knowledgeId of new Set(knowledgeIds)) {
+      const run = runs.get(knowledgeId) ?? { count: 0, ended: false };
+      if (run.ended) continue;
+      if (outcome === 'failure') run.count += 1;
+      else run.ended = true;
+      runs.set(knowledgeId, run);
+    }
+  }
+
+  let best: { knowledgeId: string; count: number } | null = null;
+  for (const [knowledgeId, run] of runs) {
+    if (run.count === 0) continue;
+    if (
+      !best ||
+      run.count > best.count ||
+      (run.count === best.count && knowledgeId < best.knowledgeId)
+    )
+      best = { knowledgeId, count: run.count };
+  }
+  if (!best) return null;
+  const [node] = await db
+    .select({ name: knowledge.name })
+    .from(knowledge)
+    .where(and(eq(knowledge.id, best.knowledgeId), isNull(knowledge.archived_at)))
+    .limit(1);
+  return node
+    ? { knowledge_id: best.knowledgeId, knowledge_name: node.name, count: best.count }
+    : null;
 }
 
 export interface LearningEventRef {
