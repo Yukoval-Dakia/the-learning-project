@@ -199,6 +199,13 @@ export const copilotCapability = defineCapability({
       {
         name: 'copilot_run',
         queue: 'agent',
+        // Inserts on this queue wake the worker's LISTEN/NOTIFY listener at
+        // commit, so an accepted run starts immediately instead of waiting out
+        // the 2s poll (polling stays as the fallback).
+        notify: true,
+        // Two per-node workers; the session queue guarantees at most one
+        // physical job per session, so concurrency only spans sessions.
+        localConcurrency: 2,
         // The generic agent expiry is 2h. A 30s heartbeat lets pg-boss turn a
         // crashed active delivery into retry/failed evidence promptly; the
         // Copilot reconciler still never guesses from heartbeat timestamps.

@@ -30,6 +30,7 @@ import {
   selectActorRef,
   selectSurface,
 } from '@/capabilities/copilot/server/copilot-run-input';
+import { createCopilotRunProgressWriter } from '@/capabilities/copilot/server/copilot-run-progress';
 import {
   captureWorkerSessionCursor,
   commitWorkerSessionCursor,
@@ -50,7 +51,6 @@ import {
   hasCopilotSettlementTerminal,
   markCopilotRunStarted,
   projectCopilotOutcomeMarker,
-  publishCopilotRunProgressEvent,
   terminalRunResult,
   withCopilotExecutionSettlementLock,
   writeFailedTerminalProjection,
@@ -432,8 +432,16 @@ async function executeAcceptedCopilotRun(
     historyAnchorEventId: runId,
   });
   const resumeSessionId = await selectResumableWorkerSession(db, data.session_id, answerOnly);
-  let progressChain: Promise<void> = Promise.resolve();
   let streamedProse = '';
+  // Delta persistence is coalesced; streamedProse only grows with committed
+  // flushes, so partial-reply recovery always matches durable evidence.
+  const progressWriter = createCopilotRunProgressWriter({
+    db,
+    runId,
+    onDeltaAccepted: (text) => {
+      streamedProse += text;
+    },
+  });
   const toolSummaries: string[] = [];
   const partialReply = () => copilotPartialReply({ prose: streamedProse, toolSummaries });
   const displayedProse = (): string | undefined =>
@@ -683,28 +691,13 @@ async function executeAcceptedCopilotRun(
           const isProse = activity.kind === 'prose_delta';
           const payload = isProse ? { text: activity.text } : projectCopilotActivity(activity);
           if (!payload) return;
-          progressChain = progressChain
-            .catch(() => undefined)
-            .then(async () => {
-              // Stop and terminal commits share the settlement lock. A queued
-              // delta cannot cross either boundary, even when persistence lags
-              // the provider; the boundary rule lives in the settlement owner.
-              await publishCopilotRunProgressEvent(
-                db,
-                runId,
-                isProse ? { kind: 'delta', text: activity.text } : { kind: 'step', payload },
-                isProse
-                  ? (text) => {
-                      streamedProse += text;
-                    }
-                  : undefined,
-              );
-            });
-          return progressChain;
+          progressWriter.push(
+            isProse ? { kind: 'delta', text: activity.text } : { kind: 'step', payload },
+          );
         },
       },
     );
-    await drainDeltaChain(progressChain, runId);
+    await drainDeltaChain(progressWriter.drain(), runId);
     const finalized = result.finalization;
     const finalReply = finalized.replyText;
     const preparedReply: PreparedCopilotReply = finalized.preparedReply;
@@ -854,7 +847,7 @@ async function executeAcceptedCopilotRun(
     if (err instanceof DurableTerminalProjectionError) throw err;
     // streamTaskCollecting graceful-degrades（resolve partial，见上），故这里只捕获
     // 它之外的 throw（装配 / MCP mount / 事件写），或注入 fixture 的 throw。
-    await drainDeltaChain(progressChain, runId);
+    await drainDeltaChain(progressWriter.drain(), runId);
     if ((await cancellationControl.probe()) === 'cancel_requested') {
       return await settleObservedCancellation();
     }
@@ -885,8 +878,9 @@ async function drainDeltaChain(chain: Promise<void>, runId: string): Promise<voi
 
 /**
  * pg-boss handler 工厂（JobHandlerFactory 形态 `(db) => (jobs) => Promise<void>`）。
- * 注册器（register-capability-jobs.ts）固定 { pollingIntervalSeconds:2, batchSize:1 }
- * → 天然 n=1 单线程一次一 run（串行化由 batchSize:1 提供）。
+ * 每次投递一个 job（batchSize:1）；manifest 给 copilot_run 开了 localConcurrency:2，所以一个 worker
+ * 可同时跑两个不同会话的 run。同一会话的串行由会话头协议保证：dispatchSessionHeadTx 只给
+ * 会话当前的头 run 发物理 job，后继 run 要等前一个 run 终态后经 wakeSession 才派发。
  */
 export function buildCopilotRunHandler(
   db: Db,
