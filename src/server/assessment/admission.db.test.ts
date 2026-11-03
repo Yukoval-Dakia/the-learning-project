@@ -1,15 +1,15 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getStream } from '@/capabilities/practice/scheduling/server/stream-store';
 import {
   getIssuanceState,
   saveResponseDraft,
   saveSubmission,
-} from '@/capabilities/practice/server/assessment/submit';
+} from '@/capabilities/practice/grading/server/assessment/submit';
 import {
   type EvaluateSubmissionRequest,
   evaluateSubmission,
-} from '@/capabilities/practice/server/judge/evaluate-submission';
+} from '@/capabilities/practice/grading/server/judge/evaluate-submission';
+import { getStream } from '@/capabilities/practice/scheduling/server/stream-store';
 import { getFrozenPaperDetail } from '@/capabilities/practice/session/server/assessment/paper-detail';
 import { PaperAssessmentBinding } from '@/capabilities/practice/session/server/assessment/paper-issuance';
 import type { ModelUnitOutcomeT } from '@/core/schema/assessment';

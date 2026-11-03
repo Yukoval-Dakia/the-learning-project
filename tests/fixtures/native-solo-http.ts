@@ -1,7 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { vi } from 'vitest';
-import * as evaluations from '@/capabilities/practice/server/judge/evaluate-submission';
-import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
+import * as evaluations from '@/capabilities/practice/grading/server/judge/evaluate-submission';
+import { createRecordedModelExecutor } from '@/capabilities/practice/grading/server/judge/recorded-model-executor';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';

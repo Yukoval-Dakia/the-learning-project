@@ -1,7 +1,18 @@
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-
+import {
+  dispatchNativeAttempt,
+  executeNativeAttempt,
+} from '@/capabilities/practice/grading/server/assessment/durable-attempt';
+import * as evaluationService from '@/capabilities/practice/grading/server/judge/evaluate-submission';
+import { createRecordedModelExecutor } from '@/capabilities/practice/grading/server/judge/recorded-model-executor';
+import {
+  disposeJudgeRun,
+  fenceJudgeUnitClaim,
+} from '@/capabilities/practice/grading/server/judge-operational';
+import { readJudgeQuestionActivity } from '@/capabilities/practice/grading/server/judge-run-observation';
+import { freezeQuestionForJudge } from '@/capabilities/practice/grading/server/judge-run-payload';
 import {
   JUDGE_RUN_EVENTS,
   JUDGE_RUN_TABLE,
@@ -9,20 +20,6 @@ import {
   handleReviewDue,
   installInterventionDiagnosticLeaves,
 } from '@/capabilities/practice/public';
-
-import {
-  dispatchNativeAttempt,
-  executeNativeAttempt,
-} from '@/capabilities/practice/server/assessment/durable-attempt';
-
-import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
-import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
-import {
-  disposeJudgeRun,
-  fenceJudgeUnitClaim,
-} from '@/capabilities/practice/server/judge-operational';
-import { readJudgeQuestionActivity } from '@/capabilities/practice/server/judge-run-observation';
-import { freezeQuestionForJudge } from '@/capabilities/practice/server/judge-run-payload';
 
 import { resetTestConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';

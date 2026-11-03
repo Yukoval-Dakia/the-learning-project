@@ -46,7 +46,7 @@ import {
   issuanceRowToContract,
   issueAssessment,
   revisionRowToContract,
-} from '../../../server/assessment/issue';
+} from '@/kernel/records/assessment-issuance';
 import {
   type FrozenIssuanceScope,
   type RegionMapIssue,

@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProbeAnswerResponseSchema } from '@/capabilities/agency/api/contracts';
 import { POST } from '@/capabilities/agency/api/probe-answer';
 import { serveProbeOnce } from '@/capabilities/agency/public';
+import * as evaluationService from '@/capabilities/practice/grading/server/judge/evaluate-submission';
+import { createRecordedModelExecutor } from '@/capabilities/practice/grading/server/judge/recorded-model-executor';
 import { editQuestion } from '@/capabilities/practice/question-bank/server/question-bank-write';
-import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
-import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
 import {
   assessment_issuance,
   event,

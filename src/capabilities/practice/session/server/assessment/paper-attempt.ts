@@ -7,13 +7,13 @@ import { answer, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { lockPaperNativeSlot } from '@/kernel/locks/practice-session';
 import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
+import type { SaveSubmissionRequest } from '../../../grading/public';
 import {
   commitFormalAttempt,
   prepareFormalAttemptSubmission,
+  projectEvaluationToJudgeResult,
   recordFormalAttemptCapture,
-} from '../../../server/assessment/attempt';
-import type { SaveSubmissionRequest } from '../../../server/assessment/submit';
-import { projectEvaluationToJudgeResult } from '../../../server/judge/evaluation-authority';
+} from '../../../grading/public';
 import { assertSessionMutable, freezeAnswerDraft } from '../answer-draft';
 import { assertIssuedPaperSlotsRenderable, readPaperAssessmentBinding } from './paper-issuance';
 

@@ -28,7 +28,7 @@ import {
   repairMergeAttributionForFromId,
   writeKnowledgeProposeEvent,
 } from '@/capabilities/knowledge/server/proposals';
-import { POST as submitPOST } from '@/capabilities/practice/api/submit';
+import { POST as submitPOST } from '@/capabilities/practice/grading/api/submit';
 import { mergeExactQuestionDuplicateKnowledgeIds } from '@/capabilities/practice/public';
 import { initialFsrsState } from '@/capabilities/practice/scheduling/server/fsrs';
 import { newId } from '@/core/ids';

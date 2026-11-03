@@ -6,7 +6,7 @@
 | 子模块 | 职责 |
 |--------|------|
 | `ai/` | Pi agent runner（唯一执行引擎）+ domain tool registry + tool bridge（见本目录 AGENTS.md）；`ai/mem0/` 是 Mem0 平台适配器 |
-| `assessment/` | 评估激活、结算（settle 全族）与判分模型执行器 |
+| `assessment/` | 评估激活与结算（settle 全族）；`runtime.ts` 是 practice 判分调用结算的接缝。判分模型执行器与模型切片登记归 `capabilities/practice/grading/server/` |
 | `boss/` | pg-boss client + handler 注册；`handlers/` 是 job/cron 目录（见 AGENTS.md）|
 | `config/` | 运行时配置水合与管理面配置读写 |
 | `durable/` | DBOS durable 层：判分、孤儿会话回收、付费副作用控制等 workflow family |

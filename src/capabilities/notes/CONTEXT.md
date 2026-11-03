@@ -33,4 +33,4 @@ hub-dismiss）、generate/verify durable handoff 与 Living Note refine 链（no
   api/ — 9 条 route body（T4 填，kernel v2 签名）。
 - 包外主要消费方：knowledge/node-page（笔记 section + backlinks 聚合读）、orchestrator
   {learning_intent,teaching}、proposals/actions（note_update applier，M4 真身前留旧）、
-  practice/api/submit（enqueueMasteryNoteRefine）。
+  practice/grading/api/submit（enqueueMasteryNoteRefine）。

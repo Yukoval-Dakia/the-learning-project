@@ -9,6 +9,7 @@ import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { evaluation, evaluation_effective_head, event, question_revision } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 import { revisionRowToContract } from '@/kernel/records/assessment-issuance';
 import { pendingProposalWithCooldown } from './inbox';
 import { writeAiProposal } from './writer';
@@ -614,9 +615,7 @@ export async function writeEvaluationCorrectionProposal(
     // 把该冻结期望运进 correction request 与 activation CAS —— head 已移动
     // ⇒ 拒绝/冲突，绝不把过期 proposal 静默 rebase 到新 head。服务端派生，
     // 不可由 agent 提供。null/0 = 组无 head（全未决评价也可被纠错）。
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${target.evaluation_group_id}))`,
-    );
+    await lockAssessmentEvaluationGroup(tx, target.evaluation_group_id);
     const [head] = await tx
       .select()
       .from(evaluation_effective_head)

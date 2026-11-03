@@ -32,23 +32,23 @@ import { publishPlacementFixture } from '../../../../../tests/fixtures/assessmen
 import { seedHistoricalAssessmentIssuance } from '../../../../../tests/fixtures/historical-assessment-issuance';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { insertLegacyGoal } from '../../../../../tests/helpers/legacy-goal';
-import { createAttemptResource as submit } from '../../api/submit';
+import { createAttemptResource as submit } from '../../grading/api/submit';
 import {
   RECONCILE_STALL_MS,
   reconcileStalledJudgeAttempts,
-} from '../../jobs/judge_pending_reconcile';
-import { runJudgeRun } from '../../jobs/judge_run';
+} from '../../grading/jobs/judge_pending_reconcile';
+import { runJudgeRun } from '../../grading/jobs/judge_run';
 import {
   dispatchNativeAttempt,
   executeNativeAttempt,
-} from '../../server/assessment/durable-attempt';
-import type { SaveSubmissionRequest } from '../../server/assessment/submit';
-import { getIssuanceState, saveSubmission } from '../../server/assessment/submit';
-import * as evaluationService from '../../server/judge/evaluate-submission';
-import { createRecordedModelExecutor } from '../../server/judge/recorded-model-executor';
-import { fenceJudgeUnitClaim } from '../../server/judge-operational';
-import { readJudgeRunPermanent } from '../../server/judge-run-observation';
-import type { NativeJudgeRunJobData } from '../../server/judge-run-payload';
+} from '../../grading/server/assessment/durable-attempt';
+import type { SaveSubmissionRequest } from '../../grading/server/assessment/submit';
+import { getIssuanceState, saveSubmission } from '../../grading/server/assessment/submit';
+import * as evaluationService from '../../grading/server/judge/evaluate-submission';
+import { createRecordedModelExecutor } from '../../grading/server/judge/recorded-model-executor';
+import { fenceJudgeUnitClaim } from '../../grading/server/judge-operational';
+import { readJudgeRunPermanent } from '../../grading/server/judge-run-observation';
+import type { NativeJudgeRunJobData } from '../../grading/server/judge-run-payload';
 import { placementStarterIdentity } from '../../supply/server/placement-starter-identity';
 import { readPlacementStarterOutcomes } from '../../supply/server/placement-starter-outcome-reader';
 import { materializePlacementStartersForGoal } from '../../supply/server/placement-starter-store';

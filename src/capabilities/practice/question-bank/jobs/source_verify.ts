@@ -27,7 +27,7 @@ import {
   type RunSourceGroundingVerifyParams,
   type SourceGroundingVerifyResult,
   runSourceGroundingVerify,
-} from '@/capabilities/practice/server/judge/source-grounding-verify';
+} from '@/capabilities/practice/grading/public';
 import {
   type PaidEffectIdentity,
   computePaidEffectIdentity,

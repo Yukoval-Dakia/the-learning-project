@@ -12,11 +12,11 @@ import {
 import { getQuestionTimeline } from '@/kernel/read-models/question-activity';
 import { seedFrozenSolveQuestion } from '../../../../../tests/fixtures/assessment-solve';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { getIssuanceState } from '../../server/assessment/submit';
+import { getIssuanceState } from '../../grading/server/assessment/submit';
 import {
   activateSubmissionCandidate,
   evaluateSubmission,
-} from '../../server/judge/evaluate-submission';
+} from '../../grading/server/judge/evaluate-submission';
 import { createAnswerDraft } from '../api/paper-answer-route';
 import { createPaperReviewSession } from '../api/paper-session-create';
 import { createPaperSubmission } from '../api/paper-submit-route';

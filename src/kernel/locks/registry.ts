@@ -44,8 +44,17 @@ export type HashtextExtendedIdentityLockNamespace = {
   readonly identity: true;
 };
 
+/** Two-key form `hashtext(namespace), hashtext(id)`; the id is the caller's, unchanged. */
+export type HashtextPairLockNamespace = {
+  readonly family: string;
+  readonly encoding: 'hashtext-pair';
+  /** Exact text passed to the first hashtext(). */
+  readonly namespace: string;
+};
+
 export type AdvisoryLockNamespace =
   | HashtextLockNamespace
+  | HashtextPairLockNamespace
   | IntLiteralLockNamespace
   | HashtextExtendedLockNamespace
   | HashtextExtendedExactLockNamespace
@@ -192,6 +201,11 @@ export const advisoryLockRegistry = {
     keyPrefix: 'image_candidate_accept:',
     suffixFields: ['proposalId'],
   },
+  assessmentEvaluationGroup: {
+    family: 'assessment-evaluation-group',
+    encoding: 'hashtext-pair',
+    namespace: 'assessment-evaluation-group',
+  },
 } as const satisfies Record<string, AdvisoryLockNamespace>;
 
 export function deriveHashtextLockKey<T extends string>(namespace: {
@@ -199,6 +213,13 @@ export function deriveHashtextLockKey<T extends string>(namespace: {
   readonly key: T;
 }): T {
   return namespace.key;
+}
+
+export function deriveHashtextPairLockNamespace<T extends string>(namespace: {
+  readonly encoding: 'hashtext-pair';
+  readonly namespace: T;
+}): T {
+  return namespace.namespace;
 }
 
 export function deriveHashtextExtendedExactLockKey<T extends string>(namespace: {
