@@ -70,6 +70,7 @@ import {
   ValidateAdminSubjectBodySchema,
   ValidateAdminSubjectResponseSchema,
 } from './api/subject-control-contracts';
+import { TaskFailureAlertsResponseSchema } from './api/task-failure-alerts-contracts';
 import {
   AdminSubjectTraitParamsSchema,
   AdminTraitWriteParamsSchema,
@@ -489,6 +490,17 @@ export const observabilityCapability = defineCapability({
         load: () => import('./api/harness-scoreboard').then((m) => m.GET),
       },
       {
+        // Live, read-only evaluation of persistently failing task kinds (admin home
+        // and today system notice). Recording is the hourly job's job, never this read.
+        method: 'GET',
+        path: '/api/observability/task-failure-alerts',
+        operationId: 'getTaskFailureAlerts',
+        responses: { 200: TaskFailureAlertsResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/task-failure-alerts').then((m) => m.GET),
+      },
+      {
         method: 'PATCH',
         path: '/api/admin/config',
         operationId: 'writeAdminConfig',
@@ -626,6 +638,17 @@ export const observabilityCapability = defineCapability({
         load: () =>
           import('./jobs/harness_scoreboard_daily').then(
             (m) => m.buildHarnessScoreboardDailyHandler,
+          ),
+      },
+      // No existing hourly zero-AI housekeeping to ride on (the run reconcile is
+      // nightly, owned elsewhere); hourly keeps alert latency under an hour.
+      {
+        name: 'task_failure_alert_hourly',
+        schedule: { cron: '17 * * * *', tz: 'Asia/Shanghai' },
+        queue: 'fast',
+        load: () =>
+          import('./jobs/task_failure_alert_hourly').then(
+            (m) => m.buildTaskFailureAlertHourlyHandler,
           ),
       },
     ],

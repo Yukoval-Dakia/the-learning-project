@@ -17,6 +17,7 @@
 | `api/conjecture-scores.ts` | conjecture 判别探针 A4 双读 reader（`/api/admin/conjecture-scores`）：`prediction_score` LOG 事件**已通电**；`kc_typed_state` confused-with-X 半边**待通电**——当前无写者产出该态（reconcile 硬编码 `confused_with_kc_id=null`），owner 已裁定通电、执行见 YUK-794，落地前该栏暂空，详见 ADR-0050 §(a) |
 | `api/calibration-maturity.ts` / `effectiveness-trend.ts` | 成效趋势只读面 |
 | `api/backup-export.ts` / `backup-import.ts` / `server/backup/` | 整库备份 ZIP 与恢复（破坏性，需 confirm）：表序/排除表/`SCHEMA_VERSION` 在 `constants.ts`，wipe-and-reload 单事务在 `archive.ts`，CSV 与评估报表。恢复后的配置重读由组合根经 `setBackupConfigHydrator` 注入，未注入时恢复返回 503；mem0 collection 表名/列在 `@/kernel/records/mem0-collection` |
+| `server/task-failure-alerts.ts` / `api/task-failure-alerts.ts` / `jobs/task_failure_alert_hourly.ts` | 任务持续失败告警唯一判定（只读 `ai_task_runs`，阈值 `TASK_FAILURE_ALERT_*`）；读面 `/api/observability/task-failure-alerts` 只读，每小时 job 按确定 id 写 `experimental:task_failure_alert`，同一告警只写一次 |
 | `api/event-correct.ts` | 统一事件流撤回 |
 | `api/job-events.ts` | 通用异步 job SSE tracker |
 | `server/` | AI observability 读模型、cost 汇总、failure 聚类、备份/恢复、event correction |

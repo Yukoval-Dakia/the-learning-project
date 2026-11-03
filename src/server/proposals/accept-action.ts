@@ -3,6 +3,7 @@ import { ApiError } from '@/kernel/http';
 import {
   type ProposalAcceptResult,
   type ProposalLifecycleResult,
+  type ProposalRuntimeSeams,
   getProposalLifecycleOperation,
 } from '@/kernel/proposals';
 import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
@@ -130,6 +131,8 @@ export async function acceptAiProposal(
   db: Db,
   proposalId: string,
   opts: AcceptAiProposalOpts = {},
+  /** Explicit owner runtime seams (job enqueue fakes in DB tests); never proposal data. */
+  runtime: ProposalRuntimeSeams = {},
 ): Promise<ProposalLifecycleResult> {
   const proposal = await requireProposal(db, proposalId);
   if (proposal.status !== 'pending') {
@@ -149,7 +152,10 @@ export async function acceptAiProposal(
   }
 
   // Owners that enqueue follow-up jobs take the boss from the runtime instead of importing it.
-  const dispatched = await dispatchAccept(db, proposal, opts, { ...opts, getBoss: getStartedBoss });
+  const dispatched = await dispatchAccept(db, proposal, opts, {
+    ...runtime,
+    getBoss: getStartedBoss,
+  });
 
   const recordIds = extractRecordEvidenceIds(proposal.payload.evidence_refs);
   if (recordIds.length > 0 && dispatched.lifecycleOutcome === 'accepted') {

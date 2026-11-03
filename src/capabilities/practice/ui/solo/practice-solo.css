@@ -14,23 +14,6 @@
   color: var(--un-text-1);
 }
 
-[data-ui-next] .un-ps {
-  /* Width of the number column: question square and part rings line up in it. */
-  --un-ps-no: 26px;
-  --un-ps-gutter: calc(var(--un-ps-no) + var(--un-sp-3));
-  /* One written line in an answer field. */
-  --un-ps-line: 34px;
-
-  /* 纸面's page padding (.un-pn-main in layout paper): the page lays out its own width, with no
-     shared .page padding around it. */
-  box-sizing: border-box;
-  padding: var(--un-sp-5) var(--un-sp-6) var(--un-sp-6);
-  /* The white page fills the retained shell's content area below its top bar, so the paper does
-     not end in a cream band under a short question (R2, owner 2026-10-18). */
-  min-height: calc(100dvh - var(--un-ps-top, 0px));
-  background: var(--un-bg-raised);
-}
-
 [data-ui-next] .un-ps-column {
   display: grid;
   gap: var(--un-sp-4);
@@ -328,245 +311,6 @@
 }
 [data-ui-next] .un-ps-extras > div:empty {
   display: none;
-}
-
-/* ── The answer fields (the production response components, rs-*), in loft type. They lose their
-   old page look (double frames, mono labels, old tokens); the sheet owns the spacing. ── */
-[data-ui-next] .un-ps {
-  & .rs-slotfield,
-  & .rs-textwrap,
-  & .rs-opts {
-    margin-top: 0;
-  }
-  & .rs-slotfield-label {
-    margin-bottom: var(--un-sp-1);
-    font-family: var(--un-font-sans);
-    font-size: var(--un-fs-1);
-    letter-spacing: 0;
-    color: var(--un-text-3);
-  }
-
-  /* Ruled writing lines: a soft baseline under every line, carried along as the text grows.
-     Focus draws a coral margin line and warms the rules; no box appears. */
-  & .rs-textarea,
-  & .un-ps-textarea {
-    display: block;
-    width: 100%;
-    box-sizing: border-box;
-    min-height: calc(2 * var(--un-ps-line));
-    resize: none;
-    field-sizing: content;
-    padding: 0 var(--un-sp-1);
-    border: 0;
-    border-radius: 0;
-    background-color: transparent;
-    background-image: repeating-linear-gradient(
-      to bottom,
-      transparent 0,
-      transparent calc(var(--un-ps-line) - 1px),
-      var(--un-line-strong) calc(var(--un-ps-line) - 1px),
-      var(--un-line-strong) var(--un-ps-line)
-    );
-    background-attachment: local;
-    color: var(--un-text-1);
-    font-family: var(--un-font-sans);
-    font-size: var(--un-fs-3);
-    line-height: var(--un-ps-line);
-    transition:
-      background-color var(--un-t-small) var(--un-ease-glide),
-      box-shadow var(--un-t-small) var(--un-ease-glide);
-  }
-  & .un-ps-textarea {
-    font-size: var(--un-fs-2);
-  }
-  /* A number blank is one short line. */
-  & .rs-textarea[inputmode="decimal"] {
-    min-height: var(--un-ps-line);
-    max-width: 14em;
-  }
-  & .rs-textarea::placeholder,
-  & .un-ps-textarea::placeholder {
-    color: var(--un-text-4);
-  }
-  & .rs-textarea:hover:not(:disabled),
-  & .un-ps-textarea:hover {
-    background-color: color-mix(in srgb, var(--un-bg-hover) 60%, transparent);
-  }
-  & .rs-textarea:focus-visible,
-  & .un-ps-textarea:focus-visible {
-    outline: none;
-    background-color: color-mix(in srgb, var(--un-accent-soft) 45%, transparent);
-    background-image: repeating-linear-gradient(
-      to bottom,
-      transparent 0,
-      transparent calc(var(--un-ps-line) - 1.5px),
-      var(--un-accent) calc(var(--un-ps-line) - 1.5px),
-      var(--un-accent) var(--un-ps-line)
-    );
-    box-shadow: inset 2px 0 0 var(--un-accent-strong);
-  }
-  /* Handed in: the lines shrink to what was written. */
-  & .rs-textarea:disabled {
-    min-height: var(--un-ps-line);
-    color: var(--un-text-2);
-    -webkit-text-fill-color: var(--un-text-2);
-    background-image: repeating-linear-gradient(
-      to bottom,
-      transparent 0,
-      transparent calc(var(--un-ps-line) - 1px),
-      var(--un-line) calc(var(--un-ps-line) - 1px),
-      var(--un-line) var(--un-ps-line)
-    );
-  }
-  & .rs-preview {
-    border: 0;
-    border-radius: var(--un-r-1);
-    background: var(--un-bg-sunk);
-  }
-
-  /* Choices are lines of the sheet: the letter sits in a small ring; picking fills it. */
-  & .rs-opts {
-    gap: var(--un-sp-1);
-  }
-  & .rs-opt {
-    align-items: center;
-    gap: var(--un-sp-3);
-    margin-left: calc(-1 * var(--un-sp-3));
-    padding: var(--un-sp-2) var(--un-sp-3);
-    border: 0;
-    border-radius: var(--un-r-1);
-    background: transparent;
-    color: var(--un-text-1);
-    transition:
-      background-color var(--un-t-small) var(--un-ease-glide),
-      box-shadow var(--un-t-small) var(--un-ease-glide);
-  }
-  & .rs-opt:hover:not(:disabled) {
-    background: var(--un-bg-hover);
-  }
-  & .rs-opt.is-sel:hover:not(:disabled) {
-    background: var(--un-accent-soft);
-  }
-  & .rs-opt:focus-visible {
-    border: 0;
-    box-shadow: inset 0 0 0 1.5px var(--un-focus);
-  }
-  & .rs-opt-k {
-    display: inline-grid;
-    place-items: center;
-    flex: none;
-    width: 24px;
-    min-width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    box-shadow: inset 0 0 0 1.5px var(--un-line-strong);
-    font-family: var(--un-font-sans);
-    font-size: 12px;
-    font-weight: var(--un-fw-semibold);
-    color: var(--un-text-2);
-    transition:
-      background-color var(--un-t-small) var(--un-ease-glide),
-      box-shadow var(--un-t-small) var(--un-ease-glide),
-      color var(--un-t-small) var(--un-ease-glide);
-  }
-  & .rs-opt-t {
-    font-size: var(--un-fs-3);
-    line-height: var(--un-lh-prose);
-    color: var(--un-text-1);
-  }
-  & .rs-opt-t p {
-    margin: 0;
-  }
-  & .rs-opt-box {
-    border-color: var(--un-line-strong);
-  }
-  & .rs-opt.is-sel {
-    border: 0;
-    background: var(--un-accent-soft);
-    box-shadow: none;
-  }
-  & .rs-opt.is-sel .rs-opt-k {
-    background: var(--un-accent-strong);
-    box-shadow: none;
-    color: var(--un-text-on-accent);
-  }
-  & .rs-opt.is-sel .rs-opt-box {
-    border-color: var(--un-accent-strong);
-    background: var(--un-accent-strong);
-    color: var(--un-text-on-accent);
-  }
-  /* After judging, the picked option takes the result's colour (only then, §6.4). */
-  & .rs-opt.is-right {
-    border: 0;
-    background: var(--un-positive-soft);
-    box-shadow: none;
-  }
-  & .rs-opt.is-right .rs-opt-k {
-    background: var(--un-positive);
-    box-shadow: none;
-    color: var(--un-text-on-accent);
-  }
-  & .rs-opt.is-wrong {
-    border: 0;
-    background: var(--un-caution-soft);
-    box-shadow: none;
-  }
-  & .rs-opt.is-wrong .rs-opt-k {
-    box-shadow: inset 0 0 0 1.5px var(--un-caution);
-    color: var(--un-caution);
-  }
-  & .rs-clear {
-    font-family: var(--un-font-sans);
-    font-size: var(--un-fs-1);
-    color: var(--un-text-3);
-  }
-
-  /* Attachments: small thumbnails on a tint, no frame inside a frame. */
-  & .rs-attach {
-    margin-top: 0;
-  }
-  & .rs-attach-item {
-    border: 0;
-    border-radius: var(--un-r-1);
-    background: var(--un-bg-sunk);
-  }
-  & .rs-attach-thumb {
-    border: 0;
-  }
-  & .rs-attach-file,
-  & .rs-attach-bind {
-    font-family: var(--un-font-sans);
-    font-size: var(--un-fs-1);
-    color: var(--un-text-2);
-  }
-  & .rs-attach-x {
-    border: 0;
-    background: var(--un-bg-raised);
-    box-shadow: 0 0 0 var(--un-hairline) var(--un-line-strong);
-    color: var(--un-text-3);
-  }
-  & .rs-ev-pending {
-    font-size: var(--un-fs-1);
-  }
-
-  /* The save state is a quiet note, not a chip. */
-  & .rs-save {
-    gap: var(--un-sp-1);
-    font-family: var(--un-font-sans);
-    font-size: var(--un-fs-1);
-    color: var(--un-text-4);
-    white-space: nowrap;
-  }
-  & .rs-save.is-error,
-  & .rs-save.is-conflict {
-    color: var(--un-caution);
-  }
-  & button.rs-save {
-    padding: 0;
-    border: 0;
-    background: none;
-    cursor: pointer;
-  }
 }
 
 /* ── The floating action bar: glass, stuck to the bottom of the screen while answering, and
@@ -1065,10 +809,6 @@
 
 /* Medium widths: a little less page and paper margin (纸面). */
 @media (min-width: 721px) and (max-width: 1100px) {
-  [data-ui-next] .un-ps {
-    padding-right: var(--un-sp-4);
-    padding-left: var(--un-sp-4);
-  }
   [data-ui-next] .un-ps-banner {
     gap: var(--un-sp-4);
   }
@@ -1077,11 +817,6 @@
 /* ── Phone (T8: ≤ 720px): the bar floats above the shell's
    tab bar; the passage is one tap away instead of stacked (R9 phone form undecided, §11). ── */
 @media (max-width: 720px) {
-  [data-ui-next] .un-ps {
-    --un-ps-no: 24px;
-    --un-ps-gutter: calc(var(--un-ps-no) + var(--un-sp-2));
-    padding: var(--un-sp-4) var(--un-sp-4) var(--un-sp-6);
-  }
   [data-ui-next] .un-ps-column {
     gap: var(--un-sp-4);
   }
@@ -1165,10 +900,6 @@
 
 /* Page composition follows docs/design/2026-10-27-m3e-practice-page.md.
    These are scoped presentation roles, not new question or submission states. */
-[data-ui-next][data-un-m3e="practice-foundation"] .un-ps {
-  color: var(--un-md-sys-color-on-surface);
-  background: var(--un-md-sys-color-surface);
-}
 [data-ui-next][data-un-m3e="practice-foundation"] .un-ps-column {
   gap: var(--un-sp-6);
 }
@@ -1245,46 +976,6 @@
 [data-ui-next][data-un-m3e="practice-foundation"] .un-ps-write {
   min-width: 0;
 }
-[data-ui-next][data-un-m3e="practice-foundation"] .un-ps :is(.rs-textarea, .un-ps-textarea) {
-  min-height: calc(3 * var(--un-md-sys-typescale-body-large-line-height));
-  padding: var(--un-sp-3);
-  border: 1px solid var(--un-md-sys-color-outline);
-  border-radius: var(--un-md-sys-shape-extra-small);
-  background: var(--un-md-sys-color-surface-container-lowest);
-  color: var(--un-md-sys-color-on-surface);
-  font-size: var(--un-md-sys-typescale-body-large-size);
-  line-height: var(--un-md-sys-typescale-body-large-line-height);
-  box-shadow: none;
-  transition: none;
-}
-[data-ui-next][data-un-m3e="practice-foundation"]
-  .un-ps
-  :is(.rs-textarea, .un-ps-textarea)::placeholder {
-  color: var(--un-md-sys-color-on-surface-variant);
-}
-[data-ui-next][data-un-m3e="practice-foundation"]
-  .un-ps
-  :is(.rs-textarea, .un-ps-textarea):hover:not(:disabled) {
-  border-color: var(--un-md-sys-color-on-surface);
-}
-[data-ui-next][data-un-m3e="practice-foundation"]
-  .un-ps
-  :is(.rs-textarea, .un-ps-textarea):focus-visible {
-  outline: var(--un-md-comp-focus-width) solid var(--un-md-sys-color-secondary);
-  outline-offset: var(--un-md-comp-focus-offset);
-  border-color: var(--un-md-sys-color-primary);
-}
-[data-ui-next][data-un-m3e="practice-foundation"]
-  .un-ps
-  :is(.rs-textarea, .un-ps-textarea):disabled {
-  color: var(--un-md-sys-color-on-surface-variant);
-  -webkit-text-fill-color: var(--un-md-sys-color-on-surface-variant);
-  background: var(--un-md-sys-color-surface-container-low);
-  border-color: var(--un-md-sys-color-outline-variant);
-}
-[data-ui-next][data-un-m3e="practice-foundation"] .un-ps .rs-textarea[inputmode="decimal"] {
-  min-height: var(--un-md-comp-control-target);
-}
 [data-ui-next][data-un-m3e="practice-foundation"] .un-ps-bar {
   justify-self: stretch;
   gap: var(--un-sp-3);
@@ -1300,10 +991,6 @@
 [data-ui-next][data-un-m3e="practice-foundation"] .un-ps-bar-save {
   padding: 0;
   border: 0;
-}
-[data-ui-next][data-un-m3e="practice-foundation"] .un-ps .rs-save {
-  white-space: normal;
-  overflow-wrap: anywhere;
 }
 [data-ui-next][data-un-m3e="practice-foundation"] .un-ps-sheet-result {
   margin-top: var(--un-sp-3);

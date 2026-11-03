@@ -90,12 +90,17 @@ describe('learning_item proposal lifecycle', () => {
     return { proposalId: proposal.proposal_id };
   }
 
+  // @invariant concurrency: a repeated learning_item accept replays the recorded accept and re-enqueues note generation only for artifacts still pending
+  // @fails-if the replay re-materializes the hierarchy or re-enqueues a note artifact that is already ready
   it('idempotent re-accept re-enqueues only note artifacts that are still pending', async () => {
     const { proposalId } = await seedLearningItemProposal({ withLong: true });
     const firstEnqueue = vi.fn(async (_artifactId: string) => true);
-    const first = await acceptAiProposal(testDb(), proposalId, {
-      enqueueLearningIntentNote: firstEnqueue,
-    });
+    const first = await acceptAiProposal(
+      testDb(),
+      proposalId,
+      {},
+      { enqueueLearningIntentNote: firstEnqueue },
+    );
     expect(first.kind).toBe('learning_item');
     assertProposalLifecycleResult<LearningItemAcceptResult>(first, 'learning_item');
     expect(first.enqueued_note_generate_jobs).toBe(3);
@@ -106,9 +111,12 @@ describe('learning_item proposal lifecycle', () => {
       .where(eq(artifact.id, first.atomic_artifact_ids[0]));
 
     const retryEnqueue = vi.fn(async (_artifactId: string) => true);
-    const second = await acceptAiProposal(testDb(), proposalId, {
-      enqueueLearningIntentNote: retryEnqueue,
-    });
+    const second = await acceptAiProposal(
+      testDb(),
+      proposalId,
+      {},
+      { enqueueLearningIntentNote: retryEnqueue },
+    );
     expect(second.kind).toBe('learning_item');
     assertProposalLifecycleResult<LearningItemAcceptResult>(second, 'learning_item');
     expect(second.idempotent).toBe(true);

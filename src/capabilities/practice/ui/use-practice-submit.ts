@@ -31,6 +31,7 @@ import { boundSlots, entriesForSubmit } from './blocks/envelope';
 import { type EntriesUpdate, parsePresentation } from './blocks/PresentationBlocks';
 import type { PfToast } from './PracticeFacePage';
 import {
+  type AdviceCommit,
   type JudgePreview,
   type QuestionFullDetail,
   type StreamItem,
@@ -39,6 +40,7 @@ import {
   isSubmitPending,
 } from './practice-api';
 import { type PracticeClient, usePracticeClient } from './practice-client';
+import { verdictNeedsLearnerRating } from './submit-recovery';
 
 export type Rating = 'again' | 'hard' | 'good';
 type IssuanceMode = 'auto_score' | 'manual';
@@ -497,6 +499,86 @@ export function usePracticeSubmit({
   // 正合「卡在同一误区」信号意图。反馈卡里 length>0 才渲染。
   const timelineEvents = q ? toAttemptTimelineEvents(q.timeline) : [];
   const issuanceId = `iss_stream_${item.id}`;
+  // YUK-1051 — 202-pending 轮询：同一次 submission 的 run 继续查询（poll_url 纯读 GET），
+  // 终态 done → 用回传的终态判词揭晓反馈卡（与同步回执同一渲染路径）；failed → 诚实
+  // 告知「作答已存住，会自动补判」，可先行推进（solo 202 可继续，不阻塞流）。
+  // YUK-1483: the poller reports each run's terminal state once (onSettled); the
+  // feedback is claimed there, not by an effect watching the snapshot.
+  const onPendingSettled = useCallback(
+    (settled: JudgeRunPollingState) => {
+      if (settled.status !== 'done') return;
+      const r = settled.result;
+      if (r?.status === 'review_required') {
+        setCommittedPreview({
+          route: 'durable',
+          coarse_outcome: 'unsupported',
+          confidence: 0,
+          feedback_md: typeof r.feedback_md === 'string' ? r.feedback_md : '',
+          suggested_rating: null,
+        });
+        setAutoCommitted(false);
+        setAutoCommitJudgeEventId(null);
+        setPendingRun(null);
+        addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
+        return;
+      }
+      const outcome =
+        r && typeof r.coarse_outcome === 'string' && r.coarse_outcome in VERDICT_OF
+          ? (r.coarse_outcome as keyof typeof VERDICT_OF)
+          : null;
+      const partial = outcome === 'partial_unknown' ? PartialUnknownFeedback.safeParse(r) : null;
+      if (partial && !partial.success) {
+        setCommittedPreview({
+          route: 'durable',
+          coarse_outcome: 'unsupported',
+          confidence: 0,
+          feedback_md: '',
+          suggested_rating: null,
+        });
+        setRating(null);
+        setAutoCommitted(true);
+        setAutoCommitJudgeEventId(null);
+        setPendingRun(null);
+        addToast('作答已保存，但部分判定信息不完整，请稍后查看。', 'info', 'clock');
+        return;
+      }
+      const fr =
+        outcome === 'partial_unknown' || r?.final_rating === null
+          ? null
+          : r &&
+              typeof r.final_rating === 'string' &&
+              ['again', 'hard', 'good'].includes(r.final_rating)
+            ? (r.final_rating as Rating)
+            : 'hard';
+      if (outcome) {
+        setCommittedPreview({
+          route: typeof r?.route === 'string' && r.route ? r.route : 'durable',
+          coarse_outcome: outcome,
+          ...(partial?.success ? { partial_units: partial.data.partial_units } : {}),
+          confidence: typeof r?.confidence === 'number' ? r.confidence : 0,
+          feedback_md: typeof r?.feedback_md === 'string' ? r.feedback_md : '',
+          suggested_rating: fr,
+        });
+        setRating(fr);
+        setAutoCommitted(true);
+        committedAppealKind.current = r?.assessment ? 'evaluation' : 'judge';
+        setAutoCommitJudgeEventId(
+          r?.assessment
+            ? (r.assessment.effective_evaluation_id ?? r.assessment.candidate_id)
+            : typeof r?.judge_event_id === 'string'
+              ? r.judge_event_id
+              : null,
+        );
+      }
+      setPendingRun(null);
+    },
+    [addToast],
+  );
+
+  // YUK-1729 — the issuance whose recovered judge outcome this visit already applied.
+  const settledApplied = useRef<string | null>(null);
+  // YUK-1729 b-lite — the issuance whose accepted-but-unrecorded answer still needs its advice replay.
+  const [recoverIssuance, setRecoverIssuance] = useState<string | null>(null);
   // YUK-1484 — issuing is a write, so it is a command, not a query: nothing may re-run it
   // on retry, focus, reconnect, invalidation, remount or StrictMode. The issuance
   // placeholder owns it (attachIssuance): when it attaches, this visit reads its issuance
@@ -542,7 +624,44 @@ export function usePracticeSubmit({
       let detached = false;
       request.then(
         (state) => {
-          if (!detached) setIssuance({ mode, state, error: null });
+          if (detached) return;
+          setIssuance({ mode, state, error: null });
+          // YUK-1729 — a refresh after submitting: the issuance read carries the submission's
+          // judge outcome. Once per issuance per visit (a re-attach reuses this resolved read
+          // and must not replay an older outcome over this visit's own result). pending →
+          // keep polling the run; terminal → the same settle path the 202 poll ends in. A
+          // terminal run is never polled (a synchronous run id has no status route).
+          const settled = state.settled;
+          if (settledApplied.current === issuanceId) return;
+          if (!settled) {
+            // YUK-1729 b-lite — accepted but not recorded (the reload landed between the
+            // judge's acceptance and the attempt record): replay advice once the restored answer
+            // has rendered (attachAnswerRoot). The verdict is reused, never re-judged.
+            if (state.submissions.length > 0) {
+              settledApplied.current = issuanceId;
+              setRecoverIssuance(issuanceId);
+            }
+            return;
+          }
+          settledApplied.current = issuanceId;
+          if (
+            settled.kind === 'terminal' &&
+            verdictNeedsLearnerRating(settled.run.status, settled.run.result)
+          ) {
+            setRecoverIssuance(issuanceId);
+            return;
+          }
+          if (settled.kind === 'pending') {
+            setPendingRun({ runId: settled.run_id, pollUrl: settled.poll_url });
+            return;
+          }
+          onPendingSettled({
+            status: settled.run.status,
+            result: settled.run.result,
+            error: null,
+            polls: 0,
+            settled: true,
+          });
         },
         (error: unknown) => {
           if (!detached) setIssuance({ mode, state: null, error });
@@ -552,7 +671,7 @@ export function usePracticeSubmit({
         detached = true;
       };
     },
-    [q, issuanceId, issuanceMode, getIssuanceState, issueAssessment],
+    [q, issuanceId, issuanceMode, getIssuanceState, issueAssessment, onPendingSettled],
   );
   // The command's settled result for the current mode; null while it is in flight.
   const issued = issuance?.mode === issuanceMode ? issuance : null;
@@ -950,86 +1069,23 @@ export function usePracticeSubmit({
     }
   }
 
-  // YUK-1051 — 202-pending 轮询：同一次 submission 的 run 继续查询（poll_url 纯读 GET），
-  // 终态 done → 用回传的终态判词揭晓反馈卡（与同步回执同一渲染路径）；failed → 诚实
-  // 告知「作答已存住，会自动补判」，可先行推进（solo 202 可继续，不阻塞流）。
-  // YUK-1483: the poller reports each run's terminal state once (onSettled); the
-  // feedback is claimed there, not by an effect watching the snapshot.
-  const onPendingSettled = useCallback(
+  // YUK-1729 — a polled verdict the learner must rate also goes through the advice replay.
+  const onPolledSettled = useCallback(
     (settled: JudgeRunPollingState) => {
-      if (settled.status !== 'done') return;
-      const r = settled.result;
-      if (r?.status === 'review_required') {
-        setCommittedPreview({
-          route: 'durable',
-          coarse_outcome: 'unsupported',
-          confidence: 0,
-          feedback_md: typeof r.feedback_md === 'string' ? r.feedback_md : '',
-          suggested_rating: null,
-        });
-        setAutoCommitted(false);
-        setAutoCommitJudgeEventId(null);
+      if (verdictNeedsLearnerRating(settled.status, settled.result)) {
         setPendingRun(null);
-        addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
+        setRecoverIssuance(issuanceId);
         return;
       }
-      const outcome =
-        r && typeof r.coarse_outcome === 'string' && r.coarse_outcome in VERDICT_OF
-          ? (r.coarse_outcome as keyof typeof VERDICT_OF)
-          : null;
-      const partial = outcome === 'partial_unknown' ? PartialUnknownFeedback.safeParse(r) : null;
-      if (partial && !partial.success) {
-        setCommittedPreview({
-          route: 'durable',
-          coarse_outcome: 'unsupported',
-          confidence: 0,
-          feedback_md: '',
-          suggested_rating: null,
-        });
-        setRating(null);
-        setAutoCommitted(true);
-        setAutoCommitJudgeEventId(null);
-        setPendingRun(null);
-        addToast('作答已保存，但部分判定信息不完整，请稍后查看。', 'info', 'clock');
-        return;
-      }
-      const fr =
-        outcome === 'partial_unknown' || r?.final_rating === null
-          ? null
-          : r &&
-              typeof r.final_rating === 'string' &&
-              ['again', 'hard', 'good'].includes(r.final_rating)
-            ? (r.final_rating as Rating)
-            : 'hard';
-      if (outcome) {
-        setCommittedPreview({
-          route: typeof r?.route === 'string' && r.route ? r.route : 'durable',
-          coarse_outcome: outcome,
-          ...(partial?.success ? { partial_units: partial.data.partial_units } : {}),
-          confidence: typeof r?.confidence === 'number' ? r.confidence : 0,
-          feedback_md: typeof r?.feedback_md === 'string' ? r.feedback_md : '',
-          suggested_rating: fr,
-        });
-        setRating(fr);
-        setAutoCommitted(true);
-        committedAppealKind.current = r?.assessment ? 'evaluation' : 'judge';
-        setAutoCommitJudgeEventId(
-          r?.assessment
-            ? (r.assessment.effective_evaluation_id ?? r.assessment.candidate_id)
-            : typeof r?.judge_event_id === 'string'
-              ? r.judge_event_id
-              : null,
-        );
-      }
-      setPendingRun(null);
+      onPendingSettled(settled);
     },
-    [addToast],
+    [issuanceId, onPendingSettled],
   );
   const pendingPoll = useJudgeRunPolling({
     runId: pendingRun?.runId ?? null,
     pollUrl: pendingRun?.pollUrl ?? null,
     readStatus: readJudgeRunStatus,
-    onSettled: onPendingSettled,
+    onSettled: onPolledSettled,
   });
 
   // commit 接受显式 rating + autoRate：客观题自动流不依赖手动 `rating` state（直接用 judge 的
@@ -1043,6 +1099,8 @@ export function usePracticeSubmit({
     autoRate?: boolean;
     advance?: boolean;
     previewOverride?: JudgePreview;
+    // YUK-1729 — a recovery replay after a reload: the original answer time is unknown here.
+    omitLatency?: boolean;
   }) => {
     const pv = opts.previewOverride ?? preview;
     if (returningRef.current || !q || (!pv && issuanceMode !== 'manual') || committing) return;
@@ -1078,7 +1136,9 @@ export function usePracticeSubmit({
         // 路径里 stamp，故**两条提交分支都覆盖**：手动评级 commit（开放题）与客观题 auto_rate:true 自动
         // commit 都经此。computeLatencyMs clamp 到 [0, 3_600_000]（对齐 server zod）；shownAt 为 null →
         // 略过（不发噪声）。server 映射成事件 payload 的 duration_ms（无后端改动）。墙钟含 idle，已知噪声源。
-        latency_ms: computeLatencyMs(questionShownAtRef.current, Date.now()),
+        latency_ms: opts.omitLatency
+          ? null
+          : computeLatencyMs(questionShownAtRef.current, Date.now()),
         // YUK-1051 (D10) — 开放作答的证据附件随提交冻结；空值不发（既有 wire 逐字不变）。
         ...(imageRefs.length > 0 ? { answer_image_refs: imageRefs } : {}),
       });
@@ -1155,6 +1215,76 @@ export function usePracticeSubmit({
     }
   };
 
+  // YUK-1729 — commit() capture sent with advice; a recovery replay leaves latency out.
+  const adviceCommit = (withLatency: boolean): AdviceCommit => ({
+    session_id: sessionId ?? null,
+    stream_item_id: item.id,
+    referenced_knowledge_ids: q ? q.labels.map((l) => l.id) : [],
+    reasoning_trace: buildCaptureFields({ reasoningTrace, selfConfidence }).reasoning_trace ?? null,
+    latency_ms: withLatency ? computeLatencyMs(questionShownAtRef.current, Date.now()) : null,
+  });
+
+  // One advice outcome path for a live answer and a recovery replay. Open (or unrated) verdicts
+  // go to the confidence step and the learner's own rating, as before. An automatic verdict the
+  // advice request already recorded (`committed`) settles here with what commit() would set; a
+  // server without that field still gets the separate commit() (idempotent on the submission).
+  const applyAdvice = async (
+    r: Awaited<ReturnType<typeof getAdvice>>,
+    recovery: boolean,
+  ): Promise<void> => {
+    activationIntent.current = r.activation_intent;
+    if (!r.automatic_commit || r.judge.suggested_rating === null) {
+      setPendingPreview(r.judge);
+      return;
+    }
+    setPreview(r.judge);
+    setRating(r.judge.suggested_rating);
+    if (r.committed) {
+      if (r.committed.status === 'review_required') {
+        addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
+        return;
+      }
+      setAutoCommitted(true);
+      committedAppealKind.current = 'evaluation';
+      setAutoCommitJudgeEventId(r.committed.judge ? r.committed.assessment.candidate_id : null);
+      return;
+    }
+    await commit({
+      withAppeal: false,
+      rating: r.judge.suggested_rating,
+      autoRate: true,
+      advance: false,
+      previewOverride: r.judge,
+      omitLatency: recovery,
+    });
+  };
+
+  // YUK-1729 b-lite — replay advice for an answer accepted before a reload but never recorded.
+  // The server reuses the stored verdict for this submission (no new judge run, no charge).
+  const recoverAccepted = async () => {
+    if (!q || isInterventionDiagnostic || issuanceMode === 'manual' || answerRecorded) return;
+    setJudging(true);
+    try {
+      const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput, adviceCommit(false));
+      await applyAdvice(r, true);
+    } catch {
+      addToast(JUDGE_FAILURE_MESSAGE, 'info', 'alert');
+    } finally {
+      setJudging(false);
+    }
+  };
+
+  // The answering root also starts the recovery replay: it runs at commit time (not in render),
+  // once, after the restored answer for this issuance has rendered.
+  const attachAnswerRoot = (node: HTMLElement | null) => {
+    const detach = attachPagehideFlush(node);
+    if (node && recoverIssuance === issuanceId && restoredIssuanceId === issuanceId && !judging) {
+      setRecoverIssuance(null);
+      void recoverAccepted();
+    }
+    return detach;
+  };
+
   const runJudge = async () => {
     if (returningRef.current || !q || !canSubmit || issuanceMode === 'manual') return;
     setJudging(true);
@@ -1194,32 +1324,8 @@ export function usePracticeSubmit({
         setAutoCommitJudgeEventId(res.judge?.judge_event_id ?? null);
         return;
       }
-      const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput);
-      activationIntent.current = r.activation_intent;
-      // YUK-444 (PR #1069 thread 修复) — 分流判据是 shouldOfferConfidenceGate(route) 本体，不再在这里
-      // 重新拼一遍 isObjectiveQuestion(route)。两者语义严格互补（gate = !isObjectiveQuestion，见上方定义
-      // 与 capture 单测的互补断言），但**判据必须只有一处**：单测断言的正是这个生产分支所调的谓词，
-      // 否则谓词被单独测绿、生产路径却走另一份拷贝 = 假绿（本 PR review finding）。
-      if (!r.automatic_commit || r.judge.suggested_rating === null) {
-        // YUK-444 — 开放题（含 semantic-override 的客观题型）：推迟揭晓。judge 结果暂存 pendingPreview
-        // → 进 confidence 相位渲 1-5 自评 interstitial，**不 setPreview**（判定卡不渲染）。用户选 1-5 或
-        // 「跳过」后经 revealVerdict 才 setPreview 揭晓（先自评再看结果的元认知语义）。评级仍走既有手动流。
-        setPendingPreview(r.judge);
-      } else {
-        // YUK-432 — 客观题（route exact/keyword，与后端 isObjectiveJudgeRoute 同源；不看 kind）：preview
-        // 回来即自动 commit（auto_rate:true + suggested_rating），跳过手动 again/hard/good。advance:false 让
-        // 用户仍看到判定反馈卡，再按「下一项」推进（commit 成功内部置 autoCommitted）。信心自评插拍**跳过**
-        // （auto-commit 流不插；此分支 ⟺ shouldOfferConfidenceGate=false ⟺ isObjectiveQuestion=true）。
-        setPreview(r.judge);
-        setRating(r.judge.suggested_rating);
-        await commit({
-          withAppeal: false,
-          rating: r.judge.suggested_rating,
-          autoRate: true,
-          advance: false,
-          previewOverride: r.judge, // 闭包里的 preview state 此刻仍 null，传 fresh judge。
-        });
-      }
+      const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput, adviceCommit(true));
+      await applyAdvice(r, false);
     } catch (e) {
       if (isInterventionDiagnostic && e instanceof ApiError && e.status === 409) {
         const restored = await qQ.refetch();
@@ -1387,7 +1493,7 @@ export function usePracticeSubmit({
     /** 「返回流」: never blocked by the draft; waits at most 8s for the last save (YUK-1489). */
     handleBack,
     /** Ref for the answering surface's root: keepalive draft flush on pagehide / page hidden. */
-    attachPagehideFlush,
+    attachPagehideFlush: attachAnswerRoot,
     /** Ref for an element that exists only while answering: the ⌘/Ctrl+Enter submit hotkey. */
     attachSubmitHotkey,
   };

@@ -580,6 +580,37 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     },
     tier: 'A',
   },
+  // ── 任务持续失败告警（observability/server/task-failure-alerts.ts 唯一判定） ──
+  TASK_FAILURE_ALERT_CONSECUTIVE: {
+    schema: z.number().int().min(2).max(100),
+    codeDefault: 2,
+    tier: 'A',
+    note: '同一 task kind 自上次成功以来连续失败达到此次数即告警',
+  },
+  TASK_FAILURE_ALERT_WINDOW_HOURS: {
+    schema: z.number().int().min(1).max(168),
+    codeDefault: 24,
+    tier: 'A',
+  },
+  TASK_FAILURE_ALERT_RATE: {
+    schema: z.number().min(0).max(1),
+    codeDefault: 0.5,
+    tier: 'A',
+    note: '窗口内失败率严格高于此值才告警；1 = 关闭失败率规则',
+  },
+  TASK_FAILURE_ALERT_MIN_RUNS: {
+    // 8 次里 ≥5 次失败才算：10% 背景失败率下误报约 0.04%，20% 下约 1%；
+    // 低频任务由连续失败规则兜住，不靠失败率。
+    schema: z.number().int().min(2).max(1000),
+    codeDefault: 8,
+    tier: 'A',
+  },
+  TASK_FAILURE_ALERT_STALE_DAYS: {
+    schema: z.number().int().min(1).max(90),
+    codeDefault: 14,
+    tier: 'A',
+    note: '最近一次失败早于此天数的连续失败不再告警（已停用的任务不长期挂红）',
+  },
   // ── admission 面（enforce 断流；mode 原文透传保 throw 语义） ──────────────
   AI_PROVIDER_ATTEMPT_ADMISSION_MODE: {
     schema: z.enum(['off', 'observe', 'enforce']),

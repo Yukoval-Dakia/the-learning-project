@@ -1246,6 +1246,19 @@
     ]
   },
   {
+    "path": "/api/observability/task-failure-alerts",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "任务持续失败告警：按 task kind 实时判定连续失败 / 窗口失败率",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "只读，需 x-internal-token；只读 ai_task_runs，零写零 AI。阈值来自配置注册表 TASK_FAILURE_ALERT_*。recorded_event_id=null 表示每小时的 task_failure_alert_hourly 尚未写入该告警事件（experimental:task_failure_alert，id 确定、同一告警只写一次）。"
+      }
+    ]
+  },
+  {
     "path": "/api/admin/config",
     "methods": [
       {

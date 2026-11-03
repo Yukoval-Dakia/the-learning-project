@@ -4,21 +4,7 @@
 // agent-notes-m3e.css; design records docs/design/2026-11-03-inbox-agent-notes-events-m3e.md and
 // docs/design/2026-11-03-today-finish-m3e.md.
 
-import {
-  ArrowRight,
-  ChevronDown,
-  CircleAlert,
-  Clock,
-  FileQuestion,
-  Link2,
-  type LucideIcon,
-  MessageSquare,
-  Moon,
-  RefreshCw,
-  Sparkles,
-  Tag,
-  Target,
-} from 'lucide-react';
+import { ArrowRight, ChevronDown, Clock, Link2 } from 'lucide-react';
 import { formatRelTime } from '@/ui/lib/utils';
 import {
   type AgentNoteGroup,
@@ -31,18 +17,6 @@ import {
 } from './derive';
 import { agentMeta, signalMeta } from './meta';
 import type { BoardAgentNote } from './types';
-
-// meta.ts icon names → lucide (unknown names get the generic sparkle, as before).
-const AGENT_ICON: Record<string, LucideIcon> = {
-  quiz: FileQuestion,
-  mistakes: CircleAlert,
-  copilot: MessageSquare,
-  tag: Tag,
-  moon: Moon,
-  refresh: RefreshCw,
-  target: Target,
-  sparkle: Sparkles,
-};
 
 /** Signal tone → ui-next tone role (hard → caution, info → accent, good → positive, coral → secondary). */
 const SIGNAL_TONE: Record<string, string> = {
@@ -162,7 +136,7 @@ export function AgentNoteGroupRow({ group, unread, now, onNavigate }: AgentNoteG
   const attention = ATTENTION_META[group.attention];
   const ttl = deriveTtl(group.expires_at, now);
   const title = group.primary_ref?.label ?? signal.label;
-  const SourceIcon = AGENT_ICON[source.icon] ?? Sparkles;
+  const SourceIcon = source.icon;
   const tone = signalToneRole(signal.tone);
 
   return (

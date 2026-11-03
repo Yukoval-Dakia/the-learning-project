@@ -15,6 +15,10 @@ import {
 import { getCorrectionStatuses } from '@/kernel/events';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import {
+  assessmentAttemptEventId,
+  submissionIdFromAttemptEventId,
+} from '@/kernel/records/assessment-attempt-identity';
+import {
   nativeAttemptOutcome,
   resolveVerdictsForAttempts,
   resolveVerdictsForNativeAttempts,
@@ -27,8 +31,6 @@ type AnswerOutcome = 'success' | 'failure' | 'partial';
 
 const NATIVE_ATTEMPT_ACTION = 'experimental:assessment_attempt';
 const RECORD_CAPTURE_ACTION = 'experimental:record_capture';
-/** Native attempt anchor id: `evt_assessment_<submission_id>`. */
-const ASSESSMENT_ATTEMPT_ID_PREFIX = 'evt_assessment_';
 
 /** The learner answered a question: legacy attempt/review rows or a native attempt anchor. */
 export const LEARNER_ANSWER_ACTIONS = ['attempt', 'review', NATIVE_ATTEMPT_ACTION] as const;
@@ -263,8 +265,8 @@ async function loadContestedAttemptIds(db: DbLike, attemptIds: string[]): Promis
   }
 
   const submissionIds = attemptIds
-    .filter((id) => id.startsWith(ASSESSMENT_ATTEMPT_ID_PREFIX))
-    .map((id) => id.slice(ASSESSMENT_ATTEMPT_ID_PREFIX.length));
+    .map(submissionIdFromAttemptEventId)
+    .filter((id): id is string => id !== null);
   const submissionByEvaluation = new Map<string, string>();
   for (const chunk of chunked(submissionIds)) {
     const evaluations = await db
@@ -286,7 +288,7 @@ async function loadContestedAttemptIds(db: DbLike, attemptIds: string[]): Promis
       );
     for (const appeal of appeals) {
       const submissionId = submissionByEvaluation.get(appeal.subjectId);
-      if (submissionId) contested.add(`${ASSESSMENT_ATTEMPT_ID_PREFIX}${submissionId}`);
+      if (submissionId) contested.add(assessmentAttemptEventId(submissionId));
     }
   }
   return contested;

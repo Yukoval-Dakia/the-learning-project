@@ -201,6 +201,13 @@ export const advisoryLockRegistry = {
     keyPrefix: 'yuk1514:serving:',
     suffixFields: ['eventId'],
   },
+  proposalDecision: {
+    family: 'proposal-decision',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'proposal_decision:',
+    suffixFields: ['proposalId'],
+  },
   imageCandidateAccept: {
     family: 'image-candidate-accept',
     encoding: 'hashtextextended',

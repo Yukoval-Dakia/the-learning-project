@@ -14,8 +14,7 @@ export class LearningIntentError extends Error {
       | 'topic_no_children'
       | 'llm_parse_failed'
       | 'invalid_atomic_knowledge_id'
-      | 'proposal_not_found'
-      | 'proposal_already_rated',
+      | 'proposal_not_found',
     message: string,
   ) {
     super(message);

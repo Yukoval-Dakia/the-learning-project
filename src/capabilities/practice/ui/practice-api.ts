@@ -285,6 +285,8 @@ export function projectQuestionDeleteResponse(
 
 type ReviewAdviceWire = ApiOperationJsonResponse<'previewReviewAdvice'>;
 export type JudgePreview = ReviewAdviceWire['judge'];
+// YUK-1729 — the learner capture an automatic verdict commits with in the same advice request.
+export type AdviceCommit = NonNullable<ApiOperationRequestBody<'previewReviewAdvice'>['commit']>;
 
 export async function getAdvice(
   questionId: string,
@@ -293,6 +295,9 @@ export async function getAdvice(
   // 使用同一份证据。空值不发字段（既有纯文本 advice wire 逐字不变）。
   imageRefs: readonly string[],
   assessment: ApiOperationRequestBody<'createSubmission'>,
+  // YUK-1729 — sent when the answer may be committed here: an automatic, rated verdict is then
+  // recorded and settled in this same request (`committed` in the response). Absent → preview only.
+  commit?: AdviceCommit,
 ): Promise<Omit<ReviewAdviceWire, 'judge'> & { judge: JudgePreview }> {
   const response = await apiOperationJson('previewReviewAdvice', {
     url: '/api/review/advice',
@@ -302,6 +307,7 @@ export async function getAdvice(
       question_id: questionId,
       response_md: responseMd,
       ...(imageRefs.length > 0 ? { answer_image_refs: [...imageRefs] } : {}),
+      ...(commit ? { commit } : {}),
     },
   });
   return response;
