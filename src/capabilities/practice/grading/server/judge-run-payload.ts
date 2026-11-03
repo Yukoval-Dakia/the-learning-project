@@ -14,6 +14,7 @@ import {
   resolveVerdictForAttempt,
   resolveVerdictsForNativeAttempts,
 } from '@/kernel/read-models/assessment-verdict';
+import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { JudgeRunTerminalResultSchema } from '../../api/assessment-contracts';
 import { projectEvaluationToJudgeResult } from './judge/evaluation-authority';
 import { ratingFromCoarseOutcome } from './judge-rating';
@@ -392,7 +393,7 @@ export async function reconstructDoneFromSyncAttempt(database: Db | Tx, submissi
   const [anchor] = await database
     .select()
     .from(event)
-    .where(eq(event.id, `evt_assessment_${submissionId}`));
+    .where(eq(event.id, assessmentAttemptEventId(submissionId)));
   if (!anchor) return null;
   const projected = await projectNativeAttemptVerdict(database, anchor);
   const resolved = projected.resolved;
