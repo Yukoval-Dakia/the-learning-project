@@ -100,8 +100,9 @@ export async function createProposalDecision(
       // Only accept re-enters the per-kind applier, which re-drives best-effort
       // note_generate on re-accept; accept appliers self-guard idempotency.
       // reverse/change_type/dismiss have no re-drive hop and would turn a
-      // same-decision replay from 200 into 409, so serve that replay here.
-      if (input.decision !== 'accept') {
+      // same-decision replay from 200 into 409, so serve that replay here. A corrected
+      // proposal has no applier hop left, so its accept replay is served here too.
+      if (input.decision !== 'accept' || correction.state !== 'active') {
         return {
           proposal_id: proposalId,
           proposal_kind: proposal.kind,
@@ -114,6 +115,8 @@ export async function createProposalDecision(
         };
       }
     }
+    // marked_wrong / superseded: the template writes no rate for a corrected proposal.
+    if (correction.state !== 'active') throw conflict(proposalId, correction.state);
   }
 
   let result: ProposalLifecycleResult;
