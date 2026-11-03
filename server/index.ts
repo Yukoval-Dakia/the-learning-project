@@ -106,9 +106,10 @@ async function registerToolsBeforeServe(): Promise<void> {
 
 // API routes and worker jobs both call Practice-owned operations through kernel ports.
 async function installPracticeOperationsBeforeServe(): Promise<void> {
-  const { installModelAdmissionPins, installPracticeHostOperations } = await import(
-    '@/capabilities/practice/public'
-  );
+  const [{ installPracticeHostOperations }, { installModelAdmissionPins }] = await Promise.all([
+    import('@/capabilities/practice/public'),
+    import('@/server/assessment/model-admission-pins'),
+  ]);
   await installPracticeHostOperations();
   await installModelAdmissionPins();
 }

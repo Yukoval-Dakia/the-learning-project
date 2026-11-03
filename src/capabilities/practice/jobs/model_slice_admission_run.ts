@@ -38,11 +38,11 @@ import { writeEvent } from '@/kernel/events';
 import { lookupGroupSubjects } from '@/kernel/read-models/model-admission';
 import {
   assertModelAdmissionSliceRegistrable,
+  createAdmissionRunExecutor,
   currentModelPins,
   modelSliceIdFor,
   registerModelAdmissionSlice,
-} from '../grading/public';
-import { createAdmissionRunExecutor } from '../server/judge/evaluate-submission';
+} from '../server/judge/evaluate-submission';
 
 /**
  * 准入阈值（config value）。min_items = 每科至少 30 道留出题；

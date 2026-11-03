@@ -145,16 +145,6 @@ export async function installInterventionDiagnosticLeaves(): Promise<void> {
   install(interventionDiagnosticLeaves);
 }
 
-// The issuance gate reads the live model pins through a kernel port. Every host that can
-// reach the gate (API, worker, repair scripts) installs it before its first read.
-export async function installModelAdmissionPins(): Promise<void> {
-  const [{ installModelPinReader }, { currentModelPins }] = await Promise.all([
-    import('@/kernel/read-models/model-admission'),
-    import('./grading/public'),
-  ]);
-  installModelPinReader(currentModelPins);
-}
-
 export { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
 export type { PlacementVerificationAuthority, SupplyTraceV1T } from '@/kernel/supply-contracts';
 export { withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';

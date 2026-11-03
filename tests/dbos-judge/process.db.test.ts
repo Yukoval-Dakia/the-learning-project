@@ -333,7 +333,7 @@ afterAll(async () => {
     'src/server/durable/judge-worker.ts',
     'src/capabilities/practice/server/judge/evaluate-submission.ts',
     'src/capabilities/practice/server/judge/recorded-model-executor.ts',
-    'src/capabilities/practice/grading/server/pi-model-executor.ts',
+    'src/server/assessment/pi-model-executor.ts',
     'src/kernel/events/events.ts',
     'pnpm-lock.yaml',
     'node_modules/@dbos-inc/dbos-sdk/package.json',

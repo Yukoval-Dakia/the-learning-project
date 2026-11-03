@@ -11,9 +11,10 @@ import { createFrontdoor } from '../frontdoor';
 const env = getServerEnv();
 requireApiInternalToken(env);
 const port = resolveApiPort(env.API_PORT);
-const { installModelAdmissionPins, installPracticeHostOperations } = await import(
-  '@/capabilities/practice/public'
-);
+const [{ installPracticeHostOperations }, { installModelAdmissionPins }] = await Promise.all([
+  import('@/capabilities/practice/public'),
+  import('@/server/assessment/model-admission-pins'),
+]);
 await installPracticeHostOperations();
 await installModelAdmissionPins();
 const [{ buildAdminConfigRuntimeFacts }, { setAdminConfigRuntimeFacts }] = await Promise.all([
