@@ -63,7 +63,13 @@ export function isToolArgumentContractFailure(result: {
 }): boolean {
   if (result.isError !== true) return false;
   const text = toolResultText(result.content);
-  return text.includes(TOOL_PARAM_CONTRACT_MARKER) || text.startsWith('Validation failed for tool');
+  // pi 1.5 reports a wholly unparseable arguments payload as "Invalid arguments
+  // for tool"; schema rejection stays "Validation failed for tool".
+  return (
+    text.includes(TOOL_PARAM_CONTRACT_MARKER) ||
+    text.startsWith('Validation failed for tool') ||
+    text.startsWith('Invalid arguments for tool')
+  );
 }
 
 /** True when the result is OUR contract rejection — the one correction-eligible failure. */
