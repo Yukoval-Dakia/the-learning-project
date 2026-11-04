@@ -164,15 +164,14 @@ export {
  * inline here so the barrel adds no new pass-through site.
  */
 export async function installTodayPracticeRecompose(): Promise<void> {
-  const [
-    { installTodayPracticeRecompose: install, installSteeringDeferredDueCount },
-    { recomposePracticeStream },
-    { countSteeringDeferredDueReviews },
-  ] = await Promise.all([
-    import('@/kernel/steering-recompose'),
-    import('./scheduling/server/stream-operations'),
-    import('./scheduling/server/due-list'),
-  ]);
+  const [{ installTodayPracticeRecompose: install, installSteeringDeferredDueCount }] =
+    await Promise.all([import('@/kernel/steering-recompose')]);
+  // Both operations ride the scheduling sub-owner's own public seam — the
+  // capability barrel must not enter scheduling/server directly
+  // (pnpm audit:practice-subowners).
+  const { recomposePracticeStream, countSteeringDeferredDueReviews } = await import(
+    './scheduling/public'
+  );
   install((db) => recomposePracticeStream(db, {}));
   installSteeringDeferredDueCount((db, now) => countSteeringDeferredDueReviews(db, { now }));
 }

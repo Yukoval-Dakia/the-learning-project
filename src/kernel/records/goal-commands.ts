@@ -346,11 +346,34 @@ export async function expireDueSteeringGoals(
     .select({ id: goal.id, effective_until: goal.effective_until })
     .from(goal)
     .where(and(eq(goal.status, 'active'), isNotNull(goal.steering)));
-  const expired = rows
+  const candidates = rows
     .filter((row) => row.effective_until !== null && row.effective_until < today)
     .map((row) => row.id);
-  for (const goalId of expired) {
+  const expired: string[] = [];
+  for (const goalId of candidates) {
+    // Recheck under the row lock (mutateGoal opens the transaction with
+    // SELECT … FOR UPDATE): a learner revising the deadline between the unlocked
+    // candidate read and this write must not find a just-extended instruction
+    // flipped to done. When the locked row no longer reads expired, skip.
+    const [locked] = await db
+      .select({
+        status: goal.status,
+        effective_until: goal.effective_until,
+        steering: goal.steering,
+      })
+      .from(goal)
+      .where(eq(goal.id, goalId))
+      .for('update');
+    if (
+      locked?.status !== 'active' ||
+      locked.steering === null ||
+      locked.effective_until === null ||
+      locked.effective_until >= today
+    ) {
+      continue; // revised/deactivated under the lock — no longer expiry-eligible
+    }
     await updateGoalStatus(db, goalId, 'done', now, { ended_by: 'expiry' }, 'steering-expiry');
+    expired.push(goalId);
   }
   return expired;
 }

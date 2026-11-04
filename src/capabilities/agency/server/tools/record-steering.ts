@@ -8,12 +8,12 @@
 // moment they said it, not a proposal. The confirmation sentence the companion
 // reads back is built ONLY from this tool's result (「记下了…接下来我会…」).
 
-import { and, desc, eq, inArray, lte } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { isLearnerLocalDay, learnerLocalDay } from '@/core/learner-day';
 import { SteeringGoalData, type SteeringGoalDataT } from '@/core/schema/steering';
 import { learnerDayWeekday, quoteAppearsInMessage, steeringDaysLeft } from '@/core/steering';
-import { goal, knowledge, material_fsrs_state } from '@/db/schema';
+import { goal, knowledge } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { listActiveSteeringGoals } from '@/kernel/read-models/active-goal-scope';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
@@ -139,17 +139,44 @@ function normalizedSignature(
   ]);
 }
 
-async function readRecentUserMessages(ctx: ToolContext, limit = 20): Promise<string[]> {
+/**
+ * The verbatim gate's ONLY anchor: the user-ask event that started this run
+ * (`ctx.causedByEventId` — both the durable and API copilot paths set it to the
+ * `copilot_user_ask`/`copilot_chip_trigger` event id). Anchoring to exactly this
+ * turn's message keeps a queued later message from failing a real quote, and an
+ * old revoked quote from authorising a new write. Fail closed when the anchor
+ * is missing — never widen back to a session-message window.
+ */
+async function quoteAppearsInCurrentTurnMessage(ctx: ToolContext, quote: string): Promise<boolean> {
+  const anchorId = ctx.causedByEventId;
+  if (!anchorId) {
+    throw new ApiError(
+      'validation_error',
+      'record_steering 需要本轮 user-ask 事件锚（causedByEventId 缺失）',
+      422,
+    );
+  }
   const { event } = await import('@/db/schema');
-  const rows = await ctx.db
-    .select({ payload: event.payload })
+  const [ask] = await ctx.db
+    .select({ action: event.action, session_id: event.session_id, payload: event.payload })
     .from(event)
-    .where(and(eq(event.session_id, ctx.sessionId ?? ''), inArray(event.action, [...ASK_ACTIONS])))
-    .orderBy(desc(event.created_at))
-    .limit(limit);
-  return rows
-    .map((row) => (row.payload as { user_message?: unknown }).user_message)
-    .filter((msg): msg is string => typeof msg === 'string');
+    .where(eq(event.id, anchorId))
+    .limit(1);
+  const message =
+    ask && (ASK_ACTIONS as readonly string[]).includes(ask.action)
+      ? (ask.payload as { user_message?: unknown }).user_message
+      : undefined;
+  if (typeof message !== 'string' || message.length === 0) {
+    throw new ApiError(
+      'validation_error',
+      '本轮锚事件不是可校验的学习者消息（user_message 缺失）',
+      422,
+    );
+  }
+  if (ctx.sessionId && ask.session_id && ask.session_id !== ctx.sessionId) {
+    throw new ApiError('validation_error', '锚事件不属于当前会话', 422);
+  }
+  return quoteAppearsInMessage(quote, message);
 }
 
 /** Resolve live KC ids; unknown and non-kc ids drop out with a typed issue each. */
@@ -278,9 +305,8 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
     const now = new Date();
     const today = learnerLocalDay(now);
 
-    // ── hard gate: the quote must come from this session's real messages ──
-    const messages = await readRecentUserMessages(ctx);
-    if (!messages.some((message) => quoteAppearsInMessage(input.learner_words, message))) {
+    // ── hard gate: the quote must come from THIS turn's user-ask event ──
+    if (!(await quoteAppearsInCurrentTurnMessage(ctx, input.learner_words))) {
       throw new ApiError(
         'validation_error',
         'learner_words 不在学习者本轮消息里：必须逐字引用学习者原话，不能转述',

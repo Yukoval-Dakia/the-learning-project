@@ -166,32 +166,44 @@ function buildCoachInput(
     pending_proposals_before: beforeRows.filter((row) => row.status === 'pending').length,
     objective,
     // Ordered by sequence_hint then created_at; empty means the model omits the strand.
-    active_goals: activeGoals.map((g) => ({
-      id: g.id,
-      title: g.title,
-      subject_id: g.subject_id,
-      scope_knowledge_ids: g.scope_knowledge_ids,
-      sequence_hint: g.sequence_hint,
-      ...(g.steering !== null && steeringWindowCoversToday(g, learnerLocalDay(now))
-        ? {
-            steering: {
-              learner_words: g.steering.learner_words,
-              instruction_md: g.steering.instruction_md,
-              scope_unresolved: g.steering.scope_unresolved,
-              excluded_subject_ids: g.steering.excluded_subject_ids,
-              excluded_knowledge_ids: g.steering.excluded_knowledge_ids,
-              window: {
-                from: g.effective_from,
-                until: g.effective_until,
-                until_weekday:
-                  g.effective_until !== null ? learnerDayWeekday(g.effective_until) : null,
-                days_left: steeringDaysLeft(g.effective_until, learnerLocalDay(now)),
-                starts_in_days: steeringStartsInDays(g.effective_from, learnerLocalDay(now)),
+    // A steering goal whose window has not started yet (effective_from in the
+    // future) is not today's attention: it stays out of the generic active-goal
+    // view entirely until its window opens (ordinary goals are unaffected).
+    active_goals: activeGoals
+      .filter(
+        (g) =>
+          !(
+            g.steering !== null &&
+            g.effective_from !== null &&
+            g.effective_from > learnerLocalDay(now)
+          ),
+      )
+      .map((g) => ({
+        id: g.id,
+        title: g.title,
+        subject_id: g.subject_id,
+        scope_knowledge_ids: g.scope_knowledge_ids,
+        sequence_hint: g.sequence_hint,
+        ...(g.steering !== null && steeringWindowCoversToday(g, learnerLocalDay(now))
+          ? {
+              steering: {
+                learner_words: g.steering.learner_words,
+                instruction_md: g.steering.instruction_md,
+                scope_unresolved: g.steering.scope_unresolved,
+                excluded_subject_ids: g.steering.excluded_subject_ids,
+                excluded_knowledge_ids: g.steering.excluded_knowledge_ids,
+                window: {
+                  from: g.effective_from,
+                  until: g.effective_until,
+                  until_weekday:
+                    g.effective_until !== null ? learnerDayWeekday(g.effective_until) : null,
+                  days_left: steeringDaysLeft(g.effective_until, learnerLocalDay(now)),
+                  starts_in_days: steeringStartsInDays(g.effective_from, learnerLocalDay(now)),
+                },
               },
-            },
-          }
-        : {}),
-    })),
+            }
+          : {}),
+      })),
     // Attention pressure only; empty means the brief derives from due/weak signals.
     active_items: activeItems.map((it) => ({
       id: it.id,

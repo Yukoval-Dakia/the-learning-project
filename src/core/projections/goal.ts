@@ -147,6 +147,12 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
         status: 'active',
         // The proposal carries no learner-declared stage; null means undeclared, not guessed.
         declared_stage: null,
+        // A goal_scope_proposal never carries learner steering (source is not
+        // 'learner_said'); null is the column default and keeps fold == row parity
+        // (the live row materializes these columns; the fold must too).
+        effective_from: null,
+        effective_until: null,
+        steering: null,
         source: 'goal_scope_proposal',
         source_ref: fe.id,
         created_at: acceptedAt,

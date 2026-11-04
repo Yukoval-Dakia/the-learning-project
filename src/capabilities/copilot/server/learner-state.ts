@@ -404,7 +404,17 @@ export async function readLearnerStateProjection(
     overnightSentencePromise,
     loadFailureStreak(db),
   ]);
-  const activeGoal = goals.find((g) => g.steering === null) ?? goals[0] ?? null;
+  const activeGoal =
+    goals.find((g) => g.steering === null) ??
+    goals.find(
+      (g) =>
+        !(
+          g.steering !== null &&
+          g.effective_from !== null &&
+          g.effective_from > learnerLocalDay(new Date())
+        ),
+    ) ??
+    null;
   const steeringLines = buildSteeringHeaderLines(goals, learnerLocalDay(new Date()));
   const topCauseCategories = rankTopCauseCategories(failures, 2);
 

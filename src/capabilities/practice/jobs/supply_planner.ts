@@ -430,8 +430,9 @@ export async function runSupplyPlanner(
   // YUK-1770 — deterministic steering tag on demands: a KC inside a steering
   // scope carries control.needed_by = until − 2d and cause owner_request (the
   // learner asked for it). Earliest needed_by wins when goals overlap. This is
-  // a post-gate annotation on the SAME general supply policy — no cap change,
-  // no exemption; the executor consumes it as scheduling context.
+  // a PLANNING-level record only: the demand event keeps it forever, but the
+  // supply_execute job payload's SupplyExecuteItem parse drops it (executor
+  // scheduling is route/count-driven; the preparer cutover owns the rewire).
   const steeringTagByKc = new Map<string, { goal_id: string; needed_by: string }>();
   for (const scope of steeringScopes) {
     if (scope.until === null) continue;

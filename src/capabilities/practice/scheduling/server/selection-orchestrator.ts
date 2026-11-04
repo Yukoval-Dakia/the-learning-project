@@ -163,16 +163,18 @@ export function buildSelectionOrchestratorTaskInputWithCandidates(
   const ranked = [...candidates].sort(byScore);
   // YUK-1770 — exam-scope reserved slots: in-scope steering candidates
   // (examRelevance ≥ 0.5) keep up to half the cap so the 24-candidate cut never
-  // silently drops the exam scope. With no steering (all examRelevance
-  // undefined) the reservation is empty and the cut is byte-identical to before.
+  // silently drops the exam scope. Remaining seats fill from ALL unselected
+  // ranked candidates (in-scope overflow included) by score — the budget is
+  // never wasted. With no steering (all examRelevance undefined) the selection
+  // is byte-identical to the plain top-cap cut.
   const cap = SELECTION_ORCHESTRATOR_CANDIDATE_CAP;
   const reserved = Math.floor(cap / 2);
-  const inScope = ranked.filter((c) => (c.examRelevance ?? 0) >= 0.5);
-  const others = ranked.filter((c) => (c.examRelevance ?? 0) < 0.5);
-  const keptInScope = inScope.slice(0, reserved);
-  const selectedCandidates = [...keptInScope, ...others.slice(0, cap - keptInScope.length)].sort(
-    byScore,
-  );
+  const selected = new Set(ranked.filter((c) => (c.examRelevance ?? 0) >= 0.5).slice(0, reserved));
+  for (const c of ranked) {
+    if (selected.size >= cap) break;
+    selected.add(c);
+  }
+  const selectedCandidates = [...selected].sort(byScore);
   const candidatesBlock = buildSelectionOrchestratorInput(selectedCandidates);
   const memoryPrior = buildMemoryPriorAdvisoryBlock(memories);
   const input = memoryPrior
