@@ -411,7 +411,9 @@ export function admissionStageRunner(input: {
                 kind: error.kind,
                 taskRunId: error.taskRunId,
                 subtype: error.subtype,
-                apiErrorStatus: error.apiErrorStatus,
+                ...(error.apiErrorStatus !== undefined
+                  ? { apiErrorStatus: error.apiErrorStatus }
+                  : {}),
                 errors: error.errors,
                 ...(error.costUsd != null ? { costUsd: error.costUsd } : {}),
                 ...(error.helpProviderFault ? { helpProviderFault: error.helpProviderFault } : {}),
