@@ -33,6 +33,14 @@ export const agencyCapability = defineCapability({
       INTERVENTION_ACTIVATED_ACTION,
       INTERVENTION_PREPARATION_FAILED_ACTION,
       INTERVENTION_SETTLED_ACTION,
+      // YUK-1770 — the goal write surface agency's steering machinery emits via
+      // kernel/records/goal-commands (genesis seeds, status/scope updates). The
+      // steering-changed subscription consumes them; composition requires a
+      // declared owner. Genesis is a generic action, but agency is the only
+      // subscriber and the only writer-path owner (goal routes/commands).
+      'experimental:genesis',
+      'experimental:goal_status_update',
+      'experimental:goal_scope_update',
     ],
   },
   subscriptions: {
