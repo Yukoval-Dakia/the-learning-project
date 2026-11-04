@@ -84,6 +84,7 @@ export const CopilotReplyFinalizationReceiptSchema = z
         placed: z.number().int().min(0),
         appended: z.number().int().min(0),
         dropped: z.number().int().min(0),
+        unplaced: z.number().int().min(0),
       })
       .strict()
       .optional(),
@@ -405,14 +406,33 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
           return `\n\n${serializeBlockFence(blocksByRef.get(ref) as never)}\n\n`;
         },
       );
-      const appended = readyBlocks.filter((b) => !placedRefs.has(b.ref));
+      // Superseded compose drafts never reach the learner: once the reply
+      // places at least one block, every other ready block is dropped; with no
+      // placement at all, only the last ready block per kind is appended. The
+      // rest are recorded as `unplaced` in the receipt.
+      const unplacedBlocks = readyBlocks.filter((b) => !placedRefs.has(b.ref));
+      let appended: typeof unplacedBlocks;
+      let unplaced: number;
+      if (placedRefs.size > 0) {
+        appended = [];
+        unplaced = unplacedBlocks.length;
+      } else {
+        const lastIndexByKind = new Map<string, number>();
+        unplacedBlocks.forEach((b, index) => {
+          const kind = (b.block as { kind?: unknown } | undefined)?.kind;
+          lastIndexByKind.set(typeof kind === 'string' ? kind : '', index);
+        });
+        const kept = new Set(lastIndexByKind.values());
+        appended = unplacedBlocks.filter((_, index) => kept.has(index));
+        unplaced = unplacedBlocks.length - appended.length;
+      }
       const appendedFences = appended
         .map((b) => serializeBlockFence(b.block as never))
         .join('\n\n');
       const fixed = appendedFences ? `${withPlaced.trimEnd()}\n\n${appendedFences}` : withPlaced;
       const blocksReceipt =
         readyBlocks.length > 0 || dropped > 0
-          ? { placed: placedRefs.size, appended: appended.length, dropped }
+          ? { placed: placedRefs.size, appended: appended.length, dropped, unplaced }
           : undefined;
       if (
         traceVersion !== startVersion ||

@@ -13,7 +13,6 @@ import {
 } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
-import type { AdaptiveGateInput } from '@/kernel/proposals/adaptive-bias';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { findActiveProposalCooldown, withProposalGateLock } from '@/kernel/proposals/signals';
 import { type WriteAiProposalInput, writeAiProposal } from '@/kernel/proposals/writer';
@@ -160,15 +159,12 @@ interface EdgeProposalProvenance {
 }
 
 /**
- * `rubric`: inbox-pending + dismiss-cooldown gate, then the shared rubric floor;
- * a rejected create is still written as a folded audit event.
+ * `rubric`: inbox-pending + dismiss-cooldown gate, then the shared structural
+ * rubric; a rejected create is still written as a folded audit event.
  */
 export interface RubricEdgeProposalInput extends EdgeProposalProvenance {
   validate: 'rubric';
   change: EdgeCreateChange | EdgeArchiveChange;
-  rubric: { isAgent: boolean; actorRef: string };
-  /** Adaptive gate bump for creates; read inside the gate transaction. */
-  resolveAdaptive?: (tx: DbLike) => Promise<AdaptiveGateInput | undefined>;
 }
 
 /**
@@ -204,7 +200,8 @@ export type RubricEdgeProposalResult =
       cooldown_key: string;
       gate: string;
       reason: string;
-    };
+    }
+  | { status: 'skipped:no_evidence'; cooldown_key: string; reason: string };
 
 function cooldownKeysFor(change: EdgeCreateChange | EdgeArchiveChange): string[] {
   return change.edge_op === 'archive'
@@ -267,6 +264,20 @@ export async function writeKnowledgeEdgeProposal(
 ): Promise<BootstrapEdgeProposalResult | RubricEdgeProposalResult> {
   const cooldownKeys = cooldownKeysFor(input.change);
   const cooldownKey = cooldownKeys[0] as string;
+  // Structural shape rule, not an evidence floor: an edge create must name at
+  // least one evidence ref so the learner can inspect and veto it; sufficiency
+  // stays an accept-time call. Archive and bootstrap carry none by design.
+  if (
+    input.validate === 'rubric' &&
+    input.change.edge_op === 'create' &&
+    input.evidence_refs.length === 0
+  ) {
+    return {
+      status: 'skipped:no_evidence',
+      cooldown_key: cooldownKey,
+      reason: 'edge create requires at least one evidence_refs entry',
+    };
+  }
   return await withProposalGateLock(db, EDGE_PROPOSAL_KIND, cooldownKeys, async (tx) => {
     if (input.validate === 'bootstrap') {
       return await writeBootstrapCreate(tx, input, cooldownKey, cooldownKeys);
@@ -318,13 +329,7 @@ async function writeRubricCreate(
   if (skip) return skip;
 
   const payload = edgeProposalPayload(input, null, change, cooldownKey);
-  const adaptive = input.resolveAdaptive ? await input.resolveAdaptive(tx) : undefined;
-  const verdict = await validateProposalQuality(
-    parseAiProposalPayload(payload),
-    tx,
-    input.rubric,
-    adaptive,
-  );
+  const verdict = await validateProposalQuality(parseAiProposalPayload(payload), tx);
   if (!verdict.ok) {
     return await foldRubricRejectedCreate(tx, input, payload, change, cooldownKey, verdict);
   }
@@ -394,9 +399,9 @@ async function writeRubricArchive(
     },
     cooldownKey,
   );
-  // Archive short-circuits the evidence gates; a structural reject is surfaced
+  // Archive short-circuits the create gates; a structural reject is surfaced
   // without folding a create-shaped event.
-  const verdict = await validateProposalQuality(parseAiProposalPayload(payload), tx, input.rubric);
+  const verdict = await validateProposalQuality(parseAiProposalPayload(payload), tx);
   if (!verdict.ok) {
     return {
       status: 'skipped:rubric_rejected',

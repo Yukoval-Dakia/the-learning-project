@@ -375,6 +375,7 @@
 {"file":"src/capabilities/practice/question-bank/public.ts","kind":"site","symbol":"itemPriorDispatchedRequestSchema","targetModule":"src/capabilities/practice/question-bank/server/item-prior-paid-effect-adapter.ts","targetSymbol":"itemPriorDispatchedRequestSchema","class":"stable_contract"}
 {"file":"src/capabilities/practice/question-bank/public.ts","kind":"site","symbol":"itemPriorMemberRequestSchema","targetModule":"src/capabilities/practice/question-bank/server/item-prior-paid-effect-adapter.ts","targetSymbol":"itemPriorMemberRequestSchema","class":"stable_contract"}
 {"file":"src/capabilities/practice/question-bank/public.ts","kind":"site","symbol":"mergeExactQuestionDuplicateKnowledgeIds","targetModule":"src/capabilities/practice/question-bank/server/quiz/content-fingerprint.ts","targetSymbol":"mergeExactQuestionDuplicateKnowledgeIds","class":"stable_contract"}
+{"file":"src/capabilities/practice/question-bank/public.ts","kind":"site","symbol":"nearestQuestionsByMethod","targetModule":"src/capabilities/practice/question-bank/server/admission/solution-prior.ts","targetSymbol":"nearestQuestionsByMethod","class":"stable_contract"}
 {"file":"src/capabilities/practice/question-bank/public.ts","kind":"site","symbol":"normalizeMethod","targetModule":"src/capabilities/practice/question-bank/server/item-prior-durable-operation.ts","targetSymbol":"normalizeMethod","class":"stable_contract"}
 {"file":"src/capabilities/practice/question-bank/public.ts","kind":"site","symbol":"normalizeReps","targetModule":"src/capabilities/practice/question-bank/server/item-prior-durable-operation.ts","targetSymbol":"normalizeReps","class":"stable_contract"}
 {"file":"src/capabilities/practice/question-bank/public.ts","kind":"site","symbol":"poolFetch","targetModule":"src/capabilities/practice/question-bank/server/quiz/pool-fetch.ts","targetSymbol":"poolFetch","class":"stable_contract"}
@@ -602,7 +603,6 @@
 {"file":"src/db/schema.ts","kind":"module","symbol":"judge_run_control","targetModule":"src/db/schema/platform.ts","targetSymbol":"judge_run_control","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"kc_typed_state","targetModule":"src/db/schema/learner-state.ts","targetSymbol":"kc_typed_state","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"knowledge_edge","targetModule":"src/db/schema/knowledge.ts","targetSymbol":"knowledge_edge","class":"stable_contract"}
-{"file":"src/db/schema.ts","kind":"module","symbol":"knowledge_mastery","targetModule":"src/db/schema/learner-state.ts","targetSymbol":"knowledge_mastery","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"knowledge","targetModule":"src/db/schema/knowledge.ts","targetSymbol":"knowledge","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"learner_axis_state","targetModule":"src/db/schema/learner-state.ts","targetSymbol":"learner_axis_state","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"learning_item","targetModule":"src/db/schema/learning.ts","targetSymbol":"learning_item","class":"stable_contract"}
@@ -645,6 +645,8 @@
 {"file":"src/db/schema.ts","kind":"module","symbol":"question_generation_plan","targetModule":"src/db/schema/question.ts","targetSymbol":"question_generation_plan","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"question_group_lifecycle","targetModule":"src/db/schema/assessment.ts","targetSymbol":"question_group_lifecycle","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"question_revision","targetModule":"src/db/schema/assessment.ts","targetSymbol":"question_revision","class":"stable_contract"}
+{"file":"src/db/schema.ts","kind":"module","symbol":"question_solution_prior_backfill_attempt","targetModule":"src/db/schema/assessment.ts","targetSymbol":"question_solution_prior_backfill_attempt","class":"stable_contract"}
+{"file":"src/db/schema.ts","kind":"module","symbol":"question_solution_prior_vector","targetModule":"src/db/schema/assessment.ts","targetSymbol":"question_solution_prior_vector","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"question_solution_prior","targetModule":"src/db/schema/assessment.ts","targetSymbol":"question_solution_prior","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"question","targetModule":"src/db/schema/question.ts","targetSymbol":"question","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"review_orphan_control","targetModule":"src/db/schema/platform.ts","targetSymbol":"review_orphan_control","class":"stable_contract"}

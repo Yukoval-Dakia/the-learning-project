@@ -33,6 +33,14 @@ export const agencyCapability = defineCapability({
       INTERVENTION_ACTIVATED_ACTION,
       INTERVENTION_PREPARATION_FAILED_ACTION,
       INTERVENTION_SETTLED_ACTION,
+      // YUK-1770 — the goal write surface agency's steering machinery emits via
+      // kernel/records/goal-commands (genesis seeds, status/scope updates). The
+      // steering-changed subscription consumes them; composition requires a
+      // declared owner. Genesis is a generic action, but agency is the only
+      // subscriber and the only writer-path owner (goal routes/commands).
+      'experimental:genesis',
+      'experimental:goal_status_update',
+      'experimental:goal_scope_update',
     ],
   },
   subscriptions: {
@@ -89,6 +97,21 @@ export const agencyCapability = defineCapability({
           import('./server/question-pool-gap-subscription').then(
             (m) => m.buildQuestionPoolGapSubscriber,
           ),
+      },
+      {
+        // YUK-1770 — goal 写事件的 steering 订阅：任何 steering 落地/修订/撤销都触发
+        // 当日重规划（coach，绕过 24h 回归窗）+ 供给重跑 + 今日练习重组。无并行事件
+        // 流：直接消费既有 goal 事件（genesis/status/scope）；非 steering 的 goal 写入
+        // 在 handler 里跳过。
+        id: 'agency.steering-changed',
+        version: 1,
+        actions: [
+          'experimental:genesis',
+          'experimental:goal_status_update',
+          'experimental:goal_scope_update',
+        ],
+        load: () =>
+          import('./server/steering-subscription').then((m) => m.buildSteeringChangedSubscriber),
       },
     ],
   },
@@ -390,6 +413,11 @@ export const agencyCapability = defineCapability({
       {
         name: 'write_agent_note',
         load: () => import('./server/tools/agent-note-tools').then((m) => m.writeAgentNoteTool),
+      },
+      {
+        // YUK-1770 — learner-said steering 直写工具（record_steering）。
+        name: 'record_steering',
+        load: () => import('./server/tools/record-steering').then((m) => m.recordSteeringTool),
       },
     ],
   },

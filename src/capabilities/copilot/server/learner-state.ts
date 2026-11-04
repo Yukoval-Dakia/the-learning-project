@@ -45,7 +45,8 @@ export interface LearnerStateWatermarks {
   dreaming_at: string | null;
   /** Latest `rate` event (proposal accept/dismiss decision) created_at. */
   proposal_decision_at: string | null;
-  /** Latest goal-subject event (Steering change) created_at. */
+  /** Latest goal write (genesis/status/scope) created_at — steering changes
+   * refresh the header's steering lines the next turn (YUK-1770). */
   goal_at: string | null;
 }
 
@@ -170,34 +171,40 @@ const PRACTICE_WATERMARK_ACTIONS = [
   'correct',
 ] as const;
 
-/** Grouped MAX(created_at) for the invalidation categories + the goal watermark. */
+// YUK-1770 — goal writes that refresh the header (steering create/revise/end;
+// ordinary goal writes also advance the watermark, which is harmless: the
+// projection only re-assembles and renders the same lines).
+const GOAL_WRITE_WATERMARK_ACTIONS = [
+  'experimental:genesis',
+  'experimental:goal_status_update',
+  'experimental:goal_scope_update',
+] as const;
+
+/** One grouped MAX(created_at) query for the three invalidation categories. */
 export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerStateWatermarks> {
-  const [rows, goalRows] = await Promise.all([
-    db
-      .select({
-        action: event.action,
-        max_at: sql<Date>`max(${event.created_at})`,
-      })
-      .from(event)
-      .where(
-        or(
-          inArray(event.action, [...PRACTICE_WATERMARK_ACTIONS]),
-          and(eq(event.action, 'experimental:dreaming_scan'), eq(event.outcome, 'success')),
-          eq(event.action, 'rate'),
+  const rows = await db
+    .select({
+      action: event.action,
+      max_at: sql<Date>`max(${event.created_at})`,
+    })
+    .from(event)
+    .where(
+      or(
+        inArray(event.action, [...PRACTICE_WATERMARK_ACTIONS]),
+        and(eq(event.action, 'experimental:dreaming_scan'), eq(event.outcome, 'success')),
+        eq(event.action, 'rate'),
+        and(
+          inArray(event.action, [...GOAL_WRITE_WATERMARK_ACTIONS]),
+          eq(event.subject_kind, 'goal'),
         ),
-      )
-      .groupBy(event.action),
-    db
-      .select({ max_at: sql<Date | null>`max(${event.created_at})` })
-      .from(event)
-      .where(eq(event.subject_kind, 'goal')),
-  ]);
+      ),
+    )
+    .groupBy(event.action);
   const byAction = new Map(rows.map((r) => [r.action, r.max_at]));
   const iso = (action: string): string | null => {
     const at = byAction.get(action);
     return at ? new Date(at).toISOString() : null;
   };
-  const goalAt = goalRows[0]?.max_at;
   return {
     attempt_at: PRACTICE_WATERMARK_ACTIONS.reduce<string | null>(
       (latest, action) => maxIso(latest, iso(action)),
@@ -205,7 +212,10 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
     ),
     dreaming_at: iso('experimental:dreaming_scan'),
     proposal_decision_at: iso('rate'),
-    goal_at: goalAt ? new Date(goalAt).toISOString() : null,
+    goal_at: GOAL_WRITE_WATERMARK_ACTIONS.reduce<string | null>(
+      (latest, action) => maxIso(latest, iso(action)),
+      null,
+    ),
   };
 }
 
@@ -248,6 +258,8 @@ function parseCache(payload: Record<string, unknown>): LearnerStateHeaderCache |
       attempt_at: wmField('attempt_at'),
       dreaming_at: wmField('dreaming_at'),
       proposal_decision_at: wmField('proposal_decision_at'),
+      // Caches written before YUK-1770 lack the key → null → the next read sees
+      // goal_at advance and re-assembles once. Intended.
       goal_at: wmField('goal_at'),
     },
   };

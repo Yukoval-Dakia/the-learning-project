@@ -47,6 +47,7 @@ import {
   createPiLlmMessageConverter,
   estimatePiTokens,
 } from './pi-context-policy';
+import { MAX_BUDGET_STOP_REASON, createPiCostCeiling } from './pi-cost-ceiling';
 import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
 import { type LoomPiModel, createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
@@ -930,6 +931,22 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // unconditional counter every maxTurns=1 task failed after its first turn.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
     let cappedByMaxTurns = false;
+    // Structured submit runs already end after a bounded landing turn; the ceiling is
+    // for open agentic loops.
+    const costCeiling =
+      !structuredOutput && typeof options.maxBudgetUsd === 'number'
+        ? createPiCostCeiling({
+            maxBudgetUsd: options.maxBudgetUsd,
+            provider: this.args.resolved.provider,
+            model: this.args.resolved.model,
+          })
+        : undefined;
+    const rootTurnLimiter =
+      maxTurns !== undefined
+        ? turnLimiter(maxTurns, () => {
+            cappedByMaxTurns = true;
+          })
+        : undefined;
     // Per-turn streamed arguments, bound to call ids at message_end; the
     // strict-JSON flag also gates the parameter-contract correction.
     const rawToolArguments = new Map<number, string>();
@@ -1021,14 +1038,13 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             // Non-structured root loops share the run-scoped correction allowance
             // too; the caller's turn ceiling keeps its normal meaning under it.
             finishTurn: this.contractCorrectionFinishTurn(
-              maxTurns !== undefined
-                ? turnLimiter(maxTurns, () => {
-                    cappedByMaxTurns = true;
-                  })
-                : undefined,
+              costCeiling ? costCeiling.finishTurn(rootTurnLimiter) : rootTurnLimiter,
             ),
+            ...(costCeiling ? { prepareNextTurn: costCeiling.prepareNextTurn } : {}),
           }),
-      beforeToolCall: this.makeBeforeToolCall(),
+      beforeToolCall: costCeiling
+        ? costCeiling.beforeToolCall(this.makeBeforeToolCall())
+        : this.makeBeforeToolCall(),
       afterToolCall: this.makeAfterToolCall(),
       transformContext: this.makeTransformContext(),
       // YUK-1022 — steering/follow-up sources are wired on the ROOT loop only:
@@ -1277,7 +1293,11 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       sanitizeErrorMessage: this.providerErrorCapture?.sanitize,
       childUsage: this.childUsage,
     });
-    if (terminal) yield terminal;
+    if (terminal) {
+      yield costCeiling?.closed && terminal.type === 'result' && terminal.subtype === 'success'
+        ? { ...terminal, stop_reason: MAX_BUDGET_STOP_REASON }
+        : terminal;
+    }
   }
 
   async close(): Promise<void> {

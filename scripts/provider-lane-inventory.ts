@@ -396,6 +396,10 @@ export const PROVIDER_LANES = [
     directImporters: [
       { path: 'src/capabilities/ingestion/server/knowledge-namer.ts', kind: 'runtime' },
       { path: 'src/capabilities/practice/question-bank/jobs/embed_backfill.ts', kind: 'runtime' },
+      {
+        path: 'src/capabilities/practice/question-bank/server/admission/solution-prior-vectors.ts',
+        kind: 'runtime',
+      },
       { path: 'src/capabilities/practice/question-bank/server/quiz/matcher.ts', kind: 'runtime' },
       // ADR-0072 LIGHT — search_bank 向量通道的查询嵌入（默认 embedFn）。
       { path: 'src/capabilities/practice/question-bank/tools/bank-search.ts', kind: 'runtime' },

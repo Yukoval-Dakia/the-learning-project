@@ -554,9 +554,8 @@ async function sweepPendingDispatch(
     .where(eq(goal.id, claim.goal_id))
     .limit(1);
   if (!goalRow) {
-    // No goal row → resolveGoalPlacementScope would silently fall through to the tier-3
-    // full-active-tree fallback and admit paid work against a scope the claim was never about.
-    // Decline; the cursor is already advanced above.
+    // No goal row → no subject to resolve a scope from, so admission would judge an empty scope
+    // and pay for work the claim is no longer about. Decline; the cursor is already advanced above.
     result.goalMissing += 1;
     console.warn(
       `[placement-starter-recovery] claim ${claim.id} references missing goal ${claim.goal_id}; skipped, cursor advanced`,

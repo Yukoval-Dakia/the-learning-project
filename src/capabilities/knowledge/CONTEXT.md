@@ -6,7 +6,7 @@
 accept/dismiss 带 FOR UPDATE 防并发）、错因归因（attribute → JudgeOnEvent）、
 科目派生（domain / subject-resolution / subject-profile）。
 
-- **表认领**：`knowledge`、`knowledge_edge`、`knowledge_mastery`（deprecated view，读者已清零 YUK-1778，DROP 归迁移线）。
+- **表认领**：`knowledge`、`knowledge_edge`。
 - **红线：科目是视角不是结构**——subject 一律经 `getEffectiveDomain` 派生轴
   （parent-chain walk），任何实体加 subject 列是违例；树按认知结构生长，永远不动树。
 - **跨包读**：node-page 的笔记 section / backlinks 经 notes 包导出

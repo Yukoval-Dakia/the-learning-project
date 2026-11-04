@@ -12,6 +12,7 @@
 import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { resolveTaskBudget } from '@/capabilities/task-registry';
 import { canonicalHash } from '@/core/migration/canonical';
 import { SourcedQuestion, SourcingImageCandidate } from '@/core/schema/sourcing';
 import type { Db, Tx } from '@/db/client';
@@ -48,6 +49,11 @@ import {
 } from './placement-starter-paid-authority';
 import type { PlacementWebDelivery } from './placement-starter-web-delivery';
 import type { SupplyDemandItem } from './plan-executor';
+import {
+  admitNightlySourcingRun,
+  holdNightlyRouteFallback,
+  settleNightlySourcingRun,
+} from './spend-gate';
 import type { RunWebFetchCandidatesParams, RunWebFetchCandidatesResult } from './web-candidates';
 
 const ACTION = 'experimental:web_supply';
@@ -294,6 +300,16 @@ export async function dispatchWebSupplyRouteFallback(
     // the quiz_gen the fallback reaches keeps the demand's supply_trace.
     ...(state.trace ? { supply_trace: state.trace } : {}),
   };
+  // A nightly unit's route switch spends tonight's supply budget. A denied hold leaves the
+  // route pending; the recovery sweep offers it again on a later night.
+  if (state.trace) {
+    const hold = await holdNightlyRouteFallback(db, {
+      targetId: state.trace.target_id,
+      route,
+      questionCount: state.item.count,
+    });
+    if (hold === 'denied') return { dispatched: false, jobId: null, route };
+  }
   const enqueue =
     deps.enqueueSupplyExecute ??
     ((payload: Record<string, unknown>) => enqueueSupplyExecuteJob(payload, fallbackKey));
@@ -679,6 +695,29 @@ export async function resumeWebSupply(
   });
 }
 
+/**
+ * Money cap of one sourcing run: the lower of the gap's declared budget and the task cap,
+ * cut to what tonight's supply budget still allows when the nightly scan admitted the unit.
+ */
+async function admitSourcingRun(
+  db: Db,
+  trace: SupplyTraceV1T | undefined,
+): Promise<{ capUsd: number; nightly: boolean }> {
+  const declared = trace?.max_budget_micro_usd;
+  const ceilingUsd = Math.min(
+    resolveTaskBudget('SourcingTask').maxCost,
+    declared == null ? Number.POSITIVE_INFINITY : declared / 1_000_000,
+  );
+  if (!trace) return { capUsd: ceilingUsd, nightly: false };
+  const admission = await admitNightlySourcingRun(db, {
+    targetId: trace.target_id,
+    runCeilingMicroUsd: Math.round(ceilingUsd * 1_000_000),
+  });
+  return admission.gated
+    ? { capUsd: admission.runCapMicroUsd / 1_000_000, nightly: true }
+    : { capUsd: ceilingUsd, nightly: false };
+}
+
 export async function runWebSupply(params: {
   db: Db;
   item: SupplyDemandItem;
@@ -719,7 +758,7 @@ export async function runWebSupply(params: {
     return resumeWebSupply(db, item.demandId, placementClaimId ? placement : undefined);
   }
   // A placement demand outside its claim's delivery has no paid authority: refuse it.
-  const reason =
+  const refusal =
     placementClaimId && !placement
       ? 'placement_attempt_required'
       : trace?.needed_by && Date.parse(trace.needed_by) <= Date.now()
@@ -727,6 +766,10 @@ export async function runWebSupply(params: {
         : trace?.max_budget_micro_usd === 0
           ? 'budget_exhausted'
           : null;
+  // Admitted before the acquisition fence: a failed admission must not leave an
+  // 'acquiring' state that reads as an unknown paid outcome.
+  const sourcingRun = refusal ? null : await admitSourcingRun(db, trace);
+  const reason = refusal ?? (sourcingRun?.capUsd === 0 ? 'budget_exhausted' : null);
   let state = State.parse({
     version: 1,
     sequence: 0,
@@ -771,6 +814,15 @@ export async function runWebSupply(params: {
   if (!(await save(db, state, null)))
     return resumeWebSupply(db, item.demandId, placementClaimId ? placement : undefined);
   if (reason) return state;
+  const settleSourcingRun = async (taskRunIds: string[], submittedCount: number) => {
+    if (!sourcingRun?.nightly || !trace) return;
+    try {
+      await settleNightlySourcingRun(db, { targetId: trace.target_id, taskRunIds, submittedCount });
+    } catch (err) {
+      // An unsettled unit keeps its whole hold, so the night is never under-counted.
+      console.error(`[web_supply] spend settlement failed for ${item.demandId}:`, err);
+    }
+  };
   const recordAcquisition = async (providerTaskRunId: string | null, costUsd: number | null) => {
     if (!paidAuthority) return;
     await recordPlacementPaidEffect(db, {
@@ -798,11 +850,13 @@ export async function runWebSupply(params: {
         producerTaskRunId: state.producerTaskRunId,
         ...(params.causeId ? { causedByEventId: params.causeId } : {}),
         ...(trace?.needed_by ? { deadlineAt: Date.parse(trace.needed_by) } : {}),
+        ...(sourcingRun ? { maxCostUsd: sourcingRun.capUsd } : {}),
       },
     });
   } catch {
     // The agent may have spent before failing: its cost is unknown, never zero.
     await recordAcquisition(null, null);
+    await settleSourcingRun([state.producerTaskRunId], 0);
     return advance(db, state, {
       phase: 'blocked',
       reason: 'acquisition_outcome_unknown',
@@ -811,8 +865,9 @@ export async function runWebSupply(params: {
   }
   if (fetched.status === 'failed') {
     // Only a missing anchor or search backend fails before the paid agent call.
-    if (!['anchor_not_found', 'web_search_unavailable'].includes(fetched.failureClass))
-      await recordAcquisition(null, null);
+    const paid = !['anchor_not_found', 'web_search_unavailable'].includes(fetched.failureClass);
+    if (paid) await recordAcquisition(null, null);
+    await settleSourcingRun(paid ? [state.producerTaskRunId] : [], 0);
     return advance(db, state, {
       phase: 'blocked',
       reason: fetched.failureClass,
@@ -823,6 +878,10 @@ export async function runWebSupply(params: {
   // The actual runner id is canonical. A legacy/injected fetch without one cannot
   // produce a traceable supply commit; preserve its result and stop honestly.
   const candidates = fetched.candidates.slice(0, item.count);
+  await settleSourcingRun(
+    [state.producerTaskRunId, ...(fetched.taskRunId ? [fetched.taskRunId] : [])],
+    fetched.taskRunId ? candidates.length : 0,
+  );
   const nextPhase = fetched.taskRunId && candidates.length ? 'verifying' : 'blocked';
   const nextReason = !fetched.taskRunId
     ? 'producer_identity_missing'
@@ -929,11 +988,15 @@ export async function recoverWebSupplies(
   db: Db,
   options: { enqueue: EnqueueVerifyFn; limit?: number },
 ) {
+  // Blocked demands come back only while their first fallback is still unsent: its
+  // enqueue failed, or the night's supply budget refused it.
   const rows = await db.execute<{ demand_id: string }>(sql`
     select subject_id as demand_id from (
       select distinct on (subject_id) subject_id, payload, created_at from ${event}
       where action = ${ACTION} order by subject_id, (payload->>'sequence')::integer desc
     ) latest where payload->>'phase' in ('submitting', 'verifying')
+      or (payload->>'phase' = 'blocked' and payload->>'nextRoute' is not null
+        and payload->>'fallbackJobId' is null)
     order by created_at, subject_id limit ${options.limit ?? 50}`);
   for (const row of rows) {
     const state = await latestRequired(db, row.demand_id);

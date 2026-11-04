@@ -44,7 +44,7 @@ import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { defaultImageFetch } from '@/kernel/judge';
 import { type WriteAiProposalInput, writeAiProposal } from '@/kernel/proposals/writer';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
-import { getFailureAttemptsWithReasoningTrace } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttemptsWithReasoningTraceForDerivation } from '@/kernel/read-models/failure-attempts';
 import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { type TaskTextRunFn, costUsdToMicroUsd, sumAllKnownCostUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -125,7 +125,7 @@ type LoadCompletedRunResultFn = (
   executionId: string,
 ) => Promise<ResearchMeetingResult | null>;
 type InduceConjectureFn = typeof induceConjecture;
-type GetFailureAttemptsWithTraceFn = typeof getFailureAttemptsWithReasoningTrace;
+type GetFailureAttemptsWithTraceFn = typeof getFailureAttemptsWithReasoningTraceForDerivation;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
 type WriteRetryableAiFailureLedgerFn = (
   db: DbLike,
@@ -350,7 +350,7 @@ async function runResearchMeetingNightlyClaimed(
     throw new Error('research_meeting_nightly: claimed execution is missing its stable id');
   }
   const getFailureAttemptsWithTraceFn =
-    deps.getFailureAttemptsWithTraceFn ?? getFailureAttemptsWithReasoningTrace;
+    deps.getFailureAttemptsWithTraceFn ?? getFailureAttemptsWithReasoningTraceForDerivation;
   const getMasteryProjectionFn = deps.getMasteryProjectionFn ?? getMasteryProjection;
   const induceConjectureFn = deps.induceConjectureFn ?? induceConjecture;
   const writeAiProposalFn = deps.writeAiProposalFn ?? writeAiProposal;

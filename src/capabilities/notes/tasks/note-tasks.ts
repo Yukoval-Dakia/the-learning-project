@@ -68,7 +68,7 @@ function noteTemplateTable(profile: SubjectProfile): string {
 }
 
 function buildNoteGeneratePrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}学习笔记作者。输入 { artifact_id, artifact_type, title, atomic_title, one_line_intent, knowledge_node: { id, name, domain }, knowledge_nodes: [...], parent_hub: { title, summary_md }, related_knowledge_ids: [...], reference_artifacts: [...] }。${methodologySection(profile)}
+  return `你是${profile.displayName}学习笔记作者。输入 { artifact_id, artifact_type, title, atomic_title, today, one_line_intent, knowledge_node: { id, name, domain }, knowledge_nodes: [...], parent_hub: { title, summary_md }, related_knowledge_ids: [...], reference_artifacts: [...] }。today 是学习者本地（Asia/Shanghai）日期与星期（YYYY-MM-DD（周X）），提到「今天/明天/下周」等相对日期时以它为锚。${methodologySection(profile)}
 artifact_type 只能是 note_atomic / note_long / note_hub。
 输入若带 revision_context（上一版正文 body_blocks 与检查发现的问题 issues），本次是修订任务：逐条修正所列问题，尤其数学与事实性陈述错误，保留其余正确内容、结构与链接纪律，仍按 NOTE v1 全文输出。
 

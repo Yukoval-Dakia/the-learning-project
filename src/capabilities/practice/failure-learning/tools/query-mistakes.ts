@@ -6,7 +6,10 @@ import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { material_fsrs_state, mistake_variant, question } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
-import { type FailureAttempt, getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import {
+  type FailureAttempt,
+  getFailureAttemptsForDerivation,
+} from '@/kernel/read-models/failure-attempts';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 // P5.1 / — snippet cap + courtesy default sourced from budgets.ts.
 // Both are byte-unchanged from the prior file-local literals (160 / 20).
@@ -199,7 +202,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     filter.knowledgeId !== undefined ||
     filter.causeCategoryId !== undefined ||
     filter.dueWithinDays !== undefined;
-  const candidates = await getFailureAttempts(ctx.db, {
+  const candidates = await getFailureAttemptsForDerivation(ctx.db, {
     limit: hasPostFilter ? null : limit,
     since,
   });

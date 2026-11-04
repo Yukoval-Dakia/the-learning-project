@@ -1,18 +1,29 @@
 // 契约段（代码产出，全部来自已有读模型，不重复计算）：
-//   - Steering：listActiveGoalsWithResolvedScope 的 goal title（YUK-1770 的原话
-//     与时间窗字段未在 main，落地后从这里换读）
+//   - Steering：listActiveGoalsWithResolvedScope——steering goal 按 YUK-1770
+//     渲染学习者原话（learner_words）+ 时间窗 + 未对应范围，普通 goal 渲染
+//     「当前目标：title」（未开始的 steering goal 不占当前目标位）
 //   - 掌握度：readLearnerJudgments 的白话档，含不确定度，uncalibrated 照实标注
 //   - 错因：现有 top 错因口径（P4 的 readCauseJudgment 落地后从这里换读）
 //   - 信号：判断批次的不确定备注；昨夜交班句
 // 所有确定性数字带 n；n 不够写「样本少」，不给数字。
 
+import { learnerLocalDay } from '@/core/learner-day';
 import { A5_BANDS, masteryBandView } from '@/core/mastery-band';
 import type { LearnerJudgmentBatch } from '@/core/schema/learner-judgment';
+import {
+  learnerDayWeekday,
+  steeringDaysLeft,
+  steeringStartsInDays,
+  steeringWindowCoversToday,
+} from '@/core/steering';
 import type { Db, Tx } from '@/db/client';
-import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-goal-scope';
+import {
+  type ActiveGoal,
+  listActiveGoalsWithResolvedScope,
+} from '@/kernel/read-models/active-goal-scope';
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
-import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { readOvernightHandoffSentence } from '@/kernel/read-models/overnight-digest';
@@ -144,28 +155,72 @@ function rankTopCauseCategories(
     .map(([cause, count]) => ({ cause, count }));
 }
 
+// steering goal 的一行：学习者原话 + 时间窗（开始/截止/倒计时）+ 未对应范围。
+// learner_words 上限 500 字，启动段按 120 字截断防占满预算。
+function steeringLineForGoal(g: ActiveGoal, today: string): string {
+  const steering = g.steering;
+  if (steering === null) return `当前安排：${g.title}`;
+  const words =
+    steering.learner_words.length > 120
+      ? `${steering.learner_words.slice(0, 120)}…`
+      : steering.learner_words;
+  const parts: string[] = [];
+  if (g.effective_from !== null) {
+    const startsIn = steeringStartsInDays(g.effective_from, today);
+    if (startsIn !== null && startsIn > 0)
+      parts.push(`${g.effective_from}（${learnerDayWeekday(g.effective_from)}）开始`);
+  }
+  if (g.effective_until !== null) {
+    const daysLeft = steeringDaysLeft(g.effective_until, today);
+    if (daysLeft !== null) {
+      parts.push(
+        daysLeft <= 0
+          ? `就是今天（${g.effective_until}）`
+          : `到 ${g.effective_until}（${learnerDayWeekday(g.effective_until)}）还有 ${daysLeft} 天`,
+      );
+    }
+  }
+  const unresolved =
+    steering.scope_unresolved.length > 0 ? `；未对应：${steering.scope_unresolved.join('、')}` : '';
+  const tail = parts.length > 0 ? `（${parts.join('，')}）` : '';
+  return `当前安排：「${words}」${tail}${unresolved}`;
+}
+
 export async function readContractSection(
   db: DbLike,
   opts: { now: Date },
 ): Promise<ContractSection> {
   const [goals, failures, overnightMd] = await Promise.all([
     listActiveGoalsWithResolvedScope(db as Db),
-    getFailureAttempts(db, { limit: FAILURE_SCAN_LIMIT }),
+    getFailureAttemptsForDerivation(db, { limit: FAILURE_SCAN_LIMIT }),
     readOvernightHandoffSentence(db),
   ]);
 
-  const steeringMd =
-    goals.length === 0
-      ? null
-      : `当前目标：${goals
-          .slice(0, 2)
-          .map((g) => g.title)
-          .join('；')}${goals.length > 2 ? `（共 ${goals.length} 个进行中目标）` : ''}`;
+  const today = learnerLocalDay(opts.now);
+  const steeringLines = goals
+    .filter((g) => g.steering !== null && steeringWindowCoversToday(g, today))
+    .map((g) => steeringLineForGoal(g, today));
+  // 未开始的 steering goal 不占「当前目标」位（与普通 goal 并存时普通 goal 优先）。
+  const activeGoal =
+    goals.find((g) => g.steering === null) ??
+    goals.find(
+      (g) =>
+        !(g.steering !== null && g.effective_from !== null && g.effective_from > today),
+    ) ??
+    null;
+  const ordinaryCount = goals.filter(
+    (g) => !(g.steering !== null && g.effective_from !== null && g.effective_from > today),
+  ).length;
+  const goalLine = activeGoal
+    ? `当前目标：${activeGoal.title}${ordinaryCount > 1 ? `（共 ${ordinaryCount} 个进行中目标）` : ''}`
+    : null;
+  const steeringParts = [...steeringLines, ...(goalLine ? [goalLine] : [])];
+  const steeringMd = steeringParts.length === 0 ? null : steeringParts.join('\n');
 
   let masteryMd: string | null = null;
   let causesMd: string | null = null;
   let signalNotes: string[] = [];
-  const scopeKcs = goals[0]?.scope_knowledge_ids ?? [];
+  const scopeKcs = activeGoal?.scope_knowledge_ids ?? [];
   if (scopeKcs.length > 0) {
     const judgment = await readLearnerJudgments(db, {
       knowledge_ids: scopeKcs,

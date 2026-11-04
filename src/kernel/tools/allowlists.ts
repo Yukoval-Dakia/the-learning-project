@@ -95,6 +95,9 @@ export const PROPOSE_WRITE_TOOLS = [
   // YUK-1548 — the one mandatory write path for generative-UI blocks (write-once
   // content-addressed assets; surface decided server-side from the caller).
   'compose_block',
+  // YUK-1770 — learner-said steering 直写（D3 裁决：无 proposal，原话即事实；
+  // 唯一硬机检是原话逐字校验，在工具内做）。授权面：仅 copilot 两面。
+  'record_steering',
   // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write: assembles authored
   // (draft-allowed) + existing
   // questions into a runnable tool_quiz paper. Granted to the copilot surfaces
@@ -103,10 +106,15 @@ export const PROPOSE_WRITE_TOOLS = [
   // ADR-0033 D6 (YUK-306, lane D) — interactive artifact authoring: the copilot
   // writes the HTML itself in-conversation (Claude Artifacts pattern) and
   // persists it as a versioned type='interactive' artifact (author = create v0,
-  // update = full-html replace + version bump). Granted to the copilot surfaces
-  // only.
+  // update = full-html replace + version bump). YUK-1769 removed the copilot
+  // surface grant (the pair stays registered for YUK-1548's sandbox route) —
+  // inventory kept so the manifest/registry/allowlist agreement holds.
   'author_artifact',
   'update_artifact',
+  // YUK-1769 — direct Markdown note write for the companion (create / append /
+  // note_generate handoff). Owned by the notes manifest; granted to the copilot
+  // surfaces only.
+  'write_note',
   // YUK-1772 — read-only deterministic note check (issues list, no verdict).
   'check_note',
   // YUK-293 — direct write to the expiring AI hint channel (not learner data,
@@ -245,12 +253,13 @@ export const COPILOT_TOOLS = [
   // YUK-1448 (Stage 1 batch D) — copilot 检索后可直接落缺口单（search_bank 已在
   // 本面；供给侧回执走既有 dispatcher 台账）。
   'file_bank_gap',
-  // ADR-0033 D6 (YUK-306, lane D) — interactive 学习 artifact authoring pair.
-  // effect='write' (单用户、路由守 scope、非破坏性创建 — D6 explicit); the chip
-  // surface inherits via the [...COPILOT_TOOLS, …] spread below. No other
-  // surface gets them.
-  'author_artifact',
-  'update_artifact',
+  // YUK-1769 — the interactive pair (author_artifact / update_artifact) was
+  // pulled from the copilot surface: whole-page HTML authoring never produced a
+  // usable note and interactive content returns via the YUK-1548 sandbox route.
+  // write_note is the companion's Markdown note write (create / append /
+  // note_generate handoff); the chip surface inherits it via the
+  // [...COPILOT_TOOLS, …] spread below.
+  'write_note',
   // YUK-1772 — read-only deterministic note check (issues list, no verdict).
   'check_note',
   // YUK-1468 — Copilot 编辑面：edit_question（ops/document/validate/probe）。
@@ -263,6 +272,9 @@ export const COPILOT_TOOLS = [
   'propose_grading_correction',
   // YUK-1548 — generative-UI blocks (diagram/figure in slice 1).
   'compose_block',
+  // YUK-1770 — 学习者口述 steering 直写（考试日期/优先级/「这周别排物理」）。
+  // 唯一非 propose 的学习者数据直写：原话即事实（D3），确认句只能基于工具结果。
+  'record_steering',
 ] as const satisfies readonly DomainToolName[];
 
 // YUK-1553 / YUK-1559 — Dreaming's grant is now an EXPLICIT list: it must not

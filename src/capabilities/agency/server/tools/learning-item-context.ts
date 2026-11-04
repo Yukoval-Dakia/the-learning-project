@@ -6,6 +6,7 @@ import {
   excerpt,
   knowledgeContext,
 } from '@/kernel/read-models/extraction-summary';
+import { derivableLearningRecords } from '@/kernel/records/queries';
 import type { DomainTool, ToolContext } from './types';
 
 const GetLearningItemInputSchema = z.object({
@@ -195,14 +196,17 @@ async function executeGetLearningItemContext(
     );
   }
   if (include.has('records')) {
-    const records = await ctx.db
-      .select()
-      .from(learning_record)
-      .where(
-        and(eq(learning_record.learning_item_id, item.id), isNull(learning_record.archived_at)),
-      )
-      .orderBy(desc(learning_record.created_at))
-      .limit(10);
+    const records = await derivableLearningRecords(
+      ctx.db,
+      await ctx.db
+        .select()
+        .from(learning_record)
+        .where(
+          and(eq(learning_record.learning_item_id, item.id), isNull(learning_record.archived_at)),
+        )
+        .orderBy(desc(learning_record.created_at))
+        .limit(10),
+    );
     recentActivity.push(
       ...records.map((row) => ({
         kind: 'learning_record' as const,

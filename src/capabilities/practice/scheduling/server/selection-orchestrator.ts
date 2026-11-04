@@ -109,6 +109,9 @@ export type SelectionOrchestratorTaskInput = {
   candidates: string;
   /** Read-only learner-memory data. Omitted entirely when retrieval is empty/unavailable. */
   memoryPrior?: string;
+  /** YUK-1770 — one line per in-window steering instruction (exam/priority).
+   *  Advisory context for weighting; omitted when no steering is active. */
+  steering?: string;
 };
 
 const MEMORY_PRIOR_OPEN = '<ADVISORY_ONLY>\n';
@@ -154,13 +157,24 @@ export function buildSelectionOrchestratorTaskInputWithCandidates(
   candidates: CollectedSignal[],
   memories: readonly string[] = [],
 ): { input: SelectionOrchestratorTaskInput; selectedCandidates: CollectedSignal[] } {
-  const selectedCandidates = [...candidates]
-    .sort(
-      (a, b) =>
-        (b.diagnosticScore ?? b.mfiScore ?? 0) - (a.diagnosticScore ?? a.mfiScore ?? 0) ||
-        a.refId.localeCompare(b.refId),
-    )
-    .slice(0, SELECTION_ORCHESTRATOR_CANDIDATE_CAP);
+  const byScore = (a: CollectedSignal, b: CollectedSignal): number =>
+    (b.diagnosticScore ?? b.mfiScore ?? 0) - (a.diagnosticScore ?? a.mfiScore ?? 0) ||
+    a.refId.localeCompare(b.refId);
+  const ranked = [...candidates].sort(byScore);
+  // YUK-1770 — exam-scope reserved slots: in-scope steering candidates
+  // (examRelevance ≥ 0.5) keep up to half the cap so the 24-candidate cut never
+  // silently drops the exam scope. Remaining seats fill from ALL unselected
+  // ranked candidates (in-scope overflow included) by score — the budget is
+  // never wasted. With no steering (all examRelevance undefined) the selection
+  // is byte-identical to the plain top-cap cut.
+  const cap = SELECTION_ORCHESTRATOR_CANDIDATE_CAP;
+  const reserved = Math.floor(cap / 2);
+  const selected = new Set(ranked.filter((c) => (c.examRelevance ?? 0) >= 0.5).slice(0, reserved));
+  for (const c of ranked) {
+    if (selected.size >= cap) break;
+    selected.add(c);
+  }
+  const selectedCandidates = [...selected].sort(byScore);
   const candidatesBlock = buildSelectionOrchestratorInput(selectedCandidates);
   const memoryPrior = buildMemoryPriorAdvisoryBlock(memories);
   const input = memoryPrior

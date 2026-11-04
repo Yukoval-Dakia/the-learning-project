@@ -17,9 +17,7 @@ import { AssessmentAttemptCapture } from '../assessment/capture';
 // §3.6b (the domain-state-scan sweeper) both presuppose this row.
 //
 // **It is deliberately NOT `action='attempt'`.** An `attempt` event is a JUDGED outcome:
-// its `outcome` enum is required, and `knowledge_mastery`
-// (drizzle/0005_phase1c1_event_payload_gin_and_mastery_view.sql:27),
-// and `personalized-difficulty` aggregate
+// its `outcome` enum is required, and `personalized-difficulty` aggregates
 // `action IN ('attempt','review')`. Writing one here would either invent an outcome the
 // judge has not produced yet, or double-count this answer once the worker writes its
 // `review` event. A distinct action keeps every existing aggregate byte-identical while

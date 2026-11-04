@@ -4,13 +4,13 @@ import {
   type ConjectureImageFetchFn,
   selectConjectureCandidates,
 } from '@/capabilities/agency/public';
-import {
-  type FailureAttempt,
-  type FailureAttemptWithReasoningTrace,
-  getFailureAttemptsWithReasoningTrace,
-} from '@/capabilities/knowledge/public';
+import type { FailureAttempt } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import {
+  type FailureAttemptWithReasoningTrace,
+  getFailureAttemptsWithReasoningTraceForDerivation,
+} from '@/kernel/read-models/failure-attempts';
 import {
   abilityReadingsByIdOrFail,
   readLearnerJudgments,
@@ -103,7 +103,7 @@ export async function collectGroundingGateCandidates(
 ): Promise<GroundingGateCandidateReport> {
   const { now, imageFetchFn } = options;
   const since = new Date(now.getTime() - GROUNDING_GATE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  const loadedRows = await getFailureAttemptsWithReasoningTrace(db, {
+  const loadedRows = await getFailureAttemptsWithReasoningTraceForDerivation(db, {
     includeReviewFailures: true,
     since,
     limit: null,
