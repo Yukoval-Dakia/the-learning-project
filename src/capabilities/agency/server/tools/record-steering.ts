@@ -322,10 +322,8 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
       };
     }
 
-    // create / revise share the payload build
-    if (input.op === 'revise' && !input.goal_id) {
-      throw new ApiError('validation_error', 'revise requires goal_id', 400);
-    }
+    // create / revise share the payload build (revise resolves goal_id at its
+    // own branch: omitted acts on the single active steering goal).
     if (!input.instruction_md) {
       throw new ApiError('validation_error', `${input.op} requires instruction_md`, 400);
     }
