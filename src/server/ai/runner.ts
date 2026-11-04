@@ -201,6 +201,16 @@ export interface RunTaskCtx {
     toolUseId?: string;
   }) => void;
   /**
+   * YUK-1548 §5 — streamed tool-argument progress for progressive block
+   * display. Carries identity + byte count + a bounded prefix only.
+   */
+  onToolArgsDelta?: (delta: {
+    toolName: string;
+    toolUseId: string;
+    receivedBytes: number;
+    argsPrefix: string;
+  }) => void;
+  /**
    * YUK-575 (N5/MF-A) — per-call budget override for durable copilot runs. The
    * registry default must stay untouched (YUK-458: raising it only turned
    * error_max_turns into an inline-request abort). Snapshotted before
@@ -529,6 +539,12 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   onAssistant?: (msg: SDKAssistantMessage) => Promise<void> | void;
   onTextDelta?: (text: string) => Promise<void> | void;
   onToolUse?: (block: SDKToolUseBlock) => void;
+  onToolArgsDelta?: (msg: {
+    tool_name: string;
+    tool_call_id: string;
+    received_bytes: number;
+    args_prefix: string;
+  }) => void;
   onSuccess?: (msg: SDKSuccessResultMessage) => Promise<void> | void;
   onApiError?: (msg: SDKSuccessResultMessage) => void;
   apiErrorMessages?: (msg: SDKSuccessResultMessage) => string[];
@@ -587,6 +603,14 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
           iteration,
           latencyMs: 0,
         });
+        continue;
+      }
+      if (msg.type === 'system' && msg.subtype === 'tool_args_progress') {
+        try {
+          args.onToolArgsDelta?.(msg);
+        } catch {
+          // Visibility failures must never abort paid work.
+        }
         continue;
       }
       if (msg.type === 'system' && msg.subtype === 'tool_args_contract_failed') {
@@ -1288,6 +1312,16 @@ async function streamTaskCollectingImpl(
                   toolName: block.name,
                   input: (block.input ?? {}) as Record<string, unknown>,
                   toolUseId: block.id,
+                });
+              }
+            : undefined,
+          onToolArgsDelta: ctx.onToolArgsDelta
+            ? (msg) => {
+                ctx.onToolArgsDelta?.({
+                  toolName: msg.tool_name,
+                  toolUseId: msg.tool_call_id,
+                  receivedBytes: msg.received_bytes,
+                  argsPrefix: msg.args_prefix,
                 });
               }
             : undefined,
