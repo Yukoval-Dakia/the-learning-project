@@ -310,6 +310,31 @@ export function nativeResponseValue(
   }
 }
 
+// YUK-1827 — a question found on the web often keeps its options in the stem as well, so they
+// show twice. Drop them from the display only when the stem's last lines are exactly the issued
+// options, each once and each starting with a label; anything less certain stays as written.
+// Stored text and grading are unchanged.
+const OPTION_LABEL = /^\s*[（(]?[A-Ha-h][)）]?\s*[.．、:：)）]\s*/;
+const bareOption = (text: string) => text.replace(OPTION_LABEL, '').replace(/\s+/g, '');
+export function stemWithoutRepeatedOptions(stem: string, options: readonly string[]): string {
+  if (options.length < 2) return stem;
+  const lines = stem.split('\n');
+  const remaining = options.map(bareOption);
+  let cut = lines.length;
+  for (let found = 0; found < options.length; ) {
+    cut -= 1;
+    if (cut < 0) return stem;
+    const line = lines[cut] ?? '';
+    if (line.trim() === '') continue;
+    const at = remaining.indexOf(bareOption(line));
+    if (!OPTION_LABEL.test(line) || at < 0) return stem;
+    remaining.splice(at, 1);
+    found += 1;
+  }
+  const kept = lines.slice(0, cut).join('\n').trimEnd();
+  return kept === '' ? stem : kept;
+}
+
 // Imported option text often repeats its own label ("A. 90°") although the label is shown on its
 // own. Drop that one leading copy for display; stored text and option ids are unchanged. A Latin
 // letter right after the punctuation means the text itself starts with names ("A、B两点…"), so keep it.

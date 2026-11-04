@@ -21,6 +21,7 @@ import type {
 import {
   type EvidenceAttachment,
   evidenceKindFromMime,
+  stemWithoutRepeatedOptions,
 } from '@/ui/components/response/response-types';
 import { StimulusFigure } from '@/ui/components/response/StimulusFigure';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
@@ -166,7 +167,10 @@ export function PresentationBlocks({
       case 'text_math': {
         const face = block.part_ref ? faceById.get(block.part_ref) : undefined;
         const material = block.material_ref ? materialById.get(block.material_ref) : undefined;
-        const source = face?.prompt_md ?? material?.content_md;
+        const options = face ? selectOptionsOf(issued.slots, face.part_id) : [];
+        const source = face
+          ? stemWithoutRepeatedOptions(face.prompt_md, options)
+          : material?.content_md;
         if (source === undefined) return null;
         return (
           <MathMarkdown key={block.block_id} className="un-blk-text un-read" notation={notation}>
@@ -387,6 +391,17 @@ export function PresentationBlocks({
       )}
     </UiNextRoot>
   );
+}
+
+// The options a part's stem might repeat: only when the part has exactly one select slot and
+// every item has text to compare (an item without text means nothing can be matched for sure).
+function selectOptionsOf(slots: readonly ResponseSlotT[], partId: string): string[] {
+  const selects = slots.filter(
+    (slot): slot is SelectSlotT => slot.kind === 'select' && slot.part_id === partId,
+  );
+  const items = selects.length === 1 ? (selects[0]?.items ?? []) : [];
+  const texts = items.flatMap((item) => item.label_md ?? []);
+  return texts.length === items.length ? texts : [];
 }
 
 function materialRefsOf(block: PresentationBlockT, refs = new Set<string>()): Set<string> {

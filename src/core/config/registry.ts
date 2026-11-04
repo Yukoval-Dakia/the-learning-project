@@ -185,6 +185,7 @@ const budgetOverrideSchema = z
  */
 const taskReasoningSchema = z
   .object({
+    level: z.string().min(1).optional(),
     reasoning_effort: z.string().min(1).optional(),
   })
   .strict();
