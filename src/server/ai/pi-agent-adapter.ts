@@ -581,7 +581,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         : piMaxRetries() !== undefined
           ? { maxRetries: piMaxRetries() }
           : {}),
+      // options.effort is the caller channel; task.<kind>.reasoning resolves to
+      // exactly one pi level — startup rejects both being set (one wire writer).
       ...(options.effort !== undefined ? { reasoning: options.effort } : {}),
+      ...(resolved.reasoning?.level !== undefined ? { reasoning: resolved.reasoning.level } : {}),
       ...(http.timeoutMs !== undefined ? { timeoutMs: http.timeoutMs } : {}),
       fetch: this.providerErrorCapture.fetch,
     };
@@ -600,7 +603,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   private readonly streamFn: StreamFn = (model: LoomPiModel, llmContext, streamOptions) => {
-    const effort = streamOptions?.reasoning;
+    // The catalog check guards options.effort only: task.<kind>.reasoning levels
+    // are already validated/carried by resolveTaskReasoning (toggle carriers are
+    // not effort names on the model's list).
+    const effort = this.args.options.effort;
     const inputTokens = estimatePiTokens(llmContext.messages);
     const remaining = model.contextWindow - inputTokens;
     streamOptions = {
@@ -608,10 +614,6 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       maxTokens: Math.min(streamOptions?.maxTokens ?? model.maxTokens, model.maxTokens, remaining),
     };
     const submitPolicy = this.structuredSubmitPolicy(model);
-    // YUK-1547 — per-task model-native reasoning params pass through verbatim.
-    // This is NOT the options.effort → ThinkingLevel path; startup rejects both
-    // being set so the wire key has exactly one writer.
-    const nativeReasoning = this.args.resolved.nativeReasoningParams;
     const streamOptionsWithPayload = {
       ...streamOptions,
       onPayload: async (payload: unknown, requestModel: PiModel<PiApi>) => {
@@ -632,15 +634,11 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         }
         const transformed = await streamOptions?.onPayload?.(payload, requestModel);
         const body = transformed ?? payload;
-        if (submitPolicy === undefined && !nativeReasoning) return body;
+        if (submitPolicy === undefined) return body;
         if (body == null || typeof body !== 'object' || Array.isArray(body)) {
           throw new Error('structured output requires an object provider payload');
         }
-        return {
-          ...body,
-          ...(submitPolicy !== undefined ? structuredSubmitWireFields(submitPolicy) : {}),
-          ...nativeReasoning,
-        };
+        return { ...body, ...structuredSubmitWireFields(submitPolicy) };
       },
     };
     return tracePiStream(
@@ -1403,14 +1401,11 @@ export class PiAgentAdapter implements ExecutionAdapter {
         `pi adapter cannot execute '${args.resolved.provider}/${args.resolved.model}': protocol or required catalog facts (endpoint, reasoning, input modalities, context/output limits) are unknown. Model selection is unchanged.`,
       );
     }
-    // YUK-1547 — reasoning_effort must have exactly one writer: options.effort
-    // and the native passthrough both serialize onto the same wire key.
-    if (
-      args.options.effort !== undefined &&
-      args.resolved.nativeReasoningParams?.reasoning_effort !== undefined
-    ) {
+    // Reasoning level must have exactly one writer: options.effort and the
+    // task.<kind>.reasoning level both land on pi's reasoning option.
+    if (args.options.effort !== undefined && args.resolved.reasoning?.level !== undefined) {
       throw new Error(
-        `conflicting reasoning params for task '${args.kind}': options.effort='${args.options.effort}' and task.<kind>.reasoning reasoning_effort='${args.resolved.nativeReasoningParams.reasoning_effort}' both target the wire reasoning_effort — keep exactly one source.`,
+        `conflicting reasoning params for task '${args.kind}': options.effort='${args.options.effort}' and task.<kind>.reasoning level='${args.resolved.reasoning.requested}' both target the wire reasoning level — keep exactly one source.`,
       );
     }
     const { tools, remoteHandles } = await this.buildTools(args, deps);

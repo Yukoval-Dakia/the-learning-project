@@ -73,8 +73,45 @@ export async function createLoomPiModels() {
     const getModels = (): LoomPiModel[] => {
       const result: LoomPiModel[] = [];
       for (const { id: modelId, ...executable } of executablePiModels(lane)) {
-        const template = templates.find((model) => model.id === modelId);
-        if (!template) continue;
+        // pi 1.5 dropped builtin templates for ids overrides still admit
+        // (xiaomi/mimo-v2.5*, opencode-go legacy deepseek/grok): clone the wire
+        // template from a same-provider sibling with the same api+thinkingFormat.
+        let template = templates.find((model) => model.id === modelId);
+        if (!template) {
+          template = templates.find(
+            (model) =>
+              model.api === executable.api &&
+              (model.compat as { thinkingFormat?: string } | undefined)?.thinkingFormat ===
+                executable.thinkingFormat,
+          );
+          if (!template) continue;
+          const rates = catalogModelCost(lane, modelId);
+          result.push({
+            ...template,
+            id: modelId,
+            name: modelId,
+            provider: id,
+            api: executable.api,
+            compat: executable.api === template.api ? template.compat : undefined,
+            baseUrl: baseUrlForWire(executable),
+            cost: {
+              input: rates?.input ?? 0,
+              output: rates?.output ?? 0,
+              cacheRead: rates?.cache_read ?? 0,
+              cacheWrite: rates?.cache_write ?? 0,
+            },
+            input: executable.input.filter(
+              (input): input is 'text' | 'image' => input === 'text' || input === 'image',
+            ),
+            reasoning: executable.reasoning,
+            contextWindow: executable.contextWindow,
+            maxInputTokens: executable.maxInputTokens,
+            maxTokens: executable.maxTokens,
+            catalogReasoning: executable.catalogReasoning,
+            thinkingLevelMap: thinkingLevelMapOf(executable.thinkingLevelMap),
+          });
+          continue;
+        }
         result.push({
           ...template,
           id: modelId,

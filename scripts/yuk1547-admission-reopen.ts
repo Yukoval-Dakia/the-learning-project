@@ -26,7 +26,7 @@ import {
   readProviderErrorEvidence,
   sanitizeProviderErrorText,
 } from '@/server/ai/provider-error-evidence';
-import { type TaskNativeReasoningParams, resolveTaskProvider } from '@/server/ai/providers';
+import { type ResolvedTaskReasoning, resolveTaskProvider } from '@/server/ai/providers';
 import {
   STRUCTURED_OUTPUT_SUBMIT_TOOL,
   STRUCTURED_SUBMIT_REMINDER,
@@ -67,8 +67,10 @@ interface ProbeRoute {
   api: string;
   endpoint: string;
   apiKey: string;
-  /** task.<kind>.reasoning resolved wire params — merged verbatim into the probe body. */
-  nativeReasoning?: TaskNativeReasoningParams;
+  /** task.<kind>.reasoning resolved level — vendor wire fields derived at send. */
+  reasoning?: ResolvedTaskReasoning;
+  /** Protocol thinking format from the executable facts (deepseek = toggle+effort wire). */
+  thinkingFormat?: string;
   /** Which config layer produced this route (env_pin / task_pair_priority / …). */
   selectionRule?: string;
   /** opencode-go requires x-opencode-session on every request. */
@@ -168,10 +170,9 @@ async function routing(): Promise<{
         model: resolved.model,
         api: native.api,
         endpoint: native.baseUrl,
+        ...(native.thinkingFormat ? { thinkingFormat: native.thinkingFormat } : {}),
         apiKey: resolved.apiKey,
-        ...(resolved.nativeReasoningParams
-          ? { nativeReasoning: resolved.nativeReasoningParams }
-          : {}),
+        ...(resolved.reasoning ? { reasoning: resolved.reasoning } : {}),
         ...(resolved.selectionRule ? { selectionRule: resolved.selectionRule } : {}),
         ...(resolved.provider === 'opencode-go' ? { sessionHeader: true } : {}),
       });
@@ -202,6 +203,22 @@ async function routing(): Promise<{
  * suffix, so the probe exercises the REAL request contract rather than a
  * bespoke one.
  */
+/** Resolved level → the wire fields pi emits for this protocol (deepseek only;
+ * other formats carry no vendor field here). */
+function reasoningWireFields(
+  reasoning: ResolvedTaskReasoning,
+  thinkingFormat: string | undefined,
+): Record<string, unknown> {
+  if (reasoning.applied === 'toggle_on') {
+    return thinkingFormat === 'deepseek' ? { thinking: { type: 'enabled' } } : {};
+  }
+  if (reasoning.level === undefined || reasoning.applied === 'none' || reasoning.applied === 'off')
+    return {};
+  return thinkingFormat === 'deepseek'
+    ? { reasoning_effort: reasoning.applied, thinking: { type: 'enabled' } }
+    : { reasoning_effort: reasoning.applied };
+}
+
 const SOLVE_PROBE_INPUT = {
   mode: 'solve' as const,
   parts: [
@@ -263,7 +280,7 @@ async function runProbe(
     selection_rule: route.selectionRule,
     submit_tool_choice: submitPolicy.forced ? 'forced' : 'auto',
     forced_tool_choice_capability: submitPolicy.capability,
-    ...(route.nativeReasoning ?? {}),
+    ...(route.reasoning ? reasoningWireFields(route.reasoning, route.thinkingFormat) : {}),
     requests: [] as Record<string, unknown>[],
     landing_turn_used: false,
   };
@@ -305,7 +322,7 @@ async function runProbe(
         model: route.model,
         max_tokens: 4096,
         stream: false,
-        ...(route.nativeReasoning ?? {}),
+        ...(route.reasoning ? reasoningWireFields(route.reasoning, route.thinkingFormat) : {}),
         messages,
         tools: [
           {

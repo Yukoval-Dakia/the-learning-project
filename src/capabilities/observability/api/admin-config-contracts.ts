@@ -102,6 +102,13 @@ export const AdminConfigCatalogModelRowSchema = z.object({
   runnable: z.boolean(),
   tool_call: AdminConfigCapabilityTriStateSchema,
   reasoning: AdminConfigCapabilityTriStateSchema,
+  /** models.dev reasoning_options 投影：mode + 该模型接受的层级取值（null = 无推理配置位）。 */
+  reasoning_options: z
+    .object({
+      mode: z.enum(['effort', 'budget_tokens', 'toggle', 'unknown']),
+      values: z.array(z.string()),
+    })
+    .nullable(),
   structured_output: AdminConfigCapabilityTriStateSchema,
   vision: AdminConfigCapabilityTriStateSchema,
   forced_tool_choice: AdminConfigCapabilityTriStateSchema,

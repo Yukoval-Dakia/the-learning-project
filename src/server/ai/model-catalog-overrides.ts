@@ -7,6 +7,13 @@ type CatalogOverride = {
   when: 'missing' | 'disagreement';
   reason: string;
   facts: ParsedCatalogModel;
+  /**
+   * Wire-protocol admission for a model pi's builtin catalog no longer ships.
+   * Present only with provenance naming the pi version that dropped the entry;
+   * `createLoomPiModels` clones the wire template from a same-provider sibling
+   * with this api+thinkingFormat.
+   */
+  protocol?: { api: string; thinkingFormat?: string };
 };
 
 const missingAnthropicEndpoint: CatalogOverride = {
@@ -47,11 +54,34 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
       },
     },
   },
+  xiaomi: {
+    'mimo-v2.5': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 builtin catalog dropped this id; models.dev still lists it as served by api.xiaomimimo.com. Protocol cloned from the same-family mimo template (1.1.0 shape).',
+      facts: {},
+      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
+    },
+    'mimo-v2.5-pro': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 builtin catalog dropped this id; models.dev still lists it as served by api.xiaomimimo.com. Protocol cloned from the same-family mimo template (1.1.0 shape).',
+      facts: {},
+      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
+    },
+    'mimo-v2.5-pro-ultraspeed': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 builtin catalog dropped this id; models.dev still lists it as served by api.xiaomimimo.com. Protocol cloned from the same-family mimo template (1.1.0 shape).',
+      facts: {},
+      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
+    },
+  },
   'opencode-go': {
     'deepseek-v4-flash': {
       when: 'missing',
       reason:
-        'Absent from models.dev. Preserve the wired metadata in main 518c8b21:src/server/ai/pi-provider-catalog.snapshot.json, not a new live-provider admission. Endpoint pinned to the OpenCode Go openai path so a catalog regen that drops the provider-level api field cannot unlist the model (YUK-1658); a live catalog endpoint still wins.',
+        'Absent from models.dev. Preserve the wired metadata in main 518c8b21:src/server/ai/pi-provider-catalog.snapshot.json, not a new live-provider admission. Endpoint pinned to the OpenCode Go openai path so a catalog regen that drops the provider-level api field cannot unlist the model (YUK-1658); a live catalog endpoint still wins. pi 1.5.0 dropped the builtin template; protocol preserved from the 1.1.0 snapshot entry.',
       facts: {
         baseUrl: 'https://opencode.ai/inference/go/openai/v1',
         reasoning: true,
@@ -62,6 +92,7 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
         contextWindowTokens: 1_000_000,
         maxOutputTokens: 384_000,
       },
+      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
     },
     'deepseek-v4-flash-vision-exp': {
       when: 'missing',
@@ -77,6 +108,7 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
         contextWindowTokens: 1_000_000,
         maxOutputTokens: 384_000,
       },
+      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
     },
     'grok-4.6': {
       when: 'missing',
@@ -92,6 +124,7 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
         contextWindowTokens: 500_000,
         maxOutputTokens: 500_000,
       },
+      protocol: { api: 'openai-responses' },
     },
     'deepseek-v4.1-flash': {
       when: 'missing',
@@ -244,6 +277,20 @@ export function tokenPlanEndpointOverride(env: Record<string, string | undefined
     );
   }
   return endpoint.replace(/\/+$/, '');
+}
+
+/**
+ * Protocol entries admitted by overrides but absent from the pi builtin
+ * snapshot (pi dropped the id while upstream still serves it). Keyed by model id.
+ */
+export function modelCatalogOverrideProtocols(
+  provider: Provider,
+): Record<string, { api: string; thinkingFormat?: string }> {
+  const out: Record<string, { api: string; thinkingFormat?: string }> = {};
+  for (const [id, override] of Object.entries(overrides[provider] ?? {})) {
+    if (override.protocol) out[id] = override.protocol;
+  }
+  return out;
 }
 
 export function modelCatalogOverride(

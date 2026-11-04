@@ -2754,6 +2754,11 @@ export interface operations {
                                 max_input_tokens: number | null;
                                 max_output_tokens: number | null;
                                 reasoning: boolean | "unknown";
+                                reasoning_options: {
+                                    /** @enum {string} */
+                                    mode: "effort" | "budget_tokens" | "toggle" | "unknown";
+                                    values: string[];
+                                } | null;
                                 runnable: boolean;
                                 structured_output: boolean | "unknown";
                                 tool_call: boolean | "unknown";

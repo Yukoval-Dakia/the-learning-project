@@ -1,6 +1,7 @@
 // Task configuration owns model selection. The runtime catalog supplies facts,
 // Pi supplies transport, and credentials stay scoped to the provider.
 
+import type { ThinkingLevel } from '@earendil-works/pi-ai';
 import { type KnownProvider, type TaskDefinition, canonicalProviderName } from '@/ai/task-spec';
 import { type Provider, type TaskKind, tasks } from '@/capabilities/task-registry';
 import {
@@ -505,20 +506,41 @@ export function crossoverModelForProvider(provider: Provider, kind: TaskKind): s
 }
 
 /**
- * YUK-1547 — model-native reasoning params resolved from the per-task
- * `task.<kind>.reasoning` config layer. Keys are the model's own wire
- * parameter names (DeepSeek `reasoning_effort`); values pass through verbatim
- * — there is deliberately no unified effort-tier enum or mapping on this path
- * (owner 2026-10-18: don't force-align effort to preset tiers; validate only
- * against the values the model itself supports). Companion switches the
- * model's own compat requires (DeepSeek `thinking:{type:'enabled'}`) are
- * DERIVED at resolution from the model's thinkingFormat — never configured,
- * never applied to non-deepseek formats.
+ * YUK-1806 — per-task `task.<kind>.reasoning` reasoning resolution. The config
+ * names a pi thinking level (`{level}`; legacy `{"reasoning_effort":"high"}`
+ * reads as the same level). models.dev `reasoning_options` is the truth for
+ * what the model accepts: effort models round UP to the nearest supported
+ * level (top when above), toggle models map any non-off level to thinking-on,
+ * and models with no reasoning options send nothing — always recorded as
+ * `requested → applied` so nothing downgrades silently. Only a name outside
+ * the level vocabulary is a config error. Wire emission is pi's (`reasoning`
+ * + the model's thinkingLevelMap); loom never assembles vendor wire fields.
  */
-export interface TaskNativeReasoningParams {
+export type PiThinkingLevelName = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export const PI_THINKING_LEVEL_ORDER: readonly PiThinkingLevelName[] = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+];
+
+export interface ResolvedTaskReasoning {
+  /** Level name stored in task.<kind>.reasoning (legacy reasoning_effort value). */
+  readonly requested: string;
+  /** What actually applies: the level, 'toggle_on', 'toggle_off', 'off', or 'none'. */
+  readonly applied: string;
+  /** pi thinking level handed to streamSimple when the wire should carry one. */
+  readonly level?: ThinkingLevel;
+}
+
+export interface TaskReasoningConfig {
+  readonly level?: string;
+  /** Legacy key: its value is read as a level name. */
   readonly reasoning_effort?: string;
-  /** Compat-derived wire switch (deepseek format only today). */
-  readonly thinking?: { readonly type: 'enabled' };
 }
 
 /**
@@ -551,8 +573,8 @@ export type ResolvedProvider =
       apiKey: string;
       /** Undefined when neither the catalog nor a documented exception supplies it. */
       baseUrl?: string;
-      /** Per-task model-native reasoning params, validated against the resolved model. */
-      nativeReasoningParams?: TaskNativeReasoningParams;
+      /** Per-task reasoning resolution (requested → applied), validated against the model. */
+      reasoning?: ResolvedTaskReasoning;
       /** Which layer produced this binding — frozen at resolution for run receipts. */
       selectionRule?: TaskSelectionRule;
     }
@@ -564,8 +586,8 @@ export type ResolvedProvider =
       apiKey: string;
       /** Env-var NAME the token was read from (diagnostics only). */
       oauthTokenEnv: string;
-      /** Per-task model-native reasoning params, validated against the resolved model. */
-      nativeReasoningParams?: TaskNativeReasoningParams;
+      /** Per-task reasoning resolution (requested → applied), validated against the model. */
+      reasoning?: ResolvedTaskReasoning;
       /** Which layer produced this binding — frozen at resolution for run receipts. */
       selectionRule?: TaskSelectionRule;
     };
@@ -668,7 +690,7 @@ export function resolveTaskBinding(
 ): {
   provider: Provider;
   model: string;
-  reasoning?: TaskNativeReasoningParams;
+  reasoning?: TaskReasoningConfig;
   selectionRule: TaskSelectionRule;
 } {
   const def = tasks[kind];
@@ -804,41 +826,59 @@ function assertOptedTaskPair(
 }
 
 /**
- * YUK-1547 — fail-closed validation + compat derivation for per-task native
- * reasoning params, resolved alongside the provider binding so a bad value is
- * a config error before any admission row, attempt row, or paid call (same
- * posture as the credential checks below). `reasoning_effort` is only honest
- * on an OpenAI-completions reasoning model, and only when the model's OWN
- * runtime directory names the value — the model declares its native levels
- * (e.g. low|high|max for deepseek-v4.1-flash), loom never invents or maps a
- * tier. Returns the FULL wire param set: for thinkingFormat='deepseek' the
- * model's own compat requires `thinking:{type:'enabled'}` beside the effort
- * (the same two fields pi emits from options.reasoningEffort); other formats
- * add nothing — DeepSeek fields are never imposed on all OpenAI models.
+ * YUK-1806 — resolve a configured level against the model's models.dev
+ * `reasoning_options`, fail-closed where a value can't be honored and never
+ * silently downgrading: the outcome is recorded as `requested → applied` on
+ * the run record. pi clamps an unsupported level (`clampThinkingLevel`), so
+ * the level handed to the wire is always one the catalog says the model takes.
+ *
+ *   - `off`              → applied 'off': no reasoning field on the wire
+ *                          (deepseek-format lanes then emit thinking:{disabled}).
+ *   - effort mode        → in-list: the level; missing: round UP to the next
+ *                          supported level (top of the list when above it).
+ *   - budget_tokens mode → same round-up over pi's non-off level set.
+ *   - toggle mode        → any non-off level → 'toggle_on' (carrier 'high').
+ *   - empty/unknown opts → 'none': no parameter, model default (recorded).
+ *   - unknown level name → config error (only this errors).
  */
-function resolveTaskNativeReasoningParams(
+function resolveTaskReasoning(
   kind: TaskKind,
   provider: Provider,
   model: string,
-  params: TaskNativeReasoningParams | undefined,
-): TaskNativeReasoningParams | undefined {
-  const effort = params?.reasoning_effort;
-  if (effort === undefined) return undefined;
-  const native = executablePiModel(provider, model);
-  if (native?.api !== 'openai-completions' || native.reasoning !== true) {
+  params: TaskReasoningConfig | undefined,
+): ResolvedTaskReasoning | undefined {
+  const requested = params?.level ?? params?.reasoning_effort;
+  if (requested === undefined) return undefined;
+  if (!(PI_THINKING_LEVEL_ORDER as readonly string[]).includes(requested)) {
     throw new Error(
-      `task.${kind}.reasoning sets reasoning_effort='${effort}', but '${provider}/${model}' is not an executable OpenAI-completions reasoning model — the param would be dropped or rejected on the wire. Remove the task override or point the task at a lane whose own reasoning parameter is reasoning_effort.`,
+      `task.${kind}.reasoning level='${requested}' is not a thinking level. Pass one of [${PI_THINKING_LEVEL_ORDER.join(', ')}].`,
     );
   }
-  const supported = resolveModelProfile(provider, model).reasoning.supportedEfforts;
-  if (!supported.includes(effort)) {
-    throw new Error(
-      `task.${kind}.reasoning reasoning_effort='${effort}' is not a value '${provider}/${model}' accepts. The runtime catalog declares [${supported.join(', ')}]. Pass one of those values verbatim.`,
-    );
+  const level = requested as PiThinkingLevelName;
+  if (level === 'off') return { requested, applied: 'off' };
+  const { reasoning: profile } = resolveModelProfile(provider, model);
+  if (profile.mode === 'toggle') {
+    return { requested, applied: 'toggle_on', level: 'high' };
   }
-  return native.thinkingFormat === 'deepseek'
-    ? { reasoning_effort: effort, thinking: { type: 'enabled' } }
-    : { reasoning_effort: effort };
+  if (profile.mode === 'effort' || profile.mode === 'budget_tokens') {
+    const supported =
+      profile.mode === 'effort'
+        ? profile.supportedEfforts.filter((effort): effort is PiThinkingLevelName =>
+            (PI_THINKING_LEVEL_ORDER as readonly string[]).includes(effort),
+          )
+        : PI_THINKING_LEVEL_ORDER.filter((name) => name !== 'off');
+    if (supported.length === 0) {
+      throw new Error(
+        `task.${kind}.reasoning level='${level}' cannot be served by '${provider}/${model}': its ${profile.mode} reasoning options name no pi level. Clear the task override.`,
+      );
+    }
+    const applied =
+      supported.find(
+        (name) => PI_THINKING_LEVEL_ORDER.indexOf(name) >= PI_THINKING_LEVEL_ORDER.indexOf(level),
+      ) ?? supported[supported.length - 1];
+    return { requested, applied, level: applied === 'off' ? undefined : applied };
+  }
+  return { requested, applied: 'none' };
 }
 
 /**
@@ -882,12 +922,7 @@ export function resolveTaskProvider(
     const baseUrl = catalogBaseUrl ?? definition.baseUrl;
     assertModelEndpointHostAllowed(baseUrl, `custom provider '${providerName}'`);
     assertProviderKeyEnvBound(definition.apiKeyEnv, baseUrl, `custom provider '${providerName}'`);
-    const wireReasoning = resolveTaskNativeReasoningParams(
-      kind,
-      providerName,
-      modelId,
-      binding.reasoning,
-    );
+    const reasoning = resolveTaskReasoning(kind, providerName, modelId, binding.reasoning);
     const apiKey = process.env[definition.apiKeyEnv];
     if (!apiKey) {
       throw new Error(
@@ -900,7 +935,7 @@ export function resolveTaskProvider(
       model: modelId,
       apiKey,
       baseUrl,
-      ...(wireReasoning !== undefined ? { nativeReasoningParams: wireReasoning } : {}),
+      ...(reasoning !== undefined ? { reasoning } : {}),
       selectionRule: binding.selectionRule,
     };
   }
@@ -911,14 +946,8 @@ export function resolveTaskProvider(
       `Unknown provider '${providerName}' for task ${kind}; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
     );
   }
-  const wireReasoning = resolveTaskNativeReasoningParams(
-    kind,
-    providerName,
-    modelId,
-    binding.reasoning,
-  );
-  const nativeReasoning =
-    wireReasoning !== undefined ? { nativeReasoningParams: wireReasoning } : {};
+  const reasoning = resolveTaskReasoning(kind, providerName, modelId, binding.reasoning);
+  const taskReasoning = reasoning !== undefined ? { reasoning } : {};
   const selectionRule = binding.selectionRule;
 
   if (config.authMode === 'oauth') {
@@ -937,7 +966,7 @@ export function resolveTaskProvider(
       apiKey: token,
       oauthTokenEnv: config.oauthTokenEnv,
       selectionRule,
-      ...nativeReasoning,
+      ...taskReasoning,
     };
   }
 
@@ -973,6 +1002,6 @@ export function resolveTaskProvider(
     apiKey,
     baseUrl,
     selectionRule,
-    ...nativeReasoning,
+    ...taskReasoning,
   };
 }

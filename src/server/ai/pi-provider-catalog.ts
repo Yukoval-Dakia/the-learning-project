@@ -4,6 +4,7 @@ import {
   looksLikeCustomProviderId,
 } from '@/core/config/custom-providers';
 import { catalogModelIds } from './model-catalog';
+import { modelCatalogOverrideProtocols } from './model-catalog-overrides';
 import {
   type ModelCapabilityTriState,
   type ModelProfileReasoning,
@@ -107,8 +108,15 @@ function nativePiModels(
     );
   }
   const protocolProvider = provider === 'xiaomi-token-plan' ? 'xiaomi' : piProviderId(provider);
+  // Models pi's builtin dropped but overrides still admit (models.dev-served or
+  // evidence-backed) keep a declared protocol entry; the snapshot stays the
+  // pi-derived truth and is never hand-edited.
+  const declared = {
+    ...protocols[protocolProvider],
+    ...(provider === 'xiaomi-token-plan' ? {} : modelCatalogOverrideProtocols(provider)),
+  };
   return Object.fromEntries(
-    Object.entries(protocols[protocolProvider] ?? {}).flatMap(([id, protocol]) => {
+    Object.entries(declared).flatMap(([id, protocol]) => {
       const profile = resolveModelProfile(provider, id, env);
       const api = profile.api ?? protocol.api;
       if (provider === 'opencode-go' && profile.baseUrl) {

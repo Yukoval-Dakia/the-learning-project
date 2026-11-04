@@ -232,6 +232,18 @@ function catalogModelRows(provider: ProviderAuthSurfaceRow['name']): AdminConfig
       runnable: executable.has(id),
       tool_call: profile.capabilities.toolCalling,
       reasoning: profile.capabilities.reasoning,
+      reasoning_options:
+        profile.reasoning.mode === 'unknown'
+          ? null
+          : {
+              mode: profile.reasoning.mode,
+              values:
+                profile.reasoning.mode === 'effort'
+                  ? [...profile.reasoning.supportedEfforts]
+                  : profile.reasoning.mode === 'toggle'
+                    ? ['off', 'on']
+                    : [],
+            },
       structured_output: profile.capabilities.structuredOutput,
       vision: profile.capabilities.vision,
       forced_tool_choice: profile.capabilities.forcedToolChoice,
