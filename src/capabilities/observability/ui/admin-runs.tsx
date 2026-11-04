@@ -246,7 +246,7 @@ function TaskFailureAlertsPanel({
         <AdminPanel
           id="adm-unsealed-alerts"
           title="回复已送达，收尾记录没写完"
-          sub={`学习者已经收到回复，不算失败，也不计入失败率。可能是超过 64k 被截断，或回执没封存 · ${formatTime(data.checked_at)} 检查`}
+          sub={`回复已写入对话，不计入失败率，但内容可能不完整。可能是超过 64k 被截断，或回执没封存，具体原因看最近一次运行 · ${formatTime(data.checked_at)} 检查`}
           aside={<Chip tone="caution">{unsealed.length} 项</Chip>}
           flush
         >
