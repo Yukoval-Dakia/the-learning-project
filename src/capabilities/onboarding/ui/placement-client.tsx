@@ -1,4 +1,7 @@
-import { createContext, useContext } from 'react';
+import { type ReactNode, createContext, useContext } from 'react';
+import type { ResponseSlotT, SlotResponseT } from '@/core/schema/assessment';
+import type { PublicMaterialViewT, PublicQuestionFaceT } from '@/core/schema/assessment/dto';
+import type { EvidenceAttachment } from '@/ui/components/response/response-types';
 import type { ApiOperationJsonResponse, ApiOperationRequestBody } from '@/ui/lib/api';
 import type { SessionTransitionRequestOptions } from '@/ui/lib/session-transition';
 import { createGoal } from './onboarding-api';
@@ -34,6 +37,32 @@ export type PlacementClient = {
   ) => Promise<ApiOperationJsonResponse<'saveResponseDraft'>>;
   /** Absent over HTTP: the poller follows the receipt's poll_url instead. */
   readJudgeRunStatus?: (runId: string) => Promise<ApiOperationJsonResponse<'getJudgeRunStatus'>>;
+  /** YUK-1823 — supplied by the shell; null means the question is drawn slot by slot. */
+  readIssuedBlocks?: (presentation: unknown) => PlacementIssuedBlocks | null;
+};
+/** How the page draws a question through its issued presentation. Practice implements it. */
+export type PlacementIssuedBlocks = {
+  blankableSlotIds: ReadonlySet<string>;
+  entriesForSubmit: (
+    slots: readonly ResponseSlotT[],
+    entries: readonly SlotResponseT[],
+  ) => SlotResponseT[];
+  render: (props: {
+    issued: {
+      faces: readonly PublicQuestionFaceT[];
+      materials: readonly PublicMaterialViewT[];
+      slots: readonly ResponseSlotT[];
+    };
+    entries: readonly SlotResponseT[];
+    onEntriesChange: (update: (prev: SlotResponseT[]) => SlotResponseT[]) => void;
+    notation: string | null;
+    disabled: boolean;
+    submitting: boolean;
+    submitted: boolean;
+    onUploadingChange: (slotId: string, uploading: boolean) => void;
+    unreceipted: Readonly<Record<string, EvidenceAttachment[]>>;
+    onUnreceiptedChange: (slotId: string, attachments: EvidenceAttachment[]) => void;
+  }) => ReactNode;
 };
 export const httpPlacementClient: PlacementClient = {
   startPlacement,
