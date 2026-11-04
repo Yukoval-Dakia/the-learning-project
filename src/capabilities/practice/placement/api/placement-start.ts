@@ -4,9 +4,8 @@
 // (which runs judge + θ̂ update + FSRS — no separate placement submit). The next question +
 // termination check are served by /api/placement/[id]/next.
 //
-// DARK-SHIP: gated on PLACEMENT_PROBE_ENABLED (default false) — while off the entrypoint 404s,
-// so no placement session is ever created and the live paths are untouched (the flag's only
-// effect). Flipping it on is the cold-start first-session go-live decision.
+// PLACEMENT_PROBE_ENABLED (default on) is the kill switch: off makes the entrypoint 404 and
+// creates no placement session.
 
 import { canonicalResourceResponse, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { startPlacementProbe } from '../server/session-operations/placement-session';
