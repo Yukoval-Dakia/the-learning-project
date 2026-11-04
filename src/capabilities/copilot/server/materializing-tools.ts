@@ -15,15 +15,15 @@ import { COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
 export const MATERIALIZING_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   'submit_review_answer',
   'author_question',
-  // YUK-1769 — the interactive pair is off the copilot surface but stays here:
-  // historical turns that called them still wrote domain rows the cascade
-  // cannot compensate, so the revert-anchor guard must keep recognizing them.
-  'author_artifact',
-  'update_artifact',
   'write_quiz',
   // YUK-1769 — write_note INSERTs/UPDATEs an artifact row (create + append +
   // the generate handoff's pending row) — same irreversible domain write.
   'write_note',
+  // Retired tools no live surface can call. Historical turns that used them wrote
+  // artifact rows some of which have no create event, so a revert would succeed and
+  // orphan the row; these names keep suppressing the anchor on replay.
+  'author_artifact',
+  'update_artifact',
 ]);
 
 // Persisted tool mirrors and explicit originals keep live and replay policy aligned.

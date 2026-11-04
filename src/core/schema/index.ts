@@ -155,10 +155,11 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
   // `ingestion_paper` is the paper provenance for a tool_quiz built from a
   // session's imported questions (ingest→practice bridge §2.3). Pure additive
   // enum, no migration (intent_source/tool_kind are text columns).
-  // ADR-0033 D6 — `author_artifact` is the interactive-artifact
-  // provenance (copilot-authored via the author_artifact DomainTool; tool_kind
-  // mirrors it). Pure additive enum, no migration. NOT a paper provenance —
-  // practice gates (practice-read.ts / /api/practice) must keep rejecting it.
+  // ADR-0033 D6 — `author_artifact` is the stored interactive-artifact
+  // provenance (written by the retired copilot authoring tool; kept so existing
+  // rows still parse). Pure additive enum, no migration. NOT a paper
+  // provenance — practice gates (practice-read.ts / /api/practice) must keep
+  // rejecting it.
   // YUK-1769 — `write_note` is the copilot Markdown-note provenance (the
   // write_note DomainTool; tool_kind mirrors it). Pure additive enum.
   intent_source: z.enum([
@@ -178,7 +179,7 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
   attrs: z.record(z.string(), z.unknown()),
   tool_state: b.ToolState.nullable(),
   // ADR-0033 D6 — 'author_artifact' mirrors the intent_source above
-  // for type='interactive' rows. Pure additive enum (text column, no DDL).
+  // for stored type='interactive' rows. Pure additive enum (text column, no DDL).
   // YUK-1769 — 'write_note' mirrors the intent_source above for copilot-written
   // note_long rows. Pure additive enum.
   tool_kind: z

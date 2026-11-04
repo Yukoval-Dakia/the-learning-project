@@ -19,11 +19,7 @@ type PublicResultTool =
       'read_agent_notes' | 'write_agent_note' | 'present_primary_view' | 'compose_block'
     >
   | 'attribute_mistake'
-  | 'propose_variant'
-  // YUK-1769 — the interactive pair lost its copilot surface grant but stays a
-  // projection policy so historical turns still replay their result snapshots.
-  | 'author_artifact'
-  | 'update_artifact';
+  | 'propose_variant';
 type ResultPolicy =
   | 'reader'
   | 'record'
@@ -87,8 +83,6 @@ const POLICIES: Record<string, ResultPolicy> = {
   attribute_mistake: ['status', 'judge_event_id', 'cause'],
   propose_variant: ['status', 'proposal_ids', 'mistake_variant_ids', 'variant_question_ids'],
   write_quiz: ['artifact_id', 'question_count', 'knowledge_ids', 'practice_path'],
-  author_artifact: ['artifact_id', 'type', 'title', 'version', 'knowledge_ids'],
-  update_artifact: ['artifact_id', 'previous_version', 'version'],
   write_note: ['status', 'artifact_id', 'title', 'version'],
   check_note: ['artifact_id', 'artifact_type', 'issues'],
 } satisfies Record<PublicResultTool, ResultPolicy>;
