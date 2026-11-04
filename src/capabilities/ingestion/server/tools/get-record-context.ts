@@ -14,7 +14,7 @@ import {
   knowledgeContext,
   knowledgeEdgeTouches,
 } from '@/kernel/read-models/extraction-summary';
-import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttemptForDerivationById } from '@/kernel/read-models/failure-attempts';
 import {
   isLearnerVisibleKnowledgeId,
   learnerVisibleKnowledgeIds,
@@ -153,7 +153,7 @@ async function executeGetRecordContext(
   }
 
   const failure = record.attempt_event_id
-    ? await getFailureAttemptById(ctx.db, record.attempt_event_id)
+    ? await getFailureAttemptForDerivationById(ctx.db, record.attempt_event_id)
     : null;
   if (include.has('attempt') && failure) {
     output.attempt = {

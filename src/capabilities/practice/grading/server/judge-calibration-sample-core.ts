@@ -24,6 +24,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { allowedEventIds } from '@/kernel/events/derivation-policy';
 import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import type { ResolvedProvider } from '@/server/ai/providers';
@@ -306,9 +307,14 @@ export async function selectJudgeCalibrationCandidates(
   // verdict the calibration should disagree-check.
   const attemptIds = [...new Set(judgeRows.map((row) => row.subject_id))];
   const rowById = new Map(judgeRows.map((row) => [row.id, row]));
+  // Consent boundary: an answer event the derivation filter withholds must
+  // never reach a re-judge model call — drop it before sampling so neither the
+  // live batch nor a frozen workset can send it.
+  const derivableAttemptIds = await allowedEventIds(db, attemptIds);
   const verdicts = await resolveVerdictsForAttempts(db, attemptIds);
   let candidates: JudgeCandidate[] = [];
-  for (const v of verdicts.values()) {
+  for (const [attemptId, v] of verdicts) {
+    if (!derivableAttemptIds.has(attemptId)) continue;
     const effectiveId = v.effective?.judge_event_id;
     if (!effectiveId) continue;
     const row = rowById.get(effectiveId);

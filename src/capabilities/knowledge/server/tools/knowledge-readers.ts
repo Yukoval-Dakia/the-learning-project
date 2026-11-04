@@ -1,4 +1,4 @@
-import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { getCurrentFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 
 // Knowledge graph read tools. Traversal stays server-side so callers get bounded,
 // named context instead of raw rows.
@@ -178,7 +178,7 @@ async function loadRecentFailures(
   }>
 > {
   if (ids.length === 0) return [];
-  const rows = (await getCurrentFailureAttempts(db))
+  const rows = (await getCurrentFailureAttemptsForDerivation(db))
     .filter((row) => row.referenced_knowledge_ids.some((id) => ids.includes(id)))
     .slice(0, limit);
   return rows.map((row) => ({
@@ -199,7 +199,7 @@ async function loadRecentFailureCounts(
   const counts = new Map(uniqueIds.map((id) => [id, 0]));
   if (uniqueIds.length === 0) return counts;
 
-  const rows = await getCurrentFailureAttempts(db, { since });
+  const rows = await getCurrentFailureAttemptsForDerivation(db, { since });
 
   const idSet = new Set(uniqueIds);
   for (const row of rows) {

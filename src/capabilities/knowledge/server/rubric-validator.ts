@@ -18,7 +18,10 @@ import {
   type EffectiveFailureCause,
   effectiveCauseForFailureAttempt,
 } from '@/kernel/read-models/cause-policy';
-import { type FailureAttempt, getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import {
+  type FailureAttempt,
+  getFailureAttemptForDerivationById,
+} from '@/kernel/read-models/failure-attempts';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { assertKnowledgeIdsExist } from '@/kernel/read-models/knowledge-validate';
 
@@ -120,7 +123,7 @@ async function resolveEvidence(
 ): Promise<ResolvedEvidence[]> {
   const out: ResolvedEvidence[] = [];
   for (const id of [...new Set(eventIds)]) {
-    const attempt = await getFailureAttemptById(db, id);
+    const attempt = await getFailureAttemptForDerivationById(db, id);
     if (!attempt) continue; // not a live failure attempt — not usable evidence
     const cause = effectiveCauseForFailureAttempt(attempt);
     // RB-5 / §4.2: recency anchor is the ATTEMPT timestamp, not the judge run.

@@ -8,7 +8,7 @@ import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { readAgentNotes } from '@/kernel/read-models/agent-note-hints';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
-import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 import { DOMAIN_TOOL_MCP_SERVER_NAME, resolveDomainToolNames } from '@/kernel/tools/allowlists';
 import { streamTask } from '@/server/ai/runner';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -42,7 +42,7 @@ async function buildReviewInput(db: Db) {
     }),
   );
 
-  const attempts = await getFailureAttempts(db, {
+  const attempts = await getFailureAttemptsForDerivation(db, {
     includeReviewFailures: true,
     limit: RECENT_MISTAKES_LIMIT,
   });
