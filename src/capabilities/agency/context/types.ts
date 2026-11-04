@@ -20,6 +20,12 @@ export interface DeltaEventLine {
   label: string;
 }
 
+/** 「今日待复习」明细一行：题干摘要 + 学习者可见知识点名。 */
+export interface DueItemLine {
+  stem: string;
+  knowledgeNames: string[];
+}
+
 /** Δ 段读数：稳态段 as_of 之后的增量 + 今日到期 + 连错 + 最近活动。 */
 export interface DeltaSection {
   asOf: Date;
@@ -36,6 +42,8 @@ export interface DeltaSection {
   /** 到期读数（上限 REVIEW_DUE_DISPLAY_CAP）；达到上限时 reviewDueOverCap=true，渲染「50+」。 */
   reviewDueCount: number;
   reviewDueOverCap: boolean;
+  /** 到期队列前几条明细（题干摘要 + 知识点名），够回答「今天做什么」。 */
+  dueItems: DueItemLine[];
   failureStreak: KnowledgeFailureStreak | null;
   lastActivityAt: Date | null;
 }
@@ -45,6 +53,8 @@ export interface ContractSection {
   steeringMd: string | null;
   masteryMd: string | null;
   causesMd: string | null;
+  /** 最近失败逐条原因（可裁明细，独立于聚合错因行单独成 unit）。 */
+  failureDetailsMd: string | null;
   signalsMd: string[];
   overnightMd: string | null;
 }
