@@ -8,7 +8,7 @@ export type ProviderCostAggregateRow = {
   readonly task_kind: string | null;
   readonly currency: string | null;
   readonly entry_kind: 'legacy' | 'attempt' | null;
-  readonly cost_basis: 'reported' | 'estimated' | 'unknown' | null;
+  readonly cost_basis: 'reported' | 'estimated' | 'catalog_estimate' | 'unknown' | null;
   readonly cost_ref: string | null;
   readonly cost: number;
   readonly reported_cost: number;

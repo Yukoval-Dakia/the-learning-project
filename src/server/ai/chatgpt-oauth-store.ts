@@ -199,16 +199,16 @@ export function createChatGPTCredentialStore(path: string) {
         const next = await fn(current);
         if (next !== undefined) {
           memory.set(providerId, next);
+          // Mark dirty BEFORE any file op — a successful refresh followed by a
+          // failed read/write must never let a later read reload the dead
+          // token from disk.
+          dirty = next;
           const auth = await readAuthFile(path);
           auth[providerId] = next;
-          try {
-            await writeAuthFile(path, auth);
-          } catch (e) {
-            // Keep the rotated credential as dirty — retry on every later
-            // access; the file is stale but the token must not be lost.
-            dirty = next;
-            throw e;
-          }
+          // A failed write leaves `next` dirty — retried on every later
+          // access; the typed write_failed propagates loudly to the caller.
+          await writeAuthFile(path, auth);
+          dirty = undefined;
         }
         return next ?? current;
       });

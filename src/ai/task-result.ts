@@ -9,7 +9,7 @@ export interface TaskTextResult {
   /** Known USD amount; absent when this attempt has no trustworthy price. */
   cost_usd?: number;
   /** Evidence class and immutable reference for cost_usd. */
-  cost_basis?: 'reported' | 'estimated' | 'unknown';
+  cost_basis?: 'reported' | 'estimated' | 'catalog_estimate' | 'unknown';
   cost_ref?: string;
   /**
    * YUK-299 seam: structured-output passthrough. `RunTaskResult` is a structural
@@ -85,6 +85,9 @@ export interface AiTaskUsage {
 export type AttemptCostTruth =
   | { basis: 'reported'; amountUsd: number; ref: string }
   | { basis: 'estimated'; amountUsd: number; ref: string }
+  // Catalog list-price estimate on a subscription lane — a projection, not
+  // money paid; reports may show it, spend gates must not count it as spend.
+  | { basis: 'catalog_estimate'; amountUsd: number; ref: string }
   | { basis: 'unknown'; amountUsd: null; ref: string };
 
 export type AttemptCostBasis = AttemptCostTruth['basis'];

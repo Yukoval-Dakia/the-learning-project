@@ -60,8 +60,11 @@ export async function createLoomPiModels() {
   const { createChatGPTCredentialStore } = await import('./chatgpt-oauth-store');
   if (chatgptPath) {
     // esbuild CJS cannot run pi-ai's dynamic importOAuthModule (import.meta +
-    // variable specifier); registerBundledOAuthFlowLoaders statically so the
-    // login lane's refresh/toAuth works in the released bundle.
+    // variable specifier); register only the openai ChatGPT flow statically so
+    // refresh/toAuth works in the released bundle (bun-oauth pulls in all 9
+    // flows — unnecessary weight and unrelated login paths).
+    // pi-ai exposes no `auth/*` subpath — `bun-oauth` is the only public entry
+    // to the loader registry.
     const { registerBunOAuthFlows } = await import('@earendil-works/pi-ai/bun-oauth');
     registerBunOAuthFlows();
   }

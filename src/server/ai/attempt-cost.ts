@@ -89,7 +89,10 @@ export function resolveAttemptCostTruth(input: {
     const reported = input.reportedCostUsd;
     // A preserved model with no catalog rate card yields pi usage.cost = 0 —
     // that is unknown, not free (hasCard guard, same as custom providers).
-    const laneProvider = catalogProviderFor(input.provider);
+    // xiaomi-token-plan shares the xiaomi catalog bucket's rate cards.
+    const laneProvider =
+      catalogProviderFor(input.provider) ??
+      (input.provider === 'xiaomi-token-plan' ? catalogProviderFor('xiaomi') : undefined);
     const hasCard =
       laneProvider !== undefined && catalogModelCost(laneProvider, input.model) !== undefined;
     if (hasCard && reported !== undefined && Number.isFinite(reported) && reported >= 0) {
@@ -100,7 +103,7 @@ export function resolveAttemptCostTruth(input: {
             ? 'pi-catalog-failure-estimate'
             : 'pi-catalog';
       return {
-        basis: 'estimated',
+        basis: 'catalog_estimate',
         amountUsd: reported,
         ref: `${prefix}:${input.provider}/${input.model}`,
       };

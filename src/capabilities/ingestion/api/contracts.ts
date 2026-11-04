@@ -591,7 +591,7 @@ export const IngestionSessionCostEvidenceSchema = z
         model: z.string().nullable(),
         source: z.enum(['cost_ledger', 'provider_attempt']),
         entry_kind: z.enum(['legacy', 'attempt']),
-        cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable(),
+        cost_basis: z.enum(['reported', 'estimated', 'catalog_estimate', 'unknown']).nullable(),
         cost_ref: z.string().nullable(),
         currency: z.string(),
         amount: z.number().nonnegative().nullable(),
