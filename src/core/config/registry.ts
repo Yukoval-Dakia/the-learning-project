@@ -356,15 +356,6 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     // 'off' 不是完整 kill switch（触发器照常记账）——面板文案必须带这句。
     note: "P2: 'off' is not a complete kill switch (trigger bookkeeping continues)",
   },
-  MEMORY_RECONCILE_HANDOFF_MODE: {
-    schema: z.enum(['observe', 'write', 'recover', 'drain']),
-    codeDefault: 'observe',
-    envName: 'MEMORY_RECONCILE_HANDOFF_MODE',
-    // env 非法值 fail-fast throw（不是 fallback 地板）：原文直通，throw 留在
-    // memoryReconcileHandoffMode 的 switch 里。
-    envParse: stringEnv,
-    tier: 'A',
-  },
   PROJECTION_IS_WRITER_ITEM_CALIBRATION: {
     schema: z.boolean(),
     codeDefault: false,

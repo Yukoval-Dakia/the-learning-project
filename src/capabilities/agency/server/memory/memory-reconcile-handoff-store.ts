@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
@@ -7,12 +7,11 @@ import {
   lockEventDerivationSources,
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
-import { lockMemoryDispatchSource, lockMemoryIngestSource } from '@/kernel/locks/memory-locks';
+import { lockMemoryIngestSource } from '@/kernel/locks/memory-locks';
 import {
   MEMORY_RECONCILE_HANDOFF_ACTION,
   MemoryReconcileHandoffError,
   type ReconcileMemInput,
-  ReconcileMemInputSchema,
   canonicalHandoffJson,
   memoryIntentDigest,
   memoryReconcileHandoffEventId,
@@ -46,15 +45,6 @@ const CompletedSchema = z
     resolution: z.enum(['provider_result', 'event_lookup']),
     memory_count: z.number().int().nonnegative(),
     intent_digest: z.string().length(64),
-  })
-  .strict();
-const IntentSchema = z
-  .object({
-    version: z.literal(1),
-    handoff_kind: z.literal('reconcile_intent'),
-    source_event_id: z.string().min(1),
-    intent_digest: z.string().length(64),
-    memory: ReconcileMemInputSchema,
   })
   .strict();
 export type IngestCompleted = z.infer<typeof CompletedSchema>;
@@ -149,7 +139,6 @@ export async function persistIngestCompleted(
     readonly sourceEventId: string;
     readonly resolution: IngestCompleted['resolution'];
     readonly memories: readonly ReconcileMemInput[];
-    readonly persistIntents: boolean;
   },
 ): Promise<IngestCompleted> {
   const memories = normalizeReconcileInputs(input.memories);
@@ -180,112 +169,9 @@ export async function persistIngestCompleted(
     await writeMemoryHandoffRecord(tx, input.sourceEventId, 'ingest_completed', completed);
     await lockEventDerivationSources(tx, input.sourceEventId);
     if (await noteRestrictedMemoryCompletion(tx, input.sourceEventId)) return;
-    if (!input.persistIntents) return;
-    for (const memory of memories)
-      await writeMemoryHandoffRecord(
-        tx,
-        input.sourceEventId,
-        'reconcile_intent',
-        {
-          version: 1,
-          handoff_kind: 'reconcile_intent',
-          source_event_id: input.sourceEventId,
-          intent_digest: digest,
-          memory,
-        },
-        memory.id,
-      );
   });
   return completed;
 }
-export async function loadCompleteIntentSet(
-  db: Db,
-  completion: IngestCompleted,
-): Promise<readonly ReconcileMemInput[] | null> {
-  const rows = await db
-    .select({ payload: event.payload })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, MEMORY_RECONCILE_HANDOFF_ACTION),
-        eq(event.subject_id, completion.source_event_id),
-        eq(sql<string>`${event.payload} ->> 'version'`, '1'),
-        eq(sql<string>`${event.payload} ->> 'handoff_kind'`, 'reconcile_intent'),
-      ),
-    )
-    .orderBy(asc(event.id));
-  const memories: ReconcileMemInput[] = [];
-  for (const row of rows) {
-    const parsed = IntentSchema.safeParse(row.payload);
-    if (!parsed.success || parsed.data.intent_digest !== completion.intent_digest) return null;
-    memories.push(parsed.data.memory);
-  }
-  const normalized = normalizeReconcileInputs(memories);
-  return normalized.length === completion.memory_count &&
-    memoryIntentDigest(normalized) === completion.intent_digest
-    ? normalized
-    : null;
-}
-export async function persistDispatchCompleted(
-  db: Db,
-  completion: IngestCompleted,
-  memories: readonly ReconcileMemInput[],
-  jobId: string,
-): Promise<void> {
-  const normalized = normalizeReconcileInputs(memories);
-  if (
-    normalized.length !== completion.memory_count ||
-    memoryIntentDigest(normalized) !== completion.intent_digest
-  )
-    throw new MemoryReconcileHandoffError(`dispatch batch mismatch ${completion.source_event_id}`);
-  await db.transaction(async (tx) => {
-    await lockMemoryDispatchSource(tx, completion.source_event_id);
-    for (const memory of normalized)
-      await writeMemoryHandoffRecord(
-        tx,
-        completion.source_event_id,
-        'reconcile_dispatch_complete',
-        {
-          version: 1,
-          handoff_kind: 'reconcile_dispatch_complete',
-          source_event_id: completion.source_event_id,
-          memory_id: memory.id,
-          intent_digest: completion.intent_digest,
-          job_id: jobId,
-        },
-        memory.id,
-      );
-  });
-}
-
-/** An advisory skip is durable evidence, never a queue receipt. */
-export async function persistObserveDispatchSkipped(
-  db: Db,
-  sourceId: string,
-  memories: readonly ReconcileMemInput[],
-  jobId: string,
-): Promise<void> {
-  await db.transaction(async (tx) => {
-    await lockMemoryDispatchSource(tx, sourceId);
-    await writeMemoryHandoffRecord(
-      tx,
-      sourceId,
-      'reconcile_observe_skipped',
-      {
-        version: 1,
-        handoff_kind: 'reconcile_observe_skipped',
-        source_event_id: sourceId,
-        level: 'warn',
-        reason: 'singleton_send_null',
-        mode: 'observe',
-        intent_digest: memoryIntentDigest(memories),
-        job_id: jobId,
-      },
-      jobId,
-    );
-  });
-}
-
 export async function readMemoryIngestStarted(db: Db | Tx, sourceId: string): Promise<Date | null> {
   const rows = await db
     .select({ payload: event.payload, createdAt: event.created_at })

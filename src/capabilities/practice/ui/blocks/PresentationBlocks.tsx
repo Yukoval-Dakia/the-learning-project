@@ -365,11 +365,34 @@ export function PresentationBlocks({
       />
     );
 
+  // A default presentation names only part text and inputs, yet a shared stem or figure is issued
+  // as a material. Whatever the tree does not place still belongs to the question: without it the
+  // learner would answer blind, and the answer would count.
+  const placedMaterials = materialRefsOf(presentation.root);
+  const unplacedMaterials = issued.materials.filter((m) => !placedMaterials.has(m.material_id));
+
   return (
     <UiNextRoot className={['un-blk-tree', className].filter(Boolean).join(' ')}>
-      {renderBlock(presentation.root)}
+      {unplacedMaterials.length > 0 ? (
+        <div className="un-blk-stack" data-gap="md">
+          {unplacedMaterials.map((material) => (
+            <div key={material.material_id} className="un-blk-text un-read">
+              {renderMaterial(material)}
+            </div>
+          ))}
+          {renderBlock(presentation.root)}
+        </div>
+      ) : (
+        renderBlock(presentation.root)
+      )}
     </UiNextRoot>
   );
+}
+
+function materialRefsOf(block: PresentationBlockT, refs = new Set<string>()): Set<string> {
+  if ('material_ref' in block && block.material_ref) refs.add(block.material_ref);
+  if ('children' in block) for (const child of block.children) materialRefsOf(child, refs);
+  return refs;
 }
 
 function axis(slot: SelectSlotT, name: string) {

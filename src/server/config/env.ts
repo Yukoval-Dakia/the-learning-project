@@ -76,7 +76,6 @@ const server = {
   LOCAL_POSTGRES_HOST: optionalString,
   LOCAL_POSTGRES_PORT: optionalString,
   LOOM_PG_IMAGE: optionalString,
-  MEMORY_RECONCILE_HANDOFF_MODE: optionalString,
   MEM0_EMBEDDING_BASE_URL: optionalString,
   MEM0_EMBEDDING_DIMS: optionalString,
   MEM0_EMBEDDING_MODEL: optionalString,

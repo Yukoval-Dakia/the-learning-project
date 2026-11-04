@@ -133,7 +133,11 @@ export async function readPlacementStarterOutcomes(
         failure_reason: { code: 'authority_unknown' },
       };
     }
-    if (claim.known_cost_micro_usd === null || claim.last_error_code === 'cost_unknown') {
+    // Uncapped sourcing_web has no budget for unknown cost to protect (same rule as
+    // placement-starter-attempts); hiding its real outcome would strand the learner.
+    const budgetUnverifiable =
+      claim.budget_limit_micro_usd !== null && claim.known_cost_micro_usd === null;
+    if (budgetUnverifiable || claim.last_error_code === 'cost_unknown') {
       return {
         ...binding,
         state: 'unknown',

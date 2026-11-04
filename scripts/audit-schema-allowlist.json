@@ -1034,5 +1034,85 @@
       "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
       "expected_by": "2027-02-28"
     }
+  },
+  "memory_reconciliation_log.user_id": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.new_memory_id": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.old_memory_id": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.action": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.reason": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.llm_raw": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.planned_at": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.applied_at": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.prev_text": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.prev_metadata": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
   }
 }
