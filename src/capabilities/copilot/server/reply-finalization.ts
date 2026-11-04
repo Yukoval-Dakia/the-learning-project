@@ -377,6 +377,9 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         options.correctionContract,
         stripCopilotInternalComments,
       );
+      if (correction.reply.trim().length === 0) {
+        return publishUnsealed('', 'missing_terminal', context);
+      }
       const disclosure = proposalDisclosure(trace);
       const { text: composed, blocksReceipt } = prepareReplyText(correction.reply);
       const disclosed = applyProposalDisclosure(composed, disclosure);
@@ -506,10 +509,13 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     context: { streamedText?: string; retainedTail?: string },
   ): CopilotReplyFinalizationResult {
     const disclosure = proposalDisclosure(trace);
-    const body =
-      stripCopilotInternalComments(candidate) ||
-      stripCopilotInternalComments(context.streamedText ?? '') ||
-      FINALIZATION_FAILURE_REPLY;
+    const candidateBody = stripCopilotInternalComments(candidate);
+    const streamedBody = stripCopilotInternalComments(context.streamedText ?? '');
+    const body = candidateBody.trim()
+      ? candidateBody
+      : streamedBody.trim()
+        ? streamedBody
+        : FINALIZATION_FAILURE_REPLY;
     const prepared = prepareReplyText(body);
     const replyText = truncateCopilotReply(
       applyProposalDisclosure(prepared.text, disclosure),
