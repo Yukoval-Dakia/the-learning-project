@@ -100,6 +100,9 @@ const ProposeKnowledgeEdgeOutputSchema = z.object({
     'skipped:rubric_rejected',
     // ADR-0032 — archive target missing/already archived, or a proposal is pending.
     'skipped:edge_not_found',
+    // A create with zero evidence refs is skipped so the agent can retry with
+    // the supporting attempt/event ids — structural shape, not an evidence floor.
+    'skipped:no_evidence',
   ]),
   proposal_id: z.string().optional(),
   cooldown_key: z.string().optional(),
@@ -193,7 +196,8 @@ async function proposeKnowledgeEdgeCreate(
 }
 
 // ADR-0032 — archive executor: proposes soft-deleting a live edge through the
-// same proposal→accept loop. No rubric evidence floor; archive carries none by design.
+// same proposal→accept loop. Archive carries no evidence by design; the ≥1-ref
+// shape rule applies to create only.
 async function proposeKnowledgeEdgeArchive(
   ctx: ToolContext,
   input: ProposeKnowledgeEdgeInput,
@@ -229,7 +233,7 @@ export const proposeKnowledgeEdgeTool: DomainTool<
 > = {
   name: 'propose_knowledge_edge',
   description:
-    'Propose one knowledge mesh edge change. op="create" (default) proposes a NEW edge from {from_knowledge_id, to_knowledge_id, relation_type, weight?} — validates active same-subject nodes, self loops, duplicate live/pending edges, and parent-only related_to redundancy. Agent-proposed creates are rubric-gated: put the supporting attempt/event ids in evidence_event_ids, not just in reasoning. op="archive" proposes soft-deleting an EXISTING live edge named by edge_id (no failure evidence required — archiving is the inverse of proposing). Both ops are proposal-only: the user accepts in the inbox; archive sets archived_at, never a hard delete. Results starting with skipped: mean the proposal was NOT written — do not retry the same change.',
+    'Propose one knowledge mesh edge change. op="create" (default) proposes a NEW edge from {from_knowledge_id, to_knowledge_id, relation_type, weight?} — validates active same-subject nodes, self loops, duplicate live/pending edges, and parent-only related_to redundancy. A create must name at least one supporting attempt/event id in evidence_event_ids (else skipped:no_evidence — fix and retry); evidence sufficiency is decided by the user at accept, not by a write-time gate. op="archive" proposes soft-deleting an EXISTING live edge named by edge_id (no failure evidence required — archiving is the inverse of proposing). Both ops are proposal-only: the user accepts in the inbox; archive sets archived_at, never a hard delete. Results starting with skipped: mean the proposal was NOT written — do not retry the same change.',
   effect: 'propose',
   inputSchema: ProposeKnowledgeEdgeInputSchema,
   outputSchema: ProposeKnowledgeEdgeOutputSchema,

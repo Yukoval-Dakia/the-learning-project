@@ -1,9 +1,7 @@
-// Structural rubric for knowledge edge proposals (RB-1, reduced to the
-// correctness class): self-edge, unknown node, cross-subject, and
-// parent-restating duplicates. The former evidence floor, per-relation
-// predicates, and reasoning-depth denylist were removed — evidence already
-// rides in `evidence_refs`, so sufficiency is the learner's accept call, not a
-// write-time gate. Verdict shape is stable:
+// Structural rubric for knowledge edge proposals (RB-1, correctness class
+// only): self-edge, unknown node, cross-subject, and parent-restating
+// duplicates. Evidence rides in `evidence_refs` — sufficiency is the learner's
+// accept call, not a write-time gate. Verdict shape is stable:
 // { ok:true } | { ok:false; gate; reason }.
 
 import { eq } from 'drizzle-orm';

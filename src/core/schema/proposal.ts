@@ -263,6 +263,9 @@ const NonEmptyObject = z
 const BaseProposal = z.object({
   target: ProposalTarget,
   reason_md: z.string().min(1).max(4000),
+  // Optional on the shared base (archive/mutation kinds may carry none). The
+  // knowledge_edge create path enforces ≥1 entry structurally at the write
+  // path — see writeKnowledgeEdgeProposal's skipped:no_evidence.
   evidence_refs: z.array(ProposalEvidenceRef).default([]),
   rollback_plan: z.unknown().optional(),
   cooldown_key: z.string().min(1).max(300).optional(),

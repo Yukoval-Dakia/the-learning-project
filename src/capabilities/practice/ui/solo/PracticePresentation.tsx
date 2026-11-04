@@ -88,7 +88,9 @@ export function PracticePresentation(props: PracticePresentationProps) {
       id,
       label,
       <div data-quotable="">
-        <MathMarkdown notation={q?.notation ?? null}>{text}</MathMarkdown>
+        <MathMarkdown className="un-read" notation={q?.notation ?? null}>
+          {text}
+        </MathMarkdown>
       </div>,
     );
   };
@@ -200,7 +202,9 @@ export function PracticePresentation(props: PracticePresentationProps) {
             <figure>
               {m.content_md !== undefined ? (
                 <div data-quotable="">
-                  <MathMarkdown notation={q.notation}>{m.content_md}</MathMarkdown>
+                  <MathMarkdown className="un-read" notation={q.notation}>
+                    {m.content_md}
+                  </MathMarkdown>
                 </div>
               ) : m.kind === 'figure' || m.kind === 'table' ? (
                 <button

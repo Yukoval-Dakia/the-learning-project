@@ -483,7 +483,7 @@ describe('block_merge proposal lifecycle', () => {
   // never produce an acceptance event) ──
 
   // @invariant data: a non-draft merge chain can never produce an acceptance event or block mutation
-  // @fails-if the accept writes a rate event or mutates blocks, or the pending row loses its not_draft reason
+  // @fails-if the accept writes a rate event or mutates blocks, or the pending row is marked unacceptable
   it('shows a non-draft chain with its reason yet answers its accept with soft stale', async () => {
     const db = testDb();
     const sessionId = createId();
@@ -508,18 +508,19 @@ describe('block_merge proposal lifecycle', () => {
       mergeBlockIds: [m1],
     });
 
-    // Visible in the learner list, carrying the admission reason.
+    // Visible in the learner list, but not marked unacceptable: accept answers
+    // this arm as a soft stale success, not a typed rejection.
     const visible = await listProposalInboxRows(db, { status: 'pending' });
-    expect(visible.find((row) => row.id === 'block_merge_nondraft')?.not_acceptable_reason).toBe(
-      'not_draft',
-    );
+    expect(
+      visible.find((row) => row.id === 'block_merge_nondraft')?.not_acceptable_reason,
+    ).toBeNull();
 
     // The single-row decision lane resolves the row — the soft-stale
     // answer rides on it — and the public accept returns stale, never
     // 409/500: no rate event, no signal, proposal stays pending.
-    expect((await getProposalInboxRow(db, 'block_merge_nondraft'))?.not_acceptable_reason).toBe(
-      'not_draft',
-    );
+    expect(
+      (await getProposalInboxRow(db, 'block_merge_nondraft'))?.not_acceptable_reason,
+    ).toBeNull();
     const result = await acceptAiProposal(db, 'block_merge_nondraft', { confirm_lossy: true });
     expect(result).toMatchObject({
       kind: 'block_merge',

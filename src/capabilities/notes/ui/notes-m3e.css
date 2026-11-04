@@ -427,6 +427,64 @@
     font-weight: var(--un-fw-semibold);
   }
 
+  /* YUK-1772 — unresolved issues the note's author left; absent on a clean note. */
+  & .nt-issues {
+    display: grid;
+    gap: var(--un-sp-3);
+    margin-bottom: var(--un-sp-5);
+    padding: var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-sunk);
+    box-shadow: inset 3px 0 0 var(--un-caution);
+  }
+
+  & .nt-issues-title {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    color: var(--un-text-1);
+    font-size: var(--un-fs-2);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .nt-issues-title > svg {
+    flex: none;
+    color: var(--un-caution);
+  }
+
+  & .nt-issues-summary,
+  & .nt-issue-text {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    line-height: var(--un-lh-prose);
+    overflow-wrap: anywhere;
+  }
+
+  & .nt-issues-list {
+    display: grid;
+    gap: var(--un-sp-3);
+    list-style: none;
+  }
+
+  & .nt-issue {
+    display: grid;
+    gap: var(--un-sp-1);
+    min-width: 0;
+  }
+
+  & .nt-issue-kind {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .nt-issue-fix {
+    display: grid;
+    gap: var(--un-sp-1);
+    padding-inline-start: var(--un-sp-3);
+    border-inline-start: var(--un-hairline) solid var(--un-line-strong);
+  }
+
   & .nt-doc-title {
     margin-bottom: var(--un-sp-3);
     color: var(--un-text-1);
@@ -579,6 +637,11 @@
     color: var(--un-text-1);
     line-height: var(--un-lh-prose);
     white-space: pre-wrap;
+  }
+
+  /* YUK-1548 — read view renders markdown (reading layer); source line breaks are markdown's now. */
+  & .nt-sem-body.un-read {
+    white-space: normal;
   }
 
   & .nt-linkcard {

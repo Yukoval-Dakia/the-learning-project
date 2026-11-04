@@ -282,7 +282,9 @@ This rubric applies to agent-generated graph proposals. Manual user-created edge
 > `src/capabilities/knowledge/server/rubric-validator.ts` (`validateProposalQuality`), called by the
 > agent edge-proposal write path (`proposeKnowledgeEdgeCreate`) before the propose-event write. Agents
 > and user-edited proposals run the same structural checks (self-edge, unknown node, cross-subject,
-> parent-restating duplicate). The §4.2 evidence floor, the §4.3 relation predicates, and the §4.4
+> parent-restating duplicate). The write path additionally enforces one payload-shape rule: an edge
+> create must carry ≥1 `evidence_refs` entry (`skipped:no_evidence`, nothing written) so the evidence
+> is inspectable at review. The §4.2 evidence floor, the §4.3 relation predicates, and the §4.4
 > reasoning-depth denylist were removed: evidence already rides in `evidence_refs`, so sufficiency is
 > decided at accept time, not by a write-time gate. A rejected proposal is **folded, not dropped**:
 > the propose event is still written carrying a `rubric_verdict: { ok:false, gate, reason }` marker,
@@ -327,24 +329,26 @@ Reject before writing `event(action='propose')` when:
 - exact live edge `(from,to,relation_type)` already exists
 - exact pending proposal already exists
 - proposal only repeats an existing tree parent/child relation
-- reasoning is generic, e.g. “二者相关” with no concrete signal
 - agent proposal has no `evidence_event_ids`
 
-### 4.2 Evidence levels
+### 4.2 Evidence levels (advisory — not enforced)
 
-| level | meaning | can write proposal? | UI treatment |
+These levels guide the agent's proposal quality and the reviewer's read of the card; they are not
+write-time gates. The only enforced requirement is the §4.1 structural list.
+
+| level | meaning | agent guidance | UI treatment |
 |---|---|---|---|
-| strong | 2+ recent failure events show same pattern, or 1 failure plus explicit user note | yes | normal |
-| medium | 1 recent failure event with clear judge analysis | yes, lower weight | show lower confidence |
-| weak | name similarity, same parent, or model intuition only | no for agent proposal | ask for more evidence / skip |
+| strong | 2+ recent failure events show same pattern, or 1 failure plus explicit user note | preferred | normal |
+| medium | 1 recent failure event with clear judge analysis | acceptable | show lower confidence |
+| weak | name similarity, same parent, or model intuition only | gather more evidence before proposing | ask for more evidence / skip |
 
-Default thresholds:
+Guidance:
 
-- recent window: 30 days
-- minimum agent evidence: 1 event for non-destructive edge proposal, 2 events for `prerequisite` / `contrasts_with` unless judge analysis is explicit
+- recent window: 30 days (the `recent_failure_count_30d` stat)
+- `prerequisite` / `contrasts_with` proposals land better with 2+ events or explicit judge analysis
 - max proposals per run: 5
 
-### 4.3 Relation-specific gates
+### 4.3 Relation-specific guidance (advisory — not enforced)
 
 `prerequisite`:
 
@@ -373,9 +377,9 @@ Default thresholds:
 - Use as a conservative weak edge only when it helps navigation or review grouping.
 - Penalize overuse; many `related_to` proposals with low accept rate should trigger prompt/rubric tightening.
 
-### 4.4 Reasoning format
+### 4.4 Reasoning format (advisory — not enforced)
 
-Agent reasoning must be concrete:
+Agent reasoning should be concrete:
 
 ```text
 最近 30 天 e_123 和 e_456 都引用了「之-主谓间」和「之-宾语前置」，judge cause 均为 concept，analysis 都指出用户把结构标志误判为代词，因此提议 contrasts_with。
@@ -428,6 +432,6 @@ These fixtures test whether the agent can understand context, not just whether S
 
 ## 6. Implementation Notes
 
-- 已落地：4 个 graph reader（`src/capabilities/knowledge/server/tools/knowledge-readers.ts`）、`propose_knowledge_edge` 的 evidence floor / rubric 校验（§4）、`KnowledgeReviewTask` 经 DomainTool bridge 挂 `knowledge_review` surface（YUK-1553）。
+- 已落地：4 个 graph reader（`src/capabilities/knowledge/server/tools/knowledge-readers.ts`）、`propose_knowledge_edge` 的结构校验（§4）、`KnowledgeReviewTask` 经 DomainTool bridge 挂 `knowledge_review` surface（YUK-1553）。
 - 仍未落地：`SubjectGraphGuide` schema 与 `seedSubjectGraphGuide()` / `enrichSubjectGraphGuide()`（§0 现状表）。
 - Phase 1/2 agent-readability fixtures 已删（§5）；可读性改用真实 actual-output 跑验证。

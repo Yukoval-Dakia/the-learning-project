@@ -338,31 +338,10 @@ export async function countPendingProposalInboxByKind(
       pendingPayloads.push(payload);
     }
 
-    // Same learner-visibility rule as the list: inadmissible pending block_merge
-    // rows are not counted.
-    const mergeInputs = new Map<
-      AiProposalPayloadT,
-      ReturnType<typeof blockMergeAdmissionInputFromPayload>
-    >();
-    const mergeBlockIds = new Set<string>();
+    // Same learner-visibility rule as the list: nothing is dropped, so every
+    // pending payload counts — including inadmissible block_merge rows, which
+    // stay visible carrying `not_acceptable_reason`.
     for (const payload of pendingPayloads) {
-      const input = blockMergeAdmissionInputFromPayload(payload);
-      mergeInputs.set(payload, input);
-      if (!input) continue;
-      mergeBlockIds.add(input.primaryBlockId);
-      for (const id of input.mergeBlockIds) mergeBlockIds.add(id);
-    }
-    const admissionCtx =
-      mergeBlockIds.size === 0
-        ? null
-        : await loadBlockMergeAdmissionContext(db, [...mergeBlockIds]);
-    for (const payload of pendingPayloads) {
-      if (payload.kind === 'block_merge') {
-        const input = mergeInputs.get(payload) ?? null;
-        if (!input || !admissionCtx || !evaluateBlockMergeAdmission(input, admissionCtx).eligible) {
-          continue;
-        }
-      }
       counts[payload.kind] = (counts[payload.kind] ?? 0) + 1;
     }
 
@@ -763,7 +742,8 @@ export async function listProposalInboxRows(
 // One batched admission proof per projected batch, run before signals/presentation.
 // Rows are never dropped: an inadmissible pending block_merge stays visible and
 // carries the proof's reason in `not_acceptable_reason`; accept re-runs the same
-// proof as a hard block.
+// proof as a hard block. The not_draft arm is the exception — accept answers it
+// as a soft stale success, so it is not marked unacceptable.
 async function annotateBlockMergeAdmission(db: DbLike, rows: ProposalInboxRow[]): Promise<void> {
   const candidates = rows.filter((row) => row.kind === 'block_merge' && row.status === 'pending');
   if (candidates.length === 0) return;
@@ -778,7 +758,7 @@ async function annotateBlockMergeAdmission(db: DbLike, rows: ProposalInboxRow[])
   for (const row of candidates) {
     const input = blockMergeAdmissionInputFromPayload(row.payload);
     const verdict = input ? evaluateBlockMergeAdmission(input, ctx) : null;
-    if (!verdict?.eligible) {
+    if (!verdict?.eligible && verdict?.reason !== 'not_draft') {
       row.not_acceptable_reason = verdict?.reason ?? 'blocks_missing';
     }
   }

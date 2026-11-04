@@ -403,7 +403,9 @@ function isClosable(
 /**
  * M4 — inbox backlog as of the window end. Pending membership reuses the inbox
  * projection with `asOf` so terminal rates/corrections after the window do not
- * retroactively empty the backlog; admission checks still read current rows.
+ * retroactively empty the backlog. Admission never drops rows, so inadmissible
+ * block_merge proposals count toward the backlog; their `not_acceptable_reason`
+ * annotation still reflects the verdict on current rows, not the window end.
  */
 async function computeM4(db: Db, to: Date): Promise<HarnessScoreboardV2T['m4_inbox_backlog']> {
   const pendingRows = await listProposalInboxRows(db, { status: 'pending', asOf: to });
