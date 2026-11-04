@@ -15,7 +15,7 @@ correction 留痕 + FSRS 重投影（申诉流程详见 docs/modules/quiz.md §8
   组合）（docs/design/2026-11-03-practice-split.md）
 - 根目录是练习面：组合文件（manifest.ts、public.ts、ui-public.ts、task-public.ts、tasks/index.ts）、
   解题辅导/提示会话（server/solve-*、tutor-session、hint-explanation 与 api/solve-*）、旧练习 UI（ui/）。
-  另有两类待落位余项：结算撤回与申诉（迁移线落位到 settlement/）、供题生成（功能线落位到 supply/）；
+  另有一类待落位余项：供题生成（功能线落位到 supply/）；
   它们的归属由 scripts/audit-practice-subowners.ts 的映射计
 - api/ — route body，由 manifest 的 load thunk 懒加载挂到 server/app.ts
 - 迁移期豁免记录：capability 暂可 import @/db/*。原 solve-session 的
