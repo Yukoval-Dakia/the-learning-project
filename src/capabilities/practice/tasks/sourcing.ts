@@ -105,6 +105,11 @@ export const sourcingTaskSpec = {
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '来源检索按题目需求找材料，不读学习者上下文。',
+    },
+
     prompt: { kind: 'profile', build: buildSourcingPrompt },
   },
   outputSchema: SourcingTaskOutput,

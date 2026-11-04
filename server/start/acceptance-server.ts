@@ -16,6 +16,8 @@ const { installPracticeHostOperations, installModelAdmissionPins } = await impor
   '@/capabilities/practice/public'
 );
 await installPracticeHostOperations();
+const { installAgencyHostOperations } = await import('@/capabilities/agency/public');
+await installAgencyHostOperations();
 await installModelAdmissionPins();
 const { installSchedulingCandidateRebuild } = await import('@/server/assessment/settle');
 installSchedulingCandidateRebuild();

@@ -60,6 +60,11 @@ export const sessionSummaryTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '只汇总当次练习会话的作答明细，不读会话外学习者历史。',
+    },
+
     prompt: { kind: 'profile', build: buildSessionSummaryPrompt },
   },
   outputSchema: SessionSummaryOutputSchema,

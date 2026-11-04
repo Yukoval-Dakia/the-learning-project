@@ -404,6 +404,12 @@ export const agencyCapability = defineCapability({
         load: () =>
           import('./server/tools/generate-goal-outline').then((m) => m.generateGoalOutlineTool),
       },
+      // YUK-1794 B1 — the Context warm-layer read (brief + facts layers), owned
+      // by agency/context; granted to copilot/coach/dreaming via allowlists.
+      {
+        name: 'query_context',
+        load: () => import('./context/query-context').then((m) => m.queryContextTool),
+      },
       {
         name: 'write_agent_note',
         load: () => import('./server/tools/agent-note-tools').then((m) => m.writeAgentNoteTool),

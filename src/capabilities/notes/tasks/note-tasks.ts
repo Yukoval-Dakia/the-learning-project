@@ -122,6 +122,8 @@ export const noteGenerateTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: { view: 'none', reason: '笔记任务只加工本条笔记内容，不读学习者历史上下文' },
+
     prompt: { kind: 'profile', build: buildNoteGeneratePrompt },
   },
   outputSchema: NoteGenerateOutputSchema,

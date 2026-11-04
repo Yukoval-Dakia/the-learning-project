@@ -20,17 +20,10 @@ type PublicResultTool =
     >
   | 'attribute_mistake'
   | 'propose_variant';
-type ResultPolicy =
-  | 'reader'
-  | 'record'
-  | 'review'
-  | 'events'
-  | 'memory'
-  | 'generated'
-  | readonly string[];
+type ResultPolicy = 'reader' | 'record' | 'review' | 'events' | 'generated' | readonly string[];
 const POLICIES: Record<string, ResultPolicy> = {
   submit_review_answer: ['kind', 'status', 'submission_id', 'attempt_id', 'candidate_id', 'run_id'],
-  query_memory_brief: 'reader',
+  query_context: 'reader',
   get_subject_graph_overview: 'reader',
   query_knowledge: 'reader',
   expand_knowledge_subgraph: 'reader',
@@ -49,7 +42,6 @@ const POLICIES: Record<string, ResultPolicy> = {
   get_record_context: 'record',
   get_review_due: 'review',
   query_events: 'events',
-  search_memory_facts: 'memory',
   generate_goal_outline: 'generated',
   generate_question_candidate: 'generated',
   propose_knowledge_edge: ['status', 'proposal_id'],
@@ -92,11 +84,6 @@ const INTERNAL = new Set([
   'present_primary_view',
   'compose_block',
 ]);
-const MEMORY_FACT = z.object({
-  id: z.string().optional(),
-  memory: z.string().optional(),
-  score: z.number().optional(),
-});
 const FILTER_FIELDS = [
   'eventId',
   'actorKind',
@@ -271,8 +258,6 @@ export function buildCopilotToolResultSnapshot(
         const rows = projected[listKey];
         if (Array.isArray(rows)) for (const row of rows) if (record(row)) delete row[field];
       }
-    } else if (policy === 'memory') {
-      projected.facts = z.array(MEMORY_FACT).parse(projected.facts);
     } else if (policy === 'events' && record(projected.filter_applied)) {
       projected.filter_applied = z
         .record(z.string(), z.union([z.string(), z.number(), z.null()]))

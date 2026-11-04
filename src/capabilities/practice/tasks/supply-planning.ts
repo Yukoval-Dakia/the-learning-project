@@ -63,6 +63,11 @@ export const supplyPlanTaskSpec = {
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '供题规划按调度读数与缺口装配；学习者上下文入口随 B3 轻量 view 接入。',
+    },
+
     prompt: { kind: 'profile', build: buildSupplyPlanPrompt },
   },
   outputSchema: SupplyPlanV1,

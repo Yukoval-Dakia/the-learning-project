@@ -118,6 +118,11 @@ export const learningIntentOutlineTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '学习意向规划按学习者当次意向输入装配，不读历史画像。',
+    },
+
     prompt: { kind: 'profile', build: buildLearningIntentOutlinePrompt },
   },
   outputSchema: OutlineSchema,
