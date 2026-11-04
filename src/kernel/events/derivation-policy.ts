@@ -2,7 +2,10 @@ import { type SQLWrapper, and, eq, inArray, sql } from 'drizzle-orm';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
+import {
+  lockDerivationSources,
+  sourceAllowsDerivationSql,
+} from '@/kernel/read-models/usage-policy';
 
 /** Every causal ancestor participates. UNION terminates malformed cycles.
  * Epoch mismatches freeze old sources after withdrawal, including after relax.
@@ -72,15 +75,5 @@ export async function allowedEventIds(db: Db | Tx, ids: string[]): Promise<Set<s
 
 /** Memory holds its existing source lock first; purpose mutation never takes it. */
 export async function lockEventDerivationSources(tx: Tx, sourceId: string) {
-  await tx.execute(sql`WITH RECURSIVE lineage AS (
-    SELECT e.id, e.session_id, e.caused_by_event_id FROM event e WHERE e.id = ${sourceId}
-    UNION SELECT p.id, p.session_id, p.caused_by_event_id FROM event p
-      JOIN lineage c ON c.caused_by_event_id = p.id
-  ) SELECT d.id FROM source_document d WHERE d.id IN (
-    SELECT coalesce(b.payload->>'document_id', s.source_document_id) FROM lineage l
-    LEFT JOIN learning_session s ON s.id = l.session_id
-    LEFT JOIN event b ON b.id = 'ingestion-usage:' || l.id
-      AND b.action = 'experimental:ingestion_usage_binding'
-      AND b.actor_kind = 'system' AND b.actor_ref = 'ingestion-usage'
-  ) ORDER BY d.id FOR SHARE`);
+  await lockDerivationSources(tx, { kind: 'event', id: sourceId });
 }

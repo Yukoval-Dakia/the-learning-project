@@ -1,3 +1,4 @@
+import { sourceAllowsDerivation } from '@/kernel/read-models/usage-policy';
 // YUK-892 (F4.0) — Practice-owned proposal tools.
 //
 // author_question (ADR-0032 D8 unified question-authoring front door) and
@@ -343,6 +344,15 @@ export async function authorQuestion(
       if (!(await getActiveLearningRecord(deps.db, seed.record_id))) {
         return {
           status: 'skipped:not_found',
+          seed_mode: 'record',
+          proposal_ids: [],
+          mistake_variant_ids: [],
+          variant_question_ids: [],
+        };
+      }
+      if (!(await sourceAllowsDerivation(deps.db, { kind: 'record', id: seed.record_id }))) {
+        return {
+          status: 'skipped:source_purpose_restricted_or_unknown',
           seed_mode: 'record',
           proposal_ids: [],
           mistake_variant_ids: [],

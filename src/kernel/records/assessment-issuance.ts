@@ -179,6 +179,12 @@ export async function readAutomaticServingDecision(
   revision: PublishedQuestionRevisionT,
   partIds: readonly string[],
 ): Promise<AutomaticServingDecision> {
+  if (!(await sourceAllowsDerivation(db, { kind: 'question', id: revision.group_id })))
+    return {
+      kind: 'unavailable',
+      reason: 'source_purpose_restricted_or_unknown',
+      detail: 'source_purpose_restricted_or_unknown',
+    };
   const admission = await resolveModelAdmissionContext(db);
   const subjects = await lookupGroupSubjects(db, [revision.group_id]);
   return decideAutomaticServing(
@@ -196,7 +202,14 @@ export async function readAutomaticIssuanceServingDecisions(
 ): Promise<Map<string, AutomaticServingDecision>> {
   if (issuanceIds.length === 0) return new Map();
   const rows = await db
-    .select({ issuance: assessment_issuance, revision: question_revision })
+    .select({
+      issuance: assessment_issuance,
+      revision: question_revision,
+      purposeAllowed: sourceAllowsDerivationSql({
+        kind: 'question',
+        id: question_revision.group_id,
+      }),
+    })
     .from(assessment_issuance)
     .innerJoin(
       question_revision,
@@ -209,23 +222,29 @@ export async function readAutomaticIssuanceServingDecisions(
     rows.map(({ revision: row }) => row.group_id),
   );
   return new Map(
-    rows.map(({ issuance, revision: row }) => {
+    rows.map(({ issuance, revision: row, purposeAllowed }) => {
       const parsed = PublishedQuestionRevision.safeParse(revisionRowToContract(row));
       const questionSubject = subjectIdFromLookup(subjects.get(row.group_id));
-      const decision: AutomaticServingDecision = parsed.success
-        ? decideAutomaticServing(parsed.data, issuance.part_ids, admission, questionSubject)
-        : row.presentation != null && !Presentation.safeParse(row.presentation).success
-          ? {
-              // Bad presentation gets its own typed reason, matching the shape gate.
-              kind: 'unavailable',
-              reason: 'invalid_presentation',
-              detail: 'malformed frozen presentation',
-            }
-          : {
-              kind: 'unavailable',
-              reason: 'invalid_scoring_contract',
-              detail: 'invalid frozen revision',
-            };
+      const decision: AutomaticServingDecision = !purposeAllowed
+        ? {
+            kind: 'unavailable',
+            reason: 'source_purpose_restricted_or_unknown',
+            detail: 'source_purpose_restricted_or_unknown',
+          }
+        : parsed.success
+          ? decideAutomaticServing(parsed.data, issuance.part_ids, admission, questionSubject)
+          : row.presentation != null && !Presentation.safeParse(row.presentation).success
+            ? {
+                // Bad presentation gets its own typed reason, matching the shape gate.
+                kind: 'unavailable',
+                reason: 'invalid_presentation',
+                detail: 'malformed frozen presentation',
+              }
+            : {
+                kind: 'unavailable',
+                reason: 'invalid_scoring_contract',
+                detail: 'invalid frozen revision',
+              };
       return [issuance.issuance_id, decision];
     }),
   );

@@ -115,6 +115,9 @@ function purposeLineage(source: PurposeSource) {
       ('event', r.origin_event_id), ('event', r.attempt_event_id),
       ('event', e.caused_by_event_id), ('session', e.session_id),
       ('question', CASE WHEN e.subject_kind = 'question' THEN e.subject_id END),
+      ('record', CASE WHEN e.subject_kind = 'record' THEN e.subject_id END),
+      ('document', CASE WHEN e.subject_kind = 'source_document' THEN e.subject_id END),
+      ('event', CASE WHEN e.subject_kind = 'event' THEN e.subject_id END),
       ('record', CASE WHEN e.payload->>'kind' = 'record_promotion'
         THEN e.payload->'proposed_change'->>'record_id' END),
       ('question', CASE WHEN e.payload->>'kind' = 'variant_question'
@@ -146,13 +149,19 @@ export function sourceAllowsDerivationSql(source: PurposeSource) {
         OR (d.provenance ? 'usage_policy' AND jsonb_typeof(d.provenance->'usage_policy') IS DISTINCT FROM 'object')
         OR (d.provenance->'usage_policy' ? 'derivation_policy'
           AND d.provenance->'usage_policy'->>'derivation_policy' IS DISTINCT FROM 'allow')
-        OR (d.provenance ? 'usage_epoch' AND jsonb_typeof(d.provenance->'usage_epoch') IS DISTINCT FROM 'string')))
+        OR (d.provenance ? 'usage_epoch' AND (jsonb_typeof(d.provenance->'usage_epoch') IS DISTINCT FROM 'string' OR d.provenance->>'usage_epoch' = ''))))
       OR (n.kind = 'session' AND (s.id IS NULL OR (s.type = 'ingestion' AND s.source_document_id IS NULL)))
       OR (n.kind = 'question' AND (q.id IS NULL
+        OR (q.metadata ? 'source_usage_epochs' AND (
+          jsonb_typeof(q.metadata->'source_usage_epochs') IS DISTINCT FROM 'object'
+          OR EXISTS (SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(q.metadata->'source_usage_epochs') = 'object'
+            THEN q.metadata->'source_usage_epochs' ELSE '{}'::jsonb END) epoch
+            LEFT JOIN source_document bound_doc ON bound_doc.id = epoch.key
+            WHERE bound_doc.id IS NULL OR epoch.value IS DISTINCT FROM coalesce(bound_doc.provenance->>'usage_epoch', 'legacy'))))
         OR (q.metadata ? 'derivation_policy' AND q.metadata->>'derivation_policy' IS DISTINCT FROM 'allow')
         OR ((q.metadata ? 'source_document_id' AND q.metadata->>'source_document_id' IS NULL)
           OR (q.metadata ? 'source_record_id' AND q.metadata->>'source_record_id' IS NULL))
-        OR (q.source IN ('ingestion', 'photo', 'pdf', 'docx', 'camera', 'import')
+        OR (q.source IN ('ingestion', 'photo', 'pdf', 'docx', 'camera', 'import', 'vision_single', 'vision_paper', 'reverse_mark')
           AND COALESCE(q.metadata->>'source_document_id', q.metadata->>'ingestion_session_id') IS NULL)
         OR (q.source = 'dreaming' AND q.metadata->>'source_record_id' IS NULL AND NOT EXISTS (
           SELECT 1 FROM event promotion WHERE promotion.id = q.source_ref
@@ -185,4 +194,15 @@ export async function lockDerivationSources(tx: Tx, source: PurposeSource): Prom
   await tx.execute(sql`${purposeLineage(source)} SELECT d.id FROM source_document d
     WHERE d.id IN (SELECT id FROM purpose_lineage WHERE kind = 'document')
     ORDER BY d.id FOR SHARE`);
+}
+
+/** Frozen generations preserve withdrawal even when the live policy later relaxes. */
+export async function readSourceUsageEpochs(
+  db: Db | Tx,
+  source: PurposeSource,
+): Promise<Record<string, string>> {
+  const rows = await db.execute<{ id: string; provenance: unknown }>(sql`${purposeLineage(source)}
+    SELECT d.id, d.provenance FROM source_document d
+    WHERE d.id IN (SELECT id FROM purpose_lineage WHERE kind = 'document')`);
+  return Object.fromEntries(rows.map((row) => [row.id, documentUsageEpoch(row.provenance)]));
 }

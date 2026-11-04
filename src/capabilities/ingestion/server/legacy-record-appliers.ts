@@ -1,7 +1,10 @@
-import { lockDerivationSources, sourceAllowsDerivation } from '@/kernel/read-models/usage-policy';
-// Tombstone appliers for record_links and record_promotion, which belong to the
-// retired learning_record domain. They exist only to accept historical proposals;
-// no live producer emits these kinds, and composition subtracts them as tombstones.
+import {
+  lockDerivationSources,
+  readSourceUsageEpochs,
+  sourceAllowsDerivation,
+} from '@/kernel/read-models/usage-policy';
+// Record link and promotion acceptance. Promotion preserves exact provenance;
+// accepting a proposal never expands the source document’s consented purposes.
 
 import { and, eq, isNull } from 'drizzle-orm';
 import { newId } from '@/core/ids';
@@ -373,7 +376,13 @@ export async function acceptRecordPromotionProposal(
             difficulty: typeof draft.difficulty === 'number' ? draft.difficulty : 3,
             source: 'dreaming',
             source_ref: proposalId,
-            metadata: { source_record_id: recordId },
+            metadata: {
+              source_record_id: recordId,
+              source_usage_epochs: await readSourceUsageEpochs(tx, {
+                kind: 'record',
+                id: recordId,
+              }),
+            },
             draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
             created_by: {
               by: 'ai',

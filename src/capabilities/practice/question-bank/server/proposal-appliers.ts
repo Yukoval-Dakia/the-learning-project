@@ -1,4 +1,8 @@
-import { lockDerivationSources, sourceAllowsDerivation } from '@/kernel/read-models/usage-policy';
+import {
+  lockDerivationSources,
+  readSourceUsageEpochs,
+  sourceAllowsDerivation,
+} from '@/kernel/read-models/usage-policy';
 // T4 — practice 包的提议 accept-applier 真身，从 dispatch 壳
 // （actions.ts @ src/server/proposals）等价平移（搬迁不改逻辑）。壳退化为
 // 纯 dispatch，按 kind 一行委托到这里。
@@ -257,7 +261,13 @@ export async function acceptVariantQuestionProposal(
           knowledge_ids: proposedChange.knowledge_ids ?? [],
           difficulty: proposedChange.difficulty as number,
           source: 'mistake_variant',
-          metadata: { source_attempt_event_id: proposedChange.source_attempt_event_id },
+          metadata: {
+            source_attempt_event_id: proposedChange.source_attempt_event_id,
+            source_usage_epochs: await readSourceUsageEpochs(tx, {
+              kind: 'event',
+              id: proposedChange.source_attempt_event_id ?? '',
+            }),
+          },
           draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
           variant_depth: proposedChange.variant_depth ?? 1,
           root_question_id: proposedChange.root_question_id ?? null,

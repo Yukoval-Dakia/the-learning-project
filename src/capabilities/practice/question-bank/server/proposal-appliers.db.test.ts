@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuestionEditOpT } from '@/core/schema/proposal';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
@@ -71,6 +72,21 @@ describe('variant_question proposal lifecycle', () => {
     mistakeVariantId: string;
   }> {
     const db = testDb();
+    await writeEvent(db, {
+      id: 'e_attempt',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q_parent',
+      outcome: 'failure',
+      payload: {
+        answer_md: 'fixture',
+        answer_image_refs: [],
+        referenced_knowledge_ids: ['k_xuci'],
+      },
+      created_at: new Date(),
+    });
     const proposalId = await writeVariantQuestionProposal(db, {
       source_question_id: 'q_parent',
       source_attempt_event_id: 'e_attempt',
