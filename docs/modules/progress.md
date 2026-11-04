@@ -2,8 +2,8 @@
 
 > Last reviewed: 2026-05-28 (T-PD8)
 >
-> 见 [架构基础](../architecture.md) 了解 `knowledge` / `knowledge_mastery` view / `learning_session` / `learning_record` schema。
-> Mastery 单层 derived view 决策见 [ADR-0012](../adr/0012-mastery-as-derived-view.md)。
+> 见 [架构基础](../architecture.md) 了解 `knowledge` / `mastery_state` / `learning_session` / `learning_record` schema。
+> Mastery 决策见 [ADR-0012](../adr/0012-mastery-as-derived-view.md) 和 [ADR-0035](../adr/0035-mastery-diagnosis-three-dim-full-engine-instantiation.md)。
 > LearningRecord 设计见 [ADR-0015](../adr/0015-learning-record-memory-brief.md)，活动上下文细节见 [`records.md`](records.md)。
 > Quiz 评分喂 mastery 详见 [`quiz.md`](quiz.md)。
 > Memory dual-layer 见 [ADR-0017](../adr/0017-memory-mem0-plus-brief-layer.md)。
@@ -17,7 +17,7 @@
 | 设计概念 | 现状 | 备注 |
 |---|---|---|
 | Mastery 双层（base_mastery + ai_delta_mastery） | ❌ DROPped (ADR-0012) | 两列 1c.1 Step 1 同步删除 |
-| Mastery derived view (`knowledge_mastery`) | ✅ Phase 1c.1 Step 1 落地 | 30 天指数衰减，权重 attempts/reviews（`src/db/schema.ts` L3838） |
+| Mastery derived view (`knowledge_mastery`) | ❌ 已删除（迁移 0140） | 掌握读数走 `mastery_state` 投影（ADR-0035） |
 | StudyLog 5 kind | 🔴 废弃 | ADR-0015：无真实数据，已直接迁移到 `LearningRecord` |
 | LearningRecord 统一活动上下文 | ✅ 落地 | `learning_record` 表 (`src/db/schema.ts` L1222)，7 个 kind；mistake 记录经 `POST /api/mistakes` 物化 |
 | `memory_brief_note` 三段式画像 | ✅ schema 落地 (`src/db/schema.ts` L1266)；Dreaming refresh 接 mem0 ingest (ADR-0017 / ADR-0021) | 三段：`recent_week_md` / `recent_months_md` / `long_term_md` |

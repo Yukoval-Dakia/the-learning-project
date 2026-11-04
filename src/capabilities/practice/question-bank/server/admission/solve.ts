@@ -41,6 +41,7 @@ import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
+  QuestionAdmissionPriorInput,
   QuestionAdmissionSolveInput,
   type QuestionAdmissionSolveInputT,
   type QuestionAdmissionSolveOutputT,
@@ -55,6 +56,11 @@ import {
 // 输入 hash 直接使用 core 的完整规范化算法。
 import type { Provider } from '../quiz/verify-framework';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
+import {
+  type KnowledgeCandidate,
+  type SolutionPriorRecordT,
+  buildSolutionPriorRecord,
+} from './solution-prior';
 
 export type { Provider } from '../quiz/verify-framework';
 
@@ -1043,4 +1049,100 @@ export async function runSourceCrosscheck(
     ),
   );
   return { receipt, per_unit };
+}
+
+/** The keys a published revision froze, for describing it without solving it again. */
+export function settledKeysFromDefinition(
+  definition: QuestionAdmissionDefinition,
+): Map<string, AdmissionKey> {
+  const keys = new Map<string, AdmissionKey>();
+  for (const unit of definition.units) {
+    const key = authorAdmissionKey(unit.seeded_criterion);
+    if (key != null) keys.set(unit.scoring_unit_id, key);
+  }
+  return keys;
+}
+
+export interface SolutionPriorPassResult {
+  record: SolutionPriorRecordT | null;
+  receipt: AdmissionSolveReceipt | null;
+  /** Kept in the admission evidence, so a question without a prior is explained, not silent. */
+  outcome: {
+    status: 'produced' | 'empty' | 'failed' | 'skipped';
+    task_run_id: string | null;
+    reason?: string;
+  };
+}
+
+/**
+ * Describe how the question is solved, once its keys are settled. Metadata only: every
+ * failure resolves to no prior, so this can neither change a verdict nor hold a batch.
+ */
+export async function runSolutionPriorPass(
+  db: Db,
+  definition: QuestionAdmissionDefinition,
+  keys: Map<string, AdmissionKey>,
+  deps: {
+    runTask: BoundRunTaskTextFn;
+    subjectProfile?: SubjectProfile;
+    knowledgeCandidates?: readonly KnowledgeCandidate[];
+  },
+): Promise<SolutionPriorPassResult> {
+  const parts = solverParts(definition);
+  let taskRunId: string | null = null;
+  try {
+    const candidates = [...(deps.knowledgeCandidates ?? [])];
+    const payload = QuestionAdmissionPriorInput.parse({
+      mode: 'prior',
+      parts,
+      units: solverUnits(definition, 0, { exposePrinted: false }),
+      answers: [...keys.entries()].map(([unitId, key]) => ({
+        scoring_unit_id: unitId,
+        answer_summary_md: describeKey(key, definition, unitId),
+      })),
+      knowledge_candidates: candidates,
+    });
+    const result = await deps.runTask(QUESTION_ADMISSION_TASK_KIND, payload, {
+      judgeRetryPolicy: 'none',
+      budgetOverride: { maxIterations: 1 },
+      ...(deps.subjectProfile != null ? { subjectProfile: deps.subjectProfile } : {}),
+    });
+    taskRunId = result.task_run_id ?? null;
+    const receipt = await sealTaskRun(db, payload, result, result.structured_output);
+    const raw = (result.structured_output as { prior?: unknown } | null | undefined)?.prior;
+    const record = buildSolutionPriorRecord({
+      raw,
+      partIds: parts.map((part) => part.part_id),
+      candidates,
+      taskRunId: receipt.task_run_id,
+    });
+    return {
+      record,
+      receipt,
+      outcome: {
+        status: record != null ? 'produced' : 'empty',
+        task_run_id: receipt.task_run_id,
+        ...(record == null ? { reason: 'no usable part in the model output' } : {}),
+      },
+    };
+  } catch (error) {
+    const failedRunId =
+      error != null &&
+      typeof error === 'object' &&
+      'taskRunId' in error &&
+      typeof error.taskRunId === 'string'
+        ? error.taskRunId
+        : taskRunId;
+    const reason = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+    console.warn('[question_admission] solution prior pass failed', {
+      group_id: definition.group_id,
+      task_run_id: failedRunId,
+      err: reason,
+    });
+    return {
+      record: null,
+      receipt: null,
+      outcome: { status: 'failed', task_run_id: failedRunId, reason },
+    };
+  }
 }

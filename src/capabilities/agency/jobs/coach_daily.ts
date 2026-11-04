@@ -16,13 +16,14 @@ import {
 // Coach consumes the out-of-band agent-note HINT channel (for_agent='coach'), where
 // quiz_verify leaves question_pool_gap notes. Hints, not facts; additive only.
 import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
+import type { DailyFocusPlanIssue } from '@/core/daily-focus-guard';
 import { type ReviewPlanNumbers, computeReviewPlanNumbers } from '@/core/daily-review-plan';
 import { CoachPlanDraft, type CoachPlanDraftT, composeTodayPlan } from '@/core/schema/coach';
 // Derived sub-skill weak points (YUK-1582): read-only landing points with first-hand
 // evidence; attention pressure for knowledge_focus, never scheduling state.
 import type { ActionableWeakPointDerivationT } from '@/core/schema/weak-point';
 import type { Db } from '@/db/client';
-import type { WriteEventInput } from '@/kernel/events';
+import { type WriteEventInput, getEvents } from '@/kernel/events';
 // Per-(kind, relation) accept-learned reason digest for the Coach input, scoped to the
 // kinds Coach can act on (includes knowledge_edge). Purely additive / cold-start inert.
 import {
@@ -58,6 +59,10 @@ const COACH_PROPOSAL_FEEDBACK_GUIDANCE =
 // no deterministic post-process fallback.
 const COACH_SUGGESTION_KIND_GUIDANCE =
   " On each propose_* tool call set the optional suggestion_kind argument: use 'proactive' (the default — omit it) when you are proposing a next step off a successful read; use 'corrective' ONLY when the proposal repairs a specific failure you yourself just observed. A read that returns zero results is a legitimate success (you looked and found nothing), NOT a failure — do NOT label a proposal corrective merely because an upstream read came back empty. Only a genuine repair of an observed failure is corrective.";
+// Self-correction channel: the previous scan's flagged daily_focus clauses ride the
+// input as previous_plan_issues; the model rephrases them this run. Inert when absent.
+const COACH_PLAN_ISSUES_GUIDANCE =
+  " When previous_plan_issues is present, your last daily_focus contained clauses the system flagged (a today-plan number differing from review_plan, or a percentage claim): rephrase those clauses this run — restate today's count/minutes exactly as review_plan or drop the number, and never attach percentages. It is feedback for you, not a user-facing alert. When previous_plan_issues is absent, behave exactly as before.";
 // Agent-note clause: hints bias attention only, never ground truth, never suppress the
 // review backbone or signal-driven proposals. Inert when agent_notes is empty.
 const COACH_AGENT_NOTES_GUIDANCE =
@@ -67,13 +72,13 @@ const COACH_AGENT_NOTES_GUIDANCE =
 // knowledge_focus and intent_tags. active_items are attention pressure only (never
 // bookkeeping/scheduling) and must never suppress the FSRS-due review backbone.
 const COACH_BRIEF_GUIDANCE =
-  " The review_session_proposal is a strategic BRIEF. Its count, estimated_minutes, time_box_minutes and subject_mix are computed by the system from the due queue and the daily budget and are supplied in `review_plan`; treat them as read-only facts and do not output or estimate your own numbers. You own knowledge_focus (ranked knowledge_ids to prioritise, drawn from due/weak signals AND the active_items attention pressure) and intent_tags. active_items carry the knowledge_ids of the user's in-progress / pinned learning items: treat them as attention pressure that biases knowledge_focus, NEVER as bookkeeping or scheduling state, and never let them suppress the FSRS-due review backbone (ND-5 / D11). When active_items is empty, derive knowledge_focus from due/weak signals alone.";
+  " The review_session_proposal is a strategic BRIEF. Its count, estimated_minutes, time_box_minutes and subject_mix are computed by the system from the due queue and the daily budget and are supplied in `review_plan`; treat them as read-only facts and do not output or estimate your own numbers. In daily_focus you may state real numbers you actually observed (context facts and tool reads), but when you mention today's question count or minutes you must restate the review_plan values exactly — no estimating, rounding, or ranges. You own knowledge_focus (ranked knowledge_ids to prioritise, drawn from due/weak signals AND the active_items attention pressure) and intent_tags. active_items carry the knowledge_ids of the user's in-progress / pinned learning items: treat them as attention pressure that biases knowledge_focus, NEVER as bookkeeping or scheduling state, and never let them suppress the FSRS-due review backbone (ND-5 / D11). When active_items is empty, derive knowledge_focus from due/weak signals alone.";
 // Weak-point guidance: derived diagnostic landing points (sub-skill granularity, each with
 // first-hand evidence refs and its own training destination). Attention pressure only —
 // additive, inert when the list is empty.
 const COACH_WEAK_POINTS_GUIDANCE =
   ' When weak_points is present, each entry is a system-derived actionable weak point at sub-skill granularity with its evidence refs and a training_destination (concept_review / retrieval_practice → concept material or no-hint retrieval drills; procedural_practice / discrimination_probe → targeted step practice or a discriminating probe). Use them to bias knowledge_focus ranking and intent_tags toward the strongest cells, and phrase daily_focus around the named targets. Treat them as derived reads, not ground truth: never invent additional weak points, never attach percentages to them, and never let them suppress or replace the FSRS-due review backbone. When weak_points is empty, behave exactly as before.';
-export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
+export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_PLAN_ISSUES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
 
 /** How many derived weak points ride the Coach input (bounded for prompt budget). */
 const COACH_MAX_WEAK_POINTS = 8;
@@ -107,6 +112,7 @@ type LoadProposalFeedbackFn = (db: Db) => Promise<ProposalFeedbackCell[]>;
 type ReadAgentNotesFn = (db: Db, now: Date) => Promise<AgentNote[]>;
 type ResolvePlanInputsFn = (db: Db) => Promise<DailyReviewPlanInputs>;
 type DeriveWeakPointsFn = (db: Db, input: { now: Date }) => Promise<ActionableWeakPointDerivationT>;
+type LoadPreviousPlanIssuesFn = (db: Db) => Promise<readonly DailyFocusPlanIssue[]>;
 
 export interface CoachRunDeps {
   runAgentTaskFn?: AgencyScanRunFn;
@@ -119,6 +125,7 @@ export interface CoachRunDeps {
   // Injects the due + budget + pace facts.
   resolvePlanInputsFn?: ResolvePlanInputsFn;
   deriveWeakPointsFn?: DeriveWeakPointsFn;
+  loadPreviousPlanIssuesFn?: LoadPreviousPlanIssuesFn;
   now?: () => Date;
 }
 
@@ -131,6 +138,7 @@ function buildCoachInput(
   agentNotes: AgentNote[],
   activeItems: ActiveLearningItem[],
   weakPoints: ActionableWeakPointDerivationT,
+  previousPlanIssues: readonly DailyFocusPlanIssue[],
   reviewPlan: ReviewPlanNumbers & {
     due_count: number;
     budget_minutes: number;
@@ -196,6 +204,10 @@ function buildCoachInput(
     weak_point_unknowns: weakPoints.unknowns,
     // Read-only plan facts; the model never owns these numbers.
     review_plan: reviewPlan,
+    // The previous scan's flagged daily_focus clauses, handed back so the model
+    // rephrases them — agent-facing feedback, not a user-facing alert. Absent when
+    // the last scan had nothing flagged.
+    ...(previousPlanIssues.length > 0 ? { previous_plan_issues: previousPlanIssues } : {}),
     budget: {
       // Advisory warning; max_tool_calls is the higher hard ceiling.
       warning_tool_calls: COACH_CONTEXT_BUDGET.toolCalls.warning,
@@ -210,9 +222,26 @@ function buildCoachInput(
     },
     output_schema: {
       kind: 'TodayPlan',
-      hint: 'Return a JSON object with daily_focus, review_session_proposal, plan_adjustments[], maintenance_proposals[]. review_session_proposal contains only knowledge_focus[] (ranked knowledge_ids from due/weak + active_items pressure) and intent_tags[]; do NOT output count, estimated_minutes, time_box_minutes or subject_mix — the system computes those from review_plan and overwrites them. When active_goals are present, also set goal_ids[] and goal_strand[] (each item: serves_goal_id, knowledge_ids[], focus) — additive only, never replacing the review backbone (ND-5).',
+      hint: "Return a JSON object with daily_focus, review_session_proposal, plan_adjustments[], maintenance_proposals[]. review_session_proposal contains only knowledge_focus[] (ranked knowledge_ids from due/weak + active_items pressure) and intent_tags[]; do NOT output count, estimated_minutes, time_box_minutes or subject_mix — the system computes those from review_plan and overwrites them. In daily_focus, any mention of today's question count or minutes must restate review_plan exactly; other real numbers you observed may be stated. When active_goals are present, also set goal_ids[] and goal_strand[] (each item: serves_goal_id, knowledge_ids[], focus) — additive only, never replacing the review backbone (ND-5).",
     },
   };
+}
+
+// The newest scan event carrying a non-empty plan_issues array — a few rows back
+// covers a failure event in between; a clean last run yields nothing to correct.
+const PREVIOUS_PLAN_ISSUES_SCAN_LIMIT = 3;
+async function loadPreviousPlanIssues(db: Db): Promise<readonly DailyFocusPlanIssue[]> {
+  const recent = await getEvents(db, {
+    action: 'experimental:coach_scan',
+    limit: PREVIOUS_PLAN_ISSUES_SCAN_LIMIT,
+  });
+  for (const evt of recent) {
+    const issues = (evt.payload as { plan_issues?: unknown } | undefined)?.plan_issues;
+    if (Array.isArray(issues) && issues.length > 0) {
+      return issues as readonly DailyFocusPlanIssue[];
+    }
+  }
+  return [];
 }
 
 export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRunResult> {
@@ -229,6 +258,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
   const deriveWeakPoints =
     deps.deriveWeakPointsFn ??
     ((db: Db, input: { now: Date }) => deriveActionableWeakPoints(db, input));
+  const loadPrevPlanIssues = deps.loadPreviousPlanIssuesFn ?? loadPreviousPlanIssues;
   // Run-log contract value kept verbatim from the nightly era; the trigger is now the return wake.
   const triggerActorRef = 'nightly_coach';
   const objective = COACH_DAILY_OBJECTIVE;
@@ -253,7 +283,9 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
       // in prepareInput rides the same built input, so this payload needs no re-read.
       const { review_plan: reviewPlan } = input as ReturnType<typeof buildCoachInput>;
       const todayPlanDraft = parseCoachOutputSafely(taskResult.text ?? '');
-      const todayPlan = todayPlanDraft ? composeTodayPlan(todayPlanDraft, reviewPlan) : null;
+      const composed = todayPlanDraft ? composeTodayPlan(todayPlanDraft, reviewPlan) : null;
+      const todayPlan = composed?.plan ?? null;
+      const focusIssues = composed?.issues ?? [];
       return {
         run_kind: 'daily',
         // Why these numbers, so a replay can verify them.
@@ -268,7 +300,15 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
           subject_mix: reviewPlan.subject_mix,
         },
         ...(todayPlan
-          ? { today_plan: todayPlan, daily_focus: todayPlan.daily_focus }
+          ? {
+              today_plan: todayPlan,
+              daily_focus: todayPlan.daily_focus,
+              // Today-plan clauses contradicting the computed plan ride the event as
+              // typed issues; the next run reads them back as previous_plan_issues.
+              // The run outcome stays 'success' — plan_issues is agent-facing
+              // feedback, not the degraded (invalid-artifact) channel.
+              ...(focusIssues.length > 0 ? { plan_issues: focusIssues } : {}),
+            }
           : {
               // Scan contract (agent-run.ts): execution completed but the domain artifact
               // is invalid → the scan owner stamps the event outcome 'degraded'.
@@ -286,6 +326,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
       const agentNotes = await readNotes(db, now);
       const activeItems = await listItems(db);
       const weakPoints = await deriveWeakPoints(db, { now });
+      const previousPlanIssues = await loadPrevPlanIssues(db);
       // Read before the trigger write and outside the scan failure boundary, closing over
       // the same anchored `now` the trigger event uses. The computed facts ride the input
       // and the success payload.
@@ -314,6 +355,7 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
           agentNotes,
           activeItems,
           weakPoints,
+          previousPlanIssues,
           reviewPlan,
         );
     },

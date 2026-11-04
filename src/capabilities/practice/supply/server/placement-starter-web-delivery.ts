@@ -5,10 +5,10 @@
 // (job id + delivery number + startedOn), keep its lease alive on job.signal, run the source
 // agent's web supply under that authority, then hand the bound questions to the original
 // placement completion owner. Callers never assemble paid eligibility from primitives.
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
 import type { Db } from '@/db/client';
-import { placement_starter_attempt_question, placement_starter_claim } from '@/db/schema';
+import { event, placement_starter_attempt_question, placement_starter_claim } from '@/db/schema';
 import {
   PLACEMENT_QUEUE_EXPIRY_MS,
   type PlacementAttemptAuthority,
@@ -29,6 +29,14 @@ export interface PlacementWebDelivery {
   attempt: PlacementAttemptAuthority;
   heartbeat: PlacementAttemptHeartbeat;
   signal: AbortSignal;
+  /**
+   * The immutable server-written dispatch event that enqueued this job
+   * (`experimental:question_supply` with payload.job_id = this job). It is the
+   * causal anchor questions submitted under this delivery publish against:
+   * their first publication's caused_by points here, and the event's bound
+   * placement session is what admission provenance proves.
+   */
+  dispatchEventId?: string;
 }
 
 type DeliveryJob = Pick<
@@ -75,12 +83,33 @@ export async function runPlacementWebDelivery(input: {
     deliveryNo,
     startedOn: job.startedOn,
   });
+  // The dispatch event that minted this job is the only server-written fact
+  // linking it to the authorizing placement session. Claims dispatched before
+  // this resolution existed have none; their submissions stay unproven.
+  const [dispatchEvent] = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:question_supply'),
+        eq(event.outcome, 'success'),
+        sql`${event.payload}->>'job_id' = ${job.id}`,
+        sql`${event.payload}->>'status' = 'dispatched'`,
+      ),
+    )
+    .orderBy(desc(event.created_at))
+    .limit(1);
   const heartbeat = startPlacementAttemptHeartbeat(db, attempt, job.signal);
   try {
     // Submit dispatches verification inside execute; the question authority requires the
     // attempt to be 'verifying', so enter it before any question can be bound.
     await markAttemptVerifying(db, attempt);
-    await input.execute({ attempt, heartbeat, signal: job.signal });
+    await input.execute({
+      attempt,
+      heartbeat,
+      signal: job.signal,
+      ...(dispatchEvent ? { dispatchEventId: dispatchEvent.id } : {}),
+    });
     await heartbeat.assertHealthy();
     await assertPlacementAttemptFence(db, attempt);
     const [bound] = await db

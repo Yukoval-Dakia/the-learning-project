@@ -79,7 +79,7 @@ const AttemptOnQuestionSchema = z.object({
     answer_md: z.string().nullable(),
     answer_image_refs: z.array(z.string()),
     duration_ms: z.number().int().optional(),
-    // feeds knowledge_mastery view (ADR-0012): which knowledge nodes this attempt exercises
+    // which knowledge nodes this attempt exercises
     referenced_knowledge_ids: z.array(z.string()).default([]),
     // Photo-only answer on a text-only judge route: the answer IS captured but NOT
     // judged (no judge event, FSRS skipped). `outcome` is structurally required but
@@ -238,7 +238,7 @@ export const ReviewOnQuestion = z
       // them on read so the refs vanished through the event API. Optional so
       // pre-image review events still parse.
       answer_image_refs: z.array(z.string()).optional(),
-      // feeds knowledge_mastery view (ADR-0012)
+      // which knowledge nodes this review exercises
       referenced_knowledge_ids: z.array(z.string()).default([]),
       // Optional because legacy events (pre-2026-05-17) don't have it.
       duration_ms: z.number().int().nonnegative().optional(),

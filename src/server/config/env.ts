@@ -69,6 +69,8 @@ const server = {
   LMNR_DEV_TRANSCRIPTS: optionalString,
   LMNR_PROJECT_API_KEY: optionalString,
   LMNR_SPAN_CONTEXT: optionalString,
+  LMNR_TRACE_ENV: optionalString,
+  LMNR_TRANSCRIPTS: optionalString,
   LMNR_TRACE_METADATA: optionalString,
   LOCAL_NEXT_PORT: optionalString,
   LOCAL_POSTGRES_HOST: optionalString,
