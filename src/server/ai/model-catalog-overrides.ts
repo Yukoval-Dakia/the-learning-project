@@ -53,6 +53,20 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
         maxOutputTokens: 16_384,
       },
     },
+    'gpt-5.2-chat-latest': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 dropped the Responses protocol entry while models.dev keeps the model. Preserve the id like the other dropped declarations — wire template clones from an openai-responses sibling.',
+      facts: { ...missingOpenAiEndpoint.facts },
+      protocol: { api: 'openai-responses' },
+    },
+    'gpt-5.3-chat-latest': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 dropped the Responses protocol entry while models.dev keeps the model. Preserve the id like the other dropped declarations — wire template clones from an openai-responses sibling.',
+      facts: { ...missingOpenAiEndpoint.facts },
+      protocol: { api: 'openai-responses' },
+    },
   },
   xiaomi: {
     'mimo-v2.5': {

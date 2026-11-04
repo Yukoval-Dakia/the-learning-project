@@ -103,7 +103,7 @@ export async function createLoomPiModels() {
                 executable.thinkingFormat,
           );
           if (!template) continue;
-          const rates = catalogModelCost(lane, modelId);
+          const rates = catalogModelCost(lane === 'xiaomi-token-plan' ? 'xiaomi' : lane, modelId);
           result.push({
             ...template,
             id: modelId,

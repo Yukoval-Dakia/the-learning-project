@@ -898,8 +898,12 @@ function resolveTaskReasoning(
   model: string,
   params: TaskReasoningConfig | undefined,
 ): ResolvedTaskReasoning | undefined {
-  const requested = params?.level ?? params?.reasoning_effort;
-  if (requested === undefined) return undefined;
+  const rawRequested = params?.level ?? params?.reasoning_effort;
+  if (rawRequested === undefined) return undefined;
+  // Legacy catalog wrote reasoning_options 'none' (hy3/hy4-preview lanes) —
+  // it maps to the same disable intent as 'off' and follows the off rule.
+  // The receipt still records the stored 'none' as requested.
+  const requested = rawRequested === 'none' ? 'off' : rawRequested;
   if (!(PI_THINKING_LEVEL_ORDER as readonly string[]).includes(requested)) {
     throw new Error(
       `task.${kind}.reasoning level='${requested}' is not a thinking level. Pass one of [${PI_THINKING_LEVEL_ORDER.join(', ')}].`,
@@ -922,10 +926,10 @@ function resolveTaskReasoning(
       (facts.overrideDeclaredThinkingFormat !== undefined ||
         facts.api === 'anthropic-messages' ||
         (facts.thinkingFormat !== undefined && (map === undefined || typeof map.off === 'string')));
-    return { requested, applied: canExpressOff ? 'off' : 'none' };
+    return { requested: rawRequested, applied: canExpressOff ? 'off' : 'none' };
   }
   if (profile.mode === 'toggle') {
-    return { requested, applied: 'on', level: 'high' };
+    return { requested: rawRequested, applied: 'on', level: 'high' };
   }
   if (profile.mode === 'effort' || profile.mode === 'budget_tokens') {
     const supported =
@@ -939,11 +943,18 @@ function resolveTaskReasoning(
         `task.${kind}.reasoning level='${level}' cannot be served by '${provider}/${model}': its ${profile.mode} reasoning options name no pi level. Clear the task override.`,
       );
     }
-    const applied =
+    const rounded =
       supported.find(
         (name) => PI_THINKING_LEVEL_ORDER.indexOf(name) >= PI_THINKING_LEVEL_ORDER.indexOf(level),
       ) ?? supported[supported.length - 1];
-    return { requested, applied, level: applied === 'off' ? undefined : applied };
+    // Budget lanes clamp every level above high to the same top budget —
+    // pi sends 16,384 for high/xhigh/max alike. applied records the wire.
+    const applied =
+      profile.mode === 'budget_tokens' &&
+      PI_THINKING_LEVEL_ORDER.indexOf(rounded) > PI_THINKING_LEVEL_ORDER.indexOf('high')
+        ? 'high'
+        : rounded;
+    return { requested: rawRequested, applied, level: applied === 'off' ? undefined : applied };
   }
   return { requested, applied: 'none' };
 }
