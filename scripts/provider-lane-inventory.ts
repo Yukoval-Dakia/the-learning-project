@@ -427,7 +427,7 @@ export const PROVIDER_LANES = [
         source: {
           path: 'src/server/ai/embed.ts',
           envReads: ['MEM0_EMBEDDING_MODEL'],
-          contains: ['DASHSCOPE_EMBED_MODEL_ID', 'model: EMBED_MODEL'],
+          contains: ['|| DASHSCOPE_EMBED_MODEL_ID', 'model: EMBED_MODEL'],
           imports: ['./providers'],
         },
       },

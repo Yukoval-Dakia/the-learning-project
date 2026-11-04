@@ -95,7 +95,7 @@ PATCH /api/admin/config   # x-internal-token
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
 | `DASHSCOPE_API_KEY` | app、worker | 记忆写入与 embedding 必需，缺失抛错；`memory_event_ingest` 在 worker 内跑 | `src/server/ai/mem0/client.ts`；`src/server/ai/embed.ts`；`src/capabilities/agency/server/memory/triggers.ts` |
-| `MEM0_EMBEDDING_MODEL` | app、worker | `text-embedding-v4` | `src/server/ai/mem0/client.ts`；`src/server/ai/embed.ts`；`src/server/ai/providers.ts`。和 `MEM0_EMBEDDING_BASE_URL` 一起改 |
+| `MEM0_EMBEDDING_MODEL` | app、worker | `text-embedding-v4` | `src/server/ai/mem0/client.ts`；`src/server/ai/embed.ts`；`src/server/ai/providers.ts`。和 `MEM0_EMBEDDING_BASE_URL` 一起改；模型必须支持 1024 维。已有向量的库换模型要重建向量或 `pnpm dev:reset`，否则新旧向量会被混着比较 |
 | `MEM0_EMBEDDING_BASE_URL` | app、worker | `https://dashscope.aliyuncs.com/compatible-mode/v1`；`embed.ts` 也读同一个键；host 须过模型端点 allowlist（含代码声明的 DashScope 双端点，以及北京 workspace MaaS `ws-tcvd1h9009b55vr0.cn-beijing.maas.aliyuncs.com`） | `src/server/ai/mem0/client.ts`；`src/server/ai/embed.ts` |
 | `MEM0_EMBEDDING_DIMS` | app、worker | `1024`；非正整数抛错 | `src/server/ai/mem0/client.ts` |
 | `MEM0_PGVECTOR_COLLECTION` | app、worker | `learning_project_memories` | `src/kernel/records/mem0-collection.ts` |
