@@ -39,6 +39,7 @@ import {
 import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { getQuestionTimeline, getRecentReviewEvents } from '@/kernel/read-models/question-activity';
+import { derivableLearningRecords } from '@/kernel/records/queries';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
 function iso(value: Date | null | undefined): string | null {
@@ -181,17 +182,20 @@ async function executeGetQuestionContext(
     });
   }
   const records = include.has('records')
-    ? await ctx.db
-        .select()
-        .from(learning_record)
-        .where(
-          and(
-            eq(learning_record.question_id, input.questionId),
-            isNull(learning_record.archived_at),
-          ),
-        )
-        .orderBy(desc(learning_record.created_at))
-        .limit(25)
+    ? await derivableLearningRecords(
+        ctx.db,
+        await ctx.db
+          .select()
+          .from(learning_record)
+          .where(
+            and(
+              eq(learning_record.question_id, input.questionId),
+              isNull(learning_record.archived_at),
+            ),
+          )
+          .orderBy(desc(learning_record.created_at))
+          .limit(25),
+      )
     : [];
   const timeline = await getQuestionTimeline(ctx.db, input.questionId, input.attemptLimit ?? 10);
   const reviews = await getRecentReviewEvents(ctx.db, {

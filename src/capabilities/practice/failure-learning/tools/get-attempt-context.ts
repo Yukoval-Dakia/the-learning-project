@@ -37,7 +37,7 @@ import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-poli
 import { getFailureAttemptForDerivationById } from '@/kernel/read-models/failure-attempts';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { getQuestionTimeline } from '@/kernel/read-models/question-activity';
-import { listLearningRecords } from '@/kernel/records/queries';
+import { listLearningRecordsForDerivation } from '@/kernel/records/queries';
 import { TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
@@ -1142,7 +1142,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     cause
       ? resolveMiscCauseLabels(ctx.db, [cause.primary_category, ...cause.secondary_categories])
       : Promise.resolve(null),
-    listLearningRecords(ctx.db, {
+    listLearningRecordsForDerivation(ctx.db, {
       attempt_event_id: activity.event_id,
       limit: 25,
     }),
