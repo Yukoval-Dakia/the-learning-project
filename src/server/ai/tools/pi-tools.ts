@@ -20,7 +20,7 @@ import {
   ensureToolParametersObjectRoot,
   zodToToolParametersSchema,
 } from '@/kernel/zod-json-schema';
-import { executeDomainToolCall } from './mcp-bridge';
+import { executeDomainToolCall, toolInputFailure } from './mcp-bridge';
 import { getTool } from './registry';
 
 /**
@@ -36,11 +36,6 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
         `buildPiDomainAgentTools: tool '${name}' is not registered. Check capability manifest registration.`,
       );
     }
-    if (!(dt.inputSchema instanceof z.ZodObject)) {
-      throw new Error(
-        `buildPiDomainAgentTools: tool '${name}' inputSchema must be a z.object(...). Got ${dt.inputSchema.constructor.name}.`,
-      );
-    }
     const parameters = zodToToolParametersSchema(dt.inputSchema, {
       io: 'input',
       reused: 'inline',
@@ -52,6 +47,17 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
       label: dt.name,
       description: dt.description,
       parameters,
+      // Union inputs need their branch-specific repair response before pi's generic validator.
+      ...(dt.inputSchema instanceof z.ZodDiscriminatedUnion
+        ? {
+            prepareArguments: (args: unknown) => {
+              const parsed = dt.inputSchema.safeParse(args);
+              if (!parsed.success)
+                throw new Error(JSON.stringify(toolInputFailure(dt, args, parsed.error)));
+              return args;
+            },
+          }
+        : {}),
       execute: async (toolCallId, params, signal) => {
         // The loop abort must reach the tool: merge it with the caller's
         // ctx.signal so either source cancels execution.
