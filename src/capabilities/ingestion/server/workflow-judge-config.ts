@@ -1,15 +1,14 @@
 /**
  * WorkflowJudge auto-enroll configuration.
  *
- * Auto-enroll writes durable learning data, so it defaults OFF: every block stays
- * in human review unless the flag is explicitly true or 1. This is the opposite
- * polarity of the note-refine triggers. The review/revert surface exists and the
- * owner opted in, but the code default remains OFF per environment.
+ * Auto-enroll is on by default and runs paid tagging and judging after extraction. Its
+ * enrolments stay revertable through the review surface. Set the flag to false or 0, or
+ * switch it off in /admin/config, to keep every block in human review.
  */
 
 import { getConfig, getConfigFlag } from '@/core/config/store';
 
-/** Env var that gates the auto-enroll path. Default OFF (see file header). */
+/** Env var that gates the auto-enroll path. Default on (see file header). */
 export const AUTO_ENROLL_FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
 /** Env var for the combined-confidence threshold. Default 0.85 (conservative). */
 export const AUTO_ENROLL_THRESHOLD_FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD';
@@ -45,9 +44,7 @@ export const AUTO_ENROLL_MAX_BLOCKS_PER_RUN = 10;
 /** Minimal env shape these readers need (a superset of NodeJS.ProcessEnv). */
 export type FlagEnv = Record<string, string | undefined>;
 
-/** True only for an enabled literal; everything else is false. Opt-in by design. */
 export function autoEnrollEnabled(env: FlagEnv = process.env): boolean {
-  // Pinned key: compose fixes env plus code default; DB writes are rejected with 409.
   return getConfigFlag(AUTO_ENROLL_FLAG, env);
 }
 

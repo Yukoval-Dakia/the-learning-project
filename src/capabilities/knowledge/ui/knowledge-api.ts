@@ -8,7 +8,7 @@ import {
   apiOperationJson,
 } from '@/ui/lib/api';
 
-// ── 树快照（loadTreeSnapshot wire：knowledge 行 + mastery 视图 join） ──
+// ── 树快照（loadTreeSnapshot wire：knowledge 行 + mastery_state 投影 + 事件脊活动时钟） ──
 type KnowledgeTreeWire = ApiOperationJsonResponse<'getKnowledgeTreeSnapshot'>['rows'][number];
 export type KnowledgeTreeNode = Pick<
   KnowledgeTreeWire,

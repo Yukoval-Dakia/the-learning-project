@@ -3,7 +3,6 @@ import { and, eq, ne, sql } from 'drizzle-orm';
 import {
   CUSTOM_ASSET_MAX_BYTES,
   CUSTOM_ASSET_MIME_TYPES,
-  customAssetIdForDigest,
 } from '@/core/schema/assessment/presentation';
 import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
@@ -158,20 +157,61 @@ export class ImmutableAssetError extends Error {
   }
 }
 
+/** Write-once asset profiles (YUK-1548 §2.3). custom_code behaviour is frozen. */
+export type ImmutableAssetProfile = 'custom_code' | 'svg_figure' | 'sandbox_html';
+
+interface ImmutableProfileSpec {
+  idPrefix: 'sbx_' | 'svf_' | 'sbh_';
+  storagePrefix: string;
+  mime: string;
+  provenanceSourceKind: string;
+  maxBytes: number;
+}
+
+const IMMUTABLE_PROFILES: Record<ImmutableAssetProfile, ImmutableProfileSpec> = {
+  custom_code: {
+    idPrefix: 'sbx_',
+    storagePrefix: 'assets/custom-code',
+    mime: CUSTOM_ASSET_MIME_TYPES[0],
+    provenanceSourceKind: 'custom_block_code',
+    maxBytes: CUSTOM_ASSET_MAX_BYTES,
+  },
+  svg_figure: {
+    idPrefix: 'svf_',
+    storagePrefix: 'assets/svg-figure',
+    mime: 'image/svg+xml',
+    provenanceSourceKind: 'svg_figure',
+    maxBytes: CUSTOM_ASSET_MAX_BYTES,
+  },
+  sandbox_html: {
+    idPrefix: 'sbh_',
+    storagePrefix: 'assets/sandbox-html',
+    mime: 'text/html',
+    provenanceSourceKind: 'sandbox_html',
+    maxBytes: CUSTOM_ASSET_MAX_BYTES,
+  },
+};
+
+const IMMUTABLE_STORAGE_PREFIXES = Object.values(IMMUTABLE_PROFILES).map((p) => p.storagePrefix);
+const IMMUTABLE_SOURCE_KINDS = Object.values(IMMUTABLE_PROFILES).map((p) => p.provenanceSourceKind);
+
 /**
- * Complete write-once custom-code protocol. The caller only supplies bytes and
- * server-owned provenance/authorization; this owner derives every content identity.
- * Never use persistSourceAsset's unconditional put for this path.
+ * Complete write-once asset protocol, parameterised by profile. The caller
+ * only supplies bytes and server-owned provenance/authorization; this owner
+ * derives every content identity. Never use persistSourceAsset's
+ * unconditional put for this path.
  */
-export async function persistImmutableCustomCodeAsset(
+export async function persistImmutableAsset(
   db: Db,
   blob: ImmutableAssetBlobClient,
   input: {
+    profile: ImmutableAssetProfile;
     bytes: Uint8Array;
     provenance: typeof source_asset.$inferInsert.provenance;
     authorize: (tx: Tx) => Promise<void>;
   },
 ): Promise<{ row: SourceAssetRow; reused: boolean }> {
+  const spec = IMMUTABLE_PROFILES[input.profile];
   const putIfAbsent = blob.putIfAbsent?.bind(blob);
   if (!putIfAbsent) {
     throw new ImmutableAssetError(
@@ -181,15 +221,17 @@ export async function persistImmutableCustomCodeAsset(
   }
   // Own a stable view across asynchronous hashing, authorization and storage IO.
   const bytes = input.bytes.slice();
-  if (bytes.byteLength === 0 || bytes.byteLength > CUSTOM_ASSET_MAX_BYTES) {
-    throw new ImmutableAssetError('immutable_asset_conflict', 'custom code size is invalid');
+  if (bytes.byteLength === 0 || bytes.byteLength > spec.maxBytes) {
+    throw new ImmutableAssetError(
+      'immutable_asset_conflict',
+      `${input.profile} asset size is invalid`,
+    );
   }
   const sha = await sha256Hex(bytes);
-  const id = customAssetIdForDigest(`sha256:${sha}`);
-  if (!id) throw new Error('SHA-256 did not produce a custom-code asset identity');
+  const id = `${spec.idPrefix}${sha.slice(0, 32)}`;
   // Keep old unconditional source writers away from this immutable namespace.
-  const storageKey = `assets/custom-code/${sha}`;
-  const mime = CUSTOM_ASSET_MIME_TYPES[0];
+  const storageKey = `${spec.storagePrefix}/${sha}`;
+  const mime = spec.mime;
   const verifyRow = (row: SourceAssetRow) => {
     if (
       row.id !== id ||
@@ -200,11 +242,11 @@ export async function persistImmutableCustomCodeAsset(
       row.byte_size !== bytes.byteLength ||
       row.width !== null ||
       row.height !== null ||
-      row.provenance.source_kind !== 'custom_block_code'
+      row.provenance.source_kind !== spec.provenanceSourceKind
     ) {
       throw new ImmutableAssetError(
         'immutable_asset_conflict',
-        'existing custom-code asset identity or metadata differs; original retained',
+        'existing immutable asset identity or metadata differs; original retained',
       );
     }
   };
@@ -236,14 +278,14 @@ export async function persistImmutableCustomCodeAsset(
     } catch (cause) {
       throw new ImmutableAssetError(
         'immutable_asset_unverifiable',
-        'custom-code blob could not be persisted and verified; no reference issued',
+        `${input.profile} blob could not be persisted and verified; no reference issued`,
         { cause },
       );
     }
     if (stored === null) {
       throw new ImmutableAssetError(
         'immutable_asset_unverifiable',
-        'custom-code blob is missing; no repair or reference issued',
+        `${input.profile} blob is missing; no repair or reference issued`,
       );
     }
     if (
@@ -252,7 +294,7 @@ export async function persistImmutableCustomCodeAsset(
     ) {
       throw new ImmutableAssetError(
         'immutable_asset_conflict',
-        'stored custom-code bytes differ; original object and row retained',
+        `stored ${input.profile} bytes differ; original object and row retained`,
       );
     }
     if (existing) return { row: existing, reused: true };
@@ -279,7 +321,7 @@ export async function persistImmutableCustomCodeAsset(
     if (!row) {
       throw new ImmutableAssetError(
         'immutable_asset_unverifiable',
-        'custom-code owner row could not be verified; no reference issued',
+        `${input.profile} owner row could not be verified; no reference issued`,
       );
     }
     verifyRow(row);
@@ -287,6 +329,19 @@ export async function persistImmutableCustomCodeAsset(
     // an immutable object for verification on retry, never deletes shared data.
     return { row, reused: inserted.length === 0 };
   });
+}
+
+/** Back-compat wrapper: the custom_code profile with its original signature. */
+export function persistImmutableCustomCodeAsset(
+  db: Db,
+  blob: ImmutableAssetBlobClient,
+  input: {
+    bytes: Uint8Array;
+    provenance: typeof source_asset.$inferInsert.provenance;
+    authorize: (tx: Tx) => Promise<void>;
+  },
+): Promise<{ row: SourceAssetRow; reused: boolean }> {
+  return persistImmutableAsset(db, blob, { profile: 'custom_code', ...input });
 }
 
 export class ImmutableAssetDeleteForbiddenError extends Error {
@@ -326,8 +381,9 @@ export async function deleteImageAsset(db: Db, r2: AssetBlobClient, id: string):
       .limit(1);
     if (!live) return false;
     if (
-      live.provenance?.source_kind === 'custom_block_code' ||
-      live.storageKey.startsWith('assets/custom-code/')
+      (live.provenance?.source_kind !== undefined &&
+        IMMUTABLE_SOURCE_KINDS.includes(live.provenance.source_kind)) ||
+      IMMUTABLE_STORAGE_PREFIXES.some((prefix) => live.storageKey.startsWith(`${prefix}/`))
     ) {
       throw new ImmutableAssetDeleteForbiddenError();
     }

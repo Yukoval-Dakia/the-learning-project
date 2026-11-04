@@ -7,7 +7,7 @@ import { newId } from '@/core/ids';
 import type {
   ArtifactBodyBlocksT,
   ArtifactHistoryEntryT,
-  NoteVerificationResultT,
+  ArtifactVerificationSummaryT,
 } from '@/core/schema/business';
 import type { Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
@@ -93,7 +93,7 @@ export interface EmitArtifactLifecycleParams {
   archivedAt?: Date | null;
   generationStatus?: string;
   verificationStatus?: string;
-  verificationSummary?: NoteVerificationResultT | null;
+  verificationSummary?: ArtifactVerificationSummaryT | null;
   generatedBy?: AgentRefValue | null;
   verifiedBy?: AgentRefValue | null;
   /** The full new attrs (required for set_attrs). */

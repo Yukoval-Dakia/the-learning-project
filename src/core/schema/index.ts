@@ -194,7 +194,7 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
     .nullable(),
   generation_status: b.ArtifactGenerationStatus,
   verification_status: b.ArtifactVerificationStatus,
-  verification_summary: b.NoteVerificationResult.nullable(),
+  verification_summary: b.ArtifactVerificationSummary.nullable(),
   verified_by: b.AgentRef.nullable(),
 });
 export type Artifact = z.infer<typeof Artifact>;

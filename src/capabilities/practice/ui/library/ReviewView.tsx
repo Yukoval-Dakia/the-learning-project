@@ -3,7 +3,7 @@ import { Card } from '@/ui-next/primitives/Card';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button } from '@/ui-next/public';
-import { VERIFY_WORDS, kindWord, sourceWord, verifyReasonWords } from './library-copy';
+import { VERIFY_WORDS, kindWord, sourceWord } from './library-copy';
 import type { LibraryScope } from './library-url';
 import { LoadMore, QuestionLine, shortDay } from './QuestionLine';
 import { ReviewBar } from './ReviewBar';
@@ -125,9 +125,7 @@ export function ReviewView({
               }
               detail={
                 row.verify_reason ? (
-                  <span className="ql-reason">
-                    没通过的原因：{verifyReasonWords(row.verify_reason)}
-                  </span>
+                  <span className="ql-reason">核验写下的原因：{row.verify_reason}</span>
                 ) : null
               }
               knowledge={row.knowledge.map((k) => ({ id: k.id, name: k.label }))}
