@@ -421,6 +421,8 @@ export type TableName = (typeof FK_ORDER)[number];
 // only transient / derived / operational state belongs here, never authored or
 // slow-accumulated cognitive data.
 export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
+  // YUK-1771: derived vectors, rebuilt from question_solution_prior by embed_backfill.
+  'question_solution_prior_vector',
   // YUK-1448: 15-minute actor/role-bound pagination evidence; no durable gap/issuance authority.
   'bank_search_snapshot',
   // SSE-replay telemetry of pg-boss job lifecycle; operational, re-derived as jobs

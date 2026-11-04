@@ -51,6 +51,7 @@ export {
   question_group_lifecycle,
   question_revision,
   question_solution_prior,
+  question_solution_prior_vector,
 } from './schema/assessment';
 export {
   difficulty_calibration_evidence,

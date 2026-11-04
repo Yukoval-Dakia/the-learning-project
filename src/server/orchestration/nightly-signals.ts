@@ -12,6 +12,8 @@ import {
   knowledge_edge,
   memory_brief_note,
   question,
+  question_solution_prior,
+  question_solution_prior_vector,
 } from '@/db/schema';
 import {
   type EligibilityDecision,
@@ -248,7 +250,20 @@ async function loadEmbedPending(db: Db): Promise<boolean> {
     .from(knowledge)
     .where(and(knowledgeStale, isNull(knowledge.archived_at)))
     .limit(1);
-  return Boolean(pendingKnowledge);
+  if (pendingKnowledge) return true;
+  const [pendingPrior] = await db
+    .select({ revision_id: question_solution_prior.revision_id })
+    .from(question_solution_prior)
+    .where(
+      sql`NOT EXISTS (
+            SELECT 1 FROM ${question_solution_prior_vector} v
+            WHERE v.revision_id = ${question_solution_prior.revision_id}
+              AND v.part_id = ${question_solution_prior.part_id}
+              AND v.embed_version >= ${EMBED_VERSION}
+          )`,
+    )
+    .limit(1);
+  return Boolean(pendingPrior);
 }
 
 async function loadReturnStockShort(db: Db): Promise<boolean> {
