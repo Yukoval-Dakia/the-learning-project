@@ -68,10 +68,14 @@ export function checkSessionSummaryClaims(
   for (const clause of checkableClauses(text)) {
     if (PER_UNIT.test(clause) || OTHER_SCOPE.test(clause)) continue;
     const { questionClaims, minuteClaims } = collectClauseClaims(clause);
+    const percentClaims = new Set<number>();
+    collectPercentClaims(clause, percentClaims);
 
     const hasWrongCue = WRONG_CUE.test(clause);
+    // "4题中67%正确": a question count sharing a clause with a percent is a
+    // denominator, not an outcome count — judge it against the whole set.
     const questionExpected =
-      questionClaims.size > 1
+      questionClaims.size > 1 || percentClaims.size > 0
         ? allQuestionCounts
         : hasWrongCue
           ? [facts.incorrect]
@@ -105,8 +109,6 @@ export function checkSessionSummaryClaims(
       }
     }
     if (facts.correct_pct !== null && ACCURACY_CUE.test(clause)) {
-      const percentClaims = new Set<number>();
-      collectPercentClaims(clause, percentClaims);
       for (const claimed of percentClaims) {
         if (claimed !== facts.correct_pct) {
           issues.push({
