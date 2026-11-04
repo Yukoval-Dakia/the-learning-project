@@ -52,10 +52,26 @@ const purposeBindingId = (jobId: string) => `question-admission-purpose:${jobId}
 /** A delivery's permanent source fact is separate from its unchanged paid input.
  * Missing legacy facts are never reconstructed from today's publication or row.
  */
+// System writers that publish pipeline content. `submit_question:*` is deliberately absent:
+// that is how a person or an agent edits a question, and the edit may hold learner material
+// while `question.source` keeps its original value.
+const PIPELINE_PUBLISHERS: ReadonlySet<string> = new Set([
+  'sourced-draft:sourcing_web',
+  'quiz_gen:persist',
+  'source_verify:promote',
+  'source_verify:suspend',
+  'quiz_verify:promote',
+  'quiz_verify:suspend',
+  'practice:question_admission',
+  'practice:question_admission_repair',
+  'solution-generate:reference_backfill',
+]);
+
 /**
- * May this admission's solve transcript leave for Laminar. Only sources known to hold no
- * learner material qualify: a photo or manual entry is the learner's own, and quiz_gen counts
- * only when generated from a knowledge point. Any failure reads as no.
+ * May this admission's solve transcript leave for Laminar. Only content known to hold no
+ * learner material qualifies: the source must be web_sourced or knowledge-triggered quiz_gen,
+ * and every publication in the group's history must come from a pipeline writer, because a
+ * later revision carries an earlier edit forward. Any failure or unknown reads as no.
  */
 export async function admissionTranscriptAllowed(
   db: Db | Tx,
@@ -68,14 +84,29 @@ export async function admissionTranscriptAllowed(
       .from(question)
       .where(eq(question.id, input.groupId))
       .limit(1);
-    if (root?.source === 'web_sourced') return true;
-    if (root?.source !== 'quiz_gen' || root.source_ref == null) return false;
-    const [node] = await db
-      .select({ id: knowledge.id })
-      .from(knowledge)
-      .where(eq(knowledge.id, root.source_ref))
-      .limit(1);
-    return node != null;
+    if (root?.source !== 'web_sourced' && root?.source !== 'quiz_gen') return false;
+    if (root.source === 'quiz_gen') {
+      if (root.source_ref == null) return false;
+      const [node] = await db
+        .select({ id: knowledge.id })
+        .from(knowledge)
+        .where(eq(knowledge.id, root.source_ref))
+        .limit(1);
+      if (!node) return false;
+    }
+    const publishers = await db
+      .selectDistinct({ actor_ref: event.actor_ref })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:assessment_publish'),
+          eq(event.subject_kind, 'question'),
+          eq(event.subject_id, input.groupId),
+        ),
+      );
+    return (
+      publishers.length > 0 && publishers.every((row) => PIPELINE_PUBLISHERS.has(row.actor_ref))
+    );
   } catch {
     return false;
   }

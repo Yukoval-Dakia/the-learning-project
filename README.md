@@ -77,7 +77,8 @@ An empty project key still prevents SDK loading and export. Omit the switch or s
 Separately, `LMNR_TRANSCRIPTS=1` enables transcripts in any environment, for a whitelist
 of tasks whose content holds no learner material. Today that is
 `QuestionAdmissionSolveTask`, and only for a question from `web_sourced` or a
-knowledge-triggered `quiz_gen` whose purpose is `allow`. A task enters the whitelist only
+knowledge-triggered `quiz_gen` whose purpose is `allow` and which only pipeline writers
+have ever published, so an edited question does not qualify. A task enters the whitelist only
 if no tool it can call returns learner data. Every other task stays metadata only. Unset
 the switch to turn it off.
 
