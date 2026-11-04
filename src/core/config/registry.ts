@@ -381,12 +381,11 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     tier: 'A',
     note: 'P2: 写所有权翻位（Scheme A dark-ship）',
   },
-  // PLACEMENT_PROBE_ENABLED —— raw === 'true' 逐位字面量：'1'/'TRUE'/' true ' 全 false。
   PLACEMENT_PROBE_ENABLED: {
     schema: z.boolean(),
     codeDefault: true,
     envName: 'PLACEMENT_PROBE_ENABLED',
-    envParse: (raw) => (raw === 'true' ? true : raw === 'false' ? false : undefined),
+    envParse: flagEnv,
     tier: 'A',
   },
   AI_RATE_LIMIT_MAX: {

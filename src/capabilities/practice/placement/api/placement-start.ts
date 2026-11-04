@@ -4,8 +4,8 @@
 // (which runs judge + θ̂ update + FSRS — no separate placement submit). The next question +
 // termination check are served by /api/placement/[id]/next.
 //
-// PLACEMENT_PROBE_ENABLED (default on) is the kill switch: off makes the entrypoint 404 and
-// creates no placement session.
+// PLACEMENT_PROBE_ENABLED (default on; switch it off in /admin/config) makes the entrypoint 404
+// and creates no placement session.
 
 import { canonicalResourceResponse, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { startPlacementProbe } from '../server/session-operations/placement-session';
