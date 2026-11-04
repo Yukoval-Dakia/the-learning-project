@@ -60,7 +60,28 @@ function chatLinkHref(href: string | undefined): string | null {
   const first = rest.split(/[/?#]/, 1)[0] ?? '';
   return first !== '' && !/[.:@]/.test(first) ? `/${rest}` : null;
 }
-const extensions = [remarkGfm];
+
+// YUK-1812 — a model sometimes writes a page path with image syntax, `![去练习](/practice/x)`. That
+// draws a broken image and no way in. In this app only `/api/assets/…` serves images from a site
+// path, so any other one is a link the model meant to write.
+type MarkdownNode = { type: string; url?: string; alt?: string | null; children?: MarkdownNode[] };
+function pageImagesToLinks(node: MarkdownNode) {
+  for (const [index, child] of (node.children ?? []).entries()) {
+    if (child.type === 'image' && child.url?.startsWith('/') && !child.url.startsWith('/api/')) {
+      const text = child.alt || '打开';
+      node.children?.splice(index, 1, {
+        type: 'link',
+        url: child.url,
+        children: [{ type: 'text', value: text } as MarkdownNode],
+      });
+    } else {
+      pageImagesToLinks(child);
+    }
+  }
+}
+const remarkPageImagesAsLinks = () => pageImagesToLinks;
+
+const extensions = [remarkGfm, remarkPageImagesAsLinks];
 
 /** Conversation content supports math explicitly, independent of the page's current subject. */
 export function ConversationMarkdown({
