@@ -26,7 +26,7 @@
 // '../tools/store-sourced-question' 是 capability 内兄弟 seam（tools 层持 server 依赖）。
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event, goal, knowledge, placement_starter_claim } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -93,16 +93,31 @@ export function jyeooGradeForDeclaredStage(
 }
 
 /**
- * 解析需求项的 declared-stage 约束：只有绑定 goal 的需求（placement_claim_id →
- * placement_starter_claim.goal_id → goal.declared_stage）携带学习者自述学段；未绑定
- * goal 的项（scanner/planner 裸 KC 需求）返回 null（无约束 → 用 job/config grade）。
- * claim 缺失或 goal 未声明学段同样返回 null——约束不存在时不改变任何既有行为。
+ * 解析需求项的 declared-stage 约束：绑定 goal 的需求（placement_claim_id →
+ * placement_starter_claim.goal_id → goal.declared_stage）用该 goal 的自述学段。夜扫等
+ * 未绑定 goal 的裸 KC 需求，用学习者在该科目（或跨科目）活跃 goal 上的自述学段，且仅当
+ * 这些 goal 声明的学段一致时才生效。claim 缺失、无人声明或声明不一致返回 null（无约束
+ * → 用 job/config grade，保持现状）。
  */
 async function resolveDeclaredStageGrade(
   db: Db,
   placementClaimId: string | undefined,
+  subjectId: string,
 ): Promise<JyeooGrade | 'out_of_band' | null> {
-  if (!placementClaimId) return null;
+  if (!placementClaimId) {
+    const stages = await db
+      .selectDistinct({ declaredStage: goal.declared_stage })
+      .from(goal)
+      .where(
+        and(
+          eq(goal.status, 'active'),
+          isNotNull(goal.declared_stage),
+          or(eq(goal.subject_id, subjectId), isNull(goal.subject_id)),
+        ),
+      )
+      .limit(2);
+    return stages.length === 1 ? jyeooGradeForDeclaredStage(stages[0]?.declaredStage) : null;
+  }
   const rows = await db
     .select({ declaredStage: goal.declared_stage })
     .from(placement_starter_claim)
@@ -457,12 +472,16 @@ async function runJyeooRoute(
     return tally;
   }
 
-  // YUK-1009 — learner-declared stage constraint: goal-bound demand (placement claim →
-  // goal.declared_stage) whose declared stage is outside the jyeoo 高中 corpus skips the
-  // route outright (reported before the transient budget check so the constraint is
-  // visible in the tally regardless of budget state); in-band stages pin the fetch
-  // grade; unconstrained items keep the job/config grade.
-  const declaredGrade = await resolveDeclaredStageGrade(run.db, run.item.placementClaimId);
+  // YUK-1009 — learner-declared stage constraint (the claim's goal, or for goal-less
+  // nightly items the learner's active goals): a declared stage outside the jyeoo 高中
+  // corpus skips the route outright (reported before the transient budget check so the
+  // constraint is visible in the tally regardless of budget state); in-band stages pin the
+  // fetch grade; unconstrained items keep the job/config grade.
+  const declaredGrade = await resolveDeclaredStageGrade(
+    run.db,
+    run.item.placementClaimId,
+    run.subjectProfile.id,
+  );
   if (declaredGrade === 'out_of_band') {
     tally.skipped = 'jyeoo_declared_stage_out_of_band';
     return tally;
