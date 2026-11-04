@@ -18,10 +18,18 @@ import {
 import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
 import type { DailyFocusPlanIssue } from '@/core/daily-focus-guard';
 import { type ReviewPlanNumbers, computeReviewPlanNumbers } from '@/core/daily-review-plan';
+import { learnerLocalDay } from '@/core/learner-day';
 import { CoachPlanDraft, type CoachPlanDraftT, composeTodayPlan } from '@/core/schema/coach';
 // Derived sub-skill weak points (YUK-1582): read-only landing points with first-hand
 // evidence; attention pressure for knowledge_focus, never scheduling state.
 import type { ActionableWeakPointDerivationT } from '@/core/schema/weak-point';
+import {
+  learnerDayWeekday,
+  learnerDayWithWeekday,
+  steeringDaysLeft,
+  steeringStartsInDays,
+  steeringWindowCoversToday,
+} from '@/core/steering';
 import type { Db } from '@/db/client';
 import { type WriteEventInput, getEvents } from '@/kernel/events';
 // Per-(kind, relation) accept-learned reason digest for the Coach input, scoped to the
@@ -154,6 +162,7 @@ function buildCoachInput(
   return {
     run_kind: 'daily',
     now: now.toISOString(),
+    today: learnerDayWithWeekday(learnerLocalDay(now)),
     pending_proposals_before: beforeRows.filter((row) => row.status === 'pending').length,
     objective,
     // Ordered by sequence_hint then created_at; empty means the model omits the strand.
@@ -163,6 +172,25 @@ function buildCoachInput(
       subject_id: g.subject_id,
       scope_knowledge_ids: g.scope_knowledge_ids,
       sequence_hint: g.sequence_hint,
+      ...(g.steering !== null && steeringWindowCoversToday(g, learnerLocalDay(now))
+        ? {
+            steering: {
+              learner_words: g.steering.learner_words,
+              instruction_md: g.steering.instruction_md,
+              scope_unresolved: g.steering.scope_unresolved,
+              excluded_subject_ids: g.steering.excluded_subject_ids,
+              excluded_knowledge_ids: g.steering.excluded_knowledge_ids,
+              window: {
+                from: g.effective_from,
+                until: g.effective_until,
+                until_weekday:
+                  g.effective_until !== null ? learnerDayWeekday(g.effective_until) : null,
+                days_left: steeringDaysLeft(g.effective_until, learnerLocalDay(now)),
+                starts_in_days: steeringStartsInDays(g.effective_from, learnerLocalDay(now)),
+              },
+            },
+          }
+        : {}),
     })),
     // Attention pressure only; empty means the brief derives from due/weak signals.
     active_items: activeItems.map((it) => ({
@@ -376,6 +404,15 @@ export function parseCoachOutputSafely(rawText: string): CoachPlanDraftT | null 
   const candidates: string[] = [rawText];
   const fenceMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenceMatch?.[1]) candidates.unshift(fenceMatch[1]);
+  // Live models (deepseek-v4.1-flash seen 2026-11-04) sometimes emit the JSON
+  // clean but append a stray CLOSING fence line with no opener — the paired
+  // regex misses it and JSON.parse chokes on the tail. Strip stray fence
+  // markers at either end as an extra best-effort candidate.
+  const stripped = rawText
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```+\s*$/i, '')
+    .trim();
+  if (stripped !== rawText.trim()) candidates.unshift(stripped);
   for (const candidate of candidates) {
     const trimmed = candidate.trim();
     if (!trimmed) continue;
