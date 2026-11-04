@@ -68,6 +68,11 @@ import {
   resolveQuestionAdmissionPolicyId,
   runQuestionAdmission,
 } from '../server/admission/run-admission';
+import {
+  SolutionPriorRecord,
+  loadPriorKnowledgeCandidates,
+  recordAdmissionSolutionPrior,
+} from '../server/admission/solution-prior';
 import { QUESTION_ADMISSION_TASK_KIND } from '../server/admission/solve';
 import {
   applyCustomPreviewDecision,
@@ -468,9 +473,21 @@ export async function runAdmissionForQuestion(
           throw error;
         }
       };
+      // Metadata for the solution prior only: a read failure must not touch the paid batch.
+      const knowledgeCandidates = await loadPriorKnowledgeCandidates(db, {
+        groupId: rootId,
+        subjectId: batch.input.subject_profile.id,
+      }).catch((error: unknown) => {
+        console.warn('[question_admission] prior knowledge candidates unavailable', {
+          group_id: rootId,
+          err: error instanceof Error ? error.message : String(error),
+        });
+        return [];
+      });
       const result = await runQuestionAdmission(definitionFromContract(batch.input.contract), {
         db,
         runTask,
+        knowledgeCandidates,
         subjectProfile: batch.input.subject_profile,
         solver2: batch.input.solver2
           ? {
@@ -664,6 +681,34 @@ export async function runAdmissionForQuestion(
       if (preview.kind !== 'no_custom') deps.signal?.throwIfAborted();
       const persisted = await publishQuestionGroup(tx, built.publish);
       if (preview.kind !== 'no_custom') deps.signal?.throwIfAborted();
+      const priorRevisionId =
+        persisted.status === 'published'
+          ? persisted.revision_id
+          : persisted.status === 'admission_updated' || persisted.status === 'noop'
+            ? persisted.current_revision_id
+            : null;
+      const priorRecord = SolutionPriorRecord.safeParse(
+        (result as { solution_prior?: unknown }).solution_prior,
+      );
+      if (priorRevisionId != null && priorRecord.success) {
+        // Savepoint: the prior is metadata and must never roll back the publication.
+        await tx
+          .transaction((sp) =>
+            recordAdmissionSolutionPrior(sp, {
+              revisionId: priorRevisionId,
+              questionId: rootId,
+              record: priorRecord.data,
+              now,
+            }),
+          )
+          .catch((error: unknown) => {
+            console.warn('[question_admission] solution prior not recorded', {
+              group_id: rootId,
+              revision_id: priorRevisionId,
+              err: error instanceof Error ? error.message : String(error),
+            });
+          });
+      }
       const status =
         persisted.status === 'conflict' ? 'conflict' : admitted ? 'admitted' : 'withheld';
       if (status === 'admitted') {
