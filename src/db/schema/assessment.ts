@@ -252,9 +252,10 @@ export const question_solution_prior = pgTable(
 export const question_solution_prior_backfill_attempt = pgTable(
   'question_solution_prior_backfill_attempt',
   {
+    // Cascade so a backup restore's sweep of question_revision is not blocked by this ledger.
     revision_id: text('revision_id')
       .primaryKey()
-      .references(() => question_revision.revision_id),
+      .references(() => question_revision.revision_id, { onDelete: 'cascade' }),
     backfill_run_id: text('backfill_run_id').notNull(),
     status: text('status', {
       enum: ['started', 'produced', 'empty', 'failed', 'skipped'],
