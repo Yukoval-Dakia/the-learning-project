@@ -1,5 +1,5 @@
 {
-  "id": "d68c2bda-21c9-4044-bee2-6085e73ee5b2",
+  "id": "e2926038-ecdb-40dd-ab62-527437a0b2d1",
   "prevId": "b4fb0ef7-e2c1-4a17-9a44-edd1124711a9",
   "version": "7",
   "dialect": "postgresql",
@@ -12253,6 +12253,90 @@
         "question_solution_prior_backfill_ck": {
           "name": "question_solution_prior_backfill_ck",
           "value": "(\"question_solution_prior\".\"origin\" = 'backfill') = (\"question_solution_prior\".\"backfill_run_id\" IS NOT NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.question_solution_prior_backfill_attempt": {
+      "name": "question_solution_prior_backfill_attempt",
+      "schema": "",
+      "columns": {
+        "revision_id": {
+          "name": "revision_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "backfill_run_id": {
+          "name": "backfill_run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_run_id": {
+          "name": "task_run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "attempted_at": {
+          "name": "attempted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "question_solution_prior_backfill_attempt_run_idx": {
+          "name": "question_solution_prior_backfill_attempt_run_idx",
+          "columns": [
+            {
+              "expression": "backfill_run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "question_solution_prior_backfill_attempt_revision_id_question_revision_revision_id_fk": {
+          "name": "question_solution_prior_backfill_attempt_revision_id_question_revision_revision_id_fk",
+          "tableFrom": "question_solution_prior_backfill_attempt",
+          "tableTo": "question_revision",
+          "columnsFrom": [
+            "revision_id"
+          ],
+          "columnsTo": [
+            "revision_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "question_solution_prior_backfill_attempt_status_ck": {
+          "name": "question_solution_prior_backfill_attempt_status_ck",
+          "value": "\"question_solution_prior_backfill_attempt\".\"status\" IN ('started','produced','empty','failed','skipped')"
         }
       },
       "isRLSEnabled": false
