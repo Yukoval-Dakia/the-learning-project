@@ -51,6 +51,7 @@ function referencesRestrictedCorrection(
   message: string,
   contract: CopilotCorrectionContract,
 ): boolean {
+  if (contract.positions_unavailable) return true;
   const restricted = new Set(contract.restricted_prior_turn_ids);
   if (
     restricted.size === 0 ||
@@ -61,7 +62,6 @@ function referencesRestrictedCorrection(
     return false;
   // Restricted turns are absent from model history. A relative reference must
   // never silently bind an older visible reply in their place.
-  if (contract.positions_unavailable) return true;
   const order = contract.prior_turn_order ?? contract.available_prior_turn_ids;
   const distances = new Set<number>();
   if (/(?:上上轮|上两轮|前两轮)/.test(message)) distances.add(2);

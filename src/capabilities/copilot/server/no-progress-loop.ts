@@ -207,6 +207,9 @@ function walk(value: unknown, tool: string, facts: EvidenceFact[], depth: number
     return;
   }
   if (!isRecord(value)) return;
+  if (typeof value.name === 'string' && isRecord(value.refs) && typeof value.refs.id === 'string') {
+    facts.push({ kind: 'knowledge', id: value.refs.id, tool });
+  }
   const disputeReason = disputeReasonOf(value);
   const disputeEvaluationId = evaluationIdOf(value);
   if (disputeReason && disputeEvaluationId) {

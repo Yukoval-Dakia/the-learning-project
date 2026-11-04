@@ -1,7 +1,8 @@
 // The only place that decides "this task kind keeps failing", read straight from
-// ai_task_runs. Two rules, thresholds from the config registry:
+// ai_task_runs. Failure rules use thresholds from the config registry:
 //   consecutive — failures since the kind's last success reach N (latest failure not stale);
 //   rate        — inside the window, terminal runs ≥ MIN_RUNS and failure share > RATE.
+// Unsealed deliveries raise an operational alert independently of failure counts.
 // A kind with an active consecutive alert does not also raise a rate alert.
 // "Failure" is isTaskFailureOutcome: retried attempts, sweeper-converged rows and
 // cancelled help attempts are neither failures nor successes, so they are invisible to
@@ -49,7 +50,7 @@ export interface TaskFailureAlert {
   /** Deterministic alert id; equals the recorded event id. */
   id: string;
   task_kind: string;
-  rule: 'consecutive' | 'rate';
+  rule: 'consecutive' | 'rate' | 'unsealed';
   failures: number;
   /** Terminal runs counted by the rule (consecutive: equals failures). */
   runs: number;
@@ -170,8 +171,7 @@ export async function evaluateTaskFailureAlerts(
       and r.finished_at <= ${now.toISOString()}::timestamptz
       and (ls.at is null or r.finished_at > ls.at)
     group by r.task_kind
-    having (count(*) >= ${thresholds.consecutive_failures}
-      or bool_or(r.finish_reason = 'reply_unsealed'))
+    having count(*) >= ${thresholds.consecutive_failures}
       and max(r.finished_at) >= ${staleCutoff.toISOString()}::timestamptz
   `);
 
@@ -231,6 +231,33 @@ export async function evaluateTaskFailureAlerts(
       last_success_at: nullableIso(row.last_success_at),
       latest_run_id: row.latest_run_id,
       latest_finish_reason: row.latest_finish_reason,
+    });
+  }
+
+  const unsealedRows = await db.execute<{
+    id: string;
+    task_kind: string;
+    finished_at: Date | string;
+  }>(sql`
+    select distinct on (task_kind) id, task_kind, finished_at
+    from ai_task_runs
+    where status in ('success', 'failure') and finish_reason = 'reply_unsealed'
+      and finished_at >= ${staleCutoff.toISOString()}::timestamptz
+      and finished_at <= ${now.toISOString()}::timestamptz
+    order by task_kind, finished_at desc, id desc
+  `);
+  for (const row of unsealedRows) {
+    alerts.push({
+      id: `task_failure_alert:unsealed:${row.task_kind}:${row.id}`,
+      task_kind: row.task_kind,
+      rule: 'unsealed',
+      failures: 0,
+      runs: 1,
+      since: iso(row.finished_at),
+      last_failure_at: iso(row.finished_at),
+      last_success_at: iso(row.finished_at),
+      latest_run_id: row.id,
+      latest_finish_reason: 'reply_unsealed',
     });
   }
 
@@ -323,7 +350,7 @@ export async function recordTaskFailureAlerts(
       action: TASK_FAILURE_ALERT_EVENT_ACTION,
       subject_kind: 'query',
       subject_id: alert.id,
-      outcome: 'failure',
+      outcome: alert.rule === 'unsealed' ? 'success' : 'failure',
       payload: {
         version: 1,
         rule: alert.rule,

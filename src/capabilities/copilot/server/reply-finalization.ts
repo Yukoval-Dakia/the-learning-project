@@ -36,10 +36,23 @@ export const COPILOT_REPLY_TRACE_MAX_CALLS = Number.MAX_SAFE_INTEGER;
 export const COPILOT_REPLY_CHAR_LIMIT = 64_000;
 const FINALIZATION_FAILURE_REPLY = '这次回复未能完成，已有内容已保留。';
 
-export function truncateCopilotReply(text: string, limit = COPILOT_REPLY_CHAR_LIMIT): string {
-  return text.length > limit
-    ? `${text.slice(0, limit)}\n\n> 回答过长，已截断于 ${limit} 字。`
-    : text;
+export function truncateCopilotReply(
+  text: string,
+  limit = COPILOT_REPLY_CHAR_LIMIT,
+  retainedTail = '',
+): string {
+  if (text.length <= limit) return text;
+  const disclosure =
+    text.match(
+      /<!--copilot-proposal-disclosure:start-->[\s\S]*?<!--copilot-proposal-disclosure:end-->\s*$/,
+    )?.[0] ?? '';
+  let body = disclosure ? text.slice(0, text.length - disclosure.length).trimEnd() : text;
+  const tail = retainedTail.trim();
+  if (tail && body.endsWith(tail)) body = body.slice(0, -tail.length).trimEnd();
+  const suffix = [`> 回答过长，已截断于 ${limit} 字。`, tail, disclosure]
+    .filter(Boolean)
+    .join('\n\n');
+  return `${body.slice(0, Math.max(0, limit - suffix.length - 2))}\n\n${suffix}`;
 }
 
 export const EPHEMERAL_PRESENTATION_STORAGE_NOTICE =
@@ -316,20 +329,24 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
   async function finalizeTerminal(
     terminalText: string,
     failure?: ProviderFailureInfo,
+    context: { streamedText?: string; retainedTail?: string } = {},
   ): Promise<CopilotReplyFinalizationResult> {
     if (failure !== undefined) {
       return publishUnsealed(
-        terminalText || publicProseFailureMessage(providerFailureToPublicFailure(failure)),
+        terminalText ||
+          context.streamedText ||
+          publicProseFailureMessage(providerFailureToPublicFailure(failure)),
         'provider_failure',
+        context,
       );
     }
     const startVersion = traceVersion;
     const startTraceSha = digestTrace(trace);
     try {
       if (terminalText.trim().length === 0)
-        return publishUnsealed(terminalText, 'missing_terminal');
+        return publishUnsealed(terminalText, 'missing_terminal', context);
       if (trace.some((entry) => entry.status === 'in_flight' || entry.output_sha256 === null)) {
-        return publishUnsealed(terminalText, 'incomplete_tool_trace');
+        return publishUnsealed(terminalText, 'incomplete_tool_trace', context);
       }
       const candidateSha = sha256Text(terminalText);
       const presentedText = options.authoritativeReply?.reply ?? terminalText;
@@ -361,81 +378,16 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         stripCopilotInternalComments,
       );
       const disclosure = proposalDisclosure(trace);
-      // YUK-1548 — only compose_block may mint tlp-block fences. Neutralise
-      // hand-written ones before substitution (render as inert code).
-      const withDisclosure = applyProposalDisclosure(correction.reply, disclosure).replace(
-        /^([^\S\n]*(?:`{3,}|~{3,})[^\S\n]*)tlp-block\b[^\n]*$/gim,
-        '$1text',
-      );
-      // YUK-1548 §5 — resolve `![alt](block:<ref>)` placements against the
-      // successful root compose_block calls bound to this trace, substitute
-      // canonical tlp-block fences, and append never-placed blocks in order.
-      const readyBlocks = trace
-        .filter(
-          (entry) =>
-            entry.root_call &&
-            entry.status === 'succeeded' &&
-            entry.domain_executed === true &&
-            domainToolName(entry.tool_name) === 'compose_block',
-        )
-        .flatMap((entry) => {
-          const output = entry.domain_output as
-            | { status?: string; ref?: string; block?: unknown }
-            | undefined;
-          return output?.status === 'ready' && typeof output.ref === 'string'
-            ? [{ ref: output.ref, block: output.block }]
-            : [];
-        });
-      const blocksByRef = new Map(readyBlocks.map((b) => [b.ref, b.block]));
-      const placedRefs = new Set<string>();
-      let dropped = 0;
-      const withPlaced = withDisclosure.replace(
-        BLOCK_PLACE_PATTERN,
-        (_match, _alt, ref: string) => {
-          if (!blocksByRef.has(ref)) {
-            dropped += 1;
-            return '';
-          }
-          placedRefs.add(ref);
-          return `\n\n${serializeBlockFence(blocksByRef.get(ref) as never)}\n\n`;
-        },
-      );
-      // Superseded compose drafts never reach the learner: once the reply
-      // places at least one block, every other ready block is dropped; with no
-      // placement at all, only the last ready block per kind is appended. The
-      // rest are recorded as `unplaced` in the receipt.
-      const unplacedBlocks = readyBlocks.filter((b) => !placedRefs.has(b.ref));
-      let appended: typeof unplacedBlocks;
-      let unplaced: number;
-      if (placedRefs.size > 0) {
-        appended = [];
-        unplaced = unplacedBlocks.length;
-      } else {
-        const lastIndexByKind = new Map<string, number>();
-        unplacedBlocks.forEach((b, index) => {
-          const kind = (b.block as { kind?: unknown } | undefined)?.kind;
-          lastIndexByKind.set(typeof kind === 'string' ? kind : '', index);
-        });
-        const kept = new Set(lastIndexByKind.values());
-        appended = unplacedBlocks.filter((_, index) => kept.has(index));
-        unplaced = unplacedBlocks.length - appended.length;
-      }
-      const appendedFences = appended
-        .map((b) => serializeBlockFence(b.block as never))
-        .join('\n\n');
-      const composed = appendedFences ? `${withPlaced.trimEnd()}\n\n${appendedFences}` : withPlaced;
-      const fixed = truncateCopilotReply(composed);
-      const truncated = fixed !== composed;
-      const blocksReceipt =
-        readyBlocks.length > 0 || dropped > 0
-          ? { placed: placedRefs.size, appended: appended.length, dropped, unplaced }
-          : undefined;
+      const { text: composed, blocksReceipt } = prepareReplyText(correction.reply);
+      const disclosed = applyProposalDisclosure(composed, disclosure);
+      const fixed = truncateCopilotReply(disclosed, COPILOT_REPLY_CHAR_LIMIT, context.retainedTail);
+      const truncated = fixed !== disclosed;
       if (
         traceVersion !== startVersion ||
         digestTrace(trace) !== startTraceSha ||
         trace.some((entry) => entry.status === 'in_flight')
       ) {
-        return publishUnsealed(terminalText, 'trace_changed');
+        return publishUnsealed(terminalText, 'trace_changed', context);
       }
       const primaryView = presented.primaryView;
       const receipt: CopilotReplyFinalizationReceipt = {
@@ -461,7 +413,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         accepted: true,
       };
     } catch {
-      return publishUnsealed(terminalText, 'finalization_error');
+      return publishUnsealed(terminalText, 'finalization_error', context);
     }
   }
 
@@ -482,13 +434,88 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     traceVersion += 1;
   }
 
+  function prepareReplyText(text: string) {
+    // YUK-1548 — only compose_block may mint tlp-block fences. Neutralise
+    // hand-written ones before substitution (render as inert code).
+    const withDisclosure = text.replace(
+      /^([^\S\n]*(?:`{3,}|~{3,})[^\S\n]*)tlp-block\b[^\n]*$/gim,
+      '$1text',
+    );
+    // YUK-1548 §5 — resolve `![alt](block:<ref>)` placements against the
+    // successful root compose_block calls bound to this trace, substitute
+    // canonical tlp-block fences, and append never-placed blocks in order.
+    const readyBlocks = trace
+      .filter(
+        (entry) =>
+          entry.root_call &&
+          entry.status === 'succeeded' &&
+          entry.domain_executed === true &&
+          domainToolName(entry.tool_name) === 'compose_block',
+      )
+      .flatMap((entry) => {
+        const output = entry.domain_output as
+          | { status?: string; ref?: string; block?: unknown }
+          | undefined;
+        return output?.status === 'ready' && typeof output.ref === 'string'
+          ? [{ ref: output.ref, block: output.block }]
+          : [];
+      });
+    const blocksByRef = new Map(readyBlocks.map((b) => [b.ref, b.block]));
+    const placedRefs = new Set<string>();
+    let dropped = 0;
+    const withPlaced = withDisclosure.replace(BLOCK_PLACE_PATTERN, (_match, _alt, ref: string) => {
+      if (!blocksByRef.has(ref)) {
+        dropped += 1;
+        return '';
+      }
+      placedRefs.add(ref);
+      return `\n\n${serializeBlockFence(blocksByRef.get(ref) as never)}\n\n`;
+    });
+    // Superseded compose drafts never reach the learner: once the reply
+    // places at least one block, every other ready block is dropped; with no
+    // placement at all, only the last ready block per kind is appended. The
+    // rest are recorded as `unplaced` in the receipt.
+    const unplacedBlocks = readyBlocks.filter((b) => !placedRefs.has(b.ref));
+    let appended: typeof unplacedBlocks;
+    let unplaced: number;
+    if (placedRefs.size > 0) {
+      appended = [];
+      unplaced = unplacedBlocks.length;
+    } else {
+      const lastIndexByKind = new Map<string, number>();
+      unplacedBlocks.forEach((b, index) => {
+        const kind = (b.block as { kind?: unknown } | undefined)?.kind;
+        lastIndexByKind.set(typeof kind === 'string' ? kind : '', index);
+      });
+      const kept = new Set(lastIndexByKind.values());
+      appended = unplacedBlocks.filter((_, index) => kept.has(index));
+      unplaced = unplacedBlocks.length - appended.length;
+    }
+    const appendedFences = appended.map((b) => serializeBlockFence(b.block as never)).join('\n\n');
+    const composed = appendedFences ? `${withPlaced.trimEnd()}\n\n${appendedFences}` : withPlaced;
+    const blocksReceipt =
+      readyBlocks.length > 0 || dropped > 0
+        ? { placed: placedRefs.size, appended: appended.length, dropped, unplaced }
+        : undefined;
+    return { text: composed, blocksReceipt };
+  }
+
   function publishUnsealed(
     candidate: string,
     reason: NonNullable<CopilotReplyFinalizationReceipt['unsealed_reason']>,
+    context: { streamedText?: string; retainedTail?: string },
   ): CopilotReplyFinalizationResult {
     const disclosure = proposalDisclosure(trace);
-    const body = stripCopilotInternalComments(candidate) || FINALIZATION_FAILURE_REPLY;
-    const replyText = truncateCopilotReply(applyProposalDisclosure(body, disclosure));
+    const body =
+      stripCopilotInternalComments(candidate) ||
+      stripCopilotInternalComments(context.streamedText ?? '') ||
+      FINALIZATION_FAILURE_REPLY;
+    const prepared = prepareReplyText(body);
+    const replyText = truncateCopilotReply(
+      applyProposalDisclosure(prepared.text, disclosure),
+      COPILOT_REPLY_CHAR_LIMIT,
+      context.retainedTail,
+    );
     const traceSha = digestTrace(trace);
     return {
       replyText,
@@ -507,6 +534,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         correction: 'normal',
         proposal_disclosure: disclosure ? 'server_composed' : 'none',
         primary_view: 'absent',
+        ...(prepared.blocksReceipt ? { blocks: prepared.blocksReceipt } : {}),
       },
     };
   }

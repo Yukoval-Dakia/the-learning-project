@@ -16,7 +16,7 @@ import type { RunTaskResult } from '@/ai/task-result';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { PiAfterToolCall } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
-import { recordAiTaskFinalizationFailure } from '@/kernel/records/ai-attempt-facts';
+import { recordAiTaskReplyUnsealed } from '@/kernel/records/ai-attempt-facts';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   resolveDomainToolNames,
@@ -571,8 +571,10 @@ export function createCopilotExecutionOwner(
         ).catch(() => undefined);
       },
     };
+    let streamedProse = '';
     const prose = createCopilotProseStream((text) => {
       if (policy.cancellation.signal.aborted || lifecycleAbortController.signal.aborted) return;
+      streamedProse += text;
       void emitActivity(policy, { kind: 'prose_delta', text });
     });
     let retainSdkSession = false;
@@ -656,10 +658,17 @@ export function createCopilotExecutionOwner(
           const finalized = await finalizer.finalizeTerminal(
             closureText ?? (partial ? result.text : terminalText),
             closureText === undefined && partial ? result.providerFailure : undefined,
+            {
+              streamedText: streamedProse,
+              retainedTail:
+                sealedClosure && planned
+                  ? renderNoProgressClosure(sealedClosure, planned.fallback)
+                  : undefined,
+            },
           );
           if (finalized.receipt.assurance === 'unsealed') {
             try {
-              await recordAiTaskFinalizationFailure(
+              await recordAiTaskReplyUnsealed(
                 db,
                 result.task_run_id,
                 finalized.receipt.unsealed_reason ?? 'finalization_error',
@@ -670,7 +679,7 @@ export function createCopilotExecutionOwner(
               });
             }
           }
-          reportOutcome(finalized.receipt.assurance === 'unsealed' ? 'rejected' : 'accepted');
+          reportOutcome('accepted');
           return finalized;
         },
       );

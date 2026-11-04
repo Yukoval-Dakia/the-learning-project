@@ -30,7 +30,6 @@ import {
   readCopilotPublicProse,
 } from './public-prose';
 import {
-  COPILOT_REPLY_CHAR_LIMIT,
   type CopilotReplyFinalizationReceipt,
   type PreparedCopilotReply,
   sealCommittedPresentationReply,
@@ -218,8 +217,8 @@ export async function writeCopilotReply(
               }),
         }
       : undefined;
-  // With no published text, retain the finalizer's original failure disclosure
-  // and matching receipt. There is no public prose to replace or re-sign.
+  // Unsealed replies already reconcile the streamed text with the finalizer.
+  // Keep the matching receipt rather than restoring an older public snapshot.
   const retainEmptyFinalizedReply =
     (publicProse?.text.length === 0 || params.replyFinalization?.assurance === 'unsealed') &&
     params.preparedReply?.text === params.replyText &&
@@ -249,12 +248,7 @@ export async function writeCopilotReply(
   const receipt = receiptMatches ? params.replyFinalization : undefined;
   const sealed = sealCommittedPresentationReply(prepared, receipt);
   const cleanedReply = sealed.preparedReply.text;
-  if (
-    publicProse &&
-    sealed.receipt?.assurance === 'unsealed' &&
-    (sealed.receipt.unsealed_reason === 'reply_truncated' ||
-      publicProse.text.length > COPILOT_REPLY_CHAR_LIMIT)
-  ) {
+  if (publicProse && sealed.receipt?.assurance === 'unsealed' && cleanedReply.length > 0) {
     publicProse.text = cleanedReply;
   }
   const primaryView = receipt ? sealed.preparedReply.primaryView : undefined;

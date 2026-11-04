@@ -4,7 +4,7 @@ import { knowledge } from '@/db/schema';
 
 const referenceKey = /^(?:id|refs?)$|(?:_ids?|_refs?)$|(?:Id|Ids)$/;
 const referenceValue =
-  /^(?:[a-z0-9_-]+:[a-z0-9_-]+:[a-z0-9_:-]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+  /^(?:[a-z][a-z0-9_-]*:[a-z0-9_-]+:[a-z0-9_:-]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
