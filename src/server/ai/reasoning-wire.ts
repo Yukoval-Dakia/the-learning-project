@@ -52,9 +52,11 @@ export function reasoningModelView<T extends ReasoningWireModel>(
   effortOption: string | undefined,
 ): T {
   const map = model.thinkingLevelMap;
-  if (map === undefined && reasoning === undefined) return model;
   if (reasoning === undefined && effortOption === undefined) {
     // Unconfigured run — identical to main: no reasoning field on the wire.
+    // `off: null` is required even when the lane has no map at all (toggle
+    // lanes carry no thinkingLevelMap): pi's `?.off !== null` check emits the
+    // disabled shape unless `off` is explicitly null.
     return { ...model, thinkingLevelMap: { ...map, off: null } };
   }
   if (reasoning?.applied === 'off') {
