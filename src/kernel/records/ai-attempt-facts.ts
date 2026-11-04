@@ -104,11 +104,11 @@ async function insertCostLedger(
 }
 
 /**
- * An ai_task_runs row that is a task's real failure outcome. Three kinds of row ride
- * on status='failure' without being one: error_retried (a later attempt carries the
+ * An ai_task_runs row that is a task's real failure outcome. Some rows ride
+ * on legacy status='failure' without being one: error_retried (a later attempt carries the
  * outcome), reconciled_stuck (sweeper convergence after the writer vanished), and a
  * help attempt whose sealed usage_json.help_latency.terminal is 'cancelled' (caller
- * stop or lifecycle abort). Timeouts stay failures. Task kinds without a help-latency
+ * stop or lifecycle abort), plus a delivered reply_unsealed. Timeouts stay failures. Task kinds without a help-latency
  * seal write cancellation as plain 'error' and cannot be told apart here.
  */
 export function isTaskFailureOutcome(
@@ -119,7 +119,23 @@ export function isTaskFailureOutcome(
   return sql`(${status} = 'failure'
     and ${finishReason} is distinct from 'error_retried'
     and ${finishReason} is distinct from 'reconciled_stuck'
+    and ${finishReason} is distinct from 'reply_unsealed'
     and (${usageJson} -> 'help_latency' ->> 'terminal') is distinct from 'cancelled')`;
+}
+
+/** Publication can succeed even when closing the execution receipt failed. Keep paid usage intact. */
+export async function recordAiTaskReplyUnsealed(
+  db: DbLike,
+  taskRunId: string,
+  reason: string,
+): Promise<void> {
+  await db
+    .update(ai_task_runs)
+    .set({
+      finish_reason: 'reply_unsealed',
+      error_message: `Reply published with an unsealed receipt: ${reason}`,
+    })
+    .where(and(eq(ai_task_runs.id, taskRunId), eq(ai_task_runs.status, 'success')));
 }
 
 export interface AiTaskRunFinishEntry {

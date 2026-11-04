@@ -1,7 +1,7 @@
 // 结算与撤回重放 owner 的 manifest 片段，由根 `manifest.ts` 组合。
 import { API_ERROR_RESPONSES } from '@/kernel/http-contracts';
 import type { CapabilityManifest } from '@/kernel/manifest';
-import { AppealResponseSchema, CreateAppealBodySchema } from '../api/contracts';
+import { AppealResponseSchema, CreateAppealBodySchema } from './api/contracts';
 
 export const settlementManifestPart: Omit<CapabilityManifest, 'name' | 'description'> = {
   api: {

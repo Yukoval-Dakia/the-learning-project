@@ -1,3 +1,4 @@
+import { catalogModelCost } from './model-catalog';
 import type { TokenCounts } from './pricing';
 
 /**
@@ -23,7 +24,19 @@ export async function piCatalogCostUsd(
   const { calculateCost } = await import('@earendil-works/pi-ai/models');
   const catalogProvider = provider === 'xiaomi-token-plan' ? 'xiaomi' : provider;
   const model = builtinModels().getModel(catalogProvider, modelId);
-  if (!model) return null;
+  // Preserved ids (e.g. token-plan mimo-v2.5*) are absent from pi's builtin
+  // catalog — price them on the models.dev card, the same source a finished
+  // run's estimate uses.
+  if (!model) {
+    const rates = catalogModelCost(catalogProvider, modelId);
+    if (!rates) return null;
+    const total =
+      tokens.inputTokens * rates.input +
+      tokens.outputTokens * rates.output +
+      (tokens.cacheReadTokens ?? 0) * rates.cache_read +
+      (tokens.cacheCreationTokens ?? 0) * (rates.cache_write ?? 0);
+    return Number.isFinite(total) && total >= 0 ? total / 1_000_000 : null;
+  }
   const cost = calculateCost(model, {
     input: tokens.inputTokens,
     output: tokens.outputTokens,

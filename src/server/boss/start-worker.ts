@@ -1,8 +1,11 @@
+import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
+import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 // Shared by scripts/worker.ts and the in-process RW_WORKER path, so the 23505 guards live once.
 // The process-level unhandledRejection exit stays in scripts/worker.ts.
 
 import type { PgBoss } from 'pg-boss';
 import { capabilities } from '@/capabilities';
+import { installSchedulingCandidateRebuild } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
 import { recoverToolOperationsOnBoot } from '@/kernel/tools/tool-operations';
@@ -14,7 +17,6 @@ import {
   startModelCatalogWatch,
 } from '@/server/ai/model-catalog';
 import { resolveTaskProvider } from '@/server/ai/providers';
-import { installSchedulingCandidateRebuild } from '@/server/assessment/settle';
 import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/client';
 import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
@@ -47,6 +49,7 @@ export async function startBossWorker(
   options: StartBossWorkerOptions = {},
 ): Promise<PgBoss> {
   await initializeLaminarTracing();
+  installSettlementCascadeRevert(orchestrateCascadeRevert);
   installSchedulingCandidateRebuild();
   // Before any consumer. A maintenance marker or a mismatched epoch polls here and does not
   // start boss. A database read failure throws, same as any other boot failure.

@@ -51,7 +51,7 @@ export const item_calibration = pgTable(
     // ── YUK-361 Phase 6 (Task 11, ADR-0043 §4 半数据驱动 b + §7 active-PPI)：
     //    b_anchor / b_calib 分离 + 重标定元数据 ──────────────────────────────
     //
-    // 读 b 的终态优先链（effectiveB helper，src/server/mastery/recalibration.ts）：
+    // 读 b 的终态优先链（effectiveB helper，src/capabilities/practice/settlement/server/recalibration.ts）：
     //   b_post ?? b_anchor ?? b
     // 〔YUK-439 / ADR-0043 2026-10-19 Amendment A2：读链由 b_calib ?? b_anchor ?? b 改为
     //   后验 b_post 优先；b_calib 退出读链。三者皆 logit 尺度同度量。〕
@@ -134,7 +134,7 @@ export const item_calibration = pgTable(
 //   是慢尺度家族层（攒够客观观测才动 b_delta，门控 n≥20 + ≥5 distinct questions）。
 //   慢 ≪ 快 是识别性的硬条件。
 //
-// 写者：src/server/mastery/personalized-difficulty.ts updateFamilyCalibration
+// 写者：src/capabilities/practice/settlement/server/personalized-difficulty.ts updateFamilyCalibration
 //   （仅在客观判分 attempt tx 内 best-effort 调用，见该模块文档）。
 // ─────────────────────────────────────────────────────────────────────────────
 export const item_family_calibration = pgTable(
@@ -191,7 +191,7 @@ export const item_family_calibration = pgTable(
 // 的**列**additive 不 bump）。
 //
 // ─── 写者（单写者契约，step9-invariant-audit.test.ts）──────────────────────────
-// 只由 src/server/mastery/recalibration.ts 的 recordDifficultyCalibrationLabel 写
+// 只由 src/capabilities/practice/settlement/server/recalibration.ts 的 recordDifficultyCalibrationLabel 写
 // （被 submit.ts / paper-submit.ts 的 attempt 路径在 SAVEPOINT 内 best-effort 调用，
 // 同家族 hook 的 tx-abort 隔离纪律——见 hook 文档）。
 // ─────────────────────────────────────────────────────────────────────────────
@@ -240,7 +240,7 @@ export const difficulty_calibration_label = pgTable(
 // 继续由旧 hook 写（settle 路径行为被既有契约 pin），但只有本表喂 b_post。
 //
 // ─── 写者（单写者契约）──────────────────────────────────────────────────────
-// 只由 src/server/mastery/calibration-evidence.ts recordDifficultyCalibrationEvidence
+// 只由 src/capabilities/practice/settlement/server/calibration-evidence.ts recordDifficultyCalibrationEvidence
 // 写（settle 的 attempt tx SAVEPOINT 内 best-effort，同 label hook 纪律）；
 // 结算 revert 按 attempt_event_id 删行（更正跟随有效判分，A4）；标定批只 READS。
 //

@@ -236,8 +236,7 @@ export async function readContractSection(
     const sum = summarizeJudgment(judgment);
     signalNotes = sum.signalNotes;
     if (sum.masterySummary !== null && sum.observed >= MIN_SAMPLE) {
-      const theta = sum.meanTheta === null ? '' : `（θ̂≈${sum.meanTheta.toFixed(1)}）`;
-      masteryMd = `掌握度：${sum.masterySummary}${theta}（n=${sum.observed}）`;
+      masteryMd = `掌握度：${sum.masterySummary}（n=${sum.observed}）`;
     } else {
       masteryMd = '掌握度：样本少，暂不读数';
     }

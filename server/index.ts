@@ -8,6 +8,7 @@ import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
 import { assertProposalKindsOwned } from '@/kernel/manifest';
 import { warnFlipOrder } from '@/kernel/projection-writer-policy';
+import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
 import { resolveApiPort } from '@/server/config/env';
 import { buildHonoApp } from './app';
@@ -118,7 +119,10 @@ async function installPracticeOperationsBeforeServe(): Promise<void> {
 }
 
 async function installSchedulingCandidateRebuildBeforeServe(): Promise<void> {
-  const { installSchedulingCandidateRebuild } = await import('@/server/assessment/settle');
+  const { installSchedulingCandidateRebuild } = await import('@/capabilities/practice/public');
+  // Dynamic: its import chain reads DB_POOL_MAX, which loadApiEnv has to set first.
+  const { orchestrateCascadeRevert } = await import('@/server/revert/cascade-revert');
+  installSettlementCascadeRevert(orchestrateCascadeRevert);
   installSchedulingCandidateRebuild();
 }
 
