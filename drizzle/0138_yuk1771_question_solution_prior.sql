@@ -3,7 +3,6 @@ CREATE TABLE "question_solution_prior" (
 	"part_id" text NOT NULL,
 	"prior_version" text NOT NULL,
 	"prior" jsonb NOT NULL,
-	"single_solver" boolean NOT NULL,
 	"origin" text NOT NULL,
 	"task_run_ids" jsonb NOT NULL,
 	"created_at" timestamp with time zone NOT NULL,

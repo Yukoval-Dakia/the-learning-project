@@ -1,5 +1,5 @@
 {
-  "id": "0b7f80eb-ae9b-451d-bb7b-944a5fc307f0",
+  "id": "b4fb0ef7-e2c1-4a17-9a44-edd1124711a9",
   "prevId": "328ef391-1c39-4c6a-984e-d9e88b41ef67",
   "version": "7",
   "dialect": "postgresql",
@@ -12174,12 +12174,6 @@
         "prior": {
           "name": "prior",
           "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "single_solver": {
-          "name": "single_solver",
-          "type": "boolean",
           "primaryKey": false,
           "notNull": true
         },

@@ -50,6 +50,7 @@ import {
   type SourceCrosscheckResult,
   type UnitSolveVerdict,
   runDualSolve,
+  runSolutionPriorPass,
   runSourceCrosscheck,
 } from './solve';
 
@@ -301,9 +302,6 @@ export async function runQuestionAdmission(
       runTask,
       subjectProfile: options.subjectProfile,
       solver2: options.solver2 ?? null,
-      ...(options.knowledgeCandidates != null
-        ? { knowledgeCandidates: options.knowledgeCandidates }
-        : {}),
     });
     if (!outcome.ok) {
       // infra / receipt 密封失败 —— 如实 pending，不伪判、不铸键；已付费的
@@ -621,6 +619,18 @@ export async function runQuestionAdmission(
       );
     }
   }
+  const settledKeys = new Map<string, AdmissionKey>();
+  for (const [unitId, verdict] of solve.verdicts) {
+    if (verdict.status === 'agreed') settledKeys.set(unitId, verdict.key);
+  }
+  const prior = await runSolutionPriorPass(options.db, definition, settledKeys, {
+    runTask,
+    ...(options.subjectProfile != null ? { subjectProfile: options.subjectProfile } : {}),
+    ...(options.knowledgeCandidates != null
+      ? { knowledgeCandidates: options.knowledgeCandidates }
+      : {}),
+  });
+  if (prior.receipt != null) evidenceTaskRuns.push(prior.receipt);
   const allAdmitted = definition.units.every((unit) => unitResult(unit).status === 'admitted');
   const result = finalize(
     definition,
@@ -636,9 +646,8 @@ export async function runQuestionAdmission(
       resolved: resolvedContract,
     },
   );
-  return solve.solution_prior != null
-    ? { ...result, solution_prior: solve.solution_prior }
-    : result;
+  result.verification.evidence.solution_prior_pass = prior.outcome;
+  return prior.record != null ? { ...result, solution_prior: prior.record } : result;
 }
 
 function finalize(

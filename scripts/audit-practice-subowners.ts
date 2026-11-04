@@ -219,6 +219,23 @@ function sortPairs(pairs: Iterable<string>): string[] {
   });
 }
 
+// The question solution prior reveals the solution path. Tools, routes and UI reach
+// learners, so none may touch it directly; a learner-facing read must gate on the attempt.
+const SOLUTION_PRIOR_RE =
+  /readSolutionPriorForServer|question_solution_prior|admission\/solution-prior/;
+const LEARNER_SURFACE_RE = /(?:^|\/)(?:tools|api|ui)\//;
+
+export function scanSolutionPriorExposure(projectRoot: string): string[] {
+  const root = resolve(projectRoot, 'src/capabilities');
+  if (!existsSync(root)) return [];
+  const files: string[] = [];
+  walk(root, files);
+  return files
+    .map((file) => relative(projectRoot, file).split(sep).join('/'))
+    .filter((path) => LEARNER_SURFACE_RE.test(path))
+    .filter((path) => SOLUTION_PRIOR_RE.test(readFileSync(resolve(projectRoot, path), 'utf8')));
+}
+
 export function main(argv = process.argv.slice(2), projectRoot = process.cwd()): void {
   const { edges, publicOnlyViolations } = scanPracticeSubowners(projectRoot);
   const baselineFile = resolve(projectRoot, BASELINE_PATH);
@@ -260,6 +277,9 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
   }
   for (const violation of publicOnlyViolations) {
     failures.push(`sub-owner entered outside its public.ts: ${violation}`);
+  }
+  for (const path of scanSolutionPriorExposure(projectRoot)) {
+    failures.push(`learner-reachable path touches the solution prior: ${path}`);
   }
   const fileEdges = [...edges.values()].reduce((sum, list) => sum + list.length, 0);
   const upward = current.filter((pair) => {

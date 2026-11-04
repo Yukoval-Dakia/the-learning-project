@@ -41,6 +41,7 @@ import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
+  QuestionAdmissionPriorInput,
   QuestionAdmissionSolveInput,
   type QuestionAdmissionSolveInputT,
   type QuestionAdmissionSolveOutputT,
@@ -105,8 +106,6 @@ export interface DualSolveResult {
       typical_wrong: { item_ids?: string[]; text?: string; reason_md?: string }[];
     }
   >;
-  /** Merged solution-method prior of both blind solves; null when neither gave a usable one. */
-  solution_prior: SolutionPriorRecordT | null;
 }
 
 /** 部分失败不丢已付费收据：ok:false 时 receipts 仍带上已完成的 solve。 */
@@ -776,27 +775,18 @@ export async function runDualSolve(
     subjectProfile?: SubjectProfile;
     /** OPEN owner decision：异源与否由配置决定（默认同一配置模型、独立上下文）。 */
     solver2?: { provider?: Provider; model?: string } | null;
-    /** Knowledge points the prior may link prerequisites to (names + ids only). */
-    knowledgeCandidates?: readonly KnowledgeCandidate[];
   },
 ): Promise<DualSolveOutcome> {
   const parts = solverParts(definition);
-  const knowledgeCandidates = [...(deps.knowledgeCandidates ?? [])];
   // solve lane 剥离一切印出判分/答案文本（rule_reference.statement_md 只进
   // crosscheck）—— 否则对全 rule_reference 判据的存量题，两次"盲"解都在
   // 看答案，agreement 证明不了任何东西。
   const unitsA = solverUnits(definition, 0, { exposePrinted: false });
-  const payloadA = QuestionAdmissionSolveInput.parse({
-    mode: 'solve',
-    parts,
-    units: unitsA,
-    knowledge_candidates: knowledgeCandidates,
-  });
+  const payloadA = QuestionAdmissionSolveInput.parse({ mode: 'solve', parts, units: unitsA });
   const payloadB = QuestionAdmissionSolveInput.parse({
     mode: 'solve',
     parts,
     units: solverUnits(definition, 1, { exposePrinted: false }),
-    knowledge_candidates: knowledgeCandidates,
   });
 
   const repairBudget = { remaining: 1 };
@@ -965,13 +955,6 @@ export async function runDualSolve(
       solve_a: first.receipt,
       solve_b: second.receipt,
       probe_candidates: probeCandidates,
-      solution_prior: buildSolutionPriorRecord({
-        rawA: first.output.prior,
-        rawB: second.output.prior,
-        partIds: parts.map((part) => part.part_id),
-        candidates: knowledgeCandidates,
-        taskRunIds: [first.receipt.task_run_id, second.receipt.task_run_id],
-      }),
     },
   };
 }
@@ -1066,4 +1049,88 @@ export async function runSourceCrosscheck(
     ),
   );
   return { receipt, per_unit };
+}
+
+export interface SolutionPriorPassResult {
+  record: SolutionPriorRecordT | null;
+  receipt: AdmissionSolveReceipt | null;
+  /** Kept in the admission evidence, so a question without a prior is explained, not silent. */
+  outcome: {
+    status: 'produced' | 'empty' | 'failed';
+    task_run_id: string | null;
+    reason?: string;
+  };
+}
+
+/**
+ * Describe how the question is solved, once its keys are settled. Metadata only: every
+ * failure resolves to no prior, so this can neither change a verdict nor hold a batch.
+ */
+export async function runSolutionPriorPass(
+  db: Db,
+  definition: QuestionAdmissionDefinition,
+  keys: Map<string, AdmissionKey>,
+  deps: {
+    runTask: BoundRunTaskTextFn;
+    subjectProfile?: SubjectProfile;
+    knowledgeCandidates?: readonly KnowledgeCandidate[];
+  },
+): Promise<SolutionPriorPassResult> {
+  const parts = solverParts(definition);
+  let taskRunId: string | null = null;
+  try {
+    const candidates = [...(deps.knowledgeCandidates ?? [])];
+    const payload = QuestionAdmissionPriorInput.parse({
+      mode: 'prior',
+      parts,
+      units: solverUnits(definition, 0, { exposePrinted: false }),
+      answers: [...keys.entries()].map(([unitId, key]) => ({
+        scoring_unit_id: unitId,
+        answer_summary_md: describeKey(key, definition, unitId),
+      })),
+      knowledge_candidates: candidates,
+    });
+    const result = await deps.runTask(QUESTION_ADMISSION_TASK_KIND, payload, {
+      judgeRetryPolicy: 'none',
+      budgetOverride: { maxIterations: 1 },
+      ...(deps.subjectProfile != null ? { subjectProfile: deps.subjectProfile } : {}),
+    });
+    taskRunId = result.task_run_id ?? null;
+    const receipt = await sealTaskRun(db, payload, result, result.structured_output);
+    const raw = (result.structured_output as { prior?: unknown } | null | undefined)?.prior;
+    const record = buildSolutionPriorRecord({
+      raw,
+      partIds: parts.map((part) => part.part_id),
+      candidates,
+      taskRunId: receipt.task_run_id,
+    });
+    return {
+      record,
+      receipt,
+      outcome: {
+        status: record != null ? 'produced' : 'empty',
+        task_run_id: receipt.task_run_id,
+        ...(record == null ? { reason: 'no usable part in the model output' } : {}),
+      },
+    };
+  } catch (error) {
+    const failedRunId =
+      error != null &&
+      typeof error === 'object' &&
+      'taskRunId' in error &&
+      typeof error.taskRunId === 'string'
+        ? error.taskRunId
+        : taskRunId;
+    const reason = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+    console.warn('[question_admission] solution prior pass failed', {
+      group_id: definition.group_id,
+      task_run_id: failedRunId,
+      err: reason,
+    });
+    return {
+      record: null,
+      receipt: null,
+      outcome: { status: 'failed', task_run_id: failedRunId, reason },
+    };
+  }
 }

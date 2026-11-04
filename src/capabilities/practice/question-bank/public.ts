@@ -5,8 +5,8 @@
 
 export { embedQuestionTextForIngest, questionEmbedStamp } from './jobs/embed_backfill';
 export { runQuestionAdmissionChecks } from './server/admission/checks';
-// Server-only: reveals the solution path. Not re-exported by the practice root
-// barrel, so no capability outside practice (Copilot tools included) can wrap it.
+// Server-only: reveals the solution path. The practice root barrel does not re-export it,
+// and audit:practice-subowners rejects it from tools, api and ui paths inside practice.
 export {
   type StoredSolutionPrior,
   readSolutionPriorForServer,

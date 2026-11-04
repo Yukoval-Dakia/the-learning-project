@@ -1,7 +1,7 @@
-// Solution-method prior (YUK-1771): what admission's dual solve learned about HOW a
-// part is solved — methods with key steps, specific error mechanisms, prerequisite
-// knowledge and a difficulty prior. It is metadata, never an admission gate: a missing
-// or malformed prior only means the part has no prior. Frozen per (revision, part).
+// Solution-method prior: HOW a part is solved — methods with key steps, specific error
+// mechanisms, prerequisite knowledge and a difficulty prior, written by one pass after the
+// keys are settled. It is metadata, never an admission gate: a missing or malformed prior
+// only means the part has no prior. Frozen per (revision, part).
 //
 // The prior carries the solution path, so it is private like the reference answer.
 // Server-side consumers read it here; no learner-facing path may expose it before the
@@ -55,7 +55,7 @@ export type SolutionPriorPartT = z.infer<typeof SolutionPriorPart>;
 /** What admission hands to publication (inside the durable paid receipt). */
 export const SolutionPriorRecord = z.strictObject({
   prior_version: z.literal(SOLUTION_PRIOR_VERSION),
-  parts: z.array(z.strictObject({ part: SolutionPriorPart, single_solver: z.boolean() })).min(1),
+  parts: z.array(SolutionPriorPart).min(1),
   task_run_ids: z.array(z.string().min(1)).min(1),
 });
 export type SolutionPriorRecordT = z.infer<typeof SolutionPriorRecord>;
@@ -83,7 +83,7 @@ function salvageList<T>(raw: unknown, schema: z.ZodType<T>, max: number): T[] {
 }
 
 /**
- * One solver's `prior` → validated parts. Invalid items are dropped one by one
+ * The model's `prior` → validated parts. Invalid items are dropped one by one
  * (an over-long pitfall loses that pitfall, not the part); a part survives only with
  * at least one valid method. Knowledge ids outside the offered candidates become null.
  */
@@ -100,19 +100,29 @@ export function salvageSolverPrior(
     const row = record(entry);
     const partId = typeof row?.part_id === 'string' ? row.part_id : null;
     if (row == null || partId == null || !allowed.has(partId) || seen.has(partId)) continue;
-    const methods = salvageList(row.methods, PriorMethod, MAX_METHODS);
+    const methods: SolutionPriorPartT['methods'] = [];
+    // A pitfall's method_idx points into the solver's list, which may lose items here.
+    const methodAt = new Map<number, number>();
+    (Array.isArray(row.methods) ? row.methods : []).forEach((raw, index) => {
+      const parsed = PriorMethod.safeParse(raw);
+      if (!parsed.success || methods.length >= MAX_METHODS) return;
+      methodAt.set(index, methods.push(parsed.data) - 1);
+    });
     if (methods.length === 0) continue;
     seen.add(partId);
-    const pitfalls = salvageList(row.pitfalls, PriorPitfall, MAX_PITFALLS).map((p) =>
-      p.method_idx != null && p.method_idx >= methods.length
-        ? { mechanism_md: p.mechanism_md, trigger_md: p.trigger_md }
-        : p,
-    );
+    const pitfalls = salvageList(row.pitfalls, PriorPitfall, MAX_PITFALLS).map((p) => {
+      const idx = p.method_idx != null ? methodAt.get(p.method_idx) : undefined;
+      return {
+        mechanism_md: p.mechanism_md,
+        trigger_md: p.trigger_md,
+        ...(idx != null ? { method_idx: idx } : {}),
+      };
+    });
     const prerequisites = salvageList(
       Array.isArray(row.prerequisites)
         ? row.prerequisites.map((p) => {
             const r = record(p);
-            return r == null ? p : { ...r, knowledge_id: r.knowledge_id ?? null };
+            return r == null ? p : { ...r, knowledge_id: r.knowledge_id || null };
           })
         : row.prerequisites,
       PriorPrerequisite,
@@ -134,98 +144,17 @@ export function salvageSolverPrior(
   return parts;
 }
 
-const norm = (text: string) => text.normalize('NFKC').replace(/\s+/g, ' ').trim();
-
-/**
- * Deterministic union of the two blind solvers. Both solvers' methods are kept
- * (several workable methods is the point), exact-text duplicates collapse, and each
- * pitfall's method_idx is remapped onto the merged list. Difficulty averages b and
- * folds the solvers' disagreement into the uncertainty:
- *   sd = sqrt((sd_a² + sd_b²)/2 + ((b_a − b_b)/2)²).
- */
-export function mergeSolverPriors(
-  a: SolutionPriorPartT | undefined,
-  b: SolutionPriorPartT | undefined,
-): { part: SolutionPriorPartT; single_solver: boolean } | null {
-  const sources = [a, b].filter((p): p is SolutionPriorPartT => p != null);
-  const first = sources[0];
-  if (first == null) return null;
-  const methods: SolutionPriorPartT['methods'] = [];
-  const methodKey = new Map<string, number>();
-  const remap: Map<number, number>[] = sources.map(() => new Map());
-  sources.forEach((src, s) => {
-    src.methods.forEach((m, i) => {
-      const key = `${norm(m.core_idea_md)}|${norm(m.key_step_md)}`;
-      let at = methodKey.get(key);
-      if (at == null && methods.length < MAX_METHODS) {
-        at = methods.push(m) - 1;
-        methodKey.set(key, at);
-      }
-      if (at != null) remap[s]?.set(i, at);
-    });
-  });
-  const pitfalls: SolutionPriorPartT['pitfalls'] = [];
-  const pitfallKeys = new Set<string>();
-  sources.forEach((src, s) => {
-    for (const p of src.pitfalls) {
-      const key = norm(p.mechanism_md);
-      if (pitfallKeys.has(key) || pitfalls.length >= MAX_PITFALLS) continue;
-      pitfallKeys.add(key);
-      const idx = p.method_idx != null ? remap[s]?.get(p.method_idx) : undefined;
-      pitfalls.push({
-        mechanism_md: p.mechanism_md,
-        trigger_md: p.trigger_md,
-        ...(idx != null ? { method_idx: idx } : {}),
-      });
-    }
-  });
-  const prerequisites: SolutionPriorPartT['prerequisites'] = [];
-  const prereqKeys = new Set<string>();
-  for (const src of sources) {
-    for (const p of src.prerequisites) {
-      const key = p.knowledge_id ?? `name:${norm(p.name_md)}`;
-      if (prereqKeys.has(key) || prerequisites.length >= MAX_PREREQUISITES) continue;
-      prereqKeys.add(key);
-      prerequisites.push(p);
-    }
-  }
-  const da = a?.difficulty ?? null;
-  const db = b?.difficulty ?? null;
-  const difficulty =
-    da != null && db != null
-      ? {
-          b_logit: (da.b_logit + db.b_logit) / 2,
-          sd_logit: Math.min(
-            6,
-            Math.sqrt(
-              (da.sd_logit ** 2 + db.sd_logit ** 2) / 2 + ((da.b_logit - db.b_logit) / 2) ** 2,
-            ),
-          ),
-          basis_md: da.basis_md,
-        }
-      : (da ?? db);
-  return {
-    part: { part_id: first.part_id, methods, pitfalls, prerequisites, difficulty },
-    single_solver: sources.length === 1 || da == null || db == null,
-  };
-}
-
-/** Merge both blind solvers' raw priors into the record publication stores; null if none usable. */
+/** One solver's raw prior → the record publication stores; null if nothing usable. */
 export function buildSolutionPriorRecord(input: {
-  rawA: unknown;
-  rawB: unknown;
+  raw: unknown;
   partIds: readonly string[];
   candidates: readonly KnowledgeCandidate[];
-  taskRunIds: readonly string[];
+  taskRunId: string;
 }): SolutionPriorRecordT | null {
   const ids = new Set(input.candidates.map((c) => c.knowledge_id));
-  const a = new Map(salvageSolverPrior(input.rawA, input.partIds, ids).map((p) => [p.part_id, p]));
-  const b = new Map(salvageSolverPrior(input.rawB, input.partIds, ids).map((p) => [p.part_id, p]));
-  const parts = input.partIds
-    .map((partId) => mergeSolverPriors(a.get(partId), b.get(partId)))
-    .filter((p): p is NonNullable<typeof p> => p != null);
+  const parts = salvageSolverPrior(input.raw, input.partIds, ids);
   if (parts.length === 0) return null;
-  return { prior_version: SOLUTION_PRIOR_VERSION, parts, task_run_ids: [...input.taskRunIds] };
+  return { prior_version: SOLUTION_PRIOR_VERSION, parts, task_run_ids: [input.taskRunId] };
 }
 
 /**
@@ -278,12 +207,11 @@ export async function recordAdmissionSolutionPrior(
   tx: Tx,
   input: { revisionId: string; questionId: string; record: SolutionPriorRecordT; now: Date },
 ): Promise<{ parts_written: number }> {
-  const rows = input.record.parts.map(({ part, single_solver }) => ({
+  const rows = input.record.parts.map((part) => ({
     revision_id: input.revisionId,
     part_id: part.part_id,
     prior_version: input.record.prior_version,
     prior: part as unknown as Record<string, unknown>,
-    single_solver,
     origin: 'admission' as const,
     task_run_ids: input.record.task_run_ids,
     created_at: input.now,
@@ -294,7 +222,7 @@ export async function recordAdmissionSolutionPrior(
     .onConflictDoNothing()
     .returning({ part_id: question_solution_prior.part_id });
   const difficulties = input.record.parts
-    .map(({ part }) => part.difficulty)
+    .map((part) => part.difficulty)
     .filter((d): d is NonNullable<typeof d> => d != null);
   if (difficulties.length > 0) {
     const n = difficulties.length;
@@ -320,7 +248,6 @@ export interface StoredSolutionPrior {
   part_id: string;
   prior_version: string;
   prior: SolutionPriorPartT;
-  single_solver: boolean;
   origin: 'admission' | 'backfill';
   task_run_ids: string[];
 }
@@ -354,7 +281,6 @@ export async function readSolutionPriorForServer(
       part_id: row.part_id,
       prior_version: row.prior_version,
       prior: prior.data,
-      single_solver: row.single_solver,
       origin: row.origin,
       task_run_ids: row.task_run_ids,
     });
