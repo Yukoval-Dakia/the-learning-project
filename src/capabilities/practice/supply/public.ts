@@ -149,6 +149,7 @@ export {
   materializePlacementStartersForGoal,
   resolvePlacementStarterGoalAuthority,
 } from './server/placement-starter-store';
+export { isUnanchoredSupplyPaused } from './server/spend-gate';
 export {
   checkSupplyPlanKnowledgeIds,
   checkSupplyPlanStructure,

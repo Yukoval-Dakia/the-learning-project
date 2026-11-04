@@ -483,7 +483,15 @@ export interface PaperListItem {
   generation_status: string;
   knowledge: Array<{ id: string; name: string }>;
   total_slots: number;
-  session: { id: string; status: string; pos: number; right: number; wrong: number } | null;
+  session: {
+    id: string;
+    status: string;
+    pos: number;
+    /** Includes partly correct answers; subtract `partial` for the fully correct count. */
+    right: number;
+    wrong: number;
+    partial?: number;
+  } | null;
   created_at: string;
 }
 
@@ -562,7 +570,15 @@ export interface PaperDetail {
   title: string;
   generation_status: string;
   intent_source: string;
-  session: { id: string; status: string; pos: number; right: number; wrong: number } | null;
+  session: {
+    id: string;
+    status: string;
+    pos: number;
+    right: number;
+    wrong: number;
+    /** Written after hand-in by the session summary job; null until then, or if none was written. */
+    summary_md?: string | null;
+  } | null;
   sections: Array<{ section_index: number; knowledge_focus_names: string[]; slots: PaperSlot[] }>;
 }
 

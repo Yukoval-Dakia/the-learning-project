@@ -491,7 +491,9 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
   },
   SUPPLY_NIGHTLY_SPEND_CAP_USD: {
     // 夜扫供题链（找题 + 换路 + 核验）每个学习日（Asia/Shanghai）合计 USD 上限；
-    // 0 = 当晚不派任何付费供题（kill switch）。判定点 supply/server/spend-gate.ts。
+    // 0 = 定位之外不再派新的付费供题（kill switch，含 supply_planner、手动 quiz-gen 和
+    // file_bank_gap）；已入队的 job 仍会跑完。
+    // 判定点 supply/server/spend-gate.ts。
     schema: z.number().min(0),
     codeDefault: 1,
     envName: 'SUPPLY_NIGHTLY_SPEND_CAP_USD',

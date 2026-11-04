@@ -25,6 +25,7 @@ import { knowledge } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import { supplyDispatchWebSearchAvailable } from '@/kernel/supply-dispatch-web-search';
+import { isUnanchoredSupplyPaused } from '../supply/public';
 import { QUIZ_GEN_MANUAL_COUNT_WARN, QuizGenTriggerBodySchema } from './quiz-gen-trigger-contracts';
 
 export async function POST(req: Request): Promise<Response> {
@@ -59,6 +60,14 @@ export async function POST(req: Request): Promise<Response> {
         'not_found',
         `knowledge point ${knowledgeId} not found (or archived); nothing was enqueued`,
         404,
+      );
+    }
+
+    if (isUnanchoredSupplyPaused()) {
+      throw new ApiError(
+        'supply_paused',
+        'SUPPLY_NIGHTLY_SPEND_CAP_USD is 0: admission cannot solve what a manual run produces, so paid supply outside placement is paused',
+        409,
       );
     }
 
