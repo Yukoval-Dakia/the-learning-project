@@ -125,8 +125,10 @@ export function projectDurableCopilotMessage(
     subtasks: view.subtasks,
     public_prose: publicProse,
     ...(view.toolCalls && view.toolCalls.length > 0 ? { tool_calls: view.toolCalls } : {}),
-    // The terminal reply carries its own fences; stream blocks never outlive the stream.
-    stream_blocks: terminal ? undefined : view.blocks,
+    // The reply frame already carries its own fences (`done` may arrive later); stream blocks stop
+    // there, or every block would show twice until the run ends.
+    stream_blocks:
+      terminal || typeof view.replyPayload?.reply_md === 'string' ? undefined : view.blocks,
   };
   if (!terminal) return { ...base, text: view.replyText || previous.text, streaming: true };
   const reply = projectCopilotReply(
