@@ -337,11 +337,11 @@ export interface ProposalCardProps {
 }
 
 const MERGE_BLOCKED_WORDS: Readonly<Record<string, string>> = {
-  blocks_missing: '要合并的题块有的已经不在了。',
-  session_mismatch: '这些题块不是同一次录入的。',
+  blocks_missing: '找不到可以合并的题块。',
+  session_mismatch: '这些题块和这条提议说的不是同一次录入。',
   unknown_source: '这些题块不是来自同一份资料，或者找不到原资料。',
   ambiguous_page_index: '读不出这些题块在第几页，没法确认它们前后相连。',
-  pages_not_adjacent: '这些题块不在相邻的页上。',
+  pages_not_adjacent: '这些题块的页码不是按顺序紧挨着的。',
   conflicting_question_number: '后面的题块有自己的题号，看起来是另一道题。',
   missing_continuity: '读不出这些题块是不是连在一起的。',
 };
@@ -587,7 +587,7 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
         </div>
       )}
 
-      {confirmingMerge && !resolved && (
+      {confirmingMerge && !resolved && !mergeBlockedWords && (
         <div className="ib-confirm" role="alert">
           <b>合并后无法撤销</b>
           <span>并进来的题会成为保留那道题的一部分，之后不能再拆开。</span>
