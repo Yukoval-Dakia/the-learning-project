@@ -61,7 +61,6 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   WAVE6_TRIGGER_MARK_WRONG_ENABLED: 'src/capabilities/notes/server/note-refine-triggers.ts',
   WAVE6_TRIGGER_MASTERY_ENABLED: 'src/capabilities/notes/server/note-refine-triggers.ts',
   WAVE6_TRIGGER_DREAMING_ENABLED: 'src/capabilities/notes/server/note-refine-triggers.ts',
-  WAVE6_TRIGGER_VERIFY_ENABLED: 'src/capabilities/notes/server/note-refine-triggers.ts',
   NOTES_MASTERY_SUBSCRIPTION_ENABLED:
     'src/capabilities/notes/server/mastery-progress-subscription.ts',
   AUTO_INTERVENTION_EXPANSION_ENABLED: 'src/capabilities/agency/server/intervention/snapshot.ts',

@@ -37,22 +37,12 @@ export type { NoteListQuery, NoteListResponse } from './server/note-list-read';
 export { loadNoteList } from './server/note-list-read';
 export { loadNotePage } from './server/note-page';
 export { enqueueMasteryNoteRefine, enqueueNoteRefineTrigger } from './server/note-refine-triggers';
-export {
-  type RunNoteVerifyResult,
-  type RunTaskFn,
-  runNoteVerify,
-} from './server/note-verify-durable-operation';
 export type { NoteSummary } from './server/notes-read';
 export {
   interactiveForKnowledge,
   listNotes,
   notesForKnowledge,
 } from './server/notes-read';
-export { buildNoteVerificationControlAdmission } from './server/paid-effect-note-admission';
-export {
-  NOTE_VERIFY_OBLIGATION_FAMILY,
-  countNoteVerifyClaimObligations,
-} from './server/paid-effect-note-obligations';
 export type { NoteUpdateAcceptResult } from './server/proposal-accept-applier';
 export { archiveProposalArtifacts } from './server/proposal-artifacts';
 // Task composition uses the narrow task-public entry, not this barrel.

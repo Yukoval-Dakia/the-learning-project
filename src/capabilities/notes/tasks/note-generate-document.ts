@@ -629,11 +629,6 @@ export function compileNoteGenerateDocument(
   if (declared === 'note_atomic' && sections.some((section) => section.name === 'body')) {
     fail('note_atomic cannot use @body');
   }
-  if (declared === 'note_atomic') {
-    const found = new Set(sections.map((section) => section.name));
-    const missing = SEMANTIC_KINDS.filter((kind) => !found.has(kind));
-    if (missing.length > 0) fail(`note_atomic missing ${missing.join(', ')}`);
-  }
 
   const content: PmNode[] = [];
   for (const section of sections) {

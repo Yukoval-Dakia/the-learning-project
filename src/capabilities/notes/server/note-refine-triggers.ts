@@ -13,8 +13,6 @@ const FLAG_BY_KIND: Record<NoteRefineTriggerKind, string> = {
   mark_wrong: 'WAVE6_TRIGGER_MARK_WRONG_ENABLED',
   mastery_change: 'WAVE6_TRIGGER_MASTERY_ENABLED',
   dreaming: 'WAVE6_TRIGGER_DREAMING_ENABLED',
-  // Opt-in: verify findings add background AI cost only when enabled.
-  verify: 'WAVE6_TRIGGER_VERIFY_ENABLED',
 };
 
 export type NoteRefineBossSend = (
@@ -162,26 +160,6 @@ export const enqueueMarkWrongNoteRefine = (input: {
     ]
       .filter(Boolean)
       .join('\n'),
-    evidenceIds: input.triggerEventId ? [input.triggerEventId] : [],
-  });
-
-// note_verify → refine bridge: needs_review enqueues a verify refine carrying the
-// findings. Opt-in so it does not silently add background cost, and it passes the
-// same gate as every other trigger. Its debounce key is separate from the others.
-export const enqueueVerifyNoteRefine = (input: {
-  db?: Db;
-  artifactId: string;
-  contextMd?: string;
-  triggerEventId?: string;
-  bossSend?: NoteRefineBossSend;
-  env?: NodeJS.ProcessEnv;
-  now?: Date;
-}) =>
-  enqueueNoteRefineTrigger({
-    ...input,
-    kind: 'verify',
-    contextMd:
-      input.contextMd ?? 'Note verification flagged issues; consider a small corrective patch.',
     evidenceIds: input.triggerEventId ? [input.triggerEventId] : [],
   });
 
