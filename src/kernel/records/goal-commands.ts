@@ -155,7 +155,10 @@ export async function createLearnerSteering(
     const genesisEventId = newId();
     await writeEvent(tx, {
       id: genesisEventId,
-      actor_kind: 'user',
+      // GenesisExperimental pins actor_kind to 'system' (the seed is a projection
+      // row, not a user action); the learner provenance rides steering.learner_words
+      // + source_ref (the copilot turn event id).
+      actor_kind: 'system',
       actor_ref: 'steering-record',
       action: 'experimental:genesis',
       subject_kind: 'goal',
