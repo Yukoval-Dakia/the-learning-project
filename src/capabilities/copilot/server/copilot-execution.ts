@@ -370,7 +370,13 @@ export function createCopilotExecutionOwner(
         // frames come from this explicit projection, not the generic mirror.
         if (result.name === 'compose_block' && result.tool_use_id) {
           const output = result.output as
-            | { status?: string; ref?: string; block?: unknown; issues?: { code: string }[] }
+            | {
+                status?: string;
+                ref?: string;
+                kind?: string;
+                block?: unknown;
+                issues?: { code: string }[];
+              }
             | undefined;
           if (result.error_reason === null && output?.status === 'ready' && output.ref) {
             void Promise.resolve(
@@ -384,11 +390,16 @@ export function createCopilotExecutionOwner(
           } else {
             const codes = (output?.issues ?? []).map((issue) => issue.code).join(',');
             const status = output?.status ?? 'invalid';
+            // Large args (svg/html source) stay out of job_events: emit a
+            // digest-sized card, not the raw input.
+            const inputBytes = new TextEncoder().encode(
+              JSON.stringify(result.input ?? {}),
+            ).byteLength;
             void Promise.resolve(
               emitActivity(policy, {
                 kind: 'tool_finished',
                 toolName: 'compose_block',
-                input: (result.input ?? {}) as Record<string, unknown>,
+                input: { block: output?.kind ?? 'block', args_bytes: inputBytes },
                 summary: `${status}${codes ? ` (${codes})` : ''}`,
                 toolUseId: result.tool_use_id,
               }),

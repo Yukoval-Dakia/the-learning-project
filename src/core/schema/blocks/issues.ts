@@ -9,6 +9,7 @@ export const BLOCK_ISSUE_CODES = [
   'shape_invalid',
   'kind_not_allowed_on_surface',
   'too_large',
+  'block_limit_exceeded',
   // Diagram
   'diagram_parse_error',
   'diagram_type_unsupported',
