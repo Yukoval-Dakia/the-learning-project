@@ -1243,7 +1243,7 @@ export async function evaluateSubmissionCore(
       input.policy?.low_confidence_threshold != null &&
       outcome.confidence != null &&
       outcome.confidence < input.policy.low_confidence_threshold;
-    if (lowConfidence && plan.escalation.on_low_confidence === 'human_review') {
+    if (lowConfidence && plan.escalation.on_low_confidence !== 'accept') {
       unitResults.push(
         withUnit(
           pending({

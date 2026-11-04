@@ -20,6 +20,7 @@ import {
   bankRequirementInterpretTaskSpec,
 } from '../question-bank/tasks/bank-search-semantic';
 import { itemPriorLlasaTaskSpec, itemPriorTaskSpec } from '../question-bank/tasks/item-prior';
+import { questionAdmissionAdjudicateTaskSpec } from '../question-bank/tasks/question-admission-adjudicate';
 import { questionAdmissionSolveTaskSpec } from '../question-bank/tasks/question-admission-solve';
 import { quizVerifyTaskSpec } from '../question-bank/tasks/quiz-verify';
 import { variantVerifyTaskSpec } from '../question-bank/tasks/variant-verify';
@@ -63,4 +64,5 @@ export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
   AssessmentRuleJudgeTask: assessmentRuleTaskSpec,
   AssessmentRubricJudgeTask: assessmentRubricTaskSpec,
   QuestionAdmissionSolveTask: questionAdmissionSolveTaskSpec,
+  QuestionAdmissionAdjudicateTask: questionAdmissionAdjudicateTaskSpec,
 });

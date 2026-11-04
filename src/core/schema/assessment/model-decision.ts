@@ -101,3 +101,5 @@ export const AssessmentRubricDecision = z.discriminatedUnion('kind', [
     .strict(),
 ]);
 export type AssessmentRubricDecisionT = z.infer<typeof AssessmentRubricDecision>;
+
+export const ASSESSMENT_RULE_PROMPT_REVISION = 'assessment-rule-prompt-v1' as const;

@@ -9,6 +9,7 @@ import {
   PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNITS,
+  STRUCTURED_QUESTION_ADMISSION_PAID_UNIT,
 } from '@/core/question-admission-policy';
 import { ExecutionPlan } from '@/core/schema/assessment/execution';
 import { Presentation } from '@/core/schema/assessment/presentation';
@@ -122,15 +123,17 @@ export async function claimAdmissionBatch(
   options: { maySend: boolean; historicalTerminal: boolean },
 ) {
   const version = delivery.jobData?.admission_version;
-  // Direct invocations (no jobData) run the current @3 contract; job deliveries
+  // Direct invocations (no jobData) run the current admission contract; job deliveries
   // claim their own version's unit. A job carrying no admission_version is an
-  // old queued @1 delivery — it may reconcile @1 but never initiate @3.
+  // old queued @1 delivery — it may reconcile @1 but never initiate the current contract.
   const unit =
-    delivery.jobData == null || version === 3
+    delivery.jobData == null || version === 4
       ? QUESTION_ADMISSION_PAID_UNIT
-      : version === 2
-        ? PREVIOUS_QUESTION_ADMISSION_PAID_UNIT
-        : LEGACY_QUESTION_ADMISSION_PAID_UNIT;
+      : version === 3
+        ? STRUCTURED_QUESTION_ADMISSION_PAID_UNIT
+        : version === 2
+          ? PREVIOUS_QUESTION_ADMISSION_PAID_UNIT
+          : LEGACY_QUESTION_ADMISSION_PAID_UNIT;
   // An applied verdict from ANY contract version is terminal for this base.
   // the marked @2 -> @3 reopen exception is retired — unresolved
   // rows move through the generic void + successor authorization instead, and
@@ -249,11 +252,11 @@ export async function claimAdmissionBatch(
   // A terminal verification suppresses re-payment.
   if (options.historicalTerminal) return { kind: 'historical' as const, input, identity };
   // Old-version deliveries keep reconciling their own unit's rows above but can
-  // never initiate a paid send under the @3 contract.
+  // never initiate a paid send under the current contract.
   if (unit !== QUESTION_ADMISSION_PAID_UNIT || !options.maySend)
     return { kind: 'stale' as const, input, identity };
   // Legacy receipt fence: a same-base @1/@2 receipt_ready is a paid result still
-  // owed application — a fresh @3 send must hold instead of buying a second
+  // owed application — a fresh current-contract send must hold instead of buying a second
   // result for content the family already paid for. The entity gate stops at
   // sending/unknown, so the parked receipt is locked and checked here, inside
   // the family-locked claim transaction. Every receipt transition goes through
@@ -262,7 +265,7 @@ export async function claimAdmissionBatch(
   // transition: a sending legacy row still hits the entity gate below, and a
   // receipt recorded in a serialized-earlier transaction is already visible.
   // A void + successor authorization exempts gate blockers only; it never
-  // waives a recorded receipt. Held claims admit no @3 intent row at all.
+  // waives a recorded receipt. Held claims admit no current-contract intent row at all.
   const [legacyReceipt] = await tx
     .select({ unit: paid_effect.unit })
     .from(paid_effect)
@@ -272,6 +275,7 @@ export async function claimAdmissionBatch(
         eq(paid_effect.entity_id, effect.entityId),
         eq(paid_effect.entity_revision, effect.entityRevision),
         inArray(paid_effect.unit, [
+          STRUCTURED_QUESTION_ADMISSION_PAID_UNIT,
           LEGACY_QUESTION_ADMISSION_PAID_UNIT,
           PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
         ]),

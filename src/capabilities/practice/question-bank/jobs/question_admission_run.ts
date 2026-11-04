@@ -21,10 +21,12 @@ import {
   settleExpiredPaidEffectSends,
 } from '@/db/paid-effect-store';
 import {
+  event,
   knowledge,
   question,
   question_admission_verification,
   question_revision,
+  question_solution_prior,
   source_asset,
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
@@ -42,6 +44,7 @@ import {
   placementAuthority as placementAuthorityPort,
   readVisibleVectorNearHold,
 } from '../../supply/public';
+import { ADJUDICATION_TASK_KIND } from '../server/admission/adjudicate';
 import { runQuestionAdmissionChecks } from '../server/admission/checks';
 import {
   ADMISSION_FAMILY,
@@ -369,7 +372,16 @@ export async function runAdmissionForQuestion(
   if (batch.kind === 'applied') return simple(batch.status);
   if (batch.kind === 'historical') return simple('already_verified');
   if (batch.kind === 'stale')
-    return simple(batch.staleInput || batch.purpose.state === 'allow' ? 'stale' : 'pending');
+    return batch.staleInput || batch.purpose.state === 'allow'
+      ? simple('stale')
+      : {
+          ...simple('withheld'),
+          per_unit: batch.input.contract.scoring_basis.units.map((unit) => ({
+            scoring_unit_id: unit.scoring_unit_id,
+            status: 'withheld',
+            reason: `source_purpose_${batch.purpose.state}`,
+          })),
+        };
   if (batch.kind === 'held') return simple('pending');
 
   const checkPurpose = async (tx: Tx) =>
@@ -450,16 +462,20 @@ export async function runAdmissionForQuestion(
         try {
           await beforeSend();
           const [kind, input, ctx] = args;
-          if (kind !== QUESTION_ADMISSION_TASK_KIND)
+          if (kind !== QUESTION_ADMISSION_TASK_KIND && kind !== ADJUDICATION_TASK_KIND)
             throw new Error('Question admission task kind differs from its frozen solve contract');
-          const result = await executeTask(QUESTION_ADMISSION_TASK_KIND, input, {
+          const taskCtx = {
             ...ctx,
             lifecycleAbortController: controller,
             beforeProviderQuery: async (started) => {
               await ctx?.beforeProviderQuery?.(started);
               await beforeSend();
             },
-          });
+          } satisfies import('@/server/ai/runner-fn').RunTaskCallCtx;
+          const result =
+            kind === QUESTION_ADMISSION_TASK_KIND
+              ? await executeTask(QUESTION_ADMISSION_TASK_KIND, input, taskCtx)
+              : await executeTask('QuestionAdmissionAdjudicateTask', input, taskCtx);
           if (result.task_run_id) attemptedTaskRunIds.add(result.task_run_id);
           await recordPlacementAdmissionCall(result.task_run_id ?? null, result.cost_usd ?? null);
           return result;
@@ -489,9 +505,21 @@ export async function runAdmissionForQuestion(
         });
         return [];
       });
+      const priorRows = batch.input.revision_id
+        ? await db
+            .select({ part_id: question_solution_prior.part_id })
+            .from(question_solution_prior)
+            .where(eq(question_solution_prior.revision_id, batch.input.revision_id))
+        : [];
+      const priorComplete = batch.input.contract.structure.parts.every((part) =>
+        priorRows.some((row) => row.part_id === part.part_id),
+      );
       const result = await runQuestionAdmission(definitionFromContract(batch.input.contract), {
         db,
         runTask,
+        ...(priorComplete && batch.input.revision_digest
+          ? { priorRevisionDigest: batch.input.revision_digest }
+          : {}),
         knowledgeCandidates,
         subjectProfile: batch.input.subject_profile,
         solver2: batch.input.solver2
@@ -504,18 +532,26 @@ export async function runAdmissionForQuestion(
           : null,
         policyId: batch.input.policy_id,
       });
-      if (result.status === 'pending') {
-        await db.transaction((tx) =>
-          markPaidEffectUnknown(
-            tx,
-            batch.identity,
-            delivery.id,
-            `admission_pending:${result.reason ?? 'unsealed_result'};task_runs=${[...new Set([...attemptedTaskRunIds, ...result.evidence_refs.task_run_ids])].join(',')}`,
-            { fence: batch.fence },
-          ),
-        );
-        return { ...simple('pending'), per_unit: result.per_unit };
+      if (result.status === 'withheld') {
+        const [source] = batch.purpose.sourceId
+          ? await db
+              .select({ action: event.action })
+              .from(event)
+              .where(eq(event.id, batch.purpose.sourceId))
+          : [];
+        result.verification.evidence.repair_delivery =
+          source?.action === 'experimental:question_draft_submit'
+            ? { kind: 'author_repair', source_event_id: batch.purpose.sourceId }
+            : {
+                kind: 'system_closed',
+                reason: 'no_author',
+                source_event_id: batch.purpose.sourceId,
+              };
       }
+      result.evidence_refs.task_run_ids = [
+        ...new Set([...attemptedTaskRunIds, ...result.evidence_refs.task_run_ids]),
+      ];
+      result.verification.evidence.attempt_run_ids = result.evidence_refs.task_run_ids;
       receipt = AdmissionResultReceipt.parse(
         JSON.parse(JSON.stringify({ version: 1, recorded_at: new Date().toISOString(), result })),
       );
