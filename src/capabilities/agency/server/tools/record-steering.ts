@@ -180,19 +180,42 @@ async function resolveScopeKnowledgeIds(
   return resolved;
 }
 
-/** Canonicalize subject ids; unknown ones issue and drop. */
-function resolveSubjectIds(
+/** Canonicalize subject ids. Registered (builtin or hydrated custom) subjects
+ * resolve through the registry; an unregistered name is accepted ONLY when the
+ * knowledge tree positively carries that domain (a live custom subject). A
+ * real unknown — e.g. 「物理」 when the registry only knows `physics` — produces
+ * the typed issue so the model corrects it instead of writing a silently
+ * no-op exclusion (P1-3). No hard-coded alias table; Chinese names resolve
+ * only if the tree itself was built with them as domains. */
+async function resolveSubjectIds(
+  ctx: ToolContext,
   raw: string[],
   issues: RecordSteeringToolOutput['issues'],
   issueKind: 'subject_unknown' | 'exclude_subject_unknown',
-): string[] {
+): Promise<string[]> {
   const out: string[] = [];
+  const liveCache = new Map<string, number>();
   for (const id of raw) {
-    const canonical = resolveKnownSubjectId(id) ?? (normalizeSubjectKey(id) ? id : null);
-    if (canonical === null) {
+    const canonical = resolveKnownSubjectId(id);
+    if (canonical !== null) {
+      if (!out.includes(canonical)) out.push(canonical);
+      continue;
+    }
+    const normalized = normalizeSubjectKey(id);
+    if (normalized === '') {
       issues.push({ kind: issueKind, detail: id });
-    } else if (!out.includes(canonical)) {
-      out.push(canonical);
+      continue;
+    }
+    // Unregistered: honest only if the tree positively carries the domain.
+    let liveCount = liveCache.get(normalized);
+    if (liveCount === undefined) {
+      liveCount = (await resolveSubjectKnowledgeIds(ctx.db, normalized)).length;
+      liveCache.set(normalized, liveCount);
+    }
+    if (liveCount > 0) {
+      if (!out.includes(normalized)) out.push(normalized);
+    } else {
+      issues.push({ kind: issueKind, detail: id });
     }
   }
   return out;
@@ -360,7 +383,7 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
     }
 
     const subjectId = input.subject_id
-      ? (resolveSubjectIds([input.subject_id], issues, 'subject_unknown')[0] ?? null)
+      ? ((await resolveSubjectIds(ctx, [input.subject_id], issues, 'subject_unknown'))[0] ?? null)
       : null;
 
     // Scope: omitted on revise carries over the recorded mapping (ids + text +
@@ -388,7 +411,8 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
             knowledge_ids: [...prior.excluded_knowledge_ids],
           }
         : undefined);
-    const excludedSubjects = resolveSubjectIds(
+    const excludedSubjects = await resolveSubjectIds(
+      ctx,
       excludeInput?.subject_ids ?? [],
       issues,
       'exclude_subject_unknown',
