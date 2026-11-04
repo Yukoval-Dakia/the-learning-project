@@ -14,13 +14,12 @@ Tool 互动型分支当前唯一实例是 `tool_quiz`（见 [`quiz.md`](quiz.md)
 
 ## 0. 实施现状（2026-05-28）
 
-> Note 链路已有 MVP：Learning Intent 可以创建 hub/atomic LearningItem 与配套 artifact，pg-boss `note_generate` 会异步填充 atomic body blocks；`note_verify` 已做二次检查。Wave 6 Living Note v0 已接入 `NoteRefineTask`：小 patch 走 mutator，超过阈值走 `AiProposal(kind='note_update')` 人工审批，编辑中 defer，idle/blur flush，并提供 AI 改动 timeline + undo。
+> Note 链路已有 MVP：Learning Intent 可以创建 hub/atomic LearningItem 与配套 artifact，pg-boss `note_generate` 会异步填充 atomic body blocks；Wave 6 Living Note v0 已接入 `NoteRefineTask`：小 patch 走 mutator，超过阈值走 `AiProposal(kind='note_update')` 人工审批，编辑中 defer，idle/blur flush，并提供 AI 改动 timeline + undo。
 
 | 设计概念 | 现状 |
 |---|---|
 | `artifact` 表 | ✅ schema (`src/db/schema.ts` L1310) 与 write path 已在 Learning Intent / note generation 路径启用；body 存 `body_blocks` (ProseMirror JSON), 而非 markdown 文件 |
 | `NoteGenerateTask` | ✅ registry 已有；pg-boss `note_generate` handler 填 atomic body blocks |
-| `NoteVerifyTask` | ✅ Pass-2 verify 把结果写 `artifact.verification_status` + `verification_summary` |
 | `NoteRefineTask` | ✅ Wave 6 / T-88 P4：输出 patch ops；`≤3 ops && ≤2 new blocks` 自动 apply，其余写 `AiProposal(kind='note_update')` |
 | `note_hub` / `note_atomic` 类型 | ✅ artifact.type 二态 + `parent_artifact_id` 父子链 |
 | Hub ↔ LearningItem hub 1:1 / atomic ↔ LearningItem atomic 1:1 | ✅ Learning Intent accept 时同步 materialize |
@@ -87,7 +86,6 @@ note_hub: 氧化还原反应
 | --- | --- |
 | 在 A 对应知识点错题 | `mark_wrong` 触发 `note_refine`，小修自动 apply，大修进 proposal inbox |
 | mastery 升高 | `mastery_change` 触发精简/复盘向 patch 候选 |
-| `note_verify` 发现需复核 | `verify` 触发 patch 候选 |
 | dreaming 产出 `note_update` 候选 | `dreaming` 触发 patch 候选 |
 
 这是相对静态笔记软件（Notion / Obsidian / Wikipedia）的护城河：内容跟随用户演化。
@@ -117,7 +115,6 @@ UI 上每个 section 显示来源标识（小标签），用户知道哪些还�
 
 ```
 Pass 1  NoteGenerateTask  →  草稿（便宜模型）
-Pass 2  NoteVerifyTask    →  不同 model 跑事实一致性检查
                             标可疑 section
 ```
 

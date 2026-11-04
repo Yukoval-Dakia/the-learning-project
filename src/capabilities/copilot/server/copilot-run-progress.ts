@@ -30,6 +30,9 @@ export function createCopilotRunProgressWriter(deps: {
   let chain: Promise<void> = Promise.resolve();
   let buffered = '';
   let timer: ReturnType<typeof setTimeout> | null = null;
+  // YUK-1548 §5 — latest-wins block_draft slot per tool_use_id; a push replaces
+  // the slot and the slot flushes on the same 150ms timer, after buffered prose.
+  const blockDrafts = new Map<string, Record<string, unknown>>();
 
   const clearFlushTimer = () => {
     if (timer) {
@@ -48,7 +51,6 @@ export function createCopilotRunProgressWriter(deps: {
     if (!buffered) return;
     const text = buffered;
     buffered = '';
-    clearFlushTimer();
     enqueue(() =>
       publishCopilotRunProgressEvent(
         deps.db,
@@ -59,11 +61,21 @@ export function createCopilotRunProgressWriter(deps: {
     );
   };
 
+  const flushBlockDrafts = () => {
+    if (blockDrafts.size === 0) return;
+    const slots = [...blockDrafts.values()];
+    blockDrafts.clear();
+    for (const payload of slots) {
+      enqueue(() => publishCopilotRunProgressEvent(deps.db, deps.runId, { kind: 'step', payload }));
+    }
+  };
+
   const scheduleFlush = () => {
     if (timer) return;
     timer = setTimeout(() => {
       timer = null;
       flushDelta();
+      flushBlockDrafts();
     }, COPILOT_PROGRESS_FLUSH_MS);
     // A pending flush must not pin the worker process after the run settles.
     timer.unref?.();
@@ -77,7 +89,16 @@ export function createCopilotRunProgressWriter(deps: {
         else scheduleFlush();
         return;
       }
+      if (progress.kind === 'block_draft') {
+        const toolUseId = String(progress.payload.tool_use_id ?? '');
+        if (toolUseId) {
+          blockDrafts.set(toolUseId, progress.payload);
+          scheduleFlush();
+        }
+        return;
+      }
       flushDelta();
+      flushBlockDrafts();
       enqueue(() =>
         publishCopilotRunProgressEvent(deps.db, deps.runId, {
           kind: 'step',
@@ -88,6 +109,7 @@ export function createCopilotRunProgressWriter(deps: {
     async drain() {
       clearFlushTimer();
       flushDelta();
+      flushBlockDrafts();
       await chain;
     },
   };

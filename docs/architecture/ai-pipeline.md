@@ -130,7 +130,7 @@ via `composeTaskCatalog` from `src/ai/task-catalog.ts` (which enforces `expected
 | Practice | 27 | AttributionTask, VariantGenTask, JudgeTasks, QuizGenTask, SourcingTask, SupplyPlanTask |
 | Ingestion | 9 | VisionExtractTask, StructureTask, TaggingTask |
 | Knowledge | 2 | FrontierPrerequisiteTask, KnowledgeReviewTask |
-| Notes | 3 | NoteGenerateTask, NoteVerifyTask, NoteRefineTask |
+| Notes | 2 | NoteGenerateTask, NoteRefineTask |
 | Agency | 12 | DreamingTask, CoachTask, MindModelInductionTask, ConjectureProbeAuthorTask |
 | Copilot | 3 | CopilotTask, TeachingTurnTask |
 

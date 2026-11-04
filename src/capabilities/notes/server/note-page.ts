@@ -14,7 +14,7 @@ import {
 import type {
   ArtifactBodyBlocksT,
   ArtifactHistoryEntryT,
-  NoteVerificationResultT,
+  ArtifactVerificationSummaryT,
 } from '@/core/schema/business';
 import { InteractiveArtifactAttrs } from '@/core/schema/business';
 import type { Db } from '@/db/client';
@@ -67,7 +67,7 @@ export interface NotePage {
   generation_status: string;
   generation_failure: NoteGenerationFailure | null;
   verification_status: string;
-  verification_summary: NoteVerificationResultT | null;
+  verification_summary: ArtifactVerificationSummaryT | null;
   // Only for interactive artifacts; a row whose attrs fail validation yields null
   // so the page can degrade instead of 404.
   interactive: { html: string } | null;

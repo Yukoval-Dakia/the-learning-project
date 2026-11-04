@@ -16,7 +16,7 @@ AI 主动产出走两条平行 lane，UI 模式一致：建议列表 + reason �
 | pg-boss worker / schedules | ✅ `scripts/worker.ts` + `src/server/boss/handlers.ts` |
 | Knowledge proposal | ✅ content-driven（cold-start-bridge / image-candidate-accept matcher / agent proposal-tools / `KnowledgeReviewTask`）写 `subject_kind='knowledge'` proposal — Lane D（YUK-482）移除了 `knowledge_propose_nightly`（答错→提议耦合） |
 | Knowledge edge proposal | ✅ `knowledge_maintenance_nightly`（`KnowledgeReviewTask` 经 `propose_knowledge_edge`）与 `frontier_fill_nightly` 写 `subject_kind='knowledge_edge'` proposal；`knowledge_edge_propose_nightly` 已并入 maintenance（YUK-1664） |
-| Note generation + verification | ✅ `note_generate` job 填 atomic artifact sections；`note_verify` job 二次检查并写 artifact verification metadata / `experimental:note_verify` event |
+| Note generation | ✅ `note_generate` job 填 atomic artifact sections；确定性块契约检查在落盘前跑一次，未解决 issue 写 `verification_summary` 已知问题 |
 | Variant generation | ✅ `variant_gen` job 写 draft `question(source='mistake_variant')` |
 | Review session summary | ✅ `session_summary` job |
 | Maintenance lane 6 个 action（archive/merge/etc.） | ❌ 仍是 Phase 2+ |

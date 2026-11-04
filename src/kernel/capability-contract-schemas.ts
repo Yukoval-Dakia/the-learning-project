@@ -6,6 +6,7 @@ export { ActivityRef } from '@/core/schema/activity';
 export {
   ArtifactBodyBlocks,
   ArtifactHistoryEntry,
+  ArtifactVerificationSummary,
   CauseCategory,
   FsrsRating,
   IngestionEntrypoint,

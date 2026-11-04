@@ -21,7 +21,7 @@ import type {
   AgentRef,
   ArtifactBodyBlocks,
   ArtifactHistoryEntry,
-  NoteVerificationResult,
+  ArtifactVerificationSummary,
   ToolState,
 } from '../../core/schema/business';
 import type { SerializedQueuedPatch } from '../../core/schema/note-refine-queue';
@@ -29,7 +29,7 @@ import type { SerializedQueuedPatch } from '../../core/schema/note-refine-queue'
 type AgentRefT = z.infer<typeof AgentRef>;
 type ArtifactBodyBlocksT = z.infer<typeof ArtifactBodyBlocks>;
 type ArtifactHistoryEntryT = z.infer<typeof ArtifactHistoryEntry>;
-type NoteVerificationResultT = z.infer<typeof NoteVerificationResult>;
+type ArtifactVerificationSummaryT = z.infer<typeof ArtifactVerificationSummary>;
 type ToolStateT = z.infer<typeof ToolState>;
 type JsonObject = Record<string, unknown>;
 
@@ -94,7 +94,7 @@ export const artifact = pgTable(
     tool_state: jsonb('tool_state').$type<ToolStateT>(),
     generation_status: text('generation_status').notNull().default('pending'),
     verification_status: text('verification_status').notNull().default('not_required'),
-    verification_summary: jsonb('verification_summary').$type<NoteVerificationResultT>(),
+    verification_summary: jsonb('verification_summary').$type<ArtifactVerificationSummaryT>(),
     generated_by: jsonb('generated_by').$type<AgentRefT>(),
     verified_by: jsonb('verified_by').$type<AgentRefT>(),
     history: jsonb('history').$type<ArtifactHistoryEntryT[]>().notNull().default([]),

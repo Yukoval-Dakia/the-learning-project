@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { showToast } from '@/ui-next/feedback/toast-store';
 import { Button, Expand } from '@/ui-next/public';
 import { type QuestionFullDetail, isDeleted, isDraft } from './library-api';
 import { useLibraryClient } from './library-client';
-import { VERIFY_WORDS, holdWords, verifyReasonWords } from './library-copy';
+import { VERIFY_WORDS, holdWords, verifyOutcomeWords } from './library-copy';
 import { ServingButton } from './ServingButton';
 import { LIBRARY_KEY } from './use-library';
 import { useForceEnable, useRestore, useVerifyDraft, writeErrorText } from './use-question-writes';
@@ -29,7 +30,7 @@ function DraftNotice({ id }: { id: string }) {
     verify.mutate(id, {
       onSuccess: (r) =>
         showToast({
-          message: r.promoted ? '核验通过，已开始出给你' : `没通过：${verifyReasonWords(r.reason)}`,
+          message: r.promoted ? '核验通过，已开始出给你' : verifyOutcomeWords(r.status),
         }),
       onError: (err) => showToast({ message: writeErrorText(err) }),
     });
@@ -41,7 +42,7 @@ function DraftNotice({ id }: { id: string }) {
           showToast({
             message: r.promoted
               ? '已启用。没有核验，这次的理由记下了。'
-              : `没能启用：${verifyReasonWords(r.reason)}`,
+              : verifyOutcomeWords(r.status),
           }),
         onError: (err) => showToast({ message: writeErrorText(err) }),
       },
@@ -53,9 +54,14 @@ function DraftNotice({ id }: { id: string }) {
       <p className="qd-notice-text">
         {words ? `${words.word}。` : ''}
         {check.data?.verify_reason
-          ? `上次没通过的原因：${verifyReasonWords(check.data.verify_reason)}`
+          ? '核验写下的原因：'
           : '核验会检查题目和答案，通过后就开始出给你，可能要等一会儿。'}
       </p>
+      {check.data?.verify_reason ? (
+        <MathMarkdown className="qd-notice-reason" notation={check.data.notation}>
+          {check.data.verify_reason}
+        </MathMarkdown>
+      ) : null}
       <div className="qd-notice-actions">
         <Button size="sm" variant="primary" disabled={busy} onClick={runVerify}>
           {verify.isPending ? '正在核验…' : '核验并启用'}

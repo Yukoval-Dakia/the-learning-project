@@ -32,7 +32,7 @@ export const HUB_SYNC_RECOVERY_CONTINUATION_KEY = 'hub_sync_recovery_continuatio
 
 type RecoveryFloorDeps = {
   runHubRecovery?: () => Promise<HubSyncCycleResult>;
-  recoverHandoffsAndClaims?: () => Promise<void>;
+  recoverHandoffs?: () => Promise<void>;
 };
 
 // singletonKey alone does not de-duplicate on a standard pg-boss queue; it needs
@@ -135,7 +135,7 @@ export function buildHubSyncRecoveryJobHandler(
       errors.push(error);
     }
     try {
-      await (deps.recoverHandoffsAndClaims?.() ?? recoverNoteHandoffsAndClaims(db));
+      await (deps.recoverHandoffs?.() ?? recoverNoteHandoffsAndClaims(db));
     } catch (error) {
       errors.push(error);
     }
