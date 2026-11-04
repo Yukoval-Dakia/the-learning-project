@@ -30,6 +30,7 @@ export const PaperListItemSchema = z.object({
       status: z.string(),
       pos: z.number().int().nonnegative(),
       right: z.number().int().nonnegative(),
+      partial: z.number().int().nonnegative(),
       wrong: z.number().int().nonnegative(),
     })
     .nullable(),
