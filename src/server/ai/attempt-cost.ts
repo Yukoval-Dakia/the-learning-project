@@ -96,15 +96,21 @@ export function resolveAttemptCostTruth(input: {
     input.provider === 'xiaomi-token-plan'
   ) {
     const reported = input.reportedCostUsd;
-    // A preserved model with no catalog rate card yields pi usage.cost = 0 —
-    // that is unknown, not free (hasCard guard, same as custom providers).
+    // A preserved model with no catalog rate card can still carry pi's own
+    // usage.cost — a positive reported amount is estimated card or no card;
+    // only a reported 0 with no card is unknown (placeholder zero, not free).
     // xiaomi-token-plan shares the xiaomi catalog bucket's rate cards.
     const laneProvider =
       catalogProviderFor(input.provider) ??
       (input.provider === 'xiaomi-token-plan' ? catalogProviderFor('xiaomi') : undefined);
     const hasCard =
       laneProvider !== undefined && catalogModelCost(laneProvider, input.model) !== undefined;
-    if (hasCard && reported !== undefined && Number.isFinite(reported) && reported >= 0) {
+    if (
+      reported !== undefined &&
+      Number.isFinite(reported) &&
+      reported >= 0 &&
+      (reported > 0 || hasCard)
+    ) {
       // Only the ChatGPT-login route carries the subscription marker — the
       // same catalog number on key-auth openai / opencode-go / token-plan
       // keeps today's pi-catalog ref so nothing else changes. The spend gate
