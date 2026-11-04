@@ -39,6 +39,7 @@ import {
   material_fsrs_state,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 import { ApiError } from '@/kernel/http';
 import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluation-group-lock';
 import { resolveAbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
@@ -441,6 +442,7 @@ export async function learningSettlement(
       return mine;
     });
   } catch (err) {
+    if (err instanceof HostOperationNotInstalledError) throw err;
     const detail: Record<string, unknown> =
       err instanceof ReplayRequiredError
         ? (err.detail as unknown as Record<string, unknown>)
