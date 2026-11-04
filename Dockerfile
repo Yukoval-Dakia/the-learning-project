@@ -81,6 +81,14 @@ FROM node:24-bookworm-slim AS mermaiddeps
 WORKDIR /mermaidjs
 RUN npm install --omit=dev --no-audit --no-fund mermaid@12.2.0 jsdom@30.1.3
 
+# Laminar SDK for app and worker. It is ESM that calls createRequire(import.meta.url) at load,
+# which is undefined once bundled to CJS, so it stays external. It needs a different `uuid`
+# major than the mermaid overlay, so it lives in its own tree and is linked into node_modules;
+# a plain merge would mix their files. The pin MUST match package.json.
+FROM node:24-bookworm-slim AS lmnrdeps
+WORKDIR /lmnr
+RUN npm install --omit=dev --no-audit --no-fund @lmnr-ai/lmnr@0.8.53
+
 FROM base AS runner
 ENV NODE_ENV=production
 # 文档转换链 + sharp 运行库 —— apt 两层逐字沿旧 runner。
@@ -110,6 +118,9 @@ COPY --from=sqlitedeps /sqlite/node_modules/bindings ./node_modules/bindings
 COPY --from=sqlitedeps /sqlite/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
 # PDFium JS + sibling pdfium.wasm, from the flat external-package stage (YUK-636)
 COPY --from=pdfiumdeps /pdfium/node_modules/@hyzyla/pdfium ./node_modules/@hyzyla/pdfium
+COPY --from=lmnrdeps /lmnr/node_modules ./vendor/lmnr/node_modules
+RUN ln -s ../vendor/lmnr/node_modules/@lmnr-ai ./node_modules/@lmnr-ai
+RUN test -f node_modules/@lmnr-ai/lmnr/package.json
 RUN test -s node_modules/@hyzyla/pdfium/dist/pdfium.wasm
 # Pre-create the worker's named-volume mountpoint with the
 # matching owner; docker-compose's mem0-init also repairs existing root-owned
