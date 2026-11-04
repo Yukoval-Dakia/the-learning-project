@@ -41,6 +41,7 @@ import './notes-m3e.css';
 import { NoteBlockView, blockOutlineLabel, questionDetailHref } from './NoteBlocks';
 import { NoteEditor } from './NoteEditor';
 import { NoteEmpty } from './NoteEmpty';
+import { NoteKnownIssues } from './NoteKnownIssues';
 import {
   type BodyBlock,
   SEMANTIC_KIND_LABEL,
@@ -68,23 +69,6 @@ function ReaderFrame({ children }: { children: ReactNode }) {
       <main className="nt-reader-main un-m3e-bridge">{children}</main>
       <ToastHost />
     </UiNextRoot>
-  );
-}
-
-function VerifyChip({ verified }: { verified: boolean }) {
-  if (verified) {
-    return (
-      <Chip tone="positive">
-        <Check size={12} aria-hidden="true" />
-        已校验
-      </Chip>
-    );
-  }
-  return (
-    <Chip>
-      <Sparkles size={12} aria-hidden="true" />
-      草稿
-    </Chip>
   );
 }
 
@@ -405,7 +389,6 @@ export default function NoteReaderPage({
   // 不空——返回链是导航兜底，不是入口断言）。
   const entryMatch = entryKid ? (note.labels.find((l) => l.id === entryKid) ?? null) : null;
   const entryLabel = entryMatch ?? note.labels[0] ?? null;
-  const verified = note.verification_status === 'verified';
   const shown = mode === 'edit' ? (draft ?? []) : blocks;
 
   return (
@@ -515,7 +498,6 @@ export default function NoteReaderPage({
           <h1 className="nt-doc-title">{note.title}</h1>
           <div className="nt-doc-meta">
             <Chip>{NOTE_TYPE_LABEL[note.type] ?? '笔记'}</Chip>
-            <VerifyChip verified={verified} />
             <span className="nt-doc-version">第 {note.version} 版</span>
           </div>
 
@@ -537,6 +519,8 @@ export default function NoteReaderPage({
               ))}
             </div>
           )}
+
+          {mode === 'read' && <NoteKnownIssues summary={note.verification_summary} />}
 
           {mode === 'edit' && draft ? (
             <NoteEditor
@@ -564,12 +548,6 @@ export default function NoteReaderPage({
           <section className="nt-ctx-sec" aria-labelledby="nt-ctx-props">
             <SectionHead id="nt-ctx-props" title="属性" />
             <dl className="nt-props">
-              <div className="nt-prop">
-                <dt>状态</dt>
-                <dd>
-                  <VerifyChip verified={verified} />
-                </dd>
-              </div>
               <div className="nt-prop">
                 <dt>版本</dt>
                 <dd className="un-num">第 {note.version} 版</dd>
