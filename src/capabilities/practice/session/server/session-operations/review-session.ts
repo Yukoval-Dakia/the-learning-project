@@ -214,6 +214,7 @@ export async function readReviewSession(sessionId: string) {
       type: learning_session.type,
       status: learning_session.status,
       paper_id: learning_session.artifact_id,
+      summary_md: learning_session.summary_md,
       started_at: learning_session.started_at,
       ended_at: learning_session.ended_at,
       updated_at: learning_session.updated_at,

@@ -7,24 +7,37 @@
 // `getFailureAttempts` now comes from the kernel read-model directly (the
 // knowledge public seam only re-exported it); the run function is the platform
 // `BoundRunTaskTextFn` from `@/server/ai/runner-fn`.
+//
+// YUK-1783 (B5): the model's observation is appended verbatim — no clause
+// filtering. Real counts ride the input as numeric_facts/top_causes/top_knowledge
+// counts; numbers in the observation that contradict them are reported as typed
+// issues on the experimental:session_summary event (agent-facing feedback, never
+// an edit, never a failure). Session answers are the canonical learner-answer set
+// — native assessment_attempt anchors plus legacy attempt/review rows — so paper
+// sessions (交卷复盘) summarize the same way as FSRS ones.
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
+import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, question } from '@/db/schema';
-import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
+import { writeEvent } from '@/kernel/events';
+import {
+  nativeAttemptOutcome,
+  resolveVerdictsForAttempts,
+  resolveVerdictsForNativeAttempts,
+} from '@/kernel/read-models/assessment-verdict';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { type SessionSummaryIssue, checkSessionSummaryClaims } from './session-summary-guard';
 
 const NOTABLE_LIMIT = 3;
-const MODEL_STATISTIC_CLAIMS = [
-  /%|百分之/u,
-  /(?:题数|正确率|错误率|准确率|得分率|通过率)(?:为|是|约|仅|只有|达到|[:：=])*[\d零〇一二两三四五六七八九十百千万半几]/u,
-  /(?<![第这那每\d零〇一二两三四五六七八九十百千万半几])[\d零〇一二两三四五六七八九十百千万半几]+(?:[.点]\d+)?(?:题|道(?=题|没做完|未完成|答[对错]|[对错])|成(?=没对|正确|错误|答[对错]|的?题))/u,
-];
+const NATIVE_ATTEMPT_ACTION = 'experimental:assessment_attempt';
+const LEARNER_ANSWER_ACTIONS = ['attempt', 'review', NATIVE_ATTEMPT_ACTION] as const;
+export const SESSION_SUMMARY_EVENT_ACTION = 'experimental:session_summary';
 
 /**
  * deterministic session numbers. Only the effective verdict track is
@@ -74,11 +87,15 @@ export interface RunSessionSummaryResult {
     | 'skipped:no_events'
     | 'skipped:already_summarized';
   summary_md?: string;
+  /** Observation clauses whose numbers contradict the session stats. */
+  issues?: SessionSummaryIssue[];
 }
+
+type AnswerEventRow = typeof event.$inferSelect;
 
 /**
  * Generate and persist a short markdown summary for a finished review session.
- * Idempotent: skips when summary_md is already set. Only review events on this
+ * Idempotent: skips when summary_md is already set. Only learner answers on this
  * session_id are considered.
  */
 export async function runSessionSummary(
@@ -102,31 +119,55 @@ export async function runSessionSummary(
   if (!sess) return { status: 'skipped:no_session' };
   if (sess.summary_md) return { status: 'skipped:already_summarized' };
 
-  const reviewEvents = await db
-    .select({
-      id: event.id,
-      subject_id: event.subject_id,
-      payload: event.payload,
-      created_at: event.created_at,
-    })
+  const answerEvents: AnswerEventRow[] = await db
+    .select()
     .from(event)
     .where(
       and(
         eq(event.session_id, sessionId),
-        eq(event.action, 'review'),
+        inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
         eq(event.subject_kind, 'question'),
       ),
     )
     .orderBy(asc(event.created_at));
 
-  if (reviewEvents.length === 0) {
+  if (answerEvents.length === 0) {
     return { status: 'skipped:no_events' };
   }
 
+  const nativeRows = answerEvents.filter((r) => r.action === NATIVE_ATTEMPT_ACTION);
+  const legacyRows = answerEvents.filter((r) => r.action !== NATIVE_ATTEMPT_ACTION);
+  const [legacyVerdicts, nativeVerdicts] = await Promise.all([
+    resolveVerdictsForAttempts(
+      db,
+      legacyRows.map((r) => r.id),
+    ),
+    resolveVerdictsForNativeAttempts(db, nativeRows),
+  ]);
+
+  // Per-event effective outcome on the verdict track; null = no usable verdict
+  // (unjudged, pending, self-reported, unsupported).
+  const outcomeFor = (r: AnswerEventRow): string | null => {
+    if (r.action === NATIVE_ATTEMPT_ACTION) {
+      const outcome = nativeAttemptOutcome(nativeVerdicts.get(r.id));
+      return outcome === 'success'
+        ? 'correct'
+        : outcome === 'failure'
+          ? 'incorrect'
+          : outcome === 'partial'
+            ? 'partial'
+            : null;
+    }
+    return legacyVerdicts.get(r.id)?.effective?.verdict.coarse_outcome ?? null;
+  };
+
   const knowledgeCounts = new Map<string, number>();
-  for (const r of reviewEvents) {
-    const payload = r.payload as { referenced_knowledge_ids?: string[] };
-    for (const k of payload.referenced_knowledge_ids ?? []) {
+  for (const r of answerEvents) {
+    const knowledgeIds =
+      r.action === NATIVE_ATTEMPT_ACTION
+        ? (nativeVerdicts.get(r.id)?.knowledge_ids ?? [])
+        : ((r.payload as { referenced_knowledge_ids?: string[] }).referenced_knowledge_ids ?? []);
+    for (const k of knowledgeIds) {
       knowledgeCounts.set(k, (knowledgeCounts.get(k) ?? 0) + 1);
     }
   }
@@ -148,23 +189,18 @@ export async function runSessionSummary(
 
   // session stats and causes both come from THIS session's effective
   // verdicts. Historical failure attribution is deliberately not mixed in.
-  const verdictMap = await resolveVerdictsForAttempts(
-    db,
-    reviewEvents.map((r) => r.id),
-  );
   const effectiveOutcomeCounts = new Map<string, number>();
   const sessionFailureIds: string[] = [];
-  for (const [id, verdict] of verdictMap) {
-    const effective = verdict.effective?.verdict;
-    if (!effective?.coarse_outcome) continue;
-    const outcome = effective.coarse_outcome;
+  for (const r of answerEvents) {
+    const outcome = outcomeFor(r);
+    if (!outcome) continue;
     effectiveOutcomeCounts.set(outcome, (effectiveOutcomeCounts.get(outcome) ?? 0) + 1);
-    if (outcome === 'incorrect') sessionFailureIds.push(id);
+    if (outcome === 'incorrect') sessionFailureIds.push(r.id);
   }
 
   // Reuse the shared cause policy (active user_cause wins over agent judge) but
   // only for this session's effective-incorrect reviews.
-  const questionIds = [...new Set(reviewEvents.map((review) => review.subject_id))];
+  const questionIds = [...new Set(answerEvents.map((r) => r.subject_id))];
   const failures = questionIds.length
     ? await getFailureAttempts(db, {
         questionIds,
@@ -181,7 +217,7 @@ export async function runSessionSummary(
     // written only for sessionless manual attempts, never for these reviews.
     const category =
       (failure ? effectiveCauseForFailureAttempt(failure)?.primary_category : null) ??
-      verdictMap.get(id)?.effective?.verdict.cause?.primary_category;
+      legacyVerdicts.get(id)?.effective?.verdict.cause?.primary_category;
     if (category) causeCounts.set(category, (causeCounts.get(category) ?? 0) + 1);
   }
 
@@ -200,16 +236,20 @@ export async function runSessionSummary(
       count,
     }));
 
-  // Session statistics belong to this template; observations may still name
-  // numbered chapters, questions or mathematical concepts.
+  // Session statistics belong to this template; the model may cite the same
+  // numbers verbatim from numeric_facts.
   const numericSummary = renderSessionNumericSummary({
-    total_reviewed: reviewEvents.length,
+    total_reviewed: answerEvents.length,
     effective_outcomes: Object.fromEntries(effectiveOutcomeCounts),
     primary_cause: topCauses[0]?.category_label?.trim() || null,
   });
 
-  const notable = reviewEvents
+  const notable = answerEvents
     .filter((r) => {
+      if (r.action === NATIVE_ATTEMPT_ACTION) {
+        const outcome = outcomeFor(r);
+        return outcome === 'incorrect' || outcome === 'partial';
+      }
       const rating = (r.payload as { fsrs_rating?: string }).fsrs_rating;
       return rating === 'again' || rating === 'hard';
     })
@@ -224,10 +264,15 @@ export async function runSessionSummary(
     for (const q of qrows) qById.set(q.id, { prompt_md: q.prompt_md });
   }
   const notableAttempts = notable.map((r) => {
-    const p = r.payload as { fsrs_rating?: string; user_response_md?: string | null };
+    const p = r.payload as {
+      fsrs_rating?: string;
+      user_response_md?: string | null;
+      response_md?: string | null;
+    };
     return {
       prompt_md: qById.get(r.subject_id)?.prompt_md ?? '(题面缺失)',
-      user_response_md: p.user_response_md ?? null,
+      user_response_md:
+        (r.action === NATIVE_ATTEMPT_ACTION ? p.response_md : p.user_response_md) ?? null,
       fsrs_rating: p.fsrs_rating ?? null,
     };
   });
@@ -237,35 +282,74 @@ export async function runSessionSummary(
       ? Math.round((sess.ended_at.getTime() - sess.started_at.getTime()) / 60_000)
       : null;
 
+  const correctCount = effectiveOutcomeCounts.get('correct') ?? 0;
+  const partialCount =
+    (effectiveOutcomeCounts.get('partial') ?? 0) +
+    (effectiveOutcomeCounts.get('partial_unknown') ?? 0);
+  const incorrectCount = effectiveOutcomeCounts.get('incorrect') ?? 0;
+  const gradedCount = correctCount + partialCount + incorrectCount;
+  const numericFacts = {
+    total_reviewed: answerEvents.length,
+    graded: gradedCount,
+    correct: correctCount,
+    partial: partialCount,
+    incorrect: incorrectCount,
+    correct_pct: gradedCount > 0 ? Math.round((correctCount / gradedCount) * 100) : null,
+    duration_min: durationMin,
+  };
+
   const input = {
     session_id: sessionId,
     duration_min: durationMin,
     numeric_summary: numericSummary,
-    // Counts stay server-side; the model only needs the ranked, labeled causes.
-    top_causes: topCauses.map(({ category, category_label }) => ({ category, category_label })),
-    top_knowledge: topKnowledge.map(({ id }) => ({ id })),
+    // The real session counts; the model may cite them verbatim but must not
+    // compute, round or invent others.
+    numeric_facts: numericFacts,
+    top_causes: topCauses.map(({ category, category_label, count }) => ({
+      category,
+      category_label,
+      count,
+    })),
+    top_knowledge: topKnowledge.map(({ id, count }) => ({ id, count })),
     notable_attempts: notableAttempts,
   };
 
   const result = await runTaskFn('SessionSummaryTask', input, { subjectProfile });
-  // Filter statistical clauses, not numerals in topic names or chapter references.
-  const observation = (result.text.match(/[^，,、。！？!?；;\n]+[，,、。！？!?；;\n]*/gu) ?? [])
-    .filter((clause) => {
-      const normalized = clause.normalize('NFKC').replace(/\s+/gu, '');
-      return !MODEL_STATISTIC_CLAIMS.some((claim) => claim.test(normalized));
-    })
-    .join('')
-    .trim();
+  // The observation is appended verbatim; contradictory numbers become typed
+  // issues on the summary event, never edits.
+  const observation = result.text.trim();
+  const issues = checkSessionSummaryClaims(observation, numericFacts);
   // The fixed numeric prefix is never truncated away by an over-long observation.
   const summaryMd = `${numericSummary}${observation}`.slice(0, 240);
 
+  const status = observation.length > 0 ? 'written' : 'written:numbers_only';
   await db
     .update(learning_session)
     .set({ summary_md: summaryMd, updated_at: new Date() })
     .where(eq(learning_session.id, sessionId));
 
+  // Provenance + contradiction issues ride one event per written summary so a
+  // replay can verify the numbers and later readers can see what was flagged.
+  await writeEvent(db, {
+    id: newId(),
+    session_id: sessionId,
+    actor_kind: 'system',
+    actor_ref: 'session_summary',
+    action: SESSION_SUMMARY_EVENT_ACTION,
+    subject_kind: 'learning_session',
+    subject_id: sessionId,
+    outcome: 'success',
+    payload: {
+      status,
+      task_run_id: result.task_run_id,
+      facts: numericFacts,
+      ...(issues.length > 0 ? { issues } : {}),
+    },
+  });
+
   return {
-    status: observation.length > 0 ? 'written' : 'written:numbers_only',
+    status,
     summary_md: summaryMd,
+    ...(issues.length > 0 ? { issues } : {}),
   };
 }
