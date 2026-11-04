@@ -253,7 +253,9 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
       // in prepareInput rides the same built input, so this payload needs no re-read.
       const { review_plan: reviewPlan } = input as ReturnType<typeof buildCoachInput>;
       const todayPlanDraft = parseCoachOutputSafely(taskResult.text ?? '');
-      const todayPlan = todayPlanDraft ? composeTodayPlan(todayPlanDraft, reviewPlan) : null;
+      const composed = todayPlanDraft ? composeTodayPlan(todayPlanDraft, reviewPlan) : null;
+      const todayPlan = composed?.plan ?? null;
+      const focusIssues = composed?.issues ?? [];
       return {
         run_kind: 'daily',
         // Why these numbers, so a replay can verify them.
@@ -268,7 +270,19 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
           subject_mix: reviewPlan.subject_mix,
         },
         ...(todayPlan
-          ? { today_plan: todayPlan, daily_focus: todayPlan.daily_focus }
+          ? {
+              today_plan: todayPlan,
+              daily_focus: todayPlan.daily_focus,
+              // Number claims contradicting the server plan degrade the scan instead of
+              // being silently deleted from the prose.
+              ...(focusIssues.length > 0
+                ? {
+                    outcome: 'degraded',
+                    plan_issues: focusIssues,
+                    degraded_reason: 'daily_focus_number_mismatch',
+                  }
+                : {}),
+            }
           : {
               // Scan contract (agent-run.ts): execution completed but the domain artifact
               // is invalid → the scan owner stamps the event outcome 'degraded'.
