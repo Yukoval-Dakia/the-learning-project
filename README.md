@@ -70,9 +70,9 @@ NODE_ENV=development LMNR_DEV_TRANSCRIPTS=1 pnpm dev:local
 
 `dev:local` inherits these variables into both processes. Restart an existing dev
 session after changing them. The switch accepts only `1` and requires exactly
-`NODE_ENV=development`; production, test, or an unset environment cannot enable it.
+`NODE_ENV=development`; production, test, or an unset environment cannot enable this switch.
 An empty project key still prevents SDK loading and export. Omit the switch or set
-`LMNR_DEV_TRANSCRIPTS=0` to keep metadata-only tracing.
+`LMNR_DEV_TRANSCRIPTS=0` to turn this switch off.
 
 Separately, `LMNR_TRANSCRIPTS=1` enables transcripts in any environment, for a whitelist
 of tasks whose content holds no learner material. Today that is

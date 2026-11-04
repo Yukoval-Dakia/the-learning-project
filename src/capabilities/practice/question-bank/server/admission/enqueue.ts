@@ -49,9 +49,6 @@ const AdmissionPurposeBinding = z
   .strict();
 const purposeBindingId = (jobId: string) => `question-admission-purpose:${jobId}`;
 
-/** A delivery's permanent source fact is separate from its unchanged paid input.
- * Missing legacy facts are never reconstructed from today's publication or row.
- */
 // System writers that publish pipeline content. `submit_question:*` is deliberately absent:
 // that is how a person or an agent edits a question, and the edit may hold learner material
 // while `question.source` keeps its original value.
@@ -112,6 +109,9 @@ export async function admissionTranscriptAllowed(
   }
 }
 
+/** A delivery's permanent source fact is separate from its unchanged paid input.
+ * Missing legacy facts are never reconstructed from today's publication or row.
+ */
 export async function readAdmissionPurpose(
   tx: Tx,
   deliveryId: string,
