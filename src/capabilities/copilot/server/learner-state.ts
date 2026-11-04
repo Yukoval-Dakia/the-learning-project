@@ -26,6 +26,7 @@ import {
 } from '@/kernel/proposals/adaptive-bias';
 import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
 import { loadLearnerContext } from '@/kernel/read-models/learner-context';
+import { PURPOSE_CHANGE_ACTION } from '@/kernel/read-models/purpose-change';
 import { PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
 
 type DbLike = Db | Tx;
@@ -48,6 +49,8 @@ export interface LearnerStateWatermarks {
   /** Latest goal write (genesis/status/scope) created_at — steering changes
    * refresh the header's steering lines the next turn (YUK-1770). */
   goal_at: string | null;
+  /** Latest source-purpose change: a withdrawn source must leave a cached header next turn. */
+  purpose_change_at: string | null;
 }
 
 /** The already-scoped proposal-feedback digest carried in the header block. */
@@ -123,7 +126,8 @@ export function isLearnerStateHeaderStale(
       cached.watermarks.proposal_decision_at,
       current.watermarks.proposal_decision_at,
     ) ||
-    watermarkAdvanced(cached.watermarks.goal_at, current.watermarks.goal_at)
+    watermarkAdvanced(cached.watermarks.goal_at, current.watermarks.goal_at) ||
+    watermarkAdvanced(cached.watermarks.purpose_change_at, current.watermarks.purpose_change_at)
   );
 }
 
@@ -202,6 +206,7 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
         inArray(event.action, [...PRACTICE_WATERMARK_ACTIONS]),
         and(eq(event.action, 'experimental:dreaming_scan'), eq(event.outcome, 'success')),
         eq(event.action, 'rate'),
+        eq(event.action, PURPOSE_CHANGE_ACTION),
         and(
           inArray(event.action, [...GOAL_WRITE_WATERMARK_ACTIONS]),
           eq(event.subject_kind, 'goal'),
@@ -225,6 +230,7 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
       (latest, action) => maxIso(latest, iso(action)),
       null,
     ),
+    purpose_change_at: iso(PURPOSE_CHANGE_ACTION),
   };
 }
 
@@ -270,6 +276,7 @@ function parseCache(payload: Record<string, unknown>): LearnerStateHeaderCache |
       // Caches written before YUK-1770 lack the key → null → the next read sees
       // goal_at advance and re-assembles once. Intended.
       goal_at: wmField('goal_at'),
+      purpose_change_at: wmField('purpose_change_at'),
     },
   };
 }
