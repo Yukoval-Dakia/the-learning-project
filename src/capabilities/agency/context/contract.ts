@@ -204,8 +204,7 @@ export async function readContractSection(
   const activeGoal =
     goals.find((g) => g.steering === null) ??
     goals.find(
-      (g) =>
-        !(g.steering !== null && g.effective_from !== null && g.effective_from > today),
+      (g) => !(g.steering !== null && g.effective_from !== null && g.effective_from > today),
     ) ??
     null;
   const ordinaryCount = goals.filter(
