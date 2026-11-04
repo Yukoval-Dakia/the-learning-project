@@ -93,7 +93,6 @@ export {
   goal,
   intervention,
   kc_typed_state,
-  knowledge_mastery,
   learner_axis_state,
   mastery_state,
   material_fsrs_state,

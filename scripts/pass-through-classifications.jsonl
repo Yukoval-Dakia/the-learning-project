@@ -601,7 +601,6 @@
 {"file":"src/db/schema.ts","kind":"module","symbol":"judge_run_control","targetModule":"src/db/schema/platform.ts","targetSymbol":"judge_run_control","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"kc_typed_state","targetModule":"src/db/schema/learner-state.ts","targetSymbol":"kc_typed_state","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"knowledge_edge","targetModule":"src/db/schema/knowledge.ts","targetSymbol":"knowledge_edge","class":"stable_contract"}
-{"file":"src/db/schema.ts","kind":"module","symbol":"knowledge_mastery","targetModule":"src/db/schema/learner-state.ts","targetSymbol":"knowledge_mastery","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"knowledge","targetModule":"src/db/schema/knowledge.ts","targetSymbol":"knowledge","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"learner_axis_state","targetModule":"src/db/schema/learner-state.ts","targetSymbol":"learner_axis_state","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"learning_item","targetModule":"src/db/schema/learning.ts","targetSymbol":"learning_item","class":"stable_contract"}

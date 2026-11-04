@@ -1,5 +1,4 @@
-// Learner state: FSRS / mastery / KC state, the knowledge_mastery view,
-// interventions, axis state, goals, and placement starter tables.
+// Learner state: FSRS / mastery / KC state, interventions, axis state, goals, and placement starter tables.
 
 import { sql } from 'drizzle-orm';
 import {
@@ -12,7 +11,6 @@ import {
   integer,
   jsonb,
   pgTable,
-  pgView,
   primaryKey,
   real,
   text,
@@ -55,10 +53,10 @@ export const material_fsrs_state = pgTable(
 // ─────────────────────────────────────────────────────────────────────────────
 // B1-W1 (ADR-0035 决定#2) — mastery_state：诊断维 p(L) 的物化载体。
 //
-// 取代 knowledge_mastery VIEW 作为 p(L) 诊断维的 SoT。YUK-420 起 view 消费端已切：
+// p(L) 诊断维的 SoT。
 // getMasteryProjection（src/kernel/read-models/mastery-projection.ts）是唯一展示/AI 读，投影 = 难度感知
 // PFA p(L)（σ(γ·success + ρ·fail − β)，β=KC 代表性 hard-track item 难度 + ADR-0035
-// 置信带），不再是 view 的占位也不再是 interim σ(θ̂)@b=0。per-knowledge 一行，
+// 置信带）。per-knowledge 一行，
 // subject_kind 固定 'knowledge'（与 material_fsrs_state 的 subject_kind 平行，但语义
 // 正交：FSRS=R 调度轴，这里=p(L) 诊断轴，三轴正交红线 ADR-0035）。
 //
@@ -663,23 +661,3 @@ export const placement_starter_cost_component = pgTable(
     ),
   ],
 );
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Phase 1c.1 Step 1.3 (Lane A) — knowledge_mastery derived view.
-//
-// Per ADR-0012: mastery / last_active_at are derived from events, not stored
-// fields. DDL lives in drizzle/0004_phase1c1_knowledge_mastery_view.sql
-// (drizzle-kit can register the view as `.existing()` but does NOT generate
-// the CREATE VIEW statement). All view columns nullable except knowledge_id
-// (primary correlation) — `mastery` is NULL when no evidence, `evidence_count`
-// is always 0+ via COALESCE in the view SQL, `last_active_at` defaults to
-// knowledge.created_at when no events touch the node.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const knowledge_mastery = pgView('knowledge_mastery', {
-  knowledge_id: text('knowledge_id').notNull(),
-  mastery: real('mastery'),
-  evidence_count: integer('evidence_count').notNull(),
-  last_evidence_at: timestamp('last_evidence_at', { withTimezone: true }),
-  last_active_at: timestamp('last_active_at', { withTimezone: true }).notNull(),
-}).existing();
