@@ -223,7 +223,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown) {
               .safeParse(observation.output);
             const defect =
               issues.success && issues.data.issues?.length
-                ? JSON.stringify(issues.data.issues)
+                ? JSON.stringify([observation.name, issues.data.issues])
                 : null;
             if (defect !== null && defect === priorDefect) noProgress = true;
             priorDefect = defect;
