@@ -70,6 +70,7 @@ const StageReceipt = z.discriminatedUnion('kind', [
     kind: z.literal('waiting'),
     recovery: AdmissionRecovery,
     quota_failures: z.number().int().nonnegative().optional(),
+    inherited_login_wait: z.boolean().optional(),
   }),
   z.object({
     kind: z.literal('failure'),
@@ -109,6 +110,29 @@ async function serializeAdjudication<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
+async function readRouteLoginWait(db: Db, configuration: unknown) {
+  const route = z
+    .object({ task: z.object({ provider: z.string(), model: z.string() }).passthrough() })
+    .safeParse(configuration);
+  if (!route.success) return null;
+  const [latest] = await db.execute<{ receipt: unknown; recorded_at: Date }>(sql`
+    SELECT result_json AS receipt, result_recorded_at AS recorded_at FROM paid_effect
+    WHERE family = ${FAMILY} AND state IN ('receipt_ready', 'applied')
+      AND input_json->>'kind' = 'QuestionAdmissionAdjudicateTask'
+      AND input_json->'configuration'->'task'->>'provider' = ${route.data.task.provider}
+      AND input_json->'configuration'->'task'->>'model' = ${route.data.task.model}
+      AND (result_json->>'kind' = 'result' OR (
+        result_json->>'kind' = 'waiting'
+        AND coalesce((result_json->>'inherited_login_wait')::boolean, false) = false))
+    ORDER BY result_recorded_at DESC, created_at DESC LIMIT 1
+  `);
+  if (!latest) return null;
+  const receipt = StageReceipt.parse(latest.receipt);
+  return receipt.kind === 'waiting' && receipt.recovery.reason === 'login'
+    ? { recovery: receipt.recovery, recordedAt: new Date(latest.recorded_at) }
+    : null;
+}
+
 export function admissionStageRunner(input: {
   db: Db;
   groupId: string;
@@ -129,6 +153,20 @@ export function admissionStageRunner(input: {
         task: getTaskOverride(kind) ?? null,
         override: ctx?.override ?? null,
       };
+      const loginWait =
+        kind === 'QuestionAdmissionAdjudicateTask'
+          ? await readRouteLoginWait(input.db, configuration)
+          : null;
+      const [confirmation] =
+        loginWait && input.recoveryConfirmed
+          ? await input.db.execute<{ confirmed: boolean }>(sql`
+              SELECT created_on > ${loginWait.recordedAt.toISOString()}::timestamptz AS confirmed FROM pgboss.job
+              WHERE id::text = ${input.deliveryId}
+            `)
+          : [];
+      // A bulk recovery delivery created before a failed login probe is not a
+      // fresh confirmation. Only the first probe may refresh that dead token.
+      const loginProbeConfirmed = confirmation?.confirmed === true;
       const history = await input.db
         .select()
         .from(paid_effect)
@@ -204,10 +242,13 @@ export function admissionStageRunner(input: {
         if (!changedConfiguration && receipt.recovery.reason === 'quota')
           quotaFailures = receipt.quota_failures ?? frozen.attempt + 1;
         const confirmed =
-          input.recoveryConfirmed && frozen.recovery_confirmation !== input.deliveryId;
+          input.recoveryConfirmed &&
+          frozen.recovery_confirmation !== input.deliveryId &&
+          (receipt.recovery.reason !== 'login' || !loginWait || loginProbeConfirmed);
         const due =
           receipt.recovery.retry_at != null && Date.parse(receipt.recovery.retry_at) <= Date.now();
-        if (!due && !confirmed && !changedConfiguration)
+        const loginRecovered = receipt.recovery.reason === 'login' && loginWait == null;
+        if (!due && !confirmed && !changedConfiguration && !loginRecovered)
           throw new AdmissionWaiting(receipt.recovery, previous.unit);
         attempt = frozen.attempt + 1;
       }
@@ -267,71 +308,81 @@ export function admissionStageRunner(input: {
           queryStarted = true;
         },
       } satisfies NonNullable<Parameters<BoundRunTaskTextFn>[2]>;
-      try {
-        const result =
-          kind === 'QuestionAdmissionSolveTask'
-            ? await input.execute('QuestionAdmissionSolveTask', payload, stageCtx)
-            : kind === 'QuestionAdmissionAdjudicateTask'
-              ? await input.execute('QuestionAdmissionAdjudicateTask', payload, stageCtx)
-              : (() => {
-                  throw new Error('Unknown admission stage task');
-                })();
-        receipt = StageReceipt.parse({ kind: 'result', result });
-      } catch (error) {
-        const recovery = input.recovery?.(error) ?? existingRecovery(error);
-        const [run] =
-          error instanceof AgentRunError
-            ? await input.db.select().from(ai_task_runs).where(eq(ai_task_runs.id, error.taskRunId))
-            : [];
-        const knownFailure =
-          error instanceof AgentRunError &&
-          (error.apiErrorStatus != null ||
-            (run?.finished_at != null &&
-              (run.usage_json.transport?.send_state === 'not_sent' ||
-                error.subtype === 'error_max_structured_output_retries')));
-        if (recovery) {
-          const parsed = AdmissionRecovery.pick({ reason: true, evidence_ref: true }).parse(
-            recovery,
-          );
-          quotaFailures = parsed.reason === 'quota' ? quotaFailures + 1 : 0;
-          const minutes = [5, 15, 30][quotaFailures - 1] ?? 60;
-          receipt = {
-            kind: 'waiting',
-            quota_failures: quotaFailures,
-            recovery: {
-              ...parsed,
-              retry_at:
-                parsed.reason === 'quota'
-                  ? new Date(Date.now() + minutes * 60_000).toISOString()
-                  : null,
-            },
-          };
-        } else if (knownFailure && error instanceof AgentRunError)
-          receipt = {
-            kind: 'failure',
-            fields: {
-              kind: error.kind,
-              taskRunId: error.taskRunId,
-              subtype: error.subtype,
-              apiErrorStatus: error.apiErrorStatus,
-              errors: error.errors,
-              ...(error.costUsd != null ? { costUsd: error.costUsd } : {}),
-            },
-          };
-        else if (!queryStarted) receipt = { kind: 'not_sent' };
-        else {
-          await input.db.transaction((tx) =>
-            markPaidEffectUnknown(
-              tx,
-              reservation.identity,
-              input.deliveryId,
-              'admission_stage_outcome_unknown',
-              { fence: reservation.fence },
-            ),
-          );
-          throw error;
+      if (loginWait && !loginProbeConfirmed) {
+        receipt = {
+          kind: 'waiting',
+          recovery: loginWait.recovery,
+          inherited_login_wait: true,
+        };
+      } else
+        try {
+          const result =
+            kind === 'QuestionAdmissionSolveTask'
+              ? await input.execute('QuestionAdmissionSolveTask', payload, stageCtx)
+              : kind === 'QuestionAdmissionAdjudicateTask'
+                ? await input.execute('QuestionAdmissionAdjudicateTask', payload, stageCtx)
+                : (() => {
+                    throw new Error('Unknown admission stage task');
+                  })();
+          receipt = StageReceipt.parse({ kind: 'result', result });
+        } catch (error) {
+          const recovery = input.recovery?.(error) ?? existingRecovery(error);
+          const [run] =
+            error instanceof AgentRunError
+              ? await input.db
+                  .select()
+                  .from(ai_task_runs)
+                  .where(eq(ai_task_runs.id, error.taskRunId))
+              : [];
+          const knownFailure =
+            error instanceof AgentRunError &&
+            (error.apiErrorStatus != null ||
+              (run?.finished_at != null &&
+                (run.usage_json.transport?.send_state === 'not_sent' ||
+                  error.subtype === 'error_max_structured_output_retries')));
+          if (recovery) {
+            const parsed = AdmissionRecovery.pick({ reason: true, evidence_ref: true }).parse(
+              recovery,
+            );
+            quotaFailures = parsed.reason === 'quota' ? quotaFailures + 1 : 0;
+            const minutes = [5, 15, 30][quotaFailures - 1] ?? 60;
+            receipt = {
+              kind: 'waiting',
+              quota_failures: quotaFailures,
+              recovery: {
+                ...parsed,
+                retry_at:
+                  parsed.reason === 'quota'
+                    ? new Date(Date.now() + minutes * 60_000).toISOString()
+                    : null,
+              },
+            };
+          } else if (knownFailure && error instanceof AgentRunError)
+            receipt = {
+              kind: 'failure',
+              fields: {
+                kind: error.kind,
+                taskRunId: error.taskRunId,
+                subtype: error.subtype,
+                apiErrorStatus: error.apiErrorStatus,
+                errors: error.errors,
+                ...(error.costUsd != null ? { costUsd: error.costUsd } : {}),
+              },
+            };
+          else if (!queryStarted) receipt = { kind: 'not_sent' };
+          else {
+            await input.db.transaction((tx) =>
+              markPaidEffectUnknown(
+                tx,
+                reservation.identity,
+                input.deliveryId,
+                'admission_stage_outcome_unknown',
+                { fence: reservation.fence },
+              ),
+            );
+            throw error;
+          }
         }
-      }
       await input.db.transaction(async (tx) => {
         await recordPaidEffectResult(tx, reservation.identity, input.deliveryId, receipt, {
           fence: reservation.fence,
