@@ -313,70 +313,8 @@
     }
   }
 
-  /* Markdown in replies and teaching cards. */
-  & .un-cp-md {
-    line-height: var(--un-lh-prose);
-    overflow-wrap: anywhere;
-
-    & :where(p, ul, ol, pre, blockquote, table) + :where(p, ul, ol, pre, blockquote, table) {
-      margin-top: var(--un-sp-3);
-    }
-
-    & :where(ul) {
-      padding-left: 1.2em;
-      list-style: disc;
-    }
-
-    & :where(ol) {
-      padding-left: 1.4em;
-      list-style: decimal;
-    }
-
-    & :where(li + li) {
-      margin-top: var(--un-sp-1);
-    }
-
-    & :where(strong) {
-      font-weight: var(--un-fw-semibold);
-    }
-
-    & :where(h1, h2, h3, h4) {
-      margin-top: var(--un-sp-4);
-      font-weight: var(--un-fw-semibold);
-    }
-
-    & :where(code) {
-      padding: 0 4px;
-      border-radius: 4px;
-      background: var(--un-bg-sunk);
-      font-family: var(--un-font-mono);
-      font-size: 0.9em;
-    }
-
-    & :where(pre) {
-      padding: var(--un-sp-3);
-      overflow-x: auto;
-      border-radius: var(--un-r-1);
-      background: var(--un-bg-sunk);
-    }
-
-    & :where(pre code) {
-      padding: 0;
-      background: none;
-    }
-
-    & :where(a) {
-      color: var(--un-accent-strong);
-      text-decoration: underline;
-      text-underline-offset: 2px;
-    }
-
-    & :where(blockquote) {
-      padding-left: var(--un-sp-3);
-      border-left: 2px solid var(--un-line-strong);
-      color: var(--un-text-2);
-    }
-  }
+  /* Markdown in replies and teaching cards: the shared reading layer (src/ui-next/reading.css,
+     via ConversationMarkdown's un-read). */
 
   /* ── Steps ─────────────────────────────────────────────── */
   & .un-cp-steps {
@@ -1154,8 +1092,9 @@
 [data-ui-next][data-un-m3e="companion-content"] .un-cp-today-focus {
   color: var(--un-md-sys-color-on-surface);
 }
-[data-ui-next][data-un-m3e="companion-content"] .un-cp-reply .katex {
-  letter-spacing: normal;
+[data-ui-next][data-un-m3e="companion-content"] .un-cp-reply {
+  /* Reading rhythm (YUK-1548): M3E body-large sets the size; the line height stays a reading one. */
+  line-height: var(--un-read-lh);
 }
 [data-ui-next][data-un-m3e="companion-content"] .un-cp-bubble {
   background: var(--un-md-sys-color-secondary-container);
