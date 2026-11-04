@@ -17,6 +17,7 @@ import {
   getEffectiveTruths,
   newerEventRow,
 } from '@/kernel/events';
+import { allowedEventIds } from '@/kernel/events/derivation-policy';
 
 import {
   type NativeAttemptVerdict,
@@ -232,6 +233,30 @@ export async function getFailureAttemptsWithReasoningTrace(
   return loadFailureAttempts(db, opts);
 }
 
+/**
+ * Derivation-facing sibling of {@link getFailureAttempts}: the same projection
+ * minus rows the shared consent filter withholds (`eventAllowsDerivationSql` —
+ * restricted payload, withdrawn document consent, or a restricted causal
+ * ancestor). Model-input and derived-data consumers must use this port; the
+ * plain readers stay learner-facing. Chained judge/user_cause rows are checked
+ * the same way, so `analysis_md`/`user_notes`/`reasoning_trace` derived from
+ * restricted content cannot ride along on an allowed attempt.
+ */
+export async function getFailureAttemptsForDerivation(
+  db: DbLike,
+  opts: GetFailureAttemptsOpts = {},
+): Promise<FailureAttempt[]> {
+  return (await loadFailureAttempts(db, opts, false, true)).map((row) => row.failure);
+}
+
+/** Derivation-facing sibling of {@link getFailureAttemptsWithReasoningTrace}. */
+export async function getFailureAttemptsWithReasoningTraceForDerivation(
+  db: DbLike,
+  opts: GetFailureAttemptsOpts = {},
+): Promise<FailureAttemptWithReasoningTrace[]> {
+  return loadFailureAttempts(db, opts, false, true);
+}
+
 /** {@link FailureAttempt} plus the opt-in process-data self-report. */
 export type FailureAttemptWithReasoningTrace = {
   failure: FailureAttempt;
@@ -258,8 +283,16 @@ async function filterActiveFailureRows(
   db: DbLike,
   rows: EventRow[],
   currentOnly = false,
+  derivationOnly = false,
 ): Promise<EventRow[]> {
-  const active = await filterActiveRows(db, rows);
+  let active = await filterActiveRows(db, rows);
+  if (derivationOnly && active.length > 0) {
+    const allowed = await allowedEventIds(
+      db,
+      active.map((row) => row.id),
+    );
+    active = active.filter((row) => allowed.has(row.id));
+  }
   const native = await resolveVerdictsForNativeAttempts(db, active);
   const legacy = await resolveVerdictsForAttempts(
     db,
@@ -280,6 +313,7 @@ async function loadFailureAttempts(
   db: DbLike,
   opts: GetFailureAttemptsOpts = {},
   currentOnly = false,
+  derivationOnly = false,
 ): Promise<FailureAttemptWithReasoningTrace[]> {
   const unbounded = opts.limit === null;
   const limit = opts.limit ?? DEFAULT_FAILURE_ATTEMPTS_LIMIT;
@@ -333,7 +367,7 @@ async function loadFailureAttempts(
         partitionBatchLimit,
       );
       if (attemptRows.length === 0) break;
-      const filtered = await filterActiveFailureRows(db, attemptRows, currentOnly);
+      const filtered = await filterActiveFailureRows(db, attemptRows, currentOnly, derivationOnly);
       for (const row of filtered) {
         const rows = activeRowsByQuestion.get(row.subject_id) ?? [];
         if (rows.length >= perQuestionLimit) continue;
@@ -376,7 +410,9 @@ async function loadFailureAttempts(
         .orderBy(...orderBy)
         .limit(batchSize);
       if (rows.length === 0) break;
-      activeAttemptRows.push(...(await filterActiveFailureRows(db, rows, currentOnly)));
+      activeAttemptRows.push(
+        ...(await filterActiveFailureRows(db, rows, currentOnly, derivationOnly)),
+      );
       if ((!unbounded && activeAttemptRows.length >= limit) || rows.length < batchSize) break;
       cursor = rows.at(-1);
     }
@@ -400,6 +436,19 @@ async function loadFailureAttempts(
       ),
     );
   const effectiveChainedRows = await resolveEffectiveActiveRows(db, chainedRows);
+  // A restricted attempt is dropped before this point, so its cause rows are
+  // never fetched. A cause can still be restricted on its own — a
+  // derivation-limited payload, a lineage hitting withdrawn consent, or a
+  // correction whose replacement is restricted — so derivation reads check the
+  // raw receipts and the chain-resolved rows alike.
+  const chainedAllowed = derivationOnly
+    ? await allowedEventIds(db, [
+        ...new Set([
+          ...chainedRows.map((row) => row.id),
+          ...[...effectiveChainedRows.values()].map((entry) => entry.row.id),
+        ]),
+      ])
+    : null;
   const attemptTruths = await getEffectiveTruths(db, attemptIds);
   const attemptIdSet = new Set(attemptIds);
 
@@ -420,7 +469,7 @@ async function loadFailureAttempts(
   for (const originalRow of chainedRows) {
     const key = anchorKeyFor(originalRow);
     if (key === null) continue;
-    if (originalRow.action === 'judge') {
+    if (originalRow.action === 'judge' && (!chainedAllowed || chainedAllowed.has(originalRow.id))) {
       const prev = originalJudgeRowByAttempt.get(key);
       // Keep the earliest row.
       if (!prev || newerEventRow(prev, originalRow)) {
@@ -429,6 +478,7 @@ async function loadFailureAttempts(
     }
     const effective = effectiveChainedRows.get(originalRow.id);
     if (!effective) continue;
+    if (chainedAllowed && !chainedAllowed.has(effective.row.id)) continue;
     const bucket = effective.row.action === 'judge' ? judgeByAttempt : userCauseByAttempt;
     const existing = bucket.get(key);
     if (!existing || newerEventRow(effective.row, existing.row)) {
@@ -614,6 +664,22 @@ export async function getFailureAttemptWithReasoningTraceById(
   return loadFailureAttemptById(db, attemptEventId);
 }
 
+/** Derivation-facing sibling of {@link getFailureAttemptById}. */
+export async function getFailureAttemptForDerivationById(
+  db: DbLike,
+  attemptEventId: string,
+): Promise<FailureAttempt | null> {
+  return (await loadFailureAttemptById(db, attemptEventId, true))?.failure ?? null;
+}
+
+/** Derivation-facing sibling of {@link getFailureAttemptWithReasoningTraceById}. */
+export async function getFailureAttemptWithReasoningTraceForDerivationById(
+  db: DbLike,
+  attemptEventId: string,
+): Promise<FailureAttemptWithReasoningTrace | null> {
+  return loadFailureAttemptById(db, attemptEventId, true);
+}
+
 /**
  * Shared single-query loader: derives both the projection and reasoning_trace from
  * one attempt row, so no second round-trip is needed.
@@ -621,6 +687,7 @@ export async function getFailureAttemptWithReasoningTraceById(
 async function loadFailureAttemptById(
   db: DbLike,
   attemptEventId: string,
+  derivationOnly = false,
 ): Promise<FailureAttemptWithReasoningTrace | null> {
   const rows = await db.select().from(event).where(eq(event.id, attemptEventId)).limit(1);
   const attempt = rows[0];
@@ -632,6 +699,9 @@ async function loadFailureAttemptById(
     attempt.subject_kind !== 'question' ||
     (attempt.action !== 'experimental:assessment_attempt' && attempt.outcome !== 'failure')
   ) {
+    return null;
+  }
+  if (derivationOnly && !(await allowedEventIds(db, [attempt.id])).has(attempt.id)) {
     return null;
   }
 
@@ -660,7 +730,7 @@ async function loadFailureAttemptById(
       ),
     )
     .orderBy(asc(event.created_at), asc(event.dispatch_seq), asc(event.id));
-  const [effectiveJudgeRows, originalJudgeTruths, userCause] = await Promise.all([
+  const [effectiveJudgeRows, originalJudgeTruths, fetchedUserCause] = await Promise.all([
     resolveEffectiveActiveRows(db, judgeRows),
     judgeRows.length > 0
       ? getEffectiveTruths(
@@ -670,14 +740,35 @@ async function loadFailureAttemptById(
       : Promise.resolve(new Map<string, EffectiveTruth>()),
     getUserCauseForAttempt(db, attempt.id),
   ]);
-  // earliestJudge is the first row in created_at order.
-  const earliestJudge = judgeRows[0];
+  // Derivation reads drop restricted judge/user_cause rows too — see the batch
+  // loader's chainedAllowed comment for why the check covers raw receipts and
+  // resolved rows.
+  const chainedAllowed = derivationOnly
+    ? await allowedEventIds(db, [
+        ...new Set([
+          ...judgeRows.map((row) => row.id),
+          ...[...effectiveJudgeRows.values()].map((entry) => entry.row.id),
+          ...(fetchedUserCause ? [fetchedUserCause.user_cause_event_id] : []),
+        ]),
+      ])
+    : null;
+  const userCause =
+    fetchedUserCause &&
+    (!chainedAllowed || chainedAllowed.has(fetchedUserCause.user_cause_event_id))
+      ? fetchedUserCause
+      : null;
+  // earliestJudge is the first row in created_at order; derivation reads take
+  // the first row the consent filter passes.
+  const earliestJudge = chainedAllowed
+    ? judgeRows.find((row) => chainedAllowed.has(row.id))
+    : judgeRows[0];
   // effective judge is the newest row still live after chain resolution.
   let judge: FailureAttemptJudge | null = null;
   let judgeRow: EventRow | null = null;
   for (const originalRow of judgeRows) {
     const effective = effectiveJudgeRows.get(originalRow.id);
     if (!effective) continue;
+    if (chainedAllowed && !chainedAllowed.has(effective.row.id)) continue;
     if (
       effective.row.subject_id !== attempt.id &&
       effective.row.caused_by_event_id !== attempt.id
@@ -786,6 +877,16 @@ async function getPartitionedFailureRows(
 export async function getCurrentFailureAttempts(db: DbLike, opts: GetFailureAttemptsOpts = {}) {
   // Reporting callers without a limit retain full totals, read through bounded pages.
   return (await loadFailureAttempts(db, { ...opts, limit: opts.limit ?? null }, true)).map(
+    (row) => row.failure,
+  );
+}
+
+/** Derivation-facing sibling of {@link getCurrentFailureAttempts}. */
+export async function getCurrentFailureAttemptsForDerivation(
+  db: DbLike,
+  opts: GetFailureAttemptsOpts = {},
+) {
+  return (await loadFailureAttempts(db, { ...opts, limit: opts.limit ?? null }, true, true)).map(
     (row) => row.failure,
   );
 }

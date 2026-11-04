@@ -46,6 +46,7 @@ import { runQuestionAdmissionChecks } from '../server/admission/checks';
 import {
   ADMISSION_FAMILY,
   AdmissionJobData,
+  admissionTranscriptAllowed,
   isPendingAdmission,
   lockAdmissionGroup,
   readAdmissionPurpose,
@@ -440,6 +441,10 @@ export async function runAdmissionForQuestion(
         makeRunTaskTextFn(db, {
           providerSessionDeadlineAt: Date.now() + 15 * 60_000,
           judgeRetryPolicy: 'none',
+          laminarTranscript: await admissionTranscriptAllowed(db, {
+            groupId: rootId,
+            purposeState: batch.purpose.state,
+          }),
         });
       const runTask: BoundRunTaskTextFn = async (...args) => {
         try {

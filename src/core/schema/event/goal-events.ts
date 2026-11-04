@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DeclaredStage } from '../business';
+import { SteeringGoalData } from '../steering';
 
 // ====================================================================
 // Goal action events (goal fold)
@@ -16,6 +17,9 @@ import { DeclaredStage } from '../business';
 // A qualitative status transition (active | dormant | done — never a progress %).
 // Mirrors updateGoalStatus: the imperative path bumps `version` (+1) and stamps `updated_at`.
 // The reducer applies status→payload.status, version+1, updated_at=event.created_at.
+// YUK-1770 — steering withdrawals (「考试取消了」) ride the same action with optional
+// provenance fields (why it ended + the verbatim learner words that ended it); the
+// reducer carries them only for audit trails, not row state.
 export const GoalStatusUpdateExperimental = z.object({
   actor_kind: z.enum(['user', 'agent', 'system']),
   actor_ref: z.string().min(1),
@@ -23,9 +27,14 @@ export const GoalStatusUpdateExperimental = z.object({
   subject_kind: z.literal('goal'),
   subject_id: z.string().min(1), // = goal.id
   outcome: z.literal('success').nullable().optional(),
-  payload: z.object({
-    status: z.enum(['active', 'dormant', 'done']),
-  }),
+  payload: z
+    .object({
+      status: z.enum(['active', 'dormant', 'done']),
+      reason_md: z.string().max(280).optional(),
+      learner_words: z.string().max(500).optional(),
+      ended_by: z.enum(['learner', 'expiry']).optional(),
+    })
+    .strict(),
   caused_by_event_id: z.string().optional(),
   task_run_id: z.string().optional(),
   cost_micro_usd: z.number().int().optional(),
@@ -57,6 +66,11 @@ export const GoalScopeUpdateExperimental = z.object({
       // declaration. Curriculum constraint only — never an ability/θ̂ input.
       declared_stage: DeclaredStage.nullable().optional(),
       placement_starter_augmentation: z.literal(true).optional(),
+      // YUK-1770 steering — window/payload revisions (record_steering revise).
+      // Optional like every patch field; explicit NULL clears the column.
+      effective_from: z.string().nullable().optional(),
+      effective_until: z.string().nullable().optional(),
+      steering: SteeringGoalData.nullable().optional(),
     })
     .strict(),
   caused_by_event_id: z.string().optional(),

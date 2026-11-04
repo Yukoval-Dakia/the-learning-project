@@ -2,6 +2,7 @@
 // here, so the singleton key and window have one owner. Agency's manifest keeps the job
 // name as a literal for the task census; the two must match.
 
+import { createHash } from 'node:crypto';
 import { desc, eq } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
@@ -15,6 +16,42 @@ const COACH_WAKE_WINDOW_SECONDS = 24 * 60 * 60;
 // Written by the agency scan owner at the start of every coach run, success or not,
 // so a failed run also counts as this window's attempt.
 const COACH_TRIGGER_ACTION = 'experimental:trigger_coach_scan';
+
+/**
+ * YUK-1770 (D5) — steering change wake: enqueue coach_daily NOW, bypassing the
+ * 24h return window. The job id is a deterministic UUID derived from
+ * (goal, source event): pg-boss's singleton index is keyed on
+ * (name, singleton_key, singleton_on) where singleton_on is a TIME SLOT — a
+ * redelivery crossing a slot boundary would otherwise bill a second same-day
+ * coach run for one event. With an explicit id the send is INSERT … ON
+ * CONFLICT DO NOTHING, deduping regardless of slot (same pattern as practice's
+ * sendJobIdempotent; kept inline because agency must not import practice).
+ */
+export async function enqueueCoachForSteering(
+  boss: { send(name: string, data: object, options?: object): Promise<string | null> },
+  goalId: string,
+  sourceEventId: string,
+): Promise<string | null> {
+  return boss.send(
+    COACH_DAILY_QUEUE,
+    { reason: 'steering_changed', goal_id: goalId, source_event_id: sourceEventId },
+    {
+      id: steeringJobUuid('coach', goalId, sourceEventId),
+      singletonKey: `coach.steering.${goalId}.${sourceEventId}`,
+      singletonSeconds: 24 * 60 * 60,
+    },
+  );
+}
+
+/** Deterministic UUID (RFC 4122 shape, sha1-based) so redeliveries map to one job row. */
+export function steeringJobUuid(
+  prefix: 'coach' | 'supply',
+  goalId: string,
+  eventId: string,
+): string {
+  const h = createHash('sha1').update(`${prefix}.steering.${goalId}.${eventId}`).digest('hex');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
 
 /**
  * Enqueue coach_daily when its plan is stale: no coach run in the last window and

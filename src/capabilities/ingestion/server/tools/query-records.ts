@@ -2,6 +2,7 @@ import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { learning_record } from '@/db/schema';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
+import { derivableLearningRecords } from '@/kernel/records/queries';
 import { excerpt, recordKnowledgeContainsAny } from './record-tool-support';
 import type { DomainTool, ToolContext } from './types';
 
@@ -92,12 +93,15 @@ async function executeQueryRecords(
     );
     if (textCondition) conditions.push(textCondition);
   }
-  const rows = await ctx.db
-    .select()
-    .from(learning_record)
-    .where(and(...conditions))
-    .orderBy(desc(learning_record.created_at), desc(learning_record.id))
-    .limit(input.limit ?? 20);
+  const rows = await derivableLearningRecords(
+    ctx.db,
+    await ctx.db
+      .select()
+      .from(learning_record)
+      .where(and(...conditions))
+      .orderBy(desc(learning_record.created_at), desc(learning_record.id))
+      .limit(input.limit ?? 20),
+  );
 
   return QueryRecordsOutputSchema.parse({
     rows: rows.map((row) => ({

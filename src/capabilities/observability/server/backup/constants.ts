@@ -177,7 +177,6 @@ export const MAX_INLINE_ASSETS = 45;
 //     dreaming_proposal + ingestion_session (Step 9.J)
 //   - added: knowledge_edge (ADR-0010), learning_session (ADR-0008),
 //     material_fsrs_state (ADR-0006 v2 FSRS projection), event (ADR-0006 v2)
-//   - knowledge_mastery view: NOT in FK_ORDER (views are read-only, not exported)
 //
 // ②d backup-orphan fix (reverse-lockstep): added 7 persistent business tables that
 // had silently fallen out of the backup payload — artifact_block_ref (cross-link +
@@ -198,10 +197,9 @@ export const MAX_INLINE_ASSETS = 45;
 // B1-W1 (ADR-0035): added mastery_state (after knowledge — diagnostic projection
 // keyed by knowledge subject_id, no enforced FK) + item_calibration (after
 // question — logical dependency on question_id, no enforced FK). 24 → 26.
-// Like knowledge_mastery these are DERIVED (rebuildable from the event stream /
-// re-estimable), so they are NOT in the CSV export body — but unlike the view
-// they ARE physical tables that need wipe/insert sweep ordering, so they DO
-// belong in FK_ORDER (CSV-body membership and FK_ORDER membership are orthogonal).
+// These are DERIVED (rebuildable from the event stream / re-estimable), so they are
+// NOT in the CSV export body, but they are physical tables that need wipe/insert sweep
+// ordering, so they DO belong in FK_ORDER (CSV-body membership and FK_ORDER membership are orthogonal).
 export const FK_ORDER = [
   'knowledge',
   'mastery_state',
@@ -421,6 +419,10 @@ export type TableName = (typeof FK_ORDER)[number];
 // only transient / derived / operational state belongs here, never authored or
 // slow-accumulated cognitive data.
 export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
+  // YUK-1771: derived vectors, rebuilt from question_solution_prior by embed_backfill.
+  'question_solution_prior_vector',
+  // YUK-1771: one-off backfill ledger; losing it costs at most one more paid call per group.
+  'question_solution_prior_backfill_attempt',
   // YUK-1448: 15-minute actor/role-bound pagination evidence; no durable gap/issuance authority.
   'bank_search_snapshot',
   // SSE-replay telemetry of pg-boss job lifecycle; operational, re-derived as jobs

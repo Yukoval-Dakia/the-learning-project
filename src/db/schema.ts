@@ -51,6 +51,8 @@ export {
   question_group_lifecycle,
   question_revision,
   question_solution_prior,
+  question_solution_prior_backfill_attempt,
+  question_solution_prior_vector,
 } from './schema/assessment';
 export {
   difficulty_calibration_evidence,
@@ -91,7 +93,6 @@ export {
   goal,
   intervention,
   kc_typed_state,
-  knowledge_mastery,
   learner_axis_state,
   mastery_state,
   material_fsrs_state,

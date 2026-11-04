@@ -102,6 +102,20 @@ export const ProposalInboxRowResponseSchema = z.object({
   cost_micro_usd: z.number().int().nullable(),
   source_action: z.string(),
   source_subject_kind: z.string(),
+  // Pending block_merge rows only: why the stored-fact proof currently blocks
+  // accept. Other kinds and non-pending rows are always null.
+  not_acceptable_reason: z
+    .enum([
+      'blocks_missing',
+      'not_draft',
+      'session_mismatch',
+      'unknown_source',
+      'ambiguous_page_index',
+      'pages_not_adjacent',
+      'conflicting_question_number',
+      'missing_continuity',
+    ])
+    .nullable(),
   signals: z.record(z.string(), z.unknown()).nullable(),
   presentation: ProposalPresentationResponseSchema.nullable(),
 });

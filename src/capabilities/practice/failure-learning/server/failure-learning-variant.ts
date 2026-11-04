@@ -27,7 +27,7 @@ import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluat
 import { hasProposalWithCooldownKey } from '@/kernel/proposals/inbox';
 import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
-import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttemptForDerivationById } from '@/kernel/read-models/failure-attempts';
 import { getMisconceptionsByIds } from '@/kernel/read-models/failure-learning-context';
 // Runtime creation records its complete base, including cause_category, before
 // index and projection. Genesis remains the legacy backfill event, not runtime creation.
@@ -98,7 +98,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     return { status: 'skipped:not_a_failure_attempt' };
   }
 
-  const failure = await getFailureAttemptById(db, attemptEventId);
+  const failure = await getFailureAttemptForDerivationById(db, attemptEventId);
   if (!failure) return { status: 'skipped:attempt_not_active' };
   const native = failure.assessment ? await loadNativeFailureContext(db, attemptEventId) : null;
   if (failure.assessment && !native) return { status: 'skipped:question_not_found' };
@@ -279,7 +279,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
       await acquireLearningStateWriteLock(tx);
       await lockAssessmentEvaluationGroup(tx, native.evaluationGroupId);
       const current = await loadNativeFailureContext(tx, attemptEventId);
-      const currentFailure = await getFailureAttemptById(tx, attemptEventId);
+      const currentFailure = await getFailureAttemptForDerivationById(tx, attemptEventId);
       if (
         !current ||
         current.evaluationId !== native.evaluationId ||

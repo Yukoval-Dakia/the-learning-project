@@ -35,6 +35,8 @@ export interface Options {
   abortController?: AbortController;
   /** Agentic-turn ceiling — pi enforces it via `finishTurn`. */
   maxTurns?: number;
+  /** Priced-spend ceiling for kinds that opt in (`enforceMaxCost`); see pi-cost-ceiling.ts. */
+  maxBudgetUsd?: number;
   /** allowedTools allowlist — `mcp__<server>__<tool>` wire names. */
   tools?: string[];
   /** Reasoning effort tier → pi `reasoning` stream option. */

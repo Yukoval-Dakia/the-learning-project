@@ -18,10 +18,18 @@ import {
 import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
 import type { DailyFocusPlanIssue } from '@/core/daily-focus-guard';
 import { type ReviewPlanNumbers, computeReviewPlanNumbers } from '@/core/daily-review-plan';
+import { learnerLocalDay } from '@/core/learner-day';
 import { CoachPlanDraft, type CoachPlanDraftT, composeTodayPlan } from '@/core/schema/coach';
 // Derived sub-skill weak points (YUK-1582): read-only landing points with first-hand
 // evidence; attention pressure for knowledge_focus, never scheduling state.
 import type { ActionableWeakPointDerivationT } from '@/core/schema/weak-point';
+import {
+  learnerDayWeekday,
+  learnerDayWithWeekday,
+  steeringDaysLeft,
+  steeringStartsInDays,
+  steeringWindowCoversToday,
+} from '@/core/steering';
 import type { Db } from '@/db/client';
 import { type WriteEventInput, getEvents } from '@/kernel/events';
 // Per-(kind, relation) accept-learned reason digest for the Coach input, scoped to the
@@ -61,6 +69,10 @@ const COACH_SUGGESTION_KIND_GUIDANCE =
   " On each propose_* tool call set the optional suggestion_kind argument: use 'proactive' (the default — omit it) when you are proposing a next step off a successful read; use 'corrective' ONLY when the proposal repairs a specific failure you yourself just observed. A read that returns zero results is a legitimate success (you looked and found nothing), NOT a failure — do NOT label a proposal corrective merely because an upstream read came back empty. Only a genuine repair of an observed failure is corrective.";
 // Self-correction channel: the previous scan's flagged daily_focus clauses ride the
 // input as previous_plan_issues; the model rephrases them this run. Inert when absent.
+// YUK-1770 steering clause: in-window learner-said instructions weight attention by
+// exam-day nearness (a fact the input carries); still additive only.
+const COACH_STEERING_GUIDANCE =
+  " When an active goal carries `steering`, it is the learner's own said instruction (verbatim `learner_words` + restatement `instruction_md`), effective inside `window`. Weight knowledge_focus toward its scope with pressure that grows as days_left shrinks; state in daily_focus which instruction you weighted. scope_unresolved lists scope parts that could not be mapped to knowledge points — mention them as text, never invent ids. excluded_subject_ids means those subjects' due reviews are deferred inside the window by the system (not deleted; they re-enter by forgetting risk): state that cost once, in this plan's daily_focus, without re-listing every item. A steering goal never removes the review backbone for everything else. If the learner revoked the instruction in conversation, a newer steering event supersedes it — trust the newest.";
 const COACH_PLAN_ISSUES_GUIDANCE =
   " When previous_plan_issues is present, your last daily_focus contained clauses the system flagged (a today-plan number differing from review_plan, or a percentage claim): rephrase those clauses this run — restate today's count/minutes exactly as review_plan or drop the number, and never attach percentages. It is feedback for you, not a user-facing alert. When previous_plan_issues is absent, behave exactly as before.";
 // Agent-note clause: hints bias attention only, never ground truth, never suppress the
@@ -78,7 +90,7 @@ const COACH_BRIEF_GUIDANCE =
 // additive, inert when the list is empty.
 const COACH_WEAK_POINTS_GUIDANCE =
   ' When weak_points is present, each entry is a system-derived actionable weak point at sub-skill granularity with its evidence refs and a training_destination (concept_review / retrieval_practice → concept material or no-hint retrieval drills; procedural_practice / discrimination_probe → targeted step practice or a discriminating probe). Use them to bias knowledge_focus ranking and intent_tags toward the strongest cells, and phrase daily_focus around the named targets. Treat them as derived reads, not ground truth: never invent additional weak points, never attach percentages to them, and never let them suppress or replace the FSRS-due review backbone. When weak_points is empty, behave exactly as before.';
-export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_PLAN_ISSUES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
+export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_STEERING_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_PLAN_ISSUES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
 
 /** How many derived weak points ride the Coach input (bounded for prompt budget). */
 const COACH_MAX_WEAK_POINTS = 8;
@@ -150,16 +162,48 @@ function buildCoachInput(
   return {
     run_kind: 'daily',
     now: now.toISOString(),
+    today: learnerDayWithWeekday(learnerLocalDay(now)),
     pending_proposals_before: beforeRows.filter((row) => row.status === 'pending').length,
     objective,
     // Ordered by sequence_hint then created_at; empty means the model omits the strand.
-    active_goals: activeGoals.map((g) => ({
-      id: g.id,
-      title: g.title,
-      subject_id: g.subject_id,
-      scope_knowledge_ids: g.scope_knowledge_ids,
-      sequence_hint: g.sequence_hint,
-    })),
+    // A steering goal whose window has not started yet (effective_from in the
+    // future) is not today's attention: it stays out of the generic active-goal
+    // view entirely until its window opens (ordinary goals are unaffected).
+    active_goals: activeGoals
+      .filter(
+        (g) =>
+          !(
+            g.steering !== null &&
+            g.effective_from !== null &&
+            g.effective_from > learnerLocalDay(now)
+          ),
+      )
+      .map((g) => ({
+        id: g.id,
+        title: g.title,
+        subject_id: g.subject_id,
+        scope_knowledge_ids: g.scope_knowledge_ids,
+        sequence_hint: g.sequence_hint,
+        ...(g.steering !== null && steeringWindowCoversToday(g, learnerLocalDay(now))
+          ? {
+              steering: {
+                learner_words: g.steering.learner_words,
+                instruction_md: g.steering.instruction_md,
+                scope_unresolved: g.steering.scope_unresolved,
+                excluded_subject_ids: g.steering.excluded_subject_ids,
+                excluded_knowledge_ids: g.steering.excluded_knowledge_ids,
+                window: {
+                  from: g.effective_from,
+                  until: g.effective_until,
+                  until_weekday:
+                    g.effective_until !== null ? learnerDayWeekday(g.effective_until) : null,
+                  days_left: steeringDaysLeft(g.effective_until, learnerLocalDay(now)),
+                  starts_in_days: steeringStartsInDays(g.effective_from, learnerLocalDay(now)),
+                },
+              },
+            }
+          : {}),
+      })),
     // Attention pressure only; empty means the brief derives from due/weak signals.
     active_items: activeItems.map((it) => ({
       id: it.id,
@@ -372,6 +416,15 @@ export function parseCoachOutputSafely(rawText: string): CoachPlanDraftT | null 
   const candidates: string[] = [rawText];
   const fenceMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenceMatch?.[1]) candidates.unshift(fenceMatch[1]);
+  // Live models (deepseek-v4.1-flash seen 2026-11-04) sometimes emit the JSON
+  // clean but append a stray CLOSING fence line with no opener — the paired
+  // regex misses it and JSON.parse chokes on the tail. Strip stray fence
+  // markers at either end as an extra best-effort candidate.
+  const stripped = rawText
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```+\s*$/i, '')
+    .trim();
+  if (stripped !== rawText.trim()) candidates.unshift(stripped);
   for (const candidate of candidates) {
     const trimmed = candidate.trim();
     if (!trimmed) continue;

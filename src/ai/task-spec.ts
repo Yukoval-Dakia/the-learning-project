@@ -71,6 +71,13 @@ export interface TaskDefinition {
   readonly defaultProvider: Provider;
   readonly defaultModel: ModelId;
   readonly budget: TaskBudget;
+  /**
+   * Opt-in: the pi lane stops the agent loop once the run's priced spend reaches
+   * `budget.maxCost`. Off by default because every chat kind inherits
+   * DEFAULT_TASK_BUDGET.maxCost, and enforcing it everywhere would cut runs that
+   * today end only at maxIterations or the timeout.
+   */
+  readonly enforceMaxCost?: boolean;
   readonly needsToolCall: boolean;
   readonly isMultimodal: boolean;
   readonly allowedTools: readonly string[];

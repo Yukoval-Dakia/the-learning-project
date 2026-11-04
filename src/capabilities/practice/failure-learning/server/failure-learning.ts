@@ -3,8 +3,8 @@ import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 import {
-  getFailureAttemptById,
-  getFailureAttemptWithReasoningTraceById,
+  getFailureAttemptForDerivationById,
+  getFailureAttemptWithReasoningTraceForDerivationById,
 } from '@/kernel/read-models/failure-attempts';
 import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-context';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
@@ -135,7 +135,7 @@ export async function requestFailureLearning(
     return { status: 'ignored', reason: 'verdict_overturned' };
   }
 
-  const failure = await getFailureAttemptById(deps.db, input.attemptEventId);
+  const failure = await getFailureAttemptForDerivationById(deps.db, input.attemptEventId);
   if (!failure) return { status: 'ignored', reason: 'attempt_not_active' };
   if (failure.user_cause) return { status: 'ignored', reason: 'user_cause_present' };
 
@@ -168,7 +168,10 @@ async function attributeFailure(
     }
   }
 
-  const loaded = await getFailureAttemptWithReasoningTraceById(deps.db, attemptEventId);
+  const loaded = await getFailureAttemptWithReasoningTraceForDerivationById(
+    deps.db,
+    attemptEventId,
+  );
   if (!loaded) {
     return { status: 'skipped', reason: 'attempt_not_active', modelInvoked: false };
   }

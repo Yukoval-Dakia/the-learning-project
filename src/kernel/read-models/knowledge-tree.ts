@@ -147,16 +147,3 @@ export async function resolveSubjectKnowledgeIds(db: Db | Tx, subject: string): 
   }
   return matched;
 }
-
-/**
- * Every active knowledge id, no subject filter. The cold-start tier-3 fallback for
- * placement when a day-one goal resolves no scope; the picker still requires an
- * eligible question, so empty subgraphs add no phantom KC.
- */
-export async function resolveAllActiveKnowledgeIds(db: Db | Tx): Promise<string[]> {
-  const rows = await db
-    .select({ id: knowledge.id })
-    .from(knowledge)
-    .where(isNull(knowledge.archived_at));
-  return rows.map((row) => row.id);
-}
