@@ -99,6 +99,8 @@ export type RunWebSourcingAgentFn = (params: {
     causedByEventId: string;
     deadlineAt?: number;
     producerTaskRunId?: string;
+    /** Run money cap in USD; the runner takes the lower of it and the task's maxCost. */
+    maxCostUsd?: number;
     modelBinding?: {
       provider?: 'xiaomi' | 'anthropic-sub' | 'anthropic' | 'zhipuai-coding-plan' | 'opencode-go';
       model?: string;
@@ -129,6 +131,7 @@ export interface RunWebFetchCandidatesParams {
     causedByEventId?: string;
     deadlineAt?: number;
     producerTaskRunId?: string;
+    maxCostUsd?: number;
   };
   deps: RunWebFetchCandidatesDeps;
   now?: Date;
@@ -279,6 +282,7 @@ async function runWebFetchCandidatesCore(
     causedByEventId: params.ctx?.causedByEventId ?? `web_fetch_trigger_${anchor.id}`,
     ...(params.ctx?.producerTaskRunId ? { producerTaskRunId: params.ctx.producerTaskRunId } : {}),
     ...(params.ctx?.deadlineAt !== undefined ? { deadlineAt: params.ctx.deadlineAt } : {}),
+    ...(params.ctx?.maxCostUsd !== undefined ? { maxCostUsd: params.ctx.maxCostUsd } : {}),
   };
   const taskResult = await deps.runSourcingAgent({
     db,

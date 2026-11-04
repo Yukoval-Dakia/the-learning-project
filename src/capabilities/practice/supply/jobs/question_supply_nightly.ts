@@ -8,13 +8,13 @@
 // hook。
 //
 // ── 红线：成本 ───────────────────────────────────────────────────────────────
-// 这个 cron 让付费获取（Tavily web 找题 + LLM 生成/验证）**自动**发生。唯一的防 job-spam
-// 闸是 dispatcher 的 7d query-based fingerprint cooldown：同一未满足缺口在 7 天窗内只真派
-// 一次后台 job；其余扫描在截取 per-run 硬顶前即被剔除（计入 coolingDown，不写派发事件），
-// dispatcher 派发时仍按同一判据复查。本 job **依赖** dispatcher 这层 cooldown 作为成本护栏——绝不在此处绕过
-// dispatcher 直发队列。本 job 无自身 cron，由夜间 orchestrator 在标定链（item_prior →
-// recalibration）之后触发，让缺口判定读到 firm 过的 b_calib（manifest.ts 的 dependsOn
-// 硬边即此保证）。
+// 这个 cron 让付费获取（web 找题 + LLM 生成/验证）**自动**发生。两道闸：dispatcher 的 7d
+// query-based fingerprint cooldown（同一未满足缺口在 7 天窗内只真派一次后台 job；其余扫描在截取
+// per-run 硬顶前即被剔除，计入 coolingDown，不写派发事件；dispatcher 派发时仍按同一判据复查），
+// 以及当晚供题预算（spend-gate.ts，SUPPLY_NIGHTLY_SPEND_CAP_USD）：每个目标派发前先占额，
+// 占不到的目标与其后全部顺延到下一晚，未派发因而不进冷却。绝不在此处绕过 dispatcher 直发队列。
+// 本 job 无自身 cron，由夜间 orchestrator 在标定链（item_prior → recalibration）之后触发，
+// 让缺口判定读到 firm 过的 b_calib（manifest.ts 的 dependsOn 硬边即此保证）。
 //
 // ── 红线：草稿排除 + 只读消费 ────────────────────────────────────────────────
 // 候选 KC 的题池由 discoverSupplyTargets → loadQuestionPool 提供，后者已带 draft 过滤。
@@ -32,6 +32,10 @@ import {
 import { discoverConfusableContrastTargets } from '@/capabilities/practice/supply/server/confusable-contrast-discovery';
 import { recentlyDispatchedFingerprints } from '@/capabilities/practice/supply/server/dispatcher';
 import { runInventoryShadowDualRead } from '@/capabilities/practice/supply/server/inventory-projection';
+import {
+  holdNightlySupplyUnit,
+  releaseNightlySupplyUnit,
+} from '@/capabilities/practice/supply/server/spend-gate';
 import {
   type QuestionSupplyTarget,
   computePriority,
@@ -81,10 +85,12 @@ export interface QuestionSupplyNightlyResult {
   discovered: number;
   /** 截取前因同指纹在 cooldown 窗内已派过而剔除的目标数（不占名额、不写事件）。 */
   coolingDown: number;
-  /** 本轮实际进入派发的目标数（= min(discovered − coolingDown, maxPerRun)）。 */
+  /** 本轮实际进入派发的目标数（per-run cap 与当晚供题预算之内）。 */
   considered: number;
-  /** per-run cap 截掉、留待下轮的目标数（discovered − coolingDown − considered）。 */
+  /** per-run cap 或当晚供题预算截掉、留待下轮的目标数（discovered − coolingDown − considered）。 */
   deferred: number;
+  /** 其中因当晚供题预算用满而顺延的数目：未派发，不进 7 天冷却，下一晚照常可派。 */
+  budgetDeferred: number;
   /** 真派到后台队列的目标数（status='dispatched'）。 */
   dispatched: number;
   /** 无后台队列、留给人工/UI 的目标数（status='manual'）。 */
@@ -99,12 +105,14 @@ function tallyByStatus(
   results: DispatchResult[],
   discovered: number,
   coolingDown = 0,
+  budgetDeferred = 0,
 ): QuestionSupplyNightlyResult {
   const out: QuestionSupplyNightlyResult = {
     discovered,
     coolingDown,
     considered: results.length,
     deferred: Math.max(0, discovered - coolingDown - results.length),
+    budgetDeferred,
     dispatched: 0,
     manual: 0,
     skipped: 0,
@@ -135,6 +143,7 @@ function emptyTally(discovered = 0, coolingDown = 0): QuestionSupplyNightlyResul
     coolingDown,
     considered: 0,
     deferred: discovered - coolingDown,
+    budgetDeferred: 0,
     dispatched: 0,
     manual: 0,
     skipped: 0,
@@ -223,6 +232,38 @@ async function returnStockCovered(
   return Math.min(requested, live);
 }
 
+/**
+ * Tonight's supply budget (spend-gate.ts) must hold the target's unit before it is enqueued.
+ * null = the budget is spent: the target is not dispatched, so it starts no cooldown.
+ */
+async function dispatchWithinBudget(
+  db: Db,
+  target: QuestionSupplyTarget,
+  dispatch: () => Promise<DispatchResult>,
+): Promise<DispatchResult | null> {
+  const hold = await holdNightlySupplyUnit(db, {
+    targetId: target.id,
+    questionCount: target.desiredCount,
+  });
+  if (!hold.granted) {
+    console.log('[question_supply_nightly] supply budget reached; deferring to the next night', {
+      cap_micro_usd: hold.capMicroUsd,
+      committed_micro_usd: hold.committedMicroUsd,
+    });
+    return null;
+  }
+  const result = await dispatch();
+  if (result.status !== 'dispatched') {
+    try {
+      await releaseNightlySupplyUnit(db, target.id);
+    } catch (err) {
+      // A kept hold only over-counts tonight; it never lets the night overspend.
+      console.error(`[question_supply_nightly] hold release failed for ${target.id}`, err);
+    }
+  }
+  return result;
+}
+
 async function dispatchReturnStock(
   db: Db,
   deps: DepsOverride,
@@ -231,33 +272,40 @@ async function dispatchReturnStock(
   if (gaps.length === 0) return emptyTally();
   const cooldownDays = deps.dispatchDeps?.cooldownDays ?? SUPPLY_DISPATCH_COOLDOWN_DAYS;
   const results: DispatchResult[] = [];
-  for (const gap of gaps) {
+  let budgetDeferred = 0;
+  for (const [gapIndex, gap] of gaps.entries()) {
     let remaining = gap.missing;
     for (const knowledgeId of [...new Set(gap.knowledgeIds)].sort()) {
       if (remaining <= 0) break;
       const subjectId = await subjectForReturnStock(db, gap.subjectId, knowledgeId);
       if (!subjectId) continue;
       const target = returnStockTarget(subjectId, knowledgeId, remaining);
-      let result: DispatchResult;
-      try {
-        result = await dispatchPracticeSupplyTarget(db, target, deps.dispatchDeps);
-      } catch (err) {
-        console.error(
-          `[question_supply_nightly] return stock dispatch threw for ${target.fingerprint}`,
-          err,
-        );
-        result = failedReturnStockDispatch(target, err);
+      const result = await dispatchWithinBudget(db, target, async () => {
+        try {
+          return await dispatchPracticeSupplyTarget(db, target, deps.dispatchDeps);
+        } catch (err) {
+          console.error(
+            `[question_supply_nightly] return stock dispatch threw for ${target.fingerprint}`,
+            err,
+          );
+          return failedReturnStockDispatch(target, err);
+        }
+      });
+      if (!result) {
+        budgetDeferred = gaps.length - gapIndex;
+        break;
       }
       results.push(result);
       remaining -= await returnStockCovered(db, result, remaining, cooldownDays);
     }
+    if (budgetDeferred > 0) break;
   }
-  if (results.length === 0) {
+  if (results.length === 0 && budgetDeferred === 0) {
     console.warn(
       '[question_supply_nightly] return stock is short but no knowledge id could be dispatched',
     );
   }
-  return tallyByStatus(results, results.length);
+  return tallyByStatus(results, results.length + budgetDeferred, 0, budgetDeferred);
 }
 
 // 对比缺口是附加来源：读取失败只丢这一路，覆盖缺口照常派发。
@@ -302,7 +350,18 @@ async function runSupplyDiscoveryAndDispatch(
   // （截掉的目标不 dispatch ⇒ 无 fingerprint 落库 ⇒ 无 cooldown 副作用）。
   const dispatchTargets = eligible.slice(0, deps.maxPerRun ?? DEFAULT_MAX_PER_RUN);
   if (dispatchTargets.length === 0) return emptyTally(targets.length, coolingDown);
-  const results = await dispatchSupplyTargets(db, dispatchTargets, deps.dispatchDeps);
+  const results: DispatchResult[] = [];
+  for (const [index, target] of dispatchTargets.entries()) {
+    // dispatchSupplyTargets keeps its per-target catch: one bad target never aborts the rest.
+    const result = await dispatchWithinBudget(db, target, async () => {
+      const [only] = await dispatchSupplyTargets(db, [target], deps.dispatchDeps);
+      return only;
+    });
+    if (!result) {
+      return tallyByStatus(results, targets.length, coolingDown, dispatchTargets.length - index);
+    }
+    results.push(result);
+  }
   return tallyByStatus(results, targets.length, coolingDown);
 }
 

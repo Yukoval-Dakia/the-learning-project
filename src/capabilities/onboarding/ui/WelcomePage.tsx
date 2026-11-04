@@ -78,6 +78,9 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
   const togLean = (id: string) =>
     setLeanings((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   const goalReady = goal.trim().length >= 2;
+  // YUK-1749 — placement serves the subject's starter questions, so the starter path needs a
+  // concrete subject; general (and no subject) cannot plant starters. Upload works without one.
+  const starterReady = subject !== null && subject !== 'general';
 
   // 分叉：primary → 上传材料 · secondary → 起始集（定位）。两条都先建 goal。
   const proceed = async (route: string) => {
@@ -297,7 +300,8 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
             <button
               type="button"
               className="un-ob-fork-card"
-              disabled={!goalReady || submitting}
+              disabled={!goalReady || !starterReady || submitting}
+              aria-describedby={starterReady ? undefined : `${ids}-starter-need`}
               onClick={() => void proceed('/placement')}
             >
               <Layers size={24} aria-hidden="true" />
@@ -310,6 +314,11 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
               </span>
             </button>
           </div>
+          {!starterReady && (
+            <p id={`${ids}-starter-need`} className="un-ob-hint">
+              用起始集定位，要先在上面选一个具体的科目（「通用」不行）。不选科目也可以先上传自己的材料。
+            </p>
+          )}
         </section>
       </main>
     </UiNextRoot>
