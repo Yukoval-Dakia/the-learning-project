@@ -50,6 +50,8 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
   const legacyScopes = await readCuratorLegacyScopes(db);
   const toolNames = ['curate_context', 'query_context', 'query_events'];
   let noProgress = false;
+  let writeFailed = false;
+  let repeated = false;
   const seen = new Set<string>();
   const result = await runAgentTask(
     'DreamingTask',
@@ -57,7 +59,13 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
       context: context.markdown,
       evidence,
       legacy_scopes: legacyScopes,
-      topic_board: await topicBoard(db, now),
+      topic_freshness: (await topicBoard(db, now)).topics.map((t) => ({
+        key: t.key,
+        evidence_at: t.evidence_at,
+        memory_weight: t.memory_weight,
+        freshness: t.freshness,
+        stale: t.stale,
+      })),
       legacy_facts: await readLegacyFacts(db),
       ...topics,
       instruction:
@@ -89,7 +97,20 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
               observation.input,
               observation.output,
             ]);
-            if (seen.has(signature)) noProgress = true;
+            if (seen.has(signature)) {
+              noProgress = true;
+              repeated = true;
+            }
+            if (
+              observation.name === 'curate_context' &&
+              (observation.error_reason ||
+                !observation.executed ||
+                (observation.output &&
+                  typeof observation.output === 'object' &&
+                  'status' in observation.output &&
+                  observation.output.status === 'issue'))
+            )
+              writeFailed = true;
             seen.add(signature);
             if (
               observation.name === 'curate_context' &&
@@ -105,15 +126,16 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
     },
   );
   const current = await readTopics(db);
-  await changeTopics(db, {
-    expectedVersion: current.version,
-    actor: 'curator',
-    taskRunId: result.task_run_id,
-    sourceIds: [],
-    patches: [],
-    asOf: now.toISOString(),
-    overnight,
-  });
+  if (!writeFailed && !repeated)
+    await changeTopics(db, {
+      expectedVersion: current.version,
+      actor: 'curator',
+      taskRunId: result.task_run_id,
+      sourceIds: [],
+      patches: [],
+      asOf: now.toISOString(),
+      overnight,
+    });
   await writeEvent(db, {
     id: newId(),
     action: 'experimental:dreaming_scan',
@@ -121,11 +143,13 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
     actor_ref: 'dreaming',
     subject_kind: 'query',
     subject_id: id,
-    outcome: 'success',
+    outcome: writeFailed || repeated ? 'degraded' : 'success',
     payload: {
       task_run_id: result.task_run_id,
       cost_usd: result.cost_usd,
       no_progress: noProgress,
+      write_failed: writeFailed,
+      watermark_advanced: !writeFailed && !repeated,
     },
     affected_scopes: [],
     ingest_at: new Date(),

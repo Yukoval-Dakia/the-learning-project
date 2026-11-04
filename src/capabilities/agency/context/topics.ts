@@ -7,6 +7,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, memory_brief_note } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { allowedEventIds, lockEventDerivationSources } from '@/kernel/events/derivation-policy';
+import { ApiError } from '@/kernel/http';
 import { lockPurposeBrief } from '@/kernel/locks/memory-locks';
 import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import { briefPurposeCurrent, latestPurposeWithdrawal } from '@/kernel/read-models/purpose-change';
@@ -151,7 +152,7 @@ export async function changeTopics(
   return db.transaction(async (tx) => {
     const preview = await readTopics(tx);
     if (preview.version !== input.expectedVersion)
-      throw new Error('context version conflict; reload');
+      throw new ApiError('context_version_conflict', 'context version conflict; reload', 409);
     const legacyIds =
       input.patches?.flatMap((p) => p.replaces.filter((id) => id.startsWith('mem0:'))) ?? [];
     const legacy = legacyIds.length
@@ -181,7 +182,8 @@ export async function changeTopics(
     for (const id of refs.sort()) await lockEventDerivationSources(tx, id);
     await lockPurposeBrief(tx);
     const { digest: before, version } = await readTopics(tx);
-    if (version !== input.expectedVersion) throw new Error('context version conflict; reload');
+    if (version !== input.expectedVersion)
+      throw new ApiError('context_version_conflict', 'context version conflict; reload', 409);
     const after = structuredClone(before);
     const legacyChanged: LegacyFact[] = [];
     const result = (issues: z.infer<typeof ChangeResult>['issues']) =>
@@ -229,7 +231,11 @@ export async function changeTopics(
         const changed = payload.after.topics.find((t) => t.key === key);
         if (JSON.stringify(old) === JSON.stringify(changed)) continue;
         if (JSON.stringify(after.topics.find((t) => t.key === key)) !== JSON.stringify(changed))
-          throw new Error('topic has later changes; correct it instead');
+          throw new ApiError(
+            'context_undo_conflict',
+            'topic has later changes; correct it instead',
+            409,
+          );
         after.topics = after.topics.filter((t) => t.key !== key);
         if (old)
           after.topics.push({
