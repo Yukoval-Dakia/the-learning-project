@@ -174,7 +174,7 @@ export type { ReconcileMemInput } from './memory-reconcile-handoff-store';
 
 export function buildMemoryEventIngestHandler(
   db: Db,
-  boss: Pick<BossLike, 'send' | 'getJobById'>,
+  _boss: Pick<BossLike, 'send' | 'getJobById'>,
   deps: {
     loadEvent?: (db: Db, eventId: string) => Promise<MemoryEventInput | null>;
     memoryClient?: MemoryClient;
@@ -202,8 +202,7 @@ export function buildMemoryEventIngestHandler(
 
       // Two gates before extraction: agent-originated events never feed mem0 (the
       // model must not confirm its own output), and bank-authoring events are not
-      // learner evidence. The brief still summarizes agent activity from PG, so the
-      // brief fan-out below stays independent of the extraction actor gate.
+      // learner evidence. Curator separately reads permitted learner activity from PG.
       const learnerEvidence = isLearnerEvidenceAction(row.action);
       const admitToExtraction = learnerEvidence && shouldExtractToMemory(row);
       const editedConjecture = editedConjectureMemory(row);
@@ -471,7 +470,7 @@ export async function runMemoryRecoveryFloor(legs: {
 
 export function buildMemoryIngestOutboxRecoverHandler(
   db: Db,
-  boss: Pick<BossLike, 'send' | 'getJobById'>,
+  _boss: Pick<BossLike, 'send' | 'getJobById'>,
 ): (jobs: Job<object>[]) => Promise<void> {
   const drainOnce = buildMemoryIngestOutboxPollHandler(db, boss);
   return async () => {
