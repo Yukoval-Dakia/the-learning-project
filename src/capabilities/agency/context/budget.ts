@@ -49,23 +49,39 @@ export function trimUnitsToBudget(
 
   // Drop the highest-dropRank (lowest-priority) unit until the estimate fits;
   // rank 0 (Steering) is never dropped whole — it takes the boundary truncation instead.
-  while (estimateTokens(render()) > budget.maxEstimatedTokens) {
+  while (
+    estimateTokens(render()) > budget.maxEstimatedTokens ||
+    render().length > budget.maxChars
+  ) {
     const candidates = kept.filter((u) => u.rank !== 0 && !u.protected);
     const drop = candidates.sort((a, b) => (b.dropRank ?? b.rank) - (a.dropRank ?? a.rank))[0];
     if (!drop) break;
     kept.splice(kept.indexOf(drop), 1);
   }
   let md = render();
-  if (estimateTokens(md) > budget.maxEstimatedTokens)
-    throw new Error('protected learner context exceeds startup budget');
-  if (md.length > budget.maxChars) {
-    const slice = md.slice(0, budget.maxChars);
-    const boundary = Math.max(
-      slice.lastIndexOf('。'),
-      slice.lastIndexOf('\n'),
-      slice.lastIndexOf('；'),
-    );
-    md = `${boundary > 0 ? slice.slice(0, boundary + 1) : slice}…`;
+  if (estimateTokens(md) > budget.maxEstimatedTokens || md.length > budget.maxChars) {
+    const steering = kept.find((u) => u.rank === 0);
+    if (steering) {
+      const protectedText = kept
+        .filter((u) => u !== steering)
+        .map((u) => u.markdown)
+        .join('\n');
+      let text = steering.markdown;
+      const fits = () =>
+        estimateTokens(`${text}…\n${protectedText}`) <= budget.maxEstimatedTokens &&
+        text.length + protectedText.length + 2 <= budget.maxChars;
+      while (text.length && !fits()) text = text.slice(0, -1);
+      const boundary = Math.max(
+        text.lastIndexOf('。'),
+        text.lastIndexOf('\n'),
+        text.lastIndexOf('；'),
+      );
+      if (boundary > 0) text = text.slice(0, boundary + 1);
+      steering.markdown = `${text}…`;
+      md = render();
+    }
+    if (estimateTokens(md) > budget.maxEstimatedTokens || md.length > budget.maxChars)
+      throw new Error('communication brief exceeds its compact storage contract');
   }
   return { markdown: md, estimatedTokens: estimateTokens(md) };
 }

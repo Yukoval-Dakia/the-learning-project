@@ -247,7 +247,22 @@ export async function changeTopics(
     } else if (input.withdrawKey) {
       after.topics = after.topics.filter((t) => t.key !== input.withdrawKey);
     } else {
-      for (const patch of input.patches ?? []) {
+      for (const rawPatch of input.patches ?? []) {
+        const patch = { ...rawPatch, replaces: [...rawPatch.replaces] };
+        if (patch.key === TALK_TOPIC) {
+          const current = after.topics.find((t) => t.key === TALK_TOPIC);
+          // Communication has one complete compact brief, never an ever-growing
+          // startup list. The writer receives all prior preferences in context.
+          if (
+            current?.facts.length === 1 &&
+            current.facts[0]?.body === patch.body &&
+            current.description === patch.description
+          )
+            continue;
+          patch.replaces = [
+            ...new Set([...patch.replaces, ...(current?.facts.map((f) => f.id) ?? [])]),
+          ];
+        }
         const legacyIds = patch.replaces.filter((id) => id.startsWith('mem0:'));
         const legacy = legacyIds.length
           ? (await readLegacyFacts(tx)).filter((f) => legacyIds.includes(f.id))

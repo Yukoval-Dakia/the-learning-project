@@ -1,5 +1,5 @@
 // One Curator turn owns consolidation. The job only supplies its trigger.
-import { piDomainMount } from '@/ai/pi-tool-mount';
+import { piDomainMount, piToolWireName } from '@/ai/pi-tool-mount';
 import { DEFAULT_TASK_BUDGET } from '@/ai/task-spec';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
@@ -7,11 +7,7 @@ import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
 import { writeEvent } from '@/kernel/events';
 import { advisoryLockRegistry } from '@/kernel/locks/registry';
 import { readOvernightHandoffSentence } from '@/kernel/read-models/overnight-digest';
-import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  resolveDomainToolNames,
-  resolveMcpAllowedTools,
-} from '@/kernel/tools/allowlists';
+import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
 import { readCuratorEvidence, readCuratorLegacyScopes } from './curator-evidence';
 import { loadLearnerContext } from './index';
@@ -52,6 +48,7 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
     readOvernightHandoffSentence(db),
   ]);
   const legacyScopes = await readCuratorLegacyScopes(db);
+  const toolNames = ['curate_context', 'query_context', 'query_events'];
   let noProgress = false;
   const seen = new Set<string>();
   const result = await runAgentTask(
@@ -69,12 +66,12 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
     {
       db,
       taskRunId: id,
-      allowedTools: [...resolveMcpAllowedTools('dreaming')],
+      allowedTools: toolNames.map((name) => piToolWireName(DOMAIN_TOOL_MCP_SERVER_NAME, name)),
       piToolMounts: [
         piDomainMount({
           serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
           taskKind: 'DreamingTask',
-          toolNames: resolveDomainToolNames('dreaming'),
+          toolNames,
           ctx: {
             db,
             taskRunId: id,

@@ -2,6 +2,8 @@ import { z } from 'zod';
 export const DIGEST_SCOPE = 'global:digest';
 export const CONTEXT_CHANGE = 'experimental:context_change';
 export const TALK_TOPIC = 'communication';
+export const COMMUNICATION_RULES =
+  '称呼、语气、偏好、persona 放在常驻主题 communication（怎么和我说话），只保存学习者表达的事实和偏好，不替学习者决定学习安排。该主题每次写入完整的沟通摘要（不超过四百字），合并既有仍有效的偏好与本轮新原话，不丢旧偏好；服务端以新版本替换旧摘要。';
 const Fact = z.object({
   id: z.string(),
   body: z.string().min(1).max(400),

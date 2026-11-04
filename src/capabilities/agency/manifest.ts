@@ -227,10 +227,8 @@ export const agencyCapability = defineCapability({
         load: () => import('./context/activity').then((m) => m.buildCuratorActivityHandler),
       },
       {
-        // DAG 成员：dreaming 读 proposal inbox 作去重基线，对上游 propose 生产者是软边
-        // （上游失败 dreaming 照跑，只是少看几条 pending）。cron 移除，改由 orchestrator 触发。
+        // Curator runs every night, including quiet nights that only need freshness review.
         name: 'dreaming_nightly',
-        eligibility: nightlyEligibility('reflection'),
         dependsOn: [{ job: 'knowledge_maintenance_nightly', soft: true }],
         queue: 'agent',
         load: () => import('./jobs/dreaming_nightly').then((m) => m.buildDreamingNightlyHandler),

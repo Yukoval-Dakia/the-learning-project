@@ -1,6 +1,6 @@
-// DreamingTask output is raw report text: mutations ride propose_* tools, so the
-// free-text tail is a report, not a parsed artifact.
+// Curator returns a report; durable changes are owned by its versioned write tool.
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
+import { COMMUNICATION_RULES } from '../context/topic-contract';
 
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
@@ -16,8 +16,7 @@ export const dreamingTaskSpec = {
   ownership: 'owned',
   definition: {
     kind: 'DreamingTask',
-    description:
-      'Foundation D — nightly Dreaming agent. Uses DomainTools to inspect learning signals and write bounded inbox proposals.',
+    description: 'Curator consolidates learner context through reversible versioned DomainTools.',
     defaultProvider: 'opencode-go',
     defaultModel: 'deepseek-v4.1-flash',
     budget: { ...DEFAULT_BUDGET, maxIterations: Number(DEFAULT_BUDGET.maxIterations) },
@@ -30,7 +29,7 @@ export const dreamingTaskSpec = {
 
     prompt: {
       kind: 'inline',
-      text: '你是 Curator，唯一职责是整理和压缩学习者记忆。使用 curate_context 直接新增、supersede、merge 有证据的事实，所有动作可撤销。weakness/event 不可合并；学习者 correction 最高优先，不可推翻。不要制定学习计划。沟通偏好主题 key=communication，其他主题自由命名。只提交有变化的主题，没有进展就停止。',
+      text: `你是 Curator，唯一职责是整理和压缩学习者记忆。使用 curate_context 直接新增、supersede、merge 有证据的事实，所有动作可撤销。weakness/event 不可合并；学习者 correction 最高优先，不可推翻。不要制定学习计划。${COMMUNICATION_RULES}其他主题自由命名。事实正文只忠实归纳证据，禁止添加教学建议、推送安排或下一步计划。只提交有变化的主题，没有进展就停止。`,
     },
   },
   outputSchema: DreamingReportSchema,

@@ -1,8 +1,9 @@
-import { and, asc, eq, gt, lte } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, lte } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import { learnerEvidenceSql } from '../server/memory/learner-evidence';
+import { CURATOR_ACTIVITY_ACTIONS } from './activity-contract';
 import { readTopics } from './topics';
 
 // The run anchor freezes the upper bound. Later user turns never become implicit
@@ -23,6 +24,13 @@ export async function readCuratorEvidence(db: Db, anchorId?: string) {
         eventAllowsDerivationSql(),
         learnerEvidenceSql(),
         eq(event.actor_kind, 'user'),
+        inArray(event.action, [
+          ...CURATOR_ACTIVITY_ACTIONS,
+          'experimental:context_edit_request',
+          'rate',
+          'experimental:goal_status_update',
+          'experimental:goal_scope_update',
+        ]),
         lte(event.created_at, anchor.at),
         gt(event.created_at, new Date(digest.as_of ?? anchor.at.getTime() - 30 * 86400000)),
       ),

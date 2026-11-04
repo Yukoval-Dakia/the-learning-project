@@ -10,16 +10,13 @@ import {
   event,
   knowledge,
   knowledge_edge,
-  memory_brief_note,
   question,
   question_solution_prior,
   question_solution_prior_vector,
 } from '@/db/schema';
 import {
   type EligibilityDecision,
-  MEMORY_BRIEF_SWEEP_JOB,
   type NightlySignals,
-  REFLECTION_BRIEF_SCOPE_KEYS,
   classifyActivityTier,
 } from '@/kernel/nightly-eligibility';
 import { loadLastLearnerEventAt } from '@/kernel/read-models/learner-activity';
@@ -42,7 +39,6 @@ export async function loadNightlyContext(
   opts?: { before?: Date },
 ): Promise<NightlyContext> {
   const names = [...new Set(jobNames)];
-  const dagNames = names.filter((name) => name !== MEMORY_BRIEF_SWEEP_JOB);
   const [
     lastLearner,
     treeWatermark,
@@ -50,15 +46,13 @@ export async function loadNightlyContext(
     returnStockShort,
     pendingEdgeProposals,
     history,
-    briefWatermark,
   ] = await Promise.all([
     loadLastLearnerEventAt(db, opts?.before),
     loadTreeWatermark(db),
     loadEmbedPending(db),
     loadReturnStockShort(db),
     names.includes('frontier_fill_nightly') ? loadPendingEdgeProposalCount(db) : Promise.resolve(0),
-    loadJobHistory(db, [...new Set([...dagNames, EMBED_BACKFILL_JOB])]),
-    names.includes(MEMORY_BRIEF_SWEEP_JOB) ? loadBriefWatermark(db) : Promise.resolve(null),
+    loadJobHistory(db, [...new Set([...names, EMBED_BACKFILL_JOB])]),
   ]);
 
   const tier = classifyActivityTier({
@@ -70,8 +64,7 @@ export async function loadNightlyContext(
   return {
     forJob(jobName: string): NightlySignals {
       const row = history.get(jobName);
-      const lastSuccess =
-        jobName === MEMORY_BRIEF_SWEEP_JOB ? briefWatermark : (row?.lastSuccess ?? null);
+      const lastSuccess = row?.lastSuccess ?? null;
       return {
         job: jobName,
         tier,
@@ -323,14 +316,6 @@ async function loadJobHistory(db: Db, jobNames: string[]): Promise<Map<string, H
     out.set(row.job_name, current);
   }
   return out;
-}
-
-async function loadBriefWatermark(db: Db): Promise<Date | null> {
-  const [row] = await db
-    .select({ at: sql<string | null>`max(${memory_brief_note.refreshed_at})` })
-    .from(memory_brief_note)
-    .where(inArray(memory_brief_note.scope_key, [...REFLECTION_BRIEF_SCOPE_KEYS]));
-  return asDate(row?.at);
 }
 
 function shanghaiDayStart(now: Date): Date {

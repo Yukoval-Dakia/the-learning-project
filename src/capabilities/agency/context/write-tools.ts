@@ -4,7 +4,7 @@ import { quoteAppearsInMessage } from '@/core/steering';
 import { event } from '@/db/schema';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import type { DomainTool } from '@/kernel/tools/types';
-import { ChangeResult, TopicPatch } from './topic-contract';
+import { COMMUNICATION_RULES, ChangeResult, TopicPatch } from './topic-contract';
 import { changeTopics, readTopics } from './topics';
 
 const RememberInput = TopicPatch.omit({ replaces: true }).extend({
@@ -15,8 +15,7 @@ export const rememberLearnerTool: DomainTool<
   z.infer<typeof ChangeResult>
 > = {
   name: 'remember_learner',
-  description:
-    '学习者说出希望记住的偏好、称呼、语气、persona 或个人事实时，回复前调用，确认只用工具实际返回值。learner_words 必须逐字引用本轮原话。沟通偏好 key 固定 communication，其他主题自由命名。只记事实，不推断掌握度。不用于学习安排（用 record_steering）。',
+  description: `学习者说出希望记住的偏好、称呼、语气、persona 或个人事实时，回复前调用，确认只用工具实际返回值。learner_words 必须逐字引用本轮原话。${COMMUNICATION_RULES}其他主题自由命名。只记事实，不推断掌握度。不用于学习安排（用 record_steering）。`,
   effect: 'write',
   costClass: 'local',
   mirrorEvent: 'when_causal',
@@ -63,8 +62,7 @@ export const curateContextTool: DomainTool<
   z.infer<typeof ChangeResult>
 > = {
   name: 'curate_context',
-  description:
-    '直接整理上下文主题：新增事实，或 replaces 指定旧事实 id 做 supersede/merge；全部可撤销。weakness/event 不能 merge，必须逐条 supersede。学习者 correction 优先，不得推翻。只提交有变化的主题，命名自由，沟通主题 key=communication。不决定下一步学习计划。证据由服务端本次读取集绑定，不接受模型提供证据 id。无变化就停止。',
+  description: `直接整理上下文主题：新增事实，或 replaces 指定旧事实 id 做 supersede/merge；全部可撤销。weakness/event 不能 merge，必须逐条 supersede。学习者 correction 优先，不得推翻。只提交有变化的主题，命名自由。${COMMUNICATION_RULES}事实正文禁止添加教学建议、推送安排或下一步计划。证据由服务端本次读取集绑定，不接受模型提供证据 id。无变化就停止。`,
   effect: 'write',
   costClass: 'local',
   mirrorEvent: 'when_causal',

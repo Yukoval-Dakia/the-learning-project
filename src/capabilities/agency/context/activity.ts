@@ -32,9 +32,9 @@ export function buildCuratorActivityHandler(db: Db) {
   return async (jobs: Job<{ source_id: string }>[]) => {
     for (const job of jobs) {
       const [latest] = await db
-        .select()
+        .select({ id: event.id, created_at: event.created_at })
         .from(event)
-        .where(and(inArray(event.action, CURATOR_ACTIVITY_ACTIONS), eventAllowsDerivationSql()))
+        .where(inArray(event.action, CURATOR_ACTIVITY_ACTIONS))
         .orderBy(desc(event.created_at), desc(event.id))
         .limit(1);
       if (!latest || latest.id !== job.data.source_id) continue;
