@@ -385,7 +385,9 @@
   padding-block: 8px;
 }
 /* Cell size, padding and row height come from the reading layer; the studio sets only its colours. */
+/* A real table inside the focusable scroller: the section scrolls and takes the keyboard. */
 [data-ui-next] .un-st-support .un-cp-table-scroll table {
+  display: table;
   width: 100%;
 }
 [data-ui-next] .un-st-support .un-cp-table-scroll :is(th, td) {
