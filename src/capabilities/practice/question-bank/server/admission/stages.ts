@@ -19,6 +19,7 @@ import {
 import { ai_task_runs, paid_effect } from '@/db/schema';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
+import { admissionHttpFailureStatus } from './attempt';
 
 export type AdmissionStageReceiptRef = { identity: PaidEffectIdentity; receipt_digest: string };
 
@@ -102,12 +103,15 @@ const StageReceipt = z.discriminatedUnion('kind', [
 ]);
 
 // Only bound HTTP facts qualify; provider message strings never grant a retry.
-function existingRecovery(error: unknown): ReturnType<AdmissionRecoveryReader> {
+function existingRecovery(
+  error: unknown,
+  httpStatus?: number | null,
+): ReturnType<AdmissionRecoveryReader> {
   if (!(error instanceof AgentRunError)) return null;
   if (error.helpProviderFault?.kind === 'quota')
     return { reason: 'quota', evidence_ref: error.taskRunId };
-  if (error.apiErrorStatus === 429) return { reason: 'quota', evidence_ref: error.taskRunId };
-  if (error.apiErrorStatus === 401) return { reason: 'login', evidence_ref: error.taskRunId };
+  if (httpStatus === 429) return { reason: 'quota', evidence_ref: error.taskRunId };
+  if (httpStatus === 401) return { reason: 'login', evidence_ref: error.taskRunId };
   return null;
 }
 
@@ -360,7 +364,6 @@ export function admissionStageRunner(input: {
                   })();
           receipt = StageReceipt.parse({ kind: 'result', result });
         } catch (error) {
-          const recovery = input.recovery?.(error) ?? existingRecovery(error);
           const [run] =
             error instanceof AgentRunError
               ? await input.db
@@ -368,14 +371,22 @@ export function admissionStageRunner(input: {
                   .from(ai_task_runs)
                   .where(eq(ai_task_runs.id, error.taskRunId))
               : [];
+          const httpStatus =
+            error instanceof AgentRunError && run?.finished_at != null
+              ? admissionHttpFailureStatus(error, run.usage_json.transport)
+              : null;
+          const recovery =
+            kind === 'QuestionAdmissionAdjudicateTask'
+              ? (input.recovery?.(error) ?? existingRecovery(error, httpStatus))
+              : null;
           const knownFailure =
             error instanceof AgentRunError &&
-            (error.apiErrorStatus != null ||
-              (run?.finished_at != null &&
-                (run.usage_json.transport?.send_state === 'not_sent' ||
-                  error.subtype === 'error_max_structured_output_retries' ||
-                  error.helpProviderFault?.kind === 'parse' ||
-                  error.helpProviderFault?.kind === 'bad_gateway')));
+            run?.finished_at != null &&
+            (httpStatus != null ||
+              run.usage_json.transport?.send_state === 'not_sent' ||
+              error.subtype === 'error_max_structured_output_retries' ||
+              error.helpProviderFault?.kind === 'parse' ||
+              error.helpProviderFault?.kind === 'bad_gateway');
           if (recovery && !input.interrupted?.()) {
             const parsed = AdmissionRecovery.pick({ reason: true, evidence_ref: true }).parse(
               recovery,
