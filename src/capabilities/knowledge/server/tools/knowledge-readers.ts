@@ -5,8 +5,6 @@ import { getCurrentFailureAttemptsForDerivation } from '@/kernel/read-models/fai
 
 import { and, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
-// Share the rubric's evidence window so readers and validation cannot drift.
-import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
 import {
@@ -19,7 +17,10 @@ import type { DomainTool, ToolContext } from './types';
 const TEXT_SNIPPET_MAX = KNOWLEDGE_EXCERPT_MAX;
 const MAX_NODES = 60;
 const QUERY_FAILURE_LIMIT = 10;
-export const RECENT_FAILURE_WINDOW_MS = RUBRIC_EVIDENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+// Window behind the recent_failure_count_30d stat, owned solely by this reader:
+// the stat name fixes it at 30 days and no other consumer derives from it, so
+// keeping the literal inline cannot drift against a shared definition.
+export const RECENT_FAILURE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 type KnowledgeRow = {
   id: string;
@@ -358,17 +359,8 @@ const QueryKnowledgeOutputSchema = z.object({
     recent_failures_time_scope: z.literal('all_recorded_attempts'),
     recent_failures_limit: z.literal(QUERY_FAILURE_LIMIT),
   }),
-  claim_boundaries: z.object({
-    supports_global_node_absence_claim: z.literal(false),
-    supports_never_existed_claim: z.literal(false),
-    supports_archived_node_absence_claim: z.literal(false),
-    edge_scope: z.literal('between_returned_active_nodes_for_requested_relation_types'),
-    supports_global_edge_absence_claim: z.literal(false),
-    supports_unrequested_relation_absence_claim: z.literal(false),
-    supports_complete_expansion_claim: z.boolean(),
-    optional_observation_scope: z.literal('returned_active_nodes_only'),
-    supports_recent_failure_absence_claim: z.boolean(),
-  }),
+  // One honest scope sentence: what this result covers and what was not checked.
+  claim_boundaries: z.string(),
   nodes: z.array(
     z.object({
       id: z.string(),
@@ -535,17 +527,13 @@ async function executeQueryKnowledge(
       recent_failures_time_scope: 'all_recorded_attempts',
       recent_failures_limit: QUERY_FAILURE_LIMIT,
     },
-    claim_boundaries: {
-      supports_global_node_absence_claim: false,
-      supports_never_existed_claim: false,
-      supports_archived_node_absence_claim: false,
-      edge_scope: 'between_returned_active_nodes_for_requested_relation_types',
-      supports_global_edge_absence_claim: false,
-      supports_unrequested_relation_absence_claim: false,
-      supports_complete_expansion_claim: expansionComplete,
-      optional_observation_scope: 'returned_active_nodes_only',
-      supports_recent_failure_absence_claim: ids.length > 0 && failures?.length === 0,
-    },
+    claim_boundaries:
+      `Returned ${matches.length} active node(s) in domain '${input.subjectId}'` +
+      `${expansionComplete ? ' with complete expansion' : ' with expansion truncated by the limit'}; ` +
+      'edges cover only the returned nodes' +
+      `${relationTypes ? ` and relation types ${relationTypes.join(', ')}` : ''}; ` +
+      'stats and recent_failures cover only requested, returned nodes; ' +
+      'absence of nodes, edges, or failures outside this result was not checked.',
     nodes: matches.map((row) => {
       const m = mastery.get(row.id);
       return {
