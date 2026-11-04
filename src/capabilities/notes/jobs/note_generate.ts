@@ -63,8 +63,7 @@ type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
 
-// Dead attrs marker from the retired long-note revise/recheck loop (YUK-1772);
-// a fresh generation epoch still clears it so the field cannot lie.
+// Older notes may still carry a long-check attrs marker; a fresh generation clears it.
 function attrsClearingNoteLongCheck(attrs: unknown): {
   attrs: Record<string, unknown>;
   cleared: boolean;
@@ -303,22 +302,34 @@ export async function runNoteGenerate(
     // Unresolved issues are saved on the note as its known issues — never a
     // fabricated verdict, never a second independent AI pass (YUK-1772).
     if (contractIssues.length > 0) {
-      result = await runTaskFn(
-        'NoteGenerateTask',
-        {
-          ...input,
-          revision_context: { issues: contractIssues, body_blocks: parsed.body_blocks },
-        },
-        {
-          subjectProfile,
-          piSkillDocs: skillDocs,
-          beforeProviderQuery: assertStillPending,
-        },
-      );
-      attempt = result;
-      parsed = parseNoteGenerateOutput(result.text, row.type, result.finishReason);
-      assertNoteGenerationReferences(parsed.body_blocks, referenceArtifacts);
-      contractIssues = noteBodyContractIssues(row.type, parsed.body_blocks);
+      try {
+        const revised = await runTaskFn(
+          'NoteGenerateTask',
+          {
+            ...input,
+            revision_context: { issues: contractIssues, body_blocks: parsed.body_blocks },
+          },
+          {
+            subjectProfile,
+            piSkillDocs: skillDocs,
+            beforeProviderQuery: assertStillPending,
+          },
+        );
+        const revisedParsed = parseNoteGenerateOutput(revised.text, row.type, revised.finishReason);
+        assertNoteGenerationReferences(revisedParsed.body_blocks, referenceArtifacts);
+        result = revised;
+        attempt = revised;
+        parsed = revisedParsed;
+        contractIssues = noteBodyContractIssues(row.type, parsed.body_blocks);
+      } catch (revisionError) {
+        // The first version is a usable note: keep it with its known issues instead of paying
+        // for a retry. A note that left the pending state must still stop here.
+        await assertStillPending();
+        console.warn(
+          `[note_generate] ${artifactId} revision failed; keeping the first version`,
+          revisionError,
+        );
+      }
     }
     validationMs = Date.now() - validationStarted;
     const knownIssues: ArtifactVerificationSummaryT | null = noteKnownIssuesSummary(contractIssues);
