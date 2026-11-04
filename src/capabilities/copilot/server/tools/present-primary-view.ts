@@ -9,19 +9,31 @@ export const PresentPrimaryViewOutputSchema = z.discriminatedUnion('source', [
       ref: z
         .object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) })
         .strict()
+        .describe(
+          'An actual JSON object, never a JSON-encoded string. Copy kind from the successful root tool name and id from its tool_use_id receipt.',
+        )
         .meta({ examples: [{ kind: 'write_quiz', id: '<successful tool_use_id>' }] }),
     })
     .strict(),
   z
     .object({
       source: z.literal('artifact'),
-      ref: z.object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) }).strict(),
+      ref: z
+        .object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) })
+        .strict()
+        .describe(
+          'An actual JSON object, never a JSON-encoded string. Use the existing artifact type as kind and its artifact id as id.',
+        ),
     })
     .strict(),
   z
     .object({
       source: z.literal('ephemeral_html'),
-      ref: z.string().min(1).max(EPHEMERAL_HTML_REF_MAX_CHARS),
+      ref: z
+        .string()
+        .min(1)
+        .max(EPHEMERAL_HTML_REF_MAX_CHARS)
+        .describe('HTML markup string; this string form is only for source=ephemeral_html.'),
     })
     .strict(),
 ]);

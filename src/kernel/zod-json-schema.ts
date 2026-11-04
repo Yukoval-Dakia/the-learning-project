@@ -265,7 +265,61 @@ export function ensureToolParametersObjectRoot(input: JsonObject): JsonObject {
     union.length > 0 &&
     union.every((branch) => isJsonObject(branch) && branch.type === 'object')
   ) {
-    return sortSchemaKeys({ ...schema, type: 'object' });
+    // Providers also discover fields through root properties; keep the branch constraints.
+    const branches = union.filter(isJsonObject);
+    const strict = branches.every(
+      (branch) => branch.additionalProperties === false && isJsonObject(branch.properties),
+    );
+    if (
+      !strict ||
+      schema.properties !== undefined ||
+      schema.required !== undefined ||
+      schema.additionalProperties !== undefined
+    )
+      return sortSchemaKeys({ ...schema, type: 'object' });
+    const fields = new Map<string, unknown[]>();
+    for (const branch of branches) {
+      for (const [key, value] of Object.entries(branch.properties as JsonObject)) {
+        const variants = fields.get(key) ?? [];
+        if (!variants.some((other) => JSON.stringify(other) === JSON.stringify(value)))
+          variants.push(value);
+        fields.set(key, variants);
+      }
+    }
+    const properties = Object.fromEntries(
+      [...fields].map(([key, variants]) => {
+        const constants = variants.filter(isJsonObject).map((variant) => variant.const);
+        const value =
+          variants.length === 1
+            ? variants[0]
+            : constants.length === variants.length &&
+                constants.every((constant) => constant !== undefined)
+              ? {
+                  ...(variants.every(
+                    (variant) =>
+                      isJsonObject(variant) && variant.type === (variants[0] as JsonObject).type,
+                  ) && typeof (variants[0] as JsonObject).type === 'string'
+                    ? { type: (variants[0] as JsonObject).type }
+                    : {}),
+                  enum: constants,
+                }
+              : { anyOf: variants };
+        return [key, value];
+      }),
+    );
+    const required = Array.isArray(branches[0].required)
+      ? branches[0].required.filter((key) =>
+          branches.every(
+            (branch) => Array.isArray(branch.required) && branch.required.includes(key),
+          ),
+        )
+      : [];
+    return sortSchemaKeys({
+      ...schema,
+      type: 'object',
+      properties,
+      ...(required.length ? { required } : {}),
+    });
   }
   throw new Error(
     `tool parameters root must declare type:"object"; got ${JSON.stringify({

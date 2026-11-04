@@ -428,7 +428,9 @@ export function toolInputFailure(dt: DomainTool<unknown, unknown>, args: unknown
         ['compose_block', 'edit_question', 'write_note'].includes(dt.name) &&
         issue.code === 'custom'
           ? issue.message
-          : 'Arguments must match the declared input schema.',
+          : typeof object(expected)?.description === 'string'
+            ? String(object(expected)?.description)
+            : 'Arguments must match the declared input schema.',
       expected: expected ?? root,
       ...(Array.isArray(examples) && examples.length ? { example: examples[0] } : {}),
       next_action:
