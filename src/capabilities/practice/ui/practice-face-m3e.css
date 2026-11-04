@@ -69,6 +69,10 @@
     color: var(--un-positive);
   }
 
+  & .pf-dist-legend [data-seg="hard"] {
+    color: color-mix(in srgb, var(--un-caution) 72%, var(--un-md-sys-color-on-surface-variant));
+  }
+
   & .pf-dist-legend [data-seg="again"] {
     color: var(--un-caution);
   }
