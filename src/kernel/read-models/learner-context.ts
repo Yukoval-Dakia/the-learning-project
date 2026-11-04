@@ -24,6 +24,14 @@ export interface LearnerContextResult {
   readonly markdown: string;
   /** Estimated prompt tokens of `markdown` (deterministic estimator, not a tokenizer). */
   readonly estimatedTokens: number;
+  /**
+   * 裁剪遥测（无内容，只有单元名 + token 数）：哪些 unit 因预算被丢、丢前整段的
+   * 估计 token。调用方落运行记录后可 SQL 查明细被裁频率。
+   */
+  readonly startupTrim?: {
+    readonly droppedUnits: readonly string[];
+    readonly tokensBeforeTrim: number;
+  };
   /** High-water mark the delta section covers events after (ISO): the last
    *  Dreaming consolidation, or a fixed lookback bound when none has run yet. */
   readonly asOf: string;

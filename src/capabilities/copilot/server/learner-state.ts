@@ -56,6 +56,13 @@ export type ScopedProposalFeedbackCell = Pick<
   'kind' | 'relation' | 'acceptance_rate' | 'top_dismiss_reasons' | 'top_rubric_gates'
 >;
 
+/** 启动段裁剪遥测：只有单元名与 token 数，不记内容。 */
+export interface StartupTrimRecord {
+  dropped_units: string[];
+  tokens_before: number;
+  tokens_after: number;
+}
+
 /** The cached block (persisted in the header cache event payload). */
 export interface LearnerStateHeaderCache {
   header_md: string;
@@ -63,6 +70,8 @@ export interface LearnerStateHeaderCache {
   assembled_at: string;
   day_bucket: string;
   watermarks: LearnerStateWatermarks;
+  /** 本次装配的裁剪遥测（无裁剪时 dropped_units 为空数组，如实记录）。 */
+  startup_trim?: StartupTrimRecord;
 }
 
 export type PersistedLearnerStateHeaderCache = LearnerStateHeaderCache & { session_id: string };
@@ -305,6 +314,8 @@ export async function writeLearnerStateHeaderCache(
       assembled_at: cache.assembled_at,
       day_bucket: cache.day_bucket,
       watermarks: cache.watermarks,
+      // 裁剪遥测：只记单元名 + token 数（受限内容进不来）。
+      ...(cache.startup_trim ? { startup_trim: cache.startup_trim } : {}),
     },
     // Opt out of the mem0 outbox — the header is a deterministic projection
     // DERIVED FROM mem0 signals, so ingesting it would be circular.
@@ -319,7 +330,10 @@ export interface ResolveLearnerStateHeaderDeps {
   readCacheFn?: (db: DbLike, sessionId: string) => Promise<LearnerStateHeaderCache | null>;
   readWatermarksFn?: (db: DbLike) => Promise<LearnerStateWatermarks>;
   /** Startup-segment assembler; defaults to the Context module via the kernel port. */
-  assembleHeaderFn?: (db: DbLike, now: Date) => Promise<{ header_md: string }>;
+  assembleHeaderFn?: (
+    db: DbLike,
+    now: Date,
+  ) => Promise<{ header_md: string; startup_trim?: StartupTrimRecord }>;
   loadProposalFeedbackFn?: (db: DbLike) => Promise<ProposalFeedbackCell[]>;
   writeCacheFn?: (db: DbLike, cache: PersistedLearnerStateHeaderCache) => Promise<void>;
   now?: () => Date;
@@ -353,7 +367,18 @@ export async function resolveLearnerStateHeader(
     deps.assembleHeaderFn ??
     (async (d: DbLike, at: Date) => {
       const ctx = await loadLearnerContext(d, { view: 'companion', now: at });
-      return { header_md: ctx.markdown };
+      return {
+        header_md: ctx.markdown,
+        ...(ctx.startupTrim
+          ? {
+              startup_trim: {
+                dropped_units: [...ctx.startupTrim.droppedUnits],
+                tokens_before: ctx.startupTrim.tokensBeforeTrim,
+                tokens_after: ctx.estimatedTokens,
+              } satisfies StartupTrimRecord,
+            }
+          : {}),
+      };
     });
   const loadFeedback =
     deps.loadProposalFeedbackFn ??
@@ -414,6 +439,7 @@ export async function resolveLearnerStateHeader(
       assembled_at: now.toISOString(),
       day_bucket: dayBucketNow,
       watermarks: currentWatermarks,
+      ...(assembled.startup_trim ? { startup_trim: assembled.startup_trim } : {}),
     };
     try {
       await writeCache(db, persisted);
