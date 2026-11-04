@@ -63,6 +63,6 @@ return: {scoring_unit_id, verdict: return_for_repair, reason_md,
 
 裁决任务由新门在 worker 进程内串行，排队后重新核验来源/paid fence，再申请本次阶段发送。快路径不进入该队列。provider store 的进程内文件读写串行与任务串行是两件事；新门不实现凭据文件锁、刷新或登录。进程崩溃后只对已有已知等待按持久化投递恢复；sending/unknown 不自动重发。
 
-TEST 部署当前仅有假设：worker 内串行、单进程持有凭据。部署依赖是 Owner 在 TEST/NAS 主机通过浏览器回调交互登录一次；不能假设无头登录可行。凭据位置经 `OPENAI_CHATGPT_AUTH_FILE` 配置，专用文件只由 worker 读写，不从 Mac 复制凭据，不写死内容格式。#2480 负责文件读写串行、原子写回与 modify 的 60 秒上限；多处登录是否互相作废和刷新令牌是否可隔离仍须功能线核实。若假设不成立，回协调线改方向。Sol 真实验收等 #2480 合入后再 rebase，且须 Owner 确认凭据可独占；此前不调用。真实并发、请求档位和用量必须实测；发版时 TEST 尚未登录才允许操作员显式配置 flash 过渡并记录，产品不提供自动 fallback。
+TEST 部署当前的假设是只有单个 worker 进程持有凭据；裁决任务在该进程内串行由新门实现。部署依赖是 Owner 在 TEST/NAS 主机通过浏览器回调交互登录一次；不能假设无头登录可行。凭据位置经 `OPENAI_CHATGPT_AUTH_FILE` 配置，专用文件只由 worker 读写，不从 Mac 复制凭据，不写死内容格式。#2480 负责文件读写串行、原子写回与 modify 的 60 秒上限；多处登录是否互相作废和刷新令牌是否可隔离仍须功能线核实。若假设不成立，回协调线改方向。Sol 真实验收等 #2480 合入后再 rebase，且须 Owner 确认凭据可独占；此前不调用。真实并发、请求档位和用量必须实测；发版时 TEST 尚未登录才允许操作员显式配置 flash 过渡并记录，产品不提供自动 fallback。
 
 恢复得到最终裁决后不覆盖原等待收据：最终验证追加到原发布 seam，记录各阶段 paid identity/digest；发布绑定仍指向原 coordinator 收据的真实 digest，另记 derived_result_digest。任何阶段 sending/unknown 都阻止新发送，租约到期只分类 unknown。阶段收据回放不重新记费用；中央 task run/cost ledger 是单次费用真相。中央 runner 的 beforeProviderQuery 之前被配置或授权检查挡住时，阶段保存 not_sent 的已知结果，协调收据按系统原因收口；不伪造题目缺陷，也不把没有 task run 的调用记成未知费用。尚未发送的调用没有 unknown，已知额度/登录拒绝存已知等待收据；发送后结果不明仍 unknown，绝不把它当额度等待自动重试。
