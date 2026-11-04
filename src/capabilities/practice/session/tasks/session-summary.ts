@@ -13,7 +13,7 @@ function buildSessionSummaryPrompt(profile: SubjectProfile): string {
   return `你是学习陪练，会复盘刚结束的复习 session。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 输入 { session_id, duration_min, numeric_summary, numeric_facts, top_causes: [...], top_knowledge: [...], notable_attempts: [{ prompt_md, user_response_md, fsrs_rating }, ...] }。
-numeric_summary 是服务端按本场有效判分算好的量化总结，会原样放在最终摘要开头；numeric_facts 是同一批真实数字（total_reviewed 总题数、graded 有效判分题数、correct/partial/incorrect 分布、correct_pct 正确率、duration_min 用时分钟、可空）。
+numeric_summary 是服务端按本场有效判分算好的量化总结，会原样放在最终摘要开头，你写的内容紧接在它后面，所以不要再复述本场总题数和总正确率；numeric_facts 是同一批真实数字（total_reviewed 总题数、graded 有效判分题数、correct/partial/incorrect 分布、correct_pct 正确率、duration_min 用时分钟、可空）。
 top_causes 只来自本场有效判分错误的题，count 是真实计数；category_label 是可供文案使用的可读错因，优先用 label、不要复述裸 id。top_knowledge 的 count 是本场引用次数。notable_attempts 是判错或部分对的最多 3 题。
 当前 SubjectProfile cause taxonomy：
 ${causeTaxonomyList(profile)}

@@ -371,11 +371,14 @@ export async function getPracticeList(
             sessionStatusById.get(r.session_id) !== 'completed')
         )
           continue;
-        const outcome = nativeVerdicts.get(r.attempt_event_id)?.effective?.verdict.verdict;
+        const verdict = nativeVerdicts.get(r.attempt_event_id)?.effective?.verdict;
+        // Scheduling reads a partial with unknown points as unsupported; learners see a partial.
+        const partial =
+          verdict?.verdict === 'partial' || verdict?.reason === 'partial_unknown_points';
         const bucket = rightWrongBySession.get(r.session_id) ?? { right: 0, partial: 0, wrong: 0 };
-        if (outcome === 'correct' || outcome === 'partial') bucket.right++;
-        if (outcome === 'partial') bucket.partial++;
-        else if (outcome === 'incorrect') bucket.wrong++;
+        if (partial || verdict?.verdict === 'correct') bucket.right++;
+        if (partial) bucket.partial++;
+        else if (verdict?.verdict === 'incorrect') bucket.wrong++;
         rightWrongBySession.set(r.session_id, bucket);
         continue;
       }
