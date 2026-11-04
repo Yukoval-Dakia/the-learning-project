@@ -173,7 +173,7 @@
     "sharp": "^0.35.5",
     "tencentcloud-sdk-nodejs-ocr": "^4.1.332",
     "three": "0.187.0",
-    "ts-fsrs": "^5.4.2",
+    "ts-fsrs": "^6.0.0",
     "undici": "^8.10.2",
     "unified": "11.0.5",
     "uqr": "0.1.3",
