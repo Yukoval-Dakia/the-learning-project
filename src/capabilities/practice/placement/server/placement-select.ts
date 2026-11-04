@@ -7,7 +7,7 @@
 // walking along prereq edges is not implemented yet. Returns null when no eligible question
 // exists so the caller can source starter questions.
 
-import { and, isNull, notInArray, sql } from 'drizzle-orm';
+import { and, notInArray, sql } from 'drizzle-orm';
 import type { SelectionCandidateSignal } from '@/core/selection-signals';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
@@ -225,41 +225,4 @@ export async function selectNextPlacementItem(
     }
   }
   return best;
-}
-
-/** Inventory counts serving capability, before information ranking. The background
- * target never delays issuing the first eligible item. */
-export async function countPlacementInventory(
-  db: DbLike,
-  knowledgeIds: readonly string[],
-): Promise<number> {
-  if (knowledgeIds.length === 0) return 0;
-  const rows = await db
-    .select({ id: question.id })
-    .from(question)
-    .where(
-      and(
-        sql`(${sql.join(
-          knowledgeIds.map(
-            (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
-          ),
-          sql` OR `,
-        )})`,
-        notDraftPredicate(question.draft_status),
-        questionSuspendedPredicate(question),
-        isNull(sql`${question.metadata}->>'archived_at'`),
-        // Same allowed-uses rule as the starter claim's eligible count.
-        sql`(
-          jsonb_typeof(${question.metadata}->'allowed_uses') IS DISTINCT FROM 'array'
-          OR jsonb_array_length(${question.metadata}->'allowed_uses') = 0
-          OR (${question.metadata}->'allowed_uses') ?& array['placement','diagnostic']
-        )`,
-      ),
-    );
-  return (
-    await readAutomaticallyServableQuestionIds(
-      db,
-      rows.map((row) => row.id),
-    )
-  ).size;
 }

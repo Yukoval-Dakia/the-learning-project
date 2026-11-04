@@ -3,13 +3,11 @@
 
 export {
   PLACEMENT_QUEUE_EXPIRY_MS,
-  countPlacementInventory,
   dispatchPlacementStarterClaim,
   isPlacementStarterJobLive,
   markPlacementStarterClaimTerminal,
   placementProbeEnabled,
   resolvePlacementStarterGoalAuthority,
-  selectNextPlacementItem,
   terminalizeLostPlacementDelivery,
 } from '@/capabilities/practice/public';
 export { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';

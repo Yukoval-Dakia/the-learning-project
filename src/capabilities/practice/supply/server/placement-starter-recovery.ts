@@ -22,7 +22,6 @@ import { goal, placement_starter_attempt, placement_starter_claim } from '@/db/s
 import { ApiError } from '@/kernel/http';
 import {
   PLACEMENT_QUEUE_EXPIRY_MS,
-  countPlacementInventory,
   dispatchPlacementStarterClaim,
   isPlacementStarterJobLive,
   lockPlacementSupplyScopes,
@@ -32,6 +31,7 @@ import {
   terminalizeLostPlacementDelivery,
 } from '@/kernel/placement';
 import { resolveGoalPlacementScope } from '@/kernel/read-models/placement-scope';
+import { countPlacementInventory } from './placement-inventory';
 import { placementClaimJobQueue } from './placement-starter';
 import { PLACEMENT_STARTER_REQUIRED_COUNT } from './placement-starter-attempts';
 

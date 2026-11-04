@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
+import { notDraftPredicate } from '@/db/predicates';
 import {
   event,
   placement_starter_attempt,
@@ -16,6 +16,7 @@ import {
 } from '@/kernel/placement-starter-outcome';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
+import { placementUsableQuestionPredicate } from './placement-inventory';
 import { placementStarterAttemptId } from './placement-starter-identity';
 import { readPlacementCandidateProgress } from './placement-starter-progress';
 import { markPlacementStarterClaimTerminal } from './placement-starter-store';
@@ -1061,17 +1062,8 @@ export async function countEligiblePlacementQuestions(
         eq(placement_starter_attempt_question.claim_id, claimId),
         ...(attemptId ? [eq(placement_starter_attempt_question.attempt_id, attemptId)] : []),
         eq(placement_starter_attempt_question.verification_status, 'authorized'),
-        notDraftPredicate(question.draft_status),
-        // 契约准入门：suspended/withdrawn 组不算已验证供给。
-        questionSuspendedPredicate(question),
-        isNull(sql`${question.metadata}->>'archived_at'`),
+        placementUsableQuestionPredicate(),
         sql`${question.knowledge_ids} @> jsonb_build_array(${placement_starter_claim.knowledge_id})`,
-        // Same allowed-uses rule as web serving: unrestricted, or restricted to include both.
-        sql`(
-          jsonb_typeof(${question.metadata}->'allowed_uses') IS DISTINCT FROM 'array'
-          OR jsonb_array_length(${question.metadata}->'allowed_uses') = 0
-          OR (${question.metadata}->'allowed_uses') ?& array['placement','diagnostic']
-        )`,
       ),
     );
   return (

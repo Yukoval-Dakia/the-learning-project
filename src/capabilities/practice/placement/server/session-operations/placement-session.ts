@@ -21,6 +21,7 @@ import {
   resolveNearbyPlacementScope,
 } from '@/kernel/read-models/placement-scope';
 import {
+  countPlacementInventory,
   dispatchPlacementStarterClaim,
   materializePlacementStartersForGoal,
   readPlacementStarterOutcomes,
@@ -38,11 +39,7 @@ import {
   readPlacementSessionInfo,
   readPlacementUnresolvedItems,
 } from '../placement-assessment';
-import {
-  countPlacementInventory,
-  resolveLeaningPreferenceKcs,
-  selectNextPlacementItem,
-} from '../placement-select';
+import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../placement-select';
 import * as Placement from '../placement-session-lifecycle';
 import { PLACEMENT_DEFAULT_CAP } from '../placement-termination';
 
