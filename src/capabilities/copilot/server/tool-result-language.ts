@@ -2,7 +2,7 @@ import { inArray } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 
-const referenceKey = /^(?:id|ref)$|(?:_ids?|_refs?)$|(?:Id|Ids)$/;
+const referenceKey = /^(?:id|refs?)$|(?:_ids?|_refs?)$|(?:Id|Ids)$/;
 const referenceValue =
   /^(?:[a-z0-9_-]+:[a-z0-9_-]+:[a-z0-9_:-]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 

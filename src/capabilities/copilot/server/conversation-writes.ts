@@ -30,6 +30,7 @@ import {
   readCopilotPublicProse,
 } from './public-prose';
 import {
+  COPILOT_REPLY_CHAR_LIMIT,
   type CopilotReplyFinalizationReceipt,
   type PreparedCopilotReply,
   sealCommittedPresentationReply,
@@ -248,6 +249,14 @@ export async function writeCopilotReply(
   const receipt = receiptMatches ? params.replyFinalization : undefined;
   const sealed = sealCommittedPresentationReply(prepared, receipt);
   const cleanedReply = sealed.preparedReply.text;
+  if (
+    publicProse &&
+    sealed.receipt?.assurance === 'unsealed' &&
+    (sealed.receipt.unsealed_reason === 'reply_truncated' ||
+      publicProse.text.length > COPILOT_REPLY_CHAR_LIMIT)
+  ) {
+    publicProse.text = cleanedReply;
+  }
   const primaryView = receipt ? sealed.preparedReply.primaryView : undefined;
   // created_at 严格晚于 ask（now + 1ms）：整轮共享一个 now，无偏移则 ask/reply
   // 在 created_at 上打平，turns 读取器的 (created_at, id) 排序可能把 reply 排到

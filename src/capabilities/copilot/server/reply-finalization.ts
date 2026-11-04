@@ -180,7 +180,7 @@ function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
   const retainedDrafts = proposals.filter(
     (entry) => entry.proposal_effect_contract?.retained_draft,
   ).length;
-  const hasPending = proposals.some((entry) => {
+  const pending = proposals.filter((entry) => {
     const output = isRecord(entry.domain_output) ? entry.domain_output : undefined;
     const status = typeof output?.status === 'string' ? output.status : undefined;
     return (
@@ -192,9 +192,13 @@ function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
   });
   return [
     '<!--copilot-proposal-disclosure:start-->',
-    hasPending
+    pending.length > 0
       ? '本轮建议已提交，等待你确认后才会应用到目标。'
       : '本轮没有产生可供确认的建议，未执行目标变更。',
+    // The companion reads these hidden rows to retain its inbox notice.
+    ...(pending.length > 0
+      ? ['<!--', ...pending.map(() => '- `建议`: status=pending'), '-->']
+      : []),
     ...(retainedDrafts > 0 ? ['生成的草稿已经保存；暂不采纳建议也不会删除草稿。'] : []),
     '<!--copilot-proposal-disclosure:end-->',
   ].join('\n');
