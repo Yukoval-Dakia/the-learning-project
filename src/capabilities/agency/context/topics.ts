@@ -13,6 +13,7 @@ import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import { briefPurposeCurrent, latestPurposeWithdrawal } from '@/kernel/read-models/purpose-change';
 import { markBriefPurpose } from '../server/memory/brief-purpose';
 import { type LegacyFact, readLegacyFacts, restoreLegacy, supersedeLegacy } from './legacy-facts';
+import { readMemoryBriefNote } from './memory-brief';
 
 import {
   CONTEXT_CHANGE,
@@ -25,18 +26,77 @@ import {
   type TopicPatchT,
 } from './topic-contract';
 
-const empty = (): DigestT => ({ format: 1, topics: [], as_of: null, overnight: null });
+const empty = (): DigestT => ({
+  format: 1,
+  topics: [],
+  as_of: null,
+  overnight: null,
+  withdrawals: [],
+});
 
-export async function readTopics(db: Db | Tx) {
+async function storedTopics(db: Db | Tx) {
   const [row] = await db
     .select()
     .from(memory_brief_note)
     .where(eq(memory_brief_note.scope_key, DIGEST_SCOPE))
     .limit(1);
-  if (!row) return { digest: empty(), version: 0 };
-  if (!(await briefPurposeCurrent(db, DIGEST_SCOPE, row.version)))
-    return { digest: empty(), version: row.version };
-  return { digest: Digest.parse(JSON.parse(row.long_term_md)), version: row.version };
+  if (row) return { digest: Digest.parse(JSON.parse(row.long_term_md)), version: row.version };
+  const { note } = await readMemoryBriefNote(db, 'global');
+  const digest = empty();
+  if (note) {
+    const parts = [
+      [note.recent_week_md, note.recent_week_evidence_ids],
+      [note.recent_months_md, note.recent_months_evidence_ids],
+      [note.long_term_md, note.long_term_evidence_ids],
+    ] as const;
+    const facts = parts.flatMap(([body, ids], part) =>
+      !body || !ids.length
+        ? []
+        : Array.from({ length: Math.ceil(body.length / 400) }, (_, chunk) => ({
+            id: `legacy-global:${part}:${chunk}`,
+            body: body.slice(chunk * 400, (chunk + 1) * 400),
+            kind: 'fact' as const,
+            memory_kind: 'event' as const,
+            written_by: 'curator' as const,
+            evidence_ids: ids,
+            as_of: note.refreshed_at?.toISOString() ?? '',
+            supersedes: [],
+            knowledge_ids: [],
+          })),
+    );
+    if (facts.length)
+      digest.topics.push({
+        key: 'legacy-global',
+        scope_key: 'global',
+        name: '已有画像',
+        description: '升级前保存的学习者摘要',
+        facts,
+        updated_at: note.refreshed_at?.toISOString() ?? '',
+      });
+  }
+  return { digest, version: 0 };
+}
+
+async function permittedDigest(db: Db | Tx, stored: DigestT) {
+  const digest = structuredClone(stored);
+  const ids = digest.topics.flatMap((t) => t.facts.flatMap((f) => f.evidence_ids));
+  const allowed = await allowedEventIds(db, ids);
+  digest.topics = digest.topics
+    .map((t) => ({
+      ...t,
+      facts: t.facts.filter(
+        (f) => f.evidence_ids.length > 0 && f.evidence_ids.every((id) => allowed.has(id)),
+      ),
+    }))
+    .filter((t) => t.facts.length);
+  return digest;
+}
+
+export async function readTopics(db: Db | Tx) {
+  const { digest, version } = await storedTopics(db);
+  const visible = await permittedDigest(db, digest);
+  if (!(await briefPurposeCurrent(db, DIGEST_SCOPE, version))) visible.overnight = null;
+  return { digest: visible, version };
 }
 
 function portrait(digest: DigestT) {
@@ -77,6 +137,7 @@ async function persist(
     subject_id: DIGEST_SCOPE,
     payload: {
       format: 1,
+      derivation_policy: 'answer_only',
       before,
       after,
       version: version + 1,
@@ -129,7 +190,7 @@ async function persist(
     status: 'changed',
     change_id: changeId,
     version: version + 1,
-    before: before.topics,
+    before: (await permittedDigest(tx, before)).topics,
     after: after.topics,
     issues: [],
   });
@@ -150,7 +211,7 @@ export async function changeTopics(
   },
 ) {
   return db.transaction(async (tx) => {
-    const preview = await readTopics(tx);
+    const preview = await storedTopics(tx);
     if (preview.version !== input.expectedVersion)
       throw new ApiError('context_version_conflict', 'context version conflict; reload', 409);
     const legacyIds =
@@ -165,13 +226,20 @@ export async function changeTopics(
           .where(and(eq(event.id, input.undoId), eq(event.action, CONTEXT_CHANGE)))
       : [];
     const prior = undo[0]
-      ? z.object({ before: Digest, after: Digest }).parse(undo[0].payload)
+      ? z
+          .object({
+            before: Digest,
+            after: Digest,
+            legacy_before: z.array(z.object({ evidence_ids: z.array(z.string()) })).default([]),
+          })
+          .parse(undo[0].payload)
       : null;
     const refs = [
       ...new Set([
         ...input.sourceIds,
         ...preview.digest.topics.flatMap((t) => t.facts.flatMap((f) => f.evidence_ids)),
         ...legacy.flatMap((f) => f.evidence_ids),
+        ...(prior?.legacy_before.flatMap((f) => f.evidence_ids) ?? []),
         ...[...(prior?.before.topics ?? []), ...(prior?.after.topics ?? [])].flatMap((t) =>
           t.facts.flatMap((f) => f.evidence_ids),
         ),
@@ -181,18 +249,20 @@ export async function changeTopics(
     // Match that order, then CAS the projection before applying any change.
     for (const id of refs.sort()) await lockEventDerivationSources(tx, id);
     await lockPurposeBrief(tx);
-    const { digest: before, version } = await readTopics(tx);
+    const { digest: before, version } = await storedTopics(tx);
     if (version !== input.expectedVersion)
       throw new ApiError('context_version_conflict', 'context version conflict; reload', 409);
-    const after = structuredClone(before);
+    const after = await permittedDigest(tx, before);
+    const purposeCurrent = await briefPurposeCurrent(tx, DIGEST_SCOPE, version);
+    if (!purposeCurrent) after.overnight = null;
     const legacyChanged: LegacyFact[] = [];
     const result = (issues: z.infer<typeof ChangeResult>['issues']) =>
       ChangeResult.parse({
         status: issues.length ? 'issue' : 'unchanged',
         change_id: null,
         version,
-        before: before.topics,
-        after: before.topics,
+        before: after.topics,
+        after: after.topics,
         issues,
       });
     if (input.undoId) {
@@ -205,6 +275,7 @@ export async function changeTopics(
           before: Digest,
           after: Digest,
           version: z.number(),
+          undo_of: z.string().nullable().optional(),
           legacy_before: z
             .array(
               z.object({
@@ -218,6 +289,12 @@ export async function changeTopics(
             .default([]),
         })
         .parse(row?.payload);
+      if (payload.undo_of)
+        throw new ApiError(
+          'context_undo_depth',
+          'undo of an undo is not supported; correct the topic instead',
+          409,
+        );
       for (const fact of payload.legacy_before) {
         for (const id of fact.evidence_ids) await lockEventDerivationSources(tx, id);
         const allowed = await allowedEventIds(tx, fact.evidence_ids);
@@ -250,11 +327,61 @@ export async function changeTopics(
             })),
           });
       }
+      const touched = [...keys].filter(
+        (key) =>
+          JSON.stringify(payload.before.topics.find((t) => t.key === key)) !==
+          JSON.stringify(payload.after.topics.find((t) => t.key === key)),
+      );
+      for (const key of touched) {
+        const expected = payload.after.withdrawals.find((w) => w.key === key);
+        if (
+          JSON.stringify(after.withdrawals.find((w) => w.key === key)) !== JSON.stringify(expected)
+        )
+          throw new ApiError('context_undo_conflict', 'topic withdrawal has later changes', 409);
+        after.withdrawals = after.withdrawals.filter((w) => w.key !== key);
+        const old = payload.before.withdrawals.find((w) => w.key === key);
+        if (old) after.withdrawals.push(old);
+      }
     } else if (input.withdrawKey) {
+      after.withdrawals = after.withdrawals.filter((w) => w.key !== input.withdrawKey);
+      after.withdrawals.push({ key: input.withdrawKey, at: new Date().toISOString() });
       after.topics = after.topics.filter((t) => t.key !== input.withdrawKey);
     } else {
       for (const rawPatch of input.patches ?? []) {
         const patch = { ...rawPatch, replaces: [...rawPatch.replaces] };
+        const withdrawal = after.withdrawals.find((w) => w.key === patch.key);
+        let patchSourceIds = input.sourceIds;
+        if (withdrawal) {
+          const sources = input.sourceIds.length
+            ? await tx
+                .select({
+                  id: event.id,
+                  at: event.created_at,
+                  actor: event.actor_kind,
+                  action: event.action,
+                })
+                .from(event)
+                .where(inArray(event.id, input.sourceIds))
+            : [];
+          patchSourceIds = sources
+            .filter(
+              (e) =>
+                e.actor === 'user' &&
+                [
+                  'experimental:copilot_user_ask',
+                  'experimental:copilot_chip_trigger',
+                  'experimental:context_edit_request',
+                ].includes(e.action) &&
+                e.at.getTime() > Date.parse(withdrawal.at),
+            )
+            .map((e) => e.id);
+          if (!patchSourceIds.length)
+            throw new ApiError(
+              'context_topic_withdrawn',
+              'topic needs new learner evidence after withdrawal',
+              409,
+            );
+        }
         if (patch.key === TALK_TOPIC) {
           const current = after.topics.find((t) => t.key === TALK_TOPIC);
           // Communication has one complete compact brief, never an ever-growing
@@ -326,7 +453,7 @@ export async function changeTopics(
           continue;
         }
         const evidence = [
-          ...new Set([...input.sourceIds, ...replaced.flatMap((f) => f.evidence_ids)]),
+          ...new Set([...patchSourceIds, ...replaced.flatMap((f) => f.evidence_ids)]),
         ];
         if (!evidence.length) throw new Error('context write requires server-bound evidence');
         for (const t of after.topics)
@@ -361,7 +488,7 @@ export async function changeTopics(
       if (input.asOf && (!after.as_of || input.asOf > after.as_of)) after.as_of = input.asOf;
       if (input.overnight !== undefined) after.overnight = input.overnight;
     }
-    if (JSON.stringify(before) === JSON.stringify(after)) return result([]);
+    if (purposeCurrent && JSON.stringify(before) === JSON.stringify(after)) return result([]);
     return persist(tx, before, after, version, {
       ...input,
       undoOf: input.undoId,
@@ -449,4 +576,27 @@ export async function topicBoard(db: Db, now = new Date()) {
     }),
     changes: visibleChanges,
   };
+}
+
+/** Retry only the local CAS; never repeat the provider turn after it has written. */
+export async function refreshTopicMetadata(
+  db: Db,
+  input: { taskRunId: string; asOf?: string; overnight?: string | null },
+) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { version } = await readTopics(db);
+    try {
+      await changeTopics(db, {
+        expectedVersion: version,
+        actor: 'curator',
+        sourceIds: [],
+        patches: [],
+        ...input,
+      });
+      return true;
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'context_version_conflict') throw error;
+    }
+  }
+  return false;
 }
