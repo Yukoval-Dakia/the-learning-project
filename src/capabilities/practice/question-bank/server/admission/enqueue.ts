@@ -212,10 +212,9 @@ async function readAuthorizedSuccessorPurpose(
   }
   let allowedSourceId: string | null = null;
   for (const candidate of sources) {
-    // An unproven lineage is not an established source: policy is
-    // deny-by-exception and would read 'allow' on lineage that proves nothing.
-    // Drop it; it may not produce 'allow' on its own.
-    if (!(await admissionSourceProven(tx, candidate.sourceId))) continue;
+    // Policy first: an explicit restriction refuses whether or not the lineage
+    // is proven. Only then does provenance decide whether the candidate counts
+    // as allow evidence — an unproven one may not produce 'allow' on its own.
     await lockEventDerivationSources(tx, candidate.sourceId);
     if (
       (await readEventDerivationPolicy(tx, candidate.sourceId)) !== 'allow' ||
@@ -223,6 +222,7 @@ async function readAuthorizedSuccessorPurpose(
     ) {
       return { state: 'restricted' as const, sourceId: candidate.sourceId, authorized: true };
     }
+    if (!(await admissionSourceProven(tx, candidate.sourceId))) continue;
     allowedSourceId ??= candidate.sourceId;
   }
   if (allowedSourceId != null)
