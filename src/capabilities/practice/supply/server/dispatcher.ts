@@ -224,6 +224,12 @@ export interface DispatchDeps {
   actorRef?: string;
   caused_by_event_id?: string | null;
   /**
+   * 观测事件的 session_id——仅由服务端解析出的真实 learning_session
+   * （placement claim 派发 = 定位会话授权）时供给；是判分准入 provenance
+   * 证明的锚点，非授权来源不得伪造。
+   */
+  session_id?: string | null;
+  /**
    * cooldown 窗口天数。默认 SUPPLY_DISPATCH_COOLDOWN_DAYS（7d）。
    * 测试可注入 0 关闭 cooldown 或调小窗口验证行为。
    */
@@ -535,6 +541,7 @@ export async function dispatchSupplyTarget(
             ? 'failure'
             : 'partial',
       caused_by_event_id: deps.caused_by_event_id ?? null,
+      session_id: deps.session_id ?? null,
       payload: {
         target_id: target.id,
         fingerprint: target.fingerprint,

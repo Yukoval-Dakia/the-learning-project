@@ -635,6 +635,7 @@ async function runCandidateSubmit(
         fetchedAt: now.toISOString(),
         canonicalContentHash: canonicalHash,
         supplyTrace: input.supply_trace,
+        causedByEventId: ctx.causedByEventId ?? null,
         mergeActorRef: routeConfig.mergeActorRef,
         taskRunId: ctx.taskRunId,
         now,
@@ -701,6 +702,7 @@ async function runCandidateSubmit(
       }
       await publishQuestionGroupFromRow(tx, {
         rootId: questionId,
+        causedByEventId: ctx.causedByEventId ?? null,
         actorRef: `submit-question:${input.source_route}:enrich`,
         now,
       });
