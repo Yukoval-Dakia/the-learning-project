@@ -562,7 +562,15 @@ export interface PaperDetail {
   title: string;
   generation_status: string;
   intent_source: string;
-  session: { id: string; status: string; pos: number; right: number; wrong: number } | null;
+  session: {
+    id: string;
+    status: string;
+    pos: number;
+    right: number;
+    wrong: number;
+    /** Written after hand-in by the session summary job; null until then, or if none was written. */
+    summary_md?: string | null;
+  } | null;
   sections: Array<{ section_index: number; knowledge_focus_names: string[]; slots: PaperSlot[] }>;
 }
 
