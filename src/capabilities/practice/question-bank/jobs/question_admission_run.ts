@@ -27,6 +27,7 @@ import {
   question_revision,
   source_asset,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events/index';
 import { ApiError } from '@/kernel/http';
 import {
   type NormalizedContract,
@@ -362,8 +363,35 @@ export async function runAdmissionForQuestion(
   if (batch.kind === 'vector_held') return simple('withheld');
   if (batch.kind === 'applied') return simple(batch.status);
   if (batch.kind === 'historical') return simple('already_verified');
-  if (batch.kind === 'stale')
+  if (batch.kind === 'stale') {
+    if (batch.purpose.state === 'restricted') {
+      // Durable refusal record: the authorized-successor usage check denied
+      // this delivery before any send was claimed (no pay). Idempotent per
+      // delivery — writeEvents keeps the first write on id conflict.
+      await db.transaction((tx) =>
+        writeEvent(tx, {
+          id: `question-admission-purpose-refused:${delivery.id}`,
+          actor_kind: 'system',
+          actor_ref: 'practice:question_admission',
+          action: 'experimental:question_admission_purpose_refused',
+          subject_kind: 'question',
+          subject_id: rootId,
+          caused_by_event_id: batch.purpose.sourceId,
+          payload: {
+            version: 1,
+            job_id: delivery.id,
+            group_id: rootId,
+            revision_id: batch.input.revision_id,
+            revision_digest: batch.input.revision_digest,
+            source_id: batch.purpose.sourceId,
+          },
+          affected_scopes: [],
+          ingest_at: new Date(),
+        }),
+      );
+    }
     return simple(batch.staleInput || batch.purpose.state === 'allow' ? 'stale' : 'pending');
+  }
   if (batch.kind === 'held') return simple('pending');
 
   const checkPurpose = async (tx: Tx) =>

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { QUESTION_ADMISSION_CONTRACT_VERSION } from '@/core/question-admission-policy';
 import { declaredShapesAllSupported } from '@/core/schema/assessment/blank-answer-compare';
@@ -8,6 +8,7 @@ import { lockPaidEffectControlFamily, readPaidEffectControl } from '@/db/paid-ef
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import {
   event,
+  paid_effect,
   paid_effect_authorization,
   question,
   question_group_lifecycle,
@@ -55,12 +56,10 @@ const purposeBindingId = (jobId: string) => `question-admission-purpose:${jobId}
  * An authorized void + successor send has no purpose binding: the release
  * enqueues the bound job itself, outside this subscriber (the only binding
  * writer), and its republish events carry no usable source fields. The
- * paid_effect_authorization row is the equivalent proof — it names the exact
- * successor paid input and the ONE delivery allowed to claim it. Only an
- * 'unknown' binding result falls through to that lookup: a proven 'restricted'
- * derivation policy still restricts, and the claim's own authorization gate
- * enforces the exact bound successor identity, so this check can never spend
- * anything the authorization did not name.
+ * paid_effect_authorization row locates the bound send — the usage purpose
+ * itself is still evaluated by the authorized-successor check below. Only an
+ * 'unknown' binding result falls through to that check: a proven 'restricted'
+ * derivation policy never reaches it.
  */
 export async function readAdmissionPurpose(
   tx: Tx,
@@ -70,20 +69,148 @@ export async function readAdmissionPurpose(
 ) {
   const bound = await readAdmissionPurposeBinding(tx, deliveryId, expected, jobData);
   if (bound.state !== 'unknown' || expected.revision_digest == null) return bound;
-  const [authorized] = await tx
-    .select({ authorization_id: paid_effect_authorization.authorization_id })
+  return readAuthorizedSuccessorPurpose(tx, deliveryId, expected);
+}
+
+/**
+ * An authorized void + successor send has no purpose binding: the release
+ * enqueues the bound job itself, outside this subscriber (the only binding
+ * writer), and its republish events carry no usable source fields. The
+ * authorization row alone is NOT purpose proof (YUK-1791): before the bound
+ * delivery may send, the ORIGINAL usage provenance must evaluate 'allow'
+ * under the same derivation-policy readers the binding gate uses.
+ *
+ *   - Any established original source/publication policy other than 'allow'
+ *     ('answer_only' / 'crisis' / restricted lineage) refuses the send.
+ *   - Learner material whose purpose cannot be established refuses — missing
+ *     old facts are never reconstructed from today's rows.
+ *   - A group proven web-sourced (question.source='web_sourced') carries no
+ *     learner material; with no learner source to restrict it is allowed.
+ *
+ * Established sources, in order: the voided rows' own purpose bindings (the
+ * durable usage fact written at the original send), then the group's ORIGINAL
+ * publish event resolved the way the subscriber resolves a publication. The
+ * claim's own successor gate still enforces the exact bound successor
+ * identity, so an 'allow' here can never spend anything the authorization
+ * did not name; a 'restricted' here refuses before any send is claimed.
+ */
+async function readAuthorizedSuccessorPurpose(
+  tx: Tx,
+  deliveryId: string,
+  expected: { group_id: string; revision_id: string | null; revision_digest: string | null },
+) {
+  const revisionDigest = expected.revision_digest;
+  if (revisionDigest == null) return { state: 'unknown' as const, sourceId: null };
+  const authorizations = await tx
+    .select({
+      entity_revision: paid_effect_authorization.entity_revision,
+      unit: paid_effect_authorization.unit,
+      input_digest: paid_effect_authorization.input_digest,
+    })
     .from(paid_effect_authorization)
     .where(
       and(
         eq(paid_effect_authorization.family, ADMISSION_FAMILY),
         eq(paid_effect_authorization.entity_id, expected.group_id),
-        eq(paid_effect_authorization.successor_entity_revision, expected.revision_digest),
+        eq(paid_effect_authorization.successor_entity_revision, revisionDigest),
         eq(paid_effect_authorization.successor_delivery_backend, 'pg-boss'),
         eq(paid_effect_authorization.successor_delivery_id, deliveryId),
       ),
     )
+    .limit(4);
+  if (authorizations.length === 0) return { state: 'unknown' as const, sourceId: null };
+  const sources: { sourceId: string; publicationId: string }[] = [];
+  for (const auth of authorizations) {
+    const [voided] = await tx
+      .select({ delivery_id: paid_effect.delivery_id })
+      .from(paid_effect)
+      .where(
+        and(
+          eq(paid_effect.family, ADMISSION_FAMILY),
+          eq(paid_effect.entity_id, expected.group_id),
+          eq(paid_effect.entity_revision, auth.entity_revision),
+          eq(paid_effect.unit, auth.unit),
+          eq(paid_effect.input_digest, auth.input_digest),
+        ),
+      )
+      .limit(1);
+    if (!voided?.delivery_id) continue;
+    const [binding] = await tx
+      .select()
+      .from(event)
+      .where(eq(event.id, purposeBindingId(voided.delivery_id)))
+      .limit(1);
+    const parsed = AdmissionPurposeBinding.safeParse(binding?.payload);
+    if (parsed.success && parsed.data.usage_source_event_id) {
+      sources.push({
+        sourceId: parsed.data.usage_source_event_id,
+        publicationId: parsed.data.source_event_id,
+      });
+    }
+  }
+  if (sources.length === 0 && expected.revision_id != null) {
+    // The group's ORIGINAL publish events, oldest first, resolved the way the
+    // subscriber resolves a publication: session/causal lineage → the publish
+    // itself, else the unique matching immutable draft-submit receipt.
+    const publications = await tx
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:assessment_publish'),
+          eq(event.outcome, 'success'),
+          sql`${event.payload}->>'group_id' = ${expected.group_id}`,
+          sql`${event.payload}->>'revision_id' = ${expected.revision_id}`,
+        ),
+      )
+      .orderBy(asc(event.dispatch_seq))
+      .limit(4);
+    for (const publication of publications) {
+      let usageSourceId: string | null = null;
+      if (publication.session_id || publication.caused_by_event_id) {
+        usageSourceId = publication.id;
+      } else {
+        const receipts = await tx
+          .select()
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'experimental:question_draft_submit'),
+              eq(event.outcome, 'success'),
+              sql`${event.payload}->'receipt'->>'revision_id' = ${expected.revision_id}`,
+              sql`coalesce(${event.payload}->'receipt'->>'group_id', ${event.payload}->'receipt'->>'question_id') = ${expected.group_id}`,
+              sql`${event.payload}->'receipt'->>'publish_status' = 'published'`,
+              sql`${event.payload}->'receipt'->>'status' IN ('admitted', 'withheld', 'pending')`,
+              sql`'submit_question:' || ${event.actor_ref} = ${publication.actor_ref}`,
+            ),
+          )
+          .limit(2);
+        usageSourceId = receipts.length === 1 ? receipts[0].id : null;
+      }
+      if (usageSourceId) {
+        sources.push({ sourceId: usageSourceId, publicationId: publication.id });
+        break;
+      }
+    }
+  }
+  for (const candidate of sources) {
+    await lockEventDerivationSources(tx, candidate.sourceId);
+    if (
+      (await readEventDerivationPolicy(tx, candidate.sourceId)) !== 'allow' ||
+      (await readEventDerivationPolicy(tx, candidate.publicationId)) !== 'allow'
+    ) {
+      return { state: 'restricted' as const, sourceId: candidate.sourceId };
+    }
+    return { state: 'allow' as const, sourceId: candidate.sourceId };
+  }
+  const [root] = await tx
+    .select({ source: question.source })
+    .from(question)
+    .where(eq(question.id, expected.group_id))
     .limit(1);
-  return authorized ? { state: 'allow' as const, sourceId: null } : bound;
+  return root?.source === 'web_sourced'
+    ? { state: 'allow' as const, sourceId: null }
+    : { state: 'restricted' as const, sourceId: null };
 }
 
 async function readAdmissionPurposeBinding(
