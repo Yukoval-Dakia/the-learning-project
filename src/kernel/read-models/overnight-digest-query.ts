@@ -80,7 +80,11 @@ async function loadErrorRunRows(db: DbLike, from: Date, to: Date): Promise<RunEr
     .from(ai_task_runs)
     .where(
       and(
-        isTaskFailureOutcome(ai_task_runs.status, ai_task_runs.finish_reason),
+        isTaskFailureOutcome(
+          ai_task_runs.status,
+          ai_task_runs.finish_reason,
+          ai_task_runs.usage_json,
+        ),
         gte(ai_task_runs.finished_at, from),
         lt(ai_task_runs.finished_at, to),
       ),

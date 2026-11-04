@@ -45,6 +45,7 @@ import {
   resolveExecutionAdapter,
 } from './execution-adapter';
 import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
+import { taskMayExportTranscript } from './laminar-transcript';
 import { logMissingToolMountsWarning } from './log';
 import { providerHttpTimeoutMs } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission-policy';
@@ -139,6 +140,11 @@ export interface RunTaskCtx {
   db: Db;
   /** Per-run capability-owned sanitized content; omitted runs export metadata only. */
   laminarContent?: TraceContent<RunTaskResult>;
+  /**
+   * The caller has judged that this run's content holds no learner material. Only takes
+   * effect for tasks on the transcript whitelist.
+   */
+  laminarTranscript?: boolean;
   /** Caller-owned cancellation propagated into the provider run lifecycle. */
   signal?: AbortSignal;
   /**
@@ -199,6 +205,16 @@ export interface RunTaskCtx {
     toolName: string;
     input: Record<string, unknown>;
     toolUseId?: string;
+  }) => void;
+  /**
+   * YUK-1548 §5 — streamed tool-argument progress for progressive block
+   * display. Carries identity + byte count + a bounded prefix only.
+   */
+  onToolArgsDelta?: (delta: {
+    toolName: string;
+    toolUseId: string;
+    receivedBytes: number;
+    argsPrefix: string;
   }) => void;
   /**
    * YUK-575 (N5/MF-A) — per-call budget override for durable copilot runs. The
@@ -530,6 +546,12 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   onAssistant?: (msg: SDKAssistantMessage) => Promise<void> | void;
   onTextDelta?: (text: string) => Promise<void> | void;
   onToolUse?: (block: SDKToolUseBlock) => void;
+  onToolArgsDelta?: (msg: {
+    tool_name: string;
+    tool_call_id: string;
+    received_bytes: number;
+    args_prefix: string;
+  }) => void;
   onSuccess?: (msg: SDKSuccessResultMessage) => Promise<void> | void;
   onApiError?: (msg: SDKSuccessResultMessage) => void;
   apiErrorMessages?: (msg: SDKSuccessResultMessage) => string[];
@@ -588,6 +610,14 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
           iteration,
           latencyMs: 0,
         });
+        continue;
+      }
+      if (msg.type === 'system' && msg.subtype === 'tool_args_progress') {
+        try {
+          args.onToolArgsDelta?.(msg);
+        } catch {
+          // Visibility failures must never abort paid work.
+        }
         continue;
       }
       if (msg.type === 'system' && msg.subtype === 'tool_args_contract_failed') {
@@ -835,6 +865,7 @@ export async function runTask(
   return traceOperation('task.run', { task_kind: kind }, () => runTaskImpl(kind, input, ctx), {
     signal: ctx.signal,
     content: ctx.laminarContent,
+    allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
   });
 }
 
@@ -1128,6 +1159,7 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
         {
           signal: lifecycle.abortController.signal,
           outcome: (result) => (result ? 'success' : 'error'),
+          allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
           content: ctx.laminarContent
             ? {
                 input: ctx.laminarContent.input,
@@ -1198,6 +1230,7 @@ export async function streamTaskCollecting(
       signal: ctx.signal,
       content: ctx.laminarContent,
       outcome: (result) => (result.partial ? 'error' : 'success'),
+      allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
     },
   );
 }
@@ -1289,6 +1322,16 @@ async function streamTaskCollectingImpl(
                   toolName: block.name,
                   input: (block.input ?? {}) as Record<string, unknown>,
                   toolUseId: block.id,
+                });
+              }
+            : undefined,
+          onToolArgsDelta: ctx.onToolArgsDelta
+            ? (msg) => {
+                ctx.onToolArgsDelta?.({
+                  toolName: msg.tool_name,
+                  toolUseId: msg.tool_call_id,
+                  receivedBytes: msg.received_bytes,
+                  argsPrefix: msg.args_prefix,
                 });
               }
             : undefined,

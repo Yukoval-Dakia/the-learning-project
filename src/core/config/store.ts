@@ -12,7 +12,7 @@
 //
 // 分层（每 key，见 registry.ts 注释）：
 //   envMode='priority' → env 显式 > DB > codeDefault（AI_PROVIDER_OVERRIDE pin）
-//   envMode='pinned'   → env > codeDefault，DB 层跳过（compose 强制三键）
+//   envMode='pinned'   → env > codeDefault，DB 层跳过
 //   其余               → DB > env > codeDefault
 
 import { type ConfigKeyDef, type ConfigSource, type ConfigValue, resolveKeyDef } from './registry';

@@ -38,7 +38,7 @@ export const FAST_QUEUE_OPTS = {
 function jobQueueOpts(
   queueName: string,
   expireInSeconds: number,
-  overrides: { heartbeatSeconds?: number } = {},
+  overrides: { heartbeatSeconds?: number; notify?: boolean } = {},
 ) {
   return {
     expireInSeconds,
@@ -67,6 +67,7 @@ export async function createOrUpdateQueue(
     retryDelay?: number;
     retryBackoff?: boolean;
     heartbeatSeconds?: number;
+    notify?: boolean;
   },
 ): Promise<void> {
   try {
@@ -88,7 +89,7 @@ export async function createJobQueue(
   boss: QueueAdmin,
   name: string,
   expireInSeconds: number,
-  overrides: { heartbeatSeconds?: number } = {},
+  overrides: { heartbeatSeconds?: number; notify?: boolean } = {},
 ): Promise<void> {
   await createOrUpdateQueue(boss, `${name}_dlq`, FAST_QUEUE_OPTS);
   await createOrUpdateQueue(boss, name, jobQueueOpts(name, expireInSeconds, overrides));

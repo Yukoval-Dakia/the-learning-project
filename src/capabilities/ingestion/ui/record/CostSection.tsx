@@ -135,7 +135,6 @@ export function CostSection({
                         <li key={reason}>{UNSETTLED[reason]}</li>
                       ))}
                     </ul>
-                    <p className="rc-cost-reference">任务记录：{entry.task_run_id}</p>
                   </li>
                 ))}
               </ol>
@@ -164,22 +163,6 @@ export function CostSection({
                     <dd>{entry.model ?? '未记录'}</dd>
                     <dt>记录来源</dt>
                     <dd>{entry.source === 'cost_ledger' ? '费用账目' : '服务调用记录'}</dd>
-                    <dt>依据引用</dt>
-                    <dd>{entry.cost_ref ?? '未记录'}</dd>
-                    <dt>任务记录</dt>
-                    <dd>{entry.task_run_id}</dd>
-                    {entry.attempt_id !== null && (
-                      <>
-                        <dt>调用记录</dt>
-                        <dd>{entry.attempt_id}</dd>
-                      </>
-                    )}
-                    {entry.operation_id !== null && (
-                      <>
-                        <dt>操作记录</dt>
-                        <dd>{entry.operation_id}</dd>
-                      </>
-                    )}
                   </dl>
                 </li>
               ))}

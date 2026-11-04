@@ -5,6 +5,14 @@
 
 export { embedQuestionTextForIngest, questionEmbedStamp } from './jobs/embed_backfill';
 export { runQuestionAdmissionChecks } from './server/admission/checks';
+// Server-only: reveals the solution path. The practice root barrel does not re-export it,
+// and audit:practice-subowners rejects it from tools, api and ui paths inside practice.
+export {
+  type NearestMethodQuestion,
+  type StoredSolutionPrior,
+  nearestQuestionsByMethod,
+  readSolutionPriorForServer,
+} from './server/admission/solution-prior';
 export { readPracticeDraftList } from './server/draft-list-read';
 export { enablePracticeDraft, forceEnablePracticeDraft } from './server/draft-promotion-operations';
 export { readDraftReviewDetail } from './server/draft-review';
@@ -77,10 +85,6 @@ export {
   type BankSearchScope,
   verifyBankGapEvidenceMac,
 } from './tools/bank-search';
-
-export const acceptCauseCategoryProposal: typeof import('./server/proposal-appliers').acceptCauseCategoryProposal =
-  async (...args) =>
-    (await import('./server/proposal-appliers')).acceptCauseCategoryProposal(...args);
 
 export const materializeGeneratedQuestionParts: typeof import('./server/question-parts').materializeGeneratedQuestionParts =
   async (...args) =>

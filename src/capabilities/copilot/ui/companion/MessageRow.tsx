@@ -17,7 +17,7 @@ import { HeroBlock } from './HeroBlock';
 import { ProposalNotice } from './ProposalNotice';
 import { splitProposalDisclosure } from './proposal-disclosure';
 import { SkillTurnBlock } from './SkillTurnBlock';
-import { StepList, stepsOf } from './ToolRow';
+import { StepActivity, stepsOf } from './ToolRow';
 
 export interface MessageRowProps {
   confirmationRenderer?: ConfirmationAssessmentRenderer;
@@ -66,13 +66,15 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   // A sealed help exit completes with its exit copy as the body; the badge says why it exited.
   const failureBadge = publicProse ? publicProseFailureBadge(publicProse) : undefined;
   const generating = m.streaming || publicProse?.status === 'streaming';
+  const steps = stepsOf(m);
   const settled = !generating;
   const turnId = m.reply_event_id;
   const canCorrect = settled && turnId !== undefined && props.turnNumber !== undefined;
   const checkpoint = settled ? m.checkpoint_event_id : undefined;
   return (
     <div className="un-cp-row un-cp-row-ai" data-streaming={generating ? '' : undefined}>
-      <StepList steps={stepsOf(m)} />
+      {/* YUK-1664 — settled: the reply's steps fold into one summary line above the text. */}
+      {settled ? <StepActivity steps={steps} live={false} /> : null}
       <ConversationMarkdown className="un-cp-md un-cp-reply">{body}</ConversationMarkdown>
       {failureBadge ? (
         <p className="un-cp-reply-badge">
@@ -84,10 +86,9 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
           {generationStatus}
         </p>
       ) : generating ? (
-        <p className="un-cp-reply-meta" aria-live="off">
-          <span className="un-cp-caret" aria-hidden="true" />
-          正在回复
-        </p>
+        // YUK-1664 — while generating, one status line under the text says what is happening now
+        // (text and tool steps interleave, so it stays until the reply settles).
+        <StepActivity steps={steps} live hasText={Boolean(body?.trim())} />
       ) : null}
       {m.confirmationIncompatible && <p role="alert">确认题版本或状态不兼容，暂不能操作。</p>}
       {props.showConfirmation &&

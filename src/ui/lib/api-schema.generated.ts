@@ -22416,7 +22416,7 @@ export interface operations {
                         /** Format: date-time */
                         updated_at: string;
                         verification_status: string;
-                        verification_summary: {
+                        verification_summary: ({
                             confidence: number;
                             issues: {
                                 block_id: string | null;
@@ -22430,7 +22430,20 @@ export interface operations {
                             summary_md: string;
                             /** @enum {string} */
                             verdict: "pass" | "needs_review";
-                        } | null;
+                        } | {
+                            issues: {
+                                block_id: string | null;
+                                /** @enum {string} */
+                                category: "factuality" | "coverage" | "clarity" | "subject_fit" | "format" | "safety";
+                                message: string;
+                                /** @enum {string} */
+                                severity: "info" | "warn" | "error";
+                                suggested_fix_md?: string;
+                            }[];
+                            /** @enum {string} */
+                            kind: "known_issues";
+                            summary_md: string;
+                        }) | null;
                         version: number;
                     };
                 };
@@ -22899,6 +22912,13 @@ export interface operations {
                         }[];
                         /** Format: date-time */
                         checked_at: string;
+                        config_incomplete: {
+                            missing: string[];
+                            /** @enum {string} */
+                            process: "api" | "worker";
+                            /** Format: date-time */
+                            seen_at: string;
+                        }[];
                         thresholds: {
                             consecutive_failures: number;
                             failure_rate_above: number;
@@ -33743,7 +33763,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Fenced: maintenance window or contract epoch mismatch */
+            /** @description Fenced (maintenance window or contract epoch mismatch) or a required setting is missing */
             503: {
                 headers: {
                     [name: string]: unknown;

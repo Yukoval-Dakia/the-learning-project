@@ -8,7 +8,7 @@
 // first-paint slot.
 
 import { z } from 'zod';
-import { guardDailyFocusClaims } from '@/core/daily-focus-guard';
+import { type DailyFocusPlanIssue, checkDailyFocusPlanClaims } from '@/core/daily-focus-guard';
 import type { ReviewPlanNumbers } from '@/core/daily-review-plan';
 
 export const PlanAdjustmentKind = z.enum(['defer', 'split', 'relearn', 'archive']);
@@ -117,12 +117,24 @@ export type CoachPlanDraftT = z.infer<typeof CoachPlanDraft>;
 export const COACH_MAX_PLAN_ADJUSTMENTS = 8;
 export const COACH_MAX_MAINTENANCE_PROPOSALS = 8;
 
-/** Attach the code-computed review numbers to the model's draft. */
-export function composeTodayPlan(draft: CoachPlanDraftT, numbers: ReviewPlanNumbers): TodayPlanT {
-  return TodayPlan.parse({
+export interface ComposedTodayPlan {
+  readonly plan: TodayPlanT;
+  /** daily_focus today-plan clauses contradicting the plan; prose stays verbatim. */
+  readonly issues: readonly DailyFocusPlanIssue[];
+}
+
+/**
+ * Attach the code-computed review numbers to the model's draft. The same numbers are
+ * the only truth source for the daily_focus claim check: question claims compare to
+ * `count`, minute claims to `estimated_minutes`.
+ */
+export function composeTodayPlan(
+  draft: CoachPlanDraftT,
+  numbers: ReviewPlanNumbers,
+): ComposedTodayPlan {
+  const plan = TodayPlan.parse({
     ...draft,
-    // The model's prose must not restate plan arithmetic.
-    daily_focus: guardDailyFocusClaims(draft.daily_focus),
+    daily_focus: draft.daily_focus,
     review_session_proposal: {
       ...draft.review_session_proposal,
       count: numbers.count,
@@ -131,6 +143,11 @@ export function composeTodayPlan(draft: CoachPlanDraftT, numbers: ReviewPlanNumb
       time_box_minutes: numbers.time_box_minutes,
     },
   });
+  const issues = checkDailyFocusPlanClaims(plan.daily_focus, {
+    questionCount: numbers.count,
+    minutes: numbers.estimated_minutes,
+  });
+  return { plan, issues };
 }
 
 /**

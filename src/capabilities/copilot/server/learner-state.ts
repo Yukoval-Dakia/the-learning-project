@@ -28,7 +28,7 @@ import {
 import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-goal-scope';
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
-import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 import {
   type KnowledgeFailureStreak,
   LEARNER_ANSWER_ACTIONS,
@@ -339,7 +339,7 @@ export async function readLearnerStateProjection(
     deps.listActiveGoalsFn ?? ((d: DbLike) => listActiveGoalsWithResolvedScope(d as Db));
   const loadFailures =
     deps.getFailureAttemptsFn ??
-    ((d: DbLike) => getFailureAttempts(d, { limit: FAILURE_SCAN_LIMIT }));
+    ((d: DbLike) => getFailureAttemptsForDerivation(d, { limit: FAILURE_SCAN_LIMIT }));
 
   const loadFailureStreak = deps.loadFailureStreakFn ?? loadLongestFailureStreak;
 

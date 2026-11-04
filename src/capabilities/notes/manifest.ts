@@ -39,7 +39,7 @@ export const notesCapability = defineCapability({
   description:
     '笔记域：artifact 笔记的读（note-page 聚合 / notes-read 按知识点）、写（body-blocks 块编辑 ' +
     '乐观锁 / sections / block-refs 反链索引）与 Living Note refine 链（triggers→policy→' +
-    'mutator|propose，YUK-358 决定6 后信号源 = mark_wrong/mastery_change/dreaming/verify，dwell 已裁）。',
+    'mutator|propose，YUK-358 决定6 后信号源 = mark_wrong/mastery_change/dreaming，dwell/verify 已裁）。',
   subscriptions: {
     handlers: [
       {
@@ -246,11 +246,6 @@ export const notesCapability = defineCapability({
         queue: 'llm',
         load: () => import('./jobs/note_generate').then((m) => m.buildNoteGenerateHandler),
       },
-      {
-        name: 'note_verify',
-        queue: 'llm',
-        load: () => import('./jobs/note_verify').then((m) => m.buildNoteVerifyHandler),
-      },
     ],
   },
   // The accept shell validates and orchestrates; the persist body stays in
@@ -274,9 +269,14 @@ export const notesCapability = defineCapability({
       },
     ],
   },
-  // Notes owns the interactive-artifact authoring tools; Copilot grants them by
-  // name. The backend stores the HTML opaquely (author = create v0,
-  // update = full replace + version bump).
+  // YUK-880 (F3.9b) — Notes owns the interactive-artifact authoring DomainTools
+  // (moved from the central src/server/ai/tools/author-artifact.ts). The tools
+  // stay registered here for YUK-1548's sandbox route, but YUK-1769 pulled
+  // their Copilot surface grant (COPILOT_TOOLS no longer lists them) —
+  // interactive content returns through YUK-1548, not this pair.
+  // YUK-1769 — write_note is the companion's direct Markdown note write
+  // (create / append / note_generate handoff). Notes owns it; Copilot holds
+  // only the allowlist surface grant.
   copilotTools: {
     tools: [
       {
@@ -286,6 +286,14 @@ export const notesCapability = defineCapability({
       {
         name: 'update_artifact',
         load: () => import('./server/tools/author-artifact').then((m) => m.updateArtifactTool),
+      },
+      {
+        name: 'write_note',
+        load: () => import('./server/tools/write-note').then((m) => m.writeNoteTool),
+      },
+      {
+        name: 'check_note',
+        load: () => import('./server/tools/check-note').then((m) => m.checkNoteTool),
       },
     ],
   },

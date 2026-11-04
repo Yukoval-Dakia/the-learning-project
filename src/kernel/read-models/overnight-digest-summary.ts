@@ -80,8 +80,8 @@ export function hasOvernightActivity(parts: OvernightActivityParts): boolean {
 
 /**
  * Two independent failures are needed before a kind is flagged; a single transient error
- * is too common to be worth alarming. Counts include only terminal logical failures: the
- * query excludes error_retried and reconciled_stuck rows.
+ * is too common to be worth alarming. Counts include only terminal logical failures
+ * (isTaskFailureOutcome): retried, sweeper-converged and cancelled help attempts are out.
  */
 export const DEGRADED_KIND_ERROR_THRESHOLD = 2;
 

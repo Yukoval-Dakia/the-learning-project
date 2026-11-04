@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { z } from 'zod';
 import {
+  AggregateOutcome,
   GroupEvidence,
   type GroupEvidenceT,
   PracticeIssuanceDto,
@@ -73,6 +74,21 @@ const Assessment = z.object({
   notation: z.string().nullable().optional(),
 });
 type Snapshot = z.infer<typeof Assessment>;
+
+/** YUK-1751 — the effective judgment's aggregate as one learner sentence; null hides it. */
+function aggregateScoreText(aggregate: unknown): string | null {
+  const parsed = AggregateOutcome.safeParse(aggregate);
+  if (!parsed.success) return null;
+  const outcome = parsed.data;
+  if (outcome.kind === 'points_total') return `当前判分：${outcome.points} 分。`;
+  if (outcome.kind === 'level') {
+    return outcome.points === null ? '当前判分：已评出档位。' : `当前判分：${outcome.points} 分。`;
+  }
+  if (outcome.kind === 'partial_unknown_points') {
+    return `当前判分：已确定的部分得 ${outcome.known_points} 分，还有部分暂时没法确定分数。`;
+  }
+  return '当前还没有确定的分数。';
+}
 
 export function ConfirmationAssessment(p: ConfirmationAssessmentProps) {
   const defaultClient = usePracticeClient();
@@ -211,14 +227,7 @@ function AssessmentBody(
   }
   const effectiveId = a.effective_head?.effective_evaluation_id;
   const candidate = a.candidates.find((c) => c.evaluation_id === effectiveId);
-  const effects = effectiveId
-    ? a.receipts.filter(
-        (r) =>
-          r.payload.evaluation_id === effectiveId &&
-          (r.action === 'experimental:assessment_activation' ||
-            r.action === 'experimental:assessment_settlement'),
-      )
-    : [];
+  const scoreText = candidate ? aggregateScoreText(candidate.aggregate) : null;
   const labels = {
     issued: '可以作答',
     pending: '作答已记录，判分处理中',
@@ -231,9 +240,7 @@ function AssessmentBody(
       <p role="status">{labels[a.result]}</p>
       <p>这道题发生在教学对话中。帮助情况不完全明确，本题结果不代表已证明独立掌握。</p>
       {a.issuance_state.unavailable_reason && (
-        <p role="alert">
-          题目目前不可作答：{a.issuance_state.unavailable_reason}。保留原题绑定，不自动换题。
-        </p>
+        <p role="alert">这道题目前不可作答。原题保留，不会自动换题。</p>
       )}
       {dto &&
         (presentation ? (
@@ -328,72 +335,11 @@ function AssessmentBody(
       {uploadPending && <p role="status">附件尚未取得完整回执，暂不能提交。</p>}
       {message && <p role="status">{message}</p>}
       <Button variant="ghost" onClick={p.onRefresh}>
-        读取原作答与回执
+        刷新这道题的状态
       </Button>
-      {a.pending_run_id && (
-        <p>
-          原判分任务：<code>{a.pending_run_id}</code>
-        </p>
-      )}
-      {candidate && (
-        <details open>
-          <summary>当前有效判分</summary>
-          <p>状态：{candidate.status}</p>
-          <pre>
-            {JSON.stringify(
-              { aggregate: candidate.aggregate, unit_results: candidate.unit_results },
-              null,
-              2,
-            )}
-          </pre>
-        </details>
-      )}
-      {effects.length > 0 && (
-        <details>
-          <summary>实际生效回执</summary>
-          {effects.map((r) => (
-            <div key={r.id}>
-              <p>
-                <code>{r.id}</code> · {r.action}
-              </p>
-              <pre>
-                {JSON.stringify(
-                  {
-                    effect: r.payload.effect,
-                    effects: r.payload.effects,
-                    theta_decision: r.payload.theta_decision,
-                  },
-                  null,
-                  2,
-                )}
-              </pre>
-            </div>
-          ))}
-        </details>
-      )}
-      {recorded && (
-        <details>
-          <summary>原作答及记录引用</summary>
-          <p>
-            submission：<code>{a.submission_id}</code>
-          </p>
-          <p>
-            当前有效 evaluation：<code>{effectiveId ?? '尚无'}</code>
-          </p>
-          <pre>
-            {JSON.stringify(
-              a.submission?.response_set ?? a.issuance_state.submissions[0]?.response_set,
-              null,
-              2,
-            )}
-          </pre>
-          {a.receipts.map((r) => (
-            <p key={r.id}>
-              {r.action} · <code>{r.id}</code>
-            </p>
-          ))}
-        </details>
-      )}
+      {/* YUK-1751 — the learner sees the current score in words, never run / submission /
+          evaluation ids, receipt actions or raw JSON. Nothing readable → nothing shown. */}
+      {scoreText && <p>{scoreText}</p>}
     </div>
   );
 }

@@ -148,6 +148,7 @@ export {
   formatDbProfileAuditReport,
 } from './server/subject-profile-audit';
 export {
+  type ConfigIncompleteAlert,
   type TaskFailureAlertsRead,
   loadTaskFailureAlerts,
 } from './server/task-failure-alerts';

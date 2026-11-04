@@ -44,6 +44,7 @@ export const copilotCapability = defineCapability({
       'experimental:confirmation_command',
       'experimental:confirmation_command_result',
       'experimental:help_explanation_replay',
+      'experimental:help_explanation_receipt',
       'experimental:subagent_run_started',
       'experimental:subagent_run_settled',
       'accept_suggestion',
@@ -199,6 +200,13 @@ export const copilotCapability = defineCapability({
       {
         name: 'copilot_run',
         queue: 'agent',
+        // Inserts on this queue wake the worker's LISTEN/NOTIFY listener at
+        // commit, so an accepted run starts immediately instead of waiting out
+        // the 2s poll (polling stays as the fallback).
+        notify: true,
+        // Two per-node workers; the session queue guarantees at most one
+        // physical job per session, so concurrency only spans sessions.
+        localConcurrency: 2,
         // The generic agent expiry is 2h. A 30s heartbeat lets pg-boss turn a
         // crashed active delivery into retry/failed evidence promptly; the
         // Copilot reconciler still never guesses from heartbeat timestamps.
@@ -250,15 +258,23 @@ export const copilotCapability = defineCapability({
       },
     ],
   },
-  // copilot 自有工具（事件流读 + 记忆面读）。
-  // artifact 工具的归属声明在 notes manifest；Copilot 只保留 allowlist 授权，
-  // 不再是 implementation owner。
+  // M5-T3 (YUK-321) — copilot 自有工具（事件流读 + 记忆面读）。
+  // YUK-880 (F3.9b)：author_artifact / update_artifact 的归属声明已移至
+  // notes manifest（实现 = notes/server/tools/author-artifact.ts）；Copilot
+  // 仅保留 allowlist 面授权，不再是 implementation owner。
+  // YUK-1769：该 pair 的 Copilot surface 授权也已收回（仍由 notes manifest
+  // 注册供 YUK-1548 sandbox route 复用）；学习伙伴的 Markdown 笔记写入走
+  // notes 拥有的 write_note。
   copilotTools: {
     tools: [
       {
         name: 'present_primary_view',
         load: () =>
           import('./server/tools/present-primary-view').then((m) => m.presentPrimaryViewTool),
+      },
+      {
+        name: 'compose_block',
+        load: () => import('./server/tools/compose-block').then((m) => m.composeBlockTool),
       },
       {
         name: 'query_events',

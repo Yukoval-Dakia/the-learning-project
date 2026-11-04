@@ -2,7 +2,7 @@
 // error switch to AreaGate). Query, preview limit and every navigation target are unchanged.
 import { useQuery } from '@tanstack/react-query';
 import type { PlacementProfile, PlacementProfileClient } from '@/capabilities/onboarding/ui-public';
-import { openCopilot } from '@/ui/lib/use-copilot-dwell';
+import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button } from '@/ui-next/public';
 import { AreaGate, type AreaStatus } from '../AreaGate';
@@ -70,12 +70,15 @@ function ProfileBandBody({
                   </Button>
                   <Button
                     variant="ghost"
-                    onClick={() =>
+                    onClick={() => {
+                      // YUK-1751 — the knowledge point rides as the companion's page focus
+                      // (ambient_context.focused_entity), not as an id in the learner's text.
+                      setCompanionFocus({ kind: 'knowledge', id: kc.id, title: kc.name });
                       openCopilot(
-                        `我想核对并提出异议：知识点「${kc.name}」（${kc.id}），目标 ${goalId}。今日画像显示${kc.evidence_count == null ? '证据数量未提供' : `${kc.evidence_count} 条证据记录`}，标为初步。请先查看原始依据，再讨论是否需要纠正。我的补充是：`,
+                        `我想核对并提出异议：知识点「${kc.name}」。今日画像显示${kc.evidence_count == null ? '证据数量未提供' : `${kc.evidence_count} 条证据记录`}，标为初步。请先查看原始依据，再讨论是否需要纠正。我的补充是：`,
                         { send: false },
-                      )
-                    }
+                      );
+                    }}
                   >
                     提出异议
                   </Button>

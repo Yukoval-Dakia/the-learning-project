@@ -226,8 +226,41 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       });
     }
   }
+
+  /**
+   * YUK-1548 §5 — emit bounded tool-args progress while arguments stream.
+   * Only the tool identity, cumulative bytes and a short prefix leave the
+   * loop; partial payloads (SVG/HTML source) never do. toolcall_start's
+   * partial assistant message usually already carries id + name.
+   */
+  private observeToolArgsProgress(event: AgentEvent, rawByIndex: Map<number, string>): void {
+    if (
+      event.type !== 'message_update' ||
+      event.message.role !== 'assistant' ||
+      event.assistantMessageEvent.type !== 'toolcall_delta'
+    ) {
+      return;
+    }
+    const { contentIndex, partial } = event.assistantMessageEvent;
+    const block = partial.content[contentIndex];
+    if (block?.type !== 'toolCall' || block.name.length === 0) return;
+    const raw = rawByIndex.get(contentIndex);
+    if (raw === undefined) return;
+    this.emitFrame({
+      source: 'pi',
+      type: 'system',
+      subtype: 'tool_args_progress',
+      tool_name: block.name,
+      tool_call_id: block.id,
+      received_bytes: raw.length,
+      args_prefix: raw.slice(0, PiPreparedQuery.TOOL_ARGS_PROGRESS_PREFIX_CHARS),
+      uuid: randomUUID(),
+      session_id: this.sessionId,
+    });
+  }
   /** YUK-1559 (C6) — non-2xx capture fetch, created lazily in baseLoopConfig. */
   private providerErrorCapture: ReturnType<typeof createProviderErrorCaptureFetch> | undefined;
+  private static readonly TOOL_ARGS_PROGRESS_PREFIX_CHARS = 2048;
 
   constructor(
     private readonly args: ExecutionAdapterStartupArgs,
@@ -1135,6 +1168,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       this.trackStreamedArgs(event, rawToolArguments, streamedArgsByCallId);
       if (event.type === 'turn_start') invalidStructuredArguments = false;
       this.observeToolAttempt(event, streamedArgsByCallId);
+      this.observeToolArgsProgress(event, rawToolArguments);
       // Frames queued inside the loop surface before the engine event that
       // follows them, matching the SDK wire order (lifecycle frame → tool_result).
       yield* this.drainFrames();

@@ -10,25 +10,13 @@ import {
   artifactCanReceiveNoteHandoff,
   dispatchNoteGeneration as dispatchNoteGenerationKernel,
   dispatchNoteHandoff as dispatchNoteHandoffKernel,
-  dispatchNoteVerification as dispatchNoteVerificationKernel,
   noteHandoffIntentPayloadSchema,
-  noteVerificationRecoveryJobId,
   writeNoteGenerationIntent,
-  writeNoteVerificationIntent,
 } from '@/kernel/records/note-handoff-protocol';
 import { getNotesBoss } from './boss-port';
 import { NOTE_ARTIFACT_TYPES } from './note-artifact-types';
 
 const RECOVERY_BATCH_SIZE = 50;
-
-async function durableJobExists(
-  boss: BossDispatch,
-  queue: string,
-  jobId: string,
-): Promise<boolean> {
-  const job = await boss.getJobById(queue, jobId);
-  return job !== null;
-}
 
 async function resolveNotesBoss(deps: { readonly boss?: BossDispatch }): Promise<BossDispatch> {
   return deps.boss ?? (await getNotesBoss());
@@ -55,58 +43,22 @@ export async function dispatchNoteGeneration(
   return dispatchNoteGenerationKernel(db, artifactId, { boss });
 }
 
-export async function dispatchNoteVerification(
-  db: Db,
-  artifactId: string,
-  deps: { readonly boss?: BossDispatch } = {},
-): Promise<boolean> {
-  const boss = await resolveNotesBoss(deps);
-  return dispatchNoteVerificationKernel(db, artifactId, { boss });
-}
-
-export async function dispatchNoteVerificationClaimRecovery(
-  artifactId: string,
-  fence: number,
-  deps: { readonly boss?: BossDispatch } = {},
-): Promise<boolean> {
-  const boss = await resolveNotesBoss(deps);
-  const jobId = noteVerificationRecoveryJobId(artifactId, fence);
-  try {
-    const sentId = await boss.send('note_verify', { artifact_id: artifactId }, { id: jobId });
-    return sentId === jobId || (await durableJobExists(boss, 'note_verify', jobId));
-  } catch (error) {
-    try {
-      if (await durableJobExists(boss, 'note_verify', jobId)) return true;
-    } catch {
-      throw error;
-    }
-    throw error;
-  }
-}
-
 async function synthesizeLegacyIntents(db: Db): Promise<void> {
   const rows = await db
-    .select({
-      id: artifact.id,
-      generation_status: artifact.generation_status,
-      verification_status: artifact.verification_status,
-    })
+    .select({ id: artifact.id, generation_status: artifact.generation_status })
     .from(artifact)
     .where(
       and(
         isNull(artifact.archived_at),
         inArray(artifact.type, NOTE_ARTIFACT_TYPES),
-        sql`(${artifact.generation_status} = 'pending' OR (${artifact.generation_status} = 'ready' AND ${artifact.verification_status} = 'queued'))
+        sql`${artifact.generation_status} = 'pending'
         AND NOT EXISTS (
           SELECT 1 FROM ${event} e
           WHERE e.action = ${NOTE_HANDOFF_ACTION}
             AND e.subject_id = ${artifact.id}
             AND e.payload ->> 'artifact_id' = e.subject_id
             AND e.payload ->> 'version' = ${String(NOTE_HANDOFF_VERSION)}
-            AND e.payload ->> 'handoff_kind' = CASE
-              WHEN ${artifact.generation_status} = 'pending' THEN ${NOTE_HANDOFF_KINDS.generationIntent}
-              ELSE ${NOTE_HANDOFF_KINDS.verificationIntent}
-            END
+            AND e.payload ->> 'handoff_kind' = ${NOTE_HANDOFF_KINDS.generationIntent}
         )`,
       ),
     )
@@ -115,17 +67,8 @@ async function synthesizeLegacyIntents(db: Db): Promise<void> {
 
   for (const row of rows) {
     await db.transaction(async (tx) => {
-      if (
-        row.generation_status === 'pending' &&
-        (await artifactCanReceiveNoteHandoff(tx, row.id, NOTE_HANDOFF_KINDS.generationIntent))
-      ) {
+      if (await artifactCanReceiveNoteHandoff(tx, row.id, NOTE_HANDOFF_KINDS.generationIntent)) {
         await writeNoteGenerationIntent(tx, row.id);
-      } else if (
-        row.generation_status === 'ready' &&
-        row.verification_status === 'queued' &&
-        (await artifactCanReceiveNoteHandoff(tx, row.id, NOTE_HANDOFF_KINDS.verificationIntent))
-      ) {
-        await writeNoteVerificationIntent(tx, row.id);
       }
     });
   }
@@ -136,10 +79,9 @@ export async function recoverNoteHandoffs(
   deps: { readonly boss?: BossDispatch } = {},
 ): Promise<number> {
   await synthesizeLegacyIntents(db);
-  const intentKinds = [
-    NOTE_HANDOFF_KINDS.generationIntent,
-    NOTE_HANDOFF_KINDS.verificationIntent,
-  ] as const;
+  // Stale verification_intent records (pre-YUK-1772) are left alone: nothing
+  // consumes the retired note_verify queue anymore.
+  const intentKinds = [NOTE_HANDOFF_KINDS.generationIntent] as const;
   const rows = await db
     .select({ id: event.id, artifact_id: event.subject_id, payload: event.payload })
     .from(event)
@@ -158,13 +100,9 @@ export async function recoverNoteHandoffs(
             AND completion.subject_id = ${event.subject_id}
             AND completion.payload ->> 'artifact_id' = completion.subject_id
             AND completion.payload ->> 'version' = ${String(NOTE_HANDOFF_VERSION)}
-            AND completion.payload ->> 'handoff_kind' = CASE ${event.payload} ->> 'handoff_kind'
-              WHEN ${NOTE_HANDOFF_KINDS.generationIntent} THEN ${NOTE_HANDOFF_KINDS.generationDispatchComplete}
-              ELSE ${NOTE_HANDOFF_KINDS.verificationDispatchComplete}
-            END
+            AND completion.payload ->> 'handoff_kind' = ${NOTE_HANDOFF_KINDS.generationDispatchComplete}
         )`,
-        sql`((${event.payload} ->> 'handoff_kind' = ${NOTE_HANDOFF_KINDS.generationIntent} AND ${artifact.generation_status} = 'pending')
-          OR (${event.payload} ->> 'handoff_kind' = ${NOTE_HANDOFF_KINDS.verificationIntent} AND ${artifact.generation_status} = 'ready' AND ${artifact.verification_status} = 'queued'))`,
+        sql`${artifact.generation_status} = 'pending'`,
       ),
     )
     .orderBy(asc(event.dispatch_seq), asc(event.id))
@@ -182,30 +120,11 @@ export async function recoverNoteHandoffs(
 
 type NotesRecoveryFloorDeps = {
   recoverHandoffs?: () => Promise<number>;
-  recoverClaims?: () => Promise<number>;
 };
 
 export async function recoverNoteHandoffsAndClaims(
   db: Db,
   deps: NotesRecoveryFloorDeps = {},
 ): Promise<void> {
-  const errors: unknown[] = [];
-  try {
-    await (deps.recoverHandoffs?.() ?? recoverNoteHandoffs(db));
-  } catch (error) {
-    errors.push(error);
-  }
-  try {
-    if (deps.recoverClaims) {
-      await deps.recoverClaims();
-    } else {
-      const { recoverResultReadyNoteVerifications } = await import(
-        '@/capabilities/notes/jobs/note_verify'
-      );
-      await recoverResultReadyNoteVerifications(db);
-    }
-  } catch (error) {
-    errors.push(error);
-  }
-  if (errors.length > 0) throw errors[0];
+  await (deps.recoverHandoffs?.() ?? recoverNoteHandoffs(db));
 }
