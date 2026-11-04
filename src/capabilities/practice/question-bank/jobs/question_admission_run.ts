@@ -365,9 +365,14 @@ export async function runAdmissionForQuestion(
   if (batch.kind === 'historical') return simple('already_verified');
   if (batch.kind === 'stale') {
     if (batch.purpose.state === 'restricted') {
-      // Durable refusal record: the authorized-successor usage check denied
-      // this delivery before any send was claimed (no pay). Idempotent per
-      // delivery — writeEvents keeps the first write on id conflict.
+      // Durable refusal record: the usage check denied this delivery before
+      // any send was claimed (no pay). Idempotent per delivery — writeEvents
+      // keeps the first write on id conflict. `reason` distinguishes an
+      // authorized-successor refusal from an ordinary bound restricted one.
+      const reason =
+        'authorized' in batch.purpose && batch.purpose.authorized === true
+          ? 'authorized_successor_usage_restricted'
+          : 'usage_restricted';
       await db.transaction((tx) =>
         writeEvent(tx, {
           id: `question-admission-purpose-refused:${delivery.id}`,
@@ -379,6 +384,7 @@ export async function runAdmissionForQuestion(
           caused_by_event_id: batch.purpose.sourceId,
           payload: {
             version: 1,
+            reason,
             job_id: delivery.id,
             group_id: rootId,
             revision_id: batch.input.revision_id,

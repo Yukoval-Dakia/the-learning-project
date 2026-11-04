@@ -50,6 +50,23 @@ const AdmissionPurposeBinding = z
   .strict();
 const purposeBindingId = (jobId: string) => `question-admission-purpose:${jobId}`;
 
+/** Lineage proof shared by the binding gate and the authorized-successor
+ * check: a real session (including a non-ingestion one) or an immutable
+ * document binding. Deny-by-exception policy reads are meaningless without it.
+ */
+async function admissionSourceProven(tx: Tx, sourceId: string) {
+  const [proven] = await tx.execute<{ known: boolean }>(sql`WITH RECURSIVE lineage AS (
+    SELECT id, session_id, caused_by_event_id FROM event WHERE id = ${sourceId}
+    UNION SELECT p.id, p.session_id, p.caused_by_event_id FROM event p
+      JOIN lineage c ON c.caused_by_event_id = p.id
+  ) SELECT EXISTS(SELECT 1 FROM lineage l LEFT JOIN learning_session s ON s.id = l.session_id
+      LEFT JOIN event b ON b.id = 'ingestion-usage:' || l.id
+      WHERE (s.id IS NOT NULL AND (s.type <> 'ingestion' OR s.source_document_id IS NOT NULL))
+        OR (b.action = 'experimental:ingestion_usage_binding'
+        AND b.actor_kind = 'system' AND b.actor_ref = 'ingestion-usage')) AS known`);
+  return Boolean(proven?.known);
+}
+
 /** A delivery's permanent source fact is separate from its unchanged paid input.
  * Missing legacy facts are never reconstructed from today's publication or row.
  *
@@ -193,24 +210,31 @@ async function readAuthorizedSuccessorPurpose(
       }
     }
   }
+  let allowedSourceId: string | null = null;
   for (const candidate of sources) {
+    // An unproven lineage is not an established source: policy is
+    // deny-by-exception and would read 'allow' on lineage that proves nothing.
+    // Drop it; it may not produce 'allow' on its own.
+    if (!(await admissionSourceProven(tx, candidate.sourceId))) continue;
     await lockEventDerivationSources(tx, candidate.sourceId);
     if (
       (await readEventDerivationPolicy(tx, candidate.sourceId)) !== 'allow' ||
       (await readEventDerivationPolicy(tx, candidate.publicationId)) !== 'allow'
     ) {
-      return { state: 'restricted' as const, sourceId: candidate.sourceId };
+      return { state: 'restricted' as const, sourceId: candidate.sourceId, authorized: true };
     }
-    return { state: 'allow' as const, sourceId: candidate.sourceId };
+    allowedSourceId ??= candidate.sourceId;
   }
+  if (allowedSourceId != null)
+    return { state: 'allow' as const, sourceId: allowedSourceId, authorized: true };
   const [root] = await tx
     .select({ source: question.source })
     .from(question)
     .where(eq(question.id, expected.group_id))
     .limit(1);
   return root?.source === 'web_sourced'
-    ? { state: 'allow' as const, sourceId: null }
-    : { state: 'restricted' as const, sourceId: null };
+    ? { state: 'allow' as const, sourceId: null, authorized: true }
+    : { state: 'restricted' as const, sourceId: null, authorized: true };
 }
 
 async function readAdmissionPurposeBinding(
@@ -269,16 +293,7 @@ async function readAdmissionPurposeBinding(
   }
   // A real session (including a non-Ingestion session) or immutable document
   // binding proves provenance. A publisher id with empty source fields does not.
-  const [proven] = await tx.execute<{ known: boolean }>(sql`WITH RECURSIVE lineage AS (
-    SELECT id, session_id, caused_by_event_id FROM event WHERE id = ${sourceId}
-    UNION SELECT p.id, p.session_id, p.caused_by_event_id FROM event p
-      JOIN lineage c ON c.caused_by_event_id = p.id
-  ) SELECT EXISTS(SELECT 1 FROM lineage l LEFT JOIN learning_session s ON s.id = l.session_id
-      LEFT JOIN event b ON b.id = 'ingestion-usage:' || l.id
-      WHERE (s.id IS NOT NULL AND (s.type <> 'ingestion' OR s.source_document_id IS NOT NULL))
-        OR (b.action = 'experimental:ingestion_usage_binding'
-        AND b.actor_kind = 'system' AND b.actor_ref = 'ingestion-usage')) AS known`);
-  if (!proven?.known) return { state: 'unknown' as const, sourceId };
+  if (!(await admissionSourceProven(tx, sourceId))) return { state: 'unknown' as const, sourceId };
   await lockEventDerivationSources(tx, sourceId);
   const allowed =
     (await readEventDerivationPolicy(tx, sourceId)) === 'allow' &&
