@@ -1051,6 +1051,18 @@ export async function runSourceCrosscheck(
   return { receipt, per_unit };
 }
 
+/** The keys a published revision froze, for describing it without solving it again. */
+export function settledKeysFromDefinition(
+  definition: QuestionAdmissionDefinition,
+): Map<string, AdmissionKey> {
+  const keys = new Map<string, AdmissionKey>();
+  for (const unit of definition.units) {
+    const key = authorAdmissionKey(unit.seeded_criterion);
+    if (key != null) keys.set(unit.scoring_unit_id, key);
+  }
+  return keys;
+}
+
 export interface SolutionPriorPassResult {
   record: SolutionPriorRecordT | null;
   receipt: AdmissionSolveReceipt | null;

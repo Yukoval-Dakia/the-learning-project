@@ -8,7 +8,9 @@ export { runQuestionAdmissionChecks } from './server/admission/checks';
 // Server-only: reveals the solution path. The practice root barrel does not re-export it,
 // and audit:practice-subowners rejects it from tools, api and ui paths inside practice.
 export {
+  type NearestMethodQuestion,
   type StoredSolutionPrior,
+  nearestQuestionsByMethod,
   readSolutionPriorForServer,
 } from './server/admission/solution-prior';
 export { readPracticeDraftList } from './server/draft-list-read';

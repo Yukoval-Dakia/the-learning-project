@@ -971,8 +971,15 @@
     {
       "idx": 139,
       "version": "7",
-      "when": 1793793062641,
-      "tag": "0139_yuk1770_goal_steering",
+      "when": 1793798875075,
+      "tag": "0139_yuk1771_solution_prior_vectors",
+      "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "7",
+      "when": 1793799460591,
+      "tag": "0140_yuk1770_goal_steering",
       "breakpoints": true
     }
   ]
