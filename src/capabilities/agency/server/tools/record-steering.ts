@@ -34,7 +34,9 @@ const LearnerLocalDay = z
 // an anyOf root, which the wire rejects. `op` + optional per-op fields instead.
 const RecordSteeringInputSchema = z.object({
   op: z.enum(['create', 'revise', 'end']),
-  /** The goal being revised/ended; ignored on create. */
+  /** The goal being revised/ended. Optional when exactly ONE steering goal is
+   *  active (the common follow-up case: the confirmation text carries no id);
+   * required when several are active. */
   goal_id: z.string().min(1).optional(),
   /** Verbatim quote from the learner's message this turn (≤500 chars). */
   learner_words: z.string().min(1).max(500),
@@ -216,6 +218,28 @@ async function countDeferredDueReviews(
   return rows.length;
 }
 
+/**
+ * goal_id resolution for revise/end: an explicit id wins; otherwise the single
+ * active steering goal (follow-up turns cannot carry the id — conversation
+ * history keeps prose only). Ambiguity fails loudly instead of guessing.
+ */
+async function resolveSingleSteeringGoalId(
+  ctx: ToolContext,
+  explicit: string | undefined,
+): Promise<string> {
+  if (explicit) return explicit;
+  const active = await listActiveSteeringGoals(ctx.db);
+  if (active.length === 1) return active[0].id;
+  if (active.length === 0) {
+    throw new ApiError('not_found', 'no active steering goal to revise or end', 404);
+  }
+  throw new ApiError(
+    'validation_error',
+    `several steering goals are active; pass one of: ${active.map((g) => g.id).join(', ')}`,
+    400,
+  );
+}
+
 async function buildExcludedSet(
   ctx: ToolContext,
   excludedSubjects: string[],
@@ -260,11 +284,11 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
     }
 
     if (input.op === 'end') {
-      if (!input.goal_id) throw new ApiError('validation_error', 'end requires goal_id', 400);
+      const goalId = await resolveSingleSteeringGoalId(ctx, input.goal_id);
       const [row] = await ctx.db
         .select({ id: goal.id, status: goal.status, steering: goal.steering })
         .from(goal)
-        .where(eq(goal.id, input.goal_id))
+        .where(eq(goal.id, goalId))
         .limit(1);
       if (!row || row.steering === null) {
         throw new ApiError('not_found', 'unknown steering goal', 404);
@@ -415,8 +439,7 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
     }
 
     // revise
-    const reviseGoalId = input.goal_id;
-    if (!reviseGoalId) throw new ApiError('validation_error', 'revise requires goal_id', 400);
+    const reviseGoalId = await resolveSingleSteeringGoalId(ctx, input.goal_id);
     const [row] = await ctx.db
       .select({ id: goal.id, steering: goal.steering })
       .from(goal)
