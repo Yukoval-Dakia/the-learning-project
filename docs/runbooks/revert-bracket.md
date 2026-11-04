@@ -2,8 +2,8 @@
 
 > 单元 `G3/F8 revert-bracket`，设计 SoT：`docs/design/2026-07-04-revert-bracket-spec.md`。
 > ADR：`docs/adr/0044-event-sourcing-foundation-redesign.md` §Addendum（YUK-561）。
-> 首个 live caller = rejudge overturn（`src/capabilities/practice/jobs/rejudge.ts`）；orchestrator =
-> `src/server/revert/cascade-revert.ts`；写侧 = `src/capabilities/practice/server/attempt-snapshot.ts`。
+> 首个 live caller = rejudge overturn（`src/capabilities/practice/settlement/jobs/rejudge.ts`）；orchestrator =
+> `src/server/revert/cascade-revert.ts`；写侧 = `src/capabilities/practice/settlement/server/attempt-snapshot.ts`。
 
 judge-overturn（申诉重判）在双触发门成立时**撤 θ̂ 段**（O2 双 sibling：只撤 θ̂ 不碰 FSRS），
 与改判写同一 `db.transaction` 原子提交。revert-only 只抹错误 transition、不 re-apply 正确 outcome
