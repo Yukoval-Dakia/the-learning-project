@@ -18,20 +18,25 @@ const COACH_TRIGGER_ACTION = 'experimental:trigger_coach_scan';
 
 /**
  * YUK-1770 (D5) — steering change wake: enqueue coach_daily NOW, bypassing the
- * 24h return window. Keyed per (goal, version-bucket) with a short singleton so
- * a burst of steering writes collapses into one same-day re-plan. Returns the
- * job id, or null when pg-boss deduped it away.
+ * 24h return window. Keyed per (goal, source event id) so retries of ONE
+ * delivery collapse (a completed job still holds its pg-boss singleton slot)
+ * while a NEW steering change always gets its own job — exam sentence then
+ * 「考试取消了」 minutes apart each trigger their own same-day re-plan.
+ * singletonSeconds spans a day: delivery replays beyond the handler's own
+ * retry window still dedupe; only a different event id opens a new slot.
  */
 export async function enqueueCoachForSteering(
   boss: { send(name: string, data: object, options?: object): Promise<string | null> },
   goalId: string,
-  changedAtMs: number,
+  sourceEventId: string,
 ): Promise<string | null> {
-  const bucket = Math.floor(changedAtMs / (10 * 60 * 1000)); // 10-min dedupe bucket
   return boss.send(
     COACH_DAILY_QUEUE,
-    { reason: 'steering_changed', goal_id: goalId },
-    { singletonKey: `coach.steering.${goalId}.${bucket}`, singletonSeconds: 600 },
+    { reason: 'steering_changed', goal_id: goalId, source_event_id: sourceEventId },
+    {
+      singletonKey: `coach.steering.${goalId}.${sourceEventId}`,
+      singletonSeconds: 24 * 60 * 60,
+    },
   );
 }
 

@@ -198,24 +198,18 @@ function resolveSubjectIds(
   return out;
 }
 
-/** D4 cost statement input: KC-level items due now that the window defers. */
-async function countDeferredDueReviews(
-  ctx: ToolContext,
-  excluded: Set<string>,
-  now: Date,
-): Promise<number | null> {
-  if (excluded.size === 0) return null;
-  const rows = await ctx.db
-    .select({ subject_id: material_fsrs_state.subject_id })
-    .from(material_fsrs_state)
-    .where(
-      and(
-        eq(material_fsrs_state.subject_kind, 'knowledge'),
-        lte(material_fsrs_state.due_at, now),
-        inArray(material_fsrs_state.subject_id, [...excluded]),
-      ),
-    );
-  return rows.length;
+/** D4 cost statement input, via the kernel steering port: practice installs
+ * the counter that runs the SAME due query with deferral suppressed, so the
+ * number the learner hears matches the three-segment filter exactly (P1 fix).
+ * null when the port is not installed (report unknown, never guess zero). */
+async function countDeferredDueReviews(ctx: ToolContext, now: Date): Promise<number | null> {
+  try {
+    const { steeringDeferredDueCount } = await import('@/kernel/steering-recompose');
+    return await steeringDeferredDueCount(ctx.db, now);
+  } catch (err) {
+    console.error('[record_steering] deferred-due count unavailable', { err });
+    return null;
+  }
 }
 
 /**
@@ -238,18 +232,6 @@ async function resolveSingleSteeringGoalId(
     `several steering goals are active; pass one of: ${active.map((g) => g.id).join(', ')}`,
     400,
   );
-}
-
-async function buildExcludedSet(
-  ctx: ToolContext,
-  excludedSubjects: string[],
-  excludedKnowledgeIds: string[],
-): Promise<Set<string>> {
-  const set = new Set<string>(excludedKnowledgeIds);
-  for (const subjectId of excludedSubjects) {
-    for (const kc of await resolveSubjectKnowledgeIds(ctx.db, subjectId)) set.add(kc);
-  }
-  return set;
 }
 
 export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteeringToolOutput> = {
@@ -471,11 +453,7 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
         source_ref: ctx.causedByEventId ?? ctx.taskRunId,
         now,
       });
-      const deferred = await countDeferredDueReviews(
-        ctx,
-        await buildExcludedSet(ctx, excludedSubjects, excludedKnowledgeIds),
-        now,
-      );
+      const deferred = await countDeferredDueReviews(ctx, now);
       return {
         status: 'created',
         goal_id: goalId,
@@ -508,11 +486,7 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
       now,
       'steering-revise',
     );
-    const deferred = await countDeferredDueReviews(
-      ctx,
-      await buildExcludedSet(ctx, excludedSubjects, excludedKnowledgeIds),
-      now,
-    );
+    const deferred = await countDeferredDueReviews(ctx, now);
     return {
       status: 'revised',
       goal_id: row.id,

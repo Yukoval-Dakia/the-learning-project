@@ -164,12 +164,17 @@ export {
  * inline here so the barrel adds no new pass-through site.
  */
 export async function installTodayPracticeRecompose(): Promise<void> {
-  const [{ installTodayPracticeRecompose: install }, { recomposePracticeStream }] =
-    await Promise.all([
-      import('@/kernel/steering-recompose'),
-      import('./scheduling/server/stream-operations'),
-    ]);
+  const [
+    { installTodayPracticeRecompose: install, installSteeringDeferredDueCount },
+    { recomposePracticeStream },
+    { countSteeringDeferredDueReviews },
+  ] = await Promise.all([
+    import('@/kernel/steering-recompose'),
+    import('./scheduling/server/stream-operations'),
+    import('./scheduling/server/due-list'),
+  ]);
   install((db) => recomposePracticeStream(db, {}));
+  installSteeringDeferredDueCount((db, now) => countSteeringDeferredDueReviews(db, { now }));
 }
 // practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。

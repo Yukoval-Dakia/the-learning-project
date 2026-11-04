@@ -96,6 +96,9 @@ export const PROPOSE_WRITE_TOOLS = [
   // YUK-1548 — the one mandatory write path for generative-UI blocks (write-once
   // content-addressed assets; surface decided server-side from the caller).
   'compose_block',
+  // YUK-1770 — learner-said steering 直写（D3 裁决：无 proposal，原话即事实；
+  // 唯一硬机检是原话逐字校验，在工具内做）。授权面：仅 copilot 两面。
+  'record_steering',
   // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write: assembles authored
   // (draft-allowed) + existing
   // questions into a runnable tool_quiz paper. Granted to the copilot surfaces

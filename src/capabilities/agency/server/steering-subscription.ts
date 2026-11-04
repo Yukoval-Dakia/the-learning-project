@@ -71,18 +71,21 @@ async function handleSteeringChangeDelivery(
   const send =
     deps.bossSend ?? ((name: string, data: object, opts?: object) => boss.send(name, data, opts));
   const goalId = source.subject_id;
-  const changedAtMs = source.created_at.getTime();
-  const detail: Record<string, unknown> = { goal_id: goalId };
+  // Per-event singleton keys: retries of this delivery collapse; a NEW steering
+  // event always opens its own slot (P1-1 — exam then cancel minutes apart each
+  // get their own same-day re-plan / supply rerun).
+  const sourceEventId = delivery.sourceEventId;
 
-  const coachJobId = await enqueueCoachForSteering(boss, goalId, changedAtMs);
+  const coachJobId = await enqueueCoachForSteering(boss, goalId, sourceEventId);
+  const detail: Record<string, unknown> = { goal_id: goalId, source_event_id: sourceEventId };
   detail.coach_job_id = coachJobId;
 
   const supplyJobId = await send(
     'supply_planner',
-    { reason: 'steering_changed', goal_id: goalId },
+    { reason: 'steering_changed', goal_id: goalId, source_event_id: sourceEventId },
     {
-      singletonKey: `supply.steering.${goalId}.${Math.floor(changedAtMs / (10 * 60 * 1000))}`,
-      singletonSeconds: 600,
+      singletonKey: `supply.steering.${goalId}.${sourceEventId}`,
+      singletonSeconds: 24 * 60 * 60,
     },
   );
   detail.supply_job_id = supplyJobId;

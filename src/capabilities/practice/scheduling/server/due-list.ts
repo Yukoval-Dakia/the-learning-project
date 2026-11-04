@@ -61,6 +61,9 @@ export interface ReviewDueDeps {
   // overdue items already selected by the FSRS due-ordering + limit — they
   // never change which items are returned (ND-5).
   listActiveGoalsFn?: ListActiveGoalsFn;
+  /** YUK-1770 — steering deferral set read; injectable so the deferred-count
+   *  measurement runs the same query with deferral suppressed. */
+  loadSteeringDeferredFn?: (db: DbLike, now: Date) => Promise<Set<string>>;
 }
 
 function pickLatestFailureByQuestion(failures: FailureAttempt[]): Map<
@@ -220,7 +223,7 @@ export type ReviewDueRow = {
 export async function queryReviewDue(
   activeDb: DbLike,
   input: ReviewDueQuery = {},
-  deps: Pick<ReviewDueDeps, 'listActiveGoalsFn'> = {},
+  deps: Pick<ReviewDueDeps, 'listActiveGoalsFn' | 'loadSteeringDeferredFn'> = {},
 ): Promise<{ rows: ReviewDueRow[] }> {
   const listGoals = deps.listActiveGoalsFn ?? listActiveGoalsWithResolvedScope;
   const requestedLimit = input.limit ?? 20;
@@ -303,7 +306,9 @@ export async function queryReviewDue(
   // learner revokes, the ordinary ordering serves them again by forgetting risk.
   // Question-shaped rows defer only when EVERY knowledge id is excluded — a
   // cross-subject item stays (its other subject still owns it).
-  const deferredBySteering = await loadSteeringDeferredKnowledgeIds(activeDb, now);
+  const deferredBySteering = await (
+    deps.loadSteeringDeferredFn ?? loadSteeringDeferredKnowledgeIds
+  )(activeDb, now);
   const isSteeringDeferredRow = (knowledgeIds: readonly string[]): boolean =>
     deferredBySteering.size > 0 &&
     knowledgeIds.length > 0 &&
@@ -675,6 +680,29 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+/**
+ * YUK-1770 — net items TODAY's due page loses to steering deferral. Runs the
+ * SAME query twice (deferral live vs suppressed) so the 「顺延 N 项」 the
+ * learner is told counts exactly what the three-segment filter hides —
+ * including the legacy question-level and never-reviewed slices a KC-only
+ * count used to miss. Positive; zero when nothing defers.
+ */
+export async function countSteeringDeferredDueReviews(
+  activeDb: DbLike,
+  input: ReviewDueQuery = {},
+): Promise<number> {
+  const now = input.now ?? new Date();
+  const [suppressed, live] = [
+    await queryReviewDue(
+      activeDb,
+      { limit: REVIEW_DUE_LIMIT_MAX, now },
+      { loadSteeringDeferredFn: async () => new Set<string>() },
+    ),
+    await queryReviewDue(activeDb, { limit: REVIEW_DUE_LIMIT_MAX, now }),
+  ];
+  return suppressed.rows.length - live.rows.length;
 }
 
 /**
