@@ -44,6 +44,8 @@ export interface InsertSourcedDraftInput {
   supplyTrace?: SupplyTraceV1T;
   /** Producer id for the cross-KC merge's question_edit audit event (YUK-720). */
   mergeActorRef: 'quiz_gen' | 'sourcing' | 'jyeoo_fetch';
+  /** 首发事件的 caused_by——供给链挂到派发事件上，让判分准入能证明 provenance。 */
+  causedByEventId?: string | null;
   taskRunId?: string;
   now: Date;
 }
@@ -193,6 +195,7 @@ export async function insertSourcedDraft(
       rootId: id,
       admission: { state: 'withheld', reason: 'unverified_rules' },
       availability: 'general_pool',
+      causedByEventId: input.causedByEventId ?? null,
       actorRef: `sourced-draft:${sourceRoute}`,
       now,
     });
@@ -219,6 +222,7 @@ export async function insertSourcedDraft(
       rootId: id,
       admission: { state: 'withheld', reason: 'unverified_rules' },
       availability: 'general_pool',
+      causedByEventId: input.causedByEventId ?? null,
       actorRef: `sourced-draft:${sourceRoute}`,
       now,
     });

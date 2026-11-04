@@ -490,6 +490,15 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envParse: nonNegIntEnv,
     tier: 'A',
   },
+  SUPPLY_NIGHTLY_SPEND_CAP_USD: {
+    // 夜扫供题链（找题 + 换路 + 核验）每个学习日（Asia/Shanghai）合计 USD 上限；
+    // 0 = 当晚不派任何付费供题（kill switch）。判定点 supply/server/spend-gate.ts。
+    schema: z.number().min(0),
+    codeDefault: 1,
+    envName: 'SUPPLY_NIGHTLY_SPEND_CAP_USD',
+    envParse: numberEnv,
+    tier: 'A',
+  },
   // ── 引擎/资源上限 ─────────────────────────────────────────────────────────
   EXTRACT_OCR_ENGINE: {
     schema: z.enum(['glm', 'tencent']),

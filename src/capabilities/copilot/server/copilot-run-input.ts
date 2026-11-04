@@ -3,7 +3,9 @@
 // see the same bounded context. Read failures degrade to empty/header-only
 // context; legacy missing anchors keep their locked compatibility fallback.
 
+import { learnerLocalDay } from '@/core/learner-day';
 import { type DerivationPolicyT, allowsDerivation } from '@/core/schema/derivation-policy';
+import { learnerDayWithWeekday } from '@/core/steering';
 import type { Db } from '@/db/client';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { HostOperationNotInstalledError } from '@/kernel/host-operation';
@@ -59,6 +61,8 @@ export interface CopilotRunInput {
   surface: DomainToolSurface;
   triggered_by: CopilotTriggeredBy;
   user_message: string;
+  /** YUK-1770 — learner-local (Asia/Shanghai) today line 'YYYY-MM-DD（周X）'. */
+  today: string;
   /** Server-resolved current-turn attachment reference only. */
   review_answer?: { original_ref: string };
   chip_kind?: string;
@@ -247,6 +251,7 @@ export async function assembleCopilotRunInput(
     surface: selectSurface(triggeredBy),
     triggered_by: triggeredBy,
     user_message: userMessage,
+    today: learnerDayWithWeekday(learnerLocalDay(now)),
     ...(chipKind ? { chip_kind: chipKind } : {}),
     proposal_feedback: learnerState.proposal_feedback,
     conversation_history: conversationHistory,

@@ -34,10 +34,10 @@ import { AiProposalPayload } from '@/core/schema/proposal';
 import { event, question } from '@/db/schema';
 import { type EnvelopedEvent, getEventById, getEventChain } from '@/kernel/events';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
-import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttemptForDerivationById } from '@/kernel/read-models/failure-attempts';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { getQuestionTimeline } from '@/kernel/read-models/question-activity';
-import { listLearningRecords } from '@/kernel/records/queries';
+import { listLearningRecordsForDerivation } from '@/kernel/records/queries';
 import { TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
@@ -1132,7 +1132,9 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const timelineAtReaderCap = timelineLimit === 50 && timelineCandidates.length === 50;
   const timelineHasMore = timelineAtReaderCap ? null : timelineCandidates.length > timelineLimit;
   const failure =
-    activity.outcome === 'failure' ? await getFailureAttemptById(ctx.db, activity.event_id) : null;
+    activity.outcome === 'failure'
+      ? await getFailureAttemptForDerivationById(ctx.db, activity.event_id)
+      : null;
   const cause = failure ? effectiveCauseForFailureAttempt(failure) : null;
   //misc_ primary + secondary id 的 title 回填（同一批查询）；
   // 与 records 读并行。
@@ -1140,7 +1142,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     cause
       ? resolveMiscCauseLabels(ctx.db, [cause.primary_category, ...cause.secondary_categories])
       : Promise.resolve(null),
-    listLearningRecords(ctx.db, {
+    listLearningRecordsForDerivation(ctx.db, {
       attempt_event_id: activity.event_id,
       limit: 25,
     }),

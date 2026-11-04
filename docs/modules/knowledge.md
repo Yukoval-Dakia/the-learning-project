@@ -277,38 +277,27 @@ Must explain paths directly. Do not make the model infer multi-hop relation sema
 
 This rubric applies to agent-generated graph proposals. Manual user-created edges can be looser, but should still pass structural guards.
 
-> **Enforcement status (Layer 1, P5.4 / YUK-143 — shipped 2026-05-31).** §4.1 / §4.2 / §4.3
-> are now enforced deterministically by a single shared validator,
+> **Enforcement status (Layer 1, P5.4 / YUK-143 — shipped 2026-05-31; reduced YUK-1781).** Only the
+> §4.1 structural gates are now enforced deterministically by the shared validator,
 > `src/capabilities/knowledge/server/rubric-validator.ts` (`validateProposalQuality`), called by the
-> agent edge-proposal write path (`proposeKnowledgeEdgeCreate`) before the propose-event write. Agents are strict
-> (structural + reasoning-depth + evidence floor + relation predicates); user-edited proposals run
-> structural-only (§4.1 G1–G6). A rejected agent proposal is **folded, not dropped**: the propose
-> event is still written carrying a `rubric_verdict: { ok:false, gate, reason }` marker, derives a
-> terminal `rubric_rejected` inbox status, and is excluded from live-pending dedup/cooldown so a
-> later valid proposal for the same edge is not blocked. Layer 1 is deterministic (no LLM call) and
-> rejects medium/weak evidence for agents.
-> Spec: `docs/archive/superpowers/specs/2026-05-31-p5.4-rubric-enforcement-design.md`.
+> agent edge-proposal write path (`proposeKnowledgeEdgeCreate`) before the propose-event write. Agents
+> and user-edited proposals run the same structural checks (self-edge, unknown node, cross-subject,
+> parent-restating duplicate). The write path additionally enforces one payload-shape rule: an edge
+> create must carry ≥1 `evidence_refs` entry (`skipped:no_evidence`, nothing written) so the evidence
+> is inspectable at review. The §4.2 evidence floor, the §4.3 relation predicates, and the §4.4
+> reasoning-depth denylist were removed: evidence already rides in `evidence_refs`, so sufficiency is
+> decided at accept time, not by a write-time gate. A rejected proposal is **folded, not dropped**:
+> the propose event is still written carrying a `rubric_verdict: { ok:false, gate, reason }` marker,
+> derives a terminal `rubric_rejected` inbox status, and is excluded from live-pending dedup/cooldown
+> so a later valid proposal for the same edge is not blocked.
 >
-> **Enforcement status (Layer 2, P5.4-L2 / YUK-174 — shipped 2026-05-31).** The adaptive
-> accept-learned bias is now live as an ADDITIVE soft layer on top of Layer 1, owned by
-> `src/kernel/proposals/adaptive-bias.ts` (read-only). It reads `proposal_signals` (rate + recent
-> dismiss reasons) and the `rubric_rejected` propose-event bucket and produces (1) a per-`(kind,
-> relation)` **feedback digest** (`getProposalFeedbackDigest`) injected into the Dreaming / Coach /
-> Copilot proposal prompts — each scoped to the kinds that surface can act on, so the agent learns
-> the specific failure mode (the user's own dismiss reasons + the machine rubric gates) and
-> self-corrects; and (2) a per-`(kind, relation)` **gate-bump** (`computeGateBump`) passed as an
-> OPTIONAL 4th argument to `validateProposalQuality`. The bump is **tighten-only / never-lock**: when
-> a relation's acceptance_rate is below threshold with enough samples it raises the borderline bar
-> one notch (suppresses the §4.2 explicit-single-event rescue → requires genuine `strong`), but it
-> NEVER loosens an L1 reject, NEVER blocks `strong` evidence, and is a no-op on cold start /
-> below-`minSamples`. The validator with the 4th arg omitted is byte-identical to Layer 1, and the
-> verdict shape (RB-9) is unchanged — the adaptive reject keeps `gate:'evidence_level'` and annotates
-> its `reason` with the carried rate/threshold/sample for traceability. Coach also gains
-> `propose_knowledge_edge` so the edge feedback is actionable. (The former batch
-> `knowledge_edge_propose_nightly` path, which skipped Layer 1, was folded into maintenance by YUK-1664;
-> nightly edges now go through the shared tool and its gate.)
-> No schema change. Spec:
-> `docs/archive/superpowers/specs/2026-05-31-p5.4-l2-adaptive-bias-design.md`.
+> **Enforcement status (Layer 2, P5.4-L2 / YUK-174 — digest kept, gate bump removed YUK-1781).**
+> `src/kernel/proposals/adaptive-bias.ts` (read-only) still produces the per-`(kind, relation)`
+> **feedback digest** (`getProposalFeedbackDigest`) injected into the Dreaming / Coach / Copilot
+> proposal prompts. The tighten-only gate bump (`computeGateBump` / `resolveEdgeGateBump`) was
+> removed — acceptance history is prompt context only and no longer raises the write-time bar.
+> Spec: `docs/archive/superpowers/specs/2026-05-31-p5.4-rubric-enforcement-design.md`,
+> `docs/archive/superpowers/specs/2026-05-31-p5.4-l2-adaptive-bias-design.md` (historical).
 >
 > **Suggestion-kind semantics + KPI exclusion (P5.6 / YUK-178 — 2026-05-31).** Proposals (and chips)
 > carry an OPTIONAL `suggestion_kind: 'proactive' | 'corrective'` discriminator (ADR-0011 §2.1 / §11
@@ -340,24 +329,26 @@ Reject before writing `event(action='propose')` when:
 - exact live edge `(from,to,relation_type)` already exists
 - exact pending proposal already exists
 - proposal only repeats an existing tree parent/child relation
-- reasoning is generic, e.g. “二者相关” with no concrete signal
 - agent proposal has no `evidence_event_ids`
 
-### 4.2 Evidence levels
+### 4.2 Evidence levels (advisory — not enforced)
 
-| level | meaning | can write proposal? | UI treatment |
+These levels guide the agent's proposal quality and the reviewer's read of the card; they are not
+write-time gates. The only enforced requirement is the §4.1 structural list.
+
+| level | meaning | agent guidance | UI treatment |
 |---|---|---|---|
-| strong | 2+ recent failure events show same pattern, or 1 failure plus explicit user note | yes | normal |
-| medium | 1 recent failure event with clear judge analysis | yes, lower weight | show lower confidence |
-| weak | name similarity, same parent, or model intuition only | no for agent proposal | ask for more evidence / skip |
+| strong | 2+ recent failure events show same pattern, or 1 failure plus explicit user note | preferred | normal |
+| medium | 1 recent failure event with clear judge analysis | acceptable | show lower confidence |
+| weak | name similarity, same parent, or model intuition only | gather more evidence before proposing | ask for more evidence / skip |
 
-Default thresholds:
+Guidance:
 
-- recent window: 30 days
-- minimum agent evidence: 1 event for non-destructive edge proposal, 2 events for `prerequisite` / `contrasts_with` unless judge analysis is explicit
+- recent window: 30 days (the `recent_failure_count_30d` stat)
+- `prerequisite` / `contrasts_with` proposals land better with 2+ events or explicit judge analysis
 - max proposals per run: 5
 
-### 4.3 Relation-specific gates
+### 4.3 Relation-specific guidance (advisory — not enforced)
 
 `prerequisite`:
 
@@ -386,9 +377,9 @@ Default thresholds:
 - Use as a conservative weak edge only when it helps navigation or review grouping.
 - Penalize overuse; many `related_to` proposals with low accept rate should trigger prompt/rubric tightening.
 
-### 4.4 Reasoning format
+### 4.4 Reasoning format (advisory — not enforced)
 
-Agent reasoning must be concrete:
+Agent reasoning should be concrete:
 
 ```text
 最近 30 天 e_123 和 e_456 都引用了「之-主谓间」和「之-宾语前置」，judge cause 均为 concept，analysis 都指出用户把结构标志误判为代词，因此提议 contrasts_with。
@@ -441,6 +432,6 @@ These fixtures test whether the agent can understand context, not just whether S
 
 ## 6. Implementation Notes
 
-- 已落地：4 个 graph reader（`src/capabilities/knowledge/server/tools/knowledge-readers.ts`）、`propose_knowledge_edge` 的 evidence floor / rubric 校验（§4）、`KnowledgeReviewTask` 经 DomainTool bridge 挂 `knowledge_review` surface（YUK-1553）。
+- 已落地：4 个 graph reader（`src/capabilities/knowledge/server/tools/knowledge-readers.ts`）、`propose_knowledge_edge` 的结构校验（§4）、`KnowledgeReviewTask` 经 DomainTool bridge 挂 `knowledge_review` surface（YUK-1553）。
 - 仍未落地：`SubjectGraphGuide` schema 与 `seedSubjectGraphGuide()` / `enrichSubjectGraphGuide()`（§0 现状表）。
 - Phase 1/2 agent-readability fixtures 已删（§5）；可读性改用真实 actual-output 跑验证。

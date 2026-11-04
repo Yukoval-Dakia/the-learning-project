@@ -200,23 +200,25 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
       'A6 (YUK-442) — getMasteryProjection treats derived_from as directed inheritance (base `to` is prereq-like of derived `from`) in the same order-prior propagation.',
   },
 
-  // ---- creation-validation: 全 5 type 的提议时校验闸（非下游学习消费）----
-  ...CORE_RELATION_TYPES.map(
+  // ---- creation-validation: 提议时按 relation_type 分支的校验闸（非下游学习消费）----
+  // 语义闸删除后只剩 G6 父子重述仍按 relation_type 分支（related_to /
+  // derived_from）；其余三型的创建期校验已是 relation-agnostic 结构闸。
+  ...(['related_to', 'derived_from'] as const).map(
     (relation): ConsumerEntry => ({
       relation,
       tier: 'creation-validation',
       file: 'src/capabilities/knowledge/server/rubric-validator.ts',
-      marker: 'function relationGate',
+      marker: 'g6Applies',
       surface: 'validation',
       evidence:
-        'rubric-validator relationGate() 在边提议时按 relation_type 分支校验接受/拒绝（创建期，非建好后影响学习）。',
+        'rubric-validator G6 restatesTreeAncestry 只对 related_to/derived_from 生效——按 relation_type 分支的创建期校验（非建好后影响学习）。',
     }),
   ),
 
   // NOTE: applied_in 故意**无** specialized 条目——这是预期的死边候选。grounding：
   //   src/capabilities/notes/server/hub-curation.ts:35 EXCLUDED_RELATIONS 显式排除 applied_in；topology-gate 仅
   //   prerequisite；knowledge-readers paths 反向邻接仅 related_to/contrasts_with。
-  //   applied_in 只被 generic-read 一把捞 + creation-validation 校验，零特化学习消费。
+  //   applied_in 只被 generic-read 一把捞，零特化学习消费（per-relation 创建期校验也已删除）。
 ];
 
 // ── MISCONCEPTION_CONSUMER_REGISTRY — same declarative file:marker shape for misconception_edge ──

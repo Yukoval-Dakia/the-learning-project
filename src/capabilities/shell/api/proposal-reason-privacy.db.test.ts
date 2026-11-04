@@ -15,40 +15,72 @@ beforeEach(async () => {
 });
 afterEach(() => vi.useRealTimers());
 
-// @invariant security: stored private evidence never crosses any learner proposal/brief read boundary
-// @fails-if a real route exposes raw secrets through payload, legacy reasoning, presentation, or brief summary
-it('reads private proposal evidence safely without rewriting its stored history', async () => {
+// @invariant security: stored credentials never cross any learner proposal/brief read boundary
+// @fails-if a real route exposes a raw credential through payload, legacy reasoning, presentation, or brief summary
+it('masks credentials in proposal reasons without rewriting their stored history', async () => {
   const db = testDb();
-  const reason =
-    'recent_failure_count_30d=1; api_key=sk-proj-private-example; email=other@example.test';
+  // Credential shapes that previously slipped past the masker: underscore-
+  // prefixed key names, JSON/YAML quoted-colon forms, and a BEGIN block with no
+  // END. Separators around a masked value must survive.
+  const cases = [
+    {
+      id: 'privacy-archive',
+      reason:
+        'recent_failure_count_30d=1; OPENAI_API_KEY=sk-proj-private-example; email=other@example.test',
+      masked: 'recent_failure_count_30d=1; OPENAI_API_KEY=[已遮蔽凭据]; email=other@example.test',
+    },
+    {
+      id: 'privacy-knowledge',
+      reason: 'dump {"password":"hunter2-json-secret"} tail',
+      masked: 'dump {"password":"[已遮蔽凭据]"} tail',
+    },
+    {
+      id: 'privacy-finding',
+      reason: 'prose head -----BEGIN RSA PRIVATE KEY-----\nMIBleaked-body-no-end-marker',
+      masked: 'prose head [已遮蔽凭据]',
+    },
+  ] as const;
+  const secrets = [
+    'sk-proj-private-example',
+    'hunter2-json-secret',
+    'MIBleaked-body-no-end-marker',
+    'obj-secret-9',
+    'PRIVATE KEY',
+  ];
+  const [archiveCase, knowledgeCase, findingCase] = cases;
   await writeAiProposal(db, {
-    id: 'privacy-archive',
+    id: archiveCase.id,
     payload: {
       kind: 'archive',
       target: { subject_kind: 'learning_item', subject_id: 'item-1' },
-      reason_md: reason,
+      reason_md: archiveCase.reason,
       evidence_refs: [{ kind: 'event', id: 'original-evidence' }],
-      proposed_change: { archived_reason: reason, reason, expected_version: 7 },
-      rollback_plan: { reasoning: reason },
+      proposed_change: {
+        archived_reason: archiveCase.reason,
+        reason: archiveCase.reason,
+        expected_version: 7,
+      },
+      rollback_plan: { reasoning: archiveCase.reason },
     },
   });
   await writeAiProposal(db, {
-    id: 'privacy-knowledge',
+    id: knowledgeCase.id,
     payload: {
       kind: 'knowledge_node',
       target: { subject_kind: 'knowledge', subject_id: null },
-      reason_md: reason,
+      reason_md: knowledgeCase.reason,
       evidence_refs: [{ kind: 'event', id: 'original-evidence' }],
       proposed_change: { mutation: 'propose_new', name: '数列', parent_id: null },
-      rollback_plan: { reasoning: reason },
+      // Non-string reason payloads never render — fixed fallback sentence.
+      rollback_plan: { reasoning: { password: 'obj-secret-9' } },
     },
   });
   await writeAiProposal(db, {
-    id: 'privacy-finding',
+    id: findingCase.id,
     payload: {
       kind: 'conjecture',
       target: { subject_kind: 'mind_model', subject_id: 'kc-chain-rule' },
-      reason_md: reason,
+      reason_md: findingCase.reason,
       evidence_refs: [{ kind: 'event', id: 'original-evidence' }],
       cooldown_key: 'privacy-conjecture',
       proposed_change: {
@@ -75,22 +107,36 @@ it('reads private proposal evidence safely without rewriting its stored history'
   const briefBody: unknown = await brief.json();
   const ids = z.object({ rows: z.array(z.object({ id: z.string() })) });
   expect(ids.parse(modernBody).rows.map((row) => row.id)).toEqual(
-    expect.arrayContaining(['privacy-archive', 'privacy-knowledge', 'privacy-finding']),
+    expect.arrayContaining(cases.map((c) => c.id)),
   );
-  expect(ids.parse(legacyBody).rows.map((row) => row.id)).toContain('privacy-knowledge');
+  expect(ids.parse(legacyBody).rows.map((row) => row.id)).toContain(knowledgeCase.id);
   expect(briefBody).toMatchObject({
     brief: {
-      brief_id: 'privacy-finding',
+      brief_id: findingCase.id,
       state: 'finding',
-      basis: { summary_md: '这条提议暂无可读的依据说明，请核实后再决定是否采纳。' },
+      basis: {
+        summary_md: findingCase.masked,
+      },
     },
   });
+  const reasonRows = z.object({
+    rows: z.array(z.object({ id: z.string(), payload: z.object({ reason_md: z.string() }) })),
+  });
+  const reasonById = new Map(
+    reasonRows.parse(modernBody).rows.map((row) => [row.id, row.payload.reason_md] as const),
+  );
+  for (const c of cases) {
+    expect(reasonById.get(c.id)).toBe(c.masked);
+  }
   const wire = JSON.stringify({ modernBody, legacyBody, briefBody });
-  expect(wire).not.toContain('sk-proj-private-example');
-  expect(wire).not.toContain('other@example.test');
-  expect(wire).not.toContain('recent_failure_count_30d');
+  for (const secret of secrets) {
+    expect(wire).not.toContain(secret);
+  }
+  // Non-credential content passes through as written.
+  expect(wire).toContain('email=other@example.test');
+  expect(wire).toContain('recent_failure_count_30d');
   expect(wire).toContain('original-evidence');
   expect(await db.select().from(event).orderBy(event.id)).toEqual(storedBefore);
-  const [stored] = await db.select().from(event).where(eq(event.id, 'privacy-archive'));
-  expect(JSON.stringify(stored.payload)).toContain(reason);
+  const [stored] = await db.select().from(event).where(eq(event.id, archiveCase.id));
+  expect(JSON.stringify(stored.payload)).toContain(archiveCase.reason);
 });

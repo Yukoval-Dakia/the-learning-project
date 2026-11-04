@@ -30,7 +30,7 @@ import {
   question,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
+import { getProposalFeedbackDigest } from '@/kernel/proposals/adaptive-bias';
 import {
   getProposalAcceptanceRates,
   recordProposalDecisionSignal,
@@ -38,7 +38,7 @@ import {
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { upsertFsrsState } from '@/kernel/records/scheduling-state';
-import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
+import { PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
 import { loadYuwenFixtures } from '@/subjects/yuwen/fixtures';
 
 type DbLike = Db | Tx;
@@ -519,17 +519,16 @@ async function seedRubricRejectedProposes(dbh: DbLike, now: Date): Promise<void>
       from: NODES.shici,
       to: NODES.changshi,
       relation: 'prerequisite',
-      gate: 'prerequisite_no_order_evidence',
-      reason:
-        'prerequisite requires learning-order evidence: no in-window judge-backed failure references either endpoint node (synthetic rubric-rejected fixture)',
+      gate: 'cross_subject',
+      reason: 'knowledge nodes resolve to different subjects (synthetic rubric-rejected fixture)',
     },
     {
       from: NODES.changshi,
       to: NODES.fanyi,
       relation: 'contrasts_with',
-      gate: 'contrasts_with_no_confusion',
+      gate: 'unknown_node',
       reason:
-        'contrasts_with requires confusion evidence: no in-window judge-backed failure references both endpoint nodes (synthetic rubric-rejected fixture)',
+        'knowledge node missing or archived: synthetic:missing (synthetic rubric-rejected fixture)',
     },
   ];
 
@@ -575,7 +574,7 @@ async function seedRubricRejectedProposes(dbh: DbLike, now: Date): Promise<void>
 // ── Proposal-signal idempotency guard ───────────────────────────────────────
 // `recordProposalDecisionSignal` INCREMENTS accept_count/dismiss_count by a delta
 // on every call (additive upsert), so a naive re-run would double the per-cell
-// counts → acceptance_rate + the L2 gate-bump baseline drift. Skip the signal
+// counts and drift the digest's acceptance_rate. Skip the signal
 // write when a row already exists for that cooldown_key (idempotent by cell).
 async function signalExists(dbh: DbLike, cooldownKey: string): Promise<boolean> {
   const rows = await dbh
@@ -586,10 +585,9 @@ async function signalExists(dbh: DbLike, cooldownKey: string): Promise<boolean> 
   return rows.length > 0;
 }
 
-// ── Step 5c — L2 dismiss cluster (sizes resolveEdgeGateBump → tighten) ──────
+// ── Step 5c — dismiss cluster (populates the feedback digest cell) ──────────
 // 6 PASS-style propose+rate chains on a SINGLE relation_type across distinct
-// from|to pairs, mostly dismiss, so the relation-summed total >= minSamples(5)
-// and acceptance_rate < acceptanceThreshold(0.3).
+// from|to pairs, mostly dismiss, so the digest cell shows a low acceptance rate.
 async function seedL2DismissCluster(dbh: DbLike, now: Date): Promise<void> {
   const pairs: Array<[NodeId, NodeId]> = [
     [NODES.root, NODES.shici],
@@ -599,7 +597,7 @@ async function seedL2DismissCluster(dbh: DbLike, now: Date): Promise<void> {
     [NODES.root, NODES.fanyi],
     [NODES.root, NODES.yufa],
   ];
-  // 5 dismisses + 1 accept → total 6 >= 5, rate = 1/6 ≈ 0.17 < 0.3 → tighten.
+  // 5 dismisses + 1 accept → total 6, rate = 1/6 ≈ 0.17.
   const decisions: Array<'accept' | 'dismiss'> = [
     'accept',
     'dismiss',
@@ -827,7 +825,7 @@ export interface ObserveReport {
   proposal_signal_kinds: number;
   edge_propose_pass: number;
   edge_propose_rubric_rejected: number;
-  l2_tighten_medium_to_strong: boolean;
+  dismiss_cell_acceptance_rate: number | null;
   active_subjects_detected: number;
 }
 
@@ -872,13 +870,12 @@ export async function printReport(dbh: DbLike, now: Date = new Date()): Promise<
       AND (payload->'rubric_verdict'->>'ok') = 'false'
   `);
 
-  // 4. L2 gate-bump on the sized dismiss relation.
-  const bump = await resolveEdgeGateBump(
-    dbh,
-    L2_DISMISS_RELATION,
-    PROPOSAL_FEEDBACK_BUDGET,
-    PROPOSAL_GATE_BIAS_CONFIG,
-  );
+  // 4. Feedback digest cell for the sized dismiss relation.
+  const digest = await getProposalFeedbackDigest(dbh, PROPOSAL_FEEDBACK_BUDGET);
+  const dismissCell =
+    digest.find(
+      (cell) => cell.kind === 'knowledge_edge' && cell.relation === L2_DISMISS_RELATION,
+    ) ?? null;
 
   // 5. active subjects detected.
   const active = await listActiveSubjectsSinceRefresh(dbh as Db, { now });
@@ -889,7 +886,7 @@ export async function printReport(dbh: DbLike, now: Date = new Date()): Promise<
     proposal_signal_kinds: rates.length,
     edge_propose_pass: passProposes[0]?.n ?? 0,
     edge_propose_rubric_rejected: rejectProposes[0]?.n ?? 0,
-    l2_tighten_medium_to_strong: bump.tightenMediumToStrong,
+    dismiss_cell_acceptance_rate: dismissCell ? dismissCell.acceptance_rate : null,
     active_subjects_detected: active.length,
   };
 
@@ -900,7 +897,7 @@ export async function printReport(dbh: DbLike, now: Date = new Date()): Promise<
     'active subjects:',
     active.map((a) => ({ subjectId: a.subjectId, maxCreatedAt: a.maxCreatedAt })),
   );
-  console.log('L2 gate bump (relation=%s):', L2_DISMISS_RELATION, bump);
+  console.log('feedback digest cell (relation=%s):', L2_DISMISS_RELATION, dismissCell);
   return report;
 }
 

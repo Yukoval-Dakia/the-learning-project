@@ -71,6 +71,7 @@
     "audit:fold-writes": "tsx scripts/audit-fold-writes.ts",
     "audit:flags": "tsx scripts/audit-flags.ts",
     "db:backfill:genesis": "tsx scripts/backfill-genesis-events.ts",
+    "db:backfill:solution-prior": "tsx scripts/backfill-solution-prior.ts",
     "db:backfill:lost-attribution": "tsx scripts/backfill-lost-attribution.ts",
     "jyeoo:backfill": "tsx scripts/jyeoo-backfill.ts",
     "embed:inventory": "tsx scripts/embed-inventory.ts",

@@ -134,6 +134,10 @@ export async function runSupplyExecuteJobData(
       db,
       planEventId: parsedData.plan_event_id,
       items,
+      // A placement delivery's submissions publish under the dispatch event that
+      // enqueued this job — the immutable causal anchor admission provenance
+      // walks back to the bound placement session.
+      ctx: { causedByEventId: placementDelivery?.dispatchEventId ?? null },
       ...(parsedData.supply_trace
         ? { supplyTrace: parsedData.supply_trace as SupplyTraceV1T }
         : {}),

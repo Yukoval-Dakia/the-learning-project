@@ -1,14 +1,9 @@
-// Adaptive proposal-quality bias, additive over the proposal_signals accept/dismiss
-// aggregate and the deterministic L1 rubric floor.
+// Proposal feedback digest over the proposal_signals accept/dismiss aggregate:
+// a per-(kind, relation) summary injected into proposal prompts so the model can
+// correct against the observed failure mode.
 //
-// Facet A: a per-(kind, relation) feedback digest injected into proposal prompts so
-// the model can correct against the observed failure mode.
-// Facet B: a computeGateBump input to L1's validator, which stays pure and never
-// imports this module.
-//
-// The bump only tightens, never suppresses L1, and is a no-op on cold start. The
-// relation is derived from proposal_signals.cooldown_key, so no schema change; reads
-// use the maintained aggregate and bounded recency windows.
+// The relation is derived from proposal_signals.cooldown_key, so no schema change;
+// reads use the maintained aggregate and bounded recency windows.
 
 import { and, desc, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
@@ -26,22 +21,6 @@ export interface ProposalFeedbackCell {
   acceptance_rate: number; // accept_count / total
   top_dismiss_reasons: string[]; // recent dismiss reasons, bounded
   top_rubric_gates: string[]; // recent rubric gates from rejected events (edge cells only)
-}
-
-export interface GateBiasConfig {
-  /** Below this acceptance_rate the gate tightens (medium/rescue → strong). */
-  acceptanceThreshold: number;
-  /** Sample guard: the bump stays off until total decisions ≥ this. */
-  minSamples: number;
-}
-
-export interface AdaptiveGateInput {
-  /** True when this cell's aggregate says to raise the bar one notch for borderline evidence. */
-  tightenMediumToStrong: boolean;
-  /** Audit metadata carried into the folded rubric_verdict.reason; omitted on the pure-L1 path. */
-  acceptanceRate?: number;
-  sampleCount?: number;
-  threshold?: number;
 }
 
 const KNOWLEDGE_EDGE_KIND = 'knowledge_edge';
@@ -165,7 +144,7 @@ export async function getProposalFeedbackDigest(
   }
 
   // Materialize a rubric-only cell for rejected relations with no signal row so
-  // their gates still surface. total 0 keeps the gate bump inert.
+  // their gates still surface.
   for (const relation of rejectedEdgeRelations) {
     const key = cellKey(KNOWLEDGE_EDGE_KIND, relation);
     if (!accumulators.has(key)) {
@@ -213,10 +192,6 @@ export async function getProposalFeedbackDigest(
 const cooldownKeyRelationExpr = sql<
   string | null
 >`substring(${event.payload}->'ai_proposal'->>'cooldown_key' from '[^|]*$')`;
-
-const signalCooldownKeyRelationExpr = sql<
-  string | null
->`substring(${proposal_signals.cooldown_key} from '[^|]*$')`;
 
 // Distinct relations in the most recent rubric_rejected events.
 async function loadRejectedEdgeRelations(db: DbLike): Promise<string[]> {
@@ -281,95 +256,4 @@ function dedupeGates(gates: string[], maxGates: number): string[] {
     if (out.length >= maxGates) break;
   }
   return out;
-}
-
-/**
- * Tighten-only gate bump. Cold start, too few samples, or an acceptance rate at or
- * above the threshold returns false. A true bump only suppresses the medium/rescue
- * pass, so it cannot turn a reject into a pass or block strong evidence.
- *
- * Rate, sample, and threshold ride along so the folded reject reason can cite them
- * without importing this module.
- */
-export function computeGateBump(
-  cell: ProposalFeedbackCell | undefined,
-  config: GateBiasConfig,
-): AdaptiveGateInput {
-  if (
-    !cell ||
-    cell.total < config.minSamples ||
-    cell.acceptance_rate >= config.acceptanceThreshold
-  ) {
-    return { tightenMediumToStrong: false };
-  }
-  return {
-    tightenMediumToStrong: true,
-    acceptanceRate: cell.acceptance_rate,
-    sampleCount: cell.total,
-    threshold: config.acceptanceThreshold,
-  };
-}
-
-/**
- * Find the cell for one (kind, relation). A miss is that cell's cold start, which
- * computeGateBump treats as a no-op.
- */
-export function findFeedbackCell(
-  digest: ProposalFeedbackCell[],
-  kind: string,
-  relation: string | null,
-): ProposalFeedbackCell | undefined {
-  return digest.find((cell) => cell.kind === kind && cell.relation === relation);
-}
-
-// Accept/dismiss counts for one relation, summed over its cooldown_key variants.
-// Equality on the derived segment keeps the read exact and independent of any cap.
-async function loadEdgeRelationCounts(
-  db: DbLike,
-  relation: string,
-): Promise<{ accept_count: number; dismiss_count: number }> {
-  const [row] = await db
-    .select({
-      accept_count: sql<number>`COALESCE(SUM(${proposal_signals.accept_count}), 0)::int`,
-      dismiss_count: sql<number>`COALESCE(SUM(${proposal_signals.dismiss_count}), 0)::int`,
-    })
-    .from(proposal_signals)
-    .where(
-      and(
-        sql`${proposal_signals.kind} = ${KNOWLEDGE_EDGE_KIND}`,
-        sql`${signalCooldownKeyRelationExpr} = ${relation}`,
-      ),
-    );
-  return {
-    accept_count: Number(row?.accept_count ?? 0),
-    dismiss_count: Number(row?.dismiss_count ?? 0),
-  };
-}
-
-/**
- * Resolve the gate bump for one edge relation with a relation-scoped read. The
- * display digest is sorted and capped, so a low-acceptance cell can be sliced off;
- * summing only this relation's rows keeps the bump independent of the cap and
- * avoids a full aggregate scan on every edge write.
- */
-export async function resolveEdgeGateBump(
-  db: DbLike,
-  relationType: string,
-  _budget: ProposalFeedbackBudget,
-  config: GateBiasConfig,
-): Promise<AdaptiveGateInput> {
-  const { accept_count, dismiss_count } = await loadEdgeRelationCounts(db, relationType);
-  const total = accept_count + dismiss_count;
-  if (total === 0) return computeGateBump(undefined, config);
-  const cell: ProposalFeedbackCell = {
-    kind: KNOWLEDGE_EDGE_KIND,
-    relation: relationType,
-    accept_count,
-    dismiss_count,
-    total,
-    acceptance_rate: accept_count / total,
-    top_dismiss_reasons: [],
-    top_rubric_gates: [],
-  };
-  return computeGateBump(cell, config);
 }

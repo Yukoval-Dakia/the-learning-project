@@ -14,11 +14,12 @@ import {
   knowledgeContext,
   knowledgeEdgeTouches,
 } from '@/kernel/read-models/extraction-summary';
-import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttemptForDerivationById } from '@/kernel/read-models/failure-attempts';
 import {
   isLearnerVisibleKnowledgeId,
   learnerVisibleKnowledgeIds,
 } from '@/kernel/read-models/learner-knowledge-visibility';
+import { derivableLearningRecords } from '@/kernel/records/queries';
 import type { DomainTool, ToolContext } from './types';
 
 const GetRecordContextInputSchema = z.object({
@@ -117,7 +118,8 @@ async function executeGetRecordContext(
     .from(learning_record)
     .where(eq(learning_record.id, input.recordId))
     .limit(1);
-  const record = rows[0] ?? null;
+  const record =
+    (await derivableLearningRecords(ctx.db, rows)).length > 0 ? (rows[0] ?? null) : null;
   if (!record) return GetRecordContextOutputSchema.parse({ record: null });
 
   const output: GetRecordContextOutput = {
@@ -153,7 +155,7 @@ async function executeGetRecordContext(
   }
 
   const failure = record.attempt_event_id
-    ? await getFailureAttemptById(ctx.db, record.attempt_event_id)
+    ? await getFailureAttemptForDerivationById(ctx.db, record.attempt_event_id)
     : null;
   if (include.has('attempt') && failure) {
     output.attempt = {

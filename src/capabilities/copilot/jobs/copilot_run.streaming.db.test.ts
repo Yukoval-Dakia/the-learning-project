@@ -186,6 +186,7 @@ describe('real Pi loop → runner → execution → durable job stream', () => {
           run_id: runId,
           session_id: sessionId,
           user_message: '核对历史后计算 17×19，并解释各步。',
+          today: '2026-11-04（周三）',
           triggered_by: 'chat' as const,
         },
         modelBinding: { provider: 'opencode-go' as const, model: model.id },
@@ -194,6 +195,7 @@ describe('real Pi loop → runner → execution → durable job stream', () => {
           surface: 'copilot' as const,
           triggered_by: 'chat' as const,
           user_message: '核对历史后计算 17×19，并解释各步。',
+          today: '2026-11-04（周三）',
           conversation_history: [],
           proposal_feedback: [],
           correction_contract: {
