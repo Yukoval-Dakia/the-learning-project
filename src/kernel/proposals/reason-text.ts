@@ -16,17 +16,36 @@ function knownEvidence(value: unknown): string | null {
 }
 
 // Credential and private-key material is a security boundary, so it is masked in
-// place. Everything else (email, URL queries, assignment-shaped text, model
-// dump syntax) is the learner's own data and passes through unchanged.
+// place. Everything else (email, URL queries, assignment-shaped text, model dump
+// syntax) is the learner's own data and passes through unchanged.
+const CREDENTIAL_KEY =
+  /(?:[A-Za-z0-9]+[-_])*(?:api[-_ ]?key|access[-_]?key|secret[-_]?key|private[-_]?key|client[-_]?secret|password|passwd|pwd|passphrase|authorization|token|secret)(?:[-_][A-Za-z0-9]+)*/
+    .source;
+// A quoted value is masked to its closing quote, so a space or an escaped quote
+// cannot leak a tail. An unclosed quote masks through the end of the text.
+const QUOTED_VALUE = /\\"(?:(?!\\").)*(?:\\"|$)|"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)/
+  .source;
+const BARE_VALUE = /[^\s;,"'`]+/.source;
+const ASSIGNED_CREDENTIAL = new RegExp(
+  `(\\b${CREDENTIAL_KEY}\\b(?:\\\\?["'])?\\s*[:=]\\s*(?:(?:Bearer|Basic)\\s+)?)(${QUOTED_VALUE}|${BARE_VALUE})`,
+  'gis',
+);
+const AUTH_SCHEME_CREDENTIAL = new RegExp(
+  `\\b(?:Bearer|Basic)\\s+(?:${QUOTED_VALUE}|${BARE_VALUE})`,
+  'gis',
+);
+
+function maskValue(value: string): string {
+  const quote = /^(?:\\"|"|')/.exec(value)?.[0];
+  return quote ? `${quote}${MASKED_CREDENTIAL}${quote}` : MASKED_CREDENTIAL;
+}
+
 function maskCredentials(text: string): string {
   return text
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, `$1${MASKED_CREDENTIAL}@`)
     .replace(
-      // Key names may carry underscore-separated prefixes (OPENAI_API_KEY,
-      // DB_PASSWORD, AWS_SECRET_ACCESS_KEY) or suffixes, and the separator may
-      // be a JSON/YAML quoted colon ("password": "…"). The value stops at
-      // whitespace, quotes, or , ; ` so separators are never swallowed.
-      /(\b(?:[A-Za-z0-9]+_)*(?:api[-_]?key|access[-_]?key|secret[-_]?key|private[-_]?key|password|passwd|authorization|access[-_]?token|refresh[-_]?token|id[-_]?token|secret)(?:_[A-Za-z0-9]+)*\b["']?\s*[:=]\s*["']?(?:(?:Bearer|Basic)\s+)?)[^\s;,"'`]+/gi,
-      `$1${MASKED_CREDENTIAL}`,
+      ASSIGNED_CREDENTIAL,
+      (_match, prefix: string, value: string) => `${prefix}${maskValue(value)}`,
     )
     .replace(
       // A BEGIN block without a matching END masks through the end of the
@@ -34,7 +53,7 @@ function maskCredentials(text: string): string {
       /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g,
       MASKED_CREDENTIAL,
     )
-    .replace(/\b(?:Bearer|Basic)\s+[^\s;,"'`]+/gi, MASKED_CREDENTIAL)
+    .replace(AUTH_SCHEME_CREDENTIAL, MASKED_CREDENTIAL)
     .replace(
       /\b(?:sk-(?:ant-|proj-|or-)?[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AKIA[A-Z0-9]{16}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g,
       MASKED_CREDENTIAL,
