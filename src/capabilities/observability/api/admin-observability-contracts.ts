@@ -28,7 +28,7 @@ export const AdminRunSchema = z.object({
   finish_reason: z.string().nullable(),
   usage_json: z.object({ inputTokens: z.number(), outputTokens: z.number() }),
   cost_usd: z.number().nullable(),
-  cost_basis: z.enum(['reported', 'estimated', 'catalog_estimate', 'unknown']).nullable(),
+  cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable(),
   cost_ref: z.string().nullable(),
   error_message: z.string().nullable(),
   started_at: z.string().datetime(),
@@ -59,7 +59,7 @@ const CostLedgerRowSchema = z.object({
   cost: z.number().nullable(),
   currency: z.string(),
   entry_kind: z.enum(['legacy', 'attempt']),
-  cost_basis: z.enum(['reported', 'estimated', 'catalog_estimate', 'unknown']).nullable(),
+  cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable(),
   cost_ref: z.string().nullable(),
   tokens_in: z.number().int().nullable(),
   tokens_out: z.number().int().nullable(),
@@ -86,10 +86,7 @@ const AdminRunTimelineEventSchema = z.object({
   iteration: z.number().int().optional(),
   latency_ms: z.number().optional(),
   cost: z.number().optional(),
-  cost_basis: z
-    .enum(['reported', 'estimated', 'catalog_estimate', 'unknown'])
-    .nullable()
-    .optional(),
+  cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable().optional(),
   cost_ref: z.string().nullable().optional(),
   tokens_in: z.number().int().optional(),
   tokens_out: z.number().int().optional(),
@@ -115,7 +112,7 @@ const AdminCostRowFields = {
 const CostTruthRowSchema = z.object({
   currency: z.string(),
   entry_kind: z.enum(['legacy', 'attempt']),
-  cost_basis: z.enum(['reported', 'estimated', 'catalog_estimate', 'unknown']).nullable(),
+  cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable(),
   cost_ref: z.string().nullable(),
   cost: z.number(),
   tokens_in: z.number().int(),

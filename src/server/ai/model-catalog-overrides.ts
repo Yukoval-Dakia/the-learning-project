@@ -333,7 +333,10 @@ export function modelCatalogOverride(
   model: string,
   env: Record<string, string | undefined>,
 ): CatalogOverride | undefined {
-  if (provider === 'xiaomi-token-plan' && Object.hasOwn(protocols.xiaomi, model)) {
+  if (
+    provider === 'xiaomi-token-plan' &&
+    (Object.hasOwn(protocols.xiaomi, model) || Object.hasOwn(overrides.xiaomi ?? {}, model))
+  ) {
     return {
       when: 'missing',
       reason:

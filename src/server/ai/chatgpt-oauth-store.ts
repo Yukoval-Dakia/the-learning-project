@@ -43,6 +43,10 @@ export class ChatGPTOAuthFileError extends Error {
 
 // One chain per path; concurrent runs share the file through it.
 const fileMutexByPath = new Map<string, Promise<unknown>>();
+// A rotation whose write-back has not landed yet, per path — every store
+// instance on the same file must see it, or a second instance would reload
+// the already-invalidated refresh token from disk.
+const dirtyByPath = new Map<string, CredentialLike>();
 
 function serialized<T>(path: string, fn: () => Promise<T>): Promise<T> {
   const tail = fileMutexByPath.get(path) ?? Promise.resolve();
@@ -133,24 +137,19 @@ async function writeAuthFile(path: string, auth: Record<string, CredentialLike>)
  */
 export function createChatGPTCredentialStore(path: string) {
   const memory = new Map<string, CredentialLike>();
-  // A credential whose rotation succeeded but whose write-back failed. It is
-  // preferred over the file on every later access and the write is retried —
-  // the old refresh token may already be dead, so falling back to the file
-  // would silently un-rotate (and could revoke the login).
-  let dirty: CredentialLike | undefined;
 
   // Reads the entry inside the caller's mutex scope — the public `read`
   // re-queues on the same chain, so calling it from within `serialized` (e.g.
   // inside `modify`) would deadlock the lane. The file is the single truth;
-  // `dirty` is the only in-memory state allowed to beat it.
+  // `dirtyByPath` is the only in-memory state allowed to beat it.
   const readInsideLock = async (): Promise<CredentialLike | undefined> => {
-    if (dirty !== undefined) {
-      const pending = dirty;
+    const pending = dirtyByPath.get(path);
+    if (pending !== undefined) {
       try {
         const auth = await readAuthFile(path);
         auth.openai = pending;
         await writeAuthFile(path, auth);
-        dirty = undefined;
+        dirtyByPath.delete(path);
       } catch (e) {
         // Persist failure stays loud — the credential is retained as dirty
         // but nothing may pretend the write-back succeeded.
@@ -200,15 +199,15 @@ export function createChatGPTCredentialStore(path: string) {
         if (next !== undefined) {
           memory.set(providerId, next);
           // Mark dirty BEFORE any file op — a successful refresh followed by a
-          // failed read/write must never let a later read reload the dead
-          // token from disk.
-          dirty = next;
+          // failed read/write must never let a later read (from ANY store on
+          // this path) reload the dead token from disk.
+          dirtyByPath.set(path, next);
           const auth = await readAuthFile(path);
           auth[providerId] = next;
           // A failed write leaves `next` dirty — retried on every later
           // access; the typed write_failed propagates loudly to the caller.
           await writeAuthFile(path, auth);
-          dirty = undefined;
+          dirtyByPath.delete(path);
         }
         return next ?? current;
       });
@@ -217,7 +216,7 @@ export function createChatGPTCredentialStore(path: string) {
       memory.delete(providerId);
       if (providerId !== 'openai') return;
       await serialized(path, async () => {
-        dirty = undefined;
+        dirtyByPath.delete(path);
         try {
           const auth = await readAuthFile(path);
           if (auth.openai !== undefined) {

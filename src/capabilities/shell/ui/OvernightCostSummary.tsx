@@ -36,9 +36,7 @@ function amount(value: number | null, currency: string): string {
 function costBasis(detail: CostDetail): string {
   if (detail.entry_kind === 'legacy') return '历史口径';
   if (detail.cost_basis === null) return '费用口径未知';
-  const label =
-    detail.cost_basis === 'catalog_estimate' ? '目录价估算' : usageLabels[detail.cost_basis];
-  return `${label}费用`;
+  return `${usageLabels[detail.cost_basis]}费用`;
 }
 
 function usage(value: number | null, missing: number): string {

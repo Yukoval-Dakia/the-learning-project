@@ -20,7 +20,7 @@ export type HelpModality = 'text' | 'vision' | 'deterministic' | 'reference' | '
 export type ExecutableHelpBasis = 'deterministic_step' | 'sealed_reference' | 'verified_fallback';
 
 export type HelpCost =
-  | { readonly basis: 'reported' | 'estimated' | 'catalog_estimate'; readonly usd: number }
+  | { readonly basis: 'reported' | 'estimated'; readonly usd: number }
   | { readonly basis: 'unknown'; readonly usd: null };
 
 export interface HelpLatencyMarks {
@@ -114,8 +114,7 @@ export function helpTerminalForAttempt(input: {
 
 /** Unknown, missing, or negative amounts stay unknown. A real 0 with a known basis stays 0. */
 export function helpCost(basis: string | undefined, usd: number | null | undefined): HelpCost {
-  if (basis !== 'reported' && basis !== 'estimated' && basis !== 'catalog_estimate')
-    return { basis: 'unknown', usd: null };
+  if (basis !== 'reported' && basis !== 'estimated') return { basis: 'unknown', usd: null };
   if (usd === null || usd === undefined || !Number.isFinite(usd) || usd < 0) {
     return { basis: 'unknown', usd: null };
   }

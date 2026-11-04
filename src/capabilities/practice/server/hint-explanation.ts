@@ -8,7 +8,7 @@ export async function loadHelpExplanationEvidence(
   db: Db,
   ran: {
     task_run_id?: string | null;
-    cost_basis?: 'reported' | 'estimated' | 'catalog_estimate' | 'unknown';
+    cost_basis?: 'reported' | 'estimated' | 'unknown';
     cost_usd?: number;
   },
 ): Promise<HelpExplanationEvidence> {
@@ -38,7 +38,7 @@ export async function sealHintExplanation(
   explanation: string,
   ran: {
     task_run_id?: string;
-    cost_basis?: 'reported' | 'estimated' | 'catalog_estimate' | 'unknown';
+    cost_basis?: 'reported' | 'estimated' | 'unknown';
     cost_usd?: number;
   },
 ) {

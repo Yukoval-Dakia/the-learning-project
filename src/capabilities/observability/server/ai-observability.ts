@@ -65,7 +65,7 @@ export interface AdminRunListRow {
   finish_reason: string | null;
   usage_json: { inputTokens: number; outputTokens: number };
   cost_usd: number | null;
-  cost_basis: 'reported' | 'estimated' | 'catalog_estimate' | 'unknown' | null;
+  cost_basis: 'reported' | 'estimated' | 'unknown' | null;
   cost_ref: string | null;
   error_message: string | null;
   started_at: Date;
@@ -94,7 +94,7 @@ export interface AdminRunTimelineEvent {
   iteration?: number;
   latency_ms?: number;
   cost?: number;
-  cost_basis?: 'reported' | 'estimated' | 'catalog_estimate' | 'unknown' | null;
+  cost_basis?: 'reported' | 'estimated' | 'unknown' | null;
   cost_ref?: string | null;
   tokens_in?: number;
   tokens_out?: number;
@@ -145,7 +145,7 @@ export interface AdminCostTaskRow {
 export interface AdminCostTruthRow {
   currency: string;
   entry_kind: 'legacy' | 'attempt';
-  cost_basis: 'reported' | 'estimated' | 'catalog_estimate' | 'unknown' | null;
+  cost_basis: 'reported' | 'estimated' | 'unknown' | null;
   cost_ref: string | null;
   cost: number;
   tokens_in: number;
@@ -301,7 +301,6 @@ function projectRun(
     cost_basis:
       row.cost_basis === 'reported' ||
       row.cost_basis === 'estimated' ||
-      row.cost_basis === 'catalog_estimate' ||
       row.cost_basis === 'unknown'
         ? row.cost_basis
         : null,
@@ -436,7 +435,6 @@ export async function getAdminRunTimeline(
         cost_basis:
           entry.cost_basis === 'reported' ||
           entry.cost_basis === 'estimated' ||
-          entry.cost_basis === 'catalog_estimate' ||
           entry.cost_basis === 'unknown'
             ? entry.cost_basis
             : null,

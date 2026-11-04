@@ -3471,7 +3471,7 @@ export interface operations {
                             calls: number;
                             cost: number;
                             /** @enum {string|null} */
-                            cost_basis: "reported" | "estimated" | "catalog_estimate" | "unknown" | null;
+                            cost_basis: "reported" | "estimated" | "unknown" | null;
                             cost_ref: string | null;
                             currency: string;
                             /** @enum {string} */
@@ -4946,7 +4946,7 @@ export interface operations {
                     "application/json": {
                         data: {
                             /** @enum {string|null} */
-                            cost_basis: "reported" | "estimated" | "catalog_estimate" | "unknown" | null;
+                            cost_basis: "reported" | "estimated" | "unknown" | null;
                             cost_ref: string | null;
                             cost_usd: number | null;
                             duration_ms: number | null;
@@ -4979,7 +4979,7 @@ export interface operations {
                         };
                         rows: {
                             /** @enum {string|null} */
-                            cost_basis: "reported" | "estimated" | "catalog_estimate" | "unknown" | null;
+                            cost_basis: "reported" | "estimated" | "unknown" | null;
                             cost_ref: string | null;
                             cost_usd: number | null;
                             duration_ms: number | null;
@@ -5130,7 +5130,7 @@ export interface operations {
                         ledger: {
                             cost: number | null;
                             /** @enum {string|null} */
-                            cost_basis: "reported" | "estimated" | "catalog_estimate" | "unknown" | null;
+                            cost_basis: "reported" | "estimated" | "unknown" | null;
                             cost_ref: string | null;
                             currency: string;
                             /** @enum {string} */
@@ -5149,7 +5149,7 @@ export interface operations {
                         }[];
                         run: {
                             /** @enum {string|null} */
-                            cost_basis: "reported" | "estimated" | "catalog_estimate" | "unknown" | null;
+                            cost_basis: "reported" | "estimated" | "unknown" | null;
                             cost_ref: string | null;
                             cost_usd: number | null;
                             duration_ms: number | null;
@@ -5179,7 +5179,7 @@ export interface operations {
                             at: string;
                             cost?: number;
                             /** @enum {string|null} */
-                            cost_basis?: "reported" | "estimated" | "catalog_estimate" | "unknown" | null;
+                            cost_basis?: "reported" | "estimated" | "unknown" | null;
                             cost_ref?: string | null;
                             id?: string;
                             iteration?: number;
@@ -12864,7 +12864,7 @@ export interface operations {
                                 calls: number;
                                 cost: number;
                                 /** @enum {string|null} */
-                                cost_basis: "reported" | "estimated" | "catalog_estimate" | "unknown" | null;
+                                cost_basis: "reported" | "estimated" | "unknown" | null;
                                 cost_ref: string | null;
                                 currency: string;
                                 /** @enum {string} */
@@ -15443,7 +15443,7 @@ export interface operations {
                                 amount: number | null;
                                 attempt_id: string | null;
                                 /** @enum {string|null} */
-                                cost_basis: "reported" | "estimated" | "catalog_estimate" | "unknown" | null;
+                                cost_basis: "reported" | "estimated" | "unknown" | null;
                                 cost_ref: string | null;
                                 currency: string;
                                 /** @enum {string} */
@@ -38214,7 +38214,7 @@ export interface operations {
                             details: {
                                 amount: number | null;
                                 /** @enum {string|null} */
-                                cost_basis: "reported" | "estimated" | "catalog_estimate" | "unknown" | null;
+                                cost_basis: "reported" | "estimated" | "unknown" | null;
                                 cost_ref: string | null;
                                 currency: string;
                                 /** @enum {string} */

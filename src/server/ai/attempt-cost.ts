@@ -16,6 +16,13 @@ import {
 
 export type { AttemptCostBasis, AttemptCostTruth } from '@/ai/task-result';
 
+/**
+ * cost_ref prefix marking a catalog estimate produced on a subscription route
+ * (currently: openai ChatGPT-login). The spend gate excludes refs with this
+ * prefix — defined once here so writer and gate cannot drift.
+ */
+export const CATALOG_SUBSCRIPTION_REF_PREFIX = 'pi-catalog-subscription';
+
 export function unknownAttemptCostTruth(provider: string, model: string): AttemptCostTruth {
   return { basis: 'unknown', amountUsd: null, ref: `unpriced:${provider}/${model}` };
 }
@@ -31,7 +38,7 @@ export function unknownAttemptCostTruth(provider: string, model: string): Attemp
 export function resolveAttemptCostTruth(input: {
   provider: Provider;
   model: string;
-  /** The resolved route's auth mode — decides estimated vs catalog_estimate. */
+  /** The resolved route's auth mode — decides the subscription ref prefix. */
   authMode?: 'key' | 'oauth' | 'oauth-file';
   tokens: TokenCounts;
   /** False when zero counters are placeholders, not observed provider usage. */
@@ -98,21 +105,25 @@ export function resolveAttemptCostTruth(input: {
     const hasCard =
       laneProvider !== undefined && catalogModelCost(laneProvider, input.model) !== undefined;
     if (hasCard && reported !== undefined && Number.isFinite(reported) && reported >= 0) {
-      const prefix =
-        input.priceOrigin === 'timeout-estimate'
+      // Only the ChatGPT-login route carries the subscription marker — the
+      // same catalog number on key-auth openai / opencode-go / token-plan
+      // keeps today's pi-catalog ref so nothing else changes. The spend gate
+      // excludes this prefix: a subscription catalog estimate is a projection,
+      // not paid spend.
+      const subscription = input.provider === 'openai' && input.authMode === 'oauth-file';
+      const prefix = subscription
+        ? input.priceOrigin === 'timeout-estimate'
+          ? `${CATALOG_SUBSCRIPTION_REF_PREFIX}-timeout-estimate`
+          : input.priceOrigin === 'failure-estimate'
+            ? `${CATALOG_SUBSCRIPTION_REF_PREFIX}-failure-estimate`
+            : CATALOG_SUBSCRIPTION_REF_PREFIX
+        : input.priceOrigin === 'timeout-estimate'
           ? 'pi-catalog-timeout-estimate'
           : input.priceOrigin === 'failure-estimate'
             ? 'pi-catalog-failure-estimate'
             : 'pi-catalog';
-      // Only the ChatGPT-login route records the subscription marker — the
-      // same number on key-auth openai / opencode-go / token-plan stays
-      // 'estimated' so the supply cap keeps counting it exactly as today.
-      const basis =
-        input.provider === 'openai' && input.authMode === 'oauth-file'
-          ? ('catalog_estimate' as const)
-          : ('estimated' as const);
       return {
-        basis,
+        basis: 'estimated',
         amountUsd: reported,
         ref: `${prefix}:${input.provider}/${input.model}`,
       };

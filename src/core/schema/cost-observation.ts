@@ -27,7 +27,7 @@ export const ProviderCostDetailSchema = z.object({
   task_kind: z.string(),
   source: z.enum(['provider_attempt', 'cost_ledger']),
   entry_kind: z.enum(['legacy', 'attempt']),
-  cost_basis: z.enum(['reported', 'estimated', 'catalog_estimate', 'unknown']).nullable(),
+  cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable(),
   cost_ref: z.string().nullable(),
   currency: z.string(),
   amount: z.number().nullable(),

@@ -26,7 +26,7 @@ const projectedRowSchema = z.object({
   task_kind: textSchema,
   source: z.enum(['cost_ledger', 'provider_attempt']),
   entry_kind: z.enum(['legacy', 'attempt']),
-  cost_basis: z.enum(['reported', 'estimated', 'catalog_estimate', 'unknown']).nullable(),
+  cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable(),
   cost_ref: textSchema.nullable(),
   currency: z.string().regex(/^[A-Z]{3}$/),
   cost: z.number().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
@@ -242,8 +242,7 @@ export async function readSessionCostEvidence(db: Db, sessionId: string): Promis
           if (
             row.entry_kind !== 'legacy' &&
             row.cost_basis !== 'reported' &&
-            row.cost_basis !== 'estimated' &&
-            row.cost_basis !== 'catalog_estimate'
+            row.cost_basis !== 'estimated'
           )
             note(identity, 'unknown_cost_basis');
           if (row.cost == null) note(identity, 'missing_amount');
@@ -256,8 +255,7 @@ export async function readSessionCostEvidence(db: Db, sessionId: string): Promis
             (row.entry_kind === 'legacy' || row.cost_ref != null) &&
             (row.entry_kind === 'legacy' ||
               row.cost_basis === 'reported' ||
-              row.cost_basis === 'estimated' ||
-              row.cost_basis === 'catalog_estimate');
+              row.cost_basis === 'estimated');
           records.push({
             ...identity,
             attempt_id: row.source === 'provider_attempt' ? row.ref : null,
@@ -280,12 +278,7 @@ export async function readSessionCostEvidence(db: Db, sessionId: string): Promis
           };
           if (known && row.cost != null) {
             bucket.known_subtotal = addAmount(bucket.known_subtotal, row.cost);
-            const basis =
-              row.entry_kind === 'legacy'
-                ? 'legacy'
-                : row.cost_basis === 'catalog_estimate'
-                  ? 'estimated'
-                  : row.cost_basis;
+            const basis = row.entry_kind === 'legacy' ? 'legacy' : row.cost_basis;
             if (basis === 'reported' || basis === 'estimated' || basis === 'legacy')
               bucket[basis] = addAmount(bucket[basis], row.cost);
           }

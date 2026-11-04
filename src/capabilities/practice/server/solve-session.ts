@@ -49,7 +49,7 @@ export type RunTaskFn = (
   task_run_id?: string;
   help_latency?: SealedHelpLatency;
   cost_usd?: number;
-  cost_basis?: 'reported' | 'estimated' | 'catalog_estimate' | 'unknown';
+  cost_basis?: 'reported' | 'estimated' | 'unknown';
 }>;
 
 // Default mastery threshold for solve-tutor: a judged attempt scoring below this
@@ -149,7 +149,7 @@ interface SolveHintAttempt extends PlanSolveHintResult {
   attempt_latency?: SealedHelpLatency;
   reply_grounding?: SealedReplyGrounding;
   cost_usd?: number;
-  cost_basis?: 'reported' | 'estimated' | 'catalog_estimate' | 'unknown';
+  cost_basis?: 'reported' | 'estimated' | 'unknown';
 }
 
 // Session-free seed: a question face + reference + hintIndex, not a sessionId.
@@ -686,7 +686,7 @@ function sealHintRequest(input: {
   modality: HelpModality;
   executable: ExecutableHelpBasis | null;
   complete: boolean;
-  costBasis?: 'reported' | 'estimated' | 'catalog_estimate' | 'unknown';
+  costBasis?: 'reported' | 'estimated' | 'unknown';
   costUsd?: number;
 }): SealedHelpLatency {
   const firstToken = input.attempt

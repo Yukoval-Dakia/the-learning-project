@@ -11,7 +11,7 @@ export const GenerateGoalOutlineOutputSchema = z.object({
   text: z.string(),
   task_run_id: z.string().nullable(),
   cost_usd: z.number().nullable(),
-  cost_basis: z.enum(['reported', 'estimated', 'catalog_estimate', 'unknown']),
+  cost_basis: z.enum(['reported', 'estimated', 'unknown']),
   cost_ref: z.string(),
   finish_reason: z.string().nullable(),
 });

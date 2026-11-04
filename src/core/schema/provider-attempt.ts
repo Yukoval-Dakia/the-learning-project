@@ -84,7 +84,7 @@ export type ProviderAttemptUsageTruth = z.infer<typeof ProviderAttemptUsageTruth
 
 const KnownProviderAttemptCost = z
   .object({
-    basis: z.enum(['reported', 'estimated', 'catalog_estimate']),
+    basis: z.enum(['reported', 'estimated']),
     amount: z.number().finite().nonnegative(),
     currency: CurrencyCode,
     source: NonblankString,

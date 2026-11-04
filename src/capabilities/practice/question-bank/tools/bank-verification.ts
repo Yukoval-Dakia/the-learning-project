@@ -246,10 +246,7 @@ export async function callBankSemanticTask(
   const [row] = await ctx.db.select().from(ai_task_runs).where(eq(ai_task_runs.id, id)).limit(1);
   const usageBasis =
     row?.usage_json?.usage_basis ?? (row?.status === 'success' ? 'reported' : 'unknown');
-  const knownCost =
-    row?.cost_basis === 'reported' ||
-    row?.cost_basis === 'estimated' ||
-    row?.cost_basis === 'catalog_estimate';
+  const knownCost = row?.cost_basis === 'reported' || row?.cost_basis === 'estimated';
   return {
     value,
     receipt: {
