@@ -16,6 +16,7 @@ import {
 // Coach consumes the out-of-band agent-note HINT channel (for_agent='coach'), where
 // quiz_verify leaves question_pool_gap notes. Hints, not facts; additive only.
 import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
+import { collectSuppliedNumbers } from '@/core/daily-focus-guard';
 import { type ReviewPlanNumbers, computeReviewPlanNumbers } from '@/core/daily-review-plan';
 import { CoachPlanDraft, type CoachPlanDraftT, composeTodayPlan } from '@/core/schema/coach';
 // Derived sub-skill weak points (YUK-1582): read-only landing points with first-hand
@@ -253,7 +254,9 @@ export async function runCoach(db: Db, deps: CoachRunDeps = {}): Promise<CoachRu
       // in prepareInput rides the same built input, so this payload needs no re-read.
       const { review_plan: reviewPlan } = input as ReturnType<typeof buildCoachInput>;
       const todayPlanDraft = parseCoachOutputSafely(taskResult.text ?? '');
-      const composed = todayPlanDraft ? composeTodayPlan(todayPlanDraft, reviewPlan) : null;
+      const composed = todayPlanDraft
+        ? composeTodayPlan(todayPlanDraft, reviewPlan, collectSuppliedNumbers(input))
+        : null;
       const todayPlan = composed?.plan ?? null;
       const focusIssues = composed?.issues ?? [];
       return {

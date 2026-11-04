@@ -119,14 +119,19 @@ export const COACH_MAX_MAINTENANCE_PROPOSALS = 8;
 
 export interface ComposedTodayPlan {
   readonly plan: TodayPlanT;
-  /** daily_focus number claims contradicting every server value; prose stays verbatim. */
+  /** daily_focus number claims matching no supplied value; prose stays verbatim. */
   readonly issues: readonly DailyFocusNumberIssue[];
 }
 
-/** Attach the code-computed review numbers to the model's draft. */
+/**
+ * Attach the code-computed review numbers to the model's draft. `supplied` is the set of
+ * numeric values the model could read from its injected context — claims matching any of
+ * them pass, everything else is reported as a number_mismatch issue.
+ */
 export function composeTodayPlan(
   draft: CoachPlanDraftT,
-  numbers: ReviewPlanNumbers & { due_count?: number; budget_minutes?: number },
+  numbers: ReviewPlanNumbers,
+  supplied: ReadonlySet<number>,
 ): ComposedTodayPlan {
   const plan = TodayPlan.parse({
     ...draft,
@@ -140,19 +145,7 @@ export function composeTodayPlan(
       time_box_minutes: numbers.time_box_minutes,
     },
   });
-  const issues = checkDailyFocusNumbers(plan.daily_focus, {
-    questionCounts: [
-      numbers.count,
-      ...(typeof numbers.due_count === 'number' ? [numbers.due_count] : []),
-    ],
-    minutes: [
-      ...new Set(
-        [numbers.estimated_minutes, numbers.time_box_minutes, numbers.budget_minutes].filter(
-          (v): v is number => typeof v === 'number',
-        ),
-      ),
-    ],
-  });
+  const issues = checkDailyFocusNumbers(plan.daily_focus, supplied);
   return { plan, issues };
 }
 

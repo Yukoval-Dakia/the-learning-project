@@ -1,23 +1,21 @@
 // YUK-1622 → YUK-1775 — the model's daily_focus prose is published verbatim; the
 // server only flags numeric claims that contradict the computed plan.
 //
-// Plan numbers come from the due queue and budget (`daily-review-plan.ts`). Instead of
-// deleting number-bearing clauses, we extract "N 题 / N 分钟 / N 小时" claims and compare
-// each against the server truth set. A claim matching any server value passes; one that
-// contradicts all of them produces a typed `number_mismatch` issue for the degraded
-// channel. Prose itself is never rewritten and there is no fallback sentence.
+// The model contract is "numbers are read from the injected context". So the truth set
+// is every finite number leaf in that context (`collectSuppliedNumbers`): plan count,
+// due count, subject weights, minutes, budget, derived stats like weak-point failure
+// counts. A "N 题 / N 分钟" claim matching any supplied number is a legitimate
+// restatement — including real narrative stats like "昨天错了 5 道题". A claim matching
+// none is either a plan contradiction or an unsourced number, and yields a typed
+// `number_mismatch` issue for the degraded channel. Prose is never rewritten and there
+// is no fallback sentence.
 
 export interface DailyFocusNumberIssue {
   readonly kind: 'number_mismatch';
   readonly unit: 'questions' | 'minutes';
   readonly claimed: number;
-  /** Every server-computed value the claim could legitimately restate. */
+  /** Sorted server-supplied values the claim could legitimately restate. */
   readonly actual: readonly number[];
-}
-
-export interface DailyFocusActuals {
-  readonly questionCounts: readonly number[];
-  readonly minutes: readonly number[];
 }
 
 const NUMBER = String.raw`(?:\d+(?:\.\d+)?|[零〇一二三四五六七八九十百千万两]+)`;
@@ -25,7 +23,9 @@ const NUMBER = String.raw`(?:\d+(?:\.\d+)?|[零〇一二三四五六七八九十
 const QUESTION_CLAIM = new RegExp(`(${NUMBER})\\s*(?:道题|道|题)`, 'g');
 const MINUTE_CLAIM = new RegExp(`(${NUMBER})\\s*(?:分钟|min(?:ute)?s?)`, 'gi');
 const HOUR_CLAIM = new RegExp(`(${NUMBER})\\s*(?:小时|hours?)`, 'gi');
-const HALF_HOUR = /半\s*个?小时/g;
+// "一个半小时" claims 90; consumed before the bare-半 hour pass so 半 isn't double-read.
+const NUM_HALF_HOUR = new RegExp(`(${NUMBER})\\s*个?\\s*半\\s*个?\\s*小时`, 'g');
+const HALF_HOUR = /半\s*个?\s*小时/g;
 // "第 3 题" is an ordinal reference, not a count claim.
 const ORDINAL_QUESTION = new RegExp(`第\\s*${NUMBER}\\s*(?:道题|道|题)`, 'g');
 
@@ -88,41 +88,58 @@ function collectClaims(text: string, pattern: RegExp, scale: number, into: Set<n
 }
 
 /**
- * Compare number claims in `text` against the server-computed plan values. Claims that
- * contradict every server value yield one `number_mismatch` issue each; the prose is
- * returned to the caller untouched regardless.
+ * Every finite number leaf in a JSON-like value. The coach input's supplied numbers are
+ * the only values the model may legitimately restate in prose; strings (ids, ISO dates)
+ * contribute nothing.
+ */
+export function collectSuppliedNumbers(value: unknown, into = new Set<number>()): Set<number> {
+  if (typeof value === 'number') {
+    if (Number.isFinite(value)) into.add(value);
+    return into;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectSuppliedNumbers(item, into);
+    return into;
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const item of Object.values(value)) collectSuppliedNumbers(item, into);
+  }
+  return into;
+}
+
+/**
+ * Compare number claims in `text` against the server-supplied number set. Claims that
+ * match no supplied value yield one `number_mismatch` issue each; the prose is returned
+ * to the caller untouched regardless.
  */
 export function checkDailyFocusNumbers(
   text: string,
-  actuals: DailyFocusActuals,
+  supplied: ReadonlySet<number>,
 ): DailyFocusNumberIssue[] {
-  const withoutOrdinals = text.replace(ORDINAL_QUESTION, '');
   const questionClaims = new Set<number>();
-  collectClaims(withoutOrdinals, QUESTION_CLAIM, 1, questionClaims);
   const minuteClaims = new Set<number>();
-  collectClaims(withoutOrdinals, MINUTE_CLAIM, 1, minuteClaims);
-  collectClaims(withoutOrdinals, HOUR_CLAIM, 60, minuteClaims);
-  for (const _ of withoutOrdinals.matchAll(HALF_HOUR)) minuteClaims.add(30);
+  const withoutNumHalfHour = text
+    .replace(ORDINAL_QUESTION, '')
+    .replace(NUM_HALF_HOUR, (_match, token: string) => {
+      const value = parseNumber(token);
+      if (value !== null && value > 0) minuteClaims.add(value * 60 + 30);
+      return '';
+    });
+  collectClaims(withoutNumHalfHour, QUESTION_CLAIM, 1, questionClaims);
+  collectClaims(withoutNumHalfHour, MINUTE_CLAIM, 1, minuteClaims);
+  collectClaims(withoutNumHalfHour, HOUR_CLAIM, 60, minuteClaims);
+  for (const _ of withoutNumHalfHour.matchAll(HALF_HOUR)) minuteClaims.add(30);
 
+  const actual = [...supplied].sort((a, b) => a - b);
   const issues: DailyFocusNumberIssue[] = [];
   for (const claimed of questionClaims) {
-    if (!actuals.questionCounts.includes(claimed)) {
-      issues.push({
-        kind: 'number_mismatch',
-        unit: 'questions',
-        claimed,
-        actual: actuals.questionCounts,
-      });
+    if (!supplied.has(claimed)) {
+      issues.push({ kind: 'number_mismatch', unit: 'questions', claimed, actual });
     }
   }
   for (const claimed of minuteClaims) {
-    if (!actuals.minutes.includes(claimed)) {
-      issues.push({
-        kind: 'number_mismatch',
-        unit: 'minutes',
-        claimed,
-        actual: actuals.minutes,
-      });
+    if (!supplied.has(claimed)) {
+      issues.push({ kind: 'number_mismatch', unit: 'minutes', claimed, actual });
     }
   }
   return issues;
