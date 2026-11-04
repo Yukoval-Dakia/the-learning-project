@@ -193,6 +193,7 @@ const AuthorQuestionOutputSchema = z.object({
     'skipped:attempt_not_found',
     'skipped:not_failure_attempt',
     'skipped:attempt_not_active',
+    'skipped:source_purpose_restricted_or_unknown',
     'skipped:no_judge_yet',
     'skipped:question_not_found',
     'skipped:max_depth',

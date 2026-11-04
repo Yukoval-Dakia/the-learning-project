@@ -2,6 +2,7 @@ import { type SQLWrapper, and, eq, inArray, sql } from 'drizzle-orm';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import { sourceAllowsDerivationSql } from '@/kernel/read-models/usage-policy';
 
 /** Every causal ancestor participates. UNION terminates malformed cycles.
  * Epoch mismatches freeze old sources after withdrawal, including after relax.
@@ -14,37 +15,7 @@ export function eventAllowsDerivationSql(
     session_id: SQLWrapper;
   } = event,
 ) {
-  return sql`NOT EXISTS (
-    WITH RECURSIVE lineage(id, payload, session_id, caused_by_event_id) AS (
-      SELECT ${row.id}, ${row.payload}, ${row.session_id}, ${row.caused_by_event_id}
-      UNION
-      SELECT parent.id, parent.payload, parent.session_id, parent.caused_by_event_id
-      FROM event parent JOIN lineage child ON parent.id = child.caused_by_event_id
-    )
-    SELECT 1 FROM lineage l
-    LEFT JOIN event binding ON binding.id = 'ingestion-usage:' || l.id
-      AND binding.action = 'experimental:ingestion_usage_binding'
-      AND binding.actor_kind = 'system' AND binding.actor_ref = 'ingestion-usage'
-    LEFT JOIN learning_session s ON s.id = l.session_id
-    LEFT JOIN source_document d ON d.id = COALESCE(binding.payload->>'document_id', s.source_document_id)
-    WHERE (l.payload ? 'derivation_policy' AND l.payload->>'derivation_policy' IS DISTINCT FROM 'allow')
-      OR (l.session_id IS NOT NULL AND s.id IS NULL)
-      OR (s.type = 'ingestion' AND s.source_document_id IS NULL AND binding.id IS NULL)
-      OR (coalesce(binding.payload->>'document_id', s.source_document_id) IS NOT NULL AND d.id IS NULL)
-      OR (d.id IS NOT NULL AND (
-        coalesce(d.provenance->'usage_policy'->>'derivation_policy', 'allow') <> 'allow'
-        OR (d.provenance ? 'usage_policy' AND jsonb_typeof(d.provenance->'usage_policy') <> 'object')
-        OR (d.provenance->'usage_policy' ? 'derivation_policy' AND d.provenance->'usage_policy'->>'derivation_policy' IS DISTINCT FROM 'allow')
-        OR (d.provenance ? 'usage_epoch' AND jsonb_typeof(d.provenance->'usage_epoch') <> 'string')
-        OR coalesce(binding.payload->>'epoch', 'legacy')
-          <> coalesce(d.provenance->>'usage_epoch', 'legacy')
-      ))
-      OR (binding.id IS NOT NULL AND (d.id IS NULL
-        OR binding.payload->>'source_policy' IS DISTINCT FROM 'allow'
-        OR NOT (binding.payload ?& ARRAY['document_id','epoch','source_policy'])))
-      OR (l.caused_by_event_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM event known_parent WHERE known_parent.id = l.caused_by_event_id))
-  )`;
+  return sourceAllowsDerivationSql({ kind: 'event', id: row.id });
 }
 
 export async function readEventDerivationPolicy(

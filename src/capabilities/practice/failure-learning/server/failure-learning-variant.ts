@@ -1,3 +1,4 @@
+import { sourceAllowsDerivation } from '@/kernel/read-models/usage-policy';
 // Practice-owned Failure Learning — variant proposal stage.
 // Triggered after a failure attempt has an effective cause. If the active
 // SubjectProfile marks the cause's primary_category as targetable, generate
@@ -56,6 +57,7 @@ export interface RunVariantGenParams {
 export interface RunVariantGenResult {
   status:
     | 'proposed'
+    | 'skipped:source_purpose_restricted_or_unknown'
     | 'skipped:attempt_not_found'
     | 'skipped:not_a_failure_attempt'
     | 'skipped:attempt_not_active'
@@ -251,6 +253,9 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     },
     depth: parent.variant_depth,
   };
+
+  if (!(await sourceAllowsDerivation(db, { kind: 'event', id: attemptEventId })))
+    return { status: 'skipped:source_purpose_restricted_or_unknown' };
 
   const result = await runTaskFn('VariantGenTask', input, {
     subjectProfile,

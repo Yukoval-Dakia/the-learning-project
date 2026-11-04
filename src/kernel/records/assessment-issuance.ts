@@ -1,3 +1,8 @@
+import {
+  lockDerivationSources,
+  sourceAllowsDerivation,
+  sourceAllowsDerivationSql,
+} from '@/kernel/read-models/usage-policy';
 // 发题编排：组根锁 → 生命周期校验 → 绑定推导 → 不可变 issuance（+ 可选 claim）。
 // 不评分、不写学习状态、不创建 submission。
 //
@@ -139,6 +144,7 @@ export async function readAutomaticallyServableQuestionIds(
     .where(
       and(
         inArray(question.id, [...new Set(questionIds)]),
+        sourceAllowsDerivationSql({ kind: 'question', id: question.id }),
         notDraftPredicate(question.draft_status),
         eq(question_group_lifecycle.scoring_admission_state, 'admitted'),
         eq(question_group_lifecycle.suspended, false),
@@ -451,6 +457,11 @@ async function issueAssessmentInternal(
       if (mode !== 'auto_score') return { status: 'not_admitted' };
       if (request.container_occurrence_ref !== probeContainerRef(root.id))
         return { status: 'container_ref_required' };
+    }
+    if (!capture) {
+      await lockDerivationSources(tx, { kind: 'question', id: request.group_id });
+      if (!(await sourceAllowsDerivation(tx, { kind: 'question', id: request.group_id })))
+        return { status: 'not_admitted', issues: ['source_purpose_restricted_or_unknown'] };
     }
     if (!capture && lifecycle?.scoring_admission_state !== 'admitted') {
       return { status: 'not_admitted' };
