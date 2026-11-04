@@ -1,6 +1,6 @@
 ---
 name: note-physics
-description: 物理学习笔记规范包 —— 合格 atomic / long / hub note 的结构要求、各 semantic_kind 内容标准、质检判据。NoteGenerateTask / NoteVerifyTask / NoteRefineTask 共用同一份规范。
+description: 物理学习笔记规范包 —— 合格 atomic / long / hub note 的结构要求、各 semantic_kind 内容标准、质检判据。NoteGenerateTask / NoteRefineTask 共用同一份规范。
 ---
 
 # 物理学习笔记规范
@@ -30,7 +30,7 @@ description: 物理学习笔记规范包 —— 合格 atomic / long / hub note 
 - **note_long**：综合多个知识节点（如「匀变速直线运动五个公式及适用条件」「万有引力与圆周运动综合」），自由 block tree，重点在建立物理定律之间的推导关系和建模路径，量纲链路须贯穿全文。
 - **note_hub**：是专题路线图，用 crossLinkBlock 串联相关 atomic/long，给出从基础物理量定义到综合建模的学习顺序提示；不要假装是单知识点 atomic。
 
-## 质检标准（NoteVerifyTask 共用）
+## 质检标准（生成与精修共用）
 
 - **factuality**：物理定律是否正确，量纲是否一致；推导必须能追溯到物理定律、定义、量纲分析或题面条件；不能编造定律。
 - **coverage**：atomic 必须覆盖全部五种 semantic_kind；long 检查量纲链路是否贯穿。

@@ -168,7 +168,7 @@ async function allProbeQuestions() {
 describe('acceptConjectureProposal lifecycle', () => {
   beforeEach(async () => {
     await resetDb();
-    // YUK-531 PR-3 — every test starts with the promotion flag OFF (dark default).
+    // Every test starts with the promotion flag unset, so the code default applies.
     // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
     delete process.env.MISCONCEPTION_PROMOTE_ENABLED;
   });

@@ -55,7 +55,6 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   hub_auto_sync_nightly: 'drain',
   hub_sync_mutation_wake: 'drain',
   hub_sync_recovery: 'drain',
-  note_verify: 'drain',
   note_generate: 'drain',
   note_refine: 'drain',
 
