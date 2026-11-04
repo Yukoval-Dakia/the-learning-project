@@ -99,7 +99,6 @@ for (const [name, owner, queue, cron, tz] of [
   ['echo', 'src/server/boss/handlers.ts', 'fast', null, null],
   ['memory_event_ingest', 'src/capabilities/agency/server/memory/triggers.ts', 'llm', null, null],
   ['memory_brief_regen', 'src/capabilities/agency/server/memory/triggers.ts', 'llm', null, null],
-  ['memory_reconcile', 'src/capabilities/agency/server/memory/triggers.ts', 'llm', null, null],
   [
     'nightly_orchestrator',
     'src/server/orchestration/register.ts',

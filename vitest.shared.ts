@@ -80,7 +80,6 @@ export const fastTestInclude = [
   'src/server/durable/paid-effect-protocol.test.ts',
   'src/server/http/errors.test.ts',
   'src/server/ai/mem0/client.test.ts',
-  'src/server/ai/mem0/reconcile-llm.test.ts',
   'src/server/projections/parity.unit.test.ts',
 ];
 
@@ -255,8 +254,6 @@ export const dbTestInclude = [
   'src/capabilities/agency/server/memory/mem0-sdk-failure.db.test.ts',
   'src/capabilities/agency/server/memory/memory-ingest-recovery.db.test.ts',
   'src/capabilities/agency/server/memory/memory-reconcile-handoff-handler.db.test.ts',
-  'src/capabilities/agency/server/memory/memory-reconcile-handoff.db.test.ts',
-  'src/capabilities/agency/server/memory/reconcile-handler.db.test.ts',
   'src/capabilities/agency/server/memory/triggers.outbox.test.ts',
   'src/server/migration/apply.db.test.ts',
   'src/server/migration/capture.db.test.ts',
