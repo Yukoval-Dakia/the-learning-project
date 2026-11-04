@@ -15,7 +15,7 @@ const CATEGORY_WORDS: Readonly<Record<string, string>> = {
 };
 
 export function NoteKnownIssues({ summary }: { summary: NotePage['verification_summary'] }) {
-  if (!summary || summary.issues.length === 0) return null;
+  if (!summary || !Array.isArray(summary.issues) || summary.issues.length === 0) return null;
   return (
     <section className="nt-issues" aria-labelledby="nt-issues-title">
       <h2 id="nt-issues-title" className="nt-issues-title">
@@ -26,8 +26,11 @@ export function NoteKnownIssues({ summary }: { summary: NotePage['verification_s
         <MathMarkdown className="nt-issues-summary">{summary.summary_md}</MathMarkdown>
       ) : null}
       <ul className="nt-issues-list">
-        {summary.issues.map((issue, i) => (
-          <li key={`${issue.category}-${issue.block_id ?? ''}-${i}`} className="nt-issue">
+        {summary.issues.map((issue) => (
+          <li
+            key={`${issue.category}-${issue.block_id ?? ''}-${issue.message}`}
+            className="nt-issue"
+          >
             <span className="nt-issue-kind">
               {CATEGORY_WORDS[issue.category] ?? issue.category}
             </span>
