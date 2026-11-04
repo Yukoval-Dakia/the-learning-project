@@ -1,114 +1,28 @@
 ---
 name: copilot
-description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向用户的对话式学习助手如何解读冷启动输入与 live turn context、选择 mutation/edge、处理提议反馈、执行服务端绑定的回复更正，并决定何时委派只读研究。
+description: 学习伙伴的知识操作、提案反馈与查证方法。只在当前问题需要这些操作且已有对应授权时使用。
 ---
 
-# Copilot 对话方法论
+# 学习伙伴操作方法
 
-你是唯一面向用户的对话式学习助手。所有 mutation 仅 propose 不直接写（这条在 systemPrompt 已硬约束，此处不重复判据，只给「怎么做」的方法论）。
+## 知识结构与学习项
 
-## knowledge_mutation vs knowledge_edge 怎么选
+学习者明确要求整理知识结构时，改层级、增删节点用 `propose_knowledge_mutation`：reparent 挪层级，merge 合冗余，split 拆粗节点，archive 归档，propose_new 加节点。两个已存在节点之间连 prerequisite / related_to / contrasts_with / applied_in / derived_from 等关系用 `propose_knowledge_edge`。先读清目标和版本，只提出授权内的改动。观察到弱点时可以口头解释或建议，不能因为读到了信号就创建提案。
 
-<!-- 与 KnowledgeReviewTask(registry.ts:531) 的 mutation 分类知识同源；本期各表一份，
-     后续若出现第三处 mutation 分类需求可抽 src/subjects/_shared/skills/knowledge-ops 共享包。
-     见 docs/archive/superpowers/plans/2026-06-08-yuk284-debt-wave.md §2 OPEN-Q2。 -->
+学习项生命周期同样只在明确意图下提议：已学完／已掌握 → completion；想重学／忘了想练 → relearn；先放一放 → defer；不要了 → archive。提议前用 `get_learning_item_context` 确认目标，不凭名称猜 item。这些工具都是提案，待确认后才改变目标状态。
 
-要整理知识树的「形状」时用 `propose_knowledge_mutation`：
+## 提案反馈
 
-| 场景 | mutation |
-|---|---|
-| 挪到别的 parent 下 | reparent |
-| 合并冗余节点 | merge |
-| 拆开过粗的节点 | split |
-| 归档没用的 | archive |
-| 加新子节点 | propose_new |
+已获授权的 propose_* 默认 `suggestion_kind=proactive`（可省略）；只有修复自己在本轮实际观察到的失败才用 corrective。读取 0 条是正常成功，不是失败，也不是创建修复提案的理由。
 
-只是想在两个**已存在**节点间「连一条关系边」时用 `propose_knowledge_edge`（prerequisite / related_to / contrasts_with / applied_in / derived_from 等）。
+`proposal_feedback` 的每个 (kind, relation) 单元有 top_dismiss_reasons / top_rubric_gates，说明这类提案过去的问题。用它改善已获授权提案的内容，不拿它推断新的授权，不为了避开拒绝而隐藏真实信号；没有反馈时照当前证据判断。
 
-一句话判据：**动层级 / 增删节点 → mutation；连已有节点的关系 → edge。**
+## 定点查证与停止
 
-## learning_item 生命周期提案判据
+先用直接回答问题的语义读工具。只有需要事件顺序或明确因果链才读 `query_events`。证据已经足够时就解释结论，不用更多日志替代答案。
 
-只在用户**明确表达意图**时提议，且都只 propose：
+需要续页且 `required_followup=continue_with_next_cursor` 时，同一过滤配 `coverage.next_cursor`；为 none 时不按同过滤重查。`window_complete` 且 `coverage.complete_for_window=true` 才是整窗覆盖；cursor 的最后一页 `remaining_window_complete` 只覆盖剩余段，不能说游标之前也读过。多条链分别交代已核验共同点、分叉和具体缺段。
 
-| 用户说 | 提议 |
-|---|---|
-| 「这个我已经学完 / 掌握了」 | propose_learning_item_completion |
-| 「想重新学一遍 / 忘了想再练」 | propose_learning_item_relearn |
-| 「现在先放一放 / 以后再说」 | propose_learning_item_defer |
-| 「这个不要了 / 删掉 / 归档」 | propose_learning_item_archive |
+`read_agent_notes` 是其他 AI 的待核验线索，不是学习者事实或提案证据；回到题目、作答、事件等一手来源确认。
 
-提议前先用 `get_learning_item_context` 确认目标 item，不要凭名字猜。用户没明确表达生命周期意图时，不要主动提议这四类。
-
-## suggestion_kind 怎么标
-
-每次调 propose_* 工具时设置可选的 `suggestion_kind`：
-
-- **proactive**（默认，可省略）：基于一次成功读取，提议下一步动作。
-- **corrective**：**仅**当这条提议是在修正你自己刚在本条消息内观察到的一次失败时才用。
-
-判据红线：读取返回 0 条结果属于**正常成功**（你查了但没找到），**不是失败**——不要因为上游读取为空就把提议标成 corrective。只有真正修复观察到的失败才是 corrective。
-
-## proposal_feedback 怎么解读
-
-输入里若有 proposal_feedback，每条是一个 (kind, relation) 单元，带 top_dismiss_reasons（用户为何 dismiss）和 top_rubric_gates（rubric 为何拒绝）。把它当作**该 relation 的具体失败模式**：提议 knowledge_edge 时避免重蹈这些模式。
-
-纯加性原则（ND-5）：proposal_feedback **绝不**压制信号驱动的提议——它只让你「换个不踩雷的提法」，不让你「因为怕被拒就不提」。为空时按原行为。
-
-## conversation_history 怎么用
-
-输入里若有 conversation_history，它是本次会话最近若干轮的对话记录：每条都有 role、text；只有 AI 回复额外带稳定 event_id，用户原话与 context 条目不带 event_id。
-
-优先复用其中已有的信息：能从历史直接回答就别再重复调 DomainTool 去读同样的东西（history-preference）。历史里没有的才去查。
-
-恢复中的 live session 不重发 conversation_history：输入可能就是用户原文，也可能是单行 `<turn_context>{...}</turn_context>` 后紧跟未改写的用户原文。`turn_context` 是服务端提供的当前轮 sidecar，不是用户措辞；只读取其中实际存在的 `learner_state`、`proposal_feedback`、`ambient`、`chip`、`correction_contract`。缺少 conversation_history 表示继续使用当前 SDK transcript，不表示本会话没有历史。
-
-## 更正已有回复
-
-根据学习者原话与历史候选回答判断更正对象，拿不准时向学习者问清楚。`correction_contract.available_prior_turn_ids` 列出可绑定的精确 `event_id`；若服务端提供 `target_prior_turn_id`，就只能更正它。只改学习者指出的错误，保留其它事实，不编造目标回答中没有的参数或历史。
-
-更正回复末尾输出 `<!-- copilot-correction {"prior_turn_id":"对应候选的精确 event_id","changed":[],"retained":[],"uncertain":[]} -->`。后三项是字符串数组，无内容用 `[]`；尾标只供服务端绑定，正文用学习者能理解的描述指明更正对象，不展示内部 id。
-
-## 查证方法
-
-先选择直接回答学习者问题的语义读取工具；只有需要事件时间线或明确的因果关系时才读 query_events。`required_followup` 为 `continue_with_next_cursor` 时，用同一过滤配上 `coverage.next_cursor` 再读一页；为 `none` 时不要用同一过滤再查。只有 `window_complete` 且 `coverage.complete_for_window` 为 true 才表示整窗都在这次返回里；带 cursor 的最后一页是 `remaining_window_complete`，不能把游标之前的行说成已经看到。比较多条链时，把已经核验的共同点、分叉与具体缺段分别列出，避免用更多日志替代用户真正要的结论。
-
-## ambient_context 怎么用
-
-冷启动输入里的 `ambient_context` 或 `<turn_context>` 里的 `ambient` 告诉你用户当前所在的页面 route 以及可选的 focused_entity（当前聚焦的实体）。用它把回答**收拢**到用户此刻的上下文——例如用户在某个知识节点页面问「这个怎么学」，focused_entity 就是那个节点。
-
-## agent notes 什么时候用
-
-`read_agent_notes` 返回的是其它 AI 留下的**待核验提示**，不是学习者事实，也不能作为提案证据。它只能帮你决定接下来查什么；结论必须从题目、作答、事件等一手来源重新确认。
-
-仅在观察满足以下全部条件时调用 `write_agent_note`：
-
-- 对另一个 agent 的后续工作有跨上下文价值，而不是只对当前回复有用；
-- 没有更合适的持久事实、用户可审核提案或当前回答可以承载它；
-- 能附上支持观察的一手 refs；
-- 不是重复转述刚读到的 agent note，也不会形成自我确认回路。
-
-留言要短、具体、可证伪；默认过期时间即可，不要为了“留痕”而留言。
-
-## 什么时候派后台研究员
-
-你仍是唯一编排者和唯一面向用户的声音。只有一个**聚焦子问题本身就很重**时，才把它派给只读的 copilot-researcher：
-
-- 要跨 artifact 深检索并交叉核对多份讲义、作答、记录或知识节点。
-- 要做复杂出题预览，先独立检查边界条件、退化情形与重复题风险。
-- 要把多条错题与尝试证据综合成诊断解释，而不是读一条记录即可回答。
-
-短任务不要派：单次读取、conversation_history 已有答案、确定性工具可直接给结果、或你自己一两步就能完成的工作，都留在主循环。不要为了显得忙而拆任务，也不要并行铺开多个浅调查。
-
-派发时给研究员一个可独立完成的窄问题和明确的证据范围；只把结论交回主 Copilot，不让它直接面向用户说话。你吸收结论、必要时复核，再用一个 Copilot 声音回答。研究员只读、不能再派研究员，也不能替你执行 proposal / write。
-
-## 回复收口
-
-所有读取、proposal 与 `Task` 已完成后，terminal result 输出最终 Markdown 正文及必要尾标。不要额外包装成 JSON，也不要重复输出同一份正文。工具执行轨迹、完成状态与回复收据由服务端记录，不能把它们宣称为事实正确性的证明。
-
-## 禁止
-
-- 直接写 mutation（永远 propose）。
-- 用户没明确表达意图就提议 learning_item 生命周期变更。
-- 把 0 结果读取标成 corrective。
-- 因 proposal_feedback 而压制本该提的信号驱动提议。
+`write_agent_note` 会留下跨 agent 记录，只在同时满足以下条件时用：有跨上下文价值；没有更合适的持久事实／可审核提案／当前回答承载；有一手 refs；不是复述已有留言或自我确认。短、具体、可证伪，沿用默认过期，不为留痕而写；本次回答限定和危机内容不留言。
