@@ -250,7 +250,10 @@ export async function changeTopics(
     for (const id of refs.sort()) await lockEventDerivationSources(tx, id);
     await lockPurposeBrief(tx);
     const { digest: before, version } = await storedTopics(tx);
-    if (version !== input.expectedVersion)
+    if (
+      version !== input.expectedVersion ||
+      JSON.stringify(before) !== JSON.stringify(preview.digest)
+    )
       throw new ApiError('context_version_conflict', 'context version conflict; reload', 409);
     const after = await permittedDigest(tx, before);
     const purposeCurrent = await briefPurposeCurrent(tx, DIGEST_SCOPE, version);

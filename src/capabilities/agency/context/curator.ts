@@ -12,7 +12,7 @@ import { runAgentTask } from '@/server/ai/runner';
 import { readCuratorEvidence, readCuratorLegacyScopes } from './curator-evidence';
 import { loadLearnerContext } from './index';
 import { readLegacyFacts } from './legacy-facts';
-import { changeTopics, readTopics, topicBoard } from './topics';
+import { readTopics, refreshTopicMetadata, topicBoard } from './topics';
 
 export async function runCurator(db: Db, reason: 'nightly' | 'activity') {
   return withinSessionAdvisoryLock(
@@ -127,17 +127,14 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
       ],
     },
   );
-  const current = await readTopics(db);
-  if (!writeFailed && !repeated)
-    await changeTopics(db, {
-      expectedVersion: current.version,
-      actor: 'curator',
+  const watermarkAdvanced =
+    !writeFailed &&
+    !repeated &&
+    (await refreshTopicMetadata(db, {
       taskRunId: result.task_run_id,
-      sourceIds: [],
-      patches: [],
       asOf: now.toISOString(),
       overnight,
-    });
+    }));
   await writeEvent(db, {
     id: newId(),
     action: 'experimental:dreaming_scan',
@@ -145,13 +142,13 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
     actor_ref: 'dreaming',
     subject_kind: 'query',
     subject_id: id,
-    outcome: writeFailed || repeated ? 'degraded' : 'success',
+    outcome: watermarkAdvanced ? 'success' : 'degraded',
     payload: {
       task_run_id: result.task_run_id,
       cost_usd: result.cost_usd,
       no_progress: noProgress,
       write_failed: writeFailed,
-      watermark_advanced: !writeFailed && !repeated,
+      watermark_advanced: watermarkAdvanced,
     },
     affected_scopes: [],
     ingest_at: new Date(),

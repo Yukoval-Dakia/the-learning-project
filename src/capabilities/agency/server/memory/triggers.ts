@@ -314,9 +314,8 @@ export function buildContextPurposeRepairHandler(
     for (const job of jobs) {
       if (!job.data.purpose_operation_id) throw new Error('purpose repair requires operation id');
       const scopeKey = job.data.scope_key;
-      // One scope's provider/LLM throw must not reject the job and cause a retry
-      // storm. The writer stays loud; this catch logs and continues. The prior brief
-      // survives because the upsert is only reached on success.
+      // Purpose commands use retryLimit=0. Failures remain visible without
+      // automatically repeating an uncertain provider operation.
       try {
         await executePurposeBrief(
           db,
@@ -324,16 +323,9 @@ export function buildContextPurposeRepairHandler(
           async (purposeTaskId) => {
             const purposeId = job.data.purpose_operation_id;
             if (scopeKey === 'global:digest') {
-              const { readTopics, changeTopics } = await import('../../context/topics');
-              const { version } = await readTopics(db);
-              await changeTopics(db, {
-                expectedVersion: version,
-                actor: 'curator',
-                taskRunId: purposeTaskId ?? job.id,
-                sourceIds: [],
-                patches: [],
-                asOf: new Date().toISOString(),
-              });
+              const { refreshTopicMetadata } = await import('../../context/topics');
+              if (!(await refreshTopicMetadata(db, { taskRunId: purposeTaskId ?? job.id })))
+                throw new Error('context purpose repair version conflict');
               return;
             }
             const searchFacts = async () => {
@@ -406,8 +398,12 @@ export function buildContextPurposeRepairHandler(
           },
         );
       } catch (err) {
-        // Leave the prior brief intact and continue; rethrowing would retry-storm.
-        console.error(`[memory_brief_regen] scope ${scopeKey} failed; leaving prior brief`, err);
+        // Preserve the failure as a terminal queue outcome; never report a failed repair as complete.
+        console.error(
+          `[context_purpose_repair] scope ${scopeKey} failed; leaving prior brief`,
+          err,
+        );
+        throw err;
       }
     }
   };
@@ -470,7 +466,7 @@ export async function runMemoryRecoveryFloor(legs: {
 
 export function buildMemoryIngestOutboxRecoverHandler(
   db: Db,
-  _boss: Pick<BossLike, 'send' | 'getJobById'>,
+  boss: Pick<BossLike, 'send' | 'getJobById'>,
 ): (jobs: Job<object>[]) => Promise<void> {
   const drainOnce = buildMemoryIngestOutboxPollHandler(db, boss);
   return async () => {

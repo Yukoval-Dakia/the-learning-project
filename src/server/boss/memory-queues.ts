@@ -62,6 +62,21 @@ export async function registerMemoryHandlers(
     ),
   );
 
+  // Upgrade drain only: ordinary legacy regeneration commands are discarded.
+  // Bound purpose commands retain their original job id and once-only reservation.
+  await createJobQueue(boss, 'memory_brief_regen', EXPIRE_LLM);
+  const legacyPurposeHandler = buildContextPurposeRepairHandler(db, {
+    memoryClient: deps.memoryClient,
+    generateBrief,
+  });
+  await boss.work<{ scope_key: string; purpose_operation_id?: string }>(
+    'memory_brief_regen',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    fenceAwareJobHandler(db, 'memory_brief_regen', async (jobs) => {
+      await legacyPurposeHandler(jobs.filter((job) => Boolean(job.data.purpose_operation_id)));
+    }),
+  );
+
   await createOrUpdateQueue(boss, MEMORY_INGEST_OUTBOX_POLL_QUEUE, FAST_QUEUE_OPTS);
   await boss.work(
     MEMORY_INGEST_OUTBOX_POLL_QUEUE,

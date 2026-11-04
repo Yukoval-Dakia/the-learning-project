@@ -5,7 +5,7 @@ import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { errorResponse } from '@/kernel/http';
+import { ApiError, errorResponse } from '@/kernel/http';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
 import { CONTEXT_CHANGE } from '../context/topic-contract';
@@ -70,6 +70,7 @@ export async function EDIT(req: Request) {
       affected_scopes: [],
       ingest_at: new Date(),
     });
+    let writeFailure = false;
     const result = await runAgentTask(
       'DreamingTask',
       {
@@ -88,6 +89,19 @@ export async function EDIT(req: Request) {
             serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
             taskKind: 'DreamingTask',
             toolNames: ['curate_context'],
+            beforeExecute: () =>
+              writeFailure ? 'Previous write failed; finish without further writes.' : undefined,
+            onResult: (observation) => {
+              if (
+                observation.error_reason ||
+                !observation.executed ||
+                (observation.output &&
+                  typeof observation.output === 'object' &&
+                  'status' in observation.output &&
+                  observation.output.status === 'issue')
+              )
+                writeFailure = true;
+            },
             ctx: {
               db,
               taskRunId: id,
@@ -128,6 +142,14 @@ export async function EDIT(req: Request) {
           issues: [],
         };
       });
+    if (writeFailure || !changes.length)
+      throw new ApiError(
+        'context_edit_not_committed',
+        '更正未完成，请重新读取当前画像后再试。',
+        409,
+        undefined,
+        { version: (await readTopics(db)).version, changes },
+      );
     return Response.json(ContextEditResponse.parse({ reply: result.text, changes }));
   } catch (err) {
     return errorResponse(err);

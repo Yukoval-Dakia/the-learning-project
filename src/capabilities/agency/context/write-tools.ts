@@ -89,7 +89,9 @@ export const curateContextTool: DomainTool<
         : [],
     );
     return changeTopics(ctx.db, {
-      expectedVersion: input.expected_version,
+      expectedVersion: learnerEdit
+        ? z.object({ expected_version: z.number().int() }).parse(anchor.payload).expected_version
+        : input.expected_version,
       actor: learnerEdit ? 'learner' : 'curator',
       taskRunId: ctx.taskRunId,
       sourceIds: learnerEdit

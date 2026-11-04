@@ -120,7 +120,9 @@ export async function recoverPurposeChanges(
         const jobId = repair.job_id;
         if (!jobId) continue;
         try {
-          const job = await boss.getJobById('context_purpose_repair', jobId);
+          const job =
+            (await boss.getJobById('context_purpose_repair', jobId)) ??
+            (await boss.getJobById('memory_brief_regen', jobId));
           if (confirmedBriefJob(job, jobId, receipt.operation_id, repair.source_id))
             await recordPurposeRepair(db, {
               operation_id: receipt.operation_id,
