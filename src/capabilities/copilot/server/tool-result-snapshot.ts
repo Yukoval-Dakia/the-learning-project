@@ -82,6 +82,7 @@ const POLICIES: Record<string, ResultPolicy> = {
   write_quiz: ['artifact_id', 'question_count', 'knowledge_ids', 'practice_path'],
   author_artifact: ['artifact_id', 'type', 'title', 'version', 'knowledge_ids'],
   update_artifact: ['artifact_id', 'previous_version', 'version'],
+  check_note: ['artifact_id', 'artifact_type', 'issues'],
 } satisfies Record<PublicResultTool, ResultPolicy>;
 const INTERNAL = new Set(['read_agent_notes', 'write_agent_note', 'present_primary_view']);
 const MEMORY_FACT = z.object({
