@@ -1,10 +1,12 @@
-import { type SQLWrapper, and, eq, inArray, sql } from 'drizzle-orm';
+import { type SQLWrapper, and, eq, inArray } from 'drizzle-orm';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import {
   lockDerivationSources,
   sourceAllowsDerivationSql,
+  sourceBelongsToDocumentSql,
+  sourceHasCrisisSql,
 } from '@/kernel/read-models/usage-policy';
 
 /** Every causal ancestor participates. UNION terminates malformed cycles.
@@ -28,16 +30,7 @@ export async function readEventDerivationPolicy(
   const [row] = await db
     .select({
       allowed: eventAllowsDerivationSql(),
-      crisis: sql<boolean>`EXISTS (
-      WITH RECURSIVE lineage AS (
-        SELECT e.id, e.payload, e.session_id, e.caused_by_event_id FROM event e WHERE e.id = ${eventId}
-        UNION SELECT p.id, p.payload, p.session_id, p.caused_by_event_id FROM event p
-          JOIN lineage c ON c.caused_by_event_id = p.id
-      ) SELECT 1 FROM lineage l LEFT JOIN learning_session s ON s.id = l.session_id
-      LEFT JOIN source_document d ON d.id = s.source_document_id
-      WHERE l.payload->>'derivation_policy' = 'crisis'
-        OR d.provenance->'usage_policy'->>'derivation_policy' = 'crisis'
-    )`,
+      crisis: sourceHasCrisisSql({ kind: 'event', id: eventId }),
     })
     .from(event)
     .where(eq(event.id, eventId))
@@ -50,18 +43,7 @@ export function eventBelongsToDocumentSql(
   documentId: string | SQLWrapper,
   id: SQLWrapper = event.id,
 ) {
-  return sql`EXISTS (
-    WITH RECURSIVE lineage AS (
-      SELECT e.id, e.payload, e.session_id, e.caused_by_event_id FROM event e WHERE e.id = ${id}
-      UNION
-      SELECT p.id, p.payload, p.session_id, p.caused_by_event_id FROM event p
-      JOIN lineage c ON c.caused_by_event_id = p.id
-    ) SELECT 1 FROM lineage l LEFT JOIN learning_session s ON s.id = l.session_id
-    LEFT JOIN event binding ON binding.id = 'ingestion-usage:' || l.id
-      AND binding.action = 'experimental:ingestion_usage_binding'
-      AND binding.actor_kind = 'system' AND binding.actor_ref = 'ingestion-usage'
-    WHERE coalesce(binding.payload->>'document_id', s.source_document_id) = ${documentId}
-  )`;
+  return sourceBelongsToDocumentSql({ kind: 'event', id }, documentId);
 }
 
 export async function allowedEventIds(db: Db | Tx, ids: string[]): Promise<Set<string>> {

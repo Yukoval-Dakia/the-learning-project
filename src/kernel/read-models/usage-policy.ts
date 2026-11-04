@@ -206,3 +206,20 @@ export async function readSourceUsageEpochs(
     WHERE d.id IN (SELECT id FROM purpose_lineage WHERE kind = 'document')`);
   return Object.fromEntries(rows.map((row) => [row.id, documentUsageEpoch(row.provenance)]));
 }
+
+export function sourceHasCrisisSql(source: PurposeSource) {
+  return sql`EXISTS (${purposeLineage(source)} SELECT 1 FROM purpose_lineage n
+    LEFT JOIN source_document d ON n.kind = 'document' AND d.id = n.id
+    LEFT JOIN event e ON n.kind = 'event' AND e.id = n.id
+    LEFT JOIN question q ON n.kind = 'question' AND q.id = n.id
+    LEFT JOIN learning_record r ON n.kind = 'record' AND r.id = n.id
+    WHERE d.provenance->'usage_policy'->>'derivation_policy' = 'crisis'
+      OR e.payload->>'derivation_policy' = 'crisis'
+      OR q.metadata->>'derivation_policy' = 'crisis'
+      OR r.payload->>'derivation_policy' = 'crisis')`;
+}
+
+export function sourceBelongsToDocumentSql(source: PurposeSource, documentId: string | SQLWrapper) {
+  return sql`EXISTS (${purposeLineage(source)} SELECT 1 FROM purpose_lineage
+    WHERE kind = 'document' AND id = ${documentId})`;
+}
