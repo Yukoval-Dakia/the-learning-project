@@ -4,7 +4,9 @@
 import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
 import { assertProposalKindsOwned } from '@/kernel/manifest';
+import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
 import { getServerEnv, requireApiInternalToken, resolveApiPort } from '@/server/config/env';
+import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { buildHonoApp } from '../app';
 import { assertComposedRoutesDeclared } from '../composed-routes';
 import { createFrontdoor } from '../frontdoor';
@@ -19,7 +21,8 @@ await installPracticeHostOperations();
 const { installAgencyHostOperations } = await import('@/capabilities/agency/public');
 await installAgencyHostOperations();
 await installModelAdmissionPins();
-const { installSchedulingCandidateRebuild } = await import('@/server/assessment/settle');
+const { installSchedulingCandidateRebuild } = await import('@/capabilities/practice/public');
+installSettlementCascadeRevert(orchestrateCascadeRevert);
 installSchedulingCandidateRebuild();
 const [{ buildAdminConfigRuntimeFacts }, { setAdminConfigRuntimeFacts }] = await Promise.all([
   import('@/server/config/admin-config-facts'),

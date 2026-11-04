@@ -17,13 +17,15 @@ import { z } from 'zod';
 import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/public';
 import { induceConjecture } from '@/capabilities/agency/public';
 import { restoreFromArchive } from '@/capabilities/observability/server/backup/archive';
+import { installSchedulingCandidateRebuild } from '@/capabilities/practice/settlement/public';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { source_asset } from '@/db/schema';
 import type { R2Client } from '@/kernel/object-storage';
+import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { installSchedulingCandidateRebuild } from '@/server/assessment/settle';
 import { hydrateConfigFromDb } from '@/server/config/hydrate';
+import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   GROUNDING_GATE_DEFAULT_CLUSTERS,
@@ -626,6 +628,7 @@ async function runScoreCanary(options: Map<string, string>): Promise<number> {
 
 export async function runCli(argv: string[] = process.argv.slice(2)): Promise<number> {
   const { command, options } = parseArgs(argv);
+  installSettlementCascadeRevert(orchestrateCascadeRevert);
   installSchedulingCandidateRebuild();
   if (command === 'inspect') return runInspect(options);
   if (command === 'shadow') return runShadow(options);

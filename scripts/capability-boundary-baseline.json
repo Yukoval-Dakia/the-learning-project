@@ -3,13 +3,12 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 8,
+      "total": 7,
       "byOwnerPair": {
         "copilot -> proposals": 1,
         "copilot -> revert": 1,
         "knowledge -> projections": 2,
         "knowledge -> proposals": 1,
-        "practice -> assessment": 1,
         "practice -> questions": 1,
         "shell -> proposals": 1
       }

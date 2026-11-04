@@ -16,7 +16,7 @@ import {
   buildFamilyKey as familyKey,
   getFamilyCalibration,
 } from '@/kernel/read-models/question-difficulty';
-import { resetDb } from '../../../tests/helpers/db';
+import { resetDb } from '../../../../../tests/helpers/db';
 import {
   FAMILY_MIN_DISTINCT_QUESTIONS,
   FAMILY_MIN_EVIDENCE,
