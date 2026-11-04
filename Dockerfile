@@ -67,6 +67,20 @@ FROM node:24-bookworm-slim AS pwdeps
 WORKDIR /pw
 RUN npm install --omit=dev --no-audit --no-fund playwright-core@1.64.0
 
+# Stage 2.10 (YUK-1548): mermaid + jsdom flat install for the worker-only
+# compose_block diagram validator (src/kernel/blocks/mermaid-validate.ts).
+# `build:worker`/`build:server` mark both packages external, so the shipped
+# bundle resolves them from node_modules on first use — keeping them out of
+# the bundle also fixes jsdom's `browser/default-stylesheet.css` read, which
+# resolved relative to dist/ when inlined and always ENOENT'd. Bundling was
+# never an option for jsdom for the same reason as pdfium above. Flat npm
+# layout — same reasoning as sharp/mcp/sqlite/pdfium/pw stages; the dep tree
+# (~100 packages) shares no top-level name with the curated overlays, so a
+# plain node_modules merge cannot clobber them. Pins MUST match package.json.
+FROM node:24-bookworm-slim AS mermaiddeps
+WORKDIR /mermaidjs
+RUN npm install --omit=dev --no-audit --no-fund mermaid@12.2.0 jsdom@30.1.3
+
 FROM base AS runner
 ENV NODE_ENV=production
 # 文档转换链 + sharp 运行库 —— apt 两层逐字沿旧 runner。
@@ -116,6 +130,10 @@ CMD ["node", "dist/server.cjs"]
 FROM runner AS worker
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 COPY --from=pwdeps /pw/node_modules/playwright-core ./node_modules/playwright-core
+# YUK-1548 — mermaid + jsdom flat overlay for compose_block diagram validation
+# (worker-only; the app image only registers the tool module, never executes
+# it, so runner stays free of the ~220MB dep tree).
+COPY --from=mermaiddeps /mermaidjs/node_modules ./node_modules
 # `install --with-deps` 下载 browsers.json 钉住的 headless shell 并 apt 装其
 # Debian 运行库 —— 需要 root；装完回到 `node`，运行时仍非 root。
 USER root
