@@ -13,14 +13,13 @@
 // through as `correlatedToolUseId`.
 
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
-import { z } from 'zod';
 import { type BuildMcpServerOptions, type PiToolMount, piToolWireName } from '@/ai/pi-tool-mount';
 import { writeToolCallLog, writeUnpricedToolCost } from '@/kernel/tools/call-evidence';
 import {
   ensureToolParametersObjectRoot,
   zodToToolParametersSchema,
 } from '@/kernel/zod-json-schema';
-import { executeDomainToolCall, toolInputFailure } from './mcp-bridge';
+import { executeDomainToolCall } from './mcp-bridge';
 import { getTool } from './registry';
 
 /**
@@ -36,28 +35,23 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
         `buildPiDomainAgentTools: tool '${name}' is not registered. Check capability manifest registration.`,
       );
     }
-    const parameters = zodToToolParametersSchema(dt.inputSchema, {
-      io: 'input',
-      reused: 'inline',
-      target: 'draft-07',
-    }) as AgentTool['parameters'];
+    const parameters = zodToToolParametersSchema(
+      dt.inputSchema,
+      {
+        io: 'input',
+        reused: 'inline',
+        target: 'draft-07',
+      },
+      dt.name === 'present_primary_view',
+    ) as AgentTool['parameters'];
 
     return {
       name: piToolWireName(options.serverName, dt.name),
       label: dt.name,
       description: dt.description,
       parameters,
-      // Union inputs need their branch-specific repair response before pi's generic validator.
-      ...(dt.inputSchema instanceof z.ZodDiscriminatedUnion
-        ? {
-            prepareArguments: (args: unknown) => {
-              const parsed = dt.inputSchema.safeParse(args);
-              if (!parsed.success)
-                throw new Error(JSON.stringify(toolInputFailure(dt, args, parsed.error)));
-              return args;
-            },
-          }
-        : {}),
+      // Keep rejection in the bridge so the normal hooks and durable log observe it.
+      ...(dt.name === 'present_primary_view' ? { inputValidation: 'bridge' as const } : {}),
       execute: async (toolCallId, params, signal) => {
         // The loop abort must reach the tool: merge it with the caller's
         // ctx.signal so either source cancels execution.

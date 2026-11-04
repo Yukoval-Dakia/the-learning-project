@@ -32,6 +32,7 @@ import type {
 } from '@/kernel/tools/types';
 import { TOOL_OUTPUT_IMAGES_FIELD } from '@/kernel/tools/types';
 import { zodToToolParametersSchema } from '@/kernel/zod-json-schema';
+import { sanitizeArgumentsEvidence, sanitizeProviderErrorText } from '../provider-error-evidence';
 import { __resolveMirrorPolicy } from './tool-mirror-policy';
 
 /**
@@ -425,23 +426,30 @@ export function toolInputFailure(dt: DomainTool<unknown, unknown>, args: unknown
       code: 'shape_invalid',
       path,
       detail:
-        ['compose_block', 'edit_question', 'write_note'].includes(dt.name) &&
         issue.code === 'custom'
-          ? issue.message
+          ? sanitizeProviderErrorText(issue.message)
           : typeof object(expected)?.description === 'string'
             ? String(object(expected)?.description)
             : 'Arguments must match the declared input schema.',
-      expected: expected ?? root,
-      ...(Array.isArray(examples) && examples.length ? { example: examples[0] } : {}),
+      ...(issue.code === 'custom'
+        ? {}
+        : {
+            expected: expected ?? root,
+            ...(Array.isArray(examples) && examples.length ? { example: examples[0] } : {}),
+          }),
       next_action:
-        dt.name === 'present_primary_view' && path === '/ref' && object(expected)?.type === 'object'
+        dt.name === 'present_primary_view' &&
+        object(args)?.source === 'tool_result' &&
+        issue.code === 'invalid_type' &&
+        path === '/ref' &&
+        object(expected)?.type === 'object'
           ? 'copy_receipt'
           : 'correct_arguments',
       retryable: true,
     };
   });
   return {
-    error: 'Tool input does not match the declared schema.',
+    error: `Tool input does not match the declared schema: ${issues.map((issue) => `${issue.path}: ${issue.detail}`).join('; ')}`,
     issues,
     next_action: 'correct_arguments',
     retryable: true,
@@ -462,7 +470,12 @@ function parseInput(call: ToolCallContext, rawArgs: unknown): InputPhase {
     };
   } catch (error) {
     return {
-      input: { parsedInput: rawArgs, execInput: rawArgs, truncationNote: null },
+      input: {
+        parsedInput: sanitizeArgumentsEvidence(rawArgs),
+        execInput: rawArgs,
+        truncationNote: null,
+        correlatedToolUseId: call.opts.correlatedToolUseId,
+      },
       result: { ok: false, ...toolInputFailure(call.dt, rawArgs, error) },
     };
   }
@@ -480,8 +493,8 @@ async function runBeforeExecuteGate(call: ToolCallContext, phase: InputPhase): P
         ...phase,
         result: {
           ok: false,
-          error: `${permissionError} The model cannot change this permission; ask the operator.`,
-          next_action: 'ask_operator',
+          error: permissionError,
+          next_action: 'respect_turn_mode',
           retryable: false,
         },
       };

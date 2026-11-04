@@ -255,7 +255,10 @@ function flattenTupleItems(value: unknown): unknown {
  * violation and throws instead of being masked as an empty object. Tuple items
  * are flattened to the single-schema form every provider accepts.
  */
-export function ensureToolParametersObjectRoot(input: JsonObject): JsonObject {
+export function ensureToolParametersObjectRoot(
+  input: JsonObject,
+  projectUnionProperties = false,
+): JsonObject {
   const schema = flattenTupleItems(input) as JsonObject;
   if (schema.type === 'object') return schema;
   const union = schema.anyOf ?? schema.oneOf;
@@ -265,6 +268,7 @@ export function ensureToolParametersObjectRoot(input: JsonObject): JsonObject {
     union.length > 0 &&
     union.every((branch) => isJsonObject(branch) && branch.type === 'object')
   ) {
+    if (!projectUnionProperties) return sortSchemaKeys({ ...schema, type: 'object' });
     // Providers also discover fields through root properties; keep the branch constraints.
     const branches = union.filter(isJsonObject);
     const strict = branches.every(
@@ -336,6 +340,10 @@ export function ensureToolParametersObjectRoot(input: JsonObject): JsonObject {
 export function zodToToolParametersSchema(
   schema: ZodTypeAny,
   params: ZodJsonSchemaCompatParams,
+  projectUnionProperties = false,
 ): JsonObject {
-  return ensureToolParametersObjectRoot(zodToJsonSchemaCompat(schema, params));
+  return ensureToolParametersObjectRoot(
+    zodToJsonSchemaCompat(schema, params),
+    projectUnionProperties,
+  );
 }
