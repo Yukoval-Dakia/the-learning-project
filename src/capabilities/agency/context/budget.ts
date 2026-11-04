@@ -27,6 +27,7 @@ export interface TrimUnit {
    * 比所有基础段高：预算紧时先丢明细、不动既有段落，也给 §13 留空间。
    */
   readonly dropRank?: number;
+  readonly protected?: boolean;
   readonly markdown: string | null;
 }
 
@@ -48,13 +49,11 @@ export function trimUnitsToBudget(
 
   // Drop the highest-dropRank (lowest-priority) unit until the estimate fits;
   // rank 0 (Steering) is never dropped whole — it takes the boundary truncation instead.
-  while (kept.length > 1 && estimateTokens(render()) > budget.maxEstimatedTokens) {
-    let dropIdx = 0;
-    for (let i = 1; i < kept.length; i++) {
-      if ((kept[i].dropRank ?? kept[i].rank) >= (kept[dropIdx].dropRank ?? kept[dropIdx].rank))
-        dropIdx = i;
-    }
-    kept.splice(dropIdx, 1);
+  while (estimateTokens(render()) > budget.maxEstimatedTokens) {
+    const candidates = kept.filter(u => u.rank !== 0 && !u.protected);
+    const drop = candidates.sort((a, b) => (b.dropRank ?? b.rank) - (a.dropRank ?? a.rank))[0];
+    if (!drop) break;
+    kept.splice(kept.indexOf(drop), 1);
   }
   let md = render();
   if (md.length > budget.maxChars) {

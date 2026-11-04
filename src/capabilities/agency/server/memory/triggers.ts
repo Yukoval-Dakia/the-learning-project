@@ -10,8 +10,6 @@ import {
   lockEventDerivationSources,
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
-import { enqueueMemoryBriefRegen } from '@/kernel/memory-brief-regen';
-import { REFLECTION_BRIEF_SCOPE_KEYS } from '@/kernel/nightly-eligibility';
 import {
   LEARNING_ACTIVITY_ACTIONS,
   resolveLearningEventSubjects,
@@ -81,7 +79,6 @@ const BRIEF_REFRESH_LOOKBACK_DAYS = 30;
 const SUBJECT_SCOPE_PREFIX = 'subject:';
 
 export const MEMORY_EVENT_INGEST_QUEUE = 'memory_event_ingest';
-export const MEMORY_BRIEF_SWEEP_QUEUE = 'memory_brief_sweep';
 // Outbox poller runs at the pg-boss cron minimum (one minute); the hourly recovery
 // sweep catches whatever a restart or an oversized burst leaves behind.
 export const MEMORY_INGEST_OUTBOX_POLL_QUEUE = 'memory_ingest_outbox_poll';
@@ -100,13 +97,6 @@ export interface MemoryScheduleDeclaration {
 }
 
 export const MEMORY_INFRA_SCHEDULES: readonly MemoryScheduleDeclaration[] = [
-  {
-    name: MEMORY_BRIEF_SWEEP_QUEUE,
-    cron: '0 3 * * *',
-    tz: 'Asia/Shanghai',
-    queue: 'fast',
-    note: '每日 brief 兜底重算（per-event regen 的 backstop）',
-  },
   {
     name: MEMORY_INGEST_OUTBOX_POLL_QUEUE,
     cron: '* * * * *',
@@ -367,59 +357,12 @@ export function buildMemoryEventIngestHandler(
           ...(persistIntents ? { completion } : {}),
         };
       }
-      // Bounded, sequential, per-scope-isolated brief fan-out. The slice caps bulk
-      // events; sequential sends avoid flooding the connection pool; one failure must
-      // not skip the rest or block reconcile. The daily sweep only backstops scopes
-      // that already have a brief row, so a first-appearance tail is best-effort.
-      // Bank-authoring events fan out nothing: they are not learner evidence.
-      const regenScopes = learnerEvidence
-        ? row.affected_scopes.slice(0, MAX_BRIEF_REGEN_SCOPES)
-        : [];
-      if (learnerEvidence && row.affected_scopes.length > MAX_BRIEF_REGEN_SCOPES) {
-        console.warn(
-          `[memory_brief_bridge] event ${row.id} has ${row.affected_scopes.length} affected scopes; capping brief regen fan-out at ${MAX_BRIEF_REGEN_SCOPES} (best-effort, sweep partially backstops the rest)`,
-        );
-      }
-      const regenFailures: { scope: string; reason: unknown }[] = [];
-      for (const scopeKey of regenScopes) {
-        try {
-          await enqueueMemoryBriefRegen(boss, scopeKey);
-        } catch (err) {
-          regenFailures.push({ scope: scopeKey, reason: err });
-        }
-      }
-      if (regenFailures.length > 0) {
-        console.warn(
-          `[memory_brief_bridge] affected_scopes brief regen enqueue failed for event ${row.id} (${regenFailures.length}/${regenScopes.length} scopes: ${regenFailures.map((f) => f.scope).join(', ')}); scopes with an existing brief are still swept, a first-appearance scope loses only this batch`,
-          regenFailures.map((f) => f.reason),
-        );
-      }
-
-      // Core learning events never tag `subject:*` in affected_scopes, so the
-      // fan-out above cannot refresh a per-subject brief. Resolve the event to its
-      // canonical subject and enqueue that scope, moving freshness from the nightly
-      // sweep to hours. The subject singleton slot collapses bursts. Best-effort: a
-      // bridge failure must not make the ingest job retry; the sweep backstops it.
-      if ((LEARNING_ACTIVITY_ACTIONS as readonly string[]).includes(row.action)) {
-        try {
-          const subjectByEventId = await resolveLearningEventSubjects(db, [row], 'default_subject');
-          const subjectId = subjectByEventId.get(row.id);
-          if (subjectId) {
-            await enqueueMemoryBriefRegen(boss, `${SUBJECT_SCOPE_PREFIX}${subjectId}`);
-          }
-        } catch (err) {
-          console.warn(
-            `[memory_brief_bridge] subject bridge failed for event ${row.id}; nightly sweep will backstop`,
-            err,
-          );
-        }
-      }
       if (reconcileDispatch) await dispatchMemoryReconcile(db, boss, reconcileDispatch);
     }
   };
 }
 
-export function buildMemoryBriefRegenHandler(
+export function buildContextPurposeRepairHandler(
   db: Db,
   deps: {
     memoryClient?: Pick<MemoryClient, 'search'>;
@@ -434,6 +377,7 @@ export function buildMemoryBriefRegenHandler(
   let memoryClient = deps.memoryClient;
   return async (jobs) => {
     for (const job of jobs) {
+      if (!job.data.purpose_operation_id) throw new Error('purpose repair requires operation id');
       const scopeKey = job.data.scope_key;
       // One scope's provider/LLM throw must not reject the job and cause a retry
       // storm. The writer stays loud; this catch logs and continues. The prior brief
@@ -802,48 +746,6 @@ async function applyPlannedRows(db: Db, userId: string): Promise<void> {
     }
     await markApplied(db, row.id);
   }
-}
-
-/** Whether nightly eligibility turns the reflection brief scopes off for this sweep. */
-export type ReflectionBriefsOff = (db: Db, now: Date) => Promise<boolean>;
-
-export function buildMemoryBriefSweepHandler(
-  db: Db,
-  boss: Pick<BossLike, 'send'>,
-  reflectionBriefsOff: ReflectionBriefsOff,
-  // One now per sweep, shared with the regen jobs it enqueues, so detection and
-  // reload use the same lookback floor. Also keeps fixed-now tests deterministic.
-  opts?: { now?: Date },
-): (jobs: Job<object>[]) => Promise<void> {
-  return async () => {
-    const now = opts?.now ?? new Date();
-
-    // Stale non-subject scopes only: subject refresh is owned by the capped path
-    // below, so this loop cannot bypass maxSubjectsPerRun. The global brief is never
-    // subject to that cap.
-    const staleScopes = await listStaleBriefScopes(db, now);
-    const reflectionOff = await reflectionBriefsOff(db, now);
-    for (const scopeKey of staleScopes) {
-      if (reflectionOff && (REFLECTION_BRIEF_SCOPE_KEYS as readonly string[]).includes(scopeKey)) {
-        continue;
-      }
-      await enqueueMemoryBriefRegen(boss, scopeKey);
-    }
-
-    // Activity-gated subject layer: subjects with evidence newer than their brief
-    // (or never built inside the lookback), most recent first, capped per run.
-    // Deferred subjects stay eligible next run, so nothing starves.
-    const activeSubjects = await listActiveSubjectsSinceRefresh(db, {
-      lookbackDays: BRIEF_REFRESH_LOOKBACK_DAYS,
-      now,
-    });
-    for (const subject of selectSubjectsForRun(
-      activeSubjects,
-      BRIEF_REFRESH_BUDGET.maxSubjectsPerRun,
-    )) {
-      await enqueueMemoryBriefRegen(boss, subject.scopeKey, now);
-    }
-  };
 }
 
 // Transactional outbox poll: one batch of pending rows is locked SKIP LOCKED,

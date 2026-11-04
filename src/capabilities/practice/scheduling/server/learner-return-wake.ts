@@ -13,7 +13,6 @@ import type {
   EventSubscriptionHandler,
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
-import { enqueueMemoryBriefRegen } from '@/kernel/memory-brief-regen';
 import { loadActivityTier } from '@/kernel/read-models/activity-tier';
 import {
   LEARNING_ACTIVITY_ACTIONS,
@@ -75,21 +74,6 @@ export function buildLearnerReturnWakeHandler(
     });
     const { runQuestionSupplyNightly } = await import('../../public');
     const supply = await runQuestionSupplyNightly(db, { returnStock: true });
-    const policy = await readEventDerivationPolicy(db, eventId);
-    if (policy !== 'allow') {
-      console.warn(
-        `[learner_return_wake] prepared return practice without a brief (derivation_policy=${policy}, composed=${added}, dispatched=${supply.dispatched})`,
-      );
-      return;
-    }
-    // 证据读不出学科的回访不刷新简报（不落到默认学科）。
-    const subjectId = (await resolveLearningEventSubjects(db, [row], 'omit')).get(row.id);
-    if (!subjectId) return;
-    const boss = await getStartedBoss();
-    const scopeKey = `subject:${subjectId}`;
-    await enqueueMemoryBriefRegen(boss, scopeKey, row.created_at);
-    console.log(
-      `[learner_return_wake] return from ${tier}: composed=${added}, dispatched=${supply.dispatched}, brief=${scopeKey}`,
-    );
+    console.log(`[learner_return_wake] return from ${tier}: composed=${added}, dispatched=${supply.dispatched}`);
   };
 }

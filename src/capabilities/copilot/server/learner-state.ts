@@ -193,6 +193,7 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
         inArray(event.action, [...PRACTICE_WATERMARK_ACTIONS]),
         and(eq(event.action, 'experimental:dreaming_scan'), eq(event.outcome, 'success')),
         eq(event.action, 'rate'),
+        eq(event.action, 'experimental:context_change'),
         and(
           inArray(event.action, [...GOAL_WRITE_WATERMARK_ACTIONS]),
           eq(event.subject_kind, 'goal'),
@@ -210,7 +211,7 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
       (latest, action) => maxIso(latest, iso(action)),
       null,
     ),
-    dreaming_at: iso('experimental:dreaming_scan'),
+    dreaming_at: maxIso(iso('experimental:dreaming_scan'), iso('experimental:context_change')),
     proposal_decision_at: iso('rate'),
     goal_at: GOAL_WRITE_WATERMARK_ACTIONS.reduce<string | null>(
       (latest, action) => maxIso(latest, iso(action)),

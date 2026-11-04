@@ -74,10 +74,11 @@ export async function assembleCompanionContext(
   const portraitMd = steady.portraitMd ? `画像：${steady.portraitMd}` : null;
   const signalsMd =
     contract.signalsMd.length > 0 ? `判读备注：${contract.signalsMd.join('')}` : null;
-  const overnightMd = contract.overnightMd ? `昨夜交班：${contract.overnightMd}` : null;
+  const overnightMd = steady.overnightMd ? `昨夜交班：${steady.overnightMd}` : null;
 
   const trimmed = trimUnitsToBudget([
     { rank: 0, markdown: contract.steeringMd },
+    { rank: 0.5, markdown: steady.communicationMd ? `怎么和我说话：${steady.communicationMd}` : null, protected: true },
     { rank: 1, markdown: renderDelta(delta) },
     { rank: 2, markdown: renderDueItems(delta.dueItems), dropRank: 8 },
     { rank: 3, markdown: masteryMd },

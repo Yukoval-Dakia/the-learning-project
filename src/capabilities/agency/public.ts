@@ -50,14 +50,12 @@ export {
   memoryReconcileHandoffMode,
 } from './server/memory/memory-reconcile-handoff';
 export {
-  MEMORY_BRIEF_SWEEP_QUEUE,
   MEMORY_EVENT_INGEST_QUEUE,
   MEMORY_INFRA_SCHEDULES,
   MEMORY_INGEST_OUTBOX_POLL_QUEUE,
   MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
   type ReconcileMemInput,
-  buildMemoryBriefRegenHandler,
-  buildMemoryBriefSweepHandler,
+  buildContextPurposeRepairHandler,
   buildMemoryEventIngestHandler,
   buildMemoryIngestOutboxPollHandler,
   buildMemoryIngestOutboxRecoverHandler,
