@@ -90,6 +90,7 @@ import {
   markAttemptVerifying,
   markPlacementStarterClaimTerminal,
   placementDeliveryMetadata,
+  readPlacementDispatchEventId,
   reconcilePlacementDelivery,
   recordPlacementAttemptOutput,
   releaseAuthorizedPaidCall,
@@ -282,6 +283,8 @@ export interface RunQuizGenParams {
   supplyTrace?: SupplyTraceV1T;
   placementAttempt?: PlacementAttemptAuthority;
   placementHeartbeat?: PlacementAttemptHeartbeat;
+  /** Publication provenance: the dispatch event of a placement delivery. */
+  causedByEventId?: string;
   runAgentTaskFn?: RunAgentTaskFn;
   buildExaMcpServerFn?: BuildExaMcpServerFn;
   enqueueQuizVerify?: EnqueueQuizVerifyFn;
@@ -605,7 +608,13 @@ async function planQuizGeneration(
       ),
     ];
     if (gateReasons.length === 0) {
-      acceptedPlan = parsedPlan.plan;
+      // `count` is what the caller pays for. The planner sometimes returns more, and each extra
+      // item is one more generated question.
+      const planLimit = Math.max(count, params.exactCount ?? 0);
+      acceptedPlan = {
+        ...parsedPlan.plan,
+        items: parsedPlan.plan.items.slice(0, planLimit),
+      };
       break;
     }
     evidence.planRejections.push(gateReasons);
@@ -1146,6 +1155,7 @@ export function buildQuizGenHandler(
       }
       let placementAttempt: PlacementAttemptAuthority | undefined;
       let placementHeartbeat: PlacementAttemptHeartbeat | undefined;
+      let causedByEventId: string | undefined;
       try {
         if (data.placement_starter_claim_id) {
           const { deliveryNo } = placementDeliveryMetadata({
@@ -1168,6 +1178,7 @@ export function buildQuizGenHandler(
             now: deps.now,
             sleep: deps.heartbeatSleep,
           });
+          causedByEventId = await readPlacementDispatchEventId(db, job.id);
         }
         const result = await runQuizGen({
           db,
@@ -1188,6 +1199,7 @@ export function buildQuizGenHandler(
           ...(supplyTrace ? { supplyTrace } : {}),
           ...(placementAttempt ? { placementAttempt } : {}),
           ...(placementHeartbeat ? { placementHeartbeat } : {}),
+          ...(causedByEventId ? { causedByEventId } : {}),
           runAgentTaskFn: deps.runAgentTaskFn,
           buildExaMcpServerFn: deps.buildExaMcpServerFn,
           enqueueQuizVerify: deps.enqueueQuizVerify,

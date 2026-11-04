@@ -45,6 +45,31 @@ type DeliveryJob = Pick<
 >;
 
 /**
+ * The dispatch event that minted this job is the only server-written fact linking it to the
+ * authorizing placement session. Claims dispatched before this resolution existed have none;
+ * what they publish stays unproven.
+ */
+export async function readPlacementDispatchEventId(
+  db: Db,
+  jobId: string,
+): Promise<string | undefined> {
+  const [dispatchEvent] = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:question_supply'),
+        eq(event.outcome, 'success'),
+        sql`${event.payload}->>'job_id' = ${jobId}`,
+        sql`${event.payload}->>'status' = 'dispatched'`,
+      ),
+    )
+    .orderBy(desc(event.created_at))
+    .limit(1);
+  return dispatchEvent?.id;
+}
+
+/**
  * Run `execute` as the claim's delivery when `job` is the claim's recorded sourcing_web job;
  * otherwise run it without placement authority, which the web owner refuses for placement
  * demands. Errors propagate so pg-boss stays the only redelivery driver (3 deliveries total).
@@ -83,22 +108,7 @@ export async function runPlacementWebDelivery(input: {
     deliveryNo,
     startedOn: job.startedOn,
   });
-  // The dispatch event that minted this job is the only server-written fact
-  // linking it to the authorizing placement session. Claims dispatched before
-  // this resolution existed have none; their submissions stay unproven.
-  const [dispatchEvent] = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'experimental:question_supply'),
-        eq(event.outcome, 'success'),
-        sql`${event.payload}->>'job_id' = ${job.id}`,
-        sql`${event.payload}->>'status' = 'dispatched'`,
-      ),
-    )
-    .orderBy(desc(event.created_at))
-    .limit(1);
+  const dispatchEventId = await readPlacementDispatchEventId(db, job.id);
   const heartbeat = startPlacementAttemptHeartbeat(db, attempt, job.signal);
   try {
     // Submit dispatches verification inside execute; the question authority requires the
@@ -108,7 +118,7 @@ export async function runPlacementWebDelivery(input: {
       attempt,
       heartbeat,
       signal: job.signal,
-      ...(dispatchEvent ? { dispatchEventId: dispatchEvent.id } : {}),
+      ...(dispatchEventId ? { dispatchEventId } : {}),
     });
     await heartbeat.assertHealthy();
     await assertPlacementAttemptFence(db, attempt);

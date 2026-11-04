@@ -56,6 +56,14 @@ function capMicroUsd(): number {
     : 0;
 }
 
+/**
+ * A cap of 0 pauses paid supply outside placement. Those paths publish with no provenance, so
+ * admission never solves what they produce and the spend buys no usable question.
+ */
+export function isUnanchoredSupplyPaused(): boolean {
+  return capMicroUsd() === 0;
+}
+
 function chargeOf(record: SpendRecordT): number {
   return record.kind === 'settle' ? (record.charge_micro_usd ?? 0) : record.hold_micro_usd;
 }

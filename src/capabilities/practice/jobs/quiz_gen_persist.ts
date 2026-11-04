@@ -427,6 +427,7 @@ export async function persistQuizDrafts(
         rootId: id,
         actorRef: 'quiz_gen:persist',
         now,
+        ...(params.causedByEventId ? { causedByEventId: params.causedByEventId } : {}),
       });
       if (params.placementAttempt) {
         const authorized = await authorizePlacementQuestion(
