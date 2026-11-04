@@ -91,7 +91,7 @@ function preamble(key) {
   return `You are a grounding-strict backlog scanner (key=${key}). First: cd ${REPO} and run \`pwd && git rev-parse --show-toplevel\`.
 READ FIRST: ${SCOUT} (shared grounding + rules). For Linear cross-check also read ${INV}.
 IRON RULE: every finding cites concrete evidence — \`file:line\` / \`PR#NNN + comment URL\` / \`YUK-id\`. NO speculation; if you did not open and confirm it, do NOT report it. Quote the snippet.
-Prefer serena / claude-context over blind grep for code discovery; grep for literal strings.
+Use ykv-code-index for code discovery; LSP or grep for known symbols and literal strings.
 OUTPUT markdown, numbered. Per finding use EXACTLY:
 ### F-${key}-<n>: <short imperative title>
 - source: <codebase|docs|prs|linear>
@@ -121,7 +121,7 @@ const TASKS = [
     key: 'CODE', label: 'scan:CODE', effort: 'medium',
     prompt: `${preamble('CODE')}
 
-YOUR AREA — non-ADR code debt across src/ server/ web/ scripts/: \`throw ... not_implemented\` / HTTP 501 stubs; \`it.todo(\`/\`describe.todo\` placeholder tests; declared-but-unimplemented routes/maps (e.g. FUTURE_* dispatch tables); \`@deprecated\` symbols still referenced (check the deprecation notice is accurate vs callers); TODO/FIXME/HACK/XXX without a YUK ref. Use rg for markers, serena to confirm reachability. Report only actionable + untracked (check ${INV}).`,
+YOUR AREA — non-ADR code debt across src/ server/ web/ scripts/: \`throw ... not_implemented\` / HTTP 501 stubs; \`it.todo(\`/\`describe.todo\` placeholder tests; declared-but-unimplemented routes/maps (e.g. FUTURE_* dispatch tables); \`@deprecated\` symbols still referenced (check the deprecation notice is accurate vs callers); TODO/FIXME/HACK/XXX without a YUK ref. Use rg for markers, LSP or grep to confirm reachability. Report only actionable + untracked (check ${INV}).`,
   },
   { key: 'DOCSADR', label: 'scan:DOCSADR', prompt: `${preamble('DOCSADR')}\n\nYOUR AREA — unfinished DECISIONS inside docs/adr/: ADRs in Proposed/Draft/Accepted-but-unimplemented with no tracking issue; unresolved "open question"/"TBD"/"未决" that still matter; ADRs contradicting a newer ADR without a supersession note. Cite adr:line + quote. Skip implemented/tracked.` },
   { key: 'DOCSSPEC', label: 'scan:DOCSSPEC', prompt: `${preamble('DOCSSPEC')}\n\nYOUR AREA — docs/archive/superpowers/specs/ + docs/archive/superpowers/plans/. Find genuinely-open, still-relevant, UNTRACKED items: unresolved open questions, deferred items with no YUK, specced capability never built. Weight toward recent docs + current direction. Ignore shipped phases + intentional deferrals carrying a tracking ref. Cite doc:line + quote.` },

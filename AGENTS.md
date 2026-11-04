@@ -66,7 +66,7 @@
 - 架构/设计决策写 ADR 或 `docs/design/`；过程性的规划、清单、审计和回执写到仓库外的 `/Volumes/YukovalSBak/yukoval-projects/tlp-docs/`（planning/、audit/），不进 git；README 随 runtime 形态同步；domain layout 用根 `CONTEXT.md` 与 `docs/adr/`。
 - 批量证据外置 `tlp-audit-artifacts/<line-or-issue>/<head>/`（架构线必须落在 `architecture-deepening/` 子路径）；git 只留结论、命令、revision、外部路径与 SHA256 摘要；git 历史不重写；把既有批量证据从 HEAD 删除前必须先外置复制、hash 核验、建 git 指针并经协调线逐批确认。
 - Linear（Yukoval Studios / YUK）是权威 tracker，GitHub Issues 仅历史。branch/commit/PR 用 `YUK-NN`；多票逐个 `Closes YUK-NN`；任务收尾执行 capture gate（先查重再建/更新 actionable follow-up，没有则说明原因）；触及的 issue 状态当场与代码现实对齐。流程见 `docs/agents/issue-tracker.md`，标签见 `docs/agents/triage-labels.md`。
-- 代码检索：概念/未知位置先 `ykv-code-index.search_code`；已知符号/引用用 Serena（每 session 首次先 `serena.initial_instructions`，行号 0-based）；已知字面量/regex/文件名用 grep，无结果不断言不存在；索引偏靶时查 index health 再交叉验证。
+- 代码检索：概念/未知位置先 `ykv-code-index.search_code`；已知符号/引用用 LSP 或 grep；已知字面量/regex/文件名用 grep，无结果不断言不存在；索引偏靶时查 index health 再交叉验证。
 - UI 实施在 2026-10-07 [自主交付授权](docs/planning/2026-10-07-autonomous-delivery-charter.md) 范围内自主进行：pre-flight 引用 design doc 原文（路径+行号）、声明组件类型（drawer/route/modal/page）、列出创建与修改文件；遵循既有 design tokens/primitives/design-system。
 - 生产部署与运维在本机 Docker Compose（app、worker、migrate、mem0-init、Postgres/pgvector，worker 含 playwright/Chromium），默认本机访问；入口见 `README.md` 与授权 charter；数据恢复、独立审查与验收要求保留。
 - MCP/tool/plugin 配置 session start 快照，新增换名需新 session 验证；不在项目任务中改用户级 provider/auth/telemetry；用户级 Claude settings 若受 self-modification 保护，给用户精确 diff，项目级 `.claude/settings.json` 可直接修改；hooks 负责确定性约束，不在提示词里要求忽略 hook、工具结果或运行时 context。

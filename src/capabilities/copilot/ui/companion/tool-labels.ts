@@ -32,8 +32,6 @@ export const TOOL_LABELS: Readonly<Record<string, string>> = {
   attribute_mistake: '错因分析结果',
   propose_variant: '变式提议',
   write_quiz: '练习生成结果',
-  author_artifact: '资料生成结果',
-  update_artifact: '资料更新结果',
   // Tools the step rows meet that have no saved-result card.
   knowledge_mutation: '学习内容建议',
   edit_question: '题目修改',

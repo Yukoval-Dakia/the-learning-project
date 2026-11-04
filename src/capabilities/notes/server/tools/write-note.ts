@@ -1,14 +1,14 @@
 // YUK-1769 — write_note: the companion's direct Markdown note write.
 //
-// Background: the copilot surface previously offered ONLY author_artifact /
-// update_artifact (interactive HTML, ADR-0033) as its save-a-note path. A learner
+// Background: the copilot surface previously offered ONLY the now-deleted
+// interactive-HTML authoring pair (ADR-0033) as its save-a-note path. A learner
 // asking 「存成笔记」 forced the model to author a full HTML page, which the
 // learning-content gate then rejected repeatedly. This tool is the plain
 // Markdown write path the coordinator ruling asked for (2026-11-03):
 //
 //   - mode='create'   → INSERT a note_long artifact carrying the Markdown body
 //                       (atomic double-write: artifact_create event in the same
-//                       tx, author_artifact precedent).
+//                       tx).
 //   - mode='append'   → merge one new block onto an existing note through
 //                       editArtifactBodyBlocks (the canonical versioned write:
 //                       optimistic version check + history + fold-source
@@ -30,7 +30,7 @@
 // superRefine on the schema — the model gets `code/path/message` for the exact
 // field instead of a prose error.
 //
-// phase-deferred (author_artifact / write_quiz same stance): no per-run
+// phase-deferred (write_quiz same stance): no per-run
 // idempotency guard — a duplicate create is non-destructive; add a guard only
 // if real usage shows double-writes.
 
@@ -49,7 +49,7 @@ import { NOTE_ARTIFACT_TYPES } from '../note-artifact-types';
 import { dispatchNoteGeneration } from '../note-handoff';
 
 // Generous ceiling: a full review note fits far below this; the cap exists only
-// to bound pathological tool inputs (INTERACTIVE_HTML_MAX_CHARS precedent).
+// to bound pathological tool inputs.
 export const WRITE_NOTE_MARKDOWN_MAX_CHARS = 100_000;
 
 const NOTE_BLOCK_SOURCE_TIER = 'llm_only';
@@ -95,7 +95,7 @@ const WriteNoteInputSchema = z
     // task, e.g. 「给期中复习的系统笔记」). Ignored for create/append.
     intent: z.string().min(1).max(500).optional(),
     // Optional knowledge-node labels for discovery. No existence check — a
-    // dangling id degrades discovery, it breaks nothing (author_artifact D6).
+    // dangling id degrades discovery, it breaks nothing (ADR-0033 D6).
     knowledge_ids: z.array(z.string().min(1)).max(20).optional(),
   })
   .superRefine((input, ctx) => {
