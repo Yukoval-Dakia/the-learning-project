@@ -44,6 +44,7 @@ export const copilotCapability = defineCapability({
       'experimental:confirmation_command',
       'experimental:confirmation_command_result',
       'experimental:help_explanation_replay',
+      'experimental:help_explanation_receipt',
       'experimental:subagent_run_started',
       'experimental:subagent_run_settled',
       'accept_suggestion',
