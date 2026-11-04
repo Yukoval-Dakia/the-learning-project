@@ -41,6 +41,7 @@ import { z } from 'zod';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import { artifact } from '@/db/schema';
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
+import { writeNoteGenerationIntent } from '@/kernel/records/note-handoff-protocol';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { syncBlockRefsForArtifact } from '../block-refs';
 import { editArtifactBodyBlocks } from '../body-blocks-edit';
@@ -173,6 +174,12 @@ async function createNoteArtifact(
     // Same committed-tx backlink index as the canonical edit path (a generated
     // block tree can carry crossLinkBlock children on later appends).
     if (bodyBlocks) await syncBlockRefsForArtifact(tx, input.note_id as string, bodyBlocks);
+    // generation='pending' rides the durable handoff: the intent lands in the
+    // same tx so the post-commit dispatch can send immediately instead of
+    // waiting for the every-minute recovery floor (learning-intent-note-birth).
+    if (generationStatus === 'pending') {
+      await writeNoteGenerationIntent(tx, input.note_id as string);
+    }
   });
 }
 
@@ -255,7 +262,7 @@ async function executeWriteNote(
     // Post-commit dispatcher: the durable intent + a confirmed send. A `false`
     // here only means THIS dispatch attempt didn't land — the every-minute
     // hub_sync_recovery floor re-dispatches from the persisted intent.
-    const dispatchConfirmed = await dispatchNoteGeneration(ctx.db, artifactId);
+    const dispatchConfirmed = await dispatchNoteGeneration(ctx.db, artifactId).catch(() => false);
     return {
       status: 'generation_queued',
       artifact_id: artifactId,
