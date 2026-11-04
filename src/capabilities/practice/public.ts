@@ -292,7 +292,6 @@ export {
   readPlacementProfile,
   readPlacementSession,
   releaseHeldPlacement,
-  selectNextPlacementItem,
   selectNextPlacementQuestion,
   selectOrphanPlacementCandidates,
   startPlacementProbe,
