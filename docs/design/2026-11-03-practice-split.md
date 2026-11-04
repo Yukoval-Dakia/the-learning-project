@@ -75,7 +75,7 @@ practice 当前有 521 个文件、132,465 行，已不是票面写的 437 文�
   - 题库到供题：`quiz/matcher.ts` 直接调 `question-supply/dispatcher`；`bank-search` 与 `question-parts` 取 `evidence-demand` 类型；`edit-question` 与 `proposal-appliers` 调 `tools/submit-question`。
   - 准入到供题：取 `placement-starter-attempts` 的定位授权和 `placement-supply-lock`，共 20 条边。
   - 供题到题库：取 `content-fingerprint`、`pool-fetch`、`question-parts`、`embed_backfill`，共 12 条边。
-- **作答 ↔ 判分：** `jobs/judge_run.ts` 回写 `assessment/durable-attempt` 与 `review-operation`。`judge/evaluate-submission.ts` 是枢纽：它内联调用 `src/server/assessment/runtime` 的 `activateEvaluation` 与 `learningSettlement`，还调用 `assessment/appeal-execution` 的评价槽分配。
+- **作答 ↔ 判分：** `jobs/judge_run.ts` 回写 `assessment/durable-attempt` 与 `review-operation`。`judge/evaluate-submission.ts` 是枢纽：它内联调用 `settlement/public`（这份设计写的时候是 `src/server/assessment/runtime`，YUK-1735 已删） 的 `activateEvaluation` 与 `learningSettlement`，还调用 `assessment/appeal-execution` 的评价槽分配。
 - **复习排程 ↔ 练习流 ↔ 卷：**
   - 排程到流：`daily-review-plan` 调 `stream-inputs`，`learner-return-wake` 调 `stream-store`。
   - 流到排程：`stream-inputs` 调 `due-list`，`stream-store` 调 `review-session-lifecycle`。
@@ -309,7 +309,7 @@ practice 之外有 142 个文件引用 practice。从 `public` / `ui-public` 静
 
 **迁移线落位时需要倒置的耦合**（只标注，由迁移线决定实现）：
 
-1. `judge/evaluate-submission.ts` 内联调用 `activateEvaluation` 和 `learningSettlement`，形成 grading → settlement 的上行边。目标形态是 settlement 消费评价结果：激活后事件，或由组合根装入的 kernel 端口。在倒置之前，grading 搬迁时保留对 `src/server/assessment/runtime` 的现有 server 边，不新增新的边。
+1. `judge/evaluate-submission.ts` 内联调用 `activateEvaluation` 和 `learningSettlement`，形成 grading → settlement 的上行边。目标形态是 settlement 消费评价结果：激活后事件，或由组合根装入的 kernel 端口。在倒置之前，grading 搬迁时保留对 `src/server/assessment/runtime` 的现有 server 边，不新增新的边。 （YUK-1735 已删除这个接缝，这条边现在经 `settlement/public`。）
 2. `assessment/appeal-execution.ts` 的 `bindAppealExecution` / `reservedEvaluationAttempt` 是「在 evaluation-group 锁下分配评价槽」，非申诉的分配者也会调用。槽分配归 grading；申诉只作为它的一个消费方。
 3. `review-operation.ts` 调用 `placement-assessment.validatePlacementSubmission`，形成作答到定位的上行边。改为 grading 拥有「发卷容器仍有效」的端口，由 placement 装入。
 4. `judge-retraction-applier.ts:24-28`（归 settlement）从 `./proposal-appliers`（归 question-bank）取三样东西：`recordPracticeProposalDecision`（本地改名为 `recordProposalDecisionSignal`）、`PracticeApplierOpts`、`ProposalInboxRow`。这条边会形成 settlement → question-bank 的依赖，与 §0「settlement 与 question-bank 互不依赖」矛盾。修法：settlement 直接依赖 kernel，不经 question-bank。

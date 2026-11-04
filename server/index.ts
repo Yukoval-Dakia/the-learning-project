@@ -118,7 +118,7 @@ async function installPracticeOperationsBeforeServe(): Promise<void> {
   await installAgencyHostOperations();
 }
 
-async function installSchedulingCandidateRebuildBeforeServe(): Promise<void> {
+async function installSettlementPortsBeforeServe(): Promise<void> {
   const { installSchedulingCandidateRebuild } = await import('@/capabilities/practice/public');
   // Dynamic: its import chain reads DB_POOL_MAX, which loadApiEnv has to set first.
   const { orchestrateCascadeRevert } = await import('@/server/revert/cascade-revert');
@@ -209,7 +209,7 @@ void (async () => {
   await hydrateModelCatalogBeforeServe();
   await registerToolsBeforeServe();
   await installPracticeOperationsBeforeServe();
-  await installSchedulingCandidateRebuildBeforeServe();
+  await installSettlementPortsBeforeServe();
   await recoverToolOperationsBeforeServe();
   await injectAdminConfigFactsBeforeServe();
   await injectAdminConfigWriterBeforeServe();

@@ -49,8 +49,7 @@ vi.mock('@/core/theta-grid', async (importOriginal) => {
   };
 });
 
-import { effectiveFamilyB } from '@/capabilities/practice/settlement/server/personalized-difficulty';
-import { effectiveB } from '@/capabilities/practice/settlement/server/recalibration';
+import { effectiveB, effectiveFamilyB } from '@/capabilities/practice/settlement/public';
 import { type ReplayAttempt, replayTheta } from '@/core/calibration/replay';
 import { newId } from '@/core/ids';
 import { difficultyToLogitB } from '@/core/theta';
