@@ -141,7 +141,7 @@ export interface RunWebFetchCandidatesParams {
 // 与旧 sourcing.ts parseOutput（:183-205）同款严格度：宽松提取 + riskyRepair:'reject' +
 // schema 校验。sourcing 解析结果直接落库为题面，web 素材 ASCII 标点密度高（jsonrepair
 // 静默重划字符串边界的高危形态）——只许内容保真的确定性修复级。
-export function parseSourcingOutput(text: string, parseLoose: ParseLooseFn): SourcingTaskOutputT {
+function parseSourcingOutput(text: string, parseLoose: ParseLooseFn): SourcingTaskOutputT {
   let extracted: ReturnType<ParseLooseFn>;
   try {
     extracted = parseLoose(text, 'web-candidates parseOutput', { riskyRepair: 'reject' });
@@ -175,8 +175,8 @@ function withoutNulls(value: unknown): unknown {
 }
 
 // The run is already paid for, so one malformed question must not void the others, and neither
-// must a missing audit field the server can fill. With no question left, the schema's "at least
-// one result" rule still fails the run.
+// must a missing audit field the server can fill. A run left with no questions and no image
+// candidates still fails the schema's "at least one result" rule.
 function keepValidQuestions(output: unknown): unknown {
   if (output === null || typeof output !== 'object') return output;
   const { questions } = output as { questions?: unknown };
