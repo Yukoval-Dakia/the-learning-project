@@ -104,7 +104,6 @@ PATCH /api/admin/config   # x-internal-token
 | `MEM0_HISTORY_DB_PATH` | app、worker | `/var/lib/mem0/history.db`；compose 覆盖 app 为 `/tmp/mem0/history.db`、worker 为 `/var/lib/mem0/history.db` | `src/server/ai/mem0/client.ts`；`docker-compose.yml` |
 | `MEM0_LLM_MODEL` | app、worker | 无全局 pin 时 `glm-5.2` | `src/server/ai/mem0/llm-config.ts`；`src/server/ai/providers.ts` |
 | `MEM0_LLM_BASE_URL` | app、worker | 无全局 pin 时 `https://open.bigmodel.cn/api/coding/paas/v4`；host 须过模型端点 allowlist | `src/server/ai/mem0/llm-config.ts` |
-| `MEMORY_RECONCILE_HANDOFF_MODE` | app、worker | `observe`；非法值在 reader 内抛错 | `registry` |
 | `MEM0_TELEMETRY` | app、worker（`mem0ai` SDK） | SDK 默认可向外报 PostHog；compose 强制 `false`；非 compose 部署也应显式 `false` | `docker-compose.yml`；`src/server/config/env.ts` |
 
 ### OCR、录入与外部检索

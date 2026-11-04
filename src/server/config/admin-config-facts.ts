@@ -5,7 +5,7 @@
 // the auth-status projection (never credential values).
 
 import { capabilities } from '@/capabilities';
-import { MEMORY_INFRA_SCHEDULES, memoryReconcileHandoffMode } from '@/capabilities/agency/public';
+import { MEMORY_INFRA_SCHEDULES } from '@/capabilities/agency/public';
 import { copilotConfigEffectiveFacts } from '@/capabilities/copilot/public';
 import { ingestionConfigEffectiveFacts } from '@/capabilities/ingestion/public';
 import { knowledgeConfigEffectiveFacts } from '@/capabilities/knowledge/public';
@@ -138,15 +138,6 @@ function visionOverrideFacts(): { provider: ConfigEffectiveFact; model: ConfigEf
 function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
   const rateLimit = resolveAiRateLimitConfig();
   const vision = visionOverrideFacts();
-  let handoffMode: ConfigEffectiveFact;
-  try {
-    handoffMode = { value: memoryReconcileHandoffMode() };
-  } catch {
-    handoffMode = {
-      value: null,
-      note: 'reader throws（fail-visible）：非法值在消费点报错，不静默回退',
-    };
-  }
   // lane.global.* must come from readGlobalProviderSwitch (env/DB merge + provider
   // gate): model-only config is not consumed, and unknown providers throw.
   let globalSwitch: ReturnType<typeof readGlobalProviderSwitch> | undefined;
@@ -185,7 +176,6 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
       value: getLearnerLocale(),
       note: 'AI 输出语言：下次 system prompt 构建时读取本进程快照；跨进程轮询间隔 15s（失败保留旧快照），不改变 UI 语言或 typed task',
     },
-    MEMORY_RECONCILE_HANDOFF_MODE: handoffMode,
     'lane.global.provider': globalPinActive
       ? { value: globalSwitch?.provider }
       : {

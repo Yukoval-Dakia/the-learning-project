@@ -87,10 +87,6 @@ const ATTEMPT_WRAPPER_SURFACES = [
     requiredTokens: ['executeDirectProviderAttempt', 'dashscope.embedding'],
   },
   {
-    path: 'src/server/ai/mem0/reconcile-llm.ts',
-    requiredTokens: ['executeDirectProviderAttempt', 'glm.memory-reconcile'],
-  },
-  {
     path: 'src/capabilities/ingestion/server/provider-attempts.ts',
     requiredTokens: [
       'executeDirectProviderAttempt',

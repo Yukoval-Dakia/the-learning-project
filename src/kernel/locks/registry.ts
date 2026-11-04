@@ -129,13 +129,6 @@ export const advisoryLockRegistry = {
     keyPrefix: 'memory:ingest:',
     suffixFields: ['sourceEventId'],
   },
-  memoryDispatchSource: {
-    family: 'memory-dispatch-source',
-    encoding: 'hashtextextended',
-    salt: 0,
-    keyPrefix: 'memory:dispatch:',
-    suffixFields: ['sourceEventId'],
-  },
   memoryOperatorRequest: {
     family: 'memory-operator-request',
     encoding: 'hashtextextended',
