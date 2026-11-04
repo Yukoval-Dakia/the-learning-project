@@ -137,6 +137,8 @@ export interface PracticePaperItem {
     pos: number;
     /** right/wrong distribution from the latest judge per slot */
     right: number;
+    /** Subset of `right`: slots judged partially correct. */
+    partial: number;
     wrong: number;
   } | null;
   created_at: Date;
@@ -318,7 +320,7 @@ export async function getPracticeList(
   // 被 retract/mark_wrong 的判不计入右错桶（回落 attempt outcome 语义）。
   // Q9: correct/partial → right, anything else → wrong (deliberate —
   // partial counts as right, see comment in previous rounds).
-  const rightWrongBySession = new Map<string, { right: number; wrong: number }>();
+  const rightWrongBySession = new Map<string, { right: number; partial: number; wrong: number }>();
   if (sessionIds.length > 0) {
     // Round-6 fix #2 (CR 3359820526): also fetch visible_to_user from the
     // effective judge. For sessions not yet 'completed', slots with
@@ -370,8 +372,9 @@ export async function getPracticeList(
         )
           continue;
         const outcome = nativeVerdicts.get(r.attempt_event_id)?.effective?.verdict.verdict;
-        const bucket = rightWrongBySession.get(r.session_id) ?? { right: 0, wrong: 0 };
+        const bucket = rightWrongBySession.get(r.session_id) ?? { right: 0, partial: 0, wrong: 0 };
         if (outcome === 'correct' || outcome === 'partial') bucket.right++;
+        if (outcome === 'partial') bucket.partial++;
         else if (outcome === 'incorrect') bucket.wrong++;
         rightWrongBySession.set(r.session_id, bucket);
         continue;
@@ -391,7 +394,7 @@ export async function getPracticeList(
       const sessionStatus = sessionStatusById.get(r.session_id);
       const judgeBuffered = effective?.verdict.visible_to_user === false;
       if (judgeBuffered && sessionStatus !== 'completed') continue;
-      const bucket = rightWrongBySession.get(r.session_id) ?? { right: 0, wrong: 0 };
+      const bucket = rightWrongBySession.get(r.session_id) ?? { right: 0, partial: 0, wrong: 0 };
       // Prefer effective judge coarse_outcome; fall back to attempt outcome mapping.
       // attempt 'success' → treated as 'correct'; 'partial' → right; else wrong.
       const verdict =
@@ -400,6 +403,7 @@ export async function getPracticeList(
       if (verdict === 'correct' || verdict === 'partial') {
         // Partial counts as right (deliberate: meaningful progress).
         bucket.right += 1;
+        if (verdict === 'partial') bucket.partial += 1;
       } else {
         bucket.wrong += 1;
       }
@@ -438,6 +442,7 @@ export async function getPracticeList(
             status: session.status,
             pos: posBySession.get(session.id) ?? 0,
             right: rightWrongBySession.get(session.id)?.right ?? 0,
+            partial: rightWrongBySession.get(session.id)?.partial ?? 0,
             wrong: rightWrongBySession.get(session.id)?.wrong ?? 0,
           }
         : null,
