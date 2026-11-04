@@ -96,6 +96,18 @@ export function placementSchemaFailure(issues: z.ZodIssue[]): PlacementStarterFa
 }
 
 const Binding = z.object({
+  progress: z
+    .object({
+      stage: z.enum(['queued', 'finding_questions', 'checking_questions', 'ended']),
+      target_count: z.number().int().positive(),
+      submitted_count: z.number().int().nonnegative(),
+      available_count: z.number().int().nonnegative(),
+      pending_count: z.number().int().nonnegative(),
+      unavailable_count: z.number().int().nonnegative(),
+      refill_ended: z.boolean(),
+      updated_at: z.string().datetime(),
+    })
+    .optional(),
   session_id: z.string(),
   goal_id: z.string().nullable(),
   semantic_goal_revision_id: z.string().nullable(),

@@ -28,11 +28,15 @@ import {
   markPlacementStarterClaimTerminal,
   placementProbeEnabled,
   resolvePlacementStarterGoalAuthority,
-  selectNextPlacementItem,
   terminalizeLostPlacementDelivery,
 } from '@/kernel/placement';
-import { resolveGoalPlacementScope } from '@/kernel/read-models/placement-scope';
+import {
+  resolveGoalPlacementScope,
+  resolveNearbyPlacementScope,
+} from '@/kernel/read-models/placement-scope';
+import { countPlacementInventory } from './placement-inventory';
 import { placementClaimJobQueue } from './placement-starter';
+import { PLACEMENT_STARTER_REQUIRED_COUNT } from './placement-starter-attempts';
 
 /**
  * How far forward the sweeper pushes `next_reconcile_at` when it acquires a claim. This is the
@@ -691,7 +695,17 @@ async function sweepPendingDispatch(
         return false; // suppress dispatch; the claim is terminalized below, outside this tx
       }
       await lockPlacementSupplyScopes(tx, knowledgeIds);
-      return (await selectNextPlacementItem(tx, { knowledgeIds })) === null;
+      // Same threshold and nearby scope as the initial dispatch: a learner can consume the few available
+      // questions and then have nothing, so one servable question must not stop the refill.
+      const inventoryKnowledgeIds = await resolveNearbyPlacementScope(
+        tx,
+        knowledgeIds,
+        goalRow.subjectId,
+      );
+      return (
+        (await countPlacementInventory(tx, inventoryKnowledgeIds)) <
+        PLACEMENT_STARTER_REQUIRED_COUNT
+      );
     });
     if (!admitInvoked) {
       // Early return inside dispatchPlacementStarterClaimTx: the claim was no longer
