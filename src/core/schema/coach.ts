@@ -8,7 +8,7 @@
 // first-paint slot.
 
 import { z } from 'zod';
-import { type DailyFocusNumberIssue, checkDailyFocusNumbers } from '@/core/daily-focus-guard';
+import { type DailyFocusPlanIssue, checkDailyFocusPlanClaims } from '@/core/daily-focus-guard';
 import type { ReviewPlanNumbers } from '@/core/daily-review-plan';
 
 export const PlanAdjustmentKind = z.enum(['defer', 'split', 'relearn', 'archive']);
@@ -119,23 +119,21 @@ export const COACH_MAX_MAINTENANCE_PROPOSALS = 8;
 
 export interface ComposedTodayPlan {
   readonly plan: TodayPlanT;
-  /** daily_focus number claims matching no supplied value; prose stays verbatim. */
-  readonly issues: readonly DailyFocusNumberIssue[];
+  /** daily_focus today-plan clauses contradicting the plan; prose stays verbatim. */
+  readonly issues: readonly DailyFocusPlanIssue[];
 }
 
 /**
- * Attach the code-computed review numbers to the model's draft. `supplied` is the set of
- * numeric values the model could read from its injected context — claims matching any of
- * them pass, everything else is reported as a number_mismatch issue.
+ * Attach the code-computed review numbers to the model's draft. The same numbers are
+ * the only truth source for the daily_focus claim check: question claims compare to
+ * `count`, minute claims to `estimated_minutes`.
  */
 export function composeTodayPlan(
   draft: CoachPlanDraftT,
   numbers: ReviewPlanNumbers,
-  supplied: ReadonlySet<number>,
 ): ComposedTodayPlan {
   const plan = TodayPlan.parse({
     ...draft,
-    // Model prose publishes verbatim; numeric contradictions are reported, not edited.
     daily_focus: draft.daily_focus,
     review_session_proposal: {
       ...draft.review_session_proposal,
@@ -145,7 +143,10 @@ export function composeTodayPlan(
       time_box_minutes: numbers.time_box_minutes,
     },
   });
-  const issues = checkDailyFocusNumbers(plan.daily_focus, supplied);
+  const issues = checkDailyFocusPlanClaims(plan.daily_focus, {
+    questionCount: numbers.count,
+    minutes: numbers.estimated_minutes,
+  });
   return { plan, issues };
 }
 
