@@ -338,7 +338,6 @@ export interface ProposalCardProps {
 
 const MERGE_BLOCKED_WORDS: Readonly<Record<string, string>> = {
   blocks_missing: '要合并的题块有的已经不在了。',
-  not_draft: '有的题块已经不是待整理的状态，不能再合并。',
   session_mismatch: '这些题块不是同一次录入的。',
   unknown_source: '这些题块不是来自同一份资料，或者找不到原资料。',
   ambiguous_page_index: '读不出这些题块在第几页，没法确认它们前后相连。',
