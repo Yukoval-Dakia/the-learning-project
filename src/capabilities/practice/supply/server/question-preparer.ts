@@ -13,7 +13,7 @@ import { getStartedBoss } from '@/server/boss/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { QuestionPreparerJobData, preparerTerminal } from './question-preparer-contract';
 import {
-  defectIdentity,
+  defectCategory,
   preparerCalls,
   preparerFinish,
   preparerHistory,
@@ -21,6 +21,7 @@ import {
   preparerRecord,
   preparerSpendKey,
   preparerSubmittedRevisions,
+  preparerUnitContent,
   recoverQuestionPreparer,
 } from './question-preparer-journal';
 import {
@@ -111,14 +112,26 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
     const calls = await preparerCalls(db, previous.task_run_id);
     const verdict = data.continuation?.verdict;
     if (verdict) {
+      const authorRuns = history.filter(
+        (row) => row.outcome === 'finished' && row.subject_id === data.ticket.demand_id,
+      );
+      const authorCalls = (
+        await Promise.all(
+          authorRuns.map((row) =>
+            preparerCalls(db, preparerTerminal.parse(row.payload.terminal).task_run_id),
+          ),
+        )
+      ).flat();
       if (
-        !calls.some(
+        !authorCalls.some(
           (call) =>
             call.tool_name.endsWith('submit_question') &&
             call.output_json?.question_id === verdict.question_id &&
             call.output_json?.revision_id === verdict.revision_id &&
             (call.output_json?.published === true ||
-              call.output_json?.publish_status === 'published'),
+              ['published', 'noop', 'admission_updated'].includes(
+                String(call.output_json?.publish_status),
+              )),
         )
       )
         throw new Error('repair verdict must bind a published submission of the prior segment');
@@ -153,7 +166,27 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
   const claim = await db.transaction(async (tx) => {
     await lockQuestionSubmitRequest(tx, `question_preparer:${preparerLockKey(data)}`);
     const records = await preparerHistory(tx, data);
-    for (const row of records.filter((record) => record.outcome === 'unstarted')) {
+    const returned = data.continuation?.verdict;
+    const content = returned
+      ? await preparerUnitContent(tx, returned.question_id, returned.scoring_unit_id)
+      : null;
+    if (returned && !content) {
+      await preparerRecord(tx, jobId, data, 'unstarted');
+      return {
+        terminal: await preparerFinish(
+          tx,
+          jobId,
+          data,
+          'no_progress',
+          'system_closed/unit_not_in_current_revision',
+        ),
+      };
+    }
+    const contentRecord = content
+      ? { unit_content_digest: content.digest, unit_revision_id: content.revision_id }
+      : {};
+    let comparedLatestCategory = false;
+    for (const row of records.filter((record) => record.outcome === 'unstarted').reverse()) {
       const previousId = String(row.payload.job_id);
       const terminal = records.find(
         (record) => record.id === `question_preparer_finished_${previousId}`,
@@ -173,10 +206,39 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
         previous.ticket.demand_id === data.ticket.demand_id
       )
         return { terminal: done };
-      if (data.continuation && defectIdentity(data) === defectIdentity(previous)) {
-        if (data.continuation.verdict.revision_id === previous.continuation?.verdict.revision_id)
+      if (data.continuation && defectCategory(data) === defectCategory(previous)) {
+        if (
+          JSON.stringify(data.continuation.verdict) ===
+            JSON.stringify(previous.continuation?.verdict) &&
+          data.continuation.prior_job_id === previous.continuation?.prior_job_id
+        )
           return { terminal: done };
-        await preparerRecord(tx, jobId, data, 'unstarted');
+        if (comparedLatestCategory) continue;
+        comparedLatestCategory = true;
+        const priorUnit = previous.continuation
+          ? await preparerUnitContent(
+              tx,
+              previous.continuation.verdict.question_id,
+              previous.continuation.verdict.scoring_unit_id,
+              typeof row.payload.unit_revision_id === 'string'
+                ? row.payload.unit_revision_id
+                : previous.continuation.verdict.revision_id,
+            )
+          : null;
+        if (!priorUnit) {
+          await preparerRecord(tx, jobId, data, 'unstarted', contentRecord);
+          return {
+            terminal: await preparerFinish(
+              tx,
+              jobId,
+              data,
+              'no_progress',
+              'system_closed/unit_content_unavailable',
+            ),
+          };
+        }
+        if (content?.digest !== priorUnit.digest) continue;
+        await preparerRecord(tx, jobId, data, 'unstarted', contentRecord);
         const closed = await preparerFinish(
           tx,
           jobId,
@@ -187,7 +249,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
         return { terminal: closed };
       }
     }
-    await preparerRecord(tx, jobId, data, 'unstarted');
+    await preparerRecord(tx, jobId, data, 'unstarted', contentRecord);
     return {};
   });
   if ('terminal' in claim) return claim.terminal;
@@ -220,7 +282,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
   const hold = await holdNightlySupplyUnit(db, {
     targetId: spendKey,
     questionCount: data.ticket.inventory_goal.eligible_count,
-    runMicroUsd: allowance,
+    runCeilingMicroUsd: allowance,
   });
   if (!hold.granted) return finish('no_progress', 'unified_supply_spend_policy_denied', true);
   const admission = await admitNightlySourcingRun(db, {

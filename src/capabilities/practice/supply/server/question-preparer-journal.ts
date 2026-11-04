@@ -1,7 +1,14 @@
 import { createHash } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
-import { ai_task_runs, event, tool_call_log } from '@/db/schema';
+import {
+  ai_task_runs,
+  event,
+  question_group_lifecycle,
+  question_revision,
+  tool_call_log,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { lockQuestionSubmitRequest } from '@/kernel/locks/question-supply';
 import { unknownAttemptCostTruth } from '@/server/ai/attempt-cost';
@@ -16,7 +23,7 @@ import { settleNightlySourcingRun } from './spend-gate';
 
 const action = 'experimental:question_preparer';
 export const preparerSpendKey = (jobId: string) => `question_preparer:${jobId}`;
-export function defectIdentity(data: QuestionPreparerData): string | null {
+export function defectCategory(data: QuestionPreparerData): string | null {
   const v = data.continuation?.verdict;
   if (!v) return null;
   return createHash('sha256')
@@ -31,6 +38,70 @@ export function defectIdentity(data: QuestionPreparerData): string | null {
     )
     .digest('hex');
 }
+/** Relevant unit content, excluding sibling units, revision ids, timestamps and hint wording. */
+function unitDigest(
+  revision: typeof question_revision.$inferSelect,
+  unitId: string,
+): string | null {
+  const unit = revision.scoring_basis.units.find((item) => item.scoring_unit_id === unitId);
+  if (!unit) return null;
+  const slotIds = new Set([...unit.slot_refs, ...unit.evidence_slot_refs]);
+  const slots = revision.response_spec.slots.filter((slot) => slotIds.has(slot.slot_id));
+  const partIds = new Set(slots.map((slot) => slot.part_id));
+  const parts = revision.structure.parts.filter((part) => partIds.has(part.part_id));
+  const materialIds = new Set([
+    ...unit.material_refs,
+    ...parts.flatMap((part) => part.material_ids),
+  ]);
+  return canonicalHash({
+    unit,
+    slots,
+    parts: parts.map(({ part_id, prompt_md, material_ids, blank_order }) => ({
+      part_id,
+      prompt_md,
+      material_ids,
+      blank_order,
+    })),
+    materials: revision.structure.materials.filter((material) =>
+      materialIds.has(material.material_id),
+    ),
+    executors: revision.execution_plan.assignments
+      .filter((assignment) => assignment.scoring_unit_ids.includes(unitId))
+      .map((assignment) => assignment.executor),
+    blank_scores_zero: revision.scoring_basis.blank_scores_zero,
+  });
+}
+
+export async function preparerUnitContent(
+  db: Db | Tx,
+  questionId: string,
+  unitId: string,
+  revisionId?: string,
+) {
+  const [row] = revisionId
+    ? await db
+        .select()
+        .from(question_revision)
+        .where(
+          and(
+            eq(question_revision.group_id, questionId),
+            eq(question_revision.revision_id, revisionId),
+          ),
+        )
+    : await db
+        .select({ revision: question_revision })
+        .from(question_group_lifecycle)
+        .innerJoin(
+          question_revision,
+          eq(question_revision.revision_id, question_group_lifecycle.current_revision_id),
+        )
+        .where(eq(question_group_lifecycle.group_id, questionId))
+        .then((rows) => rows.map((item) => item.revision));
+  if (!row) return null;
+  const digest = unitDigest(row, unitId);
+  return digest ? { digest, revision_id: row.revision_id } : null;
+}
+
 export function preparerLockKey(data: QuestionPreparerData): string {
   return data.continuation
     ? `question:${data.continuation.verdict.question_id}`
@@ -58,7 +129,7 @@ export async function preparerRecord(
       data,
       job_id: jobId,
       lock_key: preparerLockKey(data),
-      defect_identity: defectIdentity(data),
+      defect_category: defectCategory(data),
       ...extra,
     },
     task_run_id: `question_preparer_${jobId}`,

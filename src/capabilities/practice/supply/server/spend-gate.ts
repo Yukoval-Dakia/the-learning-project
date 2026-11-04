@@ -173,12 +173,14 @@ async function holdNewKey(
  * before the target is enqueued. A denied target is left for the next night. */
 export function holdNightlySupplyUnit(
   db: Db,
-  input: { targetId: string; questionCount: number; runMicroUsd?: number; now?: Date },
+  input: { targetId: string; questionCount: number; runCeilingMicroUsd?: number; now?: Date },
 ): Promise<SupplySpendHold> {
   const verify = input.questionCount * VERIFY_RESERVATION_MICRO_USD;
   return holdNewKey(db, {
     key: nightlyUnitKey(input.targetId),
-    holdMicroUsd: (input.runMicroUsd ?? RUN_RESERVATION_MICRO_USD) + verify,
+    holdMicroUsd:
+      Math.min(input.runCeilingMicroUsd ?? RUN_RESERVATION_MICRO_USD, RUN_RESERVATION_MICRO_USD) +
+      verify,
     verifyMicroUsd: verify,
     now: input.now ?? new Date(),
   });
