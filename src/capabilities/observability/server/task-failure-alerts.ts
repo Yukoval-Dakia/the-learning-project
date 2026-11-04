@@ -170,7 +170,8 @@ export async function evaluateTaskFailureAlerts(
       and r.finished_at <= ${now.toISOString()}::timestamptz
       and (ls.at is null or r.finished_at > ls.at)
     group by r.task_kind
-    having count(*) >= ${thresholds.consecutive_failures}
+    having (count(*) >= ${thresholds.consecutive_failures}
+      or bool_or(r.finish_reason = 'reply_unsealed'))
       and max(r.finished_at) >= ${staleCutoff.toISOString()}::timestamptz
   `);
 

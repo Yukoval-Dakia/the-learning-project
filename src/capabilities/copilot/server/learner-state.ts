@@ -180,8 +180,7 @@ export function assembleLearnerStateHeaderMd(
     lines.push(`连续答错：${p.failureStreak.knowledge_name}（${p.failureStreak.count} 次）`);
   }
   if (p.masterySummary) {
-    const theta = p.meanTheta === null ? '' : `（θ̂≈${p.meanTheta.toFixed(1)}）`;
-    lines.push(`掌握度：${p.masterySummary}${theta}`);
+    lines.push(`掌握度：${p.masterySummary}`);
   }
   if (p.judgmentSentence) lines.push(p.judgmentSentence);
   if (p.overnightSentence) lines.push(`昨夜交班：${p.overnightSentence}`);

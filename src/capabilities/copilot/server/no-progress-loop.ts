@@ -534,18 +534,8 @@ export async function fileSealedCorrection(
   });
 }
 
-export function mergeNoProgressReply(prose: string, closure: string, limit: number): string {
-  const head = prose.trim();
-  const tail = closure.trim();
-  if (!head) return tail.slice(0, limit);
-  if (!tail) return head.slice(0, limit);
-  const gap = '\n\n';
-  if (head.length + gap.length + tail.length <= limit) return `${head}${gap}${tail}`;
-  const tailBudget = Math.min(tail.length, Math.max(limit - gap.length - 1, 0));
-  const keptTail = tail.slice(0, tailBudget);
-  const headBudget = limit - gap.length - keptTail.length;
-  if (headBudget <= 0) return tail.slice(0, limit);
-  return `${head.slice(0, headBudget)}${gap}${keptTail}`;
+export function mergeNoProgressReply(prose: string, closure: string): string {
+  return [prose.trim(), closure.trim()].filter(Boolean).join('\n\n');
 }
 
 export function assistantProse(streamed: string, terminal: string): string {

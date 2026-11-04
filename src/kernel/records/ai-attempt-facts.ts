@@ -122,6 +122,22 @@ export function isTaskFailureOutcome(
     and (${usageJson} -> 'help_latency' ->> 'terminal') is distinct from 'cancelled')`;
 }
 
+/** Publication can succeed even when closing the execution receipt failed. Keep paid usage intact. */
+export async function recordAiTaskFinalizationFailure(
+  db: DbLike,
+  taskRunId: string,
+  reason: string,
+): Promise<void> {
+  await db
+    .update(ai_task_runs)
+    .set({
+      status: 'failure',
+      finish_reason: 'reply_unsealed',
+      error_message: `Reply published with an unsealed receipt: ${reason}`,
+    })
+    .where(and(eq(ai_task_runs.id, taskRunId), eq(ai_task_runs.status, 'success')));
+}
+
 export interface AiTaskRunFinishEntry {
   id: string;
   status: 'success' | 'failure';

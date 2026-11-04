@@ -30,35 +30,9 @@ export type CopilotImplicitCorrectionResolution =
 
 const CORRECTION_ENVELOPE = /\s*<!-- copilot-correction (\{[\s\S]*\}) -->\s*$/;
 
-function clarificationReply(
-  contract: CopilotCorrectionContract,
-  turnIds: readonly string[] = contract.available_prior_turn_ids,
-): string {
-  if (turnIds.length === 0) {
-    return '请先明确要更正的 prior_turn_id；我不会把“上一轮”自动绑定到较早的回复。';
-  }
-  const turns = turnIds
-    .map((id) => {
-      // Position labels stay relative to the FULL history so a narrowed
-      // candidate list does not renumber older turns as “上一轮”.
-      const order = contract.prior_turn_order ?? contract.available_prior_turn_ids;
-      const index = order.indexOf(id);
-      const distance = order.length - index;
-      const position =
-        distance === 1 ? '上一轮' : distance === 2 ? '上上轮' : `往前第 ${distance} 轮`;
-      const summary = contract.prior_turn_summaries?.[id];
-      return summary
-        ? `- ${position}是「${summary}」（prior_turn_id：${id}）`
-        : `- ${position}（prior_turn_id：${id}）`;
-    })
-    .join('\n');
-  return `请先明确要更正的 prior_turn_id；我不会把“上一轮”自动绑定到较早的回复。可选历史回复：\n${turns}`;
+function clarificationReply(): string {
+  return '请说明要更正哪一段回答；可以引用其中一句话，我会核对后再更正。';
 }
-
-const CORRECTION_VERB =
-  /(?:更正|纠正|改正|修正|重写|重新写|替换|改(?:一下|掉|成)|correct|revise|rewrite|fix|change)/i;
-const PRIOR_ANSWER_CUE =
-  /(?:那个|之前(?:那)?|前面(?:那)?|你刚才(?:的|说的)?|你(?:上次|前面)的)(?:的)?(?:一?轮|回答|回复|解释|结论)/;
 
 function bindTarget(
   contract: CopilotCorrectionContract,
@@ -70,7 +44,7 @@ function bindTarget(
       contract: { ...contract, target_prior_turn_id: target },
     };
   }
-  return { kind: 'clarify', reply: clarificationReply(contract, []) };
+  return { kind: 'clarify', reply: clarificationReply() };
 }
 
 export function resolveDeterministicCorrectionContract(
@@ -90,50 +64,7 @@ export function resolveDeterministicCorrectionContract(
   if (contract.target_prior_turn_id !== undefined) {
     return bindTarget(contract, contract.target_prior_turn_id);
   }
-  if (!CORRECTION_VERB.test(userMessage)) return { kind: 'normal', contract };
-  if (contract.positions_unavailable)
-    return { kind: 'clarify', reply: '历史用途暂时无法核对，请重新提交需要更正的内容。' };
-
-  const exactTargets = contract.available_prior_turn_ids.filter((id) => userMessage.includes(id));
-  if (exactTargets.length === 1) return bindTarget(contract, exactTargets[0] as string);
-  if (exactTargets.length > 1) {
-    return { kind: 'clarify', reply: clarificationReply(contract, exactTargets) };
-  }
-
-  const distances = new Set<number>();
-  if (/(?:上上轮|上两轮|前两轮)/.test(userMessage)) distances.add(2);
-  if (/(?:上一轮|上一个回答|刚才(?:那|的)?(?:一轮|回答)?)/.test(userMessage)) {
-    distances.add(1);
-  }
-  const numbered = userMessage.match(/往前第\s*(\d{1,2})\s*轮/);
-  if (numbered?.[1]) distances.add(Number(numbered[1]));
-
-  if (distances.size === 1) {
-    const distance = [...distances][0] as number;
-    const target = (contract.prior_turn_order ?? contract.available_prior_turn_ids).at(-distance);
-    if (target && contract.restricted_prior_turn_ids?.includes(target))
-      return resolveDeterministicCorrectionContract(userMessage, {
-        ...contract,
-        restricted_target: true,
-      });
-    return target
-      ? bindTarget(contract, target)
-      : { kind: 'clarify', reply: clarificationReply(contract) };
-  }
-  if (distances.size > 1) {
-    return { kind: 'clarify', reply: clarificationReply(contract) };
-  }
-
-  if (!PRIOR_ANSWER_CUE.test(userMessage)) return { kind: 'normal', contract };
-  if (contract.restricted_prior_turn_ids?.length)
-    return {
-      kind: 'clarify',
-      reply: '请明确要更正的回复；仅用于本次回答的内容需要重新输入或粘贴后才能继续使用。',
-    };
-  if (contract.available_prior_turn_ids.length === 1) {
-    return bindTarget(contract, contract.available_prior_turn_ids[0] as string);
-  }
-  return { kind: 'clarify', reply: clarificationReply(contract) };
+  return { kind: 'normal', contract };
 }
 
 export function resolveCorrectionReply(
@@ -143,30 +74,29 @@ export function resolveCorrectionReply(
 ): CopilotCorrectionResolution {
   const matched = reply.match(CORRECTION_ENVELOPE);
   if (!matched) {
-    return contract.target_prior_turn_id === undefined
-      ? { kind: 'normal', reply: sanitizeProse(reply) }
-      : { kind: 'clarify', reply: clarificationReply(contract) };
+    return { kind: 'normal', reply: sanitizeProse(reply) };
   }
 
   let rawEnvelope: unknown;
   try {
     rawEnvelope = JSON.parse(matched[1]);
   } catch {
-    return { kind: 'clarify', reply: clarificationReply(contract) };
+    return { kind: 'clarify', reply: clarificationReply() };
   }
   const parsed = CorrectionEnvelopeSchema.safeParse(rawEnvelope);
   if (
     !parsed.success ||
-    contract.target_prior_turn_id === undefined ||
-    parsed.data.prior_turn_id !== contract.target_prior_turn_id ||
+    (contract.target_prior_turn_id !== undefined &&
+      parsed.data.prior_turn_id !== contract.target_prior_turn_id) ||
+    contract.restricted_prior_turn_ids?.includes(parsed.data.prior_turn_id) ||
     !contract.available_prior_turn_ids.includes(parsed.data.prior_turn_id)
   ) {
-    return { kind: 'clarify', reply: clarificationReply(contract) };
+    return { kind: 'clarify', reply: clarificationReply() };
   }
 
   const body = sanitizeProse(reply.slice(0, matched.index)).trimEnd();
   const fields = [
-    `更正目标 prior_turn_id：${parsed.data.prior_turn_id}`,
+    `更正对象：${contract.prior_turn_summaries?.[parsed.data.prior_turn_id] ?? '先前的回答'}`,
     `已变更：${parsed.data.changed.join('；') || '无'}`,
     `保留：${parsed.data.retained.join('；') || '无'}`,
     `不确定：${parsed.data.uncertain.join('；') || '无'}`,
