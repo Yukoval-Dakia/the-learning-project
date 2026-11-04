@@ -3,7 +3,7 @@
 // suggest, write), so no row ever reads as a generic "task".
 
 export const TOOL_LABELS: Readonly<Record<string, string>> = {
-  query_memory_brief: '学习概况',
+  query_context: '学习概况',
   generate_goal_outline: '目标大纲',
   generate_question_candidate: '题目草稿',
   get_subject_graph_overview: '知识概览',
@@ -21,7 +21,6 @@ export const TOOL_LABELS: Readonly<Record<string, string>> = {
   search_bank: '题库检索',
   read_bank: '题库内容',
   check_bank: '题库检查',
-  search_memory_facts: '记忆检索',
   propose_knowledge_edge: '知识关联提议',
   propose_knowledge_mutation: '知识调整提议',
   propose_learning_item_completion: '完成学习提议',
@@ -62,7 +61,7 @@ export function toolLabel(toolName: string): string {
 // one-line activity before the reply text arrives). Common tools get their own phrase; any other
 // tool reads as a verb by what it does plus its plain name, so no internal tool name ever shows.
 const ACTIVITY: Readonly<Record<string, string>> = {
-  query_memory_brief: '正在看你的学习概况',
+  query_context: '正在看你的学习概况',
   query_mistakes: '正在查你最近的错题',
   get_review_due: '正在看今天该复习什么',
   query_knowledge: '正在查相关的知识点',
@@ -78,7 +77,6 @@ const ACTIVITY: Readonly<Record<string, string>> = {
   search_bank: '正在题库里找题',
   read_bank: '正在读题库里的题',
   check_bank: '正在核对题库',
-  search_memory_facts: '正在回想你之前说过的情况',
   read_agent_notes: '正在看之前记下的学习笔记',
   write_agent_note: '正在记一条学习笔记',
   generate_question_candidate: '正在出题',

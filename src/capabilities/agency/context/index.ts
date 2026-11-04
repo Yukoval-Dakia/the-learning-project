@@ -1,7 +1,7 @@
 // Context 模块唯一读口（YUK-1794 B1）：按 agent 分 view 的 learner-context 装配。
-// 对外经 agency/public.ts 转出；非 agency 消费方走 kernel 端口
-// `read-models/learner-context`（启动时由 installAgencyHostOperations 绑定，
-// 不产生跨 capability 依赖边）。
+// 非 agency 消费方走 kernel 端口 `read-models/learner-context`（启动时由
+// installAgencyHostOperations 绑定，不产生跨 capability 依赖边）；agency 内
+// 部（host-operations、query_context 工具）直接引用本文件。
 
 import type { ContextViewName } from '@/ai/task-spec';
 import type { Db, Tx } from '@/db/client';

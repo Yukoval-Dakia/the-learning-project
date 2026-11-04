@@ -14,8 +14,6 @@ type DbLike = Db | Tx;
 
 export interface LearnerContextInput {
   readonly view: ContextViewName;
-  readonly subjectId?: string;
-  readonly scope?: string;
   readonly now?: Date;
 }
 
@@ -26,8 +24,11 @@ export interface LearnerContextResult {
   readonly markdown: string;
   /** Estimated prompt tokens of `markdown` (deterministic estimator, not a tokenizer). */
   readonly estimatedTokens: number;
-  /** High-water mark of the steady section (ISO); the delta section covers events after it. */
-  readonly asOf: string | null;
+  /** High-water mark the delta section covers events after (ISO): the last
+   *  Dreaming consolidation, or a fixed lookback bound when none has run yet. */
+  readonly asOf: string;
+  /** What `asOf` actually is: a real consolidation mark or the lookback fallback. */
+  readonly asOfBasis: 'dreaming' | 'lookback';
 }
 
 export type LearnerContextLoader = (

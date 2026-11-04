@@ -72,7 +72,7 @@ export const bankRequirementInterpretTaskSpec = {
     structuredOutputSchema: BankInterpretationSchema,
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '题库检索按需求语义匹配候选题，不读学习者上下文。',
     },
 
     prompt: {
@@ -101,7 +101,7 @@ export const bankConditionVerifyTaskSpec = {
     structuredOutputSchema: BankVerificationSchema,
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '题库检索按需求语义匹配候选题，不读学习者上下文。',
     },
 
     prompt: {

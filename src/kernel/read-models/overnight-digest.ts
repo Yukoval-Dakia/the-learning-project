@@ -1,5 +1,6 @@
 // Shared overnight facts and loader for Today, Start and Copilot.
-// The shared read model owns aggregation; Copilot owns its handoff sentence and failure policy.
+// The shared read model owns aggregation plus the one-line handoff sentence and
+// its failure policy (degrade to a fixed unavailable sentence, never throw).
 // Query and cost readers load lazily after the caller supplies its clock and DB.
 
 import type { ProviderCostWindow } from '@/core/schema/cost-observation';

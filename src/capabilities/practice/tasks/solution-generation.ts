@@ -56,7 +56,7 @@ export const solutionGenerateTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '解答生成只按题面与 rubric，不读学习者历史。',
     },
 
     prompt: { kind: 'profile', build: buildSolutionGeneratePrompt },
@@ -79,7 +79,7 @@ export const solutionGenerateVisionTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '解答生成只按题面与 rubric，不读学习者历史。',
     },
 
     prompt: { kind: 'profile', build: buildSolutionGenerateVisionPrompt },

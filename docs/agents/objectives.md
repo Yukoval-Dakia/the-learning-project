@@ -17,7 +17,7 @@
 - **Purpose**（AF §1.1 / §2.1）：唯一面向用户的对话 agent。全局挂载、自动拿当前上下文，可教学 / 解题 / 讲解 / 批评 / 规划 / 巡检。Teaching 是它的一个 skill/state，不是单独产品面。
 - **输入**：用户消息 + `CurrentUserContext` 信封（AF §5：route / surface / 单 active_ref；selection / 多 ref 是后续 pass）+ memory brief + 按需经工具拉的领域记录/事件。
 - **输出**：对话回复 + tool-card（工具调用外显）+ 走 propose_* 的提议（破坏性改动一律不直改）。
-- **工具面**：`allowlists.ts` 的 `COPILOT_TOOLS`（共 11 项 = 10 项安全 read + 1 项 propose；read 非 `READ_TOOLS` 全集 —— `query_context`（memory brief + facts 合并）+ 图概览/知识/事件/记录/记录上下文/题目/错题/attempt/复习到期 read，**不含** `expand_knowledge_subgraph` 子图展开、`find_knowledge_paths` 路径、`get_learning_item_context` 学习项 read；propose 仅 `propose_knowledge_edge`）；`copilot_user_suggested_mistake_action` 变体在用户显式触发时追加 `attribute_mistake` + `propose_variant`。YUK-1794：`query_memory_brief`+`search_memory_facts` 合并为 `query_context`（coach/dreaming/copilot 三编排角色授予）。
+- **工具面**：`allowlists.ts` 的 `COPILOT_TOOLS`（共 37 项，清单以 allowlists.ts 为真相源：read 面含 `query_context`（memory brief + facts 合并）、图谱/事件/记录/题目/错题/attempt/学习项/复习到期/题库三件/agent-notes 两件等；提案与写面含 `propose_*` 系列、`author_question`、`write_quiz`、`edit_question`、`author_artifact`/`update_artifact`、`compose_block`、`file_bank_gap` 等）；`copilot_user_suggested_mistake_action` 变体在用户显式触发时追加 `attribute_mistake` + `propose_variant`。YUK-1794：memory brief 与 facts 两层读合并为 `query_context`（coach/dreaming/copilot 三编排角色授予）。
 - **边界**：
   - proposal-only —— 破坏性领域改动只能提议，除非已有用户确认路由拥有该 mutation（owner = [ADR-0025 ND-5](../adr/0025-north-star-goal-entity-and-coach-coexistence.md) + [ADR-0004](../adr/0004-pattern-c-two-type-agent-architecture.md)，AF §1.2 / §3.3 只引用不重定义）。
   - 不持原始 DB mutation 能力；draft-layer 直改只在显式为该编辑设计的 surface 上（如 `ingestion_block_edit`，不在 Copilot 默认工具面）。

@@ -106,7 +106,7 @@ export const sourcingTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '来源检索按题目需求找材料，不读学习者上下文。',
     },
 
     prompt: { kind: 'profile', build: buildSourcingPrompt },

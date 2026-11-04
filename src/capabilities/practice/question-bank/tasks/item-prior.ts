@@ -89,7 +89,7 @@ export const itemPriorLlasaTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '题目先验当前只按题目与来源材料估计；学习者先验（memoryPrior）入口随 B3 接入。',
     },
 
     prompt: { kind: 'profile', build: buildItemPriorLlasaPrompt },
@@ -112,7 +112,7 @@ export const itemPriorTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '题目先验当前只按题目与来源材料估计；学习者先验（memoryPrior）入口随 B3 接入。',
     },
 
     prompt: { kind: 'profile', build: buildItemPriorPrompt },

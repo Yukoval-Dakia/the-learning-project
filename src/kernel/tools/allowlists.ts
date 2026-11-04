@@ -20,9 +20,8 @@ export const READ_TOOLS = [
   'get_question_context',
   'get_review_due',
   'get_learning_item_context',
-  // YUK-1794 B1 — merged Context warm-layer read (query_memory_brief +
-  // search_memory_facts → query_context). Granted to coach / dreaming / copilot
-  // below; NOT to evaluator surfaces.
+  // YUK-1794 B1 — Context warm-layer read (brief + facts layers). Granted to
+  // coach / dreaming / copilot below; NOT to evaluator surfaces.
   'query_context',
   // ADR-0072 LIGHT — 题库 agent 三工具（search/read/check）随各自竖切接入。
   // 授予 copilot surfaces；备题员面（ADR-0069 第一刀）落地时再扩。其余

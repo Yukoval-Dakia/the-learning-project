@@ -137,7 +137,7 @@ export const attributionTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '错因归因只按当次作答与既有错因标注装配输入；学习者画像不属归因证据。',
     },
 
     prompt: { kind: 'profile', build: buildAttributionPrompt },
@@ -162,7 +162,7 @@ export const attributionRerankTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '错因归因只按当次作答与既有错因标注装配输入；学习者画像不属归因证据。',
     },
 
     prompt: { kind: 'profile', build: buildAttributionRerankPrompt },

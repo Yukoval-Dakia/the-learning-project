@@ -85,7 +85,7 @@ export const variantGenTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '变式生成只按原题与错因标注装配输入，不读学习者历史。',
     },
 
     prompt: { kind: 'profile', build: buildVariantGenPrompt },

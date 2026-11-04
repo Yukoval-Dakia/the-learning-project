@@ -52,7 +52,7 @@ export const sourceGroundingVerifyTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '只校验题目内容是否落在给定来源材料上，与学习者历史无关。',
     },
 
     prompt: { kind: 'profile', build: buildSourceGroundingVerifyPrompt },

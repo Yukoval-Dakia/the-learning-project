@@ -6,12 +6,14 @@ import type { LearnerContextResult } from '@/kernel/read-models/learner-context'
 import { trimUnitsToBudget } from './budget';
 import { readContractSection } from './contract';
 import { readDeltaSection, shanghaiLabel } from './delta';
-import { readSteadySection } from './steady';
+import { DELTA_FALLBACK_LOOKBACK_MS, readSteadySection } from './steady';
 import type { DeltaSection } from './types';
 
 type DbLike = Db | Tx;
 
 const FAILURE_STREAK_HEADER_MIN = 3;
+
+const LOOKBACK_DAYS = Math.round(DELTA_FALLBACK_LOOKBACK_MS / (24 * 60 * 60 * 1000));
 
 function renderDelta(delta: DeltaSection): string {
   const lines: string[] = [];
@@ -24,10 +26,15 @@ function renderDelta(delta: DeltaSection): string {
     c.steering > 0 ? `目标调整 ${c.steering} 次` : '',
     c.messages > 0 ? `发言 ${c.messages} 次` : '',
   ].filter((p) => p.length > 0);
-  const scope = delta.asOf ? `自 ${shanghaiLabel(delta.asOf)} 固化以来` : '近期';
+  const scope =
+    delta.asOfBasis === 'dreaming'
+      ? `自 ${shanghaiLabel(delta.asOf)} 固化以来`
+      : `近 ${LOOKBACK_DAYS} 天`;
   lines.push(parts.length > 0 ? `${scope}：${parts.join('，')}` : `${scope}暂无新学习动态`);
   for (const line of delta.recent) lines.push(`· ${shanghaiLabel(line.at)} ${line.label}`);
-  const tail = [`今日待复习 ${delta.reviewDueCount} 项`];
+  const tail = [
+    `今日待复习 ${delta.reviewDueOverCap ? `${delta.reviewDueCount}+` : delta.reviewDueCount} 项`,
+  ];
   if (delta.failureStreak && delta.failureStreak.count >= FAILURE_STREAK_HEADER_MIN) {
     tail.push(`连续答错：${delta.failureStreak.knowledge_name}（${delta.failureStreak.count} 次）`);
   }
@@ -38,15 +45,17 @@ function renderDelta(delta: DeltaSection): string {
 
 /**
  * The companion startup segment: three sections read from existing read models,
- * rendered then deterministically trimmed to the view budget.
+ * rendered then deterministically trimmed to the view budget. The three reads
+ * are independent (not one snapshot); the segment is an advisory attention
+ * prior, so mild read skew is acceptable.
  */
 export async function assembleCompanionContext(
   db: DbLike,
   opts: { now: Date },
 ): Promise<LearnerContextResult> {
-  const steady = await readSteadySection(db);
+  const steady = await readSteadySection(db, { now: opts.now });
   const [delta, contract] = await Promise.all([
-    readDeltaSection(db, { asOf: steady.asOf, now: opts.now }),
+    readDeltaSection(db, { asOf: steady.asOf, asOfBasis: steady.asOfBasis, now: opts.now }),
     readContractSection(db, { now: opts.now }),
   ]);
 
@@ -69,6 +78,7 @@ export async function assembleCompanionContext(
     view: 'companion',
     markdown: trimmed.markdown,
     estimatedTokens: trimmed.estimatedTokens,
-    asOf: steady.asOf ? steady.asOf.toISOString() : null,
+    asOf: steady.asOf.toISOString(),
+    asOfBasis: steady.asOfBasis,
   };
 }

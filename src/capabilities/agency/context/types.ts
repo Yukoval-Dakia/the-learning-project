@@ -9,8 +9,10 @@ export type { ContextViewName };
 export interface SteadySection {
   /** global brief 的 recent_week_md，原文不改写；行不存在或非现行用途时为 null。 */
   portraitMd: string | null;
-  /** Δ 段高水位 = brief 覆盖到的最新证据时间（无证据时间退 refreshed_at）。 */
-  asOf: Date | null;
+  /** Δ 段高水位：最近一次成功 Dreaming 固化时间；无固化记录时为固定回看窗下界。 */
+  asOf: Date;
+  /** 'dreaming' = 真实固化水位；'lookback' = 尚无 Dreaming，退回固定回看窗。 */
+  asOfBasis: 'dreaming' | 'lookback';
 }
 
 export interface DeltaEventLine {
@@ -20,7 +22,8 @@ export interface DeltaEventLine {
 
 /** Δ 段读数：稳态段 as_of 之后的增量 + 今日到期 + 连错 + 最近活动。 */
 export interface DeltaSection {
-  asOf: Date | null;
+  asOf: Date;
+  asOfBasis: 'dreaming' | 'lookback';
   counts: {
     answers: number;
     reviews: number;
@@ -30,7 +33,9 @@ export interface DeltaSection {
     messages: number;
   };
   recent: DeltaEventLine[];
+  /** 到期读数（上限 REVIEW_DUE_DISPLAY_CAP）；达到上限时 reviewDueOverCap=true，渲染「50+」。 */
   reviewDueCount: number;
+  reviewDueOverCap: boolean;
   failureStreak: KnowledgeFailureStreak | null;
   lastActivityAt: Date | null;
 }

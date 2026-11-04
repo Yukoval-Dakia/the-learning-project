@@ -22,6 +22,7 @@ import './load-env';
 import { runCoach } from '@/capabilities/agency/jobs/coach_daily';
 import { runDreamingNightly } from '@/capabilities/agency/jobs/dreaming_nightly';
 import { runGoalScopeProposeNightly } from '@/capabilities/agency/jobs/goal_scope_propose_nightly';
+import { installAgencyHostOperations } from '@/capabilities/agency/public';
 import { loadSubjectBriefEvents } from '@/capabilities/agency/server/memory/active-subjects';
 import { regenerateMemoryBrief } from '@/capabilities/agency/server/memory/brief';
 import { buildBriefGenerator } from '@/capabilities/agency/server/memory/brief-writer';
@@ -67,6 +68,7 @@ async function step<T>(name: string, fn: () => Promise<T>): Promise<T | null> {
 
 async function main() {
   installSchedulingCandidateRebuild();
+  await installAgencyHostOperations();
   console.log(`\n#### Layer-8 flywheel demo — loom_demo, real LLM, ${NOW.toISOString()} ####`);
 
   const gen = buildBriefGenerator({ db });
@@ -88,7 +90,7 @@ async function main() {
       generate: gen,
     });
   });
-  await step('2. read query_memory_brief(global) — what the orchestrator sees', async () => {
+  await step('2. read memory brief(global) — what the orchestrator sees', async () => {
     const out = await executeMemoryBrief(toolCtx, { scopeKey: 'global', includeEvidence: true });
     show('recent_week_md', out.note?.recent_week_md);
     show('long_term_md', out.note?.long_term_md);

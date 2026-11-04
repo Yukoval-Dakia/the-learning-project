@@ -27,26 +27,33 @@ export interface TrimUnit {
 /**
  * Trim ordered units to the token budget by dropping the lowest-priority present
  * units first (昨夜 → 信号 → 稳态画像 → 掌握和错因 → Δ；Steering 永不整段丢）。
- * Only when the remainder still overflows does the highest-priority unit get a
- * raw char truncation — the deterministic rule the design fixes at code level.
+ * Only when the remainder still overflows does it get a sentence-boundary
+ * truncation marked with … — never a mid-sentence cut, and rank 0 (Steering)
+ * keeps every complete sentence that fits.
  */
 export function trimUnitsToBudget(
   units: readonly TrimUnit[],
   budget = LEARNER_CONTEXT_STARTUP_BUDGET,
-): { markdown: string; estimatedTokens: number; droppedRanks: number[] } {
+): { markdown: string; estimatedTokens: number } {
   const kept = units
     .filter((u): u is TrimUnit & { markdown: string } => !!u.markdown && u.markdown.length > 0)
     .sort((a, b) => a.rank - b.rank);
-  const droppedRanks: number[] = [];
   const render = () => kept.map((u) => u.markdown).join('\n');
 
   // Drop the largest-rank (lowest-priority) unit until the estimate fits; rank 0
-  // (Steering) is never dropped whole — it takes the char fallback instead.
+  // (Steering) is never dropped whole — it takes the boundary truncation instead.
   while (kept.length > 1 && estimateTokens(render()) > budget.maxEstimatedTokens) {
-    const drop = kept.pop();
-    if (drop) droppedRanks.push(drop.rank);
+    kept.pop();
   }
   let md = render();
-  if (md.length > budget.maxChars) md = md.slice(0, budget.maxChars);
-  return { markdown: md, estimatedTokens: estimateTokens(md), droppedRanks };
+  if (md.length > budget.maxChars) {
+    const slice = md.slice(0, budget.maxChars);
+    const boundary = Math.max(
+      slice.lastIndexOf('。'),
+      slice.lastIndexOf('\n'),
+      slice.lastIndexOf('；'),
+    );
+    md = `${boundary > 0 ? slice.slice(0, boundary + 1) : slice}…`;
+  }
+  return { markdown: md, estimatedTokens: estimateTokens(md) };
 }

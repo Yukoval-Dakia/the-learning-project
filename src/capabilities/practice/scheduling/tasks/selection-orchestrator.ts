@@ -64,7 +64,7 @@ export const selectionOrchestratorTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '选题编排将消费 L2 memoryPrior（设计 §1.4），该入口随 B3 接入；当前按调度读数装配。',
     },
 
     prompt: { kind: 'profile', build: buildSelectionOrchestratorPrompt },

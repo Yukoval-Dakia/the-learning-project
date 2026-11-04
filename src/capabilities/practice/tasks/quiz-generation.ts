@@ -109,7 +109,7 @@ export const quizGenTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '组卷生成按题目清单与约束装配；学习者上下文入口随 B3 轻量 view 接入。',
     },
 
     prompt: { kind: 'profile', build: buildQuizGenPrompt },

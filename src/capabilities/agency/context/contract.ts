@@ -1,7 +1,8 @@
 // 契约段（代码产出，全部来自已有读模型，不重复计算）：
-//   - Steering：listActiveGoalsWithResolvedScope，学习者原话
+//   - Steering：listActiveGoalsWithResolvedScope 的 goal title（YUK-1770 的原话
+//     与时间窗字段未在 main，落地后从这里换读）
 //   - 掌握度：readLearnerJudgments 的白话档，含不确定度，uncalibrated 照实标注
-//   - 错因：现有 top 错因口径（P4 的 readCauseJudgment 落地后从这里换读，留接口位）
+//   - 错因：现有 top 错因口径（P4 的 readCauseJudgment 落地后从这里换读）
 //   - 信号：判断批次的不确定备注；昨夜交班句
 // 所有确定性数字带 n；n 不够写「样本少」，不给数字。
 
@@ -14,10 +15,7 @@ import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
-import {
-  type LoadTodayOvernightDigest,
-  readOvernightHandoffSentence,
-} from '@/kernel/read-models/overnight-digest';
+import { readOvernightHandoffSentence } from '@/kernel/read-models/overnight-digest';
 import type { ContractSection } from './types';
 
 type DbLike = Db | Tx;
@@ -146,21 +144,14 @@ function rankTopCauseCategories(
     .map(([cause, count]) => ({ cause, count }));
 }
 
-export interface ReadContractDeps {
-  loadOvernightDigestFn?: LoadTodayOvernightDigest;
-  // P4 接口位：错因判断读数落地后经此注入，不再现算 top 错因。
-  readCauseJudgmentFn?: (db: DbLike) => Promise<{ cause: string; count: number }[]>;
-}
-
 export async function readContractSection(
   db: DbLike,
   opts: { now: Date },
-  deps: ReadContractDeps = {},
 ): Promise<ContractSection> {
   const [goals, failures, overnightMd] = await Promise.all([
     listActiveGoalsWithResolvedScope(db as Db),
     getFailureAttempts(db, { limit: FAILURE_SCAN_LIMIT }),
-    readOvernightHandoffSentence(db, deps.loadOvernightDigestFn),
+    readOvernightHandoffSentence(db),
   ]);
 
   const steeringMd =
@@ -192,10 +183,7 @@ export async function readContractSection(
     masteryMd = `${masteryMd} ${sum.coreSentence}`;
   }
 
-  // P4 readCauseJudgment 未落地前沿用 top 错因现算；落地后走注入读数。
-  const causes = deps.readCauseJudgmentFn
-    ? await deps.readCauseJudgmentFn(db)
-    : rankTopCauseCategories(failures, 2);
+  const causes = rankTopCauseCategories(failures, 2);
   if (causes.length > 0) {
     causesMd =
       failures.length < MIN_SAMPLE

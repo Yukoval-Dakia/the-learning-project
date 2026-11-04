@@ -62,7 +62,7 @@ export const sessionSummaryTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '只汇总当次练习会话的作答明细，不读会话外学习者历史。',
     },
 
     prompt: { kind: 'profile', build: buildSessionSummaryPrompt },

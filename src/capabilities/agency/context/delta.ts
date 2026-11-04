@@ -4,7 +4,8 @@
 //
 // 受限内容闸：增量只读 `eventAllowsDerivationSql()` 通过的行 —— crisis / 受限
 // 用途事件（含危机倾诉、未授权照片派生）永远不会进启动段。模板一句话只渲染
-// 动作类别与 outcome 词，不回放学习者自由文本。
+// 动作类别与 outcome 词，不回放学习者自由文本；answer_only / crisis 回合的
+// 发言也因此不计入「发言 N 次」。
 
 import { and, desc, eq, gt, inArray, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
@@ -28,11 +29,13 @@ const RECORD_CAPTURE_ACTION = 'experimental:record_capture';
 const REVIEW_ACTION = 'review';
 const ATTEMPT_ACTION = 'attempt';
 const RATE_ACTION = 'rate';
-const GOAL_ACTIONS = new Set([
-  'experimental:genesis',
+// 「目标调整」只认学习者本人的 status/scope 变更；建档时的 system genesis 事件不算。
+const STEERING_ACTIONS = [
   'experimental:goal_status_update',
   'experimental:goal_scope_update',
-]);
+] as const;
+/** 「今日待复习」读数上限（端口 limit max(50)）；达到上限如实标「50+」。 */
+const REVIEW_DUE_DISPLAY_CAP = 50;
 
 const SHANGHAI_HOUR_MIN = new Intl.DateTimeFormat('en-GB', {
   timeZone: 'Asia/Shanghai',
@@ -85,21 +88,47 @@ function lineFor(row: {
   return '学习动态';
 }
 
+function deltaEventPredicate(asOf: Date) {
+  return and(
+    // Restricted-purpose events (crisis disclosures, consent-scoped
+    // derivations) are excluded here, before any template sees them.
+    eventAllowsDerivationSql(),
+    or(
+      and(
+        eq(event.actor_kind, 'user'),
+        inArray(event.action, [
+          ...LEARNER_ANSWER_ACTIONS,
+          RECORD_CAPTURE_ACTION,
+          RATE_ACTION,
+          COPILOT_USER_ASK_ACTION,
+        ]),
+      ),
+      and(
+        eq(event.subject_kind, 'goal'),
+        eq(event.actor_kind, 'user'),
+        inArray(event.action, [...STEERING_ACTIONS]),
+      ),
+    ),
+    gt(event.created_at, asOf),
+  );
+}
+
 /**
- * Read the delta segment. `asOf` is the steady section's high-water; when there
- * is no steady row the segment falls back to the newest DELTA_SCAN_LIMIT events
- * and is labelled 近期 (no "since consolidation" claim).
+ * Read the delta segment: events after `asOf` (the consolidation high-water),
+ * counted exactly by a grouped aggregate — the DELTA_SCAN_LIMIT rows only feed
+ * the "最近 3 条" lines, never the numbers.
  */
 export async function readDeltaSection(
   db: DbLike,
-  opts: { asOf: Date | null; now: Date },
+  opts: { asOf: Date; asOfBasis: 'dreaming' | 'lookback'; now: Date },
 ): Promise<DeltaSection> {
   const toolCtx: ToolContext = {
     db: db as ToolContext['db'],
     taskRunId: 'learner-context-delta',
     callerActor: { kind: 'system', ref: 'learner-context' },
   };
-  const [rows, due, streak, lastActivityAt] = await Promise.all([
+  const predicate = deltaEventPredicate(opts.asOf);
+  const [rows, countRows, due, streak, lastActivityAt] = await Promise.all([
     db
       .select({
         action: event.action,
@@ -109,51 +138,44 @@ export async function readDeltaSection(
         created_at: event.created_at,
       })
       .from(event)
-      .where(
-        and(
-          // Restricted-purpose events (crisis disclosures, consent-scoped
-          // derivations) are excluded here, before any template sees them.
-          eventAllowsDerivationSql(),
-          or(
-            and(
-              eq(event.actor_kind, 'user'),
-              inArray(event.action, [
-                ...LEARNER_ANSWER_ACTIONS,
-                RECORD_CAPTURE_ACTION,
-                RATE_ACTION,
-                COPILOT_USER_ASK_ACTION,
-              ]),
-            ),
-            eq(event.subject_kind, 'goal'),
-          ),
-          opts.asOf ? gt(event.created_at, opts.asOf) : undefined,
-        ),
-      )
+      .where(predicate)
       .orderBy(desc(event.created_at), desc(event.id))
       .limit(DELTA_SCAN_LIMIT),
-    executeGetReviewDue(toolCtx, { limit: 50 }),
+    db
+      .select({
+        action: event.action,
+        subject_kind: event.subject_kind,
+        n: sql<number>`count(*)::int`,
+      })
+      .from(event)
+      .where(predicate)
+      .groupBy(event.action, event.subject_kind),
+    executeGetReviewDue(toolCtx, { limit: REVIEW_DUE_DISPLAY_CAP }),
     loadLongestFailureStreak(db),
     loadLastLearnerEventAt(db),
   ]);
 
   const counts = { answers: 0, reviews: 0, captures: 0, decisions: 0, steering: 0, messages: 0 };
-  for (const row of rows) {
-    if (row.subject_kind === 'goal' && GOAL_ACTIONS.has(row.action)) {
-      counts.steering += 1;
+  for (const row of countRows) {
+    if (row.subject_kind === 'goal') {
+      counts.steering += row.n;
       continue;
     }
-    if (row.action === ATTEMPT_ACTION || row.action === NATIVE_ATTEMPT_ACTION) counts.answers += 1;
-    else if (row.action === REVIEW_ACTION) counts.reviews += 1;
-    else if (row.action === RECORD_CAPTURE_ACTION) counts.captures += 1;
-    else if (row.action === RATE_ACTION) counts.decisions += 1;
-    else if (row.action === COPILOT_USER_ASK_ACTION) counts.messages += 1;
+    if (row.action === ATTEMPT_ACTION || row.action === NATIVE_ATTEMPT_ACTION)
+      counts.answers += row.n;
+    else if (row.action === REVIEW_ACTION) counts.reviews += row.n;
+    else if (row.action === RECORD_CAPTURE_ACTION) counts.captures += row.n;
+    else if (row.action === RATE_ACTION) counts.decisions += row.n;
+    else if (row.action === COPILOT_USER_ASK_ACTION) counts.messages += row.n;
   }
 
   return {
     asOf: opts.asOf,
+    asOfBasis: opts.asOfBasis,
     counts,
     recent: rows.slice(0, 3).map((row) => ({ at: row.created_at, label: lineFor(row) })),
     reviewDueCount: due.queue_summary.total_returned,
+    reviewDueOverCap: due.queue_summary.total_returned >= REVIEW_DUE_DISPLAY_CAP,
     failureStreak: streak,
     lastActivityAt,
   };

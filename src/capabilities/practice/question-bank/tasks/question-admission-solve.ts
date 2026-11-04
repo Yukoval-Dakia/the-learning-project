@@ -447,7 +447,7 @@ export const questionAdmissionSolveTaskSpec = {
     ]),
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '准入解题只验证题目本身可解且答案正确，不读学习者历史。',
     },
 
     prompt: { kind: 'inline', text: PROMPT },

@@ -45,7 +45,7 @@ export const variantVerifyTaskSpec = {
     // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: '变式校验只评题目本身正确性，与学习者历史无关。',
     },
 
     prompt: { kind: 'profile', build: buildVariantVerifyPrompt },

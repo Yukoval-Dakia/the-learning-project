@@ -28,7 +28,7 @@ export const dreamingTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+      reason: 'Dreaming 是 Context 的固化方：按夜链 job 输入直接读事件与记忆，不经 view。',
     },
 
     prompt: {

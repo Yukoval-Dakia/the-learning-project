@@ -31,7 +31,7 @@ export const coachTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+      reason: 'coach_daily 按既有 job 输入装配（今日计划与提议读数）；Context view 在 B2 接入。',
     },
 
     prompt: {

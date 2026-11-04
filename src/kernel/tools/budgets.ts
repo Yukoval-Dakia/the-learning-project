@@ -233,7 +233,7 @@ export const COPILOT_HISTORY_BUDGET: CopilotHistoryBudget = {
 };
 
 // CROSS-REFERENCE (PR #717 round-2 OCR fix #1) — `totalChars` above bounds the
-// PINNED learner-state header too (chat.ts's assembleConversationHistory reserves
+// PINNED learner-state header too (copilot-run-input.ts's assembleConversationHistory reserves
 // the header's char cost first, before the oldest-first drop loop touches real
 // turns). The pinned header is the Context startup segment (agency/context,
 // LEARNER_CONTEXT_STARTUP_BUDGET ≤1000 est tokens, 2400-char hard cap); its raw

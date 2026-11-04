@@ -34,7 +34,7 @@ export const assessmentRubricTaskSpec = {
     structuredOutputSchema: AssessmentRubricDecision,
     context: {
       view: 'none',
-      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+      reason: 'rubric 判分只评当次作答与题面；学习者上下文是判分偏差来源，按设计不读。',
     },
 
     prompt: {

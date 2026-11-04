@@ -39,7 +39,7 @@ export const memoryBriefTaskSpec = {
     // per-profile builder.
     context: {
       view: 'none',
-      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+      reason: 'brief 写作任务产出稳态段内容本身，按 writer 输入装配，不读 view。',
     },
 
     prompt: {

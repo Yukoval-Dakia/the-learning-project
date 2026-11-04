@@ -89,7 +89,7 @@ export const mindModelInductionTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+      reason: '猜想归纳按既有证据集装配，不读学习者画像 view。',
     },
 
     prompt: { kind: 'profile', build: buildMindModelInductionPrompt },
@@ -117,7 +117,7 @@ export const conjectureGroupingTaskSpec = {
     allowedTools: [],
     context: {
       view: 'none',
-      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+      reason: '猜想归纳按既有证据集装配，不读学习者画像 view。',
     },
 
     prompt: {

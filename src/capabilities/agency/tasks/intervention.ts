@@ -93,7 +93,7 @@ export const interventionRecommendationTaskSpec = {
     structuredOutputSchema: PedagogyRecommendationStructuredOutput,
     context: {
       view: 'none',
-      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+      reason: '干预推荐与题目准备按干预快照及诊断输入装配，不读学习者画像 view。',
     },
 
     prompt: {
@@ -133,7 +133,7 @@ export const interventionPackageAuthorTaskSpec = {
     structuredOutputSchema: InterventionPackageStructuredOutput,
     context: {
       view: 'none',
-      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+      reason: '干预推荐与题目准备按干预快照及诊断输入装配，不读学习者画像 view。',
     },
 
     prompt: { kind: 'profile', build: buildInterventionPackageAuthorPrompt },
@@ -160,7 +160,7 @@ export const interventionPackageReviewTaskSpec = {
     structuredOutputSchema: InterventionPackageReviewStructuredOutput,
     context: {
       view: 'none',
-      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+      reason: '干预推荐与题目准备按干预快照及诊断输入装配，不读学习者画像 view。',
     },
 
     prompt: { kind: 'profile', build: buildInterventionPackageReviewPrompt },
