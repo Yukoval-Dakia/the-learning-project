@@ -39,6 +39,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
         mime_type: source_asset.mime_type,
         byte_size: source_asset.byte_size,
         sha256: source_asset.sha256,
+        provenance: source_asset.provenance,
       })
       .from(source_asset)
       .where(eq(source_asset.id, id))
@@ -65,19 +66,33 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     // 处理，绝不在本站以可执行或可渲染的类型返回。nosniff 全部都带。
     const codeAssetMime =
       row.mime_type === 'text/javascript' || row.mime_type === 'application/javascript';
+    // YUK-1548 §2.3 — only rows written by the svg_figure immutable writer
+    // (provenance + svf_ id + reserved storage prefix) may serve SVG inline.
+    // Every other SVG stays a download. The bytes are already rebuilt from the
+    // allowlist at compose time; CSP + nosniff keep direct-open inert.
+    const svgFigure =
+      row.mime_type === 'image/svg+xml' &&
+      row.provenance?.source_kind === 'svg_figure' &&
+      /^svf_[0-9a-f]{32}$/.test(row.id) &&
+      row.storage_key.startsWith('assets/svg-figure/');
     const displayableImage = DISPLAYABLE_IMAGE_MIMES.has(row.mime_type);
-    const servedHeaders: Record<string, string> = codeAssetMime
+    const servedHeaders: Record<string, string> = svgFigure
       ? {
-          'Content-Type': 'text/plain; charset=utf-8',
+          'Content-Type': 'image/svg+xml',
           'Content-Security-Policy': "sandbox; default-src 'none'",
         }
-      : displayableImage
-        ? { 'Content-Type': row.mime_type }
-        : {
-            'Content-Type': 'application/octet-stream',
-            'Content-Disposition': 'attachment',
+      : codeAssetMime
+        ? {
+            'Content-Type': 'text/plain; charset=utf-8',
             'Content-Security-Policy': "sandbox; default-src 'none'",
-          };
+          }
+        : displayableImage
+          ? { 'Content-Type': row.mime_type }
+          : {
+              'Content-Type': 'application/octet-stream',
+              'Content-Disposition': 'attachment',
+              'Content-Security-Policy': "sandbox; default-src 'none'",
+            };
     return new Response(new Uint8Array(bytes), {
       status: 200,
       headers: {
