@@ -7,16 +7,16 @@
 |------|------|
 | `manifest.ts` | 组合根：根目录条目加各子 owner 的 `manifest-part.ts`，按固定顺序拼接（路由注册顺序即匹配顺序） |
 | `<owner>/` | 子 owner 目录（grading、settlement、question-bank、failure-learning、session、scheduling、supply、placement），各有 `public.ts` 与 `manifest-part.ts`；根目录其余文件归练习面，尚未迁出的按 `scripts/audit-practice-subowners.ts` 的映射计归属 |
-| `api/*.ts` | appeal、solve 与共享契约；作答/发卷/提交路由在 `grading/api/`，定位路由在 `placement/api/` |
+| `api/*.ts` | solve 与共享契约；申诉路由在 `settlement/api/`；作答/发卷/提交路由在 `grading/api/`，定位路由在 `placement/api/` |
 | `placement/server/placement-session-lifecycle.ts` | Placement 完整状态操作与运行时 flag；跨域 orphan 操作经 `public.ts` |
 | `grading/` | 作答与判分：发卷/草稿/提交路由、formal attempt、判分路由与判分器、DBOS judge 投递与 pending 对账、判分校准采样、模型执行器（Jev/Rubric/Pi）与模型切片登记、`model_slice_admission_run`；结算经 `settlement/public.ts` 调用 |
-| `question-bank/` | 题库与准入：题目目录与编辑、`/api/questions*`、`/api/review/drafts*`、检索工具、准入框架（`server/admission/*`、`server/quiz/verify-*`、`jobs/{quiz,variant,source}_verify`、`question_admission_run`）、暂不出题复检（`serving-actions` 与订阅 `practice.serving-recheck@v1`）、难度标定（item prior / recalibration / fixed anchor）与回填 job、干预包作者 |
+| `question-bank/` | 题库与准入：题目目录与编辑、`/api/questions*`、`/api/review/drafts*`、检索工具、准入框架（`server/admission/*`、`server/quiz/verify-*`、`jobs/{quiz,variant,source}_verify`、`question_admission_run`）、暂不出题复检（`serving-actions` 与订阅 `practice.serving-recheck@v1`）、难度标定（item prior / fixed anchor，重新校准在 `settlement/`）与回填 job、干预包作者 |
 | `question-bank/server/verify-dispatch-outbox.ts` | 验证 intent、同事务派发与 orphan 恢复；基础设施 adapter 在 `src/server/boss/verify-dispatch-recovery.ts` |
 | `supply/server/coverage-lattice.ts` / `api/coverage-lattice.ts` | 供题覆盖细目只读读模型与 `/api/admin/coverage-lattice`：供题扫描器四规则的 KC 池级覆盖 + 缺口 targets + 供给活动聚合；Observability admin 页只展示 |
 | `failure-learning/server/failure-learning.ts` | 失败尝试 eligibility、归因、变式提议的 owner operation；durable subscriber 只调用该入口 |
 | `server/` | 练习面：解题辅导/提示会话（`solve-*`、`tutor-session`、`hint-explanation`）、配置生效事实、对话确认题、`worksheet/region-map-validate`（§4.2 暂留）。另有待落位余项：供题生成（`question-generation-grounding`、`supply-plan-operation`、`web-sourcing-operation`、`quiz/*`、`tools/` 下其余候选工具，功能线落位到 `supply/`） |
 | `jobs/` | 根目录只剩待落位余项：供题生成（`quiz_gen*`、`supply_planner`、`jyeoo_staged_asset_reap`）；`rejudge*` 已在 `settlement/jobs/` |
-| `settlement/` | 结算与撤回重放：申诉请求与裁决（`server/appeal*`、`server/appeal-execution` 的 `authorizeConfirmationCorrection`）、`judge_retraction` accept、`attempt-snapshot` 快照括号、复习作答绑定（`review-answer-binding`）、`rejudge` job 与 `propose_grading_correction` 工具；判分侧的评价槽分配（`reservedEvaluationAttempt`、`bindAppealExecution`）在 grading，settlement 经 grading public 消费其 receipt 契约。settle 全族与校准规则在 `server/`，跨 owner 的级联撤回经 kernel 端口由组合根安装|
+| `settlement/` | 结算与撤回重放：申诉请求与裁决（`server/appeal*`、`server/appeal-execution` 的 `authorizeConfirmationCorrection`）、`judge_retraction` accept、`attempt-snapshot` 快照括号、复习作答绑定（`review-answer-binding`）、`rejudge` job 与 `propose_grading_correction` 工具；判分侧的评价槽分配（`reservedEvaluationAttempt`、`bindAppealExecution`）在 grading，两边的回执契约在 `kernel/records/appeal-execution-binding`。settle 全族与校准规则在 `server/`，跨 owner 的级联撤回经 kernel 端口由组合根安装|
 | `tasks/` / `tools/` | `tasks/index.ts` 组合各 owner 的 TaskSpec；根 `tasks/` 其余是练习面的 `teaching-quality` 与待落位的供题生成 TaskSpec；`tools/types.ts` 是共享工具类型 |
 | `ui/` | PracticeFacePage；`ui/library/` 题目库（全部 / 做错过 / 待审核 / 暂不出题）与单题页 |
 
