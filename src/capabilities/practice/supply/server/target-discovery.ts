@@ -155,7 +155,7 @@ export interface PoolQuestion {
   difficulty: number;
   /**
    * effectiveB = b_post ?? b_anchor ?? b。有 item_calibration 行（任一
-   * b 列非空）→ 一个**可靠锚**（mastery/selection 用的同一 b 解析，src/server/mastery/recalibration
+   * b 列非空）→ 一个**可靠锚**（mastery/selection 用的同一 b 解析，src/capabilities/practice/settlement/server/recalibration
    * effectiveB），band 归类优先用它。null = 无 item_calibration 行（纯 difficulty proxy，非可靠锚）。
    * 关键：b_anchor/b 是 ItemPriorTask 写的冷启锚（real anchor），**不是** difficultyToLogitB
    * 弱 proxy——effectiveB 退回 b_anchor ?? b 仍是可靠锚，故 R3「只信真实标定」与本字段不冲突。
@@ -326,7 +326,7 @@ function isRecallKind(kind: QuestionKindT): boolean {
 }
 
 // 客观题（可机判，校准首选 grounded 客观题）。判分路由落 exact/keyword（OBJECTIVE_JUDGE_ROUTES，
-// src/server/mastery/personalized-difficulty.ts）的题型：choice/true_false → exact，
+// src/capabilities/practice/settlement/server/personalized-difficulty.ts）的题型：choice/true_false → exact，
 // fill_blank → exact|keyword（defaultJudgeKindForQuestion）。三者皆 active-PPI 可标定。
 // YUK-391 (kind Step 4)：不再手维护 kind 集合——由 answer-class 单一真相派生
 // （OBJECTIVE_ANSWER_KINDS = class 在任何 keyword 形态下都落 exact|keyword 的

@@ -31,7 +31,7 @@ import {
   normalizeQuestionRowToContract,
 } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { activateEvaluation, insertInitialEvaluationHead } from './activate';
 import { ASSESSMENT_SETTLEMENT_ACTION, learningSettlement } from './settle';
 

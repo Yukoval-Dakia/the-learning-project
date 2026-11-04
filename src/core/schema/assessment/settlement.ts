@@ -14,7 +14,7 @@ import type { ScoringBasisT, ScoringUnitT } from './scoring';
 //
 // 本模块只做【无 IO 的确定性判定】：evaluation verdict → 局部证据（per-KC
 // obs）→ FSRS 评级 / θ̂ 更新决策。DB 编排（锁序、快照 bracket、有序 replay）
-// 在 `src/server/assessment/settle.ts`；本文件不得 import 任何 IO 依赖。
+// 在 `src/capabilities/practice/settlement/server/settle.ts`；本文件不得 import 任何 IO 依赖。
 //
 // 已批准决策映射（decisions 文件逐条对应）：
 //
