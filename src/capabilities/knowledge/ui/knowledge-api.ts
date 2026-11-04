@@ -8,7 +8,7 @@ import {
   apiOperationJson,
 } from '@/ui/lib/api';
 
-// ── 树快照（loadTreeSnapshot wire：knowledge 行 + mastery 视图 join） ──
+// ── 树快照（loadTreeSnapshot wire：knowledge 行 + mastery_state 投影 + 事件脊活动时钟） ──
 type KnowledgeTreeWire = ApiOperationJsonResponse<'getKnowledgeTreeSnapshot'>['rows'][number];
 export type KnowledgeTreeNode = Pick<
   KnowledgeTreeWire,
@@ -121,7 +121,7 @@ export const createEdge = (input: ApiOperationRequestBody<'createKnowledgeEdge'>
 export type KnowledgeNodePage = ApiOperationJsonResponse<'getKnowledgeNode'>;
 export type NoteSummary = Pick<
   KnowledgeNodePage['notes'][number],
-  'id' | 'type' | 'title' | 'knowledge_ids' | 'verification_status' | 'updated_at'
+  'id' | 'type' | 'title' | 'knowledge_ids' | 'updated_at'
 >;
 export type NodePageMeshNeighbor = KnowledgeNodePage['mesh_neighbors'][number];
 export type NodePageChild = KnowledgeNodePage['children'][number];

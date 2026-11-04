@@ -1144,7 +1144,7 @@ function PlacementQuestionCard({
         </div>
       ))}
       {frozen?.faces.map((face) => (
-        <MathMarkdown key={face.part_id} className="un-ob-pl-stem" notation={notation}>
+        <MathMarkdown key={face.part_id} className="un-ob-pl-stem un-read" notation={notation}>
           {face.prompt_md}
         </MathMarkdown>
       ))}

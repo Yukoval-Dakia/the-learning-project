@@ -367,24 +367,10 @@
 
   /* The paper's summary: one tonal panel (secondary container), not a card with a shadow. */
   & .pf-retro-summary {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--un-sp-4);
     padding: 20px 24px;
     border-radius: 24px;
     background: var(--un-md-sys-color-secondary-container);
     color: var(--un-md-sys-color-on-secondary-container);
-  }
-
-  & .pf-retro-ava {
-    display: grid;
-    flex: none;
-    place-items: center;
-    width: 36px;
-    height: 36px;
-    border-radius: var(--un-md-sys-shape-full);
-    background: var(--un-md-sys-color-surface-container-lowest);
-    color: var(--un-md-sys-color-primary);
   }
 
   & .pf-retro-summary-text {
