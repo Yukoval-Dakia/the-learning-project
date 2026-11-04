@@ -108,6 +108,19 @@ export const EvidenceAgeSchema = z.discriminatedUnion('kind', [
 ]);
 export type EvidenceAge = z.infer<typeof EvidenceAgeSchema>;
 
+// unified evidence timing derived at read time, replacing the
+// deprecated knowledge_mastery view's last_evidence_at / last_active_at
+// columns. The practice clock (preferred) is the mastery_state settlement
+// time; the any-event clock is the latest event touching the node, derived
+// from the event spine. No new table. Null also covers a failed any-event
+// derivation: this is a display clock, so it fails soft per item instead of
+// failing the batch.
+export const EvidenceTimingSchema = z.object({
+  last_outcome_at: z.date().nullable(),
+  last_activity_at: z.date().nullable(),
+});
+export type EvidenceTiming = z.infer<typeof EvidenceTimingSchema>;
+
 export const ComponentDisagreementSchema = z.discriminatedUnion('kind', [
   UnknownSchema,
   z.object({
@@ -251,6 +264,7 @@ export const LearnerJudgmentSchema = z.object({
   ]),
   ability_claim: AbilityClaimSchema,
   retention: RetentionSchema,
+  evidence_timing: EvidenceTimingSchema,
   review_timing: ReviewTimingSchema,
   retention_forecast: UnknownSchema,
   uncertainty: z.object({

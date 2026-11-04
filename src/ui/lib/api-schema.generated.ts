@@ -22416,7 +22416,7 @@ export interface operations {
                         /** Format: date-time */
                         updated_at: string;
                         verification_status: string;
-                        verification_summary: {
+                        verification_summary: ({
                             confidence: number;
                             issues: {
                                 block_id: string | null;
@@ -22430,7 +22430,20 @@ export interface operations {
                             summary_md: string;
                             /** @enum {string} */
                             verdict: "pass" | "needs_review";
-                        } | null;
+                        } | {
+                            issues: {
+                                block_id: string | null;
+                                /** @enum {string} */
+                                category: "factuality" | "coverage" | "clarity" | "subject_fit" | "format" | "safety";
+                                message: string;
+                                /** @enum {string} */
+                                severity: "info" | "warn" | "error";
+                                suggested_fix_md?: string;
+                            }[];
+                            /** @enum {string} */
+                            kind: "known_issues";
+                            summary_md: string;
+                        }) | null;
                         version: number;
                     };
                 };

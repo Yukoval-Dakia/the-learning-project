@@ -1,12 +1,12 @@
 {
   "MISCONCEPTION_PROMOTE_ENABLED": {
     "kind": "env",
-    "literals": ["true", "1"],
+    "literals": ["false", "0"],
     "case_insensitive": true,
-    "polarity": "opt-in",
+    "polarity": "opt-out",
     "reader_marker": "getConfigFlag('MISCONCEPTION_PROMOTE_ENABLED')",
     "file": "src/capabilities/agency/server/misconception-promote.ts",
-    "notes": "gates misconception promote. Opt-in/default OFF; parsed via shared parseFlag. Reader is LIVE (conjecture-accept.ts:167) — unlike the hard-confirm half; see ADR-0050 §(b2)."
+    "notes": "gates misconception promote. Opt-out/default ON; parsed via shared parseFlag. Reader is LIVE (conjecture-accept.ts:167) — unlike the hard-confirm half; see ADR-0050 §(b2)."
   },
   "MISCONCEPTION_HARD_CONFIRM_ENABLED": {
     "kind": "env",
@@ -28,12 +28,12 @@
   },
   "PLACEMENT_PROBE_ENABLED": {
     "kind": "env",
-    "literals": ["true"],
-    "case_insensitive": false,
-    "polarity": "opt-in",
+    "literals": ["false", "0"],
+    "case_insensitive": true,
+    "polarity": "opt-out",
     "reader_marker": "getConfigFlag('PLACEMENT_PROBE_ENABLED')",
     "file": "src/capabilities/practice/placement/server/placement-session-lifecycle.ts",
-    "notes": "Placement probe gate, default OFF. Registry preserves only exact env 'true' (not '1', case variants or whitespace); compose-pinned and DB override ignored. Metadata correction only; reader unchanged."
+    "notes": "Placement probe gate. Opt-out/default ON; parsed via shared parseFlag."
   },
   "QUESTION_SUPPLY_REFILL_ENABLED": {
     "kind": "env",
@@ -55,12 +55,12 @@
   },
   "WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED": {
     "kind": "env",
-    "literals": ["true", "1"],
+    "literals": ["false", "0"],
     "case_insensitive": true,
-    "polarity": "opt-in",
+    "polarity": "opt-out",
     "reader_marker": "getConfigFlag(AUTO_ENROLL_FLAG, env)",
     "file": "src/capabilities/ingestion/server/workflow-judge-config.ts",
-    "notes": "CRITICAL-SAFETY auto-enroll gate. Opt-in/default OFF; parsed via shared parseFlag."
+    "notes": "Auto-enroll gate. Opt-out/default ON; parsed via shared parseFlag."
   },
   "WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED": {
     "kind": "env",
@@ -106,15 +106,6 @@
     "reader_marker": "getConfig(FLAG_BY_KIND[kind], env)",
     "file": "src/capabilities/notes/server/note-refine-triggers.ts",
     "notes": "note-refine dreaming trigger. Opt-out/default ON; parsed via shared parseFlag with defaultValue=true."
-  },
-  "WAVE6_TRIGGER_VERIFY_ENABLED": {
-    "kind": "env",
-    "literals": ["true", "1"],
-    "case_insensitive": true,
-    "polarity": "opt-in",
-    "reader_marker": "getConfig(FLAG_BY_KIND[kind], env)",
-    "file": "src/capabilities/notes/server/note-refine-triggers.ts",
-    "notes": "note-refine verify trigger. Opt-in/default OFF; parsed via shared parseFlag with defaultValue=false."
   },
   "DAY_ONE_PRIOR_ENABLED": {
     "kind": "const",

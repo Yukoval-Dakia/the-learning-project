@@ -1,5 +1,6 @@
 // Today's four count cards (M3E: today.css .un-today-metric; YUK-1713 swapped the last old icon).
 import { ArrowRight } from 'lucide-react';
+import { kindCountsByTier } from '../inbox-tier';
 import type { WorkbenchSummary } from '../workbench-api';
 
 interface Kpi {
@@ -30,18 +31,21 @@ function proposalsValue(total: number, hasMore: boolean): number | string {
   return '?';
 }
 
+function proposalsSub(proposals: WorkbenchSummary['proposals']): string {
+  if (proposals.has_more) return '扫描已达上限，可能仍有待审';
+  const { decideTotal, observeTotal } = kindCountsByTier(proposals.by_kind);
+  if (observeTotal === 0) return '等待裁决的提议';
+  if (decideTotal === 0) return '都是仅作观察，不需要你裁决';
+  return `${decideTotal} 项待你裁决，${observeTotal} 项仅作观察`;
+}
+
 export function KpiRow({
   kpi,
-  proposalsDecisionTotal,
-  proposalsHasMore,
+  proposals,
   navigate,
 }: {
   kpi: WorkbenchSummary['kpi'];
-  // 第 4 卡只展示真正需要用户裁决的数量；C-strength pending 记录属于旁观事实，
-  // 不得制造虚假的待办积压。
-  proposalsDecisionTotal: number;
-  /** true 时 decision total 只是扫描窗口内下界，不能渲染成精确零。 */
-  proposalsHasMore: boolean;
+  proposals: WorkbenchSummary['proposals'];
   navigate: (to: string) => void;
 }) {
   const cards: Kpi[] = [
@@ -76,8 +80,8 @@ export function KpiRow({
       key: 'proposals',
       label: 'AI 提议',
       icon: 'inbox',
-      value: proposalsValue(proposalsDecisionTotal, proposalsHasMore),
-      sub: proposalsHasMore ? '扫描已达上限，可能仍有待审' : '等待裁决的提议',
+      value: proposalsValue(proposals.total, proposals.has_more),
+      sub: proposalsSub(proposals),
       onGo: () => navigate('/inbox'),
     },
   ];

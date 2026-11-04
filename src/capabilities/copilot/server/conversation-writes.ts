@@ -32,7 +32,6 @@ import {
 import {
   type CopilotReplyFinalizationReceipt,
   type PreparedCopilotReply,
-  extractPrimaryView,
   sealCommittedPresentationReply,
 } from './reply-finalization';
 import type { TeachingSkillResult } from './skills/teaching-skill';
@@ -233,11 +232,7 @@ export async function writeCopilotReply(
     ? { text: replyText }
     : params.preparedReply?.text === params.replyText
       ? params.preparedReply
-      : {
-          text: extractPrimaryView(params.replyText, {
-            taskRunId: params.taskRunId,
-          }).text,
-        };
+      : { text: params.replyText };
   const persistedDigest = createHash('sha256').update(prepared.text, 'utf8').digest('hex');
   const receiptMatches = params.replyFinalization?.reply_sha256 === persistedDigest;
   if (params.replyFinalization && !receiptMatches) {

@@ -86,6 +86,26 @@ export function bucketPendingByTier<T extends { kind: string }>(
   return { decide, moved };
 }
 
+export interface KindCountsByTier {
+  /** 待你裁决的 kind（含未知 kind），数量降序。 */
+  decide: Array<[kind: string, count: number]>;
+  /** 仅作观察的 kind（C 档），数量降序。 */
+  observe: Array<[kind: string, count: number]>;
+  decideTotal: number;
+  observeTotal: number;
+}
+
+/** 把全部 pending 计数按档位分组，一项都不丢；今日页按这个顺序显示并用文字说明档位。 */
+export function kindCountsByTier(byKind: Readonly<Record<string, number>>): KindCountsByTier {
+  const entries = Object.entries(byKind)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1]);
+  const decide = entries.filter(([kind]) => !isMovedOutKind(kind));
+  const observe = entries.filter(([kind]) => isMovedOutKind(kind));
+  const sum = (rows: Array<[string, number]>) => rows.reduce((total, [, n]) => total + n, 0);
+  return { decide, observe, decideTotal: sum(decide), observeTotal: sum(observe) };
+}
+
 // ── A 档撤销窗口态（时间基 v0）─────────────────────────────────────────────────
 // 撤销窗口：apply 后这段时间内 'live'（一键干净撤回）；窗口过 → 'consumed'（视为已被
 // 下游消费、不保证干净撤销——但 retract 车道仍可达，只是不再标 live）；已 retract → 'reverted'。

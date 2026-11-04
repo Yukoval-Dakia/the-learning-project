@@ -152,8 +152,13 @@
     color: var(--un-text-2);
   }
 
+  /* The check's reason as written; long ones show three lines here, in full on the question. */
   & .ql-reason {
+    display: -webkit-box;
+    overflow: hidden;
     font-size: var(--un-fs-1);
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
   }
 
   /* ── Groups (做错过 by standing, 暂不出题 by reason) ── */

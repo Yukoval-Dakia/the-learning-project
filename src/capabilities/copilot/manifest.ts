@@ -44,6 +44,7 @@ export const copilotCapability = defineCapability({
       'experimental:confirmation_command',
       'experimental:confirmation_command_result',
       'experimental:help_explanation_replay',
+      'experimental:help_explanation_receipt',
       'experimental:subagent_run_started',
       'experimental:subagent_run_settled',
       'accept_suggestion',
@@ -266,6 +267,10 @@ export const copilotCapability = defineCapability({
         name: 'present_primary_view',
         load: () =>
           import('./server/tools/present-primary-view').then((m) => m.presentPrimaryViewTool),
+      },
+      {
+        name: 'compose_block',
+        load: () => import('./server/tools/compose-block').then((m) => m.composeBlockTool),
       },
       {
         name: 'query_events',

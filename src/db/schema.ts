@@ -50,6 +50,7 @@ export {
   question_admission_verification,
   question_group_lifecycle,
   question_revision,
+  question_solution_prior,
 } from './schema/assessment';
 export {
   difficulty_calibration_evidence,

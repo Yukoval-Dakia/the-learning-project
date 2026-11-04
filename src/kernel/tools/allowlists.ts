@@ -93,6 +93,9 @@ export const PROPOSE_WRITE_TOOLS = [
   // YUK-1497 (K5) — presentation composition tool; same containment as the six
   // draft-edit tools above (writes ONE jsonb-internal key of the draft container).
   'compose_presentation',
+  // YUK-1548 — the one mandatory write path for generative-UI blocks (write-once
+  // content-addressed assets; surface decided server-side from the caller).
+  'compose_block',
   // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write: assembles authored
   // (draft-allowed) + existing
   // questions into a runnable tool_quiz paper. Granted to the copilot surfaces
@@ -105,6 +108,8 @@ export const PROPOSE_WRITE_TOOLS = [
   // only.
   'author_artifact',
   'update_artifact',
+  // YUK-1772 — read-only deterministic note check (issues list, no verdict).
+  'check_note',
   // YUK-293 — direct write to the expiring AI hint channel (not learner data,
   // not an inbox proposal). Surface grants remain narrow below.
   'write_agent_note',
@@ -128,9 +133,6 @@ export const PROPOSE_WRITE_TOOLS = [
   // YUK-1407 — 判分纠错提案（可逆，人审 accept 才经 appeal/rejudge/CAS+replay
   // 生效）。授予发现疑似误判的 agent 面：copilot / dreaming / coach。
   'propose_grading_correction',
-  // YUK-1770 — learner-said steering 直写（D3 裁决：无 proposal，原话即事实；
-  // 唯一硬机检是原话逐字校验，在工具内做）。授权面：仅 copilot 两面。
-  'record_steering',
 ] as const;
 
 // YUK-949 — model-authored presentation intent. This is neither a data read nor
@@ -251,6 +253,8 @@ export const COPILOT_TOOLS = [
   // surface gets them.
   'author_artifact',
   'update_artifact',
+  // YUK-1772 — read-only deterministic note check (issues list, no verdict).
+  'check_note',
   // YUK-1468 — Copilot 编辑面：edit_question（ops/document/validate/probe）。
   // copilot 调 save 时工具按 caller surface 自动落 question_edit proposal
   // （accept applier 走同一 ops → submit gate）；validate/probe 直出。
@@ -259,6 +263,8 @@ export const COPILOT_TOOLS = [
   'write_agent_note',
   // YUK-1407 — 判分纠错提案（对话中发现疑似误判时可落地；accept 仍人审）。
   'propose_grading_correction',
+  // YUK-1548 — generative-UI blocks (diagram/figure in slice 1).
+  'compose_block',
   // YUK-1770 — 学习者口述 steering 直写（考试日期/优先级/「这周别排物理」）。
   // 唯一非 propose 的学习者数据直写：原话即事实（D3），确认句只能基于工具结果。
   'record_steering',

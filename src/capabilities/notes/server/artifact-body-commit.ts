@@ -16,6 +16,7 @@ import {
   ArtifactBodyBlocks,
   type ArtifactBodyBlocksT,
   type ArtifactHistoryEntryT,
+  type ArtifactVerificationSummaryT,
 } from '@/core/schema/business';
 import type { Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
@@ -46,6 +47,7 @@ export interface ArtifactBodyChange {
     op: Extract<ArtifactLifecycleOp, 'set_generation_status' | 'set_verification_status'>;
     generationStatus?: string;
     verificationStatus?: string;
+    verificationSummary?: ArtifactVerificationSummaryT | null;
     generatedBy?: Record<string, unknown>;
     attrs?: Record<string, unknown>;
   };
@@ -161,6 +163,9 @@ export async function commitArtifactBody<S = never>(
       ...(lifecycle?.verificationStatus !== undefined
         ? { verification_status: lifecycle.verificationStatus }
         : {}),
+      ...(lifecycle?.verificationSummary !== undefined
+        ? { verification_summary: lifecycle.verificationSummary as never }
+        : {}),
       ...(lifecycle?.generatedBy !== undefined
         ? { generated_by: { ...lifecycle.generatedBy } as never }
         : {}),
@@ -196,6 +201,7 @@ export async function commitArtifactBody<S = never>(
       op: lifecycle.op,
       generationStatus: lifecycle.generationStatus,
       verificationStatus: lifecycle.verificationStatus,
+      verificationSummary: lifecycle.verificationSummary,
       generatedBy: lifecycle.generatedBy,
       attrs: lifecycle.attrs,
       nextVersion: version,

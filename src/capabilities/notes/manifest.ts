@@ -39,7 +39,7 @@ export const notesCapability = defineCapability({
   description:
     '笔记域：artifact 笔记的读（note-page 聚合 / notes-read 按知识点）、写（body-blocks 块编辑 ' +
     '乐观锁 / sections / block-refs 反链索引）与 Living Note refine 链（triggers→policy→' +
-    'mutator|propose，YUK-358 决定6 后信号源 = mark_wrong/mastery_change/dreaming/verify，dwell 已裁）。',
+    'mutator|propose，YUK-358 决定6 后信号源 = mark_wrong/mastery_change/dreaming，dwell/verify 已裁）。',
   subscriptions: {
     handlers: [
       {
@@ -246,11 +246,6 @@ export const notesCapability = defineCapability({
         queue: 'llm',
         load: () => import('./jobs/note_generate').then((m) => m.buildNoteGenerateHandler),
       },
-      {
-        name: 'note_verify',
-        queue: 'llm',
-        load: () => import('./jobs/note_verify').then((m) => m.buildNoteVerifyHandler),
-      },
     ],
   },
   // The accept shell validates and orchestrates; the persist body stays in
@@ -286,6 +281,10 @@ export const notesCapability = defineCapability({
       {
         name: 'update_artifact',
         load: () => import('./server/tools/author-artifact').then((m) => m.updateArtifactTool),
+      },
+      {
+        name: 'check_note',
+        load: () => import('./server/tools/check-note').then((m) => m.checkNoteTool),
       },
     ],
   },

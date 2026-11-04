@@ -1,5 +1,5 @@
 {
-  "id": "affa1fe6-8cf1-44ed-b835-a7d36ac35186",
+  "id": "b4fb0ef7-e2c1-4a17-9a44-edd1124711a9",
   "prevId": "328ef391-1c39-4c6a-984e-d9e88b41ef67",
   "version": "7",
   "dialect": "postgresql",
@@ -4342,24 +4342,6 @@
         "declared_stage": {
           "name": "declared_stage",
           "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "effective_from": {
-          "name": "effective_from",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "effective_until": {
-          "name": "effective_until",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "steering": {
-          "name": "steering",
-          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },
@@ -12163,6 +12145,88 @@
         "question_revision_ordinal_positive_ck": {
           "name": "question_revision_ordinal_positive_ck",
           "value": "\"question_revision\".\"revision_ordinal\" >= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.question_solution_prior": {
+      "name": "question_solution_prior",
+      "schema": "",
+      "columns": {
+        "revision_id": {
+          "name": "revision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "part_id": {
+          "name": "part_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "prior_version": {
+          "name": "prior_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "prior": {
+          "name": "prior",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "origin": {
+          "name": "origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_run_ids": {
+          "name": "task_run_ids",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "question_solution_prior_revision_fk": {
+          "name": "question_solution_prior_revision_fk",
+          "tableFrom": "question_solution_prior",
+          "tableTo": "question_revision",
+          "columnsFrom": [
+            "revision_id"
+          ],
+          "columnsTo": [
+            "revision_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "question_solution_prior_revision_id_part_id_pk": {
+          "name": "question_solution_prior_revision_id_part_id_pk",
+          "columns": [
+            "revision_id",
+            "part_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "question_solution_prior_origin_ck": {
+          "name": "question_solution_prior_origin_ck",
+          "value": "\"question_solution_prior\".\"origin\" IN ('admission','backfill')"
         }
       },
       "isRLSEnabled": false

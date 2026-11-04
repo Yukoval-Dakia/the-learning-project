@@ -5,20 +5,15 @@
 // requires an explicit row. Admission takes the row FOR SHARE in the caller's
 // transaction, so it serializes against a switch's FOR UPDATE.
 //
-// A switch is refused while any obligation is unfinished, including note_verify
-// claims projected through a pinned probe. Until per-state takeover evidence
-// exists, ownership moves only over a fully drained family; producer cutover
-// stays parent-owned.
+// A switch is refused while any obligation is unfinished. Until per-state
+// takeover evidence exists, ownership moves only over a fully drained family;
+// producer cutover stays parent-owned.
 //
 // The table may not exist before the control migration. Probe with
 // paidEffectControlTableExists(); catching 42P01 would abort the transaction and
 // every later statement fails with 25P02.
 import { and, count, eq, inArray } from 'drizzle-orm';
 
-import {
-  NOTE_VERIFY_OBLIGATION_FAMILY,
-  countNoteVerifyClaimObligations,
-} from '@/capabilities/notes/public';
 import {
   DEFAULT_PAID_EFFECT_BACKEND,
   DEFAULT_PAID_EFFECT_GENERATION,
@@ -34,21 +29,6 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { lockPaidEffectControlFamily, rowToControl } from '@/db/paid-effect-control';
 import { paid_effect, paid_effect_control } from '@/db/schema';
-
-/**
- * Live unfinished obligations for families whose paid authority is not a
- * paid_effect row. Runs on the caller's transaction so it sees exactly the state
- * the switch serialized against.
- */
-const FAMILY_OBLIGATION_PROBES: ReadonlyMap<
-  string,
-  (tx: Tx) => Promise<{
-    pending: number;
-    sending: number;
-    unknown: number;
-    receipt_ready: number;
-  }>
-> = new Map([[NOTE_VERIFY_OBLIGATION_FAMILY, countNoteVerifyClaimObligations]]);
 
 /**
  * Switch the family's backend. Refused while any obligation is unfinished. The
@@ -105,15 +85,6 @@ export async function switchPaidEffectBackend(
       .groupBy(paid_effect.state);
     const countsByState: Partial<Record<PaidEffectState, number>> = {};
     for (const group of grouped) countsByState[group.state] = Number(group.n);
-    const probe = FAMILY_OBLIGATION_PROBES.get(family);
-    if (probe) {
-      // Same transaction and lock window, never a second connection's snapshot.
-      const projected = await probe(tx);
-      countsByState.pending = (countsByState.pending ?? 0) + projected.pending;
-      countsByState.sending = (countsByState.sending ?? 0) + projected.sending;
-      countsByState.unknown = (countsByState.unknown ?? 0) + projected.unknown;
-      countsByState.receipt_ready = (countsByState.receipt_ready ?? 0) + projected.receipt_ready;
-    }
     const gate = summarizePaidEffectSwitchBlocking(countsByState);
     if (gate.blocked) throw new PaidEffectSwitchBlockedError(family, gate.blocking);
     const current = rowToControl(family, row);

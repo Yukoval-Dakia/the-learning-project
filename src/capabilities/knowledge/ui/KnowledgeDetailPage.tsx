@@ -33,7 +33,7 @@ import './knowledge-m3e.css';
 
 import { BandChip } from './BandChip';
 import { humanizeActivity } from './humanize-activity';
-import { DecayChip, RelTag, VerifyChip } from './KnowledgeChips';
+import { DecayChip, RelTag } from './KnowledgeChips';
 import { KnowledgeEmpty } from './KnowledgeEmpty';
 import type { KnowledgeNodePage, NoteSummary } from './knowledge-api';
 import { useKnowledgeClient } from './knowledge-client';
@@ -69,14 +69,12 @@ function NoteLinkRow({
   // 知识节点上下文里跳 note，让 NoteReader 的入口 banner/is-here/「入口」tag 真触发。
   go: (noteId: string) => void;
 }) {
-  const verified = note.verification_status === 'verified';
   return (
     <button type="button" className="kn-link-row" onClick={() => go(note.id)}>
       <span className="kn-link-row-ic" aria-hidden="true">
         {note.type === 'note_long' ? <FileText size={15} /> : <List size={15} />}
       </span>
       <span className="kn-link-row-title">{note.title}</span>
-      <VerifyChip verified={verified} />
       <span className="kn-link-row-date un-num">
         {new Date(note.updated_at).toLocaleDateString('zh-CN')}
       </span>
@@ -345,7 +343,6 @@ export default function KnowledgeDetailPage({
                         主笔记
                       </span>
                       <span className="kn-primary-title">{primary.title}</span>
-                      <VerifyChip verified={primary.verification_status === 'verified'} />
                     </div>
                     {/* T6 简化渲染：从 semanticBlock 抽 source_markdown；
                         完整块渲染（NoteBlocks）随 T7 阅读器落地后可替换。 */}

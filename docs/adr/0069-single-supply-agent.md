@@ -1,10 +1,10 @@
 ---
-status: accepted
+status: superseded
 ---
 
 # ADR-0069 — 单一备题员：题目的唯一入口与同一道准入门
 
-**Status:** Accepted（设计方向，2026-10-11）；尚未实施。
+**Status:** Superseded by ADR-0078（owner 2026-11-04 决定直接切换，取消并跑/盲核/旧路由层与三检查 job；保留条款并入 ADR-0078）。
 **Decision source:** owner 2026-10-10 愿景评审「题源次序：只看质量，并且 agent 为题目唯一实际入口，而不是三根管子」；2026-10-11 拍板 S1–S4（决定记录 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/decisions/2026-10-11-supply-and-brain.md`），讨论票转实施。
 **Tracking:** [YUK-1468](https://linear.app/yukoval-studios/issue/YUK-1468)。
 **Related:** ADR-0067（教研白板与事件例会——本文 D7 修订其 D5 一处）、ADR-0068（通用学科，D7 来源覆盖诚实声明）、[YUK-1445](https://linear.app/yukoval-studios/issue/YUK-1445)（判分准入）、[YUK-1448](https://linear.app/yukoval-studios/issue/YUK-1448)（题库即题源——其验收 3 被 D3 取代）；讨论稿（细节真相源，绝对路径）`/Volumes/YukovalSBak/yukoval-projects/tlp-status/discussions/supply-agent-draft.md`。
