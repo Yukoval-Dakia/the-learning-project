@@ -280,8 +280,10 @@ export async function changeTopics(
           .concat(
             legacy.map((f) => ({
               ...f,
-              kind: 'fact' as const,
-              written_by: 'curator' as const,
+              kind:
+                f.payload.corrected_by_owner === true ? ('correction' as const) : ('fact' as const),
+              written_by:
+                f.payload.corrected_by_owner === true ? ('learner' as const) : ('curator' as const),
               as_of: '',
               supersedes: [],
               knowledge_ids: [],
