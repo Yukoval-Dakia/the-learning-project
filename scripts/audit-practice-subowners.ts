@@ -223,7 +223,7 @@ function sortPairs(pairs: Iterable<string>): string[] {
 // learners, so none may touch it directly; a learner-facing read must gate on the attempt.
 // The practice root barrel is covered too: exporting from it opens every other capability.
 const SOLUTION_PRIOR_RE =
-  /readSolutionPriorForServer|question_solution_prior|admission\/solution-prior/;
+  /readSolutionPriorForServer|nearestQuestionsByMethod|question_solution_prior|admission\/solution-prior/;
 const LEARNER_SURFACE_RE =
   /(?:^|\/)(?:tools|api|ui)\/|^src\/capabilities\/practice\/(?:ui-)?public\.tsx?$|^server\//;
 
