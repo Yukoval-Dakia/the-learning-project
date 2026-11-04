@@ -1,6 +1,5 @@
 // Stable server contract for consumers outside the practice capability.
 
-import { loadLearningContentValidator } from './question-bank/public';
 import { loadReviewDueReader } from './scheduling/public';
 
 // Compatibility export; shared read models consume their owner, kernel/events,
@@ -156,6 +155,25 @@ export {
   scheduleReview,
   updatePracticeStreamItem,
 } from './scheduling/public';
+
+/**
+ * YUK-1770 — installs practice's today-recompose operation behind the kernel
+ * steering port. Agency's steering subscription calls the port and never
+ * imports practice (cross-capability value edges are decrease-only). Defined
+ * inline here so the barrel adds no new pass-through site.
+ */
+export async function installTodayPracticeRecompose(): Promise<void> {
+  const [{ installTodayPracticeRecompose: install, installSteeringDeferredDueCount }] =
+    await Promise.all([import('@/kernel/steering-recompose')]);
+  // Both operations ride the scheduling sub-owner's own public seam — the
+  // capability barrel must not enter scheduling/server directly
+  // (pnpm audit:practice-subowners).
+  const { recomposePracticeStream, countSteeringDeferredDueReviews } = await import(
+    './scheduling/public'
+  );
+  install((db) => recomposePracticeStream(db, {}));
+  installSteeringDeferredDueCount((db, now) => countSteeringDeferredDueReviews(db, { now }));
+}
 // practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
@@ -173,20 +191,16 @@ export async function installPracticeHostOperations(): Promise<void> {
   const [
     { installReviewAnswerBindingOperations },
     { installReviewDueReader },
-    { installLearningContentValidator },
     { installConversationConfirmationAssessment },
     { captureReviewAnswerBinding, consumeReviewAnswerBinding },
     executeGetReviewDue,
-    validateLearningContent,
     { issueConversationConfirmation, readConversationConfirmation, submitConversationConfirmation },
   ] = await Promise.all([
     import('@/kernel/records/review-answer-binding'),
     import('@/kernel/read-models/review-due'),
-    import('@/kernel/tools/learning-content-validation'),
     import('@/kernel/records/conversation-confirmation-assessment'),
     import('./settlement/public'),
     loadReviewDueReader(),
-    loadLearningContentValidator(),
     import('./server/conversation-confirmation'),
   ]);
   installReviewAnswerBindingOperations({
@@ -194,7 +208,6 @@ export async function installPracticeHostOperations(): Promise<void> {
     consume: consumeReviewAnswerBinding,
   });
   installReviewDueReader(executeGetReviewDue);
-  installLearningContentValidator(validateLearningContent);
   installConversationConfirmationAssessment({
     issue: issueConversationConfirmation,
     submit: submitConversationConfirmation,

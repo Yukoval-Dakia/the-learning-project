@@ -56,6 +56,11 @@ export const goalScopeTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '目标范围提议按目标与知识图谱读数装配，不读学习者画像 view。',
+    },
+
     prompt: { kind: 'profile', build: buildGoalScopePrompt },
   },
   outputSchema: GoalScopeOutputSchema,

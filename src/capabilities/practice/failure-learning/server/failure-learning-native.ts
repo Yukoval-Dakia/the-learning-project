@@ -6,7 +6,7 @@ import {
   nativeAttemptOutcome,
   resolveVerdictsForNativeAttempts,
 } from '@/kernel/read-models/assessment-verdict';
-import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttemptForDerivationById } from '@/kernel/read-models/failure-attempts';
 import { projectFrozenStudyContext } from '../../grading/public';
 
 /** Content and scope for attribution come from the original issuance and submission. */
@@ -15,7 +15,7 @@ export async function loadNativeFailureContext(db: Db | Tx, attemptEventId: stri
   if (anchor?.action !== 'experimental:assessment_attempt') return null;
   const verdict = (await resolveVerdictsForNativeAttempts(db, [anchor])).get(anchor.id);
   if (!verdict?.effective || nativeAttemptOutcome(verdict) !== 'failure') return null;
-  if (!(await getFailureAttemptById(db, attemptEventId))) return null;
+  if (!(await getFailureAttemptForDerivationById(db, attemptEventId))) return null;
   const scope = await loadAssessmentLearningScope(
     db,
     verdict.submission.submission_id,

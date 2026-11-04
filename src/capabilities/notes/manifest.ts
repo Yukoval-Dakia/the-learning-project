@@ -269,18 +269,14 @@ export const notesCapability = defineCapability({
       },
     ],
   },
-  // Notes owns the interactive-artifact authoring tools; Copilot grants them by
-  // name. The backend stores the HTML opaquely (author = create v0,
-  // update = full replace + version bump).
+  // YUK-1769 — write_note is the companion's direct Markdown note write
+  // (create / append / note_generate handoff). Notes owns it; Copilot holds
+  // only the allowlist surface grant.
   copilotTools: {
     tools: [
       {
-        name: 'author_artifact',
-        load: () => import('./server/tools/author-artifact').then((m) => m.authorArtifactTool),
-      },
-      {
-        name: 'update_artifact',
-        load: () => import('./server/tools/author-artifact').then((m) => m.updateArtifactTool),
+        name: 'write_note',
+        load: () => import('./server/tools/write-note').then((m) => m.writeNoteTool),
       },
       {
         name: 'check_note',

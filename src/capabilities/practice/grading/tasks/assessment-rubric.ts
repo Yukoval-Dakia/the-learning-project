@@ -32,6 +32,11 @@ export const assessmentRubricTaskSpec = {
     isMultimodal: true,
     allowedTools: [],
     structuredOutputSchema: AssessmentRubricDecision,
+    context: {
+      view: 'none',
+      reason: 'rubric 判分只评当次作答与题面；学习者上下文是判分偏差来源，按设计不读。',
+    },
+
     prompt: {
       kind: 'inline',
       text: `Contract revision: ${ASSESSMENT_RUBRIC_PROMPT_REVISION}.

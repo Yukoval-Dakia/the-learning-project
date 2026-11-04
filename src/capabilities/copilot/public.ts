@@ -30,8 +30,9 @@ export { assertCopilotLegacyDrained } from './server/legacy-drain-readiness';
 export { dismissCopilotNudge, markCopilotNudgeOpened } from './server/nudge-actions';
 export { loadActiveNudges } from './server/nudge-read';
 export { cancelCopilotRun } from './server/run-cancel-request';
-// memory-brief reader for non-LLM read paths (today summary, demos).
-export { MEMORY_BRIEF_STALE_AFTER_MS, executeMemoryBrief } from './server/tools/memory-brief';
+// memory-brief reader for non-LLM read paths (today summary, demos); the read
+// semantics themselves are agency-owned behind the kernel memory-brief port.
+export { executeMemoryBrief } from './server/tools/memory-brief';
 export { readCopilotTurns } from './server/turns-request';
 
 // task composition uses the narrow task-public entry directly.

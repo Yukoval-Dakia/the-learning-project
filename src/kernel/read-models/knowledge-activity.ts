@@ -1,8 +1,6 @@
 // the any-event knowledge activity clock, derived from the event
-// spine. Single owner of the semantics the deprecated knowledge_mastery view's
-// `activity` CTE computed (max created_at over events touching the node), so
-// migrating view readers do not fork the formula. Read-time derivation only:
-// no view, no new table.
+// spine (max created_at over events touching the node). Single owner of that
+// formula. Read-time derivation only: no view, no new table.
 
 import { sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';

@@ -1,14 +1,14 @@
 // Copilot learner-state header (session-anchored, assemble-once).
 //
-// Deterministic (no-LLM) code-read projection — 今日 due count, 活跃 goal, top-2
-// 误区, 同一知识点连错, θ̂/mastery band, 昨夜交班摘要 — hard-capped at
-// LEARNER_STATE_HEADER_BUDGET.maxChars (a char cap, not tokens; CJK near the ceiling
-// can run ~400-1000 tokens).
+// The startup segment itself is assembled by the unified Context module
+// (agency/context, reached through the kernel learner-context port) — this file
+// keeps only the Copilot-side session-anchored delivery: validity watermarks,
+// cache row read/write, and degrade policy.
 //
 // OWNER HARD CONSTRAINT (never regress): NO per-turn 装配注入. Assemble once per
 // validity window, cache session-anchored, re-assemble only on cross-day, new
-// attempt, overnight dreaming, or a proposal decision (accept/dismiss); the
-// proposal_feedback digest folds into the same block.
+// attempt, overnight dreaming, proposal decision (accept/dismiss), or a Steering
+// (goal) change; the proposal_feedback digest folds into the same block.
 //
 // 防循环: it is a code read, never orchestrator output, and its cache event opts
 // out of the mem0 outbox (the projection reads mem0-derived signals, so
@@ -16,33 +16,17 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
-import { A5_BANDS, masteryBandView } from '@/core/mastery-band';
-import type { LearnerJudgmentBatch } from '@/core/schema/learner-judgment';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
+import { HostOperationNotInstalledError } from '@/kernel/host-operation';
 import {
   type ProposalFeedbackCell,
   getProposalFeedbackDigest,
 } from '@/kernel/proposals/adaptive-bias';
-import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-goal-scope';
-import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
-import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
-import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
-import {
-  type KnowledgeFailureStreak,
-  LEARNER_ANSWER_ACTIONS,
-  loadLongestFailureStreak,
-} from '@/kernel/read-models/learner-activity';
-import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
-import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
-import {
-  LEARNER_STATE_HEADER_BUDGET,
-  type LearnerStateHeaderBudget,
-  PROPOSAL_FEEDBACK_BUDGET,
-} from '@/kernel/tools/budgets';
-import { type CopilotSummary, loadCopilotSummary } from './copilot-summary';
-import { type LoadTodayOvernightDigest, readOvernightHandoffSentence } from './overnight-handoff';
+import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
+import { loadLearnerContext } from '@/kernel/read-models/learner-context';
+import { PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
 
 type DbLike = Db | Tx;
 
@@ -50,13 +34,6 @@ type DbLike = Db | Tx;
 // other Copilot turn-state rows (no new schema). turns.ts replay only reads
 // ask/chip/reply actions, so this action never pollutes the drawer.
 export const LEARNER_STATE_HEADER_ACTION = 'experimental:copilot_learner_state_header';
-
-// Recent failure attempts scanned when ranking the top-2 误区. Bounded — this only
-// runs on (re)assembly, not per turn.
-const FAILURE_SCAN_LIMIT = 40;
-
-// Shortest same-knowledge failure run worth a header line.
-const FAILURE_STREAK_HEADER_MIN = 3;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -68,6 +45,9 @@ export interface LearnerStateWatermarks {
   dreaming_at: string | null;
   /** Latest `rate` event (proposal accept/dismiss decision) created_at. */
   proposal_decision_at: string | null;
+  /** Latest goal write (genesis/status/scope) created_at — steering changes
+   * refresh the header's steering lines the next turn (YUK-1770). */
+  goal_at: string | null;
 }
 
 /** The already-scoped proposal-feedback digest carried in the header block. */
@@ -75,17 +55,6 @@ export type ScopedProposalFeedbackCell = Pick<
   ProposalFeedbackCell,
   'kind' | 'relation' | 'acceptance_rate' | 'top_dismiss_reasons' | 'top_rubric_gates'
 >;
-
-export interface LearnerStateProjection {
-  reviewDueCount: number;
-  activeGoalTitle: string | null;
-  topCauseCategories: string[];
-  masterySummary: string | null;
-  meanTheta: number | null;
-  judgmentSentence?: string | null;
-  overnightSentence: string | null;
-  failureStreak?: KnowledgeFailureStreak | null;
-}
 
 /** The cached block (persisted in the header cache event payload). */
 export interface LearnerStateHeaderCache {
@@ -130,7 +99,8 @@ function watermarkAdvanced(cached: string | null, current: string | null): boole
 
 /**
  * Cheap invalidation predicate. The header is stale when the day rolled over OR
- * any watermark advanced (new attempt / dreaming ran / proposal decision).
+ * any watermark advanced (new attempt / dreaming ran / proposal decision /
+ * Steering change).
  */
 export function isLearnerStateHeaderStale(
   cached: { day_bucket: string; watermarks: LearnerStateWatermarks },
@@ -143,35 +113,9 @@ export function isLearnerStateHeaderStale(
     watermarkAdvanced(
       cached.watermarks.proposal_decision_at,
       current.watermarks.proposal_decision_at,
-    )
+    ) ||
+    watermarkAdvanced(cached.watermarks.goal_at, current.watermarks.goal_at)
   );
-}
-
-/**
- * Deterministic projection → header prose, hard-truncated to the size budget.
- * The due line is always present; the goal / 误区 / mastery / 交班 lines render
- * only when their data exists (cold start → a minimal, non-blank header).
- */
-export function assembleLearnerStateHeaderMd(
-  p: LearnerStateProjection,
-  budget: LearnerStateHeaderBudget = LEARNER_STATE_HEADER_BUDGET,
-): string {
-  const lines: string[] = [`今日待复习 ${p.reviewDueCount} 项`];
-  if (p.activeGoalTitle) lines.push(`当前目标：${p.activeGoalTitle}`);
-  if (p.topCauseCategories.length > 0) {
-    lines.push(`近期高频误区：${p.topCauseCategories.slice(0, 2).join('、')}`);
-  }
-  if (p.failureStreak && p.failureStreak.count >= FAILURE_STREAK_HEADER_MIN) {
-    lines.push(`连续答错：${p.failureStreak.knowledge_name}（${p.failureStreak.count} 次）`);
-  }
-  if (p.masterySummary) {
-    const theta = p.meanTheta === null ? '' : `（θ̂≈${p.meanTheta.toFixed(1)}）`;
-    lines.push(`掌握度：${p.masterySummary}${theta}`);
-  }
-  if (p.judgmentSentence) lines.push(p.judgmentSentence);
-  if (p.overnightSentence) lines.push(`昨夜交班：${p.overnightSentence}`);
-  const md = lines.join('\n');
-  return md.length > budget.maxChars ? md.slice(0, budget.maxChars) : md;
 }
 
 // Copilot proposes ONLY knowledge_edge, so the digest is edge-scoped:
@@ -207,178 +151,6 @@ export function scopeCopilotProposalFeedback(
   return scoped;
 }
 
-// ── Projection reads (IO; only run on (re)assembly) ──────────────────────────
-
-function rankTopCauseCategories(failures: FailureAttempt[], n: number): string[] {
-  const counts = new Map<string, number>();
-  for (const fa of failures) {
-    const cause = effectiveCauseCategoryForFailureAttempt(fa);
-    if (!cause) continue;
-    counts.set(cause, (counts.get(cause) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, n)
-    .map(([cause]) => cause);
-}
-
-function summarizeMastery(proj: Map<string, MasteryProjection>): {
-  masterySummary: string | null;
-  meanTheta: number | null;
-} {
-  const bandCounts = [0, 0, 0, 0];
-  const thetas: number[] = [];
-  for (const entry of proj.values()) {
-    const view = masteryBandView(entry);
-    if (view.unknown) continue;
-    bandCounts[view.band] = (bandCounts[view.band] ?? 0) + 1;
-    thetas.push(entry.theta_hat);
-  }
-  if (thetas.length === 0) return { masterySummary: null, meanTheta: null };
-  // High → low band so the strongest mastery reads first.
-  const parts: string[] = [];
-  for (let b = A5_BANDS.length - 1; b >= 0; b -= 1) {
-    if ((bandCounts[b] ?? 0) > 0) parts.push(`${A5_BANDS[b]}${bandCounts[b]}`);
-  }
-  const meanTheta = thetas.reduce((s, t) => s + t, 0) / thetas.length;
-  return { masterySummary: parts.join(' '), meanTheta };
-}
-
-function summarizeJudgment(batch: LearnerJudgmentBatch): {
-  masterySummary: string | null;
-  meanTheta: number | null;
-  judgmentSentence: string;
-} {
-  const observed = new Map<string, MasteryProjection>();
-  let lowObserved = false;
-  let insufficient = false;
-  let notEvaluable = false;
-  let unavailable = false;
-  let growing = false;
-  let undated = false;
-  let unknownRetention = false;
-  let divergentCount = 0;
-  const readingEngines = new Set<string>();
-  for (const item of batch.items) {
-    switch (item.ability_claim.kind) {
-      case 'low_observed':
-        lowObserved = true;
-        if (item.ability.kind === 'available')
-          observed.set(item.knowledge_id, item.ability.reading);
-        break;
-      case 'observed':
-        if (item.ability.kind === 'available')
-          observed.set(item.knowledge_id, item.ability.reading);
-        break;
-      case 'insufficient_evidence':
-        insufficient = true;
-        break;
-      case 'not_evaluable':
-        notEvaluable = true;
-        break;
-      case 'unavailable':
-        unavailable = true;
-        break;
-    }
-    const age = item.uncertainty.evidence_age;
-    if (age.kind === 'dated' && age.growing) growing = true;
-    if (age.kind === 'undated') undated = true;
-    if (
-      item.retention.kind === 'unknown' ||
-      (typeof item.retention.reading !== 'number' && item.retention.reading.kind === 'unknown')
-    ) {
-      unknownRetention = true;
-    }
-    if (item.retention.kind === 'available') readingEngines.add(item.retention.engine);
-    if (item.uncertainty.component_disagreement.kind === 'divergence_observed') divergentCount += 1;
-  }
-  const engineName =
-    readingEngines.size !== 1 || readingEngines.has('unknown')
-      ? '实际引擎混合或未知'
-      : readingEngines.has('fsrs')
-        ? 'FSRS'
-        : '候选遗忘引擎';
-  return {
-    ...summarizeMastery(observed),
-    judgmentSentence: [
-      `共用判断 ${batch.version}：尚未个人校准。`,
-      lowObserved ? '有本人作答落在低掌握一侧（不会），这不是证据不足。' : '',
-      insufficient ? '有知识点还不知道你会不会，不能当成不会或未训练。' : '',
-      notEvaluable ? '有节点不评掌握，不计入会不会。' : '',
-      unavailable ? '掌握读取失败，不能当成不会或不知道。' : '',
-      growing ? '有作答已变旧，不确定在增大；这不是新的预测区间。' : '',
-      undated ? '有作答缺少时间，不能判断不确定是否在增大。' : '',
-      unknownRetention
-        ? `保持：同范围存在未知项（${engineName}），不能据此断言记得或忘了。`
-        : `保持：同范围现役读数可用（${engineName}），尚不能据此声称已校准或保持良好。`,
-      divergentCount > 0 ? `读数分歧：${divergentCount} 项会做与保持两读数背离。` : '',
-      '只作文字解读，不向学习者新增预测数字。',
-    ].join(''),
-  };
-}
-
-/** IO dependencies for the projection read. */
-export interface ReadProjectionDeps {
-  loadCopilotSummaryFn?: (db: DbLike) => Promise<CopilotSummary>;
-  loadOvernightDigestFn?: LoadTodayOvernightDigest;
-  listActiveGoalsFn?: (db: DbLike) => Promise<{ title: string; scope_knowledge_ids: string[] }[]>;
-  getFailureAttemptsFn?: (db: DbLike) => Promise<FailureAttempt[]>;
-  getMasteryProjectionFn?: (db: DbLike, ids: string[]) => Promise<Map<string, MasteryProjection>>;
-  loadFailureStreakFn?: (db: DbLike) => Promise<KnowledgeFailureStreak | null>;
-}
-
-export async function readLearnerStateProjection(
-  db: DbLike,
-  deps: ReadProjectionDeps = {},
-): Promise<LearnerStateProjection> {
-  const loadSummary = deps.loadCopilotSummaryFn ?? ((d: DbLike) => loadCopilotSummary(d));
-  const loadOvernightDigest = deps.loadOvernightDigestFn;
-  // Resolved read: the default is only invoked with the outer Db (call site below);
-  // the DbLike dep shape stays for fakes, hence the narrow cast.
-  const loadGoals =
-    deps.listActiveGoalsFn ?? ((d: DbLike) => listActiveGoalsWithResolvedScope(d as Db));
-  const loadFailures =
-    deps.getFailureAttemptsFn ??
-    ((d: DbLike) => getFailureAttempts(d, { limit: FAILURE_SCAN_LIMIT }));
-
-  const loadFailureStreak = deps.loadFailureStreakFn ?? loadLongestFailureStreak;
-
-  const overnightSentencePromise = readOvernightHandoffSentence(db, loadOvernightDigest);
-  const [summary, goals, failures, overnightSentence, failureStreak] = await Promise.all([
-    loadSummary(db),
-    loadGoals(db),
-    loadFailures(db),
-    overnightSentencePromise,
-    loadFailureStreak(db),
-  ]);
-  const activeGoal = goals[0] ?? null;
-  const topCauseCategories = rankTopCauseCategories(failures, 2);
-
-  const scopeKcs = activeGoal?.scope_knowledge_ids ?? [];
-  let masterySummary: string | null = null;
-  let meanTheta: number | null = null;
-  let judgmentSentence: string | null = null;
-  if (scopeKcs.length > 0) {
-    const judgment = await readLearnerJudgments(
-      db,
-      { knowledge_ids: scopeKcs, context: 'any', as_of: new Date() },
-      { getMasteryProjectionFn: deps.getMasteryProjectionFn },
-    );
-    ({ masterySummary, meanTheta, judgmentSentence } = summarizeJudgment(judgment));
-  }
-
-  return {
-    reviewDueCount: summary.review_due_count,
-    activeGoalTitle: activeGoal?.title ?? null,
-    topCauseCategories,
-    masterySummary,
-    meanTheta,
-    judgmentSentence,
-    overnightSentence,
-    failureStreak,
-  };
-}
-
 // ── Cache + watermark reads (IO) ─────────────────────────────────────────────
 
 // Pick whichever ISO timestamp is more recent; null is "no signal" and loses to
@@ -399,6 +171,15 @@ const PRACTICE_WATERMARK_ACTIONS = [
   'correct',
 ] as const;
 
+// YUK-1770 — goal writes that refresh the header (steering create/revise/end;
+// ordinary goal writes also advance the watermark, which is harmless: the
+// projection only re-assembles and renders the same lines).
+const GOAL_WRITE_WATERMARK_ACTIONS = [
+  'experimental:genesis',
+  'experimental:goal_status_update',
+  'experimental:goal_scope_update',
+] as const;
+
 /** One grouped MAX(created_at) query for the three invalidation categories. */
 export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerStateWatermarks> {
   const rows = await db
@@ -412,6 +193,10 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
         inArray(event.action, [...PRACTICE_WATERMARK_ACTIONS]),
         and(eq(event.action, 'experimental:dreaming_scan'), eq(event.outcome, 'success')),
         eq(event.action, 'rate'),
+        and(
+          inArray(event.action, [...GOAL_WRITE_WATERMARK_ACTIONS]),
+          eq(event.subject_kind, 'goal'),
+        ),
       ),
     )
     .groupBy(event.action);
@@ -427,6 +212,10 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
     ),
     dreaming_at: iso('experimental:dreaming_scan'),
     proposal_decision_at: iso('rate'),
+    goal_at: GOAL_WRITE_WATERMARK_ACTIONS.reduce<string | null>(
+      (latest, action) => maxIso(latest, iso(action)),
+      null,
+    ),
   };
 }
 
@@ -469,6 +258,9 @@ function parseCache(payload: Record<string, unknown>): LearnerStateHeaderCache |
       attempt_at: wmField('attempt_at'),
       dreaming_at: wmField('dreaming_at'),
       proposal_decision_at: wmField('proposal_decision_at'),
+      // Caches written before YUK-1770 lack the key → null → the next read sees
+      // goal_at advance and re-assembles once. Intended.
+      goal_at: wmField('goal_at'),
     },
   };
 }
@@ -526,7 +318,8 @@ export async function writeLearnerStateHeaderCache(
 export interface ResolveLearnerStateHeaderDeps {
   readCacheFn?: (db: DbLike, sessionId: string) => Promise<LearnerStateHeaderCache | null>;
   readWatermarksFn?: (db: DbLike) => Promise<LearnerStateWatermarks>;
-  readProjectionFn?: (db: DbLike) => Promise<LearnerStateProjection>;
+  /** Startup-segment assembler; defaults to the Context module via the kernel port. */
+  assembleHeaderFn?: (db: DbLike, now: Date) => Promise<{ header_md: string }>;
   loadProposalFeedbackFn?: (db: DbLike) => Promise<ProposalFeedbackCell[]>;
   writeCacheFn?: (db: DbLike, cache: PersistedLearnerStateHeaderCache) => Promise<void>;
   now?: () => Date;
@@ -537,9 +330,10 @@ const EMPTY_HEADER: LearnerStateHeader = { header_md: '', proposal_feedback: [] 
 /**
  * Resolve the session-anchored learner-state header: read the cache and current
  * watermarks (cheap), reuse a fresh cache with NO reassembly (the owner's hard
- * constraint), else (re)assemble the projection + scoped digest, persist a new
- * cache row, and return it. Any read failure degrades to a stale cache (if any)
- * or an empty header, never crashing the chat.
+ * constraint), else load the Context startup segment + scoped digest, persist a
+ * new cache row, and return it. Any read failure degrades to a stale cache (if
+ * any) or an empty header, never crashing the chat; a never-installed host port
+ * is a wiring defect and propagates instead of degrading.
  *
  * Cache and watermark reads degrade independently:
  *   - cache read fails → treated as `cached=null`; the flow continues with a full
@@ -555,7 +349,12 @@ export async function resolveLearnerStateHeader(
   const now = deps.now?.() ?? new Date();
   const readCache = deps.readCacheFn ?? readLatestLearnerStateHeaderCache;
   const readWatermarks = deps.readWatermarksFn ?? readLearnerStateWatermarks;
-  const readProjection = deps.readProjectionFn ?? readLearnerStateProjection;
+  const assembleHeader =
+    deps.assembleHeaderFn ??
+    (async (d: DbLike, at: Date) => {
+      const ctx = await loadLearnerContext(d, { view: 'companion', now: at });
+      return { header_md: ctx.markdown };
+    });
   const loadFeedback =
     deps.loadProposalFeedbackFn ??
     ((d: DbLike) => getProposalFeedbackDigest(d, PROPOSAL_FEEDBACK_BUDGET));
@@ -605,9 +404,9 @@ export async function resolveLearnerStateHeader(
   }
 
   try {
-    const [projection, rawFeedback] = await Promise.all([readProjection(db), loadFeedback(db)]);
+    const [assembled, rawFeedback] = await Promise.all([assembleHeader(db, now), loadFeedback(db)]);
     const proposal_feedback = scopeCopilotProposalFeedback(rawFeedback);
-    const header_md = assembleLearnerStateHeaderMd(projection);
+    const header_md = assembled.header_md;
     const persisted: PersistedLearnerStateHeaderCache = {
       session_id: sessionId,
       header_md,
@@ -626,6 +425,7 @@ export async function resolveLearnerStateHeader(
     }
     return { header_md, proposal_feedback };
   } catch (err) {
+    if (err instanceof HostOperationNotInstalledError) throw err;
     console.error('[resolveLearnerStateHeader] assembly failed; degrading', {
       session_id: sessionId,
       err,

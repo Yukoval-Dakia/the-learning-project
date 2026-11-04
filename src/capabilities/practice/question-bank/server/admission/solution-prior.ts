@@ -11,6 +11,7 @@ import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, question, question_solution_prior } from '@/db/schema';
+import { toSqlVector } from '@/db/vector';
 import { applyItemPrior } from '@/kernel/records/item-calibration';
 
 export const SOLUTION_PRIOR_VERSION = 'solution-prior-v1';
@@ -288,4 +289,65 @@ export async function readSolutionPriorForServer(
     });
   }
   return out;
+}
+
+export interface NearestMethodQuestion {
+  question_id: string;
+  part_id: string;
+  method_idx: number;
+  similarity: number;
+}
+
+/**
+ * Live admitted questions whose method is closest to the query, best part per question.
+ * Server-only like the read above. It returns ids and similarity, never prior text, so a
+ * caller can pick a question without learning how it is solved.
+ */
+export async function nearestQuestionsByMethod(
+  db: Db | Tx,
+  input: {
+    query: number[] | { revisionId: string; partId: string; methodIdx: number };
+    k: number;
+    excludeQuestionIds?: readonly string[];
+  },
+): Promise<NearestMethodQuestion[]> {
+  const queryVector = Array.isArray(input.query)
+    ? sql`${toSqlVector(input.query)}::vector`
+    : sql`(SELECT q.embedding FROM question_solution_prior_vector q
+           WHERE q.revision_id = ${input.query.revisionId} AND q.part_id = ${input.query.partId}
+             AND q.facet = 'method' AND q.idx = ${input.query.methodIdx})`;
+  const exclude = input.excludeQuestionIds ?? [];
+  const excludeClause =
+    exclude.length > 0
+      ? sql`AND l.group_id NOT IN (${sql.join(
+          exclude.map((id) => sql`${id}`),
+          sql`, `,
+        )})`
+      : sql``;
+  const rows = await db.execute<{
+    question_id: string;
+    part_id: string;
+    idx: number;
+    similarity: number;
+  }>(sql`
+    SELECT question_id, part_id, idx, similarity FROM (
+      SELECT DISTINCT ON (l.group_id) l.group_id AS question_id, v.part_id, v.idx,
+             1 - (v.embedding <=> ${queryVector}) AS similarity
+      FROM question_solution_prior_vector v
+      JOIN question_group_lifecycle l ON l.current_revision_id = v.revision_id
+      WHERE v.facet = 'method'
+        AND l.scoring_admission_state = 'admitted' AND NOT l.withdrawn AND NOT l.suspended
+        ${excludeClause}
+      ORDER BY l.group_id, v.embedding <=> ${queryVector}, v.part_id, v.idx
+    ) best
+    WHERE similarity IS NOT NULL
+    ORDER BY similarity DESC, question_id
+    LIMIT ${Math.max(1, Math.trunc(input.k))}
+  `);
+  return [...rows].map((row) => ({
+    question_id: row.question_id,
+    part_id: row.part_id,
+    method_idx: row.idx,
+    similarity: Number(row.similarity),
+  }));
 }

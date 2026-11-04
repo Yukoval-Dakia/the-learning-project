@@ -21,10 +21,14 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { learnerLocalDay } from '@/core/learner-day';
 import type { SupplyPlanItemV1T, SupplyPlanV1T } from '@/core/schema/supply_plan';
+import { learnerDayWeekday, steeringDaysLeft, steeringWindowCoversToday } from '@/core/steering';
 import type { Db } from '@/db/client';
 import { knowledge, mastery_state, placement_starter_claim, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-goal-scope';
+import { expireDueSteeringGoals } from '@/kernel/records/goal-commands';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { type SupplyPlanRunAgentFn, runSupplyPlanOperation } from '../server/supply-plan-operation';
@@ -54,6 +58,51 @@ const PLANNER_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
   month: '2-digit',
   day: '2-digit',
 });
+
+/** One in-window steering goal as the planner sees it (YUK-1770). */
+interface SteeringScopeEntry {
+  goal_id: string;
+  instruction_md: string;
+  learner_words: string;
+  scope_knowledge_ids: string[];
+  scope_unresolved: string[];
+  until: string | null;
+  days_left: number | null;
+}
+
+/**
+ * In-window steering goals with resolved scope. Slice 1 keeps the general
+ * supply policy untouched: no steering cap, no exemption — the planner still
+ * decides within the same 25-item gate; steering only adds priority context
+ * and a deterministic needed_by/cause tag on matching demands.
+ */
+async function loadSteeringScopes(db: Db, now: Date): Promise<SteeringScopeEntry[]> {
+  const goals = await listActiveGoalsWithResolvedScope(db);
+  const today = learnerLocalDay(now);
+  return goals
+    .filter(
+      (g): g is typeof g & { steering: NonNullable<typeof g.steering> } =>
+        g.steering !== null && steeringWindowCoversToday(g, today),
+    )
+    .map((g) => ({
+      goal_id: g.id,
+      instruction_md: g.steering.instruction_md,
+      learner_words: g.steering.learner_words,
+      scope_knowledge_ids: g.scope_knowledge_ids,
+      scope_unresolved: g.steering.scope_unresolved,
+      until: g.effective_until,
+      days_left: steeringDaysLeft(g.effective_until, today),
+    }));
+}
+
+/**
+ * needed_by = steering until − 2 days (supply must land before the exam),
+ * converted to an ISO instant at Shanghai midnight of that day.
+ */
+function steeringNeededBy(until: string): string {
+  const ms = Date.parse(`${until}T00:00:00.000Z`) - 2 * 24 * 60 * 60 * 1000;
+  return new Date(ms).toISOString();
+}
 
 export interface SupplyPlannerDeps {
   runAgentTaskFn?: SupplyPlanRunAgentFn;
@@ -222,19 +271,43 @@ export async function runSupplyPlanner(
   deps: SupplyPlannerDeps = {},
 ): Promise<SupplyPlannerResult> {
   const now = deps.now?.() ?? new Date();
+  const today = PLANNER_DATE_FORMATTER.format(now);
+
+  // YUK-1770 D2 — nightly expiry sweep lives here (05:50 cron; never on a read
+  // path). A flipped goal writes goal_status_update → the steering subscription
+  // re-plans/re-runs supply exactly like a learner withdrawal. Best-effort on a
+  // manual (subscription-triggered) run: failure never blocks planning.
+  try {
+    const expired = await expireDueSteeringGoals(db, today, now);
+    if (expired.length > 0) {
+      console.info('[supply_planner] steering expired', { goal_ids: expired });
+    }
+  } catch (err) {
+    console.error('[supply_planner] steering expiry sweep failed (continuing)', { err });
+  }
 
   // ── 1. 原始信号装配 ──────────────────────────────────────────────────────
-  const [{ rows: knowledgeRows, subjectById }, poolCounts, mastery, pendingClaims, jyeooRemaining] =
-    await Promise.all([
-      loadLiveKnowledge(db),
-      loadPoolCounts(db),
-      loadMasterySignals(db),
-      loadPendingClaims(db),
-      jyeooBudgetRemaining(db, now),
-    ]);
+  const [
+    { rows: knowledgeRows, subjectById },
+    poolCounts,
+    mastery,
+    pendingClaims,
+    jyeooRemaining,
+    steeringScopes,
+  ] = await Promise.all([
+    loadLiveKnowledge(db),
+    loadPoolCounts(db),
+    loadMasterySignals(db),
+    loadPendingClaims(db),
+    jyeooBudgetRemaining(db, now),
+    loadSteeringScopes(db, now),
+  ]);
 
   const liveKnowledgeIds = new Set(knowledgeRows.map((row) => row.id));
-  const frontier: FrontierEntry[] = knowledgeRows
+  // YUK-1770 — steering scope KCs are guaranteed frontier members: the cap can
+  // cut them in a big tree, and the planner must always see the exam scope.
+  const steeringScopeIds = new Set(steeringScopes.flatMap((scope) => scope.scope_knowledge_ids));
+  const frontierAll: FrontierEntry[] = knowledgeRows
     .filter((row) => row.parentId !== null) // 非根节点才是可规划格子
     .map((row) => {
       const counts = poolCounts.get(row.id) ?? { available: 0, draft: 0 };
@@ -254,8 +327,11 @@ export async function runSupplyPlanner(
         a.available_questions - b.available_questions ||
         a.evidence_count - b.evidence_count ||
         a.id.localeCompare(b.id),
-    )
-    .slice(0, PLANNER_FRONTIER_CAP);
+    );
+  const frontier = [
+    ...frontierAll.slice(0, PLANNER_FRONTIER_CAP),
+    ...frontierAll.slice(PLANNER_FRONTIER_CAP).filter((entry) => steeringScopeIds.has(entry.id)),
+  ];
 
   const subjectIds = [...new Set(frontier.map((entry) => entry.subject_id))].sort();
   const subjects = subjectIds.map((subjectId) => ({
@@ -266,7 +342,8 @@ export async function runSupplyPlanner(
   }));
 
   const plannerInput: Record<string, unknown> = {
-    date: PLANNER_DATE_FORMATTER.format(now),
+    date: today,
+    today: `${today}（${learnerDayWeekday(today)}）`,
     subjects,
     pending_placement_claims: pendingClaims.map((claim) => ({
       claim_id: claim.claimId,
@@ -274,6 +351,21 @@ export async function runSupplyPlanner(
       knowledge_id: claim.knowledgeId,
     })),
     jyeoo_budget_remaining: jyeooRemaining,
+    // YUK-1770 — in-window steering goals（原话+转述+scope+剩余天数）。不加额度、
+    // 不免机检：只在同一套规划约束里抬升考纲内补题优先级（见 prompt）。
+    ...(steeringScopes.length > 0
+      ? {
+          steering: steeringScopes.map((scope) => ({
+            goal_id: scope.goal_id,
+            instruction_md: scope.instruction_md,
+            learner_words: scope.learner_words,
+            scope_knowledge_ids: scope.scope_knowledge_ids,
+            scope_unresolved: scope.scope_unresolved,
+            until: scope.until,
+            days_left: scope.days_left,
+          })),
+        }
+      : {}),
   };
 
   // ── 2. LLM 规划 + 机器门（≤2 轮有界重生成） ──────────────────────────────
@@ -326,6 +418,7 @@ export async function runSupplyPlanner(
       jyeoo_budget_remaining: jyeooRemaining,
       pending_claim_ids: pendingClaims.map((claim) => claim.claimId),
       frontier_size: frontier.length,
+      steering_goal_ids: steeringScopes.map((scope) => scope.goal_id),
     },
     cost_micro_usd: costUsdTotal > 0 ? Math.round(costUsdTotal * 1_000_000) : null,
     ingest_at: now,
@@ -334,9 +427,27 @@ export async function runSupplyPlanner(
 
   let demandEvents = 0;
   const demandEventIds: string[] = [];
+  // YUK-1770 — deterministic steering tag on demands: a KC inside a steering
+  // scope carries control.needed_by = until − 2d and cause owner_request (the
+  // learner asked for it). Earliest needed_by wins when goals overlap. This is
+  // a PLANNING-level record only: the demand event keeps it forever, but the
+  // supply_execute job payload's SupplyExecuteItem parse drops it (executor
+  // scheduling is route/count-driven; the preparer cutover owns the rewire).
+  const steeringTagByKc = new Map<string, { goal_id: string; needed_by: string }>();
+  for (const scope of steeringScopes) {
+    if (scope.until === null) continue;
+    const neededBy = steeringNeededBy(scope.until);
+    for (const kc of scope.scope_knowledge_ids) {
+      const existing = steeringTagByKc.get(kc);
+      if (!existing || neededBy < existing.needed_by) {
+        steeringTagByKc.set(kc, { goal_id: scope.goal_id, needed_by: neededBy });
+      }
+    }
+  }
   if (acceptedPlan !== null) {
     for (const item of acceptedPlan.items) {
       const claimId = claimByKnowledgeId.get(item.knowledge_id);
+      const steeringTag = steeringTagByKc.get(item.knowledge_id);
       const demandEventId = `supply_planner_demand_${createId()}`;
       demandEventIds.push(demandEventId);
       await writeEvent(db, {
@@ -354,6 +465,15 @@ export async function runSupplyPlanner(
           plan_event_id: planEventId,
           item,
           ...(claimId ? { placement_claim_id: claimId } : {}),
+          ...(steeringTag
+            ? {
+                steering: {
+                  goal_id: steeringTag.goal_id,
+                  needed_by: steeringTag.needed_by,
+                  cause: 'owner_request',
+                },
+              }
+            : {}),
         },
         ingest_at: now,
         created_at: now,
@@ -381,6 +501,9 @@ export async function runSupplyPlanner(
           ? {
               placement_claim_id: claimByKnowledgeId.get(item.knowledge_id),
             }
+          : {}),
+        ...(steeringTagByKc.has(item.knowledge_id)
+          ? { steering: steeringTagByKc.get(item.knowledge_id) }
           : {}),
       })),
     };

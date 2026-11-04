@@ -261,13 +261,6 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/notes/server/tools/author-artifact.ts',
-    marker: '.insert(artifact)',
-    role: 'event-native-by-caller',
-    note: 'Tx-owned create snapshot and version-CAS attrs/lifecycle update; invalid event rolls back the paired row mutation.',
-  },
-  {
-    table: 'artifact',
     file: 'src/kernel/records/learning-intent-note-birth.ts',
     marker: '.insert(artifact)',
     role: 'event-native-by-caller',

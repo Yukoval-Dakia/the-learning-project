@@ -4,8 +4,9 @@
 // 机制（ticket：attribution 落 other 时 tally，按 subject + 语义聚类粗略即可）：
 // 1. pending 去重——同一 subject 同时最多一张 open catalog 提议，避免骚扰
 // owner（accept/dismiss 后下一轮 other 才重新评估）。
-// 2. tally——读侧聚合 getFailureAttempts 的 effective cause（user_cause 赢
-// judge），不建新表：event 流本身就是台账。
+// 2. tally——读侧聚合 getFailureAttemptsForDerivation 的 effective cause
+// （user_cause 赢 judge；用途受限的失败本就不进模型输入），不建新表：
+// event 流本身就是台账。
 // 3. ≥ floor → CauseCategoryProposeTask 判定连贯模式 → propose event。
 // LLM 只产语义（slug/label/description/rationale）；`ov_` 前缀与 id 防撞
 // 在代码里收口。
@@ -16,7 +17,7 @@ import { event, question } from '@/db/schema';
 import { pendingProposalWithCooldown } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
-import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-context';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
@@ -72,7 +73,7 @@ export async function maybeProposeCauseCategoryFromOthers(params: {
     // pending 去重：一张 open 提议没裁决前不再造第二张。
     if (await pendingProposalWithCooldown(db, 'cause_category', cooldownKey)) return;
 
-    const failures = await getFailureAttempts(db, {
+    const failures = await getFailureAttemptsForDerivation(db, {
       limit: FAILURE_WINDOW,
       includeReviewFailures: true,
     });

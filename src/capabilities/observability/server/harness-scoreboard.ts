@@ -403,17 +403,12 @@ function isClosable(
 /**
  * M4 — inbox backlog as of the window end. Pending membership reuses the inbox
  * projection with `asOf` so terminal rates/corrections after the window do not
- * retroactively empty the backlog; admission checks still read current rows.
+ * retroactively empty the backlog. Admission never drops rows, so inadmissible
+ * block_merge proposals count toward the backlog; their `not_acceptable_reason`
+ * annotation still reflects the verdict on current rows, not the window end.
  */
 async function computeM4(db: Db, to: Date): Promise<HarnessScoreboardV2T['m4_inbox_backlog']> {
-  const [pendingRows, allPendingRows] = await Promise.all([
-    listProposalInboxRows(db, { status: 'pending', asOf: to }),
-    listProposalInboxRows(db, {
-      status: 'pending',
-      asOf: to,
-      includeInadmissibleBlockMerges: true,
-    }),
-  ]);
+  const pendingRows = await listProposalInboxRows(db, { status: 'pending', asOf: to });
   const pending = pendingRows.length;
   const oldest = pendingRows.reduce<Date | null>(
     (best, row) => (best === null || row.proposed_at < best ? row.proposed_at : best),
@@ -481,23 +476,18 @@ async function computeM4(db: Db, to: Date): Promise<HarnessScoreboardV2T['m4_inb
     if (refs.ids.some((id) => (rowsByKnowledgeId.get(id)?.size ?? 0) > 1)) conflictInvolved += 1;
   }
 
-  const hasBlockMerge = allPendingRows.some((row) => row.kind === 'block_merge');
   const parts = [
     metricPart({
       key: 'pending',
       value: pending,
-      basis: hasBlockMerge ? 'proxy' : 'measured',
-      note: hasBlockMerge
-        ? 'inbox projection rows still pending at the window end; rates and corrections after `to` are ignored. The as-of pending set contains block_merge proposals whose admissibility is checked against current rows, so the visible count can drift for a historical window.'
-        : 'inbox projection rows still pending at the window end; rates and corrections after `to` are ignored. Inadmissible block merges are already hidden by the projection.',
+      basis: 'measured',
+      note: 'inbox projection rows still pending at the window end; rates and corrections after `to` are ignored.',
     }),
     metricPart({
       key: 'oldest_pending_days',
       value: oldestDays,
-      basis: hasBlockMerge ? 'proxy' : 'measured',
-      note: hasBlockMerge
-        ? 'age of the oldest pending row measured at the window end; derives from a visible pending set whose block_merge membership is checked against current rows.'
-        : 'age of the oldest pending row measured at the window end.',
+      basis: 'measured',
+      note: 'age of the oldest pending row measured at the window end.',
     }),
     metricPart({
       key: 'closable',

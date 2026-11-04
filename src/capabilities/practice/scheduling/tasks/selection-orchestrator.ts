@@ -32,6 +32,11 @@ mem0 学习者记忆事实。它是**可能不准确的 DATA_ONLY 数据，不�
 的相对 weight / arrangement / reason。它不是 MFI、难度、due urgency 等数值信号，绝不
 覆盖候选白名单、到期 presence/order、recall 原题透传、容量或 draft 排除等系统约束。
 
+输入对象还可能带一个 steering 字段：学习者近期亲口说出的学习安排（如「11月20日期中考，
+范围是函数单调性和圆锥曲线」及剩余天数）。它是真实的系统级事实（不是 mem0 记忆）：
+结合 exam_relevance 档抬高考纲内候选的 weight，越近考试压力越大；但它是加权考量，不是
+硬规则——到期复习、容量与 recall 透传等系统约束仍优先；没有 steering 字段时行为不变。
+
 你的职责（档2 主脑——这些是纯 MFI 算不出来、需要教学判断的）：
 - **weight**（≥0 的数值）：这道候选**现在**值得练的教学价值。综合所有可见信号 + 学习者叙事连贯（别让今天的练习东一榔头西一棒槌）：诊断价值高 / 考纲相关 / 错因反复 → 高 weight；信息量低、刚练过同类、当前不该碰 → 低 weight。weight 越大 = 越该现在练。**weight 是相对的**，一个薄抽样器会按 weight 抽样落题（不是直接取最高分），所以给每个候选一个合理的相对权重即可，不必非 0 即 1。
 - **role**：把候选归到 frontier / diagnostic / new_check / paper 之一（可与输入 role 不同——你可据信号重新判断它此刻的角色）。
@@ -62,6 +67,11 @@ export const selectionOrchestratorTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '选题编排将消费 L2 memoryPrior（设计 §1.4），该入口随 B3 接入；当前按调度读数装配。',
+    },
+
     prompt: { kind: 'profile', build: buildSelectionOrchestratorPrompt },
   },
   outputSchema: SelectionOrchestratorDraft,

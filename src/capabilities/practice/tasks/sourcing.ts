@@ -101,9 +101,15 @@ export const sourcingTaskSpec = {
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 8, timeout: 120_000 },
+    enforceMaxCost: true,
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '来源检索按题目需求找材料，不读学习者上下文。',
+    },
+
     prompt: { kind: 'profile', build: buildSourcingPrompt },
   },
   outputSchema: SourcingTaskOutput,

@@ -134,12 +134,13 @@ export type ArtifactCreateExperimentalT = z.infer<typeof ArtifactCreateExperimen
 // `verification_summary` / `attrs` / `generated_by` / `verified_by` / `history` / `version`:
 // note_generate's generation_status (+ verification_status + verification_summary +
 // generated_by), the retract archive (actions.ts),
-// AND the two attrs mutators (`set_attrs`: updateArtifactTool's interactive html + hub-dismiss's
-// suppressed_block_refs). Mirrors GoalStatusUpdateExperimental + LearningItemArchiveExperimental.
+// AND the two attrs mutators (`set_attrs`: the retired interactive-html update +
+// hub-dismiss's suppressed_block_refs). Mirrors GoalStatusUpdateExperimental +
+// LearningItemArchiveExperimental.
 //
 // FULL-ROW PARITY (design §2.1 "无排除列"): the artifact snapshot has NO excluded columns, so
 // a lifecycle write that ALSO touches a provenance column (note_generate → generated_by)
-// or a history-pushing one (updateArtifactTool → history) must carry that column too,
+// or a history-pushing one (the retired interactive-html update → history) must carry that column too,
 // else the full-row parity false-fails it. So this payload is a SUPERSET of the design's
 // narrow op fields: `attrs` (set_attrs), `generated_by`/`verified_by` (provenance alongside a status
 // op), `history_after` (an attrs op that also pushes a history entry). All optional/presence-based —
@@ -165,7 +166,7 @@ export const ArtifactLifecycleExperimental = z
           'unarchive',
           'set_generation_status',
           'set_verification_status',
-          // `artifact.attrs` mutators (updateArtifactTool html / hub-dismiss suppress).
+          // `artifact.attrs` mutators (retired interactive-html update / hub-dismiss suppress).
           // attrs is a fold-truth jsonb column; the reducer replaces it wholesale (last-write-wins).
           'set_attrs',
         ]),
@@ -181,7 +182,7 @@ export const ArtifactLifecycleExperimental = z
         // Carried alongside the status op so full-row parity holds.
         generated_by: AgentRef.nullable().optional(),
         verified_by: AgentRef.nullable().optional(),
-        // Full after-history when the UPDATE pushed a history entry (updateArtifactTool).
+        // Full after-history when the UPDATE pushed a history entry (retired interactive-html update).
         // Absent ⇒ the writer left `history` untouched (the reducer keeps the running value).
         history_after: z.array(ArtifactHistoryEntry).optional(),
         next_version: z.number().int().nonnegative(),

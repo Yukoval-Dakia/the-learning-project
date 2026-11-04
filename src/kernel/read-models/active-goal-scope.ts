@@ -1,7 +1,8 @@
 // Active-goal effective-scope read model. Agency keeps goal writes and the scope
 // vocabulary; this module only projects stored rows.
 
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNotNull } from 'drizzle-orm';
+import type { SteeringGoalDataT } from '@/core/schema/steering';
 import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
@@ -15,6 +16,10 @@ export interface ActiveGoal {
   scope_knowledge_ids: string[];
   scope_mode: (typeof goal.$inferSelect)['scope_mode'];
   sequence_hint: number;
+  // YUK-1770 steering — NULL/absent on ordinary goals.
+  effective_from: string | null;
+  effective_until: string | null;
+  steering: SteeringGoalDataT | null;
 }
 
 /**
@@ -30,6 +35,9 @@ export async function listActiveGoals(db: DbLike): Promise<ActiveGoal[]> {
       scope_knowledge_ids: goal.scope_knowledge_ids,
       scope_mode: goal.scope_mode,
       sequence_hint: goal.sequence_hint,
+      effective_from: goal.effective_from,
+      effective_until: goal.effective_until,
+      steering: goal.steering,
     })
     .from(goal)
     .where(eq(goal.status, 'active'))
@@ -41,7 +49,24 @@ export async function listActiveGoals(db: DbLike): Promise<ActiveGoal[]> {
     scope_knowledge_ids: r.scope_knowledge_ids ?? [],
     scope_mode: r.scope_mode,
     sequence_hint: r.sequence_hint,
+    effective_from: r.effective_from,
+    effective_until: r.effective_until,
+    steering: r.steering ?? null,
   }));
+}
+
+/**
+ * Active goals that carry a steering payload (YUK-1770), in listActiveGoals
+ * order. Window filtering stays with callers: they own the learner-local today
+ * and each consumer has its own coverage rule (deferral, planning, header).
+ */
+export async function listActiveSteeringGoals(db: DbLike): Promise<ActiveGoal[]> {
+  const rows = await db
+    .select({ id: goal.id })
+    .from(goal)
+    .where(and(eq(goal.status, 'active'), isNotNull(goal.steering)));
+  const wanted = new Set(rows.map((r) => r.id));
+  return (await listActiveGoals(db)).filter((g) => wanted.has(g.id));
 }
 
 /**

@@ -29430,6 +29430,8 @@ export interface operations {
                             id: string;
                             /** @enum {string} */
                             kind: "knowledge_node" | "knowledge_edge" | "knowledge_mutation" | "learning_item" | "note_update" | "variant_question" | "completion" | "relearn" | "defer" | "record_links" | "record_promotion" | "archive" | "judge_retraction" | "goal_scope" | "block_merge" | "image_candidate" | "question_draft" | "question_edit" | "conjecture" | "cause_category";
+                            /** @enum {string|null} */
+                            not_acceptable_reason: "blocks_missing" | "not_draft" | "session_mismatch" | "unknown_source" | "ambiguous_page_index" | "pages_not_adjacent" | "conflicting_question_number" | "missing_continuity" | null;
                             payload: {
                                 cooldown_key?: string;
                                 /** @default [] */
@@ -30540,6 +30542,8 @@ export interface operations {
                             id: string;
                             /** @enum {string} */
                             kind: "knowledge_node" | "knowledge_edge" | "knowledge_mutation" | "learning_item" | "note_update" | "variant_question" | "completion" | "relearn" | "defer" | "record_links" | "record_promotion" | "archive" | "judge_retraction" | "goal_scope" | "block_merge" | "image_candidate" | "question_draft" | "question_edit" | "conjecture" | "cause_category";
+                            /** @enum {string|null} */
+                            not_acceptable_reason: "blocks_missing" | "not_draft" | "session_mismatch" | "unknown_source" | "ambiguous_page_index" | "pages_not_adjacent" | "conflicting_question_number" | "missing_continuity" | null;
                             payload: {
                                 cooldown_key?: string;
                                 /** @default [] */

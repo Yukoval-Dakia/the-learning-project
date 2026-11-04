@@ -113,6 +113,8 @@ async function installPracticeOperationsBeforeServe(): Promise<void> {
   );
   await installPracticeHostOperations();
   await installModelAdmissionPins();
+  const { installAgencyHostOperations } = await import('@/capabilities/agency/public');
+  await installAgencyHostOperations();
 }
 
 async function installSchedulingCandidateRebuildBeforeServe(): Promise<void> {

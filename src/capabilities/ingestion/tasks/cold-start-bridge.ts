@@ -40,6 +40,8 @@ export const coldStartPlacementBridgeTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: { view: 'none', reason: '录入 agent 只处理当次源材料，不读学习者历史上下文' },
+
     prompt: { kind: 'inline', text: COLD_START_BRIDGE_PROMPT },
   },
   outputSchema: ColdStartBridgeOutput,
