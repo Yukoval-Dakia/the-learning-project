@@ -19,14 +19,20 @@ export function estimateTokens(text: string): number {
 }
 
 export interface TrimUnit {
-  /** Trim priority rank: 0 = kept longest, higher = dropped earlier. */
+  /** Render order AND default drop priority: 0 = rendered first, kept longest. */
   readonly rank: number;
+  /**
+   * Drop priority override (higher = dropped earlier). Defaults to `rank`.
+   * §13「怎么和我说话」要常驻，所以 YUK-1811 的明细段各自成 unit、dropRank
+   * 比所有基础段高：预算紧时先丢明细、不动既有段落，也给 §13 留空间。
+   */
+  readonly dropRank?: number;
   readonly markdown: string | null;
 }
 
 /**
  * Trim ordered units to the token budget by dropping the lowest-priority present
- * units first (昨夜 → 信号 → 稳态画像 → 掌握和错因 → Δ；Steering 永不整段丢）。
+ * units first（明细 → 昨夜 → 信号 → 稳态画像 → 掌握和错因 → Δ；Steering 永不整段丢）。
  * Only when the remainder still overflows does it get a sentence-boundary
  * truncation marked with … — never a mid-sentence cut, and rank 0 (Steering)
  * keeps every complete sentence that fits.
@@ -40,10 +46,15 @@ export function trimUnitsToBudget(
     .sort((a, b) => a.rank - b.rank);
   const render = () => kept.map((u) => u.markdown).join('\n');
 
-  // Drop the largest-rank (lowest-priority) unit until the estimate fits; rank 0
-  // (Steering) is never dropped whole — it takes the boundary truncation instead.
+  // Drop the highest-dropRank (lowest-priority) unit until the estimate fits;
+  // rank 0 (Steering) is never dropped whole — it takes the boundary truncation instead.
   while (kept.length > 1 && estimateTokens(render()) > budget.maxEstimatedTokens) {
-    kept.pop();
+    let dropIdx = 0;
+    for (let i = 1; i < kept.length; i++) {
+      if ((kept[i].dropRank ?? kept[i].rank) >= (kept[dropIdx].dropRank ?? kept[dropIdx].rank))
+        dropIdx = i;
+    }
+    kept.splice(dropIdx, 1);
   }
   let md = render();
   if (md.length > budget.maxChars) {

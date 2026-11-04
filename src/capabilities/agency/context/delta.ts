@@ -7,19 +7,22 @@
 // 动作类别与 outcome 词，不回放学习者自由文本；answer_only / crisis 回合的
 // 发言也因此不计入「发言 N 次」。
 
-import { and, desc, eq, gt, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
+import { event, knowledge } from '@/db/schema';
 import { COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
+import { excerpt } from '@/kernel/read-models/extraction-summary';
 import {
   LEARNER_ANSWER_ACTIONS,
   loadLastLearnerEventAt,
   loadLongestFailureStreak,
 } from '@/kernel/read-models/learner-activity';
+import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 import { executeGetReviewDue } from '@/kernel/read-models/review-due';
 import type { ToolContext } from '@/kernel/tools/types';
-import type { DeltaSection } from './types';
+import type { DeltaSection, DueItemLine } from './types';
 
 type DbLike = Db | Tx;
 
@@ -36,6 +39,11 @@ const STEERING_ACTIONS = [
 ] as const;
 /** 「今日待复习」读数上限（端口 limit max(50)）；达到上限如实标「50+」。 */
 const REVIEW_DUE_DISPLAY_CAP = 50;
+/** 启动段只带前几道到期题：够回答「今天做什么」，不代替复习页。 */
+const DUE_ITEM_DETAIL_MAX = 3;
+/** 明细字段再压到单行宽度，防长题干/长知识链吃掉启动段预算。 */
+const DUE_STEM_EXCERPT_MAX = 36;
+const DUE_KNOWLEDGE_NAME_MAX = 2;
 
 const SHANGHAI_HOUR_MIN = new Intl.DateTimeFormat('en-GB', {
   timeZone: 'Asia/Shanghai',
@@ -159,6 +167,34 @@ export async function readDeltaSection(
     loadLastLearnerEventAt(db),
   ]);
 
+  // 到期队列前几条明细：题干摘要 + 知识点显示名（学习者可见 id、非 seed 结构锚、未归档节点）。
+  const dueItemRows = due.rows.slice(0, DUE_ITEM_DETAIL_MAX);
+  const dueKnowledgeIds = learnerVisibleKnowledgeIds(
+    dueItemRows
+      .flatMap((row) => row.knowledge_ids)
+      .filter((id) => !SYNTHETIC_SUBJECT_ROOT_RE.test(id)),
+  );
+  const dueKnowledgeNameById =
+    dueKnowledgeIds.length > 0
+      ? new Map(
+          (
+            await db
+              .select({ id: knowledge.id, name: knowledge.name })
+              .from(knowledge)
+              .where(and(inArray(knowledge.id, dueKnowledgeIds), isNull(knowledge.archived_at)))
+          ).map((row) => [row.id, row.name] as const),
+        )
+      : new Map<string, string>();
+  const dueItems: DueItemLine[] = dueItemRows
+    .map((row) => ({
+      stem: excerpt(row.prompt_excerpt, DUE_STEM_EXCERPT_MAX),
+      knowledgeNames: row.knowledge_ids
+        .map((id) => dueKnowledgeNameById.get(id))
+        .filter((name): name is string => typeof name === 'string' && name.length > 0)
+        .slice(0, DUE_KNOWLEDGE_NAME_MAX),
+    }))
+    .filter((item) => item.stem.length > 0);
+
   const counts = { answers: 0, reviews: 0, captures: 0, decisions: 0, steering: 0, messages: 0 };
   for (const row of countRows) {
     if (row.subject_kind === 'goal') {
@@ -180,6 +216,7 @@ export async function readDeltaSection(
     recent: rows.slice(0, 3).map((row) => ({ at: row.created_at, label: lineFor(row) })),
     reviewDueCount: due.queue_summary.total_returned,
     reviewDueOverCap: due.queue_summary.total_returned >= REVIEW_DUE_DISPLAY_CAP,
+    dueItems,
     failureStreak: streak,
     lastActivityAt,
   };
