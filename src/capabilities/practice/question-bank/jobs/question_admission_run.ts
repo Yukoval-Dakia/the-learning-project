@@ -1,6 +1,9 @@
 // one durable admission batch per group/base digest.
 // The publisher event outbox enqueues pinned revisions. Queue retries replay a
-// complete result receipt, never paid solves. Unknown batches require reconciliation.
+// complete result receipt, never paid solves. A 'pending' verdict (an unsealed
+// result) is marked unknown and re-driven through the generic void + successor
+// authorization — a bounded number of authorized fresh sends on minute-level
+// backoff; any other unknown batch still requires reconciliation.
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -38,6 +41,7 @@ import {
 } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { type BoundRunTaskTextFn, makeRunTaskTextFn } from '@/server/ai/runner-fn';
+import { getStartedBoss } from '@/server/boss/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   placementAuthority as placementAuthorityPort,
@@ -60,6 +64,10 @@ import {
   claimAdmissionBatch,
   completedAdmissionStatus,
 } from '../server/admission/receipt';
+import {
+  ADMISSION_REDRIVE_MAX_ATTEMPTS,
+  scheduleAdmissionPendingRedrive,
+} from '../server/admission/redrive';
 import {
   admissionCheckVerdict,
   buildAdmissionPublishInput,
@@ -518,31 +526,64 @@ export async function runAdmissionForQuestion(
         });
         return [];
       });
-      const result = await runQuestionAdmission(definitionFromContract(batch.input.contract), {
-        db,
-        runTask,
-        knowledgeCandidates,
-        subjectProfile: batch.input.subject_profile,
-        solver2: batch.input.solver2
-          ? {
-              ...(batch.input.solver2.provider
-                ? { provider: canonicalProviderName(batch.input.solver2.provider) as Provider }
-                : {}),
-              ...(batch.input.solver2.model ? { model: batch.input.solver2.model } : {}),
-            }
-          : null,
-        policyId: batch.input.policy_id,
-      });
+      const result = await runQuestionAdmission(
+        {
+          ...definitionFromContract(batch.input.contract),
+          revision_id: batch.input.revision_id,
+        },
+        {
+          db,
+          runTask,
+          knowledgeCandidates,
+          subjectProfile: batch.input.subject_profile,
+          solver2: batch.input.solver2
+            ? {
+                ...(batch.input.solver2.provider
+                  ? { provider: canonicalProviderName(batch.input.solver2.provider) as Provider }
+                  : {}),
+                ...(batch.input.solver2.model ? { model: batch.input.solver2.model } : {}),
+              }
+            : null,
+          policyId: batch.input.policy_id,
+        },
+      );
       if (result.status === 'pending') {
-        await db.transaction((tx) =>
-          markPaidEffectUnknown(
+        // 'pending' is an unsealed result: the send happened, nothing
+        // publishable came back. Retry budget lives on the paid input — a
+        // successor carries attempt+1 in its own redrive coordinate.
+        const attempt = batch.input.redrive?.attempt ?? 0;
+        const boss =
+          attempt < ADMISSION_REDRIVE_MAX_ATTEMPTS
+            ? await getStartedBoss().catch((error: unknown) => {
+                console.warn('[question_admission] pending re-drive scheduler unavailable', {
+                  err: error instanceof Error ? error.message : String(error),
+                });
+                return null;
+              })
+            : null;
+        await db.transaction(async (tx) => {
+          await markPaidEffectUnknown(
             tx,
             batch.identity,
             delivery.id,
             `admission_pending:${result.reason ?? 'unsealed_result'};task_runs=${[...new Set([...attemptedTaskRunIds, ...result.evidence_refs.task_run_ids])].join(',')}`,
             { fence: batch.fence },
-          ),
-        );
+          );
+          // mark → void → authorize → enqueue in ONE transaction: the bound
+          // delivery exists iff the authorization does. Exhausted attempts
+          // leave the honest 'unknown' obligation for lead resolution.
+          if (boss != null) {
+            await scheduleAdmissionPendingRedrive(tx, {
+              boss,
+              identity: batch.identity,
+              input: batch.input,
+              fence: batch.fence,
+              deliveryId: delivery.id,
+              jobData: data,
+              nextAttempt: attempt + 1,
+            });
+          }
+        });
         return { ...simple('pending'), per_unit: result.per_unit };
       }
       receipt = AdmissionResultReceipt.parse(

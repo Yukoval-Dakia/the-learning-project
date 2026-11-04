@@ -52,6 +52,13 @@ export const FrozenAdmissionInput = z.object({
   subject_profile: SubjectProfileSchema,
   policy_id: z.string().min(1),
   solver2: z.object({ provider: z.string().optional(), model: z.string().optional() }).nullable(),
+  // The re-drive coordinate is PAID identity: an authorized successor is the
+  // same frozen envelope plus this marker, hence a new digest and a new effect
+  // row — a fresh spend bound to `of_delivery`'s re-drive job, never a replay
+  // of the voided send.
+  redrive: z
+    .object({ attempt: z.number().int().min(1), of_delivery: z.string().min(1) })
+    .optional(),
 });
 export type FrozenAdmissionInput = z.infer<typeof FrozenAdmissionInput>;
 

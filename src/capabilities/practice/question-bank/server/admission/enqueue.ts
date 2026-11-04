@@ -33,6 +33,8 @@ export const AdmissionJobData = z.object({
   dispatch_generation: z.number().int().nonnegative().optional(),
   source_event_id: z.string().min(1).optional(),
   usage_source_event_id: z.string().min(1).optional(),
+  /** Bound successor deliveries only: which authorized re-drive this job is. */
+  redrive_attempt: z.number().int().positive().optional(),
 });
 export type AdmissionJobData = z.infer<typeof AdmissionJobData>;
 

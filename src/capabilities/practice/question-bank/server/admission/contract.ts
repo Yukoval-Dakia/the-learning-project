@@ -60,6 +60,9 @@ export interface AdmissionSourceAnswer {
 
 export interface QuestionAdmissionDefinition {
   group_id: string;
+  /** Published revision this definition grades, when one exists. The prior
+   * pass skips a revision whose parts already carry a stored prior. */
+  revision_id?: string | null;
   /**
    * 本定义所基于的【归一前】草稿契约 digest（job 在行快照上计算）。持久化时
    * 用它做 drift CAS —— 行内容变了，本 admission 的全部证据随之失效。

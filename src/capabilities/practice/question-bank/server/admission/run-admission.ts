@@ -42,7 +42,11 @@ import {
   runCalibrationProbes,
 } from './calibrate';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
-import type { KnowledgeCandidate, SolutionPriorRecordT } from './solution-prior';
+import {
+  type KnowledgeCandidate,
+  type SolutionPriorRecordT,
+  readSolutionPriorForServer,
+} from './solution-prior';
 import {
   type AdmissionKey,
   type AdmissionSolveReceipt,
@@ -626,6 +630,19 @@ export async function runQuestionAdmission(
   }
   // No settled key means the solvers could not agree on the answer, so a description of
   // the solution (and a write-once difficulty anchor from it) would be speculation.
+  // A revision whose parts already carry the stored prior must not buy the pass
+  // again — a re-paid batch (queue void+successor, re-pending) would otherwise
+  // pay a second prior call for an already-frozen record.
+  const priorAlreadyRecorded =
+    settledKeys.size > 0 &&
+    definition.revision_id != null &&
+    definition.structure.parts.length > 0 &&
+    (await readSolutionPriorForServer(options.db, { revisionId: definition.revision_id }).then(
+      (stored) => {
+        const covered = new Set(stored.map((row) => row.part_id));
+        return definition.structure.parts.every((part) => covered.has(part.part_id));
+      },
+    ));
   const prior: SolutionPriorPassResult =
     settledKeys.size === 0
       ? {
@@ -633,13 +650,19 @@ export async function runQuestionAdmission(
           receipt: null,
           outcome: { status: 'skipped', task_run_id: null, reason: 'no settled key' },
         }
-      : await runSolutionPriorPass(options.db, definition, settledKeys, {
-          runTask,
-          ...(options.subjectProfile != null ? { subjectProfile: options.subjectProfile } : {}),
-          ...(options.knowledgeCandidates != null
-            ? { knowledgeCandidates: options.knowledgeCandidates }
-            : {}),
-        });
+      : priorAlreadyRecorded
+        ? {
+            record: null,
+            receipt: null,
+            outcome: { status: 'skipped', task_run_id: null, reason: 'already recorded' },
+          }
+        : await runSolutionPriorPass(options.db, definition, settledKeys, {
+            runTask,
+            ...(options.subjectProfile != null ? { subjectProfile: options.subjectProfile } : {}),
+            ...(options.knowledgeCandidates != null
+              ? { knowledgeCandidates: options.knowledgeCandidates }
+              : {}),
+          });
   if (prior.receipt != null) evidenceTaskRuns.push(prior.receipt);
   const allAdmitted = definition.units.every((unit) => unitResult(unit).status === 'admitted');
   const result = finalize(
