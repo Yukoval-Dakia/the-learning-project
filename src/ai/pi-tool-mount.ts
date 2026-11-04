@@ -38,6 +38,8 @@ export interface BuildMcpServerOptions {
   /** `task_kind` recorded on each tool_call_log row (defaults to ctx.callerActor.ref). */
   taskKind?: string;
   toolOperations?: ToolOperations;
+  /** Model-facing projection only; execution evidence retains the original result. */
+  presentResult?: (envelope: Record<string, unknown>) => Promise<Record<string, unknown>>;
   cancellationSignals?: ReadonlyArray<{
     signal: AbortSignal;
     requestedBy: 'system' | 'user';

@@ -44,7 +44,7 @@ import {
   initialSchedulingState,
   upsertFsrsState,
 } from '@/kernel/records/scheduling-state';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { activateEvaluation, insertInitialEvaluationHead } from './activate';
 import {
   ASSESSMENT_SETTLEMENT_ACTION,

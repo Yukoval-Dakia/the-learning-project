@@ -148,9 +148,32 @@ function alertLastSuccessText(alert: TaskFailureAlertRow): string {
   return '窗口内没有成功';
 }
 
+function AlertTaskCell({ taskKind }: { taskKind: string }) {
+  return (
+    <td>
+      <span className="adm-run-task">{taskLabel(taskKind)}</span>
+      {taskLabel(taskKind) !== taskKind && <code className="adm-mono adm-quiet"> {taskKind}</code>}
+    </td>
+  );
+}
+
+function AlertRecordedCell({ recordedAt }: { recordedAt: string | null | undefined }) {
+  return (
+    <td>
+      {recordedAt ? (
+        <Chip tone="positive">已记录 · {formatTime(recordedAt)}</Chip>
+      ) : (
+        <Chip>下次整点检查时记录</Chip>
+      )}
+    </td>
+  );
+}
+
 /**
  * YUK-1738 — task kinds that keep failing, read live from observability. Shown only when
  * there is at least one alert; a failed read is one quiet line and never blocks the run list.
+ * YUK-1765 — an `unsealed` alert is not a failure (the reply was delivered), so it has its own
+ * panel and never reads as 「失败 0 / 1 次」.
  */
 function TaskFailureAlertsPanel({
   read,
@@ -168,59 +191,94 @@ function TaskFailureAlertsPanel({
     return <p className="adm-warn">持续失败告警暂时读不到，下面的运行记录不受影响。</p>;
   const data = alertsQ.data;
   if (!data || data.alerts.length === 0) return null;
+  const failing = data.alerts.filter((alert) => alert.rule !== 'unsealed');
+  const unsealed = data.alerts.filter((alert) => alert.rule === 'unsealed');
   return (
-    <AdminPanel
-      id="adm-failure-alerts"
-      title="持续失败的任务"
-      sub={`连续失败 ${data.thresholds.consecutive_failures} 次，或 ${data.thresholds.window_hours} 小时内失败率超过 ${Math.round(data.thresholds.failure_rate_above * 100)}% 时列出 · ${formatTime(data.checked_at)} 检查`}
-      aside={<Chip tone="critical">{data.alerts.length} 项</Chip>}
-      flush
-    >
-      <div className="adm-table-scroll">
-        <table className="adm-table">
-          <thead>
-            <tr>
-              <th scope="col">任务</th>
-              <th scope="col">失败</th>
-              <th scope="col">最近失败</th>
-              <th scope="col">上次成功</th>
-              <th scope="col">告警记录</th>
-              <th scope="col">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.alerts.map((alert) => (
-              <tr key={alert.id}>
-                <td>
-                  <span className="adm-run-task">{taskLabel(alert.task_kind)}</span>
-                  {taskLabel(alert.task_kind) !== alert.task_kind && (
-                    <code className="adm-mono adm-quiet"> {alert.task_kind}</code>
-                  )}
-                </td>
-                <td>
-                  <Chip tone="critical">{alertRuleText(alert, data.thresholds.window_hours)}</Chip>
-                  {alert.latest_finish_reason && (
-                    <code className="adm-mono adm-quiet"> {alert.latest_finish_reason}</code>
-                  )}
-                </td>
-                <td className="adm-mono adm-quiet">{formatTime(alert.last_failure_at)}</td>
-                <td className="adm-mono adm-quiet">{alertLastSuccessText(alert)}</td>
-                <td>
-                  {alert.recorded_at ? (
-                    <Chip tone="positive">已记录 · {formatTime(alert.recorded_at)}</Chip>
-                  ) : (
-                    <Chip>下次整点检查时记录</Chip>
-                  )}
-                </td>
-                <td>
-                  <Button onClick={() => onOpenRun(alert.latest_run_id)}>查看最近一次运行</Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </AdminPanel>
+    <>
+      {failing.length > 0 && (
+        <AdminPanel
+          id="adm-failure-alerts"
+          title="持续失败的任务"
+          sub={`连续失败 ${data.thresholds.consecutive_failures} 次，或 ${data.thresholds.window_hours} 小时内失败率超过 ${Math.round(data.thresholds.failure_rate_above * 100)}% 时列出 · ${formatTime(data.checked_at)} 检查`}
+          aside={<Chip tone="critical">{failing.length} 项</Chip>}
+          flush
+        >
+          <div className="adm-table-scroll">
+            <table className="adm-table">
+              <thead>
+                <tr>
+                  <th scope="col">任务</th>
+                  <th scope="col">失败</th>
+                  <th scope="col">最近失败</th>
+                  <th scope="col">上次成功</th>
+                  <th scope="col">告警记录</th>
+                  <th scope="col">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {failing.map((alert) => (
+                  <tr key={alert.id}>
+                    <AlertTaskCell taskKind={alert.task_kind} />
+                    <td>
+                      <Chip tone="critical">
+                        {alertRuleText(alert, data.thresholds.window_hours)}
+                      </Chip>
+                      {alert.latest_finish_reason && (
+                        <code className="adm-mono adm-quiet"> {alert.latest_finish_reason}</code>
+                      )}
+                    </td>
+                    <td className="adm-mono adm-quiet">{formatTime(alert.last_failure_at)}</td>
+                    <td className="adm-mono adm-quiet">{alertLastSuccessText(alert)}</td>
+                    <AlertRecordedCell recordedAt={alert.recorded_at} />
+                    <td>
+                      <Button onClick={() => onOpenRun(alert.latest_run_id)}>
+                        查看最近一次运行
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </AdminPanel>
+      )}
+      {unsealed.length > 0 && (
+        <AdminPanel
+          id="adm-unsealed-alerts"
+          title="回复已送达，收尾记录没写完"
+          sub={`回复已写入对话，不计入失败率，但内容可能不完整。可能是超过 64k 被截断，或回执没封存，具体原因看最近一次运行 · ${formatTime(data.checked_at)} 检查`}
+          aside={<Chip tone="caution">{unsealed.length} 项</Chip>}
+          flush
+        >
+          <div className="adm-table-scroll">
+            <table className="adm-table">
+              <thead>
+                <tr>
+                  <th scope="col">任务</th>
+                  <th scope="col">最近一次</th>
+                  <th scope="col">告警记录</th>
+                  <th scope="col">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {unsealed.map((alert) => (
+                  <tr key={alert.id}>
+                    <AlertTaskCell taskKind={alert.task_kind} />
+                    <td className="adm-mono adm-quiet">{formatTime(alert.last_failure_at)}</td>
+                    <AlertRecordedCell recordedAt={alert.recorded_at} />
+                    <td>
+                      <Button onClick={() => onOpenRun(alert.latest_run_id)}>
+                        查看最近一次运行
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </AdminPanel>
+      )}
+    </>
   );
 }
 

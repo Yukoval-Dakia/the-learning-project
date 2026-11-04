@@ -914,6 +914,13 @@ function PlacementQuestionCard({
   const frozen = binding.state.practice_dto;
   // YUK-1406 — the subject's render notation from the server; without it formulas show as source.
   const notation = qRef.notation ?? null;
+  // YUK-1823 — the issuance's presentation draws the question, as on the other answer pages.
+  // Select and blank slots exist only as blocks. Questions with sandboxed custom blocks stay on
+  // the per-slot path: this page does not host their load and verify steps.
+  const blocks = useMemo(
+    () => client.readIssuedBlocks?.(frozen?.presentation) ?? null,
+    [client, frozen?.presentation],
+  );
   const accepted = binding.state.submissions[0];
   const restored = binding.state.draft ?? accepted;
   const [responses, setResponses] = useState<ResponseSetT>(
@@ -932,7 +939,12 @@ function PlacementQuestionCard({
     'answering' | 'retry' | 'pending' | 'held' | 'waiting' | 'uncertain'
   >(binding.phase);
   const [pendingRun, setPendingRun] = useState(binding.pending_run);
-  const [uploading, setUploading] = useState(false);
+  const [composerUploading, setComposerUploading] = useState(false);
+  const [blockUploads, setBlockUploads] = useState<Readonly<Record<string, boolean>>>({});
+  const [unreceipted, setUnreceipted] = useState<Readonly<Record<string, EvidenceAttachment[]>>>(
+    {},
+  );
+  const uploading = composerUploading || Object.values(blockUploads).some(Boolean);
   const [submitting, setSubmitting] = useState(false);
   const [conflict, setConflict] = useState(false);
   // Set together with `conflict` when a save gets a 409 (async handler, not render), so
@@ -1157,6 +1169,12 @@ function PlacementQuestionCard({
     setResponses(response_set);
     editDraft({ response_set, group_evidence: latest.group_evidence });
   };
+  const updateEntries = (update: (prev: SlotResponseT[]) => SlotResponseT[]) => {
+    const latest = currentValue.current;
+    const response_set = { entries: update(latest.response_set.entries) };
+    setResponses(response_set);
+    editDraft({ response_set, group_evidence: latest.group_evidence });
+  };
   const updateEvidence = (next: EvidenceAttachment[]) => {
     setEvidence(next);
     editDraft({
@@ -1165,14 +1183,21 @@ function PlacementQuestionCard({
     });
   };
   const unavailable =
-    !frozen || frozen.response_spec.slots.some((slot) => !nativeSlotFieldSpec(slot));
+    !frozen || (!blocks && frozen.response_spec.slots.some((slot) => !nativeSlotFieldSpec(slot)));
+  // A block-drawn select or blank may be left empty and goes in as an active blank, but the
+  // answer as a whole may not be empty (same rule as the practice page).
+  // A free_area block keeps its photos on the open entry itself; they answer that slot.
+  const entryAnswered = (entry: SlotResponseT | undefined) =>
+    isSlotResponseAnswered(nativeResponseValue(entry)) ||
+    (entry?.kind === 'open' && entry.evidence.length > 0);
   const answered =
     !!frozen &&
+    (!blocks || responses.entries.some(entryAnswered) || nativeEvidence.length > 0) &&
     frozen.response_spec.slots
       .filter((slot) => slot.kind !== 'table')
       .every((slot) => {
         const entry = responses.entries.find((entry) => entry.slot_id === slot.slot_id);
-        if (isSlotResponseAnswered(nativeResponseValue(entry))) return true;
+        if (entryAnswered(entry) || blocks?.blankableSlotIds.has(slot.slot_id)) return true;
         const units = frozen.response_requirements?.find(
           (requirement) => requirement.slot_id === slot.slot_id,
         )?.evidence_unit_ids;
@@ -1193,6 +1218,7 @@ function PlacementQuestionCard({
     !submitting &&
     !leaving &&
     !conflict &&
+    Object.values(unreceipted).every((list) => list.length === 0) &&
     evidence.every((item) => item.original !== undefined);
   const commit = async () => {
     if (submitting || (status !== 'retry' && !canSubmit)) return;
@@ -1203,7 +1229,11 @@ function PlacementQuestionCard({
     try {
       // Stop queued autosaves; an ordinary save ACK precedes finalization.
       if (!accepted) await persist(currentValue.current, false);
-      const responseSet = accepted?.response_set ?? responses;
+      const responseSet =
+        accepted?.response_set ??
+        (blocks && frozen
+          ? { entries: blocks.entriesForSubmit(frozen.response_spec.slots, responses.entries) }
+          : responses);
       const groupEvidence = accepted?.group_evidence ?? nativeEvidence;
       dispatched = true;
       const result = await client.submitProbeAnswer({
@@ -1275,23 +1305,44 @@ function PlacementQuestionCard({
   };
   return (
     <div ref={attachCard} className="un-ob-section un-ob-panel un-ob-pl-card">
-      {frozen?.materials.map((material) => (
-        <div key={material.material_id}>
-          {material.content_md !== undefined ? (
-            <MathMarkdown notation={notation}>{material.content_md}</MathMarkdown>
-          ) : (
-            <AssetEvidencePreview
-              assetId={material.asset_id}
-              label={material.caption ?? material.alt_text}
-            />
-          )}
-        </div>
-      ))}
-      {frozen?.faces.map((face) => (
-        <MathMarkdown key={face.part_id} className="un-ob-pl-stem un-read" notation={notation}>
-          {face.prompt_md}
-        </MathMarkdown>
-      ))}
+      {blocks && frozen ? (
+        blocks.render({
+          issued: {
+            faces: frozen.faces,
+            materials: frozen.materials,
+            slots: frozen.response_spec.slots,
+          },
+          entries: responses.entries,
+          onEntriesChange: updateEntries,
+          notation,
+          disabled: status !== 'answering' || submitting || leaving || conflict,
+          submitting,
+          submitted: status !== 'answering',
+          onUploadingChange: (id, value) => setBlockUploads((prev) => ({ ...prev, [id]: value })),
+          unreceipted,
+          onUnreceiptedChange: (id, items) => setUnreceipted((prev) => ({ ...prev, [id]: items })),
+        })
+      ) : (
+        <>
+          {frozen?.materials.map((material) => (
+            <div key={material.material_id}>
+              {material.content_md !== undefined ? (
+                <MathMarkdown notation={notation}>{material.content_md}</MathMarkdown>
+              ) : (
+                <AssetEvidencePreview
+                  assetId={material.asset_id}
+                  label={material.caption ?? material.alt_text}
+                />
+              )}
+            </div>
+          ))}
+          {frozen?.faces.map((face) => (
+            <MathMarkdown key={face.part_id} className="un-ob-pl-stem un-read" notation={notation}>
+              {face.prompt_md}
+            </MathMarkdown>
+          ))}
+        </>
+      )}
       {unavailable ? (
         <OnboardingError text="这道题需要当前页面尚不支持的作答控件。可以退出并保留这次定位练习的记录。" />
       ) : (
@@ -1305,7 +1356,7 @@ function PlacementQuestionCard({
             </div>
           )}
           {frozen.response_spec.slots.map((slot) => {
-            const spec = nativeSlotFieldSpec(slot);
+            const spec = blocks ? null : nativeSlotFieldSpec(slot);
             if (!spec) return null;
             const entry = responses.entries.find((item) => item.slot_id === slot.slot_id);
             return (
@@ -1331,7 +1382,7 @@ function PlacementQuestionCard({
             disabled={status !== 'answering' || submitting || leaving || conflict}
             upload={uploadAsset}
             uploadErrorMessage="图片上传失败，请重试"
-            onUploadingChange={setUploading}
+            onUploadingChange={setComposerUploading}
           />
         </>
       )}

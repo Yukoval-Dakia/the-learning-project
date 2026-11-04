@@ -22904,7 +22904,7 @@ export interface operations {
                             recorded_at: string | null;
                             recorded_event_id: string | null;
                             /** @enum {string} */
-                            rule: "consecutive" | "rate";
+                            rule: "consecutive" | "rate" | "unsealed";
                             runs: number;
                             /** Format: date-time */
                             since: string;

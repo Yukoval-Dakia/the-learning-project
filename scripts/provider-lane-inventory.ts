@@ -423,10 +423,11 @@ export const PROVIDER_LANES = [
       },
       model: {
         summary:
-          'text-embedding-v4 declared in the provider catalog (DASHSCOPE_EMBED_MODEL_ID); embed.ts wires it via EMBED_MODEL',
+          'MEM0_EMBEDDING_MODEL env override; defaults to text-embedding-v4 from the provider catalog (DASHSCOPE_EMBED_MODEL_ID)',
         source: {
           path: 'src/server/ai/embed.ts',
-          contains: ['EMBED_MODEL = DASHSCOPE_EMBED_MODEL_ID', 'model: EMBED_MODEL'],
+          envReads: ['MEM0_EMBEDDING_MODEL'],
+          contains: ['|| DASHSCOPE_EMBED_MODEL_ID', 'model: EMBED_MODEL'],
           imports: ['./providers'],
         },
       },
