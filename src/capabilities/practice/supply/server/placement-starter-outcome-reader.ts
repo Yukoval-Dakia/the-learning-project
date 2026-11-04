@@ -1,12 +1,18 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import type { Tx } from '@/db/client';
-import { learning_session, placement_starter_claim } from '@/db/schema';
+import {
+  learning_session,
+  placement_starter_attempt_question,
+  placement_starter_claim,
+} from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import {
   type PlacementStarterOutcome,
   readPlacementStarterFailure,
 } from '@/kernel/placement-starter-outcome';
+import { PLACEMENT_STARTER_REQUIRED_COUNT } from './placement-starter-attempts';
 import { placementStarterIdentity } from './placement-starter-identity';
+import { readPlacementCandidateProgress } from './placement-starter-progress';
 import { resolvePlacementStarterGoalAuthority } from './placement-starter-store';
 
 /** Call in a read-only repeatable-read transaction so goal and claim binding share a snapshot. */
@@ -54,6 +60,24 @@ export async function readPlacementStarterOutcomes(
         inArray(placement_starter_claim.subject_id, authority.subjectIds),
       ),
     );
+  const bindings =
+    claims.length === 0
+      ? []
+      : await db
+          .select({
+            claimId: placement_starter_attempt_question.claim_id,
+            questionId: placement_starter_attempt_question.question_id,
+          })
+          .from(placement_starter_attempt_question)
+          .where(
+            inArray(
+              placement_starter_attempt_question.claim_id,
+              claims.map((claim) => claim.id),
+            ),
+          );
+  const candidates = await readPlacementCandidateProgress(db, [
+    ...new Set(bindings.map((row) => row.questionId)),
+  ]);
   return authority.subjectIds.map((subjectId): PlacementStarterOutcome => {
     const identity = placementStarterIdentity(authority.semanticGoalRevisionId, subjectId);
     const claim = claims.find((row) => row.subject_id === subjectId);
@@ -63,6 +87,33 @@ export async function readPlacementStarterOutcomes(
       semantic_goal_revision_id: authority.semanticGoalRevisionId,
       subject_id: subjectId,
       claim_id: claim?.id ?? null,
+      ...(claim
+        ? {
+            progress: (() => {
+              const ids = new Set(
+                bindings.filter((row) => row.claimId === claim.id).map((row) => row.questionId),
+              );
+              const items = candidates.filter((item) => ids.has(item.question_id));
+              const ended = ['satisfied', 'exhausted', 'cancelled'].includes(claim.status);
+              return {
+                stage: ended
+                  ? ('ended' as const)
+                  : claim.status === 'verifying' && items.length > 0
+                    ? ('checking_questions' as const)
+                    : ['running', 'verifying'].includes(claim.status)
+                      ? ('finding_questions' as const)
+                      : ('queued' as const),
+                target_count: PLACEMENT_STARTER_REQUIRED_COUNT,
+                submitted_count: items.length,
+                available_count: items.filter((item) => item.state === 'available').length,
+                pending_count: items.filter((item) => item.state === 'pending').length,
+                unavailable_count: items.filter((item) => item.state === 'unavailable').length,
+                refill_ended: ended,
+                updated_at: claim.updated_at.toISOString(),
+              };
+            })(),
+          }
+        : {}),
     };
     if (!claim)
       return {
@@ -76,6 +127,7 @@ export async function readPlacementStarterOutcomes(
     if (claim.id !== identity.claimId || claim.fingerprint !== identity.fingerprint) {
       return {
         ...binding,
+        progress: undefined,
         state: 'unknown',
         next_action: 'resolve_unknown_outcome',
         failure_reason: { code: 'authority_unknown' },
