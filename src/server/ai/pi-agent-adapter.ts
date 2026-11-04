@@ -170,6 +170,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   private readonly externalSignal: AbortSignal | undefined;
   private readonly sessionId: string;
   private readonly allTools: AgentTool[];
+  private readonly bridgeWireParameters = new Map<string, AgentTool['parameters']>();
   private readonly queuedFrames: RunnerMessage[] = [];
   private readonly childUsage = emptyPiChildUsage();
   private readonly executedToolCalls = new Map<string, number>();
@@ -291,50 +292,59 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         : [];
     const visibleSpawn =
       allowed === undefined ? spawnTools : spawnTools.filter((tool) => allowed.has(tool.name));
-    this.allTools = [...tools, ...visibleSpawn].map((tool) => ({
-      ...tool,
-      // YUK-1547/YUK-1559 (C1) — every mounted tool gets the parameter-contract
-      // repair ahead of pi's validateToolArguments (prepareArguments is the only
-      // seam that runs first). A failed repair throws → isError result, so
-      // execute is never reached and side effects stay exactly-once.
-      prepareArguments: (rawArgs: unknown) => {
-        const prepared = tool.prepareArguments ? tool.prepareArguments(rawArgs) : rawArgs;
-        const repaired = repairToolArguments(tool.parameters, prepared);
-        if (repaired.coercions.length > 0) {
-          this.repairedToolArgs.set(tool.name, repaired.args);
-          const queue = this.pendingCoercions.get(tool.name) ?? [];
-          queue.push(repaired.coercions);
-          this.pendingCoercions.set(tool.name, queue);
-        }
-        return repaired.args;
-      },
-      execute: (...args: Parameters<AgentTool['execute']>) => {
-        this.executedToolCalls.set(args[0], (this.executedToolCalls.get(args[0]) ?? 0) + 1);
-        // Root and nested loops share these wrappers. Observe only actual
-        // execute crossings, with the prepared arguments passed to the delegate.
-        const observation = this.runMonitor.observeExecutedTool({
-          toolName: tool.name,
-          callId: args[0],
-          args: args[1],
-        });
-        return traceOperation(
-          'tool.execute',
-          {
-            task_run_id: this.args.runId,
-            tool_name: tool.name,
-            tool_call_id: args[0],
-            executed: true,
-            ...observation,
-          },
-          () => tool.execute(...args),
-          {
-            signal: args[2],
-            outcome: (result) => (result.isError ? 'error' : 'success'),
-            transcript: { input: () => args[1], output: (result) => result },
-          },
-        );
-      },
-    }));
+    this.allTools = [...tools, ...visibleSpawn].map((tool) => {
+      const bridgeValidates = 'inputValidation' in tool && tool.inputValidation === 'bridge';
+      if (bridgeValidates) this.bridgeWireParameters.set(tool.name, tool.parameters);
+      // The bridge owns this input's complete validation. The provider still receives its canonical schema.
+      const parameters = bridgeValidates
+        ? ({ type: 'object', additionalProperties: true } as AgentTool['parameters'])
+        : tool.parameters;
+      return {
+        ...tool,
+        parameters,
+        // YUK-1547/YUK-1559 (C1) — every mounted tool gets the parameter-contract
+        // repair ahead of pi's validateToolArguments (prepareArguments is the only
+        // seam that runs first). A failed repair throws → isError result, so
+        // execute is never reached and side effects stay exactly-once.
+        prepareArguments: (rawArgs: unknown) => {
+          const prepared = tool.prepareArguments ? tool.prepareArguments(rawArgs) : rawArgs;
+          const repaired = repairToolArguments(parameters, prepared);
+          if (repaired.coercions.length > 0) {
+            this.repairedToolArgs.set(tool.name, repaired.args);
+            const queue = this.pendingCoercions.get(tool.name) ?? [];
+            queue.push(repaired.coercions);
+            this.pendingCoercions.set(tool.name, queue);
+          }
+          return repaired.args;
+        },
+        execute: (...args: Parameters<AgentTool['execute']>) => {
+          this.executedToolCalls.set(args[0], (this.executedToolCalls.get(args[0]) ?? 0) + 1);
+          // Root and nested loops share these wrappers. Observe only actual
+          // execute crossings, with the prepared arguments passed to the delegate.
+          const observation = this.runMonitor.observeExecutedTool({
+            toolName: tool.name,
+            callId: args[0],
+            args: args[1],
+          });
+          return traceOperation(
+            'tool.execute',
+            {
+              task_run_id: this.args.runId,
+              tool_name: tool.name,
+              tool_call_id: args[0],
+              executed: true,
+              ...observation,
+            },
+            () => tool.execute(...args),
+            {
+              signal: args[2],
+              outcome: (result) => (result.isError ? 'error' : 'success'),
+              transcript: { input: () => args[1], output: (result) => result },
+            },
+          );
+        },
+      };
+    });
   }
 
   private observeToolAttempt(
@@ -615,11 +625,28 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   private readonly streamFn: StreamFn = (model: LoomPiModel, llmContext, streamOptions) => {
+    const wireContext =
+      this.bridgeWireParameters.size === 0
+        ? llmContext
+        : {
+            ...llmContext,
+            messages: llmContext.messages.map((message) =>
+              message.role === 'system' && message.toolsAdded
+                ? {
+                    ...message,
+                    toolsAdded: message.toolsAdded.map((tool) => {
+                      const parameters = this.bridgeWireParameters.get(tool.name);
+                      return parameters ? { ...tool, parameters } : tool;
+                    }),
+                  }
+                : message,
+            ),
+          };
     // The catalog check guards options.effort only: task.<kind>.reasoning levels
     // are already validated/carried by resolveTaskReasoning (toggle carriers are
     // not effort names on the model's list).
     const effort = this.args.options.effort;
-    const inputTokens = estimatePiTokens(llmContext.messages);
+    const inputTokens = estimatePiTokens(wireContext.messages);
     const remaining = model.contextWindow - inputTokens;
     streamOptions = {
       ...streamOptions,
@@ -671,7 +698,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // Request-scoped model view: unconfigured reasoning must not emit
       // thinking:{disabled}; an explicit 'off' must stay expressible.
       reasoningModelView(model, this.args.resolved.reasoning, effort),
-      llmContext,
+      wireContext,
       streamOptionsWithPayload,
     );
   };
