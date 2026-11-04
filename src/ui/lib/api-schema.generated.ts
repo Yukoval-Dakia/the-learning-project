@@ -23843,10 +23843,13 @@ export interface operations {
                         answeredCount: number;
                         knowledgeIds: string[];
                         no_item?: {
+                            /** @enum {string} */
+                            next_action?: "wait_for_admission" | "continue_other_activities";
                             options: ("recheck" | "end")[];
                             preparing_subjects: string[];
                             /** @enum {string} */
                             reason: "no_servable_item";
+                            supply_ended?: boolean;
                         } | null;
                         question: {
                             assessment: {
@@ -24489,6 +24492,18 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "provide_goal" | "source_questions";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
@@ -24514,6 +24529,18 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "wait_for_supply";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
@@ -24526,6 +24553,18 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "continue_placement";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
@@ -24551,6 +24590,18 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "review_supply_failure";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
@@ -24576,6 +24627,18 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "resolve_unknown_outcome";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
@@ -24724,6 +24787,18 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "provide_goal" | "source_questions";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
@@ -24749,6 +24824,18 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "wait_for_supply";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
@@ -24761,6 +24848,18 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "continue_placement";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
@@ -24786,6 +24885,18 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "review_supply_failure";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
@@ -24811,6 +24922,18 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "resolve_unknown_outcome";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
@@ -25106,8 +25229,15 @@ export interface operations {
                             answeredCount: number;
                             /** @enum {boolean} */
                             done: true;
+                            evidence?: {
+                                answered_count: number;
+                                /** @enum {string} */
+                                confidence: "low";
+                                /** @enum {string} */
+                                next_action: "calibrate_with_daily_practice";
+                            };
                             /** @enum {string} */
-                            reason: "cap" | "se_converged";
+                            reason: "cap" | "se_converged" | "supply_ended";
                             starterSupply?: ({
                                 /** @enum {string|null} */
                                 claim_id: null;
@@ -25116,6 +25246,18 @@ export interface operations {
                                 goal_id: string | null;
                                 /** @enum {string} */
                                 next_action: "provide_goal" | "source_questions";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string | null;
                                 session_id: string;
                                 /** @enum {string} */
@@ -25141,6 +25283,18 @@ export interface operations {
                                 goal_id: string;
                                 /** @enum {string} */
                                 next_action: "wait_for_supply";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string;
                                 session_id: string;
                                 /** @enum {string} */
@@ -25153,6 +25307,18 @@ export interface operations {
                                 goal_id: string;
                                 /** @enum {string} */
                                 next_action: "continue_placement";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string;
                                 session_id: string;
                                 /** @enum {string} */
@@ -25178,6 +25344,18 @@ export interface operations {
                                 goal_id: string;
                                 /** @enum {string} */
                                 next_action: "review_supply_failure";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string;
                                 session_id: string;
                                 /** @enum {string} */
@@ -25203,6 +25381,18 @@ export interface operations {
                                 goal_id: string | null;
                                 /** @enum {string} */
                                 next_action: "resolve_unknown_outcome";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string | null;
                                 session_id: string;
                                 /** @enum {string} */
@@ -25220,10 +25410,13 @@ export interface operations {
                             /** @enum {boolean} */
                             done: false;
                             no_item?: {
+                                /** @enum {string} */
+                                next_action?: "wait_for_admission" | "continue_other_activities";
                                 options: ("recheck" | "end")[];
                                 preparing_subjects: string[];
                                 /** @enum {string} */
                                 reason: "no_servable_item";
+                                supply_ended?: boolean;
                             } | null;
                             question: {
                                 assessment: {
@@ -25865,6 +26058,18 @@ export interface operations {
                                 goal_id: string | null;
                                 /** @enum {string} */
                                 next_action: "provide_goal" | "source_questions";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string | null;
                                 session_id: string;
                                 /** @enum {string} */
@@ -25890,6 +26095,18 @@ export interface operations {
                                 goal_id: string;
                                 /** @enum {string} */
                                 next_action: "wait_for_supply";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string;
                                 session_id: string;
                                 /** @enum {string} */
@@ -25902,6 +26119,18 @@ export interface operations {
                                 goal_id: string;
                                 /** @enum {string} */
                                 next_action: "continue_placement";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string;
                                 session_id: string;
                                 /** @enum {string} */
@@ -25927,6 +26156,18 @@ export interface operations {
                                 goal_id: string;
                                 /** @enum {string} */
                                 next_action: "review_supply_failure";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string;
                                 session_id: string;
                                 /** @enum {string} */
@@ -25952,6 +26193,18 @@ export interface operations {
                                 goal_id: string | null;
                                 /** @enum {string} */
                                 next_action: "resolve_unknown_outcome";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string | null;
                                 session_id: string;
                                 /** @enum {string} */
@@ -26097,8 +26350,15 @@ export interface operations {
                         answeredCount: number;
                         /** @enum {boolean} */
                         done: true;
+                        evidence?: {
+                            answered_count: number;
+                            /** @enum {string} */
+                            confidence: "low";
+                            /** @enum {string} */
+                            next_action: "calibrate_with_daily_practice";
+                        };
                         /** @enum {string} */
-                        reason: "cap" | "se_converged";
+                        reason: "cap" | "se_converged" | "supply_ended";
                         starterSupply?: ({
                             /** @enum {string|null} */
                             claim_id: null;
@@ -26107,6 +26367,18 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "provide_goal" | "source_questions";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
@@ -26132,6 +26404,18 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "wait_for_supply";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
@@ -26144,6 +26428,18 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "continue_placement";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
@@ -26169,6 +26465,18 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "review_supply_failure";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
@@ -26194,6 +26502,18 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "resolve_unknown_outcome";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
@@ -26211,10 +26531,13 @@ export interface operations {
                         /** @enum {boolean} */
                         done: false;
                         no_item?: {
+                            /** @enum {string} */
+                            next_action?: "wait_for_admission" | "continue_other_activities";
                             options: ("recheck" | "end")[];
                             preparing_subjects: string[];
                             /** @enum {string} */
                             reason: "no_servable_item";
+                            supply_ended?: boolean;
                         } | null;
                         question: {
                             assessment: {
@@ -26856,6 +27179,18 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "provide_goal" | "source_questions";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
@@ -26881,6 +27216,18 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "wait_for_supply";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
@@ -26893,6 +27240,18 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "continue_placement";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
@@ -26918,6 +27277,18 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "review_supply_failure";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
@@ -26943,6 +27314,18 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "resolve_unknown_outcome";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */

@@ -226,3 +226,33 @@ export async function selectNextPlacementItem(
   }
   return best;
 }
+
+/** Inventory counts serving capability, before information ranking. The background
+ * target never delays issuing the first eligible item. */
+export async function countPlacementInventory(
+  db: DbLike,
+  knowledgeIds: readonly string[],
+): Promise<number> {
+  if (knowledgeIds.length === 0) return 0;
+  const rows = await db
+    .select({ id: question.id })
+    .from(question)
+    .where(
+      and(
+        sql`(${sql.join(
+          knowledgeIds.map(
+            (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
+          ),
+          sql` OR `,
+        )})`,
+        notDraftPredicate(question.draft_status),
+        questionSuspendedPredicate(question),
+      ),
+    );
+  return (
+    await readAutomaticallyServableQuestionIds(
+      db,
+      rows.map((row) => row.id),
+    )
+  ).size;
+}

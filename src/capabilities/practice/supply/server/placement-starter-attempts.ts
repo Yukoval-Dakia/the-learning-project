@@ -14,10 +14,10 @@ import {
   type PlacementStarterFailure,
   PlacementStarterFailureSchema,
 } from '@/kernel/placement-starter-outcome';
-import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import { placementStarterAttemptId } from './placement-starter-identity';
+import { readPlacementCandidateProgress } from './placement-starter-progress';
 import { markPlacementStarterClaimTerminal } from './placement-starter-store';
 
 export const PLACEMENT_VERIFY_POLL_MS = 2_000;
@@ -1099,25 +1099,16 @@ export async function placementAttemptVerificationSettled(
     )
     .where(eq(placement_starter_attempt.id, attemptId));
   if (route?.route === 'sourcing_web') {
-    // Web supply settles only through source verification AND scoring admission. A question is
-    // settled when it serves, or when serving reports a terminal hold; awaiting admission (or no
-    // decision yet) keeps the delivery waiting for the decision deadline.
     const ids = (
       await db
         .select({ questionId: placement_starter_attempt_question.question_id })
         .from(placement_starter_attempt_question)
         .where(eq(placement_starter_attempt_question.attempt_id, attemptId))
     ).map((row) => row.questionId);
-    if (ids.length === 0) return false;
-    const serving = (await readQuestionServing(db, ids)).byId;
-    return ids.every((id) => {
-      const item = serving.get(id);
-      return (
-        item !== undefined &&
-        (item.servable || (item.hold_reason !== null && item.hold_reason !== 'awaiting_admission'))
-      );
-    });
+    const progress = await readPlacementCandidateProgress(db, ids);
+    return progress.length > 0 && progress.every((item) => item.state !== 'pending');
   }
+
   // A question's verification is SETTLED when it is already pool-visible (active — verified by
   // definition; an active DUPLICATE the outbox terminal_skips never gets a fresh quiz_verify event)
   // OR it carries a terminal quiz_verify verdict (any non-error outcome — pass/needs_review/fail all

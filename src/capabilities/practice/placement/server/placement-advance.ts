@@ -65,7 +65,12 @@ export interface PlacementAdvanceOutcome {
   selection:
     | {
         done: true;
-        reason: 'cap' | 'se_converged';
+        reason: 'cap' | 'se_converged' | 'supply_ended';
+        evidence?: {
+          answered_count: number;
+          confidence: 'low';
+          next_action: 'calibrate_with_daily_practice';
+        };
         answeredCount: number;
         unresolved_items?: PlacementUnresolvedItem[];
       }
@@ -198,6 +203,33 @@ export async function runPlacementAdvanceTx(
       progress,
       { startedAt: info?.startedAt ?? null },
     );
+    if (next === null && answeredCount > 0) {
+      const supply = await readPlacementStarterOutcomes(tx, sessionId);
+      if (
+        supply.length > 0 &&
+        supply.every(
+          (item) =>
+            item.state === 'satisfied' ||
+            item.state === 'exhausted' ||
+            item.progress?.refill_ended === true,
+        )
+      ) {
+        return {
+          selection: {
+            done: true as const,
+            reason: 'supply_ended' as const,
+            answeredCount,
+            evidence: {
+              answered_count: answeredCount,
+              confidence: 'low' as const,
+              next_action: 'calibrate_with_daily_practice' as const,
+            },
+            ...unresolvedField(unresolved),
+          },
+          release,
+        };
+      }
+    }
     if (next === null) {
       await recordPlacementNoItem(tx, sessionId, info?.startedAt ?? null, answeredCount);
     }
@@ -277,6 +309,17 @@ export function placementNoItem(
 ): z.infer<typeof PlacementNoItemSchema> {
   return {
     reason: 'no_servable_item',
+    supply_ended:
+      starterSupply.length > 0 &&
+      starterSupply.every(
+        (item) =>
+          item.state === 'satisfied' ||
+          item.state === 'exhausted' ||
+          item.progress?.refill_ended === true,
+      ),
+    next_action: starterSupply.some((item) => item.state === 'pending')
+      ? 'wait_for_admission'
+      : 'continue_other_activities',
     preparing_subjects: starterSupply
       .filter((outcome) => outcome.state === 'pending')
       .map((outcome) => outcome.subject_id),
