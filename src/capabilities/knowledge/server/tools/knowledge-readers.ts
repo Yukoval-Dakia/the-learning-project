@@ -142,8 +142,7 @@ type MasteryMapEntry = {
 
 async function loadMasteryMap(db: Db, rows: KnowledgeRow[]): Promise<Map<string, MasteryMapEntry>> {
   if (rows.length === 0) return new Map();
-  // One judgment-contract read owns mastery and both evidence clocks; the
-  // deprecated knowledge_mastery view is no longer read.
+  // One judgment-contract read owns mastery and both evidence clocks.
   const batch = await readLearnerJudgments(db, {
     knowledge_ids: rows.map((row) => row.id),
     context: 'any',
