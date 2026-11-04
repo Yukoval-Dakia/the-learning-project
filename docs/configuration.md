@@ -149,7 +149,6 @@ PATCH /api/admin/config   # x-internal-token
 | `WAVE6_TRIGGER_MARK_WRONG_ENABLED` | app、worker | `true` | `registry` |
 | `WAVE6_TRIGGER_MASTERY_ENABLED` | app、worker | `true` | `registry` |
 | `WAVE6_TRIGGER_DREAMING_ENABLED` | app、worker | `true` | `registry` |
-| `WAVE6_TRIGGER_VERIFY_ENABLED` | app、worker | `false` | `registry` |
 | `AUTO_INTERVENTION_EXPANSION_ENABLED` | app、worker | `false` | `registry` |
 | `INTERVENTION_DISABLED_METHOD_IDS` | app、worker | `[]`；CSV 解析为数组 | `registry` |
 | `COPILOT_SUBAGENT_ENABLED` | app、worker | `true` | `registry` |

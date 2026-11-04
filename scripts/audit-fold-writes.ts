@@ -233,27 +233,6 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/notes/server/note-long-check.ts',
-    marker: '.update(artifact)',
-    role: 'event-native-by-caller',
-    note: 'Long-check marker attrs updates are version-guarded and paired with set_attrs lifecycle events at the update timestamp; the revision body goes through artifact-body-commit.',
-  },
-  {
-    table: 'artifact',
-    file: 'src/capabilities/notes/jobs/note_verify.ts',
-    marker: '.update(artifact)',
-    role: 'event-native-by-caller',
-    note: 'Result persistence runs inside claim-result finalization after artifact/claim locks and epoch/status revalidation; lifecycle shares the update timestamp.',
-  },
-  {
-    table: 'artifact',
-    file: 'src/capabilities/notes/server/note-verification-claim-reservation.ts',
-    marker: '.update(artifact)',
-    role: 'event-native-by-caller',
-    note: 'Epoch/status-guarded exhaustion update and lifecycle event are atomic with the claim transition.',
-  },
-  {
-    table: 'artifact',
     file: 'src/capabilities/notes/jobs/note_generate.ts',
     marker: '.update(artifact)',
     role: 'event-native-by-caller',

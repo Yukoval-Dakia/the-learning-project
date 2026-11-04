@@ -669,6 +669,7 @@
 {"file":"src/db/schema.ts","kind":"module","symbol":"worksheet_export_item","targetModule":"src/db/schema/worksheet.ts","targetSymbol":"worksheet_export_item","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"worksheet_export","targetModule":"src/db/schema/worksheet.ts","targetSymbol":"worksheet_export","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"worksheet_region_map_page","targetModule":"src/db/schema/worksheet.ts","targetSymbol":"worksheet_region_map_page","class":"stable_contract"}
+{"file":"src/kernel/capability-contract-schemas.ts","kind":"module","symbol":"ArtifactVerificationSummary","targetModule":"src/core/schema/business.ts","targetSymbol":"ArtifactVerificationSummary","class":"stable_contract"}
 {"file":"src/kernel/events/index.ts","kind":"module","symbol":"eventCorrectionActiveSql","targetModule":"src/kernel/events/corrections.ts","targetSymbol":"eventCorrectionActiveSql","class":"stable_contract"}
 {"file":"src/kernel/events/index.ts","kind":"module","symbol":"nextProjectionEventTime","targetModule":"src/kernel/events/events.ts","targetSymbol":"nextProjectionEventTime","class":"stable_contract"}
 {"file":"src/kernel/placement-jobs.ts","kind":"site","symbol":"fromPgBossDrizzleTx","targetModule":"src/db/pg-boss-drizzle.ts","targetSymbol":"fromPgBossDrizzleTx","class":"stable_contract"}
