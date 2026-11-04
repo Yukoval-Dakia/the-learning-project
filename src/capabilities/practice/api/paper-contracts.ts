@@ -225,6 +225,8 @@ export const PaperDetailResponseSchema = z.object({
       pos: z.number().int().nonnegative(),
       right: z.number().int().nonnegative(),
       wrong: z.number().int().nonnegative(),
+      /** SessionSummaryTask output; null until the post-close job writes it. */
+      summary_md: z.string().nullable(),
     })
     .nullable(),
   sections: z.array(PaperDetailSectionSchema),
