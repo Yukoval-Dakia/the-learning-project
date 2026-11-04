@@ -141,6 +141,8 @@ describe('explicit single-event memory ingest recovery', () => {
     ).rejects.toThrow(/conflicts/);
   });
 
+  // @invariant concurrency: only one current replay grant can authorize a user source
+  // @fails-if stale concurrent authorization wins or completed/non-user sources receive a replay grant
   it('rejects stale concurrent authorizations and non-user or completed sources', async () => {
     const request = await stalledSource();
     const results = await Promise.allSettled([
@@ -157,7 +159,6 @@ describe('explicit single-event memory ingest recovery', () => {
       sourceEventId: completed.sourceEventId,
       resolution: 'event_lookup',
       memories: [],
-      persistIntents: true,
     });
     await expect(authorizeMemoryIngestReplay(testDb(), completed)).rejects.toThrow(/no stalled/);
     expect(
@@ -189,6 +190,8 @@ describe('explicit single-event memory ingest recovery', () => {
     expect(boundary.add).not.toHaveBeenCalled();
   });
 
+  // @invariant concurrency: concurrent explicit replays cross the paid add boundary once and preserve original markers
+  // @fails-if ordinary retries consume grants or concurrent replays duplicate paid add or replace original evidence
   it('does one fenced paid add for concurrent replay of a grant, preserving original evidence and normal retry behavior', async () => {
     const request = await stalledSource();
     const grant = await authorizeMemoryIngestReplay(testDb(), request);
@@ -204,7 +207,6 @@ describe('explicit single-event memory ingest recovery', () => {
       buildMemoryEventIngestHandler(testDb(), boundary.boss, {
         memoryClient: boundary.client,
         replayGrant: grant,
-        handoffMode: 'write',
       })([{ data: { event_id: request.sourceEventId } }]);
     const results = await Promise.allSettled([run(), run()]);
     expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);
@@ -220,9 +222,6 @@ describe('explicit single-event memory ingest recovery', () => {
     ).toHaveLength(1);
     expect(records.some((row) => row.id === request.expectedFenceId)).toBe(true);
     expect(records.some((row) => row.payload?.handoff_kind === 'ingest_completed')).toBe(true);
-    expect(records.some((row) => row.payload?.handoff_kind === 'reconcile_dispatch_complete')).toBe(
-      true,
-    );
   });
 
   // @invariant concurrency: an existing attributed memory resolves recovery without another paid start
@@ -253,6 +252,8 @@ describe('explicit single-event memory ingest recovery', () => {
     expect(await testDb().select().from(provider_attempt)).toHaveLength(0);
   });
 
+  // @invariant data: owner-edited conjecture recovery preserves verbatim projection identity
+  // @fails-if replay infers instead of preserving the owner text or loses the source projection key
   it('replays an owner-edited conjecture through the verbatim fence and preserves its projection identity', async () => {
     const request = await stalledSource('edited-owner-event');
     await testDb()
@@ -274,7 +275,6 @@ describe('explicit single-event memory ingest recovery', () => {
     await buildMemoryEventIngestHandler(testDb(), boundary.boss, {
       memoryClient: boundary.client,
       replayGrant: grant,
-      handoffMode: 'write',
     })([{ data: { event_id: request.sourceEventId } }]);
     expect(boundary.add).toHaveBeenCalledOnce();
     expect(boundary.add).toHaveBeenCalledWith(
@@ -295,6 +295,8 @@ describe('explicit single-event memory ingest recovery', () => {
     ]);
   });
 
+  // @invariant concurrency: live provider reservations prevent replay while completed sources remain excluded
+  // @fails-if authorization permits a live original attempt or pagination includes completed sources
   it('rejects an original live reservation and advances a read-only cursor across completed markers', async () => {
     const request = await stalledSource('original-live');
     const sdk = vi.fn(async () => 'not called');
@@ -323,7 +325,6 @@ describe('explicit single-event memory ingest recovery', () => {
       sourceEventId: completed.sourceEventId,
       resolution: 'event_lookup',
       memories: [],
-      persistIntents: false,
     });
     const all = await listStalledMemoryIngests(testDb());
     const collected = [];

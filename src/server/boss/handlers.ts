@@ -27,7 +27,7 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     fenceAwareJobHandler(db, 'echo', buildEchoHandler(db)),
   );
 
-  // brief writer、付费判官与 fence 都在 registerMemoryHandlers 里面装配。
+  // brief writer 与 fence 都在 registerMemoryHandlers 里面装配。
   await registerMemoryHandlers(boss, db);
 
   await createOrUpdateQueue(boss, 'promote_conversation_idle', FAST_QUEUE_OPTS);
