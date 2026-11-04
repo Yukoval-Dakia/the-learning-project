@@ -643,6 +643,7 @@
 {"file":"src/db/schema.ts","kind":"module","symbol":"question_generation_plan","targetModule":"src/db/schema/question.ts","targetSymbol":"question_generation_plan","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"question_group_lifecycle","targetModule":"src/db/schema/assessment.ts","targetSymbol":"question_group_lifecycle","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"question_revision","targetModule":"src/db/schema/assessment.ts","targetSymbol":"question_revision","class":"stable_contract"}
+{"file":"src/db/schema.ts","kind":"module","symbol":"question_solution_prior_backfill_attempt","targetModule":"src/db/schema/assessment.ts","targetSymbol":"question_solution_prior_backfill_attempt","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"question_solution_prior_vector","targetModule":"src/db/schema/assessment.ts","targetSymbol":"question_solution_prior_vector","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"question_solution_prior","targetModule":"src/db/schema/assessment.ts","targetSymbol":"question_solution_prior","class":"stable_contract"}
 {"file":"src/db/schema.ts","kind":"module","symbol":"question","targetModule":"src/db/schema/question.ts","targetSymbol":"question","class":"stable_contract"}

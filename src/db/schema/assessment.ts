@@ -246,6 +246,33 @@ export const question_solution_prior = pgTable(
 );
 
 /**
+ * 回填的付费尝试记录：一组题每个版本只付一次，没有产出也不自动重付。调用前先写入，所以进程
+ * 中途退出留下的 `started` 同样不会被自动重付。可丢失（最多多付一次），不进备份。
+ */
+export const question_solution_prior_backfill_attempt = pgTable(
+  'question_solution_prior_backfill_attempt',
+  {
+    revision_id: text('revision_id')
+      .primaryKey()
+      .references(() => question_revision.revision_id),
+    backfill_run_id: text('backfill_run_id').notNull(),
+    status: text('status', {
+      enum: ['started', 'produced', 'empty', 'failed', 'skipped'],
+    }).notNull(),
+    task_run_id: text('task_run_id'),
+    reason: text('reason'),
+    attempted_at: timestamp('attempted_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    check(
+      'question_solution_prior_backfill_attempt_status_ck',
+      sql`${t.status} IN ('started','produced','empty','failed','skipped')`,
+    ),
+    index('question_solution_prior_backfill_attempt_run_idx').on(t.backfill_run_id),
+  ],
+);
+
+/**
  * 先验的方法与易错机理向量。派生索引：可由 question_solution_prior 重建，所以不进备份。
  * 向量同样泄露解法，读口只返回题目 id 和相似度。
  */

@@ -13,6 +13,7 @@ import {
   question_group_lifecycle,
   question_revision,
   question_solution_prior,
+  question_solution_prior_backfill_attempt,
 } from '@/db/schema';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import {
@@ -33,7 +34,8 @@ export type BackfillExclusion =
   | 'no_paid_admission_evidence'
   | 'vision_source'
   | 'quiz_gen_material_unproven'
-  | 'already_has_prior';
+  | 'already_has_prior'
+  | 'already_attempted';
 
 export interface BackfillGroupFacts {
   group_id: string;
@@ -45,16 +47,23 @@ export interface BackfillGroupFacts {
   /** A passed admission on this revision and digest, with paid solve runs on record. */
   has_paid_admission_evidence: boolean;
   source_ref_is_knowledge: boolean;
-  part_count: number;
   prior_rows: number;
+  attempt_status: string | null;
 }
 
 /**
  * The eligibility rule. `question.source` is a mutable column, so it can only exclude,
  * never admit: the proof is the immutable admission evidence. The derivation policy is
  * read separately because it needs each publication's event lineage.
+ *
+ * Any prior row counts as done: a partial result stays partial, because describing the
+ * group again would pay for the parts that already have a frozen prior. An earlier attempt
+ * also counts, so failures cost one call each unless the operator asks to retry them.
  */
-export function backfillExclusion(facts: BackfillGroupFacts): BackfillExclusion | null {
+export function backfillExclusion(
+  facts: BackfillGroupFacts,
+  options: { retryUnproduced?: boolean } = {},
+): BackfillExclusion | null {
   if (facts.revision_id == null) return 'no_current_revision';
   if (facts.admission_state !== 'admitted') return 'not_admitted';
   if (facts.withdrawn) return 'withdrawn';
@@ -64,7 +73,8 @@ export function backfillExclusion(facts: BackfillGroupFacts): BackfillExclusion 
   if (facts.source === 'quiz_gen' && !facts.source_ref_is_knowledge) {
     return 'quiz_gen_material_unproven';
   }
-  if (facts.part_count > 0 && facts.prior_rows >= facts.part_count) return 'already_has_prior';
+  if (facts.prior_rows > 0) return 'already_has_prior';
+  if (facts.attempt_status != null && !options.retryUnproduced) return 'already_attempted';
   return null;
 }
 
@@ -74,7 +84,10 @@ export interface BackfillCensus {
   excluded: Partial<Record<BackfillExclusion | 'derivation_policy_not_allow', string[]>>;
 }
 
-export async function censusSolutionPriorBackfill(db: Db): Promise<BackfillCensus> {
+export async function censusSolutionPriorBackfill(
+  db: Db,
+  options: { retryUnproduced?: boolean } = {},
+): Promise<BackfillCensus> {
   const rows = await db.execute<BackfillGroupFacts & Record<string, unknown>>(sql`
     SELECT l.group_id, l.current_revision_id AS revision_id,
            l.scoring_admission_state AS admission_state, l.withdrawn, l.suspended, q.source,
@@ -89,12 +102,14 @@ export async function censusSolutionPriorBackfill(db: Db): Promise<BackfillCensu
            EXISTS (
              SELECT 1 FROM ${knowledge} k WHERE k.id = q.source_ref
            ) AS source_ref_is_knowledge,
-           COALESCE(jsonb_array_length(r.structure->'parts'), 0)::int AS part_count,
            (SELECT count(*)::int FROM ${question_solution_prior} p
-            WHERE p.revision_id = l.current_revision_id) AS prior_rows
+            WHERE p.revision_id = l.current_revision_id) AS prior_rows,
+           a.status AS attempt_status
     FROM ${question_group_lifecycle} l
     LEFT JOIN ${question} q ON q.id = l.group_id
     LEFT JOIN ${question_revision} r ON r.revision_id = l.current_revision_id
+    LEFT JOIN ${question_solution_prior_backfill_attempt} a
+      ON a.revision_id = l.current_revision_id
     ORDER BY l.group_id
   `);
   const census: BackfillCensus = { total_groups: 0, eligible: [], excluded: {} };
@@ -103,12 +118,13 @@ export async function censusSolutionPriorBackfill(db: Db): Promise<BackfillCensu
   };
   for (const facts of rows) {
     census.total_groups += 1;
-    const reason = backfillExclusion(facts);
+    const reason = backfillExclusion(facts, options);
     if (reason != null) {
       exclude(reason, facts.group_id);
       continue;
     }
     // A further condition, not proof: the reader answers `allow` when it finds no restriction.
+    // No publication means no lineage to read, so that does not pass.
     const publications = await db
       .select({ id: event.id })
       .from(event)
@@ -122,7 +138,7 @@ export async function censusSolutionPriorBackfill(db: Db): Promise<BackfillCensu
     const policies = await Promise.all(
       publications.map((row) => readEventDerivationPolicy(db, row.id)),
     );
-    if (policies.some((policy) => policy !== 'allow')) {
+    if (publications.length === 0 || policies.some((policy) => policy !== 'allow')) {
       exclude('derivation_policy_not_allow', facts.group_id);
       continue;
     }
@@ -185,11 +201,27 @@ function sealedDefinition(revision: typeof question_revision.$inferSelect) {
  */
 export async function applySolutionPriorBackfill(
   db: Db,
-  input: { backfillRunId: string; limit: number; runTask?: BoundRunTaskTextFn },
+  input: {
+    backfillRunId: string;
+    limit: number;
+    retryUnproduced?: boolean;
+    runTask?: BoundRunTaskTextFn;
+  },
 ): Promise<{ results: BackfillResult[]; cost_usd: number; unknown_cost_runs: number }> {
   const runTask = input.runTask ?? makeRunTaskTextFn(db, { judgeRetryPolicy: 'none' });
-  const census = await censusSolutionPriorBackfill(db);
+  const census = await censusSolutionPriorBackfill(db, { retryUnproduced: input.retryUnproduced });
   const results: BackfillResult[] = [];
+  const record = async (result: BackfillResult) => {
+    results.push(result);
+    await db
+      .update(question_solution_prior_backfill_attempt)
+      .set({
+        status: result.status,
+        task_run_id: result.task_run_id,
+        reason: result.reason ?? null,
+      })
+      .where(eq(question_solution_prior_backfill_attempt.revision_id, result.revision_id));
+  };
   for (const { group_id, revision_id } of census.eligible.slice(0, input.limit)) {
     const skipped = (reason: string): BackfillResult => ({
       group_id,
@@ -199,6 +231,18 @@ export async function applySolutionPriorBackfill(
       parts_written: 0,
       reason,
     });
+    await db
+      .insert(question_solution_prior_backfill_attempt)
+      .values({
+        revision_id,
+        backfill_run_id: input.backfillRunId,
+        status: 'started',
+        attempted_at: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: question_solution_prior_backfill_attempt.revision_id,
+        set: { backfill_run_id: input.backfillRunId, status: 'started', attempted_at: new Date() },
+      });
     const [revision] = await db
       .select()
       .from(question_revision)
@@ -206,12 +250,12 @@ export async function applySolutionPriorBackfill(
       .limit(1);
     const definition = revision ? sealedDefinition(revision) : null;
     if (definition == null) {
-      results.push(skipped('revision seal does not verify'));
+      await record(skipped('revision seal does not verify'));
       continue;
     }
     const keys = settledKeysFromDefinition(definition);
     if (keys.size === 0) {
-      results.push(skipped('no settled key'));
+      await record(skipped('no settled key'));
       continue;
     }
     const subjectProfile = await subjectProfileForGroup(db, group_id);
@@ -224,27 +268,27 @@ export async function applySolutionPriorBackfill(
       subjectProfile,
       knowledgeCandidates,
     });
-    const record = pass.record;
+    const prior = pass.record;
     const written =
-      record == null
+      prior == null
         ? []
         : await db
             .insert(question_solution_prior)
             .values(
-              record.parts.map((part) => ({
+              prior.parts.map((part) => ({
                 revision_id,
                 part_id: part.part_id,
-                prior_version: record.prior_version,
+                prior_version: prior.prior_version,
                 prior: part as unknown as Record<string, unknown>,
                 origin: 'backfill' as const,
-                task_run_ids: record.task_run_ids,
+                task_run_ids: prior.task_run_ids,
                 backfill_run_id: input.backfillRunId,
                 created_at: new Date(),
               })),
             )
             .onConflictDoNothing()
             .returning({ part_id: question_solution_prior.part_id });
-    results.push({
+    await record({
       group_id,
       revision_id,
       status: pass.outcome.status,
@@ -268,7 +312,10 @@ export async function applySolutionPriorBackfill(
   };
 }
 
-/** Undo one run: its prior rows, and their vectors by cascade. Lists only unless `apply`. */
+/**
+ * Undo one run: its prior rows, their vectors by cascade, and its attempts, so the groups
+ * become eligible again. Lists only unless `apply`.
+ */
 export async function revertSolutionPriorBackfill(
   db: Db,
   input: { backfillRunId: string; apply: boolean },
@@ -278,7 +325,12 @@ export async function revertSolutionPriorBackfill(
     revision_id: question_solution_prior.revision_id,
     part_id: question_solution_prior.part_id,
   };
-  return input.apply
-    ? db.delete(question_solution_prior).where(where).returning(columns)
-    : db.select(columns).from(question_solution_prior).where(where);
+  if (!input.apply) return db.select(columns).from(question_solution_prior).where(where);
+  return db.transaction(async (tx) => {
+    const rows = await tx.delete(question_solution_prior).where(where).returning(columns);
+    await tx
+      .delete(question_solution_prior_backfill_attempt)
+      .where(eq(question_solution_prior_backfill_attempt.backfill_run_id, input.backfillRunId));
+    return rows;
+  });
 }

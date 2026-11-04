@@ -1,21 +1,31 @@
 // One-off ops CLI: backfill the solution prior for already admitted questions.
 //
 //   pnpm db:backfill:solution-prior                                # census: no writes, no spend
-//   pnpm db:backfill:solution-prior --apply --limit 100            # paid; prints a run id
+//   pnpm db:backfill:solution-prior --apply --limit 100            # paid; then fills vectors
+//   pnpm db:backfill:solution-prior --apply --retry-unproduced     # pays again for groups that
+//                                                                  # produced nothing last time
 //   pnpm db:backfill:solution-prior --revert <run_id>              # lists what a revert removes
 //   pnpm db:backfill:solution-prior --revert <run_id> --apply
 //
-// Task runners log to stdout too, so the receipt is the last line: pipe through `tail -1`.
+// Each group is paid for once unless --retry-unproduced is given. Task runners log to stdout
+// too, so the receipt is the last line: pipe through `tail -1`.
 import { randomUUID } from 'node:crypto';
 import './load-env';
 
 function parseArgs(argv: string[]) {
-  const args = { apply: false, limit: 25, revert: undefined as string | undefined };
+  const args = {
+    apply: false,
+    limit: 25,
+    retryUnproduced: false,
+    revert: undefined as string | undefined,
+  };
   const rest = [...argv];
   while (rest.length > 0) {
     const arg = rest.shift();
     if (arg === '--apply') {
       args.apply = true;
+    } else if (arg === '--retry-unproduced') {
+      args.retryUnproduced = true;
     } else if (arg === '--limit' || arg === '--revert') {
       const value = rest.shift();
       if (value === undefined || value.startsWith('--')) throw new Error(`${arg} needs a value`);
@@ -47,7 +57,9 @@ async function main(): Promise<void> {
     return;
   }
   if (!args.apply) {
-    const census = await backfill.censusSolutionPriorBackfill(db);
+    const census = await backfill.censusSolutionPriorBackfill(db, {
+      retryUnproduced: args.retryUnproduced,
+    });
     console.log(
       JSON.stringify({
         eligible_count: census.eligible.length,
@@ -64,11 +76,25 @@ async function main(): Promise<void> {
   await hydrateConfigFromDb(db);
   await hydrateModelCatalog(db);
   const backfillRunId = `prior-backfill-${randomUUID()}`;
+  // Printed first: a crash midway must still leave the id a revert needs.
+  console.log(JSON.stringify({ backfill_run_id: backfillRunId, started: true }));
   const outcome = await backfill.applySolutionPriorBackfill(db, {
     backfillRunId,
     limit: args.limit,
+    retryUnproduced: args.retryUnproduced,
   });
-  console.log(JSON.stringify({ backfill_run_id: backfillRunId, ...outcome }));
+  // A bigger deadline than the nightly job's, so the window finishes in one go.
+  const { embedSolutionPriorVectors } = await import(
+    '@/capabilities/practice/question-bank/server/admission/solution-prior-vectors'
+  );
+  const vectorsWritten = await embedSolutionPriorVectors(db, args.limit * 4, {
+    db,
+    caller: 'worker',
+    deadlineAt: new Date(Date.now() + 10 * 60_000),
+  });
+  console.log(
+    JSON.stringify({ backfill_run_id: backfillRunId, vectors_written: vectorsWritten, ...outcome }),
+  );
 }
 
 main().then(
