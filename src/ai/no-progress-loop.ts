@@ -319,9 +319,10 @@ export function createNoProgressLoop(policy?: {
       : settled.kind === 'mutation' && settled.applied;
     if (progressed) {
       generation += 1;
-      if (policy) seenFingerprints.clear();
+      if (policy?.progressed) seenFingerprints.clear();
     }
-    const repeatedFingerprint = !progressed && seenFingerprints.has(fingerprintKey);
+    const repeatedFingerprint =
+      !(policy?.progressed && progressed) && seenFingerprints.has(fingerprintKey);
     settledAtGeneration.set(signatureOf(observation.call.name, observation.args), generation);
     seenFingerprints.add(fingerprintKey);
     if (settled.kind === 'read') armBudgetAnchor();

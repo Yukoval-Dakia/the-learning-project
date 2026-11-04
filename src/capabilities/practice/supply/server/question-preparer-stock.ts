@@ -22,7 +22,7 @@ export async function questionPreparerPendingStock(db: Db, ticket: EvidenceDeman
         eq(question_group_lifecycle.withdrawn, false),
         eq(question_group_lifecycle.availability, 'general_pool'),
         sql`${question_group_lifecycle.current_revision_id} IS NOT NULL`,
-        inArray(question.kind, ticket.task.kinds),
+        ticket.task.kinds.includes('any') ? undefined : inArray(question.kind, ticket.task.kinds),
         sql`${question.knowledge_ids} @> ${JSON.stringify(ticket.claim.knowledge_ids)}::jsonb`,
       ),
     );

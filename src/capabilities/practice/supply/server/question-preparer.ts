@@ -5,7 +5,6 @@ import { piDomainMount } from '@/ai/pi-tool-mount';
 import { getConfig } from '@/core/config/store';
 import type { Db, Tx } from '@/db/client';
 import { event, question_revision } from '@/db/schema';
-import { lockQuestionSubmitRequest } from '@/kernel/locks/question-supply';
 import { QUESTION_PREPARER_TOOLS, resolveMcpAllowedTools } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
 import { currentTaskSpendScope, withTaskSpendScope } from '@/server/ai/task-spend-scope';
@@ -14,10 +13,10 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { QuestionPreparerJobData, preparerTerminal } from './question-preparer-contract';
 import {
   defectCategory,
+  lockQuestionPreparerSegment,
   preparerCalls,
   preparerFinish,
   preparerHistory,
-  preparerLockKey,
   preparerRecord,
   preparerSpendKey,
   preparerSubmittedRevisions,
@@ -66,7 +65,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
     retryable = false,
   ) =>
     db.transaction(async (tx) => {
-      await lockQuestionSubmitRequest(tx, `question_preparer:${preparerLockKey(data)}`);
+      await lockQuestionPreparerSegment(tx, data);
       const [existing] = await tx
         .select()
         .from(event)
@@ -164,7 +163,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
   // Short advisory-locked journal acts as the execution lease. Queue state, never age, releases it.
   const boss = await getStartedBoss();
   const claim = await db.transaction(async (tx) => {
-    await lockQuestionSubmitRequest(tx, `question_preparer:${preparerLockKey(data)}`);
+    await lockQuestionPreparerSegment(tx, data);
     const records = await preparerHistory(tx, data);
     const returned = data.continuation?.verdict;
     const content = returned
@@ -295,7 +294,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
   }
   async function assertSegmentOpen(tx?: Tx) {
     const connection = tx ?? db;
-    if (tx) await lockQuestionSubmitRequest(tx, `question_preparer:${preparerLockKey(data)}`);
+    if (tx) await lockQuestionPreparerSegment(tx, data);
     const [terminal] = await connection
       .select({ id: event.id })
       .from(event)
@@ -321,6 +320,8 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
           status: z.string().optional(),
           revision_id: z.string().optional(),
           published: z.boolean().optional(),
+          publish_status: z.string().optional(),
+          replayed: z.boolean().optional(),
           issues: z.array(z.object({ code: z.string(), detail: z.string() })).optional(),
         })
         .safeParse(payload);
@@ -330,7 +331,12 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
         versions.add(value.draft_ref);
         return true;
       }
-      if (value.published && value.revision_id && !progressRevisions.has(value.revision_id)) {
+      if (
+        (value.published || value.publish_status === 'published') &&
+        !value.replayed &&
+        value.revision_id &&
+        !progressRevisions.has(value.revision_id)
+      ) {
         progressRevisions.add(value.revision_id);
         return true;
       }
@@ -350,18 +356,18 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
     result = await withTaskSpendScope(
       admission.runCapMicroUsd / 1_000_000,
       async (runId) => {
-        await assertSegmentOpen();
-        if (!started) {
-          await preparerRecord(db, jobId, data, 'started_unknown');
-          started = true;
-        }
         if (runIds.has(runId)) return;
-        await preparerRecord(db, jobId, data, 'run_registered', {
-          run_id: runId,
-          remaining_micro_usd: Math.floor(
-            (currentTaskSpendScope()?.remainingUsd() ?? 0) * 1_000_000,
-          ),
+        await db.transaction(async (tx) => {
+          await assertSegmentOpen(tx);
+          if (!started) await preparerRecord(tx, jobId, data, 'started_unknown');
+          await preparerRecord(tx, jobId, data, 'run_registered', {
+            run_id: runId,
+            remaining_micro_usd: Math.floor(
+              (currentTaskSpendScope()?.remainingUsd() ?? 0) * 1_000_000,
+            ),
+          });
         });
+        started = true;
         runIds.add(runId);
       },
       () =>
@@ -420,6 +426,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                       publish_status: z.string().optional(),
                       revision_id: z.string().optional(),
                       fulfillment: z.string().optional(),
+                      replayed: z.boolean().optional(),
                       pending_stock: z.array(z.json()).optional(),
                     })
                     .safeParse(observation.output);
@@ -431,6 +438,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                   if (
                     observation.name === 'submit_question' &&
                     value.data.revision_id &&
+                    !value.data.replayed &&
                     (value.data.published || value.data.publish_status === 'published')
                   )
                     published.add(value.data.revision_id);

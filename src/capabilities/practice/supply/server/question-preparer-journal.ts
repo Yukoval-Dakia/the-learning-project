@@ -107,6 +107,16 @@ export function preparerLockKey(data: QuestionPreparerData): string {
     ? `question:${data.continuation.verdict.question_id}`
     : `ticket:${data.ticket.demand_id}`;
 }
+/** All segment fences acquire ticket first, then question; never hold either across a model call. */
+export async function lockQuestionPreparerSegment(tx: Tx, data: QuestionPreparerData) {
+  await lockQuestionSubmitRequest(tx, `question_preparer:ticket:${data.ticket.demand_id}`);
+  if (data.continuation)
+    await lockQuestionSubmitRequest(
+      tx,
+      `question_preparer:question:${data.continuation.verdict.question_id}`,
+    );
+}
+
 export async function preparerRecord(
   db: Db | Tx,
   jobId: string,
@@ -192,7 +202,9 @@ export async function preparerSubmittedRevisions(db: Db | Tx, taskRunId: string)
       return receipt &&
         typeof receipt === 'object' &&
         'revision_id' in receipt &&
-        typeof receipt.revision_id === 'string'
+        typeof receipt.revision_id === 'string' &&
+        (('publish_status' in receipt && receipt.publish_status === 'published') ||
+          ('published' in receipt && receipt.published === true))
         ? [receipt.revision_id]
         : [];
     }),
@@ -211,7 +223,7 @@ export async function recoverQuestionPreparer(db: Db, jobId: string, forceDead =
   const job = await boss.getJobById('question_preparer_run', jobId);
   if (!forceDead && job && ['created', 'retry', 'active'].includes(job.state)) return;
   await db.transaction(async (tx) => {
-    await lockQuestionSubmitRequest(tx, `question_preparer:${preparerLockKey(data)}`);
+    await lockQuestionPreparerSegment(tx, data);
     const history = await preparerHistory(tx, data);
     if (history.some((row) => row.id === `question_preparer_finished_${jobId}`)) return;
     const started = history.some((row) => row.id === `question_preparer_started_unknown_${jobId}`);
@@ -221,17 +233,7 @@ export async function recoverQuestionPreparer(db: Db, jobId: string, forceDead =
     const runIds = [
       ...new Set([...registered, ...(started ? [`question_preparer_${jobId}`] : [])]),
     ];
-    const calls = await preparerCalls(tx, `question_preparer_${jobId}`);
-    const revisions = new Set(
-      calls.flatMap((call) =>
-        call.tool_name.endsWith('submit_question') &&
-        typeof call.output_json?.revision_id === 'string'
-          ? [call.output_json.revision_id]
-          : [],
-      ),
-    );
-    for (const revision of await preparerSubmittedRevisions(tx, `question_preparer_${jobId}`))
-      revisions.add(revision);
+    const revisions = await preparerSubmittedRevisions(tx, `question_preparer_${jobId}`);
     if (runIds.length) {
       const rows = await tx.select().from(ai_task_runs).where(inArray(ai_task_runs.id, runIds));
       for (const run of rows.filter((row) => row.status === 'running')) {
