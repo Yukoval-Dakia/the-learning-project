@@ -6,10 +6,7 @@
 import { and, eq, or } from 'drizzle-orm';
 import { type TaskKind, tasks } from '@/capabilities/task-registry';
 import { canonicalHash } from '@/core/migration/canonical';
-import {
-  ASSESSMENT_RUBRIC_PROMPT_REVISION,
-  ASSESSMENT_RULE_PROMPT_REVISION,
-} from '@/core/schema/assessment/model-decision';
+import { ASSESSMENT_RUBRIC_PROMPT_REVISION } from '@/core/schema/assessment/model-decision';
 import type {
   AdmittedModelSliceT,
   ModelResponseClass,
@@ -31,7 +28,6 @@ const CURRENT_MODEL_VERSION_PINS: Readonly<Record<string, string>> = {
   JevScoringDecisionTask: JEV_CANONICAL_MODEL,
   // Chat lane: the rubric prompt and output contract revision.
   AssessmentRubricJudgeTask: ASSESSMENT_RUBRIC_PROMPT_REVISION,
-  AssessmentRuleJudgeTask: ASSESSMENT_RULE_PROMPT_REVISION,
 };
 
 /**

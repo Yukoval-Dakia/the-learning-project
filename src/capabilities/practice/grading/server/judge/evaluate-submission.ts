@@ -239,7 +239,9 @@ export function createFormalModelExecutor(
   );
   return async (request, signal) => {
     const sliceId = request.executor.admitted_slice_id;
-    // Every registered grading pin is rechecked before a paid claim.
+    // 只有登记处钉了 pin 的 task kind（细则 / Jev）才在付费前复核切片。
+    // AssessmentRuleJudgeTask 不在这张 pin 表里；它的切片 id 是历史占位，
+    // 拦下来会让规则判分在 claim 之前直接扣留。
     if (sliceId !== null && currentModelPins().has(request.executor.task_kind)) {
       const decision = await gradingSliceMatchesLivePin(db, sliceId, request.executor.task_kind);
       if (!decision.ok) {
@@ -266,14 +268,6 @@ export function createAdmissionRunExecutor(
   deadlineAt: number,
   maxCostUsdMicros: number,
 ): ModelUnitExecutorPort | undefined {
-  if (taskKind === 'AssessmentRuleJudgeTask') {
-    return createPiModelExecutor({
-      db,
-      deadlineAt,
-      maxCostUsdMicros,
-      judgeRetryPolicy: 'none',
-    });
-  }
   if (taskKind === 'AssessmentRubricJudgeTask') {
     return createRubricModelExecutor({
       db,
