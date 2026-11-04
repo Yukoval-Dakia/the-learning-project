@@ -3,6 +3,10 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
+import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
+import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
+
+installSettlementCascadeRevert(orchestrateCascadeRevert);
 
 let _client: ReturnType<typeof postgres> | undefined;
 let _db: Db | undefined;
