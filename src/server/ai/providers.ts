@@ -274,7 +274,13 @@ export function providerCredentialEnvName(provider: Provider): string | undefine
   if (looksLikeCustomProviderId(provider)) return customProviderDefinition(provider)?.apiKeyEnv;
   const config = PROVIDERS[provider as KnownProvider];
   if (!config) return undefined;
-  return config.authMode === 'oauth' ? config.oauthTokenEnv : config.apiKeyEnv;
+  if (config.authMode === 'oauth') return config.oauthTokenEnv;
+  // oauth-file lane: when only the credential-file env is set, it is the env
+  // the lane actually reads — surface it instead of the absent key env.
+  if ('authFileEnv' in config && config.authFileEnv && !process.env[config.apiKeyEnv]) {
+    return config.authFileEnv;
+  }
+  return config.apiKeyEnv;
 }
 
 // ─── provider credential <-> endpoint binding (YUK-1654) ─────────────────────
@@ -321,6 +327,14 @@ function providerKeyEndpointBindings(): ProviderKeyEndpointBindings {
 setProviderKeyEndpointBindingsSource(providerKeyEndpointBindings);
 
 export function isProviderLaneReady(provider: Provider): boolean {
+  const config = looksLikeCustomProviderId(provider)
+    ? undefined
+    : PROVIDERS[provider as KnownProvider];
+  const authFileEnv =
+    config && 'authFileEnv' in config
+      ? (config as { authFileEnv?: string }).authFileEnv
+      : undefined;
+  if (authFileEnv && process.env[authFileEnv]) return true;
   const envName = providerCredentialEnvName(provider);
   return envName !== undefined && Boolean(process.env[envName]);
 }

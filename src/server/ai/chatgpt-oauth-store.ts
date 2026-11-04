@@ -24,7 +24,8 @@ export class ChatGPTOAuthFileError extends Error {
       | 'missing_file'
       | 'invalid_json'
       | 'missing_openai_credential'
-      | 'write_failed',
+      | 'write_failed'
+      | 'refresh_timeout',
     detail: string,
   ) {
     super(`openai ChatGPT-login credential file error (${reason}): ${detail}`);
@@ -61,9 +62,22 @@ async function readAuthFile(path: string): Promise<Record<string, CredentialLike
 }
 
 async function writeAuthFile(path: string, auth: Record<string, CredentialLike>): Promise<void> {
+  // Crash-safe write: a refresh may have already rotated the refresh token, so
+  // truncating the file in place could leave a corrupt credential on kill —
+  // write-temp-fsync-rename is atomic on POSIX. 0600 because the content is a
+  // live credential (chmod is applied before the rename lands).
+  const tmp = `${path}.tmp-${process.pid}`;
   try {
-    await fs.writeFile(path, JSON.stringify(auth, null, 2), { encoding: 'utf8', mode: 0o600 });
+    const fh = await fs.open(tmp, 'w', 0o600);
+    try {
+      await fh.writeFile(JSON.stringify(auth, null, 2), 'utf8');
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
+    await fs.rename(tmp, path);
   } catch (e) {
+    await fs.unlink(tmp).catch(() => undefined);
     throw new ChatGPTOAuthFileError('write_failed', `${path}: ${(e as Error).message}`);
   }
 }
@@ -88,20 +102,26 @@ export async function loadChatGPTCredential(
  * `modify` persists the whole auth map back so a refreshed/rotated credential
  * survives the next run and process.
  */
+const MODIFY_TIMEOUT_MS = 60_000;
+
 export function createChatGPTCredentialStore(path: string) {
   const memory = new Map<string, CredentialLike>();
   let fileLoaded = false;
+  // Reads the file entry inside the caller's mutex scope — the public `read`
+  // re-queues on the same chain, so calling it from within `serialized` (e.g.
+  // inside `modify`) would deadlock the lane.
+  const readInsideLock = async (): Promise<CredentialLike | undefined> => {
+    if (!fileLoaded) {
+      const auth = await readAuthFile(path);
+      if (auth.openai) memory.set('openai', auth.openai);
+      fileLoaded = true;
+    }
+    return memory.get('openai');
+  };
   return {
     async read(providerId: string): Promise<CredentialLike | undefined> {
       if (providerId !== 'openai') return memory.get(providerId);
-      return serialized(path, async () => {
-        if (!fileLoaded) {
-          const auth = await readAuthFile(path);
-          if (auth.openai) memory.set('openai', auth.openai);
-          fileLoaded = true;
-        }
-        return memory.get('openai');
-      });
+      return serialized(path, readInsideLock);
     },
     async list() {
       const entries: Array<{ providerId: string; type: Credential['type'] }> = [];
@@ -122,8 +142,24 @@ export function createChatGPTCredentialStore(path: string) {
         return next;
       }
       return serialized(path, async () => {
-        const current = await this.read(providerId);
-        const next = await fn(current);
+        const current = await readInsideLock();
+        // Bound the mutation fn (pi's refresh makes a network call) so a hung
+        // request can't hold the file mutex — and this whole lane — forever.
+        const next = await Promise.race<CredentialLike | undefined>([
+          fn(current),
+          new Promise<never>((_resolve, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new ChatGPTOAuthFileError(
+                    'refresh_timeout',
+                    `credential mutation for '${providerId}' exceeded ${MODIFY_TIMEOUT_MS}ms`,
+                  ),
+                ),
+              MODIFY_TIMEOUT_MS,
+            ).unref(),
+          ),
+        ]);
         if (next !== undefined) {
           memory.set(providerId, next);
           const auth = await readAuthFile(path);
