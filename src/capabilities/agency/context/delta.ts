@@ -47,7 +47,11 @@ const SHANGHAI_HOUR_MIN = new Intl.DateTimeFormat('en-GB', {
 });
 
 export function shanghaiLabel(at: Date): string {
-  return SHANGHAI_HOUR_MIN.format(at).replace(',', '');
+  // en-GB 的 MM/DD 会被读成 4 月 11 日；显式拼 MM-DD 消除歧义。
+  const parts = Object.fromEntries(
+    SHANGHAI_HOUR_MIN.formatToParts(at).map((p) => [p.type, p.value]),
+  );
+  return `${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
 function outcomeWord(outcome: string | null): string {
