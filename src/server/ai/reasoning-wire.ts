@@ -38,6 +38,7 @@ export function reasoningWireFields(
 
 export interface ReasoningWireModel {
   thinkingLevelMap?: Record<string, string | null>;
+  overrideDeclaredThinkingFormat?: string;
 }
 
 /**
@@ -52,6 +53,12 @@ export function reasoningModelView<T extends ReasoningWireModel>(
   effortOption: string | undefined,
 ): T {
   const map = model.thinkingLevelMap;
+  // Only lanes whose thinkingFormat our overrides introduce need correction:
+  // main sent no reasoning field for them, while pi 1.5.0's new format branch
+  // would emit a disable. Lanes with builtin-declared formats keep pi's
+  // default wire exactly as main had it (e.g. anthropic, token-plan mimo
+  // both sent thinking:{disabled} on unset in 1.1.0).
+  if (model.overrideDeclaredThinkingFormat === undefined) return model;
   // 'none' means no reasoning parameter by design — identical to unset.
   if ((reasoning === undefined && effortOption === undefined) || reasoning?.applied === 'none') {
     // Unconfigured run — identical to main: no reasoning field on the wire.

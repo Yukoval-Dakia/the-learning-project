@@ -15,6 +15,7 @@ import {
 export type LoomPiModel = Model<Api> & {
   maxInputTokens?: number;
   catalogReasoning?: ModelProfileReasoning;
+  overrideDeclaredThinkingFormat?: string;
 };
 
 /** Pure-protocol builtin lanes a custom provider clones its transport from. */
@@ -109,19 +110,7 @@ export async function createLoomPiModels() {
             name: modelId,
             provider: id,
             api: executable.api,
-            compat:
-              executable.api === template.api
-                ? {
-                    ...template.compat,
-                    // Effort-mode models take reasoning_effort on the wire;
-                    // pi gates the field behind this flag (deepseek + generic
-                    // completions branches). Toggle/none lanes must not send
-                    // it — endpoints can reject an unexpected effort field.
-                    ...(executable.catalogReasoning?.mode === 'effort'
-                      ? { supportsReasoningEffort: true }
-                      : {}),
-                  }
-                : undefined,
+            compat: executable.api === template.api ? template.compat : undefined,
             baseUrl: baseUrlForWire(executable),
             cost: {
               input: rates?.input ?? 0,
@@ -137,6 +126,7 @@ export async function createLoomPiModels() {
             maxInputTokens: executable.maxInputTokens,
             maxTokens: executable.maxTokens,
             catalogReasoning: executable.catalogReasoning,
+            overrideDeclaredThinkingFormat: executable.overrideDeclaredThinkingFormat,
             thinkingLevelMap: thinkingLevelMapOf(executable.thinkingLevelMap),
           });
           continue;
@@ -146,6 +136,7 @@ export async function createLoomPiModels() {
           id: modelId,
           provider: id,
           api: executable.api,
+          overrideDeclaredThinkingFormat: executable.overrideDeclaredThinkingFormat,
           // A declared thinkingFormat is source data (see model-catalog-overrides
           // protocol): it must reach compat so getCompat emits the model's real
           // thinking switch even when the builtin template predates it.

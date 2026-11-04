@@ -37,6 +37,9 @@ export interface ExecutablePiModelFacts {
   catalogReasoning: ModelProfileReasoning;
   thinkingLevelMap?: Record<string, string | null>;
   thinkingFormat?: string;
+  /** thinkingFormat introduced by our overrides (not the builtin catalog) —
+   *  the marker the reasoning view uses to scope unset-suppression. */
+  overrideDeclaredThinkingFormat?: string;
 }
 
 /** Undefined when a required fact is missing — the model is then not executable. */
@@ -151,6 +154,11 @@ function nativePiModels(
                   )
                 : undefined,
             thinkingFormat: protocol.thinkingFormat,
+            // Marker only when the LANE'S OWN overrides introduce the format —
+            // borrowed protocol declarations (token-plan reusing xiaomi's)
+            // keep pi's default wire, which is what main sent for them.
+            overrideDeclaredThinkingFormat:
+              modelCatalogOverrideProtocols(provider)[id]?.thinkingFormat,
           },
         ],
       ];
