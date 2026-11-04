@@ -8,7 +8,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ChevronDown } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { AttachmentStrip } from '@/ui/components/response/AttachmentStrip';
 import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
@@ -171,19 +171,23 @@ export function PfrQRow({
 }
 
 const SUMMARY_POLL_MS = 4000;
-const SUMMARY_POLLS = 30;
+const SUMMARY_POLL_WINDOW_MS = 120_000;
 
 export function PfRetro({ artifactId, onBack }: { artifactId: string; onBack: () => void }) {
   const { getPaperDetail } = usePracticeClient();
+  const openedAt = useRef(Date.now());
   const detailQ = useQuery({
     queryKey: ['paper', artifactId, 'retro'],
     queryFn: () => getPaperDetail(artifactId),
-    // The summary job runs after hand-in. Look for it for about two minutes, then stop: an older
-    // paper may never have one, and the system summary below stands on its own.
+    // The summary job runs after hand-in. Look for it for two minutes from opening this page, then
+    // stop, whether reads succeed or fail: an older paper may never have one, and the system summary
+    // below stands on its own.
     refetchInterval: (query) => {
       const session = query.state.data?.session;
       const waiting = session?.status === 'completed' && !session.summary_md;
-      return waiting && query.state.dataUpdateCount < SUMMARY_POLLS ? SUMMARY_POLL_MS : false;
+      return waiting && Date.now() - openedAt.current < SUMMARY_POLL_WINDOW_MS
+        ? SUMMARY_POLL_MS
+        : false;
     },
   });
 
