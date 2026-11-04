@@ -175,8 +175,25 @@ function readBaseBaseline(sha: string): Baseline | null {
   }
 }
 
-function raisedFindings(current: Baseline, base: Baseline): Finding[] {
+function raisedFindings(current: Baseline, base: Baseline, sha: string): Finding[] {
   const previous = new Map(base.sites.map((site) => [site.path, site.count]));
+  // A rename carries its existing lock budget; a copy still starts at zero.
+  const status = execFileSync('git', ['diff', '--name-status', '-M', '-z', sha, '--'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).split('\0');
+  for (let i = 0; i < status.length; ) {
+    if (status[i]?.startsWith('R')) {
+      const count = previous.get(status[i + 1]);
+      if (count !== undefined) {
+        previous.delete(status[i + 1]);
+        previous.set(status[i + 2], count);
+      }
+      i += 3;
+    } else i += 2;
+  }
+
   const findings: Finding[] = [];
   for (const site of current.sites) {
     const before = previous.get(site.path) ?? 0;
@@ -254,7 +271,7 @@ function main(): void {
   } else {
     try {
       const base = readBaseBaseline(sha);
-      if (base) findings.push(...raisedFindings(baseline, base));
+      if (base) findings.push(...raisedFindings(baseline, base, sha));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       findings.push({ rule: 'BASE_UNREADABLE', detail: message });

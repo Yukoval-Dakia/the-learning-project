@@ -2728,7 +2728,7 @@ export interface operations {
                                 error_type: string | null;
                                 http_status: number | null;
                                 /** @enum {string} */
-                                status: "unconfigured" | "configured" | "auth_failed";
+                                status: "unconfigured" | "configured" | "auth_failed" | "login_lane";
                             };
                             /** @enum {string} */
                             auth_mode: "key" | "oauth";
@@ -2754,6 +2754,11 @@ export interface operations {
                                 max_input_tokens: number | null;
                                 max_output_tokens: number | null;
                                 reasoning: boolean | "unknown";
+                                reasoning_options: {
+                                    /** @enum {string} */
+                                    mode: "effort" | "budget_tokens" | "toggle" | "unknown";
+                                    values: string[];
+                                } | null;
                                 runnable: boolean;
                                 structured_output: boolean | "unknown";
                                 tool_call: boolean | "unknown";

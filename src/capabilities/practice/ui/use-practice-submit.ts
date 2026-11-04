@@ -110,7 +110,7 @@ export const VERDICT_OF: Record<JudgePreview['coarse_outcome'], { label: string;
 // YUK-432 — 客观题判别（OWNER DECISION A：客观题自动判分 + 自动评级，跳过手动 again/hard/good）。
 //
 // gate 的判据：judge 预览 route 是确定性客观路由（exact/keyword）。**只看 route，不看题型 kind。**
-// 必须逐字对齐后端 label gate：后端 src/server/mastery/personalized-difficulty.ts 的
+// 必须逐字对齐后端 label gate：后端 src/capabilities/practice/settlement/server/personalized-difficulty.ts 的
 // isObjectiveJudgeRoute(judgeRoute) 仅在 route ∈ OBJECTIVE_JUDGE_ROUTES={exact,keyword} 时才写
 // difficulty_calibration_label（键于 judge route，与 kind 无关）。UI auto-rate gate 与之同源——
 // UI 发 auto_rate:true ⟺ 后端会写 label。

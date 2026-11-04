@@ -90,6 +90,14 @@
       "count": 1
     },
     {
+      "path": "src/capabilities/practice/settlement/server/personalized-difficulty.ts",
+      "count": 1
+    },
+    {
+      "path": "src/capabilities/practice/settlement/server/settle-apply.ts",
+      "count": 1
+    },
+    {
       "path": "src/capabilities/shell/server/teaching-brief-ack.ts",
       "count": 1
     },
@@ -134,10 +142,6 @@
       "count": 1
     },
     {
-      "path": "src/server/assessment/settle-apply.ts",
-      "count": 1
-    },
-    {
       "path": "src/server/durable/judge-family.ts",
       "count": 2
     },
@@ -159,10 +163,6 @@
     },
     {
       "path": "src/server/durable/session-orphan-family.ts",
-      "count": 1
-    },
-    {
-      "path": "src/server/mastery/personalized-difficulty.ts",
       "count": 1
     },
     {

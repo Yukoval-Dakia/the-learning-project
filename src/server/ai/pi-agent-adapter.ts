@@ -80,6 +80,7 @@ import {
   providerHttpTimeoutMs,
 } from './provider-http-timeout';
 import { createBudgetedProviderFetch } from './provider-transport';
+import { reasoningModelView } from './reasoning-wire';
 import { createRunMonitor } from './run-monitor';
 import type { SDKUserMessage } from './sdk-types';
 import {
@@ -380,7 +381,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       pending !== undefined &&
       isToolArgumentContractFailure({ isError: event.isError, content: event.result?.content })
     ) {
-      const secrets = this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [];
+      const secrets =
+        this.args.resolved.authMode !== 'oauth-file' && this.args.resolved.apiKey
+          ? [this.args.resolved.apiKey]
+          : [];
       // Fidelity: prefer this call's exact streamed bytes (sanitized — the
       // recursive pass redacts credentials inside embedded JSON fields). When no
       // deltas arrived, event.args is a pi-parsed object → label 'reconstructed'.
@@ -534,7 +538,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     this.providerHttp ??= createBudgetedProviderFetch({
       httpTimeoutMs: timeoutMs ?? providerHttpTimeoutMs(OPENAI_SDK_DEFAULT_TIMEOUT_MS),
       marginMs: PROVIDER_HTTP_TIMEOUT_MARGIN_MS,
-      secrets: this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [],
+      secrets:
+        this.args.resolved.authMode !== 'oauth-file' && this.args.resolved.apiKey
+          ? [this.args.resolved.apiKey]
+          : [],
       ...(collector !== undefined ? { collector } : {}),
     });
     collector?.noteSdkTimeout(
@@ -561,7 +568,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     this.providerErrorCapture ??= createProviderErrorCaptureFetch(
       http.fetch,
       // The request's resolved credential — redacted at the shared boundary.
-      { secrets: resolved.apiKey ? [resolved.apiKey] : [] },
+      { secrets: resolved.authMode !== 'oauth-file' && resolved.apiKey ? [resolved.apiKey] : [] },
     );
     return {
       // All prompts are standard LLM messages; UI-only AgentMessages never reach
@@ -573,9 +580,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       ...(resolved.provider === 'opencode-go'
         ? { headers: { [OPENCODE_SESSION_HEADER]: runId } }
         : {}),
-      // Per-request credential resolved once in resolveTaskProvider for both auth
-      // modes (oauth carries the sk-ant-oat* token → Bearer).
-      apiKey: resolved.apiKey,
+      // Per-request credential resolved once in resolveTaskProvider for all auth
+      // modes (oauth carries the sk-ant-oat* token → Bearer; oauth-file carries
+      // no apiKey — auth resolves through the file-backed credential store).
+      apiKey: resolved.authMode !== 'oauth-file' ? resolved.apiKey : undefined,
       // YUK-590 parity: cap provider retries so a persistent 5xx returns control
       // to loom's deliberate retry layer. An explicit operator '0' is preserved.
       ...(options.judgeRetryPolicy === 'none'
@@ -583,7 +591,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         : piMaxRetries() !== undefined
           ? { maxRetries: piMaxRetries() }
           : {}),
+      // options.effort is the caller channel; task.<kind>.reasoning resolves to
+      // exactly one pi level — startup rejects both being set (one wire writer).
       ...(options.effort !== undefined ? { reasoning: options.effort } : {}),
+      ...(resolved.reasoning?.level !== undefined ? { reasoning: resolved.reasoning.level } : {}),
       ...(http.timeoutMs !== undefined ? { timeoutMs: http.timeoutMs } : {}),
       fetch: this.providerErrorCapture.fetch,
     };
@@ -595,14 +606,20 @@ class PiPreparedQuery implements PreparedExecutionQuery {
    * to 'auto' + the single closing reminder wired in iterate().
    */
   private structuredSubmitPolicy(model: PiModel<PiApi>) {
-    if (toolOutputSchema(this.args.kind) === undefined || model.api !== 'openai-completions') {
+    if (
+      toolOutputSchema(this.args.kind) === undefined ||
+      (model.api !== 'openai-completions' && model.api !== 'openai-responses')
+    ) {
       return undefined;
     }
     return resolveStructuredSubmitPolicy(this.args.resolved.provider, this.args.resolved.model);
   }
 
   private readonly streamFn: StreamFn = (model: LoomPiModel, llmContext, streamOptions) => {
-    const effort = streamOptions?.reasoning;
+    // The catalog check guards options.effort only: task.<kind>.reasoning levels
+    // are already validated/carried by resolveTaskReasoning (toggle carriers are
+    // not effort names on the model's list).
+    const effort = this.args.options.effort;
     const inputTokens = estimatePiTokens(llmContext.messages);
     const remaining = model.contextWindow - inputTokens;
     streamOptions = {
@@ -610,10 +627,6 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       maxTokens: Math.min(streamOptions?.maxTokens ?? model.maxTokens, model.maxTokens, remaining),
     };
     const submitPolicy = this.structuredSubmitPolicy(model);
-    // YUK-1547 — per-task model-native reasoning params pass through verbatim.
-    // This is NOT the options.effort → ThinkingLevel path; startup rejects both
-    // being set so the wire key has exactly one writer.
-    const nativeReasoning = this.args.resolved.nativeReasoningParams;
     const streamOptionsWithPayload = {
       ...streamOptions,
       onPayload: async (payload: unknown, requestModel: PiModel<PiApi>) => {
@@ -634,14 +647,16 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         }
         const transformed = await streamOptions?.onPayload?.(payload, requestModel);
         const body = transformed ?? payload;
-        if (submitPolicy === undefined && !nativeReasoning) return body;
+        if (submitPolicy === undefined) return body;
         if (body == null || typeof body !== 'object' || Array.isArray(body)) {
           throw new Error('structured output requires an object provider payload');
         }
         return {
           ...body,
-          ...(submitPolicy !== undefined ? structuredSubmitWireFields(submitPolicy) : {}),
-          ...nativeReasoning,
+          ...structuredSubmitWireFields(
+            submitPolicy,
+            model.api === 'openai-responses' ? 'openai-responses' : 'openai-completions',
+          ),
         };
       },
     };
@@ -654,7 +669,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           context,
           options,
         ),
-      model,
+      // Request-scoped model view: unconfigured reasoning must not emit
+      // thinking:{disabled}; an explicit 'off' must stay expressible.
+      reasoningModelView(model, this.args.resolved.reasoning, effort),
       llmContext,
       streamOptionsWithPayload,
     );
@@ -1279,7 +1296,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
                 [...rawToolArguments.values()]
                   .map((raw) =>
                     sanitizeArgumentsEvidenceText(raw, {
-                      secrets: this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [],
+                      secrets:
+                        this.args.resolved.authMode !== 'oauth-file' && this.args.resolved.apiKey
+                          ? [this.args.resolved.apiKey]
+                          : [],
                     }),
                   )
                   .join('\n'),
@@ -1410,8 +1430,8 @@ export class PiAgentAdapter implements ExecutionAdapter {
   async startup(args: ExecutionAdapterStartupArgs): Promise<PreparedExecutionQuery> {
     const deps = await this.resolveDeps();
     // Fail fast before the durable attempt row: an unknown model or unresolved
-    // credential is a config error, not a paid call. Both auth modes carry the
-    // credential on `resolved.apiKey`.
+    // credential is a config error, not a paid call. key/oauth modes carry the
+    // credential on `resolved.apiKey`; oauth-file resolves it via the store.
     if (
       typeof args.options.resume === 'string' &&
       args.options.resume.length > 0 &&
@@ -1427,14 +1447,12 @@ export class PiAgentAdapter implements ExecutionAdapter {
         `pi adapter cannot execute '${args.resolved.provider}/${args.resolved.model}': protocol or required catalog facts (endpoint, reasoning, input modalities, context/output limits) are unknown. Model selection is unchanged.`,
       );
     }
-    // YUK-1547 — reasoning_effort must have exactly one writer: options.effort
-    // and the native passthrough both serialize onto the same wire key.
-    if (
-      args.options.effort !== undefined &&
-      args.resolved.nativeReasoningParams?.reasoning_effort !== undefined
-    ) {
+    // Reasoning level must have exactly one writer: options.effort and the
+    // task.<kind>.reasoning resolution both target the wire reasoning slot —
+    // even an applied 'off'/'none' outcome, or the receipt would lie.
+    if (args.options.effort !== undefined && args.resolved.reasoning !== undefined) {
       throw new Error(
-        `conflicting reasoning params for task '${args.kind}': options.effort='${args.options.effort}' and task.<kind>.reasoning reasoning_effort='${args.resolved.nativeReasoningParams.reasoning_effort}' both target the wire reasoning_effort — keep exactly one source.`,
+        `conflicting reasoning params for task '${args.kind}': options.effort='${args.options.effort}' and task.<kind>.reasoning level='${args.resolved.reasoning.requested}' both target the wire reasoning level — keep exactly one source.`,
       );
     }
     const { tools, remoteHandles } = await this.buildTools(args, deps);

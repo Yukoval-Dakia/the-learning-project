@@ -14,3 +14,14 @@ export const captureReviewAnswerBinding: typeof import('./server/review-answer-b
 export const consumeReviewAnswerBinding: typeof import('./server/review-answer-binding').consumeReviewAnswerBinding =
   async (...args) =>
     (await import('./server/review-answer-binding')).consumeReviewAnswerBinding(...args);
+
+export { type ActivateEvaluationRequestT, activateEvaluation } from './server/activate';
+export { snapshotAssessmentLearningScope } from './server/learning-scope';
+export { type FamilyCalibrationRow, effectiveFamilyB } from './server/personalized-difficulty';
+export { effectiveB, recalibrateQuestion } from './server/recalibration';
+export {
+  installSchedulingCandidateRebuild,
+  learningSettlement,
+  withdrawCapturedOccurrence,
+} from './server/settle';
+export type { SettlementObservers } from './server/settle-apply';

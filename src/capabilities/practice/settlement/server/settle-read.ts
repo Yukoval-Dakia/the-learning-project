@@ -34,8 +34,8 @@ import {
   question_revision,
 } from '@/db/schema';
 import type { AbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
-import type { FamilyFoldRecord } from '@/server/mastery/personalized-difficulty';
 import type { ActivationSettleInput } from './activate';
+import type { FamilyFoldRecord } from './personalized-difficulty';
 
 // The settlement event action this ledger reads. Mirrors
 // ASSESSMENT_SETTLEMENT_ACTION in settle.ts, which stays the writer-facing
