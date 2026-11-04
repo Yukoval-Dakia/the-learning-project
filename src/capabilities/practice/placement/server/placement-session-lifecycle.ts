@@ -21,9 +21,8 @@ import { assertFromState } from '@/kernel/learning-session-guard';
 //
 // PLACEMENT_PROBE_ENABLED gates the whole entrypoint. When false no probe is
 // created, so the daily-stream and review paths are unchanged; the flag never
-// touches steady-state selection. It stays a function rather than a const
-// because envPinned means the dashboard cannot silently flip it, while callers
-// still need the runtime value (YUK-1007).
+// touches steady-state selection. It stays a function so callers read the live
+// config value.
 export function placementProbeEnabled(): boolean {
   return getConfigFlag('PLACEMENT_PROBE_ENABLED');
 }
