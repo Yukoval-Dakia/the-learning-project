@@ -47,6 +47,8 @@ export const PlacementNoItemSchema = z.object({
   preparing_subjects: z.array(z.string()),
   /** 'recheck' = re-POST this selection endpoint; 'end' = PATCH the session closed. */
   options: z.array(z.enum(['recheck', 'end'])),
+  supply_ended: z.boolean().optional(),
+  next_action: z.enum(['wait_for_admission', 'continue_other_activities']).optional(),
 });
 
 export const PlacementQuestionSchema = z.object({
@@ -98,7 +100,14 @@ export const CreatePlacementQuestionSelectionBodySchema = z.object({
 export const PlacementQuestionSelectionResponseSchema = z.discriminatedUnion('done', [
   z.object({
     done: z.literal(true),
-    reason: z.enum(['cap', 'se_converged']),
+    reason: z.enum(['cap', 'se_converged', 'supply_ended']),
+    evidence: z
+      .object({
+        answered_count: z.number().int().positive(),
+        confidence: z.literal('low'),
+        next_action: z.literal('calibrate_with_daily_practice'),
+      })
+      .optional(),
     answeredCount: z.number().int().nonnegative(),
     starterSupply: z.array(PlacementStarterOutcomeSchema).optional(),
     unresolved_items: z.array(PlacementUnresolvedItemSchema).optional(),

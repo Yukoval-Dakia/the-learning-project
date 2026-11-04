@@ -53,6 +53,7 @@ import {
   type DispatchResult,
   type QuestionSupplyTarget,
   dispatchSupplyTarget,
+  isUnanchoredSupplyPaused,
   targetFingerprint,
 } from '../../supply/public';
 
@@ -424,7 +425,14 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
     demand.control.max_budget_micro_usd !== null && demand.control.max_budget_micro_usd <= 0;
   const deadlinePassed =
     demand.control.needed_by !== null && Date.parse(demand.control.needed_by) <= Date.now();
-  if (!retrievalComplete || unsupported.length > 0 || budgetExhausted || deadlinePassed) {
+  const supplyPaused = isUnanchoredSupplyPaused();
+  if (
+    !retrievalComplete ||
+    unsupported.length > 0 ||
+    budgetExhausted ||
+    deadlinePassed ||
+    supplyPaused
+  ) {
     // 检索不完整 / dispatcher 无法落实某限制 / 预算耗尽 / 截止时间已过 → held：需求
     // 照常入台账（供人工/未来路由接手），但绝不把没搜全当成缺题、绝不静默丢字段后
     // 假装已供题、绝不在零预算或过期截止下派出付费 job。
@@ -440,7 +448,9 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
         ? `unsupported_constraint: ${unsupported.length} retrieval constraint(s) the dispatcher cannot honour (see receipt.unsupported_constraints)`
         : budgetExhausted
           ? `budget_exhausted: demand.control.max_budget_micro_usd=${demand.control.max_budget_micro_usd} — no paid supply may be dispatched on an exhausted budget; raise the budget and re-file under a NEW request_id`
-          : `deadline_passed: demand.control.needed_by=${demand.control.needed_by} is already in the past — no paid supply can arrive in time; extend the deadline and re-file under a NEW request_id`;
+          : deadlinePassed
+            ? `deadline_passed: demand.control.needed_by=${demand.control.needed_by} is already in the past — no paid supply can arrive in time; extend the deadline and re-file under a NEW request_id`
+            : 'supply_paused: paid supply outside placement is paused (SUPPLY_NIGHTLY_SPEND_CAP_USD=0)';
     return settleFiling({ status: 'held', reason, receipt });
   }
 

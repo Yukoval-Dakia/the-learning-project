@@ -1,3 +1,5 @@
+export { countPlacementInventory } from './server/placement-inventory';
+
 // 供题与备题员 owner 的稳定业务操作。practice 内其它 owner 只经本文件引用本 owner
 // （`pnpm audit:practice-subowners`）；practice 外部调用方经根 `public.ts` 的具名转出。
 // 契约（EvidenceDemandV1 / SupplyTraceV1 / PlacementVerificationAuthority）在
@@ -149,6 +151,7 @@ export {
   materializePlacementStartersForGoal,
   resolvePlacementStarterGoalAuthority,
 } from './server/placement-starter-store';
+export { isUnanchoredSupplyPaused } from './server/spend-gate';
 export {
   checkSupplyPlanKnowledgeIds,
   checkSupplyPlanStructure,

@@ -8,7 +8,6 @@ export {
   markPlacementStarterClaimTerminal,
   placementProbeEnabled,
   resolvePlacementStarterGoalAuthority,
-  selectNextPlacementItem,
   terminalizeLostPlacementDelivery,
 } from '@/capabilities/practice/public';
 export { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
