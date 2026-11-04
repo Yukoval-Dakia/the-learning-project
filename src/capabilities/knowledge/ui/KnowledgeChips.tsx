@@ -1,6 +1,6 @@
 // Small labels shared by the knowledge tree, the node drawer and the node detail page (M3E roles,
 // styles in knowledge-m3e.css). Presentation only: callers pass the already-decided cue.
-import { Check, CircleAlert, History, Sparkles } from 'lucide-react';
+import { Check, CircleAlert, History } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { RelationCue } from './relation-cue';
 
@@ -37,24 +37,6 @@ export function RelTag({ rel, cue }: { rel: string; cue: RelationCue }) {
         {cue.glyph}
       </span>
       {cue.label}
-    </span>
-  );
-}
-
-/** A note's verification state: 已校验 (positive) or 草稿 (neutral). */
-export function VerifyChip({ verified }: { verified: boolean }) {
-  if (verified) {
-    return (
-      <span className="kn-tag kn-tag-positive">
-        <Check size={12} aria-hidden="true" />
-        已校验
-      </span>
-    );
-  }
-  return (
-    <span className="kn-tag">
-      <Sparkles size={12} aria-hidden="true" />
-      草稿
     </span>
   );
 }
