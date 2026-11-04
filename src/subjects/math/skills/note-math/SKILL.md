@@ -1,6 +1,6 @@
 ---
 name: note-math
-description: 数学学习笔记规范包 —— 合格 atomic / long / hub note 的结构要求、各 semantic_kind 内容标准、质检判据。NoteGenerateTask / NoteVerifyTask / NoteRefineTask 共用同一份规范。
+description: 数学学习笔记规范包 —— 合格 atomic / long / hub note 的结构要求、各 semantic_kind 内容标准、质检判据。NoteGenerateTask / NoteRefineTask 共用同一份规范。
 ---
 
 # 数学学习笔记规范
@@ -30,7 +30,7 @@ description: 数学学习笔记规范包 —— 合格 atomic / long / hub note 
 - **note_long**：综合多个知识节点（如「等差数列三种表达及互推」「二次函数与判别式综合」），自由 block tree，重点在建立知识点之间的推导关系和解题路径，不强制逐段 semantic_kind。
 - **note_hub**：是专题路线图，用 crossLinkBlock 串联相关 atomic/long，给出从基础定义到综合应用的学习顺序提示；不要假装是单知识点 atomic。
 
-## 质检标准（NoteVerifyTask 共用）
+## 质检标准（生成与精修共用）
 
 - **factuality**：公式是否正确，推导是否自洽；条件不足时指出缺少的条件，不编造定理。
 - **coverage**：atomic 必须覆盖全部五种 semantic_kind；long 检查综合范围是否完整。
