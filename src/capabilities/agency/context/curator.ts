@@ -109,8 +109,10 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
                   typeof observation.output === 'object' &&
                   'status' in observation.output &&
                   observation.output.status === 'issue'))
-            )
+            ) {
               writeFailed = true;
+              noProgress = true;
+            }
             seen.add(signature);
             if (
               observation.name === 'curate_context' &&

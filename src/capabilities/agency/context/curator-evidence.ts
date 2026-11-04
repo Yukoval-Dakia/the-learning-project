@@ -7,7 +7,8 @@ import { CURATOR_ACTIVITY_ACTIONS } from './activity-contract';
 import { readTopics } from './topics';
 
 // The run anchor freezes the upper bound. Later user turns never become implicit
-// evidence for a Curator run already in flight.
+// evidence for a Curator run already in flight. Synchronous edits are already
+// reflected in the projection; replaying their requests would undo a later undo.
 export async function readCuratorEvidence(db: Db, anchorId?: string) {
   if (!anchorId) throw new Error('Curator run anchor missing');
   const [anchor] = await db
@@ -26,7 +27,6 @@ export async function readCuratorEvidence(db: Db, anchorId?: string) {
         eq(event.actor_kind, 'user'),
         inArray(event.action, [
           ...CURATOR_ACTIVITY_ACTIONS,
-          'experimental:context_edit_request',
           'rate',
           'experimental:goal_status_update',
           'experimental:goal_scope_update',
