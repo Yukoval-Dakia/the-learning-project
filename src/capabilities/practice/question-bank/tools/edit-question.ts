@@ -205,7 +205,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
 export const editQuestionTool: DomainTool<Input, Output> = {
   name: 'edit_question',
   description:
-    '创建或修复题目时调用。save 用 JSON 对象 document 创建 v2 草稿，或用 ops 按稳定 part/unit/slot/material ID 编辑 draft_ref/question_id；request_id 幂等，expected_draft_version/expected_revision 做 CAS。validate 只检查，probe 走真实判分并如实返回未决。返回草稿身份和 typed issues；发布另调 submit_question。',
+    '创建或修复题目时调用。save 用 JSON 对象 document 创建 v2 草稿，或用 ops 按稳定 part/unit/slot/material ID 编辑 draft_ref/question_id；request_id 幂等，expected_draft_version/expected_revision 做 CAS。validate 只检查，probe 走真实判分并如实返回未决。返回草稿身份和 typed issues；发布另调 submit_question。来源中的加点等视觉标记用题干内的强调保留，选项只放在选项中。',
   effect: 'write',
   inputSchema,
   outputSchema,

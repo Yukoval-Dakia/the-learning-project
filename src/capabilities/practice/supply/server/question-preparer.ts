@@ -9,7 +9,7 @@ import { parseTaskOutput } from '@/kernel/parse-task-output';
 import { QUESTION_PREPARER_TOOLS, resolveMcpAllowedTools } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
 import { currentTaskSpendScope, withTaskSpendScope } from '@/server/ai/task-spend-scope';
-import { getStartedBoss } from '@/server/boss/client';
+import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { QuestionPreparerJobData, preparerTerminal } from './question-preparer-contract';
 import {
@@ -184,7 +184,22 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
         const delivery = await boss.getJobById('question_preparer_run', previousId);
         if (!delivery || !['created', 'active', 'retry'].includes(delivery.state))
           return { recover: previousId };
-        throw new Error('question preparer group has a live segment; retry delivery later');
+        // Waiting is not a failed paid attempt: retain it beyond the queue's finite retries.
+        await preparerRecord(tx, jobId, data, 'unstarted', contentRecord);
+        const deferred = await preparerFinish(
+          tx,
+          jobId,
+          data,
+          'no_progress',
+          `waiting_for_prior_segment:${previousId}`,
+          true,
+        );
+        await boss.send('question_preparer_run', data, {
+          db: fromPgBossDrizzleTx(tx),
+          startAfter: new Date(Date.now() + 30_000),
+          singletonKey: `question_preparer_wait:${jobId}`,
+        });
+        return { terminal: deferred };
       }
       const previous = QuestionPreparerJobData.parse(row.payload.data);
       const done = preparerTerminal.parse(terminal.payload.terminal);
@@ -484,6 +499,8 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
             ? 'awaiting_admission'
             : 'done'
           : 'no_progress',
-    report.success ? report.data.summary : result.text,
+    report.success
+      ? report.data.summary
+      : result.text || loop.closure()?.reason || 'no_terminal_report',
   );
 }
