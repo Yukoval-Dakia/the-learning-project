@@ -11,7 +11,7 @@
 import type { AgentLoopConfig, FinishTurn } from '@earendil-works/pi-agent-core';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import type { Provider } from '@/ai/registry';
-import { resolveAttemptCostTruth } from './attempt-cost';
+import { CATALOG_SUBSCRIPTION_REF_PREFIX, resolveAttemptCostTruth } from './attempt-cost';
 import { piUserMessage } from './pi-runner-frames';
 import { currentTaskSpendScope } from './task-spend-scope';
 
@@ -39,6 +39,7 @@ export function createPiCostCeiling(input: {
   maxBudgetUsd: number;
   provider: Provider;
   model: string;
+  authMode?: Parameters<typeof resolveAttemptCostTruth>[0]['authMode'];
 }): PiCostCeiling {
   const shared = currentTaskSpendScope();
   let spentUsd = 0;
@@ -47,9 +48,10 @@ export function createPiCostCeiling(input: {
   const priceTurn = (message: AssistantMessage): number | null => {
     const usage = message.usage;
     if (!usage) return null;
-    return resolveAttemptCostTruth({
+    const truth = resolveAttemptCostTruth({
       provider: input.provider,
       model: input.model,
+      authMode: input.authMode,
       tokens: {
         inputTokens: usage.input,
         outputTokens: usage.output,
@@ -57,7 +59,9 @@ export function createPiCostCeiling(input: {
         cacheCreationTokens: usage.cacheWrite,
       },
       reportedCostUsd: usage.cost?.total,
-    }).amountUsd;
+    });
+    // Match the unified supply ledger: a subscription projection is not paid spend.
+    return shared && truth.ref?.startsWith(CATALOG_SUBSCRIPTION_REF_PREFIX) ? 0 : truth.amountUsd;
   };
 
   const charged = new WeakSet<AssistantMessage>();

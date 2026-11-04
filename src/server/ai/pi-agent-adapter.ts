@@ -957,6 +957,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             maxBudgetUsd: options.maxBudgetUsd,
             provider: this.args.resolved.provider,
             model: this.args.resolved.model,
+            authMode: this.args.resolved.authMode,
           })
         : undefined;
     const rootTurnLimiter =
