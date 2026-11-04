@@ -98,26 +98,21 @@ export function outcomeWord(outcome: string): string {
 }
 
 /**
- * What a failed check said, in plain words. The raw check text is internal and never shown; a
- * reason not listed here becomes one general sentence.
+ * What a verify request came back with when it did not enable the question, by the typed status
+ * the server returns. The check's own reason is not rewritten here: the question page shows it
+ * as written (verify_reason). A skipped status means no check ran, so it never says "没通过".
  */
-const VERIFY_REASON_WORDS: ReadonlyArray<readonly [string, string]> = [
-  ['source_consistency', '题目内容和标注的来源对不上。'],
-  ['source_grounding', '找不到能支撑这道题的来源。'],
-  ['structure_completeness', '题目不完整，缺了题干、选项或答案中的一部分。'],
-  ['solve_check', '重新解了一遍，得到的答案和参考答案不一样。'],
-  ['dedup', '题库里已经有一道几乎一样的题。'],
-  ['exact answer mismatch', '答案和来源里的答案对不上。'],
-  ['image content was unavailable', '题目里的图没能读到，没法核对。'],
-  ['knowledge point archived', '这道题练的知识点已经归档了。'],
-  ['vector similarity', '和题库里另一道题很像，需要你看一眼。'],
-  ['question not found', '找不到这道题了。'],
-];
+const VERIFY_OUTCOME_WORDS: Readonly<Record<string, string>> = {
+  failed: '核验没通过，原因写在题目上方。',
+  needs_review: '核验没下定论，需要你看一眼，原因写在题目上方。',
+  'skipped:unsupported_source': '这道题的来源还不能核验，这次没有核验，也没有启用。',
+  'skipped:not_draft': '这道题已经不在待审核里了。',
+  'skipped:archived_draft': '这道题已经归档或被拒，不能再启用。',
+  'skipped:archived_knowledge': '这道题练的知识点已经归档，不能启用。',
+  'skipped:question_part': '这是大题里的一小问，要随整道题一起核验。',
+  'skipped:not_found': '找不到这道题了。',
+};
 
-export const VERIFY_REASON_UNKNOWN = '核验没通过。看一眼题目和答案，改好后可以再核验一次。';
-
-export function verifyReasonWords(raw: string | null | undefined): string {
-  if (!raw) return VERIFY_REASON_UNKNOWN;
-  const hit = VERIFY_REASON_WORDS.find(([key]) => raw.includes(key));
-  return hit ? hit[1] : VERIFY_REASON_UNKNOWN;
+export function verifyOutcomeWords(status: string): string {
+  return VERIFY_OUTCOME_WORDS[status] ?? `没有启用（服务端返回：${status}）。`;
 }
