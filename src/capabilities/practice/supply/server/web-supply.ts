@@ -10,6 +10,7 @@
 // bounded by the plan length and claimed through the demand lock so a redelivery
 // can never double-dispatch paid work. Placement demands never fall back.
 import { createHash } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
@@ -39,14 +40,18 @@ import {
 } from '../tools/submit-question';
 import { enqueueSupplyExecuteJob } from './dispatcher';
 import {
+  PLACEMENT_DECISION_DEADLINE_MS,
+  PLACEMENT_VERIFY_POLL_MS,
   PlacementStarterAdmissionError,
   assertPlacementAttemptFence,
+  countEligiblePlacementQuestions,
 } from './placement-starter-attempts';
 import {
   assertPlacementPaidEffectAuthority,
   authorizePlacementQuestion,
   recordPlacementPaidEffect,
 } from './placement-starter-paid-authority';
+import { readPlacementCandidateProgress } from './placement-starter-progress';
 import type { PlacementWebDelivery } from './placement-starter-web-delivery';
 import type { SupplyDemandItem } from './plan-executor';
 import {
@@ -718,7 +723,7 @@ async function admitSourcingRun(
     : { capUsd: ceilingUsd, nightly: false };
 }
 
-export async function runWebSupply(params: {
+interface WebSupplyParams {
   db: Db;
   item: SupplyDemandItem;
   trace?: unknown;
@@ -733,7 +738,62 @@ export async function runWebSupply(params: {
    * jyeoo_fetch): seeded into routesTried so fallback never re-pays for a
    * route this demand already executed. */
   routesExecuted?: string[];
-}): Promise<WebSupplyState> {
+}
+
+/** Placement alone may replace settled unusable candidates. Round identities survive
+ * retries; unknown acquisition/submit outcomes never authorize another paid round. */
+export async function runWebSupply(params: WebSupplyParams): Promise<WebSupplyState> {
+  const delivery = params.placement;
+  if (!delivery) return runWebSupplyRound(params);
+  const baseId =
+    params.trace === undefined ? params.item.demandId : SupplyTraceV1.parse(params.trace).demand_id;
+  let noProgress = 0;
+  let previousCount = 0;
+  let state: WebSupplyState | undefined;
+  for (let round = 0; round < 3; round++) {
+    const roundId = round === 0 ? baseId : `${baseId}:placement-refill:${round}`;
+    const prior = await latest(params.db, roundId);
+    const count = prior?.item.count ?? Math.max(1, params.item.count - previousCount);
+    state = await runWebSupplyRound({ ...params, item: { ...params.item, count } }, roundId);
+    if (
+      state.phase === 'acquiring' ||
+      state.activeRequestId !== null ||
+      state.reason === 'acquisition_outcome_unknown' ||
+      state.reason === 'producer_identity_missing' ||
+      (state.phase === 'blocked' &&
+        !['candidate_not_servable', 'text_evidence_unavailable'].includes(state.reason ?? '')) ||
+      state.submissions.some((submission) => !submission.receipt)
+    )
+      return state;
+    for (;;) {
+      const ids = state.submissions.flatMap((submission) =>
+        submission.receipt?.question_id ? [submission.receipt.question_id] : [],
+      );
+      const progress = await readPlacementCandidateProgress(params.db, ids);
+      if (progress.every((item) => item.state !== 'pending')) break;
+      if (Date.now() >= delivery.attempt.startedOn.getTime() + PLACEMENT_DECISION_DEADLINE_MS)
+        return state;
+      await sleep(PLACEMENT_VERIFY_POLL_MS, undefined, { signal: delivery.signal });
+      await delivery.heartbeat.assertHealthy();
+    }
+    const available = await countEligiblePlacementQuestions(
+      params.db,
+      delivery.attempt.claimId,
+      delivery.attempt.attemptId,
+    );
+    if (available >= params.item.count) return state;
+    noProgress = available > previousCount ? 0 : noProgress + 1;
+    if (noProgress >= 2) return state;
+    previousCount = available;
+  }
+  if (!state) throw new Error('placement refill produced no state');
+  return state;
+}
+
+async function runWebSupplyRound(
+  params: WebSupplyParams,
+  roundId?: string,
+): Promise<WebSupplyState> {
   const { db, placement } = params;
   const trace = params.trace === undefined ? undefined : SupplyTraceV1.parse(params.trace);
   const item = { ...params.item, demandId: trace?.demand_id ?? params.item.demandId };
@@ -745,6 +805,8 @@ export async function runWebSupply(params: {
       subjectId: params.subjectProfile.id,
     });
   }
+  // Validate the original claim binding before deriving a private acquisition key.
+  if (placement && roundId) item.demandId = roundId;
   const intent = {
     item: { ...item, routePreference: undefined },
     trace: trace ? { ...trace, trace_id: undefined } : undefined,
