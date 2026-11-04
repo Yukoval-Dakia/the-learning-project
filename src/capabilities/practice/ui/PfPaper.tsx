@@ -1882,7 +1882,7 @@ function PaperVisit({
               <MathMarkdown
                 key={face.part_id}
                 notation={cur.question.notation}
-                className="pf-pp-stem"
+                className="pf-pp-stem un-read"
               >
                 {face.prompt_md}
               </MathMarkdown>
@@ -1893,7 +1893,7 @@ function PaperVisit({
             {(cur.question.image_refs ?? []).map((assetId) => (
               <StimulusFigure key={assetId} assetId={assetId} />
             ))}
-            <MathMarkdown notation={cur.question.notation} className="pf-pp-stem">
+            <MathMarkdown notation={cur.question.notation} className="pf-pp-stem un-read">
               {cur.question.prompt_md}
             </MathMarkdown>
           </>

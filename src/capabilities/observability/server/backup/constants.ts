@@ -140,7 +140,11 @@
 // model_catalog_cache bucket/checks it feeds are refetchable and excluded.
 // NEW FK_ORDER table → bump 4.31 → 4.32 (migration 0130).
 // YUK-1522: permanent creation receipts must survive resource deletion and restore.
-export const SCHEMA_VERSION = '4.33';
+// YUK-1771: question_solution_prior — the admission solve's frozen method prior per
+// (revision, part). It came from paid solves and cannot be rebuilt for free; FK →
+// question_revision, so it restores right after the verification rows.
+// NEW FK_ORDER table → bump 4.33 → 4.34 (migration 0138).
+export const SCHEMA_VERSION = '4.34';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -237,6 +241,7 @@ export const FK_ORDER = [
   'question_revision',
   'question_group_lifecycle',
   'question_admission_verification',
+  'question_solution_prior',
   'assessment_issuance',
   'evaluation_group',
   'assessment_submission',

@@ -1,10 +1,10 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # ADR-0074 — 作答与展示：拍照/手写为主、受约束的生成式展示、作答位与判分单元的标准契约
 
-**Status:** Proposed（设计方向，2026-10-11）；尚未实施。
+**Status:** Accepted（2026-11-04 更正：原标「尚未实施」与代码不符）。已实施——槽位/作答位与判分单元契约（`src/core/schema/assessment/`）、展示积木管线 `compose_presentation` + blocks-v1 + sandbox-v1 出口（`src/server/questions/`、`practice/ui/blocks/`）、自定义块准入预览（`question-bank/server/custom-block-preview/`）、拍照上传与 SSE 进度（`/api/ingestion/*`）。部分实施中：题目积木实际使用仍窄（TEST 436 组中仅 stack/text_math/option_list/blank_input 在用，断句/配对/排序/沙箱/非默认给分规则均为 0——扩大形式自由度归 YUK-1468 备题员与 YUK-1548 v2 展示统一，见 `tlp-docs/audit/2026-11-04-flexible-grading-and-presentation-review.md` §4）。
 **Decision source:** owner 2026-10-11 拍板 A1–A4、M1（决定记录 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/decisions/2026-10-11-answering-display-phone.md`）；原始提议 15:23「最好是用手写上传/图片上传就行……agent 对于一些难搞的题目自己写展示方法，后端只获得判分拿哪些材料交给谁判（这个是要标准契约的），以及多少分」（讨论稿 `discussions/answering-and-display.md`）；15:34 笔写/断句补充；15:46 录入要快、进度清楚、Copilot 追问同视图。
 **Tracking:** [YUK-1438](https://linear.app/yukoval-studios/issue/YUK-1438)（UI 线）、[YUK-1445](https://linear.app/yukoval-studios/issue/YUK-1445)（判分准入，契约底座）。
 **Related:** ADR-0073（计分单元、冻结方法、一套判分、单元级服务门——本文的直接上游）、ADR-0072、ADR-0068（通用学科）、ADR-0069（D8 单一入库闸）、[YUK-1456](https://linear.app/yukoval-studios/issue/YUK-1456)（录入后 AI 复盘）、`docs/design/2026-10-07-ui-visual-direction.md`（R9 等）、真卷题型清点 `tlp-status/discussions/zj-g11-question-type-inventory.md`。
