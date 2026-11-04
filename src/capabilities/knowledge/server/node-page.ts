@@ -137,8 +137,8 @@ export async function loadKnowledgeNodePage(
   knowledgeId: string,
 ): Promise<KnowledgeNodePage | null> {
   if (!isLearnerVisibleKnowledgeId(knowledgeId)) return null;
-  // Mastery is overlaid from the mastery_state projection, not the deprecated
-  // knowledge_mastery view, so last_evidence_at is the real last attempt.
+  // Mastery is overlaid from the mastery_state projection, so last_evidence_at is the
+  // real last attempt.
   const nodeRows = await db
     .select({
       id: knowledge.id,

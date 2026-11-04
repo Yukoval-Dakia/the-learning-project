@@ -28,9 +28,7 @@ type DbLike = Db | Tx;
 
 /**
  * B1 double-truth fix — the SINGLE display/AI-facing read of mastery, derived
- * from the real `mastery_state` source of truth (NOT the deprecated
- * `knowledge_mastery` view's faked recency-weighted-success-rate +
- * `evidence_count < 3 → 0.5` placeholder).
+ * from the real `mastery_state` source of truth.
  *
  * Batch read of the p(L) state for many knowledge nodes, projecting each row to
  * a 0..1 `mastery` via the **difficulty-aware PFA p(L)** ({@link pLearnedBand} /
@@ -39,9 +37,7 @@ type DbLike = Db | Tx;
  * `theta_precision`, default precision=1 → SE=1) for uncertainty. Returns a Map
  * keyed by knowledge id. Nodes with no `mastery_state` row (never attempted) are
  * simply ABSENT from the map — callers treat absence as cold start /
- * `mastery=null`, matching the old view's NULL (no-evidence) semantics.
- * `last_outcome_at` is the real last-attempt time (replaces the view's
- * `last_evidence_at`).
+ * `mastery=null`. `last_outcome_at` is the real last-attempt time.
  *
  * B1 FULL path (YUK-420) — this is the LIVE difficulty-aware p(L) projection,
  *   completing the path that previously shipped only the interim σ(θ̂)@b=0
