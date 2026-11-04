@@ -86,6 +86,7 @@ export {
 
 import { SupplyTraceV1, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { candidateContentIssues } from '../server/candidate-content-checks';
 import {
   claimHttpSourceDuplicate,
   findVectorNearDuplicate,
@@ -410,6 +411,16 @@ async function runCandidateSubmit(
   const { db } = ctx;
   const { candidate } = input;
   const knowledgeIds = input.knowledge_ids ?? [];
+  const issues = candidateContentIssues(input);
+  if (issues.length > 0)
+    return {
+      status: 'withheld',
+      published: false,
+      reason: 'deterministic_checks_failed',
+      issues,
+      request_id: input.request_id,
+    };
+
   if (knowledgeIds.length === 0) {
     return {
       status: 'withheld',

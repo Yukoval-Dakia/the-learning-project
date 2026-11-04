@@ -98,3 +98,5 @@ export async function installInterventionAuthorStages(): Promise<void> {
     ]);
   install(interventionAuthorStages);
 }
+
+export { checkSourceConsistency, checkStructureCompleteness } from './jobs/source_verify_prechecks';

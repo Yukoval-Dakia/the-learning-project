@@ -17,6 +17,12 @@ export const supplyManifestPart: Omit<CapabilityManifest, 'name' | 'description'
   },
   jobs: {
     handlers: [
+      {
+        name: 'question_preparer_run',
+        queue: 'llm',
+        load: () =>
+          import('./jobs/question_preparer_run').then((m) => m.buildQuestionPreparerHandler),
+      },
       // YUK-988 E3 — sourcing 单体 job 退役（找+判+存一体）：找题核下沉
       // web_fetch_candidates（SourcingTask 在工具内部），存由 store_sourced_question
       // commit seam 唯一负责。本入口换为确定性供给执行 job（plan-executor 的
@@ -72,6 +78,10 @@ export const supplyManifestPart: Omit<CapabilityManifest, 'name' | 'description'
   },
   copilotTools: {
     tools: [
+      {
+        name: 'scan_coverage_gaps',
+        load: () => import('./tools/scan-coverage-gaps').then((m) => m.scanCoverageGapsTool),
+      },
       {
         name: 'submit_question',
         load: () => import('./tools/submit-question').then((m) => m.submitQuestionTool),
