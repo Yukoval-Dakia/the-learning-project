@@ -379,7 +379,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       pending !== undefined &&
       isToolArgumentContractFailure({ isError: event.isError, content: event.result?.content })
     ) {
-      const secrets = this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [];
+      const secrets = this.args.resolved.authMode !== 'oauth-file' && this.args.resolved.apiKey
+        ? [this.args.resolved.apiKey]
+        : [];
       // Fidelity: prefer this call's exact streamed bytes (sanitized — the
       // recursive pass redacts credentials inside embedded JSON fields). When no
       // deltas arrived, event.args is a pi-parsed object → label 'reconstructed'.
@@ -533,7 +535,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     this.providerHttp ??= createBudgetedProviderFetch({
       httpTimeoutMs: timeoutMs ?? providerHttpTimeoutMs(OPENAI_SDK_DEFAULT_TIMEOUT_MS),
       marginMs: PROVIDER_HTTP_TIMEOUT_MARGIN_MS,
-      secrets: this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [],
+      secrets:
+        this.args.resolved.authMode !== 'oauth-file' && this.args.resolved.apiKey
+          ? [this.args.resolved.apiKey]
+          : [],
       ...(collector !== undefined ? { collector } : {}),
     });
     collector?.noteSdkTimeout(
@@ -560,7 +565,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     this.providerErrorCapture ??= createProviderErrorCaptureFetch(
       http.fetch,
       // The request's resolved credential — redacted at the shared boundary.
-      { secrets: resolved.apiKey ? [resolved.apiKey] : [] },
+      { secrets: resolved.authMode !== 'oauth-file' && resolved.apiKey ? [resolved.apiKey] : [] },
     );
     return {
       // All prompts are standard LLM messages; UI-only AgentMessages never reach
@@ -572,9 +577,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       ...(resolved.provider === 'opencode-go'
         ? { headers: { [OPENCODE_SESSION_HEADER]: runId } }
         : {}),
-      // Per-request credential resolved once in resolveTaskProvider for both auth
-      // modes (oauth carries the sk-ant-oat* token → Bearer).
-      apiKey: resolved.apiKey,
+      // Per-request credential resolved once in resolveTaskProvider for all auth
+      // modes (oauth carries the sk-ant-oat* token → Bearer; oauth-file carries
+      // no apiKey — auth resolves through the file-backed credential store).
+      apiKey: resolved.authMode !== 'oauth-file' ? resolved.apiKey : undefined,
       // YUK-590 parity: cap provider retries so a persistent 5xx returns control
       // to loom's deliberate retry layer. An explicit operator '0' is preserved.
       ...(options.judgeRetryPolicy === 'none'
@@ -1273,7 +1279,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
                 [...rawToolArguments.values()]
                   .map((raw) =>
                     sanitizeArgumentsEvidenceText(raw, {
-                      secrets: this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [],
+                      secrets:
+                        this.args.resolved.authMode !== 'oauth-file' && this.args.resolved.apiKey
+                          ? [this.args.resolved.apiKey]
+                          : [],
                     }),
                   )
                   .join('\n'),
@@ -1404,8 +1413,8 @@ export class PiAgentAdapter implements ExecutionAdapter {
   async startup(args: ExecutionAdapterStartupArgs): Promise<PreparedExecutionQuery> {
     const deps = await this.resolveDeps();
     // Fail fast before the durable attempt row: an unknown model or unresolved
-    // credential is a config error, not a paid call. Both auth modes carry the
-    // credential on `resolved.apiKey`.
+    // credential is a config error, not a paid call. key/oauth modes carry the
+    // credential on `resolved.apiKey`; oauth-file resolves it via the store.
     if (
       typeof args.options.resume === 'string' &&
       args.options.resume.length > 0 &&

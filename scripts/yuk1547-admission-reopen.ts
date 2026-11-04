@@ -171,7 +171,7 @@ async function routing(): Promise<{
         api: native.api,
         endpoint: native.baseUrl,
         ...(native.thinkingFormat ? { thinkingFormat: native.thinkingFormat } : {}),
-        apiKey: resolved.apiKey,
+        apiKey: resolved.authMode !== 'oauth-file' ? resolved.apiKey : '',
         ...(resolved.reasoning ? { reasoning: resolved.reasoning } : {}),
         ...(resolved.selectionRule ? { selectionRule: resolved.selectionRule } : {}),
         ...(resolved.provider === 'opencode-go' ? { sessionHeader: true } : {}),

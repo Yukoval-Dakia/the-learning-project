@@ -1,6 +1,7 @@
 // Task configuration owns model selection. The runtime catalog supplies facts,
 // Pi supplies transport, and credentials stay scoped to the provider.
 
+import { existsSync } from 'node:fs';
 import type { ThinkingLevel } from '@earendil-works/pi-ai';
 import { type KnownProvider, type TaskDefinition, canonicalProviderName } from '@/ai/task-spec';
 import { type Provider, type TaskKind, tasks } from '@/capabilities/task-registry';
@@ -41,6 +42,8 @@ interface KeyProviderConfig {
   authMode: 'key';
   /** Env var holding the bearer / x-api-key value. */
   apiKeyEnv: string;
+  /** Optional env var naming a ChatGPT-login credential file (openai only). */
+  authFileEnv?: string;
   /** Optional human-readable note shown in errors when the env is missing. */
   description?: string;
 }
@@ -141,6 +144,11 @@ const PROVIDERS: Record<KnownProvider, BoundProviderConfig> = {
   openai: {
     authMode: 'key',
     apiKeyEnv: 'OPENAI_API_KEY',
+    // ChatGPT-login lane: points at a pi auth.json containing an `openai`
+    // OAuth entry. Explicit opt-in; setting both this and OPENAI_API_KEY is a
+    // config error (never a silent key↔login fallback). On TEST only the
+    // worker mounts the file read-write (YUK-1806 gate lane).
+    authFileEnv: 'OPENAI_CHATGPT_AUTH_FILE',
     description: 'OpenAI direct first-party (gpt-6-astra via the Responses API, YUK-1027)',
     modelDefaults: {
       // pi usage.cost is the catalog rate-card estimate, not a contractual
@@ -590,6 +598,23 @@ export type ResolvedProvider =
       reasoning?: ResolvedTaskReasoning;
       /** Which layer produced this binding — frozen at resolution for run receipts. */
       selectionRule?: TaskSelectionRule;
+    }
+  | {
+      /**
+       * ChatGPT-login lane: the OAuth credential lives in a file read only
+       * through pi-ai's credential store (file-backed, refresh-persisting).
+       * The binding carries the PATH, never the token value.
+       */
+      authMode: 'oauth-file';
+      provider: Provider;
+      model: string;
+      credentialPath: string;
+      /** Undefined when neither the catalog nor a documented exception supplies it. */
+      baseUrl?: string;
+      /** Per-task reasoning resolution (requested → applied), validated against the model. */
+      reasoning?: ResolvedTaskReasoning;
+      /** Which layer produced this binding — frozen at resolution for run receipts. */
+      selectionRule?: TaskSelectionRule;
     };
 
 /**
@@ -970,13 +995,6 @@ export function resolveTaskProvider(
     };
   }
 
-  const apiKey = process.env[config.apiKeyEnv];
-  if (!apiKey) {
-    throw new Error(
-      `${config.apiKeyEnv} is required to run task ${kind} (provider=${providerName}${config.description ? ` — ${config.description}` : ''})`,
-    );
-  }
-
   // Chat lanes select native pi presets; typed OpenRouter retains its own executor.
   if (!isProviderImplementedForTask(providerName, kind)) {
     // Derive the wired list from the same predicate that gates this throw —
@@ -994,6 +1012,36 @@ export function resolveTaskProvider(
   const baseUrl = profile.baseUrl;
   if (baseUrl !== undefined) {
     assertModelEndpointHostAllowed(baseUrl, `provider '${providerName}' model '${modelId}'`);
+  }
+
+  const authFileEnv = (config as { authFileEnv?: string }).authFileEnv;
+  const credentialPath = authFileEnv ? process.env[authFileEnv] : undefined;
+  const apiKey = process.env[config.apiKeyEnv];
+  if (credentialPath && apiKey) {
+    throw new Error(
+      `Both ${authFileEnv} and ${config.apiKeyEnv} are set for provider '${providerName}' — the ChatGPT-login and API-key lanes are mutually exclusive; unset one (task ${kind}).`,
+    );
+  }
+  if (credentialPath) {
+    if (!existsSync(credentialPath)) {
+      throw new Error(
+        `${authFileEnv} points at '${credentialPath}' which does not exist — the ChatGPT-login credential file is required to run task ${kind} (provider=${providerName}); it is mounted only into the worker and read only through pi-ai.`,
+      );
+    }
+    return {
+      authMode: 'oauth-file',
+      provider: providerName,
+      model: modelId,
+      credentialPath,
+      baseUrl,
+      selectionRule,
+      ...taskReasoning,
+    };
+  }
+  if (!apiKey) {
+    throw new Error(
+      `${config.apiKeyEnv} is required to run task ${kind} (provider=${providerName}${config.description ? ` — ${config.description}` : ''})`,
+    );
   }
   return {
     authMode: 'key',

@@ -53,7 +53,14 @@ function baseUrlForWire(facts: ExecutablePiModelFacts): string {
 // Pi owns transport/auth/compat. Its model facts never override the runtime directory.
 export async function createLoomPiModels() {
   const { builtinModels } = await import('@earendil-works/pi-ai/providers/all');
-  const models = builtinModels();
+  // ChatGPT-login lane: the OAuth credential lives in a file-backed store so a
+  // pi-internal refresh persists back to disk (pi's in-memory store would lose
+  // the rotation). Only present when the lane is configured.
+  const chatgptPath = process.env.OPENAI_CHATGPT_AUTH_FILE;
+  const { createChatGPTCredentialStore } = await import('./chatgpt-oauth-store');
+  const models = builtinModels(
+    chatgptPath ? { credentials: createChatGPTCredentialStore(chatgptPath) } : undefined,
+  );
   const xiaomi = models.getProvider('xiaomi');
   const lanes: Provider[] = [
     'anthropic',

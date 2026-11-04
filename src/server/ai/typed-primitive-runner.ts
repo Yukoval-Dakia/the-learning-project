@@ -239,7 +239,7 @@ export async function runTypedPrimitiveTask<Output = unknown>(
               method: 'POST',
               redirect: 'error',
               headers: {
-                Authorization: `Bearer ${lifecycle.resolved.apiKey}`,
+                Authorization: `Bearer ${lifecycle.resolved.authMode !== 'oauth-file' ? lifecycle.resolved.apiKey : ''}`,
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify(body),
