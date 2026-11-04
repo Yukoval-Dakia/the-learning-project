@@ -155,6 +155,12 @@ function sdkCaptureSettingsAreSafe(): boolean {
   return true;
 }
 
+// Dev and TEST share one Laminar project; this is how to tell their spans apart.
+function traceEnvironment(): string {
+  const value = process.env.LMNR_TRACE_ENV?.trim();
+  return value && /^[a-z0-9-]{1,20}$/.test(value) ? value : 'dev';
+}
+
 export async function initializeLaminarTracing(
   options: { projectApiKey?: string; loadSdk?: () => Promise<Sdk> } = {},
 ): Promise<void> {
@@ -172,14 +178,16 @@ export async function initializeLaminarTracing(
         traceExportTimeoutMillis: TRACE_EXPORT_TIMEOUT_MS,
         logLevel: 'error',
       });
+      const environment = traceEnvironment();
       exporter = {
         start: ({ name, spanType, parentContext }) => {
           const span = Laminar.startSpan({
             name,
             spanType,
             parentSpanContext: parentContext,
-            tags: ['tlp'],
+            tags: ['tlp', `tlp-env=${environment}`],
           });
+          span.setAttribute('lmnr.association.properties.metadata.tlp_env', environment);
           let serializedContext: string | undefined;
           telemetry(() => {
             serializedContext = Laminar.serializeLaminarSpanContext(span) ?? undefined;

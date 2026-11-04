@@ -184,6 +184,7 @@ PATCH /api/admin/config   # x-internal-token
 | `LMNR_PROJECT_API_KEY` | app、worker | 空或未设时跳过 Laminar SDK 与导出 | `src/server/ai/laminar-tracing.ts` |
 | `LMNR_DEV_TRANSCRIPTS` | app、worker | 只有字面 `1` 且 `NODE_ENV=development` 时开启 | `src/server/ai/laminar-transcript.ts` |
 | `LMNR_TRANSCRIPTS` | app、worker | 只有字面 `1` 时开启，不看 `NODE_ENV`。只发白名单任务的 transcript，并且调用方要判定本次内容不含学习者材料；其他任务只有元数据 | `src/server/ai/laminar-transcript.ts` |
+| `LMNR_TRACE_ENV` | app、worker | 给每个 span 打环境标记 `tlp-env=<值>`，共用一个 Laminar 项目时用来筛选。只接受小写字母、数字和连字符，其他情况或未设都算 `dev` | `src/server/ai/laminar-tracing.ts` |
 | `LMNR_DEBUG` | app、worker | 只要设置就拒绝初始化 tracing | `src/server/ai/laminar-tracing.ts` |
 | `LMNR_TRACE_METADATA` | app、worker | 只要设置就拒绝初始化 tracing | `src/server/ai/laminar-tracing.ts` |
 | `LMNR_SPAN_CONTEXT` | app、worker | 只要设置就拒绝初始化 tracing | `src/server/ai/laminar-tracing.ts` |
