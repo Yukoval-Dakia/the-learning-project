@@ -1,4 +1,5 @@
 import {
+  allowedQuestionIds,
   lockDerivationSources,
   sourceAllowsDerivation,
   sourceAllowsDerivationSql,
@@ -144,7 +145,6 @@ export async function readAutomaticallyServableQuestionIds(
     .where(
       and(
         inArray(question.id, [...new Set(questionIds)]),
-        sourceAllowsDerivationSql({ kind: 'question', id: question.id }),
         notDraftPredicate(question.draft_status),
         eq(question_group_lifecycle.scoring_admission_state, 'admitted'),
         eq(question_group_lifecycle.suspended, false),
@@ -155,20 +155,40 @@ export async function readAutomaticallyServableQuestionIds(
       ),
     );
   const admitted = new Set<string>();
-  // Model-slice admission is read once; the serving decision stays pure.
-  const admission = await resolveModelAdmissionContext(db);
-  const subjects = await lookupGroupSubjects(
+  const purposeAllowed = await allowedQuestionIds(
     db,
-    rows.map((row) => row.parentId ?? row.id),
+    rows.map((row) => row.id),
   );
+  const modelCandidates = [];
   for (const row of rows) {
+    if (!purposeAllowed.has(row.id)) continue;
     const parsed = PublishedQuestionRevision.safeParse(revisionRowToContract(row.revision));
     if (!parsed.success) continue;
     const revision = parsed.data;
     const partIds = row.parentId ? [row.id] : revision.structure.parts.map((part) => part.part_id);
-    const questionSubject = subjectIdFromLookup(subjects.get(row.parentId ?? row.id));
-    if (decideAutomaticServing(revision, partIds, admission, questionSubject).kind === 'admitted')
-      admitted.add(row.id);
+    // Deterministic contracts have no model/subject dependency. Preserve the
+    // bank-only read boundary instead of consulting learner tables to describe them.
+    const decision = decideAutomaticServing(
+      revision,
+      partIds,
+      { slices: new Map(), current_models: new Map() },
+      null,
+    );
+    if (decision.kind === 'admitted') admitted.add(row.id);
+    else if (decision.reason === 'model_admission_unavailable')
+      modelCandidates.push({ row, revision, partIds });
+  }
+  if (modelCandidates.length) {
+    const admission = await resolveModelAdmissionContext(db);
+    const subjects = await lookupGroupSubjects(
+      db,
+      modelCandidates.map(({ row }) => row.parentId ?? row.id),
+    );
+    for (const { row, revision, partIds } of modelCandidates) {
+      const questionSubject = subjectIdFromLookup(subjects.get(row.parentId ?? row.id));
+      if (decideAutomaticServing(revision, partIds, admission, questionSubject).kind === 'admitted')
+        admitted.add(row.id);
+    }
   }
   return admitted;
 }

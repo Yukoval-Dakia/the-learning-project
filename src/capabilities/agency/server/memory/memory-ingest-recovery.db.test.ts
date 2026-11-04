@@ -255,12 +255,24 @@ describe('explicit single-event memory ingest recovery', () => {
   // @invariant data: owner-edited conjecture recovery preserves verbatim projection identity
   // @fails-if replay infers instead of preserving the owner text or loses the source projection key
   it('replays an owner-edited conjecture through the verbatim fence and preserves its projection identity', async () => {
+    await writeEvent(testDb(), {
+      id: 'conjecture-original',
+      actor_kind: 'user',
+      actor_ref: 'owner',
+      action: 'experimental:recovery_test_source',
+      subject_kind: 'query',
+      subject_id: 'query-recovery',
+      payload: {},
+      outcome: 'success',
+      ingest_at: new Date(),
+    });
     const request = await stalledSource('edited-owner-event');
     await testDb()
       .update(event)
       .set({
         action: 'rate',
         subject_kind: 'event',
+        subject_id: 'conjecture-original',
         payload: {
           rating: 'accept',
           conjecture_id: 'conjecture-original',

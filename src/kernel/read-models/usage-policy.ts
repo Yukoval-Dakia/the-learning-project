@@ -4,10 +4,10 @@
 //
 // A document without a policy resolves to 'allow' (legacy behavior).
 
-import { type SQLWrapper, eq, sql } from 'drizzle-orm';
+import { type SQLWrapper, and, eq, inArray, sql } from 'drizzle-orm';
 import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
-import { learning_session, source_document } from '@/db/schema';
+import { learning_session, question, source_document } from '@/db/schema';
 
 /** `source_document.provenance` key holding the learner's consented usage. */
 export const USAGE_POLICY_PROVENANCE_KEY = 'usage_policy';
@@ -95,36 +95,44 @@ function purposeLineage(source: PurposeSource) {
     SELECT ${source.kind}::text, ${source.id}::text
     UNION
     SELECT edge.kind, edge.id FROM purpose_lineage n
-    LEFT JOIN question q ON n.kind = 'question' AND q.id = n.id
-    LEFT JOIN learning_record r ON n.kind = 'record' AND r.id = n.id
-    LEFT JOIN event e ON n.kind = 'event' AND e.id = n.id
-    LEFT JOIN learning_session s ON n.kind = 'session' AND s.id = n.id
-    LEFT JOIN event b ON b.id = 'ingestion-usage:' || e.id
-      AND b.action = 'experimental:ingestion_usage_binding'
-      AND b.actor_kind = 'system' AND b.actor_ref = 'ingestion-usage'
-    CROSS JOIN LATERAL (VALUES
-      ('document', q.metadata->>'source_document_id'),
-      ('session', q.metadata->>'ingestion_session_id'),
-      ('record', q.metadata->>'source_record_id'),
-      ('question', q.parent_question_id),
-      ('question', q.parent_variant_id),
-      ('question', NULLIF(q.root_question_id, q.id)),
-      ('event', q.metadata->>'source_attempt_event_id'),
-      ('event', CASE WHEN q.source = 'dreaming' THEN q.source_ref END),
-      ('document', r.source_document_id), ('question', r.question_id),
-      ('event', r.origin_event_id), ('event', r.attempt_event_id),
-      ('event', e.caused_by_event_id), ('session', e.session_id),
-      ('question', CASE WHEN e.subject_kind = 'question' THEN e.subject_id END),
-      ('record', CASE WHEN e.subject_kind = 'record' THEN e.subject_id END),
-      ('document', CASE WHEN e.subject_kind = 'source_document' THEN e.subject_id END),
-      ('event', CASE WHEN e.subject_kind = 'event' THEN e.subject_id END),
-      ('record', CASE WHEN e.payload->>'kind' = 'record_promotion'
-        THEN e.payload->'proposed_change'->>'record_id' END),
-      ('question', CASE WHEN e.payload->>'kind' = 'variant_question'
-        THEN e.payload->'proposed_change'->>'source_question_id' END),
-      ('document', b.payload->>'document_id'),
-      ('document', s.source_document_id)
-    ) edge(kind, id) WHERE edge.id IS NOT NULL
+    CROSS JOIN LATERAL (
+      SELECT v.kind, v.id FROM question q
+      CROSS JOIN LATERAL (VALUES
+        ('document', q.metadata->>'source_document_id'),
+        ('session', q.metadata->>'ingestion_session_id'),
+        ('record', q.metadata->>'source_record_id'),
+        ('question', q.parent_question_id), ('question', q.parent_variant_id),
+        ('question', NULLIF(q.root_question_id, q.id)),
+        ('event', q.metadata->>'source_attempt_event_id'),
+        ('event', CASE WHEN q.source = 'dreaming' THEN q.source_ref END)
+      ) v(kind, id) WHERE n.kind = 'question' AND q.id = n.id
+      UNION ALL
+      SELECT v.kind, v.id FROM learning_record r
+      CROSS JOIN LATERAL (VALUES
+        ('document', r.source_document_id), ('question', r.question_id),
+        ('event', r.origin_event_id), ('event', r.attempt_event_id)
+      ) v(kind, id) WHERE n.kind = 'record' AND r.id = n.id
+      UNION ALL
+      SELECT v.kind, v.id FROM event e
+      LEFT JOIN event b ON b.id = 'ingestion-usage:' || e.id
+        AND b.action = 'experimental:ingestion_usage_binding'
+        AND b.actor_kind = 'system' AND b.actor_ref = 'ingestion-usage'
+      CROSS JOIN LATERAL (VALUES
+        ('event', e.caused_by_event_id), ('session', e.session_id),
+        ('question', CASE WHEN e.subject_kind = 'question' THEN e.subject_id END),
+        ('record', CASE WHEN e.subject_kind = 'record' THEN e.subject_id END),
+        ('document', CASE WHEN e.subject_kind = 'source_document' THEN e.subject_id END),
+        ('event', CASE WHEN e.subject_kind = 'event' THEN e.subject_id END),
+        ('record', CASE WHEN e.payload->>'kind' = 'record_promotion'
+          THEN e.payload->'proposed_change'->>'record_id' END),
+        ('question', CASE WHEN e.payload->>'kind' = 'variant_question'
+          THEN e.payload->'proposed_change'->>'source_question_id' END),
+        ('document', b.payload->>'document_id')
+      ) v(kind, id) WHERE n.kind = 'event' AND e.id = n.id
+      UNION ALL
+      SELECT 'document', s.source_document_id FROM learning_session s
+      WHERE n.kind = 'session' AND s.id = n.id
+    ) edge WHERE edge.id IS NOT NULL
   )`;
 }
 
@@ -133,50 +141,57 @@ function purposeLineage(source: PurposeSource) {
  */
 export function sourceAllowsDerivationSql(source: PurposeSource) {
   return sql`NOT EXISTS (${purposeLineage(source)}
-    SELECT 1 FROM purpose_lineage n
-    LEFT JOIN question q ON n.kind = 'question' AND q.id = n.id
-    LEFT JOIN learning_record r ON n.kind = 'record' AND r.id = n.id
-    LEFT JOIN event e ON n.kind = 'event' AND e.id = n.id
-    LEFT JOIN learning_session s ON n.kind = 'session' AND s.id = n.id
-    LEFT JOIN source_document d ON n.kind = 'document' AND d.id = n.id
-    LEFT JOIN event b ON b.id = 'ingestion-usage:' || e.id
-      AND b.action = 'experimental:ingestion_usage_binding'
-      AND b.actor_kind = 'system' AND b.actor_ref = 'ingestion-usage'
-    LEFT JOIN learning_session es ON es.id = e.session_id
-    LEFT JOIN source_document ed ON ed.id = COALESCE(b.payload->>'document_id', es.source_document_id)
-    WHERE
-      (n.kind = 'document' AND (d.id IS NULL
-        OR (d.provenance ? 'usage_policy' AND jsonb_typeof(d.provenance->'usage_policy') IS DISTINCT FROM 'object')
-        OR (d.provenance->'usage_policy' ? 'derivation_policy'
-          AND d.provenance->'usage_policy'->>'derivation_policy' IS DISTINCT FROM 'allow')
-        OR (d.provenance ? 'usage_epoch' AND (jsonb_typeof(d.provenance->'usage_epoch') IS DISTINCT FROM 'string' OR d.provenance->>'usage_epoch' = ''))))
-      OR (n.kind = 'session' AND (s.id IS NULL OR (s.type = 'ingestion' AND s.source_document_id IS NULL)))
-      OR (n.kind = 'question' AND (q.id IS NULL
-        OR (q.metadata ? 'source_usage_epochs' AND (
-          jsonb_typeof(q.metadata->'source_usage_epochs') IS DISTINCT FROM 'object'
-          OR EXISTS (SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(q.metadata->'source_usage_epochs') = 'object'
-            THEN q.metadata->'source_usage_epochs' ELSE '{}'::jsonb END) epoch
-            LEFT JOIN source_document bound_doc ON bound_doc.id = epoch.key
-            WHERE bound_doc.id IS NULL OR epoch.value IS DISTINCT FROM coalesce(bound_doc.provenance->>'usage_epoch', 'legacy'))))
-        OR (q.metadata ? 'derivation_policy' AND q.metadata->>'derivation_policy' IS DISTINCT FROM 'allow')
-        OR ((q.metadata ? 'source_document_id' AND q.metadata->>'source_document_id' IS NULL)
-          OR (q.metadata ? 'source_record_id' AND q.metadata->>'source_record_id' IS NULL))
-        OR (q.source IN ('ingestion', 'photo', 'pdf', 'docx', 'camera', 'import', 'vision_single', 'vision_paper', 'reverse_mark')
-          AND COALESCE(q.metadata->>'source_document_id', q.metadata->>'ingestion_session_id') IS NULL)
-        OR (q.source = 'dreaming' AND q.metadata->>'source_record_id' IS NULL AND NOT EXISTS (
-          SELECT 1 FROM event promotion WHERE promotion.id = q.source_ref
-            AND promotion.action = 'propose' AND promotion.payload->>'kind' = 'record_promotion'
-            AND promotion.payload->'proposed_change'->>'record_id' IS NOT NULL))
-        OR (q.source = 'mistake_variant' AND COALESCE(q.parent_variant_id, q.root_question_id) IS NULL)))
-      OR (n.kind = 'record' AND (r.id IS NULL
-        OR (r.payload ? 'derivation_policy' AND r.payload->>'derivation_policy' IS DISTINCT FROM 'allow')
-        OR COALESCE(r.source_document_id, r.question_id, r.origin_event_id, r.attempt_event_id) IS NULL))
-      OR (n.kind = 'event' AND (e.id IS NULL
-        OR (e.payload ? 'derivation_policy' AND e.payload->>'derivation_policy' IS DISTINCT FROM 'allow')
-        OR (b.id IS NOT NULL AND (b.payload->>'source_policy' IS DISTINCT FROM 'allow'
-          OR NOT (b.payload ?& ARRAY['document_id', 'epoch', 'source_policy'])))
-        OR (ed.id IS NOT NULL AND coalesce(b.payload->>'epoch', 'legacy') <> coalesce(ed.provenance->>'usage_epoch', 'legacy'))
-        OR (e.payload->>'kind' = 'record_promotion' AND e.payload->'proposed_change'->>'record_id' IS NULL)))
+    SELECT 1 FROM purpose_lineage n WHERE CASE n.kind
+      WHEN 'document' THEN NOT EXISTS (
+        SELECT 1 FROM source_document d WHERE d.id = n.id AND NOT coalesce((
+          (d.provenance ? 'usage_policy' AND jsonb_typeof(d.provenance->'usage_policy') IS DISTINCT FROM 'object')
+          OR (d.provenance->'usage_policy' ? 'derivation_policy'
+            AND d.provenance->'usage_policy'->>'derivation_policy' IS DISTINCT FROM 'allow')
+          OR (d.provenance ? 'usage_epoch' AND (jsonb_typeof(d.provenance->'usage_epoch') IS DISTINCT FROM 'string'
+            OR d.provenance->>'usage_epoch' = ''))
+        ), false))
+      WHEN 'session' THEN NOT EXISTS (
+        SELECT 1 FROM learning_session s WHERE s.id = n.id
+          AND NOT (s.type = 'ingestion' AND s.source_document_id IS NULL))
+      WHEN 'question' THEN NOT EXISTS (
+        SELECT 1 FROM question q WHERE q.id = n.id AND NOT coalesce((
+          (q.metadata ? 'source_usage_epochs' AND (
+            jsonb_typeof(q.metadata->'source_usage_epochs') IS DISTINCT FROM 'object'
+            OR EXISTS (SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(q.metadata->'source_usage_epochs') = 'object'
+              THEN q.metadata->'source_usage_epochs' ELSE '{}'::jsonb END) epoch
+              LEFT JOIN source_document bound_doc ON bound_doc.id = epoch.key
+              WHERE bound_doc.id IS NULL OR epoch.value IS DISTINCT FROM coalesce(bound_doc.provenance->>'usage_epoch', 'legacy'))))
+          OR (q.metadata ? 'derivation_policy' AND q.metadata->>'derivation_policy' IS DISTINCT FROM 'allow')
+          OR (q.metadata ? 'source_document_id' AND q.metadata->>'source_document_id' IS NULL)
+          OR (q.metadata ? 'source_record_id' AND q.metadata->>'source_record_id' IS NULL)
+          OR (q.source IN ('ingestion', 'photo', 'pdf', 'docx', 'camera', 'import', 'vision_single', 'vision_paper', 'reverse_mark')
+            AND COALESCE(q.metadata->>'source_document_id', q.metadata->>'ingestion_session_id') IS NULL)
+          OR (q.source = 'dreaming' AND q.metadata->>'source_record_id' IS NULL AND NOT EXISTS (
+            SELECT 1 FROM event promotion WHERE promotion.id = q.source_ref
+              AND promotion.action = 'propose' AND promotion.payload->>'kind' = 'record_promotion'
+              AND promotion.payload->'proposed_change'->>'record_id' IS NOT NULL))
+          OR (q.source = 'mistake_variant' AND COALESCE(q.parent_variant_id, q.root_question_id) IS NULL)
+        ), false))
+      WHEN 'record' THEN NOT EXISTS (
+        SELECT 1 FROM learning_record r WHERE r.id = n.id AND NOT coalesce((
+          (r.payload ? 'derivation_policy' AND r.payload->>'derivation_policy' IS DISTINCT FROM 'allow')
+          OR COALESCE(r.source_document_id, r.question_id, r.origin_event_id, r.attempt_event_id) IS NULL
+        ), false))
+      WHEN 'event' THEN NOT EXISTS (
+        SELECT 1 FROM event e
+        LEFT JOIN event b ON b.id = 'ingestion-usage:' || e.id
+          AND b.action = 'experimental:ingestion_usage_binding'
+          AND b.actor_kind = 'system' AND b.actor_ref = 'ingestion-usage'
+        LEFT JOIN learning_session es ON es.id = e.session_id
+        LEFT JOIN source_document ed ON ed.id = COALESCE(b.payload->>'document_id', es.source_document_id)
+        WHERE e.id = n.id AND NOT coalesce((
+          (e.payload ? 'derivation_policy' AND e.payload->>'derivation_policy' IS DISTINCT FROM 'allow')
+          OR (b.id IS NOT NULL AND (b.payload->>'source_policy' IS DISTINCT FROM 'allow'
+            OR NOT (b.payload ?& ARRAY['document_id', 'epoch', 'source_policy'])))
+          OR (ed.id IS NOT NULL AND coalesce(b.payload->>'epoch', 'legacy') <> coalesce(ed.provenance->>'usage_epoch', 'legacy'))
+          OR (e.payload->>'kind' = 'record_promotion' AND e.payload->'proposed_change'->>'record_id' IS NULL)
+        ), false))
+      ELSE true END
   )`;
 }
 
@@ -222,4 +237,68 @@ export function sourceHasCrisisSql(source: PurposeSource) {
 export function sourceBelongsToDocumentSql(source: PurposeSource, documentId: string | SQLWrapper) {
   return sql`EXISTS (${purposeLineage(source)} SELECT 1 FROM purpose_lineage
     WHERE kind = 'document' AND id = ${documentId})`;
+}
+
+/** Independent question authorship needs no learner-table read. Dependent rows
+ * still use the complete provenance closure, in one batch rather than per row.
+ */
+export async function allowedQuestionIds(
+  db: Db | Tx,
+  ids: readonly string[],
+): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const rows = await db
+    .select({
+      id: question.id,
+      source: question.source,
+      metadata: question.metadata,
+      parent: question.parent_question_id,
+      variant: question.parent_variant_id,
+      root: question.root_question_id,
+    })
+    .from(question)
+    .where(inArray(question.id, [...new Set(ids)]));
+  const allowed = new Set<string>();
+  const dependent: string[] = [];
+  for (const row of rows) {
+    const metadata = row.metadata ?? {};
+    const independent =
+      [
+        'manual',
+        'web_sourced',
+        'quiz_gen',
+        'copilot_authored',
+        'embedded',
+        'daily',
+        'final',
+        'teaching_check',
+        'mind_probe',
+        'intervention_diagnostic',
+      ].includes(row.source) &&
+      row.parent === null &&
+      row.variant === null &&
+      (row.root === null || row.root === row.id) &&
+      ![
+        'source_document_id',
+        'ingestion_session_id',
+        'source_record_id',
+        'source_attempt_event_id',
+        'source_usage_epochs',
+      ].some((key) => Object.hasOwn(metadata, key));
+    if (!independent) dependent.push(row.id);
+    else if (readDerivationPolicy(metadata) === 'allow') allowed.add(row.id);
+  }
+  if (dependent.length) {
+    const proven = await db
+      .select({ id: question.id })
+      .from(question)
+      .where(
+        and(
+          inArray(question.id, dependent),
+          sourceAllowsDerivationSql({ kind: 'question', id: question.id }),
+        ),
+      );
+    for (const row of proven) allowed.add(row.id);
+  }
+  return allowed;
 }
