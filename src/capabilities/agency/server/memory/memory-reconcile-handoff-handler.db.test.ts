@@ -6,7 +6,6 @@ import { writeEvent } from '@/kernel/events';
 import type { MemoryClient, MemoryEventInput } from '@/server/ai/mem0/client';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { memoryClientMock } from '../../../../../tests/helpers/memory-client-mock';
-import { MEMORY_RECONCILE_QUEUE } from './memory-reconcile-handoff';
 import { buildMemoryEventIngestHandler } from './triggers';
 
 function ingestJob(eventId: string): Job<{ event_id: string }> {
@@ -39,11 +38,11 @@ function deterministicSendId(options: object): string | null {
   return 'id' in options && typeof options.id === 'string' ? options.id : null;
 }
 
-describe('memory reconcile ingest handoff modes and crashes', () => {
+describe('memory ingest concurrency', () => {
   beforeEach(resetDb);
 
   // @invariant concurrency: concurrent misses for one source commit one paid lifecycle and handoff
-  // @fails-if both handlers cross the provider fence or dispatch duplicate reconcile work
+  // @fails-if both handlers cross the provider fence
   it('allows only one generic handler through the provider boundary after concurrent lookup misses', async () => {
     const db = testDb();
     const sourceId = 'generic-concurrent';
@@ -83,7 +82,6 @@ describe('memory reconcile ingest handoff modes and crashes', () => {
       options ? deterministicSendId(options) : null,
     );
     const dependencies = {
-      handoffMode: 'write' as const,
       loadEvent: async () => sourceEvent(sourceId),
       memoryClient: memoryClientMock({ addEventMemoryOnce, findByEventId }),
     };
@@ -100,7 +98,6 @@ describe('memory reconcile ingest handoff modes and crashes', () => {
     expect(addEventMemoryOnce).toHaveBeenCalledTimes(2);
     expect(providerAdd).toHaveBeenCalledOnce();
     expect(externalMemories.size).toBe(1);
-    expect(send.mock.calls.filter(([queue]) => queue === MEMORY_RECONCILE_QUEUE)).toHaveLength(1);
     const rows = await db
       .select({ payload: event.payload })
       .from(event)

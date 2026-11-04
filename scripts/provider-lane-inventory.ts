@@ -608,94 +608,6 @@ export const PROVIDER_LANES = [
     costSupport: 'not applicable after pruning; schema and migrations remain historical record',
   },
   {
-    id: 'glm.memory-reconcile',
-    owner: 'server/ai/mem0',
-    disposition: 'migrate',
-    wire: {
-      path: 'src/server/ai/mem0/reconcile-llm.ts',
-      calls: ['fetchImpl'],
-      contains: ['judgeReconciliation', '/chat/completions'],
-    },
-    callers: [
-      {
-        path: 'src/server/boss/memory-queues.ts',
-        imports: ['@/server/ai/mem0/reconcile-llm'],
-      },
-    ],
-    directImporters: [{ path: 'src/server/boss/memory-queues.ts', kind: 'runtime' }],
-    roles: ['worker'],
-    provider: 'Product-pinned OpenAI completions endpoint via shared memory LLM configuration',
-    model: 'env-resolved MEM0_LLM_MODEL; hardcoded ledger text is not model truth',
-    endpointClass: 'OpenAI-compatible chat completions POST /chat/completions',
-    configuration: {
-      endpoint: {
-        summary:
-          'Runtime catalog supplies completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback remains explicit',
-        source: {
-          path: 'src/server/ai/mem0/llm-config.ts',
-          contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
-          calls: ['resolveGlobalProviderSwitch', 'executablePiModel', 'resolveModelProfile'],
-        },
-      },
-      credential: {
-        summary: 'Global provider credential env; ZHIPU_API_KEY only for unpinned GLM rollback',
-        source: {
-          path: 'src/server/ai/mem0/llm-config.ts',
-          contains: ['env.ZHIPU_API_KEY', 'env[credentialEnv]'],
-          calls: ['providerCredentialEnvName'],
-        },
-      },
-      model: {
-        summary:
-          'Global provider model; unpinned MEM0_LLM_MODEL env overrides the provider-catalog lane default (LEGACY_GLM_MODEL_ID, YUK-1559)',
-        source: {
-          path: 'src/server/ai/mem0/llm-config.ts',
-          contains: ['env.MEM0_LLM_MODEL', 'LEGACY_GLM_MODEL_ID', 'model: pin.model'],
-        },
-      },
-    },
-    evidence: {
-      path: 'src/server/ai/mem0/reconcile-llm.ts',
-      calls: ['executeDirectProviderAttempt', 'attempt.estimateCost'],
-    },
-    attemptSemantics: {
-      admittedUnit: 'one HTTP chat-completions request for one memory reconciliation batch',
-      transportRetryCount: 0,
-      attemptsPerInvocation: {
-        kind: 'exact',
-        value: 1,
-        fixedRequestCount: 1,
-        fixedFanOutMultiplier: 1,
-      },
-      durableIdentity:
-        'one provider_attempt per GLM fetch under the pg-boss job operation identity',
-      timeout: '60 seconds by default, bounded again by the 65-second caller deadline',
-      clientRetry: 'none inside the HTTP client; retryable failures propagate',
-      redelivery:
-        'the deterministic memory_reconcile job has retryLimit 3, composing one GLM request per delivery to at most four wire attempts',
-      fanOut:
-        'one GLM judgment after bounded sequential Mem0 searches for the memories in the job batch',
-      evidence: [
-        {
-          path: 'src/server/ai/mem0/reconcile-llm.ts',
-          calls: ['executeDirectProviderAttempt', 'setTimeout'],
-          contains: ['DEFAULT_TIMEOUT_MS'],
-        },
-        {
-          path: 'src/capabilities/agency/server/memory/triggers.ts',
-          imports: ['./mem0-runtime'],
-          contains: ['operationAnchor: job.id', 'new Date(Date.now() + 65_000)'],
-        },
-        {
-          path: 'src/capabilities/agency/server/memory/memory-reconcile-handoff.ts',
-          imports: ['@/db/client'],
-          contains: ['retryLimit: 3', 'id: jobId'],
-        },
-      ],
-    },
-    costSupport: 'provider_attempt records reported usage and estimated CNY cost per wire attempt',
-  },
-  {
     id: 'glm.ocr-layout-parsing',
     owner: 'capabilities/ingestion',
     disposition: 'migrate',
@@ -877,9 +789,9 @@ export const PROVIDER_LANES = [
       clientRetry:
         'Mem0 internal retry behavior is opaque and is not multiplied by a wrapper retry',
       redelivery:
-        'worker redelivery reuses durable event/job anchors; reconcile retryLimit 3 composes to at most four observed SDK operations per input, while fenced start reservation prevents an ambiguous paid add from repeating',
+        'worker redelivery reuses durable event/job anchors; fenced start reservation prevents an ambiguous paid add from repeating',
       fanOut:
-        'one opaque search is recorded per new memory before one GLM batch judgment; Mem0 internal GLM/DashScope fan-out stays explicitly unknown rather than guessed',
+        'Mem0 internal extraction/embedding fan-out stays explicitly unknown rather than guessed',
       evidence: [
         {
           path: 'src/server/ai/mem0/client.ts',
@@ -889,11 +801,6 @@ export const PROVIDER_LANES = [
           path: 'src/server/ai/opaque-provider-operation.ts',
           calls: ['handle.reserveProviderStart', 'settleMem0OpaqueOperation'],
           contains: ['wireCount: null'],
-        },
-        {
-          path: 'src/capabilities/agency/server/memory/memory-reconcile-handoff.ts',
-          imports: ['@/db/client'],
-          contains: ['retryLimit: 3', 'id: jobId'],
         },
       ],
     },
