@@ -445,6 +445,11 @@ export const questionAdmissionSolveTaskSpec = {
       QuestionAdmissionSourceCrosscheckOutput,
       QuestionAdmissionPriorOutput,
     ]),
+    context: {
+      view: 'none',
+      reason: '准入解题只验证题目本身可解且答案正确，不读学习者历史。',
+    },
+
     prompt: { kind: 'inline', text: PROMPT },
   },
   outputSchema: z.union([

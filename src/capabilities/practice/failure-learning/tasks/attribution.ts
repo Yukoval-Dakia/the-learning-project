@@ -135,6 +135,11 @@ export const attributionTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '错因归因只按当次作答与既有错因标注装配输入；学习者画像不属归因证据。',
+    },
+
     prompt: { kind: 'profile', build: buildAttributionPrompt },
   },
   outputSchema: AttributionOutputSchema,
@@ -155,6 +160,11 @@ export const attributionRerankTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '错因归因只按当次作答与既有错因标注装配输入；学习者画像不属归因证据。',
+    },
+
     prompt: { kind: 'profile', build: buildAttributionRerankPrompt },
   },
   outputSchema: AttributionOutputSchema,

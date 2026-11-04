@@ -26,6 +26,7 @@ export {
 export type { ConjectureAcceptResult } from './server/conjecture-accept';
 export type { GoalScopeAcceptResult } from './server/goals/accept';
 export { createGoal } from './server/goals/create';
+export { installAgencyHostOperations } from './server/host-operations';
 export { retireInterventionPreparationJobs } from './server/intervention/retire-jobs';
 export type {
   AcceptLearningIntentParams,

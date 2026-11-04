@@ -130,6 +130,8 @@ export async function registerCapabilityJobs(
   // operations. Agency probes issue assessments, so the model pin reader is bound here too.
   const practice = await import('@/capabilities/practice/public');
   await practice.installPracticeHostOperations();
+  const { installAgencyHostOperations } = await import('@/capabilities/agency/public');
+  await installAgencyHostOperations();
   await practice.installDailyReviewPlanFacts();
   await practice.installTodayPracticeRecompose();
   await practice.installInterventionAuthorStages();

@@ -67,6 +67,11 @@ export const selectionOrchestratorTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '选题编排将消费 L2 memoryPrior（设计 §1.4），该入口随 B3 接入；当前按调度读数装配。',
+    },
+
     prompt: { kind: 'profile', build: buildSelectionOrchestratorPrompt },
   },
   outputSchema: SelectionOrchestratorDraft,

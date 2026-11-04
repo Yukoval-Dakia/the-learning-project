@@ -8,22 +8,29 @@ beforeAll(async () => registerCapabilityTools(capabilities));
 beforeEach(async () => resetDb());
 
 describe('result snapshots use real registered domain output contracts', () => {
+  // @invariant security: user-visible tool-result snapshots expose only the registered output contract's public fields while @fails-if private provider/metadata fields or opaque attribution internals leak into the snapshot value
   it('strips Mem0 passthrough and opaque attribution without deleting the actual record', () => {
-    const memory = buildCopilotToolResultSnapshot('search_memory_facts', {
-      facts: [
-        {
-          id: 'f-42',
-          memory: '用户正在复习函数定义域',
-          score: 0,
-          metadata: { secret: 'private' },
-          provider_trace: 'private',
-        },
-      ],
-      count: 1,
+    const memory = buildCopilotToolResultSnapshot('query_context', {
+      brief: null,
+      facts: {
+        facts: [
+          {
+            id: 'f-42',
+            memory: '用户正在复习函数定义域',
+            score: 0,
+            metadata: { secret: 'private' },
+            provider_trace: 'private',
+          },
+        ],
+        count: 1,
+      },
     });
     expect(memory).toMatchObject({
       state: 'available',
-      value: { facts: [{ id: 'f-42', memory: '用户正在复习函数定义域', score: 0 }], count: 1 },
+      value: {
+        brief: null,
+        facts: { facts: [{ id: 'f-42', memory: '用户正在复习函数定义域', score: 0 }], count: 1 },
+      },
     });
     expect(JSON.stringify(memory)).not.toContain('provider_trace');
     const record = {

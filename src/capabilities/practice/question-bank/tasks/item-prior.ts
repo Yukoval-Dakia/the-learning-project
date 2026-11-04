@@ -87,6 +87,11 @@ export const itemPriorLlasaTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '题目先验当前只按题目与来源材料估计；学习者先验（memoryPrior）入口随 B3 接入。',
+    },
+
     prompt: { kind: 'profile', build: buildItemPriorLlasaPrompt },
   },
   outputSchema: ItemPriorLlasaDraft,
@@ -105,6 +110,11 @@ export const itemPriorTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '题目先验当前只按题目与来源材料估计；学习者先验（memoryPrior）入口随 B3 接入。',
+    },
+
     prompt: { kind: 'profile', build: buildItemPriorPrompt },
   },
   outputSchema: ItemPriorDraft,

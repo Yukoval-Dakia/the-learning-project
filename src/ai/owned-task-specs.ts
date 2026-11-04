@@ -1,4 +1,9 @@
-import type { OwnedTaskSpecEntry, TaskDefinition } from './task-spec';
+import {
+  CONTEXT_VIEWS,
+  type ContextViewName,
+  type OwnedTaskSpecEntry,
+  type TaskDefinition,
+} from './task-spec';
 
 export type TaskOwner = 'practice' | 'ingestion' | 'knowledge' | 'notes' | 'agency' | 'copilot';
 
@@ -92,6 +97,23 @@ function validateDefinition(owner: TaskOwner, key: string, definition: TaskDefin
   }
   if (!definition.needsToolCall && definition.allowedTools.length > 0) {
     throw new Error(`defineOwnedTaskSpecs(${owner}): "${key}" has tools without tool calls`);
+  }
+  const context = definition.context;
+  if (typeof context !== 'object' || context === null) {
+    throw new Error(
+      `defineOwnedTaskSpecs(${owner}): "${key}" missing context declaration (audit:context-consumers)`,
+    );
+  }
+  if (context.view === 'none') {
+    if (typeof context.reason !== 'string' || !context.reason.trim()) {
+      throw new Error(
+        `defineOwnedTaskSpecs(${owner}): "${key}" context 'none' requires a non-empty reason`,
+      );
+    }
+  } else if (!CONTEXT_VIEWS.includes(context.view as ContextViewName)) {
+    throw new Error(
+      `defineOwnedTaskSpecs(${owner}): "${key}" context view '${String(context.view)}' is not a registered Context view`,
+    );
   }
   if (definition.reasoningEffort !== undefined && !EFFORT_LEVELS.has(definition.reasoningEffort)) {
     throw new Error(`defineOwnedTaskSpecs(${owner}): "${key}" invalid reasoningEffort`);
