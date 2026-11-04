@@ -27,6 +27,7 @@ import {
   sanitizeProviderErrorText,
 } from '@/server/ai/provider-error-evidence';
 import { type ResolvedTaskReasoning, resolveTaskProvider } from '@/server/ai/providers';
+import { reasoningWireFields } from '@/server/ai/reasoning-wire';
 import {
   STRUCTURED_OUTPUT_SUBMIT_TOOL,
   STRUCTURED_SUBMIT_REMINDER,
@@ -203,26 +204,8 @@ async function routing(): Promise<{
  * suffix, so the probe exercises the REAL request contract rather than a
  * bespoke one.
  */
-/** Resolved level → the wire fields pi emits for this protocol (deepseek only;
- * other formats carry no vendor field here). */
-function reasoningWireFields(
-  reasoning: ResolvedTaskReasoning,
-  thinkingFormat: string | undefined,
-): Record<string, unknown> {
-  if (reasoning.applied === 'toggle_on') {
-    return thinkingFormat === 'deepseek' ? { thinking: { type: 'enabled' } } : {};
-  }
-  if (reasoning.applied === 'none') return {};
-  if (reasoning.applied === 'off') {
-    // Production sends no reasoning option; on deepseek-format lanes pi then
-    // emits the explicit disabled switch — the probe must test the same body.
-    return thinkingFormat === 'deepseek' ? { thinking: { type: 'disabled' } } : {};
-  }
-  if (reasoning.level === undefined) return {};
-  return thinkingFormat === 'deepseek'
-    ? { reasoning_effort: reasoning.applied, thinking: { type: 'enabled' } }
-    : { reasoning_effort: reasoning.applied };
-}
+// reasoningWireFields lives in @/server/ai/reasoning-wire — the single source
+// for resolved-reasoning wire semantics (imported above).
 
 const SOLVE_PROBE_INPUT = {
   mode: 'solve' as const,

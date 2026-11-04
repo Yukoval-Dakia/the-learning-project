@@ -109,7 +109,19 @@ export async function createLoomPiModels() {
             name: modelId,
             provider: id,
             api: executable.api,
-            compat: executable.api === template.api ? template.compat : undefined,
+            compat:
+              executable.api === template.api
+                ? {
+                    ...template.compat,
+                    // Effort-mode models take reasoning_effort on the wire;
+                    // pi gates the field behind this flag (deepseek + generic
+                    // completions branches). Toggle/none lanes must not send
+                    // it — endpoints can reject an unexpected effort field.
+                    ...(executable.catalogReasoning?.mode === 'effort'
+                      ? { supportsReasoningEffort: true }
+                      : {}),
+                  }
+                : undefined,
             baseUrl: baseUrlForWire(executable),
             cost: {
               input: rates?.input ?? 0,

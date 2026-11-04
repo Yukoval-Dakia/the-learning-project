@@ -1,0 +1,65 @@
+/**
+ * Single source for how a resolved task reasoning outcome reaches the wire.
+ * The adapter applies the model view to the request's pi model; the reopen
+ * preflight reads the same fields to predict the payload — they must not
+ * drift.
+ *
+ * pi's thinking-format branches treat "no reasoningEffort set" and
+ * "reasoningEffort disabled" identically when `thinkingLevelMap.off !==
+ * null` (it emits `thinking:{disabled}` / `reasoning:{effort:'none'}`).
+ * Scoping `off` to the actual 'off' outcome is the only way an
+ * unconfigured run stays identical to main (no reasoning field at all,
+ * provider default applies).
+ */
+import type { ResolvedTaskReasoning } from './providers';
+
+/**
+ * Wire fields pi emits for a resolved reasoning outcome (deepseek-format
+ * lanes; other formats carry no vendor field). Kept beside
+ * `reasoningModelView` so preflight and production share one source — a
+ * change to either must stay consistent here.
+ */
+export function reasoningWireFields(
+  reasoning: ResolvedTaskReasoning,
+  thinkingFormat: string | undefined,
+): Record<string, unknown> {
+  if (reasoning.applied === 'on') {
+    return thinkingFormat === 'deepseek' ? { thinking: { type: 'enabled' } } : {};
+  }
+  if (reasoning.applied === 'none') return {};
+  if (reasoning.applied === 'off') {
+    return thinkingFormat === 'deepseek' ? { thinking: { type: 'disabled' } } : {};
+  }
+  if (reasoning.level === undefined) return {};
+  return thinkingFormat === 'deepseek'
+    ? { reasoning_effort: reasoning.applied, thinking: { type: 'enabled' } }
+    : { reasoning_effort: reasoning.applied };
+}
+
+export interface ReasoningWireModel {
+  thinkingLevelMap?: Record<string, string | null>;
+}
+
+/**
+ * Returns a request-scoped view of the pi model with `thinkingLevelMap`
+ * adjusted for THIS run's reasoning outcome. pi reads only `?.off !== null`
+ * for the no-effort branch, so `off: null` suppresses the field while a
+ * defined value keeps the disable shape reachable.
+ */
+export function reasoningModelView<T extends ReasoningWireModel>(
+  model: T,
+  reasoning: ResolvedTaskReasoning | undefined,
+  effortOption: string | undefined,
+): T {
+  const map = model.thinkingLevelMap;
+  if (map === undefined && reasoning === undefined) return model;
+  if (reasoning === undefined && effortOption === undefined) {
+    // Unconfigured run — identical to main: no reasoning field on the wire.
+    return { ...model, thinkingLevelMap: { ...map, off: null } };
+  }
+  if (reasoning?.applied === 'off') {
+    // Explicit off — the disable shape must be expressible.
+    return { ...model, thinkingLevelMap: { ...map, off: 'disabled' } };
+  }
+  return model;
+}

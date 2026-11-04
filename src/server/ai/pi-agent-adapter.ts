@@ -80,6 +80,7 @@ import {
   providerHttpTimeoutMs,
 } from './provider-http-timeout';
 import { createBudgetedProviderFetch } from './provider-transport';
+import { reasoningModelView } from './reasoning-wire';
 import { createRunMonitor } from './run-monitor';
 import type { SDKUserMessage } from './sdk-types';
 import {
@@ -667,7 +668,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           context,
           options,
         ),
-      model,
+      // Request-scoped model view: unconfigured reasoning must not emit
+      // thinking:{disabled}; an explicit 'off' must stay expressible.
+      reasoningModelView(model, this.args.resolved.reasoning, effort),
       llmContext,
       streamOptionsWithPayload,
     );

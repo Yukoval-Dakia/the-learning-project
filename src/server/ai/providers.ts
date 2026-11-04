@@ -565,7 +565,7 @@ export const PI_THINKING_LEVEL_ORDER: readonly PiThinkingLevelName[] = [
 export interface ResolvedTaskReasoning {
   /** Level name stored in task.<kind>.reasoning (legacy reasoning_effort value). */
   readonly requested: string;
-  /** What actually applies: the level, 'toggle_on', 'toggle_off', 'off', or 'none'. */
+  /** What actually applies: the level, 'on', 'toggle_off', 'off', or 'none'. */
   readonly applied: string;
   /** pi thinking level handed to streamSimple when the wire should carry one. */
   readonly level?: ThinkingLevel;
@@ -888,7 +888,7 @@ function assertOptedTaskPair(
  *   - effort mode        → in-list: the level; missing: round UP to the next
  *                          supported level (top of the list when above it).
  *   - budget_tokens mode → same round-up over pi's non-off level set.
- *   - toggle mode        → any non-off level → 'toggle_on' (carrier 'high').
+ *   - toggle mode        → any non-off level → 'on' (carrier 'high').
  *   - empty/unknown opts → 'none': no parameter, model default (recorded).
  *   - unknown level name → config error (only this errors).
  */
@@ -914,7 +914,7 @@ function resolveTaskReasoning(
     return { requested, applied: profile.mode === 'toggle' ? 'off' : 'none' };
   }
   if (profile.mode === 'toggle') {
-    return { requested, applied: 'toggle_on', level: 'high' };
+    return { requested, applied: 'on', level: 'high' };
   }
   if (profile.mode === 'effort' || profile.mode === 'budget_tokens') {
     const supported =
