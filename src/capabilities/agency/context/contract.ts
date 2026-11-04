@@ -273,5 +273,12 @@ export async function readContractSection(
   });
   const failureDetailsMd = failureLines.length > 0 ? failureLines.join('\n') : null;
 
-  return { steeringMd, masteryMd, causesMd, failureDetailsMd, signalsMd: signalNotes, overnightMd: null };
+  return {
+    steeringMd,
+    masteryMd,
+    causesMd,
+    failureDetailsMd,
+    signalsMd: signalNotes,
+    overnightMd: null,
+  };
 }

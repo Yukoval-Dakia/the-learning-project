@@ -40,7 +40,7 @@ export interface TrimUnit {
  */
 export function trimUnitsToBudget(
   units: readonly TrimUnit[],
-  budget = LEARNER_CONTEXT_STARTUP_BUDGET,
+  budget: { maxEstimatedTokens: number; maxChars: number } = LEARNER_CONTEXT_STARTUP_BUDGET,
 ): { markdown: string; estimatedTokens: number } {
   const kept = units
     .filter((u): u is TrimUnit & { markdown: string } => !!u.markdown && u.markdown.length > 0)
@@ -50,12 +50,14 @@ export function trimUnitsToBudget(
   // Drop the highest-dropRank (lowest-priority) unit until the estimate fits;
   // rank 0 (Steering) is never dropped whole — it takes the boundary truncation instead.
   while (estimateTokens(render()) > budget.maxEstimatedTokens) {
-    const candidates = kept.filter(u => u.rank !== 0 && !u.protected);
+    const candidates = kept.filter((u) => u.rank !== 0 && !u.protected);
     const drop = candidates.sort((a, b) => (b.dropRank ?? b.rank) - (a.dropRank ?? a.rank))[0];
     if (!drop) break;
     kept.splice(kept.indexOf(drop), 1);
   }
   let md = render();
+  if (estimateTokens(md) > budget.maxEstimatedTokens)
+    throw new Error('protected learner context exceeds startup budget');
   if (md.length > budget.maxChars) {
     const slice = md.slice(0, budget.maxChars);
     const boundary = Math.max(

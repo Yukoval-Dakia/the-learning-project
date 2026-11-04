@@ -10,24 +10,9 @@ import {
   lockEventDerivationSources,
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
-import {
-  LEARNING_ACTIVITY_ACTIONS,
-  resolveLearningEventSubjects,
-} from '@/kernel/read-models/learner-activity';
 import { latestPurposeWithdrawal } from '@/kernel/read-models/purpose-change';
-import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
-import {
-  listActiveSubjectsSinceRefresh,
-  loadSubjectBriefEvents,
-  selectSubjectsForRun,
-  subjectScopeHasNewEvidence,
-} from './active-subjects';
-import {
-  type GenerateBrief,
-  listStaleBriefScopes,
-  regenerateMemoryBrief,
-  scopeHasNewEvidence,
-} from './brief';
+import { loadSubjectBriefEvents, subjectScopeHasNewEvidence } from './active-subjects';
+import { type GenerateBrief, regenerateMemoryBrief, scopeHasNewEvidence } from './brief';
 import { executePurposeBrief } from './brief-purpose';
 import { isLearnerEvidenceAction } from './learner-evidence';
 import {
@@ -388,6 +373,19 @@ export function buildContextPurposeRepairHandler(
           { scopeKey, operationId: job.data.purpose_operation_id, jobId: job.id },
           async (purposeTaskId) => {
             const purposeId = job.data.purpose_operation_id;
+            if (scopeKey === 'global:digest') {
+              const { readTopics, changeTopics } = await import('../../context/topics');
+              const { version } = await readTopics(db);
+              await changeTopics(db, {
+                expectedVersion: version,
+                actor: 'curator',
+                taskRunId: purposeTaskId ?? job.id,
+                sourceIds: [],
+                patches: [],
+                asOf: new Date().toISOString(),
+              });
+              return;
+            }
             const searchFacts = async () => {
               // Lazily construct the client inside this try so a missing Mem0 key
               // degrades to no facts, while a missing LLM key fails later in generate.

@@ -62,7 +62,7 @@ function renderDueItems(items: DueItemLine[]): string | null {
  */
 export async function assembleCompanionContext(
   db: DbLike,
-  opts: { now: Date },
+  opts: { now: Date; budget?: number },
 ): Promise<LearnerContextResult> {
   const steady = await readSteadySection(db, { now: opts.now });
   const [delta, contract] = await Promise.all([
@@ -76,17 +76,24 @@ export async function assembleCompanionContext(
     contract.signalsMd.length > 0 ? `判读备注：${contract.signalsMd.join('')}` : null;
   const overnightMd = steady.overnightMd ? `昨夜交班：${steady.overnightMd}` : null;
 
-  const trimmed = trimUnitsToBudget([
-    { rank: 0, markdown: contract.steeringMd },
-    { rank: 0.5, markdown: steady.communicationMd ? `怎么和我说话：${steady.communicationMd}` : null, protected: true },
-    { rank: 1, markdown: renderDelta(delta) },
-    { rank: 2, markdown: renderDueItems(delta.dueItems), dropRank: 8 },
-    { rank: 3, markdown: masteryMd },
-    { rank: 4, markdown: contract.failureDetailsMd, dropRank: 9 },
-    { rank: 5, markdown: portraitMd },
-    { rank: 6, markdown: signalsMd },
-    { rank: 7, markdown: overnightMd },
-  ]);
+  const trimmed = trimUnitsToBudget(
+    [
+      { rank: 0, markdown: contract.steeringMd },
+      {
+        rank: 0.5,
+        markdown: steady.communicationMd ? `怎么和我说话：${steady.communicationMd}` : null,
+        protected: true,
+      },
+      { rank: 1, markdown: renderDelta(delta) },
+      { rank: 2, markdown: renderDueItems(delta.dueItems), dropRank: 8 },
+      { rank: 3, markdown: masteryMd },
+      { rank: 4, markdown: contract.failureDetailsMd, dropRank: 9 },
+      { rank: 5, markdown: portraitMd },
+      { rank: 6, markdown: signalsMd },
+      { rank: 7, markdown: overnightMd },
+    ],
+    { maxEstimatedTokens: opts.budget ?? 1000, maxChars: 2400 },
+  );
 
   return {
     view: 'companion',

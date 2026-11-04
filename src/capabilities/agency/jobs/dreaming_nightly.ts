@@ -6,6 +6,10 @@ export async function runDreamingNightly(db: Db) {
   return runCurator(db, 'nightly');
 }
 
-export function buildDreamingNightlyHandler(db: Db): (jobs: Job<Record<string, never>>[]) => Promise<void> {
-  return async () => { await runDreamingNightly(db); };
+export function buildDreamingNightlyHandler(
+  db: Db,
+): (jobs: Job<Record<string, never>>[]) => Promise<void> {
+  return async () => {
+    await runDreamingNightly(db);
+  };
 }

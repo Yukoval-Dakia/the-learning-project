@@ -56,6 +56,7 @@ export const READ_TOOLS = [
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
+  'curate_context',
   'submit_review_answer',
   'propose_knowledge_edge',
   'propose_knowledge_mutation',
@@ -145,8 +146,7 @@ export type ControlDomainToolName = (typeof CONTROL_TOOLS)[number];
 export type DomainToolName =
   | ReadDomainToolName
   | ProposeWriteDomainToolName
-  | ControlDomainToolName
-  | 'curate_context';
+  | ControlDomainToolName;
 
 export type DomainToolSurface =
   | 'knowledge_review'

@@ -17,7 +17,9 @@ import {
   buildMemoryReconcileHandler,
 } from '@/capabilities/agency/public';
 import type { Db } from '@/db/client';
+
 const CONTEXT_PURPOSE_REPAIR_QUEUE = 'context_purpose_repair';
+
 import type { MemoryClient } from '@/server/ai/mem0/client';
 import { judgeReconciliation } from '@/server/ai/mem0/reconcile-llm';
 import {

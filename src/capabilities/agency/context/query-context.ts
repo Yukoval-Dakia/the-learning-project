@@ -1,3 +1,4 @@
+import { readTopics } from './topics';
 // `query_context` — the merged Context warm-layer read (YUK-1794 B1). One tool
 // over the two layers that both still exist pre-C slice:
 //   depth 'summary' → brief layer only (Dreaming-maintained memory_brief_note);
@@ -87,15 +88,24 @@ export function buildQueryContextTool(
   const readDeps = opts.memoryFactory ? { createClient: opts.memoryFactory } : undefined;
 
   async function execute(ctx: ToolContext, input: QueryContextInput): Promise<QueryContextOutput> {
-    const scopeKey = input.scopeKey ?? 'global';
-    const read = await readMemoryBriefNote(ctx.db, scopeKey);
+    const scopeKey = input.scopeKey ?? 'global:digest';
+    let read = await readMemoryBriefNote(ctx.db, scopeKey);
+    const { digest } = await readTopics(ctx.db);
+    const scoped = digest.topics.filter(
+      (t) => scopeKey === 'global:digest' || scopeKey === 'global' || t.scope_key === scopeKey,
+    );
+    const scopedText = scoped
+      .map((t) => `${t.name}：${t.facts.map((f) => f.body).join('；')}`)
+      .join('\n');
+    if (scopedText && !read.note) read = await readMemoryBriefNote(ctx.db, 'global:digest');
     const brief = {
       note: read.note
         ? {
             scope_key: read.note.scope_key,
-            recent_week_md: read.note.recent_week_md,
-            recent_months_md: read.note.recent_months_md,
-            long_term_md: read.note.long_term_md,
+            recent_week_md: scopedText || read.note.recent_week_md,
+            recent_months_md: scopedText ? '' : read.note.recent_months_md,
+            long_term_md:
+              scopedText || (scopeKey === 'global:digest' ? '' : read.note.long_term_md),
             long_term_freshness_score: read.note.long_term_freshness_score,
             refreshed_at: iso(read.note.refreshed_at),
             version: read.note.version,

@@ -1,5 +1,3 @@
-import { ContextBoardResponse, ContextEditRequest, ContextEditResponse, ContextActionRequest, ChangeResult } from './context/wire';
-import { CURATOR_ACTIVITY_ACTIONS } from './context/activity-contract';
 import { PROBE_RESULT_ACTION } from '@/core/schema/conjecture';
 import { DREAMING_NOTE_REFRESH_ACTION } from '@/core/schema/event/dreaming-note-refresh';
 import {
@@ -21,6 +19,14 @@ import {
   ProbeAnswerResponseSchema,
 } from './api/contracts';
 import { CreateGoalBody, GoalSchema } from './api/goal-contracts';
+import { CURATOR_ACTIVITY_ACTIONS } from './context/activity-contract';
+import { ChangeResult } from './context/topic-contract';
+import {
+  ContextActionRequest,
+  ContextBoardResponse,
+  ContextEditRequest,
+  ContextEditResponse,
+} from './context/wire';
 
 export const agencyCapability = defineCapability({
   name: 'agency',
@@ -49,8 +55,12 @@ export const agencyCapability = defineCapability({
   },
   subscriptions: {
     handlers: [
-      { id: 'agency.curator-activity', version: 1, actions: CURATOR_ACTIVITY_ACTIONS,
-        load: () => import('./context/activity').then(m => m.buildCuratorActivitySubscriber) },
+      {
+        id: 'agency.curator-activity',
+        version: 1,
+        actions: CURATOR_ACTIVITY_ACTIONS,
+        load: () => import('./context/activity').then((m) => m.buildCuratorActivitySubscriber),
+      },
       {
         id: 'agency.probe-publication-serve',
         version: 1,
@@ -123,15 +133,32 @@ export const agencyCapability = defineCapability({
   },
   api: {
     routes: [
-      { method: 'GET', path: '/api/learner-context', operationId: 'getLearnerContext',
-        responses: { 200: ContextBoardResponse, ...API_ERROR_RESPONSES }, successStatus: 200,
-        load: () => import('./api/context').then(m => m.GET) },
-      { method: 'POST', path: '/api/learner-context/edit', operationId: 'editLearnerContext',
-        request: { body: ContextEditRequest }, responses: { 200: ContextEditResponse, ...API_ERROR_RESPONSES }, successStatus: 200,
-        load: () => import('./api/context').then(m => m.EDIT) },
-      { method: 'POST', path: '/api/learner-context/action', operationId: 'actOnLearnerContext',
-        request: { body: ContextActionRequest }, responses: { 200: ChangeResult, ...API_ERROR_RESPONSES }, successStatus: 200,
-        load: () => import('./api/context').then(m => m.ACTION) },
+      {
+        method: 'GET',
+        path: '/api/learner-context',
+        operationId: 'getLearnerContext',
+        responses: { 200: ContextBoardResponse, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/context').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/learner-context/edit',
+        operationId: 'editLearnerContext',
+        request: { body: ContextEditRequest },
+        responses: { 200: ContextEditResponse, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/context').then((m) => m.EDIT),
+      },
+      {
+        method: 'POST',
+        path: '/api/learner-context/action',
+        operationId: 'actOnLearnerContext',
+        request: { body: ContextActionRequest },
+        responses: { 200: ChangeResult, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/context').then((m) => m.ACTION),
+      },
       {
         method: 'GET',
         path: '/api/agents/notes',
@@ -194,8 +221,11 @@ export const agencyCapability = defineCapability({
     // 只触发一次），档位映射建队配方见 kernel JobDecl docblock。注册由
     // server/boss/register-capability-jobs.ts 收集挂载，此处声明是唯一归属源。
     handlers: [
-      { name: 'curator_activity', queue: 'agent',
-        load: () => import('./context/activity').then(m => m.buildCuratorActivityHandler) },
+      {
+        name: 'curator_activity',
+        queue: 'agent',
+        load: () => import('./context/activity').then((m) => m.buildCuratorActivityHandler),
+      },
       {
         // DAG 成员：dreaming 读 proposal inbox 作去重基线，对上游 propose 生产者是软边
         // （上游失败 dreaming 照跑，只是少看几条 pending）。cron 移除，改由 orchestrator 触发。
@@ -387,8 +417,14 @@ export const agencyCapability = defineCapability({
   // copilot 工具归属声明（learning_item 上下文读 1 + 生命周期提议 4）。
   copilotTools: {
     tools: [
-      { name: 'remember_learner', load: () => import('./context/write-tools').then(m => m.rememberLearnerTool) },
-      { name: 'curate_context', load: () => import('./context/write-tools').then(m => m.curateContextTool) },
+      {
+        name: 'remember_learner',
+        load: () => import('./context/write-tools').then((m) => m.rememberLearnerTool),
+      },
+      {
+        name: 'curate_context',
+        load: () => import('./context/write-tools').then((m) => m.curateContextTool),
+      },
       {
         name: 'get_learning_item_context',
         load: () =>
