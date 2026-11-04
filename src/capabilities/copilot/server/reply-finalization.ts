@@ -369,8 +369,8 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       // YUK-1548 — only compose_block may mint tlp-block fences. Neutralise
       // hand-written ones before substitution (render as inert code).
       const withDisclosure = applyProposalDisclosure(correction.reply, disclosure).replace(
-        /^[^\S\n]*```tlp-block[^\S\n]*$/gm,
-        '```text',
+        /^([^\S\n]*(?:`{3,}|~{3,})[^\S\n]*)tlp-block\b[^\n]*$/gim,
+        '$1text',
       );
       // YUK-1548 §5 — resolve `![alt](block:<ref>)` placements against the
       // successful root compose_block calls bound to this trace, substitute
@@ -394,14 +394,17 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       const blocksByRef = new Map(readyBlocks.map((b) => [b.ref, b.block]));
       const placedRefs = new Set<string>();
       let dropped = 0;
-      const withPlaced = withDisclosure.replace(BLOCK_PLACE_PATTERN, (_match, ref: string) => {
-        if (!blocksByRef.has(ref)) {
-          dropped += 1;
-          return '';
-        }
-        placedRefs.add(ref);
-        return `\n\n${serializeBlockFence(blocksByRef.get(ref) as never)}\n\n`;
-      });
+      const withPlaced = withDisclosure.replace(
+        BLOCK_PLACE_PATTERN,
+        (_match, _alt, ref: string) => {
+          if (!blocksByRef.has(ref)) {
+            dropped += 1;
+            return '';
+          }
+          placedRefs.add(ref);
+          return `\n\n${serializeBlockFence(blocksByRef.get(ref) as never)}\n\n`;
+        },
+      );
       const appended = readyBlocks.filter((b) => !placedRefs.has(b.ref));
       const appendedFences = appended
         .map((b) => serializeBlockFence(b.block as never))
