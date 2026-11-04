@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
+import { notDraftPredicate } from '@/db/predicates';
 import {
   event,
   placement_starter_attempt,
@@ -14,10 +14,11 @@ import {
   type PlacementStarterFailure,
   PlacementStarterFailureSchema,
 } from '@/kernel/placement-starter-outcome';
-import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
+import { placementUsableQuestionPredicate } from './placement-inventory';
 import { placementStarterAttemptId } from './placement-starter-identity';
+import { readPlacementCandidateProgress } from './placement-starter-progress';
 import { markPlacementStarterClaimTerminal } from './placement-starter-store';
 
 export const PLACEMENT_VERIFY_POLL_MS = 2_000;
@@ -92,12 +93,8 @@ export function placementDeliveryMetadata(input: { retryCount: unknown; retryLim
 export function placementFulfillmentDisposition(
   eligibleCount: number,
 ): 'satisfied' | 'underfilled' {
-  if (eligibleCount > PLACEMENT_STARTER_REQUIRED_COUNT) {
-    throw new PlacementStarterAdmissionError(
-      `placement starter invariant exceeded exact count: ${eligibleCount}/${PLACEMENT_STARTER_REQUIRED_COUNT}`,
-    );
-  }
-  return eligibleCount === PLACEMENT_STARTER_REQUIRED_COUNT ? 'satisfied' : 'underfilled';
+  // Late admissions from an earlier refill round can push the count past the target.
+  return eligibleCount >= PLACEMENT_STARTER_REQUIRED_COUNT ? 'satisfied' : 'underfilled';
 }
 
 export interface PlacementAttemptAuthority {
@@ -1065,17 +1062,8 @@ export async function countEligiblePlacementQuestions(
         eq(placement_starter_attempt_question.claim_id, claimId),
         ...(attemptId ? [eq(placement_starter_attempt_question.attempt_id, attemptId)] : []),
         eq(placement_starter_attempt_question.verification_status, 'authorized'),
-        notDraftPredicate(question.draft_status),
-        // 契约准入门：suspended/withdrawn 组不算已验证供给。
-        questionSuspendedPredicate(question),
-        isNull(sql`${question.metadata}->>'archived_at'`),
+        placementUsableQuestionPredicate(),
         sql`${question.knowledge_ids} @> jsonb_build_array(${placement_starter_claim.knowledge_id})`,
-        // Same allowed-uses rule as web serving: unrestricted, or restricted to include both.
-        sql`(
-          jsonb_typeof(${question.metadata}->'allowed_uses') IS DISTINCT FROM 'array'
-          OR jsonb_array_length(${question.metadata}->'allowed_uses') = 0
-          OR (${question.metadata}->'allowed_uses') ?& array['placement','diagnostic']
-        )`,
       ),
     );
   return (
@@ -1099,25 +1087,16 @@ export async function placementAttemptVerificationSettled(
     )
     .where(eq(placement_starter_attempt.id, attemptId));
   if (route?.route === 'sourcing_web') {
-    // Web supply settles only through source verification AND scoring admission. A question is
-    // settled when it serves, or when serving reports a terminal hold; awaiting admission (or no
-    // decision yet) keeps the delivery waiting for the decision deadline.
     const ids = (
       await db
         .select({ questionId: placement_starter_attempt_question.question_id })
         .from(placement_starter_attempt_question)
         .where(eq(placement_starter_attempt_question.attempt_id, attemptId))
     ).map((row) => row.questionId);
-    if (ids.length === 0) return false;
-    const serving = (await readQuestionServing(db, ids)).byId;
-    return ids.every((id) => {
-      const item = serving.get(id);
-      return (
-        item !== undefined &&
-        (item.servable || (item.hold_reason !== null && item.hold_reason !== 'awaiting_admission'))
-      );
-    });
+    const progress = await readPlacementCandidateProgress(db, ids);
+    return progress.length > 0 && progress.every((item) => item.state !== 'pending');
   }
+
   // A question's verification is SETTLED when it is already pool-visible (active — verified by
   // definition; an active DUPLICATE the outbox terminal_skips never gets a fresh quiz_verify event)
   // OR it carries a terminal quiz_verify verdict (any non-error outcome — pass/needs_review/fail all

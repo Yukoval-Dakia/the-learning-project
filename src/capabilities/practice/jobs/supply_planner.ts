@@ -32,7 +32,11 @@ import { expireDueSteeringGoals } from '@/kernel/records/goal-commands';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { type SupplyPlanRunAgentFn, runSupplyPlanOperation } from '../server/supply-plan-operation';
-import { discoverSupplyTargets, jyeooBudgetRemaining } from '../supply/public';
+import {
+  discoverSupplyTargets,
+  isUnanchoredSupplyPaused,
+  jyeooBudgetRemaining,
+} from '../supply/public';
 
 // 非终态 placement claim（schema.ts placement_starter_claim 注释同集）：
 // 这些 claim 是已声明未满足的供给需求，透传给 planner 并回填到 demand 事件。
@@ -112,7 +116,7 @@ export interface SupplyPlannerDeps {
 }
 
 export interface SupplyPlannerResult {
-  outcome: 'accepted' | 'rejected';
+  outcome: 'accepted' | 'rejected' | 'paused';
   planItems: number;
   demandEvents: number;
   scannerTargets: number;
@@ -284,6 +288,21 @@ export async function runSupplyPlanner(
     }
   } catch (err) {
     console.error('[supply_planner] steering expiry sweep failed (continuing)', { err });
+  }
+
+  if (isUnanchoredSupplyPaused()) {
+    return {
+      outcome: 'paused',
+      planItems: 0,
+      demandEvents: 0,
+      scannerTargets: 0,
+      shadowOverlap: 0,
+      attempts: 0,
+      rejections: [],
+      planEventId: '',
+      executeJobId: undefined,
+      shadowEventId: null,
+    };
   }
 
   // ── 1. 原始信号装配 ──────────────────────────────────────────────────────

@@ -1,13 +1,14 @@
 // M2 练习面 — 交卷结果 / 复盘（YUK-316）。
 // 设计基准 docs/design/loom-refresh/project/pface-paper.jsx（PfrBody/Result/Retro）：
-// 分数 hero + 判定分布条 + 系统小结 + 逐题展开（你的作答 / AI 反馈 / 不服判）。
-// 系统小结只陈述这张卷的判分计数：它不是模型写的，也不承诺之后的排程（YUK-1768）。
+// 分数 hero + 判定分布条 + 小结 + 逐题展开（你的作答 / AI 反馈 / 不服判）。
+// 小结：有 session.summary_md 就原样显示模型写的；还没有时是系统小结，只陈述判分计数，
+// 不冒充模型，也不承诺之后的排程（YUK-1768）。
 // 错题去向 trace（归因事件 / 变式排期）等 M4 归因链上线后接真数据。
 // M3E 呈现：docs/design/2026-11-03-practice-face-m3e.md（样式 practice-face-m3e.css）。
 
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ChevronDown } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { AttachmentStrip } from '@/ui/components/response/AttachmentStrip';
 import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
@@ -169,11 +170,25 @@ export function PfrQRow({
   );
 }
 
+const SUMMARY_POLL_MS = 4000;
+const SUMMARY_POLL_WINDOW_MS = 120_000;
+
 export function PfRetro({ artifactId, onBack }: { artifactId: string; onBack: () => void }) {
   const { getPaperDetail } = usePracticeClient();
+  const openedAt = useRef(Date.now());
   const detailQ = useQuery({
     queryKey: ['paper', artifactId, 'retro'],
     queryFn: () => getPaperDetail(artifactId),
+    // The summary job runs after hand-in. Look for it for two minutes from opening this page, then
+    // stop, whether reads succeed or fail: an older paper may never have one, and the system summary
+    // below stands on its own.
+    refetchInterval: (query) => {
+      const session = query.state.data?.session;
+      const waiting = session?.status === 'completed' && !session.summary_md;
+      return waiting && Date.now() - openedAt.current < SUMMARY_POLL_WINDOW_MS
+        ? SUMMARY_POLL_MS
+        : false;
+    },
   });
 
   if (detailQ.isLoading)
@@ -230,6 +245,7 @@ export function PfRetro({ artifactId, onBack }: { artifactId: string; onBack: ()
   const again =
     verdicts.filter((v) => v === 'again').length + verdicts.filter((v) => v === null).length;
   const total = slots.length;
+  const summaryMd = detail.session?.summary_md;
   const unknownScores = slots.filter(
     (slot) =>
       slot.slot_state.submission?.visible_to_user &&
@@ -278,11 +294,22 @@ export function PfRetro({ artifactId, onBack }: { artifactId: string; onBack: ()
       </div>
 
       <div className="pf-retro-summary">
-        <p className="pf-retro-summary-text">
-          {good} 题完整正确，{hard} 题部分正确，{again} 题错或未答。
-          {unknownScores > 0 ? `其中 ${unknownScores} 题分数未知。` : ''}
-        </p>
-        <p className="pf-retro-summary-meta">系统小结 · 按这张卷的判分统计</p>
+        {summaryMd ? (
+          <>
+            <MathMarkdown className="pf-retro-summary-text" notation={slots[0]?.question.notation}>
+              {summaryMd}
+            </MathMarkdown>
+            <p className="pf-retro-summary-meta">AI 小结</p>
+          </>
+        ) : (
+          <>
+            <p className="pf-retro-summary-text">
+              {good} 题完整正确，{hard} 题部分正确，{again} 题错或未答。
+              {unknownScores > 0 ? `其中 ${unknownScores} 题分数未知。` : ''}
+            </p>
+            <p className="pf-retro-summary-meta">系统小结 · 按这张卷的判分统计</p>
+          </>
+        )}
       </div>
 
       <div className="pf-retro-list">

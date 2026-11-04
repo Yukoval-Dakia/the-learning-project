@@ -605,7 +605,13 @@ async function planQuizGeneration(
       ),
     ];
     if (gateReasons.length === 0) {
-      acceptedPlan = parsedPlan.plan;
+      // `count` is what the caller pays for. The planner sometimes returns more, and each extra
+      // item is one more generated question.
+      const planLimit = Math.max(count, params.exactCount ?? 0);
+      acceptedPlan = {
+        ...parsedPlan.plan,
+        items: parsedPlan.plan.items.slice(0, planLimit),
+      };
       break;
     }
     evidence.planRejections.push(gateReasons);

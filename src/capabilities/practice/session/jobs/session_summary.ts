@@ -34,7 +34,10 @@ export function buildSessionSummaryHandler(
       }
       try {
         const result = await runSessionSummary({ db, sessionId, runTaskFn });
-        console.log(`[session_summary] ${sessionId} → ${result.status}`);
+        console.log(
+          `[session_summary] ${sessionId} → ${result.status}` +
+            (result.issues?.length ? ` (${result.issues.length} number issues)` : ''),
+        );
       } catch (err) {
         console.error(`[session_summary] ${sessionId} failed`, err);
         throw err; // let pg-boss retry per its config

@@ -141,6 +141,8 @@ export interface PaperDetailResult {
     pos: number;
     right: number;
     wrong: number;
+    /** SessionSummaryTask output, null until the post-close job writes it. */
+    summary_md: string | null;
   } | null;
   /** Ordered sections with their slots + question faces + slot state */
   sections: PaperDetailSection[];
@@ -235,11 +237,12 @@ export async function getPaperDetail(
   }
 
   // 3) Linked review session (newest for this paper).
-  let sessionInfo: { id: string; status: string } | null = null;
+  let sessionInfo: { id: string; status: string; summary_md: string | null } | null = null;
   const sessionRows = await db
     .select({
       id: learning_session.id,
       status: learning_session.status,
+      summary_md: learning_session.summary_md,
     })
     .from(learning_session)
     .where(
@@ -248,7 +251,11 @@ export async function getPaperDetail(
     .orderBy(desc(learning_session.created_at))
     .limit(1);
   if (sessionRows[0]) {
-    sessionInfo = { id: sessionRows[0].id, status: sessionRows[0].status };
+    sessionInfo = {
+      id: sessionRows[0].id,
+      status: sessionRows[0].status,
+      summary_md: sessionRows[0].summary_md,
+    };
   }
 
   if (sessionInfo) {
@@ -450,7 +457,6 @@ export async function getPaperDetail(
       }
     }
 
-    sessionInfo = { id: sessionInfo.id, status: sessionInfo.status };
     // Attach pos/right/wrong by building the full session shape below.
     (sessionInfo as typeof sessionInfo & { pos?: number; right?: number; wrong?: number }).pos =
       pos;
@@ -578,7 +584,14 @@ export async function getPaperDetail(
   }
 
   // Build final session shape (with pos/right/wrong injected above).
-  type SessionShape = { id: string; status: string; pos: number; right: number; wrong: number };
+  type SessionShape = {
+    id: string;
+    status: string;
+    pos: number;
+    right: number;
+    wrong: number;
+    summary_md: string | null;
+  };
   const si = sessionInfo as
     | (typeof sessionInfo & { pos?: number; right?: number; wrong?: number })
     | null;
@@ -589,6 +602,7 @@ export async function getPaperDetail(
         pos: si.pos ?? 0,
         right: si.right ?? 0,
         wrong: si.wrong ?? 0,
+        summary_md: si.summary_md,
       }
     : null;
 
