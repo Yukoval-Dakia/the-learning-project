@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { QuestionPreparerJobData } from '@/capabilities/practice/supply/server/question-preparer';
+import { QuestionPreparerJobData } from '@/capabilities/practice/supply/server/question-preparer-contract';
 import { getStartedBoss } from '@/server/boss/client';
 import { DEV_DATABASE_PATTERN, devDatabaseName } from './dev-worktree-db';
 

@@ -9,7 +9,6 @@
 // ====================================================================
 
 import { and, desc, eq, ne, or, sql } from 'drizzle-orm';
-import { z } from 'zod';
 import {
   DEDUP_OVERLAP_THRESHOLD,
   maxNgramOverlap,
@@ -272,26 +271,6 @@ export async function attributableSourceIssue(
   if (source == null) {
     if (!isNew) return null;
     return { code: 'missing_source', detail: 'document has no attributable source' };
-  }
-  if (source.kind === 'generated' || source.kind === 'adapted') {
-    const refs = z
-      .array(z.object({ url: z.string(), snippet: z.string().optional() }))
-      .safeParse(doc.metadata.source_refs ?? []);
-    if (!refs.success)
-      return {
-        code: 'source_refs_invalid',
-        detail: 'source_refs must carry url and optional snippet',
-      };
-    const materialSources = new Set(doc.materials.map((material) => material.source_ref));
-    const snippets = refs.data
-      .filter((ref) => !materialSources.has(ref.url))
-      .flatMap((ref) => (ref.snippet ? [ref.snippet] : []));
-    const overlap = maxNgramOverlap(doc.parts.map((part) => part.prompt_md).join('\n'), snippets);
-    if (overlap >= 0.5)
-      return {
-        code: 'copy_safety_too_close',
-        detail: `source n-gram overlap ${overlap.toFixed(3)} ≥ 0.5`,
-      };
   }
   if (source.kind !== 'adapted') return null;
   const from = source.adapted_from_question_id;

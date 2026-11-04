@@ -90,6 +90,7 @@ import {
   structuredSubmitSystemSuffix,
   structuredSubmitWireFields,
 } from './structured-submit';
+import { currentTaskSpendScope } from './task-spend-scope';
 import {
   type ToolParamCoercion,
   isToolArgumentContractFailure,
@@ -934,7 +935,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // Structured submit runs already end after a bounded landing turn; the ceiling is
     // for open agentic loops.
     const costCeiling =
-      !structuredOutput && typeof options.maxBudgetUsd === 'number'
+      (!structuredOutput || currentTaskSpendScope()) && typeof options.maxBudgetUsd === 'number'
         ? createPiCostCeiling({
             maxBudgetUsd: options.maxBudgetUsd,
             provider: this.args.resolved.provider,
@@ -1073,6 +1074,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           }
         : {}),
     };
+
+    if (structuredOutput && costCeiling)
+      config.finishTurn = costCeiling.finishTurn(config.finishTurn);
 
     const startedAt = Date.now();
     let numTurns = 0;

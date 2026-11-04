@@ -20,8 +20,18 @@ export const supplyManifestPart: Omit<CapabilityManifest, 'name' | 'description'
       {
         name: 'question_preparer_run',
         queue: 'llm',
+        includeMetadata: true,
         load: () =>
           import('./jobs/question_preparer_run').then((m) => m.buildQuestionPreparerHandler),
+      },
+      {
+        name: 'question_preparer_recovery',
+        schedule: { cron: '*/5 * * * *', tz: 'Asia/Shanghai' },
+        queue: 'fast',
+        load: () =>
+          import('./server/question-preparer-journal').then(
+            (m) => m.buildQuestionPreparerRecoveryHandler,
+          ),
       },
       // YUK-988 E3 — sourcing 单体 job 退役（找+判+存一体）：找题核下沉
       // web_fetch_candidates（SourcingTask 在工具内部），存由 store_sourced_question

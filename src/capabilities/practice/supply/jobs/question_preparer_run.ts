@@ -4,6 +4,12 @@ import { runQuestionPreparer } from '../server/question-preparer';
 
 export function buildQuestionPreparerHandler(db: Db) {
   return async (jobs: Job[]) => {
-    for (const job of jobs) await runQuestionPreparer(db, job.id, job.data);
+    for (const job of jobs)
+      await runQuestionPreparer(
+        db,
+        job.id,
+        job.data,
+        'retryCount' in job ? Number(job.retryCount) : 0,
+      );
   };
 }

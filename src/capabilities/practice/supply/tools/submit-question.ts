@@ -86,7 +86,10 @@ export {
 
 import { SupplyTraceV1, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { candidateContentIssues } from '../server/candidate-content-checks';
+import {
+  candidateContentIssues,
+  questionPreparerCandidateBindingIssue,
+} from '../server/candidate-content-checks';
 import {
   claimHttpSourceDuplicate,
   findVectorNearDuplicate,
@@ -344,6 +347,14 @@ async function executeCandidateSubmit(
 ): Promise<Output> {
   const { db } = ctx;
   const { candidate } = input;
+  const bindingIssue = await questionPreparerCandidateBindingIssue(ctx, input);
+  if (bindingIssue)
+    return {
+      status: 'withheld',
+      published: false,
+      issues: [bindingIssue],
+      request_id: input.request_id,
+    };
   const requestId = input.request_id;
   const fingerprint = candidateSubmitFingerprint(input);
   const claim = await db.transaction(async (tx) => {
@@ -609,7 +620,7 @@ async function runCandidateSubmit(
   };
 
   let persisted:
-    | Awaited<ReturnType<typeof insertSourcedDraft>>
+    | (Awaited<ReturnType<typeof insertSourcedDraft>> & { publication?: Output })
     | { status: 'source_duplicate'; existingId: string }
     | { status: 'request_replay'; receipt: Output }
     | { status: 'request_reused' };
@@ -711,7 +722,7 @@ async function runCandidateSubmit(
           })
           .where(eq(question.id, questionId));
       }
-      await publishQuestionGroupFromRow(tx, {
+      const publication = await publishQuestionGroupFromRow(tx, {
         rootId: questionId,
         causedByEventId: ctx.causedByEventId ?? null,
         actorRef: `submit-question:${input.source_route}:enrich`,
@@ -744,6 +755,13 @@ async function runCandidateSubmit(
       const receipt: Output = {
         status: 'pending',
         question_id: questionId,
+        published: ['published', 'noop', 'admission_updated'].includes(publication.status),
+        publish_status: publication.status,
+        ...('revision_id' in publication
+          ? { revision_id: publication.revision_id }
+          : 'current_revision_id' in publication && publication.current_revision_id
+            ? { revision_id: publication.current_revision_id }
+            : {}),
         request_id: input.request_id,
         difficulty_evidence: inserted.difficultyEvidence,
       };
@@ -762,7 +780,7 @@ async function runCandidateSubmit(
         },
         now,
       );
-      return inserted;
+      return { ...inserted, publication: receipt };
     });
   } catch (err) {
     await cleanupStagedForRejected(db, candidate.staged_asset_ids);
@@ -845,6 +863,7 @@ async function runCandidateSubmit(
   }
 
   return {
+    ...persisted.publication,
     status: 'pending',
     question_id: questionId,
     verify_enqueued: verifyEnqueued,

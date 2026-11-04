@@ -4,6 +4,7 @@ import {
   EXA_SCOPED_TOOL_NAMES,
   buildExaMcpServer,
 } from '@/ai/exa-mcp';
+import { NO_PROGRESS_BUDGET_LANDING_MARGIN_MS, createNoProgressLoop } from '@/ai/no-progress-loop';
 import {
   type BuildMcpServerOptions,
   type RemoteMcpHttpConfig,
@@ -43,11 +44,9 @@ import {
   compileCopilotSessionContext,
 } from './live-turn-context';
 import {
-  NO_PROGRESS_BUDGET_LANDING_MARGIN_MS,
   type SealedCorrectionFiling,
   assistantProse,
   chooseVerifiedFallback,
-  createNoProgressLoop,
   mergeNoProgressReply,
   renderNoProgressClosure,
 } from './no-progress-loop';
