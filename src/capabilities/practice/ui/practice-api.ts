@@ -483,7 +483,15 @@ export interface PaperListItem {
   generation_status: string;
   knowledge: Array<{ id: string; name: string }>;
   total_slots: number;
-  session: { id: string; status: string; pos: number; right: number; wrong: number } | null;
+  session: {
+    id: string;
+    status: string;
+    pos: number;
+    /** Includes partly correct answers; subtract `partial` for the fully correct count. */
+    right: number;
+    wrong: number;
+    partial?: number;
+  } | null;
   created_at: string;
 }
 

@@ -135,6 +135,10 @@ export function PfShelf({
     const s = shelfSource(p);
     const sess = p.session;
     const isDone = sess?.status === 'completed';
+    // Same counts as the paper's summary: only a fully correct answer is 对, out of the graded answers.
+    const partial = sess?.partial ?? 0;
+    const correct = (sess?.right ?? 0) - partial;
+    const graded = (sess?.right ?? 0) + (sess?.wrong ?? 0);
     const isGen = p.generation_status !== 'ready';
     const look = SRC_LOOK[s];
     const SrcIcon = look.icon;
@@ -182,17 +186,24 @@ export function PfShelf({
           <div className="pf-dist-row">
             <div className="pf-dist">
               <div className="pf-dist-bar" aria-hidden="true">
-                {sess.right > 0 && <span data-seg="good" style={{ flex: sess.right }} />}
+                {correct > 0 && <span data-seg="good" style={{ flex: correct }} />}
+                {partial > 0 && <span data-seg="hard" style={{ flex: partial }} />}
                 {sess.wrong > 0 && <span data-seg="again" style={{ flex: sess.wrong }} />}
               </div>
               <p className="pf-dist-legend">
-                <span data-seg="good">{sess.right} 对</span>
+                <span data-seg="good">{correct} 对</span>
+                {partial > 0 && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span data-seg="hard">{partial} 部分</span>
+                  </>
+                )}
                 <span aria-hidden="true">·</span>
-                <span data-seg="again">{sess.wrong} 待巩固</span>
+                <span data-seg="again">{sess.wrong} 错</span>
               </p>
             </div>
             <p className="pf-dist-score">
-              <b>{p.total_slots > 0 ? Math.round((sess.right / p.total_slots) * 100) : 0}%</b>
+              <b>{graded > 0 ? Math.round((correct / graded) * 100) : 0}%</b>
               <span>正确率</span>
             </p>
           </div>
