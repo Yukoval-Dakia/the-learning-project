@@ -17,7 +17,9 @@ import type { DomainTool, ToolContext } from './types';
 const TEXT_SNIPPET_MAX = KNOWLEDGE_EXCERPT_MAX;
 const MAX_NODES = 60;
 const QUERY_FAILURE_LIMIT = 10;
-// Window behind the recent_failure_count_30d stat, owned by this reader.
+// Window behind the recent_failure_count_30d stat, owned solely by this reader:
+// the stat name fixes it at 30 days and no other consumer derives from it, so
+// keeping the literal inline cannot drift against a shared definition.
 export const RECENT_FAILURE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 type KnowledgeRow = {

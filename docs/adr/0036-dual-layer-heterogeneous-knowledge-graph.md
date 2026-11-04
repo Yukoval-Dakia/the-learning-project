@@ -16,6 +16,8 @@ GPT 外部稿（`~/Documents/ai_learning_tool_research_design.docx`）为知识�
 
 ## 决定
 
+> **2026-11-04 修订（YUK-1781）**：本文三处引用的 `rubric-validator` 语义面已变化——决定 3 末段「所有闸假设两端皆 knowledge」、决定 6 的「`related_to` dumping-ground 加严已实现」、代价节「per-relation 语义闸」所指内容已整体删除；`rubric-validator` 现只剩结构校验（self-edge / unknown node / cross-subject / parent-restating duplicate），边 create 另有写入路径的 ≥1 `evidence_refs` 形状要求。RT1 异构边所需平行闸的复用成本按此现状重新评估。
+
 1. **关系结构 = 双层异构图（否决 GPT 三层平行图），建在「一棵不可动的认知树骨架 + 一张已验证的同构 typed-edge 网」之上**。骨架 = `knowledge.parent_id`（认知结构、红线、只读，延续 ADR-0010「不动树」）；同构肌肉 = `knowledge_edge` 两端皆 `knowledge_id` 的 5 核心 relation_type 网；其上叠**渐进晋升的 misconception 异构层**（见决定②）。三张平行图退役为这一座双层异构图。
 
 2. **三层分离是本体设计的核心裁决（身份 / 观测 / 派生）**，谁活在哪层是裁决，而非「什么有意义就升 KG 实体」（`...phase1_5-relations.md` §1）：

@@ -200,7 +200,8 @@ export type RubricEdgeProposalResult =
       cooldown_key: string;
       gate: string;
       reason: string;
-    };
+    }
+  | { status: 'skipped:no_evidence'; cooldown_key: string; reason: string };
 
 function cooldownKeysFor(change: EdgeCreateChange | EdgeArchiveChange): string[] {
   return change.edge_op === 'archive'
@@ -263,6 +264,20 @@ export async function writeKnowledgeEdgeProposal(
 ): Promise<BootstrapEdgeProposalResult | RubricEdgeProposalResult> {
   const cooldownKeys = cooldownKeysFor(input.change);
   const cooldownKey = cooldownKeys[0] as string;
+  // Structural shape rule, not an evidence floor: an edge create must name at
+  // least one evidence ref so the learner can inspect and veto it; sufficiency
+  // stays an accept-time call. Archive and bootstrap carry none by design.
+  if (
+    input.validate === 'rubric' &&
+    input.change.edge_op === 'create' &&
+    input.evidence_refs.length === 0
+  ) {
+    return {
+      status: 'skipped:no_evidence',
+      cooldown_key: cooldownKey,
+      reason: 'edge create requires at least one evidence_refs entry',
+    };
+  }
   return await withProposalGateLock(db, EDGE_PROPOSAL_KIND, cooldownKeys, async (tx) => {
     if (input.validate === 'bootstrap') {
       return await writeBootstrapCreate(tx, input, cooldownKey, cooldownKeys);
