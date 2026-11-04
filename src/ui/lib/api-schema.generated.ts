@@ -23079,6 +23079,7 @@ export interface operations {
                             knowledge_ids: string[];
                             session: {
                                 id: string;
+                                partial: number;
                                 pos: number;
                                 right: number;
                                 status: string;
@@ -23107,6 +23108,7 @@ export interface operations {
                             knowledge_ids: string[];
                             session: {
                                 id: string;
+                                partial: number;
                                 pos: number;
                                 right: number;
                                 status: string;
@@ -23701,6 +23703,7 @@ export interface operations {
                             pos: number;
                             right: number;
                             status: string;
+                            summary_md: string | null;
                             wrong: number;
                         } | null;
                         title: string;
@@ -27745,6 +27748,7 @@ export interface operations {
                             pos: number;
                             right: number;
                             status: string;
+                            summary_md: string | null;
                             wrong: number;
                         } | null;
                         title: string;
