@@ -336,6 +336,17 @@ export interface ProposalCardProps {
   onError: (msg: string) => void;
 }
 
+const MERGE_BLOCKED_WORDS: Readonly<Record<string, string>> = {
+  blocks_missing: '要合并的题块有的已经不在了。',
+  not_draft: '有的题块已经不是待整理的状态，不能再合并。',
+  session_mismatch: '这些题块不是同一次录入的。',
+  unknown_source: '这些题块不是来自同一份资料，或者找不到原资料。',
+  ambiguous_page_index: '读不出这些题块在第几页，没法确认它们前后相连。',
+  pages_not_adjacent: '这些题块不在相邻的页上。',
+  conflicting_question_number: '后面的题块有自己的题号，看起来是另一道题。',
+  missing_continuity: '读不出这些题块是不是连在一起的。',
+};
+
 export function ProposalCard({ p, resolved, navigate, onResolve, onError }: ProposalCardProps) {
   const meta = kindMeta(p.kind);
   const client = useWorkbenchClient();
@@ -383,6 +394,11 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
 
   const isEdge = p.kind === 'knowledge_edge';
   const change = p.payload.proposed_change;
+  // YUK-1781 — the server's own reason this merge can't be accepted. Accepting would only get a 409,
+  // so the card says why and offers dismiss alone.
+  const mergeBlockedWords = p.not_acceptable_reason
+    ? (MERGE_BLOCKED_WORDS[p.not_acceptable_reason] ?? '存下来的信息证明不了这是同一道题。')
+    : null;
   // ADR-0032 D4-E1 / YUK-332 — legacy proposals have no discriminator and are creates.
   // Archive proposals are destructive and only support accept/dismiss server-side, so their
   // operation, CTA copy, and available controls must not masquerade as create semantics.
@@ -599,11 +615,18 @@ export function ProposalCard({ p, resolved, navigate, onResolve, onError }: Prop
         </div>
       )}
 
+      {mergeBlockedWords && !resolved && (
+        <div className="ib-prop-blocked">
+          <b>不能合并</b>
+          <span>{mergeBlockedWords}</span>
+        </div>
+      )}
+
       <div className="ib-prop-foot">
         <div className="ib-acts ib-prop-acts">
           {/* M4 review fix (codex P2)：defer/archive/judge_retraction 的 accept
               在 dispatchAccept 是 400（unsupported_proposal_kind），不渲 CTA。 */}
-          {isAcceptSupported(p.kind) && !confirmingMerge && (
+          {isAcceptSupported(p.kind) && !confirmingMerge && !mergeBlockedWords && (
             <Button
               size="sm"
               className={isArchiveEdge ? 'ib-btn-critical' : undefined}
