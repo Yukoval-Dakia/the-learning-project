@@ -49,6 +49,11 @@ export const quizPlanTaskSpec = {
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '组卷规划按题目需求与约束装配；学习者上下文入口随 B3 轻量 view 接入。',
+    },
+
     prompt: { kind: 'profile', build: buildQuizPlanPrompt },
   },
   outputSchema: QuizGenPlan,

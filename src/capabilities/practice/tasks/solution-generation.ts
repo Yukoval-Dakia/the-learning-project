@@ -54,6 +54,11 @@ export const solutionGenerateTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '解答生成只按题面与 rubric，不读学习者历史。',
+    },
+
     prompt: { kind: 'profile', build: buildSolutionGeneratePrompt },
   },
   outputSchema: SolutionGenerateOutput,
@@ -72,6 +77,11 @@ export const solutionGenerateVisionTaskSpec = {
     needsToolCall: false,
     isMultimodal: true,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '解答生成只按题面与 rubric，不读学习者历史。',
+    },
+
     prompt: { kind: 'profile', build: buildSolutionGenerateVisionPrompt },
   },
   outputSchema: SolutionGenerateOutput,

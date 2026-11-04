@@ -70,6 +70,11 @@ export const quizVerifyTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '校验只评题目本身正确性，与学习者历史无关。',
+    },
+
     prompt: { kind: 'profile', build: buildQuizVerifyPrompt },
   },
   outputSchema: QuizVerificationResult,

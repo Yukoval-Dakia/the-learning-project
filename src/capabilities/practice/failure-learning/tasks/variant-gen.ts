@@ -83,6 +83,11 @@ export const variantGenTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '变式生成只按原题与错因标注装配输入，不读学习者历史。',
+    },
+
     prompt: { kind: 'profile', build: buildVariantGenPrompt },
   },
   outputSchema: VariantOutputSchema,

@@ -259,12 +259,7 @@ export const copilotCapability = defineCapability({
     ],
   },
   // M5-T3 (YUK-321) — copilot 自有工具（事件流读 + 记忆面读）。
-  // YUK-880 (F3.9b)：author_artifact / update_artifact 的归属声明已移至
-  // notes manifest（实现 = notes/server/tools/author-artifact.ts）；Copilot
-  // 仅保留 allowlist 面授权，不再是 implementation owner。
-  // YUK-1769：该 pair 的 Copilot surface 授权也已收回（仍由 notes manifest
-  // 注册供 YUK-1548 sandbox route 复用）；学习伙伴的 Markdown 笔记写入走
-  // notes 拥有的 write_note。
+  // YUK-1769：学习伙伴的 Markdown 笔记写入走 notes 拥有的 write_note。
   copilotTools: {
     tools: [
       {
@@ -280,15 +275,8 @@ export const copilotCapability = defineCapability({
         name: 'query_events',
         load: () => import('./server/tools/query-events').then((m) => m.queryEventsTool),
       },
-      {
-        name: 'query_memory_brief',
-        load: () => import('./server/tools/memory-brief').then((m) => m.queryMemoryBriefTool),
-      },
-      {
-        name: 'search_memory_facts',
-        load: () =>
-          import('./server/tools/search-memory-facts').then((m) => m.searchMemoryFactsTool),
-      },
+      // Context 暖层读归 agency 的 query_context（YUK-1794 B1）；今日摘要的
+      // brief 读走 kernel read-models/memory-brief 端口（executeMemoryBrief 适配）。
     ],
   },
 });

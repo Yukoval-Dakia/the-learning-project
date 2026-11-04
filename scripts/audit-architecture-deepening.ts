@@ -29,6 +29,7 @@ import {
 //   5. central roots: no semantic quarry, registry stays a compatibility projection, proposal
 //      actions stay kind-branch-free, boss/events/tools directories stay infrastructure-only;
 //   6. TaskSpec ownership census: one capability owner, no copied central TaskDef or locator;
+//      audit:context-consumers — every TaskSpec declares a Context view or 'none' + reason;
 //   7. DomainTool ownership: one owner, Zod schemas, manifest/registry/allowlist agreement;
 //   8. pg-boss queue ownership: domain queues are manifest-owned, central ones housekeeping-only;
 //   9. proposal lifecycle: one owner, loader-backed accept/dismiss/retract, zero central switch;
@@ -643,6 +644,48 @@ export function scanTaskSpecOwnership(
   return violations;
 }
 
+// audit:context-consumers (YUK-1794 B1). Every owned TaskSpec must declare its
+// learner-context consumption: a registered Context view, or `view:'none'` with a
+// non-empty reason (e.g. grading reads only the current attempt by design).
+export function scanTaskContextDeclarations(
+  ownerMaps: readonly TaskOwnerMapShape[],
+  registeredViews: readonly string[],
+): OwnershipViolation[] {
+  const violations: OwnershipViolation[] = [];
+  const known = new Set(registeredViews);
+  for (const { owner, specs } of ownerMaps) {
+    for (const [key, spec] of Object.entries(specs)) {
+      const context = (spec.definition as { context?: unknown } | undefined)?.context;
+      const path = `${owner}/${key}`;
+      if (!isRecord(context) || typeof context.view !== 'string') {
+        violations.push({
+          path,
+          source: '',
+          reason:
+            "TaskSpec must declare definition.context: a registered Context view or { view: 'none', reason }",
+        });
+        continue;
+      }
+      if (context.view === 'none') {
+        if (typeof context.reason !== 'string' || !(context.reason as string).trim()) {
+          violations.push({
+            path,
+            source: '',
+            reason: "context 'none' declaration requires a non-empty reason",
+          });
+        }
+      } else if (!known.has(context.view as string)) {
+        violations.push({
+          path,
+          source: String(context.view),
+          reason: `context view '${String(context.view)}' is not a registered Context view`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
 export interface TaskCensusConformanceInput {
   /** Result of scripts/audit-task-census.ts against the audited head. */
   readonly errors: readonly string[];
@@ -1093,6 +1136,8 @@ export function scanDependencyCeilings(input: {
 
 export interface ArchitectureDeepeningFacts {
   readonly ownerMaps: readonly TaskOwnerMapShape[];
+  /** Registered Context view names (src/ai/task-spec.ts CONTEXT_VIEWS). */
+  readonly registeredContextViews: readonly string[];
   readonly taskCensus: TaskCensusConformanceInput;
   readonly tools: DomainToolOwnershipInput;
   readonly queues: QueueOwnershipInput;
@@ -1197,6 +1242,7 @@ export function auditArchitectureDeepening(
   const queueOwnershipInput: QueueOwnershipInput = { ...facts.queues, centralLiterals };
   const violations = [
     ...ownership.violations,
+    ...scanTaskContextDeclarations(facts.ownerMaps, facts.registeredContextViews),
     ...scanTaskSpecOwnership(facts.ownerMaps, {
       requiredOwnerOfKind: { ProfileCriticTask: 'ingestion' },
     }),
@@ -1442,6 +1488,7 @@ async function runCli(): Promise<void> {
 
   const result = auditArchitectureDeepening(projectRoot, publicReadCycleCatalog, {
     ownerMaps,
+    registeredContextViews: (await import('../src/ai/task-spec.js')).CONTEXT_VIEWS,
     taskCensus: {
       errors: census.errors,
       profileCriticCallerPresent: census.profileCriticCaller !== null,

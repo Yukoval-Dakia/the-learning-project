@@ -8,6 +8,7 @@ import {
   assessment_response_draft,
   assessment_submission,
   event,
+  learning_session,
   question_revision,
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
@@ -71,6 +72,13 @@ export async function getFrozenPaperDetail(
         eq(event.action, 'experimental:assessment_attempt'),
       ),
     );
+  // Session summary read port for the retro page (D1): null until the
+  // post-close session_summary job writes it.
+  const [sessionRow] = await db
+    .select({ summary_md: learning_session.summary_md })
+    .from(learning_session)
+    .where(eq(learning_session.id, binding.session_id))
+    .limit(1);
   const captureBySubmission = new Map(
     captures.map((capture) => [capture.payload.submission_id, capture]),
   );
@@ -214,7 +222,14 @@ export async function getFrozenPaperDetail(
     title: paper.title,
     generation_status: paper.generation_status,
     intent_source: paper.intent_source,
-    session: { id: binding.session_id, status: sessionStatus, pos, right, wrong },
+    session: {
+      id: binding.session_id,
+      status: sessionStatus,
+      pos,
+      right,
+      wrong,
+      summary_md: sessionRow?.summary_md ?? null,
+    },
     sections: [...sections.values()].sort((a, b) => a.section_index - b.section_index),
     withheld_assessments: withheld.length > 0 ? withheld : undefined,
     is_flat_fallback: false,
