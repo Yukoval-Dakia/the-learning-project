@@ -1,6 +1,7 @@
 // Placement waits for native evaluation and settlement before the next adaptive selection.
 // M3E presentation (YUK-1473, docs/design/2026-11-03-placement-m3e.md): only the markup and
 // styles changed; session, autosave, pagehide, judge polling and submit logic are as before.
+import { useQuery } from '@tanstack/react-query';
 import {
   ArrowRight,
   Check,
@@ -47,13 +48,22 @@ import type {
   PlacementUnresolvedItem,
 } from './placement-api';
 import { type PlacementClient, usePlacementClient } from './placement-client';
-import { type StarterOutcome, starterStatus } from './starter-supply-status';
+import {
+  type StarterOutcome,
+  starterProgress,
+  starterStatus,
+  starterWaitStalled,
+  starterWaitWords,
+} from './starter-supply-status';
 import './onboarding-m3e.css';
 
 const CAP = 8;
 // YUK-1489 — a save waits at most this long for a pending chained (pagehide) save; past it the
 // save goes out at the current epoch and the server's epoch check catches any clash.
 const CHAIN_WAIT_CAP_MS = 8000;
+// YUK-1796 — while questions are being found or checked, the page asks for the next step on its
+// own. A repeat read is safe on the server; it stops when the tab is hidden or the page is left.
+const SUPPLY_WAIT_POLL_MS = 12_000;
 const VALID_PACES = ['light', 'medium', 'dense'] as const;
 function readSelfReport(search: string): PlacementSelfReport {
   const sp = new URLSearchParams(search);
@@ -77,6 +87,8 @@ type Phase =
 type PlacementSelection =
   | PlacementNextResult
   | Awaited<ReturnType<PlacementClient['releaseHeldPlacement']>>['selection'];
+// Set when the supply ran out after some answers: the result stands, with low confidence.
+type PlacementEndEvidence = Extract<PlacementNextResult, { done: true }>['evidence'];
 // What the current question card lends the exit button: save its draft, and pause or
 // resume its autosave while leaving (the old `!leaving` gate).
 interface ExitSave {
@@ -97,6 +109,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [supply, setSupply] = useState<StarterOutcome[] | undefined>(undefined);
   const [noItem, setNoItem] = useState<PlacementNoItem | null>(null);
+  const [endEvidence, setEndEvidence] = useState<PlacementEndEvidence>(undefined);
   // Questions that closed without a verdict, shown on the end and terminal states.
   const [unresolved, setUnresolved] = useState<PlacementUnresolvedItem[]>([]);
   const [checking, setChecking] = useState(false);
@@ -114,12 +127,17 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   // One start/resume request per screen instance, reused across StrictMode re-attach;
   // `applied` makes sure its result is applied (URL, phase, settle) exactly once.
   const initialRequest = useRef<{
-    promise: Promise<PlacementStartResult | { terminal: PlacementUnresolvedItem[] }>;
+    promise: Promise<
+      | (PlacementStartResult & { endEvidence?: PlacementEndEvidence })
+      | { terminal: PlacementUnresolvedItem[] }
+    >;
     applied: boolean;
   } | null>(null);
   // True while the screen's root is attached: late completions after leaving do nothing.
   const activeRef = useRef(false);
   const finishing = useRef(false);
+  // Bumped by every applied selection, so a slower background check cannot replace a newer one.
+  const selectionEpoch = useRef(0);
 
   const profileDest = useCallback(
     () => (goalIdRef.current ? `/profile?goal=${encodeURIComponent(goalIdRef.current)}` : '/today'),
@@ -136,37 +154,42 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   // the session once and go to the profile. Called from the events that reveal "done" —
   // never from render. Questions that closed without a verdict keep the learner here first,
   // so they see those were not counted.
-  const finish = useCallback(() => {
-    setQRef(null);
-    setNoItem(null);
-    setPhase('settling');
-    if (finishing.current) return;
-    finishing.current = true;
-    void transition('completed')
-      .then((result) => {
-        if (!activeRef.current) return;
-        const items = result?.unresolved_items ?? [];
-        if (items.length > 0) {
-          setUnresolved(items);
-          setPhase('ended');
-          return;
-        }
-        navigate(profileDest());
-      })
-      .catch((error: unknown) => {
-        finishing.current = false;
-        if (!activeRef.current) return;
-        setErrMsg(error instanceof Error ? error.message : String(error));
-        setPhase('error');
-      });
-  }, [navigate, profileDest, transition]);
+  const finish = useCallback(
+    (evidence?: PlacementEndEvidence) => {
+      setQRef(null);
+      setNoItem(null);
+      setPhase('settling');
+      if (finishing.current) return;
+      finishing.current = true;
+      void transition('completed')
+        .then((result) => {
+          if (!activeRef.current) return;
+          const items = result?.unresolved_items ?? [];
+          if (items.length > 0 || evidence) {
+            setUnresolved(items);
+            setEndEvidence(evidence);
+            setPhase('ended');
+            return;
+          }
+          navigate(profileDest());
+        })
+        .catch((error: unknown) => {
+          finishing.current = false;
+          if (!activeRef.current) return;
+          setErrMsg(error instanceof Error ? error.message : String(error));
+          setPhase('error');
+        });
+    },
+    [navigate, profileDest, transition],
+  );
   const applySelection = useCallback(
     (next: PlacementSelection) => {
+      selectionEpoch.current += 1;
       setAnsweredCount(next.answeredCount);
       setSupply(next.starterSupply);
       setRestoreVersion((v) => v + 1);
       if (next.done) {
-        finish();
+        finish(next.evidence);
       } else {
         setQRef(next.question);
         setNoItem(next.no_item ?? null);
@@ -180,6 +203,32 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     if (!sid || !sessionOpenRef.current) return;
     applySelection(await transport.current.placementNext(sid));
   }, [applySelection]);
+  // YUK-1796 — the background check behind the waiting page. It applies only if nothing else
+  // moved the page while the request was out. A failed check keeps the page and tries again.
+  const supplyWait = useQuery({
+    queryKey: ['placement-supply-wait'],
+    enabled: phase === 'noitem' && noItem?.next_action === 'wait_for_admission' && !leaving,
+    initialData: null,
+    staleTime: SUPPLY_WAIT_POLL_MS,
+    gcTime: 0,
+    retry: false,
+    refetchInterval: SUPPLY_WAIT_POLL_MS,
+    queryFn: async () => {
+      const sid = sessionIdRef.current;
+      if (!sid || !sessionOpenRef.current) return null;
+      const epoch = selectionEpoch.current;
+      const next = await transport.current.placementNext(sid);
+      if (
+        epoch === selectionEpoch.current &&
+        activeRef.current &&
+        sessionOpenRef.current &&
+        !finishing.current
+      ) {
+        applySelection(next);
+      }
+      return null;
+    },
+  });
   // YUK-1405 — 「继续」 on a held question: the release answers with the next step, so the
   // page moves straight on. A question that is no longer held (409 not_releasable) means
   // the page is behind: refresh quietly instead of showing an error.
@@ -246,6 +295,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
                 answeredCount: next.answeredCount,
                 question: null,
                 sourcingNeeded: false,
+                endEvidence: next.evidence,
               };
             return {
               sessionId: existing,
@@ -288,7 +338,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
             setQRef(null);
             setPhase('sourcing');
           } else {
-            finish();
+            finish(res.endEvidence);
           }
         })
         .catch((error: unknown) => {
@@ -441,7 +491,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
           <OnboardingState
             icon={<Check size={24} />}
             title="定位练习已结束"
-            text={`有 ${unresolved.length} 题没有计入结果，下面是原因。它们不算答错。`}
+            text={endedText(endEvidence, unresolved.length)}
             action={
               <Button variant="primary" onClick={() => navigate(profileDest())}>
                 看档案
@@ -456,9 +506,12 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
         <section className="un-ob-section un-ob-panel">
           <NoItemStatus
             noItem={noItem}
+            outcomes={supply}
+            answeredCount={answeredCount}
+            checkFailed={supplyWait.isError}
             checking={checking}
             onRecheck={recheck}
-            onEnd={finish}
+            onEnd={() => finish()}
             onUpload={() => void leaveProbe('/onboarding/upload')}
           />
           {errMsg && <OnboardingError text={errMsg} onRetry={recheck} />}
@@ -493,7 +546,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
             answeredCount={answeredCount}
             onAccepted={loadNext}
             onRelease={releaseHeld}
-            onEnd={finish}
+            onEnd={() => finish()}
             saveForExit={saveForExit}
             leaving={leaving}
             client={transport.current}
@@ -508,68 +561,110 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   );
 }
 
-// YUK-1405 — the server has no question it can give right now. Say so plainly, name what is
-// still being prepared, and offer the server's own ways out instead of an endless wait.
+function endedText(evidence: PlacementEndEvidence, unresolvedCount: number): string {
+  const unresolved = `有 ${unresolvedCount} 题没有计入结果，下面是原因。它们不算答错。`;
+  if (!evidence) return unresolved;
+  const thin = `这次能用的题只够答 ${evidence.answered_count} 题，结果还比较粗略，这不算没通过。之后的每日练习会继续校准。`;
+  return unresolvedCount > 0 ? `${thin}另外，${unresolved}` : thin;
+}
+
+// YUK-1405 / YUK-1796 — the server has no question it can give right now. `next_action` decides
+// which of the two this is: questions are still on their way (the page keeps checking and shows
+// how far along they are), or nothing more will come (say so, and what to do instead).
 function NoItemStatus({
   noItem,
+  outcomes,
+  answeredCount,
+  checkFailed,
   checking,
   onRecheck,
   onEnd,
   onUpload,
 }: {
   noItem: PlacementNoItem;
+  outcomes: StarterOutcome[] | undefined;
+  answeredCount: number;
+  checkFailed: boolean;
   checking: boolean;
   onRecheck: () => void;
   onEnd: () => void;
   onUpload: () => void;
 }) {
-  const preparing = [...new Set(noItem.preparing_subjects.map((id) => subjectDisplayName(id)))];
-  const admissionWaits = noItem.admission_waits ?? [];
-  const nextRetry = admissionWaits
-    .map((wait) => wait.retry_at)
-    .filter((value): value is string => value != null)
-    .sort()[0];
-  const waitText = admissionWaits.some((wait) => wait.reason === 'login')
-    ? '有些题的校验服务需要 Owner 重新登录；这些题暂时跳过，可重新检查其他可用题。'
-    : nextRetry
-      ? `有些题在等待校验额度恢复，将在 ${new Date(nextRetry).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 重试；这些题暂时跳过，可重新检查其他可用题。`
-      : admissionWaits.length
-        ? '有些题在等待校验额度恢复；恢复时间还未知，这些题暂时跳过，可重新检查其他可用题。'
-        : null;
+  const canEnd = noItem.options.includes('end');
+  const status = starterStatus(outcomes);
+  if (noItem.next_action === 'wait_for_admission') {
+    const progress = starterProgress(outcomes);
+    const words = starterWaitWords(
+      progress,
+      [...new Set(noItem.preparing_subjects.map((id) => subjectDisplayName(id)))],
+      answeredCount > 0 ? '下一题' : '第一题',
+    );
+    return (
+      <div role="status" aria-live="polite" className="un-ob-status">
+        <OnboardingState
+          icon={<LoaderCircle size={24} className="un-ob-spin" />}
+          title={words.title}
+          text={words.text}
+          action={
+            canEnd && (
+              <Button variant="secondary" onClick={onEnd}>
+                结束定位
+              </Button>
+            )
+          }
+        />
+        {progress && starterWaitStalled(progress, Date.now()) && (
+          <p className="un-ob-supply-note">
+            <Chip tone="caution">比平时久</Chip>
+            可能卡住了。可以再等等，也可以先结束定位，不影响其他功能。
+          </p>
+        )}
+        {status.kind === 'preparing' && status.lastFailure && (
+          <p className="un-ob-supply-note">
+            <Chip tone="critical">上次没成功</Chip>
+            {status.lastFailure}，会自动重试。
+          </p>
+        )}
+        {checkFailed && <p className="un-ob-supply-note">暂时没连上服务，会继续自动检查。</p>}
+      </div>
+    );
+  }
+  const reason = status.kind === 'failed' || status.kind === 'unknown' ? status.reason : null;
   return (
     <div role="status" aria-live="polite" className="un-ob-status">
       <OnboardingState
         icon={<Clock size={24} />}
-        title="暂时没有能出的题"
+        title={noItem.supply_ended ? '这次没能备好题' : '暂时没有能出的题'}
         text={
-          waitText ??
-          (preparing.length > 0
-            ? `还在准备${preparing.join('、')}的题。可以过一会儿再检查，也可以先结束定位。`
-            : '目前也没有题在准备。可以先结束定位，或者上传自己的材料，从里面出题。')
+          noItem.supply_ended
+            ? '这个目标这次没有准备出能用的题，也不会再自动补了。这不算没通过，也不影响其他功能。可以结束定位先去用别的，或者上传自己的材料，从里面出题。'
+            : '目前没有题在准备。这不影响其他功能。可以结束定位先去用别的，或者上传自己的材料，从里面出题。'
         }
         action={
           <>
-            {noItem.options.includes('recheck') && (
-              <Button variant="primary" disabled={checking} onClick={onRecheck}>
-                <RefreshCw size={18} aria-hidden="true" />
-                {checking ? '正在检查…' : '重新检查'}
+            {canEnd && (
+              <Button variant="primary" disabled={checking} onClick={onEnd}>
+                结束定位
               </Button>
             )}
-            {noItem.options.includes('end') && (
-              <Button variant="secondary" disabled={checking} onClick={onEnd}>
-                结束定位
+            <Button variant="secondary" disabled={checking} onClick={onUpload}>
+              <Upload size={18} aria-hidden="true" />
+              上传自己的材料
+            </Button>
+            {noItem.options.includes('recheck') && (
+              <Button variant="ghost" disabled={checking} onClick={onRecheck}>
+                <RefreshCw size={18} aria-hidden="true" />
+                {checking ? '正在检查…' : '重新检查'}
               </Button>
             )}
           </>
         }
       />
-      {preparing.length === 0 && (
-        <div className="un-ob-actions un-ob-actions-start">
-          <Button variant="ghost" disabled={checking} onClick={onUpload}>
-            <Upload size={18} aria-hidden="true" />
-            上传自己的材料
-          </Button>
-        </div>
+      {reason && (
+        <p className="un-ob-supply-note">
+          <Chip tone="critical">原因</Chip>
+          {reason}
+        </p>
       )}
     </div>
   );
