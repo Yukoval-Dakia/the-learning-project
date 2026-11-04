@@ -2,6 +2,7 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { AgentRunError, type AgentRunErrorFields } from '@/ai/agent-run-error';
+import { type HelpProviderFault, isHelpProviderFault } from '@/ai/help-provider-fault';
 import { getTaskOverride } from '@/core/config/store';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
@@ -95,6 +96,7 @@ const StageReceipt = z.discriminatedUnion('kind', [
       apiErrorStatus: z.number().nullable().optional(),
       errors: z.array(z.string()),
       costUsd: z.number().optional(),
+      helpProviderFault: z.custom<HelpProviderFault>(isHelpProviderFault).optional(),
     }),
   }),
 ]);
@@ -102,6 +104,8 @@ const StageReceipt = z.discriminatedUnion('kind', [
 // Only bound HTTP facts qualify; provider message strings never grant a retry.
 function existingRecovery(error: unknown): ReturnType<AdmissionRecoveryReader> {
   if (!(error instanceof AgentRunError)) return null;
+  if (error.helpProviderFault?.kind === 'quota')
+    return { reason: 'quota', evidence_ref: error.taskRunId };
   if (error.apiErrorStatus === 429) return { reason: 'quota', evidence_ref: error.taskRunId };
   if (error.apiErrorStatus === 401) return { reason: 'login', evidence_ref: error.taskRunId };
   return null;
@@ -369,7 +373,9 @@ export function admissionStageRunner(input: {
             (error.apiErrorStatus != null ||
               (run?.finished_at != null &&
                 (run.usage_json.transport?.send_state === 'not_sent' ||
-                  error.subtype === 'error_max_structured_output_retries')));
+                  error.subtype === 'error_max_structured_output_retries' ||
+                  error.helpProviderFault?.kind === 'parse' ||
+                  error.helpProviderFault?.kind === 'bad_gateway')));
           if (recovery && !input.interrupted?.()) {
             const parsed = AdmissionRecovery.pick({ reason: true, evidence_ref: true }).parse(
               recovery,
@@ -397,6 +403,7 @@ export function admissionStageRunner(input: {
                 apiErrorStatus: error.apiErrorStatus,
                 errors: error.errors,
                 ...(error.costUsd != null ? { costUsd: error.costUsd } : {}),
+                ...(error.helpProviderFault ? { helpProviderFault: error.helpProviderFault } : {}),
               },
             };
           else if (

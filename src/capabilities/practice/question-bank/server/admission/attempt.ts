@@ -54,6 +54,8 @@ export async function runAdmissionAttempts<T>(
         row.status !== 'running' &&
         (row.usage_json.transport?.send_state === 'not_sent' ||
           error.subtype === 'error_max_structured_output_retries' ||
+          error.helpProviderFault?.kind === 'parse' ||
+          error.helpProviderFault?.kind === 'bad_gateway' ||
           (error.subtype === 'api_error_result' &&
             error.apiErrorStatus != null &&
             error.apiErrorStatus >= 500));
