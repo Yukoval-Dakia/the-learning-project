@@ -3,6 +3,7 @@
 // suggest, write), so no row ever reads as a generic "task".
 
 export const TOOL_LABELS: Readonly<Record<string, string>> = {
+  write_note: '写笔记',
   query_memory_brief: '学习概况',
   generate_goal_outline: '目标大纲',
   generate_question_candidate: '题目草稿',
@@ -62,6 +63,7 @@ export function toolLabel(toolName: string): string {
 // one-line activity before the reply text arrives). Common tools get their own phrase; any other
 // tool reads as a verb by what it does plus its plain name, so no internal tool name ever shows.
 const ACTIVITY: Readonly<Record<string, string>> = {
+  write_note: '正在写笔记',
   query_memory_brief: '正在看你的学习概况',
   query_mistakes: '正在查你最近的错题',
   get_review_due: '正在看今天该复习什么',
