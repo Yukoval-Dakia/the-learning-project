@@ -71,6 +71,7 @@ type Phase =
   | 'ended'
   | 'terminal'
   | 'nogoal'
+  | 'needsubject'
   | 'error';
 // The next step after an answer or a released held question: same shape from both routes.
 type PlacementSelection =
@@ -293,6 +294,12 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
         .catch((error: unknown) => {
           if (cancelled || request.applied) return;
           request.applied = true;
+          // YUK-1749 — a goal without a concrete subject (none, or one that cannot plant
+          // starters such as general) cannot be placed: guide instead of showing the error.
+          if (error instanceof ApiError && error.code === 'placement_goal_needs_subject') {
+            setPhase('needsubject');
+            return;
+          }
           setErrMsg(error instanceof Error ? error.message : String(error));
           setPhase('error');
         });
@@ -330,7 +337,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     void leaveProbe('/today');
   };
   const shellExit =
-    phase === 'terminal' || phase === 'nogoal' || phase === 'ended'
+    phase === 'terminal' || phase === 'nogoal' || phase === 'needsubject' || phase === 'ended'
       ? () => navigate('/today')
       : exitProbe;
 
@@ -369,6 +376,35 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
               <Button variant="primary" onClick={() => navigate('/welcome')}>
                 去设定
               </Button>
+            }
+          />
+        </section>
+      )}
+      {phase === 'needsubject' && (
+        <section className="un-ob-section un-ob-panel">
+          <OnboardingState
+            icon={<Target size={24} />}
+            title="这个目标还没有选科目"
+            text="定位练习按科目出起始题。这个目标没有选具体的科目，所以没法直接定位。新建一个选好科目的目标，就能接着做定位；也可以先上传自己的材料，从里面出题。"
+            action={
+              <>
+                <Button variant="primary" onClick={() => navigate('/welcome')}>
+                  新建选好科目的目标
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    const goal = goalIdRef.current;
+                    navigate(
+                      goal
+                        ? `/onboarding/upload?goal=${encodeURIComponent(goal)}`
+                        : '/onboarding/upload',
+                    );
+                  }}
+                >
+                  上传自己的材料
+                </Button>
+              </>
             }
           />
         </section>
