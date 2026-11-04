@@ -13,6 +13,7 @@ export const AdmissionRepair = z.object({
   broken_part: z.enum(['question', 'options', 'figure', 'scoring_unit', 'reference']),
   defect: z.enum([
     'missing_figure',
+    'missing_marking',
     'missing_condition',
     'wrong_domain',
     'scoring_kind_mismatch',
@@ -56,10 +57,18 @@ export const AdmissionAdjudicationInput = z.object({
   parts: z.array(SolvePart).min(1),
   units: z.array(SolveUnit).min(1),
   figure_state: z.enum(['none_referenced', 'missing_referenced', 'unreadable', 'available']),
+  markings: z.array(
+    z.object({
+      part_id: z.string().min(1),
+      marking: z.enum(['dot', 'underline', 'wavy', 'emphasis', 'box', 'figure_annotation']),
+      status: z.enum(['missing_referenced', 'candidate_present', 'text_identified']),
+    }),
+  ),
   solves: z.array(z.unknown()).length(2),
   author_evidence: z.unknown(),
   source_answers: z.unknown(),
 });
+export type AdmissionMarkingStateT = z.infer<typeof AdmissionAdjudicationInput>['markings'][number];
 export const questionAdmissionAdjudicateTaskSpec = {
   ownership: 'owned',
   definition: {
@@ -81,6 +90,7 @@ export const questionAdmissionAdjudicateTaskSpec = {
 Return exactly one verdict per input unit: pass with decided_key and reason_md, or return_for_repair with repair {repair_target,broken_part,defect,fix_hint_md,suggested_key?}. Never reject. evidence_errors is required and lists wrong source_answer, printed_rule or author_key evidence with an explanation. If the question itself can be answered but a reference solution or rubric is wrong or internally contradictory, PASS with a corrected key/rubric and evidence_errors; do not return merely to fix reference evidence. Mark contradictions in printed_rule explicitly, including inconsistent derivative signs, required_points and reference_solution. A single semantic rule_reference/text unit can carry an entire proof with AI grading: do not reject it merely for having one unit or a legacy text slot. Return scoring_kind_mismatch only when the actual response/grade contract cannot represent what must be graded.
 Judge equivalence in the semantics of THIS question. Do not include genuinely different answers as aliases. In particular, an endpoint outside the function domain is invalid even when a defined endpoint could conventionally be omitted. Explain your basis, including domain and unit assumptions. For a function defined at an endpoint, school monotonic-interval notation can legitimately include or exclude that endpoint; do not impose a blanket open/closed distinction.
 Do not invent missing conditions, geometric orientation or a figure. missing_referenced means no readable figure was supplied: pass ONLY if the text independently supplies every needed condition, explaining why. A reference to a figure alone is not a proof that it is indispensable. If an unreadable figure is necessary, return missing_figure with a concrete fix.
+The learner sees only the public question parts, public materials and options, never the reference solution or private evidence. Required dots, underlines, wavy lines, emphasis dots, boxes and labels on figures must actually be visible or their targets explicitly identified in that public text. Raw HTML is not rendered. A candidate_present marking is only a syntactic candidate (possibly unrelated bold text or a figure), not proof that the required target is identifiable. text_identified means the text explicitly names a target; verify that it identifies EVERY required target, rather than a comparison word elsewhere. If missing markings make the question unanswerable, return repair_target:question_text, broken_part:question, defect:missing_marking. Do not use missing_figure for missing text markings. If the public text independently identifies all targets, pass when otherwise valid and explain why no visual mark is necessary.
 Check that the scoring structure can grade what the question asks. A proof or multi-step solution needs an AI rubric covering its required reasoning, not a final-answer string alone. For kind free, pass requires ai_grading_sufficient:true and decided_key {kind:free,rubric_md} containing a correct reference solution and usable marking rubric; false means return for repair. For deterministic select/blank, ai_grading_sufficient is optional. Preserve printed points; never invent scores. Missing or ambiguous domain should only cause repair when it affects the answer required by the question, rather than imposing an unstated demand for a maximal factorization.
 Use stable item_ids from the input only for select. blank_text accepted must contain complete correct answers only. Numeric tolerance must not be enlarged to disguise disagreement. Submit through the structured output tool.`,
     },

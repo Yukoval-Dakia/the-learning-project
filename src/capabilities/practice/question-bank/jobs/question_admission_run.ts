@@ -60,6 +60,10 @@ import {
 } from '../server/admission/enqueue';
 import { type Provider, definitionFromContract } from '../server/admission/index';
 import {
+  enqueueAdmissionLoginRecovery,
+  maintainAdmissionLoginRecovery,
+} from '../server/admission/login-recovery';
+import {
   type AdmissionDelivery,
   AdmissionResultReceipt,
   FrozenAdmissionInput,
@@ -84,6 +88,7 @@ import {
 import { QUESTION_ADMISSION_TASK_KIND } from '../server/admission/solve';
 import {
   ADMISSION_STAGE_FAMILY,
+  AdmissionInterrupted,
   AdmissionNotSent,
   type AdmissionRecoveryReader,
   type AdmissionStageReceiptRef,
@@ -219,6 +224,18 @@ async function loadGradedContract(
   } catch {
     return { contract: await loadDefinition(db, rootId), revision, digestMatches: false };
   }
+}
+
+function admissionInputIsCurrent(
+  graded: GradedContract | null,
+  currentRevisionId: string | null,
+  input: FrozenAdmissionInput,
+) {
+  return (
+    graded?.digestMatches === true &&
+    graded.contract.integrity_digest === input.contract.integrity_digest &&
+    currentRevisionId === input.revision_id
+  );
 }
 
 async function subjectProfileFor(db: Db | Tx, rootId: string) {
@@ -385,6 +402,24 @@ export async function runAdmissionForQuestion(
           originalDelivery === delivery.id ? delivery.jobData : undefined,
         )
       : purpose;
+    if (
+      claimed.kind === 'receipt' &&
+      claimed.receipt.result.status === 'waiting' &&
+      !admissionInputIsCurrent(graded, lifecycle?.current_revision_id ?? null, claimed.input)
+    ) {
+      await recordPaidEffectApplication(tx, claimed.identity, {
+        status: 'stale',
+        group_id: rootId,
+      });
+      return {
+        ...claimed,
+        kind: 'applied' as const,
+        status: 'stale' as const,
+        purpose: originalPurpose,
+        sourceDeliveryId: originalDelivery,
+        staleInput: true,
+      };
+    }
     return {
       ...claimed,
       purpose: originalPurpose,
@@ -427,6 +462,7 @@ export async function runAdmissionForQuestion(
     else deps.signal?.addEventListener('abort', abort, { once: true });
     const stageReceiptRefs: AdmissionStageReceiptRef[] = [];
     let purposeStopped = false;
+    let superseded = false;
     let checking = false;
     const beforeSend = async () => {
       controller.signal.throwIfAborted();
@@ -434,7 +470,18 @@ export async function runAdmissionForQuestion(
         await db.transaction(async (tx) => {
           await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
           await assertAdmissionDelivery(tx, delivery);
-          await lockAdmissionGroup(tx, rootId);
+          const { root, lifecycle } = await lockAdmissionGroup(tx, rootId);
+          const current = root
+            ? await loadGradedContract(tx, rootId, lifecycle?.current_revision_id ?? null)
+            : null;
+          if (
+            !admissionInputIsCurrent(current, lifecycle?.current_revision_id ?? null, batch.input)
+          ) {
+            superseded = true;
+            throw new Error('Question admission input revision was superseded');
+          }
+          if (lifecycle && !isPendingAdmission(lifecycle))
+            throw new Error('Question admission lifecycle no longer permits a paid send');
           const snapshot = await readPaidEffect(tx, batch.identity);
           if (
             !(
@@ -452,8 +499,10 @@ export async function runAdmissionForQuestion(
         });
         controller.signal.throwIfAborted();
       } catch (error) {
-        purposeStopped = true;
-        controller.abort(error);
+        if (!controller.signal.aborted) {
+          purposeStopped = true;
+          controller.abort(error);
+        }
         throw error;
       }
     };
@@ -541,8 +590,11 @@ export async function runAdmissionForQuestion(
         taskRunIds: attemptedTaskRunIds,
         receiptRefs: stageReceiptRefs,
         beforeSend,
+        interrupted: () => purposeStopped || controller.signal.aborted,
+        interruptionReason: () => controller.signal.reason,
         recovery: deps.providerRecovery,
         recoveryConfirmed: data.recovery_confirmed,
+        loginProbeRoute: data.login_probe_route,
       });
       // Metadata for the solution prior only: a read failure must not touch the paid batch.
       const knowledgeCandidates = await loadPriorKnowledgeCandidates(db, {
@@ -582,6 +634,7 @@ export async function runAdmissionForQuestion(
           : null,
         policyId: batch.input.policy_id,
       });
+      await beforeSend();
       if (result.status === 'withheld') {
         const [source] = batch.purpose.sourceId
           ? await db
@@ -612,7 +665,20 @@ export async function runAdmissionForQuestion(
           recordPaidEffectResult(tx, batch.identity, delivery.id, receipt, { fence: batchFence }),
         );
     } catch (error) {
-      if (error instanceof AdmissionWaiting) {
+      if (superseded && batch.kind === 'receipt') {
+        await db.transaction(async (tx) => {
+          await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
+          if ((await readPaidEffect(tx, batch.identity))?.state === 'receipt_ready')
+            await recordPaidEffectApplication(tx, batch.identity, {
+              status: 'stale',
+              group_id: rootId,
+            });
+        });
+        return simple('stale');
+      }
+      const interrupted =
+        purposeStopped || controller.signal.aborted || error instanceof AdmissionInterrupted;
+      if (error instanceof AdmissionWaiting && !interrupted) {
         const waitingReceipt = AdmissionResultReceipt.parse({
           version: 1,
           recorded_at: new Date().toISOString(),
@@ -634,7 +700,11 @@ export async function runAdmissionForQuestion(
             evidence_refs: { task_run_ids: [...attemptedTaskRunIds] },
           },
         });
-        const boss = error.recovery.retry_at ? await getStartedBoss() : null;
+        const boss =
+          (error.recovery.reason === 'quota' && error.recovery.retry_at) ||
+          (error.recovery.reason === 'login' && error.route)
+            ? await getStartedBoss()
+            : null;
         await db.transaction(async (tx) => {
           await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
           await assertAdmissionDelivery(tx, delivery);
@@ -642,7 +712,7 @@ export async function runAdmissionForQuestion(
             await recordPaidEffectResult(tx, batch.identity, delivery.id, waitingReceipt, {
               fence: batchFence,
             });
-          if (boss && error.recovery.retry_at) {
+          if (boss && error.recovery.reason === 'quota' && error.recovery.retry_at) {
             const wakeData = {
               ...data,
               admission_version: 4 as const,
@@ -660,6 +730,8 @@ export async function runAdmissionForQuestion(
               db: fromPgBossDrizzleTx(tx),
             });
           }
+          if (boss && error.recovery.reason === 'login' && error.route)
+            await enqueueAdmissionLoginRecovery(tx, boss, error.route, delivery.id);
         });
         return {
           ...simple('waiting'),
@@ -670,7 +742,7 @@ export async function runAdmissionForQuestion(
           })),
         };
       }
-      if (error instanceof AdmissionNotSent) {
+      if (error instanceof AdmissionNotSent && !interrupted) {
         receipt = AdmissionResultReceipt.parse({
           version: 1,
           recorded_at: new Date().toISOString(),
@@ -712,7 +784,8 @@ export async function runAdmissionForQuestion(
             );
           }
         });
-        if (purposeStopped) return simple('pending');
+        deps.signal?.throwIfAborted();
+        if (interrupted) return simple('pending');
         throw error;
       }
     } finally {
@@ -779,12 +852,11 @@ export async function runAdmissionForQuestion(
       const fresh = root
         ? await loadGradedContract(tx, rootId, lifecycle?.current_revision_id ?? null)
         : null;
-      const freshDigest = fresh?.digestMatches ? fresh.contract.integrity_digest : null;
-      const current =
-        root != null &&
-        freshDigest != null &&
-        freshDigest === batch.input.contract.integrity_digest &&
-        (lifecycle?.current_revision_id ?? null) === batch.input.revision_id;
+      const current = admissionInputIsCurrent(
+        fresh,
+        lifecycle?.current_revision_id ?? null,
+        batch.input,
+      );
       if (!current) {
         await recordPaidEffectApplication(tx, batch.identity, {
           status: 'stale',
@@ -852,6 +924,7 @@ export async function runAdmissionForQuestion(
         await notePaidEffectApplicationFailure(tx, batch.identity, candidate.reason);
         return simple('pending');
       }
+      const freshDigest = fresh?.digestMatches ? fresh.contract.integrity_digest : null;
       const built = applyCustomPreviewDecision(preview, candidate, batch.input, receipt, {
         revision_id: lifecycle?.current_revision_id ?? null,
         revision_digest: freshDigest,
@@ -952,10 +1025,18 @@ export function buildQuestionAdmissionRunHandler(
         { id: job.id, jobData: job.data },
         { signal: job.signal },
       );
-      console.log(
-        `[question_admission_run] ${result.group_id} -> ${result.status}` +
-          (result.revision_id ? ` rev=${result.revision_id}` : ''),
-      );
+      if (job.data.login_probe_route)
+        await maintainAdmissionLoginRecovery(
+          db,
+          job.data.login_probe_route,
+          job.id,
+          result.status === 'pending' ? result.group_id : undefined,
+        );
+      if (!(result.status === 'waiting' && result.per_unit.some((unit) => unit.reason === 'login')))
+        console.log(
+          `[question_admission_run] ${result.group_id} -> ${result.status}` +
+            (result.revision_id ? ` rev=${result.revision_id}` : ''),
+        );
     }
   };
 }

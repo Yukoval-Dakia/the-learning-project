@@ -41,6 +41,7 @@ import {
   runCalibrationProbes,
 } from './calibrate';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
+import { prepareAdmissionQuestionText } from './question-text';
 import type { KnowledgeCandidate, SolutionPriorRecordT } from './solution-prior';
 import {
   type AdmissionImage,
@@ -263,6 +264,41 @@ export async function runQuestionAdmission(
     });
   }
 
+  const questionText = prepareAdmissionQuestionText(
+    definition,
+    options.subjectProfile?.renderConfig.notation === 'katex',
+  );
+  if (questionText.repairs.length > 0) {
+    for (const unit of definition.units) {
+      const defect = questionText.repairs.find((repair) => repair.part_id === unit.part_id);
+      mark(unit, {
+        status: 'withheld',
+        reason: defect?.repair.defect ?? 'question_text_invalid',
+        ...(defect ? { repair: defect.repair } : {}),
+      });
+    }
+    const returned = finalize(
+      definition,
+      policyId,
+      now,
+      per_unit,
+      evidenceTaskRuns,
+      null,
+      solverContext,
+      {
+        status: 'withheld',
+        reason: 'question_text_invalid',
+      },
+    );
+    returned.verification.evidence.question_text = {
+      markings: questionText.markings,
+      changes: questionText.changes,
+      repairs: questionText.repairs,
+    };
+    return returned;
+  }
+  definition = questionText.definition;
+
   const figureMaterials = definition.structure.materials.filter(
     (m) => isPublicSharedMaterial(m) && m.kind === 'figure',
   );
@@ -404,6 +440,7 @@ export async function runQuestionAdmission(
   const crosscheck: null = null;
   if (
     figureState !== 'none_referenced' ||
+    questionText.markings.length > 0 ||
     solvableUnits.some(
       (u) =>
         solve.verdicts.get(u.scoring_unit_id)?.status !== 'agreed' || u.printed_rule_md != null,
@@ -419,6 +456,7 @@ export async function runQuestionAdmission(
         runTask,
         options.subjectProfile,
         images,
+        questionText.markings,
       );
     } catch (error) {
       if (!(error instanceof AdmissionAttemptExhausted)) throw error;
@@ -799,6 +837,10 @@ export async function runQuestionAdmission(
     },
   );
   result.verification.evidence.figure_state = figureState;
+  result.verification.evidence.question_text = {
+    markings: questionText.markings,
+    changes: questionText.changes,
+  };
   result.verification.evidence.adjudication = adjudicationEvidence;
   result.verification.evidence.blind_solves = solve.outputs;
   result.verification.evidence.attempt_run_ids = solve.attempt_run_ids;

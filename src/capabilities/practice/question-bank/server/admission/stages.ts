@@ -36,6 +36,7 @@ export class AdmissionWaiting extends Error {
   constructor(
     readonly recovery: AdmissionRecoveryT,
     readonly stage: string,
+    readonly route?: { provider: string; model: string },
   ) {
     super(
       recovery.reason === 'quota'
@@ -51,10 +52,23 @@ export class AdmissionNotSent extends Error {
   }
 }
 
+export class AdmissionInterrupted extends Error {
+  constructor(reason?: unknown) {
+    super(
+      reason instanceof Error
+        ? reason.message
+        : typeof reason === 'string'
+          ? reason
+          : 'Admission was interrupted; no terminal question verdict',
+    );
+  }
+}
+
 export const ADMISSION_STAGE_FAMILY = 'question_admission_stage';
 const FAMILY = ADMISSION_STAGE_FAMILY;
 const StageReceipt = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('not_sent') }),
+  z.object({ kind: z.literal('interrupted'), reason: z.string().optional() }),
   z.object({
     kind: z.literal('result'),
     result: z
@@ -110,7 +124,7 @@ async function serializeAdjudication<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-async function readRouteLoginWait(db: Db, configuration: unknown) {
+export async function readRouteLoginWait(db: Db | Tx, configuration: unknown) {
   const route = z
     .object({ task: z.object({ provider: z.string(), model: z.string() }).passthrough() })
     .safeParse(configuration);
@@ -141,6 +155,9 @@ export function admissionStageRunner(input: {
   execute: BoundRunTaskTextFn;
   recovery?: AdmissionRecoveryReader;
   recoveryConfirmed?: boolean;
+  loginProbeRoute?: { provider: string; model: string };
+  interrupted?: () => boolean;
+  interruptionReason?: () => unknown;
   beforeSend?: () => Promise<void>;
   taskRunIds?: Set<string>;
   receiptRefs?: AdmissionStageReceiptRef[];
@@ -167,6 +184,19 @@ export function admissionStageRunner(input: {
       // A bulk recovery delivery created before a failed login probe is not a
       // fresh confirmation. Only the first probe may refresh that dead token.
       const loginProbeConfirmed = confirmation?.confirmed === true;
+      const route =
+        configuration.task?.provider && configuration.task.model
+          ? { provider: configuration.task.provider, model: configuration.task.model }
+          : undefined;
+      const automaticLoginProbe =
+        loginWait != null &&
+        route != null &&
+        canonicalHash(input.loginProbeRoute ?? null) === canonicalHash(route) &&
+        Date.now() >=
+          Date.parse(
+            loginWait.recovery.retry_at ??
+              new Date(loginWait.recordedAt.getTime() + 60 * 60_000).toISOString(),
+          );
       const history = await input.db
         .select()
         .from(paid_effect)
@@ -226,6 +256,7 @@ export function admissionStageRunner(input: {
           );
         if (receipt.kind === 'result') return receipt.result;
         if (receipt.kind === 'not_sent') throw new AdmissionNotSent();
+        if (receipt.kind === 'interrupted') throw new AdmissionInterrupted(receipt.reason);
         if (receipt.kind === 'failure')
           throw new AgentRunError(receipt.fields as AgentRunErrorFields);
         const routing = (value: unknown) =>
@@ -246,17 +277,16 @@ export function admissionStageRunner(input: {
           frozen.recovery_confirmation !== input.deliveryId &&
           (receipt.recovery.reason !== 'login' || !loginWait || loginProbeConfirmed);
         const due =
-          receipt.recovery.retry_at != null && Date.parse(receipt.recovery.retry_at) <= Date.now();
+          receipt.recovery.reason === 'quota' &&
+          receipt.recovery.retry_at != null &&
+          Date.parse(receipt.recovery.retry_at) <= Date.now();
         const loginRecovered = receipt.recovery.reason === 'login' && loginWait == null;
-        if (!due && !confirmed && !changedConfiguration && !loginRecovered)
-          throw new AdmissionWaiting(receipt.recovery, previous.unit);
+        if (!due && !confirmed && !changedConfiguration && !loginRecovered && !automaticLoginProbe)
+          throw new AdmissionWaiting(receipt.recovery, previous.unit, route);
         attempt = frozen.attempt + 1;
       }
-      try {
-        await input.beforeSend?.();
-      } catch {
-        throw new AdmissionNotSent();
-      }
+      // Purpose/control guards and aborts retain their original identity.
+      await input.beforeSend?.();
       const unit = `call:${index}:attempt:${attempt}`;
       const stageInput = {
         kind,
@@ -308,7 +338,7 @@ export function admissionStageRunner(input: {
           queryStarted = true;
         },
       } satisfies NonNullable<Parameters<BoundRunTaskTextFn>[2]>;
-      if (loginWait && !loginProbeConfirmed) {
+      if (loginWait && !loginProbeConfirmed && !automaticLoginProbe) {
         receipt = {
           kind: 'waiting',
           recovery: loginWait.recovery,
@@ -340,7 +370,7 @@ export function admissionStageRunner(input: {
               (run?.finished_at != null &&
                 (run.usage_json.transport?.send_state === 'not_sent' ||
                   error.subtype === 'error_max_structured_output_retries')));
-          if (recovery) {
+          if (recovery && !input.interrupted?.()) {
             const parsed = AdmissionRecovery.pick({ reason: true, evidence_ref: true }).parse(
               recovery,
             );
@@ -354,7 +384,7 @@ export function admissionStageRunner(input: {
                 retry_at:
                   parsed.reason === 'quota'
                     ? new Date(Date.now() + minutes * 60_000).toISOString()
-                    : null,
+                    : new Date(Date.now() + 60 * 60_000).toISOString(),
               },
             };
           } else if (knownFailure && error instanceof AgentRunError)
@@ -369,7 +399,16 @@ export function admissionStageRunner(input: {
                 ...(error.costUsd != null ? { costUsd: error.costUsd } : {}),
               },
             };
-          else if (!queryStarted) receipt = { kind: 'not_sent' };
+          else if (
+            !queryStarted ||
+            (input.interrupted?.() && run?.usage_json.transport?.send_state === 'not_sent')
+          )
+            receipt = input.interrupted?.()
+              ? {
+                  kind: 'interrupted',
+                  reason: new AdmissionInterrupted(input.interruptionReason?.()).message,
+                }
+              : { kind: 'not_sent' };
           else {
             await input.db.transaction((tx) =>
               markPaidEffectUnknown(
@@ -395,7 +434,12 @@ export function admissionStageRunner(input: {
       });
       if (receipt.kind === 'result') input.taskRunIds?.add(receipt.result.task_run_id);
       if (receipt.kind === 'failure') input.taskRunIds?.add(receipt.fields.taskRunId);
-      if (receipt.kind === 'waiting') throw new AdmissionWaiting(receipt.recovery, unit);
+      if (input.interrupted?.() || receipt.kind === 'interrupted')
+        throw new AdmissionInterrupted(
+          input.interruptionReason?.() ??
+            (receipt.kind === 'interrupted' ? receipt.reason : undefined),
+        );
+      if (receipt.kind === 'waiting') throw new AdmissionWaiting(receipt.recovery, unit, route);
       if (receipt.kind === 'not_sent') throw new AdmissionNotSent();
       if (receipt.kind === 'failure')
         throw new AgentRunError(receipt.fields as AgentRunErrorFields);
@@ -434,11 +478,12 @@ export async function readAdmissionWaits(db: Db | Tx, groupIds: readonly string[
       question_id: row.group_id,
       reason: recovery.reason,
       retry_at: recovery.retry_at,
-      recovery_action: recovery.retry_at
-        ? ('wait_for_retry' as const)
-        : recovery.reason === 'login'
+      recovery_action:
+        recovery.reason === 'login'
           ? ('reauthenticate' as const)
-          : ('confirm_recovery' as const),
+          : recovery.retry_at
+            ? ('wait_for_retry' as const)
+            : ('confirm_recovery' as const),
     };
   });
 }

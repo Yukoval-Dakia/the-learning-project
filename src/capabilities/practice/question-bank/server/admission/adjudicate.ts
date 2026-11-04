@@ -6,6 +6,7 @@ import type { SubjectProfile } from '@/subjects/profile';
 import {
   AdmissionAdjudication,
   AdmissionAdjudicationInput,
+  type AdmissionMarkingStateT,
 } from '../../tasks/question-admission-adjudicate';
 import { AdmissionParseFailure, runAdmissionAttempts } from './attempt';
 import type { QuestionAdmissionDefinition } from './contract';
@@ -29,6 +30,7 @@ export async function adjudicateAdmission(
   runTask: BoundRunTaskTextFn,
   subjectProfile?: SubjectProfile,
   images?: readonly AdmissionImage[],
+  markings: readonly AdmissionMarkingStateT[] = [],
 ) {
   const config = getTaskOverride(ADJUDICATION_TASK_KIND);
   if (!config?.provider || !config.model || config.overrideGlobalPin !== true) {
@@ -38,6 +40,7 @@ export async function adjudicateAdmission(
     parts: solverParts(definition),
     units: solverUnits(definition, 0, { exposePrinted: true }),
     figure_state: figureState,
+    markings,
     solves: solve.outputs,
     author_evidence:
       definition.original_units ??

@@ -26,6 +26,7 @@ export const AdmissionJobData = z.object({
   /** Absent on old queued deliveries: they may reconcile old units but never initiate @3. */
   admission_version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
   recovery_confirmed: z.boolean().optional(),
+  login_probe_route: z.object({ provider: z.string().min(1), model: z.string().min(1) }).optional(),
   question_id: z.string().min(1).optional(),
   revision_id: z.string().min(1).optional(),
   expected_revision_digest: z.string().min(1).optional(),

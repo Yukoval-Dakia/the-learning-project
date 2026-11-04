@@ -527,13 +527,10 @@ export function keysAgree(
     };
     const na = [...new Set(a.accepted.map((t) => normalizeBlankText(t, norm)))].sort();
     const nb = [...new Set(b.accepted.map((t) => normalizeBlankText(t, norm)))].sort();
-    // 双方 accepted 的归一化并集一致 = 等价（各自多余变体必须是对方已接受的）。
+    // Partial overlap cannot prove that omitted aliases are wrong.
     const allA = na.every((t) => nb.includes(t));
     const allB = nb.every((t) => na.includes(t));
     if (allA && allB) return { agree: true, key: a };
-    const intersection = a.accepted.filter((t) => nb.includes(normalizeBlankText(t, norm)));
-    if (intersection.length > 0)
-      return { agree: true, key: { kind: 'blank_text', accepted: intersection } };
     return {
       agree: false,
       detail: `blank_text ${boundDetail(na.join('|'))} vs ${boundDetail(nb.join('|'))}`,
@@ -675,9 +672,8 @@ function authorKeyAcceptsGrade(result: ScoringUnitResultT, points: number | null
 
 /**
  * 作者键是否接受模型的最终答案：走这道题自己的判分器，不另定相等。
- * 第 2 片：已声明槽位不只检查模型 accepted[0] —— 模型键与作者键
- * 的【全部】别名都必须被实际 grade 接受（作者键自身别名的编译完整性在
- * runDualSolve 的 seed 分支单独校验）。
+ * Every solver alias must pass the frozen grader, including shape-free text.
+ * The minted key remains the author's full key after independent agreement.
  */
 async function authorKeyAccepts(
   unit: AdmissionUnitSpec,
@@ -699,7 +695,7 @@ async function authorKeyAccepts(
     );
   }
   if (scoring.criterion.kind !== 'blank_key') return false;
-  if (shape != null && key.kind === 'blank_text') {
+  if (key.kind === 'blank_text') {
     for (const alias of key.accepted) {
       const graded = await gradeBlankExactUnit(
         scoring,
@@ -933,7 +929,7 @@ export async function runDualSolve(
       verdicts.set(
         unit.scoring_unit_id,
         agreement.agree && agreement.key != null
-          ? { status: 'agreed', key: agreement.key }
+          ? { status: 'agreed', key: authorKey }
           : { status: 'conflict', detail: agreement.detail ?? 'independent solves disagree' },
       );
     } else {
