@@ -44,8 +44,22 @@ export function candidateContentIssues(input: {
       extraction_hash: candidate.extraction_hash,
     }),
   };
+  // Project typed options for checks without changing the fetch-bound candidate.
+  const declaredChoiceRows = q.parts?.flatMap((part) =>
+    part.units.flatMap((unit) =>
+      unit.response_spec.kind === 'select'
+        ? [
+            {
+              ...row,
+              kind: 'choice',
+              choices_md: unit.response_spec.items.map((item) => item.label_md ?? item.item_id),
+            },
+          ]
+        : [],
+    ),
+  );
   const checks = [
-    checkStructureCompleteness(row),
+    ...(declaredChoiceRows?.length ? declaredChoiceRows : [row]).map(checkStructureCompleteness),
     ...(input.source_route === 'sourcing_web' ? [checkSourceConsistency(row)] : []),
   ];
   const issues: { code: string; detail: string }[] = checks
