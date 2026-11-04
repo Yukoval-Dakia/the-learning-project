@@ -56,6 +56,7 @@ patchedDependencies:
   mem0ai@3.0.13: patches/mem0ai@3.0.13.patch
 
 minimumReleaseAgeExclude:
-  - '@earendil-works/pi-agent-core@1.0.2'
-  - '@earendil-works/pi-ai@1.0.2'
-  - '@earendil-works/pi-telemetry@1.0.2'
+  - '@earendil-works/pi-agent-core@1.5.0'
+  - '@earendil-works/pi-ai@1.5.0'
+  - '@earendil-works/pi-schema@1.5.0'
+  - '@earendil-works/pi-telemetry@1.5.0'
