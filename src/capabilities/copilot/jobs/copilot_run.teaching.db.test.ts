@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installAgencyHostOperations } from '@/capabilities/agency/public';
 import { writeCopilotInputEvent } from '@/capabilities/copilot/server/conversation-writes';
 import {
   COPILOT_RUN_EVENTS,
@@ -13,6 +14,10 @@ import * as Conversation from '../server/conversation-lifecycle';
 import { runCopilotRun, writeSuccessfulTerminalProjection } from './copilot_run';
 
 const db = testDb();
+
+beforeAll(async () => {
+  await installAgencyHostOperations();
+});
 
 async function acceptedTeachingTurn(kind: TeachingSkillResult['kind']) {
   const { sessionId } = await Conversation.findOrCreateCopilotConversation(db);
