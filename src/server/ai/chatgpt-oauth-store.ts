@@ -24,8 +24,7 @@ export class ChatGPTOAuthFileError extends Error {
       | 'missing_file'
       | 'invalid_json'
       | 'missing_openai_credential'
-      | 'write_failed'
-      | 'refresh_timeout',
+      | 'write_failed',
     detail: string,
   ) {
     super(`openai ChatGPT-login credential file error (${reason}): ${detail}`);
@@ -64,20 +63,25 @@ async function readAuthFile(path: string): Promise<Record<string, CredentialLike
 async function writeAuthFile(path: string, auth: Record<string, CredentialLike>): Promise<void> {
   // Crash-safe write: a refresh may have already rotated the refresh token, so
   // truncating the file in place could leave a corrupt credential on kill —
-  // write-temp-fsync-rename is atomic on POSIX. 0600 because the content is a
-  // live credential (chmod is applied before the rename lands).
+  // write-temp-fsync-rename is atomic on POSIX. The temp file inherits the
+  // existing file's mode so a write-back never broadens (or narrows)
+  // permissions; the operator sets them when creating the file.
   const tmp = `${path}.tmp-${process.pid}`;
   try {
-    const fh = await fs.open(tmp, 'w', 0o600);
+    const st = await fs.stat(path).catch(() => undefined);
+    if (!st) throw new ChatGPTOAuthFileError('missing_file', `cannot stat ${path}`);
+    const fh = await fs.open(tmp, 'w');
     try {
       await fh.writeFile(JSON.stringify(auth, null, 2), 'utf8');
       await fh.sync();
+      await fh.chmod(st.mode);
     } finally {
       await fh.close();
     }
     await fs.rename(tmp, path);
   } catch (e) {
     await fs.unlink(tmp).catch(() => undefined);
+    if (e instanceof ChatGPTOAuthFileError) throw e;
     throw new ChatGPTOAuthFileError('write_failed', `${path}: ${(e as Error).message}`);
   }
 }
@@ -102,8 +106,6 @@ export async function loadChatGPTCredential(
  * `modify` persists the whole auth map back so a refreshed/rotated credential
  * survives the next run and process.
  */
-const MODIFY_TIMEOUT_MS = 60_000;
-
 export function createChatGPTCredentialStore(path: string) {
   const memory = new Map<string, CredentialLike>();
   // Reads the file entry inside the caller's mutex scope — the public `read`
@@ -141,23 +143,12 @@ export function createChatGPTCredentialStore(path: string) {
       }
       return serialized(path, async () => {
         const current = await readInsideLock();
-        // Bound the mutation fn (pi's refresh makes a network call) so a hung
-        // request can't hold the file mutex — and this whole lane — forever.
-        const next = await Promise.race<CredentialLike | undefined>([
-          fn(current),
-          new Promise<never>((_resolve, reject) =>
-            setTimeout(
-              () =>
-                reject(
-                  new ChatGPTOAuthFileError(
-                    'refresh_timeout',
-                    `credential mutation for '${providerId}' exceeded ${MODIFY_TIMEOUT_MS}ms`,
-                  ),
-                ),
-              MODIFY_TIMEOUT_MS,
-            ).unref(),
-          ),
-        ]);
+        // The lock is held until the mutation settles — abandoning a
+        // late-successful refresh would drop a rotated refresh token (the old
+        // one may already be dead upstream), which is a logout. pi threads the
+        // request's AbortSignal into oauth.refresh, so the bound on a hung
+        // refresh is the HTTP request's own timeout/abort, not this lock.
+        const next = await fn(current);
         if (next !== undefined) {
           memory.set(providerId, next);
           const auth = await readAuthFile(path);
