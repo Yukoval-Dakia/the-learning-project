@@ -63,7 +63,13 @@ function textIdentifiesTarget(text: string, name: string): boolean {
     '(?:的)?(?:字词|词语|成语|汉字|字|词|句子|句|部分|内容)?(?:是|为|即|指|[:：])?\\s*';
   return (
     new RegExp(`${name}${target}[“「『"][^”」』"\\n]+[”」』"]`, 'u').test(text) ||
-    new RegExp(`[“「『"][^”」』"\\n]+[”」』"](?:[（(]${name}[）)]|(?:的)?${name})`, 'u').test(text)
+    new RegExp(`[“「『"][^”」』"\\n]+[”」』"](?:[（(]${name}[）)]|(?:的)?${name})`, 'u').test(
+      text,
+    ) ||
+    new RegExp(
+      `${name}(?:的)?(?:字词|词语|成语|汉字|字|词|句子|句|部分|内容)?\\s*(?:分别是|分别为|是|为|指|即)\\s*\\S+`,
+      'u',
+    ).test(text)
   );
 }
 
@@ -169,7 +175,8 @@ export function prepareAdmissionQuestionText(
           ? 'candidate_present'
           : 'missing_referenced';
       markings.push({ part_id: part.part_id, marking: mark.kind, status });
-      if (status === 'missing_referenced')
+      // Coordinates or labels may already be fully stated in prose; only adjudication can decide that.
+      if (status === 'missing_referenced' && mark.kind !== 'figure_annotation')
         repairs.push({
           part_id: part.part_id,
           repair: {
