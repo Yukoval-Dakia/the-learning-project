@@ -17,10 +17,18 @@ import {
 // quiz_verify leaves question_pool_gap notes. Hints, not facts; additive only.
 import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
 import { type ReviewPlanNumbers, computeReviewPlanNumbers } from '@/core/daily-review-plan';
+import { learnerLocalDay } from '@/core/learner-day';
 import { CoachPlanDraft, type CoachPlanDraftT, composeTodayPlan } from '@/core/schema/coach';
 // Derived sub-skill weak points (YUK-1582): read-only landing points with first-hand
 // evidence; attention pressure for knowledge_focus, never scheduling state.
 import type { ActionableWeakPointDerivationT } from '@/core/schema/weak-point';
+import {
+  learnerDayWeekday,
+  learnerDayWithWeekday,
+  steeringDaysLeft,
+  steeringStartsInDays,
+  steeringWindowCoversToday,
+} from '@/core/steering';
 import type { Db } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
 // Per-(kind, relation) accept-learned reason digest for the Coach input, scoped to the
@@ -51,6 +59,10 @@ export const COACH_MAX_PROPOSALS = COACH_CONTEXT_BUDGET.maxProposals as number;
 // Goal-strand guidance appended to the Coach objective (additive only).
 const COACH_GOAL_STRAND_GUIDANCE =
   ' If active_goals are provided, additionally add a goal-oriented strand: set TodayPlan.goal_ids to the goals you address and add goal_strand items (each tagged serves_goal_id + knowledge_ids). Distribute attention across active goals (round-robin + weakest-scope first). CRITICAL: the goal strand is purely additive direction — it must NOT suppress or replace the FSRS-due review backbone, hide other capture tasks, preempt the daily review quota, or change any due times. If there are no active goals, omit the goal strand.';
+// YUK-1770 steering clause: in-window learner-said instructions weight attention by
+// exam-day nearness (a fact the input carries); still additive only.
+const COACH_STEERING_GUIDANCE =
+  " When an active goal carries `steering`, it is the learner's own said instruction (verbatim `learner_words` + restatement `instruction_md`), effective inside `window`. Weight knowledge_focus toward its scope with pressure that grows as days_left shrinks; state in daily_focus which instruction you weighted. scope_unresolved lists scope parts that could not be mapped to knowledge points — mention them as text, never invent ids. excluded_subject_ids means those subjects' due reviews are deferred inside the window by the system (not deleted; they re-enter by forgetting risk): state that cost once, in this plan's daily_focus, without re-listing every item. A steering goal never removes the review backbone for everything else. If the learner revoked the instruction in conversation, a newer steering event supersedes it — trust the newest.";
 // Reason-feedback clause: empty proposal_feedback (cold start) makes it inert.
 const COACH_PROPOSAL_FEEDBACK_GUIDANCE =
   ' When proposal_feedback is present, each entry is a (kind, relation) cell carrying top_dismiss_reasons (why the user dismissed) and, for knowledge_edge cells, top_rubric_gates (why the rubric rejected) — read them as the specific failure mode and avoid repeating it; additive only, never suppress or replace the review backbone or signal-driven proposals (ND-5). Only propose a knowledge_edge when a concrete mistake pattern shows two knowledge points are confused / ordered / applied together AND that relation has not been routinely dismissed; otherwise skip the edge. When proposal_feedback is empty, behave exactly as before.';
@@ -73,7 +85,7 @@ const COACH_BRIEF_GUIDANCE =
 // additive, inert when the list is empty.
 const COACH_WEAK_POINTS_GUIDANCE =
   ' When weak_points is present, each entry is a system-derived actionable weak point at sub-skill granularity with its evidence refs and a training_destination (concept_review / retrieval_practice → concept material or no-hint retrieval drills; procedural_practice / discrimination_probe → targeted step practice or a discriminating probe). Use them to bias knowledge_focus ranking and intent_tags toward the strongest cells, and phrase daily_focus around the named targets. Treat them as derived reads, not ground truth: never invent additional weak points, never attach percentages to them, and never let them suppress or replace the FSRS-due review backbone. When weak_points is empty, behave exactly as before.';
-export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
+export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan draft for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_STEERING_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_WEAK_POINTS_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
 
 /** How many derived weak points ride the Coach input (bounded for prompt budget). */
 const COACH_MAX_WEAK_POINTS = 8;
@@ -142,6 +154,7 @@ function buildCoachInput(
   return {
     run_kind: 'daily',
     now: now.toISOString(),
+    today: learnerDayWithWeekday(learnerLocalDay(now)),
     pending_proposals_before: beforeRows.filter((row) => row.status === 'pending').length,
     objective,
     // Ordered by sequence_hint then created_at; empty means the model omits the strand.
@@ -151,6 +164,25 @@ function buildCoachInput(
       subject_id: g.subject_id,
       scope_knowledge_ids: g.scope_knowledge_ids,
       sequence_hint: g.sequence_hint,
+      ...(g.steering !== null && steeringWindowCoversToday(g, learnerLocalDay(now))
+        ? {
+            steering: {
+              learner_words: g.steering.learner_words,
+              instruction_md: g.steering.instruction_md,
+              scope_unresolved: g.steering.scope_unresolved,
+              excluded_subject_ids: g.steering.excluded_subject_ids,
+              excluded_knowledge_ids: g.steering.excluded_knowledge_ids,
+              window: {
+                from: g.effective_from,
+                until: g.effective_until,
+                until_weekday:
+                  g.effective_until !== null ? learnerDayWeekday(g.effective_until) : null,
+                days_left: steeringDaysLeft(g.effective_until, learnerLocalDay(now)),
+                starts_in_days: steeringStartsInDays(g.effective_from, learnerLocalDay(now)),
+              },
+            },
+          }
+        : {}),
     })),
     // Attention pressure only; empty means the brief derives from due/weak signals.
     active_items: activeItems.map((it) => ({

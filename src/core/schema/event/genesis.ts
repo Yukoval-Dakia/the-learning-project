@@ -7,6 +7,7 @@ import {
   NoteVerificationResult,
 } from '../business';
 import { QuestionDraftDocument } from '../question-draft';
+import { SteeringGoalData } from '../steering';
 import { FigureRef, StructuredQuestion } from '../structured_question';
 
 // Genesis backfill seed. Rows that existed before the projection's event log have
@@ -95,6 +96,11 @@ export const GoalRowSnapshot = z
     // OPTIONAL+nullable for the same legacy-payload reason as scope_mode: absent ⇒
     // the fold materializes NULL. Curriculum constraint only, never θ̂ input.
     declared_stage: DeclaredStage.nullable().optional(),
+    // YUK-1770 steering — optional+nullable so historical genesis payloads keep
+    // parsing; absent ⇒ NULL (ordinary goals carry no window/payload).
+    effective_from: z.string().nullable().optional(),
+    effective_until: z.string().nullable().optional(),
+    steering: SteeringGoalData.nullable().optional(),
     status: z.enum(['active', 'dormant', 'done']),
     source: z.string(), // provenance, set-once
     source_ref: z.string().nullable(), // nullable column (the propose event id)

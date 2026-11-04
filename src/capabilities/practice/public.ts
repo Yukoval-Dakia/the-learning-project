@@ -156,6 +156,21 @@ export {
   scheduleReview,
   updatePracticeStreamItem,
 } from './scheduling/public';
+
+/**
+ * YUK-1770 — installs practice's today-recompose operation behind the kernel
+ * steering port. Agency's steering subscription calls the port and never
+ * imports practice (cross-capability value edges are decrease-only). Defined
+ * inline here so the barrel adds no new pass-through site.
+ */
+export async function installTodayPracticeRecompose(): Promise<void> {
+  const [{ installTodayPracticeRecompose: install }, { recomposePracticeStream }] =
+    await Promise.all([
+      import('@/kernel/steering-recompose'),
+      import('./scheduling/server/stream-operations'),
+    ]);
+  install((db) => recomposePracticeStream(db, {}));
+}
 // practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';

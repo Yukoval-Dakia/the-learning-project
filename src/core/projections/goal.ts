@@ -105,6 +105,10 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
         // always materialize so parity compares a value on both sides.
         scope_mode: seed.data.scope_mode ?? 'explicit',
         declared_stage: seed.data.declared_stage ?? null,
+        // YUK-1770 — same legacy-payload defaulting for the steering columns.
+        effective_from: seed.data.effective_from ?? null,
+        effective_until: seed.data.effective_until ?? null,
+        steering: seed.data.steering ?? null,
       };
       continue;
     }
@@ -209,6 +213,12 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
         ...(patch.sequence_hint !== undefined ? { sequence_hint: patch.sequence_hint } : {}),
         // An explicit null clears the learner-declared stage; retract does not touch it.
         ...(patch.declared_stage !== undefined ? { declared_stage: patch.declared_stage } : {}),
+        // YUK-1770 steering window/payload revisions; explicit null clears.
+        ...(patch.effective_from !== undefined ? { effective_from: patch.effective_from } : {}),
+        ...(patch.effective_until !== undefined ? { effective_until: patch.effective_until } : {}),
+        ...(patch.steering !== undefined
+          ? { steering: patch.steering ? { ...patch.steering } : null }
+          : {}),
         updated_at: fe.created_at,
         version: row.version + 1,
       };

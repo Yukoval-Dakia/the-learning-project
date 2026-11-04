@@ -128,6 +128,9 @@ export const PROPOSE_WRITE_TOOLS = [
   // YUK-1407 — 判分纠错提案（可逆，人审 accept 才经 appeal/rejudge/CAS+replay
   // 生效）。授予发现疑似误判的 agent 面：copilot / dreaming / coach。
   'propose_grading_correction',
+  // YUK-1770 — learner-said steering 直写（D3 裁决：无 proposal，原话即事实；
+  // 唯一硬机检是原话逐字校验，在工具内做）。授权面：仅 copilot 两面。
+  'record_steering',
 ] as const;
 
 // YUK-949 — model-authored presentation intent. This is neither a data read nor
@@ -256,6 +259,9 @@ export const COPILOT_TOOLS = [
   'write_agent_note',
   // YUK-1407 — 判分纠错提案（对话中发现疑似误判时可落地；accept 仍人审）。
   'propose_grading_correction',
+  // YUK-1770 — 学习者口述 steering 直写（考试日期/优先级/「这周别排物理」）。
+  // 唯一非 propose 的学习者数据直写：原话即事实（D3），确认句只能基于工具结果。
+  'record_steering',
 ] as const satisfies readonly DomainToolName[];
 
 // YUK-1553 / YUK-1559 — Dreaming's grant is now an EXPLICIT list: it must not

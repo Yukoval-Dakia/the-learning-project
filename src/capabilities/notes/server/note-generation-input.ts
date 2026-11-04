@@ -5,6 +5,8 @@ import { eq, inArray } from 'drizzle-orm';
 
 import type { NoteGenerationReference } from '@/capabilities/notes/server/note-generation-references';
 import { loadNoteGenerationReferences } from '@/capabilities/notes/server/note-generation-references';
+import { learnerLocalDay } from '@/core/learner-day';
+import { learnerDayWithWeekday } from '@/core/steering';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 
@@ -22,6 +24,8 @@ export interface NoteGenerateTaskInput {
   artifact_type: string;
   atomic_title: string;
   title: string;
+  /** YUK-1770 — learner-local today 'YYYY-MM-DD（周X）'; anchors relative dates. */
+  today: string;
   one_line_intent: string | null;
   knowledge_node: { id: string; name: string; domain: string | null } | null;
   knowledge_nodes: Array<{ id: string; name: string; domain: string | null }>;
@@ -33,6 +37,7 @@ export interface NoteGenerateTaskInput {
 export async function loadNoteGenerateTaskInput(
   db: Db,
   row: NoteGenerateSourceRow,
+  now: Date = new Date(),
 ): Promise<{ input: NoteGenerateTaskInput; referenceArtifacts: NoteGenerationReference[] }> {
   let parentHub: { title: string; attrs: unknown } | null = null;
   if (row.parent_artifact_id) {
@@ -68,6 +73,7 @@ export async function loadNoteGenerateTaskInput(
     artifact_type: row.type,
     atomic_title: row.title,
     title: row.title,
+    today: learnerDayWithWeekday(learnerLocalDay(now)),
     one_line_intent: oneLine,
     knowledge_node: kNode,
     knowledge_nodes: kNodes,

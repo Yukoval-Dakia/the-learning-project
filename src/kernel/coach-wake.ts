@@ -17,6 +17,25 @@ const COACH_WAKE_WINDOW_SECONDS = 24 * 60 * 60;
 const COACH_TRIGGER_ACTION = 'experimental:trigger_coach_scan';
 
 /**
+ * YUK-1770 (D5) — steering change wake: enqueue coach_daily NOW, bypassing the
+ * 24h return window. Keyed per (goal, version-bucket) with a short singleton so
+ * a burst of steering writes collapses into one same-day re-plan. Returns the
+ * job id, or null when pg-boss deduped it away.
+ */
+export async function enqueueCoachForSteering(
+  boss: { send(name: string, data: object, options?: object): Promise<string | null> },
+  goalId: string,
+  changedAtMs: number,
+): Promise<string | null> {
+  const bucket = Math.floor(changedAtMs / (10 * 60 * 1000)); // 10-min dedupe bucket
+  return boss.send(
+    COACH_DAILY_QUEUE,
+    { reason: 'steering_changed', goal_id: goalId },
+    { singletonKey: `coach.steering.${goalId}.${bucket}`, singletonSeconds: 600 },
+  );
+}
+
+/**
  * Enqueue coach_daily when its plan is stale: no coach run in the last window and
  * derivation-allowed learning activity since the last one. Returns whether it sent.
  */

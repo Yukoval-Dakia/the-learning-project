@@ -122,6 +122,7 @@ export async function registerCapabilityJobs(
   const practice = await import('@/capabilities/practice/public');
   await practice.installPracticeHostOperations();
   await practice.installDailyReviewPlanFacts();
+  await practice.installTodayPracticeRecompose();
   await practice.installInterventionAuthorStages();
   await practice.installInterventionDiagnosticLeaves();
   await practice.installModelAdmissionPins();

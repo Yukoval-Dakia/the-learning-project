@@ -14,7 +14,8 @@
 // 严守只读契约（item-更新半边锁死 G4）：本模块**永不写** item_calibration / mastery_state。
 // b 锚只读 track='hard'（软轨 b 永不进 p(L)/调度，ADR-0035）。
 
-import { and, eq, isNotNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { learnerLocalDay } from '@/core/learner-day';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import {
   EARLY_KLP_ENABLED,
@@ -24,9 +25,14 @@ import {
   klpScore,
   mfiScore,
 } from '@/core/selection-signals';
+import { steeringWindowCoversToday } from '@/core/steering';
 import { THETA_GRID_ENABLED, type ThetaGridPosterior, klpScoreFromGrid } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
-import { mistake_variant, question } from '@/db/schema';
+import { knowledge, knowledge_edge, mistake_variant, question } from '@/db/schema';
+import {
+  type ActiveGoal,
+  listActiveGoalsWithResolvedScope,
+} from '@/kernel/read-models/active-goal-scope';
 import {
   type MasteryStateRow,
   effectiveThetaForKcBatch,
@@ -41,6 +47,108 @@ import { MISCONCEPTION_RECURRENCE_ENABLED } from '../../server/selection-constan
 import { rotationClassForKind } from './variant-rotation';
 
 type DbLike = Db | Tx;
+
+// ── YUK-1770 examRelevance：选题信号的第一个 cheap reader ────────────────────
+//
+// In-window steering goals (考试日期/优先级) turn their resolved scope into
+// exam pressure: in-scope (incl. active descendants) = 1, direct prerequisite
+// neighbour = 0.5, otherwise undefined (no steering → undefined → prompt rows
+// stay `exam_relevance=n/a`, byte-identical to the pre-steering behavior).
+
+export interface SteeringExamRelevanceSets {
+  scope: ReadonlySet<string>;
+  prerequisite: ReadonlySet<string>;
+}
+
+const EMPTY_EXAM_RELEVANCE: SteeringExamRelevanceSets = {
+  scope: new Set(),
+  prerequisite: new Set(),
+};
+
+/** Per-candidate pure read over the steering sets (in scope → 1, prerequisite → 0.5). */
+export function examRelevanceForKnowledgeIds(
+  sets: SteeringExamRelevanceSets,
+  knowledgeIds: readonly string[],
+): number | undefined {
+  if (sets.scope.size === 0 && sets.prerequisite.size === 0) return undefined;
+  let prerequisite = false;
+  for (const id of knowledgeIds) {
+    if (sets.scope.has(id)) return 1;
+    if (sets.prerequisite.has(id)) prerequisite = true;
+  }
+  return prerequisite ? 0.5 : undefined;
+}
+
+async function loadSteeringExamRelevanceSets(
+  db: DbLike,
+  now: Date,
+): Promise<SteeringExamRelevanceSets> {
+  const goals = await listActiveGoalsWithResolvedScope(db as Db);
+  const today = learnerLocalDay(now);
+  const scoped = goals.filter(
+    (g): g is ActiveGoal & { steering: NonNullable<ActiveGoal['steering']> } =>
+      g.steering !== null && steeringWindowCoversToday(g, today),
+  );
+  if (scoped.length === 0) return EMPTY_EXAM_RELEVANCE;
+
+  const rows = await db
+    .select({ id: knowledge.id, parent_id: knowledge.parent_id })
+    .from(knowledge)
+    .where(isNull(knowledge.archived_at));
+  const childrenOf = new Map<string, string[]>();
+  for (const row of rows) {
+    if (row.parent_id === null) continue;
+    const list = childrenOf.get(row.parent_id) ?? [];
+    list.push(row.id);
+    childrenOf.set(row.parent_id, list);
+  }
+  // Scope closure: stated KCs + their active descendants (an exam chapter drags
+  // its subtopics in).
+  const scope = new Set<string>();
+  const queue: string[] = [];
+  for (const g of scoped) {
+    for (const id of g.scope_knowledge_ids) {
+      if (!scope.has(id)) {
+        scope.add(id);
+        queue.push(id);
+      }
+    }
+  }
+  while (queue.length > 0) {
+    const id = queue.pop() as string;
+    for (const child of childrenOf.get(id) ?? []) {
+      if (!scope.has(child)) {
+        scope.add(child);
+        queue.push(child);
+      }
+    }
+  }
+
+  // Direct prerequisite neighbours of the closure: either edge endpoint in the
+  // closure pulls the other endpoint in at 0.5.
+  const prerequisite = new Set<string>();
+  const edgeRows = await db
+    .select({
+      from_knowledge_id: knowledge_edge.from_knowledge_id,
+      to_knowledge_id: knowledge_edge.to_knowledge_id,
+    })
+    .from(knowledge_edge)
+    .where(
+      and(
+        eq(knowledge_edge.relation_type, 'prerequisite'),
+        isNull(knowledge_edge.archived_at),
+        or(
+          inArray(knowledge_edge.from_knowledge_id, [...scope]),
+          inArray(knowledge_edge.to_knowledge_id, [...scope]),
+        ),
+      ),
+    );
+  for (const edge of edgeRows) {
+    if (scope.has(edge.from_knowledge_id)) prerequisite.add(edge.to_knowledge_id);
+    if (scope.has(edge.to_knowledge_id)) prerequisite.add(edge.from_knowledge_id);
+  }
+  return { scope, prerequisite };
+}
 
 /**
  * 候选输入。一条候选 = 一题或一卷。
@@ -341,6 +449,7 @@ async function collectQuestionSignal(
   effectiveThetaByKc: Map<string, number>,
   difficultyRead: CandidateDifficultyRead,
   misconceptionRecurrence?: number,
+  examRelevance?: number,
 ): Promise<CollectedSignal> {
   const knowledgeIds = cand.knowledgeIds ?? [];
   const { thetaHat, thetaPrecision, evidenceCount, gridPosterior, thetaGlobal } =
@@ -420,9 +529,10 @@ async function collectQuestionSignal(
     // ─────────────────────────────────────────────────────────────────────────
     // §9.2 / ADR-0042 编排档2 first-class 信号扩充（选题不止 MFI 中心）。
     // NEVER zero-fill——undefined = 「无数据」，0 = 「测得为零」，评分层据此 MFI-only 退化。
-    //   - examRelevance（考纲/考点权重）：仍无 cheap reader——SubjectProfileSchema
-    //     （profile-schema.ts）无 examWeight/syllabus 字段；无考纲映射数据源。引入 subject
-    //     profile 考纲权重表后，在此据 candidate 的 knowledgeIds → 考点权重映射计算。
+    //   - examRelevance（考纲/考点权重）：YUK-1770 第一个 cheap reader——在窗口内的
+    //     steering goal（考试/优先级）把解析后的 scope 变成考试压力：in-scope（含活
+    //     后代）=1，直接 prerequisite 邻居=0.5，其余 undefined（无 steering → undefined，
+    //     prompt 行保持 exam_relevance=n/a，与既有行为逐位一致）。
     //   - misconceptionRecurrence（错误观念复发度）：**已填**（P2 D2 / A8）。flag-gated
     //     dark-ship（MISCONCEPTION_RECURRENCE_ENABLED，默认 false → undefined → orchestrator
     //     prompt byte-identical）。ON 时 batchAggregateMisconceptionRecurrence 算 per-learner
@@ -432,7 +542,7 @@ async function collectQuestionSignal(
     // 都不存在；等真实 reader + red-capable tests 一起落地后再恢复（YUK-792）。
     // 不为剩余信号自建子系统/查询（缺数据留 undefined + scope discipline）。
     // ─────────────────────────────────────────────────────────────────────────
-    examRelevance: undefined,
+    examRelevance,
     misconceptionRecurrence,
   };
 }
@@ -466,6 +576,9 @@ export async function collectCandidateSignals(
   const questionCands = candidates.filter(
     (c): c is CandidateInput & { kind: QuestionKindT } => c.refKind === 'question',
   );
+  // YUK-1770 — one steering scope read for the whole batch; no in-window steering
+  // goal → the empty sets keep every examRelevance undefined (bit-identical).
+  const steeringSets = await loadSteeringExamRelevanceSets(db, new Date());
   const difficultyRead = await prepareCandidateDifficultyRead(
     db,
     questionCands.map((c) => ({
@@ -515,6 +628,7 @@ export async function collectCandidateSignals(
           effectiveThetaByKc,
           difficultyRead,
           recurrenceByQuestion[questionIndex],
+          examRelevanceForKnowledgeIds(steeringSets, cand.knowledgeIds ?? []),
         ),
       );
       questionIndex += 1;

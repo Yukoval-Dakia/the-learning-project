@@ -33,6 +33,7 @@ import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/ca
 import { type FailureAttempt, getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
+import { loadSteeringDeferredKnowledgeIds } from '@/kernel/read-models/steering-deferral';
 // T-CS / — cross-subject scheduling v1 (, line 242). The due
 // pool is round-robin balanced across the learning-subjects that have due items
 // so one busy subject can't dominate the page. batchResolveSubjectIds walks
@@ -296,13 +297,28 @@ export async function queryReviewDue(
     (stateRow) => !nonKcDueIds.has(stateRow.knowledge_id),
   );
 
+  // YUK-1770 D4 — subtractive steering deferral (「这周别排物理」). In-window
+  // excluded KCs leave the candidate pool entirely: their FSRS rows, due_at and
+  // state are untouched (deferral, not deletion); when the window closes or the
+  // learner revokes, the ordinary ordering serves them again by forgetting risk.
+  // Question-shaped rows defer only when EVERY knowledge id is excluded — a
+  // cross-subject item stays (its other subject still owns it).
+  const deferredBySteering = await loadSteeringDeferredKnowledgeIds(activeDb, now);
+  const isSteeringDeferredRow = (knowledgeIds: readonly string[]): boolean =>
+    deferredBySteering.size > 0 &&
+    knowledgeIds.length > 0 &&
+    knowledgeIds.every((kid) => deferredBySteering.has(kid));
+  const schedulingKnowledgeRows = rawKnowledgeStateRows.filter(
+    (stateRow) => !deferredBySteering.has(stateRow.knowledge_id),
+  );
+
   // bulk-prefetch every probe-selection DB input for the whole due page in THREE
   // reads (was up to ~3 serial round-trips PER due KC — the /api/review/due N+1). The per-KC
   // selection below is then pure in-memory over the prefetch, and the shared usedDueQuestionIds
   // set is threaded through the SAME sequential order → byte-identical probe picks.
   const knowledgeStateRows = (
     await Promise.all(
-      rawKnowledgeStateRows.map((row) =>
+      schedulingKnowledgeRows.map((row) =>
         resolveSchedulingProjection(activeDb, 'knowledge', row.knowledge_id, row, now),
       ),
     )
@@ -388,6 +404,7 @@ export async function queryReviewDue(
   );
   for (const row of legacyQuestionStateRows
     .filter((row) => admittedLegacyIds.has(row.question_id))
+    .filter((row) => !isSteeringDeferredRow(row.knowledge_ids ?? []))
     .slice(0, candidateWindow)) {
     if (usedDueQuestionIds.has(row.question_id)) continue;
     usedDueQuestionIds.add(row.question_id);
@@ -502,6 +519,7 @@ export async function queryReviewDue(
 
     const trulyNew = newQuestionIds.filter((id) => {
       if (reviewed.has(id)) return false;
+      if (isSteeringDeferredRow([...(knowledgeIdsByQid.get(id) ?? [])])) return false;
       const knowledgeIds = knowledgeIdsByQid.get(id);
       if (knowledgeIds) {
         for (const kid of knowledgeIds) {

@@ -5,6 +5,7 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
+  date,
   doublePrecision,
   foreignKey,
   index,
@@ -25,6 +26,7 @@ import { event } from './events';
 import { question } from './question';
 
 type FsrsStateT = import('@/core/schema/scheduling-state').SchedulingState;
+type SteeringGoalDataT = import('@/core/schema/steering').SteeringGoalDataT;
 type JsonObject = Record<string, unknown>;
 
 // FSRS state projection per review subject. YUK-203 P3 schedules knowledge-
@@ -358,6 +360,14 @@ export const goal = pgTable(
     declared_stage: text('declared_stage', {
       enum: ['middle_school', 'high_school', 'university', 'custom'],
     }),
+    // YUK-1770 steering — learner-said instruction window (dates are learner-local
+    // Asia/Shanghai calendar days; pure helpers in core/steering.ts). Only steering
+    // goals (source='learner_said') carry these; NULL on every ordinary goal.
+    effective_from: date('effective_from'),
+    effective_until: date('effective_until'),
+    // The steering payload (verbatim words + restatement + unresolved scope + D4
+    // exclusions + free metadata); see core/schema/steering.ts. NULL = not steering.
+    steering: jsonb('steering').$type<SteeringGoalDataT>(),
     // 'active' | 'dormant' | 'done'
     status: text('status', { enum: ['active', 'dormant', 'done'] })
       .notNull()
