@@ -205,15 +205,7 @@ export async function runPlacementAdvanceTx(
     );
     if (next === null && answeredCount > 0) {
       const supply = await readPlacementStarterOutcomes(tx, sessionId);
-      if (
-        supply.length > 0 &&
-        supply.every(
-          (item) =>
-            item.state === 'satisfied' ||
-            item.state === 'exhausted' ||
-            item.progress?.refill_ended === true,
-        )
-      ) {
+      if (supply.length > 0 && supply.every(refillCannotAddQuestions)) {
         return {
           selection: {
             done: true as const,
@@ -303,21 +295,26 @@ export async function recordPlacementNoItem(
   });
 }
 
+/** A claim can end while submitted candidates are still being admitted, and those may
+ * yet be served; ending placement then would strand them. */
+function refillCannotAddQuestions(item: PlacementStarterOutcome): boolean {
+  const claimEnded =
+    item.state === 'satisfied' ||
+    item.state === 'exhausted' ||
+    item.progress?.refill_ended === true;
+  return claimEnded && (item.progress?.pending_count ?? 0) === 0;
+}
+
 /** The typed alternative attached post-tx when a selection yields no item. */
 export function placementNoItem(
   starterSupply: readonly PlacementStarterOutcome[],
 ): z.infer<typeof PlacementNoItemSchema> {
   return {
     reason: 'no_servable_item',
-    supply_ended:
-      starterSupply.length > 0 &&
-      starterSupply.every(
-        (item) =>
-          item.state === 'satisfied' ||
-          item.state === 'exhausted' ||
-          item.progress?.refill_ended === true,
-      ),
-    next_action: starterSupply.some((item) => item.state === 'pending')
+    supply_ended: starterSupply.length > 0 && starterSupply.every(refillCannotAddQuestions),
+    next_action: starterSupply.some(
+      (item) => item.state === 'pending' || (item.progress?.pending_count ?? 0) > 0,
+    )
       ? 'wait_for_admission'
       : 'continue_other_activities',
     preparing_subjects: starterSupply

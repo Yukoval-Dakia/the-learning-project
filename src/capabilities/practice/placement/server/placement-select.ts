@@ -7,7 +7,7 @@
 // walking along prereq edges is not implemented yet. Returns null when no eligible question
 // exists so the caller can source starter questions.
 
-import { and, notInArray, sql } from 'drizzle-orm';
+import { and, isNull, notInArray, sql } from 'drizzle-orm';
 import type { SelectionCandidateSignal } from '@/core/selection-signals';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
@@ -247,6 +247,13 @@ export async function countPlacementInventory(
         )})`,
         notDraftPredicate(question.draft_status),
         questionSuspendedPredicate(question),
+        isNull(sql`${question.metadata}->>'archived_at'`),
+        // Same allowed-uses rule as the starter claim's eligible count.
+        sql`(
+          jsonb_typeof(${question.metadata}->'allowed_uses') IS DISTINCT FROM 'array'
+          OR jsonb_array_length(${question.metadata}->'allowed_uses') = 0
+          OR (${question.metadata}->'allowed_uses') ?& array['placement','diagnostic']
+        )`,
       ),
     );
   return (

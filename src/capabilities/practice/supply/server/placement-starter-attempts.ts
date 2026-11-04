@@ -92,12 +92,8 @@ export function placementDeliveryMetadata(input: { retryCount: unknown; retryLim
 export function placementFulfillmentDisposition(
   eligibleCount: number,
 ): 'satisfied' | 'underfilled' {
-  if (eligibleCount > PLACEMENT_STARTER_REQUIRED_COUNT) {
-    throw new PlacementStarterAdmissionError(
-      `placement starter invariant exceeded exact count: ${eligibleCount}/${PLACEMENT_STARTER_REQUIRED_COUNT}`,
-    );
-  }
-  return eligibleCount === PLACEMENT_STARTER_REQUIRED_COUNT ? 'satisfied' : 'underfilled';
+  // Late admissions from an earlier refill round can push the count past the target.
+  return eligibleCount >= PLACEMENT_STARTER_REQUIRED_COUNT ? 'satisfied' : 'underfilled';
 }
 
 export interface PlacementAttemptAuthority {
