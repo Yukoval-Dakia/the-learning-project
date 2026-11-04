@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { helpCost } from '@/ai/help-latency';
-import { type HelpExplanationEvidence, replayHelpExplanation } from '@/ai/help-reply-grounding';
+import { type HelpExplanationEvidence, sealHelpExplanation } from '@/ai/help-reply-grounding';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 
@@ -32,21 +32,19 @@ export async function loadHelpExplanationEvidence(
   };
 }
 
-export async function groundHintExplanation(
+export async function sealHintExplanation(
   db: Db,
   prompt: string,
   explanation: string,
-  hintIndex: number,
   ran: {
     task_run_id?: string;
     cost_basis?: 'reported' | 'estimated' | 'unknown';
     cost_usd?: number;
   },
 ) {
-  return replayHelpExplanation({
+  return sealHelpExplanation({
     prompt,
     explanation,
-    hintIndex,
     evidence: await loadHelpExplanationEvidence(db, ran),
   });
 }
