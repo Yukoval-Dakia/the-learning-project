@@ -108,7 +108,7 @@ export const EvidenceAgeSchema = z.discriminatedUnion('kind', [
 ]);
 export type EvidenceAge = z.infer<typeof EvidenceAgeSchema>;
 
-// YUK-1778 — unified evidence timing derived at read time, replacing the
+// unified evidence timing derived at read time, replacing the
 // deprecated knowledge_mastery view's last_evidence_at / last_active_at
 // columns. The practice clock (preferred) is the mastery_state settlement
 // time; the any-event clock is the latest event touching the node, derived

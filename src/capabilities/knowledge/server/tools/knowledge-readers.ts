@@ -129,7 +129,7 @@ function recentFailureCutoff(now = new Date()): Date {
   return new Date(now.getTime() - RECENT_FAILURE_WINDOW_MS);
 }
 
-/** Mastery band plus the contract's unified evidence clocks (YUK-1778). */
+/** Mastery band plus the contract's unified evidence clocks. */
 type MasteryMapEntry = {
   mastery: number | null;
   // Practice clock: the mastery_state settlement time, same field the
@@ -143,7 +143,7 @@ type MasteryMapEntry = {
 async function loadMasteryMap(db: Db, rows: KnowledgeRow[]): Promise<Map<string, MasteryMapEntry>> {
   if (rows.length === 0) return new Map();
   // One judgment-contract read owns mastery and both evidence clocks; the
-  // deprecated knowledge_mastery view is no longer read (YUK-1778).
+  // deprecated knowledge_mastery view is no longer read.
   const batch = await readLearnerJudgments(db, {
     knowledge_ids: rows.map((row) => row.id),
     context: 'any',
@@ -383,7 +383,7 @@ const QueryKnowledgeOutputSchema = z.object({
         .object({
           recent_failure_count_30d: z.number().int(),
           last_touched_at: z.string().nullable(),
-          // YUK-1778 — unified practice clock, the same evidence_timing field the
+          // unified practice clock, the same evidence_timing field the
           // knowledge page and question detail render.
           last_evidence_at: z.string().nullable(),
           mastery_estimate: z.number().nullable(),

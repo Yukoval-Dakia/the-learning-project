@@ -27,7 +27,7 @@ type ProvenanceT = z.infer<typeof Provenance>;
 // Phase 1c.1 Step 1.2 (Lane A): DROPped base_mastery / ai_delta_mastery / last_active_at
 // per ADR-0012 — mastery reads come from the mastery_state projection; the
 // deprecated knowledge_mastery view stays declared (learner-state.ts) with zero
-// readers (YUK-1778) until the migration lane drops it.
+// readers until the migration lane drops it.
 export const knowledge = pgTable('knowledge', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),

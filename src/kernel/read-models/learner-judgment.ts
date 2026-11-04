@@ -234,7 +234,7 @@ function judgment(
   scheduling: ComponentRead<SchedulingReviewFact>,
   durations: ReadonlyMap<string, number | null> | null,
   nonKcIds: ReadonlySet<string> = new Set(),
-  // YUK-1778 — any-event activity clock from the event spine; null when the
+  // any-event activity clock from the event spine; null when the
   // derivation found nothing (or was not run for this read path).
   activity: Date | null = null,
 ): LearnerJudgment {
@@ -537,13 +537,14 @@ export async function readLearnerJudgments(
       }
     }
     const retention = retentionRead(scheduling);
-    // YUK-1778 — the any-event activity clock rides the same snapshot in its
+    // the any-event activity clock rides the same snapshot in its
     // own savepoint; a failed derivation degrades to per-item null (display
     // clock, fail-soft) instead of aborting the ability/retention readings.
     let activity: ReadonlyMap<string, Date> = new Map();
     try {
       activity = await tx.transaction((part) => lastKnowledgeActivityAt(part, ids));
-    } catch {
+    } catch (err) {
+      console.warn('[learner-judgment] activity clock derivation failed', err);
       activity = new Map();
     }
     batch.items = ids.map((id) =>

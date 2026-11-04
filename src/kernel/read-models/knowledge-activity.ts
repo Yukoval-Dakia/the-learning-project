@@ -1,4 +1,4 @@
-// YUK-1778 — the any-event knowledge activity clock, derived from the event
+// the any-event knowledge activity clock, derived from the event
 // spine. Single owner of the semantics the deprecated knowledge_mastery view's
 // `activity` CTE computed (max created_at over events touching the node), so
 // migrating view readers do not fork the formula. Read-time derivation only:

@@ -1,7 +1,7 @@
 // Complete knowledge-graph reads for notes hub curation and existing consumers.
 // loadTreeSnapshot preserves the original tree read shape: mastery from the
 // mastery_state projection, the any-event activity clock from the event spine
-// (YUK-1778 — the deprecated knowledge_mastery view is no longer read),
+// (the deprecated knowledge_mastery view is no longer read),
 // effective-domain walk, optional subject filter, 5000-row cap with a
 // truncation warn. listKnowledgeMeshEdges preserves the default listKnowledgeEdges
 // row set, ordering, 500-edge truncation, and cursor encoding.
@@ -62,7 +62,7 @@ export function warnIfTreeSnapshotTruncated(
 
 export async function loadTreeSnapshot(db: Db, subject?: string): Promise<KnowledgeNode[]> {
   // Mastery comes from the mastery_state projection; the any-event activity
-  // clock derives from the event spine (YUK-1778) — the deprecated
+  // clock derives from the event spine — the deprecated
   // knowledge_mastery view is no longer read.
   const baseRows = await db
     .select({
