@@ -17,10 +17,10 @@
 // loopback DATABASE_URL wins; @/db/client then targets loom_demo.
 import './load-env';
 
+import { runCurator } from '@/capabilities/agency/context/curator';
 // YUK-1064 dev-only exception: this sandbox demo explicitly orchestrates jobs.
 // Keep these three concrete runners out of agency/public; production dispatch uses manifests.
 import { runCoach } from '@/capabilities/agency/jobs/coach_daily';
-import { runCurator } from '@/capabilities/agency/context/curator';
 import { runGoalScopeProposeNightly } from '@/capabilities/agency/jobs/goal_scope_propose_nightly';
 import { installAgencyHostOperations } from '@/capabilities/agency/public';
 import { loadSubjectBriefEvents } from '@/capabilities/agency/server/memory/active-subjects';
