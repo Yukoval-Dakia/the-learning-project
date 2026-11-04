@@ -40,6 +40,10 @@ function renderDelta(delta: DeltaSection): string {
   }
   if (delta.lastActivityAt) tail.push(`最近活动 ${shanghaiLabel(delta.lastActivityAt)}`);
   lines.push(tail.join('；'));
+  for (const item of delta.dueItems) {
+    const kcs = item.knowledgeNames.length > 0 ? `（${item.knowledgeNames.join('、')}）` : '';
+    lines.push(`· ${item.stem}${kcs}`);
+  }
   return lines.join('\n');
 }
 
