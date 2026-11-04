@@ -5,6 +5,7 @@ import { piDomainMount } from '@/ai/pi-tool-mount';
 import { getConfig } from '@/core/config/store';
 import type { Db, Tx } from '@/db/client';
 import { event, question_revision } from '@/db/schema';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 import { QUESTION_PREPARER_TOOLS, resolveMcpAllowedTools } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
 import { currentTaskSpendScope, withTaskSpendScope } from '@/server/ai/task-spend-scope';
@@ -114,26 +115,15 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
       const authorRuns = history.filter(
         (row) => row.outcome === 'finished' && row.subject_id === data.ticket.demand_id,
       );
-      const authorCalls = (
-        await Promise.all(
-          authorRuns.map((row) =>
-            preparerCalls(db, preparerTerminal.parse(row.payload.terminal).task_run_id),
-          ),
-        )
-      ).flat();
-      if (
-        !authorCalls.some(
-          (call) =>
-            call.tool_name.endsWith('submit_question') &&
-            call.output_json?.question_id === verdict.question_id &&
-            call.output_json?.revision_id === verdict.revision_id &&
-            (call.output_json?.published === true ||
-              ['published', 'noop', 'admission_updated'].includes(
-                String(call.output_json?.publish_status),
-              )),
-        )
-      )
-        throw new Error('repair verdict must bind a published submission of the prior segment');
+      const authorRunIds = authorRuns.map(
+        (row) => preparerTerminal.parse(row.payload.terminal).task_run_id,
+      );
+      // Publication and its receipt share a transaction; tool logs do not.
+      const authorReceipts = await Promise.all(
+        authorRunIds.map((runId) => preparerSubmittedRevisions(db, runId)),
+      );
+      if (!authorReceipts.some((revisions) => revisions.has(verdict.revision_id)))
+        throw new Error('repair verdict must bind a published submission of this ticket');
       const [revision] = await db
         .select()
         .from(question_revision)
@@ -309,6 +299,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
   const progressRevisions = new Set<string>();
   const defects = new Set<string>();
   let inventorySatisfied = false;
+  let bankEvidenceObserved = false;
   let pendingStockObserved = false;
   let started = false;
   const loop = createNoProgressLoop({
@@ -324,7 +315,9 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
           replayed: z.boolean().optional(),
           issues: z.array(z.object({ code: z.string(), detail: z.string() })).optional(),
         })
-        .safeParse(payload);
+        .safeParse(
+          payload && typeof payload === 'object' && 'output' in payload ? payload.output : payload,
+        );
       if (!output.success || observation.isError) return false;
       const value = output.data;
       if (value.status === 'saved' && value.draft_ref && !versions.has(value.draft_ref)) {
@@ -431,6 +424,8 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                     })
                     .safeParse(observation.output);
                   if (!value.success) return;
+                  if (['search_bank', 'read_bank', 'check_bank'].includes(observation.name))
+                    bankEvidenceObserved = true;
                   if (observation.name === 'scan_coverage_gaps' && value.data.pending_stock?.length)
                     pendingStockObserved = true;
                   if (observation.name === 'search_bank' && value.data.fulfillment === 'met')
@@ -469,18 +464,26 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
     .safeParse(
       (() => {
         try {
-          return JSON.parse(result.text);
+          return parseTaskOutput(
+            result.text,
+            'QuestionPreparerTask',
+            z.object({ outcome: z.enum(['done', 'no_progress']), summary: z.string() }),
+          );
         } catch {
           return null;
         }
       })(),
     );
   return finish(
-    published.size || (pendingStockObserved && report.success && report.data.outcome === 'done')
+    published.size
       ? 'awaiting_admission'
       : inventorySatisfied
         ? 'done'
-        : 'no_progress',
+        : report.success && report.data.outcome === 'done' && bankEvidenceObserved
+          ? pendingStockObserved
+            ? 'awaiting_admission'
+            : 'done'
+          : 'no_progress',
     report.success ? report.data.summary : result.text,
   );
 }

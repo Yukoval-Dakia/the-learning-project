@@ -39,7 +39,6 @@ export interface SealedCorrectionFiling {
   readonly causedByEventId?: string;
 }
 
-
 async function resolveEvaluation(
   db: Db,
   facts: readonly EvidenceFact[],

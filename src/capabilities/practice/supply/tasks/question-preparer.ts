@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
+import { parseTaskOutput } from '@/kernel/parse-task-output';
 
 const report = z.object({ outcome: z.enum(['done', 'no_progress']), summary: z.string() });
 export const questionPreparerTaskSpec = {
@@ -35,5 +36,5 @@ admission_return 是每 unit 一份 return_for_repair；scoring_unit_id 标识�
     },
   },
   outputSchema: report,
-  parseText: (text) => report.parse(JSON.parse(text)),
+  parseText: (text) => parseTaskOutput(text, 'QuestionPreparerTask', report),
 } satisfies TaskSpec<unknown, z.infer<typeof report>>;
