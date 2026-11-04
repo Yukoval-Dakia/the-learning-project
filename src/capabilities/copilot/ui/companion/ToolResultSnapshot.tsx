@@ -45,6 +45,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   stats: '学习状态',
   mastery_estimate: '掌握程度',
   last_touched_at: '最近学习时间',
+  last_evidence_at: '最近作答时间',
   returned_node_count: '本次返回数量',
   seed_matches_complete: '匹配范围完整',
   returned_count: '本次返回数量',

@@ -169,7 +169,7 @@ export function PresentationBlocks({
         const source = face?.prompt_md ?? material?.content_md;
         if (source === undefined) return null;
         return (
-          <MathMarkdown key={block.block_id} className="un-blk-text" notation={notation}>
+          <MathMarkdown key={block.block_id} className="un-blk-text un-read" notation={notation}>
             {source}
           </MathMarkdown>
         );
