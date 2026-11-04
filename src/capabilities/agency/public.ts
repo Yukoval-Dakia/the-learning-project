@@ -6,6 +6,10 @@ export {
   requestLearningIntent,
 } from './api/learning-intent-create';
 export { submitConjectureProbeAnswer } from './api/probe-answer';
+// YUK-1794 B1 — the unified learner-context read API. Non-agency consumers go
+// through the kernel port `read-models/learner-context` (installed below), so no
+// cross-capability edge appears.
+export { loadLearnerContext } from './context/index';
 export {
   type ConjectureCandidate,
   selectConjectureCandidates,
@@ -26,6 +30,7 @@ export {
 export type { ConjectureAcceptResult } from './server/conjecture-accept';
 export type { GoalScopeAcceptResult } from './server/goals/accept';
 export { createGoal } from './server/goals/create';
+export { installAgencyHostOperations } from './server/host-operations';
 export { retireInterventionPreparationJobs } from './server/intervention/retire-jobs';
 export type {
   AcceptLearningIntentParams,

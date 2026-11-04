@@ -20,10 +20,10 @@ export const READ_TOOLS = [
   'get_question_context',
   'get_review_due',
   'get_learning_item_context',
-  'query_memory_brief',
-  // YUK-203 U4 / L-memtool — Mem0 fact-layer retrieval (D7②). Granted only to
-  // coach / dreaming / copilot below; NOT to evaluator surfaces.
-  'search_memory_facts',
+  // YUK-1794 B1 — merged Context warm-layer read (query_memory_brief +
+  // search_memory_facts → query_context). Granted to coach / dreaming / copilot
+  // below; NOT to evaluator surfaces.
+  'query_context',
   // ADR-0072 LIGHT — 题库 agent 三工具（search/read/check）随各自竖切接入。
   // 授予 copilot surfaces；备题员面（ADR-0069 第一刀）落地时再扩。其余
   // surface 均不授权（同款 containment —— 扩面归 coordinator）。
@@ -184,7 +184,7 @@ const KNOWLEDGE_REVIEW_TOOLS = [
 export const COPILOT_TOOLS = [
   'submit_review_answer',
   'present_primary_view',
-  'query_memory_brief',
+  'query_context',
   'generate_goal_outline',
   'generate_question_candidate',
   'get_subject_graph_overview',
@@ -228,8 +228,7 @@ export const COPILOT_TOOLS = [
   // The knowledge|material seed (ADR-0031 lane B) generates a draft question +
   // question_draft proposal — the copilot 出题 primitive.
   'author_question',
-  // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
-  'search_memory_facts',
+
   // ADR-0031 决定1/D5 + ADR-0032 D9 (YUK-304 lane B) — the quiz C→A reverse-U6
   // grant: the copilot IS the quiz orchestrator now (the C-form detectQuizIntent
   // / resolveQuizIntent / quiz-skill pre-dispatch is retired), so it carries the
@@ -287,13 +286,12 @@ const DREAMING_TOOLS = [
   'get_question_context',
   'query_mistakes',
   'get_learning_item_context',
-  'query_memory_brief',
+  'query_context',
   'propose_learning_item_completion',
   'propose_learning_item_relearn',
   'propose_record_links',
   'propose_record_promotion',
-  // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
-  'search_memory_facts',
+
   'read_agent_notes',
   'write_agent_note',
   // YUK-1407 — dreaming 复核中发现疑似误判 → 可逆纠错提案。
@@ -313,7 +311,7 @@ const DREAMING_TOOLS = [
 // feedback would be a dead/informational feed; the COACH objective gains brief
 // when-to-propose-an-edge guidance so it is exercised.
 const COACH_TOOLS = [
-  'query_memory_brief',
+  'query_context',
   'query_mistakes',
   'get_attempt_context',
   'get_review_due',
@@ -325,8 +323,7 @@ const COACH_TOOLS = [
   'propose_learning_item_archive',
   'propose_knowledge_mutation',
   'propose_knowledge_edge',
-  // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
-  'search_memory_facts',
+
   'read_agent_notes',
   'write_agent_note',
   // YUK-1407 — coach 复盘发现疑似误判 → 可逆纠错提案。

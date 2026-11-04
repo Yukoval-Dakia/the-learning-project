@@ -57,6 +57,8 @@ export const frontierPrerequisiteTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: { view: 'none', reason: '知识结构维护只读图谱与提议证据，不读学习者画像' },
+
     prompt: { kind: 'profile', build: buildFrontierPrerequisitePrompt },
   },
   outputSchema: FrontierPrerequisiteOutputSchema,
@@ -106,6 +108,8 @@ export const knowledgeReviewTaskSpec = {
     // propose_knowledge_mutation + propose_knowledge_edge), resolved through
     // the shared DomainTool mount. The private write_proposal tool is retired.
     allowedTools: [...resolveMcpAllowedTools('knowledge_review')],
+    context: { view: 'none', reason: '知识结构维护只读图谱与提议证据，不读学习者画像' },
+
     prompt: { kind: 'profile', build: buildKnowledgeReviewPrompt },
   },
   outputSchema: KnowledgeReviewOutputSchema,

@@ -62,6 +62,11 @@ export const selectionOrchestratorTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+    },
+
     prompt: { kind: 'profile', build: buildSelectionOrchestratorPrompt },
   },
   outputSchema: SelectionOrchestratorDraft,

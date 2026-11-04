@@ -125,6 +125,11 @@ const judgeTaskDefinitions = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+    },
+
     prompt: { kind: 'profile', build: buildSemanticJudgePrompt },
   },
   UnitDimensionFallback: {
@@ -138,6 +143,11 @@ const judgeTaskDefinitions = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+    },
+
     prompt: { kind: 'profile', build: buildUnitDimensionFallbackPrompt },
   },
   StepsJudgeTask: {
@@ -161,6 +171,11 @@ const judgeTaskDefinitions = {
     // invocation omitted (defaults to 'auto'): runs on every derivation grading
     // attempt; human-initiated vision tasks are 'manual_rescue_only' instead.
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+    },
+
     prompt: { kind: 'profile', build: buildStepsJudgePrompt },
   },
   MultimodalDirectJudgeTask: {
@@ -179,6 +194,11 @@ const judgeTaskDefinitions = {
     // invocation omitted (defaults to 'auto'): part of the grading flow, not a
     // user-initiated rescue.
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+    },
+
     prompt: { kind: 'profile', build: buildMultimodalDirectJudgePrompt },
   },
 } satisfies Record<string, TaskDefinition>;

@@ -56,6 +56,11 @@ export const goalScopeTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+    },
+
     prompt: { kind: 'profile', build: buildGoalScopePrompt },
   },
   outputSchema: GoalScopeOutputSchema,

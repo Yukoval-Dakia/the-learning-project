@@ -77,6 +77,8 @@ export const ingestionAgentTaskSpec = {
     needsToolCall: true,
     isMultimodal: true,
     allowedTools: [],
+    context: { view: 'none', reason: '录入 agent 只处理当次源材料，不读学习者历史上下文' },
+
     prompt: { kind: 'profile', build: buildIngestionAgentPrompt },
   },
   outputSchema: AgentRunReport,

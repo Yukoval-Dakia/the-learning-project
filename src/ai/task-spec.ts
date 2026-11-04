@@ -56,6 +56,17 @@ export type TaskPrompt =
    */
   | { readonly kind: 'none' };
 
+/**
+ * YUK-1794 — Context 模块消费声明（audit:context-consumers）。每个 TaskSpec 必须
+ * 声明它消费哪个 learner-context view，或显式 `view:'none'` 加理由（如判分只评
+ * 本次作答、有意不读历史）。已登记 view 的词表只在 CONTEXT_VIEWS 一处扩。
+ */
+export const CONTEXT_VIEWS = ['companion'] as const;
+export type ContextViewName = (typeof CONTEXT_VIEWS)[number];
+export type TaskContextDeclaration =
+  | { readonly view: ContextViewName }
+  | { readonly view: 'none'; readonly reason: string };
+
 /** Runtime-neutral task definition projected into the central registry. */
 export interface TaskDefinition {
   readonly kind: string;
@@ -74,6 +85,7 @@ export interface TaskDefinition {
   readonly needsToolCall: boolean;
   readonly isMultimodal: boolean;
   readonly allowedTools: readonly string[];
+  readonly context: TaskContextDeclaration;
   readonly prompt: TaskPrompt;
   /**
    * YUK-923 — optional reasoning effort tier threaded to the Agent SDK `effort`

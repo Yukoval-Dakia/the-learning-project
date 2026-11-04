@@ -26,6 +26,11 @@ export const dreamingTaskSpec = {
     // The nightly handler supplies the surface-specific DomainTool allowlist
     // from src/kernel/tools/allowlists.ts; registry default stays empty.
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+    },
+
     prompt: {
       kind: 'inline',
       text: '你是 Dreaming agent。夜间读取学习信号，使用允许的 DomainTools 发现少量真正值得用户审核的建议，并通过 propose_* 工具写入 inbox。不要直接修改用户学习数据；没有高价值建议时停止。',

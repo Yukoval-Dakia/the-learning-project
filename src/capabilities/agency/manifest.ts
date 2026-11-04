@@ -381,6 +381,12 @@ export const agencyCapability = defineCapability({
         load: () =>
           import('./server/tools/generate-goal-outline').then((m) => m.generateGoalOutlineTool),
       },
+      // YUK-1794 B1 — merged Context warm-layer read; replaces copilot-owned
+      // query_memory_brief + search_memory_facts (read-side two layers both stay).
+      {
+        name: 'query_context',
+        load: () => import('./context/query-context').then((m) => m.queryContextTool),
+      },
       {
         name: 'write_agent_note',
         load: () => import('./server/tools/agent-note-tools').then((m) => m.writeAgentNoteTool),

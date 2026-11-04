@@ -146,6 +146,11 @@ export const conjectureProbeAuthorTaskSpec = {
     needsToolCall: false,
     isMultimodal: true,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+    },
+
     prompt: { kind: 'profile', build: buildConjectureProbeAuthorPrompt },
   },
   outputSchema: ConjectureProbeAuthorOutputSchema,
@@ -164,6 +169,11 @@ export const conjectureProbeReviewTaskSpec = {
     needsToolCall: false,
     isMultimodal: true,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+    },
+
     prompt: { kind: 'profile', build: buildConjectureProbeReviewPrompt },
   },
   outputSchema: ConjectureProbeReviewOutputSchema,

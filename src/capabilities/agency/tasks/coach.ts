@@ -29,6 +29,11 @@ export const coachTaskSpec = {
     // The coach_daily handler supplies the surface-specific DomainTool
     // allowlist from src/kernel/tools/allowlists.ts; registry default stays empty.
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+    },
+
     prompt: {
       kind: 'inline',
       text: '你是 Coach agent。读取 DomainTools 给出的学习信号，产出今日安排草稿 JSON，所有 mutation 走 propose_* 工具写入 inbox。不要直接改用户数据；不要估算题数、分钟数或科目配比——这些由系统按到期队列和每日预算计算。没有高价值建议时输出空 plan_adjustments / maintenance_proposals。',

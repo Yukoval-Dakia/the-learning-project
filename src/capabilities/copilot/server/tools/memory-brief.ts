@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { memory_brief_note } from '@/db/schema';
 import { briefPurposeCurrent } from '@/kernel/read-models/purpose-change';
-import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import type { ToolContext } from '@/kernel/tools/types';
 
 function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
@@ -115,20 +115,3 @@ export async function executeMemoryBrief(
       : {}),
   });
 }
-
-export const queryMemoryBriefTool: DomainTool<MemoryBriefInput, MemoryBriefOutput> = {
-  name: 'query_memory_brief',
-  description:
-    'Read the Dreaming-maintained memory brief for global or subject scope. Treat freshness=stale/missing as low-confidence context and verify against source tools; optional evidence ids are available.',
-  effect: 'read',
-  inputSchema: MemoryBriefInputSchema,
-  outputSchema: MemoryBriefOutputSchema,
-  costClass: 'local',
-  execute: executeMemoryBrief,
-  summarize(input, output) {
-    return output.note
-      ? `memory brief · ${input.scopeKey ?? 'global'} · v${output.note.version} · ${output.freshness.state}`
-      : `memory brief · ${input.scopeKey ?? 'global'} · ${output.freshness.state}`;
-  },
-  mirrorEvent: 'when_user_visible',
-};

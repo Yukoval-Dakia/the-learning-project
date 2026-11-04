@@ -91,6 +91,11 @@ export const interventionRecommendationTaskSpec = {
     isMultimodal: false,
     allowedTools: [],
     structuredOutputSchema: PedagogyRecommendationStructuredOutput,
+    context: {
+      view: 'none',
+      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+    },
+
     prompt: {
       kind: 'inline',
       text: `You are the single pedagogy recommendation stage inside an intervention preparation wave. Input contains an immutable conjecture/learner snapshot, deterministic candidate method definitions, exclusions, and prior interventions.
@@ -126,6 +131,11 @@ export const interventionPackageAuthorTaskSpec = {
     isMultimodal: false,
     allowedTools: [],
     structuredOutputSchema: InterventionPackageStructuredOutput,
+    context: {
+      view: 'none',
+      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+    },
+
     prompt: { kind: 'profile', build: buildInterventionPackageAuthorPrompt },
   },
   outputSchema: InterventionPackageStructuredOutput,
@@ -148,6 +158,11 @@ export const interventionPackageReviewTaskSpec = {
     isMultimodal: false,
     allowedTools: [],
     structuredOutputSchema: InterventionPackageReviewStructuredOutput,
+    context: {
+      view: 'none',
+      reason: '判分/夜链按既有 job 输入装配，Context view 在 B2 切片接入（curator/coach）',
+    },
+
     prompt: { kind: 'profile', build: buildInterventionPackageReviewPrompt },
   },
   outputSchema: InterventionPackageReviewStructuredOutput,

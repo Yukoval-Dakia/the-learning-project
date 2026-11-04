@@ -276,15 +276,8 @@ export const copilotCapability = defineCapability({
         name: 'query_events',
         load: () => import('./server/tools/query-events').then((m) => m.queryEventsTool),
       },
-      {
-        name: 'query_memory_brief',
-        load: () => import('./server/tools/memory-brief').then((m) => m.queryMemoryBriefTool),
-      },
-      {
-        name: 'search_memory_facts',
-        load: () =>
-          import('./server/tools/search-memory-facts').then((m) => m.searchMemoryFactsTool),
-      },
+      // query_memory_brief + search_memory_facts 已并入 agency 的 query_context
+      // （YUK-1794 B1）；executeMemoryBrief 仍是今日摘要的本地读函数。
     ],
   },
 });

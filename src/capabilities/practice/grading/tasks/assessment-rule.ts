@@ -18,6 +18,11 @@ export const assessmentRuleTaskSpec = {
     isMultimodal: true,
     allowedTools: [],
     structuredOutputSchema: AssessmentRuleDecision,
+    context: {
+      view: 'none',
+      reason: '判分与供题只评当次作答/题目，有意不读历史（B3 切片再议轻量 view）',
+    },
+
     prompt: {
       kind: 'inline',
       text: `Judge exactly one frozen scoring unit. The JSON input contains its issued question parts, native response slots, original submitted responses, published criterion and frozen materials. An images manifest identifies attached originals in the same order as the image blocks. Question materials are conditions, not student answers.
