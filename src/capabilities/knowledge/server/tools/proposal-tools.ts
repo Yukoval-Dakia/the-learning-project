@@ -17,14 +17,8 @@ import { SuggestionKind } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
-// P5.4-L2 / YUK-174 — per-(kind, relation) gate bump passed to the L1 validator;
-// cold start is a no-op.
-import { type AdaptiveGateInput, resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
 import { withProposalGateLock } from '@/kernel/proposals/signals';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
-// P5.4-L2 / YUK-174 — adaptive gate-bump budget + bias config.
-import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
-import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import { sanitizeProposedNodeDomain } from '@/subjects/profile';
 import type { DomainTool, ToolContext } from './types';
 
@@ -195,56 +189,7 @@ async function proposeKnowledgeEdgeCreate(
     actor_ref: ctx.callerActor.ref,
     task_run_id: ctx.taskRunId,
     caused_by_event_id: ctx.causedByEventId ?? null,
-    // P5.4 — agents strict, users structural-only.
-    rubric: { isAgent: ctx.callerActor.kind === 'agent', actorRef: ctx.callerActor.ref },
-    resolveAdaptive:
-      ctx.callerActor.kind === 'agent'
-        ? (tx) => resolveAdaptiveEdgeGateBump(ctx, tx, relationType)
-        : undefined,
   });
-}
-
-// P5.4-L2 — adaptive bump for this (knowledge_edge, relation). A digest error must
-// not block pure L1, so it downgrades to undefined (same as cold start).
-async function resolveAdaptiveEdgeGateBump(
-  ctx: ToolContext,
-  tx: DbLike,
-  relationType: string,
-): Promise<AdaptiveGateInput | undefined> {
-  try {
-    return await resolveEdgeGateBump(
-      tx,
-      relationType,
-      PROPOSAL_FEEDBACK_BUDGET,
-      PROPOSAL_GATE_BIAS_CONFIG,
-    );
-  } catch (bumpErr) {
-    // Evidence-first: log the soft-layer downgrade via ctx.db (an independent
-    // side-record that survives a gate rollback). Logging must never break the
-    // tool path; fall back to console.
-    const errorReason = bumpErr instanceof Error ? bumpErr.message : String(bumpErr);
-    try {
-      await writeToolCallLog(ctx.db, {
-        task_run_id: ctx.taskRunId,
-        task_kind: ctx.callerActor.ref,
-        tool_name: 'propose_knowledge_edge:resolveEdgeGateBump',
-        effect: 'read',
-        input_json: { relation_type: relationType },
-        output_json: { adaptive_downgraded: true },
-        error_reason: errorReason,
-        iteration: 0,
-        latency_ms: 0,
-        cost: 0,
-      });
-    } catch (logErr) {
-      console.error('[propose_knowledge_edge] adaptive-bump downgrade log failed', {
-        task_run_id: ctx.taskRunId,
-        bump_error: errorReason,
-        err: logErr,
-      });
-    }
-    return undefined;
-  }
 }
 
 // ADR-0032 — archive executor: proposes soft-deleting a live edge through the
@@ -265,7 +210,6 @@ async function proposeKnowledgeEdgeArchive(
     actor_ref: ctx.callerActor.ref,
     task_run_id: ctx.taskRunId,
     caused_by_event_id: ctx.causedByEventId ?? null,
-    rubric: { isAgent: ctx.callerActor.kind === 'agent', actorRef: ctx.callerActor.ref },
   });
 }
 

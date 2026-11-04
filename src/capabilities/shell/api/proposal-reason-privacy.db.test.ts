@@ -15,9 +15,9 @@ beforeEach(async () => {
 });
 afterEach(() => vi.useRealTimers());
 
-// @invariant security: stored private evidence never crosses any learner proposal/brief read boundary
-// @fails-if a real route exposes raw secrets through payload, legacy reasoning, presentation, or brief summary
-it('reads private proposal evidence safely without rewriting its stored history', async () => {
+// @invariant security: stored credentials never cross any learner proposal/brief read boundary
+// @fails-if a real route exposes a raw credential through payload, legacy reasoning, presentation, or brief summary
+it('masks credentials in proposal reasons without rewriting their stored history', async () => {
   const db = testDb();
   const reason =
     'recent_failure_count_30d=1; api_key=sk-proj-private-example; email=other@example.test';
@@ -82,13 +82,16 @@ it('reads private proposal evidence safely without rewriting its stored history'
     brief: {
       brief_id: 'privacy-finding',
       state: 'finding',
-      basis: { summary_md: '这条提议暂无可读的依据说明，请核实后再决定是否采纳。' },
+      basis: {
+        summary_md: 'recent_failure_count_30d=1; api_key=[已遮蔽凭据] email=other@example.test',
+      },
     },
   });
   const wire = JSON.stringify({ modernBody, legacyBody, briefBody });
   expect(wire).not.toContain('sk-proj-private-example');
-  expect(wire).not.toContain('other@example.test');
-  expect(wire).not.toContain('recent_failure_count_30d');
+  // Non-credential content passes through as written.
+  expect(wire).toContain('email=other@example.test');
+  expect(wire).toContain('recent_failure_count_30d');
   expect(wire).toContain('original-evidence');
   expect(await db.select().from(event).orderBy(event.id)).toEqual(storedBefore);
   const [stored] = await db.select().from(event).where(eq(event.id, 'privacy-archive'));

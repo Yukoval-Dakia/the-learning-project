@@ -15,7 +15,6 @@
 // user-configurable budgets (CB-5) and no hard-reject circuit-breaker (§6):
 // over-budget degrades gracefully via the tracker below.
 
-import type { GateBiasConfig } from '@/kernel/proposals/adaptive-bias';
 import type { DomainToolSurface } from './allowlists';
 
 export interface ContextBudgetThreshold {
@@ -274,20 +273,6 @@ export interface LearnerStateHeaderBudget {
 
 export const LEARNER_STATE_HEADER_BUDGET: LearnerStateHeaderBudget = {
   maxChars: 400, // hard cap; CJK-heavy content near this ceiling ≈ 400-1000 tokens
-};
-
-// ── P5.4-L2 gate-bias config (AB-3, §5 Q1) ──────────────────────────────────
-//
-// Single-source threshold + cold-start guard for `computeGateBump`. The
-// `GateBiasConfig` TYPE is owned by adaptive-bias.ts (the L2 module, §3.4); this
-// is the single-source CONST, kept here alongside PROPOSAL_FEEDBACK_BUDGET so
-// all L2 tunables live in budgets.ts. Single-user scale: most `(kind, relation)`
-// cells carry 0–5 samples, so `minSamples` keeps the bump inert until enough
-// signal accrues (§6). Tune against real proposal_signals after a few weeks (the
-// P5.1 "revisit after ~2 weeks of logs" stance).
-export const PROPOSAL_GATE_BIAS_CONFIG: GateBiasConfig = {
-  acceptanceThreshold: 0.3, // §5 Q1 suggested default
-  minSamples: 5, // §5 Q1 suggested cold-start guard
 };
 
 // ── P5.3 long-term brief freshness/decay budget ─────────────────────────────

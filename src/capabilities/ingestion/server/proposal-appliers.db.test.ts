@@ -430,12 +430,14 @@ describe('block_merge proposal lifecycle', () => {
     expect((await readBlock(m1)).status).toBe('draft');
   });
 
-  it('hides an inadmissible proposal from the learner inbox and rejects its accept (multi-paper conflict)', async () => {
+  // @invariant data: an unprovable block_merge stays visible with its admission reason and can never be accepted
+  // @fails-if the row loses not_acceptable_reason, or the accept merges blocks or writes a rate event
+  it('shows an inadmissible proposal with its reason and rejects its accept (multi-paper conflict)', async () => {
     // The TEST-event shape: two blocks carrying the SAME question number on
     // adjacent pages of one upload batch (different papers) — the AI's
     // numbering signal proposed the merge but stored facts prove a
-    // different-question conflict. The event stays stored; it is never
-    // learner-visible and can never be accepted.
+    // different-question conflict. The row stays visible carrying the proof's
+    // reason; accept is still hard-blocked on the same proof.
     const db = testDb();
     const sessionId = createId();
     await seedSourceDocument();
@@ -461,18 +463,14 @@ describe('block_merge proposal lifecycle', () => {
     });
 
     const visible = await listProposalInboxRows(db, { status: 'pending' });
-    expect(visible.some((row) => row.id === 'block_merge_conflict')).toBe(false);
-    // …yet the stored event still occupies the internal pending set.
-    const raw = await listProposalInboxRows(db, {
-      status: 'pending',
-      includeInadmissibleBlockMerges: true,
-    });
-    expect(raw.some((row) => row.id === 'block_merge_conflict')).toBe(true);
+    expect(visible.find((row) => row.id === 'block_merge_conflict')?.not_acceptable_reason).toBe(
+      'conflicting_question_number',
+    );
 
-    // The shared accept boundary sees the proposal as invisible → 404.
+    // Accept is still hard-blocked by the same admission proof → typed 409.
     await expect(
       acceptAiProposal(db, 'block_merge_conflict', { confirm_lossy: true }),
-    ).rejects.toMatchObject({ code: 'not_found', status: 404 });
+    ).rejects.toMatchObject({ code: 'merge_inadmissible', status: 409 });
     const rateRows = await db
       .select()
       .from(event)
@@ -484,7 +482,9 @@ describe('block_merge proposal lifecycle', () => {
   // chain can never be re-merged — it must be invisible to the learner and can
   // never produce an acceptance event) ──
 
-  it('hides a non-draft chain from the learner inbox yet answers its accept with soft stale', async () => {
+  // @invariant data: a non-draft merge chain can never produce an acceptance event or block mutation
+  // @fails-if the accept writes a rate event or mutates blocks, or the pending row loses its not_draft reason
+  it('shows a non-draft chain with its reason yet answers its accept with soft stale', async () => {
     const db = testDb();
     const sessionId = createId();
     await seedSourceDocument();
@@ -508,20 +508,18 @@ describe('block_merge proposal lifecycle', () => {
       mergeBlockIds: [m1],
     });
 
-    // Hidden from the learner list (the shared read rule now consults status)
-    // …yet the stored event still occupies the internal pending set.
+    // Visible in the learner list, carrying the admission reason.
     const visible = await listProposalInboxRows(db, { status: 'pending' });
-    expect(visible.some((row) => row.id === 'block_merge_nondraft')).toBe(false);
-    const raw = await listProposalInboxRows(db, {
-      status: 'pending',
-      includeInadmissibleBlockMerges: true,
-    });
-    expect(raw.some((row) => row.id === 'block_merge_nondraft')).toBe(true);
+    expect(visible.find((row) => row.id === 'block_merge_nondraft')?.not_acceptable_reason).toBe(
+      'not_draft',
+    );
 
-    // The single-row decision lane still resolves the row — the soft-stale
+    // The single-row decision lane resolves the row — the soft-stale
     // answer rides on it — and the public accept returns stale, never
     // 409/500: no rate event, no signal, proposal stays pending.
-    expect(await getProposalInboxRow(db, 'block_merge_nondraft')).not.toBeNull();
+    expect((await getProposalInboxRow(db, 'block_merge_nondraft'))?.not_acceptable_reason).toBe(
+      'not_draft',
+    );
     const result = await acceptAiProposal(db, 'block_merge_nondraft', { confirm_lossy: true });
     expect(result).toMatchObject({
       kind: 'block_merge',
@@ -605,6 +603,8 @@ describe('block_merge proposal lifecycle', () => {
     expect(rateRows).toHaveLength(0);
   });
 
+  // @invariant data: the admission proof blocks accept regardless of how the proposal row was loaded
+  // @fails-if a caller bypassing the inbox read can merge blocks whose stored facts prove a conflict
   it('fails closed at the shared applier boundary even when the inbox is bypassed', async () => {
     // A caller that constructs the applier input directly (skipping the inbox
     // read rule) still hits the authoritative admission proof BEFORE any merge.
@@ -648,6 +648,7 @@ describe('block_merge proposal lifecycle', () => {
       cost_micro_usd: null,
       source_action: 'experimental:proposal',
       source_subject_kind: 'event',
+      not_acceptable_reason: null,
       signals: null,
       presentation: null,
     } as unknown as ProposalInboxRow;
