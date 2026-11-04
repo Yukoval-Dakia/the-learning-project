@@ -22,7 +22,7 @@ CREATE TABLE "question_solution_prior_vector" (
 );
 --> statement-breakpoint
 ALTER TABLE "question_solution_prior" ADD COLUMN "backfill_run_id" text;--> statement-breakpoint
-ALTER TABLE "question_solution_prior_backfill_attempt" ADD CONSTRAINT "question_solution_prior_backfill_attempt_revision_id_question_revision_revision_id_fk" FOREIGN KEY ("revision_id") REFERENCES "public"."question_revision"("revision_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "question_solution_prior_backfill_attempt" ADD CONSTRAINT "question_solution_prior_backfill_attempt_revision_id_question_revision_revision_id_fk" FOREIGN KEY ("revision_id") REFERENCES "public"."question_revision"("revision_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "question_solution_prior_vector" ADD CONSTRAINT "question_solution_prior_vector_prior_fk" FOREIGN KEY ("revision_id","part_id") REFERENCES "public"."question_solution_prior"("revision_id","part_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "question_solution_prior_backfill_attempt_run_idx" ON "question_solution_prior_backfill_attempt" USING btree ("backfill_run_id");--> statement-breakpoint
 CREATE INDEX "question_solution_prior_backfill_idx" ON "question_solution_prior" USING btree ("backfill_run_id");--> statement-breakpoint

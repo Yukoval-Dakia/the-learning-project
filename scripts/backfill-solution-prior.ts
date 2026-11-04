@@ -87,14 +87,19 @@ async function main(): Promise<void> {
   const { embedSolutionPriorVectors } = await import(
     '@/capabilities/practice/question-bank/server/admission/solution-prior-vectors'
   );
-  const vectorsWritten = await embedSolutionPriorVectors(db, args.limit * 4, {
+  // The paid results are already committed: a vector failure must not lose their receipt.
+  // The nightly sweep picks up whatever is left.
+  const vectors = await embedSolutionPriorVectors(db, args.limit * 4, {
     db,
     caller: 'worker',
     deadlineAt: new Date(Date.now() + 10 * 60_000),
-  });
-  console.log(
-    JSON.stringify({ backfill_run_id: backfillRunId, vectors_written: vectorsWritten, ...outcome }),
+  }).then(
+    (written) => ({ vectors_written: written }),
+    (error: unknown) => ({
+      vectors_error: error instanceof Error ? error.message.slice(0, 300) : 'unknown',
+    }),
   );
+  console.log(JSON.stringify({ backfill_run_id: backfillRunId, ...vectors, ...outcome }));
 }
 
 main().then(

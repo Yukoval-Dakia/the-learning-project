@@ -1,6 +1,6 @@
 # ADR-0012 — Mastery / last_active_at 转 derived view（drop stub fields）
 
-**状态**：superseded。`knowledge_mastery` view 已由迁移 `0140_yuk1778_drop_knowledge_mastery_view` 删除，掌握读数只走 `mastery_state` 投影（ADR-0035）。drop 三个 stub 字段的决定仍然有效。
+**状态**：accepted，view 部分已被取代。`knowledge_mastery` view 已由迁移 `0140_yuk1778_drop_knowledge_mastery_view` 删除，掌握读数只走 `mastery_state` 投影（ADR-0035）。drop 三个 stub 字段的决定仍然有效。
 **日期**：2026-05-15
 **Superseded by**: [ADR-0035](0035-mastery-diagnosis-three-dim-full-engine-instantiation.md)（占位计算公式） · **Amended by**: [ADR-0037](0037-unified-scheduling-merge-engine.md)（mastery 被 B1 `mastery_state` 重写；view 派生原则保留）
 
