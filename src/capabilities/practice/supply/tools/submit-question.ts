@@ -1049,6 +1049,9 @@ function declaredCandidateOutcome(
   }
   return {
     status: 'pending',
+    published: true,
+    publish_status: submit.publish_status,
+    revision_id: submit.revision_id,
     question_id: submit.question_id,
     verify_enqueued: submit.verify_enqueued === true,
     difficulty_evidence: difficultyEvidence,
