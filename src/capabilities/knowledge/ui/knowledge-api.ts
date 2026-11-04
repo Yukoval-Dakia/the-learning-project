@@ -121,7 +121,7 @@ export const createEdge = (input: ApiOperationRequestBody<'createKnowledgeEdge'>
 export type KnowledgeNodePage = ApiOperationJsonResponse<'getKnowledgeNode'>;
 export type NoteSummary = Pick<
   KnowledgeNodePage['notes'][number],
-  'id' | 'type' | 'title' | 'knowledge_ids' | 'verification_status' | 'updated_at'
+  'id' | 'type' | 'title' | 'knowledge_ids' | 'updated_at'
 >;
 export type NodePageMeshNeighbor = KnowledgeNodePage['mesh_neighbors'][number];
 export type NodePageChild = KnowledgeNodePage['children'][number];
