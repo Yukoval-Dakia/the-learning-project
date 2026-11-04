@@ -1422,8 +1422,9 @@ export class PiAgentAdapter implements ExecutionAdapter {
       );
     }
     // Reasoning level must have exactly one writer: options.effort and the
-    // task.<kind>.reasoning level both land on pi's reasoning option.
-    if (args.options.effort !== undefined && args.resolved.reasoning?.level !== undefined) {
+    // task.<kind>.reasoning resolution both target the wire reasoning slot —
+    // even an applied 'off'/'none' outcome, or the receipt would lie.
+    if (args.options.effort !== undefined && args.resolved.reasoning !== undefined) {
       throw new Error(
         `conflicting reasoning params for task '${args.kind}': options.effort='${args.options.effort}' and task.<kind>.reasoning level='${args.resolved.reasoning.requested}' both target the wire reasoning level — keep exactly one source.`,
       );

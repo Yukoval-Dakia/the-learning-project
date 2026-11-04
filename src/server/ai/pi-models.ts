@@ -1,4 +1,4 @@
-import type { Api, Model, ThinkingLevelMap } from '@earendil-works/pi-ai';
+import type { Api, Model, OpenAICompletionsCompat, ThinkingLevelMap } from '@earendil-works/pi-ai';
 import type { Provider } from '@/ai/task-spec';
 import {
   type CustomProviderProtocol,
@@ -117,7 +117,24 @@ export async function createLoomPiModels() {
           id: modelId,
           provider: id,
           api: executable.api,
-          compat: executable.api === template.api ? template.compat : undefined,
+          // A declared thinkingFormat is source data (see model-catalog-overrides
+          // protocol): it must reach compat so getCompat emits the model's real
+          // thinking switch even when the builtin template predates it.
+          compat:
+            executable.api === template.api
+              ? executable.thinkingFormat
+                ? {
+                    ...template.compat,
+                    thinkingFormat:
+                      executable.thinkingFormat as OpenAICompletionsCompat['thinkingFormat'],
+                  }
+                : template.compat
+              : executable.thinkingFormat
+                ? {
+                    thinkingFormat:
+                      executable.thinkingFormat as OpenAICompletionsCompat['thinkingFormat'],
+                  }
+                : undefined,
           baseUrl: baseUrlForWire(executable),
           input: executable.input.filter(
             (input): input is 'text' | 'image' => input === 'text' || input === 'image',

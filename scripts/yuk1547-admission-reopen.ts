@@ -212,8 +212,13 @@ function reasoningWireFields(
   if (reasoning.applied === 'toggle_on') {
     return thinkingFormat === 'deepseek' ? { thinking: { type: 'enabled' } } : {};
   }
-  if (reasoning.level === undefined || reasoning.applied === 'none' || reasoning.applied === 'off')
-    return {};
+  if (reasoning.applied === 'none') return {};
+  if (reasoning.applied === 'off') {
+    // Production sends no reasoning option; on deepseek-format lanes pi then
+    // emits the explicit disabled switch — the probe must test the same body.
+    return thinkingFormat === 'deepseek' ? { thinking: { type: 'disabled' } } : {};
+  }
+  if (reasoning.level === undefined) return {};
   return thinkingFormat === 'deepseek'
     ? { reasoning_effort: reasoning.applied, thinking: { type: 'enabled' } }
     : { reasoning_effort: reasoning.applied };

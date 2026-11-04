@@ -132,6 +132,34 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
         'models.dev has no forcedToolChoice field. YUK-1547 actual HTTP 400 with thinking + named tool_choice, request_id 6fde3ba6-8f64-4c84-8a3d-5a5e211b430a.',
       facts: { forcedToolChoice: false },
     },
+    'mimo-v2.6-pro': {
+      when: 'missing',
+      reason:
+        'models.dev lists reasoning_options as empty for this route, but measured direct calls (2026-11-04, coordinator) show thinking on by default and a working toggle: thinking:{enabled} reasoning_tokens=124, thinking:{disabled} reasoning_tokens=0, reasoning_effort:"high"=108 vs baseline 54, reasoning_effort:"banana"→HTTP 400. Declared as toggle with the deepseek thinking switch.',
+      facts: { reasoningMode: 'toggle' },
+      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
+    },
+    'mimo-v2.6-flash': {
+      when: 'missing',
+      reason:
+        'models.dev lists reasoning_options as empty for this route; same OpenCode Go mimo family and endpoint as mimo-v2.6-pro (see its entry for the measured evidence). Declared as toggle with the deepseek thinking switch.',
+      facts: { reasoningMode: 'toggle' },
+      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
+    },
+    'longcat-2.5-preview-free': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 builtin catalog dropped this id; models.dev still lists it on the OpenCode Go openai path. Protocol preserved from the 1.1.0 snapshot entry.',
+      facts: {},
+      protocol: { api: 'openai-completions' },
+    },
+    'space-bunny': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 builtin catalog dropped this id; models.dev still lists it on the OpenCode Go openai path. Protocol preserved from the 1.1.0 snapshot entry.',
+      facts: {},
+      protocol: { api: 'openai-completions' },
+    },
   },
   openrouter: {
     'qwen/qwen3.7-flash': {
@@ -302,7 +330,7 @@ export function modelCatalogOverride(
     return {
       when: 'missing',
       reason:
-        "models.dev has no Token Plan provider. Xiaomi model facts are shared, but endpoint/auth are separate (YUK-1402); only mimo-v2.6-pro has this lane's tool-loop receipts.",
+        "models.dev's xiaomi-token-plan-* providers carry the same model facts as xiaomi; Xiaomi facts are shared, but endpoint/auth are separate (YUK-1402); only mimo-v2.6-pro has this lane's tool-loop receipts.",
       facts: {
         baseUrl: tokenPlanEndpointOverride(env),
         ...(model === 'mimo-v2.6-pro' ? { toolCalling: true } : {}),
