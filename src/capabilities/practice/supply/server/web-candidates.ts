@@ -12,12 +12,13 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
+import type { z } from 'zod';
 import type {
   SourcedQuestionT,
   SourcingImageCandidateT,
   SourcingTaskOutputT,
 } from '@/core/schema/sourcing';
-import { SourcingTaskOutput } from '@/core/schema/sourcing';
+import { SourcedQuestion, SourcingTaskOutput } from '@/core/schema/sourcing';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { costUsdToMicroUsd } from '@/kernel/cost';
@@ -140,7 +141,7 @@ export interface RunWebFetchCandidatesParams {
 // 与旧 sourcing.ts parseOutput（:183-205）同款严格度：宽松提取 + riskyRepair:'reject' +
 // schema 校验。sourcing 解析结果直接落库为题面，web 素材 ASCII 标点密度高（jsonrepair
 // 静默重划字符串边界的高危形态）——只许内容保真的确定性修复级。
-function parseSourcingOutput(text: string, parseLoose: ParseLooseFn): SourcingTaskOutputT {
+export function parseSourcingOutput(text: string, parseLoose: ParseLooseFn): SourcingTaskOutputT {
   let extracted: ReturnType<ParseLooseFn>;
   try {
     extracted = parseLoose(text, 'web-candidates parseOutput', { riskyRepair: 'reject' });
@@ -150,13 +151,55 @@ function parseSourcingOutput(text: string, parseLoose: ParseLooseFn): SourcingTa
   if (extracted === null) {
     throw new Error('web-candidates parseOutput: no JSON object found in text');
   }
-  const parsed = SourcingTaskOutput.safeParse(extracted.json);
+  const parsed = SourcingTaskOutput.safeParse(keepValidQuestions(withoutNulls(extracted.json)));
   if (!parsed.success) {
-    throw new Error(
-      `web-candidates parseOutput: schema invalid: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
-    );
+    throw new Error(`web-candidates parseOutput: schema invalid: ${describeIssues(parsed.error)}`);
   }
   return parsed.data;
+}
+
+function describeIssues(error: z.ZodError): string {
+  return error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
+}
+
+// Models write null for "nothing here" where the schema means an absent key. A required field
+// written as null still fails, because it is then missing.
+function withoutNulls(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutNulls);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, item]) => item !== null)
+      .map(([key, item]) => [key, withoutNulls(item)]),
+  );
+}
+
+// The run is already paid for, so one malformed question must not void the others, and neither
+// must a missing audit field the server can fill. With no question left, the schema's "at least
+// one result" rule still fails the run.
+function keepValidQuestions(output: unknown): unknown {
+  if (output === null || typeof output !== 'object') return output;
+  const { questions } = output as { questions?: unknown };
+  if (!Array.isArray(questions)) return output;
+  const kept = questions.filter((question, index) => {
+    const checked = SourcedQuestion.safeParse(question);
+    if (!checked.success) {
+      console.warn(
+        `[web-candidates] dropped question ${index}: ${describeIssues(checked.error)}`.slice(
+          0,
+          500,
+        ),
+      );
+    }
+    return checked.success;
+  });
+  return {
+    query_plan: [],
+    fetched_at: new Date().toISOString(),
+    tool: 'exa',
+    ...output,
+    questions: kept,
+  };
 }
 
 // parseJsonObjectLoose 的结构化替身（避免 question-supply → @/server/ai 边；工具层注入真身）。
