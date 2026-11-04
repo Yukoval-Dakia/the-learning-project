@@ -181,21 +181,29 @@ function keepValidQuestions(output: unknown): unknown {
   if (output === null || typeof output !== 'object') return output;
   const { questions } = output as { questions?: unknown };
   if (!Array.isArray(questions)) return output;
-  const kept = questions.flatMap((question, index) => {
+  const clean: unknown[] = [];
+  const repaired: unknown[] = [];
+  questions.forEach((question, index) => {
     const checked = SourcedQuestion.safeParse(question);
-    if (checked.success) return [question];
+    if (checked.success) {
+      clean.push(question);
+      return;
+    }
     const salvaged = repairUnits(question, checked.error);
     if (salvaged !== null && SourcedQuestion.safeParse(salvaged.question).success) {
       console.warn(
         `[web-candidates] question ${index}: repaired units: ${salvaged.detail}`.slice(0, 700),
       );
-      return [salvaged.question];
+      repaired.push(salvaged.question);
+      return;
     }
     console.warn(
       `[web-candidates] dropped question ${index}: ${describeIssues(checked.error)}`.slice(0, 500),
     );
-    return [];
   });
+  // A question that lost its rule is withheld at submit, so it must not take a slot from one that
+  // can be served when callers keep only the first `count`.
+  const kept = [...clean, ...repaired];
   return {
     query_plan: [],
     fetched_at: new Date().toISOString(),
@@ -205,9 +213,10 @@ function keepValidQuestions(output: unknown): unknown {
   };
 }
 
-// Two unit mistakes do not cost the paid question. A malformed rule is removed: a unit without one
-// is a legal draft that stays undecided (`missing_rule`), and no rule is guessed. A method written as
-// its bare kind is wrapped; the schema still checks the kind. Anything else drops the question.
+// Two unit mistakes do not cost the paid question. A malformed rule is removed: the unit stays
+// undecided (`missing_rule`) and the draft is withheld until someone supplies a rule; none is guessed.
+// A method written as its bare kind is wrapped; the schema still checks the kind. Anything else drops
+// the question.
 function repairUnits(
   question: unknown,
   error: z.ZodError,
