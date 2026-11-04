@@ -565,7 +565,7 @@ export const PI_THINKING_LEVEL_ORDER: readonly PiThinkingLevelName[] = [
 export interface ResolvedTaskReasoning {
   /** Level name stored in task.<kind>.reasoning (legacy reasoning_effort value). */
   readonly requested: string;
-  /** What actually applies: the level, 'on', 'toggle_off', 'off', or 'none'. */
+  /** What actually applies: the level, 'on', 'on', 'off', or 'none'. */
   readonly applied: string;
   /** pi thinking level handed to streamSimple when the wire should carry one. */
   readonly level?: ThinkingLevel;
