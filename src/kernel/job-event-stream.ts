@@ -1,5 +1,9 @@
 import type { Db } from '@/db/client';
 import { computeReplay } from '@/kernel/job-events';
+import {
+  INTERACTIVE_ARTIFACT_TOOL_NAMES,
+  redactInteractiveArtifactToolInput,
+} from '@/kernel/learning-content';
 
 // Process-local pub/sub and complete SSE responses for job-event channels.
 // The listen loop parses NOTIFY and fans out here. Only the app process
@@ -60,6 +64,30 @@ export function broadcast(payload: SSEPayload): void {
 const JOB_EVENT_HEARTBEAT_MS = 15_000;
 /** Durable cursor catch-up: NOTIFY is a wake-up hint, never the only delivery path. */
 const JOB_EVENT_CATCHUP_MS = 10_000;
+
+/**
+ * YUK-1763 — persisted job-event frames carry the artifact-authoring tools'
+ * FULL args (html with answer attributes + the answer manifest). Frames written
+ * before the serve-time redaction stay raw in storage, so every emitted frame
+ * is redacted here; write-time redaction (tool-activity.ts) makes this a no-op
+ * for new frames.
+ */
+function redactJobEventPayload(payload: unknown): unknown {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+  const record = payload as Record<string, unknown>;
+  if (
+    typeof record.tool_name !== 'string' ||
+    !INTERACTIVE_ARTIFACT_TOOL_NAMES.has(record.tool_name)
+  ) {
+    return record;
+  }
+  const input = record.input;
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) return record;
+  return {
+    ...record,
+    input: redactInteractiveArtifactToolInput(input as Record<string, unknown>),
+  };
+}
 
 /**
  * Own replay, live delivery and response cleanup for the two existing protocols.
@@ -167,7 +195,7 @@ export function jobEventStreamResponse(
           emit(event.id, {
             event_id: event.id,
             event_type: event.event_type,
-            payload: event.payload,
+            payload: redactJobEventPayload(event.payload),
           });
         }
         // Never install an unreachable subscription after abort or failed enqueue.
@@ -185,7 +213,7 @@ export function jobEventStreamResponse(
                 emit(event.id, {
                   event_id: event.id,
                   event_type: event.event_type,
-                  payload: event.payload,
+                  payload: redactJobEventPayload(event.payload),
                 });
               }
             } catch (err) {
@@ -214,7 +242,7 @@ export function jobEventStreamResponse(
               emit(event.id, {
                 event_id: event.id,
                 event_type: event.event_type,
-                payload: event.payload,
+                payload: redactJobEventPayload(event.payload),
               });
             }
           });
