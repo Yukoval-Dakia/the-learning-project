@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { AgentRunError } from '@/ai/agent-run-error';
 import { canonicalProviderName } from '@/ai/task-spec';
 import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import { declaredShapesAllSupported } from '@/core/schema/assessment/blank-answer-compare';
@@ -490,6 +491,7 @@ export async function runAdmissionForQuestion(
           }),
         });
       const fencedTask: BoundRunTaskTextFn = async (...args) => {
+        let queryStarted = false;
         try {
           await beforeSend();
           const [kind, input, ctx] = args;
@@ -501,6 +503,7 @@ export async function runAdmissionForQuestion(
             beforeProviderQuery: async (started) => {
               await beforeSend();
               await ctx?.beforeProviderQuery?.(started);
+              queryStarted = true;
             },
           } satisfies import('@/server/ai/runner-fn').RunTaskCallCtx;
           const result =
@@ -521,7 +524,11 @@ export async function runAdmissionForQuestion(
               ? error.taskRunId
               : null;
           if (failedRunId) attemptedTaskRunIds.add(failedRunId);
-          if (!purposeStopped && failedRunId) await recordPlacementAdmissionCall(failedRunId, null);
+          if (!purposeStopped && queryStarted && failedRunId)
+            await recordPlacementAdmissionCall(
+              failedRunId,
+              error instanceof AgentRunError ? (error.costUsd ?? null) : null,
+            );
           throw error;
         }
       };
