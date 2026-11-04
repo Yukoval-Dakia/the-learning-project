@@ -16,6 +16,7 @@ import {
   readStartOvernightDigest,
   readStartProposalInbox,
   readStartRecentAiChanges,
+  readStartTaskFailureAlerts,
   readStartTeachingBrief,
   readStartTodayCost,
   readStartWorkbenchSummary,
@@ -30,6 +31,9 @@ export const getStartOvernightDigest = createServerFn({ method: 'GET' }).handler
 );
 export const getStartTodayCost = createServerFn({ method: 'GET' }).handler(({ context }) =>
   runAuthenticatedStartWorkbench(context, getRequest(), readStartTodayCost),
+);
+export const getStartTaskFailureAlerts = createServerFn({ method: 'GET' }).handler(({ context }) =>
+  runAuthenticatedStartWorkbench(context, getRequest(), readStartTaskFailureAlerts),
 );
 export const getStartAutoApplied = createServerFn({ method: 'GET' }).handler(({ context }) =>
   runAuthenticatedStartWorkbench(context, getRequest(), readStartAutoApplied),

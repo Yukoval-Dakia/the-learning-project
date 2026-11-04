@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { type SQL, type SQLWrapper, and, eq, sql } from 'drizzle-orm';
 import type { AiTaskUsage, AttemptCostBasis, AttemptCostTruth } from '@/ai/task-result';
 import { newId as createId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
@@ -101,6 +101,25 @@ async function insertCostLedger(
     pgboss_job_id: entry.pgboss_job_id ?? null,
     occurred_at: entry.occurred_at ?? new Date(),
   });
+}
+
+/**
+ * An ai_task_runs row that is a task's real failure outcome. Three kinds of row ride
+ * on status='failure' without being one: error_retried (a later attempt carries the
+ * outcome), reconciled_stuck (sweeper convergence after the writer vanished), and a
+ * help attempt whose sealed usage_json.help_latency.terminal is 'cancelled' (caller
+ * stop or lifecycle abort). Timeouts stay failures. Task kinds without a help-latency
+ * seal write cancellation as plain 'error' and cannot be told apart here.
+ */
+export function isTaskFailureOutcome(
+  status: SQLWrapper,
+  finishReason: SQLWrapper,
+  usageJson: SQLWrapper,
+): SQL {
+  return sql`(${status} = 'failure'
+    and ${finishReason} is distinct from 'error_retried'
+    and ${finishReason} is distinct from 'reconciled_stuck'
+    and (${usageJson} -> 'help_latency' ->> 'terminal') is distinct from 'cancelled')`;
 }
 
 export interface AiTaskRunFinishEntry {

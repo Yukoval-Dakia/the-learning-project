@@ -19,6 +19,7 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Chip } from '@/ui-next/public';
 
 import {
@@ -158,7 +159,14 @@ export function NoteBlockView({
           <VerifiedChip />
         </span>
       )}
-      <div className="nt-sem-body">{blockText(block)}</div>
+      {/* YUK-1548 — read: the block's markdown rendered through the shared reading layer
+          (formulas included; a note carries no subject notation, so the renderer's fallback
+          decides). Edit keeps the source text. */}
+      {variant === 'read' ? (
+        <MathMarkdown className="nt-sem-body un-read">{blockText(block)}</MathMarkdown>
+      ) : (
+        <div className="nt-sem-body">{blockText(block)}</div>
+      )}
     </div>
   );
 }

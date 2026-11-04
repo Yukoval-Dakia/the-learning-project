@@ -566,11 +566,12 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
 
   // Two worker replicas booting in the same second both pass the window + "no run today" gate.
   // The DB partial unique (run_date) WHERE status='running' is what has to hold the line.
+  // @invariant concurrency: two workers booting at once open one run and land each paid root job exactly once
+  // @fails-if the run single-flight or the claimNodePending CAS breaks, so runs or the shared job rows for r1/r2 exceed one
   it('A7 two workers booting at once create exactly one run and enqueue each root once', async () => {
     // 两个副本共享**同一份** job 表 —— 生产里它们连同一个 pg-boss 库（见 FakeBoss
-    // 构造器）。此前各给一份独立表，B 查不到 A 刚发的 job，自愈补发便把它判成
-    // 「send never landed」重发一次，于是 allSends 里出现两条 'r1' —— 一个纯粹的
-    // 建模产物，且只在特定交错下出现（CI 上偶发红、本地几乎必绿）。
+    // 构造器）。A 已 claim 但 job 未落库时，B 的自愈补发会用同一 reserved id 再 send
+    // 一次；这是合法交错，所以只断言落库行数，不断言 send 调用次数。
     const sharedJobs = new Map<string, { state: string; output?: unknown }>();
     const bossA = new FakeBoss(sharedJobs);
     const bossB = new FakeBoss(sharedJobs);
@@ -591,16 +592,10 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
       else expect(out.reason).toBe('run-exists');
     }
     expect([outA.action, outB.action]).toContain('started');
-    // Each paid root was sent exactly once ACROSS both replicas (claimNodePending CAS).
-    const allSends = [...bossA.memberSends, ...bossB.memberSends].map((s) => s.name);
-    expect(allSends.filter((n) => n === 'r1')).toHaveLength(1);
-    expect(allSends.filter((n) => n === 'r2')).toHaveLength(1);
-    expect(allSends.filter((n) => n === 'down')).toHaveLength(0);
     expect((await nodeRow(runs[0].id, 'r1'))?.status).toBe('enqueued');
     expect((await nodeRow(runs[0].id, 'r2'))?.status).toBe('enqueued');
 
-    // 更承重的一条：真正代表「没有重复付费」的不是 send **调用**次数，而是**落库的 job
-    // 行数**。共享 job 表让这条可断言了——即便某条路径重发，reserved id 相同 +
+    // 「没有重复付费」看落库的 job 行数：即便某条路径重发，reserved id 相同 +
     // ON CONFLICT DO NOTHING 也只会存在一行。
     const jobKeys = [...sharedJobs.keys()];
     expect(jobKeys.filter((k) => k.startsWith('r1:'))).toHaveLength(1);

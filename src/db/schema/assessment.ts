@@ -12,6 +12,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -32,6 +33,7 @@ import type {
   ScoringUnitResultT,
 } from '../../core/schema/assessment';
 import type { AgentRef } from '../../core/schema/business';
+import { vector } from '../vector';
 
 type AgentRefT = z.infer<typeof AgentRef>;
 type JsonObject = Record<string, unknown>;
@@ -204,6 +206,97 @@ export const question_admission_verification = pgTable(
       sql`${t.outcome} IN ('passed','suspended','failed')`,
     ),
     check('question_admission_verification_generation_ck', sql`${t.generation} >= 0`),
+  ],
+);
+
+/**
+ * 题目解法先验（YUK-1771）：准入在 key 定了之后单独产出的方法、关键步、易错机理、前置知识与
+ * 难度先验，按 (revision, part) 冻结。先验含解法，与参考答案同属私有面：不进入任何
+ * 作答前的下发载荷，学习者侧只能在判定可见后经 attempt 读取。
+ * 写一次：BEFORE UPDATE trigger 拒绝改写。
+ */
+export const question_solution_prior = pgTable(
+  'question_solution_prior',
+  {
+    revision_id: text('revision_id').notNull(),
+    part_id: text('part_id').notNull(),
+    prior_version: text('prior_version').notNull(),
+    prior: jsonb('prior').$type<JsonObject>().notNull(),
+    origin: text('origin', { enum: ['admission', 'backfill'] }).notNull(),
+    /** 产出这份先验的付费 run；成本以这些 run 为准，不另拆分。 */
+    task_run_ids: jsonb('task_run_ids').$type<string[]>().notNull(),
+    /** 回填批次；只有回填行有，撤销一次回填时按它删除。 */
+    backfill_run_id: text('backfill_run_id'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.revision_id, t.part_id] }),
+    foreignKey({
+      columns: [t.revision_id],
+      foreignColumns: [question_revision.revision_id],
+      name: 'question_solution_prior_revision_fk',
+    }),
+    check('question_solution_prior_origin_ck', sql`${t.origin} IN ('admission','backfill')`),
+    check(
+      'question_solution_prior_backfill_ck',
+      sql`(${t.origin} = 'backfill') = (${t.backfill_run_id} IS NOT NULL)`,
+    ),
+    index('question_solution_prior_backfill_idx').on(t.backfill_run_id),
+  ],
+);
+
+/**
+ * 回填的付费尝试记录：一组题每个版本只付一次，没有产出也不自动重付。调用前先写入，所以进程
+ * 中途退出留下的 `started` 同样不会被自动重付。可丢失（最多多付一次），不进备份。
+ */
+export const question_solution_prior_backfill_attempt = pgTable(
+  'question_solution_prior_backfill_attempt',
+  {
+    // Cascade so a backup restore's sweep of question_revision is not blocked by this ledger.
+    revision_id: text('revision_id')
+      .primaryKey()
+      .references(() => question_revision.revision_id, { onDelete: 'cascade' }),
+    backfill_run_id: text('backfill_run_id').notNull(),
+    status: text('status', {
+      enum: ['started', 'produced', 'empty', 'failed', 'skipped'],
+    }).notNull(),
+    task_run_id: text('task_run_id'),
+    reason: text('reason'),
+    attempted_at: timestamp('attempted_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    check(
+      'question_solution_prior_backfill_attempt_status_ck',
+      sql`${t.status} IN ('started','produced','empty','failed','skipped')`,
+    ),
+    index('question_solution_prior_backfill_attempt_run_idx').on(t.backfill_run_id),
+  ],
+);
+
+/**
+ * 先验的方法与易错机理向量。派生索引：可由 question_solution_prior 重建，所以不进备份。
+ * 向量同样泄露解法，读口只返回题目 id 和相似度。
+ */
+export const question_solution_prior_vector = pgTable(
+  'question_solution_prior_vector',
+  {
+    revision_id: text('revision_id').notNull(),
+    part_id: text('part_id').notNull(),
+    facet: text('facet', { enum: ['method', 'pitfall'] }).notNull(),
+    idx: integer('idx').notNull(),
+    embedding: vector(1024).notNull(),
+    embed_model: text('embed_model').notNull(),
+    embed_version: integer('embed_version').notNull(),
+    content_hash: text('content_hash').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.revision_id, t.part_id, t.facet, t.idx] }),
+    foreignKey({
+      columns: [t.revision_id, t.part_id],
+      foreignColumns: [question_solution_prior.revision_id, question_solution_prior.part_id],
+      name: 'question_solution_prior_vector_prior_fk',
+    }).onDelete('cascade'),
+    check('question_solution_prior_vector_facet_ck', sql`${t.facet} IN ('method','pitfall')`),
   ],
 );
 

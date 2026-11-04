@@ -3,7 +3,7 @@ import {
   AgentRef,
   ArtifactBodyBlocks,
   ArtifactHistoryEntry,
-  NoteVerificationResult,
+  ArtifactVerificationSummary,
 } from '../business';
 import { ArtifactRowSnapshot } from './genesis';
 
@@ -132,14 +132,14 @@ export type ArtifactCreateExperimentalT = z.infer<typeof ArtifactCreateExperimen
 
 // design §3 #4. Drives `archived_at` / `generation_status` / `verification_status` /
 // `verification_summary` / `attrs` / `generated_by` / `verified_by` / `history` / `version`:
-// note_generate's generation_status (+ verification_status='queued' + generated_by), note_verify's
-// verification_status + verification_summary (+ verified_by), the retract archive (actions.ts),
+// note_generate's generation_status (+ verification_status + verification_summary +
+// generated_by), the retract archive (actions.ts),
 // AND the two attrs mutators (`set_attrs`: updateArtifactTool's interactive html + hub-dismiss's
 // suppressed_block_refs). Mirrors GoalStatusUpdateExperimental + LearningItemArchiveExperimental.
 //
 // FULL-ROW PARITY (design §2.1 "无排除列"): the artifact snapshot has NO excluded columns, so
-// a lifecycle write that ALSO touches a provenance column (note_generate → generated_by, note_verify
-// → verified_by) or a history-pushing one (updateArtifactTool → history) must carry that column too,
+// a lifecycle write that ALSO touches a provenance column (note_generate → generated_by)
+// or a history-pushing one (updateArtifactTool → history) must carry that column too,
 // else the full-row parity false-fails it. So this payload is a SUPERSET of the design's
 // narrow op fields: `attrs` (set_attrs), `generated_by`/`verified_by` (provenance alongside a status
 // op), `history_after` (an attrs op that also pushes a history entry). All optional/presence-based —
@@ -174,11 +174,11 @@ export const ArtifactLifecycleExperimental = z
         // free text columns on the table (NOT pgEnums) — generation_status / verification_status.
         generation_status: z.string().optional(),
         verification_status: z.string().optional(),
-        verification_summary: NoteVerificationResult.nullable().optional(),
+        verification_summary: ArtifactVerificationSummary.nullable().optional(),
         // The full new `attrs` jsonb (set_attrs op). Required-when-set_attrs via superRefine.
         attrs: z.record(z.string(), z.unknown()).optional(),
-        // Provenance columns a status write co-mutates (note_generate→generated_by,
-        // note_verify→verified_by). Carried alongside the status op so full-row parity holds.
+        // Provenance columns a status write co-mutates (note_generate→generated_by).
+        // Carried alongside the status op so full-row parity holds.
         generated_by: AgentRef.nullable().optional(),
         verified_by: AgentRef.nullable().optional(),
         // Full after-history when the UPDATE pushed a history entry (updateArtifactTool).

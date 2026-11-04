@@ -768,6 +768,8 @@ function PlacementQuestionCard({
 }) {
   const binding = qRef.assessment;
   const frozen = binding.state.practice_dto;
+  // YUK-1406 — the subject's render notation from the server; without it formulas show as source.
+  const notation = qRef.notation ?? null;
   const accepted = binding.state.submissions[0];
   const restored = binding.state.draft ?? accepted;
   const [responses, setResponses] = useState<ResponseSetT>(
@@ -1129,13 +1131,10 @@ function PlacementQuestionCard({
   };
   return (
     <div ref={attachCard} className="un-ob-section un-ob-panel un-ob-pl-card">
-      <div className="un-ob-pl-meta">
-        <span className="un-ob-pl-qid">{qRef.questionId.slice(0, 12)}</span>
-      </div>
       {frozen?.materials.map((material) => (
         <div key={material.material_id}>
           {material.content_md !== undefined ? (
-            <MathMarkdown>{material.content_md}</MathMarkdown>
+            <MathMarkdown notation={notation}>{material.content_md}</MathMarkdown>
           ) : (
             <AssetEvidencePreview
               assetId={material.asset_id}
@@ -1145,7 +1144,7 @@ function PlacementQuestionCard({
         </div>
       ))}
       {frozen?.faces.map((face) => (
-        <MathMarkdown key={face.part_id} className="un-ob-pl-stem">
+        <MathMarkdown key={face.part_id} className="un-ob-pl-stem un-read" notation={notation}>
           {face.prompt_md}
         </MathMarkdown>
       ))}
@@ -1171,6 +1170,7 @@ function PlacementQuestionCard({
                 spec={spec}
                 label={slot.placement?.label}
                 ariaLabel={slot.placement?.label ?? '作答'}
+                notation={notation}
                 value={nativeResponseValue(entry)}
                 onChange={(value) => updateResponse(nativeResponseEntry(slot, value, entry))}
                 disabled={status !== 'answering' || submitting || leaving || conflict}

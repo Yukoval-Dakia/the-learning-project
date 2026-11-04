@@ -147,6 +147,11 @@ export {
   auditProfilesFromDb,
   formatDbProfileAuditReport,
 } from './server/subject-profile-audit';
+export {
+  type ConfigIncompleteAlert,
+  type TaskFailureAlertsRead,
+  loadTaskFailureAlerts,
+} from './server/task-failure-alerts';
 export { type TodayCost, loadTodayCost } from './server/today-cost';
 export {
   type EditSharedTraitInput,

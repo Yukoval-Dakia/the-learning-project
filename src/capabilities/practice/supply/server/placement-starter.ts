@@ -1,7 +1,7 @@
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import type { SendOptions } from 'pg-boss';
 import type { Db, Tx } from '@/db/client';
-import { placement_starter_claim } from '@/db/schema';
+import { learning_session, placement_starter_claim } from '@/db/schema';
 import {
   JOB_RETRY_DELAY_SECONDS,
   JOB_RETRY_LIMIT,
@@ -138,10 +138,23 @@ export async function dispatchPlacementStarterClaimTx(
   try {
     return await tx.transaction(async (sp) => {
       const target = buildPlacementStarterTarget(claim);
+      // Provenance anchor: the claim only exists because a learner started
+      // placement on this goal. Server-resolve the goal's latest placement
+      // session and bind it onto the dispatch event; admission lineage proof
+      // reads session-bound ancestors and nothing else counts.
+      const [placementSession] = await sp
+        .select({ id: learning_session.id })
+        .from(learning_session)
+        .where(
+          and(eq(learning_session.type, 'placement'), eq(learning_session.goal_id, claim.goal_id)),
+        )
+        .orderBy(desc(learning_session.started_at))
+        .limit(1);
       const result = await dispatchSupplyTarget(sp, target, {
         atomic: true,
         cooldownDays: 0,
         actorRef: 'placement_starter',
+        session_id: placementSession?.id ?? null,
         webSearchAvailable: () => true,
         enqueueQuizGen: (data) =>
           send('quiz_gen', data, {

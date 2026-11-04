@@ -8,6 +8,7 @@
 import { createHash } from 'node:crypto';
 
 import { createId } from '@paralleldrive/cuid2';
+import { ZodError } from 'zod';
 import type { BuildMcpServerOptions } from '@/ai/pi-tool-mount';
 import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import { writeEvent } from '@/kernel/events';
@@ -267,6 +268,19 @@ async function resolveOutputImages(
     }
     let bytes = loaded.bytes;
     let mimeType = loaded.mime_type;
+    // YUK-1548 (D8) — a stored SVG figure reaches the model as a PNG raster:
+    // providers do not consume raw SVG, and the rebuild is already verified.
+    if (mimeType === 'image/svg+xml') {
+      try {
+        const { default: sharp } = await import('sharp');
+        const raster = await sharp(Buffer.from(bytes), { density: 144 }).png().toBuffer();
+        bytes = new Uint8Array(raster.buffer, raster.byteOffset, raster.byteLength);
+        mimeType = 'image/png';
+      } catch {
+        blocks.push(note(`asset '${assetRef.asset_id}' could not be rasterised to PNG`));
+        continue;
+      }
+    }
     const maxEdge =
       typeof ref.max_edge === 'number' ? Math.min(ref.max_edge, MAX_TOOL_IMAGE_EDGE) : 0;
     if (maxEdge > 0) {
@@ -314,7 +328,12 @@ async function resolveOutputImages(
 
 type PhaseResult<T> =
   | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly error: string };
+  | {
+      readonly ok: false;
+      readonly error: string;
+      /** YUK-1548 §4.2 — typed shape issues from a ZodError, model-repairable. */
+      readonly issues?: { code: string; path: string; detail: string }[];
+    };
 type ToolInputState = {
   readonly parsedInput: unknown;
   readonly execInput: unknown;
@@ -364,9 +383,19 @@ function parseInput(call: ToolCallContext, rawArgs: unknown): InputPhase {
     };
   } catch (error) {
     // Parse failure logs the raw request and does not claim call correlation.
+    // YUK-1548 §4.2 — a ZodError surfaces as shape_invalid issues inside the
+    // same isError JSON, so the model gets the repair vocabulary either way.
+    const issues =
+      error instanceof ZodError
+        ? error.issues.slice(0, 12).map((issue) => ({
+            code: 'shape_invalid',
+            path: `/${issue.path.join('/')}`,
+            detail: issue.message,
+          }))
+        : undefined;
     return {
       input: { parsedInput: rawArgs, execInput: rawArgs, truncationNote: null },
-      result: phaseError(error),
+      result: { ok: false, error: phaseError(error).error, ...(issues ? { issues } : {}) },
     };
   }
 }
@@ -727,6 +756,11 @@ function formatToolResponse(
             ? {
                 error: errorReason,
                 summary,
+                ...(execution.result.ok
+                  ? {}
+                  : execution.result.issues
+                    ? { issues: execution.result.issues }
+                    : {}),
                 ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
                 ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
               }

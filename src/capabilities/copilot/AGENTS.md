@@ -24,7 +24,7 @@
   将晚于后续输入到达的前轮回复归回前轮；不要另建第三套 reader/projection。
 - `server/durable-dispatch.ts` 拥有 FIFO 接纳和派发：只有最早未终结消息有物理 `copilot_run` job。
   终态提交后才能唤醒后继；合法等待消息没有 pickup 超时，DISPATCHED 才启动 pickup 计时。
-- `server/copilot-execution.ts` 拥有公共模型/工具/读取预算与发布校验；Copilot 执行层无数量 cap（turns / tool calls / context rows 均无硬顶，warning 仅 advisory），墙钟边界仍是 owner 的 45 分钟有限时限（恢复上限 < 1h stuck 阈值）。同一调用再次出现且没有新证据时，`server/no-progress-loop.ts` 在这 45 分钟用完前停掉后续工具。距硬超时还有一分钟时，根循环里只要有过一次非写入的工具结算（读成功或失败都算），下一次根工具也不再执行，走同一条封存收口；纯写入不单独触发这次落地。根模型调用若是额度（429）、502 或无法读出的输出，收集结果直接带上可封存的退出正文（原因、停止重试、确定性练习），不再以空的「请重试」收口。工具结果上若带有同样的已证明故障，循环立即停止，仍走证据与可执行入口。封存的回复保留已经写出的正文，并附上证据和可执行入口；只有证据对象本身写明判词异议时，才在回复结算的同一事务里提交纠错提案。这不是轮数或费用上限。
+- `server/copilot-execution.ts` 拥有公共模型/工具/读取预算与发布校验；Copilot 执行层无数量 cap（turns / tool calls / context rows 均无硬顶，warning 仅 advisory），墙钟边界仍是 owner 的 45 分钟有限时限（恢复上限 < 1h stuck 阈值）。同一签名调用再次出现，或同一工具返回完全相同的结果时，`server/no-progress-loop.ts` 在这 45 分钟用完前判为原地打转：先拒绝后续根工具（拒绝正文要求用已收集证据作答），模型仍写出回答；连拒数次仍重试才硬性终止。不同查询之间的结果重叠不算不前进。距硬超时还有一分钟时，根循环里只要有过一次非写入的工具结算（读成功或失败都算），下一次根工具同样被拒并走同一条封存收口；纯写入不单独触发这次落地。根模型调用若是额度（429）、502 或无法读出的输出，收集结果直接带上可封存的退出正文（原因、停止重试、确定性练习），不再以空的「请重试」收口。工具结果上若带有同样的已证明故障，循环立即终止，仍走同一条封存路径。封存的回复保留已经写出的正文，并附上一段不含内部 id 与操作名的收口说明；证据清单与兜底入口只留给服务端结算，只有证据对象本身写明判词异议时，才在回复结算的同一事务里提交纠错提案。这不是轮数或费用上限。
   SDK id 只有本进程确实持有且实际提交文本匹配时才可复用；异进程从产品历史冷启，不重烧已执行消息。
   `agent_sdk_session_id` 槽承载 pi lane 的 `pi:<uuid>` 标记（YUK-1022）：`pi:` cursor 只在下一次
   attempt 续用——pi 的「会话文件」等价物是 durable turns 经 `piSessionReplay` 回放进 `context.messages`。
@@ -38,11 +38,11 @@
   `copilot_run_reconcile` 只依据 pg-boss 权威状态、持久化 outcome marker 与 execution
   fence / legacy worker-touch evidence 做有界修复；只有 QUEUED-only dead delivery 才能标成
   pre-execution loss。不得用 wall-clock 或 heartbeat timestamp 猜测 live queue run 已死。
-- 工具归属以 `manifest.ts` 为准；artifact 创建/更新属于 [Notes manifest](../notes/manifest.ts)，Copilot 仅持调用授权与呈现控制。
+- 工具归属以 `manifest.ts` 为准；artifact 创建/更新属于 [Notes manifest](../notes/manifest.ts)，Copilot 仅持调用授权与呈现控制。YUK-1769：`author_artifact`/`update_artifact` 已不在 Copilot surface（待 YUK-1548 sandbox route），伙伴写 Markdown 笔记走 notes 的 `write_note`（create / append / note_generate 交接）。
 - 根任务实时流式发送正文，并以 terminal Markdown 权威替换草稿；服务端在 runner terminal 后绑定实际 root trace、更正、proposal 披露与呈现授权。
   [ADR-0061](../../../docs/adr/0061-copilot-presentation-intent-control.md) 允许 agent 看完结果后按需调用 `present_primary_view` 提名成品，服务端校验后发布；该短交互仍受既有执行预算约束。
 - chip 是 Copilot 回复里的可点击动作卡片，accept-chip 把用户选择物化为教学事件。
-- 解题提示和教学回合只在题干对上并集、单调区间或合法替代写法时核讲解。讲对的原文保留；讲反了改成封存说明，并留下 digest、task-run、provider、model 与费用。否定只管辖紧挨着的主张。写在区间前的「不是」撤回这一分句里的区间，区间内部的逗号不算分句。被否定的「增/减」会跳过，不给后面分句的区间标增减，也不把外侧、中间或开区间 a 的范围读成讲对；跳过之后明文写错的外侧或中间仍判失败。教学检查题的题面用核过的正文；讲反时参考和选项也改成这份正文，不再留模型原文。这条不改已发布正文的结算。
+- 教学回合正文原样发布，不再按题干特调替换；每次发布封存一条 `experimental:help_explanation_receipt`，绑定输入面与正文 digest、task-run、provider/model 与费用（历史 `help_explanation_replay` 载荷仍可读）。教学检查题保留模型自产的 structured_question（kind / reference / choices 不被改写），题面回退用回合正文。这条不改已发布正文的结算。
 
 ## ANTI-PATTERNS
 - 别把 Copilot 做成通用 AI 调用入口；所有 task 仍走领域 route / worker。

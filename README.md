@@ -70,11 +70,19 @@ NODE_ENV=development LMNR_DEV_TRANSCRIPTS=1 pnpm dev:local
 
 `dev:local` inherits these variables into both processes. Restart an existing dev
 session after changing them. The switch accepts only `1` and requires exactly
-`NODE_ENV=development`; production, test, or an unset environment cannot enable it.
+`NODE_ENV=development`; production, test, or an unset environment cannot enable this switch.
 An empty project key still prevents SDK loading and export. Omit the switch or set
-`LMNR_DEV_TRANSCRIPTS=0` to keep metadata-only tracing.
+`LMNR_DEV_TRANSCRIPTS=0` to turn this switch off.
 
-This opt-in captures the Pi system/user/assistant/tool conversation as message
+Separately, `LMNR_TRANSCRIPTS=1` enables transcripts in any environment, for a whitelist
+of tasks whose content holds no learner material. Today that is
+`QuestionAdmissionSolveTask`, and only for a question from `web_sourced` or a
+knowledge-triggered `quiz_gen` whose purpose is `allow` and which only pipeline writers
+have ever published, so an edited question does not qualify. A task enters the whitelist only
+if no tool it can call returns learner data. Every other task stays metadata only. Unset
+the switch to turn it off.
+
+Either opt-in captures the Pi system/user/assistant/tool conversation as message
 arrays on `llm.call`, visible final assistant text and correlated tool calls, and
 sanitized structured arguments/results on tool spans. It preserves normal
 educational content. It excludes reasoning blocks/signatures, credentials, auth
@@ -150,7 +158,8 @@ reuses the same database and only applies new migrations. Docker/OrbStack must b
   runs the dev API and worker against TEST's data and jobs — do not use it casually.
 - **Connections:** each dev API and worker uses a small pool (`DB_POOL_MAX=5`, also caps pg-boss), about 29 connections per worktree (pools plus the pg-boss and event LISTEN clients). `dev:local` saves `max_connections=300` on the shared dev Postgres (in its volume, not the compose file) and restarts it only when no other worktree is connected; otherwise it prints the restart command to run once they are stopped.
 - **Builtin subjects:** migrations run through the production entry `scripts/migrate.ts`, so every start also runs the subject-root seed and the builtin subject/trait reconcile (4 subjects, 24 traits); both are idempotent, so older dev databases are filled on their next start.
-- **Seed questions:** a fresh dev DB starts with 7 admitted math questions (ids `devseed:q:*`, fixed answer keys graded without any model call) so the question bank, practice and today pages have content; re-running adds nothing. Dev DB only — never with `DEV_ALLOW_TEST_DB=1`.
+- **Seed questions:** unless `DEV_SEED=0`, a fresh dev DB starts with 7 admitted math questions (ids `devseed:q:*`, fixed answer keys graded without any model call) so the question bank, practice and today pages have content; re-running adds nothing. Dev DB only — never with `DEV_ALLOW_TEST_DB=1`.
+  For a cold-start or first-use check on an empty learner state: `pnpm dev:reset`, then `DEV_SEED=0 pnpm dev:local`. Builtin subjects and subject roots still come from `scripts/migrate.ts` (production does the same); `DEV_SEED=0` never deletes questions seeded earlier.
 - **Reset the dev DB:** `pnpm dev:reset` drops **only the current worktree's** database (the
   next `pnpm dev:local` recreates, migrates and re-seeds it). Never
   `docker compose -f docker-compose.dev.yml down -v` — the volume holds every worktree's

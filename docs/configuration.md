@@ -36,7 +36,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | --- | --- | --- | --- |
 | `INTERNAL_TOKEN` | app（`/api/*`） | 必填非空，否则 API 启动失败；`/api/health`、`/api/ready` 豁免 | `src/server/config/env.ts`；`server/app.ts` |
 | `JUDGE_PROVENANCE_SECRET` | app | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时 provenance 签发/校验关闭；worker 不读 | `src/capabilities/practice/grading/server/judge/preview-provenance-token.ts`；`.env.example` |
-| `BANK_GAP_EVIDENCE_SECRET` | app、worker | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时一律视为未设：`search_bank` 不签 MAC，`file_bank_gap` 拒绝 filing | `src/capabilities/practice/question-bank/tools/bank-search.ts`；`src/capabilities/practice/server/tools/file-bank-gap.ts` |
+| `BANK_GAP_EVIDENCE_SECRET` | app、worker（必须同值；`openssl rand -hex 32` 生成；`dev:local` 未设时按本 worktree 库名派生一个稳定值，只限 dev 库，`DEV_ALLOW_TEST_DB=1` 时不派生） | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时一律视为未设：`search_bank` 不签 MAC，`file_bank_gap` 拒绝 filing | `src/capabilities/practice/question-bank/tools/bank-search.ts`；`src/capabilities/practice/server/tools/file-bank-gap.ts` |
 
 ### AI provider 与模型选择
 
@@ -138,18 +138,17 @@ PATCH /api/admin/config   # x-internal-token
 | --- | --- | --- | --- |
 | `JUDGE_DURABLE_ENABLED` | app、worker | `false` | `registry` |
 | `JUDGE_FALLBACK_PROVIDER` | app、worker | `anthropic-sub`；空串 = 显式关闭兜底 | `registry` |
-| `MISCONCEPTION_PROMOTE_ENABLED` | app、worker | `false`；compose 强制项，DB 写入返回 409 | `registry`；`src/server/config/write.ts` |
+| `MISCONCEPTION_PROMOTE_ENABLED` | app、worker | `true` | `registry` |
 | `MISCONCEPTION_HARD_CONFIRM_ENABLED` | app、worker | `false` | `registry` |
 | `QUESTION_SUPPLY_REFILL_ENABLED` | app、worker | `false` | `registry` |
 | `JUDGE_CALIBRATION_SAMPLING_ENABLED` | worker | `false` | `registry` |
-| `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` | worker | `false`；compose 强制项，DB 写入返回 409 | `registry`；`src/server/config/write.ts` |
+| `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` | worker | `true` | `registry` |
 | `WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD` | worker | `0.85` | `registry` |
 | `WORKFLOW_JUDGE_OBSERVE_ENABLED` | worker | `false` | `registry` |
 | `WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED` | worker | `false` | `registry` |
 | `WAVE6_TRIGGER_MARK_WRONG_ENABLED` | app、worker | `true` | `registry` |
 | `WAVE6_TRIGGER_MASTERY_ENABLED` | app、worker | `true` | `registry` |
 | `WAVE6_TRIGGER_DREAMING_ENABLED` | app、worker | `true` | `registry` |
-| `WAVE6_TRIGGER_VERIFY_ENABLED` | app、worker | `false` | `registry` |
 | `AUTO_INTERVENTION_EXPANSION_ENABLED` | app、worker | `false` | `registry` |
 | `INTERVENTION_DISABLED_METHOD_IDS` | app、worker | `[]`；CSV 解析为数组 | `registry` |
 | `COPILOT_SUBAGENT_ENABLED` | app、worker | `true` | `registry` |
@@ -157,7 +156,7 @@ PATCH /api/admin/config   # x-internal-token
 | `COPILOT_NUDGE_ENABLED` | app、worker | `false` | `registry` |
 | `COPILOT_NUDGE_DAILY_MAX` | app、worker | `3` | `registry` |
 | `COPILOT_NUDGE_EXPIRES_HOURS` | app、worker | `24` | `registry` |
-| `PLACEMENT_PROBE_ENABLED` | app、worker | `false`；compose 强制项，DB 写入返回 409 | `registry`；`src/server/config/write.ts` |
+| `PLACEMENT_PROBE_ENABLED` | app、worker | `true` | `registry` |
 | `PROJECTION_IS_WRITER_ITEM_CALIBRATION` | app、worker | `false`；env 只认字面 `1` 为 true | `registry` |
 | `SELECTION_POLICY` | app、worker | `softmax_mfi`；只接受 `legacy`/`softmax_mfi` | `registry` |
 | `HUB_SYNC_MODE` | worker（夜间同步） | `off`；只接受 `off`/`shadow`/`apply` | `registry` |
@@ -184,6 +183,8 @@ PATCH /api/admin/config   # x-internal-token
 | --- | --- | --- | --- |
 | `LMNR_PROJECT_API_KEY` | app、worker | 空或未设时跳过 Laminar SDK 与导出 | `src/server/ai/laminar-tracing.ts` |
 | `LMNR_DEV_TRANSCRIPTS` | app、worker | 只有字面 `1` 且 `NODE_ENV=development` 时开启 | `src/server/ai/laminar-transcript.ts` |
+| `LMNR_TRANSCRIPTS` | app、worker | 只有字面 `1` 时开启，不看 `NODE_ENV`。只发白名单任务的 transcript，并且调用方要判定本次内容不含学习者材料；其他任务只有元数据 | `src/server/ai/laminar-transcript.ts` |
+| `LMNR_TRACE_ENV` | app、worker | 给每个 span 打环境标记 `tlp-env=<值>`，共用一个 Laminar 项目时用来筛选。只接受小写字母、数字和连字符，其他情况或未设都算 `dev` | `src/server/ai/laminar-tracing.ts` |
 | `LMNR_DEBUG` | app、worker | 只要设置就拒绝初始化 tracing | `src/server/ai/laminar-tracing.ts` |
 | `LMNR_TRACE_METADATA` | app、worker | 只要设置就拒绝初始化 tracing | `src/server/ai/laminar-tracing.ts` |
 | `LMNR_SPAN_CONTEXT` | app、worker | 只要设置就拒绝初始化 tracing | `src/server/ai/laminar-tracing.ts` |
@@ -215,4 +216,4 @@ app 与 worker 启动时各 hydrate 一次，之后每 `15_000` ms 刷新；刷�
 
 写面是 `PATCH /api/admin/config` 与 `POST /api/admin/config/reset`，页面为 `/admin/config`；同一事务内 upsert/删除行、追加 journal、bump epoch，提交后本进程立即 hydrate，响应分别报告提交 epoch 与本进程快照 epoch（`src/capabilities/observability/manifest.ts`；`src/server/config/write.ts`；`src/server/config/admin-config-write.ts`；`src/kernel/ui-surfaces.ts`）。
 
-生效优先级按 key 的 `envMode`：默认 `fallback` = DB > env > code default；`priority` = env 显式 > DB > code default；`pinned` = 只看 env（DB 写入 409）。当前 `pinned` 是 `MISCONCEPTION_PROMOTE_ENABLED`、`WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED`、`PLACEMENT_PROBE_ENABLED`（`src/core/config/store.ts`；`registry`）。
+生效优先级按 key 的 `envMode`：默认 `fallback` = DB > env > code default；`priority` = env 显式 > DB > code default；`pinned` = 只看 env（DB 写入 409）。目前没有 key 使用 `pinned`（`src/core/config/store.ts`；`registry`）。

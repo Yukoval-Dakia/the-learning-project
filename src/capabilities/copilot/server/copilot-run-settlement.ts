@@ -13,7 +13,7 @@
 // The execution owner feeds its final outcome in here; it never appends terminal
 // job_events itself.
 
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
 import type {
   CopilotModeState,
@@ -343,10 +343,12 @@ type CopilotExecutionSettlement<T> =
   | { outcome: 'settled'; value: T }
   | { outcome: 'already_terminal'; events: TerminalProjectionEvent[] };
 
-/** One non-terminal progress frame the execution owner may publish mid-run. */
+/** One non-terminal progress frame the execution owner may publish mid-run.
+ *  `block_draft` is a writer-internal latest-wins slot — flushed as `step`. */
 export type CopilotRunProgressEvent =
   | { kind: 'delta'; text: string }
-  | { kind: 'step'; payload: Record<string, unknown> };
+  | { kind: 'step'; payload: Record<string, unknown> }
+  | { kind: 'block_draft'; payload: Record<string, unknown> };
 
 /**
  * Publish live progress under the settlement lock. A queued delta/step is
@@ -361,18 +363,38 @@ export async function publishCopilotRunProgressEvent(
   progress: CopilotRunProgressEvent,
   onDeltaAccepted?: (text: string) => void,
 ): Promise<void> {
-  const publication = await withCopilotExecutionSettlementLock(db, runId, async (tx, events) => {
-    if (hasCancelRequest(events) || (await findPersistedDurableReply(tx, runId))) return false;
+  // Same settlement lock as outcome/cancel commits, but a bounded blocking-row
+  // probe instead of a full replay: a progress frame is only ever blocked by a
+  // cancel request, a terminal frame, or a committed outcome marker. Streaming
+  // makes this path hot, so it must stay near-constant per write.
+  const published = await db.transaction(async (tx) => {
+    await acquireCopilotExecutionSettlementLock(tx, runId);
+    const blocking = await tx
+      .select({ event_type: job_events.event_type, payload: job_events.payload })
+      .from(job_events)
+      .where(
+        and(
+          eq(job_events.business_table, COPILOT_RUN_TABLE),
+          eq(job_events.business_id, runId),
+          inArray(job_events.event_type, [
+            COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+            COPILOT_RUN_EVENTS.DONE,
+            COPILOT_RUN_EVENTS.FAILED,
+          ]),
+        ),
+      );
+    if (hasCancelRequest(blocking) || blocking.some(isCopilotRunTerminalEvent)) return false;
+    if (await findPersistedDurableReply(tx, runId)) return false;
     await writeJobEvent(tx, {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
       event_type: progress.kind === 'delta' ? COPILOT_RUN_EVENTS.DELTA : COPILOT_RUN_EVENTS.STEP,
       payload: progress.kind === 'delta' ? { text: progress.text } : progress.payload,
     });
+    // (block_draft slots never reach here — the writer flushes them as steps.)
     return true;
   });
-  if (publication.outcome === 'settled' && publication.value && progress.kind === 'delta')
-    onDeltaAccepted?.(progress.text);
+  if (published && progress.kind === 'delta') onDeltaAccepted?.(progress.text);
 }
 
 /**

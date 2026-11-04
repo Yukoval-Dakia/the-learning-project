@@ -16,7 +16,7 @@
 import { createHash } from 'node:crypto';
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
 import type {
   AdmissionEvidenceT,
@@ -49,6 +49,7 @@ import {
 } from '@/core/schema/assessment/lifecycle';
 import type { Db, Tx } from '@/db/client';
 import {
+  event,
   question,
   question_admission_verification,
   question_group_lifecycle,
@@ -127,6 +128,12 @@ export interface PublishQuestionGroupInput {
   verification?: AdmissionVerificationWrite;
   /** 发布者 provenance（jsonb published_by；缺省 NULL）。 */
   publishedBy?: unknown;
+  /**
+   * 发布事件的 caused_by_event_id。缺省（undefined）时，同一 revision 的生命周期
+   * 更新继承该 revision 上一发布事件的 caused_by；新 revision 不继承，因为旧来源的
+   * 授权没有覆盖新内容。显式传值（含 null）优先。
+   */
+  causedByEventId?: string | null;
   /**
    * 自定义块字节核验的读取器；kernel 不依赖存储层，由组合方注入。含 custom
    * 块时必供，缺省 fail-closed。
@@ -754,6 +761,26 @@ export async function publishQuestionGroup(
       };
     }
 
+    // 判分准入把 caused_by 当来源证明：只有内容不变的生命周期更新才能沿用，
+    // 铸新 revision 的写入点（下方）只认显式传值。
+    const explicitCausedByEventId = input.causedByEventId ?? null;
+    let causedByEventId = explicitCausedByEventId;
+    if (input.causedByEventId === undefined && currentRevisionId != null) {
+      const [prior] = await tx
+        .select({ causedBy: event.caused_by_event_id })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, ASSESSMENT_PUBLISH_ACTION),
+            sql`${event.payload}->>'group_id' = ${groupId}`,
+            sql`${event.payload}->>'revision_id' = ${currentRevisionId}`,
+          ),
+        )
+        .orderBy(desc(event.created_at), desc(event.id))
+        .limit(1);
+      causedByEventId = prior?.causedBy ?? null;
+    }
+
     let previousContract: {
       structure: QuestionGroupStructureT;
       response_spec: ResponseSpecT;
@@ -838,6 +865,7 @@ export async function publishQuestionGroup(
           session_id: null,
           actor_kind: 'system',
           actor_ref: input.actorRef,
+          caused_by_event_id: causedByEventId,
           action: ASSESSMENT_PUBLISH_ACTION,
           subject_kind: 'question',
           subject_id: groupId,
@@ -950,6 +978,7 @@ export async function publishQuestionGroup(
       session_id: null,
       actor_kind: 'system',
       actor_ref: input.actorRef,
+      caused_by_event_id: explicitCausedByEventId,
       action: ASSESSMENT_PUBLISH_ACTION,
       subject_kind: 'question',
       subject_id: groupId,
@@ -1066,6 +1095,8 @@ export interface PublishFromRowInput {
   verification?: AdmissionVerificationWrite;
   /** 缺省不改；首次发布时 'unbounded'。 */
   claimPolicy?: 'one_time' | 'unbounded';
+  /** 透传给 publishQuestionGroup，缺省时的继承规则见其 causedByEventId。 */
+  causedByEventId?: string | null;
   /** 透传给 publishQuestionGroup；含 custom 块时必供。 */
   readAssetBytes?: (storageKey: string) => Promise<Uint8Array | null>;
   actorRef: string;
@@ -1170,6 +1201,7 @@ export async function publishQuestionGroupFromRow(
       suspension: input.suspension,
       verification: input.verification,
       claimPolicy: input.claimPolicy,
+      causedByEventId: input.causedByEventId,
       readAssetBytes: input.readAssetBytes,
       actorRef: input.actorRef,
       now: input.now,

@@ -46,7 +46,7 @@ if (process.env.NODE_ENV !== 'production') {
   globalForBoss.__loomBossState = bossState;
 }
 
-export function createBoss(): PgBoss {
+export function createBoss(options: { listenNotify?: boolean } = {}): PgBoss {
   if (bossState.instance) return bossState.instance;
   const env = getServerEnv();
   const connectionString = env.DATABASE_URL;
@@ -63,6 +63,14 @@ export function createBoss(): PgBoss {
   bossState.instance = new PgBoss({
     connectionString,
     schema: 'pgboss',
+    // Only processes that register workers (startBossWorker) pass listenNotify.
+    // The sender side doesn't need the dedicated LISTEN connection: pg-boss
+    // emits the wake-up pg_notify inside the job INSERT, gated only on the
+    // queue's `notify` flag — not on any sender-side listener. Also kept off
+    // in disabled-automation mode so restore-acceptance runs and the small
+    // vitest pool (max:2) don't spend a pinned connection. If the listener
+    // can't be established, pg-boss warns and workers keep polling.
+    ...(options.listenNotify === true && automation === 'enabled' ? { useListenNotify: true } : {}),
     ...(automation === 'disabled'
       ? { schedule: false, supervise: false, migrate: false, registerInstance: false }
       : {}),

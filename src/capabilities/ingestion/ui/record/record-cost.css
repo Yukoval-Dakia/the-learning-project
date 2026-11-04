@@ -33,7 +33,6 @@
   margin-block: 8px;
 }
 [data-ui-next] .rc-cost-note,
-[data-ui-next] .rc-cost-reference,
 [data-ui-next].rc-cost dt {
   color: var(--un-md-sys-color-on-surface-variant);
 }

@@ -62,6 +62,7 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   } else {
     await createJobQueue(boss, decl.name, EXPIRE_BY_QUEUE[decl.queue], {
       ...(decl.heartbeatSeconds !== undefined ? { heartbeatSeconds: decl.heartbeatSeconds } : {}),
+      ...(decl.notify !== undefined ? { notify: decl.notify } : {}),
     });
   }
 
@@ -77,6 +78,7 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
       pollingIntervalSeconds: decl.pollingIntervalSeconds ?? 2,
       batchSize: decl.batchSize ?? 1,
       ...(decl.includeMetadata !== undefined ? { includeMetadata: decl.includeMetadata } : {}),
+      ...(decl.localConcurrency !== undefined ? { localConcurrency: decl.localConcurrency } : {}),
     },
     fenceAwareJobHandler(db, decl.name, handler),
   );

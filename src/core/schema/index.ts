@@ -159,6 +159,8 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
   // provenance (copilot-authored via the author_artifact DomainTool; tool_kind
   // mirrors it). Pure additive enum, no migration. NOT a paper provenance —
   // practice gates (practice-read.ts / /api/practice) must keep rejecting it.
+  // YUK-1769 — `write_note` is the copilot Markdown-note provenance (the
+  // write_note DomainTool; tool_kind mirrors it). Pure additive enum.
   intent_source: z.enum([
     'learning_intent',
     'declared',
@@ -169,6 +171,7 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
     'embedded_check',
     'ingestion_paper',
     'author_artifact',
+    'write_note',
   ]),
   body_blocks: b.ArtifactBodyBlocks.nullable(),
   knowledge_ids: z.array(z.string()),
@@ -176,6 +179,8 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
   tool_state: b.ToolState.nullable(),
   // ADR-0033 D6 — 'author_artifact' mirrors the intent_source above
   // for type='interactive' rows. Pure additive enum (text column, no DDL).
+  // YUK-1769 — 'write_note' mirrors the intent_source above for copilot-written
+  // note_long rows. Pure additive enum.
   tool_kind: z
     .enum([
       'quiz',
@@ -184,11 +189,12 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
       'embedded_check',
       'ingestion_paper',
       'author_artifact',
+      'write_note',
     ])
     .nullable(),
   generation_status: b.ArtifactGenerationStatus,
   verification_status: b.ArtifactVerificationStatus,
-  verification_summary: b.NoteVerificationResult.nullable(),
+  verification_summary: b.ArtifactVerificationSummary.nullable(),
   verified_by: b.AgentRef.nullable(),
 });
 export type Artifact = z.infer<typeof Artifact>;

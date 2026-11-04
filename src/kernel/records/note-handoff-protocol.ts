@@ -74,14 +74,6 @@ export function noteHandoffJobId(kind: IntentKind, artifactId: string): string {
   )}-${hex.slice(20, 32)}`;
 }
 
-export function noteVerificationRecoveryJobId(artifactId: string, fence: number): string {
-  const hex = deterministicHex(`note-verification-claim-recovery:${fence}`, artifactId);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(
-    17,
-    20,
-  )}-${hex.slice(20, 32)}`;
-}
-
 function completionFor(intentKind: IntentKind): CompletionKind {
   return intentKind === NOTE_HANDOFF_KINDS.generationIntent
     ? NOTE_HANDOFF_KINDS.generationDispatchComplete
@@ -131,10 +123,6 @@ async function writeHandoffRecord(
 
 export async function writeNoteGenerationIntent(tx: Tx, artifactId: string): Promise<void> {
   await writeHandoffRecord(tx, artifactId, NOTE_HANDOFF_KINDS.generationIntent);
-}
-
-export async function writeNoteVerificationIntent(tx: Tx, artifactId: string): Promise<void> {
-  await writeHandoffRecord(tx, artifactId, NOTE_HANDOFF_KINDS.verificationIntent);
 }
 
 async function recordExists(db: Db, id: string): Promise<boolean> {
@@ -224,12 +212,4 @@ export async function dispatchNoteGeneration(
   deps: { readonly boss: BossDispatch },
 ): Promise<boolean> {
   return dispatchNoteHandoff(db, artifactId, NOTE_HANDOFF_KINDS.generationIntent, deps);
-}
-
-export async function dispatchNoteVerification(
-  db: Db,
-  artifactId: string,
-  deps: { readonly boss: BossDispatch },
-): Promise<boolean> {
-  return dispatchNoteHandoff(db, artifactId, NOTE_HANDOFF_KINDS.verificationIntent, deps);
 }

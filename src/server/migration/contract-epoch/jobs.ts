@@ -37,6 +37,8 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   nightly_orchestrator: 'drain',
   // 被卡死的 provider run 对账/剪枝：运维真相表，与判分合同无关。
   ai_task_run_reconcile_nightly: 'drain',
+  // Reads ai_task_runs and writes one deterministic-id alert event; no AI, no contract state.
+  task_failure_alert_hourly: 'drain',
   copilot_run_reconcile: 'drain',
   // mem0 管道：事件 outbox 摄取与 brief 再生成是 epoch 无关的后台效应
   // （迁移不重放、不删 fact；memory triggers 不重发由 apply/replay 保证）。
@@ -53,7 +55,6 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   hub_auto_sync_nightly: 'drain',
   hub_sync_mutation_wake: 'drain',
   hub_sync_recovery: 'drain',
-  note_verify: 'drain',
   note_generate: 'drain',
   note_refine: 'drain',
 

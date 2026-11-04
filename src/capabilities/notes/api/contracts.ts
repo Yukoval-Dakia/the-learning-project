@@ -3,9 +3,9 @@ import { NoteGenerationFailureSchema } from '@/capabilities/notes/server/note-ge
 import {
   ArtifactBodyBlocks,
   ArtifactHistoryEntry,
+  ArtifactVerificationSummary,
   CorrectArtifactPayload,
   NoteSection,
-  NoteVerificationResult,
   SubjectProfileSchema,
 } from '@/kernel/capability-contract-schemas';
 
@@ -117,7 +117,7 @@ export const NotePageResponseSchema = z.object({
   generation_status: z.string(),
   generation_failure: NoteGenerationFailureSchema.nullable(),
   verification_status: z.string(),
-  verification_summary: NoteVerificationResult.nullable(),
+  verification_summary: ArtifactVerificationSummary.nullable(),
   interactive: z.object({ html: z.string() }).nullable(),
   subject_profile: SubjectProfileSchema.pick({
     id: true,

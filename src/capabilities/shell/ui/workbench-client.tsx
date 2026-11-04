@@ -17,6 +17,8 @@ export type WorkbenchClient = {
   getWorkbenchSummary: typeof getWorkbenchSummary;
   getOvernightDigest: typeof getOvernightDigest;
   getTodayCost: () => Promise<ApiOperationJsonResponse<'getTodayCost'>>;
+  /** YUK-1738 — task kinds that keep failing (read-only; the hourly job records them). */
+  getTaskFailureAlerts: () => Promise<ApiOperationJsonResponse<'getTaskFailureAlerts'>>;
   listDecisionProposalPage: typeof listDecisionProposalPage;
   listObservationProposalPreview: typeof listObservationProposalPreview;
   listAutoApplied: typeof listAutoApplied;
@@ -34,6 +36,10 @@ export const httpWorkbenchClient: WorkbenchClient = {
   getWorkbenchSummary: () => getWorkbenchSummary(),
   getOvernightDigest: () => getOvernightDigest(),
   getTodayCost: () => apiJson<ApiOperationJsonResponse<'getTodayCost'>>('/api/cost/today'),
+  getTaskFailureAlerts: () =>
+    apiJson<ApiOperationJsonResponse<'getTaskFailureAlerts'>>(
+      '/api/observability/task-failure-alerts',
+    ),
   listDecisionProposalPage: (...args) => listDecisionProposalPage(...args),
   listObservationProposalPreview: () => listObservationProposalPreview(),
   listAutoApplied: () => listAutoApplied(),

@@ -70,7 +70,7 @@ export async function startBossWorker(
     );
   }
 
-  const boss = createBoss();
+  const boss = createBoss({ listenNotify: true });
 
   // pg-boss emits `error` from its background loops. With no listener, EventEmitter
   // rethrows and the process exits. A cold-start 23505 on an existing internal queue
