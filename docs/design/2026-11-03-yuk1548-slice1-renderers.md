@@ -73,7 +73,8 @@ Create:
 - `src/ui/components/blocks/BlockSkeleton.tsx` — 「正在绘制：…」 / 「正在修正：…」.
 - `src/ui/components/blocks/diagram-render.ts` — lazy mermaid loader, theme store, render cache
   (module memo + `useSyncExternalStore`).
-- `src/ui/components/blocks/block-fence.ts` — browser-safe fence parse (see §4).
+- `src/ui/components/blocks/BlockFrame.tsx` — the card, plus the waiting, failed and quiet states.
+- `src/ui/components/blocks/block-fence.ts` — the UI-only streaming draft fence.
 - `src/ui/components/blocks/blocks.css` — card styles (`--un-*` tokens only).
 
 Modify:
@@ -86,10 +87,15 @@ Modify:
   compose the streaming Markdown with block placeholders.
 - `src/capabilities/copilot/ui/companion/MessageRow.tsx` — streaming body goes through the composer.
 - `src/capabilities/copilot/ui/companion/tool-labels.ts` — `compose_block`: 「画图」 / 「正在画图」.
+- `src/ui/katex-mhchem.d.ts` (new) — module declaration; katex ships none for mhchem.
 
 ## 4. Notes
 
-- `@/core/schema/blocks` re-exports `fence.ts`, which imports `node:crypto`. A browser bundle cannot
-  link that, so the UI imports runtime values from `@/core/schema/blocks/block` and only types from the
-  barrel until the feature line moves the digest helpers out (v2 §1.1 must-fix 1).
-- Reading the Markdown typography is not restyled; only block cards get styles.
+- The barrel `@/core/schema/blocks` is browser-safe since the feature line moved the digest helpers
+  to `src/kernel/blocks/digest.ts` (v2 §1.1 must-fix 1), so the UI imports it directly.
+- The Markdown typography is not restyled; only block cards get styles.
+- A diagram whose source sets its own `style … fill:` / `classDef … fill:` keeps the light palette on a
+  paper card in both themes. Its colours were chosen for paper, and dark-theme ink on them is unreadable
+  (seen in a real reply).
+- The streaming draft fence's info string is random per page load, so stored or model-written text
+  can never draw a skeleton.

@@ -2,7 +2,11 @@
 // `parseBlockFence`; this file adds the streaming placeholder fence the chat composer writes into
 // draft text while a block is still being drawn. That fence never leaves the browser.
 
-export const BLOCK_DRAFT_FENCE_INFO = 'tlp-block-draft';
+import { randomId } from '@/ui/lib/random-id';
+
+// Random per page load, so text that was stored or written by the model can never match it: a
+// hand-written draft fence stays plain code instead of drawing a spinner that never ends.
+export const BLOCK_DRAFT_FENCE_INFO = `tlp-block-draft-${randomId().replaceAll('-', '').slice(0, 16)}`;
 
 export interface BlockDraftView {
   title?: string;

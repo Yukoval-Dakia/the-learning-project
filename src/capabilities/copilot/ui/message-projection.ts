@@ -191,8 +191,9 @@ export function composeStreamingReply(
   const source = text.replace(OPEN_PLACE_TAIL, '');
   if (!source.includes(BLOCK_REF_SCHEME) && blocks.length === 0) return source;
   const byRef = new Map(blocks.filter((block) => block.ref).map((block) => [block.ref, block]));
-  const matches = [...source.matchAll(CODE_OR_PLACE)].filter((match) => match[2]);
-  const textRefs = new Set(matches.map((match) => match[2]));
+  // Groups: 1 = code to skip, 2 = alt, 3 = ref (BLOCK_PLACE_PATTERN's own two).
+  const matches = [...source.matchAll(CODE_OR_PLACE)].filter((match) => match[3]);
+  const textRefs = new Set(matches.map((match) => match[3]));
   // A placement the text wrote with a ref that does not resolve (written before the block was
   // ready, or a made-up token) takes the next block no real ref claims, in stream order: the
   // picture shows once, where the text put it, and stays there when it turns ready.
@@ -200,8 +201,8 @@ export function composeStreamingReply(
   const placed = new Set<CopilotRunBlock>();
   const edits: { at: number; remove: number; insert: string }[] = [];
   for (const match of matches) {
-    const ref = match[2] as string;
-    const alt = match[0].slice(2, match[0].lastIndexOf(']('));
+    const ref = match[3] as string;
+    const alt = match[2];
     const stand = byRef.get(ref) ?? adoptable.find((block) => !placed.has(block));
     let insert = '';
     if (stand) {
