@@ -117,7 +117,20 @@ export type CopilotExecutionActivity =
       errorReason?: string;
       toolUseId?: string;
     }
-  | { kind: 'spawn_budget'; observation: SpawnBudgetObservation };
+  | { kind: 'spawn_budget'; observation: SpawnBudgetObservation }
+  | {
+      kind: 'block_draft';
+      toolUseId: string;
+      receivedBytes: number;
+      blockKind?: string;
+      title?: string;
+    }
+  | {
+      kind: 'block_ready';
+      toolUseId: string;
+      ref: string;
+      block: unknown;
+    };
 
 export interface CopilotExecutionTurn {
   input: CopilotRunInput;
@@ -153,6 +166,17 @@ export interface CopilotExecutionResult {
   sdkSessionId?: string;
   contextDigest: string;
   correctionFiling?: SealedCorrectionFiling;
+}
+
+/** Tolerant scan of the streamed compose_block args prefix (never the payload). */
+function scanBlockArgsPrefix(prefix: string): { blockKind?: string; title?: string } {
+  const kind = prefix.match(/"kind"\s*:\s*"([a-z_]{1,24})"/)?.[1];
+  const rawTitle = prefix.match(/"(?:alt|title)"\s*:\s*"((?:[^"\\]|\\.){0,80})/)?.[1];
+  const title = rawTitle?.slice(0, 60);
+  return {
+    ...(kind ? { blockKind: kind } : {}),
+    ...(title ? { title } : {}),
+  };
 }
 
 export type ExecuteCopilotTurn = (
@@ -342,6 +366,46 @@ export function createCopilotExecutionOwner(
       onResult: (result) => {
         proposalFlowGate.observe(result);
         finalizer.observeDomainTool(result);
+        // YUK-1548 §5 — compose_block is mirrorEvent:'never', so its public
+        // frames come from this explicit projection, not the generic mirror.
+        if (result.name === 'compose_block' && result.tool_use_id) {
+          const output = result.output as
+            | {
+                status?: string;
+                ref?: string;
+                kind?: string;
+                block?: unknown;
+                issues?: { code: string }[];
+              }
+            | undefined;
+          if (result.error_reason === null && output?.status === 'ready' && output.ref) {
+            void Promise.resolve(
+              emitActivity(policy, {
+                kind: 'block_ready',
+                toolUseId: result.tool_use_id,
+                ref: output.ref,
+                block: output.block,
+              }),
+            ).catch(() => undefined);
+          } else {
+            const codes = (output?.issues ?? []).map((issue) => issue.code).join(',');
+            const status = output?.status ?? 'invalid';
+            // Large args (svg/html source) stay out of job_events: emit a
+            // digest-sized card, not the raw input.
+            const inputBytes = new TextEncoder().encode(
+              JSON.stringify(result.input ?? {}),
+            ).byteLength;
+            void Promise.resolve(
+              emitActivity(policy, {
+                kind: 'tool_finished',
+                toolName: 'compose_block',
+                input: { block: output?.kind ?? 'block', args_bytes: inputBytes },
+                summary: `${status}${codes ? ` (${codes})` : ''}`,
+                toolUseId: result.tool_use_id,
+              }),
+            ).catch(() => undefined);
+          }
+        }
       },
       onToolComplete: (result) => {
         void Promise.resolve(emitActivity(policy, { kind: 'tool_finished', ...result })).catch(
@@ -531,6 +595,19 @@ export function createCopilotExecutionOwner(
         void Promise.resolve(emitActivity(policy, { kind: 'tool_started', ...call })).catch(
           () => undefined,
         );
+      },
+      onToolArgsDelta: (delta) => {
+        if (delta.toolName !== `mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__compose_block`) return;
+        const draft = scanBlockArgsPrefix(delta.argsPrefix);
+        void Promise.resolve(
+          emitActivity(policy, {
+            kind: 'block_draft',
+            toolUseId: delta.toolUseId,
+            receivedBytes: delta.receivedBytes,
+            ...(draft.blockKind ? { blockKind: draft.blockKind } : {}),
+            ...(draft.title ? { title: draft.title } : {}),
+          }),
+        ).catch(() => undefined);
       },
     };
     const prose = createCopilotProseStream((text) => {
