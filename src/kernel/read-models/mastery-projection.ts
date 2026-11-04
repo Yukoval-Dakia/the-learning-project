@@ -28,9 +28,7 @@ type DbLike = Db | Tx;
 
 /**
  * B1 double-truth fix — the SINGLE display/AI-facing read of mastery, derived
- * from the real `mastery_state` source of truth (NOT the deprecated
- * `knowledge_mastery` view's faked recency-weighted-success-rate +
- * `evidence_count < 3 → 0.5` placeholder).
+ * from the real `mastery_state` source of truth.
  *
  * Batch read of the p(L) state for many knowledge nodes, projecting each row to
  * a 0..1 `mastery` via the **difficulty-aware PFA p(L)** ({@link pLearnedBand} /

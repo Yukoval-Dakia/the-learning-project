@@ -1,8 +1,7 @@
 // GET /api/placement/profile?goal=<id>: the placement-done "起始档案".
 //
 // The placement-done "起始档案": per-KC mastery over the goal's scope, derived from the
-// LIVE mastery_state projection (getMasteryProjection — the B1 single source of truth, NOT
-// the deprecated knowledge_mastery view). In-scope KCs with no mastery_state row come back
+// LIVE mastery_state projection (getMasteryProjection — the B1 single source of truth). In-scope KCs with no mastery_state row come back
 // as `tested:false` (untested · 0 题). Read-only; no θ̂/FSRS writes.
 //
 // Scope resolution mirrors placement-start EXACTLY by sharing the same three-tier
