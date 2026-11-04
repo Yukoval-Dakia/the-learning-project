@@ -1056,7 +1056,7 @@ export interface SolutionPriorPassResult {
   receipt: AdmissionSolveReceipt | null;
   /** Kept in the admission evidence, so a question without a prior is explained, not silent. */
   outcome: {
-    status: 'produced' | 'empty' | 'failed';
+    status: 'produced' | 'empty' | 'failed' | 'skipped';
     task_run_id: string | null;
     reason?: string;
   };

@@ -47,6 +47,7 @@ import {
   type AdmissionKey,
   type AdmissionSolveReceipt,
   type Provider,
+  type SolutionPriorPassResult,
   type SourceCrosscheckResult,
   type UnitSolveVerdict,
   runDualSolve,
@@ -623,13 +624,22 @@ export async function runQuestionAdmission(
   for (const [unitId, verdict] of solve.verdicts) {
     if (verdict.status === 'agreed') settledKeys.set(unitId, verdict.key);
   }
-  const prior = await runSolutionPriorPass(options.db, definition, settledKeys, {
-    runTask,
-    ...(options.subjectProfile != null ? { subjectProfile: options.subjectProfile } : {}),
-    ...(options.knowledgeCandidates != null
-      ? { knowledgeCandidates: options.knowledgeCandidates }
-      : {}),
-  });
+  // No settled key means the solvers could not agree on the answer, so a description of
+  // the solution (and a write-once difficulty anchor from it) would be speculation.
+  const prior: SolutionPriorPassResult =
+    settledKeys.size === 0
+      ? {
+          record: null,
+          receipt: null,
+          outcome: { status: 'skipped', task_run_id: null, reason: 'no settled key' },
+        }
+      : await runSolutionPriorPass(options.db, definition, settledKeys, {
+          runTask,
+          ...(options.subjectProfile != null ? { subjectProfile: options.subjectProfile } : {}),
+          ...(options.knowledgeCandidates != null
+            ? { knowledgeCandidates: options.knowledgeCandidates }
+            : {}),
+        });
   if (prior.receipt != null) evidenceTaskRuns.push(prior.receipt);
   const allAdmitted = definition.units.every((unit) => unitResult(unit).status === 'admitted');
   const result = finalize(

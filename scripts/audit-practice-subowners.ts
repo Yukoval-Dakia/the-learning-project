@@ -221,15 +221,18 @@ function sortPairs(pairs: Iterable<string>): string[] {
 
 // The question solution prior reveals the solution path. Tools, routes and UI reach
 // learners, so none may touch it directly; a learner-facing read must gate on the attempt.
+// The practice root barrel is covered too: exporting from it opens every other capability.
 const SOLUTION_PRIOR_RE =
   /readSolutionPriorForServer|question_solution_prior|admission\/solution-prior/;
-const LEARNER_SURFACE_RE = /(?:^|\/)(?:tools|api|ui)\//;
+const LEARNER_SURFACE_RE =
+  /(?:^|\/)(?:tools|api|ui)\/|^src\/capabilities\/practice\/(?:ui-)?public\.tsx?$|^server\//;
 
 export function scanSolutionPriorExposure(projectRoot: string): string[] {
-  const root = resolve(projectRoot, 'src/capabilities');
-  if (!existsSync(root)) return [];
   const files: string[] = [];
-  walk(root, files);
+  for (const dir of ['src/capabilities', 'server']) {
+    const root = resolve(projectRoot, dir);
+    if (existsSync(root)) walk(root, files);
+  }
   return files
     .map((file) => relative(projectRoot, file).split(sep).join('/'))
     .filter((path) => LEARNER_SURFACE_RE.test(path))

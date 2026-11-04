@@ -178,7 +178,6 @@ export async function loadPriorKnowledgeCandidates(
       and(
         isNull(knowledge.archived_at),
         eq(knowledge.role, 'kc'),
-        eq(knowledge.approval_status, 'approved'),
         or(
           eq(knowledge.domain, input.subjectId),
           isNull(knowledge.domain),
@@ -221,6 +220,9 @@ export async function recordAdmissionSolutionPrior(
     .values(rows)
     .onConflictDoNothing()
     .returning({ part_id: question_solution_prior.part_id });
+  // Replays and re-admissions of a frozen revision must not seed an anchor from a prior
+  // that was never stored.
+  if (written.length === 0) return { parts_written: 0 };
   const difficulties = input.record.parts
     .map((part) => part.difficulty)
     .filter((d): d is NonNullable<typeof d> => d != null);
