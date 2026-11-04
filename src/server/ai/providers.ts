@@ -326,6 +326,13 @@ function providerKeyEndpointBindings(): ProviderKeyEndpointBindings {
 
 setProviderKeyEndpointBindingsSource(providerKeyEndpointBindings);
 
+export function providerAuthFileEnvName(provider: Provider): string | undefined {
+  if (looksLikeCustomProviderId(provider)) return undefined;
+  const config = PROVIDERS[provider as KnownProvider];
+  if (config?.authMode !== 'key') return undefined;
+  return 'authFileEnv' in config ? config.authFileEnv : undefined;
+}
+
 export function isProviderLaneReady(provider: Provider): boolean {
   const config = looksLikeCustomProviderId(provider)
     ? undefined

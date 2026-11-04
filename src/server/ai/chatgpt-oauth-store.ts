@@ -106,16 +106,14 @@ const MODIFY_TIMEOUT_MS = 60_000;
 
 export function createChatGPTCredentialStore(path: string) {
   const memory = new Map<string, CredentialLike>();
-  let fileLoaded = false;
   // Reads the file entry inside the caller's mutex scope — the public `read`
   // re-queues on the same chain, so calling it from within `serialized` (e.g.
-  // inside `modify`) would deadlock the lane.
+  // inside `modify`) would deadlock the lane. No `openai` cache: a second
+  // store instance (unmemoised resolveDeps) may hold a credential this
+  // instance's refresh already rotated — the file is the single truth.
   const readInsideLock = async (): Promise<CredentialLike | undefined> => {
-    if (!fileLoaded) {
-      const auth = await readAuthFile(path);
-      if (auth.openai) memory.set('openai', auth.openai);
-      fileLoaded = true;
-    }
+    const auth = await readAuthFile(path);
+    if (auth.openai) memory.set('openai', auth.openai);
     return memory.get('openai');
   };
   return {

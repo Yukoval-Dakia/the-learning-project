@@ -5,6 +5,7 @@ import { executablePiModel } from '@/server/ai/pi-provider-catalog';
 import {
   LEGACY_GLM_MODEL_ID,
   isOauthProvider,
+  providerAuthFileEnvName,
   providerCredentialEnvName,
   resolveGlobalProviderSwitch,
 } from '@/server/ai/providers';
@@ -40,6 +41,11 @@ export function resolveMemoryLlmConfig(env: Env = process.env): MemoryLlmConfig 
     };
   }
   const credentialEnv = providerCredentialEnvName(pin.provider);
+  if (credentialEnv && credentialEnv === providerAuthFileEnvName(pin.provider)) {
+    throw new Error(
+      `Memory LLM requires a key-auth credential for the global pin (${pin.provider}); the ChatGPT-login file lane cannot serve it`,
+    );
+  }
   const native = pin.model ? executablePiModel(pin.provider, pin.model, env) : undefined;
   if (isOauthProvider(pin.provider) || !pin.model || native?.api !== 'openai-completions') {
     throw new Error(
