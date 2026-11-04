@@ -114,5 +114,5 @@ const VERIFY_OUTCOME_WORDS: Readonly<Record<string, string>> = {
 };
 
 export function verifyOutcomeWords(status: string): string {
-  return VERIFY_OUTCOME_WORDS[status] ?? `没有启用（服务端返回：${status}）。`;
+  return VERIFY_OUTCOME_WORDS[status] ?? `这次没有启用（${status}）。`;
 }
