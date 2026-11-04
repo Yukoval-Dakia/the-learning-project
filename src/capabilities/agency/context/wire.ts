@@ -17,6 +17,7 @@ export const ContextBoardResponse = z.object({
   topics: z.array(
     Topic.extend({
       evidence_at: z.string().nullable(),
+      memory_weight: z.number().nullable(),
       freshness: z.number().nullable(),
       stale: z.boolean(),
     }),

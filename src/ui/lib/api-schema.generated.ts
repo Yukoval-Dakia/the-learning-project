@@ -21691,6 +21691,7 @@ export interface operations {
                             }[];
                             freshness: number | null;
                             key: string;
+                            memory_weight: number | null;
                             name: string;
                             /** @default global */
                             scope_key: string;

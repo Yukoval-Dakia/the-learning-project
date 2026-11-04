@@ -52,6 +52,7 @@ const statuses = [
   'pending',
 ] as const;
 const liveSubscriberIdentities = [
+  ['agency.curator-activity', 1],
   ['agency.intervention-diagnostic-review-settlement', 4],
   ['agency.probe-evidence-intervention-prepare', 1],
   ['agency.probe-publication-serve', 1],
@@ -259,7 +260,7 @@ describe('YUK-766 subscription progress backup', () => {
 
   // @invariant data: archive keeps all live subscribers, seven states, and one shared publish event
   // @fails-if omit admission enqueue or the return wake, or split the publish source
-  it('archives all thirteen live subscriber identities, seven delivery states and effect provenance', async () => {
+  it('archives all fourteen live subscriber identities, seven delivery states and effect provenance', async () => {
     const { registry } = await seedProgress();
     const data = decode(await archive());
     expect(data.event_subscription_checkpoint).toHaveLength(subscriberCount);
