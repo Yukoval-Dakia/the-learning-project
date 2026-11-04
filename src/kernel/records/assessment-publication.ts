@@ -129,9 +129,9 @@ export interface PublishQuestionGroupInput {
   /** 发布者 provenance（jsonb published_by；缺省 NULL）。 */
   publishedBy?: unknown;
   /**
-   * 发布事件的 caused_by_event_id。缺省（undefined）时继承本组最近一次
-   * assessment_publish 事件的 caused_by——组的后续 republish 沿用同一
-   * provenance 链；组首发无先例 ⇒ null。显式传值（含 null）覆盖继承。
+   * 发布事件的 caused_by_event_id。缺省（undefined）时，同一 revision 的生命周期
+   * 更新继承该 revision 上一发布事件的 caused_by；新 revision 不继承，因为旧来源的
+   * 授权没有覆盖新内容。显式传值（含 null）优先。
    */
   causedByEventId?: string | null;
   /**
@@ -761,10 +761,11 @@ export async function publishQuestionGroup(
       };
     }
 
-    // 未显式指定时继承本组最近一次发布事件的 caused_by：republish 沿用组的
-    // 首发 provenance 链（组首发无先例 ⇒ null；显式传值含 null 覆盖继承）。
-    let causedByEventId = input.causedByEventId ?? null;
-    if (input.causedByEventId === undefined) {
+    // 判分准入把 caused_by 当来源证明：只有内容不变的生命周期更新才能沿用，
+    // 铸新 revision 的写入点（下方）只认显式传值。
+    const explicitCausedByEventId = input.causedByEventId ?? null;
+    let causedByEventId = explicitCausedByEventId;
+    if (input.causedByEventId === undefined && currentRevisionId != null) {
       const [prior] = await tx
         .select({ causedBy: event.caused_by_event_id })
         .from(event)
@@ -772,6 +773,7 @@ export async function publishQuestionGroup(
           and(
             eq(event.action, ASSESSMENT_PUBLISH_ACTION),
             sql`${event.payload}->>'group_id' = ${groupId}`,
+            sql`${event.payload}->>'revision_id' = ${currentRevisionId}`,
           ),
         )
         .orderBy(desc(event.created_at), desc(event.id))
@@ -976,7 +978,7 @@ export async function publishQuestionGroup(
       session_id: null,
       actor_kind: 'system',
       actor_ref: input.actorRef,
-      caused_by_event_id: causedByEventId,
+      caused_by_event_id: explicitCausedByEventId,
       action: ASSESSMENT_PUBLISH_ACTION,
       subject_kind: 'question',
       subject_id: groupId,
@@ -1093,7 +1095,7 @@ export interface PublishFromRowInput {
   verification?: AdmissionVerificationWrite;
   /** 缺省不改；首次发布时 'unbounded'。 */
   claimPolicy?: 'one_time' | 'unbounded';
-  /** 透传给 publishQuestionGroup（缺省继承本组上一发布事件的 caused_by）。 */
+  /** 透传给 publishQuestionGroup，缺省时的继承规则见其 causedByEventId。 */
   causedByEventId?: string | null;
   /** 透传给 publishQuestionGroup；含 custom 块时必供。 */
   readAssetBytes?: (storageKey: string) => Promise<Uint8Array | null>;
