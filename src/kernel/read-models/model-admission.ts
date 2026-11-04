@@ -1,5 +1,5 @@
-// Read side of model admission: the active slices plus the group→subject bridge the
-// issuance gate needs. Writing and retiring slices belongs to Practice grading.
+// Read active system slices and resolve group subjects for coverage reporting.
+// Writing and retiring slices belongs to Practice grading.
 // The live model pins come from the pin table Practice installs at startup.
 
 import { eq, inArray } from 'drizzle-orm';

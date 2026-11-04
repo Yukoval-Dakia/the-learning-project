@@ -44,7 +44,7 @@ export type AutomaticServingDecision =
 
 // ---------- YUK-1496 — 模型准入切片（服务门只读视图） ----------
 
-/** 模型可判的响应类（设计 §4 准入门第 4 步：科目/响应类/任务/模型版本切片）。 */
+/** 模型可判的响应类；系统切片不按科目绑定。 */
 export type ModelResponseClass = 'blank' | 'free';
 
 /**
