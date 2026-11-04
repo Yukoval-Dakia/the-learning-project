@@ -5,7 +5,6 @@ import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { event } from '@/db/schema';
 import {
   eventAllowsDerivationSql,
-  lockEventDerivationSources,
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
 import { enqueueMemoryBriefRegen } from '@/kernel/memory-brief-regen';
