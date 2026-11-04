@@ -2,8 +2,9 @@ import { sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 
-/** Delivery completion is evidence that waiting cannot advance this candidate. It
- * never grants serving permission or authorizes another send of the same paid input. */
+/** With no live job left, waiting cannot advance a candidate, whichever job stopped. The
+ * age covers pg-boss purging that job's record while still allowing the outbox gap before
+ * the first enqueue. This never grants serving permission or authorizes another paid send. */
 export async function readPlacementCandidateProgress(db: Db | Tx, questionIds: string[]) {
   if (questionIds.length === 0) return [];
   const serving = (await readQuestionServing(db, questionIds)).byId;
@@ -15,19 +16,20 @@ export async function readPlacementCandidateProgress(db: Db | Tx, questionIds: s
           and p.entity_id = coalesce(q.parent_question_id, q.id)
           and p.entity_revision = r.integrity_digest and p.state = 'unknown'
       ) or (
-        exists (
-          select 1 from pgboss.job j
-          where j.name = 'question_admission_run'
-            and j.data->>'question_id' = coalesce(q.parent_question_id, q.id)
-            and j.data->>'expected_revision_digest' = r.integrity_digest
-            and j.data->>'expected_admission_generation' = l.scoring_admission_generation::text
-            and j.state in ('completed', 'failed', 'cancelled')
-        ) and not exists (
+        not exists (
           select 1 from pgboss.job j
           where j.name in ('question_admission_run', 'source_verify')
             and (j.data->>'question_id' = coalesce(q.parent_question_id, q.id)
               or (j.data->'question_ids') ? coalesce(q.parent_question_id, q.id))
             and j.state in ('created', 'retry', 'active')
+        ) and (
+          exists (
+            select 1 from pgboss.job j
+            where j.name in ('question_admission_run', 'source_verify')
+              and (j.data->>'question_id' = coalesce(q.parent_question_id, q.id)
+                or (j.data->'question_ids') ? coalesce(q.parent_question_id, q.id))
+              and j.state in ('completed', 'failed', 'cancelled')
+          ) or q.created_at < now() - interval '10 minutes'
         )
       )
     ) as stopped
