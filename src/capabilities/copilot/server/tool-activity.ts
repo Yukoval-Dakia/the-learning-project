@@ -1,3 +1,7 @@
+import {
+  INTERACTIVE_ARTIFACT_TOOL_NAMES,
+  redactInteractiveArtifactToolInput,
+} from '@/kernel/learning-content';
 import type { CopilotExecutionActivity } from './copilot-execution';
 
 /** Must stay aligned with SPAWN_TOOL_NAME in src/core/subagent-contract.ts */
@@ -16,6 +20,13 @@ export interface ToolResultSsePayload {
   errorReason?: string;
   /** 同名并行 call 的确定性关联 id；有则投影进 SSE。 */
   toolUseId?: string;
+}
+
+/** YUK-1763 — artifact-authoring args carry the answer key; never project it. */
+function redactIfNeeded(toolName: string, input: Record<string, unknown>): Record<string, unknown> {
+  return INTERACTIVE_ARTIFACT_TOOL_NAMES.has(toolName)
+    ? redactInteractiveArtifactToolInput(input)
+    : input;
 }
 
 /**
@@ -74,7 +85,7 @@ export function projectCopilotActivity(
         ? {
             step_kind: 'tool_started',
             tool_name: call.toolName,
-            input: call.input,
+            input: redactIfNeeded(call.toolName, call.input),
             ...(call.toolUseId ? { tool_use_id: call.toolUseId } : {}),
           }
         : null;
@@ -85,7 +96,7 @@ export function projectCopilotActivity(
         ? {
             step_kind: 'tool_finished',
             tool_name: result.toolName,
-            input: result.input,
+            input: redactIfNeeded(result.toolName, result.input),
             summary: result.summary,
             ...(result.errorReason ? { error_reason: result.errorReason } : {}),
             ...(result.toolUseId ? { tool_use_id: result.toolUseId } : {}),

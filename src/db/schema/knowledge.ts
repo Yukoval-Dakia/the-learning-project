@@ -113,7 +113,7 @@ export const knowledge = pgTable('knowledge', {
 //     dedup (semantic near-dup detection) when that slice ships.
 // YUK-531 (A5 S4 / RT1): the promotion-flow lifecycle/provenance columns
 // (status/source/seen/evidence) land here; the writer (insert via accept route)
-// is gated behind MISCONCEPTION_PROMOTE_ENABLED — DORMANT until that flag flips.
+// is gated behind MISCONCEPTION_PROMOTE_ENABLED (default on).
 export const misconception = pgTable('misconception', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
