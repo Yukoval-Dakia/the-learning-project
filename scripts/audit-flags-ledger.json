@@ -225,14 +225,6 @@
     "notes": "Default softmax_mfi; exact env literals (no trim). Unknown values fall back to default; legacy selects deterministic composition.",
     "values": ["legacy", "softmax_mfi"]
   },
-  "MEMORY_RECONCILE_HANDOFF_MODE": {
-    "kind": "config",
-    "value_type": "enum",
-    "reader_marker": "rawConfigValue('MEMORY_RECONCILE_HANDOFF_MODE')",
-    "file": "src/capabilities/agency/server/memory/memory-reconcile-handoff.ts",
-    "notes": "Default observe; consumer trims then validates, invalid non-empty values throw. write/recover persist new intents; recover/drain run recovery.",
-    "values": ["observe", "write", "recover", "drain"]
-  },
   "INTERVENTION_DISABLED_METHOD_IDS": {
     "kind": "config",
     "value_type": "csv",

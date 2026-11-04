@@ -72,8 +72,7 @@ export type MemoryEventInput = {
   affected_scopes: string[];
   created_at: Date;
   /**
-   * Deterministic kind (preference / habit / weakness / event) stored in mem0
-   * metadata and consumed by the reconcile prompt's per-kind rules.
+   * Deterministic kind (preference / habit / weakness / event) stored in mem0 metadata.
    */
   kind: string;
 };
@@ -223,8 +222,7 @@ export function createMem0Config(env: Env = process.env): MemoryConfig {
     },
     // History stays enabled because it makes the extraction prompt's "Last k
     // Messages" non-empty (only SQLiteManager implements it). Cost: the native
-    // better-sqlite3 dependency. Reconciliation does not depend on it: that reads
-    // its own Postgres WAL, and only add/update/delete write SQLite. App and worker
+    // better-sqlite3 dependency. Only add/update/delete write SQLite. App and worker
     // use separate historyDbPath values to avoid cross-container write contention.
     disableHistory: false,
     historyDbPath: optionalEnv(env, 'MEM0_HISTORY_DB_PATH', DEFAULT_HISTORY_DB_PATH),
