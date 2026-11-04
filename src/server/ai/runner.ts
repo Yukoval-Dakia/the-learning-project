@@ -45,6 +45,7 @@ import {
   resolveExecutionAdapter,
 } from './execution-adapter';
 import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
+import { taskMayExportTranscript } from './laminar-transcript';
 import { logMissingToolMountsWarning } from './log';
 import { providerHttpTimeoutMs } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission-policy';
@@ -139,6 +140,11 @@ export interface RunTaskCtx {
   db: Db;
   /** Per-run capability-owned sanitized content; omitted runs export metadata only. */
   laminarContent?: TraceContent<RunTaskResult>;
+  /**
+   * The caller has judged that this run's content holds no learner material. Only takes
+   * effect for tasks on the transcript whitelist.
+   */
+  laminarTranscript?: boolean;
   /** Caller-owned cancellation propagated into the provider run lifecycle. */
   signal?: AbortSignal;
   /**
@@ -858,6 +864,7 @@ export async function runTask(
   return traceOperation('task.run', { task_kind: kind }, () => runTaskImpl(kind, input, ctx), {
     signal: ctx.signal,
     content: ctx.laminarContent,
+    allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
   });
 }
 
@@ -1151,6 +1158,7 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
         {
           signal: lifecycle.abortController.signal,
           outcome: (result) => (result ? 'success' : 'error'),
+          allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
           content: ctx.laminarContent
             ? {
                 input: ctx.laminarContent.input,
@@ -1221,6 +1229,7 @@ export async function streamTaskCollecting(
       signal: ctx.signal,
       content: ctx.laminarContent,
       outcome: (result) => (result.partial ? 'error' : 'success'),
+      allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
     },
   );
 }

@@ -6,7 +6,13 @@ import { declaredShapesAllSupported } from '@/core/schema/assessment/blank-answe
 import type { Db, Tx } from '@/db/client';
 import { lockPaidEffectControlFamily, readPaidEffectControl } from '@/db/paid-effect-control';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
-import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import {
   lockEventDerivationSources,
   readEventDerivationPolicy,
@@ -46,6 +52,35 @@ const purposeBindingId = (jobId: string) => `question-admission-purpose:${jobId}
 /** A delivery's permanent source fact is separate from its unchanged paid input.
  * Missing legacy facts are never reconstructed from today's publication or row.
  */
+/**
+ * May this admission's solve transcript leave for Laminar. Only sources known to hold no
+ * learner material qualify: a photo or manual entry is the learner's own, and quiz_gen counts
+ * only when generated from a knowledge point. Any failure reads as no.
+ */
+export async function admissionTranscriptAllowed(
+  db: Db | Tx,
+  input: { groupId: string; purposeState: string },
+): Promise<boolean> {
+  if (input.purposeState !== 'allow') return false;
+  try {
+    const [root] = await db
+      .select({ source: question.source, source_ref: question.source_ref })
+      .from(question)
+      .where(eq(question.id, input.groupId))
+      .limit(1);
+    if (root?.source === 'web_sourced') return true;
+    if (root?.source !== 'quiz_gen' || root.source_ref == null) return false;
+    const [node] = await db
+      .select({ id: knowledge.id })
+      .from(knowledge)
+      .where(eq(knowledge.id, root.source_ref))
+      .limit(1);
+    return node != null;
+  } catch {
+    return false;
+  }
+}
+
 export async function readAdmissionPurpose(
   tx: Tx,
   deliveryId: string,

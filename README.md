@@ -74,7 +74,14 @@ session after changing them. The switch accepts only `1` and requires exactly
 An empty project key still prevents SDK loading and export. Omit the switch or set
 `LMNR_DEV_TRANSCRIPTS=0` to keep metadata-only tracing.
 
-This opt-in captures the Pi system/user/assistant/tool conversation as message
+Separately, `LMNR_TRANSCRIPTS=1` enables transcripts in any environment, for a whitelist
+of tasks whose content holds no learner material. Today that is
+`QuestionAdmissionSolveTask`, and only for a question from `web_sourced` or a
+knowledge-triggered `quiz_gen` whose purpose is `allow`. A task enters the whitelist only
+if no tool it can call returns learner data. Every other task stays metadata only. Unset
+the switch to turn it off.
+
+Either opt-in captures the Pi system/user/assistant/tool conversation as message
 arrays on `llm.call`, visible final assistant text and correlated tool calls, and
 sanitized structured arguments/results on tool spans. It preserves normal
 educational content. It excludes reasoning blocks/signatures, credentials, auth

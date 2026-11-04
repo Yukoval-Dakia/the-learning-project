@@ -7,6 +7,7 @@ import {
   piOutputTranscript,
   sanitizeTraceMessages,
   sanitizeTracePayload,
+  taskTranscriptsEnabled,
 } from './laminar-transcript';
 import { hasPiUsageEvidence } from './pi-usage-evidence';
 
@@ -117,6 +118,9 @@ let exporter: TraceExporter | undefined;
 let initializing: Promise<void> | undefined;
 const activeSpan = new AsyncLocalStorage<TraceSpan>();
 export const TRACE_FLUSH_TIMEOUT_MS = 500;
+// Background batch export, not shutdown: a batch with transcripts takes seconds, and a
+// shorter limit drops the whole batch.
+const TRACE_EXPORT_TIMEOUT_MS = 15_000;
 
 export function isLaminarTracingEnabled(): boolean {
   return exporter !== undefined;
@@ -165,7 +169,7 @@ export async function initializeLaminarTracing(
         projectApiKey: key,
         instrumentModules: {},
         inheritGlobalContext: false,
-        traceExportTimeoutMillis: TRACE_FLUSH_TIMEOUT_MS,
+        traceExportTimeoutMillis: TRACE_EXPORT_TIMEOUT_MS,
         logLevel: 'error',
       });
       exporter = {
@@ -210,12 +214,17 @@ export async function initializeLaminarTracing(
   await initializing;
 }
 
+// Set by each task span, inherited by everything under it. A task under a denied task stays
+// denied, whatever it declares, because its input may come from the parent's content.
+type TranscriptScope = 'unset' | 'allow' | 'deny';
+
 export class TraceSpan {
   private ended = false;
   private readonly identities: TraceMetadata = {};
   constructor(
     private readonly sink?: TraceSinkSpan,
     private readonly name?: SpanName,
+    readonly transcriptScope: TranscriptScope = 'unset',
   ) {}
   get context(): string | undefined {
     return this.sink?.context;
@@ -257,7 +266,9 @@ export class TraceSpan {
     }
   }
   transcript(direction: 'input' | 'output', project: () => unknown): void {
-    if (this.ended || !this.sink || !developmentTranscriptsEnabled()) return;
+    if (this.ended || !this.sink) return;
+    const allowedTaskRun = taskTranscriptsEnabled() && this.transcriptScope === 'allow';
+    if (!allowedTaskRun && !developmentTranscriptsEnabled()) return;
     telemetry(() => {
       const value =
         this.name === 'llm.call'
@@ -280,7 +291,19 @@ export class TraceSpan {
   }
 }
 
-export function startTraceSpan(name: SpanName, metadata: TraceMetadata = {}): TraceSpan {
+const TASK_SPANS: ReadonlySet<SpanName> = new Set(['task.run', 'copilot.run', 'copilot.finalize']);
+
+function transcriptScopeFor(name: SpanName, allowTranscript: boolean): TranscriptScope {
+  const inherited = activeSpan.getStore()?.transcriptScope ?? 'unset';
+  if (!TASK_SPANS.has(name)) return inherited;
+  return allowTranscript && inherited !== 'deny' ? 'allow' : 'deny';
+}
+
+export function startTraceSpan(
+  name: SpanName,
+  metadata: TraceMetadata = {},
+  options: { allowTranscript?: boolean } = {},
+): TraceSpan {
   let sink: TraceSinkSpan | undefined;
   telemetry(() => {
     sink = exporter?.start({
@@ -289,7 +312,11 @@ export function startTraceSpan(name: SpanName, metadata: TraceMetadata = {}): Tr
       parentContext: activeSpan.getStore()?.context,
     });
   });
-  const span = new TraceSpan(sink, name);
+  const span = new TraceSpan(
+    sink,
+    name,
+    transcriptScopeFor(name, options.allowTranscript === true),
+  );
   span.metadata(activeSpan.getStore()?.identityMetadata ?? {});
   span.metadata(metadata);
   return span;
@@ -312,10 +339,11 @@ export async function traceOperation<T>(
     content?: TraceContent<T>;
     transcript?: { input: () => unknown; output: (result: T) => unknown };
     outcome?: (result: T) => 'success' | 'error' | 'cancelled';
+    allowTranscript?: boolean;
   } = {},
 ): Promise<T> {
   if (!exporter) return callback();
-  const span = startTraceSpan(name, metadata);
+  const span = startTraceSpan(name, metadata, { allowTranscript: options.allowTranscript });
   telemetry(() => {
     span.content('input', options.content?.input);
     if (options.transcript) span.transcript('input', options.transcript.input);
