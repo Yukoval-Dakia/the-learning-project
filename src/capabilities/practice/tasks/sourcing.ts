@@ -58,6 +58,10 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 typed 声明（可选字段 parts，统一草稿结构）：
 - 每个 DraftPart = 一个小问：{"part_id":"p1","prompt_md":"该问题面（忠实原文）","units":[DraftUnit, ...],"blank_order":["本 part 各 blank 槽 slot_id 的逻辑作答序"](可选，多空才填),"question_no":"(1)"(可选),"explanation_md":"解析"(可选)}。
 - 每个 DraftUnit = 一个作答位：{"unit_id":"p1::u1","slot_id":"p1::r1","response_class":"select|blank|free","response_spec":{...},"points":分值(不知道就写 null，禁止编造),"key":答案键(select/blank 有确证才写),"reference_md":"参考答案"(free 用),"rubric":{...}(可选),"method":{"kind":"set-compare|exact|ai-rubric|human_review"},"rule":{"version":1,"cases":[...],"otherwise":{...}}(select/blank 有 key 时必写印出的给分政策，否则该 unit 按未决处理),"material_refs":[],"metadata":{}}。
+- rule 的形状（strict，写错的键或多余的键都不合法）：{"version":1,"source":{"statement":"卷面印出的给分原文"}(可选),"cases":[{"when":条件,"award":给分}, ...],"otherwise":给分}。cases 按顺序取第一个命中的；没有印出的给分政策就整个省略 rule，不要编。
+  - 条件 when 只读计数：select 用 hit / wrong / miss / picked / expected，blank 用 correct（0 或 1）；每个计数写比较 {"eq"|"gt"|"gte"|"lt"|"lte":非负整数}，同一对象内为「且」，也可写 {"all":[条件,...]} / {"any":[条件,...]}。
+  - 给分 award / otherwise 只有四种：{"points":分值}、{"per_hit":分值,"cap":上限(可选)}、{"per_item":{"item_id":分值},"cap":上限(可选)}、{"unknown":"partial_points_not_printed"|"points_not_printed"}。
+  - 例：单选 3 分 {"version":1,"cases":[{"when":{"wrong":{"eq":0},"miss":{"eq":0}},"award":{"points":3}}],"otherwise":{"points":0}}；填空 4 分 {"version":1,"cases":[{"when":{"correct":{"eq":1}},"award":{"points":4}}],"otherwise":{"points":0}}。
 - response_spec 三种：select→{"kind":"select","items":[{"item_id":"it_a","label_md":"选项原文"}],"pick":"one|many"}；blank→{"kind":"blank","format":"text|math"(可选),"unit_hint":"单位提示"(可选),"answer_shape":{...}(可选)}；free→{"kind":"free"}。
 - key 两种：select→{"kind":"select","accepted_item_ids":["items 里正确的 item_id"]}；blank→{"kind":"blank","key":{"kind":"text","accepted":["可接受答案原文",...]}|{"kind":"numeric","value":数值,"unit":"单位"(可选),"tolerance":{"kind":"absolute","value":0}(可选)}}。
 - method 对应：select→"set-compare"；blank 文本精确判→"exact"；free 或需要模型判→"ai-rubric"；只能人工评→"human_review"。
