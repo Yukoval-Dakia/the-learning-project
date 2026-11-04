@@ -71,10 +71,13 @@ async function handleSteeringChangeDelivery(
   const send =
     deps.bossSend ?? ((name: string, data: object, opts?: object) => boss.send(name, data, opts));
   const goalId = source.subject_id;
-  // Per-event singleton keys: retries of this delivery collapse; a NEW steering
-  // event always opens its own slot (P1-1 — exam then cancel minutes apart each
-  // get their own same-day re-plan / supply rerun).
+  // Deterministic job ids (same pattern as practice's sendJobIdempotent, kept
+  // inline — agency must not import practice): the singleton key alone is
+  // slot-scoped in pg-boss, so a redelivery crossing a slot boundary would
+  // bill a second identical run. The explicit id makes the insert ON CONFLICT
+  // DO NOTHING regardless of slot.
   const sourceEventId = delivery.sourceEventId;
+  const { steeringJobUuid } = await import('@/kernel/coach-wake');
 
   const coachJobId = await enqueueCoachForSteering(boss, goalId, sourceEventId);
   const detail: Record<string, unknown> = { goal_id: goalId, source_event_id: sourceEventId };
@@ -84,6 +87,7 @@ async function handleSteeringChangeDelivery(
     'supply_planner',
     { reason: 'steering_changed', goal_id: goalId, source_event_id: sourceEventId },
     {
+      id: steeringJobUuid('supply', goalId, sourceEventId),
       singletonKey: `supply.steering.${goalId}.${sourceEventId}`,
       singletonSeconds: 24 * 60 * 60,
     },
