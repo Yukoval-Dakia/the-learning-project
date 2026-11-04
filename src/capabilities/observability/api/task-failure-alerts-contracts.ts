@@ -4,7 +4,7 @@ export const TaskFailureAlertSchema = z.object({
   /** Deterministic alert id; equals the recorded event id once written. */
   id: z.string(),
   task_kind: z.string(),
-  rule: z.enum(['consecutive', 'rate']),
+  rule: z.enum(['consecutive', 'rate', 'unsealed']),
   failures: z.number().int().nonnegative(),
   /** Terminal runs counted by the rule (consecutive: equals failures). */
   runs: z.number().int().nonnegative(),
