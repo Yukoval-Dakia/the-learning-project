@@ -322,14 +322,48 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
       };
     }
 
-    // create / revise share the payload build (revise resolves goal_id at its
-    // own branch: omitted acts on the single active steering goal).
+    // create / revise share the payload build. On revise, an omitted structural
+    // field (window / scope / exclude / metadata) CARRIES OVER the recorded
+    // value — a learner changing only the date must not silently lift the
+    // physics deferral or drop the mapped scope. A present (even empty) field
+    // replaces, so revocations stay expressible.
+    const reviseRow =
+      input.op === 'revise'
+        ? ((
+            await ctx.db
+              .select({
+                id: goal.id,
+                scope_knowledge_ids: goal.scope_knowledge_ids,
+                effective_from: goal.effective_from,
+                effective_until: goal.effective_until,
+                steering: goal.steering,
+              })
+              .from(goal)
+              .where(eq(goal.id, await resolveSingleSteeringGoalId(ctx, input.goal_id)))
+              .limit(1)
+          )[0] ?? null)
+        : null;
+    if (input.op === 'revise' && (reviseRow === null || reviseRow.steering === null)) {
+      throw new ApiError('not_found', 'unknown steering goal', 404);
+    }
+    const prior = reviseRow?.steering ?? null;
     if (!input.instruction_md) {
       throw new ApiError('validation_error', `${input.op} requires instruction_md`, 400);
     }
-    // Window: default from=today; reject inverted ranges. create rejects a past until.
-    const from = input.window?.from ?? today;
-    const until = input.window?.until ?? null;
+    // Window: create defaults from=today; revise keeps the recorded window when
+    // the patch omits it. Reject inverted ranges; create rejects a past until.
+    const from =
+      input.op === 'create'
+        ? (input.window?.from ?? today)
+        : input.window
+          ? input.window.from
+          : (reviseRow?.effective_from ?? null);
+    const until =
+      input.op === 'create'
+        ? (input.window?.until ?? null)
+        : input.window
+          ? input.window.until
+          : (reviseRow?.effective_until ?? null);
     if (from !== null && !isLearnerLocalDay(from)) {
       throw new ApiError('validation_error', 'window.from must be YYYY-MM-DD', 400);
     }
@@ -347,18 +381,38 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
       ? (resolveSubjectIds([input.subject_id], issues, 'subject_unknown')[0] ?? null)
       : null;
 
-    const requestedIds = input.scope?.knowledge_ids ?? [];
+    // Scope: omitted on revise carries over the recorded mapping (ids + text +
+    // unresolved); a present scope replaces it wholesale.
+    const scopeInput =
+      input.scope ??
+      (input.op === 'revise' && prior
+        ? {
+            text: prior.scope_text,
+            knowledge_ids: reviseRow?.scope_knowledge_ids ?? [],
+            unresolved: [...prior.scope_unresolved],
+          }
+        : undefined);
+    const requestedIds = scopeInput?.knowledge_ids ?? [];
     const resolvedIds = await resolveScopeKnowledgeIds(ctx, requestedIds, issues);
-    const unresolved = [...(input.scope?.unresolved ?? [])];
-    const scopeText = input.scope?.text ?? null;
+    const unresolved = [...(scopeInput?.unresolved ?? [])];
+    const scopeText = scopeInput?.text ?? null;
 
+    // Exclusions (D4): omitted on revise carries over; a present exclude replaces.
+    const excludeInput =
+      input.exclude ??
+      (input.op === 'revise' && prior
+        ? {
+            subject_ids: [...prior.excluded_subject_ids],
+            knowledge_ids: [...prior.excluded_knowledge_ids],
+          }
+        : undefined);
     const excludedSubjects = resolveSubjectIds(
-      input.exclude?.subject_ids ?? [],
+      excludeInput?.subject_ids ?? [],
       issues,
       'exclude_subject_unknown',
     );
     const excludedKnowledgeIds = await (async () => {
-      const raw = input.exclude?.knowledge_ids ?? [];
+      const raw = excludeInput?.knowledge_ids ?? [];
       if (raw.length === 0) return [];
       const rows = await ctx.db
         .select({ id: knowledge.id })
@@ -379,7 +433,7 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
       scope_unresolved: unresolved,
       excluded_subject_ids: excludedSubjects,
       excluded_knowledge_ids: excludedKnowledgeIds,
-      metadata: input.metadata ?? {},
+      metadata: input.metadata ?? prior?.metadata ?? {},
     });
 
     if (input.op === 'create') {
@@ -436,14 +490,9 @@ export const recordSteeringTool: DomainTool<RecordSteeringToolInput, RecordSteer
       };
     }
 
-    // revise
-    const reviseGoalId = await resolveSingleSteeringGoalId(ctx, input.goal_id);
-    const [row] = await ctx.db
-      .select({ id: goal.id, steering: goal.steering })
-      .from(goal)
-      .where(eq(goal.id, reviseGoalId))
-      .limit(1);
-    if (!row || row.steering === null) {
+    // revise (row already fetched and validated above)
+    const row = reviseRow;
+    if (row === null || row.steering === null) {
       throw new ApiError('not_found', 'unknown steering goal', 404);
     }
     await updateGoalScope(
