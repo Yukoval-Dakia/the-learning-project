@@ -94,7 +94,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
       .at(-1);
     if (retry) data = { ...data, recovery: { prior_job_id: String(retry.payload.job_id) } };
   }
-  const priorJobId = data.continuation?.prior_job_id ?? data.recovery?.prior_job_id;
+  const priorJobId = data.recovery?.prior_job_id ?? data.continuation?.prior_job_id;
   let priorContext: unknown = null;
   if (priorJobId) {
     const prior = history.find((row) => row.id === `question_preparer_finished_${priorJobId}`);

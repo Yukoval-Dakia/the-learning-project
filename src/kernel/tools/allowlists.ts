@@ -40,12 +40,10 @@ export const READ_TOOLS = [
   // nor writes a proposal; author_question remains the distinct retained path.
   'generate_goal_outline',
   'generate_question_candidate',
-  // YUK-986 (Supply-Agent/1) — jyeoo grade-route candidate fetch. E1: registry
-  // only, NO surface grant (E3/YUK-988 grants the supply-executor surface).
+  // Candidate-fetch registration alone grants no surface access; question_preparer
+  // grants below follow ADR-0078 and the cutover plan §1.2.
   'jyeoo_fetch_candidates',
-  // YUK-988 (Supply-Agent/3) — web-route candidate fetch (Tavily search +
-  // SourcingTask extraction). E3: registry only, NO surface grant (same
-  // containment as jyeoo_fetch_candidates).
+  // Web-route candidate fetch; surface access is granted separately below.
   'web_fetch_candidates',
   // YUK-293 — expiring AI-to-AI hints. Granted only to copilot / dreaming /
   // coach below; evaluator and operator surfaces filter it out.

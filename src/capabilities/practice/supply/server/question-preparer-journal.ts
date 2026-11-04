@@ -234,8 +234,10 @@ export async function recoverQuestionPreparer(db: Db, jobId: string, forceDead =
       ...new Set([...registered, ...(started ? [`question_preparer_${jobId}`] : [])]),
     ];
     const revisions = await preparerSubmittedRevisions(tx, `question_preparer_${jobId}`);
+    let interruptedUnknown = started && registered.length === 0;
     if (runIds.length) {
       const rows = await tx.select().from(ai_task_runs).where(inArray(ai_task_runs.id, runIds));
+      interruptedUnknown ||= rows.length !== runIds.length;
       for (const run of rows.filter((row) => row.status === 'running')) {
         await writeAiTaskAttemptFinished(db, {
           id: run.id,
@@ -255,7 +257,7 @@ export async function recoverQuestionPreparer(db: Db, jobId: string, forceDead =
       targetId: preparerSpendKey(jobId),
       taskRunIds: runIds,
       submittedCount: revisions.size,
-      interruptedUnknown: started,
+      interruptedUnknown,
     });
     await preparerFinish(
       tx,
