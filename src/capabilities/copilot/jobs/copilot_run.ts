@@ -691,8 +691,14 @@ async function executeAcceptedCopilotRun(
           const isProse = activity.kind === 'prose_delta';
           const payload = isProse ? { text: activity.text } : projectCopilotActivity(activity);
           if (!payload) return;
+          // YUK-1548 §5 — block_draft rides the writer's latest-wins slot
+          // (one row per tool_use_id per flush), never a step per delta.
           progressWriter.push(
-            isProse ? { kind: 'delta', text: activity.text } : { kind: 'step', payload },
+            isProse
+              ? { kind: 'delta', text: activity.text }
+              : payload.step_kind === 'block_draft'
+                ? { kind: 'block_draft', payload }
+                : { kind: 'step', payload },
           );
         },
       },

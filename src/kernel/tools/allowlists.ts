@@ -93,6 +93,9 @@ export const PROPOSE_WRITE_TOOLS = [
   // YUK-1497 (K5) — presentation composition tool; same containment as the six
   // draft-edit tools above (writes ONE jsonb-internal key of the draft container).
   'compose_presentation',
+  // YUK-1548 — the one mandatory write path for generative-UI blocks (write-once
+  // content-addressed assets; surface decided server-side from the caller).
+  'compose_block',
   // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write: assembles authored
   // (draft-allowed) + existing
   // questions into a runnable tool_quiz paper. Granted to the copilot surfaces
@@ -256,6 +259,8 @@ export const COPILOT_TOOLS = [
   'write_agent_note',
   // YUK-1407 — 判分纠错提案（对话中发现疑似误判时可落地；accept 仍人审）。
   'propose_grading_correction',
+  // YUK-1548 — generative-UI blocks (diagram/figure in slice 1).
+  'compose_block',
 ] as const satisfies readonly DomainToolName[];
 
 // YUK-1553 / YUK-1559 — Dreaming's grant is now an EXPLICIT list: it must not
