@@ -16,8 +16,15 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
+import { learnerLocalDay } from '@/core/learner-day';
 import { A5_BANDS, masteryBandView } from '@/core/mastery-band';
 import type { LearnerJudgmentBatch } from '@/core/schema/learner-judgment';
+import {
+  learnerDayWeekday,
+  steeringDaysLeft,
+  steeringStartsInDays,
+  steeringWindowCoversToday,
+} from '@/core/steering';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
@@ -25,6 +32,7 @@ import {
   type ProposalFeedbackCell,
   getProposalFeedbackDigest,
 } from '@/kernel/proposals/adaptive-bias';
+import type { ActiveGoal } from '@/kernel/read-models/active-goal-scope';
 import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-goal-scope';
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
@@ -68,6 +76,9 @@ export interface LearnerStateWatermarks {
   dreaming_at: string | null;
   /** Latest `rate` event (proposal accept/dismiss decision) created_at. */
   proposal_decision_at: string | null;
+  /** Latest goal write (genesis/status/scope) created_at — steering changes
+   * refresh the header's steering lines the next turn (YUK-1770). */
+  goal_at: string | null;
 }
 
 /** The already-scoped proposal-feedback digest carried in the header block. */
@@ -79,6 +90,8 @@ export type ScopedProposalFeedbackCell = Pick<
 export interface LearnerStateProjection {
   reviewDueCount: number;
   activeGoalTitle: string | null;
+  /** YUK-1770 — one line per in-window steering goal, steering goals first. */
+  steeringLines: string[];
   topCauseCategories: string[];
   masterySummary: string | null;
   meanTheta: number | null;
@@ -143,20 +156,22 @@ export function isLearnerStateHeaderStale(
     watermarkAdvanced(
       cached.watermarks.proposal_decision_at,
       current.watermarks.proposal_decision_at,
-    )
+    ) ||
+    watermarkAdvanced(cached.watermarks.goal_at, current.watermarks.goal_at)
   );
 }
 
 /**
  * Deterministic projection → header prose, hard-truncated to the size budget.
- * The due line is always present; the goal / 误区 / mastery / 交班 lines render
- * only when their data exists (cold start → a minimal, non-blank header).
+ * The due line is always present; steering lines (YUK-1770) precede the goal
+ * title line; the goal / 误区 / mastery / 交班 lines render only when their
+ * data exists (cold start → a minimal, non-blank header).
  */
 export function assembleLearnerStateHeaderMd(
   p: LearnerStateProjection,
   budget: LearnerStateHeaderBudget = LEARNER_STATE_HEADER_BUDGET,
 ): string {
-  const lines: string[] = [`今日待复习 ${p.reviewDueCount} 项`];
+  const lines: string[] = [`今日待复习 ${p.reviewDueCount} 项`, ...p.steeringLines];
   if (p.activeGoalTitle) lines.push(`当前目标：${p.activeGoalTitle}`);
   if (p.topCauseCategories.length > 0) {
     lines.push(`近期高频误区：${p.topCauseCategories.slice(0, 2).join('、')}`);
@@ -207,7 +222,45 @@ export function scopeCopilotProposalFeedback(
   return scoped;
 }
 
-// ── Projection reads (IO; only run on (re)assembly) ──────────────────────────
+// ── Projection reads (IO; only run on (re)assembly) ─────────────────────────────
+
+/**
+ * YUK-1770 — one header line per in-window steering goal. Out-of-window goals
+ * (the nightly expiry sweep has not flipped them yet) never render; the
+ * countdown states the exam-day pressure, the unresolved marker keeps the
+ * honest 「未对应」 surface. Pure over the read rows.
+ */
+export function buildSteeringHeaderLines(goals: ActiveGoal[], today: string): string[] {
+  return goals
+    .filter((g) => g.steering !== null && steeringWindowCoversToday(g, today))
+    .map((g) => {
+      const steering = g.steering;
+      if (steering === null) return null;
+      const parts: string[] = [];
+      if (g.effective_from !== null) {
+        const startsIn = steeringStartsInDays(g.effective_from, today);
+        if (startsIn !== null && startsIn > 0)
+          parts.push(`${g.effective_from}（${learnerDayWeekday(g.effective_from)}）开始`);
+      }
+      if (g.effective_until !== null) {
+        const daysLeft = steeringDaysLeft(g.effective_until, today);
+        if (daysLeft !== null) {
+          parts.push(
+            daysLeft <= 0
+              ? `就是今天（${g.effective_until}）`
+              : `到 ${g.effective_until}（${learnerDayWeekday(g.effective_until)}）还有 ${daysLeft} 天`,
+          );
+        }
+      }
+      const unresolved =
+        steering.scope_unresolved.length > 0
+          ? `；未对应：${steering.scope_unresolved.join('、')}`
+          : '';
+      const tail = parts.length > 0 ? `（${parts.join('，')}）` : '';
+      return `当前安排：${steering.instruction_md}${tail}${unresolved}`;
+    })
+    .filter((line): line is string => line !== null);
+}
 
 function rankTopCauseCategories(failures: FailureAttempt[], n: number): string[] {
   const counts = new Map<string, number>();
@@ -321,7 +374,7 @@ function summarizeJudgment(batch: LearnerJudgmentBatch): {
 export interface ReadProjectionDeps {
   loadCopilotSummaryFn?: (db: DbLike) => Promise<CopilotSummary>;
   loadOvernightDigestFn?: LoadTodayOvernightDigest;
-  listActiveGoalsFn?: (db: DbLike) => Promise<{ title: string; scope_knowledge_ids: string[] }[]>;
+  listActiveGoalsFn?: (db: DbLike) => Promise<ActiveGoal[]>;
   getFailureAttemptsFn?: (db: DbLike) => Promise<FailureAttempt[]>;
   getMasteryProjectionFn?: (db: DbLike, ids: string[]) => Promise<Map<string, MasteryProjection>>;
   loadFailureStreakFn?: (db: DbLike) => Promise<KnowledgeFailureStreak | null>;
@@ -351,7 +404,18 @@ export async function readLearnerStateProjection(
     overnightSentencePromise,
     loadFailureStreak(db),
   ]);
-  const activeGoal = goals[0] ?? null;
+  const activeGoal =
+    goals.find((g) => g.steering === null) ??
+    goals.find(
+      (g) =>
+        !(
+          g.steering !== null &&
+          g.effective_from !== null &&
+          g.effective_from > learnerLocalDay(new Date())
+        ),
+    ) ??
+    null;
+  const steeringLines = buildSteeringHeaderLines(goals, learnerLocalDay(new Date()));
   const topCauseCategories = rankTopCauseCategories(failures, 2);
 
   const scopeKcs = activeGoal?.scope_knowledge_ids ?? [];
@@ -370,6 +434,7 @@ export async function readLearnerStateProjection(
   return {
     reviewDueCount: summary.review_due_count,
     activeGoalTitle: activeGoal?.title ?? null,
+    steeringLines,
     topCauseCategories,
     masterySummary,
     meanTheta,
@@ -399,6 +464,15 @@ const PRACTICE_WATERMARK_ACTIONS = [
   'correct',
 ] as const;
 
+// YUK-1770 — goal writes that refresh the header (steering create/revise/end;
+// ordinary goal writes also advance the watermark, which is harmless: the
+// projection only re-assembles and renders the same lines).
+const GOAL_WRITE_WATERMARK_ACTIONS = [
+  'experimental:genesis',
+  'experimental:goal_status_update',
+  'experimental:goal_scope_update',
+] as const;
+
 /** One grouped MAX(created_at) query for the three invalidation categories. */
 export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerStateWatermarks> {
   const rows = await db
@@ -412,6 +486,10 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
         inArray(event.action, [...PRACTICE_WATERMARK_ACTIONS]),
         and(eq(event.action, 'experimental:dreaming_scan'), eq(event.outcome, 'success')),
         eq(event.action, 'rate'),
+        and(
+          inArray(event.action, [...GOAL_WRITE_WATERMARK_ACTIONS]),
+          eq(event.subject_kind, 'goal'),
+        ),
       ),
     )
     .groupBy(event.action);
@@ -427,6 +505,10 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
     ),
     dreaming_at: iso('experimental:dreaming_scan'),
     proposal_decision_at: iso('rate'),
+    goal_at: GOAL_WRITE_WATERMARK_ACTIONS.reduce<string | null>(
+      (latest, action) => maxIso(latest, iso(action)),
+      null,
+    ),
   };
 }
 
@@ -469,6 +551,9 @@ function parseCache(payload: Record<string, unknown>): LearnerStateHeaderCache |
       attempt_at: wmField('attempt_at'),
       dreaming_at: wmField('dreaming_at'),
       proposal_decision_at: wmField('proposal_decision_at'),
+      // Caches written before YUK-1770 lack the key → null → the next read sees
+      // goal_at advance and re-assembles once. Intended.
+      goal_at: wmField('goal_at'),
     },
   };
 }
