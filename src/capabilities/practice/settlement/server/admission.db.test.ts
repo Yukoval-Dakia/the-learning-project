@@ -37,8 +37,8 @@ import {
 } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { streamLocalDate } from '@/kernel/stream-date';
-import { seedHistoricalAssessmentIssuance } from '../../../tests/fixtures/historical-assessment-issuance';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { seedHistoricalAssessmentIssuance } from '../../../../../tests/fixtures/historical-assessment-issuance';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { activateEvaluation } from './activate';
 import { learningSettlement } from './settle';
 

@@ -5,8 +5,7 @@ import { loadReviewDueReader } from './scheduling/public';
 // Compatibility export; shared read models consume their owner, kernel/events,
 // directly so initialization does not re-enter the practice runtime barrel.
 export type { EffectiveTruth } from '@/kernel/events';
-// The seed-root anchor regex is owned by the kernel placement-scope read model; settlement
-// code in src/server/assessment still reads it from this seam.
+// The seed-root anchor regex is owned by the kernel placement-scope read model.
 export { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 // Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
 // bundle on the @kernel + @db chain with no SDK import.
@@ -292,7 +291,6 @@ export {
   readPlacementProfile,
   readPlacementSession,
   releaseHeldPlacement,
-  selectNextPlacementItem,
   selectNextPlacementQuestion,
   selectOrphanPlacementCandidates,
   startPlacementProbe,
@@ -310,3 +308,5 @@ export {
   submitPaperSlot,
   transitionReviewSession,
 } from './session/public';
+
+export { installSchedulingCandidateRebuild } from './settlement/public';

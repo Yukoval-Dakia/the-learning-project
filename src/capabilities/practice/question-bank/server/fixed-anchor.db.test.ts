@@ -14,7 +14,7 @@ import {
 } from '@/capabilities/practice/question-bank/server/fixed-anchor';
 import { db } from '@/db/client';
 import { item_calibration } from '@/db/schema';
-import { resetDb } from '../../../tests/helpers/db';
+import { resetDb } from '../../../../../tests/helpers/db';
 
 async function readCalRow(questionId: string) {
   const rows = await db

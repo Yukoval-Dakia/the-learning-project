@@ -3,7 +3,7 @@
 // The shell gathers the event rows that can affect rowId, maps them to the flat
 // FoldEvent envelope, folds, and writes the result through. It never writes on a
 // live path: item_calibration's live writers stay the single-owner primitives in
-// src/server/mastery/ (applyItemPrior / fixed-anchor / recalibrateQuestion). This
+// kernel/records/item-calibration、practice/question-bank 与 practice/settlement. This
 // shell exists for the offline registry surfaces only (rebuild:projection, the B3
 // gate and the audit's shared gather). The per-entity projectionIsWriter flag is
 // off and no flip is planned while the table is anchor-only backfilled.

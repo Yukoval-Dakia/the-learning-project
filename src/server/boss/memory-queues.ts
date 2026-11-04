@@ -7,21 +7,17 @@ import {
   MEMORY_INFRA_SCHEDULES,
   MEMORY_INGEST_OUTBOX_POLL_QUEUE,
   MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
-  MEMORY_RECONCILE_QUEUE,
-  type ReconcileMemInput,
   buildBriefGenerator,
   buildContextPurposeRepairHandler,
   buildMemoryEventIngestHandler,
   buildMemoryIngestOutboxPollHandler,
   buildMemoryIngestOutboxRecoverHandler,
-  buildMemoryReconcileHandler,
 } from '@/capabilities/agency/public';
 import type { Db } from '@/db/client';
 
 const CONTEXT_PURPOSE_REPAIR_QUEUE = 'context_purpose_repair';
 
 import type { MemoryClient } from '@/server/ai/mem0/client';
-import { judgeReconciliation } from '@/server/ai/mem0/reconcile-llm';
 import {
   EXPIRE_LLM,
   FAST_QUEUE_OPTS,
@@ -89,26 +85,4 @@ export async function registerMemoryHandlers(
   for (const decl of MEMORY_INFRA_SCHEDULES) {
     await boss.schedule(decl.name, decl.cron, {}, { tz: decl.tz });
   }
-
-  // Reconcile is event-driven and shares the hourly recovery floor. It is a paid
-  // LLM queue, so it gets the same expiry policy as the other memory queues.
-  await createJobQueue(boss, MEMORY_RECONCILE_QUEUE, EXPIRE_LLM);
-  await boss.work(
-    MEMORY_RECONCILE_QUEUE,
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    fenceAwareJobHandler<
-      Job<{
-        memories: ReconcileMemInput[];
-        user_id: string;
-        source_event_id?: string;
-      }>
-    >(
-      db,
-      MEMORY_RECONCILE_QUEUE,
-      buildMemoryReconcileHandler(db, {
-        memoryClient: deps.memoryClient,
-        judge: judgeReconciliation,
-      }),
-    ),
-  );
 }

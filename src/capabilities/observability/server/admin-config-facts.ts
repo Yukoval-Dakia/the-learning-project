@@ -42,7 +42,7 @@ export interface AdminConfigCatalogModelRow {
  * the only credential-derived facts beyond key_present, and never the value.
  */
 export interface AdminConfigProviderAuth {
-  readonly status: 'unconfigured' | 'configured' | 'auth_failed';
+  readonly status: 'unconfigured' | 'configured' | 'auth_failed' | 'login_lane';
   /** HTTP status of the failed /models read or inference probe; null otherwise. */
   readonly http_status: number | null;
   /** Provider error type of the failure (e.g. invalid_api_key); null otherwise. */

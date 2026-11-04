@@ -338,12 +338,13 @@ function DegradedKindsFlags() {
 
 // YUK-1738 — one generic line when some AI task kind keeps failing (observability's read).
 // Learner copy only: never the task kind, counts or run ids — those live at the top of
-// /admin/runs. Silent while loading, on error, and when there is no alert.
+// /admin/runs. Silent while loading, on error, and when there is no alert. An `unsealed` alert
+// stays off this line: the reply reached the learner, only its closing record is incomplete.
 const TASK_FAILURE_ALERTS_KEY = ['task-failure-alerts'] as const;
 function TaskFailureNotice() {
   const { getTaskFailureAlerts } = useWorkbenchClient();
   const q = useQuery({ queryKey: TASK_FAILURE_ALERTS_KEY, queryFn: getTaskFailureAlerts });
-  if (!q.data || q.data.alerts.length === 0) return null;
+  if (!q.data?.alerts.some((alert) => alert.rule !== 'unsealed')) return null;
   return (
     <p className="td-flag td-flag-caution" role="status">
       <CircleAlert size={16} aria-hidden="true" className="td-flag-ic" />

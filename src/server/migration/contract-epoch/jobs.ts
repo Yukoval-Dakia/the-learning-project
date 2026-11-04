@@ -47,7 +47,6 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   memory_brief_sweep: 'drain',
   memory_ingest_outbox_poll: 'drain',
   memory_ingest_outbox_recover: 'drain',
-  memory_reconcile: 'drain',
   // 投影/审计类只读或写运维投影：不碰判分/作答真相。
   projection_oracle_sweep: 'drain',
   subject_profile_audit_nightly: 'drain',

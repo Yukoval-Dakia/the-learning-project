@@ -2,6 +2,7 @@
 // 渲染序即文档序；裁剪序：Steering > Δ > 掌握和错因 > 稳态画像 > 信号 > 昨夜，
 // 到期题明细与失败明细（§13 给「怎么和我说话」留空间）最先被裁。
 
+import { wrapUntrustedLearnerText } from '@/capabilities/agency/server/conjecture/untrusted-text';
 import type { Db, Tx } from '@/db/client';
 import type { LearnerContextResult } from '@/kernel/read-models/learner-context';
 import { trimUnitsToBudget } from './budget';
@@ -44,14 +45,18 @@ function renderDelta(delta: DeltaSection): string {
   return lines.join('\n');
 }
 
+// 题干摘录是学习者文本（prompt_md 属仓库红线的 learner-authored text），整段
+// 明细包一次 <untrusted_learner_text> 定界——逐条已截断（先截断再包裹），
+// 定界符也计入启动段预算（trim 测的是包裹后的 markdown）。
 function renderDueItems(items: DueItemLine[]): string | null {
   if (items.length === 0) return null;
-  return items
+  const block = items
     .map((item) => {
       const kcs = item.knowledgeNames.length > 0 ? `（${item.knowledgeNames.join('、')}）` : '';
       return `· ${item.stem}${kcs}`;
     })
     .join('\n');
+  return wrapUntrustedLearnerText(block);
 }
 
 /**
@@ -78,19 +83,20 @@ export async function assembleCompanionContext(
 
   const trimmed = trimUnitsToBudget(
     [
-      { rank: 0, markdown: contract.steeringMd },
+      { rank: 0, name: 'steering', markdown: contract.steeringMd },
       {
         rank: 0.5,
+        name: 'communication',
         markdown: steady.communicationMd ? `怎么和我说话：${steady.communicationMd}` : null,
         protected: true,
       },
-      { rank: 1, markdown: renderDelta(delta) },
-      { rank: 2, markdown: renderDueItems(delta.dueItems), dropRank: 8 },
-      { rank: 3, markdown: masteryMd },
-      { rank: 4, markdown: contract.failureDetailsMd, dropRank: 9 },
-      { rank: 5, markdown: portraitMd },
-      { rank: 6, markdown: signalsMd },
-      { rank: 7, markdown: overnightMd },
+      { rank: 1, name: 'delta', markdown: renderDelta(delta) },
+      { rank: 2, name: 'due_details', markdown: renderDueItems(delta.dueItems), dropRank: 8 },
+      { rank: 3, name: 'mastery_causes', markdown: masteryMd },
+      { rank: 4, name: 'failure_details', markdown: contract.failureDetailsMd, dropRank: 9 },
+      { rank: 5, name: 'portrait', markdown: portraitMd },
+      { rank: 6, name: 'signals', markdown: signalsMd },
+      { rank: 7, name: 'overnight', markdown: overnightMd },
     ],
     { maxEstimatedTokens: opts.budget ?? 1000, maxChars: 2400 },
   );
@@ -99,6 +105,10 @@ export async function assembleCompanionContext(
     view: 'companion',
     markdown: trimmed.markdown,
     estimatedTokens: trimmed.estimatedTokens,
+    startupTrim: {
+      droppedUnits: trimmed.droppedUnits,
+      tokensBeforeTrim: trimmed.tokensBeforeTrim,
+    },
     asOf: steady.asOf.toISOString(),
     asOfBasis: steady.asOfBasis,
   };

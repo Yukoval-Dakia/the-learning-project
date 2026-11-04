@@ -32,10 +32,10 @@
 import './load-env';
 
 import { and, eq, isNotNull } from 'drizzle-orm';
+import { recalibrateQuestion } from '@/capabilities/practice/settlement/public';
 import type { Db } from '@/db/client';
 import { db } from '@/db/client';
 import { item_calibration } from '@/db/schema';
-import { recalibrateQuestion } from '@/server/mastery/recalibration';
 
 export interface RecomputeBCalibCapResult {
   /** 候选题数（b_calib IS NOT NULL 的 hard 轨行）。 */

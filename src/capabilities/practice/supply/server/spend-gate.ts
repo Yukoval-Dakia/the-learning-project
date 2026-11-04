@@ -19,6 +19,7 @@ import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { lockSupplySpendDay } from '@/kernel/locks/question-supply';
+import { CATALOG_SUBSCRIPTION_REF_PREFIX } from '@/server/ai/attempt-cost';
 
 const SUPPLY_SPEND_ACTION = 'experimental:supply_spend';
 const CAP_CONFIG_KEY = 'SUPPLY_NIGHTLY_SPEND_CAP_USD';
@@ -262,12 +263,21 @@ async function runCostMicroUsd(
 ): Promise<{ known: number; unpriced: boolean }> {
   if (taskRunIds.length === 0) return { known: 0, unpriced: false };
   const rows = await db
-    .select({ costUsd: ai_task_runs.cost_usd, basis: ai_task_runs.cost_basis })
+    .select({
+      costUsd: ai_task_runs.cost_usd,
+      basis: ai_task_runs.cost_basis,
+      costRef: ai_task_runs.cost_ref,
+    })
     .from(ai_task_runs)
     .where(inArray(ai_task_runs.id, [...new Set(taskRunIds)]));
   let known = 0;
   let unpriced = false;
   for (const row of rows) {
+    // Subscription-lane catalog estimates (pi-catalog-subscription:* refs)
+    // are projections, not paid spend — everything else counts exactly as
+    // before.
+    const subscription = row.costRef?.startsWith(CATALOG_SUBSCRIPTION_REF_PREFIX) === true;
+    if (subscription) continue;
     if ((row.basis === 'reported' || row.basis === 'estimated') && row.costUsd !== null) {
       known += Math.round(row.costUsd * 1_000_000);
     } else {

@@ -40,15 +40,11 @@ export {
   parseLearningIntentOutline,
   planLearningIntent,
 } from './server/learning-intent';
-// The platform boss layer mounts the memory pipeline queues; admin config reads its crons and mode.
+// The platform boss layer mounts the memory pipeline queues; admin config reads its crons.
 export type { GenerateBrief } from './server/memory/brief';
 export { buildBriefGenerator } from './server/memory/brief-writer';
 // Backup restore reopens outbox rows whose pg-boss job was lost with the queue.
 export { reopenUnstartedMemoryIngests } from './server/memory/memory-ingest-recovery-store';
-export {
-  MEMORY_RECONCILE_QUEUE,
-  memoryReconcileHandoffMode,
-} from './server/memory/memory-reconcile-handoff';
 export {
   MEMORY_EVENT_INGEST_QUEUE,
   MEMORY_INFRA_SCHEDULES,
@@ -59,7 +55,6 @@ export {
   buildMemoryEventIngestHandler,
   buildMemoryIngestOutboxPollHandler,
   buildMemoryIngestOutboxRecoverHandler,
-  buildMemoryReconcileHandler,
 } from './server/memory/triggers';
 export { misconceptionHardConfirmEnabled } from './server/misconception-promote';
 export {

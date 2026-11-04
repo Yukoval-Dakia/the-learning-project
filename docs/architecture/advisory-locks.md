@@ -14,7 +14,7 @@
 >    `instance ⇄ corrections:all` 2-环，双方向路径全程持 G 共同串行化，
 >    已核站点内不可达 runtime 死锁——见 §4/E4。
 > 2. **appeal 拆族及补边**：native appeal、resolution 的 `hashtext` 键与历史
->    rejudge 的 `hashtextextended` 键拆为 #10/#80/#81 三族；补登
+>    rejudge 的 `hashtextextended` 键拆为 #10/#79/#80 三族；补登
 >    `request → group` 与激活回调内 `group → resolution`——见 §3/E9。
 > 3. **durable 跨事务假边**：`family-control(int 对) → per-tick` 同段拼接
 >    撤回；install tx（`fence → 族控制锁`）与 runtime tx（control 行锁 →
@@ -195,16 +195,15 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | 72 | serving-command | yuk1514:serving:<eventId> | hashtextextended:0 | transaction | xact | 1 |  |
 | 73 | placement-supply | placement-supply:v1:<knowledgeId> | hashtextextended:0 | transaction | xact | 3 | proposal-decision |
 | 74 | memory-ingest | memory:ingest:<sourceId> | hashtextextended:0 | transaction | xact | 3 |  |
-| 75 | memory-dispatch | memory:dispatch:<sourceEventId> | hashtextextended:0 | transaction | xact | 2 |  |
-| 76 | memory-operator-request | memory:operator-request:<requestId> | hashtextextended:0 | transaction | xact | 1 |  |
-| 77 | model-slice-admission | model-slice-admission:<sliceId> | hashtext | session | session-try | 1 |  |
-| 78 | migration-apply-fence | yuk1050:migration-apply | hashtext | session | session-try | 2 |  |
-| 79 | yuk1406-repair-operation | yuk1406_select_display_label_repair | hashtextextended:0 | transaction | xact | 1 |  |
-| 80 | assessment-resolution-claim | evt_native_resolution_<hash> | hashtext | transaction | xact | 1 | assessment-evaluation-group |
-| 81 | appeal-rejudge-legacy-claim | hte(<appeal.id>, 0) | hashtextextended:0 | transaction | xact | 1 |  |
-| 82 | supply-spend-day | supply-spend:v1:<day> | hashtextextended:0 | transaction | xact | 1 |  |
+| 75 | memory-operator-request | memory:operator-request:<requestId> | hashtextextended:0 | transaction | xact | 1 |  |
+| 76 | model-slice-admission | model-slice-admission:<sliceId> | hashtext | session | session-try | 1 |  |
+| 77 | migration-apply-fence | yuk1050:migration-apply | hashtext | session | session-try | 2 |  |
+| 78 | yuk1406-repair-operation | yuk1406_select_display_label_repair | hashtextextended:0 | transaction | xact | 1 |  |
+| 79 | assessment-resolution-claim | evt_native_resolution_<hash> | hashtext | transaction | xact | 1 | assessment-evaluation-group |
+| 80 | appeal-rejudge-legacy-claim | hte(<appeal.id>, 0) | hashtextextended:0 | transaction | xact | 1 |  |
+| 81 | supply-spend-day | supply-spend:v1:<day> | hashtextextended:0 | transaction | xact | 1 |  |
 
-#10/#80/#81 由旧版混族行 `assessment-appeal-claim`（sites 3）拆出：request
+#10/#79/#80 由旧版混族行 `assessment-appeal-claim`（sites 3）拆出：request
 （appeal.ts:24）、resolution（appeal.ts:78）、历史 rejudge（rejudge.ts:45）
 是三个不同 key 模板/锁值，同族合并会遮蔽 `request→group`、`group→resolution`
 已证边（§4/E9）。

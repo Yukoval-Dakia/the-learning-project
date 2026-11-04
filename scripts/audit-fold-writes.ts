@@ -334,7 +334,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'item_calibration',
-    file: 'src/server/mastery/recalibration.ts',
+    file: 'src/capabilities/practice/settlement/server/recalibration.ts',
     marker: '.update(item_calibration)',
     role: 'off-path-writer',
     note: 'recalibrateQuestion b_calib firm-up UPDATE (OFF-path sole writer — post-anchor writes surface as audit drift, the documented 方案 A boundary).',

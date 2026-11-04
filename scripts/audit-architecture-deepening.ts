@@ -1515,7 +1515,7 @@ async function runCli(): Promise<void> {
         'promote_conversation_idle',
         'verify_dispatch_recover',
       ],
-      moduleOwnedQueues: ['memory_event_ingest', 'memory_brief_regen', 'memory_reconcile'],
+      moduleOwnedQueues: ['memory_event_ingest', 'memory_brief_regen'],
     },
     proposals: {
       declarations: proposalDeclarations,

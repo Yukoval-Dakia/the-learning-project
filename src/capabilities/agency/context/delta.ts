@@ -9,7 +9,7 @@
 
 import { and, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { event, knowledge } from '@/db/schema';
+import { event, knowledge, question, source_document } from '@/db/schema';
 import { COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import { excerpt } from '@/kernel/read-models/extraction-summary';
@@ -21,12 +21,18 @@ import {
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 import { executeGetReviewDue } from '@/kernel/read-models/review-due';
+import { readDocumentDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import type { ToolContext } from '@/kernel/tools/types';
 import type { DeltaSection, DueItemLine } from './types';
 
 type DbLike = Db | Tx;
 
 const DELTA_SCAN_LIMIT = 200;
+const NON_MATERIAL_QUESTION_SOURCES: ReadonlySet<string> = new Set([
+  'manual',
+  'web_sourced',
+  'quiz_gen',
+]);
 const NATIVE_ATTEMPT_ACTION = 'experimental:assessment_attempt';
 const RECORD_CAPTURE_ACTION = 'experimental:record_capture';
 const REVIEW_ACTION = 'review';
@@ -167,8 +173,61 @@ export async function readDeltaSection(
     loadLastLearnerEventAt(db),
   ]);
 
+  // 到期明细的来源同意闸：题的每个来源文档（ingestion 捕获的
+  // metadata.source_document_id、quiz_gen 物料的
+  // metadata.quiz_gen.material_source_document_id）逐一查用途策略——任一非
+  // 'allow'（answer_only/crisis/解析不出）或文档行缺失，该题不进启动段
+  // （题干和知识点名都不放）。没有来源键的题只放行已知不来自学习者材料的
+  // source：变式题等派生题不记来源却可能由受限文档生成。只影响启动段明细；
+  // review-due wire 与到期计数不变。
+  const dueQuestionIds = due.rows.map((row) => row.question_id);
+  const questionMetaRows =
+    dueQuestionIds.length > 0
+      ? await db
+          .select({ id: question.id, source: question.source, metadata: question.metadata })
+          .from(question)
+          .where(inArray(question.id, dueQuestionIds))
+      : [];
+  const docIdSet = new Set<string>();
+  const docIdsByQuestion = new Map<string, string[]>();
+  const sourceByQuestion = new Map<string, string>();
+  for (const row of questionMetaRows) {
+    sourceByQuestion.set(row.id, row.source);
+    const meta =
+      row.metadata && typeof row.metadata === 'object'
+        ? (row.metadata as Record<string, unknown>)
+        : {};
+    const ids = [
+      meta.source_document_id,
+      (meta.quiz_gen as Record<string, unknown> | undefined)?.material_source_document_id,
+    ].filter((id): id is string => typeof id === 'string' && id.length > 0);
+    docIdsByQuestion.set(row.id, ids);
+    for (const id of ids) docIdSet.add(id);
+  }
+  const allowedDocIds = new Set<string>();
+  if (docIdSet.size > 0) {
+    const docRows = await db
+      .select({ id: source_document.id, provenance: source_document.provenance })
+      .from(source_document)
+      .where(inArray(source_document.id, [...docIdSet]));
+    // 行缺失 = 查不清 → 不在 allowed 集合；readDocumentDerivationPolicy 对
+    // 解析不出的 provenance 本身 fail-closed（返回 'answer_only'）。
+    for (const row of docRows) {
+      if (readDocumentDerivationPolicy(row.provenance) === 'allow') allowedDocIds.add(row.id);
+    }
+  }
+  const sourceAllowed = (questionId: string): boolean => {
+    const ids = docIdsByQuestion.get(questionId);
+    if (!ids) return false; // 到期行指向的 question 行读不到 = 查不清，当不允许
+    if (ids.length === 0)
+      return NON_MATERIAL_QUESTION_SOURCES.has(sourceByQuestion.get(questionId) ?? '');
+    return ids.every((id) => allowedDocIds.has(id));
+  };
+
   // 到期队列前几条明细：题干摘要 + 知识点显示名（学习者可见 id、非 seed 结构锚、未归档节点）。
-  const dueItemRows = due.rows.slice(0, DUE_ITEM_DETAIL_MAX);
+  const dueItemRows = due.rows
+    .filter((row) => sourceAllowed(row.question_id))
+    .slice(0, DUE_ITEM_DETAIL_MAX);
   const dueKnowledgeIds = learnerVisibleKnowledgeIds(
     dueItemRows
       .flatMap((row) => row.knowledge_ids)

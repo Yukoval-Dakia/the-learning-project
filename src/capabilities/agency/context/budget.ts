@@ -28,7 +28,18 @@ export interface TrimUnit {
    */
   readonly dropRank?: number;
   readonly protected?: boolean;
+  /** 遥测名：被裁时按名字记（只记名不记内容）。 */
+  readonly name: string;
   readonly markdown: string | null;
+}
+
+export interface TrimResult {
+  readonly markdown: string;
+  readonly estimatedTokens: number;
+  /** 按裁剪顺序记录的被裁单元名（present 但被丢的；缺 markdown 的不算被裁）。 */
+  readonly droppedUnits: string[];
+  /** 一个单元都没丢时整段渲染的估计 token（裁前值）。 */
+  readonly tokensBeforeTrim: number;
 }
 
 /**
@@ -41,11 +52,13 @@ export interface TrimUnit {
 export function trimUnitsToBudget(
   units: readonly TrimUnit[],
   budget: { maxEstimatedTokens: number; maxChars: number } = LEARNER_CONTEXT_STARTUP_BUDGET,
-): { markdown: string; estimatedTokens: number } {
+): TrimResult {
   const kept = units
     .filter((u): u is TrimUnit & { markdown: string } => !!u.markdown && u.markdown.length > 0)
     .sort((a, b) => a.rank - b.rank);
   const render = () => kept.map((u) => u.markdown).join('\n');
+  const tokensBeforeTrim = estimateTokens(render());
+  const droppedUnits: string[] = [];
 
   // Drop the highest-dropRank (lowest-priority) unit until the estimate fits;
   // rank 0 (Steering) is never dropped whole — it takes the boundary truncation instead.
@@ -56,6 +69,7 @@ export function trimUnitsToBudget(
     const candidates = kept.filter((u) => u.rank !== 0 && !u.protected);
     const drop = candidates.sort((a, b) => (b.dropRank ?? b.rank) - (a.dropRank ?? a.rank))[0];
     if (!drop) break;
+    droppedUnits.push(drop.name);
     kept.splice(kept.indexOf(drop), 1);
   }
   let md = render();
@@ -83,5 +97,10 @@ export function trimUnitsToBudget(
     if (estimateTokens(md) > budget.maxEstimatedTokens || md.length > budget.maxChars)
       throw new Error('communication brief exceeds its compact storage contract');
   }
-  return { markdown: md, estimatedTokens: estimateTokens(md) };
+  return {
+    markdown: md,
+    estimatedTokens: estimateTokens(md),
+    droppedUnits,
+    tokensBeforeTrim,
+  };
 }

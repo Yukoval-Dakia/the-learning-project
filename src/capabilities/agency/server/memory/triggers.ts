@@ -1,31 +1,21 @@
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job, PgBoss } from 'pg-boss';
-import { allowsDerivation } from '@/core/schema/derivation-policy';
-import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { event } from '@/db/schema';
 import {
   eventAllowsDerivationSql,
-  lockEventDerivationSources,
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
-import { latestPurposeWithdrawal } from '@/kernel/read-models/purpose-change';
 import { loadSubjectBriefEvents, subjectScopeHasNewEvidence } from './active-subjects';
 import { type GenerateBrief, regenerateMemoryBrief, scopeHasNewEvidence } from './brief';
 import { executePurposeBrief } from './brief-purpose';
 import { isLearnerEvidenceAction } from './learner-evidence';
 import {
-  type CandidateEntry,
   type MemoryClient,
   type MemoryEventInput,
-  type NewMemoryEntry,
-  type ReconcileJudge,
-  ReconcileParseError,
-  createDirectProviderOperationContext,
   createMem0OpaqueOperationContext,
   createMemoryClient,
-  isDirectProviderAttemptInvariantError,
   searchMemories,
 } from './mem0-runtime';
 import type { MemoryIngestReplayGrant } from './memory-ingest-recovery-contract';
@@ -35,13 +25,6 @@ import {
   memoryIngestReplayAnchor,
 } from './memory-ingest-recovery-store';
 import {
-  type MemoryReconcileHandoffMode,
-  dispatchMemoryReconcile,
-  memoryReconcileHandoffMode,
-  modePersistsNewIntents,
-  recoverMemoryReconcileHandoffs,
-} from './memory-reconcile-handoff';
-import {
   MemoryReconcileHandoffError,
   type ReconcileMemInput,
   claimMemoryIngest,
@@ -49,14 +32,6 @@ import {
   readIngestCompleted,
 } from './memory-reconcile-handoff-store';
 import { recoverPurposeChanges } from './purpose-repair';
-import { applyDecisionGates, deduplicateDecisions } from './reconcile-decisions';
-import {
-  type PlannedRow,
-  insertPlannedRows,
-  loadUnappliedLog,
-  makePlannedRow,
-  markApplied,
-} from './reconcile-store';
 
 // Per-subject brief refresh lookback, also the bounded initial build for never-built
 // subjects.
@@ -94,18 +69,11 @@ export const MEMORY_INFRA_SCHEDULES: readonly MemoryScheduleDeclaration[] = [
     cron: '0 * * * *',
     tz: 'UTC',
     queue: 'fast',
-    note: 'ADR-0021 outbox 每小时恢复扫描（poller 漏网的兜底；YUK-858 reconcile 复用同一小时地板）',
+    note: 'ADR-0021 outbox 每小时恢复扫描（poller 漏网的兜底）',
   },
 ];
 
 const OUTBOX_POLL_BATCH = 50;
-// Cap the per-event brief-regen fan-out: affected scopes are unbounded, so one bulk
-// or import event could enqueue hundreds of jobs. A truncated tail is acceptable;
-// the daily sweep partially backstops scopes that already have a brief row.
-export const MAX_BRIEF_REGEN_SCOPES = 64;
-// Reconcile topK. Reconcile is time-sensitive convergence, unlike the 6-minute brief.
-const RECONCILE_TOP_K = 30;
-
 type BossLike = Pick<PgBoss, 'createQueue' | 'updateQueue'> & {
   work(name: string, ...args: unknown[]): Promise<unknown>;
   schedule(name: string, cron: string, data: object, options: object): Promise<unknown>;
@@ -113,12 +81,7 @@ type BossLike = Pick<PgBoss, 'createQueue' | 'updateQueue'> & {
   getJobById?(name: string, id: string): Promise<{ readonly state: string } | null>;
 };
 
-/**
- * Deterministic event action → memory kind. The result travels in the mem0 payload
- * and drives the reconcile prompt's per-kind rules. Unmapped actions fall back to
- * `event`, which is conservative. `habit` is reserved for a future recurring-behavior
- * signal; the prompt covers it with `preference` until then.
- */
+/** Deterministic event action → memory kind in the Mem0 payload. */
 export function mapEventActionToKind(action: string): string {
   switch (action) {
     case 'judge':
@@ -192,7 +155,7 @@ function editedConjectureMemory(event: MemoryEventInput): EditedConjectureMemory
 }
 
 // One source of truth for the kind projected from an owner-edited conjecture:
-// verbatim projection metadata and reconcile mapping must not drift.
+// verbatim projection metadata must not drift.
 const CONJECTURE_EDIT_MEMORY_KIND = 'weakness';
 
 // Outbox poll is the sole producer. `ingest_at IS NULL` is the once-only partition:
@@ -205,7 +168,7 @@ export async function enqueueEventMemoryIngest(
   await boss.send(MEMORY_EVENT_INGEST_QUEUE, { event_id: eventId }, options);
 }
 
-// The reconcile payload threads the extracted text and created_ms alongside the id.
+// Completion digests retain the extracted text and created_ms alongside the id.
 // Searching by opaque UUID embeds noise and rarely retrieves the memory itself.
 export type { ReconcileMemInput } from './memory-reconcile-handoff-store';
 
@@ -215,13 +178,11 @@ export function buildMemoryEventIngestHandler(
   deps: {
     loadEvent?: (db: Db, eventId: string) => Promise<MemoryEventInput | null>;
     memoryClient?: MemoryClient;
-    handoffMode?: MemoryReconcileHandoffMode;
     /** Explicit synchronous operator invocation only; never read from worker job data. */
     replayGrant?: MemoryIngestReplayGrant;
   } = {},
 ): (jobs: Pick<Job<{ event_id: string }>, 'data'>[]) => Promise<void> {
   const loadEvent = deps.loadEvent ?? defaultLoadEvent;
-  const handoffMode = deps.handoffMode ?? memoryReconcileHandoffMode();
   let memoryClient = deps.memoryClient;
   return async (jobs) => {
     for (const job of jobs) {
@@ -325,24 +286,14 @@ export function buildMemoryEventIngestHandler(
         created_ms: createdMs,
         kind: editedConjecture ? CONJECTURE_EDIT_MEMORY_KIND : row.kind,
       }));
-      let reconcileDispatch: Parameters<typeof dispatchMemoryReconcile>[2] | null = null;
       if (ingest) {
-        const persistIntents = modePersistsNewIntents(handoffMode);
-        const completion = await persistIngestCompleted(db, {
+        await persistIngestCompleted(db, {
           sourceEventId: row.id,
           resolution: ingest.resolution,
           memories: newMemories,
-          persistIntents,
         });
         if ((await readEventDerivationPolicy(db, row.id)) !== 'allow') continue;
-        reconcileDispatch = {
-          mode: handoffMode,
-          sourceEventId: row.id,
-          memories: newMemories,
-          ...(persistIntents ? { completion } : {}),
-        };
       }
-      if (reconcileDispatch) await dispatchMemoryReconcile(db, boss, reconcileDispatch);
     }
   };
 }
@@ -463,289 +414,6 @@ export function buildContextPurposeRepairHandler(
   };
 }
 
-async function gatherCandidates(
-  db: Db,
-  client: MemoryClient,
-  job: Pick<Job<{ memories: ReconcileMemInput[]; user_id: string }>, 'id' | 'data'>,
-) {
-  const userId = job.data.user_id;
-  const newMemInputs = job.data.memories ?? [];
-  // New memory text/kind/created_ms are threaded from the ingest job, not re-derived
-  // from the opaque UUID. Candidates are semantic neighbors found by that text,
-  // excluding this batch's own new memories.
-  const newMems: NewMemoryEntry[] = [];
-  const candidatesByNew = new Map<number, CandidateEntry[]>();
-  const newIdSet = new Set(newMemInputs.map((m) => m.id));
-  for (let i = 0; i < newMemInputs.length; i++) {
-    const input = newMemInputs[i];
-    newMems.push({
-      index: i,
-      kind: input.kind,
-      text: input.text,
-      memory_id: input.id,
-      created_ms: input.created_ms,
-    });
-
-    const cands: CandidateEntry[] = [];
-    // Empty text → skip search (would embed ''); leaves no candidates → KEEP_BOTH.
-    if (input.text.trim().length > 0) {
-      const searchResult = await client.search(
-        input.text,
-        {
-          topK: RECONCILE_TOP_K + 1,
-          filters: { user_id: userId },
-        },
-        createMem0OpaqueOperationContext({
-          db,
-          caller: 'worker',
-          deadlineAt: new Date(Date.now() + 65_000),
-          operationAnchor: `memory-reconcile:${job.id}:${input.id}`,
-        }),
-      );
-      for (const r of searchResult?.results ?? []) {
-        if (newIdSet.has(r.id)) continue; // exclude this batch's own new memories
-        const cms = (r.metadata as Record<string, unknown> | undefined)?.created_ms;
-        cands.push({
-          index: cands.length,
-          text: r.memory,
-          memory_id: r.id,
-          created_ms: typeof cms === 'number' ? cms : undefined,
-          // mem0 fused score, consumed by the structural gate.
-          score: typeof r.score === 'number' ? r.score : undefined,
-        });
-      }
-    }
-    candidatesByNew.set(i, cands);
-  }
-
-  return { newMems, candidatesByNew };
-}
-
-async function judgeBatch(
-  db: Db,
-  job: Pick<Job<{ source_event_id?: string }>, 'id' | 'data'>,
-  userId: string,
-  newMems: NewMemoryEntry[],
-  candidatesByNew: Map<number, CandidateEntry[]>,
-  judge: ReconcileJudge,
-): Promise<Awaited<ReturnType<ReconcileJudge>> | null> {
-  try {
-    return await judge(newMems, candidatesByNew, {
-      beforeRequest: async () => {
-        const sourceId = job.data.source_event_id;
-        if (!sourceId) {
-          if (await latestPurposeWithdrawal(db))
-            throw new Error('unattributed reconcile source after purpose withdrawal');
-          return;
-        }
-        await db.transaction(async (tx) => {
-          await lockEventDerivationSources(tx, sourceId);
-          if ((await readEventDerivationPolicy(tx, sourceId)) !== 'allow')
-            throw new Error('restricted reconcile source');
-        });
-      },
-      providerAttempt: createDirectProviderOperationContext({
-        db,
-        caller: 'worker',
-        deadlineAt: new Date(Date.now() + 65_000),
-        operationAnchor: job.id,
-      }),
-    });
-  } catch (err) {
-    if (err instanceof ReconcileParseError) {
-      // A parse failure degrades the whole batch to KEEP_BOTH, never destructive.
-      console.warn(
-        `[memory_reconcile] LLM parse failed; degrading ${newMems.length} memories to KEEP_BOTH`,
-        err.message,
-      );
-      const keepRows = newMems.map((m) =>
-        makePlannedRow({
-          user_id: userId,
-          new_memory_id: m.memory_id,
-          old_memory_id: null,
-          action: 'KEEP_BOTH',
-          reason: `LLM parse failure degraded: ${err.message}`,
-          llm_raw: { error: err.message, raw: err.raw },
-        }),
-      );
-      await insertPlannedRows(db, keepRows);
-      for (const r of keepRows) await markApplied(db, r.id);
-      return null;
-    }
-    // Rethrow provider errors so pg-boss can retry or archive.
-    throw err;
-  }
-}
-
-function buildReconcilePlannedRows(
-  userId: string,
-  newMems: NewMemoryEntry[],
-  candidatesByNew: Map<number, CandidateEntry[]>,
-  uniqueDecisions: Awaited<ReturnType<ReconcileJudge>>,
-): PlannedRow[] {
-  // Write-ahead rows are inserted before apply for crash safety. Every field reads
-  // the same final action, and each downgrade rewrites reason too, so action and
-  // reason cannot diverge in the WAL. Out-of-range indices degrade to KEEP_BOTH.
-  const plannedRows: PlannedRow[] = [];
-  for (const d of uniqueDecisions) {
-    const newMem = newMems[d.new_index];
-    const cands = candidatesByNew.get(d.new_index) ?? [];
-    const { action, reason, oldMem, referencedScore, corroborated } = applyDecisionGates(
-      d,
-      newMem,
-      cands,
-      (message) => console.warn(message),
-    );
-
-    plannedRows.push(
-      makePlannedRow({
-        user_id: userId,
-        new_memory_id: newMem?.memory_id ?? null,
-        old_memory_id: action === 'KEEP_BOTH' ? null : (oldMem?.memory_id ?? null),
-        action,
-        reason,
-        // Keep the model decision and gate observability for later floor calibration.
-        llm_raw: {
-          ...d,
-          execution_policy: 'human_approval_required',
-          recommended_action: d.action,
-          new_created_ms: newMem?.created_ms ?? null,
-          referenced_score: referencedScore ?? null,
-          structurally_corroborated: corroborated,
-        },
-        prev_text: null,
-        prev_metadata: null,
-      }),
-    );
-  }
-  return plannedRows;
-}
-
-/**
- * Reconcile handler: search candidates per new memory, judge them, write audit rows
- * ahead of apply, then consume the recommendations without destructive mutation.
- * Parse failures degrade the batch to KEEP_BOTH; unapplied rows replay at job start;
- * the per-user singleton serializes runs.
- */
-export function buildMemoryReconcileHandler(
-  db: Db,
-  deps: {
-    memoryClient?: MemoryClient;
-    /** The paid judge; the worker composition injects it so this module never loads the wire. */
-    judge: ReconcileJudge;
-    /**
-     * Test seam for the client factory. A throwing factory makes the unavailable
-     * branch deterministic instead of depending on ambient Mem0 keys.
-     */
-    createClient?: () => MemoryClient;
-  },
-): (
-  jobs: Pick<
-    Job<{ memories: ReconcileMemInput[]; user_id: string; source_event_id?: string }>,
-    'id' | 'data'
-  >[],
-) => Promise<void> {
-  let memoryClient = deps.memoryClient;
-  const judge = deps.judge;
-  const createClient = deps.createClient ?? createMemoryClient;
-  return async (jobs) => {
-    for (const job of jobs) {
-      if (!allowsDerivation(job.data)) continue;
-      if (!job.data.source_event_id && (await latestPurposeWithdrawal(db))) continue;
-      if (
-        job.data.source_event_id &&
-        (await readEventDerivationPolicy(db, job.data.source_event_id)) !== 'allow'
-      )
-        continue;
-      // Per-job catch: one batch failure must not take down the worker loop.
-      try {
-        const userId = job.data.user_id;
-        const newMemInputs = job.data.memories ?? [];
-
-        // Idempotent resume: replay any unapplied planned rows from prior runs.
-        await applyPlannedRows(db, userId);
-
-        if (newMemInputs.length === 0) continue;
-
-        // Lazily construct the client so a missing key skips one batch, not the job.
-        let client = memoryClient;
-        if (!client) {
-          try {
-            client = createClient();
-            memoryClient = client;
-          } catch (err) {
-            console.warn(
-              `[memory_reconcile] Mem0 client unavailable; skipping reconcile for ${newMemInputs.length} memories`,
-              err,
-            );
-            continue;
-          }
-        }
-
-        const { newMems, candidatesByNew } = await gatherCandidates(db, client, job);
-
-        if (newMems.length === 0) continue;
-
-        const decisions = await judgeBatch(db, job, userId, newMems, candidatesByNew, judge);
-        if (decisions === null) continue;
-        if (
-          job.data.source_event_id &&
-          (await readEventDerivationPolicy(db, job.data.source_event_id)) !== 'allow'
-        )
-          continue;
-
-        // Only the first decision per new_index is safe: a second would apply against
-        // already-mutated state. Keep the first and warn-drop the rest.
-        const uniqueDecisions = deduplicateDecisions(decisions, (message) => console.warn(message));
-
-        const plannedRows = buildReconcilePlannedRows(
-          userId,
-          newMems,
-          candidatesByNew,
-          uniqueDecisions,
-        );
-        await insertPlannedRows(db, plannedRows);
-
-        // Apply consumes recommendations without mutating mem0.
-        await applyPlannedRows(db, userId);
-      } catch (err) {
-        if (isDirectProviderAttemptInvariantError(err)) throw err;
-        // Retryable failures must propagate so pg-boss retries. Retrying is safe:
-        // judge runs before this attempt's rows are inserted, and prior rows replay
-        // idempotently at job start. Swallowing would report success and lose the batch.
-        if (err instanceof RetryableError) throw err;
-        // Permanent errors (auth/4xx/non-JSON) must also propagate: otherwise a
-        // broken config looks like a healthy no-op and never surfaces in the archive.
-        if (err instanceof PermanentError) throw err;
-        // Unexpected errors leave planned rows for the next job's replay.
-        console.error(
-          '[memory_reconcile] job failed (non-retryable); planned rows left for resume',
-          err,
-        );
-      }
-    }
-  };
-}
-
-/**
- * Consume planned rows that are not applied yet. Reconciliation is recommendation-
- * only: newly synthesized rows are KEEP_BOTH, and legacy destructive rows are marked
- * applied without touching mem0 so an old decision cannot replay into a mutation.
- */
-async function applyPlannedRows(db: Db, userId: string): Promise<void> {
-  const pending = await loadUnappliedLog(db, userId);
-  if (pending.length === 0) return;
-
-  for (const row of pending) {
-    if (row.action !== 'KEEP_BOTH') {
-      console.warn(
-        `[memory_reconcile] legacy destructive WAL row blocked action=${row.action} log_id=${row.id}`,
-      );
-    }
-    await markApplied(db, row.id);
-  }
-}
-
 // Transactional outbox poll: one batch of pending rows is locked SKIP LOCKED,
 // enqueued, and stamped ingest_at in the same transaction. Concurrent pollers cannot
 // double-enqueue, and a crash before commit reverts the stamp.
@@ -785,17 +453,11 @@ export function buildMemoryIngestOutboxPollHandler(
 const OUTBOX_RECOVER_MAX_CYCLES = 1000;
 export async function runMemoryRecoveryFloor(legs: {
   readonly ingest: () => Promise<void>;
-  readonly reconcile: () => Promise<void>;
   readonly purpose?: () => Promise<void>;
 }): Promise<void> {
   const errors: unknown[] = [];
   try {
     await legs.ingest();
-  } catch (error) {
-    errors.push(error);
-  }
-  try {
-    await legs.reconcile();
   } catch (error) {
     errors.push(error);
   }
@@ -810,7 +472,6 @@ export async function runMemoryRecoveryFloor(legs: {
 export function buildMemoryIngestOutboxRecoverHandler(
   db: Db,
   boss: Pick<BossLike, 'send' | 'getJobById'>,
-  mode = memoryReconcileHandoffMode(),
 ): (jobs: Job<object>[]) => Promise<void> {
   const drainOnce = buildMemoryIngestOutboxPollHandler(db, boss);
   return async () => {
@@ -823,9 +484,6 @@ export function buildMemoryIngestOutboxRecoverHandler(
           const after = await countPendingIngest(db);
           if (after >= before) break;
         }
-      },
-      reconcile: async () => {
-        await recoverMemoryReconcileHandoffs(db, boss, mode);
       },
       purpose: () => recoverPurposeChanges(db, boss),
     });

@@ -4,6 +4,7 @@ import {
   looksLikeCustomProviderId,
 } from '@/core/config/custom-providers';
 import { catalogModelIds } from './model-catalog';
+import { modelCatalogOverrideProtocols } from './model-catalog-overrides';
 import {
   type ModelCapabilityTriState,
   type ModelProfileReasoning,
@@ -36,6 +37,9 @@ export interface ExecutablePiModelFacts {
   catalogReasoning: ModelProfileReasoning;
   thinkingLevelMap?: Record<string, string | null>;
   thinkingFormat?: string;
+  /** thinkingFormat introduced by our overrides (not the builtin catalog) —
+   *  the marker the reasoning view uses to scope unset-suppression. */
+  overrideDeclaredThinkingFormat?: string;
 }
 
 /** Undefined when a required fact is missing — the model is then not executable. */
@@ -107,8 +111,19 @@ function nativePiModels(
     );
   }
   const protocolProvider = provider === 'xiaomi-token-plan' ? 'xiaomi' : piProviderId(provider);
+  // Models pi's builtin dropped but overrides still admit (models.dev-served or
+  // evidence-backed) keep a declared protocol entry; the snapshot stays the
+  // pi-derived truth and is never hand-edited.
+  const declared = {
+    ...protocols[protocolProvider],
+    // token-plan reuses xiaomi's preserved-protocol declarations (v2.5* keep-
+    // alive) plus its own keyed entries; baseUrl still comes from the lane's
+    // own profile so nothing points at the pay-as-you-go host.
+    ...(provider === 'xiaomi-token-plan' ? modelCatalogOverrideProtocols('xiaomi') : {}),
+    ...modelCatalogOverrideProtocols(provider),
+  };
   return Object.fromEntries(
-    Object.entries(protocols[protocolProvider] ?? {}).flatMap(([id, protocol]) => {
+    Object.entries(declared).flatMap(([id, protocol]) => {
       const profile = resolveModelProfile(provider, id, env);
       const api = profile.api ?? protocol.api;
       if (provider === 'opencode-go' && profile.baseUrl) {
@@ -139,6 +154,11 @@ function nativePiModels(
                   )
                 : undefined,
             thinkingFormat: protocol.thinkingFormat,
+            // Marker only when the LANE'S OWN overrides introduce the format —
+            // borrowed protocol declarations (token-plan reusing xiaomi's)
+            // keep pi's default wire, which is what main sent for them.
+            overrideDeclaredThinkingFormat:
+              modelCatalogOverrideProtocols(provider)[id]?.thinkingFormat,
           },
         ],
       ];

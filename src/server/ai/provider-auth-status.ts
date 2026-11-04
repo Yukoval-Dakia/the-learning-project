@@ -11,7 +11,7 @@ import type { ProviderModelsCheck } from './provider-models-check';
  * verdict. `configured` covers ok, unprobed, unsettled and unreachable alike.
  */
 export interface ProviderAuthStatus {
-  status: 'unconfigured' | 'configured' | 'auth_failed';
+  status: 'unconfigured' | 'configured' | 'auth_failed' | 'login_lane';
   httpStatus: number | null;
   errorType: string | null;
 }
@@ -20,6 +20,10 @@ export function providerAuthStatus(
   check: ProviderModelsCheck | undefined,
   fingerprint: string | null,
 ): ProviderAuthStatus {
+  // Login lanes hold no HTTP credential — the file is the presence signal.
+  if (check?.list.status === 'login_lane') {
+    return { status: 'login_lane', httpStatus: null, errorType: null };
+  }
   if (fingerprint === null) return { status: 'unconfigured', httpStatus: null, errorType: null };
   // A receipt only counts for the credential fingerprint that produced it.
   if (!check || check.credentialFingerprint !== fingerprint) {

@@ -456,6 +456,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         ? resolveAttemptCostTruth({
             provider: this.resolved.provider,
             model: this.resolved.model,
+            authMode: this.resolved.authMode,
             tokens: evidence.tokenCounts,
             tokensObserved: evidence.tokenUsageObserved,
             reportedCostUsd: evidence.costUsd,
@@ -669,8 +670,13 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         model: this.resolved.model,
         profile_source: this.modelProfile.source,
         reasoning_effort: this.config.modelBinding?.effort ?? declaredDef.reasoningEffort ?? null,
-        // YUK-1547 — native reasoning params (verbatim wire passthrough; null = none).
-        native_reasoning_params: this.resolved.nativeReasoningParams ?? null,
+        // YUK-1806 — task.<kind>.reasoning 决议（requested → applied；null = 未配置）。
+        reasoning: this.resolved.reasoning
+          ? {
+              requested: this.resolved.reasoning.requested,
+              applied: this.resolved.reasoning.applied,
+            }
+          : null,
         // YUK-1547 — which config layer produced this binding, frozen at resolution.
         selection_rule: this.resolved.selectionRule ?? null,
         // YUK-921 §2.1 — adapter selection stays observable. 'pi' is the only legal
@@ -698,6 +704,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     this.costTruthCache = resolveAttemptCostTruth({
       provider: this.resolved.provider,
       model: this.resolved.model,
+      authMode: this.resolved.authMode,
       tokens: terminal.tokenCounts,
       tokensObserved: terminal.tokenUsageObserved,
       reportedCostUsd: terminal.costUsd,

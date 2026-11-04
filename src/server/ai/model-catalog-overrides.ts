@@ -7,6 +7,13 @@ type CatalogOverride = {
   when: 'missing' | 'disagreement';
   reason: string;
   facts: ParsedCatalogModel;
+  /**
+   * Wire-protocol admission for a model pi's builtin catalog no longer ships.
+   * Present only with provenance naming the pi version that dropped the entry;
+   * `createLoomPiModels` clones the wire template from a same-provider sibling
+   * with this api+thinkingFormat.
+   */
+  protocol?: { api: string; thinkingFormat?: string };
 };
 
 const missingAnthropicEndpoint: CatalogOverride = {
@@ -46,12 +53,49 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
         maxOutputTokens: 16_384,
       },
     },
+    'gpt-5.2-chat-latest': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 dropped the Responses protocol entry while models.dev keeps the model. Preserve the id like the other dropped declarations — wire template clones from an openai-responses sibling.',
+      facts: { ...missingOpenAiEndpoint.facts },
+      protocol: { api: 'openai-responses' },
+    },
+    'gpt-5.3-chat-latest': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 dropped the Responses protocol entry while models.dev keeps the model. Preserve the id like the other dropped declarations — wire template clones from an openai-responses sibling.',
+      facts: { ...missingOpenAiEndpoint.facts },
+      protocol: { api: 'openai-responses' },
+    },
+  },
+  xiaomi: {
+    'mimo-v2.5': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 builtin catalog dropped this id; models.dev still lists it as served by api.xiaomimimo.com. Protocol cloned from the same-family mimo template (1.1.0 shape).',
+      facts: {},
+      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
+    },
+    'mimo-v2.5-pro': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 builtin catalog dropped this id; models.dev still lists it as served by api.xiaomimimo.com. Protocol cloned from the same-family mimo template (1.1.0 shape).',
+      facts: {},
+      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
+    },
+    'mimo-v2.5-pro-ultraspeed': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 builtin catalog dropped this id; models.dev still lists it as served by api.xiaomimimo.com. Protocol cloned from the same-family mimo template (1.1.0 shape).',
+      facts: {},
+      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
+    },
   },
   'opencode-go': {
     'deepseek-v4-flash': {
       when: 'missing',
       reason:
-        'Absent from models.dev. Preserve the wired metadata in main 518c8b21:src/server/ai/pi-provider-catalog.snapshot.json, not a new live-provider admission. Endpoint pinned to the OpenCode Go openai path so a catalog regen that drops the provider-level api field cannot unlist the model (YUK-1658); a live catalog endpoint still wins.',
+        'Absent from models.dev. Preserve the wired metadata in main 518c8b21:src/server/ai/pi-provider-catalog.snapshot.json, not a new live-provider admission. Endpoint pinned to the OpenCode Go openai path so a catalog regen that drops the provider-level api field cannot unlist the model (YUK-1658); a live catalog endpoint still wins. pi 1.5.0 dropped the builtin template; protocol preserved from the 1.1.0 snapshot entry.',
       facts: {
         baseUrl: 'https://opencode.ai/inference/go/openai/v1',
         reasoning: true,
@@ -62,6 +106,7 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
         contextWindowTokens: 1_000_000,
         maxOutputTokens: 384_000,
       },
+      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
     },
     'deepseek-v4-flash-vision-exp': {
       when: 'missing',
@@ -77,6 +122,7 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
         contextWindowTokens: 1_000_000,
         maxOutputTokens: 384_000,
       },
+      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
     },
     'grok-4.6': {
       when: 'missing',
@@ -92,12 +138,48 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
         contextWindowTokens: 500_000,
         maxOutputTokens: 500_000,
       },
+      protocol: { api: 'openai-responses' },
     },
     'deepseek-v4.1-flash': {
       when: 'missing',
       reason:
         'models.dev has no forcedToolChoice field. YUK-1547 actual HTTP 400 with thinking + named tool_choice, request_id 6fde3ba6-8f64-4c84-8a3d-5a5e211b430a.',
       facts: { forcedToolChoice: false },
+    },
+    'mimo-v2.6-pro': {
+      when: 'missing',
+      reason:
+        'models.dev lists reasoning_options as empty for this route, but measured direct calls (2026-11-04, coordinator) show thinking on by default and a working toggle: thinking:{enabled} reasoning_tokens=124, thinking:{disabled} reasoning_tokens=0, reasoning_effort:"high"=108 vs baseline 54, reasoning_effort:"banana"→HTTP 400. Declared as toggle with the deepseek thinking switch.',
+      facts: { reasoningMode: 'toggle' },
+      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
+    },
+    'mimo-v2.6-flash': {
+      when: 'missing',
+      reason:
+        'models.dev lists reasoning_options as empty for this route; same OpenCode Go mimo family and endpoint as mimo-v2.6-pro (see its entry for the measured evidence). Declared as toggle with the deepseek thinking switch.',
+      facts: { reasoningMode: 'toggle' },
+      protocol: { api: 'openai-completions', thinkingFormat: 'deepseek' },
+    },
+    'longcat-2.5-preview-free': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 builtin catalog dropped this id; models.dev still lists it on the OpenCode Go openai path. Protocol preserved from the 1.1.0 snapshot entry.',
+      facts: {},
+      protocol: { api: 'openai-completions' },
+    },
+    'space-bunny': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 builtin catalog dropped this id; models.dev still lists it on the OpenCode Go openai path. Protocol preserved from the 1.1.0 snapshot entry.',
+      facts: {},
+      protocol: { api: 'openai-completions' },
+    },
+    'minimax-m2.7': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 builtin catalog dropped this id; models.dev moved it to the OpenCode Go anthropic path and the 1.5.0 snapshot ships anthropic-messages templates on this provider. Protocol follows the live endpoint.',
+      facts: {},
+      protocol: { api: 'anthropic-messages' },
     },
   },
   openrouter: {
@@ -246,16 +328,33 @@ export function tokenPlanEndpointOverride(env: Record<string, string | undefined
   return endpoint.replace(/\/+$/, '');
 }
 
+/**
+ * Protocol entries admitted by overrides but absent from the pi builtin
+ * snapshot (pi dropped the id while upstream still serves it). Keyed by model id.
+ */
+export function modelCatalogOverrideProtocols(
+  provider: Provider,
+): Record<string, { api: string; thinkingFormat?: string }> {
+  const out: Record<string, { api: string; thinkingFormat?: string }> = {};
+  for (const [id, override] of Object.entries(overrides[provider] ?? {})) {
+    if (override.protocol) out[id] = override.protocol;
+  }
+  return out;
+}
+
 export function modelCatalogOverride(
   provider: Provider,
   model: string,
   env: Record<string, string | undefined>,
 ): CatalogOverride | undefined {
-  if (provider === 'xiaomi-token-plan' && Object.hasOwn(protocols.xiaomi, model)) {
+  if (
+    provider === 'xiaomi-token-plan' &&
+    (Object.hasOwn(protocols.xiaomi, model) || Object.hasOwn(overrides.xiaomi ?? {}, model))
+  ) {
     return {
       when: 'missing',
       reason:
-        "models.dev has no Token Plan provider. Xiaomi model facts are shared, but endpoint/auth are separate (YUK-1402); only mimo-v2.6-pro has this lane's tool-loop receipts.",
+        "models.dev's xiaomi-token-plan-* providers carry the same model facts as xiaomi; Xiaomi facts are shared, but endpoint/auth are separate (YUK-1402); only mimo-v2.6-pro has this lane's tool-loop receipts.",
       facts: {
         baseUrl: tokenPlanEndpointOverride(env),
         ...(model === 'mimo-v2.6-pro' ? { toolCalling: true } : {}),
