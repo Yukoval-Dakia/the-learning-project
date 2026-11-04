@@ -6,7 +6,13 @@ import { declaredShapesAllSupported } from '@/core/schema/assessment/blank-answe
 import type { Db, Tx } from '@/db/client';
 import { lockPaidEffectControlFamily, readPaidEffectControl } from '@/db/paid-effect-control';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
-import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
+import {
+  event,
+  paid_effect_authorization,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import {
   lockEventDerivationSources,
   readEventDerivationPolicy,
@@ -45,8 +51,42 @@ const purposeBindingId = (jobId: string) => `question-admission-purpose:${jobId}
 
 /** A delivery's permanent source fact is separate from its unchanged paid input.
  * Missing legacy facts are never reconstructed from today's publication or row.
+ *
+ * An authorized void + successor send has no purpose binding: the release
+ * enqueues the bound job itself, outside this subscriber (the only binding
+ * writer), and its republish events carry no usable source fields. The
+ * paid_effect_authorization row is the equivalent proof — it names the exact
+ * successor paid input and the ONE delivery allowed to claim it. Only an
+ * 'unknown' binding result falls through to that lookup: a proven 'restricted'
+ * derivation policy still restricts, and the claim's own authorization gate
+ * enforces the exact bound successor identity, so this check can never spend
+ * anything the authorization did not name.
  */
 export async function readAdmissionPurpose(
+  tx: Tx,
+  deliveryId: string,
+  expected: { group_id: string; revision_id: string | null; revision_digest: string | null },
+  jobData?: AdmissionJobData,
+) {
+  const bound = await readAdmissionPurposeBinding(tx, deliveryId, expected, jobData);
+  if (bound.state !== 'unknown' || expected.revision_digest == null) return bound;
+  const [authorized] = await tx
+    .select({ authorization_id: paid_effect_authorization.authorization_id })
+    .from(paid_effect_authorization)
+    .where(
+      and(
+        eq(paid_effect_authorization.family, ADMISSION_FAMILY),
+        eq(paid_effect_authorization.entity_id, expected.group_id),
+        eq(paid_effect_authorization.successor_entity_revision, expected.revision_digest),
+        eq(paid_effect_authorization.successor_delivery_backend, 'pg-boss'),
+        eq(paid_effect_authorization.successor_delivery_id, deliveryId),
+      ),
+    )
+    .limit(1);
+  return authorized ? { state: 'allow' as const, sourceId: null } : bound;
+}
+
+async function readAdmissionPurposeBinding(
   tx: Tx,
   deliveryId: string,
   expected: { group_id: string; revision_id: string | null; revision_digest: string | null },
