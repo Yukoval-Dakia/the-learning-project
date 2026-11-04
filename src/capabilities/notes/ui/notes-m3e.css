@@ -639,6 +639,11 @@
     white-space: pre-wrap;
   }
 
+  /* YUK-1548 — read view renders markdown (reading layer); source line breaks are markdown's now. */
+  & .nt-sem-body.un-read {
+    white-space: normal;
+  }
+
   & .nt-linkcard {
     display: flex;
     align-items: center;

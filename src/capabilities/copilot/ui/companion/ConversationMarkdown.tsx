@@ -79,7 +79,9 @@ export function ConversationMarkdown({
   return (
     <MathMarkdown
       notation="katex"
-      className={['un-cp-rich-text', className].filter(Boolean).join(' ')}
+      // YUK-1548 — the shared reading layer, in the denser rhythm of a narrow panel.
+      className={['un-cp-rich-text un-read', className].filter(Boolean).join(' ')}
+      data-read="compact"
       remarkPlugins={extensions}
       components={components}
       remarkRehypeOptions={{
