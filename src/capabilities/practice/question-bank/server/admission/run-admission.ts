@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { resolveTaskBudget } from '@/capabilities/task-registry';
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 import { createAssessmentAssetLoader } from '../../../grading/public';
 import { AdmissionAttemptExhausted } from './attempt';
@@ -583,6 +584,9 @@ export async function runQuestionAdmission(
                 kind: 'model_executor' as const,
                 task_kind: 'AssessmentRuleJudgeTask',
                 admitted_slice_id: modelSlices.get(unit.scoring_unit_id) ?? null,
+                max_cost_usd_micros: Math.floor(
+                  resolveTaskBudget('AssessmentRuleJudgeTask').maxCost * 1_000_000,
+                ),
               }
             : executorFor(unit)
           : (definition.original_plan?.assignments.find((a) =>
