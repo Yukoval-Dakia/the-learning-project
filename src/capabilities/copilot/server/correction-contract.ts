@@ -47,13 +47,46 @@ function bindTarget(
   return { kind: 'clarify', reply: clarificationReply() };
 }
 
+function referencesRestrictedCorrection(
+  message: string,
+  contract: CopilotCorrectionContract,
+): boolean {
+  const restricted = new Set(contract.restricted_prior_turn_ids);
+  if (
+    restricted.size === 0 ||
+    !/(?:更正|纠正|改正|修正|重写|重新写|替换|改(?:一下|掉|成)|correct|revise|rewrite|fix|change)/i.test(
+      message,
+    )
+  )
+    return false;
+  // Restricted turns are absent from model history. A relative reference must
+  // never silently bind an older visible reply in their place.
+  if (contract.positions_unavailable) return true;
+  const order = contract.prior_turn_order ?? contract.available_prior_turn_ids;
+  const distances = new Set<number>();
+  if (/(?:上上轮|上两轮|前两轮)/.test(message)) distances.add(2);
+  if (/(?:上一轮|上一个回答|刚才(?:那|的)?(?:一轮|回答)?)/.test(message)) distances.add(1);
+  const numbered = message.match(/往前第\s*(\d{1,2})\s*轮/);
+  if (numbered?.[1]) distances.add(Number(numbered[1]));
+  if ([...distances].some((distance) => distance > 0 && restricted.has(order.at(-distance) ?? '')))
+    return true;
+  return (
+    distances.size === 0 &&
+    /(?:那个|之前(?:那)?|前面(?:那)?|你刚才(?:的|说的)?|你(?:上次|前面)的)(?:的)?(?:一?轮|回答|回复|解释|结论)/.test(
+      message,
+    )
+  );
+}
+
 export function resolveDeterministicCorrectionContract(
   userMessage: string,
   contract: CopilotCorrectionContract,
 ): CopilotImplicitCorrectionResolution {
   if (
     contract.restricted_target ||
-    contract.restricted_prior_turn_ids?.some((id) => userMessage.includes(id))
+    contract.restricted_prior_turn_ids?.some((id) => userMessage.includes(id)) ||
+    (contract.target_prior_turn_id === undefined &&
+      referencesRestrictedCorrection(userMessage, contract))
   ) {
     return {
       kind: 'clarify',
