@@ -42,13 +42,16 @@ import {
   runCalibrationProbes,
 } from './calibrate';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
+import type { KnowledgeCandidate, SolutionPriorRecordT } from './solution-prior';
 import {
   type AdmissionKey,
   type AdmissionSolveReceipt,
   type Provider,
+  type SolutionPriorPassResult,
   type SourceCrosscheckResult,
   type UnitSolveVerdict,
   runDualSolve,
+  runSolutionPriorPass,
   runSourceCrosscheck,
 } from './solve';
 
@@ -78,6 +81,8 @@ export interface QuestionAdmissionOptions {
    * registry 配置的模型 + 隔离上下文；给出时经 ctx.override 路由。
    */
   solver2?: { provider?: Provider; model?: string } | null;
+  /** Live knowledge points offered to the solution prior (YUK-1771). */
+  knowledgeCandidates?: readonly KnowledgeCandidate[];
   policyId?: string;
   now?: Date;
 }
@@ -125,6 +130,8 @@ export interface QuestionAdmissionResult {
     solve_receipts: AdmissionSolveReceipt[];
     crosscheck_receipt?: AdmissionSolveReceipt;
   };
+  /** Solution-method prior from the dual solve; publication freezes it on the revision. */
+  solution_prior?: SolutionPriorRecordT;
 }
 
 function defaultRuleFor(
@@ -613,8 +620,29 @@ export async function runQuestionAdmission(
       );
     }
   }
+  const settledKeys = new Map<string, AdmissionKey>();
+  for (const [unitId, verdict] of solve.verdicts) {
+    if (verdict.status === 'agreed') settledKeys.set(unitId, verdict.key);
+  }
+  // No settled key means the solvers could not agree on the answer, so a description of
+  // the solution (and a write-once difficulty anchor from it) would be speculation.
+  const prior: SolutionPriorPassResult =
+    settledKeys.size === 0
+      ? {
+          record: null,
+          receipt: null,
+          outcome: { status: 'skipped', task_run_id: null, reason: 'no settled key' },
+        }
+      : await runSolutionPriorPass(options.db, definition, settledKeys, {
+          runTask,
+          ...(options.subjectProfile != null ? { subjectProfile: options.subjectProfile } : {}),
+          ...(options.knowledgeCandidates != null
+            ? { knowledgeCandidates: options.knowledgeCandidates }
+            : {}),
+        });
+  if (prior.receipt != null) evidenceTaskRuns.push(prior.receipt);
   const allAdmitted = definition.units.every((unit) => unitResult(unit).status === 'admitted');
-  return finalize(
+  const result = finalize(
     definition,
     policyId,
     now,
@@ -628,6 +656,8 @@ export async function runQuestionAdmission(
       resolved: resolvedContract,
     },
   );
+  result.verification.evidence.solution_prior_pass = prior.outcome;
+  return prior.record != null ? { ...result, solution_prior: prior.record } : result;
 }
 
 function finalize(
