@@ -80,15 +80,8 @@ export async function writeVariantQuestionProposal(
   });
 }
 
-// YUK-358 决定7 (ADR-0040) — writeNoteUpdateProposal (the patch-less
-// note_verify→inbox producer) was DELETED. It wrote a `note_update` proposal
-// carrying only a summary + issues (no NotePatch), so the owner could never act
-// on it (the accept owner acceptNoteUpdateProposal applies a patch that this
-// producer never supplied). note_verify's needs_review verdict is now advisory
-// (verification_summary + the experimental:note_verify event), and acting on the
-// issues is a flag-gated verify→refine enqueue that routes through the NORMAL
-// refine gate. The `note_update` proposal KIND survives — it is still produced
-// (with a patch) by writeNoteRefineProposal and accepted by acceptNoteUpdateProposal.
+// The `note_update` proposal kind is produced (with a patch) by writeNoteRefineProposal and
+// accepted by acceptNoteUpdateProposal.
 
 export interface WriteLearningItemProposalInput extends CommonProducerInput {
   topic: string;

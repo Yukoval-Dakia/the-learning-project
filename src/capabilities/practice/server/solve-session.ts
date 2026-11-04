@@ -16,7 +16,7 @@ import {
   helpExitCopy,
   readHelpProviderFault,
 } from '@/ai/help-provider-fault';
-import type { SealedHelpExplanationReplay } from '@/ai/help-reply-grounding';
+import type { SealedReplyGrounding } from '@/ai/help-reply-grounding';
 import { sanitizeJsonStringLiterals } from '@/core/json-sanitize';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ActivateEvaluationIntentT, PracticeIssuanceDtoT } from '@/core/schema/assessment';
@@ -38,7 +38,7 @@ import {
   recordAssistanceExposure,
   revealFrozenStudyReference,
 } from '../grading/public';
-import { groundHintExplanation } from './hint-explanation';
+import { sealHintExplanation } from './hint-explanation';
 import * as Tutor from './tutor-session';
 export type RunTaskFn = (
   kind: string,
@@ -147,21 +147,33 @@ export interface PlanSolveHintResult {
 
 interface SolveHintAttempt extends PlanSolveHintResult {
   attempt_latency?: SealedHelpLatency;
-  reply_grounding?: SealedHelpExplanationReplay;
+  reply_grounding?: SealedReplyGrounding;
   cost_usd?: number;
   cost_basis?: 'reported' | 'estimated' | 'unknown';
 }
 
 // Session-free seed: a question face + reference + hintIndex, not a sessionId.
-// Seeds the worked solution as material + a synthetic message asking for ONLY the
-// next step (escalating with hintIndex). The TeachingTurnTask prompt forbids
-// dumping the full solution + caps ≤300 字/轮, so the returned text_md is a
-// minimal hint, not the answer. NO prior-attempt summary, NO memory content
-// (R4/R6: the hint turn is not memory-bearing).
+// Seeds the issued verified material — the worked sol_* solution when the
+// revision carries one, plus the reference answer — so the explainer phrases
+// from bank truth instead of being checked after the fact. The model still gets
+// a synthetic message asking for ONLY the next step (escalating with hintIndex).
+// The TeachingTurnTask prompt forbids dumping the full solution + caps ≤300 字/轮,
+// so the returned text_md is a minimal hint, not the answer. NO prior-attempt
+// summary, NO memory content (R4/R6: the hint turn is not memory-bearing).
 function buildSolveHintInput(
-  q: { prompt_md: string; reference_md: string | null; practice_dto?: PracticeIssuanceDtoT },
+  q: {
+    prompt_md: string;
+    reference_md: string | null;
+    solution_md: string | null;
+    practice_dto?: PracticeIssuanceDtoT;
+  },
   hintIndex: number,
 ) {
+  const atomicSections: Record<string, string> = {};
+  if (q.solution_md?.trim()) atomicSections.worked_solution = q.solution_md;
+  if (q.reference_md?.trim() && q.reference_md !== q.solution_md) {
+    atomicSections.reference_answer = q.reference_md;
+  }
   return {
     learning_item: {
       title: '解题陪练',
@@ -170,7 +182,7 @@ function buildSolveHintInput(
     },
     parent_hub_summary: null,
     ...(q.practice_dto ? { frozen_question: q.practice_dto } : {}),
-    atomic_sections: q.reference_md ? { worked_solution: q.reference_md } : null,
+    atomic_sections: Object.keys(atomicSections).length > 0 ? atomicSections : null,
     messages: [
       {
         role: 'user' as const,
@@ -299,24 +311,18 @@ async function runSolveHintAttempt(params: PlanSolveHintParams): Promise<SolveHi
     }
     throw err;
   }
-  const replayed = await groundHintExplanation(
-    db,
-    context.prompt_md,
-    result.text_md,
-    hintIndex,
-    ran,
-  );
+  const sealed = await sealHintExplanation(db, context.prompt_md, result.text_md, ran);
   if (issuanceId)
     await recordAssistanceExposure(db, {
       issuanceId,
       questionId,
       kind: 'hint',
       impact: 'unknown',
-      contentDigest: `sha256:${canonicalHash(replayed.text_md)}`,
+      contentDigest: `sha256:${canonicalHash(sealed.text_md)}`,
     });
   return {
-    text_md: replayed.text_md,
-    ...(replayed.replay ? { reply_grounding: replayed.replay } : {}),
+    text_md: sealed.text_md,
+    reply_grounding: sealed.receipt,
     ...(ran.help_latency ? { attempt_latency: ran.help_latency } : {}),
     ...(ran.cost_basis ? { cost_basis: ran.cost_basis } : {}),
     ...(ran.cost_usd !== undefined ? { cost_usd: ran.cost_usd } : {}),
@@ -389,7 +395,7 @@ export type SolveHintOutcome =
       status: 'ok';
       text_md: string;
       help_latency?: SealedHelpLatency;
-      reply_grounding?: SealedHelpExplanationReplay;
+      reply_grounding?: SealedReplyGrounding;
     }
   | {
       status: 'fallback';

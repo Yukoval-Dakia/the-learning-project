@@ -359,6 +359,20 @@ export const NoteVerificationResult = z.object({
 });
 export type NoteVerificationResultT = z.infer<typeof NoteVerificationResult>;
 
+// 「已知问题」: deterministic generation-time findings persisted on the note.
+// No verdict/confidence — those belong to the retired AI verify pass (YUK-1772).
+export const NoteKnownIssues = z.object({
+  kind: z.literal('known_issues'),
+  summary_md: z.string().min(1).max(1000),
+  issues: z.array(NoteVerificationIssue).max(10),
+});
+export type NoteKnownIssuesT = z.infer<typeof NoteKnownIssues>;
+
+// artifact.verification_summary: legacy AI verdict rows plus new known-issues
+// payloads. Non-null only means "issues were recorded", never "verified".
+export const ArtifactVerificationSummary = z.union([NoteVerificationResult, NoteKnownIssues]);
+export type ArtifactVerificationSummaryT = z.infer<typeof ArtifactVerificationSummary>;
+
 // VariantVerifyTask second-pass output. Used by `runVariantVerify` to decide
 // whether to flip `mistake_variant.status` from 'active' to 'broken'.
 export const VariantVerificationResult = z.object({

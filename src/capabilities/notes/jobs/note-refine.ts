@@ -35,7 +35,7 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 
 export { type ParsedNoteRefineOutput, parseNoteRefineOutput };
 
-export type NoteRefineTriggerKind = 'mark_wrong' | 'mastery_change' | 'dreaming' | 'verify';
+export type NoteRefineTriggerKind = 'mark_wrong' | 'mastery_change' | 'dreaming';
 
 export interface NoteRefineJobData {
   artifact_id: string;
