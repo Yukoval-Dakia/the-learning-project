@@ -748,6 +748,7 @@ function parseListAccess(value: unknown): ModelListAccess | undefined {
   const row = asJson(value);
   if (!row || typeof row.status !== 'string') return undefined;
   if (row.status === 'unconfigured') return { status: 'unconfigured' };
+  if (row.status === 'login_lane') return { status: 'login_lane' };
   if (row.status === 'readable') return { status: 'readable' };
   if (row.status === 'auth_failed') {
     const failed = readAuthFailed(row);
@@ -1059,6 +1060,23 @@ export function finalizeProviderModelsChecks(input: {
     const fingerprint = input.fingerprints.get(provider) ?? null;
     const previous = previousByProvider.get(provider);
     const catalogProvider = catalogProviderFor(provider) ?? null;
+    if (list.status === 'login_lane') {
+      // The lane's credential is a login file, not a key — presence is real,
+      // nothing was probed. Persist the lane marker, not 'unconfigured'.
+      checks.push(
+        canonicalProviderCheck({
+          provider,
+          catalogProvider,
+          list: { status: 'login_lane' },
+          inference: { status: 'unprobed' },
+          listed: [],
+          catalogOnly: [],
+          providerOnly: [],
+          credentialFingerprint: null,
+        }),
+      );
+      continue;
+    }
     if (fingerprint === null || list.status === 'unconfigured') {
       checks.push(
         canonicalProviderCheck({

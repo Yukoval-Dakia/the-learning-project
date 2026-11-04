@@ -2728,7 +2728,7 @@ export interface operations {
                                 error_type: string | null;
                                 http_status: number | null;
                                 /** @enum {string} */
-                                status: "unconfigured" | "configured" | "auth_failed";
+                                status: "unconfigured" | "configured" | "auth_failed" | "login_lane";
                             };
                             /** @enum {string} */
                             auth_mode: "key" | "oauth";

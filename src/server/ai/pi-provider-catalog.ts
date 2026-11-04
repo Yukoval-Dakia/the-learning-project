@@ -113,7 +113,11 @@ function nativePiModels(
   // pi-derived truth and is never hand-edited.
   const declared = {
     ...protocols[protocolProvider],
-    ...(provider === 'xiaomi-token-plan' ? {} : modelCatalogOverrideProtocols(provider)),
+    // token-plan reuses xiaomi's preserved-protocol declarations (v2.5* keep-
+    // alive) plus its own keyed entries; baseUrl still comes from the lane's
+    // own profile so nothing points at the pay-as-you-go host.
+    ...(provider === 'xiaomi-token-plan' ? modelCatalogOverrideProtocols('xiaomi') : {}),
+    ...modelCatalogOverrideProtocols(provider),
   };
   return Object.fromEntries(
     Object.entries(declared).flatMap(([id, protocol]) => {

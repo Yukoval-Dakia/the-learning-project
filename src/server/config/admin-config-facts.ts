@@ -380,10 +380,22 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
           const binding = resolveTaskProvider(kind as TaskKind);
           // Explicit allowlist: never expose the binding's auth, headers or URLs.
           return [kind, { provider: binding.provider, model: binding.model, error: null }];
-        } catch {
+        } catch (e) {
+          // The app process never mounts the ChatGPT-login file (by design) —
+          // when the lane is env-selected, report that truthfully instead of a
+          // generic unconfigured verdict. A missing file on the WORKER is the
+          // real failure and surfaces through ai_task_runs instead.
+          const loginLane =
+            e instanceof Error && e.message.includes('OPENAI_CHATGPT_AUTH_FILE')
+              ? 'openai 登录通道已配置——凭据文件仅 worker 进程可挂载；app 侧不可读属于预期。'
+              : null;
           return [
             kind,
-            { provider: null, model: null, error: '当前配置不可用，请检查模型目录与服务端凭据。' },
+            {
+              provider: null,
+              model: null,
+              error: loginLane ?? '当前配置不可用，请检查模型目录与服务端凭据。',
+            },
           ];
         }
       }),

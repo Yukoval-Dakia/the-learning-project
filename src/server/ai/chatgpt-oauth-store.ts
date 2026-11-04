@@ -4,12 +4,20 @@
  * the credential and persists through `credentials.modify`, so this store
  * writes the credential back to its JSON file (same `{provider: cred}` shape
  * pi's own `auth.json` uses). Only the worker may hold the file read-write;
- * every other consumer must not mount it at all.
+ * every other consumer must not mount it at all. Mount a DIRECTORY containing
+ * the file, not a single-file bind mount — `rename(2)` can fail with EBUSY
+ * against one-file bind mounts.
  *
  * Concurrency: pi-ai does NOT lock the file. All access here funnels through a
  * single in-process promise chain, so concurrent task runs in one worker
  * serialise reads+refreshes+write-backs. Cross-process safety is by deploy
  * rule (one r/w holder), not by this module.
+ *
+ * Durability rule: a failed write-back never overwrites the rotated credential
+ * in memory — the dirty value is preferred over the file on every later access
+ * and the write is retried until it lands or the process dies. A rotation that
+ * cannot be persisted surfaces as a typed, loud error rather than reporting
+ * success while the dead token lingers on disk.
  */
 import { promises as fs } from 'node:fs';
 
@@ -24,6 +32,7 @@ export class ChatGPTOAuthFileError extends Error {
       | 'missing_file'
       | 'invalid_json'
       | 'missing_openai_credential'
+      | 'not_oauth'
       | 'write_failed',
     detail: string,
   ) {
@@ -60,21 +69,52 @@ async function readAuthFile(path: string): Promise<Record<string, CredentialLike
   }
 }
 
+function readOpenAIEntry(path: string, auth: Record<string, CredentialLike>): OAuthCredentialLike {
+  const cred = auth.openai as OAuthCredentialLike | undefined;
+  if (cred === undefined) {
+    throw new ChatGPTOAuthFileError('missing_openai_credential', `${path} has no openai entry`);
+  }
+  if (cred.type !== 'oauth') {
+    // An api_key entry silently billed at API price — not the subscription.
+    throw new ChatGPTOAuthFileError(
+      'not_oauth',
+      `${path} openai entry is '${cred.type}', expected 'oauth'`,
+    );
+  }
+  if (typeof cred.access !== 'string' || cred.access.length === 0) {
+    throw new ChatGPTOAuthFileError(
+      'missing_openai_credential',
+      `${path} openai oauth entry has no access token`,
+    );
+  }
+  return cred;
+}
+
 async function writeAuthFile(path: string, auth: Record<string, CredentialLike>): Promise<void> {
   // Crash-safe write: a refresh may have already rotated the refresh token, so
   // truncating the file in place could leave a corrupt credential on kill —
-  // write-temp-fsync-rename is atomic on POSIX. The temp file inherits the
-  // existing file's mode so a write-back never broadens (or narrows)
-  // permissions; the operator sets them when creating the file.
+  // write-temp-fsync-rename is atomic on POSIX. The temp file is created
+  // exclusively with the existing file's mode from the start, so it never
+  // carries broader permissions and a stale/predicted temp can't be hijacked.
   const tmp = `${path}.tmp-${process.pid}`;
   try {
     const st = await fs.stat(path).catch(() => undefined);
     if (!st) throw new ChatGPTOAuthFileError('missing_file', `cannot stat ${path}`);
-    const fh = await fs.open(tmp, 'w');
+    let fh: Awaited<ReturnType<typeof fs.open>>;
+    try {
+      fh = await fs.open(tmp, 'wx', st.mode);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+        // A leftover temp from a crashed write is safe to replace — retry once.
+        await fs.unlink(tmp);
+        fh = await fs.open(tmp, 'wx', st.mode);
+      } else {
+        throw e;
+      }
+    }
     try {
       await fh.writeFile(JSON.stringify(auth, null, 2), 'utf8');
       await fh.sync();
-      await fh.chmod(st.mode);
     } finally {
       await fh.close();
     }
@@ -86,21 +126,6 @@ async function writeAuthFile(path: string, auth: Record<string, CredentialLike>)
   }
 }
 
-/** Loads the `openai` OAuth credential from the file — never logged. */
-export async function loadChatGPTCredential(
-  path: string,
-): Promise<OAuthCredentialLike | undefined> {
-  const auth = await readAuthFile(path);
-  const cred = auth.openai as OAuthCredentialLike | undefined;
-  if (cred?.type !== 'oauth' || typeof cred.access !== 'string') {
-    throw new ChatGPTOAuthFileError(
-      'missing_openai_credential',
-      `${path} has no openai OAuth entry`,
-    );
-  }
-  return cred;
-}
-
 /**
  * Minimal CredentialStore: file-backed for `openai`, in-memory otherwise.
  * `modify` persists the whole auth map back so a refreshed/rotated credential
@@ -108,16 +133,39 @@ export async function loadChatGPTCredential(
  */
 export function createChatGPTCredentialStore(path: string) {
   const memory = new Map<string, CredentialLike>();
-  // Reads the file entry inside the caller's mutex scope — the public `read`
+  // A credential whose rotation succeeded but whose write-back failed. It is
+  // preferred over the file on every later access and the write is retried —
+  // the old refresh token may already be dead, so falling back to the file
+  // would silently un-rotate (and could revoke the login).
+  let dirty: CredentialLike | undefined;
+
+  // Reads the entry inside the caller's mutex scope — the public `read`
   // re-queues on the same chain, so calling it from within `serialized` (e.g.
-  // inside `modify`) would deadlock the lane. No `openai` cache: a second
-  // store instance (unmemoised resolveDeps) may hold a credential this
-  // instance's refresh already rotated — the file is the single truth.
+  // inside `modify`) would deadlock the lane. The file is the single truth;
+  // `dirty` is the only in-memory state allowed to beat it.
   const readInsideLock = async (): Promise<CredentialLike | undefined> => {
+    if (dirty !== undefined) {
+      const pending = dirty;
+      try {
+        const auth = await readAuthFile(path);
+        auth.openai = pending;
+        await writeAuthFile(path, auth);
+        dirty = undefined;
+      } catch (e) {
+        // Persist failure stays loud — the credential is retained as dirty
+        // but nothing may pretend the write-back succeeded.
+        throw e instanceof ChatGPTOAuthFileError
+          ? e
+          : new ChatGPTOAuthFileError('write_failed', `${path}: ${(e as Error).message}`);
+      }
+      return pending;
+    }
     const auth = await readAuthFile(path);
-    if (auth.openai) memory.set('openai', auth.openai);
-    return memory.get('openai');
+    const cred = readOpenAIEntry(path, auth);
+    memory.set('openai', cred);
+    return cred;
   };
+
   return {
     async read(providerId: string): Promise<CredentialLike | undefined> {
       if (providerId !== 'openai') return memory.get(providerId);
@@ -153,13 +201,34 @@ export function createChatGPTCredentialStore(path: string) {
           memory.set(providerId, next);
           const auth = await readAuthFile(path);
           auth[providerId] = next;
-          await writeAuthFile(path, auth);
+          try {
+            await writeAuthFile(path, auth);
+          } catch (e) {
+            // Keep the rotated credential as dirty — retry on every later
+            // access; the file is stale but the token must not be lost.
+            dirty = next;
+            throw e;
+          }
         }
         return next ?? current;
       });
     },
     async delete(providerId: string): Promise<void> {
       memory.delete(providerId);
+      if (providerId !== 'openai') return;
+      await serialized(path, async () => {
+        dirty = undefined;
+        try {
+          const auth = await readAuthFile(path);
+          if (auth.openai !== undefined) {
+            delete auth.openai;
+            await writeAuthFile(path, auth);
+          }
+        } catch (e) {
+          if (e instanceof ChatGPTOAuthFileError && e.reason === 'missing_file') return;
+          throw e;
+        }
+      });
     },
   };
 }

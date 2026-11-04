@@ -87,7 +87,12 @@ export function resolveAttemptCostTruth(input: {
     input.provider === 'xiaomi-token-plan'
   ) {
     const reported = input.reportedCostUsd;
-    if (reported !== undefined && Number.isFinite(reported) && reported >= 0) {
+    // A preserved model with no catalog rate card yields pi usage.cost = 0 —
+    // that is unknown, not free (hasCard guard, same as custom providers).
+    const laneProvider = catalogProviderFor(input.provider);
+    const hasCard =
+      laneProvider !== undefined && catalogModelCost(laneProvider, input.model) !== undefined;
+    if (hasCard && reported !== undefined && Number.isFinite(reported) && reported >= 0) {
       const prefix =
         input.priceOrigin === 'timeout-estimate'
           ? 'pi-catalog-timeout-estimate'

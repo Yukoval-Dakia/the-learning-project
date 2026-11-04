@@ -604,7 +604,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
    * to 'auto' + the single closing reminder wired in iterate().
    */
   private structuredSubmitPolicy(model: PiModel<PiApi>) {
-    if (toolOutputSchema(this.args.kind) === undefined || model.api !== 'openai-completions') {
+    if (
+      toolOutputSchema(this.args.kind) === undefined ||
+      (model.api !== 'openai-completions' && model.api !== 'openai-responses')
+    ) {
       return undefined;
     }
     return resolveStructuredSubmitPolicy(this.args.resolved.provider, this.args.resolved.model);
@@ -646,7 +649,13 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         if (body == null || typeof body !== 'object' || Array.isArray(body)) {
           throw new Error('structured output requires an object provider payload');
         }
-        return { ...body, ...structuredSubmitWireFields(submitPolicy) };
+        return {
+          ...body,
+          ...structuredSubmitWireFields(
+            submitPolicy,
+            model.api === 'openai-responses' ? 'openai-responses' : 'openai-completions',
+          ),
+        };
       },
     };
     return tracePiStream(

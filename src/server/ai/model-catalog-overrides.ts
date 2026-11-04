@@ -160,6 +160,13 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
       facts: {},
       protocol: { api: 'openai-completions' },
     },
+    'minimax-m2.7': {
+      when: 'missing',
+      reason:
+        'pi 1.5.0 builtin catalog dropped this id; models.dev moved it to the OpenCode Go anthropic path and the 1.5.0 snapshot ships anthropic-messages templates on this provider. Protocol follows the live endpoint.',
+      facts: {},
+      protocol: { api: 'anthropic-messages' },
+    },
   },
   openrouter: {
     'qwen/qwen3.7-flash': {

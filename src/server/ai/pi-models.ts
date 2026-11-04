@@ -58,6 +58,13 @@ export async function createLoomPiModels() {
   // the rotation). Only present when the lane is configured.
   const chatgptPath = process.env.OPENAI_CHATGPT_AUTH_FILE;
   const { createChatGPTCredentialStore } = await import('./chatgpt-oauth-store');
+  if (chatgptPath) {
+    // esbuild CJS cannot run pi-ai's dynamic importOAuthModule (import.meta +
+    // variable specifier); registerBundledOAuthFlowLoaders statically so the
+    // login lane's refresh/toAuth works in the released bundle.
+    const { registerBunOAuthFlows } = await import('@earendil-works/pi-ai/bun-oauth');
+    registerBunOAuthFlows();
+  }
   const models = builtinModels(
     chatgptPath ? { credentials: createChatGPTCredentialStore(chatgptPath) } : undefined,
   );

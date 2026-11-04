@@ -277,7 +277,12 @@ export function providerCredentialEnvName(provider: Provider): string | undefine
   if (config.authMode === 'oauth') return config.oauthTokenEnv;
   // oauth-file lane: when only the credential-file env is set, it is the env
   // the lane actually reads — surface it instead of the absent key env.
-  if ('authFileEnv' in config && config.authFileEnv && !process.env[config.apiKeyEnv]) {
+  if (
+    'authFileEnv' in config &&
+    config.authFileEnv &&
+    !process.env[config.apiKeyEnv] &&
+    process.env[config.authFileEnv]
+  ) {
     return config.authFileEnv;
   }
   return config.apiKeyEnv;
@@ -901,8 +906,13 @@ function resolveTaskReasoning(
     );
   }
   const level = requested as PiThinkingLevelName;
-  if (level === 'off') return { requested, applied: 'off' };
   const { reasoning: profile } = resolveModelProfile(provider, model);
+  // 'off' is only meaningful where the wire can express a disable switch
+  // (toggle lanes emit thinking:{disabled}). On effort/budget lanes pi maps
+  // 'off' to null — nothing is sent — so the honest applied is 'none'.
+  if (level === 'off') {
+    return { requested, applied: profile.mode === 'toggle' ? 'off' : 'none' };
+  }
   if (profile.mode === 'toggle') {
     return { requested, applied: 'toggle_on', level: 'high' };
   }

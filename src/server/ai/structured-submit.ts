@@ -32,18 +32,26 @@ export function resolveStructuredSubmitPolicy(
 }
 
 /** The `tool_choice`/`parallel_tool_calls` fields merged into the request body verbatim. */
-export function structuredSubmitWireFields(policy: StructuredSubmitPolicy):
+export function structuredSubmitWireFields(
+  policy: StructuredSubmitPolicy,
+  api: 'openai-completions' | 'openai-responses' = 'openai-completions',
+):
   | {
-      tool_choice: { type: 'function'; function: { name: string } };
+      tool_choice:
+        | { type: 'function'; function: { name: string } }
+        | { type: 'function'; name: string };
       parallel_tool_calls: false;
     }
   | { tool_choice: 'auto'; parallel_tool_calls: false } {
   return policy.forced
     ? {
-        tool_choice: {
-          type: 'function',
-          function: { name: STRUCTURED_OUTPUT_SUBMIT_TOOL },
-        },
+        tool_choice:
+          api === 'openai-responses'
+            ? { type: 'function', name: STRUCTURED_OUTPUT_SUBMIT_TOOL }
+            : {
+                type: 'function',
+                function: { name: STRUCTURED_OUTPUT_SUBMIT_TOOL },
+              },
         parallel_tool_calls: false,
       }
     : { tool_choice: 'auto', parallel_tool_calls: false };
