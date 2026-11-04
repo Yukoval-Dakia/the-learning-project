@@ -15443,7 +15443,7 @@ export interface operations {
                                 amount: number | null;
                                 attempt_id: string | null;
                                 /** @enum {string|null} */
-                                cost_basis: "reported" | "estimated" | "unknown" | null;
+                                cost_basis: "reported" | "estimated" | "catalog_estimate" | "unknown" | null;
                                 cost_ref: string | null;
                                 currency: string;
                                 /** @enum {string} */
@@ -38214,7 +38214,7 @@ export interface operations {
                             details: {
                                 amount: number | null;
                                 /** @enum {string|null} */
-                                cost_basis: "reported" | "estimated" | "unknown" | null;
+                                cost_basis: "reported" | "estimated" | "catalog_estimate" | "unknown" | null;
                                 cost_ref: string | null;
                                 currency: string;
                                 /** @enum {string} */

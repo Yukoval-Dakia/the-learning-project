@@ -456,6 +456,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         ? resolveAttemptCostTruth({
             provider: this.resolved.provider,
             model: this.resolved.model,
+            authMode: this.resolved.authMode,
             tokens: evidence.tokenCounts,
             tokensObserved: evidence.tokenUsageObserved,
             reportedCostUsd: evidence.costUsd,
@@ -703,6 +704,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     this.costTruthCache = resolveAttemptCostTruth({
       provider: this.resolved.provider,
       model: this.resolved.model,
+      authMode: this.resolved.authMode,
       tokens: terminal.tokenCounts,
       tokensObserved: terminal.tokenUsageObserved,
       reportedCostUsd: terminal.costUsd,

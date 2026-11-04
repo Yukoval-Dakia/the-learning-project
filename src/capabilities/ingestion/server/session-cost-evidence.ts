@@ -280,7 +280,12 @@ export async function readSessionCostEvidence(db: Db, sessionId: string): Promis
           };
           if (known && row.cost != null) {
             bucket.known_subtotal = addAmount(bucket.known_subtotal, row.cost);
-            const basis = row.entry_kind === 'legacy' ? 'legacy' : row.cost_basis;
+            const basis =
+              row.entry_kind === 'legacy'
+                ? 'legacy'
+                : row.cost_basis === 'catalog_estimate'
+                  ? 'estimated'
+                  : row.cost_basis;
             if (basis === 'reported' || basis === 'estimated' || basis === 'legacy')
               bucket[basis] = addAmount(bucket[basis], row.cost);
           }

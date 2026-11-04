@@ -204,7 +204,9 @@ export async function readProviderCostWindow(
     } else if (row.cost_basis === 'reported') {
       bucket.reported_cost += amount;
       bucket.reported_attempts += row.records;
-    } else if (row.cost_basis === 'estimated') {
+    } else if (row.cost_basis === 'estimated' || row.cost_basis === 'catalog_estimate') {
+      // Subscription-lane catalog estimates stay visible in the estimate
+      // bucket; the row's own cost_basis keeps the exact label.
       bucket.estimated_cost += amount;
       bucket.estimated_attempts += row.records;
     } else {

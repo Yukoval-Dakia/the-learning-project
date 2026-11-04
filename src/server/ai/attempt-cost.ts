@@ -31,6 +31,8 @@ export function unknownAttemptCostTruth(provider: string, model: string): Attemp
 export function resolveAttemptCostTruth(input: {
   provider: Provider;
   model: string;
+  /** The resolved route's auth mode — decides estimated vs catalog_estimate. */
+  authMode?: 'key' | 'oauth' | 'oauth-file';
   tokens: TokenCounts;
   /** False when zero counters are placeholders, not observed provider usage. */
   tokensObserved?: boolean;
@@ -102,8 +104,15 @@ export function resolveAttemptCostTruth(input: {
           : input.priceOrigin === 'failure-estimate'
             ? 'pi-catalog-failure-estimate'
             : 'pi-catalog';
+      // Only the ChatGPT-login route records the subscription marker — the
+      // same number on key-auth openai / opencode-go / token-plan stays
+      // 'estimated' so the supply cap keeps counting it exactly as today.
+      const basis =
+        input.provider === 'openai' && input.authMode === 'oauth-file'
+          ? ('catalog_estimate' as const)
+          : ('estimated' as const);
       return {
-        basis: 'catalog_estimate',
+        basis,
         amountUsd: reported,
         ref: `${prefix}:${input.provider}/${input.model}`,
       };

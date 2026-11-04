@@ -23,7 +23,12 @@ const UNSETTLED = {
   unknown_currency: '币种尚不明确，无法计入某个币种的小计。',
 } satisfies Record<CostEvidence['unsettled'][number]['reasons'][number], string>;
 
-const BASIS = { reported: '已报告', estimated: '估计', unknown: '依据未知' };
+const BASIS = {
+  reported: '已报告',
+  estimated: '估计',
+  catalog_estimate: '目录价估算',
+  unknown: '依据未知',
+};
 const KIND = { agent_task: '助手处理', ocr: '文字识别' };
 
 // Preserve a real zero and arbitrarily small nonzero evidence without currency rounding.

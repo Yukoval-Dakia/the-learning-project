@@ -436,6 +436,7 @@ export async function getAdminRunTimeline(
         cost_basis:
           entry.cost_basis === 'reported' ||
           entry.cost_basis === 'estimated' ||
+          entry.cost_basis === 'catalog_estimate' ||
           entry.cost_basis === 'unknown'
             ? entry.cost_basis
             : null,
