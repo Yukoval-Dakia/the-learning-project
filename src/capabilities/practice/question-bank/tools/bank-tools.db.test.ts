@@ -414,6 +414,7 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
   // @invariant security: bank tools expose no learner-state fields and mutate no learner-state rows while serving @fails-if a tool accesses learner tables without bank-role permission, leaks state, changes persisted learner rows, or evaluates refs outside a read-only repeatable-read snapshot
   it('the tools neither read nor write learner state', async () => {
     await seedQuestion('bt_learner', { prompt_md: '等比数列通项公式求解题（带学习者历史）' });
+    await seedQuestion('bt_learner_part', { parent_question_id: 'bt_learner', part_index: 0 });
     const pub = await publishAdmitted('bt_learner');
     const ref = encodeBankRef(pub.revision_id, pub.revision_digest);
 
