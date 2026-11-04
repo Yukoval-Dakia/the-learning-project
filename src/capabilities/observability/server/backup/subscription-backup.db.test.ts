@@ -276,12 +276,14 @@ describe('YUK-766 subscription progress backup', () => {
       expect(
         data.event_subscription_delivery
           .filter((row) => row.subscriber_id === sub.id)
+          .sort((a, b) => Number(a.delivery_seq) - Number(b.delivery_seq))
           .map((row) => row.status),
       ).toEqual(statuses);
     }
     const counts = actionCounts(registry.subscriptions);
     const shared = registry.subscriptions.filter((sub) => (counts.get(sub.actions[0]) ?? 0) > 1);
     expect(shared.map((sub) => sub.id)).toEqual([
+      'agency.curator-activity',
       'agency.probe-evidence-intervention-prepare',
       'agency.probe-publication-serve',
       'agency.probe-result-reconcile',
