@@ -1,33 +1,20 @@
 import { and, eq, or, sql } from 'drizzle-orm';
-import { z } from 'zod';
 import { canonicalHash } from '@/core/migration/canonical';
-import {
-  EvaluationAdmissionSnapshot,
-  type EvaluationAdmissionSnapshotT,
-  EvaluationInputSnapshot,
-  type EvaluationInputSnapshotT,
-  type EvaluationProvenanceT,
+import type {
+  EvaluationAdmissionSnapshotT,
+  EvaluationInputSnapshotT,
+  EvaluationProvenanceT,
 } from '@/core/schema/assessment';
 import type { Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-
-const bindingAction = 'experimental:assessment_appeal_execution_binding';
-const BindingIdentity = z.object({
-  version: z.literal(1),
-  appeal_event_id: z.string().min(1),
-  evaluation_group_id: z.string().min(1),
-  submission_id: z.string().min(1),
-  execution_key: z.string().min(1),
-  input_snapshot: EvaluationInputSnapshot,
-  intent_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-});
-const Binding = BindingIdentity.extend({
-  attempt: z.number().int().positive().safe(),
-  admission_snapshot: EvaluationAdmissionSnapshot.nullable(),
-  model_hold_reason: z.string().min(1).nullable(),
-}).strict();
+import {
+  APPEAL_EXECUTION_BINDING_ACTION,
+  AppealExecutionBinding,
+  AppealExecutionBindingIdentity,
+  appealExecutionBindingId,
+} from '@/kernel/records/appeal-execution-binding';
 
 function conflict(detail: string): never {
   throw new ApiError('appeal_execution_conflict', detail, 409);
@@ -52,7 +39,7 @@ export async function reservedEvaluationAttempt(
         eq(event.subject_kind, 'evaluation_group'),
         eq(event.subject_id, groupId),
         or(
-          eq(event.action, bindingAction),
+          eq(event.action, APPEAL_EXECUTION_BINDING_ACTION),
           eq(event.action, 'experimental:assessment_model_claim'),
         ),
       ),
@@ -97,7 +84,7 @@ export async function bindAppealExecution(
   )
     conflict('execution does not identify the retained appeal and grading intent');
 
-  const identity = BindingIdentity.parse({
+  const identity = AppealExecutionBindingIdentity.parse({
     version: 1,
     appeal_event_id: appeal.id,
     evaluation_group_id: input.evaluation_group_id,
@@ -110,16 +97,16 @@ export async function bindAppealExecution(
   const read = async () => {
     const [prior] = await tx.select().from(event).where(eq(event.id, bindingId)).limit(1);
     if (!prior) return null;
-    const parsed = Binding.safeParse(prior.payload);
+    const parsed = AppealExecutionBinding.safeParse(prior.payload);
     if (
-      prior.action !== bindingAction ||
+      prior.action !== APPEAL_EXECUTION_BINDING_ACTION ||
       prior.subject_kind !== 'evaluation_group' ||
       prior.subject_id !== input.evaluation_group_id ||
       // Legacy receipts used this exact appeal as parent; retain them without rewriting.
       // New operational bindings stay outside the business-resolution child surface.
       (prior.caused_by_event_id !== null && prior.caused_by_event_id !== appeal.id) ||
       !parsed.success ||
-      canonicalHash(BindingIdentity.parse(parsed.data)) !== canonicalHash(identity)
+      canonicalHash(AppealExecutionBindingIdentity.parse(parsed.data)) !== canonicalHash(identity)
     )
       conflict('immutable appeal binding differs; no fresh execution permitted');
     return parsed.data;
@@ -144,7 +131,7 @@ export async function bindAppealExecution(
         sql`${event.dispatch_seq} > (SELECT dispatch_seq FROM event WHERE id = ${appeal.id})`,
         sql`NOT EXISTS (
           SELECT 1 FROM event AS binding
-          WHERE binding.action = ${bindingAction}
+          WHERE binding.action = ${APPEAL_EXECUTION_BINDING_ACTION}
             AND binding.subject_kind = 'evaluation_group'
             AND binding.subject_id = ${input.evaluation_group_id}
             AND binding.payload->>'evaluation_group_id' = ${input.evaluation_group_id}
@@ -155,7 +142,7 @@ export async function bindAppealExecution(
       ),
     )
     .limit(1);
-  const binding = Binding.parse({
+  const binding = AppealExecutionBinding.parse({
     ...identity,
     attempt: input.next_attempt,
     admission_snapshot: input.admission_snapshot,
@@ -168,7 +155,7 @@ export async function bindAppealExecution(
     id: bindingId,
     actor_kind: 'system',
     actor_ref: 'assessment:appeal',
-    action: bindingAction,
+    action: APPEAL_EXECUTION_BINDING_ACTION,
     subject_kind: 'evaluation_group',
     subject_id: input.evaluation_group_id,
     outcome: null,
@@ -182,16 +169,4 @@ export async function bindAppealExecution(
   const saved = await read();
   if (!saved) conflict('appeal binding missing after persistence');
   return saved;
-}
-
-export const APPEAL_EXECUTION_BINDING_ACTION = bindingAction;
-export const AppealExecutionBinding = Binding;
-export type AppealExecutionBindingT = z.infer<typeof Binding>;
-
-/** Deterministic receipt id shared by the writer (grading) and its verifier (settlement). */
-export function appealExecutionBindingId(
-  evaluationGroupId: string,
-  executionKey: string | undefined,
-): string {
-  return `evt_appeal_binding_${canonicalHash([evaluationGroupId, executionKey])}`;
 }
