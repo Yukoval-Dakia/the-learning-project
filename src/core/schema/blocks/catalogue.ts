@@ -70,7 +70,7 @@ export function renderBlockCatalogue(surface: BlockSurface): string {
   const allowed = new Set(BLOCK_SURFACE_KINDS[surface]);
   const implemented = new Set(BLOCK_IMPLEMENTED_KINDS);
   const lines: string[] = [
-    '【生成式积木】要在回复里放流程图或装置图，必须调用 compose_block（唯一通道，不要手写 tlp-block 代码块，也不要写 ```mermaid 代码块或手绘 SVG/ASCII 充当图——页面只会显示源代码，不会出现图）。通过校验返回 ref 与 place；正文中用 `![简短说明](block:<ref>)` 把积木放到想要的位置，未放置的积木会自动附在正文末尾。校验失败返回 status=invalid + issues[]（code/path/line/expected 指明怎么改），修好重新提交；不要重复提交同样的内容。',
+    '【生成式积木】要在回复里放流程图或装置图，必须调用 compose_block（唯一通道，不要手写 tlp-block 代码块，也不要写 ```mermaid 代码块或手绘 SVG/ASCII 充当图——页面只会显示源代码，不会出现图）。通过校验返回 ref 与 place；正文中用 `![简短说明](block:<ref>)` 把每个要给学习者看的积木都放到想要的位置；只要放置了一个，未放置的就不会显示。校验失败返回 status=invalid + issues[]（code/path/line/expected 指明怎么改），修好重新提交；不要重复提交同样的内容。',
   ];
   for (const kind of ['diagram', 'figure', 'chart', 'interactive', 'question_ref'] as const) {
     const meta = MEMBER_META[kind];
