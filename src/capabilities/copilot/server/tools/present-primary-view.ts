@@ -6,41 +6,41 @@ export const PresentPrimaryViewOutputSchema = z.discriminatedUnion('source', [
   z
     .object({
       source: z.literal('tool_result'),
-      ref: z.object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) }).strict(),
+      ref: z
+        .object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) })
+        .strict()
+        .describe(
+          'An actual JSON object, never a JSON-encoded string. Copy kind from the successful root tool name and id from its tool_use_id receipt.',
+        )
+        .meta({ examples: [{ kind: 'write_quiz', id: '<successful tool_use_id>' }] }),
     })
     .strict(),
   z
     .object({
       source: z.literal('artifact'),
-      ref: z.object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) }).strict(),
+      ref: z
+        .object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) })
+        .strict()
+        .describe(
+          'An actual JSON object, never a JSON-encoded string. Use the existing artifact type as kind and its artifact id as id.',
+        ),
     })
     .strict(),
   z
     .object({
       source: z.literal('ephemeral_html'),
-      ref: z.string().min(1).max(EPHEMERAL_HTML_REF_MAX_CHARS),
+      ref: z
+        .string()
+        .min(1)
+        .max(EPHEMERAL_HTML_REF_MAX_CHARS)
+        .describe('HTML markup string; this string form is only for source=ephemeral_html.'),
     })
     .strict(),
 ]);
 
 export type PresentPrimaryViewInput = z.infer<typeof PresentPrimaryViewOutputSchema>;
 
-// mcp-bridge consumes a ZodObject's raw shape, so the discriminated pairing stays
-// a refinement; PresentPrimaryViewOutputSchema remains the canonical typed DTO.
-export const PresentPrimaryViewInputSchema = z
-  .object({
-    source: z.enum(['tool_result', 'artifact', 'ephemeral_html']),
-    ref: z.union([
-      z.object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) }).strict(),
-      z.string().min(1).max(EPHEMERAL_HTML_REF_MAX_CHARS),
-    ]),
-  })
-  .strict()
-  .superRefine((value, ctx) => {
-    if (PresentPrimaryViewOutputSchema.safeParse(value).success) return;
-    ctx.addIssue({ code: 'custom', message: 'ref shape does not match primary-view source' });
-  });
-type PresentPrimaryViewRawInput = z.infer<typeof PresentPrimaryViewInputSchema>;
+export const PresentPrimaryViewInputSchema = PresentPrimaryViewOutputSchema;
 
 const lifecycle = {
   presentation_lifecycle: z.object({
@@ -59,7 +59,7 @@ const PresentationControlResultSchema = z.discriminatedUnion('source', [
 
 /** A nomination only. The reply finalizer is the authority that can publish it. */
 export const presentPrimaryViewTool: DomainTool<
-  PresentPrimaryViewRawInput,
+  PresentPrimaryViewInput,
   z.infer<typeof PresentationControlResultSchema>
 > = {
   name: 'present_primary_view',
