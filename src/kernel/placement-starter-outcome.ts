@@ -99,7 +99,7 @@ export const PlacementAdmissionWait = z.object({
   question_id: z.string(),
   reason: z.enum(['quota', 'login']),
   retry_at: z.string().datetime().nullable(),
-  recovery_action: z.enum(['wait_for_reset', 'reauthenticate', 'confirm_recovery']),
+  recovery_action: z.enum(['wait_for_retry', 'reauthenticate', 'confirm_recovery']),
 });
 const Binding = z.object({
   admission_waits: z.array(PlacementAdmissionWait).optional(),

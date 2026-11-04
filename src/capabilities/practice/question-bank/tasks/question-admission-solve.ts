@@ -381,7 +381,7 @@ export const questionAdmissionSolveTaskSpec = {
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 120_000 },
     needsToolCall: true,
-    isMultimodal: true,
+    isMultimodal: false,
     allowedTools: ['mcp__structured_output__submit'],
     structuredOutputMode: 'tool',
     structuredOutputSchema: z.union([QuestionAdmissionSolveOutput, QuestionAdmissionPriorOutput]),

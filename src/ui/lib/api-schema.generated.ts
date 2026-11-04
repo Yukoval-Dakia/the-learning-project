@@ -23848,7 +23848,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -24496,7 +24496,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -24518,7 +24518,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -24552,7 +24552,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -24573,7 +24573,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -24607,7 +24607,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -24776,7 +24776,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -24798,7 +24798,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -24832,7 +24832,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -24853,7 +24853,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -24887,7 +24887,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -25213,7 +25213,7 @@ export interface operations {
                                     /** @enum {string} */
                                     reason: "quota" | "login";
                                     /** @enum {string} */
-                                    recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
                                     retry_at: string | null;
                                 }[];
@@ -25235,7 +25235,7 @@ export interface operations {
                                     /** @enum {string} */
                                     reason: "quota" | "login";
                                     /** @enum {string} */
-                                    recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
                                     retry_at: string | null;
                                 }[];
@@ -25269,7 +25269,7 @@ export interface operations {
                                     /** @enum {string} */
                                     reason: "quota" | "login";
                                     /** @enum {string} */
-                                    recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
                                     retry_at: string | null;
                                 }[];
@@ -25290,7 +25290,7 @@ export interface operations {
                                     /** @enum {string} */
                                     reason: "quota" | "login";
                                     /** @enum {string} */
-                                    recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
                                     retry_at: string | null;
                                 }[];
@@ -25324,7 +25324,7 @@ export interface operations {
                                     /** @enum {string} */
                                     reason: "quota" | "login";
                                     /** @enum {string} */
-                                    recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
                                     retry_at: string | null;
                                 }[];
@@ -25369,7 +25369,7 @@ export interface operations {
                                     /** @enum {string} */
                                     reason: "quota" | "login";
                                     /** @enum {string} */
-                                    recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
                                     retry_at: string | null;
                                 }[];
@@ -26016,7 +26016,7 @@ export interface operations {
                                     /** @enum {string} */
                                     reason: "quota" | "login";
                                     /** @enum {string} */
-                                    recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
                                     retry_at: string | null;
                                 }[];
@@ -26038,7 +26038,7 @@ export interface operations {
                                     /** @enum {string} */
                                     reason: "quota" | "login";
                                     /** @enum {string} */
-                                    recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
                                     retry_at: string | null;
                                 }[];
@@ -26072,7 +26072,7 @@ export interface operations {
                                     /** @enum {string} */
                                     reason: "quota" | "login";
                                     /** @enum {string} */
-                                    recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
                                     retry_at: string | null;
                                 }[];
@@ -26093,7 +26093,7 @@ export interface operations {
                                     /** @enum {string} */
                                     reason: "quota" | "login";
                                     /** @enum {string} */
-                                    recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
                                     retry_at: string | null;
                                 }[];
@@ -26127,7 +26127,7 @@ export interface operations {
                                     /** @enum {string} */
                                     reason: "quota" | "login";
                                     /** @enum {string} */
-                                    recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                     /** Format: date-time */
                                     retry_at: string | null;
                                 }[];
@@ -26303,7 +26303,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -26325,7 +26325,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -26359,7 +26359,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -26380,7 +26380,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -26414,7 +26414,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -26459,7 +26459,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -27106,7 +27106,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -27128,7 +27128,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -27162,7 +27162,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -27183,7 +27183,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
@@ -27217,7 +27217,7 @@ export interface operations {
                                 /** @enum {string} */
                                 reason: "quota" | "login";
                                 /** @enum {string} */
-                                recovery_action: "wait_for_reset" | "reauthenticate" | "confirm_recovery";
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
                                 /** Format: date-time */
                                 retry_at: string | null;
                             }[];
