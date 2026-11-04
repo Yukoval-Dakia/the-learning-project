@@ -50,7 +50,8 @@ const pct = (v: number) => Math.round(v * 100);
 const clamp01 = (v: number | undefined, fb: number) => Math.max(0, Math.min(1, v ?? fb));
 
 type Conf = 'none' | 'low' | 'ok';
-const CONF_LABEL: Record<Conf, string> = { none: '未测', low: '低置信', ok: '较可信' };
+// Says what the band does, not how far to trust it: a few answers can already narrow it.
+const CONF_LABEL: Record<Conf, string> = { none: '未测', low: '区间还宽', ok: '区间已收窄' };
 // Confidence bucket for a KC: untested (no evidence) → none; otherwise the projection's
 // low_confidence flag decides low vs ok.
 const confOf = (kc: ProfileKc): Conf => {
@@ -308,7 +309,7 @@ function ProfileBody({
           </li>
           <li>
             <i data-swatch="low" aria-hidden="true" />
-            灰带 = 低置信，区间很宽
+            灰带 = 证据少，区间很宽
           </li>
         </ul>
 

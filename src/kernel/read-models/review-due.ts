@@ -12,8 +12,23 @@ export interface ReviewDueQuery {
   includeReason?: boolean;
 }
 
+/**
+ * One returned actionable due row. Field set is deliberately the starter-segment
+ * projection: implementing readers may return more (the tool output carries tier /
+ * fsrs_state / latest_mistake), consumers read only what's declared here.
+ */
+export interface ReviewDueQueueRow {
+  question_id: string;
+  prompt_excerpt: string;
+  knowledge_ids: string[];
+  due_at: string | null;
+  reason: 'never_reviewed_failure' | 'overdue' | 'filtered_match';
+}
+
 export interface ReviewDueQueue {
   queue_summary: { total_returned: number };
+  /** Returned actionable rows (never-reviewed failures, then due-earliest), capped by query limit. */
+  rows: ReviewDueQueueRow[];
 }
 
 export type ReviewDueReader = (ctx: ToolContext, query: ReviewDueQuery) => Promise<ReviewDueQueue>;

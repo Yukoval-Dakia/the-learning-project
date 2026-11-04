@@ -21,18 +21,25 @@ import {
   type ActiveGoal,
   listActiveGoalsWithResolvedScope,
 } from '@/kernel/read-models/active-goal-scope';
-import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import {
+  effectiveCauseCategoryForFailureAttempt,
+  effectiveCauseForFailureAttempt,
+} from '@/kernel/read-models/cause-policy';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
+import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { readOvernightHandoffSentence } from '@/kernel/read-models/overnight-digest';
+import { shanghaiLabel } from './delta';
 import type { ContractSection } from './types';
 
 type DbLike = Db | Tx;
 
 const FAILURE_SCAN_LIMIT = 40;
 const MIN_SAMPLE = 5;
+/** 启动段只带最近几条失败原因，只有时间戳和归因标签。 */
+const FAILURE_DETAIL_MAX = 3;
 
 function summarizeMastery(proj: Map<string, MasteryProjection>): {
   masterySummary: string | null;
@@ -244,5 +251,26 @@ export async function readContractSection(
         : `近期高频误区：${causes.map((c) => `${c.cause}（n=${c.count}）`).join('、')}`;
   }
 
-  return { steeringMd, masteryMd, causesMd, signalsMd: signalNotes, overnightMd };
+  // 最近几条失败的逐条原因：只有时间戳 + 错因类别标签（misc_ 显示回填），
+  // 未归因照实标注。analysis_md 是错答与参考答案的差异、user_notes 是学习者
+  // 原话——两者都不进常驻启动上下文（对到期题也泄题），明细不带摘要。
+  // failures 已按用途过滤（getFailureAttemptsForDerivation）。明细独立成
+  // unit，预算紧时先于基础段被裁（见 budget.ts dropRank）。
+  const recentFailures = failures.slice(0, FAILURE_DETAIL_MAX);
+  const miscLabels = await resolveMiscCauseLabels(
+    db,
+    recentFailures
+      .map((failure) => effectiveCauseForFailureAttempt(failure)?.primary_category)
+      .filter((id): id is string => typeof id === 'string'),
+  );
+  const failureLines = recentFailures.map((failure) => {
+    const cause = effectiveCauseForFailureAttempt(failure);
+    const label = cause
+      ? (miscLabels.get(cause.primary_category) ?? cause.primary_category)
+      : '未归因';
+    return `· ${shanghaiLabel(failure.created_at)} ${label}`;
+  });
+  const failureDetailsMd = failureLines.length > 0 ? failureLines.join('\n') : null;
+
+  return { steeringMd, masteryMd, causesMd, failureDetailsMd, signalsMd: signalNotes, overnightMd };
 }

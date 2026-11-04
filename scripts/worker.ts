@@ -18,7 +18,6 @@
 // 纪律：loadEnv / process-level last-resort handlers / 顶层 catch。
 
 import { warnFlipOrder } from '@/kernel/projection-writer-policy';
-import { bootWorker } from '@/server/boss/worker-boot';
 import { loadEnv } from '../server/env';
 
 // YUK-365 (Codex review P2, Finding 2): the standalone worker MUST load the same
@@ -56,6 +55,7 @@ process.on('uncaughtException', (err) => {
 });
 
 async function main() {
+  const { bootWorker } = await import('@/server/boss/worker-boot');
   await bootWorker();
 }
 

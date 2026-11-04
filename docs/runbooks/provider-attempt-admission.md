@@ -8,7 +8,7 @@ the central Claude Agent SDK session gate.
 Only these lane keys are accepted:
 
 - `dashscope.embedding`
-- `glm.memory-reconcile`
+- `glm.memory-reconcile`（调用方已删除；key 留着，因为存量策略 JSON 是严格解析）
 - `glm.ocr-layout-parsing`
 - `mem0.event-memory`
 - `tencent.question-mark-agent`

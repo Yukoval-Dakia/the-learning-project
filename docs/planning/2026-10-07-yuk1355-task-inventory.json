@@ -914,7 +914,7 @@
       "tz": null,
       "dependencies": null,
       "handlerImports": ["./jobs/rejudge"],
-      "producerSources": ["src/capabilities/practice/api/appeal.ts:37"],
+      "producerSources": ["src/capabilities/practice/settlement/server/appeal.ts"],
       "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
       "dlq": "rejudge_dlq",
       "retry": "queue-config: 2 redeliveries, 30s exponential backoff",
