@@ -73,8 +73,8 @@ export async function loadChatGPTCredential(
   path: string,
 ): Promise<OAuthCredentialLike | undefined> {
   const auth = await readAuthFile(path);
-  const cred = auth['openai'] as OAuthCredentialLike | undefined;
-  if (!cred || cred.type !== 'oauth' || typeof cred.access !== 'string') {
+  const cred = auth.openai as OAuthCredentialLike | undefined;
+  if (cred?.type !== 'oauth' || typeof cred.access !== 'string') {
     throw new ChatGPTOAuthFileError(
       'missing_openai_credential',
       `${path} has no openai OAuth entry`,
@@ -97,7 +97,7 @@ export function createChatGPTCredentialStore(path: string) {
       return serialized(path, async () => {
         if (!fileLoaded) {
           const auth = await readAuthFile(path);
-          if (auth['openai']) memory.set('openai', auth['openai']);
+          if (auth.openai) memory.set('openai', auth.openai);
           fileLoaded = true;
         }
         return memory.get('openai');

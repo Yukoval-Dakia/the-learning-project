@@ -379,9 +379,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       pending !== undefined &&
       isToolArgumentContractFailure({ isError: event.isError, content: event.result?.content })
     ) {
-      const secrets = this.args.resolved.authMode !== 'oauth-file' && this.args.resolved.apiKey
-        ? [this.args.resolved.apiKey]
-        : [];
+      const secrets =
+        this.args.resolved.authMode !== 'oauth-file' && this.args.resolved.apiKey
+          ? [this.args.resolved.apiKey]
+          : [];
       // Fidelity: prefer this call's exact streamed bytes (sanitized — the
       // recursive pass redacts credentials inside embedded JSON fields). When no
       // deltas arrived, event.args is a pi-parsed object → label 'reconstructed'.
