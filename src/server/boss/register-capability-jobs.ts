@@ -3,8 +3,7 @@
 // Declared worker options win. Absent fields stay on the retired 2s/1 recipe.
 // Jobs with no schedule mount first, so a cron sender finds its on-demand queue already created.
 
-import type { PgBoss } from 'pg-boss';
-
+import type { Job, PgBoss } from 'pg-boss';
 import type { Db } from '@/db/client';
 import type { CapabilityManifest, JobDecl, JobHandlerFactory } from '@/kernel/manifest';
 import {
@@ -34,6 +33,16 @@ function withScheduledEligibility(
   return async (jobs) => {
     if (before) await before(db);
     if (!decide) return handler(jobs);
+    // YUK-1770 — a steering-triggered send (subscription reaction to a learner's
+    // own utterance seconds ago) is not the nightly cadence: the dormant-tier
+    // gate exists to keep scheduled spends off dormant learners, and the learner
+    // just spoke. Explicit reason tag bypasses only that gate, not the handler's
+    // own budget/machine checks.
+    const steeringTriggered = jobs.some(
+      (job: Job) =>
+        (job.data as { reason?: string } | null | undefined)?.reason === 'steering_changed',
+    );
+    if (steeringTriggered) return handler(jobs);
     const signals = (await loadNightlyContext(db, new Date(), [decl.name])).forJob(decl.name);
     const decision = decide(signals);
     if (!decision.run) {
