@@ -3,6 +3,7 @@
 
 export {
   PLACEMENT_QUEUE_EXPIRY_MS,
+  countPlacementInventory,
   dispatchPlacementStarterClaim,
   isPlacementStarterJobLive,
   markPlacementStarterClaimTerminal,

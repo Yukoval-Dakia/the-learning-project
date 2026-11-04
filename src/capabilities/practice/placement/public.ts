@@ -8,7 +8,7 @@ export {
 } from './api/placement-contracts';
 export { validatePlacementSubmission } from './server/placement-assessment';
 export { readPlacementProfile } from './server/placement-profile';
-export { selectNextPlacementItem } from './server/placement-select';
+export { countPlacementInventory, selectNextPlacementItem } from './server/placement-select';
 export {
   PlacementOrphanStateError,
   abandonOrphanPlacementTx,

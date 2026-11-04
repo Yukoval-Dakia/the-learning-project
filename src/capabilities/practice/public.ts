@@ -294,6 +294,7 @@ export {
   type PlacementProfileResponse,
   UpdatePlacementSessionBodySchema,
   abandonOrphanPlacementTx,
+  countPlacementInventory,
   placementProbeEnabled,
   readPlacementProfile,
   readPlacementSession,
