@@ -48,6 +48,18 @@ function Table({ children, node: _node, ...props }: ComponentProps<'table'> & { 
 }
 
 const baseComponents: MarkdownRendererProps['components'] = { pre: CodeBlock, table: Table };
+
+// YUK-1367 — a model sometimes writes the tool's `/practice/x` as `//practice/x`. The browser reads
+// that as host `practice`, so the click leaves the app. A first part that could not be a real host
+// (no dot, no port) is the in-app path with an extra slash; anything else names another host and
+// stays plain text: a link that looks internal must not go elsewhere.
+const PROTOCOL_RELATIVE = /^\/{2,}/;
+function chatLinkHref(href: string | undefined): string | null {
+  if (!href || !PROTOCOL_RELATIVE.test(href)) return href ?? null;
+  const rest = href.replace(PROTOCOL_RELATIVE, '');
+  const first = rest.split(/[/?#]/, 1)[0] ?? '';
+  return first !== '' && !/[.:@]/.test(first) ? `/${rest}` : null;
+}
 const extensions = [remarkGfm];
 
 /** Conversation content supports math explicitly, independent of the page's current subject. */
@@ -65,14 +77,19 @@ export function ConversationMarkdown({
       h2: ({ node: _node, id, ...props }) => (
         <h2 {...props} id={id === 'footnote-label' ? `message-${instance}-footnote-label` : id} />
       ),
-      a: ({ node: _node, 'aria-describedby': description, ...props }) => (
-        <a
-          {...props}
-          aria-describedby={
-            description === 'footnote-label' ? `message-${instance}-footnote-label` : description
-          }
-        />
-      ),
+      a: ({ node: _node, 'aria-describedby': description, href, ...props }) => {
+        const safeHref = chatLinkHref(href);
+        if (href && safeHref === null) return <span>{props.children}</span>;
+        return (
+          <a
+            {...props}
+            href={safeHref ?? undefined}
+            aria-describedby={
+              description === 'footnote-label' ? `message-${instance}-footnote-label` : description
+            }
+          />
+        );
+      },
     }),
     [instance],
   );
