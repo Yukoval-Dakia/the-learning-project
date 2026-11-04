@@ -90,7 +90,6 @@ import {
   markAttemptVerifying,
   markPlacementStarterClaimTerminal,
   placementDeliveryMetadata,
-  readPlacementDispatchEventId,
   reconcilePlacementDelivery,
   recordPlacementAttemptOutput,
   releaseAuthorizedPaidCall,
@@ -283,8 +282,6 @@ export interface RunQuizGenParams {
   supplyTrace?: SupplyTraceV1T;
   placementAttempt?: PlacementAttemptAuthority;
   placementHeartbeat?: PlacementAttemptHeartbeat;
-  /** Publication provenance: the dispatch event of a placement delivery. */
-  causedByEventId?: string;
   runAgentTaskFn?: RunAgentTaskFn;
   buildExaMcpServerFn?: BuildExaMcpServerFn;
   enqueueQuizVerify?: EnqueueQuizVerifyFn;
@@ -1155,7 +1152,6 @@ export function buildQuizGenHandler(
       }
       let placementAttempt: PlacementAttemptAuthority | undefined;
       let placementHeartbeat: PlacementAttemptHeartbeat | undefined;
-      let causedByEventId: string | undefined;
       try {
         if (data.placement_starter_claim_id) {
           const { deliveryNo } = placementDeliveryMetadata({
@@ -1178,7 +1174,6 @@ export function buildQuizGenHandler(
             now: deps.now,
             sleep: deps.heartbeatSleep,
           });
-          causedByEventId = await readPlacementDispatchEventId(db, job.id);
         }
         const result = await runQuizGen({
           db,
@@ -1199,7 +1194,6 @@ export function buildQuizGenHandler(
           ...(supplyTrace ? { supplyTrace } : {}),
           ...(placementAttempt ? { placementAttempt } : {}),
           ...(placementHeartbeat ? { placementHeartbeat } : {}),
-          ...(causedByEventId ? { causedByEventId } : {}),
           runAgentTaskFn: deps.runAgentTaskFn,
           buildExaMcpServerFn: deps.buildExaMcpServerFn,
           enqueueQuizVerify: deps.enqueueQuizVerify,

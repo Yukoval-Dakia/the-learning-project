@@ -149,7 +149,6 @@ export {
   materializePlacementStartersForGoal,
   resolvePlacementStarterGoalAuthority,
 } from './server/placement-starter-store';
-export { readPlacementDispatchEventId } from './server/placement-starter-web-delivery';
 export { isUnanchoredSupplyPaused } from './server/spend-gate';
 export {
   checkSupplyPlanKnowledgeIds,
