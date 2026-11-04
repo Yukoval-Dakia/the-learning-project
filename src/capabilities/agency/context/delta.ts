@@ -28,6 +28,11 @@ import type { DeltaSection, DueItemLine } from './types';
 type DbLike = Db | Tx;
 
 const DELTA_SCAN_LIMIT = 200;
+const NON_MATERIAL_QUESTION_SOURCES: ReadonlySet<string> = new Set([
+  'manual',
+  'web_sourced',
+  'quiz_gen',
+]);
 const NATIVE_ATTEMPT_ACTION = 'experimental:assessment_attempt';
 const RECORD_CAPTURE_ACTION = 'experimental:record_capture';
 const REVIEW_ACTION = 'review';
@@ -172,19 +177,22 @@ export async function readDeltaSection(
   // metadata.source_document_id、quiz_gen 物料的
   // metadata.quiz_gen.material_source_document_id）逐一查用途策略——任一非
   // 'allow'（answer_only/crisis/解析不出）或文档行缺失，该题不进启动段
-  // （题干和知识点名都不放）。无来源文档的题（手输/web_sourced 等非文档
-  // 派生）不受此闸。只影响启动段明细；review-due wire 与到期计数不变。
+  // （题干和知识点名都不放）。没有来源键的题只放行已知不来自学习者材料的
+  // source：变式题等派生题不记来源却可能由受限文档生成。只影响启动段明细；
+  // review-due wire 与到期计数不变。
   const dueQuestionIds = due.rows.map((row) => row.question_id);
   const questionMetaRows =
     dueQuestionIds.length > 0
       ? await db
-          .select({ id: question.id, metadata: question.metadata })
+          .select({ id: question.id, source: question.source, metadata: question.metadata })
           .from(question)
           .where(inArray(question.id, dueQuestionIds))
       : [];
   const docIdSet = new Set<string>();
   const docIdsByQuestion = new Map<string, string[]>();
+  const sourceByQuestion = new Map<string, string>();
   for (const row of questionMetaRows) {
+    sourceByQuestion.set(row.id, row.source);
     const meta =
       row.metadata && typeof row.metadata === 'object'
         ? (row.metadata as Record<string, unknown>)
@@ -211,6 +219,8 @@ export async function readDeltaSection(
   const sourceAllowed = (questionId: string): boolean => {
     const ids = docIdsByQuestion.get(questionId);
     if (!ids) return false; // 到期行指向的 question 行读不到 = 查不清，当不允许
+    if (ids.length === 0)
+      return NON_MATERIAL_QUESTION_SOURCES.has(sourceByQuestion.get(questionId) ?? '');
     return ids.every((id) => allowedDocIds.has(id));
   };
 
