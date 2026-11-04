@@ -57,8 +57,9 @@ function capMicroUsd(): number {
 }
 
 /**
- * A cap of 0 pauses paid supply outside placement. Those paths publish with no provenance, so
- * admission never solves what they produce and the spend buys no usable question.
+ * A cap of 0 stops new paid supply outside placement. Those paths publish with no provenance, so
+ * admission never solves what they produce and the spend buys no usable question. Jobs already
+ * queued still run.
  */
 export function isUnanchoredSupplyPaused(): boolean {
   return capMicroUsd() === 0;
