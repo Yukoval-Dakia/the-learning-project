@@ -575,12 +575,7 @@ export default function TodayPage({
                 的二级折叠盘（[裁决 5]），保留全部夜间活动事实。 */}
               <OvernightDigestBand navigate={navigate} />
 
-              <KpiRow
-                kpi={s.kpi}
-                proposalsDecisionTotal={s.proposals.decision_total}
-                proposalsHasMore={s.proposals.has_more}
-                navigate={navigate}
-              />
+              <KpiRow kpi={s.kpi} proposals={s.proposals} navigate={navigate} />
 
               {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。
                 无 active goal 时只省略画像，不影响其余工作台。 */}
