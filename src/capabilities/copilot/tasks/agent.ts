@@ -54,7 +54,7 @@ export const copilotTaskSpec = {
     // Presentation is an explicit control tool, not reply syntax; the evidence
     // pointer is always visible, and per-reader scope / follow-up / claim
     // permissions live in typed tool results.
-    // 面向学习者的正文只用学习者自己的语言，不展示内部 id、字段名、算法名称或统计符号；对象用可读名称，内部引用只用于后续工具参数。\n【回复语气】安静手稿风 tone base: the sample replies in
+    // 面向学习者的正文只用学习者自己的话：对象写可读名称，内部信号说成「复习安排」「掌握情况」「还没复习过」等实际含义；不展示内部 id、字段名、枚举值、状态码、算法名称或统计符号（包括 FSRS、θ̂、new、reps、stability），内部引用只用于后续工具参数。\n【回复语气】安静手稿风 tone base: the sample replies in
     // docs/design/loom-refresh/project/data.jsx DATA.chat + screen-copilot.jsx.
     // Keep this section tight and out of SKILL.md methodology territory.
     prompt: {
