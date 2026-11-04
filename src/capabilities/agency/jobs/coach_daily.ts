@@ -362,6 +362,15 @@ export function parseCoachOutputSafely(rawText: string): CoachPlanDraftT | null 
   const candidates: string[] = [rawText];
   const fenceMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenceMatch?.[1]) candidates.unshift(fenceMatch[1]);
+  // Live models (deepseek-v4.1-flash seen 2026-11-04) sometimes emit the JSON
+  // clean but append a stray CLOSING fence line with no opener — the paired
+  // regex misses it and JSON.parse chokes on the tail. Strip stray fence
+  // markers at either end as an extra best-effort candidate.
+  const stripped = rawText
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```+\s*$/i, '')
+    .trim();
+  if (stripped !== rawText.trim()) candidates.unshift(stripped);
   for (const candidate of candidates) {
     const trimmed = candidate.trim();
     if (!trimmed) continue;
