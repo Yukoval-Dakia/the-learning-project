@@ -2,12 +2,12 @@
 // processing steps and background helpers. State changes in place (进行中 → 完成 / 没完成); a row
 // with a summary opens it beneath itself. Internal error text never renders.
 
-import { Check, CircleAlert, CircleSlash, LoaderCircle } from 'lucide-react';
+import { Check, ChevronDown, CircleAlert, CircleSlash, LoaderCircle } from 'lucide-react';
 import { memo, useId, useState } from 'react';
 import { Expand } from '@/ui-next/public';
 import type { ChatMessage } from '../message-projection';
 import type { ReplaySubagentRun, ReplayToolOperation } from '../replay';
-import { toolLabel } from './tool-labels';
+import { toolActivity, toolLabel } from './tool-labels';
 
 type StepStatus = 'running' | 'done' | 'failed' | 'cancelled';
 
@@ -17,6 +17,8 @@ export interface StepView {
   status: StepStatus;
   /** One plain line; done → what came back, failed → what to do. */
   detail?: string;
+  /** YUK-1664 — what this step is doing, said while it runs (「正在查你最近的错题」). */
+  activity: string;
 }
 
 const STATUS_COPY: Record<StepStatus, string> = {
@@ -47,13 +49,11 @@ export function stepsOf(message: ChatMessage): StepView[] {
     steps.push({
       key: `call-${call.toolUseId ?? `${call.toolName}-${index}`}`,
       label,
+      activity: toolActivity(call.toolName),
       status: call.status,
-      detail:
-        call.status === 'failed'
-          ? `${label}暂时没完成，稍后再试。`
-          : call.status === 'done'
-            ? call.summary
-            : undefined,
+      // YUK-1664 — a tool's own summary is a diagnostic line (counts, flags, English keys), not
+      // learner text; only the failure gets a plain line.
+      detail: call.status === 'failed' ? `${label}暂时没完成，稍后再试。` : undefined,
     });
   });
   for (const subtask of message.subtasks ?? []) {
@@ -62,6 +62,7 @@ export function stepsOf(message: ChatMessage): StepView[] {
     steps.push({
       key: `subtask-${subtask.id}`,
       label: subtask.label,
+      activity: `正在处理：${subtask.label}`,
       status,
       detail:
         status === 'failed'
@@ -74,6 +75,7 @@ export function stepsOf(message: ChatMessage): StepView[] {
     steps.push({
       key: `op-${op.id}`,
       label: toolLabel(op.tool_name),
+      activity: toolActivity(op.tool_name),
       status,
       detail: lifecycleDetail(status, op.status === 'lost'),
     });
@@ -83,6 +85,7 @@ export function stepsOf(message: ChatMessage): StepView[] {
     steps.push({
       key: `helper-${run.id}`,
       label: '分头查资料',
+      activity: '正在分头查资料',
       status,
       detail: lifecycleDetail(status, run.status === 'lost'),
     });
@@ -146,5 +149,69 @@ export function StepList({ steps }: { steps: StepView[] }) {
         <ToolRow key={step.key} step={step} />
       ))}
     </ul>
+  );
+}
+
+/**
+ * YUK-1664 — the steps of one reply as the learner should see them. While the reply is being
+ * generated (`live`), one status line under the text says what the companion is doing right now and
+ * updates in place; earlier steps are not listed. Once the reply settles it folds into one summary
+ * line above the text that opens the full step list. The only motion is the running spinner and
+ * the chevron turning on open.
+ */
+export function StepActivity({
+  steps,
+  live,
+  hasText = false,
+}: {
+  steps: StepView[];
+  live: boolean;
+  /** Live only: some reply text is already on screen. */
+  hasText?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const listId = useId();
+  if (live) {
+    // A running step says what it does; before any step or text the companion is still working out
+    // the answer; otherwise it is writing the reply.
+    let text = '正在想怎么回答';
+    if (steps.length > 0 || hasText) text = '正在整理回复';
+    const running = steps.findLast((step) => step.status === 'running');
+    if (running) text = running.activity;
+    return (
+      // Not a live region: RunFooter already announces the run's stage politely; announcing every
+      // step here too (up to dozens per reply) would flood a screen reader.
+      <p className="un-cp-activity" aria-live="off">
+        <span className="un-cp-step-glyph" aria-hidden="true">
+          <LoaderCircle size={14} className="un-cp-spin" />
+        </span>
+        <span className="un-cp-activity-text">{text}</span>
+        {steps.length > 0 && <span className="un-cp-activity-count">第 {steps.length} 步</span>}
+      </p>
+    );
+  }
+  if (steps.length === 0) return null;
+  const failed = steps.filter((step) => step.status === 'failed').length;
+  const summary =
+    failed > 0 ? `用了 ${steps.length} 步，其中 ${failed} 步没完成` : `用了 ${steps.length} 步`;
+  return (
+    <div className="un-cp-activity-done" data-failed={failed > 0 ? '' : undefined}>
+      <button
+        type="button"
+        className="un-cp-step-line un-hit"
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="un-cp-step-glyph" aria-hidden="true">
+          {failed > 0 ? <CircleAlert size={14} /> : <Check size={14} />}
+        </span>
+        <span className="un-cp-step-label">{summary}</span>
+        <ChevronDown size={14} aria-hidden="true" className="un-cp-activity-chev" />
+      </button>
+      <Expand open={open} id={listId}>
+        <StepList steps={steps} />
+      </Expand>
+    </div>
   );
 }

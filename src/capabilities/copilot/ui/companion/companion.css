@@ -303,26 +303,7 @@
     color: var(--un-text-3);
   }
 
-  & .un-cp-reply-meta {
-    display: flex;
-    align-items: center;
-    gap: var(--un-sp-2);
-    color: var(--un-text-4);
-    font-size: var(--un-fs-1);
-  }
-
-  & .un-cp-caret {
-    width: 2px;
-    height: 1em;
-    border-radius: 1px;
-    background: var(--un-accent);
-  }
-
   @media (prefers-reduced-motion: no-preference) {
-    & .un-cp-caret {
-      animation: un-cp-blink 1.1s steps(2, start) infinite;
-    }
-
     & .un-cp-spin {
       animation: un-cp-spin 900ms linear infinite;
     }
@@ -452,6 +433,63 @@
     flex: none;
     margin-left: auto;
     color: var(--un-text-4);
+  }
+
+  /* YUK-1664 — the live activity line, then the folded summary of a reply's steps. */
+  & .un-cp-activity {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    min-height: 26px;
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .un-cp-activity .un-cp-step-glyph {
+    color: var(--un-accent);
+  }
+
+  & .un-cp-activity-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  & .un-cp-activity-count {
+    flex: none;
+    margin-left: auto;
+    color: var(--un-text-4);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .un-cp-activity-done .un-cp-step-glyph {
+    color: var(--un-positive);
+  }
+
+  & .un-cp-activity-done[data-failed] .un-cp-step-glyph {
+    color: var(--un-caution);
+  }
+
+  & .un-cp-activity-chev {
+    flex: none;
+    margin-left: auto;
+    color: var(--un-text-4);
+    transition: transform var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .un-cp-activity-done > button[aria-expanded="true"] .un-cp-activity-chev {
+    transform: rotate(180deg);
+  }
+
+  & .un-cp-activity-done .un-cp-steps {
+    margin-top: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    & .un-cp-activity-chev {
+      transition: none;
+    }
   }
 
   & .un-cp-step-detail {
@@ -1034,12 +1072,6 @@
   }
 }
 
-@keyframes un-cp-blink {
-  to {
-    visibility: hidden;
-  }
-}
-
 @keyframes un-cp-spin {
   to {
     transform: rotate(1turn);
@@ -1133,7 +1165,6 @@
   padding: var(--un-sp-3) var(--un-sp-4);
 }
 [data-ui-next][data-un-m3e="companion-content"] .un-cp-state,
-[data-ui-next][data-un-m3e="companion-content"] .un-cp-reply-meta,
 [data-ui-next][data-un-m3e="companion-content"] .un-cp-row-tombstone,
 [data-ui-next][data-un-m3e="companion-content"] .un-cp-quiet,
 [data-ui-next][data-un-m3e="companion-content"] .un-cp-hello-text,
