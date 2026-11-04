@@ -247,17 +247,17 @@ export async function readContractSection(
   }
 
   const causes = rankTopCauseCategories(failures, 2);
-  const causesLines: string[] = [];
   if (causes.length > 0) {
-    causesLines.push(
+    causesMd =
       failures.length < MIN_SAMPLE
         ? '近期高频误区：样本少'
-        : `近期高频误区：${causes.map((c) => `${c.cause}（n=${c.count}）`).join('、')}`,
-    );
+        : `近期高频误区：${causes.map((c) => `${c.cause}（n=${c.count}）`).join('、')}`;
   }
+
   // 最近几条失败的逐条原因：错因类别（misc_ 显示回填）+ 一句摘要，agent
   // judge 取 analysis_md、user_cause 取 user_notes；未归因照实标注。failures
-  // 已按用途过滤（getFailureAttemptsForDerivation），摘要不含受限内容。
+  // 已按用途过滤（getFailureAttemptsForDerivation），摘要不含受限内容。明细
+  // 独立成 unit，预算紧时先于基础段被裁（见 budget.ts dropRank）。
   const recentFailures = failures.slice(0, FAILURE_DETAIL_MAX);
   const miscLabels = await resolveMiscCauseLabels(
     db,
@@ -265,17 +265,15 @@ export async function readContractSection(
       .map((failure) => effectiveCauseForFailureAttempt(failure)?.primary_category)
       .filter((id): id is string => typeof id === 'string'),
   );
-  for (const failure of recentFailures) {
+  const failureLines = recentFailures.map((failure) => {
     const cause = effectiveCauseForFailureAttempt(failure);
     const label = cause
       ? (miscLabels.get(cause.primary_category) ?? cause.primary_category)
       : '未归因';
     const summary = excerpt(cause?.analysis_md ?? cause?.user_notes, FAILURE_SUMMARY_MAX);
-    causesLines.push(
-      `· ${shanghaiLabel(failure.created_at)} ${label}${summary.length > 0 ? `：${summary}` : ''}`,
-    );
-  }
-  causesMd = causesLines.length > 0 ? causesLines.join('\n') : null;
+    return `· ${shanghaiLabel(failure.created_at)} ${label}${summary.length > 0 ? `：${summary}` : ''}`;
+  });
+  const failureDetailsMd = failureLines.length > 0 ? failureLines.join('\n') : null;
 
-  return { steeringMd, masteryMd, causesMd, signalsMd: signalNotes, overnightMd };
+  return { steeringMd, masteryMd, causesMd, failureDetailsMd, signalsMd: signalNotes, overnightMd };
 }

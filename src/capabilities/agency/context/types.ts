@@ -53,6 +53,8 @@ export interface ContractSection {
   steeringMd: string | null;
   masteryMd: string | null;
   causesMd: string | null;
+  /** 最近失败逐条原因（可裁明细，独立于聚合错因行单独成 unit）。 */
+  failureDetailsMd: string | null;
   signalsMd: string[];
   overnightMd: string | null;
 }
