@@ -2,9 +2,9 @@ import { sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 
-/** With no live job left, waiting cannot advance a candidate, whichever job stopped. The
- * age covers pg-boss purging that job's record while still allowing the outbox gap before
- * the first enqueue. This never grants serving permission or authorizes another paid send. */
+/** With no live job left, waiting cannot advance a candidate once admission finished or
+ * source verification failed. A completed source verification alone still leads to an
+ * admission enqueue; the age covers that gap and pg-boss purging job records. This never grants serving permission or authorizes another paid send. */
 export async function readPlacementCandidateProgress(db: Db | Tx, questionIds: string[]) {
   if (questionIds.length === 0) return [];
   const serving = (await readQuestionServing(db, questionIds)).byId;
@@ -25,10 +25,13 @@ export async function readPlacementCandidateProgress(db: Db | Tx, questionIds: s
         ) and (
           exists (
             select 1 from pgboss.job j
-            where j.name in ('question_admission_run', 'source_verify')
-              and (j.data->>'question_id' = coalesce(q.parent_question_id, q.id)
+            where (j.data->>'question_id' = coalesce(q.parent_question_id, q.id)
                 or (j.data->'question_ids') ? coalesce(q.parent_question_id, q.id))
-              and j.state in ('completed', 'failed', 'cancelled')
+              and (
+                (j.name = 'question_admission_run'
+                  and j.state in ('completed', 'failed', 'cancelled'))
+                or (j.name = 'source_verify' and j.state in ('failed', 'cancelled'))
+              )
           ) or q.created_at < now() - interval '10 minutes'
         )
       )
