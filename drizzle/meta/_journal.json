@@ -988,6 +988,13 @@
       "when": 1793799751735,
       "tag": "0141_yuk1770_goal_steering",
       "breakpoints": true
+    },
+    {
+      "idx": 142,
+      "version": "7",
+      "when": 1793828943450,
+      "tag": "0142_lethal_hawkeye",
+      "breakpoints": true
     }
   ]
 }

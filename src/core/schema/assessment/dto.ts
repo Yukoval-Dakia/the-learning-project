@@ -351,6 +351,16 @@ export const FeedbackUnitResultView = z.object({
 export type FeedbackUnitResultViewT = z.infer<typeof FeedbackUnitResultView>;
 
 export const AssessmentFeedbackDto = z.strictObject({
+  /** Actual execution labels; no assertion that a model result is calibrated. */
+  grading_provenance: z
+    .array(
+      z.object({
+        scoring_unit_id: z.string().min(1),
+        source: z.literal('ai'),
+        calibration: z.literal('uncalibrated'),
+      }),
+    )
+    .optional(),
   evaluation_group_id: z.string().min(1).optional(),
   member_submission_ids: z.array(z.string().min(1)).min(1).optional(),
   submission_id: z.string().min(1),
@@ -634,7 +644,22 @@ export function projectFeedback(
           .filter((item): item is RevealedRubricExplanationT => item !== null)
       : [];
 
+  const aiResults = evaluation.unit_results.filter(
+    (result) =>
+      result.judged_by === 'AssessmentRuleJudgeTask' ||
+      result.judged_by === 'AssessmentRubricJudgeTask' ||
+      result.judged_by === 'JevScoringDecisionTask',
+  );
   return AssessmentFeedbackDto.parse({
+    ...(aiResults.length > 0
+      ? {
+          grading_provenance: aiResults.map((result) => ({
+            scoring_unit_id: result.scoring_unit_id,
+            source: 'ai' as const,
+            calibration: 'uncalibrated' as const,
+          })),
+        }
+      : {}),
     ...(snapshot
       ? {
           evaluation_group_id: evaluation.evaluation_group_id,

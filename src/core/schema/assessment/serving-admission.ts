@@ -53,7 +53,6 @@ export type ModelResponseClass = 'blank' | 'free';
  */
 export interface AdmittedModelSliceT {
   readonly slice_id: string;
-  readonly subject: string;
   readonly response_class: ModelResponseClass;
   readonly task_kind: string;
   readonly model: string;
@@ -126,7 +125,6 @@ function checkModelUnitAdmission(
   >,
   admission: ModelAdmissionContext | undefined,
   slots: readonly ResponseSlotT[],
-  questionSubject: string | null | undefined,
 ): string | null {
   if (executor.admitted_slice_id === null) {
     return `model_executor slice unadmitted (task ${executor.task_kind})`;
@@ -137,9 +135,6 @@ function checkModelUnitAdmission(
   const slice = admission.slices.get(executor.admitted_slice_id);
   if (slice === undefined) {
     return `admitted_slice_id '${executor.admitted_slice_id}' does not resolve to an active slice`;
-  }
-  if (questionSubject == null || slice.subject !== questionSubject) {
-    return `slice '${slice.slice_id}' is admitted for subject '${slice.subject}', not '${questionSubject ?? 'unresolved'}'`;
   }
   if (slice.task_kind !== executor.task_kind) {
     return `slice '${slice.slice_id}' is admitted for task '${slice.task_kind}', not '${executor.task_kind}'`;
@@ -221,7 +216,7 @@ export function decideAutomaticServing(
   revision: PublishedQuestionRevisionT,
   selectedPartIds: readonly string[],
   admission?: ModelAdmissionContext,
-  questionSubject?: string | null,
+  _questionSubject?: string | null,
 ): AutomaticServingDecision {
   const scoringIssues = validateScoringBasis(
     revision.scoring_basis,
@@ -384,7 +379,6 @@ export function decideAutomaticServing(
         executor,
         admission,
         revision.response_spec.slots,
-        questionSubject,
       );
       if (admissionIssue !== null) {
         return {

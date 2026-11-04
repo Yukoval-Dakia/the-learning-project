@@ -38,7 +38,6 @@ function readModelPins(hasActiveSlice: boolean): ModelPins {
 export function admittedSliceFromRow(row: SliceRow): AdmittedModelSliceT {
   return {
     slice_id: row.slice_id,
-    subject: row.subject,
     response_class: row.response_class,
     task_kind: row.task_kind,
     model: row.model,

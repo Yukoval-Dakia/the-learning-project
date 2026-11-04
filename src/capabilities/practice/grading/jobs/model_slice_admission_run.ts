@@ -1,18 +1,4 @@
-// model_slice_admission_run：模型判分切片的留出题准入 run
-// （ADR-0073 D2「每科 ≥30 道留出题的模型级准入，与单题标定互不替代」）。
-//
-// 输入是一套【冻结】留出题：每科 ≥30 道未调参题，带独立参考分。job 用生产
-// 同源的执行端口（createAdmissionRunExecutor —— 与正式判分同一装配边界，见
-// evaluate-submission.ts）逐题判分，把逐题 agreement / severe error 写成一条
-// 事件证据（experimental:model_slice_admission_run，幂等锚 run_id），只有
-// 阈值全过且非 dry_run 才登记切片。dry run 绝不准入；没有任何自动准入路径。
-//
-// 付费说明：本 job 调真实模型，由 lead 在周预算内运行。
-//
-// severe error 定义（零容忍方向翻转）：判出分 > unit 满分；参考 0 分而判
-// 出 > 0（假得分）；参考满分而判出 0（假零分）。pending/无法判定 = 不一致
-// （拉低 agreement），不算 severe —— 诚实 pending 不是判错。
-
+// System grading admission uses frozen reference-model comparisons, never gold labels.
 import { eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
@@ -216,6 +202,8 @@ const HoldoutItem = z
     materials: z.array(SharedMaterial).default([]),
     /** 独立参考分（不是模型产出；留出题带独立标定）。 */
     reference_points: z.number().min(0),
+    answer_class: z.enum(['correct', 'equivalent', 'wrong', 'partial']).optional(),
+    class_reason: z.string().min(1).optional(),
   })
   .strict();
 
@@ -225,7 +213,6 @@ const ModelSliceAdmissionRunData = z
     run_id: z.string().min(1),
     slice: z
       .object({
-        subject: z.string().min(1),
         response_class: z.enum(['blank', 'free']),
         task_kind: z.string().min(1),
         model: z.string().min(1),
@@ -239,6 +226,7 @@ const ModelSliceAdmissionRunData = z
     holdout_digest: z.string().min(1),
     items: z.array(HoldoutItem).min(1),
     per_item_max_cost_usd_micros: z.number().int().min(1),
+    total_max_cost_usd_micros: z.number().int().min(1).max(3_000_000).default(3_000_000),
     /** dry run 只出证据，绝不登记准入。 */
     dry_run: z.boolean().default(false),
     admitted_by: z.string().min(1),
@@ -303,6 +291,7 @@ function rawHoldoutItems(rawData: unknown): unknown {
 
 const StoredAdmissionPayload = z
   .object({
+    request_digest: z.string().optional(),
     dry_run: z.boolean(),
     items: z.array(z.object({ agreed: z.boolean() }).passthrough()),
     agreement_ratio: z.number(),
@@ -329,11 +318,11 @@ async function finishFromStoredEvidence(
   db: Db,
   stored: { outcome: string | null; payload: unknown },
   registrationInput: {
-    subject: string;
     response_class: 'blank' | 'free';
     task_kind: string;
     model: string;
     model_version: string;
+    request_digest: string;
     holdout_evidence_ref: string;
     admitted_by: string;
   },
@@ -360,6 +349,14 @@ async function finishFromStoredEvidence(
         'stored evidence for this run_id is unreadable; the run was not repeated and the slice was not admitted',
       ],
     };
+  }
+  if (
+    stored.outcome === 'passed' &&
+    parsed.data.request_digest !== registrationInput.request_digest
+  ) {
+    throw new Error(
+      'stored admission evidence does not match the frozen request; use a new run_id',
+    );
   }
   const failures = [...parsed.data.failures];
   let admitted = false;
@@ -424,6 +421,7 @@ export async function runModelSliceAdmission(
   const evidenceEventId = `evt_model_slice_admission_${data.run_id}`;
   const registrationInput = {
     ...data.slice,
+    request_digest: canonicalHash(data),
     holdout_evidence_ref: evidenceEventId,
     admitted_by: data.admitted_by,
   };
@@ -471,10 +469,7 @@ export async function runModelSliceAdmission(
     }
   }
 
-  // 3b) 学科一致性（付费前置栅栏）：留出题必须真属于切片声明的学科。学科沿
-  //     canonical bridge 解析 —— revision → 根题 → knowledge_ids[0] →
-  //     effective domain → subject profile id；根题缺失、无知识标注或域不可
-  //     解析都当场失败，绝不在付费之后才发现留出题集不属于本切片学科。
+  // Subjects record coverage only; every item still binds its frozen question and rule.
   const revisionRows = await db
     .select({
       revision_id: question_revision.revision_id,
@@ -512,11 +507,6 @@ export async function runModelSliceAdmission(
         `model_slice_admission_run: item '${item.item_id}' knowledge '${lookup.knowledge_id}' has no resolvable effective domain`,
       );
     }
-    if (lookup.subject !== data.slice.subject) {
-      throw new Error(
-        `model_slice_admission_run: item '${item.item_id}' resolves to subject '${lookup.subject}', not '${data.slice.subject}' — the holdout set does not belong to the slice's subject`,
-      );
-    }
     assertFrozenUnit(item.item_id, item.revision_id, item.unit, revision.scoring_basis);
     assertFrozenQuestionParts(
       item.item_id,
@@ -524,6 +514,41 @@ export async function runModelSliceAdmission(
       item.question_parts,
       revision.structure,
     );
+  }
+
+  const answerClasses = ['correct', 'equivalent', 'wrong', 'partial'] as const;
+  if (new Set(data.items.map((item) => item.item_id)).size !== data.items.length) {
+    throw new Error('model_slice_admission_run: duplicate item identity');
+  }
+  if (data.slice.response_class === 'free') {
+    const byQuestion = new Map<string, Set<string>>();
+    for (const item of data.items) {
+      if (!item.answer_class || !item.class_reason) {
+        throw new Error(
+          'model_slice_admission_run: free responses require four-class explanations',
+        );
+      }
+      const groupId = revisionById.get(item.revision_id)!.group_id;
+      const classes = byQuestion.get(groupId) ?? new Set<string>();
+      if (classes.has(item.answer_class)) throw new Error('duplicate question/class');
+      classes.add(item.answer_class);
+      byQuestion.set(groupId, classes);
+      if (
+        item.unit.points === 0 ||
+        ((item.answer_class === 'correct' || item.answer_class === 'equivalent') &&
+          !samePoints(item.reference_points, item.unit.points!)) ||
+        (item.answer_class === 'wrong' && item.reference_points !== 0) ||
+        (item.answer_class === 'partial' &&
+          (item.reference_points <= 0 || item.reference_points >= item.unit.points!))
+      ) {
+        throw new Error(`invalid reference points for ${item.item_id}`);
+      }
+    }
+    if (byQuestion.size < 30 || [...byQuestion.values()].some((classes) => classes.size !== 4)) {
+      throw new Error(
+        'model_slice_admission_run: at least 30 questions, each with all four classes required',
+      );
+    }
   }
 
   // 4) 占位之后才逐题判分。另一条 run 拿着同一切片的会话锁时，返回
@@ -536,6 +561,10 @@ export async function runModelSliceAdmission(
     const results: ModelSliceAdmissionItemResult[] = [];
     let knownCostMicros = 0;
     for (const item of data.items) {
+      if (knownCostMicros + data.per_item_max_cost_usd_micros > data.total_max_cost_usd_micros) {
+        failures.push('total cost cap reached before next call');
+        break;
+      }
       const port = createAdmissionRunExecutor(
         db,
         data.slice.task_kind,
@@ -580,6 +609,10 @@ export async function runModelSliceAdmission(
         ),
       );
       knownCostMicros = holdoutRunTally(results).known_cost_usd_micros;
+      if (outcome.cost_usd_micros === undefined) {
+        failures.push('unknown cost; no further paid calls permitted');
+        break;
+      }
     }
 
     const tally = holdoutRunTally(results);
@@ -587,15 +620,47 @@ export async function runModelSliceAdmission(
     const severeErrors = tally.severe_errors;
     const agreementRatio = tally.agreement_ratio;
     const unknownCostItems = tally.unknown_cost_items;
-    if (severeErrors > MODEL_SLICE_ADMISSION_THRESHOLDS.max_severe_errors) {
-      failures.push(
-        `severe_errors ${severeErrors} > ${MODEL_SLICE_ADMISSION_THRESHOLDS.max_severe_errors}`,
-      );
-    }
-    if (agreementRatio < MODEL_SLICE_ADMISSION_THRESHOLDS.min_agreement_ratio) {
-      failures.push(
-        `agreement_ratio ${agreementRatio.toFixed(4)} < ${MODEL_SLICE_ADMISSION_THRESHOLDS.min_agreement_ratio}`,
-      );
+    const classResults = answerClasses.map((answerClass) => {
+      const members = data.items.filter((item) => item.answer_class === answerClass);
+      const errors = members
+        .filter((item) => {
+          const result = results.find((result) => result.item_id === item.item_id);
+          if (answerClass === 'partial') return result?.agreed !== true;
+          if (answerClass === 'wrong') {
+            // Unresolved calls cannot demonstrate admission, even though they fabricate no score.
+            return (
+              !result ||
+              result.status !== 'scored' ||
+              result.awarded_points === null ||
+              samePoints(result.awarded_points, item.unit.points!)
+            );
+          }
+          return result?.agreed !== true;
+        })
+        .map((item) => item.item_id);
+      return { answer_class: answerClass, items: members.length, errors };
+    });
+    if (data.slice.response_class === 'free') {
+      for (const group of classResults) {
+        if (group.answer_class === 'partial') continue;
+        const allowed = group.answer_class === 'wrong' ? 1 : 2;
+        if (group.errors.length * 30 > allowed * group.items) {
+          failures.push(
+            `${group.answer_class}: ${group.errors.length}/${group.items} exceeds ${allowed}/30`,
+          );
+        }
+      }
+    } else {
+      if (severeErrors > MODEL_SLICE_ADMISSION_THRESHOLDS.max_severe_errors) {
+        failures.push(
+          `severe_errors ${severeErrors} > ${MODEL_SLICE_ADMISSION_THRESHOLDS.max_severe_errors}`,
+        );
+      }
+      if (agreementRatio < MODEL_SLICE_ADMISSION_THRESHOLDS.min_agreement_ratio) {
+        failures.push(
+          `agreement_ratio ${agreementRatio.toFixed(4)} < ${MODEL_SLICE_ADMISSION_THRESHOLDS.min_agreement_ratio}`,
+        );
+      }
     }
     const passed = failures.length === 0;
 
@@ -611,7 +676,12 @@ export async function runModelSliceAdmission(
       subject_id: sliceId,
       outcome: passed ? 'passed' : 'failed',
       payload: {
-        version: 1,
+        version: 2,
+        request_digest: canonicalHash(data),
+        evidence_kind: 'reference_model_comparison',
+        calibration: 'uncalibrated',
+        class_results: classResults,
+        subject_coverage: [...subjects.values()],
         run_id: data.run_id,
         slice: data.slice,
         holdout_digest: data.holdout_digest,
