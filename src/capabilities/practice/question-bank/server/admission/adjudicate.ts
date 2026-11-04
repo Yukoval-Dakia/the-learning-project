@@ -17,6 +17,7 @@ import {
   solverParts,
   solverUnits,
 } from './solve';
+import { AdmissionNotSent } from './stages';
 
 export const ADJUDICATION_TASK_KIND = 'QuestionAdmissionAdjudicateTask';
 
@@ -31,9 +32,7 @@ export async function adjudicateAdmission(
 ) {
   const config = getTaskOverride(ADJUDICATION_TASK_KIND);
   if (!config?.provider || !config.model || config.overrideGlobalPin !== true) {
-    throw new Error(
-      'Admission adjudicator requires task.QuestionAdmissionAdjudicateTask.provider/model and override_global_pin=true',
-    );
+    throw new AdmissionNotSent();
   }
   const payload = AdmissionAdjudicationInput.parse({
     parts: solverParts(definition),

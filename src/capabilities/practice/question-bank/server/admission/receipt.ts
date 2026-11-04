@@ -62,7 +62,7 @@ export const AdmissionResultReceipt = z.object({
   recorded_at: z.string().datetime(),
   result: z
     .object({
-      status: z.enum(['admitted', 'withheld', 'pending']),
+      status: z.enum(['admitted', 'withheld', 'pending', 'waiting']),
       reason: z.string().optional(),
       resolved: Contract.optional(),
       per_unit: z.array(

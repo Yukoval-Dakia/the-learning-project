@@ -196,10 +196,34 @@ function blankNormalizationFor(seed: ScoringUnitCriterionT | null): BlankNormali
  * 已从 private 材料 + rule_reference statement 收集印刷答案原文）。
  */
 export function definitionFromContract(contract: NormalizedContract): QuestionAdmissionDefinition {
-  const converted = contract.response_spec.slots.map((slot) => ({
-    original: slot,
-    ...convertSlot(slot),
-  }));
+  const semanticSlotIds = new Set(
+    contract.scoring_basis.units
+      .filter(
+        (unit) =>
+          unit.criterion.kind === 'rule_reference' ||
+          unit.criterion.kind === 'rubric' ||
+          unit.criterion.kind === 'holistic_level',
+      )
+      .flatMap((unit) => unit.slot_refs),
+  );
+  const converted = contract.response_spec.slots.map((slot) => {
+    const converted = convertSlot(slot);
+    if (semanticSlotIds.has(slot.slot_id) && converted.targetKind === 'blank') {
+      return {
+        original: slot,
+        slot: {
+          slot_id: slot.slot_id,
+          part_id: slot.part_id,
+          placement: slot.placement,
+          kind: 'open_response' as const,
+          accepted_evidence: [],
+          evidence_required: false,
+        },
+        targetKind: 'free' as const,
+      };
+    }
+    return { original: slot, ...converted };
+  });
   const convertedById = new Map(converted.map((entry) => [entry.original.slot_id, entry] as const));
 
   const response_spec: QuestionAdmissionDefinition['response_spec'] = {

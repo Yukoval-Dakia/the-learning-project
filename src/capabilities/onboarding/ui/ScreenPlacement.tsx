@@ -524,15 +524,28 @@ function NoItemStatus({
   onUpload: () => void;
 }) {
   const preparing = [...new Set(noItem.preparing_subjects.map((id) => subjectDisplayName(id)))];
+  const admissionWaits = noItem.admission_waits ?? [];
+  const knownReset = admissionWaits
+    .map((wait) => wait.retry_at)
+    .filter((value): value is string => value != null)
+    .sort()[0];
+  const waitText = admissionWaits.some((wait) => wait.reason === 'login')
+    ? '有些题在等待恢复题目校验服务，这些题暂时跳过，可重新检查其他可用题。'
+    : knownReset
+      ? `有些题在等待校验额度恢复，预计 ${new Date(knownReset).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 后重试；这些题暂时跳过，可重新检查其他可用题。`
+      : admissionWaits.length
+        ? '有些题在等待校验额度恢复；恢复时间还未知，这些题暂时跳过，可重新检查其他可用题。'
+        : null;
   return (
     <div role="status" aria-live="polite" className="un-ob-status">
       <OnboardingState
         icon={<Clock size={24} />}
         title="暂时没有能出的题"
         text={
-          preparing.length > 0
+          waitText ??
+          (preparing.length > 0
             ? `还在准备${preparing.join('、')}的题。可以过一会儿再检查，也可以先结束定位。`
-            : '目前也没有题在准备。可以先结束定位，或者上传自己的材料，从里面出题。'
+            : '目前也没有题在准备。可以先结束定位，或者上传自己的材料，从里面出题。')
         }
         action={
           <>

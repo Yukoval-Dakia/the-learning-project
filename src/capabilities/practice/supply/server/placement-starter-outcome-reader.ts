@@ -1,11 +1,16 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import type { Tx } from '@/db/client';
-import { learning_session, placement_starter_claim } from '@/db/schema';
+import {
+  learning_session,
+  placement_starter_attempt_question,
+  placement_starter_claim,
+} from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import {
   type PlacementStarterOutcome,
   readPlacementStarterFailure,
 } from '@/kernel/placement-starter-outcome';
+import { readAdmissionWaits } from '../../question-bank/public';
 import { placementStarterIdentity } from './placement-starter-identity';
 import { resolvePlacementStarterGoalAuthority } from './placement-starter-store';
 
@@ -54,10 +59,34 @@ export async function readPlacementStarterOutcomes(
         inArray(placement_starter_claim.subject_id, authority.subjectIds),
       ),
     );
+  const questionLinks = claims.length
+    ? await db
+        .select({
+          question_id: placement_starter_attempt_question.question_id,
+          claim_id: placement_starter_attempt_question.claim_id,
+        })
+        .from(placement_starter_attempt_question)
+        .where(
+          inArray(
+            placement_starter_attempt_question.claim_id,
+            claims.map((claim) => claim.id),
+          ),
+        )
+    : [];
+  const waits = await readAdmissionWaits(
+    db,
+    questionLinks.map((link) => link.question_id),
+  );
   return authority.subjectIds.map((subjectId): PlacementStarterOutcome => {
     const identity = placementStarterIdentity(authority.semanticGoalRevisionId, subjectId);
     const claim = claims.find((row) => row.subject_id === subjectId);
+    const admissionWaits = waits.filter((wait) =>
+      questionLinks.some(
+        (link) => link.question_id === wait.question_id && link.claim_id === claim?.id,
+      ),
+    );
     const binding = {
+      ...(admissionWaits.length ? { admission_waits: admissionWaits } : {}),
       session_id: sessionId,
       goal_id: goalId,
       semantic_goal_revision_id: authority.semanticGoalRevisionId,

@@ -707,15 +707,37 @@ export async function runQuestionAdmission(
     }),
   );
   const finalAssembled = assemble(finalIds);
+  // Corrected private scoring evidence lives in the new criteria. Retain the
+  // original evidence in the paid input/old revision, never feed it to the new grader.
+  const resolvedMaterials =
+    finalIds.size === definition.units.length
+      ? definition.structure.materials.filter(isPublicSharedMaterial)
+      : definition.structure.materials;
+  const retainedMaterials = new Set(resolvedMaterials.map((material) => material.material_id));
+  const resolvedStructure = {
+    ...definition.structure,
+    materials: resolvedMaterials,
+    parts: definition.structure.parts.map((part) => ({
+      ...part,
+      material_ids: part.material_ids.filter((id) => retainedMaterials.has(id)),
+    })),
+  };
+  const resolvedBasis = {
+    ...finalAssembled.basis,
+    units: finalAssembled.basis.units.map((unit) => ({
+      ...unit,
+      material_refs: unit.material_refs.filter((id) => retainedMaterials.has(id)),
+    })),
+  };
   const resolvedContract: ResolvedAdmissionContract = {
-    structure: definition.structure,
+    structure: resolvedStructure,
     response_spec: finalAssembled.spec,
-    scoring_basis: finalAssembled.basis,
+    scoring_basis: resolvedBasis,
     execution_plan: finalAssembled.plan,
     integrity_digest: contractIntegrityDigest({
-      structure: definition.structure,
+      structure: resolvedStructure,
       response_spec: finalAssembled.spec,
-      scoring_basis: finalAssembled.basis,
+      scoring_basis: resolvedBasis,
       execution_plan: finalAssembled.plan,
     }),
   };

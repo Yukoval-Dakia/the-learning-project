@@ -277,6 +277,9 @@ export function placementNoItem(
 ): z.infer<typeof PlacementNoItemSchema> {
   return {
     reason: 'no_servable_item',
+    ...(starterSupply.some((outcome) => outcome.admission_waits?.length)
+      ? { admission_waits: starterSupply.flatMap((outcome) => outcome.admission_waits ?? []) }
+      : {}),
     preparing_subjects: starterSupply
       .filter((outcome) => outcome.state === 'pending')
       .map((outcome) => outcome.subject_id),

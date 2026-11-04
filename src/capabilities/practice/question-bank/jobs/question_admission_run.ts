@@ -20,6 +20,7 @@ import {
   recordPaidEffectResult,
   settleExpiredPaidEffectSends,
 } from '@/db/paid-effect-store';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import {
   event,
   knowledge,
@@ -39,6 +40,7 @@ import {
 } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { type BoundRunTaskTextFn, makeRunTaskTextFn } from '@/server/ai/runner-fn';
+import { getStartedBoss } from '@/server/boss/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   placementAuthority as placementAuthorityPort,
@@ -49,6 +51,7 @@ import { runQuestionAdmissionChecks } from '../server/admission/checks';
 import {
   ADMISSION_FAMILY,
   AdmissionJobData,
+  admissionJobId,
   admissionTranscriptAllowed,
   isPendingAdmission,
   lockAdmissionGroup,
@@ -79,13 +82,28 @@ import {
 } from '../server/admission/solution-prior';
 import { QUESTION_ADMISSION_TASK_KIND } from '../server/admission/solve';
 import {
+  ADMISSION_STAGE_FAMILY,
+  AdmissionNotSent,
+  type AdmissionRecoveryReader,
+  type AdmissionStageReceiptRef,
+  AdmissionWaiting,
+  admissionStageRunner,
+} from '../server/admission/stages';
+import {
   applyCustomPreviewDecision,
   prepareAdmissionCustomPreview,
 } from '../server/custom-block-preview/admission-preview';
 
 export type QuestionAdmissionRunData = AdmissionJobData;
 export interface QuestionAdmissionRunResult {
-  status: 'admitted' | 'withheld' | 'pending' | 'stale' | 'conflict' | 'already_verified';
+  status:
+    | 'admitted'
+    | 'withheld'
+    | 'pending'
+    | 'waiting'
+    | 'stale'
+    | 'conflict'
+    | 'already_verified';
   group_id: string;
   revision_id?: string;
   revision_ordinal?: number;
@@ -223,7 +241,11 @@ export async function runAdmissionForQuestion(
   db: Db,
   suppliedData: QuestionAdmissionRunData,
   delivery: AdmissionDelivery = { id: randomUUID() },
-  deps: { runTask?: BoundRunTaskTextFn; signal?: AbortSignal } = {},
+  deps: {
+    runTask?: BoundRunTaskTextFn;
+    signal?: AbortSignal;
+    providerRecovery?: AdmissionRecoveryReader;
+  } = {},
 ): Promise<QuestionAdmissionRunResult> {
   const data = AdmissionJobData.parse(suppliedData);
   let groupId = data.question_id;
@@ -248,6 +270,7 @@ export async function runAdmissionForQuestion(
     per_unit: [],
   });
   await settleExpiredPaidEffectSends(db, { family: ADMISSION_FAMILY });
+  await settleExpiredPaidEffectSends(db, { family: ADMISSION_STAGE_FAMILY });
   // A question bound to a live sourcing_web placement delivery is admitted under that claim:
   // the delivery's authority must hold before this paid batch is claimed (the batch is one
   // paid effect), each solve call is recorded on the claim, and the application re-checks the
@@ -391,13 +414,17 @@ export async function runAdmissionForQuestion(
 
   const attemptedTaskRunIds = new Set<string>();
   let receipt: AdmissionResultReceipt;
-  if (batch.kind === 'receipt') {
+  if (batch.kind === 'receipt' && batch.receipt.result.status !== 'waiting') {
     receipt = batch.receipt;
   } else {
+    const batchFence =
+      batch.kind === 'winner' ? batch.fence : (await readPaidEffect(db, batch.identity))?.fence;
+    if (batchFence == null) throw new Error('Admission coordinator fence missing');
     const controller = new AbortController();
     const abort = () => controller.abort(deps.signal?.reason);
     if (deps.signal?.aborted) abort();
     else deps.signal?.addEventListener('abort', abort, { once: true });
+    const stageReceiptRefs: AdmissionStageReceiptRef[] = [];
     let purposeStopped = false;
     let checking = false;
     const beforeSend = async () => {
@@ -409,9 +436,13 @@ export async function runAdmissionForQuestion(
           await lockAdmissionGroup(tx, rootId);
           const snapshot = await readPaidEffect(tx, batch.identity);
           if (
-            snapshot?.state !== 'sending' ||
-            snapshot.fence !== batch.fence ||
-            snapshot.delivery.deliveryId !== delivery.id
+            !(
+              snapshot?.state === 'sending' ||
+              (snapshot?.state === 'receipt_ready' &&
+                AdmissionResultReceipt.parse(snapshot.result).result.status === 'waiting')
+            ) ||
+            snapshot.fence !== batchFence ||
+            snapshot.delivery.deliveryId !== batch.sourceDeliveryId
           )
             throw new Error('Question admission original paid send fence closed');
           const purpose = await checkPurpose(tx);
@@ -458,7 +489,7 @@ export async function runAdmissionForQuestion(
             purposeState: batch.purpose.state,
           }),
         });
-      const runTask: BoundRunTaskTextFn = async (...args) => {
+      const fencedTask: BoundRunTaskTextFn = async (...args) => {
         try {
           await beforeSend();
           const [kind, input, ctx] = args;
@@ -468,8 +499,8 @@ export async function runAdmissionForQuestion(
             ...ctx,
             lifecycleAbortController: controller,
             beforeProviderQuery: async (started) => {
-              await ctx?.beforeProviderQuery?.(started);
               await beforeSend();
+              await ctx?.beforeProviderQuery?.(started);
             },
           } satisfies import('@/server/ai/runner-fn').RunTaskCallCtx;
           const result =
@@ -490,10 +521,22 @@ export async function runAdmissionForQuestion(
               ? error.taskRunId
               : null;
           if (failedRunId) attemptedTaskRunIds.add(failedRunId);
-          if (!purposeStopped) await recordPlacementAdmissionCall(failedRunId, null);
+          if (!purposeStopped && failedRunId) await recordPlacementAdmissionCall(failedRunId, null);
           throw error;
         }
       };
+      const runTask = admissionStageRunner({
+        db,
+        groupId: rootId,
+        baseDigest: batch.input.contract.integrity_digest,
+        deliveryId: delivery.id,
+        execute: fencedTask,
+        taskRunIds: attemptedTaskRunIds,
+        receiptRefs: stageReceiptRefs,
+        beforeSend,
+        recovery: deps.providerRecovery,
+        recoveryConfirmed: data.recovery_confirmed,
+      });
       // Metadata for the solution prior only: a read failure must not touch the paid batch.
       const knowledgeCandidates = await loadPriorKnowledgeCandidates(db, {
         groupId: rootId,
@@ -552,29 +595,119 @@ export async function runAdmissionForQuestion(
         ...new Set([...attemptedTaskRunIds, ...result.evidence_refs.task_run_ids]),
       ];
       result.verification.evidence.attempt_run_ids = result.evidence_refs.task_run_ids;
+      result.verification.evidence.paid_stage_receipts = stageReceiptRefs;
       receipt = AdmissionResultReceipt.parse(
         JSON.parse(JSON.stringify({ version: 1, recorded_at: new Date().toISOString(), result })),
       );
       // Separate durable transaction: a publication failure must not lose the paid result.
-      await db.transaction((tx) =>
-        recordPaidEffectResult(tx, batch.identity, delivery.id, receipt, { fence: batch.fence }),
-      );
+      if (batch.kind === 'winner')
+        await db.transaction((tx) =>
+          recordPaidEffectResult(tx, batch.identity, delivery.id, receipt, { fence: batchFence }),
+        );
     } catch (error) {
-      await db.transaction(async (tx) => {
-        await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
-        const snapshot = await readPaidEffect(tx, batch.identity);
-        if (snapshot?.state === 'sending' || snapshot?.state === 'unknown') {
-          await markPaidEffectUnknown(
-            tx,
-            batch.identity,
-            delivery.id,
-            `${error instanceof Error ? error.message : String(error)};task_runs=${[...attemptedTaskRunIds].join(',')}`,
-            { fence: batch.fence },
+      if (error instanceof AdmissionWaiting) {
+        const waitingReceipt = AdmissionResultReceipt.parse({
+          version: 1,
+          recorded_at: new Date().toISOString(),
+          result: {
+            status: 'waiting',
+            waiting: { ...error.recovery, stage: error.stage },
+            per_unit: [],
+            verification: {
+              policy_id: batch.input.policy_id,
+              outcome: 'suspended',
+              evidence: {
+                pack: 'question_admission_wait',
+                waiting: error.recovery,
+                stage: error.stage,
+                task_run_ids: [...attemptedTaskRunIds],
+                paid_stage_receipts: stageReceiptRefs,
+              },
+            },
+            evidence_refs: { task_run_ids: [...attemptedTaskRunIds] },
+          },
+        });
+        const boss = error.recovery.retry_at ? await getStartedBoss() : null;
+        await db.transaction(async (tx) => {
+          await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
+          await assertAdmissionDelivery(tx, delivery);
+          if (batch.kind === 'winner')
+            await recordPaidEffectResult(tx, batch.identity, delivery.id, waitingReceipt, {
+              fence: batchFence,
+            });
+          if (boss && error.recovery.retry_at) {
+            const wakeData = {
+              ...data,
+              admission_version: 4 as const,
+              question_id: rootId,
+              recovery_confirmed: false,
+            };
+            await boss.send(ADMISSION_FAMILY, wakeData, {
+              id: admissionJobId(
+                rootId,
+                batch.input.revision_id ?? rootId,
+                `${batch.input.contract.integrity_digest}:${error.stage}`,
+                batch.input.admission_generation,
+              ),
+              startAfter: new Date(error.recovery.retry_at),
+              db: fromPgBossDrizzleTx(tx),
+            });
+          }
+        });
+        return {
+          ...simple('waiting'),
+          per_unit: batch.input.contract.scoring_basis.units.map((unit) => ({
+            scoring_unit_id: unit.scoring_unit_id,
+            status: 'waiting',
+            reason: error.recovery.reason,
+          })),
+        };
+      }
+      if (error instanceof AdmissionNotSent) {
+        receipt = AdmissionResultReceipt.parse({
+          version: 1,
+          recorded_at: new Date().toISOString(),
+          result: {
+            status: 'withheld',
+            reason: 'admission_provider_query_not_started',
+            per_unit: batch.input.contract.scoring_basis.units.map((unit) => ({
+              scoring_unit_id: unit.scoring_unit_id,
+              status: 'withheld',
+              reason: 'admission_provider_query_not_started',
+            })),
+            verification: {
+              policy_id: batch.input.policy_id,
+              outcome: 'suspended',
+              evidence: {
+                pack: 'question_admission_not_sent',
+                repair_delivery: { kind: 'system_closed', reason: 'provider_query_not_started' },
+                paid_stage_receipts: stageReceiptRefs,
+              },
+            },
+            evidence_refs: { task_run_ids: [...attemptedTaskRunIds] },
+          },
+        });
+        if (batch.kind === 'winner')
+          await db.transaction((tx) =>
+            recordPaidEffectResult(tx, batch.identity, delivery.id, receipt, { fence: batchFence }),
           );
-        }
-      });
-      if (purposeStopped) return simple('pending');
-      throw error;
+      } else {
+        await db.transaction(async (tx) => {
+          await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
+          const snapshot = await readPaidEffect(tx, batch.identity);
+          if (snapshot?.state === 'sending' || snapshot?.state === 'unknown') {
+            await markPaidEffectUnknown(
+              tx,
+              batch.identity,
+              delivery.id,
+              `${error instanceof Error ? error.message : String(error)};task_runs=${[...attemptedTaskRunIds].join(',')}`,
+              { fence: batchFence },
+            );
+          }
+        });
+        if (purposeStopped) return simple('pending');
+        throw error;
+      }
     } finally {
       clearInterval(timer);
       deps.signal?.removeEventListener('abort', abort);
@@ -694,6 +827,9 @@ export async function runAdmissionForQuestion(
         input: batch.input,
         identity: batch.identity,
         receipt,
+        ...(batch.kind === 'receipt' && batch.receipt.result.status === 'waiting'
+          ? { coordinatorReceipt: batch.receipt }
+          : {}),
         admitted: gradingAdmitted,
         expectedCurrentRevision: batch.input.revision_id,
         expectedAdmissionGeneration: lifecycle?.scoring_admission_generation ?? null,
