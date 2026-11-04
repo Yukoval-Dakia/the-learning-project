@@ -907,11 +907,22 @@ function resolveTaskReasoning(
   }
   const level = requested as PiThinkingLevelName;
   const { reasoning: profile } = resolveModelProfile(provider, model);
-  // 'off' is only meaningful where the wire can express a disable switch
-  // (toggle lanes emit thinking:{disabled}). On effort/budget lanes pi maps
-  // 'off' to null — nothing is sent — so the honest applied is 'none'.
+  // 'off' needs a protocol that can express a disable — decided by the
+  // model's protocol facts, not by reasoning mode. pi emits the disable
+  // shape only when the built level map leaves 'off' expressible:
+  // absent map (toggle lanes) → off is expressible; a map that names 'off'
+  // a string → expressible; a map whose 'off' is absent/null → pi sends
+  // nothing (built maps fill missing levels with null), so applied is
+  // 'none'. anthropic-messages expresses the disable on its own branch.
   if (level === 'off') {
-    return { requested, applied: profile.mode === 'toggle' ? 'off' : 'none' };
+    const facts = executablePiModel(provider, model);
+    const map = facts?.thinkingLevelMap;
+    const canExpressOff =
+      facts !== undefined &&
+      (facts.overrideDeclaredThinkingFormat !== undefined ||
+        facts.api === 'anthropic-messages' ||
+        (facts.thinkingFormat !== undefined && (map === undefined || typeof map.off === 'string')));
+    return { requested, applied: canExpressOff ? 'off' : 'none' };
   }
   if (profile.mode === 'toggle') {
     return { requested, applied: 'on', level: 'high' };

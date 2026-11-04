@@ -22,13 +22,18 @@ import type { ResolvedTaskReasoning } from './providers';
 export function reasoningWireFields(
   reasoning: ResolvedTaskReasoning,
   thinkingFormat: string | undefined,
+  api?: string,
 ): Record<string, unknown> {
   if (reasoning.applied === 'on') {
     return thinkingFormat === 'deepseek' ? { thinking: { type: 'enabled' } } : {};
   }
   if (reasoning.applied === 'none') return {};
   if (reasoning.applied === 'off') {
-    return thinkingFormat === 'deepseek' ? { thinking: { type: 'disabled' } } : {};
+    if (thinkingFormat === 'deepseek' || api === 'anthropic-messages') {
+      return { thinking: { type: 'disabled' } };
+    }
+    if (thinkingFormat === 'openrouter') return { reasoning: { effort: 'none' } };
+    return {};
   }
   if (reasoning.level === undefined) return {};
   return thinkingFormat === 'deepseek'
