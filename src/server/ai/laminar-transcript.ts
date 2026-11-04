@@ -20,6 +20,21 @@ export function developmentTranscriptsEnabled(): boolean {
   return process.env.NODE_ENV === 'development' && process.env.LMNR_DEV_TRANSCRIPTS === '1';
 }
 
+/** Operator switch for whitelisted task transcripts, off unless exactly `1`. */
+export function taskTranscriptsEnabled(): boolean {
+  return process.env.LMNR_TRANSCRIPTS === '1';
+}
+
+// Entry rule: neither the task's input nor any tool it can call carries learner content.
+// Tool results reach the transcript through the next model call, so one read tool is enough
+// to disqualify a task: query_knowledge returns mastery, which rules out SourcingTask.
+const TRANSCRIPT_TASK_KINDS: ReadonlySet<string> = new Set(['QuestionAdmissionSolveTask']);
+
+/** A listed task still sends nothing unless its caller has judged this run's content. */
+export function taskMayExportTranscript(kind: string, callerConfirmed: boolean | undefined) {
+  return callerConfirmed === true && TRANSCRIPT_TASK_KINDS.has(kind);
+}
+
 /** Only known secret syntax is removed. Ordinary educational prose stays visible. */
 function cleanText(value: string): string {
   const prefix = value.slice(0, TEXT_LIMIT);
