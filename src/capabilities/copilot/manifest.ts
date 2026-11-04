@@ -257,9 +257,13 @@ export const copilotCapability = defineCapability({
       },
     ],
   },
-  // copilot 自有工具（事件流读 + 记忆面读）。
-  // artifact 工具的归属声明在 notes manifest；Copilot 只保留 allowlist 授权，
-  // 不再是 implementation owner。
+  // M5-T3 (YUK-321) — copilot 自有工具（事件流读 + 记忆面读）。
+  // YUK-880 (F3.9b)：author_artifact / update_artifact 的归属声明已移至
+  // notes manifest（实现 = notes/server/tools/author-artifact.ts）；Copilot
+  // 仅保留 allowlist 面授权，不再是 implementation owner。
+  // YUK-1769：该 pair 的 Copilot surface 授权也已收回（仍由 notes manifest
+  // 注册供 YUK-1548 sandbox route 复用）；学习伙伴的 Markdown 笔记写入走
+  // notes 拥有的 write_note。
   copilotTools: {
     tools: [
       {

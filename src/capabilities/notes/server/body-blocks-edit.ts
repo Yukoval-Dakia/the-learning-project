@@ -1,8 +1,9 @@
 import { createId } from '@paralleldrive/cuid2';
+import type { z } from 'zod';
 
 import { commitArtifactBody } from '@/capabilities/notes/server/artifact-body-commit';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
-import { ArtifactBodyBlocks } from '@/core/schema/business';
+import { type AgentRef, ArtifactBodyBlocks } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
 import { hasArtifactGenesisAnchor } from '@/kernel/records/artifact-history';
@@ -18,6 +19,12 @@ export interface EditArtifactBodyBlocksParams {
   expectedArtifactVersion: number;
   bodyBlocks: ArtifactBodyBlocksT;
   actorRef?: string;
+  // YUK-1769 — agent-initiated writes (the copilot write_note tool) stamp the
+  // body_blocks_edit event + history entry as actor 'agent' with their own
+  // ref/summary instead of the human-edit defaults below.
+  actorKind?: 'user' | 'agent';
+  historyBy?: z.infer<typeof AgentRef>;
+  historySummaryMd?: string;
   eventId?: string;
   now?: Date;
 }
@@ -33,6 +40,7 @@ export async function editArtifactBodyBlocks(
   params: EditArtifactBodyBlocksParams,
 ): Promise<EditArtifactBodyBlocksResult> {
   const eventId = params.eventId ?? createId();
+  const actorKind = params.actorKind ?? 'user';
   const actorRef = params.actorRef ?? 'artifact_block_tree_editor';
   const bodyBlocks = ArtifactBodyBlocks.parse(params.bodyBlocks);
   const concurrentlyModified = () =>
@@ -65,12 +73,12 @@ export async function editArtifactBodyBlocks(
         return {
           body: bodyBlocks,
           history: {
-            by: { by: 'user' },
-            summary_md: 'Edited block tree body',
+            by: params.historyBy ?? { by: 'user' },
+            summary_md: params.historySummaryMd ?? 'Edited block tree body',
             action: 'body_blocks_edit',
             fields: { event_id: eventId },
           },
-          actor: { kind: 'user', ref: actorRef },
+          actor: { kind: actorKind, ref: actorRef },
           eventId,
           // Leave the user-activity outbox behaviour unchanged (ingest_at stays null).
           optOutMemoryIngestion: false,

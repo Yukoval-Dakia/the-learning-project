@@ -8,7 +8,7 @@
 | `manifest.ts` | Notes-owned API、jobs、event subscription、proposal kind、copilot tools 与 todayBlock 的权威注册面 |
 | `api/*.ts` | note-page、artifacts search/recent-ai-changes、body-blocks、sections、backlinks、correct、ai-changes/undo、hub-dismiss-link、editing-session heartbeat/blur |
 | `server/` | note-page reader、body-blocks、sections、artifact-corrections 读模型、refine、handoff、verification claim、Notes boss port |
-| `server/tools/` | copilot 工具（`author_artifact` / `update_artifact`，YUK-880 归属） |
+| `server/tools/` | copilot 工具（`write_note` = YUK-1769 伙伴 Markdown 直写；`author_artifact` / `update_artifact` 已收回 Copilot surface、实现仍归 notes 待 YUK-1548） |
 | `jobs/` | `hub_auto_sync_nightly`、`hub_sync_recovery`、`hub_sync_mutation_wake`、`note_refine`、`note_generate`、`note_verify` handler |
 | `server/note-handoff.ts` | append-only versioned intent/completion、deterministic pg-boss dispatch/readback；由 `hub_sync_recovery` floor 收敛 |
 | `tasks/` | NoteGenerateTask / NoteVerifyTask 的 prompt、profile builder、provider 与 budget 真相 |
