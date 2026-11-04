@@ -122,6 +122,7 @@ export interface DomainToolCallOptions {
   /** The agentLoop's native toolCall.id, forwarded for call correlation. */
   correlatedToolUseId?: string;
   toolOperations?: ToolOperations;
+  presentResult?: BuildMcpServerOptions['presentResult'];
   cancellationSignals?: ReadonlyArray<{
     signal: AbortSignal;
     requestedBy: 'system' | 'user';
@@ -195,7 +196,22 @@ export async function executeDomainToolCall(
   const toolCallLogId = await persistToolCallLog(call, intercepted.input, execution);
   await mirrorToolUse(call, intercepted.input, execution, summary, toolCallLogId);
   await settleExecution(call, execution);
-  return formatToolResponse(intercepted.input, execution, summary, images);
+  const response = formatToolResponse(intercepted.input, execution, summary, images);
+  if (opts.presentResult && !response.isError) {
+    const text = response.content[0];
+    if (text?.type === 'text') {
+      try {
+        text.text = JSON.stringify(await opts.presentResult(JSON.parse(text.text)));
+      } catch {
+        // A label lookup must not erase a completed effect or its follow-up references.
+        text.text = JSON.stringify({
+          refs: { not_for_display: true, result: JSON.parse(text.text) },
+          display_unavailable: true,
+        });
+      }
+    }
+  }
+  return response;
 }
 
 /**

@@ -14,7 +14,7 @@ import {
   practice_stream_item,
   question,
 } from '@/db/schema';
-import { resetDb } from '../../../tests/helpers/db';
+import { resetDb } from '../../../../../tests/helpers/db';
 import { recordDifficultyCalibrationLabel } from './recalibration';
 
 // FINDING #3：π_i join 按作答本地日（Asia/Shanghai）等值 join selection_observation.date。

@@ -49,6 +49,8 @@ vi.mock('@/core/theta-grid', async (importOriginal) => {
   };
 });
 
+import { effectiveFamilyB } from '@/capabilities/practice/settlement/server/personalized-difficulty';
+import { effectiveB } from '@/capabilities/practice/settlement/server/recalibration';
 import { type ReplayAttempt, replayTheta } from '@/core/calibration/replay';
 import { newId } from '@/core/ids';
 import { difficultyToLogitB } from '@/core/theta';
@@ -63,8 +65,6 @@ import {
 } from '@/db/schema';
 import { getFamilyCalibration } from '@/kernel/read-models/question-difficulty';
 import { updateThetaForAttempt } from '@/kernel/records/mastery-state';
-import { effectiveFamilyB } from '@/server/mastery/personalized-difficulty';
-import { effectiveB } from '@/server/mastery/recalibration';
 import { resetDb } from '../../../tests/helpers/db';
 
 const ABILITY_GLOBAL_KIND = 'ability_global'; // module-private in state.ts — hardcode the literal.

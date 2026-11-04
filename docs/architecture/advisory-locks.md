@@ -195,14 +195,13 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | 72 | serving-command | yuk1514:serving:<eventId> | hashtextextended:0 | transaction | xact | 1 |  |
 | 73 | placement-supply | placement-supply:v1:<knowledgeId> | hashtextextended:0 | transaction | xact | 3 | proposal-decision |
 | 74 | memory-ingest | memory:ingest:<sourceId> | hashtextextended:0 | transaction | xact | 3 |  |
-| 75 | memory-dispatch | memory:dispatch:<sourceEventId> | hashtextextended:0 | transaction | xact | 2 |  |
-| 76 | memory-operator-request | memory:operator-request:<requestId> | hashtextextended:0 | transaction | xact | 1 |  |
-| 77 | model-slice-admission | model-slice-admission:<sliceId> | hashtext | session | session-try | 1 |  |
-| 78 | migration-apply-fence | yuk1050:migration-apply | hashtext | session | session-try | 2 |  |
-| 79 | yuk1406-repair-operation | yuk1406_select_display_label_repair | hashtextextended:0 | transaction | xact | 1 |  |
-| 80 | assessment-resolution-claim | evt_native_resolution_<hash> | hashtext | transaction | xact | 1 | assessment-evaluation-group |
-| 81 | appeal-rejudge-legacy-claim | hte(<appeal.id>, 0) | hashtextextended:0 | transaction | xact | 1 |  |
-| 82 | supply-spend-day | supply-spend:v1:<day> | hashtextextended:0 | transaction | xact | 1 |  |
+| 75 | memory-operator-request | memory:operator-request:<requestId> | hashtextextended:0 | transaction | xact | 1 |  |
+| 76 | model-slice-admission | model-slice-admission:<sliceId> | hashtext | session | session-try | 1 |  |
+| 77 | migration-apply-fence | yuk1050:migration-apply | hashtext | session | session-try | 2 |  |
+| 78 | yuk1406-repair-operation | yuk1406_select_display_label_repair | hashtextextended:0 | transaction | xact | 1 |  |
+| 79 | assessment-resolution-claim | evt_native_resolution_<hash> | hashtext | transaction | xact | 1 | assessment-evaluation-group |
+| 80 | appeal-rejudge-legacy-claim | hte(<appeal.id>, 0) | hashtextextended:0 | transaction | xact | 1 |  |
+| 81 | supply-spend-day | supply-spend:v1:<day> | hashtextextended:0 | transaction | xact | 1 |  |
 
 #10/#80/#81 由旧版混族行 `assessment-appeal-claim`（sites 3）拆出：request
 （appeal.ts:24）、resolution（appeal.ts:78）、历史 rejudge（rejudge.ts:45）

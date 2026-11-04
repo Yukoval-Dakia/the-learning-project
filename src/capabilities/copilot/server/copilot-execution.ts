@@ -16,6 +16,7 @@ import type { RunTaskResult } from '@/ai/task-result';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { PiAfterToolCall } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
+import { recordAiTaskReplyUnsealed } from '@/kernel/records/ai-attempt-facts';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   resolveDomainToolNames,
@@ -55,7 +56,6 @@ import { resolveLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import { createCopilotProseStream } from './prose-stream';
 import {
-  COPILOT_REPLY_CHAR_LIMIT,
   type CopilotReplyFinalizationResult,
   createCopilotReplyFinalizer,
   piToolErrorText,
@@ -71,6 +71,7 @@ import {
   createCopilotSubtaskProjector,
   isCopilotSubagentEnabled,
 } from './subagents';
+import { learnerToolResult } from './tool-result-language';
 
 /**
  * Durable Copilot runs carry NO quantity ceilings — owner directive removes all
@@ -309,6 +310,7 @@ export function createCopilotExecutionOwner(
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
       toolNames: answerOnly ? [...ANSWER_ONLY_TOOL_NAMES] : resolveDomainToolNames(surface),
       taskKind: 'CopilotTask',
+      presentResult: (envelope) => learnerToolResult(db, envelope),
       cancellationSignals,
       beforeExecute: async (tool) =>
         derivationToolDenial(derivationPolicy, tool) ??
@@ -569,8 +571,10 @@ export function createCopilotExecutionOwner(
         ).catch(() => undefined);
       },
     };
+    let streamedProse = '';
     const prose = createCopilotProseStream((text) => {
       if (policy.cancellation.signal.aborted || lifecycleAbortController.signal.aborted) return;
+      streamedProse += text;
       void emitActivity(policy, { kind: 'prose_delta', text });
     });
     let retainSdkSession = false;
@@ -641,7 +645,6 @@ export function createCopilotExecutionOwner(
           ? mergeNoProgressReply(
               assistantProse(result.text, terminalText),
               renderNoProgressClosure(sealedClosure, planned.fallback),
-              COPILOT_REPLY_CHAR_LIMIT,
             )
           : undefined;
       const partial = closureText !== undefined ? false : result.partial === true;
@@ -653,14 +656,39 @@ export function createCopilotExecutionOwner(
         { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: result.task_run_id },
         async (reportOutcome) => {
           const finalized = await finalizer.finalizeTerminal(
-            closureText ?? (partial ? '' : terminalText),
+            closureText ?? (partial ? result.text : terminalText),
             closureText === undefined && partial ? result.providerFailure : undefined,
+            {
+              streamedText: streamedProse,
+              retainedTail:
+                sealedClosure && planned
+                  ? renderNoProgressClosure(sealedClosure, planned.fallback)
+                  : undefined,
+            },
           );
-          reportOutcome(finalized.accepted ? 'accepted' : 'rejected');
+          if (finalized.receipt.assurance === 'unsealed') {
+            try {
+              await recordAiTaskReplyUnsealed(
+                db,
+                result.task_run_id,
+                finalized.receipt.unsealed_reason ?? 'finalization_error',
+              );
+            } catch {
+              console.error('[copilot] unsealed reply alert could not be recorded', {
+                task_run_id: result.task_run_id,
+              });
+            }
+          }
+          reportOutcome('accepted');
           return finalized;
         },
       );
-      retainSdkSession = !answerOnly && !partial && finalization.accepted && nativeChildrenComplete;
+      retainSdkSession =
+        !answerOnly &&
+        !partial &&
+        finalization.receipt.assurance !== 'unsealed' &&
+        finalization.accepted &&
+        nativeChildrenComplete;
       return {
         taskRunId: result.task_run_id,
         finishReason,

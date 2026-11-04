@@ -102,6 +102,13 @@ export const AdminConfigCatalogModelRowSchema = z.object({
   runnable: z.boolean(),
   tool_call: AdminConfigCapabilityTriStateSchema,
   reasoning: AdminConfigCapabilityTriStateSchema,
+  /** models.dev reasoning_options 投影：mode + 该模型接受的层级取值（null = 无推理配置位）。 */
+  reasoning_options: z
+    .object({
+      mode: z.enum(['effort', 'budget_tokens', 'toggle', 'unknown']),
+      values: z.array(z.string()),
+    })
+    .nullable(),
   structured_output: AdminConfigCapabilityTriStateSchema,
   vision: AdminConfigCapabilityTriStateSchema,
   forced_tool_choice: AdminConfigCapabilityTriStateSchema,
@@ -121,7 +128,7 @@ export const AdminConfigCatalogModelRowSchema = z.object({
 
 /** providers[].auth（YUK-1563 AC3）：probe/结算事实的认证状态投影，绝无凭据值。 */
 export const AdminConfigProviderAuthSchema = z.object({
-  status: z.enum(['unconfigured', 'configured', 'auth_failed']),
+  status: z.enum(['unconfigured', 'configured', 'auth_failed', 'login_lane']),
   /** 认证失败的 HTTP 状态（/models 读取或推理探针）；其余为 null。 */
   http_status: z.number().int().nullable(),
   /** 认证失败的错误类型（如 invalid_api_key）；其余为 null。 */

@@ -14,14 +14,6 @@ export async function lockMemoryIngestSource(tx: Tx, sourceEventId: string): Pro
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 }
 
-/** Serializes reconcile dispatch records for one source event. */
-export async function lockMemoryDispatchSource(tx: Tx, sourceEventId: string): Promise<void> {
-  const key = deriveHashtextExtendedLockKey(advisoryLockRegistry.memoryDispatchSource, {
-    sourceEventId,
-  });
-  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
-}
-
 /** Fences reuse of one operator request id across source events. */
 export async function lockMemoryOperatorRequest(tx: Tx, requestId: string): Promise<void> {
   const key = deriveHashtextExtendedLockKey(advisoryLockRegistry.memoryOperatorRequest, {

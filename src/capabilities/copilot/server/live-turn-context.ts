@@ -2,7 +2,7 @@ import type { CopilotRunInput } from './copilot-run-input';
 
 export const COPILOT_TURN_CONTEXT_OPEN = '<turn_context>';
 export const COPILOT_TURN_CONTEXT_CLOSE = '</turn_context>';
-export const COPILOT_TURN_CONTEXT_CODEC_VERSION = 'copilot-live-turn-v3';
+export const COPILOT_TURN_CONTEXT_CODEC_VERSION = 'copilot-live-turn-v4';
 
 type TurnContext = {
   readonly v: 1;
@@ -78,14 +78,14 @@ function compileTurnContext(input: CopilotRunInput, includeProposalFeedback: boo
           },
         }
       : {}),
-    ...(correction.target_prior_turn_id
+    ...(correction.target_prior_turn_id || correction.available_prior_turn_ids.length > 0
       ? {
           correction_contract: correction,
         }
       : {}),
   };
 
-  // `today` always rides (v3): the relative-date anchor must never go stale on a
+  // `today` always rides: the relative-date anchor must never go stale on a
   // resumed session, so the context is never empty anymore.
   return `${COPILOT_TURN_CONTEXT_OPEN}${JSON.stringify(context)}${COPILOT_TURN_CONTEXT_CLOSE}`;
 }

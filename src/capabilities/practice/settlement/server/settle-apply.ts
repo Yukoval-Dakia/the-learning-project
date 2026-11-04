@@ -4,8 +4,6 @@
 // caller's transaction; each best-effort hook opens its own savepoint.
 
 import { sql } from 'drizzle-orm';
-
-import { writeAttemptSnapshotBrackets } from '@/capabilities/practice/public';
 import { scheduleReview } from '@/core/fsrs';
 import {
   candidateObservations,
@@ -18,12 +16,13 @@ import { getMasteryState } from '@/kernel/read-models/mastery-state';
 import { updateThetaForAttempt } from '@/kernel/records/mastery-state';
 import { getFsrsState, upsertFsrsState } from '@/kernel/records/scheduling-state';
 import { selectedForgettingEngine } from '@/kernel/scheduling';
-import { recordDifficultyCalibrationEvidence } from '@/server/mastery/calibration-evidence';
+import { writeAttemptSnapshotBrackets } from './attempt-snapshot';
+import { recordDifficultyCalibrationEvidence } from './calibration-evidence';
 import {
   type FamilyFoldRecord,
   recordFamilyObservationForAttempt,
-} from '@/server/mastery/personalized-difficulty';
-import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration';
+} from './personalized-difficulty';
+import { recordDifficultyCalibrationLabel } from './recalibration';
 import {
   hasSchedulingEffect,
   planSubjects,

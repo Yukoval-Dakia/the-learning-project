@@ -1,11 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dispatchMemoryReconcile } from '@/capabilities/agency/server/memory/memory-reconcile-handoff';
-import {
-  buildMemoryEventIngestHandler,
-  buildMemoryReconcileHandler,
-} from '@/capabilities/agency/server/memory/triggers';
+import { buildMemoryEventIngestHandler } from '@/capabilities/agency/server/memory/triggers';
 import { event, job_events, learning_session } from '@/db/schema';
 import { writeJobEvent } from '@/kernel/job-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -95,7 +91,7 @@ describe('accepted answer-only lifecycle', () => {
   // @invariant security: accepted restricted turns remain excluded from memory across durable terminal paths
   // @fails-if a success, failure, cancellation or reconcile reply loses its policy and permits ingest or replay
   it.each(['success', 'failure', 'cancel', 'cancel_active', 'reconcile', 'ambiguous'] as const)(
-    'freezes every %s reply and excludes direct ingest/reconcile replay',
+    'freezes every %s reply and excludes direct ingest replay',
     async (kind) => {
       const data = await accept('answer_only');
       await setAgentSdkSessionId(testDb(), sessionId, 'pi:old_owned');
@@ -170,40 +166,11 @@ describe('accepted answer-only lifecycle', () => {
       await buildMemoryEventIngestHandler(
         testDb(),
         { send },
-        { memoryClient: memory, handoffMode: 'write' },
+        { memoryClient: memory },
       )(rows.map((row) => ({ data: { event_id: row.id } })));
       expect(memory.addEventMemoryOnce).not.toHaveBeenCalled();
       expect(memory.findByEventId).not.toHaveBeenCalled();
       expect(send).not.toHaveBeenCalled();
-      await expect(
-        dispatchMemoryReconcile(
-          testDb(),
-          { send, getJobById: async () => null },
-          {
-            sourceEventId: data.run_id,
-            memories: [
-              { id: 'restricted_fake_mem', text: message, kind: 'event', created_ms: Date.now() },
-            ],
-            mode: 'write',
-          },
-        ),
-      ).rejects.toThrow('restricted source');
-      const judge = vi.fn();
-      const createClient = vi.fn(() => memory);
-      await buildMemoryReconcileHandler(testDb(), { judge, createClient })([
-        {
-          id: 'restricted_reconcile',
-          data: {
-            source_event_id: data.run_id,
-            user_id: 'self',
-            memories: [
-              { id: 'restricted_fake_mem', text: message, kind: 'event', created_ms: Date.now() },
-            ],
-          },
-        },
-      ]);
-      expect(createClient).not.toHaveBeenCalled();
-      expect(judge).not.toHaveBeenCalled();
     },
   );
 

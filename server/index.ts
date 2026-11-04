@@ -1,3 +1,5 @@
+import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
+import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 // M0 (YUK-313) — 新栈 API 入口：loadEnv → 组合根挂载 → Hono serve。
 // dev: `pnpm rw:api`（tsx watch）。prod 形态（standalone/docker）在 M5 拆除旧栈时定稿。
 // M1-T5 (YUK-314)：RW_WORKER=1（rw:api 默认开）时同进程启动 pg-boss worker —— 新栈
@@ -118,7 +120,8 @@ async function installPracticeOperationsBeforeServe(): Promise<void> {
 }
 
 async function installSchedulingCandidateRebuildBeforeServe(): Promise<void> {
-  const { installSchedulingCandidateRebuild } = await import('@/server/assessment/settle');
+  const { installSchedulingCandidateRebuild } = await import('@/capabilities/practice/public');
+  installSettlementCascadeRevert(orchestrateCascadeRevert);
   installSchedulingCandidateRebuild();
 }
 

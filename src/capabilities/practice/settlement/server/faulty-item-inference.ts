@@ -3,13 +3,12 @@
 // length is a guess. The record is not a serving hold and does not move mastery.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
-
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/capabilities/practice/public';
 import { QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION } from '@/core/schema/event';
 import type { Tx } from '@/db/client';
 import { event, question, question_group_lifecycle } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { type SettlementPlan, liveAppliedSettlements, loadSettlementEvents } from './settle-read';
 

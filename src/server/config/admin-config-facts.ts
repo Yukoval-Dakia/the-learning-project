@@ -5,7 +5,7 @@
 // the auth-status projection (never credential values).
 
 import { capabilities } from '@/capabilities';
-import { MEMORY_INFRA_SCHEDULES, memoryReconcileHandoffMode } from '@/capabilities/agency/public';
+import { MEMORY_INFRA_SCHEDULES } from '@/capabilities/agency/public';
 import { copilotConfigEffectiveFacts } from '@/capabilities/copilot/public';
 import { ingestionConfigEffectiveFacts } from '@/capabilities/ingestion/public';
 import { knowledgeConfigEffectiveFacts } from '@/capabilities/knowledge/public';
@@ -138,15 +138,6 @@ function visionOverrideFacts(): { provider: ConfigEffectiveFact; model: ConfigEf
 function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
   const rateLimit = resolveAiRateLimitConfig();
   const vision = visionOverrideFacts();
-  let handoffMode: ConfigEffectiveFact;
-  try {
-    handoffMode = { value: memoryReconcileHandoffMode() };
-  } catch {
-    handoffMode = {
-      value: null,
-      note: 'reader throws（fail-visible）：非法值在消费点报错，不静默回退',
-    };
-  }
   // lane.global.* must come from readGlobalProviderSwitch (env/DB merge + provider
   // gate): model-only config is not consumed, and unknown providers throw.
   let globalSwitch: ReturnType<typeof readGlobalProviderSwitch> | undefined;
@@ -185,7 +176,6 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
       value: getLearnerLocale(),
       note: 'AI 输出语言：下次 system prompt 构建时读取本进程快照；跨进程轮询间隔 15s（失败保留旧快照），不改变 UI 语言或 typed task',
     },
-    MEMORY_RECONCILE_HANDOFF_MODE: handoffMode,
     'lane.global.provider': globalPinActive
       ? { value: globalSwitch?.provider }
       : {
@@ -232,6 +222,18 @@ function catalogModelRows(provider: ProviderAuthSurfaceRow['name']): AdminConfig
       runnable: executable.has(id),
       tool_call: profile.capabilities.toolCalling,
       reasoning: profile.capabilities.reasoning,
+      reasoning_options:
+        profile.reasoning.mode === 'unknown'
+          ? null
+          : {
+              mode: profile.reasoning.mode,
+              values:
+                profile.reasoning.mode === 'effort'
+                  ? [...profile.reasoning.supportedEfforts]
+                  : profile.reasoning.mode === 'toggle'
+                    ? ['off', 'on']
+                    : [],
+            },
       structured_output: profile.capabilities.structuredOutput,
       vision: profile.capabilities.vision,
       forced_tool_choice: profile.capabilities.forcedToolChoice,
@@ -368,10 +370,22 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
           const binding = resolveTaskProvider(kind as TaskKind);
           // Explicit allowlist: never expose the binding's auth, headers or URLs.
           return [kind, { provider: binding.provider, model: binding.model, error: null }];
-        } catch {
+        } catch (e) {
+          // The app process never mounts the ChatGPT-login file (by design) —
+          // when the lane is env-selected, report that truthfully instead of a
+          // generic unconfigured verdict. A missing file on the WORKER is the
+          // real failure and surfaces through ai_task_runs instead.
+          const loginLane =
+            e instanceof Error && e.message.includes('OPENAI_CHATGPT_AUTH_FILE')
+              ? 'openai 登录通道已配置——凭据文件仅 worker 进程可挂载；app 侧不可读属于预期。'
+              : null;
           return [
             kind,
-            { provider: null, model: null, error: '当前配置不可用，请检查模型目录与服务端凭据。' },
+            {
+              provider: null,
+              model: null,
+              error: loginLane ?? '当前配置不可用，请检查模型目录与服务端凭据。',
+            },
           ];
         }
       }),

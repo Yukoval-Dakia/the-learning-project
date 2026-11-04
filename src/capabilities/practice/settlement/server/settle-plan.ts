@@ -4,8 +4,6 @@
 // write path consumes these facts; this module never writes.
 
 import { and, eq, inArray } from 'drizzle-orm';
-
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/capabilities/practice/public';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
   CandidateFactSchema,
@@ -28,6 +26,7 @@ import type { Tx } from '@/db/client';
 import { event, question, question_revision } from '@/db/schema';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import type { AbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import { selectedForgettingEngine } from '@/kernel/scheduling';
 import type { ActivationSettleInput } from './activate';
