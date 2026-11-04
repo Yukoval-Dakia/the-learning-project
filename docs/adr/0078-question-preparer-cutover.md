@@ -18,9 +18,9 @@ status: accepted
 
 - 找题与证据：`search_bank` / `read_bank` / `check_bank`（ADR-0072，有效）、知识图谱读取（`query_knowledge` / `get_subject_graph_overview` / `expand_knowledge_subgraph` / `find_knowledge_paths`）、`query_mistakes`（错法定向缺口的证据面）、`scan_coverage_gaps`（见 D2）。
 - 外部取水核心（留作工具，不含路由）：`web_fetch_candidates`、`jyeoo_fetch_candidates`。
-- 产出与入库：`edit_question`（建/修 v2 草稿文档）、`compose_presentation`（展示积木/沙箱）、`submit_question`（唯一入库闸）。
+- 产出与入库：`edit_question`（建/修 v2 草稿文档）、`compose_presentation`（展示积木/沙箱）、`compose_block`（generative-UI 积木，v2 §14.3）、`submit_question`（唯一入库闸）。
 
-`author_question` 保留给交互式 Copilot 拟题（含 v2 §19 的 `teaching_draft` seed——对话出题经同一闸入库，annotation handoff 由备题员承接）；`generate_question_candidate` 的 role 随 QuizGen/QuestionAuthor 退役一并定（见 D3），备题员自出直接写草稿文档，不经第二个出题任务。
+`author_question` 工具名暂留给交互式 Copilot 拟题，后端改为 `edit_question`/`submit_question` 草稿链与 v2 §19 `teaching_draft` seed（服务端确定性组文档，无嵌套出题 task）——它不再派发 `QuestionAuthorTask`；`generate_question_candidate` 一并删除（它只是 `QuestionAuthorTask` 的薄壳）。备题员自出直接写草稿文档，不经第二个出题任务。
 
 ### D2 缺口单来源 = Coach、低库存信号、手工；`question_supply_nightly` 降为确定性读工具
 
@@ -40,24 +40,25 @@ status: accepted
 
 ### D6 唯一入库闸 `submit_question`；不另造写入器
 
-`submit_question` 的 draft path（`draft_ref` → 契约四层 → `publishQuestionGroup` 单一发布 seam）与 candidate path（jyeoo_fetch / sourcing_web 候选，原 store_sourced_question 语义）是全来源唯一闸：provenance 覆盖 `generated / adapted / owner_material / photo_ingest / jyeoo_fetch / sourcing_web / manual`（`DraftSourceKind`，非 fetch 来源用可复现内容指纹，绝不伪造 extraction_hash）。KC 活体校验、foreign-host、exact/near/source-URL/向量去重对所有来源一致；新知识点只作提议不自动批准；student 作答走既有 attempt writer，不经本闸。
+`submit_question` 的 draft path（`draft_ref` → 契约四层 → `publishQuestionGroup` 单一发布 seam）与 candidate path（jyeoo_fetch / sourcing_web 候选，原 store_sourced_question 语义）是全来源唯一闸：provenance 覆盖 `generated / adapted / owner_material / photo_ingest / jyeoo_fetch / sourcing_web / manual`（`DraftSourceKind`，非 fetch 来源用可复现内容指纹，绝不伪造 extraction_hash）。KC 活体校验、foreign-host、exact/near/source-URL/向量去重对所有来源一致；新知识点只作提议不自动批准；student 作答走既有 attempt writer，不经本闸。**无人工启用步**：任何来源过 `submit_question` → 准入，过即自动可练——「核验并启用」与「不核验，直接启用」两个人工面随 `verify-and-promote` 一并删除；准入失败时页面如实显示原因，学习者可修可修项。
 
 ### D7 付费效果硬边界与承重保护
 
-不删 handler 丢弃未知付费效果；不重跑生成来补验证。`docs/planning/2026-10-07-ts-migration-and-ui-rewrite-prep.md` §9 的 8 项 pre-AI 承重能力全部不动。花费全额记账（每题 provenance 含花费），后台花费不设硬顶；jyeoo 的 40/日硬闸与预算租约保留——那是外部授权约束，不是质量顶；jyeoo 覆盖诚实声明（ADR-0068 D7：只覆盖高中 10–12 数学）。
+不删 handler 丢弃未知付费效果；不重跑生成来补验证。`docs/planning/2026-10-07-ts-migration-and-ui-rewrite-prep.md` §9 的 8 项 pre-AI 承重能力全部不动。费用走**统一供给成本政策**（YUK-1744，#2437 spend gate）：备题员无单独上限、也无豁免，花费全量记账。jyeoo 的 40/日硬闸与预算租约是外部授权约束，独立保留；jyeoo 覆盖诚实声明（ADR-0068 D7：只覆盖高中 10–12 数学）。
 
 ## 取消项（相对 ADR-0069）
 
 - 旧 D6 与修订第 5 点的「并跑数周 + 盲核对比 + 等 owner 同意」——不搭并跑设施；验收证据见「验收」节，没变差就切。
 - D2 夜间扫描安全网的调度派发（扫描保留为 D2 读工具）。
 - `supply_planner` / `supply_execute` 的规划与路由层；`route-planner` 约束序、`dispatcher` 自动派发。
-- `quiz_verify` / `source_verify` / `variant_verify` 三个检查 job（per-check 处置表见切换计划 §检查处置）。
+- `quiz_verify` / `source_verify` / `variant_verify` 三个检查 job（per-check 处置表见切换计划 §检查处置）；`TeachingQualityTask`（quiz_verify 删除后无消费者）与 `generate_question_candidate`（QuestionAuthorTask 薄壳）随删。
+- 「核验并启用」「不核验，直接启用」两个人工启用面与 `verify-and-promote`（S4，YUK-1789）：准入即启用，无人工步。
 - 旧 `kind` / `judge_kind_override` / `answer_class` / `rubric_json` 生成字段随 QuizGen/QuestionAuthor 退役停写；存量读取另行清理。
 
 ## 验收（切换证据）
 
 - 三张真实缺口单（零覆盖知识点、错法定向、难度带定向）跑通备题员，查库、外找、自出各至少一次，并做一次同缺口新旧路径对照，结果进回执；没有变差就切。
-- 备题员用真实模型产出至少：一道断句或配对题、一道排序题、一道沙箱交互题、一道非默认给分规则题——全部过准入，并在真实页面上作答与判分（TEST 基线：这四类在 436 组中均为 0）。
+- 备题员用真实模型产出至少：一道断句或配对题、一道排序题、一道沙箱交互题、一道非默认给分规则题——全部过准入，并在真实页面上作答与判分（TEST 基线：这四类在 436 组中均为 0）。另加一道依赖模型自绘图的题：图必须随题到达 solver（v2 §14.4）。
 - **依赖：** AI 判分切片启用（`model_slice_admission_run`，311 组卡 human_review）由协调线另票处理，不在本线；非 deterministic 判分单元的准入依赖它。
 
 ## 硬边界（后果）
@@ -66,7 +67,7 @@ status: accepted
 2. **`submit_question` 是唯一入库闸**；入库题 100% 过 `question_admission_run` 准入。
 3. **agent 永不自盖金标**。
 4. **失败如实写回**（差什么、为什么不硬凑）；不降低门的代价换交付；无进展终止兜空转。
-5. **花费全额记账、无硬顶**；canary/费用事件规则保留；`supply` spend gate（YUK-1744/#2437）对备题员同样生效，统一费用策略。
+5. **花费统一成本政策**：全量记账；备题员无单独上限、不豁免 YUK-1744/#2437 供给 spend gate；canary/费用事件规则保留。
 6. **付费效果硬边界**（见 D7）；在途旧任务（排队/运行/重试/DLQ/placement claim）先排空再删旧路径。
 7. **§9 八项承重不动**。
 8. **无 AI-reviews-AI 隐藏闸**：不做预设类别、不做防御性特殊政策、不做隐藏/截断的 AI 审 AI。
