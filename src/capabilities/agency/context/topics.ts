@@ -42,7 +42,9 @@ async function storedTopics(db: Db | Tx) {
     .limit(1);
   if (row) {
     const digest = Digest.parse(JSON.parse(row.long_term_md));
-    for (const withdrawal of digest.withdrawals.filter((w) => !w.evidence_ids.length)) {
+    for (const withdrawal of digest.withdrawals.filter(
+      (w) => !w.evidence_ids.length || w.retained_fact_ids === undefined,
+    )) {
       const [change] = await db
         .select({ payload: event.payload })
         .from(event)
@@ -56,13 +58,18 @@ async function storedTopics(db: Db | Tx) {
         .limit(1);
       if (change) {
         const before = z.object({ before: Digest }).parse(change.payload).before;
-        withdrawal.evidence_ids = [
-          ...new Set(
-            before.topics
-              .filter((t) => t.key === withdrawal.key)
-              .flatMap((t) => t.facts.flatMap((f) => f.evidence_ids)),
-          ),
-        ];
+        withdrawal.retained_fact_ids ??= before.topics
+          .filter((t) => t.key !== withdrawal.key)
+          .flatMap((t) => t.facts.map((f) => f.id));
+        withdrawal.evidence_ids = withdrawal.evidence_ids.length
+          ? withdrawal.evidence_ids
+          : [
+              ...new Set(
+                before.topics
+                  .filter((t) => t.key === withdrawal.key)
+                  .flatMap((t) => t.facts.flatMap((f) => f.evidence_ids)),
+              ),
+            ];
       }
     }
     return { digest, version: row.version };
@@ -111,14 +118,18 @@ async function permittedDigest(db: Db | Tx, stored: DigestT) {
   const digest = structuredClone(stored);
   const ids = digest.topics.flatMap((t) => t.facts.flatMap((f) => f.evidence_ids));
   const allowed = await allowedEventIds(db, ids);
-  const withdrawn = withdrawnTopicEvidence(stored);
   digest.topics = digest.topics
     .map((t) => ({
       ...t,
       facts: t.facts.filter(
         (f) =>
           f.evidence_ids.length > 0 &&
-          f.evidence_ids.every((id) => allowed.has(id) && !withdrawn.has(id)),
+          f.evidence_ids.every((id) => allowed.has(id)) &&
+          stored.withdrawals.every(
+            (w) =>
+              !f.evidence_ids.some((id) => w.evidence_ids.includes(id)) ||
+              w.retained_fact_ids?.includes(f.id),
+          ),
       ),
     }))
     .filter((t) => t.facts.length);
@@ -394,6 +405,9 @@ export async function changeTopics(
         key: input.withdrawKey,
         at: new Date().toISOString(),
         evidence_ids: evidenceIds,
+        retained_fact_ids: after.topics
+          .filter((t) => t.key !== input.withdrawKey)
+          .flatMap((t) => t.facts.map((f) => f.id)),
       });
       after.topics = after.topics.filter((t) => t.key !== input.withdrawKey);
     } else {

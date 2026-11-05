@@ -30,7 +30,12 @@ export const Digest = z.object({
   overnight: z.string().nullable(),
   withdrawals: z
     .array(
-      z.object({ key: z.string(), at: z.string(), evidence_ids: z.array(z.string()).default([]) }),
+      z.object({
+        key: z.string(),
+        at: z.string(),
+        evidence_ids: z.array(z.string()).default([]),
+        retained_fact_ids: z.array(z.string()).optional(),
+      }),
     )
     .default([]),
 });
