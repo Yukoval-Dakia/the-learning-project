@@ -9,7 +9,7 @@ export const readStartPlacementSession: FrontdoorContext['readPlacementSession']
     if (typeof sessionId !== 'string') {
       throw new ApiError('validation_error', 'session id must be a string', 400);
     }
-    const { readPlacementSession } = await import('@/capabilities/practice/public');
+    const { readPlacementSession } = await import('@/capabilities/practice/placement/public');
     return await readPlacementSession(sessionId);
   } catch (error) {
     // Shape domain errors before crossing from the host into the Start bundle.

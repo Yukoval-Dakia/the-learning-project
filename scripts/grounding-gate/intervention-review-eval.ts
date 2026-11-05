@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { AgentRunError } from '@/ai/agent-run-error';
-import { reviewInterventionPackageCandidate } from '@/capabilities/practice/public';
+import { reviewInterventionPackageCandidate } from '@/capabilities/practice/question-bank/public';
 import { type TaskKind, getLearnerLocale, tasks } from '@/capabilities/task-registry';
 import {
   CurrentInterventionPackageReviewAudit,

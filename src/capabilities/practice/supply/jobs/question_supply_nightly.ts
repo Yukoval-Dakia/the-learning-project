@@ -22,13 +22,6 @@
 // emit 观测事件，永不写题的 b 锚（item difficulty）——纯只读消费 + 派发，不污染标定轴。
 
 import type { Job } from 'pg-boss';
-import type { DispatchResult } from '@/capabilities/practice/public';
-import {
-  SUPPLY_DISPATCH_COOLDOWN_DAYS,
-  dispatchPracticeSupplyTarget,
-  dispatchPracticeSupplyTargets as dispatchSupplyTargets,
-  inFlightSupplyCount,
-} from '@/capabilities/practice/public';
 import { discoverConfusableContrastTargets } from '@/capabilities/practice/supply/server/confusable-contrast-discovery';
 import { recentlyDispatchedFingerprints } from '@/capabilities/practice/supply/server/dispatcher';
 import { runInventoryShadowDualRead } from '@/capabilities/practice/supply/server/inventory-projection';
@@ -52,6 +45,13 @@ import {
   evidenceDemandToTargetContext,
 } from '@/kernel/supply-contracts';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import type { DispatchResult } from '../public';
+import {
+  SUPPLY_DISPATCH_COOLDOWN_DAYS,
+  dispatchSupplyTarget,
+  dispatchSupplyTargets,
+  inFlightSupplyCount,
+} from '../public';
 
 type DispatchDeps = Parameters<typeof dispatchSupplyTargets>[2];
 
@@ -282,7 +282,7 @@ async function dispatchReturnStock(
       const target = returnStockTarget(subjectId, knowledgeId, remaining);
       const result = await dispatchWithinBudget(db, target, async () => {
         try {
-          return await dispatchPracticeSupplyTarget(db, target, deps.dispatchDeps);
+          return await dispatchSupplyTarget(db, target, deps.dispatchDeps);
         } catch (err) {
           console.error(
             `[question_supply_nightly] return stock dispatch threw for ${target.fingerprint}`,

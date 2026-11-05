@@ -8,7 +8,7 @@ import type { FrontdoorContext } from './context';
 export const readStartPaperDetail: FrontdoorContext['readPaperDetail'] = (artifactId) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
-      const { getPaperDetail } = await import('@/capabilities/practice/public');
+      const { getPaperDetail } = await import('@/capabilities/practice/session/public');
       const { db } = await import('@/db/client');
       const result = await getPaperDetail(db, artifactId);
       if (!result) {

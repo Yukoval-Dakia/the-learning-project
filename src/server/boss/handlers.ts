@@ -1,6 +1,6 @@
 import type { PgBoss } from 'pg-boss';
-import type { PlacementVerificationAuthority } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
+import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
 import { fenceAwareJobHandler } from '@/server/migration/contract-epoch/boss-fence';
 import { buildEchoHandler } from './handlers/echo';
