@@ -41,7 +41,7 @@ export interface CrisisGuardConfig {
 // academic, or third-person mentions stay none.
 //
 // Release decisions (why-questions, 死-compounds) are NOT in these patterns — they
-// run as code in classify.ts#shouldReleaseHit. Patterns here only find terms.
+// run as code in classify.ts#releaseRemainder. Patterns here only find terms.
 //
 // First-person-objectless rule for the endurance capture: the pronoun anchor must
 // sit at a clause boundary (an optional discourse/vocative slot may precede it) so

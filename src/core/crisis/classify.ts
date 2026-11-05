@@ -68,9 +68,11 @@ const THIRD_PARTY_EN =
   'hero|heroine|villain|author|poet|writer|narrator|victim|patient|deceased|classmate|' +
   'roommate|friend|parent|father|mother|teacher|doctor|therapist|counselor|animal|animals|' +
   'fish|bird|cells?|plants?|organism|creature|novel|story|essay|poem|text|passage|article|book)\\b';
-const WHY_THIRD_PARTY_RE = new RegExp(
-  `(?:${THIRD_PARTY_ZH})(?=${WHY_WORD_ZH})|(?:${WHY_WORD_ZH})(?=${THIRD_PARTY_ZH})|` +
-    `why\\s+(?:does|do|did|would|is|are|was|were|has|have|will)\\s+(?:the\\s+|a\\s+|an\\s+|this\\s+|that\\s+)?${THIRD_PARTY_EN}`,
+const WHY_THIRD_PARTY_ZH_RE = new RegExp(
+  `(?:${THIRD_PARTY_ZH})(?=${WHY_WORD_ZH})|(?:${WHY_WORD_ZH})(?=${THIRD_PARTY_ZH})`,
+);
+const WHY_THIRD_PARTY_EN_RE = new RegExp(
+  `why\\s+(?:does|do|did|would|is|are|was|were|has|have|will)\\s+(?:the\\s+|a\\s+|an\\s+|this\\s+|that\\s+)?${THIRD_PARTY_EN}`,
 );
 // Any personal marker anywhere in the text blocks the why-release — pronoun lists
 // are never complete, so the adjacency rule above is the primary defense.
@@ -80,21 +82,31 @@ const PERSONAL_RE =
 // A release never discards the whole utterance: the released span is removed and
 // the remainder is reclassified with release disabled, so an independent hit in
 // the rest of the text stands ("想死记硬背，活着没意思" → indirect).
-const QUESTION_BOUNDARY_CHARS = '，。！？；、：…—·.,!?;:';
+// Clause boundaries: whitespace separates Chinese clauses ("他为什么想死 想死"
+// releases only the question, the residual 想死 stays a hit) but is a normal
+// word separator inside an English question.
+const QUESTION_BOUNDARY_ZH = '，。！？；、：…—·.,!?;: ';
+const QUESTION_BOUNDARY_EN = '，。！？；、：…—·.,!?;:';
+// The EN why-release additionally requires the death term to close the
+// utterance — any word after it means no release ("why does he want to die im
+// the same" stays a hit, the pronoun list can't cover every colloquial form).
+const EN_TERM_AT_END_RE =
+  /\b(?:want(?:ed)? to die|wanna die|gonna die|going to die|kill(?:ing)? myself|end(?:ing)? my life|end it all|end it|commit suicide|suicide|suicidal|better off dead|self[- ]?harm|hurt(?:ing)? myself|no reason to live|not want to live|don'?t want to live|do not want to live|not want to be alive|don'?t want to be alive|do not want to be alive|give up on life|die|dying|dead|kill)[\s.,!?;:，。？！；：…—·、]*$/;
 
-function stripWhyQuestion(text: string): string {
-  const match = WHY_THIRD_PARTY_RE.exec(text);
+function stripWhyQuestion(text: string, pattern: RegExp, isEn: boolean): string {
+  const match = pattern.exec(text);
   if (!match) return text;
+  const rightBoundary = isEn ? QUESTION_BOUNDARY_EN : QUESTION_BOUNDARY_ZH;
   let left = 0;
   for (let i = match.index - 1; i >= 0; i--) {
-    if (QUESTION_BOUNDARY_CHARS.includes(text[i])) {
+    if (QUESTION_BOUNDARY_ZH.includes(text[i])) {
       left = i + 1;
       break;
     }
   }
   let right = text.length;
   for (let i = match.index + match[0].length; i < text.length; i++) {
-    if (QUESTION_BOUNDARY_CHARS.includes(text[i])) {
+    if (rightBoundary.includes(text[i])) {
       right = i;
       break;
     }
@@ -118,8 +130,16 @@ function releaseRemainder(spaced: string, despaced: string): string | null {
   }
   if (spaced.length > MAX_RELEASE_LEN) return null;
   if (PERSONAL_RE.test(spaced) || PERSONAL_RE.test(despaced)) return null;
-  if (WHY_THIRD_PARTY_RE.test(spaced)) return stripWhyQuestion(spaced);
-  if (WHY_THIRD_PARTY_RE.test(despaced)) return stripWhyQuestion(despaced);
+  return whyRemainder(spaced) ?? whyRemainder(despaced);
+}
+
+function whyRemainder(text: string): string | null {
+  if (WHY_THIRD_PARTY_ZH_RE.test(text)) return stripWhyQuestion(text, WHY_THIRD_PARTY_ZH_RE, false);
+  if (WHY_THIRD_PARTY_EN_RE.test(text)) {
+    return EN_TERM_AT_END_RE.test(text)
+      ? stripWhyQuestion(text, WHY_THIRD_PARTY_EN_RE, true)
+      : null;
+  }
   return null;
 }
 
