@@ -35,7 +35,7 @@ export const DEFAULT_BLANK_NORMALIZATION: BlankNormalizationT = {
 /** text_key 的 legacy 归一化档位 → 版本化 BlankNormalization（answer_head 的
  * 抽头步骤只对 reference 做过；作答侧同语义 = nfkc+trim+casefold）。 */
 export function mapLegacyTextNormalization(
-  normalization: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head',
+  normalization: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head' | 'answer_head@2',
 ): BlankNormalizationT {
   switch (normalization) {
     case 'exact':
@@ -56,6 +56,7 @@ export function mapLegacyTextNormalization(
     case 'trim_casefold_nfc':
       return { ...DEFAULT_BLANK_NORMALIZATION, version: 'blank-norm@2', casefold: true };
     case 'answer_head':
+    case 'answer_head@2':
       return { ...DEFAULT_BLANK_NORMALIZATION, version: 'blank-norm@2', casefold: true };
   }
 }
@@ -182,6 +183,7 @@ function seedFor(
           kind: 'blank_key',
           key: {
             kind: 'numeric',
+            normalization_version: criterion.normalization_version,
             expected: criterion.expected,
             tolerance: criterion.tolerance,
             expected_unit: criterion.expected_unit,

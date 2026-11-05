@@ -197,6 +197,7 @@ function criterionFromKey(key: AdmissionKey, unit: AdmissionUnitSpec): ScoringUn
     kind: 'blank_key',
     key: {
       kind: 'numeric',
+      normalization_version: 'numeric-norm@2',
       expected: key.expected,
       tolerance: key.tolerance,
       ...(key.expected_unit != null ? { expected_unit: key.expected_unit } : {}),

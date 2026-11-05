@@ -1,3 +1,4 @@
+import { normalizeAnswerWidth } from '../answer-normalization';
 import { compareDeclaredBlank } from './blank-answer-compare';
 import type { BlankAnswerShapeT } from './blank-answer-shape';
 import type { ScoringUnitResultT } from './judgment';
@@ -118,9 +119,7 @@ export function normalizeBlankText(text: string, normalization: BlankNormalizati
     // indices or distinct variables. Other versions retain frozen replay semantics.
     value =
       normalization.version === 'blank-norm@2'
-        ? value
-            .replace(/[\u3000\uFF01-\uFF5E]+/gu, (width) => width.normalize('NFKC'))
-            .normalize('NFC')
+        ? normalizeAnswerWidth(value)
         : value.normalize('NFKC');
   }
   for (const [from, to] of normalization.character_variants) value = value.split(from).join(to);
@@ -144,12 +143,17 @@ function charDiff(given: string, expected: string) {
 const PLAIN_NUMBER = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/u;
 
 /**
- * 纯数值读取：NFKC + trim + PLAIN_NUMBER + finite —— 不接受千分位/单位/其他形态。
+ * 纯数值读取：冻结 Unicode 策略 + trim + PLAIN_NUMBER + finite，不解释表达式。
  * 同一个确定性 parse 既用于判分（numericCorrect），也用于准入双解的跨 kind
- * 一致性（solve.ts keysAgree）：text 键铸成 numeric 键后，判分读法不变。
+ * 一致性（solve.ts keysAgree）；新键用宽度折叠，缺省版本保留旧 NFKC。
  */
-export function parseBlankNumericText(raw: string): number | null {
-  const text = raw.normalize('NFKC').trim();
+export function parseBlankNumericText(
+  raw: string,
+  version?: 'numeric-norm@1' | 'numeric-norm@2',
+): number | null {
+  const text = (
+    version === 'numeric-norm@2' ? normalizeAnswerWidth(raw) : raw.normalize('NFKC')
+  ).trim();
   if (!PLAIN_NUMBER.test(text)) return null;
   const value = Number(text);
   return Number.isFinite(value) ? value : null;
@@ -173,9 +177,13 @@ async function numericCorrect(
   raw: string,
   key: Extract<BlankKeyCriterionT['key'], { kind: 'numeric' }>,
 ): Promise<0 | 1 | null> {
-  const text = raw.normalize('NFKC').trim();
+  const text = (
+    key.normalization_version === 'numeric-norm@2'
+      ? normalizeAnswerWidth(raw)
+      : raw.normalize('NFKC')
+  ).trim();
   if (key.expected_unit == null) {
-    const value = parseBlankNumericText(raw);
+    const value = parseBlankNumericText(raw, key.normalization_version);
     if (value == null) return null;
     return withinTolerance(value, key) ? 1 : 0;
   }
@@ -218,6 +226,17 @@ export async function gradeBlankExactUnit(
   const key = unit.criterion.key;
   let correct: 0 | 1;
   let diff: ReturnType<typeof charDiff>;
+  if (
+    key.kind === 'numeric' &&
+    key.normalization_version === 'numeric-norm@2' &&
+    normalizeAnswerWidth(entry.text) !== entry.text.normalize('NFKC')
+  ) {
+    return unreadable(
+      unit,
+      entry.slot_id,
+      'numeric answer contains unsupported compatibility symbols',
+    );
+  }
   if (declaredShape != null) {
     // 声明数学路径：作答与键同一解析器；undecidable（解析失败/歧义/超限/
     // 键与声明确定性冲突）→ pending，绝不伪零分；完整解析但不相等 →

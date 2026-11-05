@@ -236,6 +236,7 @@ function criterionFor(
         kind: 'blank_key',
         key: {
           kind: 'numeric',
+          normalization_version: key.normalization_version ?? 'numeric-norm@2',
           expected: key.value,
           tolerance: key.tolerance ?? { kind: 'absolute', value: 0 },
           ...(key.unit != null ? { expected_unit: key.unit } : {}),
@@ -761,6 +762,7 @@ function keyAndReferenceFor(
               }
             : {
                 kind: 'numeric',
+                normalization_version: key.normalization_version ?? 'numeric-norm@1',
                 value: key.expected,
                 ...(key.tolerance != null ? { tolerance: key.tolerance } : {}),
                 ...(key.expected_unit != null ? { unit: key.expected_unit } : {}),

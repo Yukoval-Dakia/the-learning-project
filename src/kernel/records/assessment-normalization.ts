@@ -302,6 +302,7 @@ function numericKeyFor(row: {
     return;
   return {
     kind: 'numeric_key',
+    normalization_version: 'numeric-norm@2',
     expected: meta.reference_value,
     expected_unit: meta.reference_unit.trim(),
     tolerance:
@@ -397,7 +398,7 @@ function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
 
       acceptedTexts:
         leaf.answerTexts.length > 0
-          ? leaf.answerTexts.map((t) => extractAnswerHead(t))
+          ? leaf.answerTexts.map((t) => extractAnswerHead(t, 'answer_head@2'))
           : [answerText],
     };
   }
@@ -463,7 +464,7 @@ function buildUnit(leaf: LeafInput, scoring: LeafScoring) {
             ? {
                 kind: 'text_key' as const,
                 accepted_texts: scoring.acceptedTexts ?? [],
-                normalization: 'answer_head' as const,
+                normalization: 'answer_head@2' as const,
               }
             : {
                 kind: 'rule_reference' as const,
