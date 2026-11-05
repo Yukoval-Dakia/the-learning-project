@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { QuestionKind } from '@/core/schema/business';
+import { GradingProvenanceEntry } from '@/core/schema/capability';
 import { ReviewTimingJsonSchema } from '@/core/schema/learner-judgment';
 
 export const QuestionParamsSchema = z.object({ id: z.string().trim().min(1) });
@@ -305,6 +306,7 @@ export const QuestionDetailResponseSchema = z
             suggested_rating: z.enum(['again', 'hard', 'good']).nullable(),
             judge_event_id: z.string().nullable(),
             evaluation_id: z.string().optional(),
+            grading_provenance: z.array(GradingProvenanceEntry).optional(),
           })
           .strict(),
       })

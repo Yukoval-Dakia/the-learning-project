@@ -1,4 +1,6 @@
 import { and, desc, eq } from 'drizzle-orm';
+import { EvaluationRecord } from '@/core/schema/assessment';
+import type { GradingProvenanceEntryT } from '@/core/schema/capability';
 import { ReviewOnQuestion } from '@/core/schema/event/known';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
@@ -18,6 +20,7 @@ import {
   retireQuestionFsrsState,
 } from '@/kernel/records/scheduling-state';
 import { streamLocalDate } from '@/kernel/stream-date';
+import { projectEvaluationToJudgeResult } from './judge/evaluation-authority';
 import { readJudgeQuestionActivity } from './judge-run-observation';
 
 export const interventionDiagnosticLeaves: InterventionDiagnosticLeaves = {
@@ -61,6 +64,7 @@ export interface CommittedInterventionDiagnosticAttempt {
     suggested_rating: 'again' | 'hard' | 'good' | null;
     judge_event_id: string | null;
     evaluation_id?: string;
+    grading_provenance?: GradingProvenanceEntryT[];
   };
 }
 
@@ -97,6 +101,12 @@ export async function loadCommittedInterventionDiagnosticAttempt(
           : verdict === 'partial'
             ? 'hard'
             : 'again';
+    const gradingProvenance = native.effective.scoring_basis
+      ? projectEvaluationToJudgeResult(
+          EvaluationRecord.parse(native.effective.row),
+          native.effective.scoring_basis,
+        ).grading_provenance
+      : undefined;
     const units = native.effective.row.unit_results.filter((unit) => unit.status === 'scored');
     return {
       review_event: { id: attempt.id, rating },
@@ -110,6 +120,7 @@ export async function loadCommittedInterventionDiagnosticAttempt(
         suggested_rating: rating,
         judge_event_id: null,
         evaluation_id: native.effective.evaluation_id,
+        ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
       },
     };
   }
