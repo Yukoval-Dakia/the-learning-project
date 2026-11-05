@@ -44,6 +44,14 @@ export const MODEL_SLICE_ADMISSION_THRESHOLDS = {
   max_severe_errors: 0,
 } as const;
 
+/**
+ * Free-response holdout 允许的显式 pending 上限：每 120 项 3 条，更大留出集按
+ * 比例 floor。pending 不算对也不算错，但超出上限说明候选没有给出可对照的完整
+ * 有分输出，不登记。与三条硬线同为常量，调用方不可放宽；其余未决（未尝试、
+ * 缺项、scored 无分）不受此线保护，仍按完整性一律拦。
+ */
+const FREE_HOLDOUT_MAX_PENDING_PER_120 = 3;
+
 /** 同一数值口径：卷面十进制分值的二进制表示误差不当差异（与发布校验同律）。 */
 function samePoints(a: number, b: number): boolean {
   return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
@@ -806,8 +814,22 @@ export async function runModelSliceAdmission(
       return { answer_class: answerClass, items: members.length, errors, unresolved };
     });
     if (data.slice.response_class === 'free') {
-      if (classResults.some((group) => group.unresolved.length > 0)) {
+      // 未决分两类：显式 pending 有原因、按 FREE_HOLDOUT_MAX_PENDING_PER_120
+      // 比例上限拦；未尝试/缺项/scored 无分仍属完整性失败，一律拦。
+      const pendingItemIds = new Set(
+        results.filter((result) => result.status === 'pending').map((result) => result.item_id),
+      );
+      const hardUnresolved = classResults
+        .flatMap((group) => group.unresolved)
+        .filter((itemId) => !pendingItemIds.has(itemId));
+      if (hardUnresolved.length > 0) {
         failures.push('unresolved comparison items; no admission evidence');
+      }
+      const maxPending = Math.floor((data.items.length * FREE_HOLDOUT_MAX_PENDING_PER_120) / 120);
+      if (pendingItemIds.size > maxPending) {
+        failures.push(
+          `pending ${pendingItemIds.size}/${data.items.length} exceeds ${maxPending} (${FREE_HOLDOUT_MAX_PENDING_PER_120} per 120)`,
+        );
       }
       for (const group of classResults) {
         if (group.answer_class === 'partial') continue;
@@ -863,6 +885,7 @@ export async function runModelSliceAdmission(
                 correct_nonfull_per_30: 2,
                 equivalent_nonfull_per_30: 2,
                 partial_bar: null,
+                max_pending_per_120: FREE_HOLDOUT_MAX_PENDING_PER_120,
               }
             : MODEL_SLICE_ADMISSION_THRESHOLDS,
         dry_run: data.dry_run,
