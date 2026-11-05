@@ -232,6 +232,7 @@ export function createStructuredSubmitLoop(input: {
   let submitAccepted = false;
   let submitFailure: string | undefined;
   let submitFeedback: string | undefined;
+  let turns = 0;
   return {
     get accepted() {
       return submitAccepted;
@@ -272,7 +273,20 @@ export function createStructuredSubmitLoop(input: {
           : !parsed.success
             ? structuredSubmitShapeErrors(input.parameters, parsed.error.issues, candidate)
             : [...(input.validate?.(parsed.data, input.taskInput) ?? [])];
-      if (errors.length === 0 && toolResults.length === 1 && !toolResults[0]?.isError) {
+      const accepted = errors.length === 0 && toolResults.length === 1 && !toolResults[0]?.isError;
+      console.info(
+        '[structured_submit_turn]',
+        JSON.stringify({
+          task_run_id: input.runId,
+          turn: ++turns,
+          input_tokens: message.usage.input,
+          output_tokens: message.usage.output,
+          cache_read_tokens: message.usage.cacheRead,
+          estimated_cost_usd: message.usage.cost.total,
+          accepted,
+        }),
+      );
+      if (accepted) {
         submitAccepted = true;
         return { action: 'end' as const };
       }
