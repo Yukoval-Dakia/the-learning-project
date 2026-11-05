@@ -74,6 +74,12 @@ updates:
       prefix-development: "deps-dev"
 
   # GitHub Actions used by .github/workflows/*.yml. Low volume, weekly.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 2
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
