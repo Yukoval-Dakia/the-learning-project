@@ -905,6 +905,8 @@ async function runWebSupplyRound(
         ...(item.kind !== 'any' ? { kind: item.kind } : {}),
         objectiveOnly: item.objectiveOnly,
         kindRequired: item.kindRequired,
+        // Placement 交付只走扁平提交链——取水即只要不带 parts 的单题。
+        flatOnly: placement !== undefined,
         subjectProfile: params.subjectProfile,
       },
       ctx: {
