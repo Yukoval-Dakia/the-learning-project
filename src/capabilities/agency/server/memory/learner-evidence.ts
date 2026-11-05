@@ -43,7 +43,19 @@ export function isLearnerEvidenceAction(action: string): boolean {
   return !NON_LEARNER_ACTIONS.has(action);
 }
 
-const LEARNER_ANSWER_SET: ReadonlySet<string> = new Set(LEARNER_ANSWER_ACTIONS);
+// Verbatim-answer events outside the kernel LEARNER_ANSWER_ACTIONS constant
+// (the constant has other consumers; only the memory gate widens here).
+const MEMORY_ONLY_ANSWER_ACTIONS = [
+  // submit confirmations persist response_set/group_evidence verbatim.
+  'experimental:confirmation_command',
+  // probe answers persist answer_md verbatim.
+  'experimental:probe_result',
+] as const;
+
+const LEARNER_ANSWER_SET: ReadonlySet<string> = new Set([
+  ...LEARNER_ANSWER_ACTIONS,
+  ...MEMORY_ONLY_ANSWER_ACTIONS,
+]);
 
 /**
  * Does this event carry the learner's verbatim answer text? Answer events stay

@@ -78,10 +78,10 @@ export interface CrisisGuardEventInput {
   eventId: string;
   now: Date;
   /**
-   * 危机分类命中时被丢弃的附件类型（目前只有 review_answer）。
-   * 只记类型，不记任何原文/摘要。
+   * 危机分类命中时被丢弃的附件类型（review_answer 或 confirmation 的作答提交；
+   * 两者同弃时只记 review_answer）。只记类型，不记任何原文/摘要。
    */
-  droppedAttachmentKind?: 'review_answer';
+  droppedAttachmentKind?: 'review_answer' | 'confirmation';
 }
 
 /**

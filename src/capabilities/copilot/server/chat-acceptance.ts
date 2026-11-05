@@ -203,7 +203,7 @@ export async function acceptCopilotTurnAfterAdmission(
     inputHash: string;
     sessionId: string;
     crisis: CrisisTurnClassification;
-    droppedReviewAnswer: boolean;
+    droppedAttachmentKind?: 'review_answer' | 'confirmation';
     signal: AbortSignal;
   },
 ): Promise<AcceptedCopilotTurn> {
@@ -213,7 +213,7 @@ export async function acceptCopilotTurnAfterAdmission(
     inputHash: durableInputHash,
     sessionId,
     crisis,
-    droppedReviewAnswer,
+    droppedAttachmentKind,
     signal,
   } = input;
   const acceptedDerivationPolicy =
@@ -264,7 +264,7 @@ export async function acceptCopilotTurnAfterAdmission(
                 eventId: `crisis_guard_${createId()}`,
                 now: new Date(),
                 // 被剔除的附件只记类型，不记内容。
-                ...(droppedReviewAnswer ? { droppedAttachmentKind: 'review_answer' as const } : {}),
+                ...(droppedAttachmentKind ? { droppedAttachmentKind } : {}),
               },
             }
           : {}),

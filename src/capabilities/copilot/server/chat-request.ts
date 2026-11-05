@@ -59,7 +59,7 @@ export async function requestCopilotChat(
   // durableInputHash 保持确定性。
   let parsed: ReturnType<typeof CopilotChatRequest.parse>;
   let crisisPreClassified: ReturnType<typeof classifyCopilotTurn> | null = null;
-  let droppedReviewAnswer = false;
+  let droppedAttachmentKind: 'review_answer' | 'confirmation' | undefined;
   try {
     let raw: unknown = await input.readBody();
     if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
@@ -69,11 +69,15 @@ export async function requestCopilotChat(
         if (!crisisPreClassified.forcedPolicy && rawBody.review_answer !== undefined) {
           crisisPreClassified = classifyCopilotAttachment(rawBody.review_answer);
         }
+        if (!crisisPreClassified.forcedPolicy && rawBody.confirmation !== undefined) {
+          crisisPreClassified = classifyCopilotAttachment(rawBody.confirmation);
+        }
         if (
           crisisPreClassified.forcedPolicy &&
           (rawBody.review_answer !== undefined || rawBody.confirmation !== undefined)
         ) {
-          droppedReviewAnswer = rawBody.review_answer !== undefined;
+          droppedAttachmentKind =
+            rawBody.review_answer !== undefined ? 'review_answer' : 'confirmation';
           raw = { ...rawBody, review_answer: undefined, confirmation: undefined };
         }
       }
@@ -156,7 +160,7 @@ export async function requestCopilotChat(
       inputHash: durableInputHash,
       sessionId: conv.sessionId,
       crisis,
-      droppedReviewAnswer,
+      droppedAttachmentKind,
       signal: signal,
     });
     return durableAcceptance(acceptance, parsed);
