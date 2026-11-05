@@ -1,5 +1,5 @@
 import type { Dispatcher } from 'undici';
-import { Agent } from 'undici';
+import { EnvHttpProxyAgent } from 'undici';
 import type { TaskTimeoutSource } from '@/ai/task-budget';
 import type {
   ProviderRequestEvidence,
@@ -18,8 +18,10 @@ import { sanitizeProviderErrorText } from './provider-error-evidence';
 /**
  * YUK-1630 — pi provider-lane transport + per-request wire evidence.
  *
- * One npm-undici Agent per lifecycle attempt carries connect/headers/body timers,
- * all derived from the same resolved task budget the SDK timeout gets. Transport
+ * One npm-undici agent per lifecycle attempt carries connect/headers/body timers,
+ * all derived from the same resolved task budget the SDK timeout gets. An explicit
+ * dispatcher replaces the one NODE_USE_ENV_PROXY installs, so this agent has to read
+ * HTTP(S)_PROXY and NO_PROXY itself; with none set it connects directly. Transport
  * composition: the instrumented fetch invokes the CURRENT `globalThis.fetch` with
  * our dispatcher injected into `init`, so observer wrappers still ride the
  * controlled Agent; a fetch that ignores `init.dispatcher` produces no dispatch
@@ -632,7 +634,7 @@ function rawTrailers(
  */
 class ObservedDispatcher {
   constructor(
-    private readonly agent: Agent,
+    private readonly agent: EnvHttpProxyAgent,
     private readonly httpTimeoutMs: number,
     private readonly record: MutableRequestRecord,
     private readonly collector: ProviderTransportCollector,
@@ -804,7 +806,7 @@ export function createBudgetedProviderFetch(input: {
   secrets: readonly string[];
   collector?: ProviderTransportCollector;
 }): BudgetedProviderFetch {
-  const agent = new Agent({
+  const agent = new EnvHttpProxyAgent({
     connectTimeout: input.httpTimeoutMs,
     headersTimeout: input.httpTimeoutMs,
     bodyTimeout: input.httpTimeoutMs,
