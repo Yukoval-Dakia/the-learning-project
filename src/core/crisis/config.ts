@@ -190,9 +190,22 @@ export const CRISIS_GUARD_CONFIG: CrisisGuardConfig = {
         `(?:我|俺|咱|自己|本人|老子|老娘|我们|咱们|你|您|你们).{0,6}想不开|` +
         `(?:^|[${CLAUSE_BOUNDARY_ZH}])想不开)`,
     ),
+    // Resignation/burdensomeness forms, same object rules: "需要我" must end the
+    // clause ("这道题没有人需要我讲" stays none), "结束这一切" keeps its own word
+    // order ("把这一切结束后再写作业" stays none), "想消失" must be adjacent
+    // ("我想让这个错误消失" stays none).
+    new RegExp(`${WHY_GUARD_ZH}(?:死了算|不如死了)`),
+    new RegExp(`${WHY_GUARD_ZH}(?:我|俺|咱|自己|本人|老子|老娘|我们|咱们)?.{0,6}想消失`),
+    new RegExp(`${WHY_GUARD_ZH}没(?:有|了)我.{0,6}(?:更好|会更好|清净|安宁)`),
+    new RegExp(
+      `${WHY_GUARD_ZH}(?:没有人|没人|谁也没|谁也不).{0,4}(?:需要我|要我)${ENDURANCE_TAIL}`,
+    ),
+    new RegExp(`${WHY_GUARD_ZH}结束这一切`),
     // English first-person endurance collapse; "hold on" keeps its object use free,
     // and object-taking "bear it"/"stand it" are not endurance terms at all.
     /i can'?t (?:keep going|hold on(?! *to)|go on (?:like this|anymore))/,
+    /i can'?t go on(?=\s*(?:$|[.!?,;]|anymore|any longer|like this))/,
+    /giv(?:e|ing) up on (?:life|everything|myself|the world)/,
     new RegExp(
       `${WHY_GUARD_EN}(?:feel like (?:giving up|disappearing)|no reason to (?:live|go on)|can'?t (?:take|do) (?:this|it) anymore|want (?:it to end|to disappear))`,
     ),

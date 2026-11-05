@@ -16,8 +16,9 @@ export {
 } from './config';
 
 function normalize(text: string): string {
-  // Lowercase for English patterns and collapse whitespace; keep emoji (joke signal).
-  return text.toLowerCase().replace(/\s+/g, ' ').trim();
+  // Lowercase for English patterns, NFKC for fullwidth forms (ｗｈｙ→why), collapse
+  // whitespace; keep emoji (joke signal).
+  return text.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
 /**
