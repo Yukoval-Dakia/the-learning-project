@@ -81,8 +81,7 @@ Browser code never holds the provider key — all AI calls funnel through Hono r
   use domain routes or worker (only `ReviewIntentTask` uses the generic entry).
 - Don't write derived lifecycle fields back to the source table — build a reader/projection.
 - Don't refactor on a bug fix.
-- Adding a new table/field requires a write path, or an allowlist entry in
-  `scripts/audit-schema-allowlist.json` with a checkable `resolves_when`.
+- Adding a new table/field requires a write path — a head stub that was not already a stub at the comparison base fails `pnpm audit:schema`; there is no allowlist file.
 
 ## Commands (cheat sheet)
 
