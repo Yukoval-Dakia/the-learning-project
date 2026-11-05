@@ -4,6 +4,7 @@ import { ActivateEvaluationIntent } from '@/core/schema/assessment';
 import {
   ActivityRef,
   FsrsRating,
+  GradingProvenanceEntry,
   JudgeResultV2,
   PartialUnknownJudgeResult,
 } from '@/kernel/capability-contract-schemas';
@@ -112,6 +113,7 @@ const LegacyAttemptJudgeResponseSchema = z
     suggested_rating: FsrsRating.nullable(),
     auto_rated: z.boolean(),
     judge_event_id: z.string().nullable(),
+    grading_provenance: z.array(GradingProvenanceEntry).optional(),
     telemetry: z.unknown().optional(),
   })
   .passthrough();

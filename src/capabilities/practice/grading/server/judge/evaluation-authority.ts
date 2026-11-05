@@ -2,6 +2,7 @@
 // activation and learning settlement; teacher-side QA retains its own judges.
 
 import type { EvaluationRecordT, ScoringBasisT } from '@/core/schema/assessment';
+import { gradingProvenanceFromUnitResults } from '@/core/schema/assessment/dto';
 import {
   VERDICT_CORRECT_THRESHOLD,
   deriveCoarseVerdict,
@@ -148,6 +149,9 @@ export function projectEvaluationToJudgeResult(
   // verdict 派生单源到 core/schema/assessment/settlement.ts
   // （学习结算读同一函数；阈值/未映射/分母纪律不再双写）。
   const verdict = deriveCoarseVerdict(record, basis);
+  // AI 判分标签随判词上每个读面（同步 judge 块、durable DONE payload、
+  // issuance settled）——由 unit_results 的 judged_by 盖章派生，不补造历史。
+  const gradingProvenance = gradingProvenanceFromUnitResults(record.unit_results);
   const pendingEvidence = {
     evaluation_id: record.evaluation_id,
     pending_units: record.unit_results
@@ -161,6 +165,7 @@ export function projectEvaluationToJudgeResult(
       coarse_outcome: 'unsupported',
       confidence: 0,
       capability_ref: CONTRACT_CAPABILITY_REF,
+      ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
       feedback_md: 'evaluation pending: retryable infrastructure failure — not a grade',
       evidence_json: pendingEvidence,
     };
@@ -173,6 +178,7 @@ export function projectEvaluationToJudgeResult(
       coarse_outcome: 'unsupported',
       confidence: 0,
       capability_ref: CONTRACT_CAPABILITY_REF,
+      ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
       feedback_md: `evaluation unresolved: ${aggregate.reason}`,
       evidence_json: {
         ...pendingEvidence,
@@ -188,6 +194,7 @@ export function projectEvaluationToJudgeResult(
       coarse_outcome: 'partial_unknown',
       confidence: 1,
       capability_ref: CONTRACT_CAPABILITY_REF,
+      ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
       feedback_md: `部分正确（${aggregate.partial_units
         .map((unit) => `${unit.correct_count}/${unit.total_count}`)
         .join('、')}），分数未知`,
@@ -207,6 +214,7 @@ export function projectEvaluationToJudgeResult(
       coarse_outcome: 'unsupported',
       confidence: 0,
       capability_ref: CONTRACT_CAPABILITY_REF,
+      ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
       feedback_md: 'evaluation hit a level with no published points mapping',
       evidence_json: pendingEvidence,
     };
@@ -235,6 +243,7 @@ export function projectEvaluationToJudgeResult(
       coarse_outcome: 'unsupported',
       confidence: 0,
       capability_ref: CONTRACT_CAPABILITY_REF,
+      ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
       feedback_md: `evaluation has no published denominator (${verdict.reason}) — points cannot be normalized into a grade`,
       evidence_json: { ...evidence_json, verdict_reason: verdict.reason },
     };
@@ -246,6 +255,7 @@ export function projectEvaluationToJudgeResult(
       coarse_outcome: 'incorrect',
       confidence: 1,
       capability_ref: CONTRACT_CAPABILITY_REF,
+      ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
       feedback_md: scoredUnitFeedback ?? 'no accepted answer key matched',
       evidence_json,
     };
@@ -257,6 +267,7 @@ export function projectEvaluationToJudgeResult(
       coarse_outcome: 'correct',
       confidence: 1,
       capability_ref: CONTRACT_CAPABILITY_REF,
+      ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
       feedback_md: scoredUnitFeedback ?? '',
       evidence_json,
     };
@@ -267,6 +278,7 @@ export function projectEvaluationToJudgeResult(
     coarse_outcome: 'partial',
     confidence: 1,
     capability_ref: CONTRACT_CAPABILITY_REF,
+    ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
     feedback_md: scoredUnitFeedback ?? 'partial credit across scoring units',
     evidence_json,
   };

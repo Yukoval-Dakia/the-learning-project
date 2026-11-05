@@ -9,6 +9,7 @@ import {
   GroupEvidence,
   type ModelExecutorRequest,
   type ModelUnitOutcomeT,
+  type PendingStateT,
   QuestionGroupStructure,
   QuestionPart,
   ResponseSlot,
@@ -67,6 +68,7 @@ export function holdoutItemFromOutcome(
       agreed: false,
       severe_error: false,
       pending_reason: outcome.pending.reason,
+      pending: outcome.pending,
       run_refs: outcome.run_refs,
       ...(outcome.cost_usd_micros !== undefined
         ? { cost_usd_micros: outcome.cost_usd_micros }
@@ -244,12 +246,23 @@ export interface ModelSliceAdmissionItemResult {
   agreed: boolean;
   severe_error: boolean;
   pending_reason?: string;
+  /** 完整未决态（detail / retryable / trigger 等）；pending_reason 只是它的索引。 */
+  pending?: PendingStateT;
+  /**
+   * 定夺 attempt（run_refs 末位）的 canonical 输入/输出 digest；
+   * 无 run 或该 run 未产出结果时为 null —— null 本身是证据，不补造。
+   */
+  input_digest?: string | null;
+  output_digest?: string | null;
   actual_runs?: Array<{
     id: string;
     provider: string;
     model: string;
     cost_basis: string | null;
     cost_usd: number | null;
+    input_hash: string;
+    result_digest: string | null;
+    error_message: string | null;
   }>;
   run_refs: string[];
   cost_usd_micros?: number;
@@ -700,6 +713,9 @@ export async function runModelSliceAdmission(
                 model: ai_task_runs.model,
                 cost_basis: ai_task_runs.cost_basis,
                 cost_usd: ai_task_runs.cost_usd,
+                input_hash: ai_task_runs.input_hash,
+                result_digest: ai_task_runs.result_digest,
+                error_message: ai_task_runs.error_message,
               })
               .from(ai_task_runs)
               .where(inArray(ai_task_runs.id, outcome.run_refs));
@@ -731,6 +747,13 @@ export async function runModelSliceAdmission(
       );
       if (lastResult) {
         lastResult.actual_runs = actualRuns;
+        // run_refs 末位是定夺 attempt；同题重投共享同一 task input，input digest 恒定。
+        const decidingRun =
+          outcome.run_refs.length > 0
+            ? actualRuns.find((run) => run.id === outcome.run_refs.at(-1))
+            : undefined;
+        lastResult.input_digest = decidingRun?.input_hash ?? null;
+        lastResult.output_digest = decidingRun?.result_digest ?? null;
         // An executor's fallback cap reserves spend; only settled attempt prices measure it.
         if (outcome.run_refs.length > 0) {
           if (actualCostKnown && actualRuns.length === outcome.run_refs.length) {

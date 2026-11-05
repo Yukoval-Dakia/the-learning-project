@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { GradingProvenanceEntry, type GradingProvenanceEntryT } from '../capability';
 import { projectIssuedScoringBasis } from './evaluation';
-import type { EvaluationRecordT, SubmissionRecordT } from './judgment';
+import type { EvaluationRecordT, ScoringUnitResultT, SubmissionRecordT } from './judgment';
 import { EvaluationInputSnapshot } from './judgment';
 import { SharedMaterialKind, isPublicSharedMaterial } from './materials';
 import { prunePresentation } from './presentation';
@@ -352,15 +353,7 @@ export type FeedbackUnitResultViewT = z.infer<typeof FeedbackUnitResultView>;
 
 export const AssessmentFeedbackDto = z.strictObject({
   /** Actual execution labels; no assertion that a model result is calibrated. */
-  grading_provenance: z
-    .array(
-      z.object({
-        scoring_unit_id: z.string().min(1),
-        source: z.literal('ai'),
-        calibration: z.literal('uncalibrated'),
-      }),
-    )
-    .optional(),
+  grading_provenance: z.array(GradingProvenanceEntry).optional(),
   evaluation_group_id: z.string().min(1).optional(),
   member_submission_ids: z.array(z.string().min(1)).min(1).optional(),
   submission_id: z.string().min(1),
@@ -522,6 +515,32 @@ function revealRubricExplanation(
   return null;
 }
 
+/** judged_by 盖章为模型判分的 task kind；deterministic comparator 与 human_review 不在此列。 */
+const MODEL_JUDGE_TASK_KINDS: ReadonlySet<string> = new Set([
+  'AssessmentRuleJudgeTask',
+  'AssessmentRubricJudgeTask',
+  'JevScoringDecisionTask',
+]);
+
+/**
+ * 从 unit_results 的 judged_by 盖章派生 grading_provenance：标签只陈述
+ * 实际执行路径（AI 判、未校准）；无盖章的历史行与确定性/人工单元不补造。
+ */
+export function gradingProvenanceFromUnitResults(
+  unitResults: readonly ScoringUnitResultT[],
+): GradingProvenanceEntryT[] | undefined {
+  const entries = unitResults
+    .filter(
+      (result) => result.judged_by !== undefined && MODEL_JUDGE_TASK_KINDS.has(result.judged_by),
+    )
+    .map((result) => ({
+      scoring_unit_id: result.scoring_unit_id,
+      source: 'ai' as const,
+      calibration: 'uncalibrated' as const,
+    }));
+  return entries.length > 0 ? entries : undefined;
+}
+
 /**
  * 纯投影：评分记录 + 可见性 policy → 反馈 DTO。
  * 未揭示的维度以【显式无内容】呈现 —— aggregate:null、
@@ -644,22 +663,9 @@ export function projectFeedback(
           .filter((item): item is RevealedRubricExplanationT => item !== null)
       : [];
 
-  const aiResults = evaluation.unit_results.filter(
-    (result) =>
-      result.judged_by === 'AssessmentRuleJudgeTask' ||
-      result.judged_by === 'AssessmentRubricJudgeTask' ||
-      result.judged_by === 'JevScoringDecisionTask',
-  );
+  const gradingProvenance = gradingProvenanceFromUnitResults(evaluation.unit_results);
   return AssessmentFeedbackDto.parse({
-    ...(aiResults.length > 0
-      ? {
-          grading_provenance: aiResults.map((result) => ({
-            scoring_unit_id: result.scoring_unit_id,
-            source: 'ai' as const,
-            calibration: 'uncalibrated' as const,
-          })),
-        }
-      : {}),
+    ...(gradingProvenance ? { grading_provenance: gradingProvenance } : {}),
     ...(snapshot
       ? {
           evaluation_group_id: evaluation.evaluation_group_id,

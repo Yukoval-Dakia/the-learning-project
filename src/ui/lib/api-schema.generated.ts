@@ -10241,6 +10241,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10256,6 +10263,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10271,6 +10285,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         /** @enum {number} */
                         score: 0;
                         /** @enum {string} */
@@ -10288,6 +10309,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         /** @enum {string|null} */
                         score: null;
                         /** @enum {string} */
@@ -10304,6 +10332,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         partial_units: {
                             correct_count: number;
                             scoring_unit_id: string;
@@ -10480,6 +10515,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10495,6 +10537,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10510,6 +10559,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         /** @enum {number} */
                         score: 0;
                         /** @enum {string} */
@@ -10527,6 +10583,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         /** @enum {string|null} */
                         score: null;
                         /** @enum {string} */
@@ -10543,6 +10606,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         partial_units: {
                             correct_count: number;
                             scoring_unit_id: string;
@@ -10719,6 +10789,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10734,6 +10811,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10749,6 +10833,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         /** @enum {number} */
                         score: 0;
                         /** @enum {string} */
@@ -10766,6 +10857,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         /** @enum {string|null} */
                         score: null;
                         /** @enum {string} */
@@ -10782,6 +10880,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         partial_units: {
                             correct_count: number;
                             scoring_unit_id: string;
@@ -10843,6 +10948,13 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                             feedback_md: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             judge_event_id: string | null;
                             route: string;
                             score: number | null;
@@ -10864,6 +10976,13 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                             feedback_md: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             judge_event_id: string | null;
                             partial_units: {
                                 correct_count: number;
@@ -10898,6 +11017,13 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                             feedback_md: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             judge_event_id: string | null;
                             route: string;
                             score: number | null;
@@ -10919,6 +11045,13 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                             feedback_md: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             judge_event_id: string | null;
                             partial_units: {
                                 correct_count: number;
@@ -19171,6 +19304,13 @@ export interface operations {
                                     evidence_json?: unknown;
                                     feedback_md?: string;
                                     final_rating?: string;
+                                    grading_provenance?: {
+                                        /** @enum {string} */
+                                        calibration: "uncalibrated";
+                                        scoring_unit_id: string;
+                                        /** @enum {string} */
+                                        source: "ai";
+                                    }[];
                                     judge_event_id?: string | null;
                                     late_arrival?: boolean;
                                     model?: string;
@@ -19894,6 +20034,13 @@ export interface operations {
                             evidence_json?: unknown;
                             feedback_md?: string;
                             final_rating?: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             judge_event_id?: string | null;
                             late_arrival?: boolean;
                             model?: string;
@@ -25060,6 +25207,13 @@ export interface operations {
                                                 evidence_json?: unknown;
                                                 feedback_md?: string;
                                                 final_rating?: string;
+                                                grading_provenance?: {
+                                                    /** @enum {string} */
+                                                    calibration: "uncalibrated";
+                                                    scoring_unit_id: string;
+                                                    /** @enum {string} */
+                                                    source: "ai";
+                                                }[];
                                                 judge_event_id?: string | null;
                                                 late_arrival?: boolean;
                                                 model?: string;
@@ -26771,6 +26925,13 @@ export interface operations {
                                                     evidence_json?: unknown;
                                                     feedback_md?: string;
                                                     final_rating?: string;
+                                                    grading_provenance?: {
+                                                        /** @enum {string} */
+                                                        calibration: "uncalibrated";
+                                                        scoring_unit_id: string;
+                                                        /** @enum {string} */
+                                                        source: "ai";
+                                                    }[];
                                                     judge_event_id?: string | null;
                                                     late_arrival?: boolean;
                                                     model?: string;
@@ -27991,6 +28152,13 @@ export interface operations {
                                                 evidence_json?: unknown;
                                                 feedback_md?: string;
                                                 final_rating?: string;
+                                                grading_provenance?: {
+                                                    /** @enum {string} */
+                                                    calibration: "uncalibrated";
+                                                    scoring_unit_id: string;
+                                                    /** @enum {string} */
+                                                    source: "ai";
+                                                }[];
                                                 judge_event_id?: string | null;
                                                 late_arrival?: boolean;
                                                 model?: string;
@@ -36496,6 +36664,13 @@ export interface operations {
                                     [key: string]: unknown;
                                 };
                                 feedback_md: string;
+                                grading_provenance?: {
+                                    /** @enum {string} */
+                                    calibration: "uncalibrated";
+                                    scoring_unit_id: string;
+                                    /** @enum {string} */
+                                    source: "ai";
+                                }[];
                                 judge_event_id: string | null;
                                 route: string;
                                 score: number | null;
@@ -36517,6 +36692,13 @@ export interface operations {
                                     [key: string]: unknown;
                                 };
                                 feedback_md: string;
+                                grading_provenance?: {
+                                    /** @enum {string} */
+                                    calibration: "uncalibrated";
+                                    scoring_unit_id: string;
+                                    /** @enum {string} */
+                                    source: "ai";
+                                }[];
                                 judge_event_id: string | null;
                                 partial_units: {
                                     correct_count: number;
