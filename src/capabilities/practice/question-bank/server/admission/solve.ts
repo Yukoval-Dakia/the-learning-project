@@ -723,9 +723,8 @@ async function validateSolvePass(
   result: TaskTextResult,
   payload: QuestionAdmissionSolveInputT,
   repairBudget: { remaining: number },
-  images?: readonly AdmissionImage[],
+  wire: unknown,
 ): Promise<{ output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt }> {
-  const wire = admissionWireInput(payload, images);
   const raw = result.structured_output != null ? result.structured_output : result.text;
   let output: QuestionAdmissionSolveOutputT;
   try {
@@ -741,7 +740,7 @@ async function validateSolvePass(
         ? `${detail};task_run_id=${taskRunId}`
         : detail
     };raw_args_sha256=${rawArgsDigest}`;
-    throw new AdmissionParseFailure(marked);
+    throw new AdmissionParseFailure(marked, error);
   }
   return { output, receipt: await sealTaskRun(db, wire, result, output) };
 }
@@ -775,15 +774,21 @@ export async function runDualSolve(
   const receipts: AdmissionSolveReceipt[] = [];
   let first: { output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt };
   try {
+    let wire = admissionWireInput(payloadA, deps.images);
     const pass = await runAdmissionAttempts(
       db,
-      () =>
-        deps.runTask(QUESTION_ADMISSION_TASK_KIND, admissionWireInput(payloadA, deps.images), {
+      (feedback) => {
+        wire = admissionWireInput(
+          feedback ? { ...payloadA, output_contract_feedback: feedback } : payloadA,
+          deps.images,
+        );
+        return deps.runTask(QUESTION_ADMISSION_TASK_KIND, wire, {
           judgeRetryPolicy: 'none',
           budgetOverride: { maxIterations: 1 },
           ...(deps.subjectProfile ? { subjectProfile: deps.subjectProfile } : {}),
-        }),
-      async (result) => validateSolvePass(db, result, payloadA, repairBudget, deps.images),
+        });
+      },
+      async (result) => validateSolvePass(db, result, payloadA, repairBudget, wire),
     );
     first = pass.value;
     attemptIds.push(...pass.taskRunIds);
@@ -798,16 +803,22 @@ export async function runDualSolve(
   receipts.push(first.receipt);
   let second: { output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt };
   try {
+    let wire = admissionWireInput(payloadB, deps.images);
     const pass = await runAdmissionAttempts(
       db,
-      () =>
-        deps.runTask(QUESTION_ADMISSION_TASK_KIND, admissionWireInput(payloadB, deps.images), {
+      (feedback) => {
+        wire = admissionWireInput(
+          feedback ? { ...payloadB, output_contract_feedback: feedback } : payloadB,
+          deps.images,
+        );
+        return deps.runTask(QUESTION_ADMISSION_TASK_KIND, wire, {
           judgeRetryPolicy: 'none',
           budgetOverride: { maxIterations: 1 },
           ...(deps.subjectProfile ? { subjectProfile: deps.subjectProfile } : {}),
           ...(deps.solver2 ? { override: deps.solver2 } : {}),
-        }),
-      async (result) => validateSolvePass(db, result, payloadB, repairBudget, deps.images),
+        });
+      },
+      async (result) => validateSolvePass(db, result, payloadB, repairBudget, wire),
     );
     second = pass.value;
     attemptIds.push(...pass.taskRunIds);

@@ -74,15 +74,20 @@ export async function adjudicateAdmission(
     source_answers: definition.source_answers,
     ...(answerForms.length ? { answer_forms: answerForms } : {}),
   });
-  const wire = admissionWireInput(payload, images);
+  let wire = admissionWireInput(payload, images);
   const attempt = await runAdmissionAttempts(
     db,
-    () =>
-      runTask(ADJUDICATION_TASK_KIND, wire, {
+    (feedback) => {
+      wire = admissionWireInput(
+        feedback ? { ...payload, output_contract_feedback: feedback } : payload,
+        images,
+      );
+      return runTask(ADJUDICATION_TASK_KIND, wire, {
         judgeRetryPolicy: 'none',
         budgetOverride: { maxIterations: 1 },
         ...(subjectProfile ? { subjectProfile } : {}),
-      }),
+      });
+    },
     async (result) => {
       try {
         if (result.structured_output == null)
@@ -144,7 +149,10 @@ export async function adjudicateAdmission(
         if (seen.size !== expected.size) throw new Error('Adjudication omitted units');
         return { output, result, formReviews };
       } catch (error) {
-        throw new AdmissionParseFailure(error instanceof Error ? error.message : String(error));
+        throw new AdmissionParseFailure(
+          error instanceof Error ? error.message : String(error),
+          error,
+        );
       }
     },
   );

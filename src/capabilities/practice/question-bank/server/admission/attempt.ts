@@ -1,5 +1,6 @@
 // Bounded attempts inside one durable batch. A lost worker never resumes this loop.
 import { eq } from 'drizzle-orm';
+import { z } from 'zod';
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { ProviderTransportEvidence, TaskTextResult } from '@/ai/task-result';
 import type { Db } from '@/db/client';
@@ -15,7 +16,32 @@ export class AdmissionAttemptExhausted extends Error {
 }
 
 /** A completed response failed the capability's structured contract. */
-export class AdmissionParseFailure extends Error {}
+export class AdmissionParseFailure extends Error {
+  readonly feedback: string;
+
+  constructor(message: string, error?: unknown) {
+    super(message);
+    // Only schema locations and expected types cross into the next prompt. Never
+    // echo submitted values, raw answers, provider errors or evidence digests.
+    this.feedback =
+      error instanceof z.ZodError
+        ? JSON.stringify(
+            error.issues.slice(0, 12).map((issue) => ({
+              path: issue.path
+                .map((part) =>
+                  typeof part === 'number' || /^[a-z_]{1,64}$/.test(String(part)) ? part : '?',
+                )
+                .join('.'),
+              code: issue.code,
+              ...('expected' in issue ? { expected: issue.expected } : {}),
+              ...(issue.code === 'unrecognized_keys'
+                ? { expected: 'only declared fields of the selected kind; remove extra fields' }
+                : {}),
+            })),
+          )
+        : 'Output failed admission semantics: cover every requested unit and answer form exactly once; free pass requires a free rubric and ai_grading_sufficient:true at the verdict level. Recheck the declared output contract.';
+  }
+}
 
 // The final root response must be observed, not inferred from an error string.
 export function admissionHttpFailureStatus(
@@ -39,13 +65,14 @@ export function admissionHttpFailureStatus(
 
 export async function runAdmissionAttempts<T>(
   db: Db,
-  invoke: () => Promise<TaskTextResult>,
+  invoke: (feedback?: string) => Promise<TaskTextResult>,
   validate: (result: TaskTextResult) => Promise<T>,
 ): Promise<{ value: T; taskRunIds: string[] }> {
   const ids: string[] = [];
+  let feedback: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const result = await invoke();
+      const result = await invoke(feedback);
       if (result.task_run_id) ids.push(result.task_run_id);
       return { value: await validate(result), taskRunIds: ids };
     } catch (error) {
@@ -58,7 +85,10 @@ export async function runAdmissionAttempts<T>(
           throw new Error('Unsealed admission parse failure; paid outcome unknown', {
             cause: error,
           });
-        if (attempt === 0) continue;
+        if (attempt === 0) {
+          feedback = error.feedback;
+          continue;
+        }
         throw new AdmissionAttemptExhausted(error.message, ids);
       }
       if (!(error instanceof AgentRunError)) throw error;
