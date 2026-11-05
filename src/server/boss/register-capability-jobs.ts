@@ -86,7 +86,12 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
     {
       pollingIntervalSeconds: decl.pollingIntervalSeconds ?? 2,
       batchSize: decl.batchSize ?? 1,
-      ...(decl.reservedPriority !== undefined ? { maxPriority: decl.reservedPriority - 1 } : {}),
+      ...(decl.reservedPriority !== undefined
+        ? {
+            maxPriority: decl.reservedPriority - 1,
+            notifyPollingIntervalSeconds: decl.pollingIntervalSeconds ?? 2,
+          }
+        : {}),
       ...(decl.includeMetadata !== undefined ? { includeMetadata: decl.includeMetadata } : {}),
       ...(decl.localConcurrency !== undefined ? { localConcurrency: decl.localConcurrency } : {}),
     },
@@ -100,6 +105,7 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
         pollingIntervalSeconds: decl.pollingIntervalSeconds ?? 2,
         batchSize: 1,
         minPriority: decl.reservedPriority,
+        notifyPollingIntervalSeconds: decl.pollingIntervalSeconds ?? 2,
       },
       fenceAwareJobHandler(db, decl.name, handler),
     );

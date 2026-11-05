@@ -120,7 +120,7 @@ export async function mountSubscriptionDispatch(
   }
   await boss.work(
     EVENT_SUBSCRIPTION_DISPATCH_QUEUE,
-    { pollingIntervalSeconds: 2, batchSize: 1 },
+    { pollingIntervalSeconds: 2, notifyPollingIntervalSeconds: 2, batchSize: 1 },
     // Drain mode: delivery is idempotent, but maintenance still stops the tick.
     // Pending-item translation lives in bootstrapSubscription.
     fenceAwareJobHandler(db, EVENT_SUBSCRIPTION_DISPATCH_QUEUE, async () => {
