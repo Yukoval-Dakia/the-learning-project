@@ -1,6 +1,6 @@
 // Generic event-envelope storage; the single INSERT owner for event rows (ADR-0005 / ADR-0021).
 
-import { and, desc, eq, gte, ne } from 'drizzle-orm';
+import { and, desc, eq, gte, ne, sql } from 'drizzle-orm';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import { type EventT, parseEvent } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
@@ -287,7 +287,22 @@ export async function writeEvents(db: DbLike, inputs: WriteEventInput[]): Promis
       }
     }
     const rows = (await bindEventUsage(tx, inputs)).map(prepareEventInsert);
-    await tx.insert(event).values(rows).onConflictDoNothing({ target: event.id });
+    const inserted = await tx
+      .insert(event)
+      .values(rows)
+      .onConflictDoNothing({ target: event.id })
+      .returning({ action: event.action });
+    if (inserted.some((row) => row.action === 'experimental:assessment_publish')) {
+      // NOTIFY is delivered only at outer commit. A failed hint must not roll back
+      // the durable event; the minute dispatcher remains the recovery path.
+      try {
+        await tx.transaction(async (hint) => {
+          await hint.execute(sql`select pg_notify('assessment_publication', '')`);
+        });
+      } catch {
+        console.warn('[events] publication wake hint failed; cron will discover the event');
+      }
+    }
     return inputs.map((input) => input.id);
   });
 }

@@ -19,11 +19,14 @@ import type {
   QuestionBlockRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
-import { event, materialized_id_index } from '@/db/schema';
+import { event, knowledge, materialized_id_index } from '@/db/schema';
 import { gatherAndFoldArtifact } from '@/kernel/records/artifact-history';
 import { gatherAndFoldGoal } from '@/kernel/records/goal-history';
 import { gatherAndFoldKnowledgeEdge } from '@/kernel/records/knowledge-edge-facts';
-import { gatherAndFoldKnowledgeNode } from '@/kernel/records/knowledge-node-history';
+import {
+  gatherAndFoldKnowledgeNode,
+  knowledgeLiveRowToSnapshot,
+} from '@/kernel/records/knowledge-node-history';
 import { entityKey, prefetchKnowledgeOperations } from '@/kernel/records/knowledge-operation';
 import { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
 import { gatherAndFoldMistakeVariant } from '@/kernel/records/mistake-variant-facts';
@@ -155,6 +158,12 @@ export async function assertKnowledgeNodeParity(
     folded as Record<string, unknown> | null,
   );
   if (diff.length > 0) onParityMismatch('knowledge', nodeId, diff);
+}
+
+/** Same assert for callers that only hold the id: the live row is read inside the caller's tx. */
+export async function assertCurrentKnowledgeNodeParity(db: DbLike, nodeId: string): Promise<void> {
+  const [row] = await db.select().from(knowledge).where(eq(knowledge.id, nodeId));
+  await assertKnowledgeNodeParity(db, nodeId, row ? knowledgeLiveRowToSnapshot(row) : null);
 }
 
 /**

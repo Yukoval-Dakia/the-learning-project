@@ -8,8 +8,7 @@ import type { SuggestionKind } from '@/kernel/capability-contract-schemas';
 import { writeEvent } from '@/kernel/events';
 import { COPILOT_REPLY_ACTION } from '@/kernel/events/copilot-actions';
 import { ApiError } from '@/kernel/http';
-import { wakeHubSyncAfterCommit } from '@/server/boss/hub-sync-wake';
-import { acceptAiProposal } from '@/server/proposals/actions';
+import { commitProposalDecisionRequest } from '@/server/proposals/decision-resource';
 import { AcceptTeachingChipBodySchema, CopilotRouteIdParamsSchema } from '../api/contracts';
 import * as Conversation from './conversation-lifecycle';
 
@@ -131,20 +130,18 @@ export async function acceptTeachingChip(
   if (input.target_tool) payload.target_tool = input.target_tool;
   if (input.target_args) payload.target_args = input.target_args;
 
-  // Order matters: run the proposal accept BEFORE persisting the chip event.
+  // Order matters: run the proposal decision BEFORE persisting the chip event.
   // writeEvent-first + a failing accept would leave a counted accept_suggestion
   // behind, and the retry would write a second one — double-counting the KPI
-  // for an action that never completed. Accept-first trades that silent
+  // for an action that never completed. Decision-first trades that silent
   // double-count for an under-count on the rare accept-OK / write-fails window:
-  // acceptAiProposal is idempotent only for kinds whose dispatch honors
+  // the decision is idempotent only for kinds whose dispatch honors
   // `result.idempotent`, so for the others a retry surfaces an error instead of
   // double-counting. Under-count + recoverable is the lesser evil.
   if (input.proposal_id) {
-    await acceptAiProposal(db, input.proposal_id);
-    // A chip-driven proposal accept is a topology mutation; best-effort
-    // hub-sync wake AFTER commit. Fire-and-forget, so the response never waits
-    // on pg-boss availability/latency; the seam swallows its own errors.
-    void wakeHubSyncAfterCommit();
+    // The shared decision entry also owns the post-commit hub-sync wake, so the
+    // chip path does not hand-roll its own accept-then-wake choreography.
+    await commitProposalDecisionRequest(db, input.proposal_id, { decision: 'accept' });
   }
 
   await writeEvent(db, {

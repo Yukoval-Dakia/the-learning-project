@@ -112,8 +112,10 @@ export const AdminConfigGlobalEffectiveSchema = z.object({
 
 export const AdminConfigTaskRowSchema = z.object({
   kind: z.string(),
-  /** Registry one-liner; the page's human-facing task label source. */
+  /** Task spec developer one-liner (English, may carry ticket refs); the expanded row's human-facing label is `label`. */
   description: z.string(),
+  /** Per-kind Chinese name + one-line purpose from the display projection; null when unlabeled — the row falls back to `kind`. */
+  label: z.string().nullable(),
   /** Human-facing group id (join with task_groups[] for label/order). */
   group_id: z.string(),
   effective_binding: AdminConfigTaskEffectiveBindingSchema.nullable(),
