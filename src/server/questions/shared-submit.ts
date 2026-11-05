@@ -50,7 +50,13 @@ import {
   structuredQuestionToDraftDocument,
 } from '@/core/schema/question-draft';
 import type { Db, Tx } from '@/db/client';
-import { question, question_block, question_group_lifecycle, question_revision } from '@/db/schema';
+import {
+  event,
+  question,
+  question_block,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { getR2 } from '@/kernel/object-storage';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
@@ -277,6 +283,56 @@ export async function writeSubmitReceiptEvent(
   });
 }
 
+// Only the server candidate path writes this event, in the same transaction as
+// the saved block. Document metadata and source_ref are never provenance authority.
+const DRAFT_SOURCE_ACTION = 'experimental:question_draft_source';
+type DraftSourceLineage = {
+  source: QuestionDraftDocumentT['source'];
+  sourced: NonNullable<SubmitDraftInput['sourced']>;
+  producer?: TrustedNewGroupProjection;
+  declaredIdMap?: BoundIdMap;
+};
+
+async function preserveDraftSource(
+  tx: Tx,
+  draftRef: string,
+  params: DeclaredGroupPersistParams,
+  projection?: Pick<DraftSourceLineage, 'producer' | 'declaredIdMap'>,
+): Promise<void> {
+  if (params.sourced == null) return;
+  const blockId = parseDraftRef(draftRef)?.blockId;
+  if (blockId == null) throw new Error('saved draft has an invalid reference');
+  // save owns the block lock; the first candidate binding survives all edits.
+  const [existing] = await tx
+    .select({ id: event.id })
+    .from(event)
+    .where(and(eq(event.action, DRAFT_SOURCE_ACTION), eq(event.subject_id, blockId)))
+    .limit(1);
+  if (existing != null) return;
+  const now = params.ctx.now ?? new Date();
+  await writeEvent(tx, {
+    id: newId(),
+    actor_kind: 'system',
+    actor_ref: 'submit_question',
+    action: DRAFT_SOURCE_ACTION,
+    subject_kind: 'question_block',
+    subject_id: blockId,
+    task_run_id: params.ctx.taskRunId ?? null,
+    caused_by_event_id: params.ctx.causedByEventId ?? null,
+    outcome: 'success',
+    created_at: now,
+    ingest_at: now,
+    payload: {
+      source: params.document.source,
+      sourced: params.sourced,
+      ...projection,
+      candidate_request_id: params.caller?.requestId ?? params.saveRequestId,
+      candidate_fingerprint: params.caller?.fingerprint ?? null,
+      draft_ref: draftRef,
+    },
+  });
+}
+
 // ---------- 提交事务内核 ----------
 
 /**
@@ -388,6 +444,38 @@ export async function submitDraftQuestionInTx(
       detail: `draft '${block.id}' has no v2 document or adaptable legacy tree`,
       request_id: requestId,
     };
+  }
+  if (
+    input.sourced == null &&
+    doc.base?.question_id == null &&
+    block.imported_question_id == null
+  ) {
+    const [lineage] = await tx
+      .select({ payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, DRAFT_SOURCE_ACTION),
+          eq(event.subject_kind, 'question_block'),
+          eq(event.subject_id, block.id),
+          eq(event.actor_kind, 'system'),
+          eq(event.actor_ref, 'submit_question'),
+        ),
+      )
+      .limit(1);
+    if (lineage != null) {
+      const trusted = lineage.payload as DraftSourceLineage;
+      doc.source = trusted.source;
+      // Edits change content identity, never the original extract or fetch binding.
+      input = {
+        ...input,
+        sourced: {
+          ...trusted.sourced,
+          canonical_content_hash: canonicalQuestionContentHash(draftCanonicalIdentity(doc)),
+        },
+      };
+      opts = { ...opts, producer: trusted.producer, declaredIdMap: trusted.declaredIdMap };
+    }
   }
   if (input.knowledge_ids != null) doc.knowledge_ids = input.knowledge_ids;
 
@@ -996,6 +1084,7 @@ export async function persistDeclaredQuestionGroupInTx(
       ctx: params.ctx,
     });
     if (resumed.status === 'saved' || resumed.status === 'noop') {
+      await preserveDraftSource(tx, resumed.draft_ref, params);
       const submit = await submitDraftQuestionInTx(
         tx,
         {
@@ -1051,6 +1140,10 @@ export async function persistDeclaredQuestionGroupInTx(
     return outcome;
   }
 
+  await preserveDraftSource(tx, save.draft_ref, params, {
+    producer,
+    declaredIdMap: bound.bound.idMap,
+  });
   const submit = await submitDraftQuestionInTx(
     tx,
     {
