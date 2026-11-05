@@ -191,6 +191,11 @@ describe('runQuizGen', () => {
     await resetDb();
   });
 
+  // @invariant data: a schema-rejected paid delivery seals the provider receipt
+  //   and exhausts the claim at its paid bound without inserting questions
+  // @fails-if drop the receipt on schema failure, leak private prompt text into
+  //   the sealed error, or let the claim survive its third paid delivery;
+  //   the receipt/exhausted/empty-pool assertions fail
   it('seals a successful model receipt and bounded schema paths through the fenced failure handler without inserting questions', async () => {
     await seedKnowledge({ id: 'k1' });
     const now = new Date();
