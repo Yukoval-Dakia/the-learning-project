@@ -2,7 +2,7 @@
 // such an event belongs to, and when the learner last did any of it. Consumers
 // read these sets instead of spelling their own action lists.
 
-import { and, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, or } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import {
   evaluation,
@@ -13,7 +13,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
-import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
+import { allowedEventIds } from '@/kernel/events/derivation-policy';
 import {
   assessmentAttemptEventId,
   submissionIdFromAttemptEventId,
@@ -46,18 +46,39 @@ export const QUESTION_ATTEMPT_ACTIONS = ['attempt', NATIVE_ATTEMPT_ACTION] as co
 
 /** Newest learner-made, derivation-allowed learning activity, optionally strictly before `before`. */
 export async function loadLastLearnerEventAt(db: DbLike, before?: Date): Promise<Date | null> {
-  const [row] = await db
-    .select({ at: sql<string | null>`max(${event.created_at})` })
-    .from(event)
-    .where(
-      and(
-        eq(event.actor_kind, 'user'),
-        inArray(event.action, [...LEARNING_ACTIVITY_ACTIONS]),
-        eventAllowsDerivationSql(),
-        before ? lt(event.created_at, before) : undefined,
-      ),
+  // Walk newest first, stopping at the first authorized activity. An aggregate
+  // max() would evaluate the recursive policy for the learner's entire history.
+  let cursor: { at: Date; id: string } | undefined;
+  for (;;) {
+    const rows = await db
+      .select({ id: event.id, at: event.created_at })
+      .from(event)
+      .where(
+        and(
+          eq(event.actor_kind, 'user'),
+          inArray(event.action, [...LEARNING_ACTIVITY_ACTIONS]),
+          before ? lt(event.created_at, before) : undefined,
+          cursor
+            ? or(
+                lt(event.created_at, cursor.at),
+                and(eq(event.created_at, cursor.at), lt(event.id, cursor.id)),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(desc(event.created_at), desc(event.id))
+      .limit(32);
+    if (!rows.length) return null;
+    const allowed = await allowedEventIds(
+      db,
+      rows.map((row) => row.id),
     );
-  return asDate(row?.at);
+    const latest = rows.find((row) => allowed.has(row.id));
+    if (latest) return asDate(latest.at);
+    if (rows.length < 32) return null;
+    const last = rows[rows.length - 1];
+    cursor = { at: last.at, id: last.id };
+  }
 }
 
 /**
@@ -98,22 +119,45 @@ const FAILURE_STREAK_SCAN_LIMIT = 200;
  * The knowledge point with the longest current run of failed answers. Answers with
  * no right/wrong bit (pending, self-reported, unsupported) and contested answers
  * (judge corrected, or an appeal filed) are skipped; a success or partial ends the
- * run. Only the newest FAILURE_STREAK_SCAN_LIMIT answers are read.
+ * run. Only the newest FAILURE_STREAK_SCAN_LIMIT derivation-allowed answers count.
  */
 export async function loadLongestFailureStreak(db: DbLike): Promise<KnowledgeFailureStreak | null> {
-  const rows = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        eq(event.actor_kind, 'user'),
-        inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
-        eq(event.subject_kind, 'question'),
-        eventAllowsDerivationSql(),
-      ),
-    )
-    .orderBy(desc(event.created_at), desc(event.id))
-    .limit(FAILURE_STREAK_SCAN_LIMIT);
+  const rows: EventRow[] = [];
+  let cursor: EventRow | undefined;
+  // Page candidates until the authorized window is full; restricted answers
+  // cannot consume its slots. Keyset order stays stable for equal timestamps.
+  for (;;) {
+    const candidates: EventRow[] = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.actor_kind, 'user'),
+          inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
+          eq(event.subject_kind, 'question'),
+          cursor
+            ? or(
+                lt(event.created_at, cursor.created_at),
+                and(eq(event.created_at, cursor.created_at), lt(event.id, cursor.id)),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(desc(event.created_at), desc(event.id))
+      .limit(FAILURE_STREAK_SCAN_LIMIT);
+    if (!candidates.length) break;
+    const allowed = await allowedEventIds(
+      db,
+      candidates.map((row) => row.id),
+    );
+    rows.push(...candidates.filter((row) => allowed.has(row.id)));
+    if (rows.length >= FAILURE_STREAK_SCAN_LIMIT) {
+      rows.length = FAILURE_STREAK_SCAN_LIMIT;
+      break;
+    }
+    if (candidates.length < FAILURE_STREAK_SCAN_LIMIT) break;
+    cursor = candidates[candidates.length - 1];
+  }
   if (rows.length === 0) return null;
   const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, rows);
   const legacyOutcomes = await loadLegacyAnswerOutcomes(db, rows);

@@ -71,6 +71,7 @@ const POLICIES: Record<string, ResultPolicy> = {
   propose_grading_correction: ['status', 'reason', 'proposal_event_id', 'evaluation_id'],
   // YUK-1770 — steering 回执：状态 + 回声（含窗口/剩余天数）+ 问题清单 + 待办承诺；
   // 原话/元数据已在事件层留痕，公共快照只给学习者可见面。
+  remember_learner: ['status', 'change_id', 'version', 'before', 'after', 'issues'],
   record_steering: ['status', 'goal_id', 'echo', 'issues', 'preparing', 'deferred_due_reviews'],
   attribute_mistake: ['status', 'judge_event_id', 'cause'],
   propose_variant: ['status', 'proposal_ids', 'mistake_variant_ids', 'variant_question_ids'],

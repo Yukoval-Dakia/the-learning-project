@@ -122,7 +122,7 @@ export async function createLearningRecord(
   input: CreateLearningRecordInput,
 ): Promise<CreateLearningRecordResult> {
   await assertKnowledgeIdsActive(db, input.knowledge_ids);
-  return insertLearningRecord(db, input);
+  return db.transaction((tx) => insertLearningRecord(tx, input));
 }
 
 /** Historical associations come from the accepted submission, never from new input tags. */
@@ -166,7 +166,8 @@ async function insertLearningRecord(
   let originEventId = input.origin_event_id ?? null;
   let origin_event: CreateLearningRecordResult['origin_event'];
 
-  if (input.create_capture_event === true) {
+  const manualCapture = input.source === 'manual' && originEventId === null;
+  if (input.create_capture_event === true || manualCapture) {
     originEventId = originEventId ?? createId();
     await writeEvent(db, {
       id: originEventId,
@@ -211,7 +212,10 @@ async function insertLearningRecord(
       artifact_id: input.artifact_id ?? null,
       source_document_id: input.source_document_id ?? null,
       asset_refs: input.asset_refs ?? [],
-      payload: input.payload,
+      payload:
+        input.source === 'manual'
+          ? { ...input.payload, input_origin: 'learner_manual' }
+          : input.payload,
       created_at: now,
       updated_at: now,
       archived_at: input.processing_status === 'archived' ? now : null,
