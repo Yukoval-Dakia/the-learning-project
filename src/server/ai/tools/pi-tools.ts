@@ -50,6 +50,7 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
       label: dt.name,
       description: dt.description,
       parameters,
+      effect: dt.effect,
       // Keep rejection in the bridge so the normal hooks and durable log observe it.
       ...(dt.name === 'present_primary_view' ? { inputValidation: 'bridge' as const } : {}),
       execute: async (toolCallId, params, signal) => {
@@ -81,7 +82,7 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
           isError: result.isError,
         } satisfies AgentToolResult<null>;
       },
-    } satisfies AgentTool;
+    } satisfies AgentTool & { effect: typeof dt.effect };
   });
 }
 

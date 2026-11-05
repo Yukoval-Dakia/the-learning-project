@@ -402,7 +402,7 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
               maxCost: admission.runCapMicroUsd / 1_000_000,
             },
             nativeCompaction: { sessionContext: JSON.stringify(data) },
-            piHooks: { beforeToolCall: [loop.beforeToolCall], afterToolCall: [loop.afterToolCall] },
+            piHooks: { progress: loop },
             piToolMounts: [
               piDomainMount({
                 ctx: {
