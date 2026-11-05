@@ -743,14 +743,19 @@ export interface PassThroughViolation {
   reason: string;
 }
 
-/** A named re-export inside `public.ts` is the file's declared job, not a
- *  pass-through shell. `export *`/`export * as ns` forwards an open namespace
- *  and is never an entrypoint; hand-written function/alias forwards are debt
- *  wherever they live. */
+/** A named re-export inside a capability `public.ts` is the file's declared
+ *  job, not a pass-through shell. `export *`/`export * as ns` forwards an open
+ *  namespace and is never an entrypoint; hand-written function/alias forwards
+ *  are debt wherever they live, and so is `var-export` — the two-step
+ *  `const b = a; export { b }` spelling of the same alias shell. Only a
+ *  `public.ts` under `src/capabilities/` declares capability entrypoints; a
+ *  `public.ts` anywhere else is just a filename. */
 function isPublicEntrypointSite(site: PassThroughSite): boolean {
   return (
+    site.file.startsWith('src/capabilities/') &&
     site.file.endsWith('/public.ts') &&
     (site.kind === 'module' || site.kind === 'site') &&
+    !site.detail.startsWith('var-export:') &&
     site.symbol !== '*' &&
     site.targetSymbol !== '*'
   );

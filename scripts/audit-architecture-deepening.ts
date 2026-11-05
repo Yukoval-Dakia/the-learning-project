@@ -1150,6 +1150,8 @@ export interface ArchitectureDeepeningFacts {
     readonly headSites: number;
     readonly added: number;
     readonly removed: number;
+    /** Added sites exempted as capability public.ts named entrypoints. */
+    readonly exempt: number;
     readonly violations: readonly OwnershipViolation[];
   };
 }
@@ -1178,6 +1180,7 @@ export interface DeepeningAuditResult extends AuditResult {
     readonly dependencyTotals: DependencyCeilings;
     readonly passThroughSites: number;
     readonly newPassThroughSites: number;
+    readonly exemptPassThroughSites: number;
   };
 }
 
@@ -1282,7 +1285,8 @@ export function auditArchitectureDeepening(
       unclassifiedProviderWires: facts.providerAttemptCensus.unclassifiedFindings,
       dependencyTotals: facts.dependency.totals,
       passThroughSites: facts.passThrough?.headSites ?? 0,
-      newPassThroughSites: facts.passThrough?.added ?? 0,
+      newPassThroughSites: facts.passThrough?.violations.length ?? 0,
+      exemptPassThroughSites: facts.passThrough?.exempt ?? 0,
     },
   };
 }
@@ -1506,6 +1510,7 @@ async function runCli(): Promise<void> {
       headSites: headSites.length,
       added: siteDiff.added.length,
       removed: siteDiff.removed.length,
+      exempt: siteDiff.added.length - passThroughViolations.length,
       violations: passThroughViolations,
     },
   });
@@ -1526,7 +1531,7 @@ async function runCli(): Promise<void> {
       .map((component) => component.join('/'))
       .join(
         '; ',
-      )}] fully catalogued (${result.intraSccEdgeCount} intra-SCC edge directions; ${result.catalogReadFiles} public-read files, ${result.catalogCommandFiles} command files); ${result.counts.classifiedProviderLanes} classified provider lanes / ${result.counts.unclassifiedProviderWires} unclassified; dependency totals ${result.counts.dependencyTotals.capabilityToServer}/${result.counts.dependencyTotals.serverToCapabilityDeep}/${result.counts.dependencyTotals.crossCapabilityValue} strictly below 531/70/62; pass-through sites ${result.counts.passThroughSites} (+${result.counts.newPassThroughSites} new).`,
+      )}] fully catalogued (${result.intraSccEdgeCount} intra-SCC edge directions; ${result.catalogReadFiles} public-read files, ${result.catalogCommandFiles} command files); ${result.counts.classifiedProviderLanes} classified provider lanes / ${result.counts.unclassifiedProviderWires} unclassified; dependency totals ${result.counts.dependencyTotals.capabilityToServer}/${result.counts.dependencyTotals.serverToCapabilityDeep}/${result.counts.dependencyTotals.crossCapabilityValue} strictly below 531/70/62; pass-through sites ${result.counts.passThroughSites} (+${result.counts.newPassThroughSites} new${result.counts.exemptPassThroughSites > 0 ? `, ${result.counts.exemptPassThroughSites} public.ts entrypoints exempt` : ''}).`,
   );
 }
 
