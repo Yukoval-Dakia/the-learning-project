@@ -1,6 +1,19 @@
-// AI 模型 (YUK-1808): the global default, then tasks by what they are for. Each row says what the
-// task really runs on and why; a save shows what the server says took effect, not what was asked.
-import { ChevronDown } from 'lucide-react';
+// AI 模型 (YUK-1808): the global default first, then a card per use. A card or row names a model only
+// where it differs from the default, so what is different shows at a glance. A save shows what the
+// server says took effect, not what was asked.
+import {
+  BookOpen,
+  Brain,
+  CheckCheck,
+  ChevronDown,
+  Compass,
+  FileQuestion,
+  type LucideIcon,
+  MessageCircle,
+  MoreHorizontal,
+  Shapes,
+  Upload,
+} from 'lucide-react';
 import { useId, useState } from 'react';
 import { Button, Chip } from '@/ui-next/public';
 import {
@@ -22,18 +35,51 @@ import { ModelPicker, modelIssue } from './config-model-picker';
 import { ConfigProviderCatalog } from './config-provider-catalog';
 import { ConfigTaskEditor } from './config-task-editor';
 
-function BindingFacts({ binding }: { binding: ConfigBinding | null }) {
+const GROUP_ICON: Readonly<Record<string, LucideIcon>> = {
+  companion: MessageCircle,
+  coach: Compass,
+  'question-prep': FileQuestion,
+  grading: CheckCheck,
+  ingestion: Upload,
+  memory: Brain,
+  'notes-knowledge': BookOpen,
+};
+
+/** True when the task simply runs on the global default: the hero says which that is. */
+function followsGlobal(binding: ConfigBinding | null): boolean {
+  return (
+    binding !== null &&
+    !binding.error &&
+    (binding.selection_rule === 'env_pin' || binding.selection_rule === 'global_pin')
+  );
+}
+
+function BindingFacts({
+  binding,
+  terse = false,
+}: {
+  binding: ConfigBinding | null;
+  /** In a list under the default: say 「跟全局默认」 instead of repeating its name. */
+  terse?: boolean;
+}) {
   const thinking = bindingThinking(binding);
+  const follows = terse && followsGlobal(binding);
   return (
     <div className="adm-binding">
-      <p className="adm-mono adm-break" data-error={binding?.error ? '' : undefined}>
-        {bindingLine(binding)}
-      </p>
-      {binding && !binding.error ? (
+      {follows ? (
+        <p className="adm-follows">跟全局默认</p>
+      ) : (
+        <p className="adm-mono adm-break" data-error={binding?.error ? '' : undefined}>
+          {bindingLine(binding)}
+        </p>
+      )}
+      {binding && !binding.error && (!follows || thinking) ? (
         <p className="adm-binding-tags">
-          <Chip tone={binding.selection_rule === 'env_pin' ? 'caution' : 'neutral'}>
-            {ruleWord(binding.selection_rule)}
-          </Chip>
+          {follows ? null : (
+            <Chip tone={binding.selection_rule === 'env_pin' ? 'caution' : 'neutral'}>
+              {ruleWord(binding.selection_rule)}
+            </Chip>
+          )}
           {thinking ? (
             <span className={binding.reasoning?.error ? 'adm-cell-caution' : 'adm-cell-sub'}>
               {thinking}
@@ -87,7 +133,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
     }
   };
   return (
-    <section className="adm-panel adm-form" aria-labelledby={`${id}-title`}>
+    <section className="adm-global adm-form" aria-labelledby={`${id}-title`}>
       <div className="adm-global-head">
         <div>
           <h2 id={`${id}-title`} className="adm-panel-title">
@@ -110,8 +156,9 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
         ) : null}
       </div>
       {current?.provider ? (
-        <p className="adm-mono adm-break">
-          {current.provider} / {current.model}
+        <p className="adm-global-model">
+          {current.model}
+          <span className="adm-global-provider">{current.provider}</span>
         </p>
       ) : (
         <p className="adm-note">没有全局默认，各任务用自己的模型。</p>
@@ -184,10 +231,20 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
   );
 }
 
-/** What a whole group runs on, in one phrase. */
-function groupSummary(tasks: readonly ConfigTask[]): string {
-  const pairs = new Set(tasks.map((task) => bindingLine(task.effective_binding)));
-  return pairs.size === 1 ? [...pairs][0] : `${pairs.size} 种模型`;
+/** What a whole group runs on: only a difference from the default gets a tag. */
+function GroupSummary({ tasks }: { tasks: readonly ConfigTask[] }) {
+  const bindings = tasks.map((task) => task.effective_binding);
+  const broken = bindings.filter((binding) => binding === null || binding.error).length;
+  if (broken > 0) {
+    return <span className="adm-tag-caution">{broken} 个任务读不出模型</span>;
+  }
+  if (bindings.every(followsGlobal)) return <span className="adm-follows">跟全局默认</span>;
+  const models = new Set(bindings.map((binding) => binding?.model));
+  return (
+    <span className="adm-tag-differs">
+      {models.size === 1 ? [...models][0] : `${models.size} 种模型`}
+    </span>
+  );
 }
 
 function TaskRow({
@@ -225,11 +282,10 @@ function TaskRow({
       <div className="adm-task-main">
         <div className="adm-task-name">
           <p>{words.name}</p>
-          {words.detail ? <p className="adm-cell-sub">{words.detail}</p> : null}
-          <p className="adm-cell-sub adm-mono adm-break">{task.kind}</p>
+          {words.detail ? <p className="adm-task-detail">{words.detail}</p> : null}
         </div>
         <div className="adm-task-binding">
-          <BindingFacts binding={task.effective_binding} />
+          <BindingFacts binding={task.effective_binding} terse />
           {dormant ? (
             <p className="adm-cell-sub">
               自己设了 {task.override?.provider} / {task.override?.model}，现在不生效。
@@ -317,7 +373,7 @@ export function ConfigModels({
   return (
     <div className="adm-stack">
       <GlobalDefault data={data} save={save} />
-      <section className="adm-stack" aria-label="按用途的任务">
+      <section className="adm-groups" aria-label="按用途的任务">
         {groups.length === 0 ? (
           <div className="adm-panel">
             <p className="adm-empty adm-pad">没有匹配项，请调整搜索条件。</p>
@@ -326,8 +382,13 @@ export function ConfigModels({
           groups.map((group) => {
             const expanded = searching || open.has(group.id);
             const panelId = `adm-group-${group.id}`;
+            const Icon = GROUP_ICON[group.id] ?? Shapes;
             return (
-              <div key={group.id} className="adm-panel adm-group">
+              <div
+                key={group.id}
+                className="adm-panel adm-group"
+                data-open={expanded ? '' : undefined}
+              >
                 <button
                   type="button"
                   className="adm-group-head un-hit"
@@ -335,9 +396,16 @@ export function ConfigModels({
                   aria-controls={panelId}
                   onClick={() => toggle(group.id)}
                 >
-                  <span className="adm-group-label">{group.label}</span>
-                  <span className="adm-cell-sub">{group.tasks.length} 个任务</span>
-                  <span className="adm-group-summary adm-mono">{groupSummary(group.tasks)}</span>
+                  <span className="adm-group-label">
+                    <span className="adm-group-icon">
+                      <Icon size={16} aria-hidden="true" />
+                    </span>
+                    {group.label}
+                  </span>
+                  <span className="adm-group-count">{group.tasks.length} 个任务</span>
+                  <span className="adm-group-summary">
+                    <GroupSummary tasks={group.tasks} />
+                  </span>
                   <ChevronDown size={16} aria-hidden="true" className="adm-group-chev" />
                 </button>
                 {expanded ? (
@@ -360,7 +428,14 @@ export function ConfigModels({
           })
         )}
       </section>
-      <ConfigProviderCatalog providers={data.providers} query={query} />
+      <details className="adm-catalog-fold" open={searching || undefined}>
+        <summary className="adm-summary">
+          <MoreHorizontal size={16} aria-hidden="true" />
+          模型目录：{data.providers.length} 家，
+          {data.providers.filter((p) => p.auth?.status === 'configured').length} 家已配置
+        </summary>
+        <ConfigProviderCatalog providers={data.providers} query={query} />
+      </details>
     </div>
   );
 }
