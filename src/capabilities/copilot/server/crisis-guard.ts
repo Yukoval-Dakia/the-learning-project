@@ -38,6 +38,35 @@ export function classifyCopilotTurn(userMessage: string): CrisisTurnClassificati
   };
 }
 
+/** 收集附件里所有学习者书写的字符串值（作答正文、reasoning_trace 等）。 */
+function collectAttachmentText(value: unknown, out: string[]): void {
+  if (typeof value === 'string') {
+    out.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectAttachmentText(item, out);
+    return;
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const item of Object.values(value)) collectAttachmentText(item, out);
+  }
+}
+
+/**
+ * 附件作答与消息本体同权：消息未命中、附件作答命中时同样强制 crisis——
+ * 附件随后按既有危机路径被剔除，守卫事件照常记 dropped_attachment_kind。
+ */
+export function classifyCopilotAttachment(attachment: unknown): CrisisTurnClassification {
+  const texts: string[] = [];
+  collectAttachmentText(attachment, texts);
+  const detectionClass = classifyCrisisExpression(texts.join('\n'));
+  return {
+    detectionClass,
+    forcedPolicy: detectionClass === 'none' ? null : 'crisis',
+  };
+}
+
 export interface CrisisGuardEventInput {
   /** 所在会话（与 user_ask 同 session，便于审定人按会话对账——不新增文本暴露面）。 */
   sessionId: string;

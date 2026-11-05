@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { CRISIS_GUARD_CONFIG_VERSION, classifyCrisisExpression } from '@/core/crisis/classify';
+import { crisisDerivationPayload } from '@/core/crisis/classify';
 import {
   type ActivateEvaluationIntentT,
   type AssessmentAttemptCaptureT,
@@ -185,12 +185,13 @@ export async function recordFormalAttemptCapture(
   await lockAssessmentAttemptCapture(tx, attemptId);
   const [existing] = await tx.select({ id: event.id }).from(event).where(eq(event.id, attemptId));
   if (existing) return;
-  // Crisis classification runs server-side at this single write point, so sync,
-  // durable and ingestion entries agree and no caller can force or dodge a mark.
-  // A hit writes the restricted policy — writeEvent then stamps ingest_at and
-  // clears scopes, keeping the answer in the ledger but off every derived read
-  // face. The class and config version stay readable for the referral lane.
-  const crisisClass = classifyCrisisExpression(
+  // Crisis classification runs server-side at every answer write point (see
+  // crisisDerivationPayload callers), so sync, durable and ingestion entries
+  // agree and no caller can force or dodge a mark. A hit writes the restricted
+  // policy — writeEvent then stamps ingest_at and clears scopes, keeping the
+  // answer in the ledger but off every derived read face. The class and config
+  // version stay readable for the referral lane.
+  const crisisFields = crisisDerivationPayload(
     `${capture.response_md ?? ''}\n${capture.reasoning_trace ?? ''}`,
   );
   await writeEvent(tx, {
@@ -230,13 +231,7 @@ export async function recordFormalAttemptCapture(
       ...(capture.final_hint_level !== undefined
         ? { final_hint_level: capture.final_hint_level }
         : {}),
-      ...(crisisClass !== 'none'
-        ? {
-            derivation_policy: 'crisis',
-            crisis_detection_class: crisisClass,
-            crisis_guard_version: CRISIS_GUARD_CONFIG_VERSION,
-          }
-        : {}),
+      ...(crisisFields ?? {}),
     },
     created_at: new Date(submission.submitted_at),
   });

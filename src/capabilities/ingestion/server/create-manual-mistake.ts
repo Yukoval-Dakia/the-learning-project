@@ -1,6 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
+import { crisisDerivationPayload } from '@/core/crisis/classify';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -141,6 +142,7 @@ export async function createManualMistake(
           answer_image_refs: body.wrong_answer_image_refs,
           referenced_knowledge_ids: body.knowledge_ids,
           question_snapshot: questionSnapshot,
+          ...(crisisDerivationPayload(body.wrong_answer_md) ?? {}),
           // Reserve the reconstruction-signal slot until a classifier lands.
           reconstruction_signal: 'unknown',
         },

@@ -2,7 +2,11 @@
 // leaves the caller; events record only class, template version, and entry point.
 // First match wins: explicit > indirect > quoted_ironic > distress.
 
-import { CRISIS_GUARD_CONFIG, type CrisisDetectionClass } from './config';
+import {
+  CRISIS_GUARD_CONFIG,
+  CRISIS_GUARD_CONFIG_VERSION,
+  type CrisisDetectionClass,
+} from './config';
 
 export type {
   CrisisDetectionClass,
@@ -26,6 +30,25 @@ function normalize(text: string): string {
  */
 function matchesAny(patterns: readonly RegExp[], spaced: string, despaced: string): boolean {
   return patterns.some((pattern) => pattern.test(spaced) || pattern.test(despaced));
+}
+
+/**
+ * Every write point that persists learner-authored answer text runs this one
+ * judgment. A hit returns the restricted-policy payload fields the event must
+ * carry; callers spread the result (null means no mark).
+ */
+export function crisisDerivationPayload(text: string): {
+  derivation_policy: 'crisis';
+  crisis_detection_class: CrisisDetectionClass;
+  crisis_guard_version: string;
+} | null {
+  const detectionClass = classifyCrisisExpression(text);
+  if (detectionClass === 'none') return null;
+  return {
+    derivation_policy: 'crisis',
+    crisis_detection_class: detectionClass,
+    crisis_guard_version: CRISIS_GUARD_CONFIG_VERSION,
+  };
 }
 
 /** Pure; never throws — any input failure degrades to 'none'. */

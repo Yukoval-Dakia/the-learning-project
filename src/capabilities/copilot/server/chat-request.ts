@@ -16,7 +16,7 @@ import {
 } from './chat-acceptance';
 import { CopilotChatRequest } from './chat-contracts';
 import * as Conversation from './conversation-lifecycle';
-import { classifyCopilotTurn } from './crisis-guard';
+import { classifyCopilotAttachment, classifyCopilotTurn } from './crisis-guard';
 import { MAX_OUTSTANDING_DURABLE_RUNS, countOutstandingDurableRuns } from './durable-backlog';
 import { COPILOT_IDEMPOTENCY_KEY_MAX_LENGTH, hashCopilotDurableInput } from './durable-dispatch';
 
@@ -66,6 +66,9 @@ export async function requestCopilotChat(
       const rawBody = raw as Record<string, unknown>;
       if (typeof rawBody.user_message === 'string') {
         crisisPreClassified = classifyCopilotTurn(rawBody.user_message);
+        if (!crisisPreClassified.forcedPolicy && rawBody.review_answer !== undefined) {
+          crisisPreClassified = classifyCopilotAttachment(rawBody.review_answer);
+        }
         if (
           crisisPreClassified.forcedPolicy &&
           (rawBody.review_answer !== undefined || rawBody.confirmation !== undefined)

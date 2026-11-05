@@ -30,6 +30,7 @@ import {
 } from '@/kernel/read-models/assessment-verdict';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -37,7 +38,6 @@ import { type SessionSummaryIssue, checkSessionSummaryClaims } from './session-s
 
 const NOTABLE_LIMIT = 3;
 const NATIVE_ATTEMPT_ACTION = 'experimental:assessment_attempt';
-const LEARNER_ANSWER_ACTIONS = ['attempt', 'review', NATIVE_ATTEMPT_ACTION] as const;
 export const SESSION_SUMMARY_EVENT_ACTION = 'experimental:session_summary';
 
 /**

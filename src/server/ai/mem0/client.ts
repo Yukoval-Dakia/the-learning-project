@@ -252,15 +252,20 @@ function parseEventMemoryResult(value: unknown, source: string): MemoryEventResu
 }
 
 function redactQuestionEvidenceForMemory(payload: unknown): unknown {
-  if (!isJsonObject(payload) || !isJsonObject(payload.question_snapshot)) return payload;
-  const snapshot = payload.question_snapshot;
+  if (!isJsonObject(payload)) return payload;
+  // review_answer carries the learner's verbatim submission + reasoning_trace
+  // as a copilot attachment. The turn's user_message still extracts; the
+  // answer text itself never enters the infer prompt.
+  const { review_answer: _reviewAnswer, ...rest } = payload;
+  if (!isJsonObject(rest.question_snapshot)) return rest;
+  const snapshot = rest.question_snapshot;
   const redactReference = (context: unknown): unknown => {
     if (!isJsonObject(context)) return context;
     const { reference_md: _referenceMd, ...safeContext } = context;
     return safeContext;
   };
   return {
-    ...payload,
+    ...rest,
     question_snapshot: {
       ...snapshot,
       question: redactReference(snapshot.question),
