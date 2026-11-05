@@ -3,7 +3,8 @@
 // 不编造整块比例。
 //
 // 复用的真相源（不建平行真相）：
-//   - getFailureAttempts —— 失败 attempt/review + 链式 judge/user_cause 归因（含纠正态）。
+//   - getFailureAttemptsForDerivation —— 派生读面的失败 attempt/review + 链式
+//     judge/user_cause 归因（含纠正态，已按用途同意过滤）。
 //   - subject profile —— cause 类目的 meta_cause_prior（冷启动先验）与人读 label。
 //   - misconception（deterministic identity 匹配）—— owner 已接受的软轨误区与硬确认
 //     （source='hard'，探针证据）只做强度升级；身份 id 约定在 core/schema/misconception.ts。
@@ -44,7 +45,10 @@ import {
 } from '@/core/schema/weak-point';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, misconception, misconception_edge } from '@/db/schema';
-import { type FailureAttempt, getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import {
+  type FailureAttempt,
+  getFailureAttemptsForDerivation,
+} from '@/kernel/read-models/failure-attempts';
 import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -146,7 +150,7 @@ export async function deriveActionableWeakPoints(
   const scanLimit = input.scanLimit ?? WEAK_POINT_SCAN_LIMIT;
   const maxResults = input.maxResults ?? WEAK_POINT_MAX_RESULTS;
 
-  const failures = await getFailureAttempts(db, {
+  const failures = await getFailureAttemptsForDerivation(db, {
     since,
     includeReviewFailures: true,
     limit: scanLimit,

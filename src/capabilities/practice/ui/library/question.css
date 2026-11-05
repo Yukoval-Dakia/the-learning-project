@@ -35,27 +35,52 @@
     padding: var(--un-sp-4) var(--un-sp-5);
     border-radius: var(--un-r-2);
     background: var(--un-bg-sunk);
-    box-shadow: inset 3px 0 0 var(--un-text-4);
   }
 
   & .qd-notice[data-tone="accent"] {
-    box-shadow: inset 3px 0 0 var(--un-accent);
+    background: var(--un-accent-soft);
   }
   & .qd-notice[data-tone="caution"] {
-    box-shadow: inset 3px 0 0 var(--un-caution);
+    background: var(--un-caution-soft);
   }
   & .qd-notice[data-tone="critical"] {
-    box-shadow: inset 3px 0 0 var(--un-critical);
+    background: var(--un-critical-soft);
   }
 
   & .qd-notice-title {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
     color: var(--un-text-1);
     font-weight: var(--un-fw-medium);
+  }
+  & .qd-notice-title svg {
+    flex: none;
+  }
+  & .qd-notice[data-tone="accent"] .qd-notice-title svg {
+    color: var(--un-accent);
+  }
+  & .qd-notice[data-tone="caution"] .qd-notice-title svg {
+    color: var(--un-caution);
+  }
+  & .qd-notice[data-tone="critical"] .qd-notice-title svg {
+    color: var(--un-critical);
   }
 
   & .qd-notice-text {
     color: var(--un-text-2);
     font-size: var(--un-fs-1);
+  }
+
+  /* The check's own words (YUK-1768 B7), as written — markdown, formulas included. */
+  & .qd-notice-reason {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-2);
+    line-height: var(--un-lh-prose);
+    overflow-wrap: anywhere;
+  }
+  & .qd-notice-reason :is(p, ul, ol) + :is(p, ul, ol) {
+    margin-top: var(--un-sp-2);
   }
 
   & .qd-notice-actions {

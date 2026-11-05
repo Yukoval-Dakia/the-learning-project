@@ -37,7 +37,7 @@ import { WORKSHEET_RENDER_QUEUE } from './jobs/worksheet-render-queue';
 
 export const sessionManifestPart: Omit<CapabilityManifest, 'name' | 'description'> = {
   events: {
-    actions: ['experimental:assessment_feedback_released'],
+    actions: ['experimental:assessment_feedback_released', 'experimental:session_summary'],
   },
   api: {
     routes: [

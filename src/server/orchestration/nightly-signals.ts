@@ -1,6 +1,6 @@
 // YUK-1560 — 资格判定的读表侧。一次夜间 tick 读完共享信号，再按 job 投影。
 
-import { and, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, gte, isNull, lt, or, sql } from 'drizzle-orm';
 import { EMBED_VERSION } from '@/core/embed-source';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
@@ -10,14 +10,13 @@ import {
   event,
   knowledge,
   knowledge_edge,
-  memory_brief_note,
   question,
+  question_solution_prior,
+  question_solution_prior_vector,
 } from '@/db/schema';
 import {
   type EligibilityDecision,
-  MEMORY_BRIEF_SWEEP_JOB,
   type NightlySignals,
-  REFLECTION_BRIEF_SCOPE_KEYS,
   classifyActivityTier,
 } from '@/kernel/nightly-eligibility';
 import { loadLastLearnerEventAt } from '@/kernel/read-models/learner-activity';
@@ -40,7 +39,6 @@ export async function loadNightlyContext(
   opts?: { before?: Date },
 ): Promise<NightlyContext> {
   const names = [...new Set(jobNames)];
-  const dagNames = names.filter((name) => name !== MEMORY_BRIEF_SWEEP_JOB);
   const [
     lastLearner,
     treeWatermark,
@@ -48,15 +46,13 @@ export async function loadNightlyContext(
     returnStockShort,
     pendingEdgeProposals,
     history,
-    briefWatermark,
   ] = await Promise.all([
     loadLastLearnerEventAt(db, opts?.before),
     loadTreeWatermark(db),
     loadEmbedPending(db),
     loadReturnStockShort(db),
     names.includes('frontier_fill_nightly') ? loadPendingEdgeProposalCount(db) : Promise.resolve(0),
-    loadJobHistory(db, [...new Set([...dagNames, EMBED_BACKFILL_JOB])]),
-    names.includes(MEMORY_BRIEF_SWEEP_JOB) ? loadBriefWatermark(db) : Promise.resolve(null),
+    loadJobHistory(db, [...new Set([...names, EMBED_BACKFILL_JOB])]),
   ]);
 
   const tier = classifyActivityTier({
@@ -68,8 +64,7 @@ export async function loadNightlyContext(
   return {
     forJob(jobName: string): NightlySignals {
       const row = history.get(jobName);
-      const lastSuccess =
-        jobName === MEMORY_BRIEF_SWEEP_JOB ? briefWatermark : (row?.lastSuccess ?? null);
+      const lastSuccess = row?.lastSuccess ?? null;
       return {
         job: jobName,
         tier,
@@ -248,7 +243,20 @@ async function loadEmbedPending(db: Db): Promise<boolean> {
     .from(knowledge)
     .where(and(knowledgeStale, isNull(knowledge.archived_at)))
     .limit(1);
-  return Boolean(pendingKnowledge);
+  if (pendingKnowledge) return true;
+  const [pendingPrior] = await db
+    .select({ revision_id: question_solution_prior.revision_id })
+    .from(question_solution_prior)
+    .where(
+      sql`NOT EXISTS (
+            SELECT 1 FROM ${question_solution_prior_vector} v
+            WHERE v.revision_id = ${question_solution_prior.revision_id}
+              AND v.part_id = ${question_solution_prior.part_id}
+              AND v.embed_version >= ${EMBED_VERSION}
+          )`,
+    )
+    .limit(1);
+  return Boolean(pendingPrior);
 }
 
 async function loadReturnStockShort(db: Db): Promise<boolean> {
@@ -308,14 +316,6 @@ async function loadJobHistory(db: Db, jobNames: string[]): Promise<Map<string, H
     out.set(row.job_name, current);
   }
   return out;
-}
-
-async function loadBriefWatermark(db: Db): Promise<Date | null> {
-  const [row] = await db
-    .select({ at: sql<string | null>`max(${memory_brief_note.refreshed_at})` })
-    .from(memory_brief_note)
-    .where(inArray(memory_brief_note.scope_key, [...REFLECTION_BRIEF_SCOPE_KEYS]));
-  return asDate(row?.at);
 }
 
 function shanghaiDayStart(now: Date): Date {

@@ -13,7 +13,6 @@
 // through as `correlatedToolUseId`.
 
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
-import { z } from 'zod';
 import { type BuildMcpServerOptions, type PiToolMount, piToolWireName } from '@/ai/pi-tool-mount';
 import { writeToolCallLog, writeUnpricedToolCost } from '@/kernel/tools/call-evidence';
 import {
@@ -36,22 +35,24 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
         `buildPiDomainAgentTools: tool '${name}' is not registered. Check capability manifest registration.`,
       );
     }
-    if (!(dt.inputSchema instanceof z.ZodObject)) {
-      throw new Error(
-        `buildPiDomainAgentTools: tool '${name}' inputSchema must be a z.object(...). Got ${dt.inputSchema.constructor.name}.`,
-      );
-    }
-    const parameters = zodToToolParametersSchema(dt.inputSchema, {
-      io: 'input',
-      reused: 'inline',
-      target: 'draft-07',
-    }) as AgentTool['parameters'];
+    const parameters = zodToToolParametersSchema(
+      dt.inputSchema,
+      {
+        io: 'input',
+        reused: 'inline',
+        target: 'draft-07',
+      },
+      dt.name === 'present_primary_view',
+    ) as AgentTool['parameters'];
 
     return {
       name: piToolWireName(options.serverName, dt.name),
       label: dt.name,
       description: dt.description,
       parameters,
+      effect: dt.effect,
+      // Keep rejection in the bridge so the normal hooks and durable log observe it.
+      ...(dt.name === 'present_primary_view' ? { inputValidation: 'bridge' as const } : {}),
       execute: async (toolCallId, params, signal) => {
         // The loop abort must reach the tool: merge it with the caller's
         // ctx.signal so either source cancels execution.
@@ -81,7 +82,7 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
           isError: result.isError,
         } satisfies AgentToolResult<null>;
       },
-    } satisfies AgentTool;
+    } satisfies AgentTool & { effect: typeof dt.effect };
   });
 }
 

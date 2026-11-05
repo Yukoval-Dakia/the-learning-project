@@ -12,7 +12,7 @@
 //
 // 分层（每 key，见 registry.ts 注释）：
 //   envMode='priority' → env 显式 > DB > codeDefault（AI_PROVIDER_OVERRIDE pin）
-//   envMode='pinned'   → env > codeDefault，DB 层跳过（compose 强制三键）
+//   envMode='pinned'   → env > codeDefault，DB 层跳过
 //   其余               → DB > env > codeDefault
 
 import { type ConfigKeyDef, type ConfigSource, type ConfigValue, resolveKeyDef } from './registry';
@@ -222,8 +222,9 @@ export function getTaskOverride(kind: string):
         transientRetries?: number;
         timeout?: number;
       };
-      /** YUK-1547 — 模型原生推理参数（键 = wire 参数名，值原样透传）。 */
+      /** YUK-1806 — 期望思考层级；legacy `reasoning_effort` 值按 level 兼容读。 */
       reasoning?: {
+        level?: string;
         reasoning_effort?: string;
       };
       /** YUK-1547 — 显式 opt-in：task pair 优先于全局 pin（只有 true 生效）。 */
@@ -257,7 +258,7 @@ export function getTaskOverride(kind: string):
         }
       : {}),
     ...(reasoning !== undefined && typeof reasoning === 'object' && reasoning !== null
-      ? { reasoning: reasoning as { reasoning_effort?: string } }
+      ? { reasoning: reasoning as { level?: string; reasoning_effort?: string } }
       : {}),
     ...(typeof overrideGlobalPin === 'boolean' ? { overrideGlobalPin } : {}),
   };

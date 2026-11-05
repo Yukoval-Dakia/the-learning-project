@@ -12,6 +12,13 @@
     box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
   }
 
+  /* Same rhythm as the sheet's own grid; also the sticky bar's containing block. */
+  & .rc-lines-scope {
+    display: grid;
+    gap: var(--un-sp-4);
+    min-width: 0;
+  }
+
   & .rc-sheet-head {
     display: flex;
     align-items: baseline;
@@ -167,6 +174,11 @@
     justify-self: stretch;
   }
 
+  /* YUK-1761 — the text is markdown now (formulas render); its paragraphs keep the old rhythm. */
+  & .rc-line-text p {
+    margin: 0;
+  }
+
   & .rc-line-text {
     display: -webkit-box;
     overflow: hidden;
@@ -212,13 +224,12 @@
     display: grid;
     gap: var(--un-sp-2);
     padding: var(--un-sp-3) var(--un-sp-4);
-    border-radius: 0 var(--un-r-1) var(--un-r-1) 0;
-    background: var(--un-bg-sunk);
-    box-shadow: inset 2px 0 0 var(--un-accent);
+    border-radius: var(--un-r-1);
+    background: var(--un-accent-soft);
   }
 
   & .rc-ask[data-done="true"] {
-    box-shadow: inset 2px 0 0 var(--un-line-strong);
+    background: var(--un-bg-sunk);
   }
 
   & .rc-ask-q {

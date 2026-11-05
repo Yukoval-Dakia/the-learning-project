@@ -20,11 +20,13 @@ import {
   bankRequirementInterpretTaskSpec,
 } from '../question-bank/tasks/bank-search-semantic';
 import { itemPriorLlasaTaskSpec, itemPriorTaskSpec } from '../question-bank/tasks/item-prior';
+import { questionAdmissionAdjudicateTaskSpec } from '../question-bank/tasks/question-admission-adjudicate';
 import { questionAdmissionSolveTaskSpec } from '../question-bank/tasks/question-admission-solve';
 import { quizVerifyTaskSpec } from '../question-bank/tasks/quiz-verify';
 import { variantVerifyTaskSpec } from '../question-bank/tasks/variant-verify';
 import { selectionOrchestratorTaskSpec } from '../scheduling/tasks/selection-orchestrator';
 import { sessionSummaryTaskSpec } from '../session/tasks/session-summary';
+import { questionPreparerTaskSpec } from '../supply/tasks/question-preparer';
 import { questionAuthorTaskSpec } from './question-author';
 import { quizGenTaskSpec } from './quiz-generation';
 import { quizPlanTaskSpec } from './quiz-planning';
@@ -34,6 +36,7 @@ import { supplyPlanTaskSpec } from './supply-planning';
 import { teachingQualityTaskSpec } from './teaching-quality';
 
 export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
+  QuestionPreparerTask: questionPreparerTaskSpec,
   BankRequirementInterpretTask: bankRequirementInterpretTaskSpec,
   BankConditionVerifyTask: bankConditionVerifyTaskSpec,
   AttributionTask: attributionTaskSpec,
@@ -63,4 +66,5 @@ export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
   AssessmentRuleJudgeTask: assessmentRuleTaskSpec,
   AssessmentRubricJudgeTask: assessmentRubricTaskSpec,
   QuestionAdmissionSolveTask: questionAdmissionSolveTaskSpec,
+  QuestionAdmissionAdjudicateTask: questionAdmissionAdjudicateTaskSpec,
 });

@@ -16,21 +16,14 @@ import {
 type PublicResultTool =
   | Exclude<
       (typeof COPILOT_TOOLS)[number],
-      'read_agent_notes' | 'write_agent_note' | 'present_primary_view'
+      'read_agent_notes' | 'write_agent_note' | 'present_primary_view' | 'compose_block'
     >
   | 'attribute_mistake'
   | 'propose_variant';
-type ResultPolicy =
-  | 'reader'
-  | 'record'
-  | 'review'
-  | 'events'
-  | 'memory'
-  | 'generated'
-  | readonly string[];
+type ResultPolicy = 'reader' | 'record' | 'review' | 'events' | 'generated' | readonly string[];
 const POLICIES: Record<string, ResultPolicy> = {
   submit_review_answer: ['kind', 'status', 'submission_id', 'attempt_id', 'candidate_id', 'run_id'],
-  query_memory_brief: 'reader',
+  query_context: 'reader',
   get_subject_graph_overview: 'reader',
   query_knowledge: 'reader',
   expand_knowledge_subgraph: 'reader',
@@ -49,7 +42,6 @@ const POLICIES: Record<string, ResultPolicy> = {
   get_record_context: 'record',
   get_review_due: 'review',
   query_events: 'events',
-  search_memory_facts: 'memory',
   generate_goal_outline: 'generated',
   generate_question_candidate: 'generated',
   propose_knowledge_edge: ['status', 'proposal_id'],
@@ -77,18 +69,22 @@ const POLICIES: Record<string, ResultPolicy> = {
   ],
   // 纠错提案回执（proposal id + 状态给模型；内部评估细节不泄）。
   propose_grading_correction: ['status', 'reason', 'proposal_event_id', 'evaluation_id'],
+  // YUK-1770 — steering 回执：状态 + 回声（含窗口/剩余天数）+ 问题清单 + 待办承诺；
+  // 原话/元数据已在事件层留痕，公共快照只给学习者可见面。
+  remember_learner: ['status', 'change_id', 'version', 'before', 'after', 'issues'],
+  record_steering: ['status', 'goal_id', 'echo', 'issues', 'preparing', 'deferred_due_reviews'],
   attribute_mistake: ['status', 'judge_event_id', 'cause'],
   propose_variant: ['status', 'proposal_ids', 'mistake_variant_ids', 'variant_question_ids'],
   write_quiz: ['artifact_id', 'question_count', 'knowledge_ids', 'practice_path'],
-  author_artifact: ['artifact_id', 'type', 'title', 'version', 'knowledge_ids'],
-  update_artifact: ['artifact_id', 'previous_version', 'version'],
+  write_note: ['status', 'artifact_id', 'title', 'version'],
+  check_note: ['artifact_id', 'artifact_type', 'issues'],
 } satisfies Record<PublicResultTool, ResultPolicy>;
-const INTERNAL = new Set(['read_agent_notes', 'write_agent_note', 'present_primary_view']);
-const MEMORY_FACT = z.object({
-  id: z.string().optional(),
-  memory: z.string().optional(),
-  score: z.number().optional(),
-});
+const INTERNAL = new Set([
+  'read_agent_notes',
+  'write_agent_note',
+  'present_primary_view',
+  'compose_block',
+]);
 const FILTER_FIELDS = [
   'eventId',
   'actorKind',
@@ -263,8 +259,6 @@ export function buildCopilotToolResultSnapshot(
         const rows = projected[listKey];
         if (Array.isArray(rows)) for (const row of rows) if (record(row)) delete row[field];
       }
-    } else if (policy === 'memory') {
-      projected.facts = z.array(MEMORY_FACT).parse(projected.facts);
     } else if (policy === 'events' && record(projected.filter_applied)) {
       projected.filter_applied = z
         .record(z.string(), z.union([z.string(), z.number(), z.null()]))

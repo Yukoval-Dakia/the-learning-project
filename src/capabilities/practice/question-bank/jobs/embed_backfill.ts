@@ -32,6 +32,7 @@ import {
   type EmbedProviderAttemptOptions,
   embedMany,
 } from '@/server/ai/embed';
+import { embedSolutionPriorVectors } from '../server/admission/solution-prior-vectors';
 
 /** Stamp a vector computed during ingest; valid only when its text is the text about
  *  to be persisted. Otherwise leave it NULL for the backfill to recompute. */
@@ -349,6 +350,8 @@ export async function runEmbedBackfill(
     // rows stay re-pickable.
     total += pairs.length;
   }
+
+  total += await embedSolutionPriorVectors(db, limit, providerAttempt);
 
   return total;
 }

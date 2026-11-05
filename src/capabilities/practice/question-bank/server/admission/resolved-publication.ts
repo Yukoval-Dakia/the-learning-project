@@ -32,6 +32,7 @@ import { canonicalHash } from '@/core/migration/canonical';
 import type { PaidEffectIdentity } from '@/core/migration/paid-effect-protocol';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import {
+  type PresentationBlockT,
   type PresentationT,
   defaultPresentation,
   validatePresentation,
@@ -66,8 +67,9 @@ export interface PaidReceiptBinding {
   /** Frozen input contract digest — the base the paid run was claimed on. */
   entity_revision: string;
   input_digest: string;
-  /** canonicalHash of the applied AdmissionResultReceipt (content-true). */
+  /** Digest of the immutable coordinator receipt; resumed verdicts add their derived digest. */
   receipt_digest: string;
+  derived_result_digest?: string;
   receipt_recorded_at: string;
   /** Generation the frozen input was claimed under (evidence, not a CAS). */
   input_admission_generation: number;
@@ -127,11 +129,44 @@ export function buildResolvedPublishContract(
         `group '${input.contract.structure.group_id}' — foreign receipt`,
     };
   }
+  // Preserve authored layout and stable bindings when a legacy semantic text
+  // response becomes a free response. Custom blocks keep their explicit contract.
+  const promoted = new Set(
+    resolved.response_spec.slots
+      .filter(
+        (slot) =>
+          slot.kind === 'open_response' &&
+          input.contract.response_spec.slots.some(
+            (old) =>
+              old.slot_id === slot.slot_id &&
+              (old.kind === 'blank' ||
+                old.kind === 'text' ||
+                old.kind === 'formula' ||
+                old.kind === 'numeric'),
+          ),
+      )
+      .map((slot) => slot.slot_id),
+  );
+  const retarget = (block: PresentationBlockT): PresentationBlockT => {
+    if (block.kind === 'stack' || block.kind === 'passage_layout')
+      return { ...block, children: block.children.map(retarget) };
+    if (block.kind === 'blank_input' && promoted.has(block.bind.slot_id))
+      return {
+        block_id: block.block_id,
+        kind: 'free_area',
+        bind: { ...block.bind, response_class: 'free' },
+        ...(block.print ? { print: block.print } : {}),
+      };
+    return block;
+  };
+  const carriedPresentation = input.contract.presentation
+    ? { ...input.contract.presentation, root: retarget(input.contract.presentation.root) }
+    : undefined;
   const explicit =
     resolved.presentation != null
       ? { source: 'resolved' as const, value: resolved.presentation }
-      : input.contract.presentation != null
-        ? { source: 'carried_from_base' as const, value: input.contract.presentation }
+      : carriedPresentation != null
+        ? { source: 'carried_from_base' as const, value: carriedPresentation }
         : null;
   let presentation: PresentationT | undefined;
   let presentationSource: ResolvedPublishContract['presentationSource'];
@@ -175,7 +210,7 @@ export function buildResolvedPublishContract(
     // variants, so we gate first and never let it widen the scope silently.
     const offending = resolved.response_spec.slots.find((slot) => {
       if (slot.kind === 'table') return false; // display-only, needs no input block
-      if (slot.kind === 'blank') return false;
+      if (slot.kind === 'blank' || slot.kind === 'open_response') return false;
       if (slot.kind === 'select') {
         return slot.items.some(
           (item) => item.coordinates != null || item.gap_after_codepoint != null,
@@ -259,6 +294,7 @@ export function buildAdmissionPublishInput(args: {
   input: FrozenAdmissionInput;
   identity: PaidEffectIdentity;
   receipt: AdmissionResultReceipt;
+  coordinatorReceipt?: AdmissionResultReceipt;
   /** Caller's admission decision already requires resolved != null. */
   admitted: boolean;
   expectedCurrentRevision: string | null;
@@ -296,8 +332,9 @@ export function buildAdmissionPublishInput(args: {
     entity_id: args.identity.entityId,
     entity_revision: args.identity.entityRevision,
     input_digest: args.identity.inputDigest,
-    receipt_digest: canonicalHash(receipt),
-    receipt_recorded_at: receipt.recorded_at,
+    receipt_digest: canonicalHash(args.coordinatorReceipt ?? receipt),
+    receipt_recorded_at: (args.coordinatorReceipt ?? receipt).recorded_at,
+    ...(args.coordinatorReceipt ? { derived_result_digest: canonicalHash(receipt) } : {}),
     input_admission_generation: input.admission_generation,
     ...resolvedPart,
   };
@@ -341,6 +378,9 @@ export function buildAdmissionPublishInput(args: {
         admission_generation: input.admission_generation,
       },
       receipt_digest: binding.receipt_digest,
+      ...(binding.derived_result_digest
+        ? { derived_result_digest: binding.derived_result_digest }
+        : {}),
       ...(args.admitted ? resolvedPart : {}),
       ...(args.repair != null ? { repair: args.repair } : {}),
     },
@@ -375,6 +415,8 @@ export function buildAdmissionPublishInput(args: {
 
 /** Shared shape of the verdict/cell input runQuestionAdmissionChecks consumes. */
 export function admissionCheckVerdict(result: AdmissionResultReceipt['result']) {
+  if (result.status === 'waiting')
+    throw new Error('A nonterminal admission wait is not a quality verdict');
   return {
     unitSummary: result.per_unit.map((unit) => ({
       unit_id: unit.scoring_unit_id,

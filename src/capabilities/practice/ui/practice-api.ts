@@ -283,11 +283,7 @@ export function projectQuestionDeleteResponse(
   };
 }
 
-// The 200 advice body; the 202 durable-judge receipt answers only an `accept_pending` request.
-type ReviewAdviceWire = Extract<
-  ApiOperationJsonResponse<'previewReviewAdvice'>,
-  { judge: unknown }
->;
+type ReviewAdviceWire = ApiOperationJsonResponse<'previewReviewAdvice'>;
 export type JudgePreview = ReviewAdviceWire['judge'];
 // YUK-1729 — the learner capture an automatic verdict commits with in the same advice request.
 export type AdviceCommit = NonNullable<ApiOperationRequestBody<'previewReviewAdvice'>['commit']>;
@@ -314,9 +310,6 @@ export async function getAdvice(
       ...(commit ? { commit } : {}),
     },
   });
-  // This request never sends `accept_pending`, so the server cannot answer with the 202 receipt.
-  if ('verdict' in response)
-    throw new Error('advice answered with a durable-judge receipt it was not asked for');
   return response;
 }
 
@@ -490,7 +483,15 @@ export interface PaperListItem {
   generation_status: string;
   knowledge: Array<{ id: string; name: string }>;
   total_slots: number;
-  session: { id: string; status: string; pos: number; right: number; wrong: number } | null;
+  session: {
+    id: string;
+    status: string;
+    pos: number;
+    /** Includes partly correct answers; subtract `partial` for the fully correct count. */
+    right: number;
+    wrong: number;
+    partial?: number;
+  } | null;
   created_at: string;
 }
 
@@ -569,7 +570,15 @@ export interface PaperDetail {
   title: string;
   generation_status: string;
   intent_source: string;
-  session: { id: string; status: string; pos: number; right: number; wrong: number } | null;
+  session: {
+    id: string;
+    status: string;
+    pos: number;
+    right: number;
+    wrong: number;
+    /** Written after hand-in by the session summary job; null until then, or if none was written. */
+    summary_md?: string | null;
+  } | null;
   sections: Array<{ section_index: number; knowledge_focus_names: string[]; slots: PaperSlot[] }>;
 }
 

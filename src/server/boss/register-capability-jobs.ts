@@ -3,8 +3,7 @@
 // Declared worker options win. Absent fields stay on the retired 2s/1 recipe.
 // Jobs with no schedule mount first, so a cron sender finds its on-demand queue already created.
 
-import type { PgBoss } from 'pg-boss';
-
+import type { Job, PgBoss } from 'pg-boss';
 import type { Db } from '@/db/client';
 import type { CapabilityManifest, JobDecl, JobHandlerFactory } from '@/kernel/manifest';
 import {
@@ -34,6 +33,16 @@ function withScheduledEligibility(
   return async (jobs) => {
     if (before) await before(db);
     if (!decide) return handler(jobs);
+    // YUK-1770 — a steering-triggered send (subscription reaction to a learner's
+    // own utterance seconds ago) is not the nightly cadence: the dormant-tier
+    // gate exists to keep scheduled spends off dormant learners, and the learner
+    // just spoke. Explicit reason tag bypasses only that gate, not the handler's
+    // own budget/machine checks.
+    const steeringTriggered = jobs.some(
+      (job: Job) =>
+        (job.data as { reason?: string } | null | undefined)?.reason === 'steering_changed',
+    );
+    if (steeringTriggered) return handler(jobs);
     const signals = (await loadNightlyContext(db, new Date(), [decl.name])).forJob(decl.name);
     const decision = decide(signals);
     if (!decision.run) {
@@ -62,6 +71,7 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   } else {
     await createJobQueue(boss, decl.name, EXPIRE_BY_QUEUE[decl.queue], {
       ...(decl.heartbeatSeconds !== undefined ? { heartbeatSeconds: decl.heartbeatSeconds } : {}),
+      ...(decl.notify !== undefined ? { notify: decl.notify } : {}),
     });
   }
 
@@ -76,10 +86,30 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
     {
       pollingIntervalSeconds: decl.pollingIntervalSeconds ?? 2,
       batchSize: decl.batchSize ?? 1,
+      ...(decl.reservedPriority !== undefined
+        ? {
+            maxPriority: decl.reservedPriority - 1,
+            notifyPollingIntervalSeconds: decl.pollingIntervalSeconds ?? 2,
+          }
+        : {}),
       ...(decl.includeMetadata !== undefined ? { includeMetadata: decl.includeMetadata } : {}),
+      ...(decl.localConcurrency !== undefined ? { localConcurrency: decl.localConcurrency } : {}),
     },
     fenceAwareJobHandler(db, decl.name, handler),
   );
+
+  if (decl.reservedPriority !== undefined) {
+    await boss.work(
+      decl.name,
+      {
+        pollingIntervalSeconds: decl.pollingIntervalSeconds ?? 2,
+        batchSize: 1,
+        minPriority: decl.reservedPriority,
+        notifyPollingIntervalSeconds: decl.pollingIntervalSeconds ?? 2,
+      },
+      fenceAwareJobHandler(db, decl.name, handler),
+    );
+  }
 
   if (decl.schedule) {
     if (
@@ -119,7 +149,10 @@ export async function registerCapabilityJobs(
   // operations. Agency probes issue assessments, so the model pin reader is bound here too.
   const practice = await import('@/capabilities/practice/public');
   await practice.installPracticeHostOperations();
+  const { installAgencyHostOperations } = await import('@/capabilities/agency/public');
+  await installAgencyHostOperations();
   await practice.installDailyReviewPlanFacts();
+  await practice.installTodayPracticeRecompose();
   await practice.installInterventionAuthorStages();
   await practice.installInterventionDiagnosticLeaves();
   await practice.installModelAdmissionPins();

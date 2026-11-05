@@ -6,6 +6,7 @@ import {
   httpPlacementClient,
   loadPlacementPage,
 } from '@/capabilities/onboarding/ui-public';
+import { readIssuedBlocks } from '@/capabilities/practice/ui-public';
 import { startJudgeRunStatusClient } from '../judge-status-client';
 import { startPlacementHeldReleaseClient } from '../placement-held-release-client';
 import { startPlacementNextClient } from '../placement-next-client';
@@ -26,6 +27,7 @@ const placementClient: PlacementClient = {
   readJudgeRunStatus: startJudgeRunStatusClient,
   saveResponseDraft: startResponseDraftClient,
   submitProbeAnswer: startPlacementSubmitClient,
+  readIssuedBlocks,
 };
 export const Route = createFileRoute('/placement')({
   ssr: false,

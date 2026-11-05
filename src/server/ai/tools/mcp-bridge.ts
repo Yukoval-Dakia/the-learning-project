@@ -8,6 +8,7 @@
 import { createHash } from 'node:crypto';
 
 import { createId } from '@paralleldrive/cuid2';
+import { ZodError } from 'zod';
 import type { BuildMcpServerOptions } from '@/ai/pi-tool-mount';
 import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import { writeEvent } from '@/kernel/events';
@@ -30,6 +31,8 @@ import type {
   ToolExecutionResultObservation,
 } from '@/kernel/tools/types';
 import { TOOL_OUTPUT_IMAGES_FIELD } from '@/kernel/tools/types';
+import { zodToToolParametersSchema } from '@/kernel/zod-json-schema';
+import { sanitizeArgumentsEvidence, sanitizeProviderErrorText } from '../provider-error-evidence';
 import { __resolveMirrorPolicy } from './tool-mirror-policy';
 
 /**
@@ -119,6 +122,7 @@ export interface DomainToolCallOptions {
   /** The agentLoop's native toolCall.id, forwarded for call correlation. */
   correlatedToolUseId?: string;
   toolOperations?: ToolOperations;
+  presentResult?: BuildMcpServerOptions['presentResult'];
   cancellationSignals?: ReadonlyArray<{
     signal: AbortSignal;
     requestedBy: 'system' | 'user';
@@ -192,7 +196,22 @@ export async function executeDomainToolCall(
   const toolCallLogId = await persistToolCallLog(call, intercepted.input, execution);
   await mirrorToolUse(call, intercepted.input, execution, summary, toolCallLogId);
   await settleExecution(call, execution);
-  return formatToolResponse(intercepted.input, execution, summary, images);
+  const response = formatToolResponse(intercepted.input, execution, summary, images);
+  if (opts.presentResult && !response.isError) {
+    const text = response.content[0];
+    if (text?.type === 'text') {
+      try {
+        text.text = JSON.stringify(await opts.presentResult(JSON.parse(text.text)));
+      } catch {
+        // A label lookup must not erase a completed effect or its follow-up references.
+        text.text = JSON.stringify({
+          refs: { not_for_display: true, result: JSON.parse(text.text) },
+          display_unavailable: true,
+        });
+      }
+    }
+  }
+  return response;
 }
 
 /**
@@ -267,6 +286,19 @@ async function resolveOutputImages(
     }
     let bytes = loaded.bytes;
     let mimeType = loaded.mime_type;
+    // YUK-1548 (D8) — a stored SVG figure reaches the model as a PNG raster:
+    // providers do not consume raw SVG, and the rebuild is already verified.
+    if (mimeType === 'image/svg+xml') {
+      try {
+        const { default: sharp } = await import('sharp');
+        const raster = await sharp(Buffer.from(bytes), { density: 144 }).png().toBuffer();
+        bytes = new Uint8Array(raster.buffer, raster.byteOffset, raster.byteLength);
+        mimeType = 'image/png';
+      } catch {
+        blocks.push(note(`asset '${assetRef.asset_id}' could not be rasterised to PNG`));
+        continue;
+      }
+    }
     const maxEdge =
       typeof ref.max_edge === 'number' ? Math.min(ref.max_edge, MAX_TOOL_IMAGE_EDGE) : 0;
     if (maxEdge > 0) {
@@ -314,7 +346,22 @@ async function resolveOutputImages(
 
 type PhaseResult<T> =
   | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly error: string };
+  | {
+      readonly ok: false;
+      readonly error: string;
+      /** YUK-1548 §4.2 — typed shape issues from a ZodError, model-repairable. */
+      readonly issues?: {
+        code: string;
+        path: string;
+        detail: string;
+        expected?: unknown;
+        example?: unknown;
+        next_action?: string;
+        retryable?: boolean;
+      }[];
+      readonly next_action?: string;
+      readonly retryable?: boolean;
+    };
 type ToolInputState = {
   readonly parsedInput: unknown;
   readonly execInput: unknown;
@@ -350,6 +397,76 @@ function errorReasonOf(result: PhaseResult<unknown>): string | undefined {
   return result.ok ? undefined : result.error;
 }
 
+/** Only schema-owned shapes/examples are returned; rejected values never enter repair feedback. */
+export function toolInputFailure(dt: DomainTool<unknown, unknown>, args: unknown, error: unknown) {
+  if (!(error instanceof ZodError)) {
+    return {
+      error: 'Tool input contract unavailable; the model cannot fix this configuration error.',
+      next_action: 'ask_operator',
+      retryable: false,
+    };
+  }
+  const wire = zodToToolParametersSchema(dt.inputSchema, {
+    io: 'input',
+    reused: 'inline',
+    target: 'draft-07',
+  });
+  const object = (value: unknown): Record<string, unknown> | undefined =>
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  const branches = wire.anyOf;
+  // Select only by literal discriminants declared by the canonical schema.
+  const branch = Array.isArray(branches)
+    ? branches.find((candidate) => {
+        const properties = object(object(candidate)?.properties);
+        const literals = Object.entries(properties ?? {}).filter(
+          ([, schema]) => 'const' in (object(schema) ?? {}),
+        );
+        return (
+          literals.length > 0 &&
+          literals.every(([key, schema]) => object(args)?.[key] === object(schema)?.const)
+        );
+      })
+    : undefined;
+  const root = object(branch) ?? wire;
+  const issues = error.issues.slice(0, 12).map((issue) => {
+    let expected: unknown = root;
+    for (const key of issue.path) {
+      const node = object(expected);
+      expected = typeof key === 'number' ? node?.items : object(node?.properties)?.[String(key)];
+    }
+    const examples = object(expected)?.examples;
+    const path = `/${issue.path.map((key) => String(key).replace(/~/g, '~0').replace(/\//g, '~1')).join('/')}`;
+    return {
+      code: 'shape_invalid',
+      path,
+      detail: sanitizeProviderErrorText(issue.message),
+      ...(issue.code === 'custom'
+        ? {}
+        : {
+            expected: expected ?? root,
+            ...(Array.isArray(examples) && examples.length ? { example: examples[0] } : {}),
+          }),
+      next_action:
+        dt.name === 'present_primary_view' &&
+        object(args)?.source === 'tool_result' &&
+        issue.code === 'invalid_type' &&
+        path === '/ref' &&
+        object(expected)?.type === 'object'
+          ? 'copy_receipt'
+          : 'correct_arguments',
+      retryable: true,
+    };
+  });
+  return {
+    error: `Tool input does not match the declared schema: ${issues.map((issue) => `${issue.path}: ${issue.detail}`).join('; ')}`,
+    issues,
+    next_action: 'correct_arguments',
+    retryable: true,
+  };
+}
+
 function parseInput(call: ToolCallContext, rawArgs: unknown): InputPhase {
   try {
     const parsedInput = call.dt.inputSchema.parse(rawArgs);
@@ -363,10 +480,14 @@ function parseInput(call: ToolCallContext, rawArgs: unknown): InputPhase {
       result: { ok: true, value: undefined },
     };
   } catch (error) {
-    // Parse failure logs the raw request and does not claim call correlation.
     return {
-      input: { parsedInput: rawArgs, execInput: rawArgs, truncationNote: null },
-      result: phaseError(error),
+      input: {
+        parsedInput: sanitizeArgumentsEvidence(rawArgs),
+        execInput: rawArgs,
+        truncationNote: null,
+        correlatedToolUseId: call.opts.correlatedToolUseId,
+      },
+      result: { ok: false, ...toolInputFailure(call.dt, rawArgs, error) },
     };
   }
 }
@@ -374,9 +495,22 @@ function parseInput(call: ToolCallContext, rawArgs: unknown): InputPhase {
 async function runBeforeExecuteGate(call: ToolCallContext, phase: InputPhase): Promise<InputPhase> {
   if (!phase.result.ok) return phase;
   try {
-    const reason =
-      derivationToolDenial(call.ctx.derivationPolicy ?? 'allow', call.gateInput) ??
-      (await call.opts.beforeExecute?.(call.gateInput));
+    const permissionError = derivationToolDenial(
+      call.ctx.derivationPolicy ?? 'allow',
+      call.gateInput,
+    );
+    if (permissionError) {
+      return {
+        ...phase,
+        result: {
+          ok: false,
+          error: permissionError,
+          next_action: 'respect_turn_mode',
+          retryable: false,
+        },
+      };
+    }
+    const reason = await call.opts.beforeExecute?.(call.gateInput);
     return typeof reason === 'string' && reason.length > 0
       ? { ...phase, result: { ok: false, error: reason } }
       : phase;
@@ -727,6 +861,17 @@ function formatToolResponse(
             ? {
                 error: errorReason,
                 summary,
+                ...(execution.result.ok
+                  ? {}
+                  : execution.result.issues
+                    ? { issues: execution.result.issues }
+                    : {}),
+                ...(!execution.result.ok && execution.result.next_action
+                  ? {
+                      next_action: execution.result.next_action,
+                      retryable: execution.result.retryable,
+                    }
+                  : {}),
                 ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
                 ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
               }

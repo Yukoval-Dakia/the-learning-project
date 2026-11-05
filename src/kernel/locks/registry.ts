@@ -122,18 +122,16 @@ export const advisoryLockRegistry = {
     keyPrefix: 'intervention:source:',
     suffixFields: ['eventId'],
   },
+  curatorConsolidation: {
+    family: 'curator-consolidation',
+    encoding: 'hashtext',
+    key: 'context:curator',
+  },
   memoryIngestSource: {
     family: 'memory-ingest-source',
     encoding: 'hashtextextended',
     salt: 0,
     keyPrefix: 'memory:ingest:',
-    suffixFields: ['sourceEventId'],
-  },
-  memoryDispatchSource: {
-    family: 'memory-dispatch-source',
-    encoding: 'hashtextextended',
-    salt: 0,
-    keyPrefix: 'memory:dispatch:',
     suffixFields: ['sourceEventId'],
   },
   memoryOperatorRequest: {
@@ -186,6 +184,13 @@ export const advisoryLockRegistry = {
     salt: 0,
     keyPrefix: 'placement-supply:v1:',
     suffixFields: ['knowledgeId'],
+  },
+  supplySpendDay: {
+    family: 'supply-spend-day',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'supply-spend:v1:',
+    suffixFields: ['day'],
   },
   questionServingCommand: {
     family: 'serving-command',

@@ -7,7 +7,6 @@ import {
   IssuanceParamsSchema,
   IssuanceStateSchema,
   IssueAssessmentBodySchema,
-  JudgeDurablePendingResponseSchema,
   JudgeRunStatusResponseSchema,
   SaveResponseDraftBodySchema,
   SaveResponseDraftResponseSchema,
@@ -15,6 +14,8 @@ import {
   SubmissionCreatedSchema,
 } from '../api/assessment-contracts';
 import { AttemptResponseSchema, CreateAttemptBodySchema } from '../api/contracts';
+// The 202-pending schema lives in the db-free judge-run-status module so this eager import stays db-light.
+import { JudgeDurablePendingResponseSchema } from './server/judge-run-status';
 
 export const gradingManifestPart: Omit<CapabilityManifest, 'name' | 'description'> = {
   // YUK-573 — judge 校准观测事件归属（report-only）：sample = 每条复判对照一行

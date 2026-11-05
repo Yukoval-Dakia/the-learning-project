@@ -47,7 +47,6 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   memory_brief_sweep: 'drain',
   memory_ingest_outbox_poll: 'drain',
   memory_ingest_outbox_recover: 'drain',
-  memory_reconcile: 'drain',
   // 投影/审计类只读或写运维投影：不碰判分/作答真相。
   projection_oracle_sweep: 'drain',
   subject_profile_audit_nightly: 'drain',
@@ -55,7 +54,6 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   hub_auto_sync_nightly: 'drain',
   hub_sync_mutation_wake: 'drain',
   hub_sync_recovery: 'drain',
-  note_verify: 'drain',
   note_generate: 'drain',
   note_refine: 'drain',
 
@@ -106,6 +104,8 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   question_supply_nightly: 'translate',
   // 卡死 placement starter claim 的到期清扫：重驱的 quiz_gen / supply_execute 投递绑定旧题合同。
   placement_starter_recovery: 'translate',
+  question_preparer_run: 'translate',
+  question_preparer_recovery: 'translate',
   learner_return_wake: 'translate',
   supply_planner: 'translate',
   jyeoo_staged_asset_reap: 'drain', // 资产回收只删 staged 文件/行，合同无关。

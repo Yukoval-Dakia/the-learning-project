@@ -14,10 +14,19 @@ import {
   acquireLearningStateWriteLock,
   acquireSortedAdvisoryLocks,
 } from '@/db/learning-state-lock';
-import { event, knowledge, knowledge_edge } from '@/db/schema';
+import { event, knowledge, knowledge_edge, materialized_id_index } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { acquireProposalDecisionLock } from '@/kernel/proposals/applier-helpers';
+import {
+  type ProposalAcceptEffectOutcome,
+  type RecordedProposalRate,
+  runProposalAccept,
+  runProposalDismiss,
+} from '@/kernel/proposals/decision-protocol';
+import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { archiveProposalCooldownKey, writeArchiveProposal } from '@/kernel/proposals/producers';
+import type { ProposalSignalSource } from '@/kernel/proposals/signals';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { rewriteGoalScopeOnMerge } from '@/kernel/records/goal-commands';
@@ -863,22 +872,21 @@ async function readProposeEvent(db: DbLike, proposalId: string): Promise<Propose
   };
 }
 
-async function assertNotAlreadyRated(db: DbLike, proposalId: string): Promise<void> {
-  const rows = await db
-    .select({ id: event.id, payload: event.payload })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'rate'),
-        eq(event.subject_kind, 'event'),
-        eq(event.caused_by_event_id, proposalId),
-      ),
-    )
-    .limit(1);
-  if (rows.length > 0) {
-    const r = rows[0].payload as { rating?: string };
-    throw new Error(`proposal ${proposalId} is not pending (rating=${r.rating ?? 'unknown'})`);
-  }
+/**
+ * Rebuild the mutation payload the accept applies from its propose event: the
+ * mutation kind is encoded in the action, the fields sit at payload top level.
+ */
+function mutationFromPropose(propose: ProposeEventRow): KnowledgeMutationPayload {
+  const mutationKind: string =
+    propose.action === 'propose'
+      ? 'propose_new'
+      : propose.action.replace(/^experimental:knowledge_/, '');
+  const { reasoning: _r, ...payloadBody } = propose.payload as { reasoning?: string };
+  void _r;
+  return {
+    mutation: mutationKind,
+    ...(payloadBody as Record<string, unknown>),
+  } as KnowledgeMutationPayload;
 }
 
 // YUK-471 — knowledge ids touched by an accept, re-projected and compared against
@@ -902,166 +910,264 @@ function affectedNodeIds(result: Exclude<AcceptResult, { kind: 'propose_new_appl
   }
 }
 
-/** Apply a pending knowledge proposal in one locked transaction. */
-export async function acceptProposal(db: Db, proposalId: string): Promise<AcceptResult> {
-  // Concurrent double-accept must not duplicate apply side effects. The status
-  // check and mutation apply share a tx with SELECT … FOR UPDATE on the propose
-  // event row; the second caller sees the first rate event and throws not-pending.
+/**
+ * Signal source for the decision template: the live inbox row when the proposal
+ * carries an ai_proposal payload, else a cooldown-key-less stub so signal writes
+ * no-op for direct callers (tests, legacy propose events).
+ */
+async function knowledgeSignalSource(
+  db: DbLike,
+  proposalId: string,
+): Promise<ProposalSignalSource> {
+  return (
+    (await getProposalInboxRow(db, proposalId)) ?? {
+      id: proposalId,
+      kind: 'knowledge_node',
+      payload: {},
+    }
+  );
+}
+
+async function materializedKnowledgeIds(db: DbLike, proposalId: string): Promise<string[]> {
+  const rows = await db
+    .select({ materialized_id: materialized_id_index.materialized_id })
+    .from(materialized_id_index)
+    .where(
+      and(
+        eq(materialized_id_index.anchor_event_id, proposalId),
+        eq(materialized_id_index.subject_kind, 'knowledge'),
+      ),
+    );
+  return rows.map((row) => row.materialized_id);
+}
+
+function rateMaterializedIds(rate: RecordedProposalRate): string[] {
+  const ids = (rate.payload as { materialized_ids?: { knowledge?: unknown } }).materialized_ids
+    ?.knowledge;
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+}
+
+/**
+ * Rebuild the public accept result from the recorded accept rate. Minted ids
+ * come off the rate payload's materialized_ids (the reverse index is the
+ * fallback for accepts predating that field); structural ids re-derive from the
+ * propose event.
+ */
+async function replayedKnowledgeAccept(
+  db: DbLike,
+  proposalId: string,
+  rate: RecordedProposalRate,
+): Promise<AcceptResult> {
+  const propose = await readProposeEvent(db, proposalId);
+  const apply = mutationFromPropose(propose);
+  const rateIds = rateMaterializedIds(rate);
+  const materializedIds =
+    rateIds.length > 0 ? rateIds : await materializedKnowledgeIds(db, proposalId);
+  switch (apply.mutation) {
+    case 'propose_new': {
+      const newNodeId = materializedIds[0];
+      if (!newNodeId) {
+        throw new Error(`proposal ${proposalId} was accepted but has no materialized knowledge id`);
+      }
+      return { kind: 'propose_new_applied', new_node_id: newNodeId };
+    }
+    case 'reparent': {
+      if (apply.new_parent_id === null) {
+        throw new Error(`reparent proposal ${proposalId} was accepted without a new parent`);
+      }
+      return {
+        kind: 'reparent_applied',
+        node_id: apply.node_id,
+        new_parent_id: apply.new_parent_id,
+      };
+    }
+    case 'merge':
+      return { kind: 'merge_applied', into_id: apply.into_id, archived_ids: apply.from_ids };
+    case 'split':
+      return {
+        kind: 'split_applied',
+        archived_id: apply.from_id,
+        new_node_ids: materializedIds,
+      };
+    case 'archive':
+      return { kind: 'archive_applied', node_id: apply.node_id };
+    default: {
+      const _exhaustive: never = apply;
+      void _exhaustive;
+      throw new Error(
+        `unknown_mutation: proposal ${proposalId} payload mutation=${JSON.stringify(
+          (apply as { mutation?: unknown }).mutation,
+        )}`,
+      );
+    }
+  }
+}
+
+export interface AcceptProposalOptions {
+  /** Inbox/signal source for the decision signal; fetched when omitted. */
+  proposal?: ProposalSignalSource;
+  userNote?: string;
+}
+
+/** Apply a pending knowledge proposal inside the shared decision transaction. */
+export async function acceptProposal(
+  db: Db,
+  proposalId: string,
+  opts: AcceptProposalOptions = {},
+): Promise<AcceptResult> {
+  const signalSource = opts.proposal ?? (await knowledgeSignalSource(db, proposalId));
   let staleError: Error | null = null;
   try {
-    return await db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT id FROM event WHERE id = ${proposalId} FOR UPDATE`);
+    const { result } = await runProposalAccept(db, proposalId, {
+      proposal: signalSource,
+      userNote: opts.userNote,
+      signal: 'after_commit',
+      replay: (rate) => replayedKnowledgeAccept(db, proposalId, rate),
+      effect: async ({ tx, writeRate }): Promise<ProposalAcceptEffectOutcome<AcceptResult>> => {
+        // The propose event row FOR UPDATE stays the first owner lock, directly
+        // after the kernel's decision lock — the same serialization the
+        // pre-template writers had between the row lock and the apply.
+        await tx.execute(sql`SELECT id FROM event WHERE id = ${proposalId} FOR UPDATE`);
+        const propose = await readProposeEvent(tx, proposalId);
+        const apply = mutationFromPropose(propose);
 
-      const propose = await readProposeEvent(tx, proposalId);
-      await assertNotAlreadyRated(tx, proposalId);
+        // YUK-471 / YUK-728 — one materialization timestamp. Lock existing rows first
+        // so timestamp order matches serialized write order; thread the instant through
+        // apply and rate=accept for byte-exact fold == row parity.
+        if (apply.mutation === 'merge') await acquireLearningStateWriteLock(tx);
+        await lockMutationRows(tx, apply);
+        const now = new Date();
 
-      const mutationKind: string =
-        propose.action === 'propose'
-          ? 'propose_new'
-          : propose.action.replace(/^experimental:knowledge_/, '');
-      const { reasoning: _r, ...payloadBody } = propose.payload as { reasoning?: string };
-      void _r;
-
-      const apply: KnowledgeMutationPayload = {
-        mutation: mutationKind,
-        ...(payloadBody as Record<string, unknown>),
-      } as KnowledgeMutationPayload;
-
-      // YUK-471 / YUK-728 — one materialization timestamp. Lock existing rows first
-      // so timestamp order matches serialized write order; thread the instant through
-      // apply and rate=accept for byte-exact fold == row parity.
-      if (apply.mutation === 'merge') await acquireLearningStateWriteLock(tx);
-      await lockMutationRows(tx, apply);
-      const now = new Date();
-
-      let result: Exclude<AcceptResult, { kind: 'propose_new_applied' }>;
-      let reparentEmbedding: ReparentEmbeddingSnapshot | null = null;
-      // YUK-543 — merge-repair breadcrumb pinned on the rate event and used by
-      // the post-rate learning_item parity assert.
-      let mergeRepair: MergeRepairEntryT[] | null = null;
-      try {
-        switch (apply.mutation) {
-          case 'propose_new': {
-            const created = await acceptKnowledgeCreate(tx, { proposalId, payload: apply, now });
-            return { kind: 'propose_new_applied', new_node_id: created.new_node_id };
-          }
-          case 'reparent': {
-            if (propose.subject_id !== apply.node_id) {
-              throw new Error(`reparent proposal ${proposalId} does not identify its target node`);
+        let result: Exclude<AcceptResult, { kind: 'propose_new_applied' }>;
+        let reparentEmbedding: ReparentEmbeddingSnapshot | null = null;
+        // YUK-543 — merge-repair breadcrumb pinned on the rate event and used by
+        // the post-rate learning_item parity assert.
+        let mergeRepair: MergeRepairEntryT[] | null = null;
+        try {
+          switch (apply.mutation) {
+            case 'propose_new': {
+              const created = await acceptKnowledgeCreate(tx, {
+                proposalId,
+                payload: apply,
+                now,
+                writeRate,
+              });
+              return {
+                status: 'accepted',
+                result: { kind: 'propose_new_applied', new_node_id: created.new_node_id },
+              };
             }
-            reparentEmbedding = await prepareReparent(tx, apply);
-            if (apply.new_parent_id === null) {
-              throw new Error('reparent payload must have new_parent_id');
+            case 'reparent': {
+              if (propose.subject_id !== apply.node_id) {
+                throw new Error(
+                  `reparent proposal ${proposalId} does not identify its target node`,
+                );
+              }
+              reparentEmbedding = await prepareReparent(tx, apply);
+              if (apply.new_parent_id === null) {
+                throw new Error('reparent payload must have new_parent_id');
+              }
+              result = {
+                kind: 'reparent_applied',
+                node_id: apply.node_id,
+                new_parent_id: apply.new_parent_id,
+              };
+              break;
             }
-            result = {
-              kind: 'reparent_applied',
-              node_id: apply.node_id,
-              new_parent_id: apply.new_parent_id,
-            };
-            break;
-          }
-          case 'archive': {
-            if (propose.subject_id !== apply.node_id)
-              throw new Error(`archive proposal ${proposalId} does not identify its target node`);
-            await prepareKnowledgeArchive(tx, apply, now);
-            result = { kind: 'archive_applied', node_id: apply.node_id };
-            break;
-          }
-          case 'merge': {
-            if (propose.subject_id !== apply.into_id)
+            case 'archive': {
+              if (propose.subject_id !== apply.node_id)
+                throw new Error(`archive proposal ${proposalId} does not identify its target node`);
+              await prepareKnowledgeArchive(tx, apply, now);
+              result = { kind: 'archive_applied', node_id: apply.node_id };
+              break;
+            }
+            case 'merge': {
+              if (propose.subject_id !== apply.into_id)
+                throw new Error(
+                  `merge proposal ${proposalId} does not identify its destination node`,
+                );
+              mergeRepair = await prepareKnowledgeMerge(tx, apply, now);
+              result = {
+                kind: 'merge_applied',
+                into_id: apply.into_id,
+                archived_ids: apply.from_ids,
+              };
+              break;
+            }
+            case 'split': {
+              if (propose.subject_id !== apply.from_id)
+                throw new Error(`split proposal ${proposalId} does not identify its source node`);
+              const newIds = await prepareKnowledgeSplit(tx, apply, now);
+              result = {
+                kind: 'split_applied',
+                archived_id: apply.from_id,
+                new_node_ids: newIds,
+              };
+              break;
+            }
+            default: {
+              const _exhaustive: never = apply;
+              void _exhaustive;
+              const kind = (apply as { mutation?: unknown }).mutation;
               throw new Error(
-                `merge proposal ${proposalId} does not identify its destination node`,
+                `unknown_mutation: proposal ${proposalId} payload mutation=${JSON.stringify(kind)}`,
               );
-            mergeRepair = await prepareKnowledgeMerge(tx, apply, now);
-            result = {
-              kind: 'merge_applied',
-              into_id: apply.into_id,
-              archived_ids: apply.from_ids,
-            };
-            break;
+            }
           }
-          case 'split': {
-            if (propose.subject_id !== apply.from_id)
-              throw new Error(`split proposal ${proposalId} does not identify its source node`);
-            const newIds = await prepareKnowledgeSplit(tx, apply, now);
-            result = {
-              kind: 'split_applied',
-              archived_id: apply.from_id,
-              new_node_ids: newIds,
-            };
-            break;
+        } catch (e) {
+          const msg = (e as Error).message;
+          if (/^stale/i.test(msg)) {
+            // Capture so the rollback marker can be written outside the tx that is
+            // about to roll back.
+            staleError = e as Error;
           }
-          default: {
-            const _exhaustive: never = apply;
-            void _exhaustive;
-            const kind = (apply as { mutation?: unknown }).mutation;
-            throw new Error(
-              `unknown_mutation: proposal ${proposalId} payload mutation=${JSON.stringify(kind)}`,
-            );
-          }
+          throw e;
         }
-      } catch (e) {
-        const msg = (e as Error).message;
-        if (/^stale/i.test(msg)) {
-          // Capture so the rollback marker can be written outside the tx that is
-          // about to roll back.
-          staleError = e as Error;
+
+        // Only split mints ids here (propose_new is a complete Knowledge operation);
+        // reparent/merge/archive omit materialized_ids.
+        const mintedKnowledgeIds = result.kind === 'split_applied' ? result.new_node_ids : [];
+        const materializedIds =
+          mintedKnowledgeIds.length > 0 ? { knowledge: mintedKnowledgeIds } : undefined;
+
+        // First-write-wins reverse-index write; anchor = the propose event id.
+        for (const mintedId of mintedKnowledgeIds) {
+          await upsertMaterializedIdIndex(tx, {
+            materialized_id: mintedId,
+            anchor_event_id: proposalId,
+            subject_kind: 'knowledge',
+          });
         }
-        throw e;
-      }
 
-      // Only split mints ids here (propose_new is a complete Knowledge operation);
-      // reparent/merge/archive omit materialized_ids.
-      const mintedKnowledgeIds = result.kind === 'split_applied' ? result.new_node_ids : [];
-      const materializedIds =
-        mintedKnowledgeIds.length > 0 ? { knowledge: mintedKnowledgeIds } : undefined;
-
-      // First-write-wins reverse-index write; anchor = the propose event id.
-      for (const mintedId of mintedKnowledgeIds) {
-        await upsertMaterializedIdIndex(tx, {
-          materialized_id: mintedId,
-          anchor_event_id: proposalId,
-          subject_kind: 'knowledge',
+        // The accept rate uses the shared `now` so fold(events) reproduces the row's
+        // created_at/updated_at exactly.
+        await writeRate({
+          created_at: now,
+          payload: {
+            ...(materializedIds ? { materialized_ids: materializedIds } : {}),
+            // YUK-543 — pin the merge-repair breadcrumb (only merge accepts set it).
+            ...(mergeRepair ? { merge_repair: mergeRepair } : {}),
+          },
         });
-      }
 
-      // Accept event uses the shared `now` so fold(events) reproduces the row's
-      // created_at/updated_at exactly.
-      await writeEvent(tx, {
-        id: newId(),
-        session_id: null,
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'rate',
-        subject_kind: 'event',
-        subject_id: proposalId,
-        outcome: 'success',
-        payload: {
-          rating: 'accept',
-          ...(materializedIds ? { materialized_ids: materializedIds } : {}),
-          // YUK-543 — pin the merge-repair breadcrumb (only merge accepts set it).
-          ...(mergeRepair ? { merge_repair: mergeRepair } : {}),
-        },
-        caused_by_event_id: proposalId,
-        task_run_id: null,
-        cost_micro_usd: null,
-        created_at: now,
-      });
+        // The complete decision and minted identities are visible before the only structural write.
+        for (const id of affectedNodeIds(result)) {
+          await projectKnowledgeNodeGuarded(tx, id);
+        }
 
-      // The complete decision and minted identities are visible before the only structural write.
-      for (const id of affectedNodeIds(result)) {
-        await projectKnowledgeNodeGuarded(tx, id);
-      }
-
-      if (reparentEmbedding) await refreshReparentEmbedding(tx, reparentEmbedding);
-      return result;
+        if (reparentEmbedding) await refreshReparentEmbedding(tx, reparentEmbedding);
+        return { status: 'accepted', result };
+      },
     });
+    return result;
   } catch (e) {
     if (staleError) {
       // Best-effort rollback marker so later reads see status='stale', not pending. Written
-      // under the proposal row lock and only while unrated, so it cannot land beside a dismiss.
+      // under the proposal decision lock and only while unrated, so it cannot land beside a
+      // dismiss or an accept that committed first.
       try {
         await db.transaction(async (tx) => {
+          await acquireProposalDecisionLock(tx, proposalId);
           await tx.execute(sql`SELECT id FROM event WHERE id = ${proposalId} FOR UPDATE`);
           const [rated] = await tx
             .select({ id: event.id })
@@ -1099,68 +1205,33 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
   }
 }
 
-/** Write rate=dismiss; idempotent when the proposal is already dismissed. */
+/** Write rate=dismiss through the shared decision template; idempotent on replay. */
 export async function dismissProposal(
   db: Db,
   proposalId: string,
   userNote?: string,
-): Promise<{ idempotent: boolean }> {
-  // Same row lock as acceptProposal, so a dismiss racing an in-flight accept sees its rate
-  // instead of writing a second one; the rate check only counts under that lock.
-  return db.transaction(async (tx) => {
-    const locked = await tx.execute(sql`SELECT id FROM event WHERE id = ${proposalId} FOR UPDATE`);
-    if (locked.length === 0) {
-      throw new Error(`proposal not found: ${proposalId}`);
-    }
+): Promise<{ idempotent: boolean; rate_event_id: string | null }> {
+  // Guard against dismissing an arbitrary event id; only proposals may be rated.
+  // Same contract the pre-template writer enforced under the row lock — events
+  // are immutable, so the read can stay outside the decision transaction.
+  const [proposeRow] = await db
+    .select({ action: event.action })
+    .from(event)
+    .where(eq(event.id, proposalId))
+    .limit(1);
+  if (!proposeRow) {
+    throw new Error(`proposal not found: ${proposalId}`);
+  }
+  const isProposal =
+    proposeRow.action === 'propose' || proposeRow.action.startsWith('experimental:knowledge_');
+  if (!isProposal) {
+    throw new Error(`event ${proposalId} is not a proposal (action='${proposeRow.action}')`);
+  }
 
-    const [existing] = await tx
-      .select({ payload: event.payload })
-      .from(event)
-      .where(
-        and(
-          eq(event.action, 'rate'),
-          eq(event.subject_kind, 'event'),
-          eq(event.caused_by_event_id, proposalId),
-        ),
-      )
-      .limit(1);
-    if (existing) {
-      const rating = (existing.payload as { rating?: string }).rating;
-      if (rating === 'dismiss') return { idempotent: true };
-      throw new ApiError(
-        'conflict',
-        `proposal ${proposalId} already decided as ${rating ?? 'unknown'}`,
-        409,
-      );
-    }
-
-    // Guard against dismissing an arbitrary event id; only proposals may be rated.
-    const [proposeRow] = await tx
-      .select({ action: event.action })
-      .from(event)
-      .where(eq(event.id, proposalId))
-      .limit(1);
-    const isProposal =
-      proposeRow.action === 'propose' || proposeRow.action.startsWith('experimental:knowledge_');
-    if (!isProposal) {
-      throw new Error(`event ${proposalId} is not a proposal (action='${proposeRow.action}')`);
-    }
-
-    await writeEvent(tx, {
-      id: newId(),
-      session_id: null,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'rate',
-      subject_kind: 'event',
-      subject_id: proposalId,
-      outcome: 'success',
-      payload: { rating: 'dismiss', ...(userNote ? { user_note: userNote } : {}) },
-      caused_by_event_id: proposalId,
-      task_run_id: null,
-      cost_micro_usd: null,
-      created_at: new Date(),
-    });
-    return { idempotent: false };
+  const dismissed = await runProposalDismiss(db, proposalId, {
+    proposal: await knowledgeSignalSource(db, proposalId),
+    userNote,
+    signal: 'after_commit',
   });
+  return { idempotent: dismissed.idempotent === true, rate_event_id: dismissed.rate_event_id };
 }

@@ -1,9 +1,10 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { apiJson } from '@/ui/lib/api';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button, Chip, type ChipTone } from '@/ui-next/public';
-import type { AdminRunDto, AdminRunTimelineEventDto } from '../public';
+import type { AdminRunDto, AdminRunTimelineEventDto, TaskFailureAlertsRead } from '../public';
 import { type AdminReadClient, httpAdminClient } from './admin-client';
 import {
   ADMIN_LINKS,
@@ -131,10 +132,165 @@ function RunOutcomeSummary({ run }: { run: AdminRunRow }) {
   );
 }
 
+type TaskFailureAlertRow = TaskFailureAlertsRead['alerts'][number];
+
+const readTaskFailureAlertsHttp = () =>
+  apiJson<TaskFailureAlertsRead>('/api/observability/task-failure-alerts');
+
+function alertRuleText(alert: TaskFailureAlertRow, windowHours: number): string {
+  if (alert.rule === 'consecutive') return `连续失败 ${alert.failures} 次`;
+  return `${windowHours} 小时内失败 ${alert.failures} / ${alert.runs} 次`;
+}
+
+function alertLastSuccessText(alert: TaskFailureAlertRow): string {
+  if (alert.last_success_at) return formatTime(alert.last_success_at);
+  if (alert.rule === 'consecutive') return '从未成功';
+  return '窗口内没有成功';
+}
+
+function AlertTaskCell({ taskKind }: { taskKind: string }) {
+  return (
+    <td>
+      <span className="adm-run-task">{taskLabel(taskKind)}</span>
+      {taskLabel(taskKind) !== taskKind && <code className="adm-mono adm-quiet"> {taskKind}</code>}
+    </td>
+  );
+}
+
+function AlertRecordedCell({ recordedAt }: { recordedAt: string | null | undefined }) {
+  return (
+    <td>
+      {recordedAt ? (
+        <Chip tone="positive">已记录 · {formatTime(recordedAt)}</Chip>
+      ) : (
+        <Chip>下次整点检查时记录</Chip>
+      )}
+    </td>
+  );
+}
+
+/**
+ * YUK-1738 — task kinds that keep failing, read live from observability. Shown only when
+ * there is at least one alert; a failed read is one quiet line and never blocks the run list.
+ * YUK-1765 — an `unsealed` alert is not a failure (the reply was delivered), so it has its own
+ * panel and never reads as 「失败 0 / 1 次」.
+ */
+function TaskFailureAlertsPanel({
+  read,
+  onOpenRun,
+}: {
+  read: () => Promise<TaskFailureAlertsRead>;
+  onOpenRun: (runId: string) => void;
+}) {
+  const alertsQ = useQuery({
+    queryKey: ['admin-task-failure-alerts'],
+    queryFn: read,
+    refetchInterval: 60_000,
+  });
+  if (alertsQ.error)
+    return <p className="adm-warn">持续失败告警暂时读不到，下面的运行记录不受影响。</p>;
+  const data = alertsQ.data;
+  if (!data || data.alerts.length === 0) return null;
+  const failing = data.alerts.filter((alert) => alert.rule !== 'unsealed');
+  const unsealed = data.alerts.filter((alert) => alert.rule === 'unsealed');
+  return (
+    <>
+      {failing.length > 0 && (
+        <AdminPanel
+          id="adm-failure-alerts"
+          title="持续失败的任务"
+          sub={`连续失败 ${data.thresholds.consecutive_failures} 次，或 ${data.thresholds.window_hours} 小时内失败率超过 ${Math.round(data.thresholds.failure_rate_above * 100)}% 时列出 · ${formatTime(data.checked_at)} 检查`}
+          aside={<Chip tone="critical">{failing.length} 项</Chip>}
+          flush
+        >
+          <div className="adm-table-scroll">
+            <table className="adm-table">
+              <thead>
+                <tr>
+                  <th scope="col">任务</th>
+                  <th scope="col">失败</th>
+                  <th scope="col">最近失败</th>
+                  <th scope="col">上次成功</th>
+                  <th scope="col">告警记录</th>
+                  <th scope="col">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {failing.map((alert) => (
+                  <tr key={alert.id}>
+                    <AlertTaskCell taskKind={alert.task_kind} />
+                    <td>
+                      <Chip tone="critical">
+                        {alertRuleText(alert, data.thresholds.window_hours)}
+                      </Chip>
+                      {alert.latest_finish_reason && (
+                        <code className="adm-mono adm-quiet"> {alert.latest_finish_reason}</code>
+                      )}
+                    </td>
+                    <td className="adm-mono adm-quiet">{formatTime(alert.last_failure_at)}</td>
+                    <td className="adm-mono adm-quiet">{alertLastSuccessText(alert)}</td>
+                    <AlertRecordedCell recordedAt={alert.recorded_at} />
+                    <td>
+                      <Button onClick={() => onOpenRun(alert.latest_run_id)}>
+                        查看最近一次运行
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </AdminPanel>
+      )}
+      {unsealed.length > 0 && (
+        <AdminPanel
+          id="adm-unsealed-alerts"
+          title="回复已送达，收尾记录没写完"
+          sub={`回复已写入对话，不计入失败率，但内容可能不完整。可能是超过 64k 被截断，或回执没封存，具体原因看最近一次运行 · ${formatTime(data.checked_at)} 检查`}
+          aside={<Chip tone="caution">{unsealed.length} 项</Chip>}
+          flush
+        >
+          <div className="adm-table-scroll">
+            <table className="adm-table">
+              <thead>
+                <tr>
+                  <th scope="col">任务</th>
+                  <th scope="col">最近一次</th>
+                  <th scope="col">告警记录</th>
+                  <th scope="col">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {unsealed.map((alert) => (
+                  <tr key={alert.id}>
+                    <AlertTaskCell taskKind={alert.task_kind} />
+                    <td className="adm-mono adm-quiet">{formatTime(alert.last_failure_at)}</td>
+                    <AlertRecordedCell recordedAt={alert.recorded_at} />
+                    <td>
+                      <Button onClick={() => onOpenRun(alert.latest_run_id)}>
+                        查看最近一次运行
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </AdminPanel>
+      )}
+    </>
+  );
+}
+
 export function AdminRunsSurface({
   navigate,
   client = httpAdminClient,
-}: AdminSurfaceProps & { client?: AdminReadClient }) {
+  readTaskFailureAlerts = readTaskFailureAlertsHttp,
+}: AdminSurfaceProps & {
+  client?: AdminReadClient;
+  /** YUK-1738 — the alert read; the Start route passes its server function. */
+  readTaskFailureAlerts?: () => Promise<TaskFailureAlertsRead>;
+}) {
   const queryClient = useQueryClient();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [staleRunId, setStaleRunId] = useState<string | null>(null);
@@ -184,6 +340,12 @@ export function AdminRunsSurface({
     setStaleRunId(null);
     setSelectedRunId(runId);
   };
+  // An alert's latest run may be older than the 100 listed; the detail still loads by id, and
+  // the next list read reconciles the pick exactly like any other selection.
+  const openAlertRun = (runId: string) => {
+    selectRun(runId);
+    document.getElementById('adm-run-timeline')?.scrollIntoView({ block: 'start' });
+  };
   const refreshRuns = () => {
     void queryClient.invalidateQueries({ queryKey: ['admin-runs'] });
     if (selectedRunId) {
@@ -205,6 +367,8 @@ export function AdminRunsSurface({
           </Button>
         }
       />
+
+      <TaskFailureAlertsPanel read={readTaskFailureAlerts} onOpenRun={openAlertRun} />
 
       <AdminKpis>
         <AdminKpi label="运行记录" value={runs.length} note={`${runs.length} / ${totalRuns} 条`} />

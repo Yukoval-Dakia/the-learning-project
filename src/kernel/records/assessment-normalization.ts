@@ -302,6 +302,7 @@ function numericKeyFor(row: {
     return;
   return {
     kind: 'numeric_key',
+    normalization_version: 'numeric-norm@2',
     expected: meta.reference_value,
     expected_unit: meta.reference_unit.trim(),
     tolerance:
@@ -311,7 +312,14 @@ function numericKeyFor(row: {
   };
 }
 
-function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
+function normalizeLeafScoring(leaf: LeafInput, normalizationBasis?: ScoringBasisT): LeafScoring {
+  const frozen = normalizationBasis?.units.find(
+    (unit) => unit.scoring_unit_id === `${leaf.partId}::u`,
+  )?.criterion;
+  const headVersion =
+    frozen?.kind === 'text_key' && frozen.normalization !== 'answer_head@2'
+      ? undefined
+      : 'answer_head@2';
   const slotId = `${leaf.partId}::r`;
   const answerText = leaf.answerTexts.find((t) => t != null && t.trim().length > 0) ?? null;
 
@@ -397,7 +405,7 @@ function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
 
       acceptedTexts:
         leaf.answerTexts.length > 0
-          ? leaf.answerTexts.map((t) => extractAnswerHead(t))
+          ? leaf.answerTexts.map((t) => extractAnswerHead(t, headVersion))
           : [answerText],
     };
   }
@@ -444,7 +452,16 @@ function buildRuleStatement(
   return { statement: parts.join('\n\n'), origin };
 }
 
-function buildUnit(leaf: LeafInput, scoring: LeafScoring) {
+function buildUnit(leaf: LeafInput, scoring: LeafScoring, normalizationBasis?: ScoringBasisT) {
+  const frozen = normalizationBasis?.units.find(
+    (unit) => unit.scoring_unit_id === `${leaf.partId}::u`,
+  )?.criterion;
+  const numericKey = scoring.numericKey == null ? undefined : { ...scoring.numericKey };
+  if (numericKey != null && frozen?.kind === 'numeric_key') {
+    delete numericKey.normalization_version;
+    if (frozen.normalization_version != null)
+      numericKey.normalization_version = frozen.normalization_version;
+  }
   return {
     scoring_unit_id: `${leaf.partId}::u`,
     slot_refs: [scoring.slot.slot_id],
@@ -457,13 +474,14 @@ function buildUnit(leaf: LeafInput, scoring: LeafScoring) {
             kind: 'option_set_key' as const,
             accepted_option_ids: scoring.acceptedOptionIds ?? [],
           }
-        : scoring.numericKey
-          ? scoring.numericKey
+        : numericKey
+          ? numericKey
           : scoring.criterionKind === 'text_key'
             ? {
                 kind: 'text_key' as const,
                 accepted_texts: scoring.acceptedTexts ?? [],
-                normalization: 'answer_head' as const,
+                normalization:
+                  frozen?.kind === 'text_key' ? frozen.normalization : ('answer_head@2' as const),
               }
             : {
                 kind: 'rule_reference' as const,
@@ -506,6 +524,7 @@ function assemble(
   leaves: LeafInput[],
   extraIssues: ConversionIssue[],
   presentation?: PresentationT,
+  normalizationBasis?: ScoringBasisT,
 ): NormalizedContract {
   // Freeze answer bytes as private material: a later reveal must not fetch a
   // newer mutable reference or synthesize a solution from the answer head.
@@ -537,9 +556,9 @@ function assemble(
       material_ids: frozenIdsByPart[i] ?? [],
     })),
   });
-  const scorings = leaves.map((leaf) => normalizeLeafScoring(leaf));
+  const scorings = leaves.map((leaf) => normalizeLeafScoring(leaf, normalizationBasis));
   const response_spec = ResponseSpec.parse({ slots: scorings.map((s) => s.slot) });
-  const units = leaves.map((leaf, i) => buildUnit(leaf, scorings[i]));
+  const units = leaves.map((leaf, i) => buildUnit(leaf, scorings[i], normalizationBasis));
   const scoring_basis = ScoringBasis.parse({
     units,
     aggregation: { kind: 'sum' },
@@ -584,7 +603,10 @@ function assemble(
 /**
  * 归一 legacy 行 → 评估契约四层 + integrity digest。纯函数（无 IO）。
  */
-function normalizeQuestionRowBase(row: NormalizableQuestionRow): NormalizedContract {
+function normalizeQuestionRowBase(
+  row: NormalizableQuestionRow,
+  normalizationBasis?: ScoringBasisT,
+): NormalizedContract {
   const group_id = row.parent_question_id ?? row.id;
   const provenance = ruleProvenanceFor(row.source, row.rubric_json);
   const figures = row.figures ?? [];
@@ -641,6 +663,7 @@ function normalizeQuestionRowBase(row: NormalizableQuestionRow): NormalizedContr
       shared.issues,
 
       promoteStructuredPresentation(structuredRoot.presentation),
+      normalizationBasis,
     );
   }
 
@@ -671,11 +694,16 @@ function normalizeQuestionRowBase(row: NormalizableQuestionRow): NormalizedContr
     shared.issues,
     // 无 structured 行没有展示层草稿位。
     undefined,
+    normalizationBasis,
   );
 }
 
-export function normalizeQuestionRowToContract(row: NormalizableQuestionRow): NormalizedContract {
-  const contract = normalizeQuestionRowBase(row);
+// Reconstruction may reuse only frozen normalization policies; new publication omits the basis.
+export function normalizeQuestionRowToContract(
+  row: NormalizableQuestionRow,
+  normalizationBasis?: ScoringBasisT,
+): NormalizedContract {
+  const contract = normalizeQuestionRowBase(row, normalizationBasis);
   if (row.source === 'mind_probe' || row.metadata?.probe_spec != null) {
     const slot = contract.response_spec.slots[0];
     if (contract.response_spec.slots.length !== 1 || !slot)

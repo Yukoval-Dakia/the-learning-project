@@ -15,7 +15,7 @@ import {
   buildProducerDifficultyEvidence,
 } from '@/core/schema/difficulty-evidence';
 import { defaultJudgeKindForQuestion, isExactCapableReference } from '@/core/schema/judge-routing';
-import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
+import { type WebSourcedProvenanceT, webSourcedMetadata } from '@/core/schema/provenance';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
@@ -44,6 +44,8 @@ export interface InsertSourcedDraftInput {
   supplyTrace?: SupplyTraceV1T;
   /** Producer id for the cross-KC merge's question_edit audit event (YUK-720). */
   mergeActorRef: 'quiz_gen' | 'sourcing' | 'jyeoo_fetch';
+  /** 首发事件的 caused_by——供给链挂到派发事件上，让判分准入能证明 provenance。 */
+  causedByEventId?: string | null;
   taskRunId?: string;
   now: Date;
 }
@@ -159,8 +161,7 @@ export async function insertSourcedDraft(
     source_ref: q.source_url,
     created_by: createdBy,
     metadata: {
-      web_sourced: webSourced,
-      source_ref_kind: 'url',
+      ...webSourcedMetadata(webSourced),
       difficulty_evidence: difficultyEvidence,
       ...(judgeKindDemotion ? { judge_kind_override_demoted: judgeKindDemotion } : {}),
       ...(markupSanitized ? { sourced_markup_sanitized: true } : {}),
@@ -193,6 +194,7 @@ export async function insertSourcedDraft(
       rootId: id,
       admission: { state: 'withheld', reason: 'unverified_rules' },
       availability: 'general_pool',
+      causedByEventId: input.causedByEventId ?? null,
       actorRef: `sourced-draft:${sourceRoute}`,
       now,
     });
@@ -219,6 +221,7 @@ export async function insertSourcedDraft(
       rootId: id,
       admission: { state: 'withheld', reason: 'unverified_rules' },
       availability: 'general_pool',
+      causedByEventId: input.causedByEventId ?? null,
       actorRef: `sourced-draft:${sourceRoute}`,
       now,
     });

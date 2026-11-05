@@ -1,15 +1,5 @@
-// admission definition builder.
-// Turns a NormalizedContract (row-normalized draft four layers, produced by
-// kernel assessment-normalization) into a QuestionAdmissionDefinition:
-// - legacy response slots are upgraded to the batch-A surface
-// (single/multi_choice → select, text/numeric/formula → blank,
-// open_response kept for free); non-representable kinds stay untouched and
-// their units classify as 'unsupported'.
-// - existing typed criteria become SEEDS the dual solve must reproduce —
-// never the key source themselves (G1: AI-written structured answers are
-// admitted only when a second independent solve agrees).
-// - private solution/rubric materials are collected as source_answers for
-// the cross-check lane only (never parsed into keys — 零文本解析键).
+// Converts frozen contract slots and preserves private answers as adjudication evidence.
+// Deterministic typed criteria are author evidence; independent solves may correct them.
 
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 import type { ResponseSlotT } from '@/core/schema/assessment/response';
@@ -23,7 +13,7 @@ import type {
 } from './contract';
 
 export const DEFAULT_BLANK_NORMALIZATION: BlankNormalizationT = {
-  version: 'blank-norm@1',
+  version: 'blank-norm@2',
   nfkc: true,
   trim_outer: true,
   casefold: false,
@@ -35,13 +25,12 @@ export const DEFAULT_BLANK_NORMALIZATION: BlankNormalizationT = {
 /** text_key 的 legacy 归一化档位 → 版本化 BlankNormalization（answer_head 的
  * 抽头步骤只对 reference 做过；作答侧同语义 = nfkc+trim+casefold）。 */
 export function mapLegacyTextNormalization(
-  normalization: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head',
+  normalization: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head' | 'answer_head@2',
 ): BlankNormalizationT {
   switch (normalization) {
     case 'exact':
       return {
         ...DEFAULT_BLANK_NORMALIZATION,
-        version: 'exact@1',
         nfkc: false,
         trim_outer: false,
         collapse_whitespace: false,
@@ -49,14 +38,14 @@ export function mapLegacyTextNormalization(
     case 'trim':
       return {
         ...DEFAULT_BLANK_NORMALIZATION,
-        version: 'trim@1',
         nfkc: false,
         collapse_whitespace: false,
       };
     case 'trim_casefold_nfc':
-      return { ...DEFAULT_BLANK_NORMALIZATION, version: 'trim_casefold@1', casefold: true };
+      return { ...DEFAULT_BLANK_NORMALIZATION, version: 'blank-norm@2', casefold: true };
     case 'answer_head':
-      return { ...DEFAULT_BLANK_NORMALIZATION, version: 'answer_head@1', casefold: true };
+    case 'answer_head@2':
+      return { ...DEFAULT_BLANK_NORMALIZATION, version: 'blank-norm@2', casefold: true };
   }
 }
 
@@ -145,7 +134,7 @@ function convertSlot(slot: ResponseSlotT): { slot: ResponseSlotT; targetKind: Ad
   }
 }
 
-/** seed 提取：已有 typed 判据 → 双解须复现的种子（仅同形可比较；异种判据
+/** seed 提取：已有 typed 判据 → 待双解和裁决核验的作者证据（仅同形可比较；异种判据
  * 不作为种子 —— solve 重新产出并报告）。 */
 function seedFor(
   unitKind: AdmissionUnitKind,
@@ -162,7 +151,20 @@ function seedFor(
     return { seed: null, constraint: `criterion '${criterion.kind}' carries no select key seed` };
   }
   if (unitKind === 'blank') {
-    if (criterion.kind === 'blank_key') return { seed: criterion };
+    if (criterion.kind === 'blank_key') {
+      // Admission creates a successor; author checks and minted keys share its policy.
+      // Clone the seed so the frozen revision and historical replay stay untouched.
+      const key = criterion.key;
+      return {
+        seed: {
+          ...criterion,
+          key:
+            key.kind === 'text'
+              ? { ...key, normalization: { ...key.normalization, version: 'blank-norm@2' } }
+              : { ...key, normalization_version: 'numeric-norm@2' },
+        },
+      };
+    }
     if (criterion.kind === 'text_key') {
       return {
         seed: {
@@ -182,6 +184,7 @@ function seedFor(
           kind: 'blank_key',
           key: {
             kind: 'numeric',
+            normalization_version: 'numeric-norm@2',
             expected: criterion.expected,
             tolerance: criterion.tolerance,
             expected_unit: criterion.expected_unit,
@@ -206,10 +209,34 @@ function blankNormalizationFor(seed: ScoringUnitCriterionT | null): BlankNormali
  * 已从 private 材料 + rule_reference statement 收集印刷答案原文）。
  */
 export function definitionFromContract(contract: NormalizedContract): QuestionAdmissionDefinition {
-  const converted = contract.response_spec.slots.map((slot) => ({
-    original: slot,
-    ...convertSlot(slot),
-  }));
+  const semanticSlotIds = new Set(
+    contract.scoring_basis.units
+      .filter(
+        (unit) =>
+          unit.criterion.kind === 'rule_reference' ||
+          unit.criterion.kind === 'rubric' ||
+          unit.criterion.kind === 'holistic_level',
+      )
+      .flatMap((unit) => unit.slot_refs),
+  );
+  const converted = contract.response_spec.slots.map((slot) => {
+    const converted = convertSlot(slot);
+    if (semanticSlotIds.has(slot.slot_id) && converted.targetKind === 'blank') {
+      return {
+        original: slot,
+        slot: {
+          slot_id: slot.slot_id,
+          part_id: slot.part_id,
+          placement: slot.placement,
+          kind: 'open_response' as const,
+          accepted_evidence: [],
+          evidence_required: false,
+        },
+        targetKind: 'free' as const,
+      };
+    }
+    return { original: slot, ...converted };
+  });
   const convertedById = new Map(converted.map((entry) => [entry.original.slot_id, entry] as const));
 
   const response_spec: QuestionAdmissionDefinition['response_spec'] = {

@@ -14,7 +14,7 @@
 >    `instance ⇄ corrections:all` 2-环，双方向路径全程持 G 共同串行化，
 >    已核站点内不可达 runtime 死锁——见 §4/E4。
 > 2. **appeal 拆族及补边**：native appeal、resolution 的 `hashtext` 键与历史
->    rejudge 的 `hashtextextended` 键拆为 #10/#80/#81 三族；补登
+>    rejudge 的 `hashtextextended` 键拆为 #10/#79/#80 三族；补登
 >    `request → group` 与激活回调内 `group → resolution`——见 §3/E9。
 > 3. **durable 跨事务假边**：`family-control(int 对) → per-tick` 同段拼接
 >    撤回；install tx（`fence → 族控制锁`）与 runtime tx（control 行锁 →
@@ -99,16 +99,19 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | `lockEventCorrectionsAll` / `lockEventCorrectionSource` | `src/kernel/events/correction-lock.ts` | 与上表 corrections:all、source 共用注册表键，语句仍是 `hashtextextended(key, 0)` xact。`writeEvents` 在有修正目标时先取 corrections:all，再按已排序 target 取 source。`review-answer-consumer` 在 copilot execution settlement 之后取 source |
 | `acquireSortedAdvisoryLocks` | `src/db/learning-state-lock.ts` | `hashtext(<ns>:<id>)` sorted，consistent-ordering 原语 |
 | `withinSessionAdvisoryLock` | `src/db/session-advisory-lock.ts` | reserved conn `pg_try_advisory_lock`+retry 至 deadline；`begin`/`savepoint` 补丁到持锁连接，inner tx 全部跑在同一 backend；finally unlock+release |
-| `acquireProposalDecisionLock` | `src/kernel/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0，键来自 `advisoryLockRegistry.proposalDecision`。接受与驳回经 `src/kernel/proposals/decision-protocol.ts` 的裁决模板在事务第一步取，锁后在同一事务内重查 rate 与更正状态，再由 owner 效果取领域锁；模板覆盖通用驳回、agency/variant_question/question_draft 专属驳回，以及 note_update、block_merge、record_links、record_promotion、learning_item、completion、relearn、goal_scope、conjecture、variant_question、question_draft、question_edit 的接受；edit_request 路径的 supply save/submit 各自提交，它们的每个写事务第一步经模板给的写守卫取同一把锁重查（embedding 请求前另开一个只取锁重查的短事务，请求期间不持锁），submit 过闸后 question_edit 的撤回与驳回拒绝。撤回、knowledge 三类、judge_retraction 与 cause_category 接受仍在各自事务第一步直接取 |
+| `acquireProposalDecisionLock` | `src/kernel/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0，键来自 `advisoryLockRegistry.proposalDecision`。接受与驳回经 `src/kernel/proposals/decision-protocol.ts` 的裁决模板在事务第一步取，锁后在同一事务内重查 rate 与更正状态，再由 owner 效果取领域锁；模板覆盖通用驳回、agency/variant_question/question_draft 专属驳回，以及 note_update、block_merge、record_links、record_promotion、learning_item、completion、relearn、goal_scope、conjecture、variant_question、question_draft、question_edit、cause_category、judge_retraction 的接受，以及 knowledge_node、knowledge_mutation、knowledge_edge 的接受与驳回；edit_request 路径的 supply save/submit 各自提交，它们的每个写事务第一步经模板给的写守卫取同一把锁重查（embedding 请求前另开一个只取锁重查的短事务，请求期间不持锁），submit 过闸后 question_edit 的撤回与驳回拒绝。撤回仍在自己事务第一步直接取；提议类别已全部经模板裁决 |
 | `withProposalGateLock` | `src/kernel/proposals/signals.ts` | `<kind>:<cooldown_key>` 多键 sorted xact gate；Db 开真 tx、Tx 内联 |
 | `lockPaidEffectControlFamily` / `lockEntityGate` | `src/db/paid-effect-control.ts` / `paid-effect-store.ts` | paid-effect family/entity 锁（只读盘点） |
 | `lockProducerFenceInstaller` 等 | `src/server/durable/*` | durable family install/control/tick |
 | `withinComposePaidWorkLock` | `practice/scheduling/server/compose-paid-work-lock.ts` | `stream:compose-paid:<date>` session |
 | `lockPracticeStreamPartition` / `lockPracticeStreamScope` | `src/kernel/locks/practice-stream.ts` | 练习流 xact：每日流 `stream:compose:<date>`、按需会话 `stream:session:<sessionId>`、作用域 `stream:scope:<date>:<knowledgeId>`。取锁顺序仍在 `stream-store.ts`（scope → session partition） |
 | `lockQuestionServingCommand` | `src/kernel/locks/question-serving-command.ts` | 题目 serving 命令账本 `yuk1514:serving:<eventId>` `hashtextextended(key, 0)` xact，键来自 `advisoryLockRegistry.questionServingCommand`；调用点 `practice/question-bank/server/serving-actions.ts` 的 `runServingAction`，同键并发命令等胜者提交后重放 |
+| `lockSupplySpendDay` | `src/kernel/locks/question-supply.ts` | 夜扫供题预算账本 `supply-spend:v1:<day>`（day = Asia/Shanghai 学习日）`hashtextextended(key, 0)` xact，键来自 `advisoryLockRegistry.supplySpendDay`；唯一调用方 `practice/supply/server/spend-gate.ts`，每个入口（夜扫占额、换路占额、找题开跑扩额、结清/释放）各开一个短事务，第一条语句取锁，持锁期间只读写该日的 `experimental:supply_spend` 事件 |
 | `acquireControlPlaneLockSql` / `withControlPlane` | `src/kernel/records/subject-control-lock.ts`；唯一取锁点 `observability/server/subject-control/commit.ts` | int 597001 xact，作为事务第一条语句；subject revision 与 control journal 同在该模块记账 |
 
-## 3. 族表（81）
+## 3. 族表（81 + 1）
+
+#1–#81 是 YUK-1577 盘点；#82 是其后新增的族（YUK-1744），不改盘点结论。
 
 `sites` = 直接语句站点计数（含 helper 内语句与 trigger）。`after` = §4 顺序登记
 ——已证同一 critical section 内的 advisory 前驱族；行锁前驱不在此列（§4/E6）。
@@ -192,15 +195,15 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | 72 | serving-command | yuk1514:serving:<eventId> | hashtextextended:0 | transaction | xact | 1 |  |
 | 73 | placement-supply | placement-supply:v1:<knowledgeId> | hashtextextended:0 | transaction | xact | 3 | proposal-decision |
 | 74 | memory-ingest | memory:ingest:<sourceId> | hashtextextended:0 | transaction | xact | 3 |  |
-| 75 | memory-dispatch | memory:dispatch:<sourceEventId> | hashtextextended:0 | transaction | xact | 2 |  |
-| 76 | memory-operator-request | memory:operator-request:<requestId> | hashtextextended:0 | transaction | xact | 1 |  |
-| 77 | model-slice-admission | model-slice-admission:<sliceId> | hashtext | session | session-try | 1 |  |
-| 78 | migration-apply-fence | yuk1050:migration-apply | hashtext | session | session-try | 2 |  |
-| 79 | yuk1406-repair-operation | yuk1406_select_display_label_repair | hashtextextended:0 | transaction | xact | 1 |  |
-| 80 | assessment-resolution-claim | evt_native_resolution_<hash> | hashtext | transaction | xact | 1 | assessment-evaluation-group |
-| 81 | appeal-rejudge-legacy-claim | hte(<appeal.id>, 0) | hashtextextended:0 | transaction | xact | 1 |  |
+| 75 | memory-operator-request | memory:operator-request:<requestId> | hashtextextended:0 | transaction | xact | 1 |  |
+| 76 | model-slice-admission | model-slice-admission:<sliceId> | hashtext | session | session-try | 1 |  |
+| 77 | migration-apply-fence | yuk1050:migration-apply | hashtext | session | session-try | 2 |  |
+| 78 | yuk1406-repair-operation | yuk1406_select_display_label_repair | hashtextextended:0 | transaction | xact | 1 |  |
+| 79 | assessment-resolution-claim | evt_native_resolution_<hash> | hashtext | transaction | xact | 1 | assessment-evaluation-group |
+| 80 | appeal-rejudge-legacy-claim | hte(<appeal.id>, 0) | hashtextextended:0 | transaction | xact | 1 |  |
+| 81 | supply-spend-day | supply-spend:v1:<day> | hashtextextended:0 | transaction | xact | 1 |  |
 
-#10/#80/#81 由旧版混族行 `assessment-appeal-claim`（sites 3）拆出：request
+#10/#79/#80 由旧版混族行 `assessment-appeal-claim`（sites 3）拆出：request
 （appeal.ts:24）、resolution（appeal.ts:78）、历史 rejudge（rejudge.ts:45）
 是三个不同 key 模板/锁值，同族合并会遮蔽 `request→group`、`group→resolution`
 已证边（§4/E9）。
@@ -225,7 +228,7 @@ edge-evidence 版 SHA-256
 证，§5 逐一标注——不得把边集当作完整排序或无环证明使用。
 
 - **learning spine**：`G → fsrs:<kind>:<id>(sorted) → mastery:ability_global(sorted)`；
-  merge accept：`event row FOR UPDATE → G → knowledge rows → knowledge_edge(sorted) →
+  merge accept：`proposal_decision → event row FOR UPDATE → G → knowledge rows → knowledge_edge(sorted) →
   retire 命名空间`（dyn：applyX 内 retire 顺序按 mutation 分支分发）。
 - **assessment group spine**：`G → group(xact pair) → evaluation/submission/
   effective_head/group-root 行锁 → fsrs:* → ability_global`（activate.ts:225-235 起；
@@ -265,6 +268,7 @@ edge-evidence 版 SHA-256
   `family-control → per-tick` 同段拼接撤回。
 - **paid-effect**：`control → identity row → gate → control row`（pinned，文件注释）。
 - **provider**：`op-kind → sorted attempt → lane`。
+- **supply spend**：`supply-spend:v1:<day>` 总是所在事务的第一把、也是唯一一把 advisory 锁；spend-gate 的事务不嵌在 web-supply demand、learning-state 或任何持锁事务里，事务内只读写 event 行（写入的事件无 correction 目标，不取 corrections 锁）。无前驱、无后继。
 - 小边：probe-question → conjecture-fold → proposal_decision → probe-serve-cap（answerProbe
   follow-up 投放）；proposal_decision → misc → probe-serve-cap（conjecture 接受，
   conjecture-accept.ts；接受不取 probe-question / conjecture-fold，与作答同向）；探针链共用
@@ -273,10 +277,19 @@ edge-evidence 版 SHA-256
   （probe-lifecycle.ts:648），发布订阅 `servePublishedProbe` 先锁题行（:207）再取
   probe-serve-cap（:209），probe-serve-cap 之后各路径只锁本事务新插入、他人不可见的题行；write_quiz →
   proposal_decision(sorted)；proposal_decision → knowledge:create（learning_item
-  接受，learning-intent.ts）；proposal_decision → placement-supply（record_promotion
+  接受，learning-intent.ts）；proposal_decision → 提议事件行 FOR UPDATE → [merge 时
+  G → knowledge 行/knowledge_edge advisory]（knowledge_node / knowledge_mutation 接受，
+  capabilities/knowledge/server/proposals.ts；驳回只到 proposal_decision；stale 回滚
+  marker 走 proposal_decision → 提议事件行）；proposal_decision → knowledge 端点行
+  FOR UPDATE NOWAIT → knowledge_edge advisory（knowledge_edge 接受/reverse/change_type
+  与 supersede，edge-proposal-accept.ts）；proposal_decision → placement-supply（record_promotion
   接受，legacy-record-appliers.ts；variant_question 接受，question-bank proposal-appliers.ts）；proposal_decision →
   submit/save request（`hashtext(request_id)`）→ 草稿/题目行（edit_request 接受经写守卫，裁决锁是这些
-  事务的第一把锁）；note_refine effect → product；paper-native →
+  事务的第一把锁）；proposal_decision → `hashtext(evt_eval_correction_<hash>)` → group
+  （judge_retraction evaluation 接受；assert 子路径在效果内先取 G：
+  proposal_decision → G → correction-claim → group → 行锁 → fsrs:* → ability_global，
+  rejudge 子路径不取 G）；proposal_decision → corrections:all → source
+  （judge_retraction event 目标接受）；note_refine effect → product；paper-native →
   attempt-claim；G → attempt-claim（capture 路径）；appeal-claim(request) →
   group（appeal.ts:24→41）；激活 tx 内 `group → resolution-claim`（record
   回调，settle `fsrs:*` 条件插入其间，dyn）；review-answer → group；

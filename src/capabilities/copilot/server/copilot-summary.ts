@@ -7,7 +7,6 @@
 // The DomainTool execute fns keep their SQL predicates single-sourced; this bypasses the
 // MCP bridge (and its ADR-0011 audit) on purpose for a read-only surface.
 
-import { guardDailyFocusClaims } from '@/core/daily-focus-guard';
 import type { Db, Tx } from '@/db/client';
 import { type EnvelopedEvent, getEvents } from '@/kernel/events';
 import {
@@ -170,8 +169,8 @@ export async function loadCopilotSummary(
   const coachEvent = newerCoachEvent(latestCoachSuccess[0], latestCoachDegraded[0]);
   const dreamingEvent = latestDreaming[0] ?? null;
   const coachPayload = (coachEvent?.payload as Record<string, unknown> | undefined) ?? null;
-  // daily_focus sits at the payload top level or under payload.today_plan. The guard also
-  // covers historical events written before the writer started stripping plan claims.
+  // daily_focus sits at the payload top level or under payload.today_plan; the write
+  // side already checked numeric claims, and historical events predate that check.
   const todayPlanInPayload = coachPayload?.today_plan as Record<string, unknown> | undefined;
   const coachDailyFocus =
     (typeof coachPayload?.daily_focus === 'string' ? coachPayload.daily_focus : null) ||
@@ -226,7 +225,7 @@ export async function loadCopilotSummary(
   const reviewDueCount = dueOutput.queue_summary.total_returned;
   const dailyFocus =
     coachDailyFocus !== null
-      ? guardDailyFocusClaims(coachDailyFocus)
+      ? coachDailyFocus
       : reviewDueCount > 0
         ? COACH_PLACEHOLDER_FOCUS_WITH_QUEUE
         : COACH_PLACEHOLDER_FOCUS_NO_QUEUE;

@@ -51,6 +51,7 @@ const input: CopilotRunInput = {
   surface: 'copilot',
   triggered_by: 'chat',
   user_message: '核对附上的原件。',
+  today: '2026-11-04（周三）',
   proposal_feedback: [],
   conversation_history: [],
   correction_contract: {

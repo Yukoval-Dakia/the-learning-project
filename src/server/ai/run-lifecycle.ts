@@ -450,12 +450,42 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   get costTruth(): AttemptCostTruth {
+    const usage = this.terminal ?? this.observedUsage;
+    const transport = this.transportEvidence.isArmed
+      ? this.transportEvidence.snapshot()
+      : undefined;
+    // Never erase usage from an earlier successful turn or an unobserved send.
+    const unbilledTransport =
+      transport?.send_state === 'not_sent' ||
+      (transport != null &&
+        transport.requests_seen > 0 &&
+        transport.requests_dropped === 0 &&
+        transport.requests.length === transport.requests_seen &&
+        transport.requests.every(
+          (request) =>
+            request.loop === 'root' &&
+            request.send_state === 'response_received' &&
+            request.http_status != null &&
+            request.http_status >= 400,
+        ));
+    const noModelUsage =
+      !usage ||
+      (usage.tokenCounts.outputTokens === 0 &&
+        (usage.priceOrigin != null ||
+          (usage.tokenCounts.inputTokens === 0 && (usage.costUsd ?? 0) === 0)));
+    if (unbilledTransport && noModelUsage)
+      return {
+        basis: 'estimated',
+        amountUsd: 0,
+        ref: `unbilled-provider-rejection:${this.resolved.provider}/${this.resolved.model}#${this.taskRunId}`,
+      };
     if (!this.costTruthCache) {
       const evidence = this.terminal ?? this.observedUsage;
       this.costTruthCache = evidence
         ? resolveAttemptCostTruth({
             provider: this.resolved.provider,
             model: this.resolved.model,
+            authMode: this.resolved.authMode,
             tokens: evidence.tokenCounts,
             tokensObserved: evidence.tokenUsageObserved,
             reportedCostUsd: evidence.costUsd,
@@ -669,8 +699,13 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         model: this.resolved.model,
         profile_source: this.modelProfile.source,
         reasoning_effort: this.config.modelBinding?.effort ?? declaredDef.reasoningEffort ?? null,
-        // YUK-1547 — native reasoning params (verbatim wire passthrough; null = none).
-        native_reasoning_params: this.resolved.nativeReasoningParams ?? null,
+        // YUK-1806 — task.<kind>.reasoning 决议（requested → applied；null = 未配置）。
+        reasoning: this.resolved.reasoning
+          ? {
+              requested: this.resolved.reasoning.requested,
+              applied: this.resolved.reasoning.applied,
+            }
+          : null,
         // YUK-1547 — which config layer produced this binding, frozen at resolution.
         selection_rule: this.resolved.selectionRule ?? null,
         // YUK-921 §2.1 — adapter selection stays observable. 'pi' is the only legal
@@ -698,6 +733,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     this.costTruthCache = resolveAttemptCostTruth({
       provider: this.resolved.provider,
       model: this.resolved.model,
+      authMode: this.resolved.authMode,
       tokens: terminal.tokenCounts,
       tokensObserved: terminal.tokenUsageObserved,
       reportedCostUsd: terminal.costUsd,

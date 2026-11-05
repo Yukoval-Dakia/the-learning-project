@@ -9,7 +9,6 @@ import type {
   ProposalRetractApplier,
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
-import * as ownerRuntime from '@/server/proposals/owner-runtime';
 import { decideKnowledgeEdgeProposal } from './edge-proposal-accept';
 import { retractKnowledgeCreate } from './knowledge-archive-operation';
 import { acceptProposal, dismissProposal } from './proposals';
@@ -49,13 +48,12 @@ async function acceptKnowledgeProposal(
     };
   }
 
-  const result = await acceptProposal(db, proposalId);
-  await ownerRuntime.recordProposalDecisionSignal(
-    db,
-    signalProposal(proposal),
-    'accept',
-    input.user_note,
-  );
+  // The decision template owns the rate write, the decision lock and the
+  // after-commit signal; the applier only supplies the signal source and note.
+  const result = await acceptProposal(db, proposalId, {
+    proposal: signalProposal(proposal),
+    userNote: input.user_note,
+  });
   return { kind, result: { kind, result } };
 }
 
@@ -79,19 +77,14 @@ export const knowledgeEdgeProposalAcceptApplier: ProposalAcceptApplier = async (
 };
 
 export const knowledgeNodeProposalDismissApplier: ProposalDismissApplier = async (db, input) => {
-  const ownerDb = db as Db;
-  const { idempotent } = await dismissProposal(ownerDb, input.proposalId, input.user_note);
-  if (!idempotent) {
-    await ownerRuntime.recordProposalDecisionSignal(
-      ownerDb,
-      signalProposal(input.proposal),
-      'dismiss',
-      input.user_note,
-    );
-  }
+  const { idempotent, rate_event_id } = await dismissProposal(
+    db as Db,
+    input.proposalId,
+    input.user_note,
+  );
   return {
     kind: input.proposal.payload.kind,
-    result: { kind: 'dismissed', rate_event_id: null, ...(idempotent ? { idempotent: true } : {}) },
+    result: { kind: 'dismissed', rate_event_id, ...(idempotent ? { idempotent: true } : {}) },
   };
 };
 
@@ -105,8 +98,30 @@ export const knowledgeEdgeProposalDismissApplier: ProposalDismissApplier = async
   ),
 });
 
-export const knowledgeNodeProposalRetractApplier: ProposalRetractApplier = async (db, input) => {
+type AssertKnowledgeNodeParity = (tx: Tx, nodeId: string) => Promise<void>;
+
+/**
+ * The retract dispatcher supplies the projections parity assert so knowledge does
+ * not import the platform projections module. Without it the retract throws before
+ * touching anything and the whole correction rolls back.
+ */
+function parityFromRuntime(runtime: unknown): AssertKnowledgeNodeParity {
+  const assertParity =
+    runtime && typeof runtime === 'object'
+      ? (runtime as { assertCurrentKnowledgeNodeParity?: unknown }).assertCurrentKnowledgeNodeParity
+      : undefined;
+  if (typeof assertParity !== 'function') {
+    throw new Error('knowledge_node retract requires assertCurrentKnowledgeNodeParity in runtime');
+  }
+  return assertParity as AssertKnowledgeNodeParity;
+}
+
+export const knowledgeNodeProposalRetractApplier: ProposalRetractApplier = async (
+  db,
+  input,
+  runtime,
+) => {
   const tx = db as Tx;
   const archived = await retractKnowledgeCreate(tx, input);
-  if (archived) await ownerRuntime.assertCurrentKnowledgeNodeParity(tx, archived.node_id);
+  if (archived) await parityFromRuntime(runtime)(tx, archived.node_id);
 };

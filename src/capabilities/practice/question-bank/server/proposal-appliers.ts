@@ -1,3 +1,8 @@
+import {
+  lockDerivationSources,
+  readSourceUsageEpochs,
+  sourceAllowsDerivation,
+} from '@/kernel/read-models/usage-policy';
 // T4 — practice 包的提议 accept-applier 真身，从 dispatch 壳
 // （actions.ts @ src/server/proposals）等价平移（搬迁不改逻辑）。壳退化为
 // 纯 dispatch，按 kind 一行委托到这里。
@@ -23,18 +28,14 @@ import {
 import type { QuestionEditOpT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
-import { cause_category_overlay, event, mistake_variant, question } from '@/db/schema';
-import { getCorrectionStatus, writeEvent } from '@/kernel/events/index';
+import { event, mistake_variant, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events/index';
 import { ApiError } from '@/kernel/http';
 import { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
 import {
-  acquireProposalDecisionLock,
   asPlainRecord,
   ensureAcceptOnly,
-  existingAcceptRate,
-  findExistingRateEvent,
   requiredString,
-  writeProposalRateEvent,
 } from '@/kernel/proposals/applier-helpers';
 import {
   type ProposalAcceptEffectOutcome,
@@ -44,11 +45,6 @@ import {
   runProposalDismiss,
 } from '@/kernel/proposals/decision-protocol';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
-import {
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/kernel/proposals/signals';
-import { CAUSE_OVERLAY_ID_PREFIX } from '@/kernel/read-models/cause-overlay';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 // W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
@@ -236,6 +232,14 @@ export async function acceptVariantQuestionProposal(
     ): Promise<ProposalAcceptEffectOutcome<VariantQuestionAcceptResult>> => {
       const now = new Date();
       const newQuestionId = createId();
+      for (const source of [
+        { kind: 'question' as const, id: proposedChange.source_question_id as string },
+        { kind: 'event' as const, id: proposedChange.source_attempt_event_id ?? '' },
+      ]) {
+        await lockDerivationSources(tx, source);
+        if (!(await sourceAllowsDerivation(tx, source)))
+          throw new ApiError('conflict', 'source_purpose_restricted_or_unknown', 409);
+      }
       await lockPlacementSupplyScopes(tx, proposedChange.knowledge_ids ?? []);
       // lock the draft mistake_variant row FOR UPDATE before the new
       // question + rate event + ROW write. projectMistakeVariantGuarded has no version-CAS (the table
@@ -257,10 +261,17 @@ export async function acceptVariantQuestionProposal(
           knowledge_ids: proposedChange.knowledge_ids ?? [],
           difficulty: proposedChange.difficulty as number,
           source: 'mistake_variant',
+          metadata: {
+            source_attempt_event_id: proposedChange.source_attempt_event_id,
+            source_usage_epochs: await readSourceUsageEpochs(tx, {
+              kind: 'event',
+              id: proposedChange.source_attempt_event_id ?? '',
+            }),
+          },
           draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
           variant_depth: proposedChange.variant_depth ?? 1,
           root_question_id: proposedChange.root_question_id ?? null,
-          parent_variant_id: proposedChange.parent_variant_id ?? null,
+          parent_variant_id: proposedChange.source_question_id,
           created_by: {
             by: 'ai',
             task_kind: 'VariantGenTask',
@@ -765,185 +776,6 @@ export async function acceptQuestionEditProposal(
     },
   });
   return result;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//B — cause_category accept：往 cause_category_overlay INSERT
-// status='active' 行。这是该表的唯一写边界（audit:schema 的 write path）；行
-// 落地后进入 attribution 合并词表（listActiveCauseCategoryOverlays）。
-export interface CauseCategoryAcceptResult {
-  kind: 'cause_category';
-  rate_event_id: string | null;
-  category_id: string;
-  idempotent?: boolean;
-}
-
-export async function acceptCauseCategoryProposal(
-  db: Db,
-  proposalId: string,
-  proposal: ProposalInboxRow,
-  opts: PracticeApplierOpts,
-): Promise<CauseCategoryAcceptResult> {
-  ensureAcceptOnly('cause_category', opts);
-  const change = asPlainRecord(proposal.payload.proposed_change);
-  const categoryId = requiredString(change.category_id, 'category_id', proposalId);
-  const label = requiredString(change.label, 'label', proposalId);
-  // 防绕过：生产者契约是 ov_ 命名空间；applier 也守住——非 ov_ id 会在合并词表
-  // 里与 profile 声明撞名。裸前缀（空 slug）同样显式拒绝（收紧）。
-  if (!categoryId.startsWith(CAUSE_OVERLAY_ID_PREFIX)) {
-    throw new ApiError(
-      'validation_error',
-      `proposal ${proposalId} category_id ${categoryId} must use the ${CAUSE_OVERLAY_ID_PREFIX} namespace`,
-      400,
-    );
-  }
-  if (categoryId === CAUSE_OVERLAY_ID_PREFIX) {
-    throw new ApiError(
-      'validation_error',
-      `proposal ${proposalId} category_id is the bare '${CAUSE_OVERLAY_ID_PREFIX}' prefix — empty slug`,
-      400,
-    );
-  }
-  const description =
-    typeof change.description === 'string' && change.description.trim().length > 0
-      ? change.description.trim()
-      : null;
-  const source = change.source === 'owner' ? 'owner' : 'llm_propose';
-  const subjectId = proposal.payload.target.subject_id;
-  if (!subjectId) {
-    throw new ApiError(
-      'validation_error',
-      `proposal ${proposalId} is missing target.subject_id (subject profile id)`,
-      400,
-    );
-  }
-  const evidenceEventIds = (proposal.payload.evidence_refs ?? [])
-    .filter((ref) => ref.kind === 'event')
-    .map((ref) => ref.id);
-
-  const loadRowOrThrow = async (dbLike: Db | Tx) => {
-    const existing = (
-      await dbLike
-        .select()
-        .from(cause_category_overlay)
-        .where(eq(cause_category_overlay.id, categoryId))
-        .limit(1)
-    )[0];
-    if (!existing || existing.archived_at !== null || existing.status !== 'active') {
-      throw new ApiError(
-        'inconsistent_state',
-        `proposal ${proposalId} has an accept rate event but overlay row ${categoryId} is ${
-          existing ? 'not active' : 'missing'
-        }; retract + retry`,
-        500,
-      );
-    }
-    return existing;
-  };
-
-  // Already-accepted idempotency fast path（question_draft 同款形状）。
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) {
-    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-    await loadRowOrThrow(db);
-    return {
-      kind: 'cause_category',
-      rate_event_id: existingRate.id,
-      category_id: categoryId,
-      idempotent: true,
-    };
-  }
-
-  const now = new Date();
-  let writtenRateEventId: string | null = null;
-  const concurrentDecision = await db.transaction(async (tx) => {
-    await acquireProposalDecisionLock(tx, proposalId);
-    const decision = await findExistingRateEvent(tx, proposalId);
-    if (decision) {
-      if (decision.decision !== 'accept') {
-        throw new ApiError(
-          'conflict',
-          `proposal ${proposalId} already decided as ${decision.decision}`,
-          409,
-        );
-      }
-      return decision;
-    }
-    const correction = await getCorrectionStatus(tx, proposalId);
-    if (correction.state !== 'active') {
-      throw new ApiError(
-        'conflict',
-        `proposal ${proposalId} is ${correction.state} and cannot be accepted`,
-        409,
-      );
-    }
-
-    // id 防撞：行已存在 = 另一个 proposal/路径已占用该 id。一律 409——归档行
-    // 复活是另一个语义决定，v1 不做（owner 可换 slug 或人工恢复）。
-    const existing = (
-      await tx
-        .select({ id: cause_category_overlay.id })
-        .from(cause_category_overlay)
-        .where(eq(cause_category_overlay.id, categoryId))
-        .limit(1)
-    )[0];
-    if (existing) {
-      throw new ApiError(
-        'conflict',
-        `cause_category_overlay ${categoryId} already exists; choose a different slug`,
-        409,
-      );
-    }
-
-    // 竞态收口：decision lock 按 proposalId 取，不同 proposal 撞同一
-    // categoryId 时两个 tx 可同过上方 SELECT。onConflictDoNothing 让并发 INSERT
-    // 优雅落空（阻塞至对方提交后再判），空 returning = 撞上 → 同一个 409。
-    const inserted = await tx
-      .insert(cause_category_overlay)
-      .values({
-        id: categoryId,
-        subject_id: subjectId,
-        label,
-        description,
-        source,
-        status: 'active',
-        proposal_event_id: proposalId,
-        evidence_event_ids: evidenceEventIds,
-        created_at: now,
-        updated_at: now,
-      })
-      .onConflictDoNothing({ target: cause_category_overlay.id })
-      .returning({ id: cause_category_overlay.id });
-    if (inserted.length === 0) {
-      throw new ApiError(
-        'conflict',
-        `cause_category_overlay ${categoryId} already exists; choose a different slug`,
-        409,
-      );
-    }
-
-    const rate = await writeProposalRateEvent(tx, proposalId, 'accept', opts.user_note);
-    writtenRateEventId = rate.rate_event_id;
-    return null;
-  });
-
-  if (concurrentDecision) {
-    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-    await loadRowOrThrow(db);
-    return {
-      kind: 'cause_category',
-      rate_event_id: concurrentDecision.id,
-      category_id: categoryId,
-      idempotent: true,
-    };
-  }
-
-  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
-  return {
-    kind: 'cause_category',
-    rate_event_id: writtenRateEventId,
-    category_id: categoryId,
-  };
 }
 
 // =============================================================================

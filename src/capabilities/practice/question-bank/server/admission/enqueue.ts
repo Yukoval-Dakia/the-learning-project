@@ -6,7 +6,13 @@ import { declaredShapesAllSupported } from '@/core/schema/assessment/blank-answe
 import type { Db, Tx } from '@/db/client';
 import { lockPaidEffectControlFamily, readPaidEffectControl } from '@/db/paid-effect-control';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
-import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import {
   lockEventDerivationSources,
   readEventDerivationPolicy,
@@ -15,10 +21,14 @@ import { writeEvent } from '@/kernel/events/index';
 import type { EventSubscriptionDelivery, EventSubscriptionOutcome } from '@/kernel/manifest';
 import { getStartedBoss } from '@/server/boss/client';
 
+import { placementAuthority } from '../../../supply/public';
+
 export const ADMISSION_FAMILY = 'question_admission_run';
 export const AdmissionJobData = z.object({
   /** Absent on old queued deliveries: they may reconcile old units but never initiate @3. */
-  admission_version: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  admission_version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
+  recovery_confirmed: z.boolean().optional(),
+  login_probe_route: z.object({ provider: z.string().min(1), model: z.string().min(1) }).optional(),
   question_id: z.string().min(1).optional(),
   revision_id: z.string().min(1).optional(),
   expected_revision_digest: z.string().min(1).optional(),
@@ -42,6 +52,66 @@ const AdmissionPurposeBinding = z
   })
   .strict();
 const purposeBindingId = (jobId: string) => `question-admission-purpose:${jobId}`;
+
+// System writers that publish pipeline content. `submit_question:*` is deliberately absent:
+// that is how a person or an agent edits a question, and the edit may hold learner material
+// while `question.source` keeps its original value.
+const PIPELINE_PUBLISHERS: ReadonlySet<string> = new Set([
+  'sourced-draft:sourcing_web',
+  'quiz_gen:persist',
+  'source_verify:promote',
+  'source_verify:suspend',
+  'quiz_verify:promote',
+  'quiz_verify:suspend',
+  'practice:question_admission',
+  'practice:question_admission_repair',
+  'solution-generate:reference_backfill',
+]);
+
+/**
+ * May this admission's solve transcript leave for Laminar. Only content known to hold no
+ * learner material qualifies: the source must be web_sourced or knowledge-triggered quiz_gen,
+ * and every publication in the group's history must come from a pipeline writer, because a
+ * later revision carries an earlier edit forward. Any failure or unknown reads as no.
+ */
+export async function admissionTranscriptAllowed(
+  db: Db | Tx,
+  input: { groupId: string; purposeState: string },
+): Promise<boolean> {
+  if (input.purposeState !== 'allow') return false;
+  try {
+    const [root] = await db
+      .select({ source: question.source, source_ref: question.source_ref })
+      .from(question)
+      .where(eq(question.id, input.groupId))
+      .limit(1);
+    if (root?.source !== 'web_sourced' && root?.source !== 'quiz_gen') return false;
+    if (root.source === 'quiz_gen') {
+      if (root.source_ref == null) return false;
+      const [node] = await db
+        .select({ id: knowledge.id })
+        .from(knowledge)
+        .where(eq(knowledge.id, root.source_ref))
+        .limit(1);
+      if (!node) return false;
+    }
+    const publishers = await db
+      .selectDistinct({ actor_ref: event.actor_ref })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:assessment_publish'),
+          eq(event.subject_kind, 'question'),
+          eq(event.subject_id, input.groupId),
+        ),
+      );
+    return (
+      publishers.length > 0 && publishers.every((row) => PIPELINE_PUBLISHERS.has(row.actor_ref))
+    );
+  } catch {
+    return false;
+  }
+}
 
 /** A delivery's permanent source fact is separate from its unchanged paid input.
  * Missing legacy facts are never reconstructed from today's publication or row.
@@ -82,8 +152,30 @@ export async function readAdmissionPurpose(
       publication.payload.integrity_digest !== expected.revision_digest)
   )
     return { state: 'unknown' as const, sourceId: null };
+  // A default policy result is not provenance. Check every bound source before
+  // considering either learner lineage or a proven pipeline-only publication.
+  const sourceIds = [
+    ...new Set(
+      [binding.source_event_id, binding.usage_source_event_id].filter(
+        (id): id is string => id != null,
+      ),
+    ),
+  ].sort();
+  let restricted = false;
+  for (const id of sourceIds) {
+    await lockEventDerivationSources(tx, id);
+    if ((await readEventDerivationPolicy(tx, id)) !== 'allow') restricted = true;
+  }
+  if (restricted) return { state: 'restricted' as const, sourceId: binding.usage_source_event_id };
+  const pipelineProven = await admissionTranscriptAllowed(tx, {
+    groupId: expected.group_id,
+    purposeState: 'allow',
+  });
   const sourceId = binding.usage_source_event_id;
-  if (!sourceId) return { state: 'unknown' as const, sourceId: null };
+  if (!sourceId)
+    return pipelineProven
+      ? { state: 'allow' as const, sourceId: publication.id }
+      : { state: 'unknown' as const, sourceId: null };
   const [source] = await tx.select().from(event).where(eq(event.id, sourceId));
   if (!source || row.caused_by_event_id !== sourceId)
     return { state: 'unknown' as const, sourceId: null };
@@ -111,7 +203,7 @@ export async function readAdmissionPurpose(
       WHERE (s.id IS NOT NULL AND (s.type <> 'ingestion' OR s.source_document_id IS NOT NULL))
         OR (b.action = 'experimental:ingestion_usage_binding'
         AND b.actor_kind = 'system' AND b.actor_ref = 'ingestion-usage')) AS known`);
-  if (!proven?.known) return { state: 'unknown' as const, sourceId };
+  if (!proven?.known && !pipelineProven) return { state: 'unknown' as const, sourceId };
   await lockEventDerivationSources(tx, sourceId);
   const allowed =
     (await readEventDerivationPolicy(tx, sourceId)) === 'allow' &&
@@ -266,7 +358,11 @@ export async function enqueuePublishedQuestionAdmission(
         source_event_id: source.id,
         ...(usageSourceId ? { usage_source_event_id: usageSourceId } : {}),
       } satisfies AdmissionJobData,
-      { id, db: fromPgBossDrizzleTx(tx) },
+      {
+        id,
+        db: fromPgBossDrizzleTx(tx),
+        priority: (await placementAuthority.isPlacementWaitingForQuestion(tx, root.id)) ? 1 : 0,
+      },
     );
     if (enqueued === null)
       return { status: 'skipped', reason: `admission job already exists: ${id}` };

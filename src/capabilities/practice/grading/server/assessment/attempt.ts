@@ -27,17 +27,17 @@ import { emitMasteryProgressSignal } from '../mastery-progress-signal';
 import { submissionWasAssisted } from './assistance';
 import { type SaveSubmissionRequest, saveSubmission } from './submit';
 
-/** The frozen issuance, revision and issued scoring units an original is judged against. */
-export async function readFormalAttemptScope(
+/** Persist the served original before a synchronous evaluation or durable dispatch. */
+export async function prepareFormalAttemptSubmission(
   database: Db | Tx,
   entry: GradingEntryPoint,
   questionId: string,
-  issuanceId: string,
+  request: SaveSubmissionRequest,
 ) {
   const [issuance] = await database
     .select()
     .from(assessment_issuance)
-    .where(eq(assessment_issuance.issuance_id, issuanceId))
+    .where(eq(assessment_issuance.issuance_id, request.issuance_id))
     .limit(1);
   if (!issuance) throw new ApiError('not_found', 'issued assessment not found', 404);
   if (
@@ -70,33 +70,6 @@ export async function readFormalAttemptScope(
   }
   const scopedBasis = projectIssuedScoringBasis(revision, issuance.part_ids);
   const scopedUnitIds = new Set(scopedBasis.units.map((unit) => unit.scoring_unit_id));
-  return { issuance, revision, scopedBasis, scopedUnitIds };
-}
-
-/** Whether a model executor scores any issued unit: the one criterion the durable divert keys on. */
-export function scopeHasModelExecutor(
-  scope: Pick<Awaited<ReturnType<typeof readFormalAttemptScope>>, 'revision' | 'scopedUnitIds'>,
-): boolean {
-  return scope.revision.execution_plan.assignments.some(
-    (a) =>
-      a.executor.kind === 'model_executor' &&
-      a.scoring_unit_ids.some((id) => scope.scopedUnitIds.has(id)),
-  );
-}
-
-/** Persist the served original before a synchronous evaluation or durable dispatch. */
-export async function prepareFormalAttemptSubmission(
-  database: Db | Tx,
-  entry: GradingEntryPoint,
-  questionId: string,
-  request: SaveSubmissionRequest,
-) {
-  const { issuance, revision, scopedBasis, scopedUnitIds } = await readFormalAttemptScope(
-    database,
-    entry,
-    questionId,
-    request.issuance_id,
-  );
   const saved = await saveSubmission(database, { ...request, actorRef: `assessment:${entry}` });
   if (!('submission' in saved)) {
     throw new ApiError(

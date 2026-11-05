@@ -15,7 +15,6 @@
 // user-configurable budgets (CB-5) and no hard-reject circuit-breaker (§6):
 // over-budget degrades gracefully via the tracker below.
 
-import type { GateBiasConfig } from '@/kernel/proposals/adaptive-bias';
 import type { DomainToolSurface } from './allowlists';
 
 export interface ContextBudgetThreshold {
@@ -88,6 +87,7 @@ const GENERIC_CONTEXT_BUDGET: ContextBudget = {
 };
 
 export const BUDGETS_BY_SURFACE: Record<DomainToolSurface, ContextBudget> = {
+  question_preparer: GENERIC_CONTEXT_BUDGET,
   copilot: COPILOT_CONTEXT_BUDGET,
   copilot_user_suggested_mistake_action: COPILOT_CONTEXT_BUDGET,
   dreaming: DREAMING_CONTEXT_BUDGET,
@@ -233,62 +233,11 @@ export const COPILOT_HISTORY_BUDGET: CopilotHistoryBudget = {
 };
 
 // CROSS-REFERENCE (PR #717 round-2 OCR fix #1) — `totalChars` above bounds the
-// PINNED learner-state header too (chat.ts's assembleConversationHistory reserves
+// PINNED learner-state header too (copilot-run-input.ts's assembleConversationHistory reserves
 // the header's char cost first, before the oldest-first drop loop touches real
-// turns). Keep LEARNER_STATE_HEADER_BUDGET.maxChars well BELOW this value: if
-// maxChars ever grows past totalChars, a lone pinned header (with zero real turns
-// left) cannot fit at all — chat.ts's guard drops the header too rather than ship
-// an orphaned over-budget entry, but that means a misconfigured maxChars silently
-// degrades the header to nothing. See the matching note on LEARNER_STATE_HEADER_
-// BUDGET below.
-
-// ── YUK-574 Copilot learner-state header budget ─────────────────────────────
-//
-// The session-anchored learner-state header (assembled ONCE per validity window,
-// not per turn — owner's hard constraint against per-turn 装配注入) rides as the
-// PINNED first entry of conversation_history. It is a deterministic code-read
-// projection (due count + active goal + top-2 误区 + θ̂/mastery band + 昨夜交班),
-// bounded here so a single tunable source documents its size. `maxChars` is a
-// HARD character cap on the assembled prose (over-limit → hard truncate at read/
-// assembly time), NOT a token estimate — review-verdict fix #4: for Claude-family
-// tokenizers, CJK runs at roughly 1.5–2.5 tokens/char (not ~1), so a maxed-out
-// 400-char CJK header could be ~600–1000 tokens, well past the original
-// "100–200 tokens" aspiration. In practice the assembled 5-short-line snapshot
-// (due count / goal / top-2 误区 / mastery band / one 昨夜交班 sentence) sits far
-// below the 400-char ceiling, so the cap is a safety rail, not the steady-state
-// size. The pinned header is NEVER dropped by the COPILOT_HISTORY_BUDGET oldest-
-// first truncation (its char cost is reserved first). Kept alongside
-// COPILOT_HISTORY_BUDGET so all Copilot input-budget tunables live in one place.
-//
-// CROSS-REFERENCE (PR #717 round-2 OCR fix #1) — `maxChars` here MUST stay well
-// below COPILOT_HISTORY_BUDGET.totalChars (400 vs. 4000 today, comfortable
-// headroom). chat.ts's assembleConversationHistory has a programmatic guard for
-// the violation case (a lone pinned header that alone exceeds totalChars gets
-// dropped entirely rather than shipped over-budget), but relying on that guard
-// means a misconfigured maxChars silently degrades the header to nothing instead
-// of failing loudly — keep this constant comfortably under totalChars instead.
-export interface LearnerStateHeaderBudget {
-  /** Whole-header char cap; the assembled prose is hard-truncated to this. */
-  maxChars: number;
-}
-
-export const LEARNER_STATE_HEADER_BUDGET: LearnerStateHeaderBudget = {
-  maxChars: 400, // hard cap; CJK-heavy content near this ceiling ≈ 400-1000 tokens
-};
-
-// ── P5.4-L2 gate-bias config (AB-3, §5 Q1) ──────────────────────────────────
-//
-// Single-source threshold + cold-start guard for `computeGateBump`. The
-// `GateBiasConfig` TYPE is owned by adaptive-bias.ts (the L2 module, §3.4); this
-// is the single-source CONST, kept here alongside PROPOSAL_FEEDBACK_BUDGET so
-// all L2 tunables live in budgets.ts. Single-user scale: most `(kind, relation)`
-// cells carry 0–5 samples, so `minSamples` keeps the bump inert until enough
-// signal accrues (§6). Tune against real proposal_signals after a few weeks (the
-// P5.1 "revisit after ~2 weeks of logs" stance).
-export const PROPOSAL_GATE_BIAS_CONFIG: GateBiasConfig = {
-  acceptanceThreshold: 0.3, // §5 Q1 suggested default
-  minSamples: 5, // §5 Q1 suggested cold-start guard
-};
+// turns). The pinned header is the Context startup segment (agency/context,
+// LEARNER_CONTEXT_STARTUP_BUDGET ≤1000 est tokens, 2400-char hard cap); its raw
+// char cap MUST stay well below totalChars so a lone pinned header still fits.
 
 // ── P5.3 long-term brief freshness/decay budget ─────────────────────────────
 // Single tunable source for the long_term_md evidence-decay freshness score

@@ -43,6 +43,11 @@ export const variantVerifyTaskSpec = {
     isMultimodal: false,
     allowedTools: [],
     // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
+    context: {
+      view: 'none',
+      reason: '变式校验只评题目本身正确性，与学习者历史无关。',
+    },
+
     prompt: { kind: 'profile', build: buildVariantVerifyPrompt },
   },
   outputSchema: VariantVerificationResult,

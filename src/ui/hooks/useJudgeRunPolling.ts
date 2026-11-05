@@ -1,6 +1,6 @@
 // YUK-1051 — 202-pending 的「同一次 submission 继续查询」poll hook。
 //
-// 契约（review-answer-response.ts durablePendingResponse）：202 body 带 { run_id, verdict:'pending',
+// 契约（submit.ts durablePendingResponse）：202 body 带 { run_id, verdict:'pending',
 // backfill: { channel:'sse', url, poll_url } }。本 hook 只轮询 poll_url（GET 纯读），
 // 直到终态（done/failed）——**永不重交同一答案**；SSE 主通道由宿主另行接入时，
 // 两者读同一个 run_id，互不冲突。

@@ -50,6 +50,11 @@ export const sourceGroundingVerifyTaskSpec = {
     // invocation omitted (defaults to 'auto'): part of the tier-2 promotion gate,
     // not a user-initiated rescue.
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '只校验题目内容是否落在给定来源材料上，与学习者历史无关。',
+    },
+
     prompt: { kind: 'profile', build: buildSourceGroundingVerifyPrompt },
   },
   outputSchema: SourceGroundingVerifyOutput,

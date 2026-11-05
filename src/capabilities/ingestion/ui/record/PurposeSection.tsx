@@ -1,4 +1,4 @@
-import { RefreshCw, ShieldCheck } from 'lucide-react';
+import { CircleCheck, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Button } from '@/ui-next/public';
 import { usePurposeChange } from './purpose-change';
 import type { PurposeImpact } from './record-api';
@@ -16,6 +16,17 @@ const repairWords = {
   unknown: '结果未知',
 };
 const stopWords = { confirmed: '已确认停止', pending: '等待停止确认', unknown: '停止结果未知' };
+// YUK-1751 — paid_effect states in learner words; an unexpected value reads 「未知」, never the code.
+const paidStateWords: Record<string, string> = {
+  pending: '等待发出',
+  sending: '正在发出',
+  unknown: '结果未知',
+  receipt_ready: '已收到结果，待入账',
+  applied: '已入账',
+  voided: '已作废',
+  cancelled: '已取消',
+  not_claimed_or_unknown: '未记录或未知',
+};
 const sinkWords = {
   mem0: '长期记忆',
   brief: '学习摘要',
@@ -33,17 +44,6 @@ function ImpactDetails({ impact }: { impact: PurposeImpact }) {
             {impact.stop.map((row) => (
               <li key={`${row.session_id}:${row.run_ref}:${row.operation_id}`}>
                 <strong>{stopWords[row.state]}</strong>
-                <details>
-                  <summary>关联记录</summary>
-                  <dl>
-                    <dt>录入会话</dt>
-                    <dd>{row.session_id}</dd>
-                    <dt>运行</dt>
-                    <dd>{row.run_ref ?? '未提供'}</dd>
-                    <dt>操作</dt>
-                    <dd>{row.operation_id ?? '未提供'}</dd>
-                  </dl>
-                </details>
               </li>
             ))}
           </ul>
@@ -74,12 +74,6 @@ function ImpactDetails({ impact }: { impact: PurposeImpact }) {
                   <strong>{sinkWords[row.sink]}</strong>
                   <span>{repairWords[row.state]}</span>
                 </div>
-                <p>{row.detail}</p>
-                <details>
-                  <summary>关联来源</summary>
-                  <p>{row.source_id}</p>
-                  <p>{row.operation_id}</p>
-                </details>
               </li>
             ))}
           </ul>
@@ -93,7 +87,7 @@ function ImpactDetails({ impact }: { impact: PurposeImpact }) {
               {impact.sinks.briefs.map((row) => (
                 <li key={row.scope_key}>
                   <div className="rc-purpose-line">
-                    <span>{row.scope_key}</span>
+                    <span>学习摘要</span>
                     <strong>{repairWords[row.state]}</strong>
                   </div>
                 </li>
@@ -117,24 +111,10 @@ function ImpactDetails({ impact }: { impact: PurposeImpact }) {
               <li key={`${row.job_id}:${row.usage_source_event_id}`}>
                 <div className="rc-purpose-line">
                   <span>当时用途：{policyWords[row.source_policy]}</span>
-                  <span>历史费用状态：{row.paid_state}</span>
+                  <span>历史费用状态：{paidStateWords[row.paid_state] ?? '未知'}</span>
                 </div>
-                {row.application_error && <p>{row.application_error}</p>}
-                <details>
-                  <summary>关联证据</summary>
-                  <dl>
-                    <dt>任务</dt>
-                    <dd>{row.job_id}</dd>
-                    <dt>题目组</dt>
-                    <dd>{row.group_id}</dd>
-                    <dt>题目修订</dt>
-                    <dd>{row.revision_id}</dd>
-                    <dt>来源事件</dt>
-                    <dd>{row.source_event_id}</dd>
-                    <dt>用途事件</dt>
-                    <dd>{row.usage_source_event_id}</dd>
-                  </dl>
-                </details>
+                {/* The stored error is raw server text; the learner gets that it failed, not the text. */}
+                {row.application_error && <p>这次处理没有成功应用。</p>}
               </li>
             ))}
           </ul>
@@ -176,17 +156,6 @@ export function PurposeSection({ sessionId }: { sessionId: string }) {
           <div className="rc-purpose-current">
             <span>最近读取的当前用途</span>
             <strong>{policyWords[p.current.policy]}</strong>
-            <details>
-              <summary>来源版本</summary>
-              <dl>
-                <dt>来源文档</dt>
-                <dd>{p.current.source_document_id}</dd>
-                <dt>版本</dt>
-                <dd>{p.current.version}</dd>
-                <dt>代际</dt>
-                <dd>{p.current.epoch}</dd>
-              </dl>
-            </details>
           </div>
         )}
         <fieldset disabled={!p.canChoose} className="rc-purpose-options">
@@ -232,18 +201,10 @@ export function PurposeSection({ sessionId }: { sessionId: string }) {
               原请求选择：{policyWords[p.journal.body.target]}；来源版本：
               {p.journal.body.expected_version}。
             </p>
-            <details>
-              <summary>查看原请求身份</summary>
-              <dl>
-                <dt>请求编号</dt>
-                <dd>{p.journal.body.request_id}</dd>
-                <dt>来源文档</dt>
-                <dd>{p.journal.body.source_document_id}</dd>
-              </dl>
-            </details>
             {p.receipt ? (
               <>
                 <p className="rc-purpose-committed" role="status">
+                  <CircleCheck size={15} aria-hidden="true" />
                   原请求的政策已提交。这不代表停止、修复或历史处理全部完成。
                 </p>
                 <p>

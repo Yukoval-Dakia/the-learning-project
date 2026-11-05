@@ -1,11 +1,13 @@
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installAgencyHostOperations } from '@/capabilities/agency/public';
 import { writeCopilotInputEvent } from '@/capabilities/copilot/server/conversation-writes';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
 } from '@/capabilities/copilot/server/copilot-run-status';
 import type { TeachingSkillResult } from '@/capabilities/copilot/server/skills/teaching-skill';
+import { installPracticeHostOperations } from '@/capabilities/practice/public';
 import { event, learning_item, question } from '@/db/schema';
 import { computeReplay } from '@/kernel/job-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -13,6 +15,11 @@ import * as Conversation from '../server/conversation-lifecycle';
 import { runCopilotRun, writeSuccessfulTerminalProjection } from './copilot_run';
 
 const db = testDb();
+
+beforeAll(async () => {
+  await installAgencyHostOperations();
+  await installPracticeHostOperations();
+});
 
 async function acceptedTeachingTurn(kind: TeachingSkillResult['kind']) {
   const { sessionId } = await Conversation.findOrCreateCopilotConversation(db);

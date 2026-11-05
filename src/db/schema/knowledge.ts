@@ -25,7 +25,7 @@ type AgentRefT = z.infer<typeof AgentRef>;
 type ProvenanceT = z.infer<typeof Provenance>;
 
 // Phase 1c.1 Step 1.2 (Lane A): DROPped base_mastery / ai_delta_mastery / last_active_at
-// per ADR-0012 — mastery is now a derived PG view (knowledge_mastery, declared below).
+// per ADR-0012 — mastery reads come from the mastery_state projection.
 export const knowledge = pgTable('knowledge', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
@@ -113,7 +113,7 @@ export const knowledge = pgTable('knowledge', {
 //     dedup (semantic near-dup detection) when that slice ships.
 // YUK-531 (A5 S4 / RT1): the promotion-flow lifecycle/provenance columns
 // (status/source/seen/evidence) land here; the writer (insert via accept route)
-// is gated behind MISCONCEPTION_PROMOTE_ENABLED — DORMANT until that flag flips.
+// is gated behind MISCONCEPTION_PROMOTE_ENABLED (default on).
 export const misconception = pgTable('misconception', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),

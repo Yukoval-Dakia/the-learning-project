@@ -68,6 +68,8 @@ docker compose run --rm migrate
 
 部署前应固定镜像提交、保存当前配置与数据、先做隔离恢复与迁移预演，再停 writer、取最终备份、执行迁移。
 
+部署配置里 `app` 与 `worker` 必须带同一个 `BANK_GAP_EVIDENCE_SECRET`：在部署机上用 `openssl rand -hex 32` 生成，至少 32 个字符且不能等于 `INTERNAL_TOKEN`，只写进部署用的 env/compose，不进 git、日志或回执。缺了它，Copilot 的题库语义检索会返回 `snapshot_signing_unavailable`，`file_bank_gap` 会拒绝所有缺口登记。换值会让已签发、尚未被登记消费的检索证据失效。
+
 ## 备份与恢复
 
 三层备份互不替代：

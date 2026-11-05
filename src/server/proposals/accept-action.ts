@@ -10,12 +10,12 @@ import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { ensureProposalDecisionSignal } from '@/kernel/proposals/signals';
 import { extractRecordEvidenceIds, markRecordsActioned } from '@/kernel/records/record-processing';
-import { getStartedBoss } from '@/server/boss/client';
 import type { AcceptAiProposalOpts } from './action-types';
 import {
   assertPending,
   ownerInput,
   proposalLifecycleRegistry,
+  proposalRuntimeSeams,
   requireProposal,
 } from './lifecycle-context';
 
@@ -151,10 +151,11 @@ export async function acceptAiProposal(
     }
   }
 
-  // Owners that enqueue follow-up jobs take the boss from the runtime instead of importing it.
+  // Declared seams (lifecycle-context) always win; caller-supplied keys only fake
+  // sibling test seams the owner itself names (e.g. enqueueLearningIntentNote).
   const dispatched = await dispatchAccept(db, proposal, opts, {
     ...runtime,
-    getBoss: getStartedBoss,
+    ...proposalRuntimeSeams,
   });
 
   const recordIds = extractRecordEvidenceIds(proposal.payload.evidence_refs);

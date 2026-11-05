@@ -20,17 +20,5 @@ export const taskCatalog = composeTaskCatalog(
     { owner: 'agency', specs: agencyTaskSpecs },
     { owner: 'copilot', specs: copilotTaskSpecs },
   ] as const,
-  // YUK-987: +SupplyPlanTask（供给需求层 planner）→ 50。
-  // YUK-1016: +CauseCategoryProposeTask（cause catalog 增长提议）→ 51。
-  // YUK-376: +ItemPriorLlasaTask（LLaSA 学生模拟冷启锚 opt-in 变体）→ 52。
-  // YUK-1049: +JevScoringDecisionTask（首个 typed execution spec）→ 53。
-  // YUK-1047: native frozen-rule pi task → 54.
-  // YUK-1047: frozen solve hint vision sibling → 55.
-  // YUK-1496: AI rubric 判定任务（C2 model grading）→ 56.
-  // YUK-1445: +QuestionAdmissionSolveTask（入库准入双盲解题）→ 57.
-  // YUK-1522: +IngestionAgentTask（R8 录入 agent 本体）→ 58.
-  // YUK-1448: +BankRequirementInterpretTask +BankConditionVerifyTask → 60.
-  // YUK-1664: −KnowledgeEdgeProposeTask（夜间边提议并入 KnowledgeReviewTask）→ 59.
-  // YUK-1664: -ResearchMeetingDirectorTask（影子例会线退役，ADR-0067 D4）→ 58.
-  58,
+  59,
 );

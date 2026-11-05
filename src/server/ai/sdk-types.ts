@@ -35,6 +35,8 @@ export interface Options {
   abortController?: AbortController;
   /** Agentic-turn ceiling — pi enforces it via `finishTurn`. */
   maxTurns?: number;
+  /** Priced-spend ceiling for kinds that opt in (`enforceMaxCost`); see pi-cost-ceiling.ts. */
+  maxBudgetUsd?: number;
   /** allowedTools allowlist — `mcp__<server>__<tool>` wire names. */
   tools?: string[];
   /** Reasoning effort tier → pi `reasoning` stream option. */
@@ -318,6 +320,22 @@ export interface SDKToolArgsContractFailedMessage {
   session_id: string;
 }
 
+/**
+ * YUK-1548 §5 — progressive tool-argument streaming evidence: accumulated
+ * bytes plus a bounded prefix for server-side tolerant scanning. Never carries
+ * more than TOOL_ARGS_PROGRESS_PREFIX chars of the raw arguments.
+ */
+export interface SDKToolArgsProgressMessage {
+  type: 'system';
+  subtype: 'tool_args_progress';
+  tool_name: string;
+  tool_call_id: string;
+  received_bytes: number;
+  args_prefix: string;
+  uuid: UUID;
+  session_id: string;
+}
+
 /** Normalized frame union the runner consumes, sized to what the codebase produces. */
 export type SDKMessage =
   | SDKAssistantMessage
@@ -330,4 +348,5 @@ export type SDKMessage =
   | SDKTaskUpdatedMessage
   | SDKTaskNotificationMessage
   | SDKToolArgsCoercedMessage
-  | SDKToolArgsContractFailedMessage;
+  | SDKToolArgsContractFailedMessage
+  | SDKToolArgsProgressMessage;

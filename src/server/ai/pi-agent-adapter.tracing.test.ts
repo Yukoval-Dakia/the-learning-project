@@ -2,7 +2,6 @@ import { type AgentTool, agentLoop } from '@earendil-works/pi-agent-core';
 import {
   type AssistantMessage,
   type Model,
-  Type,
   createAssistantMessageEventStream,
   createModels,
 } from '@earendil-works/pi-ai';
@@ -102,7 +101,11 @@ function tool(execute: AgentTool['execute']): AgentTool {
     name: 'mcp__loom__fixture',
     label: 'Fixture',
     description: 'Fixture',
-    parameters: Type.Object({ query: Type.String() }),
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string' } },
+      required: ['query'],
+    },
     execute,
   };
 }
@@ -112,6 +115,8 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+// @invariant security: credentials, prompts and tool payloads stay out of trace metadata.
+// @fails-if an execution or rejected-attempt span copies the sentinel payload into metadata.
 it.each(['success', 'throw', 'isError', 'blocked'])(
   'traces one tool execution or a pre-execute attempt: %s',
   async (outcome) => {
@@ -161,7 +166,9 @@ it.each(['success', 'throw', 'isError', 'blocked'])(
       expect(frames.at(-1)?.type).toBe('result');
     });
     expect(execute).toHaveBeenCalledTimes(outcome === 'blocked' ? 0 : 1);
-    expect(order).toEqual(outcome === 'blocked' ? ['before'] : ['before', 'execute', 'after']);
+    expect(order).toEqual(
+      outcome === 'blocked' ? ['before', 'after'] : ['before', 'execute', 'after'],
+    );
     const toolSpans = fixture.records.filter((record) => record.type === 'TOOL');
     expect(toolSpans).toHaveLength(1);
     expect(toolSpans[0].name).toBe(outcome === 'blocked' ? 'tool.attempt' : 'tool.execute');

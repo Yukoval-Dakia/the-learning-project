@@ -45,6 +45,7 @@ import {
   resolveExecutionAdapter,
 } from './execution-adapter';
 import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
+import { taskMayExportTranscript } from './laminar-transcript';
 import { logMissingToolMountsWarning } from './log';
 import { providerHttpTimeoutMs } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission-policy';
@@ -68,6 +69,7 @@ import type {
   SDKTaskUpdatedMessage,
   SDKUserMessage,
 } from './sdk-types';
+import { currentTaskSpendScope, withinTaskSpendFrame } from './task-spend-scope';
 import { addStreamText, emptyStreamTextStats } from './timeout-usage';
 
 // The runner is loaded before capability execution. Keep the shared observation
@@ -139,6 +141,11 @@ export interface RunTaskCtx {
   db: Db;
   /** Per-run capability-owned sanitized content; omitted runs export metadata only. */
   laminarContent?: TraceContent<RunTaskResult>;
+  /**
+   * The caller has judged that this run's content holds no learner material. Only takes
+   * effect for tasks on the transcript whitelist.
+   */
+  laminarTranscript?: boolean;
   /** Caller-owned cancellation propagated into the provider run lifecycle. */
   signal?: AbortSignal;
   /**
@@ -200,6 +207,21 @@ export interface RunTaskCtx {
     input: Record<string, unknown>;
     toolUseId?: string;
   }) => void;
+  /**
+   * YUK-1548 §5 — streamed tool-argument progress for progressive block
+   * display. Carries identity + byte count + a bounded prefix only.
+   */
+  onToolArgsDelta?: (delta: {
+    toolName: string;
+    toolUseId: string;
+    receivedBytes: number;
+    argsPrefix: string;
+  }) => void;
+  /**
+   * YUK-1765 — the model is sending reasoning. A signal only: the reasoning text never leaves
+   * the runner, so nothing can show or persist it.
+   */
+  onThinking?: () => void;
   /**
    * YUK-575 (N5/MF-A) — per-call budget override for durable copilot runs. The
    * registry default must stay untouched (YUK-458: raising it only turned
@@ -434,6 +456,9 @@ function buildQueryOptions(
     // timer derivation (provider-transport.ts).
     providerTimeoutMs: providerHttpTimeoutMs(budget.timeout),
     transportEvidence,
+    ...(declaredDef.enforceMaxCost === true || currentTaskSpendScope()
+      ? { maxBudgetUsd: budget.maxCost }
+      : {}),
   };
   // YUK-923 — per-run modelBinding effort wins over the task-kind declaration.
   const reasoningEffort = ctx.modelBinding?.effort ?? declaredDef.reasoningEffort;
@@ -496,12 +521,18 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
     },
     async run() {
       if (!prepared) throw new Error('adapter startup completed without a prepared query handle');
+      await currentTaskSpendScope()?.beforeQuery(lifecycle.taskRunId);
       await beforeProviderQuery?.({
         taskRunId: lifecycle.taskRunId,
         provider: lifecycle.resolved.provider,
         model: lifecycle.resolved.model,
       });
-      return consume(prepared.query(prompt));
+      try {
+        return await consume(prepared.query(prompt));
+      } catch (error) {
+        currentTaskSpendScope()?.charge(null);
+        throw error;
+      }
     },
     async close() {
       const p = prepared;
@@ -529,6 +560,13 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   onAssistant?: (msg: SDKAssistantMessage) => Promise<void> | void;
   onTextDelta?: (text: string) => Promise<void> | void;
   onToolUse?: (block: SDKToolUseBlock) => void;
+  onToolArgsDelta?: (msg: {
+    tool_name: string;
+    tool_call_id: string;
+    received_bytes: number;
+    args_prefix: string;
+  }) => void;
+  onThinking?: () => void;
   onSuccess?: (msg: SDKSuccessResultMessage) => Promise<void> | void;
   onApiError?: (msg: SDKSuccessResultMessage) => void;
   apiErrorMessages?: (msg: SDKSuccessResultMessage) => string[];
@@ -564,6 +602,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
         if (msg.type === 'text_delta' && !args.lifecycle.abortController.signal.aborted) {
           await args.onTextDelta?.(msg.text);
         }
+        if (msg.type === 'thinking_delta' && msg.text) args.onThinking?.();
         continue;
       }
       if (args.notifySessionId && msg.type === 'system' && msg.subtype === 'init') {
@@ -587,6 +626,14 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
           iteration,
           latencyMs: 0,
         });
+        continue;
+      }
+      if (msg.type === 'system' && msg.subtype === 'tool_args_progress') {
+        try {
+          args.onToolArgsDelta?.(msg);
+        } catch {
+          // Visibility failures must never abort paid work.
+        }
         continue;
       }
       if (msg.type === 'system' && msg.subtype === 'tool_args_contract_failed') {
@@ -834,15 +881,31 @@ export async function runTask(
   return traceOperation('task.run', { task_kind: kind }, () => runTaskImpl(kind, input, ctx), {
     signal: ctx.signal,
     content: ctx.laminarContent,
+    allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
   });
 }
 
-async function runTaskImpl(kind: string, input: unknown, ctx: RunTaskCtx): Promise<RunTaskResult> {
+async function runTaskImpl(
+  kind: string,
+  input: unknown,
+  ctx: RunTaskCtx,
+  enteredSpendFrame = false,
+): Promise<RunTaskResult> {
+  if (currentTaskSpendScope() && !enteredSpendFrame)
+    return withinTaskSpendFrame(() => runTaskImpl(kind, input, ctx, true));
   if (!isKnownTask(kind)) {
     throw new Error(`Unknown task kind: ${kind}`);
   }
   assertChatExecutionKind(kind);
-  const budget = resolveTaskBudget(kind, ctx.budgetOverride);
+  const scopedAllowance = currentTaskSpendScope()?.remainingUsd();
+  const budget = resolveTaskBudget(kind, {
+    ...ctx.budgetOverride,
+    ...(scopedAllowance === undefined
+      ? {}
+      : {
+          maxCost: Math.min(resolveTaskBudget(kind, ctx.budgetOverride).maxCost, scopedAllowance),
+        }),
+  });
   const def = tasks[kind];
 
   // beforeRun runs exactly once, OUTSIDE the attempt loop — every attempt sees
@@ -988,7 +1051,15 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
     throw new Error(`Unknown task kind: ${kind}`);
   }
   assertChatExecutionKind(kind);
-  const budget = resolveTaskBudget(kind, ctx.budgetOverride);
+  const scopedAllowance = currentTaskSpendScope()?.remainingUsd();
+  const budget = resolveTaskBudget(kind, {
+    ...ctx.budgetOverride,
+    ...(scopedAllowance === undefined
+      ? {}
+      : {
+          maxCost: Math.min(resolveTaskBudget(kind, ctx.budgetOverride).maxCost, scopedAllowance),
+        }),
+  });
   const modelBinding = ctx.modelBinding;
   const lifecycle = createRunLifecycle<RunTaskResult>({
     db: ctx.db,
@@ -1127,6 +1198,7 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
         {
           signal: lifecycle.abortController.signal,
           outcome: (result) => (result ? 'success' : 'error'),
+          allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
           content: ctx.laminarContent
             ? {
                 input: ctx.laminarContent.input,
@@ -1197,6 +1269,7 @@ export async function streamTaskCollecting(
       signal: ctx.signal,
       content: ctx.laminarContent,
       outcome: (result) => (result.partial ? 'error' : 'success'),
+      allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
     },
   );
 }
@@ -1211,7 +1284,15 @@ async function streamTaskCollectingImpl(
     throw new Error(`Unknown task kind: ${kind}`);
   }
   assertChatExecutionKind(kind);
-  const budget = resolveTaskBudget(kind, ctx.budgetOverride);
+  const scopedAllowance = currentTaskSpendScope()?.remainingUsd();
+  const budget = resolveTaskBudget(kind, {
+    ...ctx.budgetOverride,
+    ...(scopedAllowance === undefined
+      ? {}
+      : {
+          maxCost: Math.min(resolveTaskBudget(kind, ctx.budgetOverride).maxCost, scopedAllowance),
+        }),
+  });
   const modelBinding = ctx.modelBinding;
   const lifecycle = createRunLifecycle<StreamCollectResult>({
     db: ctx.db,
@@ -1291,6 +1372,17 @@ async function streamTaskCollectingImpl(
                 });
               }
             : undefined,
+          onToolArgsDelta: ctx.onToolArgsDelta
+            ? (msg) => {
+                ctx.onToolArgsDelta?.({
+                  toolName: msg.tool_name,
+                  toolUseId: msg.tool_call_id,
+                  receivedBytes: msg.received_bytes,
+                  argsPrefix: msg.args_prefix,
+                });
+              }
+            : undefined,
+          onThinking: ctx.onThinking,
           onApiError: (msg) => {
             console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
               event: 'task_run_success_with_error_flag',

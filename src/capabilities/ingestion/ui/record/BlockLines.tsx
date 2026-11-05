@@ -41,8 +41,10 @@ export function BlockLines({
   const waiting = draft.waiting.length;
 
   if (blocks.length === 0) return null;
+  // The sticky 收进题库 bar sticks only while this list is on screen: its own containing block
+  // keeps it off the 后续用途 options above (it covered them on phones).
   return (
-    <>
+    <div className="rc-lines-scope">
       <ol className="rc-lines" aria-label="认出的题">
         {blocks.map((block, i) => (
           <BlockLine
@@ -126,6 +128,6 @@ export function BlockLines({
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

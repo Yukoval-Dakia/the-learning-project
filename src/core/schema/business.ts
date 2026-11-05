@@ -359,6 +359,20 @@ export const NoteVerificationResult = z.object({
 });
 export type NoteVerificationResultT = z.infer<typeof NoteVerificationResult>;
 
+// 「已知问题」: deterministic generation-time findings persisted on the note.
+// No verdict/confidence — those belong to the retired AI verify pass (YUK-1772).
+export const NoteKnownIssues = z.object({
+  kind: z.literal('known_issues'),
+  summary_md: z.string().min(1).max(1000),
+  issues: z.array(NoteVerificationIssue).max(10),
+});
+export type NoteKnownIssuesT = z.infer<typeof NoteKnownIssues>;
+
+// artifact.verification_summary: legacy AI verdict rows plus new known-issues
+// payloads. Non-null only means "issues were recorded", never "verified".
+export const ArtifactVerificationSummary = z.union([NoteVerificationResult, NoteKnownIssues]);
+export type ArtifactVerificationSummaryT = z.infer<typeof ArtifactVerificationSummary>;
+
 // VariantVerifyTask second-pass output. Used by `runVariantVerify` to decide
 // whether to flip `mistake_variant.status` from 'active' to 'broken'.
 export const VariantVerificationResult = z.object({
@@ -1197,12 +1211,6 @@ export const ToolState = z.object({
 });
 export type ToolStateT = z.infer<typeof ToolState>;
 
-// ADR-0033 D2/D6 (YUK-306) — the html size cap enforced at the author_artifact /
-// update_artifact tool input boundary. Generous: a self-contained interactive
-// page (inline CSS + JS) the copilot writes in one tool call; hard limit only
-// guards against pathological inputs, not normal heavy use (护栏两层语义).
-export const INTERACTIVE_HTML_MAX_CHARS = 500_000;
-
 // Interactive artifact payload, stored in artifact.attrs (existing jsonb
 // column; NO new column, audit:schema untouched). Like ToolState, the jsonb
 // is opaque to audit:schema — this Zod parse at every write point is the
@@ -1215,10 +1223,9 @@ export const InteractiveArtifactAttrs = z
     // semantic kind 'interactive', format=html for now. Future formats widen
     // this literal into an enum.
     format: z.literal('html'),
-    // Size cap is enforced at the tool input boundary (INTERACTIVE_HTML_MAX_CHARS).
     html: z.string().min(1),
     summary: z.string().max(500).optional(),
-    origin: z.string().optional(), // 'copilot_author_artifact'
+    origin: z.string().optional(), // stored rows carry 'copilot_author_artifact'
   })
   .catchall(z.unknown());
 export type InteractiveArtifactAttrsT = z.infer<typeof InteractiveArtifactAttrs>;

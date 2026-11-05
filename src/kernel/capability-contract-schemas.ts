@@ -6,6 +6,7 @@ export { ActivityRef } from '@/core/schema/activity';
 export {
   ArtifactBodyBlocks,
   ArtifactHistoryEntry,
+  ArtifactVerificationSummary,
   CauseCategory,
   FsrsRating,
   IngestionEntrypoint,
@@ -15,6 +16,7 @@ export {
 } from '@/core/schema/business';
 export {
   CoarseOutcome,
+  GradingProvenanceEntry,
   JudgeResultV2,
   PartialUnknownJudgeResult,
   ScoreMeaning,

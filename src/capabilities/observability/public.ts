@@ -30,13 +30,19 @@ export {
 } from './api/event-contracts';
 export type {
   AdminConfigCatalogModelRow,
+  AdminConfigGlobalEffective,
   AdminConfigProviderAuth,
+  AdminConfigProviderAuthMode,
   AdminConfigProviderRow,
   AdminConfigRuntimeFacts,
   AdminConfigRuntimeFactsSource,
   AdminConfigRuntimeSection,
   AdminConfigScheduleRow,
+  AdminConfigTaskCredential,
+  AdminConfigTaskEffectiveBinding,
+  AdminConfigTaskEffectiveReasoning,
   AdminConfigTaskFacts,
+  AdminConfigTaskSelectionRule,
 } from './server/admin-config-facts';
 export {
   __resetAdminConfigRuntimeFactsForTests,
@@ -148,6 +154,7 @@ export {
   formatDbProfileAuditReport,
 } from './server/subject-profile-audit';
 export {
+  type ConfigIncompleteAlert,
   type TaskFailureAlertsRead,
   loadTaskFailureAlerts,
 } from './server/task-failure-alerts';

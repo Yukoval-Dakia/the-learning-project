@@ -161,6 +161,21 @@ export function terminalJudgeRunResult(events: JudgeRunReplayEvent[]): unknown {
   return result;
 }
 
+/**
+ * 202-pending 契约响应 schema（submit 面 async-main 分流时返回）。登记进 submit
+ * 路由的 manifest responses[202] 让 assertApiRouteSuccessStatus 放行 202（否则
+ * flag-on 的 202 被拒）。dependency-light（此模块），供 manifest 静态导入。
+ */
+export const JudgeDurablePendingResponseSchema = z.object({
+  run_id: z.string(),
+  verdict: z.literal('pending'),
+  backfill: z.object({
+    channel: z.literal('sse'),
+    url: z.string(),
+    poll_url: z.string(),
+  }),
+});
+
 /** A native submission has exactly one durable judge run; dispatch and recovery reads derive it here. */
 export function nativeJudgeRunId(submissionId: string): string {
   return `judge_native_${submissionId}`;

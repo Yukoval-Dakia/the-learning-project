@@ -53,12 +53,10 @@ function normalizeConfidenceWeight(raw: number): number {
 }
 
 /**
- * Dark-ship flag. Default OFF — when OFF the accept path is effect-identical to today (no
- * misconception, no edge). Read per-call so each process sees its own env.
+ * Default ON. When off, the accept path mints no misconception and no edge. Read per call so a
+ * config change applies without a restart.
  */
 export function misconceptionPromoteEnabled(): boolean {
-  // pinned key——DB 层跳过，直读 env > code-default（compose 强制项；'unset/垃圾值 → false'
-  // 保守地板不变）。
   return getConfigFlag('MISCONCEPTION_PROMOTE_ENABLED');
 }
 

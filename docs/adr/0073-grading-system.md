@@ -1,10 +1,10 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # ADR-0073 — 判分系统：上游存储与标定（含判分方法标定）；系统本身负责按题型展示、收集作答与判断；练习与拍照录入共用同一套
 
-**Status:** Proposed（设计方向，2026-10-11）；尚未实施。
+**Status:** Accepted（2026-11-04 更正：原标「尚未实施」与代码不符）。核心已实施——五层契约（`src/core/schema/assessment/`）、单一发布 seam `publishQuestionGroup`（`src/kernel/records/assessment-publication.ts`）、判分准入后端 `question_admission_run`（`src/capabilities/practice/question-bank/jobs/`；TEST 实测 83 组 admitted / 353 withheld）、草稿→提交链 `edit_question`/`submit_question`（`src/capabilities/practice/supply/tools/submit-question.ts`）。遗留差异如实记录：`model_executor` 所需已准入切片在 TEST 为 0 行（311 组滞留 human_review，启用归协调线另票，见 `tlp-docs/audit/2026-11-04-flexible-grading-and-presentation-review.md` §3）；`on_low_confidence: human_review` 指向不存在角色的路径待移除；实际判分仍走旧 `SemanticJudgeTask`。
 **Decision source:** owner 2026-10-11 三连拍板——14:04「我们要的是选择题“编号”，不是从文本里启发式读取答案……你需要一套完善的判分系统」、14:08「grading system的上游是好的题目存储标定，system本身处理题型展示与答案判断」、14:11「而且上游就要给判分方法做标定」（决定记录 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/decisions/2026-10-11-grading-system.md`）。
 **Tracking:** [YUK-1445](https://linear.app/yukoval-studios/issue/YUK-1445)（判分准入）、[YUK-1404](https://linear.app/yukoval-studios/issue/YUK-1404)（拍照录入）。
 **Related:** ADR-0069（D8 单一入库闸——答案 spec 与标定随其泛化落地）、ADR-0071（grader 只 fallback 到准入模型）、ADR-0072（题库/判分工具不读学习者状态）、ADR-0068（通用学科）、YUK-1468（备题员）。

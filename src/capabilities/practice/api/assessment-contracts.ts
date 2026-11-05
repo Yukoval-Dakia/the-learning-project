@@ -10,6 +10,7 @@ import {
   ResponseSet,
 } from '@/core/schema/assessment';
 import { SERVING_UNAVAILABLE_REASONS } from '@/core/schema/assessment/serving-admission';
+import { GradingProvenanceEntry } from '@/kernel/capability-contract-schemas';
 
 // ---------- 发题（issueAssessment） ----------
 
@@ -128,10 +129,7 @@ export const JudgeRunTerminalResultSchema = z
   .object({
     attempt_event_id: z.string(),
     status: z.enum(['effective', 'review_required']).optional(),
-    // Which lane recorded this attempt; absent on legacy runs. `durable` + `review_required`:
-    // the answer is saved with no automatic verdict. Its run owns the submission, so another
-    // dispatch with a different rating or candidate is refused (409 coordinate_mismatch); the
-    // learner's own rating goes through createAttempt `self_report: true`, not advice replay.
+    // Absent on legacy runs; a durable review_required result still owns its submission.
     judge_lane: z.enum(['durable', 'sync']).optional(),
     assessment: z
       .object({
@@ -159,6 +157,7 @@ export const JudgeRunTerminalResultSchema = z
     confidence: z.number().optional(),
     feedback_md: z.string().optional(),
     capability_ref: z.object({ id: z.string(), version: z.string() }).optional(),
+    grading_provenance: z.array(GradingProvenanceEntry).optional(),
     telemetry: z.unknown().optional(),
     /** The override this handler REQUESTED — not necessarily the lane that executed (#Tunn0). */
     provider_override: z.string().nullable().optional(),
@@ -199,20 +198,6 @@ export const JudgeRunStatusResponseSchema = z.discriminatedUnion('status', [
     result: z.null(),
   }),
 ]);
-
-/**
- * 202 receipt of an original accepted onto the durable judge lane (createAttempt, and advice
- * with `accept_pending`). Lives in this db-free module so both manifest parts import it eagerly.
- */
-export const JudgeDurablePendingResponseSchema = z.object({
-  run_id: z.string(),
-  verdict: z.literal('pending'),
-  backfill: z.object({
-    channel: z.literal('sse'),
-    url: z.string(),
-    poll_url: z.string(),
-  }),
-});
 
 /**
  * 最新已接收提交的判分进度。terminal 与 poll 首个永久快照同一投影（申诉/重判/撤回后取

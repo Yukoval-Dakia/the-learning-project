@@ -1,9 +1,8 @@
 // Review-answer binding: captures the immutable original inside the chat
 // acceptance transaction, and consumes a bound original by re-submitting it
 // through grading's native review-answer operation (which drives activation and
-// settlement). Moved from grading's review-operation: the binding effect —
-// original/final truth serialization under the retry and evaluation-group locks
-// — belongs to settlement; capture and judging stay in grading.
+// settlement). The binding effect — original/final truth serialization under the
+// retry and evaluation-group locks — belongs to settlement; judging stays in grading.
 
 import { and, eq, sql } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';

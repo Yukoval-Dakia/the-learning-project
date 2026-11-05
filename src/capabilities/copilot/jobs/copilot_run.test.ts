@@ -49,6 +49,7 @@ const stubRunInput: NonNullable<RunCopilotRunParams['resolveCopilotRunInputFn']>
   surface: params.triggeredBy === 'chip' ? 'copilot_user_suggested_mistake_action' : 'copilot',
   triggered_by: params.triggeredBy,
   user_message: params.userMessage,
+  today: '2026-11-04（周三）',
   ...(params.chipKind ? { chip_kind: params.chipKind } : {}),
   proposal_feedback: [],
   conversation_history: [],

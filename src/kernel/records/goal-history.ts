@@ -5,6 +5,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 
 import { foldGoal } from '@/core/projections/goal';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
+import type { SteeringGoalDataT } from '@/core/schema/steering';
 import type { Db, Tx } from '@/db/client';
 import { event, goal, materialized_id_index } from '@/db/schema';
 import { rowToFoldEvent } from '@/kernel/records/projection-events';
@@ -122,6 +123,9 @@ function pickGoalStructure(row: GoalStructure): GoalStructure {
     scope_mode: row.scope_mode,
     sequence_hint: row.sequence_hint,
     declared_stage: row.declared_stage,
+    effective_from: row.effective_from,
+    effective_until: row.effective_until,
+    steering: row.steering,
     status: row.status,
     source: row.source,
     source_ref: row.source_ref,
@@ -140,6 +144,9 @@ export function goalRowToSnapshot(row: {
   scope_mode: 'explicit' | 'subject_live';
   sequence_hint: number;
   declared_stage: 'middle_school' | 'high_school' | 'university' | 'custom' | null;
+  effective_from: string | null;
+  effective_until: string | null;
+  steering: SteeringGoalDataT | null;
   status: 'active' | 'dormant' | 'done';
   source: string;
   source_ref: string | null;
@@ -187,6 +194,10 @@ async function upsertProjectedGoal(db: DbLike, projected: GoalRowSnapshotT): Pro
     scope_mode: projected.scope_mode ?? 'explicit',
     // Legacy snapshots carry no declared_stage; the fold materializes NULL.
     declared_stage: projected.declared_stage ?? null,
+    // Same legacy defaulting for the YUK-1770 steering columns.
+    effective_from: projected.effective_from ?? null,
+    effective_until: projected.effective_until ?? null,
+    steering: projected.steering ?? null,
   });
   const { id: _id, ...fields } = values;
   await db.insert(goal).values(values).onConflictDoUpdate({

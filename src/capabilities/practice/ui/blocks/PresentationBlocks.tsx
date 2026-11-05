@@ -21,6 +21,7 @@ import type {
 import {
   type EvidenceAttachment,
   evidenceKindFromMime,
+  stemWithoutRepeatedOptions,
 } from '@/ui/components/response/response-types';
 import { StimulusFigure } from '@/ui/components/response/StimulusFigure';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
@@ -166,10 +167,13 @@ export function PresentationBlocks({
       case 'text_math': {
         const face = block.part_ref ? faceById.get(block.part_ref) : undefined;
         const material = block.material_ref ? materialById.get(block.material_ref) : undefined;
-        const source = face?.prompt_md ?? material?.content_md;
+        const options = face ? selectOptionsOf(issued.slots, face.part_id) : [];
+        const source = face
+          ? stemWithoutRepeatedOptions(face.prompt_md, options)
+          : material?.content_md;
         if (source === undefined) return null;
         return (
-          <MathMarkdown key={block.block_id} className="un-blk-text" notation={notation}>
+          <MathMarkdown key={block.block_id} className="un-blk-text un-read" notation={notation}>
             {source}
           </MathMarkdown>
         );
@@ -365,11 +369,45 @@ export function PresentationBlocks({
       />
     );
 
+  // A default presentation names only part text and inputs, yet a shared stem or figure is issued
+  // as a material. Whatever the tree does not place still belongs to the question: without it the
+  // learner would answer blind, and the answer would count.
+  const placedMaterials = materialRefsOf(presentation.root);
+  const unplacedMaterials = issued.materials.filter((m) => !placedMaterials.has(m.material_id));
+
   return (
     <UiNextRoot className={['un-blk-tree', className].filter(Boolean).join(' ')}>
-      {renderBlock(presentation.root)}
+      {unplacedMaterials.length > 0 ? (
+        <div className="un-blk-stack" data-gap="md">
+          {unplacedMaterials.map((material) => (
+            <div key={material.material_id} className="un-blk-text un-read">
+              {renderMaterial(material)}
+            </div>
+          ))}
+          {renderBlock(presentation.root)}
+        </div>
+      ) : (
+        renderBlock(presentation.root)
+      )}
     </UiNextRoot>
   );
+}
+
+// The options a part's stem might repeat: only when the part has exactly one select slot and
+// every item has text to compare (an item without text means nothing can be matched for sure).
+function selectOptionsOf(slots: readonly ResponseSlotT[], partId: string): string[] {
+  const selects = slots.filter(
+    (slot): slot is SelectSlotT => slot.kind === 'select' && slot.part_id === partId,
+  );
+  const items = selects.length === 1 ? (selects[0]?.items ?? []) : [];
+  const texts = items.flatMap((item) => item.label_md ?? []);
+  return texts.length === items.length ? texts : [];
+}
+
+function materialRefsOf(block: PresentationBlockT, refs = new Set<string>()): Set<string> {
+  if ('material_ref' in block && block.material_ref) refs.add(block.material_ref);
+  if ('children' in block) for (const child of block.children) materialRefsOf(child, refs);
+  return refs;
 }
 
 function axis(slot: SelectSlotT, name: string) {

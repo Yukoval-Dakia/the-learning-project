@@ -41,7 +41,6 @@ import {
   prepareFormalAttemptSubmission,
   type previewFormalAttempt,
   recordFormalAttemptCapture,
-  scopeHasModelExecutor,
 } from './attempt';
 import type { SaveSubmissionRequest } from './submit';
 
@@ -111,7 +110,11 @@ export async function dispatchNativeAttempt(
     }
     return { run_id: runId, caller: payload.caller, submit: payload.submit };
   };
-  const hasModel = scopeHasModelExecutor(prepared);
+  const hasModel = prepared.revision.execution_plan.assignments.some(
+    (a) =>
+      a.executor.kind === 'model_executor' &&
+      a.scoring_unit_ids.some((id) => prepared.scopedUnitIds.has(id)),
+  );
   let token: number | undefined;
   let job: NativeJudgeRunJobData | null;
   let fresh = false;
@@ -337,6 +340,14 @@ export async function executeNativeAttempt(
         },
       }),
     } satisfies Parameters<typeof writeEvent>[1];
+    // grading_provenance 由 unit_results.judged_by 纯派生（不写持久化输入），
+    // 部署边界两侧回执有无该字段都合法；剥离后比较。judged_by 本体仍在
+    // payload 内被逐字节比对，派生字段本身不带独立事实，不损失防篡改性。
+    const stripDerivedResultFields = (payload: unknown) => {
+      if (payload === null || typeof payload !== 'object') return payload;
+      const { grading_provenance: _derived, ...rest } = payload as Record<string, unknown>;
+      return rest;
+    };
     const validateReceipt = (receipt: typeof event.$inferSelect | undefined) => {
       if (
         !receipt ||
@@ -351,7 +362,8 @@ export async function executeNativeAttempt(
         receipt.task_run_id !== null ||
         receipt.cost_micro_usd !== null ||
         !NativeJudgeResolutionPayload.safeParse(receipt.payload).success ||
-        canonicalHash(receipt.payload) !== canonicalHash(wanted.payload)
+        canonicalHash(stripDerivedResultFields(receipt.payload)) !==
+          canonicalHash(stripDerivedResultFields(wanted.payload))
       )
         throw new ApiError('coordinate_mismatch', 'Immutable resolution receipt differs', 409);
     };

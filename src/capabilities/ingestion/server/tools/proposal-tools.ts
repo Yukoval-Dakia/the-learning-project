@@ -1,3 +1,4 @@
+import { sourceAllowsDerivation } from '@/kernel/read-models/usage-policy';
 // Ingestion-owned record proposal tools.
 //
 // These tools expose owner-service paths to agent tool loops. They do not
@@ -118,6 +119,7 @@ const RecordProposalOutputSchema = z.object({
     'proposed',
     'skipped:not_found',
     'skipped:unknown_target',
+    'skipped:source_purpose_restricted_or_unknown',
     'skipped:duplicate_pending',
   ]),
   proposal_id: z.string().optional(),
@@ -219,6 +221,10 @@ async function proposeRecordPromotionExecute(
   const input = ProposeRecordPromotionInputSchema.parse(raw);
   if (!(await getActiveLearningRecord(ctx.db, input.record_id))) {
     return { status: 'skipped:not_found', record_id: input.record_id };
+  }
+
+  if (!(await sourceAllowsDerivation(ctx.db, { kind: 'record', id: input.record_id }))) {
+    return { status: 'skipped:source_purpose_restricted_or_unknown', record_id: input.record_id };
   }
 
   const cooldownKey = `record_promotion:${input.record_id}:${input.target}`;

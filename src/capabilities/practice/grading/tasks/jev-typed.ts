@@ -39,6 +39,11 @@ export const jevScoringDecisionTaskDefinition = {
   needsToolCall: false,
   isMultimodal: false,
   allowedTools: [],
+  context: {
+    view: 'none',
+    reason: '判分只评当次作答与题面；学习者上下文是判分偏差来源，按设计不读。',
+  },
+
   prompt: { kind: 'none' },
 } satisfies TaskDefinition;
 

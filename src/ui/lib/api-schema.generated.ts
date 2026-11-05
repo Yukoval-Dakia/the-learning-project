@@ -1531,6 +1531,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/learner-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getLearnerContext"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/learner-context/action": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["actOnLearnerContext"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/learner-context/edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["editLearnerContext"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/learning-intents": {
         parameters: {
             query?: never;
@@ -2695,6 +2743,15 @@ export interface operations {
                 content: {
                     "application/json": {
                         facts_injected: boolean;
+                        global: {
+                            error: string | null;
+                            model: string | null;
+                            /** @enum {string|null} */
+                            model_source?: "env" | "db" | null;
+                            provider: string | null;
+                            /** @enum {string|null} */
+                            source: "env" | "db" | null;
+                        } | null;
                         keys: {
                             consumer: string | null;
                             default: (boolean | number | string | unknown[] | {
@@ -2728,10 +2785,10 @@ export interface operations {
                                 error_type: string | null;
                                 http_status: number | null;
                                 /** @enum {string} */
-                                status: "unconfigured" | "configured" | "auth_failed";
+                                status: "unconfigured" | "configured" | "auth_failed" | "login_lane";
                             };
                             /** @enum {string} */
-                            auth_mode: "key" | "oauth";
+                            auth_mode: "key" | "oauth" | "oauth-file" | "conflict";
                             credential_env: string;
                             implemented: boolean;
                             implemented_for?: {
@@ -2754,6 +2811,11 @@ export interface operations {
                                 max_input_tokens: number | null;
                                 max_output_tokens: number | null;
                                 reasoning: boolean | "unknown";
+                                reasoning_options: {
+                                    /** @enum {string} */
+                                    mode: "effort" | "budget_tokens" | "toggle" | "unknown";
+                                    values: string[];
+                                } | null;
                                 runnable: boolean;
                                 structured_output: boolean | "unknown";
                                 tool_call: boolean | "unknown";
@@ -2801,6 +2863,11 @@ export interface operations {
                             epoch: number;
                             hydrated_at: string | null;
                         };
+                        task_groups: {
+                            id: string;
+                            kinds: string[];
+                            label: string;
+                        }[];
                         tasks: {
                             budget_note: string;
                             budget_wiring: {
@@ -2817,10 +2884,24 @@ export interface operations {
                             };
                             default_model: string;
                             default_provider: string;
+                            description: string;
                             effective_binding: {
+                                also_on_lanes?: ("vision_judge" | "verify_solve")[];
+                                credential?: {
+                                    /** @enum {string} */
+                                    lane: "key" | "oauth" | "oauth-file" | "conflict";
+                                    verified_in_process: boolean;
+                                } | null;
                                 error: string | null;
                                 model: string | null;
                                 provider: string | null;
+                                reasoning: {
+                                    applied: string | null;
+                                    error: string | null;
+                                    requested: string | null;
+                                } | null;
+                                /** @enum {string|null} */
+                                selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;
                             } | null;
                             effective_budget: {
                                 maxCost: number | null;
@@ -2832,13 +2913,19 @@ export interface operations {
                                 model?: string;
                                 provider?: string;
                             } | null;
+                            group_id: string;
                             kind: string;
+                            label: string | null;
                             override: {
                                 budget?: {
                                     [key: string]: unknown;
                                 };
                                 model?: string;
+                                override_global_pin?: boolean;
                                 provider?: string;
+                                reasoning?: {
+                                    [key: string]: unknown;
+                                };
                             } | null;
                             override_wired: {
                                 budget: boolean;
@@ -2994,6 +3081,37 @@ export interface operations {
                             revision: number;
                         }[];
                         committed_epoch: number;
+                        effective: {
+                            global: {
+                                error: string | null;
+                                model: string | null;
+                                /** @enum {string|null} */
+                                model_source?: "env" | "db" | null;
+                                provider: string | null;
+                                /** @enum {string|null} */
+                                source: "env" | "db" | null;
+                            } | null;
+                            tasks: {
+                                [key: string]: {
+                                    also_on_lanes?: ("vision_judge" | "verify_solve")[];
+                                    credential?: {
+                                        /** @enum {string} */
+                                        lane: "key" | "oauth" | "oauth-file" | "conflict";
+                                        verified_in_process: boolean;
+                                    } | null;
+                                    error: string | null;
+                                    model: string | null;
+                                    provider: string | null;
+                                    reasoning: {
+                                        applied: string | null;
+                                        error: string | null;
+                                        requested: string | null;
+                                    } | null;
+                                    /** @enum {string|null} */
+                                    selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;
+                                };
+                            };
+                        };
                         snapshot_current: boolean;
                         snapshot_epoch: number;
                     };
@@ -3145,6 +3263,37 @@ export interface operations {
                             revision: number;
                         }[];
                         committed_epoch: number;
+                        effective: {
+                            global: {
+                                error: string | null;
+                                model: string | null;
+                                /** @enum {string|null} */
+                                model_source?: "env" | "db" | null;
+                                provider: string | null;
+                                /** @enum {string|null} */
+                                source: "env" | "db" | null;
+                            } | null;
+                            tasks: {
+                                [key: string]: {
+                                    also_on_lanes?: ("vision_judge" | "verify_solve")[];
+                                    credential?: {
+                                        /** @enum {string} */
+                                        lane: "key" | "oauth" | "oauth-file" | "conflict";
+                                        verified_in_process: boolean;
+                                    } | null;
+                                    error: string | null;
+                                    model: string | null;
+                                    provider: string | null;
+                                    reasoning: {
+                                        applied: string | null;
+                                        error: string | null;
+                                        requested: string | null;
+                                    } | null;
+                                    /** @enum {string|null} */
+                                    selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;
+                                };
+                            };
+                        };
                         snapshot_current: boolean;
                         snapshot_epoch: number;
                     };
@@ -10093,6 +10242,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10108,6 +10264,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10123,6 +10286,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         /** @enum {number} */
                         score: 0;
                         /** @enum {string} */
@@ -10140,6 +10310,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         /** @enum {string|null} */
                         score: null;
                         /** @enum {string} */
@@ -10156,6 +10333,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         partial_units: {
                             correct_count: number;
                             scoring_unit_id: string;
@@ -10332,6 +10516,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10347,6 +10538,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10362,6 +10560,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         /** @enum {number} */
                         score: 0;
                         /** @enum {string} */
@@ -10379,6 +10584,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         /** @enum {string|null} */
                         score: null;
                         /** @enum {string} */
@@ -10395,6 +10607,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         partial_units: {
                             correct_count: number;
                             scoring_unit_id: string;
@@ -10571,6 +10790,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10586,6 +10812,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         score: number;
                         /** @enum {string} */
                         score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
@@ -10601,6 +10834,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         /** @enum {number} */
                         score: 0;
                         /** @enum {string} */
@@ -10618,6 +10858,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         /** @enum {string|null} */
                         score: null;
                         /** @enum {string} */
@@ -10634,6 +10881,13 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         feedback_md: string;
+                        grading_provenance?: {
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            scoring_unit_id: string;
+                            /** @enum {string} */
+                            source: "ai";
+                        }[];
                         partial_units: {
                             correct_count: number;
                             scoring_unit_id: string;
@@ -10695,6 +10949,13 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                             feedback_md: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             judge_event_id: string | null;
                             route: string;
                             score: number | null;
@@ -10716,6 +10977,13 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                             feedback_md: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             judge_event_id: string | null;
                             partial_units: {
                                 correct_count: number;
@@ -10750,6 +11018,13 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                             feedback_md: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             judge_event_id: string | null;
                             route: string;
                             score: number | null;
@@ -10771,6 +11046,13 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                             feedback_md: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             judge_event_id: string | null;
                             partial_units: {
                                 correct_count: number;
@@ -19023,6 +19305,13 @@ export interface operations {
                                     evidence_json?: unknown;
                                     feedback_md?: string;
                                     final_rating?: string;
+                                    grading_provenance?: {
+                                        /** @enum {string} */
+                                        calibration: "uncalibrated";
+                                        scoring_unit_id: string;
+                                        /** @enum {string} */
+                                        source: "ai";
+                                    }[];
                                     judge_event_id?: string | null;
                                     /** @enum {string} */
                                     judge_lane?: "durable" | "sync";
@@ -19180,7 +19469,7 @@ export interface operations {
                             submitted_at: string;
                         }[];
                         /** @enum {string|null} */
-                        unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                        unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown" | null;
                     };
                 };
             };
@@ -19748,6 +20037,13 @@ export interface operations {
                             evidence_json?: unknown;
                             feedback_md?: string;
                             final_rating?: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             judge_event_id?: string | null;
                             /** @enum {string} */
                             judge_lane?: "durable" | "sync";
@@ -21561,6 +21857,589 @@ export interface operations {
             };
         };
     };
+    getLearnerContext: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        changes: {
+                            after: {
+                                description: string;
+                                facts: {
+                                    as_of: string;
+                                    body: string;
+                                    evidence_ids: string[];
+                                    id: string;
+                                    /** @enum {string} */
+                                    kind: "fact" | "correction";
+                                    /** @default [] */
+                                    knowledge_ids: string[];
+                                    /** @enum {string} */
+                                    memory_kind: "preference" | "habit" | "weakness" | "event";
+                                    supersedes: string[];
+                                    /** @enum {string} */
+                                    written_by: "companion" | "curator" | "learner";
+                                }[];
+                                key: string;
+                                name: string;
+                                /** @default global */
+                                scope_key: string;
+                                updated_at: string;
+                            }[];
+                            at: string;
+                            before: {
+                                description: string;
+                                facts: {
+                                    as_of: string;
+                                    body: string;
+                                    evidence_ids: string[];
+                                    id: string;
+                                    /** @enum {string} */
+                                    kind: "fact" | "correction";
+                                    /** @default [] */
+                                    knowledge_ids: string[];
+                                    /** @enum {string} */
+                                    memory_kind: "preference" | "habit" | "weakness" | "event";
+                                    supersedes: string[];
+                                    /** @enum {string} */
+                                    written_by: "companion" | "curator" | "learner";
+                                }[];
+                                key: string;
+                                name: string;
+                                /** @default global */
+                                scope_key: string;
+                                updated_at: string;
+                            }[];
+                            id: string;
+                            undo_of: string | null;
+                        }[];
+                        topics: {
+                            description: string;
+                            evidence_at: string | null;
+                            facts: {
+                                as_of: string;
+                                body: string;
+                                evidence_ids: string[];
+                                id: string;
+                                /** @enum {string} */
+                                kind: "fact" | "correction";
+                                /** @default [] */
+                                knowledge_ids: string[];
+                                /** @enum {string} */
+                                memory_kind: "preference" | "habit" | "weakness" | "event";
+                                supersedes: string[];
+                                /** @enum {string} */
+                                written_by: "companion" | "curator" | "learner";
+                            }[];
+                            freshness: number | null;
+                            key: string;
+                            memory_weight: number | null;
+                            name: string;
+                            /** @default global */
+                            scope_key: string;
+                            stale: boolean;
+                            updated_at: string;
+                        }[];
+                        version: number;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    actOnLearnerContext: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    change_id?: string;
+                    expected_version: number;
+                    /** @enum {string} */
+                    op: "withdraw_topic" | "undo";
+                    topic_key?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        after: {
+                            description: string;
+                            facts: {
+                                as_of: string;
+                                body: string;
+                                evidence_ids: string[];
+                                id: string;
+                                /** @enum {string} */
+                                kind: "fact" | "correction";
+                                /** @default [] */
+                                knowledge_ids: string[];
+                                /** @enum {string} */
+                                memory_kind: "preference" | "habit" | "weakness" | "event";
+                                supersedes: string[];
+                                /** @enum {string} */
+                                written_by: "companion" | "curator" | "learner";
+                            }[];
+                            key: string;
+                            name: string;
+                            /** @default global */
+                            scope_key: string;
+                            updated_at: string;
+                        }[];
+                        before: {
+                            description: string;
+                            facts: {
+                                as_of: string;
+                                body: string;
+                                evidence_ids: string[];
+                                id: string;
+                                /** @enum {string} */
+                                kind: "fact" | "correction";
+                                /** @default [] */
+                                knowledge_ids: string[];
+                                /** @enum {string} */
+                                memory_kind: "preference" | "habit" | "weakness" | "event";
+                                supersedes: string[];
+                                /** @enum {string} */
+                                written_by: "companion" | "curator" | "learner";
+                            }[];
+                            key: string;
+                            name: string;
+                            /** @default global */
+                            scope_key: string;
+                            updated_at: string;
+                        }[];
+                        change_id: string | null;
+                        issues: {
+                            detail: string;
+                            /** @enum {string} */
+                            kind: "unmergeable" | "correction_protected" | "edit_scope_exceeded";
+                        }[];
+                        /** @default [] */
+                        remaining_changes: string[];
+                        /** @default false */
+                        request_complete: boolean;
+                        /** @enum {string} */
+                        status: "changed" | "unchanged" | "issue";
+                        version: number;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    editLearnerContext: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @default allow
+                     * @enum {string}
+                     */
+                    derivation_policy?: "allow" | "answer_only" | "crisis";
+                    expected_version: number;
+                    instruction: string;
+                    topic_key?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        changes: {
+                            after: {
+                                description: string;
+                                facts: {
+                                    as_of: string;
+                                    body: string;
+                                    evidence_ids: string[];
+                                    id: string;
+                                    /** @enum {string} */
+                                    kind: "fact" | "correction";
+                                    /** @default [] */
+                                    knowledge_ids: string[];
+                                    /** @enum {string} */
+                                    memory_kind: "preference" | "habit" | "weakness" | "event";
+                                    supersedes: string[];
+                                    /** @enum {string} */
+                                    written_by: "companion" | "curator" | "learner";
+                                }[];
+                                key: string;
+                                name: string;
+                                /** @default global */
+                                scope_key: string;
+                                updated_at: string;
+                            }[];
+                            before: {
+                                description: string;
+                                facts: {
+                                    as_of: string;
+                                    body: string;
+                                    evidence_ids: string[];
+                                    id: string;
+                                    /** @enum {string} */
+                                    kind: "fact" | "correction";
+                                    /** @default [] */
+                                    knowledge_ids: string[];
+                                    /** @enum {string} */
+                                    memory_kind: "preference" | "habit" | "weakness" | "event";
+                                    supersedes: string[];
+                                    /** @enum {string} */
+                                    written_by: "companion" | "curator" | "learner";
+                                }[];
+                                key: string;
+                                name: string;
+                                /** @default global */
+                                scope_key: string;
+                                updated_at: string;
+                            }[];
+                            change_id: string | null;
+                            issues: {
+                                detail: string;
+                                /** @enum {string} */
+                                kind: "unmergeable" | "correction_protected" | "edit_scope_exceeded";
+                            }[];
+                            /** @default [] */
+                            remaining_changes: string[];
+                            /** @default false */
+                            request_complete: boolean;
+                            /** @enum {string} */
+                            status: "changed" | "unchanged" | "issue";
+                            version: number;
+                        }[];
+                        remaining_changes: string[];
+                        reply: string;
+                        /** @enum {string} */
+                        status: "changed" | "partial" | "unchanged";
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     createLearningIntentProposal: {
         parameters: {
             query?: never;
@@ -22420,7 +23299,7 @@ export interface operations {
                         /** Format: date-time */
                         updated_at: string;
                         verification_status: string;
-                        verification_summary: {
+                        verification_summary: ({
                             confidence: number;
                             issues: {
                                 block_id: string | null;
@@ -22434,7 +23313,20 @@ export interface operations {
                             summary_md: string;
                             /** @enum {string} */
                             verdict: "pass" | "needs_review";
-                        } | null;
+                        } | {
+                            issues: {
+                                block_id: string | null;
+                                /** @enum {string} */
+                                category: "factuality" | "coverage" | "clarity" | "subject_fit" | "format" | "safety";
+                                message: string;
+                                /** @enum {string} */
+                                severity: "info" | "warn" | "error";
+                                suggested_fix_md?: string;
+                            }[];
+                            /** @enum {string} */
+                            kind: "known_issues";
+                            summary_md: string;
+                        }) | null;
                         version: number;
                     };
                 };
@@ -22895,7 +23787,7 @@ export interface operations {
                             recorded_at: string | null;
                             recorded_event_id: string | null;
                             /** @enum {string} */
-                            rule: "consecutive" | "rate";
+                            rule: "consecutive" | "rate" | "unsealed";
                             runs: number;
                             /** Format: date-time */
                             since: string;
@@ -22903,6 +23795,13 @@ export interface operations {
                         }[];
                         /** Format: date-time */
                         checked_at: string;
+                        config_incomplete: {
+                            missing: string[];
+                            /** @enum {string} */
+                            process: "api" | "worker";
+                            /** Format: date-time */
+                            seen_at: string;
+                        }[];
                         thresholds: {
                             consecutive_failures: number;
                             failure_rate_above: number;
@@ -23063,6 +23962,7 @@ export interface operations {
                             knowledge_ids: string[];
                             session: {
                                 id: string;
+                                partial: number;
                                 pos: number;
                                 right: number;
                                 status: string;
@@ -23091,6 +23991,7 @@ export interface operations {
                             knowledge_ids: string[];
                             session: {
                                 id: string;
+                                partial: number;
                                 pos: number;
                                 right: number;
                                 status: string;
@@ -23685,6 +24586,7 @@ export interface operations {
                             pos: number;
                             right: number;
                             status: string;
+                            summary_md: string | null;
                             wrong: number;
                         } | null;
                         title: string;
@@ -23693,7 +24595,7 @@ export interface operations {
                             part_ref: string | null;
                             question_id: string;
                             /** @enum {string} */
-                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation";
+                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown";
                         }[];
                     };
                 };
@@ -23827,10 +24729,22 @@ export interface operations {
                         answeredCount: number;
                         knowledgeIds: string[];
                         no_item?: {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
+                            /** @enum {string} */
+                            next_action?: "wait_for_admission" | "continue_other_activities";
                             options: ("recheck" | "end")[];
                             preparing_subjects: string[];
                             /** @enum {string} */
                             reason: "no_servable_item";
+                            supply_ended?: boolean;
                         } | null;
                         question: {
                             assessment: {
@@ -24298,6 +25212,13 @@ export interface operations {
                                                 evidence_json?: unknown;
                                                 feedback_md?: string;
                                                 final_rating?: string;
+                                                grading_provenance?: {
+                                                    /** @enum {string} */
+                                                    calibration: "uncalibrated";
+                                                    scoring_unit_id: string;
+                                                    /** @enum {string} */
+                                                    source: "ai";
+                                                }[];
                                                 judge_event_id?: string | null;
                                                 /** @enum {string} */
                                                 judge_lane?: "durable" | "sync";
@@ -24455,7 +25376,7 @@ export interface operations {
                                         submitted_at: string;
                                     }[];
                                     /** @enum {string|null} */
-                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown" | null;
                                 };
                                 submission_id: string;
                             };
@@ -24468,6 +25389,15 @@ export interface operations {
                         sessionId: string;
                         sourcingNeeded: boolean;
                         starterSupply?: ({
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             /** @enum {string|null} */
                             claim_id: null;
                             /** @enum {string|null} */
@@ -24475,12 +25405,33 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "provide_goal" | "source_questions";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
                             state: "absent";
                             subject_id: string | null;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: ({
                                 /** @enum {string} */
@@ -24500,24 +25451,66 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "wait_for_supply";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
                             state: "pending";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             /** @enum {string|null} */
                             failure_reason: null;
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "continue_placement";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
                             state: "satisfied";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: {
                                 /** @enum {string} */
@@ -24537,12 +25530,33 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "review_supply_failure";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
                             state: "exhausted";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string | null;
                             failure_reason: {
                                 /** @enum {string} */
@@ -24562,6 +25576,18 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "resolve_unknown_outcome";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
@@ -24703,6 +25729,15 @@ export interface operations {
                         /** Format: date-time */
                         started_at: string;
                         starterSupply?: ({
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             /** @enum {string|null} */
                             claim_id: null;
                             /** @enum {string|null} */
@@ -24710,12 +25745,33 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "provide_goal" | "source_questions";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
                             state: "absent";
                             subject_id: string | null;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: ({
                                 /** @enum {string} */
@@ -24735,24 +25791,66 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "wait_for_supply";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
                             state: "pending";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             /** @enum {string|null} */
                             failure_reason: null;
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "continue_placement";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
                             state: "satisfied";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: {
                                 /** @enum {string} */
@@ -24772,12 +25870,33 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "review_supply_failure";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
                             state: "exhausted";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string | null;
                             failure_reason: {
                                 /** @enum {string} */
@@ -24797,6 +25916,18 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "resolve_unknown_outcome";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
@@ -25092,9 +26223,25 @@ export interface operations {
                             answeredCount: number;
                             /** @enum {boolean} */
                             done: true;
+                            evidence?: {
+                                answered_count: number;
+                                /** @enum {string} */
+                                confidence: "low";
+                                /** @enum {string} */
+                                next_action: "calibrate_with_daily_practice";
+                            };
                             /** @enum {string} */
-                            reason: "cap" | "se_converged";
+                            reason: "cap" | "se_converged" | "supply_ended";
                             starterSupply?: ({
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 /** @enum {string|null} */
                                 claim_id: null;
                                 /** @enum {string|null} */
@@ -25102,12 +26249,33 @@ export interface operations {
                                 goal_id: string | null;
                                 /** @enum {string} */
                                 next_action: "provide_goal" | "source_questions";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string | null;
                                 session_id: string;
                                 /** @enum {string} */
                                 state: "absent";
                                 subject_id: string | null;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string;
                                 failure_reason: ({
                                     /** @enum {string} */
@@ -25127,24 +26295,66 @@ export interface operations {
                                 goal_id: string;
                                 /** @enum {string} */
                                 next_action: "wait_for_supply";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string;
                                 session_id: string;
                                 /** @enum {string} */
                                 state: "pending";
                                 subject_id: string;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string;
                                 /** @enum {string|null} */
                                 failure_reason: null;
                                 goal_id: string;
                                 /** @enum {string} */
                                 next_action: "continue_placement";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string;
                                 session_id: string;
                                 /** @enum {string} */
                                 state: "satisfied";
                                 subject_id: string;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string;
                                 failure_reason: {
                                     /** @enum {string} */
@@ -25164,12 +26374,33 @@ export interface operations {
                                 goal_id: string;
                                 /** @enum {string} */
                                 next_action: "review_supply_failure";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string;
                                 session_id: string;
                                 /** @enum {string} */
                                 state: "exhausted";
                                 subject_id: string;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string | null;
                                 failure_reason: {
                                     /** @enum {string} */
@@ -25189,6 +26420,18 @@ export interface operations {
                                 goal_id: string | null;
                                 /** @enum {string} */
                                 next_action: "resolve_unknown_outcome";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string | null;
                                 session_id: string;
                                 /** @enum {string} */
@@ -25206,10 +26449,22 @@ export interface operations {
                             /** @enum {boolean} */
                             done: false;
                             no_item?: {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
+                                /** @enum {string} */
+                                next_action?: "wait_for_admission" | "continue_other_activities";
                                 options: ("recheck" | "end")[];
                                 preparing_subjects: string[];
                                 /** @enum {string} */
                                 reason: "no_servable_item";
+                                supply_ended?: boolean;
                             } | null;
                             question: {
                                 assessment: {
@@ -25677,6 +26932,13 @@ export interface operations {
                                                     evidence_json?: unknown;
                                                     feedback_md?: string;
                                                     final_rating?: string;
+                                                    grading_provenance?: {
+                                                        /** @enum {string} */
+                                                        calibration: "uncalibrated";
+                                                        scoring_unit_id: string;
+                                                        /** @enum {string} */
+                                                        source: "ai";
+                                                    }[];
                                                     judge_event_id?: string | null;
                                                     /** @enum {string} */
                                                     judge_lane?: "durable" | "sync";
@@ -25834,7 +27096,7 @@ export interface operations {
                                             submitted_at: string;
                                         }[];
                                         /** @enum {string|null} */
-                                        unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                                        unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown" | null;
                                     };
                                     submission_id: string;
                                 };
@@ -25846,6 +27108,15 @@ export interface operations {
                             } | null;
                             sourcingNeeded: boolean;
                             starterSupply?: ({
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 /** @enum {string|null} */
                                 claim_id: null;
                                 /** @enum {string|null} */
@@ -25853,12 +27124,33 @@ export interface operations {
                                 goal_id: string | null;
                                 /** @enum {string} */
                                 next_action: "provide_goal" | "source_questions";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string | null;
                                 session_id: string;
                                 /** @enum {string} */
                                 state: "absent";
                                 subject_id: string | null;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string;
                                 failure_reason: ({
                                     /** @enum {string} */
@@ -25878,24 +27170,66 @@ export interface operations {
                                 goal_id: string;
                                 /** @enum {string} */
                                 next_action: "wait_for_supply";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string;
                                 session_id: string;
                                 /** @enum {string} */
                                 state: "pending";
                                 subject_id: string;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string;
                                 /** @enum {string|null} */
                                 failure_reason: null;
                                 goal_id: string;
                                 /** @enum {string} */
                                 next_action: "continue_placement";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string;
                                 session_id: string;
                                 /** @enum {string} */
                                 state: "satisfied";
                                 subject_id: string;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string;
                                 failure_reason: {
                                     /** @enum {string} */
@@ -25915,12 +27249,33 @@ export interface operations {
                                 goal_id: string;
                                 /** @enum {string} */
                                 next_action: "review_supply_failure";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string;
                                 session_id: string;
                                 /** @enum {string} */
                                 state: "exhausted";
                                 subject_id: string;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string | null;
                                 failure_reason: {
                                     /** @enum {string} */
@@ -25940,6 +27295,18 @@ export interface operations {
                                 goal_id: string | null;
                                 /** @enum {string} */
                                 next_action: "resolve_unknown_outcome";
+                                progress?: {
+                                    available_count: number;
+                                    pending_count: number;
+                                    refill_ended: boolean;
+                                    /** @enum {string} */
+                                    stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                    submitted_count: number;
+                                    target_count: number;
+                                    unavailable_count: number;
+                                    /** Format: date-time */
+                                    updated_at: string;
+                                };
                                 semantic_goal_revision_id: string | null;
                                 session_id: string;
                                 /** @enum {string} */
@@ -26085,9 +27452,25 @@ export interface operations {
                         answeredCount: number;
                         /** @enum {boolean} */
                         done: true;
+                        evidence?: {
+                            answered_count: number;
+                            /** @enum {string} */
+                            confidence: "low";
+                            /** @enum {string} */
+                            next_action: "calibrate_with_daily_practice";
+                        };
                         /** @enum {string} */
-                        reason: "cap" | "se_converged";
+                        reason: "cap" | "se_converged" | "supply_ended";
                         starterSupply?: ({
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             /** @enum {string|null} */
                             claim_id: null;
                             /** @enum {string|null} */
@@ -26095,12 +27478,33 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "provide_goal" | "source_questions";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
                             state: "absent";
                             subject_id: string | null;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: ({
                                 /** @enum {string} */
@@ -26120,24 +27524,66 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "wait_for_supply";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
                             state: "pending";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             /** @enum {string|null} */
                             failure_reason: null;
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "continue_placement";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
                             state: "satisfied";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: {
                                 /** @enum {string} */
@@ -26157,12 +27603,33 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "review_supply_failure";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
                             state: "exhausted";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string | null;
                             failure_reason: {
                                 /** @enum {string} */
@@ -26182,6 +27649,18 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "resolve_unknown_outcome";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
@@ -26199,10 +27678,22 @@ export interface operations {
                         /** @enum {boolean} */
                         done: false;
                         no_item?: {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
+                            /** @enum {string} */
+                            next_action?: "wait_for_admission" | "continue_other_activities";
                             options: ("recheck" | "end")[];
                             preparing_subjects: string[];
                             /** @enum {string} */
                             reason: "no_servable_item";
+                            supply_ended?: boolean;
                         } | null;
                         question: {
                             assessment: {
@@ -26670,6 +28161,13 @@ export interface operations {
                                                 evidence_json?: unknown;
                                                 feedback_md?: string;
                                                 final_rating?: string;
+                                                grading_provenance?: {
+                                                    /** @enum {string} */
+                                                    calibration: "uncalibrated";
+                                                    scoring_unit_id: string;
+                                                    /** @enum {string} */
+                                                    source: "ai";
+                                                }[];
                                                 judge_event_id?: string | null;
                                                 /** @enum {string} */
                                                 judge_lane?: "durable" | "sync";
@@ -26827,7 +28325,7 @@ export interface operations {
                                         submitted_at: string;
                                     }[];
                                     /** @enum {string|null} */
-                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown" | null;
                                 };
                                 submission_id: string;
                             };
@@ -26839,6 +28337,15 @@ export interface operations {
                         } | null;
                         sourcingNeeded: boolean;
                         starterSupply?: ({
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             /** @enum {string|null} */
                             claim_id: null;
                             /** @enum {string|null} */
@@ -26846,12 +28353,33 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "provide_goal" | "source_questions";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
                             state: "absent";
                             subject_id: string | null;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: ({
                                 /** @enum {string} */
@@ -26871,24 +28399,66 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "wait_for_supply";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
                             state: "pending";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             /** @enum {string|null} */
                             failure_reason: null;
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "continue_placement";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
                             state: "satisfied";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: {
                                 /** @enum {string} */
@@ -26908,12 +28478,33 @@ export interface operations {
                             goal_id: string;
                             /** @enum {string} */
                             next_action: "review_supply_failure";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string;
                             session_id: string;
                             /** @enum {string} */
                             state: "exhausted";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string | null;
                             failure_reason: {
                                 /** @enum {string} */
@@ -26933,6 +28524,18 @@ export interface operations {
                             goal_id: string | null;
                             /** @enum {string} */
                             next_action: "resolve_unknown_outcome";
+                            progress?: {
+                                available_count: number;
+                                pending_count: number;
+                                refill_ended: boolean;
+                                /** @enum {string} */
+                                stage: "queued" | "finding_questions" | "checking_questions" | "ended";
+                                submitted_count: number;
+                                target_count: number;
+                                unavailable_count: number;
+                                /** Format: date-time */
+                                updated_at: string;
+                            };
                             semantic_goal_revision_id: string | null;
                             session_id: string;
                             /** @enum {string} */
@@ -27735,6 +29338,7 @@ export interface operations {
                             pos: number;
                             right: number;
                             status: string;
+                            summary_md: string | null;
                             wrong: number;
                         } | null;
                         title: string;
@@ -27743,7 +29347,7 @@ export interface operations {
                             part_ref: string | null;
                             question_id: string;
                             /** @enum {string} */
-                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation";
+                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown";
                         }[];
                     };
                 };
@@ -29418,6 +31022,8 @@ export interface operations {
                             id: string;
                             /** @enum {string} */
                             kind: "knowledge_node" | "knowledge_edge" | "knowledge_mutation" | "learning_item" | "note_update" | "variant_question" | "completion" | "relearn" | "defer" | "record_links" | "record_promotion" | "archive" | "judge_retraction" | "goal_scope" | "block_merge" | "image_candidate" | "question_draft" | "question_edit" | "conjecture" | "cause_category";
+                            /** @enum {string|null} */
+                            not_acceptable_reason: "blocks_missing" | "not_draft" | "session_mismatch" | "unknown_source" | "ambiguous_page_index" | "pages_not_adjacent" | "conflicting_question_number" | "missing_continuity" | null;
                             payload: {
                                 cooldown_key?: string;
                                 /** @default [] */
@@ -30528,6 +32134,8 @@ export interface operations {
                             id: string;
                             /** @enum {string} */
                             kind: "knowledge_node" | "knowledge_edge" | "knowledge_mutation" | "learning_item" | "note_update" | "variant_question" | "completion" | "relearn" | "defer" | "record_links" | "record_promotion" | "archive" | "judge_retraction" | "goal_scope" | "block_merge" | "image_candidate" | "question_draft" | "question_edit" | "conjecture" | "cause_category";
+                            /** @enum {string|null} */
+                            not_acceptable_reason: "blocks_missing" | "not_draft" | "session_mismatch" | "unknown_source" | "ambiguous_page_index" | "pages_not_adjacent" | "conflicting_question_number" | "missing_continuity" | null;
                             payload: {
                                 cooldown_key?: string;
                                 /** @default [] */
@@ -33753,7 +35361,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Fenced: maintenance window or contract epoch mismatch */
+            /** @description Fenced (maintenance window or contract epoch mismatch) or a required setting is missing */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -34870,7 +36478,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    accept_pending?: boolean;
                     activity_ref?: {
                         id: string;
                         /** @enum {string} */
@@ -35068,6 +36675,13 @@ export interface operations {
                                     [key: string]: unknown;
                                 };
                                 feedback_md: string;
+                                grading_provenance?: {
+                                    /** @enum {string} */
+                                    calibration: "uncalibrated";
+                                    scoring_unit_id: string;
+                                    /** @enum {string} */
+                                    source: "ai";
+                                }[];
                                 judge_event_id: string | null;
                                 route: string;
                                 score: number | null;
@@ -35089,6 +36703,13 @@ export interface operations {
                                     [key: string]: unknown;
                                 };
                                 feedback_md: string;
+                                grading_provenance?: {
+                                    /** @enum {string} */
+                                    calibration: "uncalibrated";
+                                    scoring_unit_id: string;
+                                    /** @enum {string} */
+                                    source: "ai";
+                                }[];
                                 judge_event_id: string | null;
                                 partial_units: {
                                     correct_count: number;
@@ -35162,25 +36783,6 @@ export interface operations {
                         };
                         question_id: string;
                         submission_id: string;
-                    };
-                };
-            };
-            /** @description Successful response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        backfill: {
-                            /** @enum {string} */
-                            channel: "sse";
-                            poll_url: string;
-                            url: string;
-                        };
-                        run_id: string;
-                        /** @enum {string} */
-                        verdict: "pending";
                     };
                 };
             };
@@ -38510,7 +40112,7 @@ export interface operations {
                             group_id: string;
                             issues: string[];
                             /** @enum {string|null} */
-                            serving_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                            serving_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown" | null;
                             status: string;
                         }[];
                         short_code: string;
@@ -38856,7 +40458,7 @@ export interface operations {
                             group_id: string;
                             issues: string[];
                             /** @enum {string|null} */
-                            serving_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                            serving_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown" | null;
                             status: string;
                         }[];
                         short_code: string;
@@ -39313,7 +40915,7 @@ export interface operations {
                             group_id: string;
                             issues: string[];
                             /** @enum {string|null} */
-                            serving_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                            serving_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown" | null;
                             status: string;
                         }[];
                         short_code: string;

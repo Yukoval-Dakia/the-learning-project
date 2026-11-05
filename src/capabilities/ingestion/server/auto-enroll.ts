@@ -46,7 +46,7 @@ import type { WriteEventInput } from '@/kernel/events';
 /**
  * WorkflowJudge auto-enroll path.
  *
- * Off by default: blocks stay draft for human review. When enabled, it tags and
+ * On by default; when switched off, blocks stay draft for human review. It tags and
  * judges at most AUTO_ENROLL_MAX_BLOCKS_PER_RUN draft blocks; 'auto' blocks are
  * enrolled through the same enrollCapturedBlock owner as the human path (only
  * provenance differs), and 'review' blocks stay untouched. It runs between

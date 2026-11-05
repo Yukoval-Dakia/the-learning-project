@@ -5,6 +5,7 @@
 // paid_effect — the backlog driver releases each authorized group inside its
 // own per-question gate (STOP / queue / unknown-rate / budget), so nothing
 // becomes consumable before its turn.
+
 import { createHash, randomUUID } from 'node:crypto';
 import { open, readFile } from 'node:fs/promises';
 import { z } from 'zod';
@@ -13,12 +14,11 @@ import { evaluateAdmissionVoidGroup } from '@/capabilities/practice/question-ban
 import { QUESTION_ADMISSION_TASK_KIND } from '@/capabilities/practice/question-bank/server/admission/solve';
 import {
   QuestionAdmissionSolveInput,
-  QuestionAdmissionSourceCrosscheckInput,
-  QuestionAdmissionSourceCrosscheckOutput,
   parseQuestionAdmissionSolveModelOutput,
   questionAdmissionSolveTaskSpec,
 } from '@/capabilities/practice/question-bank/tasks/question-admission-solve';
 import { getTaskSystemPrompt } from '@/capabilities/task-registry';
+import { QUESTION_ADMISSION_CONTRACT_VERSION } from '@/core/question-admission-policy';
 import { zodToToolParametersSchema } from '@/kernel/zod-json-schema';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import { executablePiModel } from '@/server/ai/pi-provider-catalog';
@@ -26,7 +26,8 @@ import {
   readProviderErrorEvidence,
   sanitizeProviderErrorText,
 } from '@/server/ai/provider-error-evidence';
-import { type TaskNativeReasoningParams, resolveTaskProvider } from '@/server/ai/providers';
+import { type ResolvedTaskReasoning, resolveTaskProvider } from '@/server/ai/providers';
+import { reasoningWireFields } from '@/server/ai/reasoning-wire';
 import {
   STRUCTURED_OUTPUT_SUBMIT_TOOL,
   STRUCTURED_SUBMIT_REMINDER,
@@ -36,6 +37,39 @@ import {
   structuredSubmitWireFields,
 } from '@/server/ai/structured-submit';
 import { isToolParamContractError, repairToolArguments } from '@/server/ai/tool-param-contract';
+
+// Legacy manifest/probe shapes remain local; the retired provider preflight is fenced below.
+const QuestionAdmissionSourceCrosscheckInput = z.object({
+  mode: z.literal('source_crosscheck'),
+  parts: z.array(z.unknown()).min(1),
+  units: z.array(z.unknown()).min(1),
+  source_answers: z
+    .array(
+      z.object({
+        /** 归属的 scoring_unit_id；null = 组级未归属原文。 */
+        scoring_unit_id: z.string().min(1).nullable().default(null),
+        reference_md: z.string().min(1),
+        locator: z.string().optional(),
+      }),
+    )
+    .min(1),
+  /** 两次独立解题达成一致的 typed 键的可读摘要（含 item 显示文本）。 */
+  proposals: z.array(
+    z.object({
+      scoring_unit_id: z.string().min(1),
+      answer_summary_md: z.string().min(1),
+    }),
+  ),
+});
+const QuestionAdmissionSourceCrosscheckOutput = z.object({
+  per_unit: z.array(
+    z.object({
+      scoring_unit_id: z.string().min(1),
+      status: z.enum(['consistent', 'conflict', 'unknown']),
+      reason_md: z.string().optional(),
+    }),
+  ),
+});
 
 const submit = STRUCTURED_OUTPUT_SUBMIT_TOOL;
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
@@ -67,8 +101,10 @@ interface ProbeRoute {
   api: string;
   endpoint: string;
   apiKey: string;
-  /** task.<kind>.reasoning resolved wire params — merged verbatim into the probe body. */
-  nativeReasoning?: TaskNativeReasoningParams;
+  /** task.<kind>.reasoning resolved level — vendor wire fields derived at send. */
+  reasoning?: ResolvedTaskReasoning;
+  /** Protocol thinking format from the executable facts (deepseek = toggle+effort wire). */
+  thinkingFormat?: string;
   /** Which config layer produced this route (env_pin / task_pair_priority / …). */
   selectionRule?: string;
   /** opencode-go requires x-opencode-session on every request. */
@@ -168,10 +204,9 @@ async function routing(): Promise<{
         model: resolved.model,
         api: native.api,
         endpoint: native.baseUrl,
-        apiKey: resolved.apiKey,
-        ...(resolved.nativeReasoningParams
-          ? { nativeReasoning: resolved.nativeReasoningParams }
-          : {}),
+        ...(native.thinkingFormat ? { thinkingFormat: native.thinkingFormat } : {}),
+        apiKey: resolved.authMode !== 'oauth-file' ? resolved.apiKey : '',
+        ...(resolved.reasoning ? { reasoning: resolved.reasoning } : {}),
         ...(resolved.selectionRule ? { selectionRule: resolved.selectionRule } : {}),
         ...(resolved.provider === 'opencode-go' ? { sessionHeader: true } : {}),
       });
@@ -202,6 +237,9 @@ async function routing(): Promise<{
  * suffix, so the probe exercises the REAL request contract rather than a
  * bespoke one.
  */
+// reasoningWireFields lives in @/server/ai/reasoning-wire — the single source
+// for resolved-reasoning wire semantics (imported above).
+
 const SOLVE_PROBE_INPUT = {
   mode: 'solve' as const,
   parts: [
@@ -263,7 +301,7 @@ async function runProbe(
     selection_rule: route.selectionRule,
     submit_tool_choice: submitPolicy.forced ? 'forced' : 'auto',
     forced_tool_choice_capability: submitPolicy.capability,
-    ...(route.nativeReasoning ?? {}),
+    ...(route.reasoning ? reasoningWireFields(route.reasoning, route.thinkingFormat) : {}),
     requests: [] as Record<string, unknown>[],
     landing_turn_used: false,
   };
@@ -305,7 +343,7 @@ async function runProbe(
         model: route.model,
         max_tokens: 4096,
         stream: false,
-        ...(route.nativeReasoning ?? {}),
+        ...(route.reasoning ? reasoningWireFields(route.reasoning, route.thinkingFormat) : {}),
         messages,
         tools: [
           {
@@ -665,7 +703,13 @@ const run =
         ),
       )
     : mode === '--preflight' && positional
-      ? preflight(positional)
+      ? QUESTION_ADMISSION_CONTRACT_VERSION >= 4
+        ? Promise.reject(
+            new Error(
+              'Legacy admission preflight is retired; run acceptance through question_admission_run.',
+            ),
+          )
+        : preflight(positional)
       : mode === '--plan' && positional && flags.out
         ? plan(positional, flags.out)
         : Promise.reject(new Error('Use --help; explicit mode and paths are required'));

@@ -28,11 +28,15 @@ import {
   markPlacementStarterClaimTerminal,
   placementProbeEnabled,
   resolvePlacementStarterGoalAuthority,
-  selectNextPlacementItem,
   terminalizeLostPlacementDelivery,
 } from '@/kernel/placement';
-import { resolveGoalPlacementScope } from '@/kernel/read-models/placement-scope';
+import {
+  resolveGoalPlacementScope,
+  resolveNearbyPlacementScope,
+} from '@/kernel/read-models/placement-scope';
+import { countPlacementInventory } from './placement-inventory';
 import { placementClaimJobQueue } from './placement-starter';
+import { PLACEMENT_STARTER_REQUIRED_COUNT } from './placement-starter-attempts';
 
 /**
  * How far forward the sweeper pushes `next_reconcile_at` when it acquires a claim. This is the
@@ -554,9 +558,8 @@ async function sweepPendingDispatch(
     .where(eq(goal.id, claim.goal_id))
     .limit(1);
   if (!goalRow) {
-    // No goal row → resolveGoalPlacementScope would silently fall through to the tier-3
-    // full-active-tree fallback and admit paid work against a scope the claim was never about.
-    // Decline; the cursor is already advanced above.
+    // No goal row → no subject to resolve a scope from, so admission would judge an empty scope
+    // and pay for work the claim is no longer about. Decline; the cursor is already advanced above.
     result.goalMissing += 1;
     console.warn(
       `[placement-starter-recovery] claim ${claim.id} references missing goal ${claim.goal_id}; skipped, cursor advanced`,
@@ -692,7 +695,17 @@ async function sweepPendingDispatch(
         return false; // suppress dispatch; the claim is terminalized below, outside this tx
       }
       await lockPlacementSupplyScopes(tx, knowledgeIds);
-      return (await selectNextPlacementItem(tx, { knowledgeIds })) === null;
+      // Same threshold and nearby scope as the initial dispatch: a learner can consume the few available
+      // questions and then have nothing, so one servable question must not stop the refill.
+      const inventoryKnowledgeIds = await resolveNearbyPlacementScope(
+        tx,
+        knowledgeIds,
+        goalRow.subjectId,
+      );
+      return (
+        (await countPlacementInventory(tx, inventoryKnowledgeIds)) <
+        PLACEMENT_STARTER_REQUIRED_COUNT
+      );
     });
     if (!admitInvoked) {
       // Early return inside dispatchPlacementStarterClaimTx: the claim was no longer

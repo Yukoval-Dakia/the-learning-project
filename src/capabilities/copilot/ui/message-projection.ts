@@ -1,10 +1,23 @@
+import {
+  BLOCK_PLACE_PATTERN,
+  BLOCK_REF_PATTERN,
+  BLOCK_REF_SCHEME,
+  serializeBlockFence,
+} from '@/core/schema/blocks';
 import { DerivationPolicy, type DerivationPolicyT } from '@/core/schema/derivation-policy';
+import { BLOCK_DRAFT_FENCE_INFO, blockFence } from '@/ui/components/blocks/block-fence';
 import { parseCopilotPrimaryView } from '../primary-view-contract';
 import { parseConfirmation } from './confirmation';
 import { mergePublicProse, parsePublicProse } from './public-prose';
 import type { ReplayChatMessage, ReplaySkillContext, ReplayTurn } from './replay';
 import { parseSkillContext, parseSkillTurn } from './skill-lifecycle';
-import type { CopilotRunView, CopilotSubtaskView, CopilotToolCallRecord } from './subtask-events';
+import type {
+  CopilotModelStage,
+  CopilotRunBlock,
+  CopilotRunView,
+  CopilotSubtaskView,
+  CopilotToolCallRecord,
+} from './subtask-events';
 
 export type ToolCallRecord = CopilotToolCallRecord;
 
@@ -12,6 +25,10 @@ export interface ChatMessage extends Omit<ReplayChatMessage, 'tool_calls'> {
   streaming?: boolean;
   subtasks?: CopilotSubtaskView[];
   tool_calls?: ToolCallRecord[];
+  /** Client-only, while streaming: pictures being drawn, at their stream positions (YUK-1548). */
+  stream_blocks?: CopilotRunBlock[];
+  /** Client-only, while streaming: what the model is doing right now (YUK-1765). */
+  stream_stage?: CopilotModelStage;
   /** Client-only stable correlation for an accepted server-owned run. */
   run_id?: string;
   /** Client-only correlation while the 202 boundary is still ambiguous. */
@@ -111,6 +128,11 @@ export function projectDurableCopilotMessage(
     subtasks: view.subtasks,
     public_prose: publicProse,
     ...(view.toolCalls && view.toolCalls.length > 0 ? { tool_calls: view.toolCalls } : {}),
+    // The reply frame already carries its own fences (`done` may arrive later); stream blocks stop
+    // there, or every block would show twice until the run ends.
+    stream_blocks:
+      terminal || typeof view.replyPayload?.reply_md === 'string' ? undefined : view.blocks,
+    stream_stage: terminal ? undefined : view.modelStage,
   };
   if (!terminal) return { ...base, text: view.replyText || previous.text, streaming: true };
   const reply = projectCopilotReply(
@@ -129,6 +151,92 @@ export function projectDurableCopilotMessage(
   );
   // A failed run with neither text nor a public failure status (legacy rows): state the outcome.
   return reply ?? { ...base, text: '这次没有完成回答。', streaming: false };
+}
+
+// ── Streaming blocks (YUK-1548 §5) ──────────────────────────────────────────────────────────
+// While a reply streams, its pictures are written into the draft text as fences, so the Markdown
+// stays one tree and the shared renderer draws them: a ready block as its stored fence, a block
+// still being drawn as the UI-only draft fence. A block the text places with `![alt](block:<ref>)`
+// moves there; any other block sits where it appeared in the stream.
+
+const CODE_OR_PLACE = new RegExp(
+  `(\`\`\`[\\s\\S]*?\`\`\`|~~~[\\s\\S]*?~~~|\`[^\`\\n]*\`)|${BLOCK_PLACE_PATTERN.source}`,
+  'g',
+);
+/** A `![…](block:…` the stream has not finished yet; dropped until it completes. */
+const OPEN_PLACE_TAIL = /!\[[^\]\n]{0,400}(?:\]\([^)\n]{0,90})?$/;
+const FENCE_LINE = /^(?:```|~~~)/gm;
+
+function draftFenceOf(block: CopilotRunBlock, alt?: string): string {
+  return blockFence(
+    BLOCK_DRAFT_FENCE_INFO,
+    JSON.stringify({
+      title: block.title ?? alt,
+      kind: block.kind,
+      receivedBytes: block.receivedBytes,
+      retrying: block.status === 'retrying' || undefined,
+    }),
+  );
+}
+
+function fenceOf(block: CopilotRunBlock, alt?: string): string {
+  return block.block ? `\n\n${serializeBlockFence(block.block)}\n\n` : draftFenceOf(block, alt);
+}
+
+/** An anchor inside an open code fence would land in the code; it moves after the text instead. */
+function safeAnchor(text: string, anchor: number): number {
+  const at = Math.min(Math.max(0, anchor), text.length);
+  const fences = text.slice(0, at).match(FENCE_LINE)?.length ?? 0;
+  return fences % 2 === 0 ? at : text.length;
+}
+
+export function composeStreamingReply(
+  text: string,
+  blocks: readonly CopilotRunBlock[] = [],
+): string {
+  const source = text.replace(OPEN_PLACE_TAIL, '');
+  if (!source.includes(BLOCK_REF_SCHEME) && blocks.length === 0) return source;
+  const byRef = new Map(blocks.filter((block) => block.ref).map((block) => [block.ref, block]));
+  // Groups: 1 = code to skip, 2 = alt, 3 = ref (BLOCK_PLACE_PATTERN's own two).
+  const matches = [...source.matchAll(CODE_OR_PLACE)].filter((match) => match[3]);
+  const textRefs = new Set(matches.map((match) => match[3]));
+  // A placement the text wrote with a ref that does not resolve (written before the block was
+  // ready, or a made-up token) takes the next block no real ref claims, in stream order: the
+  // picture shows once, where the text put it, and stays there when it turns ready.
+  const adoptable = blocks.filter((block) => !(block.ref && textRefs.has(block.ref)));
+  const placed = new Set<CopilotRunBlock>();
+  const edits: { at: number; remove: number; insert: string }[] = [];
+  for (const match of matches) {
+    const ref = match[3] as string;
+    const alt = match[2];
+    const stand = byRef.get(ref) ?? adoptable.find((block) => !placed.has(block));
+    let insert = '';
+    if (stand) {
+      placed.add(stand);
+      insert = fenceOf(stand, alt);
+    } else if (BLOCK_REF_PATTERN.test(ref)) {
+      // A real ref whose ready frame has not arrived yet.
+      insert = blockFence(BLOCK_DRAFT_FENCE_INFO, JSON.stringify({ title: alt }));
+    }
+    // Anything else can never resolve; the server drops it at commit too.
+    edits.push({ at: match.index ?? 0, remove: match[0].length, insert });
+  }
+  for (const block of blocks) {
+    if (placed.has(block)) continue;
+    let at = safeAnchor(source, block.anchor);
+    // Never split a placement the text wrote.
+    const inside = edits.find(
+      (edit) => edit.remove > 0 && at > edit.at && at < edit.at + edit.remove,
+    );
+    if (inside) at = inside.at + inside.remove;
+    edits.push({ at, remove: 0, insert: fenceOf(block) });
+  }
+  // Apply from the end so earlier offsets stay valid.
+  let composed = source;
+  for (const edit of edits.sort((a, b) => b.at - a.at)) {
+    composed = `${composed.slice(0, edit.at)}${edit.insert}${composed.slice(edit.at + edit.remove)}`;
+  }
+  return composed;
 }
 
 export function copilotRunReplyMessageId(runId: string): string {

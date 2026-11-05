@@ -65,7 +65,12 @@ export interface PlacementAdvanceOutcome {
   selection:
     | {
         done: true;
-        reason: 'cap' | 'se_converged';
+        reason: 'cap' | 'se_converged' | 'supply_ended';
+        evidence?: {
+          answered_count: number;
+          confidence: 'low';
+          next_action: 'calibrate_with_daily_practice';
+        };
         answeredCount: number;
         unresolved_items?: PlacementUnresolvedItem[];
       }
@@ -198,6 +203,25 @@ export async function runPlacementAdvanceTx(
       progress,
       { startedAt: info?.startedAt ?? null },
     );
+    if (next === null && answeredCount > 0) {
+      const supply = await readPlacementStarterOutcomes(tx, sessionId);
+      if (supply.length > 0 && supply.every(refillCannotAddQuestions)) {
+        return {
+          selection: {
+            done: true as const,
+            reason: 'supply_ended' as const,
+            answeredCount,
+            evidence: {
+              answered_count: answeredCount,
+              confidence: 'low' as const,
+              next_action: 'calibrate_with_daily_practice' as const,
+            },
+            ...unresolvedField(unresolved),
+          },
+          release,
+        };
+      }
+    }
     if (next === null) {
       await recordPlacementNoItem(tx, sessionId, info?.startedAt ?? null, answeredCount);
     }
@@ -271,12 +295,31 @@ export async function recordPlacementNoItem(
   });
 }
 
+/** A claim can end while submitted candidates are still being admitted, and those may
+ * yet be served; ending placement then would strand them. */
+function refillCannotAddQuestions(item: PlacementStarterOutcome): boolean {
+  const claimEnded =
+    item.state === 'satisfied' ||
+    item.state === 'exhausted' ||
+    item.progress?.refill_ended === true;
+  return claimEnded && (item.progress?.pending_count ?? 0) === 0;
+}
+
 /** The typed alternative attached post-tx when a selection yields no item. */
 export function placementNoItem(
   starterSupply: readonly PlacementStarterOutcome[],
 ): z.infer<typeof PlacementNoItemSchema> {
   return {
     reason: 'no_servable_item',
+    ...(starterSupply.some((outcome) => outcome.admission_waits?.length)
+      ? { admission_waits: starterSupply.flatMap((outcome) => outcome.admission_waits ?? []) }
+      : {}),
+    supply_ended: starterSupply.length > 0 && starterSupply.every(refillCannotAddQuestions),
+    next_action: starterSupply.some(
+      (item) => item.state === 'pending' || (item.progress?.pending_count ?? 0) > 0,
+    )
+      ? 'wait_for_admission'
+      : 'continue_other_activities',
     preparing_subjects: starterSupply
       .filter((outcome) => outcome.state === 'pending')
       .map((outcome) => outcome.subject_id),

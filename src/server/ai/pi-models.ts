@@ -1,4 +1,4 @@
-import type { Api, Model, ThinkingLevelMap } from '@earendil-works/pi-ai';
+import type { Api, Model, OpenAICompletionsCompat, ThinkingLevelMap } from '@earendil-works/pi-ai';
 import type { Provider } from '@/ai/task-spec';
 import {
   type CustomProviderProtocol,
@@ -15,6 +15,7 @@ import {
 export type LoomPiModel = Model<Api> & {
   maxInputTokens?: number;
   catalogReasoning?: ModelProfileReasoning;
+  overrideDeclaredThinkingFormat?: string;
 };
 
 /** Pure-protocol builtin lanes a custom provider clones its transport from. */
@@ -53,7 +54,24 @@ function baseUrlForWire(facts: ExecutablePiModelFacts): string {
 // Pi owns transport/auth/compat. Its model facts never override the runtime directory.
 export async function createLoomPiModels() {
   const { builtinModels } = await import('@earendil-works/pi-ai/providers/all');
-  const models = builtinModels();
+  // ChatGPT-login lane: the OAuth credential lives in a file-backed store so a
+  // pi-internal refresh persists back to disk (pi's in-memory store would lose
+  // the rotation). Only present when the lane is configured.
+  const chatgptPath = process.env.OPENAI_CHATGPT_AUTH_FILE;
+  const { createChatGPTCredentialStore } = await import('./chatgpt-oauth-store');
+  if (chatgptPath) {
+    // esbuild CJS cannot run pi-ai's dynamic importOAuthModule (import.meta +
+    // variable specifier); register only the openai ChatGPT flow statically so
+    // refresh/toAuth works in the released bundle (bun-oauth pulls in all 9
+    // flows — unnecessary weight and unrelated login paths).
+    // pi-ai exposes no `auth/*` subpath — `bun-oauth` is the only public entry
+    // to the loader registry.
+    const { registerBunOAuthFlows } = await import('@earendil-works/pi-ai/bun-oauth');
+    registerBunOAuthFlows();
+  }
+  const models = builtinModels(
+    chatgptPath ? { credentials: createChatGPTCredentialStore(chatgptPath) } : undefined,
+  );
   const xiaomi = models.getProvider('xiaomi');
   const lanes: Provider[] = [
     'anthropic',
@@ -73,14 +91,70 @@ export async function createLoomPiModels() {
     const getModels = (): LoomPiModel[] => {
       const result: LoomPiModel[] = [];
       for (const { id: modelId, ...executable } of executablePiModels(lane)) {
-        const template = templates.find((model) => model.id === modelId);
-        if (!template) continue;
+        // pi 1.5 dropped builtin templates for ids overrides still admit
+        // (xiaomi/mimo-v2.5*, opencode-go legacy deepseek/grok): clone the wire
+        // template from a same-provider sibling with the same api+thinkingFormat.
+        let template = templates.find((model) => model.id === modelId);
+        if (!template) {
+          template = templates.find(
+            (model) =>
+              model.api === executable.api &&
+              (model.compat as { thinkingFormat?: string } | undefined)?.thinkingFormat ===
+                executable.thinkingFormat,
+          );
+          if (!template) continue;
+          const rates = catalogModelCost(lane === 'xiaomi-token-plan' ? 'xiaomi' : lane, modelId);
+          result.push({
+            ...template,
+            id: modelId,
+            name: modelId,
+            provider: id,
+            api: executable.api,
+            compat: executable.api === template.api ? template.compat : undefined,
+            baseUrl: baseUrlForWire(executable),
+            cost: {
+              input: rates?.input ?? 0,
+              output: rates?.output ?? 0,
+              cacheRead: rates?.cache_read ?? 0,
+              cacheWrite: rates?.cache_write ?? 0,
+            },
+            input: executable.input.filter(
+              (input): input is 'text' | 'image' => input === 'text' || input === 'image',
+            ),
+            reasoning: executable.reasoning,
+            contextWindow: executable.contextWindow,
+            maxInputTokens: executable.maxInputTokens,
+            maxTokens: executable.maxTokens,
+            catalogReasoning: executable.catalogReasoning,
+            overrideDeclaredThinkingFormat: executable.overrideDeclaredThinkingFormat,
+            thinkingLevelMap: thinkingLevelMapOf(executable.thinkingLevelMap),
+          });
+          continue;
+        }
         result.push({
           ...template,
           id: modelId,
           provider: id,
           api: executable.api,
-          compat: executable.api === template.api ? template.compat : undefined,
+          overrideDeclaredThinkingFormat: executable.overrideDeclaredThinkingFormat,
+          // A declared thinkingFormat is source data (see model-catalog-overrides
+          // protocol): it must reach compat so getCompat emits the model's real
+          // thinking switch even when the builtin template predates it.
+          compat:
+            executable.api === template.api
+              ? executable.thinkingFormat
+                ? {
+                    ...template.compat,
+                    thinkingFormat:
+                      executable.thinkingFormat as OpenAICompletionsCompat['thinkingFormat'],
+                  }
+                : template.compat
+              : executable.thinkingFormat
+                ? {
+                    thinkingFormat:
+                      executable.thinkingFormat as OpenAICompletionsCompat['thinkingFormat'],
+                  }
+                : undefined,
           baseUrl: baseUrlForWire(executable),
           input: executable.input.filter(
             (input): input is 'text' | 'image' => input === 'text' || input === 'image',

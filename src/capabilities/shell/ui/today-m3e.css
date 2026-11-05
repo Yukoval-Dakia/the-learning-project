@@ -124,6 +124,13 @@ main[data-ui-next].un-today-page {
     color: var(--un-critical);
   }
 
+  /* YUK-1738 — a system-side notice (some AI work keeps failing), not a learner error:
+     caution, not critical. */
+  & .td-flag.td-flag-caution {
+    background: var(--un-caution-soft);
+    color: var(--un-caution);
+  }
+
   & .td-flag-ic {
     flex: none;
   }
@@ -316,9 +323,35 @@ main[data-ui-next].un-today-page {
     font: 500 40px / 1 var(--un-font-sans);
   }
 
+  & .td-props-tiers {
+    display: grid;
+    flex: 1 1 200px;
+    gap: var(--un-sp-3);
+    min-width: 0;
+  }
+
+  & .td-props-tier {
+    display: grid;
+    gap: var(--un-sp-1);
+    min-width: 0;
+  }
+
+  & .td-props-tier-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--un-sp-2);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .td-props-tier-head b {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+
   & .td-props-kinds {
     display: flex;
-    flex: 1 1 200px;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--un-sp-2);

@@ -8,13 +8,16 @@ import {
   knowledge,
   learning_record,
   question_revision,
+  source_document,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { allowedEventIds } from '@/kernel/events/derivation-policy';
 import { ApiError } from '@/kernel/http';
 import {
   issuedLearningKnowledgeIds,
   loadAssessmentLearningScope,
 } from '@/kernel/read-models/assessment-learning-scope';
+import { readDocumentDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import type {
   CreateLearningRecordInput,
   CreateLearningRecordResult,
@@ -119,7 +122,7 @@ export async function createLearningRecord(
   input: CreateLearningRecordInput,
 ): Promise<CreateLearningRecordResult> {
   await assertKnowledgeIdsActive(db, input.knowledge_ids);
-  return insertLearningRecord(db, input);
+  return db.transaction((tx) => insertLearningRecord(tx, input));
 }
 
 /** Historical associations come from the accepted submission, never from new input tags. */
@@ -163,7 +166,8 @@ async function insertLearningRecord(
   let originEventId = input.origin_event_id ?? null;
   let origin_event: CreateLearningRecordResult['origin_event'];
 
-  if (input.create_capture_event === true) {
+  const manualCapture = input.source === 'manual' && originEventId === null;
+  if (input.create_capture_event === true || manualCapture) {
     originEventId = originEventId ?? createId();
     await writeEvent(db, {
       id: originEventId,
@@ -208,7 +212,10 @@ async function insertLearningRecord(
       artifact_id: input.artifact_id ?? null,
       source_document_id: input.source_document_id ?? null,
       asset_refs: input.asset_refs ?? [],
-      payload: input.payload,
+      payload:
+        input.source === 'manual'
+          ? { ...input.payload, input_origin: 'learner_manual' }
+          : input.payload,
       created_at: now,
       updated_at: now,
       archived_at: input.processing_status === 'archived' ? now : null,
@@ -217,6 +224,65 @@ async function insertLearningRecord(
     .returning();
 
   return { record, origin_event };
+}
+
+/**
+ * Derivation-facing record filter (the record-side owner of the consent
+ * boundary): a record carrying an `origin_event_id` is kept iff the shared
+ * `eventAllowsDerivationSql` lineage check allows it — that already walks the
+ * session → document binding, so consent withdrawal reaches records without
+ * any payload flag. A record *without* an origin event is judged by its bound
+ * `source_document` usage policy; a missing document is withheld, matching the
+ * event predicate's missing-document rule.
+ *
+ * Model-input and derived-data consumers must run rows through this; the
+ * learner-facing record pages keep the unfiltered reads.
+ */
+export async function derivableLearningRecords<
+  T extends { origin_event_id: string | null; source_document_id: string | null },
+>(db: DbLike, rows: readonly T[]): Promise<T[]> {
+  if (rows.length === 0) return [];
+  const originIds = [
+    ...new Set(
+      rows
+        .map((row) => row.origin_event_id)
+        .filter((id): id is string => typeof id === 'string' && id !== null),
+    ),
+  ];
+  const allowedOrigins = await allowedEventIds(db, originIds);
+  const docIds = [
+    ...new Set(
+      rows
+        .filter((row) => row.origin_event_id === null)
+        .map((row) => row.source_document_id)
+        .filter((id): id is string => typeof id === 'string' && id !== null),
+    ),
+  ];
+  const docById = new Map(
+    docIds.length > 0
+      ? (
+          await db
+            .select({ id: source_document.id, provenance: source_document.provenance })
+            .from(source_document)
+            .where(inArray(source_document.id, docIds))
+        ).map((row) => [row.id, row] as const)
+      : [],
+  );
+  return rows.filter((row) => {
+    if (row.origin_event_id !== null) return allowedOrigins.has(row.origin_event_id);
+    const docId = row.source_document_id;
+    if (docId === null) return true;
+    const doc = docById.get(docId);
+    return doc !== undefined && readDocumentDerivationPolicy(doc.provenance) === 'allow';
+  });
+}
+
+/** Derivation-facing sibling of {@link listLearningRecords}. */
+export async function listLearningRecordsForDerivation(
+  db: DbLike,
+  filter: ListLearningRecordsFilter = {},
+): Promise<LearningRecordListRow[]> {
+  return derivableLearningRecords(db, await listLearningRecords(db, filter));
 }
 
 export async function listLearningRecords(

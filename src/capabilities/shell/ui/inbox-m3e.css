@@ -805,6 +805,29 @@
     margin: 0;
   }
 
+  /* YUK-1781 — why this merge can't be accepted; dismiss stays available below. */
+  & .ib-prop-blocked {
+    display: grid;
+    gap: var(--un-sp-1);
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-caution-soft);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ib-prop-blocked b {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-1);
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+  & .ib-prop-blocked svg {
+    flex: none;
+    color: var(--un-caution);
+  }
+
   & .ib-confirm {
     display: grid;
     gap: var(--un-sp-1);

@@ -18,7 +18,7 @@ const UsageReceiptMetadataSchema = z.object({
 
 const UsageReceiptPayloadSchema = z.union([
   UsageReceiptMetadataSchema.extend({
-    redaction_accounting: z.undefined(),
+    redaction_accounting: z.undefined().optional(),
     redacted_fields: z.array(z.string()),
     redaction_counts: z.record(
       z.string(),

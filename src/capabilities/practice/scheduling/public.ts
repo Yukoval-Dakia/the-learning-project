@@ -19,6 +19,11 @@ export { rotationClassForKind } from './server/variant-rotation';
 export const queryReviewDue: typeof import('./server/due-list').queryReviewDue = async (...args) =>
   (await import('./server/due-list')).queryReviewDue(...args);
 
+// YUK-1770 — steering deferral count for the kernel steering port; the capability
+// barrel and agency read it only through this seam or the port.
+export const countSteeringDeferredDueReviews: typeof import('./server/due-list').countSteeringDeferredDueReviews =
+  async (...args) => (await import('./server/due-list')).countSteeringDeferredDueReviews(...args);
+
 type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;
 export const handleReviewDue: HandleReviewDue = async (...args) => {
   const dueList = await import('./server/due-list');

@@ -1,15 +1,14 @@
 // GET /api/placement/profile?goal=<id>: the placement-done "起始档案".
 //
 // The placement-done "起始档案": per-KC mastery over the goal's scope, derived from the
-// LIVE mastery_state projection (getMasteryProjection — the B1 single source of truth, NOT
-// the deprecated knowledge_mastery view). In-scope KCs with no mastery_state row come back
-// as `tested:false` (untested · 0 题). Read-only; no θ̂/FSRS writes.
+// LIVE mastery_state projection (getMasteryProjection — the B1 single source of truth).
+// In-scope KCs with no mastery_state row come back as `tested:false` (untested · 0 题). Read-only; no θ̂/FSRS writes.
 //
-// Scope resolution mirrors placement-start EXACTLY by sharing the same three-tier
-// resolver (resolveGoalPlacementScope: tier-1 frozen non-empty → tier-2 subject live-resolve →
-// tier-3 full active tree), so a cold-start goal placed via tier-2/3 reads back the KC set the
-// probe was scoped over — a frozen-only read would return an EMPTY profile for
-// exactly those day-one goals. Sharing the resolver is preferable to reading
+// Scope resolution mirrors placement-start EXACTLY by sharing the same resolver
+// (resolveGoalPlacementScope: explicit frozen non-empty → the goal's own subject, live), so a
+// cold-start goal reads back the KC set the probe was scoped over — a frozen-only read would
+// return an EMPTY profile for exactly those day-one goals. The scope never leaves the goal's
+// subject, so the profile only carries that subject's KCs. Sharing the resolver is preferable to reading
 // the session-persisted scope: the profile tracks the CURRENT resolved
 // scope, so KCs bridged after the probe surface as honest "未测" rows instead of being pinned
 // to the probe-time snapshot. Untested in-scope KCs come back as tested:false so the picture
@@ -62,8 +61,7 @@ export async function readPlacementProfile(
     throw new ApiError('not_found', `goal ${goalId} not found`, 404);
   }
 
-  // Shared three-tier resolution (see header) — then the profile's own hygiene
-  // (trim/dedupe) on whatever tier won.
+  // Shared resolution (see header), then the profile's own trim/dedupe.
   const resolvedScope = await resolveGoalPlacementScope(db, {
     scope: g.scope,
     subjectId: g.subjectId,
@@ -73,7 +71,7 @@ export async function readPlacementProfile(
     new Set(resolvedScope.map((id) => id.trim()).filter((id) => id.length > 0)),
   );
   if (scope.length === 0) {
-    // Nothing resolvable anywhere (tier-3 found zero active KC) — honest empty profile.
+    // No subject and no frozen scope, or a subject with no content KC yet — honest empty profile.
     return {
       goalId,
       title: g.title,

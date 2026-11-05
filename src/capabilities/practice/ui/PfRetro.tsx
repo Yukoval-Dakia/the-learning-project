@@ -1,13 +1,14 @@
 // M2 练习面 — 交卷结果 / 复盘（YUK-316）。
 // 设计基准 docs/design/loom-refresh/project/pface-paper.jsx（PfrBody/Result/Retro）：
-// 分数 hero + 判定分布条 + AI 整卷小结 + 逐题展开（你的作答 / AI 反馈 / 不服判）。
-// 整卷小结 M2 为本地模板（按错数挑选）；M4 夜链接管后改为 AI 生成随卷持久化。
+// 分数 hero + 判定分布条 + 小结 + 逐题展开（你的作答 / AI 反馈 / 不服判）。
+// 小结：有 session.summary_md 就原样显示模型写的；还没有时是系统小结，只陈述判分计数，
+// 不冒充模型，也不承诺之后的排程（YUK-1768）。
 // 错题去向 trace（归因事件 / 变式排期）等 M4 归因链上线后接真数据。
 // M3E 呈现：docs/design/2026-11-03-practice-face-m3e.md（样式 practice-face-m3e.css）。
 
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, ChevronDown, Sparkles } from 'lucide-react';
-import { useState } from 'react';
+import { ArrowLeft, ChevronDown } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { AttachmentStrip } from '@/ui/components/response/AttachmentStrip';
 import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
@@ -38,13 +39,6 @@ function verdictOf(outcome: string): Verdict {
 // 不把未知判定硬塞进对错色）。
 function coarseOutcomeOf(outcome: string): CoarseOutcome | null {
   return outcome in COARSE_OUTCOME_META ? (outcome as CoarseOutcome) : null;
-}
-
-function summaryByWrong(wrongish: number, total: number): string {
-  if (wrongish === 0) return `全对（${total} 题）。今天这张卷没有漏的——明天我会把间隔拉长。`;
-  if (wrongish === 1) return '只丢一题，整体是稳的。错的那道我已经记下，变式会排进之后的流。';
-  if (wrongish === 2) return '对多错少，框架在、细节松。两道错题都已记录，各自的变式之后流里见。';
-  return '这张卷错得有点多——不是坏事，正好把没织牢的线都暴露出来了。错题我都记了账，之后的流会围绕它们重排。';
 }
 
 export function PfrQRow({
@@ -176,11 +170,25 @@ export function PfrQRow({
   );
 }
 
+const SUMMARY_POLL_MS = 4000;
+const SUMMARY_POLL_WINDOW_MS = 120_000;
+
 export function PfRetro({ artifactId, onBack }: { artifactId: string; onBack: () => void }) {
   const { getPaperDetail } = usePracticeClient();
+  const openedAt = useRef(Date.now());
   const detailQ = useQuery({
     queryKey: ['paper', artifactId, 'retro'],
     queryFn: () => getPaperDetail(artifactId),
+    // The summary job runs after hand-in. Look for it for two minutes from opening this page, then
+    // stop, whether reads succeed or fail: an older paper may never have one, and the system summary
+    // below stands on its own.
+    refetchInterval: (query) => {
+      const session = query.state.data?.session;
+      const waiting = session?.status === 'completed' && !session.summary_md;
+      return waiting && Date.now() - openedAt.current < SUMMARY_POLL_WINDOW_MS
+        ? SUMMARY_POLL_MS
+        : false;
+    },
   });
 
   if (detailQ.isLoading)
@@ -237,6 +245,7 @@ export function PfRetro({ artifactId, onBack }: { artifactId: string; onBack: ()
   const again =
     verdicts.filter((v) => v === 'again').length + verdicts.filter((v) => v === null).length;
   const total = slots.length;
+  const summaryMd = detail.session?.summary_md;
   const unknownScores = slots.filter(
     (slot) =>
       slot.slot_state.submission?.visible_to_user &&
@@ -285,17 +294,22 @@ export function PfRetro({ artifactId, onBack }: { artifactId: string; onBack: ()
       </div>
 
       <div className="pf-retro-summary">
-        <span className="pf-retro-ava" aria-hidden="true">
-          <Sparkles size={18} />
-        </span>
-        <div>
-          <p className="pf-retro-summary-text">
-            {unknownScores > 0
-              ? `${good} 题完整正确，${hard} 题部分正确，${again} 题错或未答。其中 ${unknownScores} 题分数未知。`
-              : summaryByWrong(hard + again, total)}
-          </p>
-          <p className="pf-retro-summary-meta">交卷统一判分</p>
-        </div>
+        {summaryMd ? (
+          <>
+            <MathMarkdown className="pf-retro-summary-text" notation={slots[0]?.question.notation}>
+              {summaryMd}
+            </MathMarkdown>
+            <p className="pf-retro-summary-meta">AI 小结</p>
+          </>
+        ) : (
+          <>
+            <p className="pf-retro-summary-text">
+              {good} 题完整正确，{hard} 题部分正确，{again} 题错或未答。
+              {unknownScores > 0 ? `其中 ${unknownScores} 题分数未知。` : ''}
+            </p>
+            <p className="pf-retro-summary-meta">系统小结 · 按这张卷的判分统计</p>
+          </>
+        )}
       </div>
 
       <div className="pf-retro-list">

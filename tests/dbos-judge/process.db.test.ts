@@ -11,6 +11,11 @@ import { z } from 'zod';
 import { evaluateSubmission } from '@/capabilities/practice/grading/server/judge/evaluate-submission';
 import { disposeJudgeRun } from '@/capabilities/practice/grading/server/judge-operational';
 import { readJudgeRunPermanent } from '@/capabilities/practice/grading/server/judge-run-observation';
+import {
+  currentModelPins,
+  registerModelAdmissionSlice,
+} from '@/capabilities/practice/grading/server/model-slice-registry';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { canonicalHash } from '@/core/migration/canonical';
 import { ModelUnitOutcome } from '@/core/schema/assessment';
 import { AssessmentRuleDecision } from '@/core/schema/assessment/model-decision';
@@ -43,6 +48,7 @@ const logs: {
 }[] = [];
 const evidence: unknown[] = [];
 let wireUrl: string;
+let admittedSliceId: string;
 const wire: { unit: string; bodyDigest: string; at: string; body: unknown }[] = [];
 const transport: {
   route: 'chat-completions' | 'responses' | 'other';
@@ -308,6 +314,22 @@ beforeAll(async () => {
 }, 60000);
 beforeEach(async () => {
   await resetDb();
+  setTestConfig({
+    'task.AssessmentRuleJudgeTask.provider': 'openai',
+    'task.AssessmentRuleJudgeTask.model': 'gpt-4.1-mini',
+    'task.AssessmentRuleJudgeTask.override_global_pin': true,
+  });
+  const pin = currentModelPins().get('AssessmentRuleJudgeTask');
+  if (!pin) throw new Error('Controlled Rule model pin missing');
+  admittedSliceId = (
+    await registerModelAdmissionSlice(testDb(), {
+      response_class: 'free',
+      task_kind: 'AssessmentRuleJudgeTask',
+      ...pin,
+      holdout_evidence_ref: 'test:judge-frozen:model-admission',
+      admitted_by: 'test:judge-frozen',
+    })
+  ).slice_id;
   await resetJudgeControl(testDb(), 'dbos');
   await testDb().execute(sql`delete from contract_epoch`);
   wire.length = 0;
@@ -316,6 +338,7 @@ beforeEach(async () => {
   failureMode = undefined;
 });
 afterAll(async () => {
+  resetTestConfig();
   for (const child of children) {
     const closed = once(child, 'close');
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
@@ -368,12 +391,17 @@ afterAll(async () => {
   );
 });
 const accepted = () =>
-  dispatchFrozenJudge(testDb(), {
-    checkRateLimit: () => 19,
-    enqueueDbos: async () => {
-      throw new Error('controlled pre-enqueue gap');
+  dispatchFrozenJudge(
+    testDb(),
+    {
+      checkRateLimit: () => 19,
+      enqueueDbos: async () => {
+        throw new Error('controlled pre-enqueue gap');
+      },
     },
-  });
+    new Date(),
+    admittedSliceId,
+  );
 // @invariant concurrency: a real SIGKILL at any committed boundary is recovered by reopening the same production workflow — units already past their boundary are never re-executed and the run settles to exactly one evaluation
 // @fails-if restart the workflow from scratch or replay committed units after reopen; the wire-count equality, single-evaluation and resolved-state assertions fail
 it.each(['native-load-committed', 'claim-committed', 'candidate-sealed', 'domain-committed'])(
@@ -999,6 +1027,7 @@ it.each([false, true])(
         },
       },
       submittedAt,
+      admittedSliceId,
     );
     const sendsBefore = await testDb()
         .select()

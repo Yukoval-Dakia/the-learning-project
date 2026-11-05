@@ -3,7 +3,6 @@ import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts'
 import type { CapabilityManifest } from '@/kernel/manifest';
 import { nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { LEARNING_ACTIVITY_ACTIONS } from '@/kernel/read-models/learner-activity';
-import { JudgeDurablePendingResponseSchema } from '../api/assessment-contracts';
 import {
   ReviewAdviceBodySchema,
   ReviewAdviceResponseSchema,
@@ -50,13 +49,8 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
         path: '/api/review/advice',
         operationId: 'previewReviewAdvice',
         request: { body: ReviewAdviceBodySchema },
-        // 202 = `accept_pending` handed a model-scored answer to the durable judge lane.
-        responses: {
-          200: ReviewAdviceResponseSchema,
-          202: JudgeDurablePendingResponseSchema,
-          ...API_ERROR_RESPONSES,
-        },
-        successStatus: [200, 202],
+        responses: { 200: ReviewAdviceResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/advice').then((m) => m.POST),
       },
       {

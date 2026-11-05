@@ -1,22 +1,16 @@
-// Read tool for the Dreaming-maintained memory brief (global or subject scope).
-// The brief row itself is written by the Dreaming nightly job.
+// Direct (non-tool) memory-brief read for Copilot's own surfaces (today summary,
+// demos). The read semantics — scope row + purpose-current gate + freshness —
+// are owned by agency and reached through the kernel `read-models/memory-brief`
+// port; this adapter only maps the result onto Copilot's output shape.
 
-import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { memory_brief_note } from '@/db/schema';
-import { briefPurposeCurrent } from '@/kernel/read-models/purpose-change';
-import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-
-function iso(value: Date | null | undefined): string | null {
-  return value ? value.toISOString() : null;
-}
+import { readMemoryBrief } from '@/kernel/read-models/memory-brief';
+import type { ToolContext } from '@/kernel/tools/types';
 
 const MemoryBriefInputSchema = z.object({
   scopeKey: z.string().optional(),
   includeEvidence: z.boolean().optional(),
 });
-
-export const MEMORY_BRIEF_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 const MemoryBriefFreshnessSchema = z.object({
   state: z.enum(['fresh', 'stale', 'missing']),
@@ -64,71 +58,32 @@ export async function executeMemoryBrief(
   now: () => Date = () => new Date(),
 ): Promise<MemoryBriefOutput> {
   const input = MemoryBriefInputSchema.parse(raw);
-  const scopeKey = input.scopeKey ?? 'global';
-  const [note] = await ctx.db
-    .select()
-    .from(memory_brief_note)
-    .where(eq(memory_brief_note.scope_key, scopeKey))
-    .limit(1);
-  if (!note || !(await briefPurposeCurrent(ctx.db, scopeKey, note.version))) {
-    return MemoryBriefOutputSchema.parse({
-      note: null,
-      freshness: {
-        state: 'missing',
-        age_ms: null,
-        stale_after_ms: MEMORY_BRIEF_STALE_AFTER_MS,
-      },
-    });
-  }
-  const ageMs = note.refreshed_at
-    ? Math.max(0, now().getTime() - note.refreshed_at.getTime())
-    : null;
+  const scope = input.scopeKey ?? 'global';
+  const read = await readMemoryBrief(ctx.db, scope === 'global' ? 'global:digest' : scope, now());
   return MemoryBriefOutputSchema.parse({
-    note: {
-      id: note.id,
-      scope_key: note.scope_key,
-      subject_id: note.subject_id ?? null,
-      recent_week_md: note.recent_week_md,
-      recent_months_md: note.recent_months_md,
-      long_term_md: note.long_term_md,
-      long_term_freshness_score: note.long_term_freshness_score ?? null,
-      refreshed_at: iso(note.refreshed_at),
-      source_event_id: note.source_event_id ?? null,
-      version: note.version,
-    },
-    freshness: {
-      state:
-        ageMs === null || ageMs >= MEMORY_BRIEF_STALE_AFTER_MS
-          ? ('stale' as const)
-          : ('fresh' as const),
-      age_ms: ageMs,
-      stale_after_ms: MEMORY_BRIEF_STALE_AFTER_MS,
-    },
-    ...(input.includeEvidence
+    note: read.note
+      ? {
+          id: read.note.id,
+          scope_key: read.note.scope_key,
+          subject_id: read.note.subject_id,
+          recent_week_md: read.note.recent_week_md,
+          recent_months_md: read.note.recent_months_md,
+          long_term_md: read.note.long_term_md,
+          long_term_freshness_score: read.note.long_term_freshness_score,
+          refreshed_at: read.note.refreshed_at ? read.note.refreshed_at.toISOString() : null,
+          source_event_id: read.note.source_event_id,
+          version: read.note.version,
+        }
+      : null,
+    freshness: read.freshness,
+    ...(input.includeEvidence && read.note
       ? {
           evidence: {
-            recent_week_ids: note.recent_week_evidence_ids ?? [],
-            recent_months_ids: note.recent_months_evidence_ids ?? [],
-            long_term_ids: note.long_term_evidence_ids ?? [],
+            recent_week_ids: read.note.recent_week_evidence_ids,
+            recent_months_ids: read.note.recent_months_evidence_ids,
+            long_term_ids: read.note.long_term_evidence_ids,
           },
         }
       : {}),
   });
 }
-
-export const queryMemoryBriefTool: DomainTool<MemoryBriefInput, MemoryBriefOutput> = {
-  name: 'query_memory_brief',
-  description:
-    'Read the Dreaming-maintained memory brief for global or subject scope. Treat freshness=stale/missing as low-confidence context and verify against source tools; optional evidence ids are available.',
-  effect: 'read',
-  inputSchema: MemoryBriefInputSchema,
-  outputSchema: MemoryBriefOutputSchema,
-  costClass: 'local',
-  execute: executeMemoryBrief,
-  summarize(input, output) {
-    return output.note
-      ? `memory brief · ${input.scopeKey ?? 'global'} · v${output.note.version} · ${output.freshness.state}`
-      : `memory brief · ${input.scopeKey ?? 'global'} · ${output.freshness.state}`;
-  },
-  mirrorEvent: 'when_user_visible',
-};

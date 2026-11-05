@@ -21,7 +21,7 @@ import type {
   AgentRef,
   ArtifactBodyBlocks,
   ArtifactHistoryEntry,
-  NoteVerificationResult,
+  ArtifactVerificationSummary,
   ToolState,
 } from '../../core/schema/business';
 import type { SerializedQueuedPatch } from '../../core/schema/note-refine-queue';
@@ -29,7 +29,7 @@ import type { SerializedQueuedPatch } from '../../core/schema/note-refine-queue'
 type AgentRefT = z.infer<typeof AgentRef>;
 type ArtifactBodyBlocksT = z.infer<typeof ArtifactBodyBlocks>;
 type ArtifactHistoryEntryT = z.infer<typeof ArtifactHistoryEntry>;
-type NoteVerificationResultT = z.infer<typeof NoteVerificationResult>;
+type ArtifactVerificationSummaryT = z.infer<typeof ArtifactVerificationSummary>;
 type ToolStateT = z.infer<typeof ToolState>;
 type JsonObject = Record<string, unknown>;
 
@@ -94,7 +94,7 @@ export const artifact = pgTable(
     tool_state: jsonb('tool_state').$type<ToolStateT>(),
     generation_status: text('generation_status').notNull().default('pending'),
     verification_status: text('verification_status').notNull().default('not_required'),
-    verification_summary: jsonb('verification_summary').$type<NoteVerificationResultT>(),
+    verification_summary: jsonb('verification_summary').$type<ArtifactVerificationSummaryT>(),
     generated_by: jsonb('generated_by').$type<AgentRefT>(),
     verified_by: jsonb('verified_by').$type<AgentRefT>(),
     history: jsonb('history').$type<ArtifactHistoryEntryT[]>().notNull().default([]),
@@ -308,16 +308,7 @@ export const editing_presence = pgTable('editing_presence', {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Memory reconciliation log（YUK-342 P2）：mem0 调和层 write-ahead 日志。
-//
-// 每条 mem0 add() 后，reconcile handler 用 GLM 判定该新 memory 与既有候选
-// memory 的关系（KEEP_BOTH / SUPERSEDE / MERGE / RETRACT_NEW）。判定意图先写
-// 到本表（planned 行，applied_at NULL = write-ahead），apply 完成后 UPDATE
-// applied_at=now()。半途崩溃时 loadUnappliedLog 重放 applied_at IS NULL 行（幂等
-// 续跑），hardDelete 命中 'not found' 被幂等吞掉。
-//
-// action 四值枚举 P2 起独立，不套 KG 侧 CorrectionKind（对象/时点/语义不同）。
-// P4 知识侧写入期调和环是否共表 §8.5 开放。
+// Memory reconciliation log：只读历史。写入方已删除，表和备份保留到 Context 迁移退役旧层。
 // ─────────────────────────────────────────────────────────────────────────────
 export const memory_reconciliation_log = pgTable(
   'memory_reconciliation_log',
@@ -330,17 +321,8 @@ export const memory_reconciliation_log = pgTable(
     action: text('action').$type<'KEEP_BOTH' | 'SUPERSEDE' | 'MERGE' | 'RETRACT_NEW'>().notNull(),
     reason: text('reason').notNull(),
     llm_raw: jsonb('llm_raw'),
-    // write-ahead 游标：planned_at = 意图写入时；applied_at NULL = 待重放。
     planned_at: timestamp('planned_at', { withTimezone: true }).notNull(),
     applied_at: timestamp('applied_at', { withTimezone: true }),
-    // YUK-557（Q2b）— ARIES 级 undo：记决策元数据不够，必须记足以重建旧状态的原文。
-    // write-ahead 阶段捕获（非 apply-time，防崩溃重放读到已改写值污染快照）。语义因
-    // action 而异：SUPERSEDE/MERGE 存 old 行原文/完整 payload（被软取代/被吸收那份）——
-    // prev_text 优先取 capturePrevState 读到的 DB 快照原文（verbatim 保真），candidate
-    // text 仅作快照缺失时的兜底（PR #699 CR-5）；
-    // RETRACT_NEW 的 prev_text 存 new 行原文（被丢弃那份），prev_metadata 留 NULL（其
-    // metadata 由本项目 inferred event-memory add 刚写、可从 event 表溯源）。KEEP_BOTH 恒 NULL。
-    // 可空——不回填历史行。恢复 runbook：docs/runbooks/memory-reconcile-undo.md。
     prev_text: text('prev_text'),
     prev_metadata: jsonb('prev_metadata'),
   },

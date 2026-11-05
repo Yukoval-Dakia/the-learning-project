@@ -25,7 +25,7 @@ import type { Db } from '@/db/client';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events/index';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
-import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttemptForDerivationById } from '@/kernel/read-models/failure-attempts';
 // mistake_variant verify write-through. verify already writes the
 // experimental:variant_verify event; the per-entity flag gates whether the projection (ON) or the
 // imperative UPDATE (OFF) writes the row (broken+failure_reasons on fail / touch updated_at on
@@ -216,7 +216,7 @@ export async function runVariantVerify(
 
   // Always use the canonical cause-policy helper, never read judge
   // events directly.
-  const failure = await getFailureAttemptById(db, attemptEventId);
+  const failure = await getFailureAttemptForDerivationById(db, attemptEventId);
   if (!failure) return { status: 'skipped:no_attempt' };
   const cause = effectiveCauseForFailureAttempt(failure);
   if (!cause) return { status: 'skipped:no_cause' };

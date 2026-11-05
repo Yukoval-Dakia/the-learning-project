@@ -391,7 +391,14 @@ async function tryLlmOrchestration(
     // outer catch (which correctly means the L2 orchestration itself failed).
     const memories = await loadMemoryPriorFailSoft(loadMemoryPrior, providerInvocation);
     const memoryPrior = buildMemoryPriorAdvisoryBlock(memories);
-    const taskInput = memoryPrior ? { ...candidateBlock, memoryPrior } : candidateBlock;
+    // YUK-1770 — in-window steering instructions ride as one advisory line; a read
+    // failure only drops the field, same isolation as the memory prior.
+    const steering = await loadSteeringAdvisoryLineFailSoft(db);
+    const taskInput = {
+      ...candidateBlock,
+      ...(memoryPrior ? { memoryPrior } : {}),
+      ...(steering ? { steering } : {}),
+    };
     const fn = runTaskFn ?? (await defaultRunTaskFn(db as Db));
     const result = await fn('SelectionOrchestratorTask', taskInput, {
       ...(providerInvocation
@@ -416,6 +423,33 @@ async function tryLlmOrchestration(
 
 const SELECTION_MEMORY_QUERY =
   'learner practice preferences, recurring weaknesses, study habits, and helpful sequencing';
+
+/** YUK-1770 — one advisory line for in-window steering goals; '' when none. Fail-soft. */
+async function loadSteeringAdvisoryLineFailSoft(db: DbLike): Promise<string> {
+  try {
+    const { listActiveGoalsWithResolvedScope } = await import(
+      '@/kernel/read-models/active-goal-scope'
+    );
+    const { learnerLocalDay } = await import('@/core/learner-day');
+    const { steeringDaysLeft, steeringWindowCoversToday } = await import('@/core/steering');
+    const goals = await listActiveGoalsWithResolvedScope(db as Db);
+    const today = learnerLocalDay(new Date());
+    return goals
+      .filter(
+        (g): g is typeof g & { steering: NonNullable<typeof g.steering> } =>
+          g.steering !== null && steeringWindowCoversToday(g, today),
+      )
+      .map((g) => {
+        const daysLeft = steeringDaysLeft(g.effective_until, today);
+        return daysLeft !== null && daysLeft >= 0
+          ? `${g.steering.instruction_md}（还有 ${daysLeft} 天）`
+          : g.steering.instruction_md;
+      })
+      .join('；');
+  } catch {
+    return '';
+  }
+}
 
 async function loadMemoryPriorFailSoft(
   loader?: LoadMemoryPriorFn,

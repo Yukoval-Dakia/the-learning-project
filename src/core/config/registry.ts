@@ -185,6 +185,7 @@ const budgetOverrideSchema = z
  */
 const taskReasoningSchema = z
   .object({
+    level: z.string().min(1).optional(),
     reasoning_effort: z.string().min(1).optional(),
   })
   .strict();
@@ -213,11 +214,9 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
   },
   MISCONCEPTION_PROMOTE_ENABLED: {
     schema: z.boolean(),
-    codeDefault: false,
+    codeDefault: true,
     envName: 'MISCONCEPTION_PROMOTE_ENABLED',
     envParse: flagEnv,
-    // compose 强制项：DB 层跳过，写端 409。
-    envMode: 'pinned',
     tier: 'A',
   },
   MISCONCEPTION_HARD_CONFIRM_ENABLED: {
@@ -243,10 +242,9 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
   },
   WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: {
     schema: z.boolean(),
-    codeDefault: false,
+    codeDefault: true,
     envName: 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED',
     envParse: flagEnv,
-    envMode: 'pinned', // compose 强制
     tier: 'A',
   },
   WORKFLOW_JUDGE_OBSERVE_ENABLED: {
@@ -261,8 +259,6 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     codeDefault: 0.85,
     envName: 'WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD',
     envParse: numberEnv,
-    // compose 只强制两面 ENABLED 旗 + PLACEMENT_PROBE_ENABLED；THRESHOLD 误 pin
-    // 会让 DB 写 409，把可调阈值钉死。
     tier: 'A',
   },
   WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED: {
@@ -290,13 +286,6 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     schema: z.boolean(),
     codeDefault: true,
     envName: 'WAVE6_TRIGGER_DREAMING_ENABLED',
-    envParse: flagEnv,
-    tier: 'A',
-  },
-  WAVE6_TRIGGER_VERIFY_ENABLED: {
-    schema: z.boolean(),
-    codeDefault: false,
-    envName: 'WAVE6_TRIGGER_VERIFY_ENABLED',
     envParse: flagEnv,
     tier: 'A',
   },
@@ -368,15 +357,6 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     // 'off' 不是完整 kill switch（触发器照常记账）——面板文案必须带这句。
     note: "P2: 'off' is not a complete kill switch (trigger bookkeeping continues)",
   },
-  MEMORY_RECONCILE_HANDOFF_MODE: {
-    schema: z.enum(['observe', 'write', 'recover', 'drain']),
-    codeDefault: 'observe',
-    envName: 'MEMORY_RECONCILE_HANDOFF_MODE',
-    // env 非法值 fail-fast throw（不是 fallback 地板）：原文直通，throw 留在
-    // memoryReconcileHandoffMode 的 switch 里。
-    envParse: stringEnv,
-    tier: 'A',
-  },
   PROJECTION_IS_WRITER_ITEM_CALIBRATION: {
     schema: z.boolean(),
     codeDefault: false,
@@ -386,16 +366,12 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     tier: 'A',
     note: 'P2: 写所有权翻位（Scheme A dark-ship）',
   },
-  // PLACEMENT_PROBE_ENABLED —— raw === 'true' 逐位字面量：'1'/'TRUE'/' true ' 全 false。
-  // compose 强制（pinned），与另两面 dark-ship 旗一致，面板写端 409。
   PLACEMENT_PROBE_ENABLED: {
     schema: z.boolean(),
-    codeDefault: false,
+    codeDefault: true,
     envName: 'PLACEMENT_PROBE_ENABLED',
-    envParse: (raw) => (raw === 'true' ? true : undefined),
-    envMode: 'pinned',
+    envParse: flagEnv,
     tier: 'A',
-    note: 'compose-forced dark-ship flag (exact-match, not flag grammar)',
   },
   AI_RATE_LIMIT_MAX: {
     schema: z.number().int().positive(),
@@ -503,6 +479,17 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     codeDefault: 40,
     envName: 'JYEOO_DAILY_FETCH_BUDGET',
     envParse: nonNegIntEnv,
+    tier: 'A',
+  },
+  SUPPLY_NIGHTLY_SPEND_CAP_USD: {
+    // 夜扫供题链（找题 + 换路 + 核验）每个学习日（Asia/Shanghai）合计 USD 上限；
+    // 0 = 定位之外不再派新的付费供题（kill switch，含 supply_planner、手动 quiz-gen 和
+    // file_bank_gap）；已入队的 job 仍会跑完。
+    // 判定点 supply/server/spend-gate.ts。
+    schema: z.number().min(0),
+    codeDefault: 1,
+    envName: 'SUPPLY_NIGHTLY_SPEND_CAP_USD',
+    envParse: numberEnv,
     tier: 'A',
   },
   // ── 引擎/资源上限 ─────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 ---
 name: note-yuwen
-description: 文言文学习笔记规范包 —— 合格 atomic / long / hub note 的结构要求、各 semantic_kind 内容标准、质检判据。NoteGenerateTask / NoteVerifyTask / NoteRefineTask 共用同一份规范。
+description: 文言文学习笔记规范包 —— 合格 atomic / long / hub note 的结构要求、各 semantic_kind 内容标准、质检判据。NoteGenerateTask / NoteRefineTask 共用同一份规范。
 ---
 
 # 文言文学习笔记规范
@@ -30,7 +30,7 @@ description: 文言文学习笔记规范包 —— 合格 atomic / long / hub no
 - **note_long**：综合多个知识节点（如「宾语前置四种类型」「虚词『以』的七种用法」），用自由 block tree（heading/paragraph/bulletList/calloutBlock/crossLinkBlock），不强制逐段 semantic_kind，但内容必须有结构性不能泛讲。
 - **note_hub**：是主题路线图，用 crossLinkBlock 串联相关 atomic/long，给出学习顺序提示；不要假装是单知识点 atomic。
 
-## 质检标准（NoteVerifyTask 共用）
+## 质检标准（生成与精修共用）
 
 - **factuality**：内容是否自洽，是否明显编造；材料不足时标注不确定，不编造出处。
 - **coverage**：atomic 必须覆盖全部五种 semantic_kind；long 检查综合范围完整；hub 检查路线和 cross-link。

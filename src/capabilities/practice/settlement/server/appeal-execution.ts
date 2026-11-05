@@ -1,7 +1,6 @@
 // Appeal request adjudication: verifies that a confirmation correction candidate
 // still identifies its retained appeal, immutable conversation original and — for
-// the automatic lane — grading's own appeal execution receipt (consumed via the
-// receipt contract grading publishes).
+// the automatic lane — grading's own appeal execution receipt.
 import { and, eq, sql } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import { EvaluationProvenance } from '@/core/schema/assessment';
@@ -21,7 +20,7 @@ import {
   APPEAL_EXECUTION_BINDING_ACTION,
   AppealExecutionBinding,
   appealExecutionBindingId,
-} from '../../grading/public';
+} from '@/kernel/records/appeal-execution-binding';
 
 /** The original correction owner supplies retained identities, never a bypass callback.
  * An already activated original can be corrected after its conversation closes;

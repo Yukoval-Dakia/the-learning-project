@@ -19,6 +19,14 @@ import {
   ProbeAnswerResponseSchema,
 } from './api/contracts';
 import { CreateGoalBody, GoalSchema } from './api/goal-contracts';
+import { CURATOR_ACTIVITY_ACTIONS } from './context/activity-contract';
+import { ChangeResult } from './context/topic-contract';
+import {
+  ContextActionRequest,
+  ContextBoardResponse,
+  ContextEditRequest,
+  ContextEditResponse,
+} from './context/wire';
 
 export const agencyCapability = defineCapability({
   name: 'agency',
@@ -27,16 +35,32 @@ export const agencyCapability = defineCapability({
     'AI 内部协调信道 agent-notes（hints not facts，用户侧只读观察窗）。',
   events: {
     actions: [
+      'experimental:context_change',
+      'experimental:context_edit_request',
       'experimental:agent_note',
       DREAMING_NOTE_REFRESH_ACTION,
       PROBE_RESULT_ACTION,
       INTERVENTION_ACTIVATED_ACTION,
       INTERVENTION_PREPARATION_FAILED_ACTION,
       INTERVENTION_SETTLED_ACTION,
+      // YUK-1770 — the goal write surface agency's steering machinery emits via
+      // kernel/records/goal-commands (genesis seeds, status/scope updates). The
+      // steering-changed subscription consumes them; composition requires a
+      // declared owner. Genesis is a generic action, but agency is the only
+      // subscriber and the only writer-path owner (goal routes/commands).
+      'experimental:genesis',
+      'experimental:goal_status_update',
+      'experimental:goal_scope_update',
     ],
   },
   subscriptions: {
     handlers: [
+      {
+        id: 'agency.curator-activity',
+        version: 1,
+        actions: CURATOR_ACTIVITY_ACTIONS,
+        load: () => import('./context/activity').then((m) => m.buildCuratorActivitySubscriber),
+      },
       {
         id: 'agency.probe-publication-serve',
         version: 1,
@@ -90,10 +114,51 @@ export const agencyCapability = defineCapability({
             (m) => m.buildQuestionPoolGapSubscriber,
           ),
       },
+      {
+        // YUK-1770 — goal 写事件的 steering 订阅：任何 steering 落地/修订/撤销都触发
+        // 当日重规划（coach，绕过 24h 回归窗）+ 供给重跑 + 今日练习重组。无并行事件
+        // 流：直接消费既有 goal 事件（genesis/status/scope）；非 steering 的 goal 写入
+        // 在 handler 里跳过。
+        id: 'agency.steering-changed',
+        version: 1,
+        actions: [
+          'experimental:genesis',
+          'experimental:goal_status_update',
+          'experimental:goal_scope_update',
+        ],
+        load: () =>
+          import('./server/steering-subscription').then((m) => m.buildSteeringChangedSubscriber),
+      },
     ],
   },
   api: {
     routes: [
+      {
+        method: 'GET',
+        path: '/api/learner-context',
+        operationId: 'getLearnerContext',
+        responses: { 200: ContextBoardResponse, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/context').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/learner-context/edit',
+        operationId: 'editLearnerContext',
+        request: { body: ContextEditRequest },
+        responses: { 200: ContextEditResponse, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/context').then((m) => m.EDIT),
+      },
+      {
+        method: 'POST',
+        path: '/api/learner-context/action',
+        operationId: 'actOnLearnerContext',
+        request: { body: ContextActionRequest },
+        responses: { 200: ChangeResult, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/context').then((m) => m.ACTION),
+      },
       {
         method: 'GET',
         path: '/api/agents/notes',
@@ -157,10 +222,13 @@ export const agencyCapability = defineCapability({
     // server/boss/register-capability-jobs.ts 收集挂载，此处声明是唯一归属源。
     handlers: [
       {
-        // DAG 成员：dreaming 读 proposal inbox 作去重基线，对上游 propose 生产者是软边
-        // （上游失败 dreaming 照跑，只是少看几条 pending）。cron 移除，改由 orchestrator 触发。
+        name: 'curator_activity',
+        queue: 'agent',
+        load: () => import('./context/activity').then((m) => m.buildCuratorActivityHandler),
+      },
+      {
+        // Curator runs every night, including quiet nights that only need freshness review.
         name: 'dreaming_nightly',
-        eligibility: nightlyEligibility('reflection'),
         dependsOn: [{ job: 'knowledge_maintenance_nightly', soft: true }],
         queue: 'agent',
         load: () => import('./jobs/dreaming_nightly').then((m) => m.buildDreamingNightlyHandler),
@@ -348,6 +416,14 @@ export const agencyCapability = defineCapability({
   copilotTools: {
     tools: [
       {
+        name: 'remember_learner',
+        load: () => import('./context/write-tools').then((m) => m.rememberLearnerTool),
+      },
+      {
+        name: 'curate_context',
+        load: () => import('./context/write-tools').then((m) => m.curateContextTool),
+      },
+      {
         name: 'get_learning_item_context',
         load: () =>
           import('./server/tools/learning-item-context').then((m) => m.getLearningItemContextTool),
@@ -381,9 +457,20 @@ export const agencyCapability = defineCapability({
         load: () =>
           import('./server/tools/generate-goal-outline').then((m) => m.generateGoalOutlineTool),
       },
+      // YUK-1794 B1 — the Context warm-layer read (brief + facts layers), owned
+      // by agency/context; granted to copilot/coach/dreaming via allowlists.
+      {
+        name: 'query_context',
+        load: () => import('./context/query-context').then((m) => m.queryContextTool),
+      },
       {
         name: 'write_agent_note',
         load: () => import('./server/tools/agent-note-tools').then((m) => m.writeAgentNoteTool),
+      },
+      {
+        // YUK-1770 — learner-said steering 直写工具（record_steering）。
+        name: 'record_steering',
+        load: () => import('./server/tools/record-steering').then((m) => m.recordSteeringTool),
       },
     ],
   },

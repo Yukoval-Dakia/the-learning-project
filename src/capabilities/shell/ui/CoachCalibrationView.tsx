@@ -137,11 +137,11 @@ function CalibrationBody({
               {pct}
               <span className="cb-meter-pct">%</span>
             </span>
-            <span className="cb-meter-cap">判断较可信的知识点</span>
+            <span className="cb-meter-cap">区间已收窄的知识点</span>
           </div>
           <div className="cb-meter-side">
             <p className="cb-meter-line">
-              <b className="un-num">{agg.firm_count}</b> / {agg.total_kcs} 个知识点判断较可信
+              <b className="un-num">{agg.firm_count}</b> / {agg.total_kcs} 个知识点区间已收窄
             </p>
             <p className="ch-note">判断越稳定，越适合用来安排后续复习。</p>
             <div className="ch-dist-bar">

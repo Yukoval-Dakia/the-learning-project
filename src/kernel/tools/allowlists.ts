@@ -20,13 +20,13 @@ export const READ_TOOLS = [
   'get_question_context',
   'get_review_due',
   'get_learning_item_context',
-  'query_memory_brief',
-  // YUK-203 U4 / L-memtool — Mem0 fact-layer retrieval (D7②). Granted only to
+  // YUK-1794 B1 — Context warm-layer read (brief + facts layers). Granted to
   // coach / dreaming / copilot below; NOT to evaluator surfaces.
-  'search_memory_facts',
+  'query_context',
   // ADR-0072 LIGHT — 题库 agent 三工具（search/read/check）随各自竖切接入。
   // 授予 copilot surfaces；备题员面（ADR-0069 第一刀）落地时再扩。其余
   // surface 均不授权（同款 containment —— 扩面归 coordinator）。
+  'scan_coverage_gaps',
   'search_bank',
   'read_bank',
   'check_bank',
@@ -40,12 +40,10 @@ export const READ_TOOLS = [
   // nor writes a proposal; author_question remains the distinct retained path.
   'generate_goal_outline',
   'generate_question_candidate',
-  // YUK-986 (Supply-Agent/1) — jyeoo grade-route candidate fetch. E1: registry
-  // only, NO surface grant (E3/YUK-988 grants the supply-executor surface).
+  // Candidate-fetch registration alone grants no surface access; question_preparer
+  // grants below follow ADR-0078 and the cutover plan §1.2.
   'jyeoo_fetch_candidates',
-  // YUK-988 (Supply-Agent/3) — web-route candidate fetch (Tavily search +
-  // SourcingTask extraction). E3: registry only, NO surface grant (same
-  // containment as jyeoo_fetch_candidates).
+  // Web-route candidate fetch; surface access is granted separately below.
   'web_fetch_candidates',
   // YUK-293 — expiring AI-to-AI hints. Granted only to copilot / dreaming /
   // coach below; evaluator and operator surfaces filter it out.
@@ -57,6 +55,7 @@ export const READ_TOOLS = [
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
+  'curate_context',
   'submit_review_answer',
   'propose_knowledge_edge',
   'propose_knowledge_mutation',
@@ -93,18 +92,24 @@ export const PROPOSE_WRITE_TOOLS = [
   // YUK-1497 (K5) — presentation composition tool; same containment as the six
   // draft-edit tools above (writes ONE jsonb-internal key of the draft container).
   'compose_presentation',
+  // YUK-1548 — the one mandatory write path for generative-UI blocks (write-once
+  // content-addressed assets; surface decided server-side from the caller).
+  'compose_block',
+  // YUK-1770 — learner-said steering 直写（D3 裁决：无 proposal，原话即事实；
+  // 唯一硬机检是原话逐字校验，在工具内做）。授权面：仅 copilot 两面。
+  'record_steering',
+  'remember_learner',
   // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write: assembles authored
   // (draft-allowed) + existing
   // questions into a runnable tool_quiz paper. Granted to the copilot surfaces
   // only.
   'write_quiz',
-  // ADR-0033 D6 (YUK-306, lane D) — interactive artifact authoring: the copilot
-  // writes the HTML itself in-conversation (Claude Artifacts pattern) and
-  // persists it as a versioned type='interactive' artifact (author = create v0,
-  // update = full-html replace + version bump). Granted to the copilot surfaces
-  // only.
-  'author_artifact',
-  'update_artifact',
+  // YUK-1769 — direct Markdown note write for the companion (create / append /
+  // note_generate handoff). Owned by the notes manifest; granted to the copilot
+  // surfaces only.
+  'write_note',
+  // YUK-1772 — read-only deterministic note check (issues list, no verdict).
+  'check_note',
   // YUK-293 — direct write to the expiring AI hint channel (not learner data,
   // not an inbox proposal). Surface grants remain narrow below.
   'write_agent_note',
@@ -143,6 +148,7 @@ export type DomainToolName =
   | ControlDomainToolName;
 
 export type DomainToolSurface =
+  | 'question_preparer'
   | 'knowledge_review'
   | 'copilot'
   | 'copilot_user_suggested_mistake_action'
@@ -179,7 +185,7 @@ const KNOWLEDGE_REVIEW_TOOLS = [
 export const COPILOT_TOOLS = [
   'submit_review_answer',
   'present_primary_view',
-  'query_memory_brief',
+  'query_context',
   'generate_goal_outline',
   'generate_question_candidate',
   'get_subject_graph_overview',
@@ -223,8 +229,7 @@ export const COPILOT_TOOLS = [
   // The knowledge|material seed (ADR-0031 lane B) generates a draft question +
   // question_draft proposal — the copilot 出题 primitive.
   'author_question',
-  // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
-  'search_memory_facts',
+
   // ADR-0031 决定1/D5 + ADR-0032 D9 (YUK-304 lane B) — the quiz C→A reverse-U6
   // grant: the copilot IS the quiz orchestrator now (the C-form detectQuizIntent
   // / resolveQuizIntent / quiz-skill pre-dispatch is retired), so it carries the
@@ -242,12 +247,12 @@ export const COPILOT_TOOLS = [
   // YUK-1448 (Stage 1 batch D) — copilot 检索后可直接落缺口单（search_bank 已在
   // 本面；供给侧回执走既有 dispatcher 台账）。
   'file_bank_gap',
-  // ADR-0033 D6 (YUK-306, lane D) — interactive 学习 artifact authoring pair.
-  // effect='write' (单用户、路由守 scope、非破坏性创建 — D6 explicit); the chip
-  // surface inherits via the [...COPILOT_TOOLS, …] spread below. No other
-  // surface gets them.
-  'author_artifact',
-  'update_artifact',
+  // YUK-1769 — write_note is the companion's Markdown note write (create /
+  // append / note_generate handoff); the chip surface inherits it via the
+  // [...COPILOT_TOOLS, …] spread below.
+  'write_note',
+  // YUK-1772 — read-only deterministic note check (issues list, no verdict).
+  'check_note',
   // YUK-1468 — Copilot 编辑面：edit_question（ops/document/validate/probe）。
   // copilot 调 save 时工具按 caller surface 自动落 question_edit proposal
   // （accept applier 走同一 ops → submit gate）；validate/probe 直出。
@@ -256,6 +261,12 @@ export const COPILOT_TOOLS = [
   'write_agent_note',
   // YUK-1407 — 判分纠错提案（对话中发现疑似误判时可落地；accept 仍人审）。
   'propose_grading_correction',
+  // YUK-1548 — generative-UI blocks (diagram/figure in slice 1).
+  'compose_block',
+  // YUK-1770 — 学习者口述 steering 直写（考试日期/优先级/「这周别排物理」）。
+  // 唯一非 propose 的学习者数据直写：原话即事实（D3），确认句只能基于工具结果。
+  'record_steering',
+  'remember_learner',
 ] as const satisfies readonly DomainToolName[];
 
 // YUK-1553 / YUK-1559 — Dreaming's grant is now an EXPLICIT list: it must not
@@ -265,6 +276,7 @@ export const COPILOT_TOOLS = [
 // propose_record_promotion still have live producers + accept appliers
 // (DREAMING_ACTABLE_KINDS), so they stay until their own cleanup lane lands.
 const DREAMING_TOOLS = [
+  'curate_context',
   // Knowledge graph readers + proposal writers (the names dreaming actually
   // uses — shared with, but no longer spread from, knowledge_review).
   'get_subject_graph_overview',
@@ -278,13 +290,12 @@ const DREAMING_TOOLS = [
   'get_question_context',
   'query_mistakes',
   'get_learning_item_context',
-  'query_memory_brief',
+  'query_context',
   'propose_learning_item_completion',
   'propose_learning_item_relearn',
   'propose_record_links',
   'propose_record_promotion',
-  // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
-  'search_memory_facts',
+
   'read_agent_notes',
   'write_agent_note',
   // YUK-1407 — dreaming 复核中发现疑似误判 → 可逆纠错提案。
@@ -304,7 +315,7 @@ const DREAMING_TOOLS = [
 // feedback would be a dead/informational feed; the COACH objective gains brief
 // when-to-propose-an-edge guidance so it is exercised.
 const COACH_TOOLS = [
-  'query_memory_brief',
+  'query_context',
   'query_mistakes',
   'get_attempt_context',
   'get_review_due',
@@ -316,8 +327,7 @@ const COACH_TOOLS = [
   'propose_learning_item_archive',
   'propose_knowledge_mutation',
   'propose_knowledge_edge',
-  // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
-  'search_memory_facts',
+
   'read_agent_notes',
   'write_agent_note',
   // YUK-1407 — coach 复盘发现疑似误判 → 可逆纠错提案。
@@ -365,7 +375,26 @@ const INGESTION_TOOLS = [
   'ask_learner',
 ] as const satisfies readonly DomainToolName[];
 
+export const QUESTION_PREPARER_TOOLS = [
+  'search_bank',
+  'read_bank',
+  'check_bank',
+  'query_knowledge',
+  'get_subject_graph_overview',
+  'expand_knowledge_subgraph',
+  'find_knowledge_paths',
+  'query_mistakes',
+  'scan_coverage_gaps',
+  'web_fetch_candidates',
+  'jyeoo_fetch_candidates',
+  'edit_question',
+  'compose_presentation',
+  'compose_block',
+  'submit_question',
+] as const satisfies readonly DomainToolName[];
+
 export const DOMAIN_TOOL_ALLOWLISTS = {
+  question_preparer: QUESTION_PREPARER_TOOLS,
   knowledge_review: KNOWLEDGE_REVIEW_TOOLS,
   copilot: COPILOT_TOOLS,
   copilot_user_suggested_mistake_action: [...COPILOT_TOOLS, 'attribute_mistake', 'propose_variant'],

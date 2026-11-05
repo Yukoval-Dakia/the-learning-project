@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { PlacementStarterOutcomeSchema } from '@/kernel/placement-starter-outcome';
+import {
+  PlacementAdmissionWait,
+  PlacementStarterOutcomeSchema,
+} from '@/kernel/placement-starter-outcome';
 import { IssuanceStateSchema } from '../../api/assessment-contracts';
 
 export const PlacementSessionParamsSchema = z.object({ id: z.string().min(1) });
@@ -38,11 +41,14 @@ export type PlacementUnresolvedItem = z.infer<typeof PlacementUnresolvedItemSche
  *  starterSupply carries the per-subject supply detail; this object says the
  *  probe itself has nothing to serve and what the learner can do next. */
 export const PlacementNoItemSchema = z.object({
+  admission_waits: z.array(PlacementAdmissionWait).optional(),
   reason: z.literal('no_servable_item'),
   /** subject ids with a live (pending) starter-supply claim — what is being prepared. */
   preparing_subjects: z.array(z.string()),
   /** 'recheck' = re-POST this selection endpoint; 'end' = PATCH the session closed. */
   options: z.array(z.enum(['recheck', 'end'])),
+  supply_ended: z.boolean().optional(),
+  next_action: z.enum(['wait_for_admission', 'continue_other_activities']).optional(),
 });
 
 export const PlacementQuestionSchema = z.object({
@@ -94,7 +100,14 @@ export const CreatePlacementQuestionSelectionBodySchema = z.object({
 export const PlacementQuestionSelectionResponseSchema = z.discriminatedUnion('done', [
   z.object({
     done: z.literal(true),
-    reason: z.enum(['cap', 'se_converged']),
+    reason: z.enum(['cap', 'se_converged', 'supply_ended']),
+    evidence: z
+      .object({
+        answered_count: z.number().int().positive(),
+        confidence: z.literal('low'),
+        next_action: z.literal('calibrate_with_daily_practice'),
+      })
+      .optional(),
     answeredCount: z.number().int().nonnegative(),
     starterSupply: z.array(PlacementStarterOutcomeSchema).optional(),
     unresolved_items: z.array(PlacementUnresolvedItemSchema).optional(),

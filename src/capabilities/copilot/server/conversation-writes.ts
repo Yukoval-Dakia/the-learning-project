@@ -32,7 +32,6 @@ import {
 import {
   type CopilotReplyFinalizationReceipt,
   type PreparedCopilotReply,
-  extractPrimaryView,
   sealCommittedPresentationReply,
 } from './reply-finalization';
 import type { TeachingSkillResult } from './skills/teaching-skill';
@@ -218,10 +217,10 @@ export async function writeCopilotReply(
               }),
         }
       : undefined;
-  // With no published text, retain the finalizer's original failure disclosure
-  // and matching receipt. There is no public prose to replace or re-sign.
+  // Unsealed replies already reconcile the streamed text with the finalizer.
+  // Keep the matching receipt rather than restoring an older public snapshot.
   const retainEmptyFinalizedReply =
-    publicProse?.text.length === 0 &&
+    (publicProse?.text.length === 0 || params.replyFinalization?.assurance === 'unsealed') &&
     params.preparedReply?.text === params.replyText &&
     params.replyFinalization?.reply_sha256 ===
       createHash('sha256').update(params.replyText, 'utf8').digest('hex');
@@ -233,11 +232,7 @@ export async function writeCopilotReply(
     ? { text: replyText }
     : params.preparedReply?.text === params.replyText
       ? params.preparedReply
-      : {
-          text: extractPrimaryView(params.replyText, {
-            taskRunId: params.taskRunId,
-          }).text,
-        };
+      : { text: params.replyText };
   const persistedDigest = createHash('sha256').update(prepared.text, 'utf8').digest('hex');
   const receiptMatches = params.replyFinalization?.reply_sha256 === persistedDigest;
   if (params.replyFinalization && !receiptMatches) {
@@ -253,6 +248,9 @@ export async function writeCopilotReply(
   const receipt = receiptMatches ? params.replyFinalization : undefined;
   const sealed = sealCommittedPresentationReply(prepared, receipt);
   const cleanedReply = sealed.preparedReply.text;
+  if (publicProse && sealed.receipt?.assurance === 'unsealed' && cleanedReply.length > 0) {
+    publicProse.text = cleanedReply;
+  }
   const primaryView = receipt ? sealed.preparedReply.primaryView : undefined;
   // created_at 严格晚于 ask（now + 1ms）：整轮共享一个 now，无偏移则 ask/reply
   // 在 created_at 上打平，turns 读取器的 (created_at, id) 排序可能把 reply 排到

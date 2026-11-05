@@ -107,6 +107,16 @@ export interface JobDecl {
   /** Non-default boss.work mount options; the registrar passes them through. */
   pollingIntervalSeconds?: number;
   batchSize?: number;
+  /**
+   * pg-boss LISTEN/NOTIFY opt-in on this job's queue: inserts wake registered
+   * workers immediately instead of waiting out the poll interval. Polling
+   * remains as the correctness fallback when the listener is unavailable.
+   */
+  notify?: boolean;
+  /** Per-node parallel workers for this queue (pg-boss `localConcurrency`). */
+  localConcurrency?: number;
+  /** Reserve one worker for jobs at this priority or above; ordinary capacity remains below it. */
+  reservedPriority?: number;
   /** cron 调度；无 schedule 的是链式/按需 job（如 rejudge） */
   schedule?: JobScheduleDecl;
   /** Queue tier → registrar recipe: llm/agent get a DLQ, fast does not. */

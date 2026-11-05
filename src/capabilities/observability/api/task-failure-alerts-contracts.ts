@@ -4,7 +4,7 @@ export const TaskFailureAlertSchema = z.object({
   /** Deterministic alert id; equals the recorded event id once written. */
   id: z.string(),
   task_kind: z.string(),
-  rule: z.enum(['consecutive', 'rate']),
+  rule: z.enum(['consecutive', 'rate', 'unsealed']),
   failures: z.number().int().nonnegative(),
   /** Terminal runs counted by the rule (consecutive: equals failures). */
   runs: z.number().int().nonnegative(),
@@ -31,4 +31,12 @@ export const TaskFailureAlertsResponseSchema = z.object({
     stale_after_days: z.number().int(),
   }),
   alerts: z.array(TaskFailureAlertSchema),
+  /** Processes running without a required setting; names only, never values. */
+  config_incomplete: z.array(
+    z.object({
+      process: z.enum(['api', 'worker']),
+      missing: z.array(z.string()).min(1),
+      seen_at: z.string().datetime(),
+    }),
+  ),
 });

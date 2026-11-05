@@ -197,10 +197,10 @@ export function verifySnapshotTransformation(
   return issues;
 }
 
-/** text_key.normalization 四档的本地镜像（与 evaluation.ts 归一化同语义）。 */
+/** text_key.normalization 的冻结版本的本地镜像（与 evaluation.ts 归一化同语义）。 */
 function normalizeReferenceText(
   value: string,
-  mode: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head',
+  mode: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head' | 'answer_head@2',
 ): string {
   switch (mode) {
     case 'exact':
@@ -209,6 +209,8 @@ function normalizeReferenceText(
       return value.trim();
     case 'trim_casefold_nfc':
       return value.normalize('NFKC').trim().toLowerCase();
+    case 'answer_head@2':
+      return extractAnswerHead(value, mode).trim().toLowerCase();
     case 'answer_head':
       return extractAnswerHead(value).normalize('NFKC').trim().toLowerCase();
   }

@@ -114,6 +114,11 @@ export async function createProposalDecision(
         };
       }
     }
+    // marked_wrong / superseded with no rate yet: the template would write none, so refuse
+    // here instead of failing below with decision_event_missing.
+    if (!existingRate && correction.state !== 'active') {
+      throw conflict(proposalId, correction.state);
+    }
   }
 
   let result: ProposalLifecycleResult;

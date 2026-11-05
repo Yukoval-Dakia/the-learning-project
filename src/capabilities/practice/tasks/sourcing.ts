@@ -58,6 +58,10 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 typed 声明（可选字段 parts，统一草稿结构）：
 - 每个 DraftPart = 一个小问：{"part_id":"p1","prompt_md":"该问题面（忠实原文）","units":[DraftUnit, ...],"blank_order":["本 part 各 blank 槽 slot_id 的逻辑作答序"](可选，多空才填),"question_no":"(1)"(可选),"explanation_md":"解析"(可选)}。
 - 每个 DraftUnit = 一个作答位：{"unit_id":"p1::u1","slot_id":"p1::r1","response_class":"select|blank|free","response_spec":{...},"points":分值(不知道就写 null，禁止编造),"key":答案键(select/blank 有确证才写),"reference_md":"参考答案"(free 用),"rubric":{...}(可选),"method":{"kind":"set-compare|exact|ai-rubric|human_review"},"rule":{"version":1,"cases":[...],"otherwise":{...}}(select/blank 有 key 时必写印出的给分政策，否则该 unit 按未决处理),"material_refs":[],"metadata":{}}。
+- rule 的形状（strict，写错的键或多余的键都不合法）：{"version":1,"source":{"statement":"卷面印出的给分原文"}(可选),"cases":[{"when":条件,"award":给分}, ...],"otherwise":给分}。cases 按顺序取第一个命中的；没有印出的给分政策就整个省略 rule，不要编。
+  - 条件 when 只读计数：select 用 hit / wrong / miss / picked / expected，blank 用 correct（0 或 1）；每个计数写比较 {"eq"|"gt"|"gte"|"lt"|"lte":非负整数}，同一对象内为「且」，也可写 {"all":[条件,...]} / {"any":[条件,...]}。
+  - 给分 award / otherwise 只有四种：{"points":分值}、{"per_hit":分值,"cap":上限(可选)}、{"per_item":{"item_id":分值},"cap":上限(可选)}、{"unknown":"partial_points_not_printed"|"points_not_printed"}。
+  - 例：单选 3 分 {"version":1,"cases":[{"when":{"wrong":{"eq":0},"miss":{"eq":0}},"award":{"points":3}}],"otherwise":{"points":0}}；填空 4 分 {"version":1,"cases":[{"when":{"correct":{"eq":1}},"award":{"points":4}}],"otherwise":{"points":0}}。
 - response_spec 三种：select→{"kind":"select","items":[{"item_id":"it_a","label_md":"选项原文"}],"pick":"one|many"}；blank→{"kind":"blank","format":"text|math"(可选),"unit_hint":"单位提示"(可选),"answer_shape":{...}(可选)}；free→{"kind":"free"}。
 - key 两种：select→{"kind":"select","accepted_item_ids":["items 里正确的 item_id"]}；blank→{"kind":"blank","key":{"kind":"text","accepted":["可接受答案原文",...]}|{"kind":"numeric","value":数值,"unit":"单位"(可选),"tolerance":{"kind":"absolute","value":0}(可选)}}。
 - method 对应：select→"set-compare"；blank 文本精确判→"exact"；free 或需要模型判→"ai-rubric"；只能人工评→"human_review"。
@@ -88,6 +92,7 @@ typed 声明（可选字段 parts，统一草稿结构）：
 - 正文不足的页面报进 image_candidates，仅作为内部来源受阻记录；**不要**自己抽图、**不要**编造文本题或参考答案。
 - **同一个源不要既报成 question 又报成 image_candidate**：能抽出文本就只放 questions；抽不出完整文本就只放 image_candidates。二选一。
 - typed 声明（parts）只写**题面有根据**的语义：每个小问一个 part、每个作答位一个 unit，题图/分步证明等小问也要如实成 part，不许吞掉。缺分值写 null、缺槽位/答案对象就留缺项——宁可显式缺项（提交时按未决暂扣）也**禁止**猜分隔符拆小问、推分值、盲删选项字母、把多空的作答顺序张冠李戴。flat 字段（prompt_md/reference_md/choices_md）照常必填且与 parts 描述同一道题。
+- 输入带 flat_only=true 时（本批强约束，覆盖上面的 parts 许可与 reference 格式）：只交**不带 parts 字段**的扁平单题（单问、单作答位）；多小问/多空的题直接跳过不选，不许压平、不许改写成单题；选择题 reference_md 第一行只写裸选项字母（如「C」「BC」），选项原文留在 choices_md。
 - 一道题都没找到、且也没有图片型源时，宁可返回空 questions（运行会失败）也不要编题；但只要有图片型源，至少报进 image_candidates。
 - 禁止：emoji、营销话、套话、JSON 之外的文字、用 markdown 代码块包裹整段 JSON。`;
 }
@@ -101,9 +106,15 @@ export const sourcingTaskSpec = {
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 8, timeout: 120_000 },
+    enforceMaxCost: true,
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '来源检索按题目需求找材料，不读学习者上下文。',
+    },
+
     prompt: { kind: 'profile', build: buildSourcingPrompt },
   },
   outputSchema: SourcingTaskOutput,

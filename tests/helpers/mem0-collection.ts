@@ -5,7 +5,7 @@ import type { Db } from '@/db/client';
 // The collection (e.g. `learning_project_memories`) is created at RUNTIME by mem0's
 // PGVector provider — it is NOT a drizzle-managed table, so DB tests that exercise
 // reconcile / backup must create it by hand. Absorbs the three duplicated copies
-// (reconcile-store.db.test, reconcile-handler.db.test, mem0-collection-backup.db.test).
+// (mem0-collection-backup.db.test).
 // The tombstone integration test deliberately does NOT use this (it builds the real
 // table via `new Memory(config)` to prove the official-delete tombstone path).
 

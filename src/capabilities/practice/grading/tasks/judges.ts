@@ -125,6 +125,11 @@ const judgeTaskDefinitions = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '判分只评当次作答与题面；学习者上下文是判分偏差来源，按设计不读。',
+    },
+
     prompt: { kind: 'profile', build: buildSemanticJudgePrompt },
   },
   UnitDimensionFallback: {
@@ -138,6 +143,11 @@ const judgeTaskDefinitions = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '判分只评当次作答与题面；学习者上下文是判分偏差来源，按设计不读。',
+    },
+
     prompt: { kind: 'profile', build: buildUnitDimensionFallbackPrompt },
   },
   StepsJudgeTask: {
@@ -161,6 +171,11 @@ const judgeTaskDefinitions = {
     // invocation omitted (defaults to 'auto'): runs on every derivation grading
     // attempt; human-initiated vision tasks are 'manual_rescue_only' instead.
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '判分只评当次作答与题面；学习者上下文是判分偏差来源，按设计不读。',
+    },
+
     prompt: { kind: 'profile', build: buildStepsJudgePrompt },
   },
   MultimodalDirectJudgeTask: {
@@ -179,6 +194,11 @@ const judgeTaskDefinitions = {
     // invocation omitted (defaults to 'auto'): part of the grading flow, not a
     // user-initiated rescue.
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '判分只评当次作答与题面；学习者上下文是判分偏差来源，按设计不读。',
+    },
+
     prompt: { kind: 'profile', build: buildMultimodalDirectJudgePrompt },
   },
 } satisfies Record<string, TaskDefinition>;

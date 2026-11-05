@@ -47,12 +47,13 @@ import {
   createPiLlmMessageConverter,
   estimatePiTokens,
 } from './pi-context-policy';
+import { MAX_BUDGET_STOP_REASON, createPiCostCeiling } from './pi-cost-ceiling';
 import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
+import { completedChildReport, installLoopProgress, turnLimiter } from './pi-loop-progress';
 import { type LoomPiModel, createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
 import {
   type PiToolResultMessage,
-  assistantText,
   collectPromptMessages,
   emptyPiChildUsage,
   lastAssistantMessage,
@@ -79,6 +80,7 @@ import {
   providerHttpTimeoutMs,
 } from './provider-http-timeout';
 import { createBudgetedProviderFetch } from './provider-transport';
+import { reasoningModelView } from './reasoning-wire';
 import { createRunMonitor } from './run-monitor';
 import type { SDKUserMessage } from './sdk-types';
 import {
@@ -89,6 +91,7 @@ import {
   structuredSubmitSystemSuffix,
   structuredSubmitWireFields,
 } from './structured-submit';
+import { currentTaskSpendScope } from './task-spend-scope';
 import {
   type ToolParamCoercion,
   isToolArgumentContractFailure,
@@ -143,20 +146,6 @@ function piSessionIdFor(optionsResume: string | undefined): string {
     : `${PI_SESSION_ID_PREFIX}${randomUUID()}`;
 }
 
-/** End at the configured ceiling without turning a clean final answer into failure. */
-function turnLimiter(maxTurns: number, onToolLimit: () => void): FinishTurn {
-  let completed = 0;
-  return ({ message }) => {
-    completed += 1;
-    // Pi calls finishTurn on failures too. Preserve the provider error/abort truth.
-    if (message.stopReason === 'error' || message.stopReason === 'aborted') return;
-    if (completed < maxTurns) return;
-    if (message.content.some((block) => block.type === 'toolCall')) onToolLimit();
-    // Also suppress queue polling after a clean final turn at the ceiling.
-    return { action: 'end' };
-  };
-}
-
 /**
  * Prepared pi query: `query()` runs ONE agentLoop and yields normalized frames;
  * `close()` aborts it. Frames produced inside the loop (subagent task_*,
@@ -168,6 +157,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   private readonly externalSignal: AbortSignal | undefined;
   private readonly sessionId: string;
   private readonly allTools: AgentTool[];
+  private readonly bridgeWireParameters = new Map<string, AgentTool['parameters']>();
   private readonly queuedFrames: RunnerMessage[] = [];
   private readonly childUsage = emptyPiChildUsage();
   private readonly executedToolCalls = new Map<string, number>();
@@ -225,8 +215,41 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       });
     }
   }
+
+  /**
+   * YUK-1548 §5 — emit bounded tool-args progress while arguments stream.
+   * Only the tool identity, cumulative bytes and a short prefix leave the
+   * loop; partial payloads (SVG/HTML source) never do. toolcall_start's
+   * partial assistant message usually already carries id + name.
+   */
+  private observeToolArgsProgress(event: AgentEvent, rawByIndex: Map<number, string>): void {
+    if (
+      event.type !== 'message_update' ||
+      event.message.role !== 'assistant' ||
+      event.assistantMessageEvent.type !== 'toolcall_delta'
+    ) {
+      return;
+    }
+    const { contentIndex, partial } = event.assistantMessageEvent;
+    const block = partial.content[contentIndex];
+    if (block?.type !== 'toolCall' || block.name.length === 0) return;
+    const raw = rawByIndex.get(contentIndex);
+    if (raw === undefined) return;
+    this.emitFrame({
+      source: 'pi',
+      type: 'system',
+      subtype: 'tool_args_progress',
+      tool_name: block.name,
+      tool_call_id: block.id,
+      received_bytes: raw.length,
+      args_prefix: raw.slice(0, PiPreparedQuery.TOOL_ARGS_PROGRESS_PREFIX_CHARS),
+      uuid: randomUUID(),
+      session_id: this.sessionId,
+    });
+  }
   /** YUK-1559 (C6) — non-2xx capture fetch, created lazily in baseLoopConfig. */
   private providerErrorCapture: ReturnType<typeof createProviderErrorCaptureFetch> | undefined;
+  private static readonly TOOL_ARGS_PROGRESS_PREFIX_CHARS = 2048;
 
   constructor(
     private readonly args: ExecutionAdapterStartupArgs,
@@ -256,50 +279,63 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         : [];
     const visibleSpawn =
       allowed === undefined ? spawnTools : spawnTools.filter((tool) => allowed.has(tool.name));
-    this.allTools = [...tools, ...visibleSpawn].map((tool) => ({
-      ...tool,
-      // YUK-1547/YUK-1559 (C1) — every mounted tool gets the parameter-contract
-      // repair ahead of pi's validateToolArguments (prepareArguments is the only
-      // seam that runs first). A failed repair throws → isError result, so
-      // execute is never reached and side effects stay exactly-once.
-      prepareArguments: (rawArgs: unknown) => {
-        const prepared = tool.prepareArguments ? tool.prepareArguments(rawArgs) : rawArgs;
-        const repaired = repairToolArguments(tool.parameters, prepared);
-        if (repaired.coercions.length > 0) {
-          this.repairedToolArgs.set(tool.name, repaired.args);
-          const queue = this.pendingCoercions.get(tool.name) ?? [];
-          queue.push(repaired.coercions);
-          this.pendingCoercions.set(tool.name, queue);
-        }
-        return repaired.args;
-      },
-      execute: (...args: Parameters<AgentTool['execute']>) => {
-        this.executedToolCalls.set(args[0], (this.executedToolCalls.get(args[0]) ?? 0) + 1);
-        // Root and nested loops share these wrappers. Observe only actual
-        // execute crossings, with the prepared arguments passed to the delegate.
-        const observation = this.runMonitor.observeExecutedTool({
-          toolName: tool.name,
-          callId: args[0],
-          args: args[1],
-        });
-        return traceOperation(
-          'tool.execute',
-          {
-            task_run_id: this.args.runId,
-            tool_name: tool.name,
-            tool_call_id: args[0],
-            executed: true,
-            ...observation,
-          },
-          () => tool.execute(...args),
-          {
-            signal: args[2],
-            outcome: (result) => (result.isError ? 'error' : 'success'),
-            transcript: { input: () => args[1], output: (result) => result },
-          },
-        );
-      },
-    }));
+    this.allTools = [...tools, ...visibleSpawn].map((tool) => {
+      const bridgeValidates = 'inputValidation' in tool && tool.inputValidation === 'bridge';
+      if (bridgeValidates) this.bridgeWireParameters.set(tool.name, tool.parameters);
+      // The bridge owns this input's complete validation. The provider still receives its canonical schema.
+      const parameters = bridgeValidates
+        ? ({ type: 'object', additionalProperties: true } as AgentTool['parameters'])
+        : tool.parameters;
+      return {
+        ...tool,
+        parameters,
+        // YUK-1547/YUK-1559 (C1) — every mounted tool gets the parameter-contract
+        // repair ahead of pi's validateToolArguments (prepareArguments is the only
+        // seam that runs first). Unrepaired inputs go to their validation owner;
+        // neither pi nor the bridge reaches domain execution with invalid input.
+        prepareArguments: (rawArgs: unknown) => {
+          const prepared = tool.prepareArguments ? tool.prepareArguments(rawArgs) : rawArgs;
+          const repaired = repairToolArguments(
+            tool.parameters,
+            prepared,
+            bridgeValidates ? 'bridge' : 'pi',
+          );
+          if (repaired.coercions.length > 0) {
+            this.repairedToolArgs.set(tool.name, repaired.args);
+            const queue = this.pendingCoercions.get(tool.name) ?? [];
+            queue.push(repaired.coercions);
+            this.pendingCoercions.set(tool.name, queue);
+          }
+          return repaired.args;
+        },
+        execute: (...args: Parameters<AgentTool['execute']>) => {
+          this.executedToolCalls.set(args[0], (this.executedToolCalls.get(args[0]) ?? 0) + 1);
+          // Root and nested loops share these wrappers. Observe only actual
+          // execute crossings, with the prepared arguments passed to the delegate.
+          const observation = this.runMonitor.observeExecutedTool({
+            toolName: tool.name,
+            callId: args[0],
+            args: args[1],
+          });
+          return traceOperation(
+            'tool.execute',
+            {
+              task_run_id: this.args.runId,
+              tool_name: tool.name,
+              tool_call_id: args[0],
+              executed: true,
+              ...observation,
+            },
+            () => tool.execute(...args),
+            {
+              signal: args[2],
+              outcome: (result) => (result.isError ? 'error' : 'success'),
+              transcript: { input: () => args[1], output: (result) => result },
+            },
+          );
+        },
+      };
+    });
   }
 
   private observeToolAttempt(
@@ -345,7 +381,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       pending !== undefined &&
       isToolArgumentContractFailure({ isError: event.isError, content: event.result?.content })
     ) {
-      const secrets = this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [];
+      const secrets =
+        this.args.resolved.authMode !== 'oauth-file' && this.args.resolved.apiKey
+          ? [this.args.resolved.apiKey]
+          : [];
       // Fidelity: prefer this call's exact streamed bytes (sanitized — the
       // recursive pass redacts credentials inside embedded JSON fields). When no
       // deltas arrived, event.args is a pi-parsed object → label 'reconstructed'.
@@ -499,7 +538,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     this.providerHttp ??= createBudgetedProviderFetch({
       httpTimeoutMs: timeoutMs ?? providerHttpTimeoutMs(OPENAI_SDK_DEFAULT_TIMEOUT_MS),
       marginMs: PROVIDER_HTTP_TIMEOUT_MARGIN_MS,
-      secrets: this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [],
+      secrets:
+        this.args.resolved.authMode !== 'oauth-file' && this.args.resolved.apiKey
+          ? [this.args.resolved.apiKey]
+          : [],
       ...(collector !== undefined ? { collector } : {}),
     });
     collector?.noteSdkTimeout(
@@ -526,7 +568,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     this.providerErrorCapture ??= createProviderErrorCaptureFetch(
       http.fetch,
       // The request's resolved credential — redacted at the shared boundary.
-      { secrets: resolved.apiKey ? [resolved.apiKey] : [] },
+      { secrets: resolved.authMode !== 'oauth-file' && resolved.apiKey ? [resolved.apiKey] : [] },
     );
     return {
       // All prompts are standard LLM messages; UI-only AgentMessages never reach
@@ -538,9 +580,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       ...(resolved.provider === 'opencode-go'
         ? { headers: { [OPENCODE_SESSION_HEADER]: runId } }
         : {}),
-      // Per-request credential resolved once in resolveTaskProvider for both auth
-      // modes (oauth carries the sk-ant-oat* token → Bearer).
-      apiKey: resolved.apiKey,
+      // Per-request credential resolved once in resolveTaskProvider for all auth
+      // modes (oauth carries the sk-ant-oat* token → Bearer; oauth-file carries
+      // no apiKey — auth resolves through the file-backed credential store).
+      apiKey: resolved.authMode !== 'oauth-file' ? resolved.apiKey : undefined,
       // YUK-590 parity: cap provider retries so a persistent 5xx returns control
       // to loom's deliberate retry layer. An explicit operator '0' is preserved.
       ...(options.judgeRetryPolicy === 'none'
@@ -548,7 +591,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         : piMaxRetries() !== undefined
           ? { maxRetries: piMaxRetries() }
           : {}),
+      // options.effort is the caller channel; task.<kind>.reasoning resolves to
+      // exactly one pi level — startup rejects both being set (one wire writer).
       ...(options.effort !== undefined ? { reasoning: options.effort } : {}),
+      ...(resolved.reasoning?.level !== undefined ? { reasoning: resolved.reasoning.level } : {}),
       ...(http.timeoutMs !== undefined ? { timeoutMs: http.timeoutMs } : {}),
       fetch: this.providerErrorCapture.fetch,
     };
@@ -560,25 +606,44 @@ class PiPreparedQuery implements PreparedExecutionQuery {
    * to 'auto' + the single closing reminder wired in iterate().
    */
   private structuredSubmitPolicy(model: PiModel<PiApi>) {
-    if (toolOutputSchema(this.args.kind) === undefined || model.api !== 'openai-completions') {
+    if (
+      toolOutputSchema(this.args.kind) === undefined ||
+      (model.api !== 'openai-completions' && model.api !== 'openai-responses')
+    ) {
       return undefined;
     }
     return resolveStructuredSubmitPolicy(this.args.resolved.provider, this.args.resolved.model);
   }
 
   private readonly streamFn: StreamFn = (model: LoomPiModel, llmContext, streamOptions) => {
-    const effort = streamOptions?.reasoning;
-    const inputTokens = estimatePiTokens(llmContext.messages);
+    const wireContext =
+      this.bridgeWireParameters.size === 0
+        ? llmContext
+        : {
+            ...llmContext,
+            messages: llmContext.messages.map((message) =>
+              message.role === 'system' && message.toolsAdded
+                ? {
+                    ...message,
+                    toolsAdded: message.toolsAdded.map((tool) => {
+                      const parameters = this.bridgeWireParameters.get(tool.name);
+                      return parameters ? { ...tool, parameters } : tool;
+                    }),
+                  }
+                : message,
+            ),
+          };
+    // The catalog check guards options.effort only: task.<kind>.reasoning levels
+    // are already validated/carried by resolveTaskReasoning (toggle carriers are
+    // not effort names on the model's list).
+    const effort = this.args.options.effort;
+    const inputTokens = estimatePiTokens(wireContext.messages);
     const remaining = model.contextWindow - inputTokens;
     streamOptions = {
       ...streamOptions,
       maxTokens: Math.min(streamOptions?.maxTokens ?? model.maxTokens, model.maxTokens, remaining),
     };
     const submitPolicy = this.structuredSubmitPolicy(model);
-    // YUK-1547 — per-task model-native reasoning params pass through verbatim.
-    // This is NOT the options.effort → ThinkingLevel path; startup rejects both
-    // being set so the wire key has exactly one writer.
-    const nativeReasoning = this.args.resolved.nativeReasoningParams;
     const streamOptionsWithPayload = {
       ...streamOptions,
       onPayload: async (payload: unknown, requestModel: PiModel<PiApi>) => {
@@ -599,14 +664,16 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         }
         const transformed = await streamOptions?.onPayload?.(payload, requestModel);
         const body = transformed ?? payload;
-        if (submitPolicy === undefined && !nativeReasoning) return body;
+        if (submitPolicy === undefined) return body;
         if (body == null || typeof body !== 'object' || Array.isArray(body)) {
           throw new Error('structured output requires an object provider payload');
         }
         return {
           ...body,
-          ...(submitPolicy !== undefined ? structuredSubmitWireFields(submitPolicy) : {}),
-          ...nativeReasoning,
+          ...structuredSubmitWireFields(
+            submitPolicy,
+            model.api === 'openai-responses' ? 'openai-responses' : 'openai-completions',
+          ),
         };
       },
     };
@@ -619,8 +686,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           context,
           options,
         ),
-      model,
-      llmContext,
+      // Request-scoped model view: unconfigured reasoning must not emit
+      // thinking:{disabled}; an explicit 'off' must stay expressible.
+      reasoningModelView(model, this.args.resolved.reasoning, effort),
+      wireContext,
       streamOptionsWithPayload,
     );
   };
@@ -710,6 +779,11 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             beforeToolCall: this.makeBeforeToolCall(subagentType),
             afterToolCall: this.makeAfterToolCall(subagentType),
           };
+
+          const childProgress = installLoopProgress(childConfig, childTools, this.args.piHooks, {
+            agentType: subagentType,
+            loopId: taskId,
+          });
 
           const accumulate = (message: PiAssistantMessage) => {
             const usage = message.usage;
@@ -802,7 +876,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
                   `nested subagent '${subagentType}' ended with stopReason='${final.stopReason}'`,
               );
             }
-            const text = assistantText(final);
+            const text = completedChildReport(final, childProgress, subagentType);
             this.emitFrame(
               piTaskUpdatedFrame({
                 sessionId: this.sessionId,
@@ -810,7 +884,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
                 status: 'completed',
               }),
             );
-            return text.length > 0 ? text : '(subagent ended without a text report)';
+            return text;
           } catch (error) {
             // An aborted child may either end its stream quietly (handled above)
             // or throw the abort — both must still close the durable task_* row.
@@ -897,6 +971,23 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // unconditional counter every maxTurns=1 task failed after its first turn.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
     let cappedByMaxTurns = false;
+    // Structured submit runs already end after a bounded landing turn; the ceiling is
+    // for open agentic loops.
+    const costCeiling =
+      (!structuredOutput || currentTaskSpendScope()) && typeof options.maxBudgetUsd === 'number'
+        ? createPiCostCeiling({
+            maxBudgetUsd: options.maxBudgetUsd,
+            provider: this.args.resolved.provider,
+            model: this.args.resolved.model,
+            authMode: this.args.resolved.authMode,
+          })
+        : undefined;
+    const rootTurnLimiter =
+      maxTurns !== undefined
+        ? turnLimiter(maxTurns, () => {
+            cappedByMaxTurns = true;
+          })
+        : undefined;
     // Per-turn streamed arguments, bound to call ids at message_end; the
     // strict-JSON flag also gates the parameter-contract correction.
     const rawToolArguments = new Map<number, string>();
@@ -988,14 +1079,13 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             // Non-structured root loops share the run-scoped correction allowance
             // too; the caller's turn ceiling keeps its normal meaning under it.
             finishTurn: this.contractCorrectionFinishTurn(
-              maxTurns !== undefined
-                ? turnLimiter(maxTurns, () => {
-                    cappedByMaxTurns = true;
-                  })
-                : undefined,
+              costCeiling ? costCeiling.finishTurn(rootTurnLimiter) : rootTurnLimiter,
             ),
+            ...(costCeiling ? { prepareNextTurn: costCeiling.prepareNextTurn } : {}),
           }),
-      beforeToolCall: this.makeBeforeToolCall(),
+      beforeToolCall: costCeiling
+        ? costCeiling.beforeToolCall(this.makeBeforeToolCall())
+        : this.makeBeforeToolCall(),
       afterToolCall: this.makeAfterToolCall(),
       transformContext: this.makeTransformContext(),
       // YUK-1022 — steering/follow-up sources are wired on the ROOT loop only:
@@ -1024,6 +1114,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           }
         : {}),
     };
+
+    if (structuredOutput && costCeiling)
+      config.finishTurn = costCeiling.finishTurn(config.finishTurn);
 
     const startedAt = Date.now();
     let numTurns = 0;
@@ -1110,6 +1203,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         .catch(() => {});
       return responseStream;
     };
+    installLoopProgress(config, this.allTools, this.args.piHooks, { loopId: this.sessionId });
     const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, rootStreamFn);
     let textStreamed = false;
     for await (const event of stream) {
@@ -1119,6 +1213,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       this.trackStreamedArgs(event, rawToolArguments, streamedArgsByCallId);
       if (event.type === 'turn_start') invalidStructuredArguments = false;
       this.observeToolAttempt(event, streamedArgsByCallId);
+      this.observeToolArgsProgress(event, rawToolArguments);
       // Frames queued inside the loop surface before the engine event that
       // follows them, matching the SDK wire order (lifecycle frame → tool_result).
       yield* this.drainFrames();
@@ -1225,7 +1320,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
                 [...rawToolArguments.values()]
                   .map((raw) =>
                     sanitizeArgumentsEvidenceText(raw, {
-                      secrets: this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [],
+                      secrets:
+                        this.args.resolved.authMode !== 'oauth-file' && this.args.resolved.apiKey
+                          ? [this.args.resolved.apiKey]
+                          : [],
                     }),
                   )
                   .join('\n'),
@@ -1243,7 +1341,11 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       sanitizeErrorMessage: this.providerErrorCapture?.sanitize,
       childUsage: this.childUsage,
     });
-    if (terminal) yield terminal;
+    if (terminal) {
+      yield costCeiling?.closed && terminal.type === 'result' && terminal.subtype === 'success'
+        ? { ...terminal, stop_reason: MAX_BUDGET_STOP_REASON }
+        : terminal;
+    }
   }
 
   async close(): Promise<void> {
@@ -1352,8 +1454,8 @@ export class PiAgentAdapter implements ExecutionAdapter {
   async startup(args: ExecutionAdapterStartupArgs): Promise<PreparedExecutionQuery> {
     const deps = await this.resolveDeps();
     // Fail fast before the durable attempt row: an unknown model or unresolved
-    // credential is a config error, not a paid call. Both auth modes carry the
-    // credential on `resolved.apiKey`.
+    // credential is a config error, not a paid call. key/oauth modes carry the
+    // credential on `resolved.apiKey`; oauth-file resolves it via the store.
     if (
       typeof args.options.resume === 'string' &&
       args.options.resume.length > 0 &&
@@ -1369,14 +1471,12 @@ export class PiAgentAdapter implements ExecutionAdapter {
         `pi adapter cannot execute '${args.resolved.provider}/${args.resolved.model}': protocol or required catalog facts (endpoint, reasoning, input modalities, context/output limits) are unknown. Model selection is unchanged.`,
       );
     }
-    // YUK-1547 — reasoning_effort must have exactly one writer: options.effort
-    // and the native passthrough both serialize onto the same wire key.
-    if (
-      args.options.effort !== undefined &&
-      args.resolved.nativeReasoningParams?.reasoning_effort !== undefined
-    ) {
+    // Reasoning level must have exactly one writer: options.effort and the
+    // task.<kind>.reasoning resolution both target the wire reasoning slot —
+    // even an applied 'off'/'none' outcome, or the receipt would lie.
+    if (args.options.effort !== undefined && args.resolved.reasoning !== undefined) {
       throw new Error(
-        `conflicting reasoning params for task '${args.kind}': options.effort='${args.options.effort}' and task.<kind>.reasoning reasoning_effort='${args.resolved.nativeReasoningParams.reasoning_effort}' both target the wire reasoning_effort — keep exactly one source.`,
+        `conflicting reasoning params for task '${args.kind}': options.effort='${args.options.effort}' and task.<kind>.reasoning level='${args.resolved.reasoning.requested}' both target the wire reasoning level — keep exactly one source.`,
       );
     }
     const { tools, remoteHandles } = await this.buildTools(args, deps);

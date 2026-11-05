@@ -906,5 +906,213 @@
       "ref": "ADR-0067 A38 decides whether to restore the EZ axis writer or drop the historical table",
       "expected_by": "2027-03-31"
     }
+  },
+  "note_verification_claim.artifact_id": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.artifact_version": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.state": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.fence": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.claim_token": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.task_run_id": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.result_json": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.result_attempts": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.provider_attempts": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.error_message": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.available_at": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.lease_expires_at": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.claimed_at": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.provider_started_at": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.result_ready_at": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "note_verification_claim.completed_at": {
+    "reason": "YUK-1772: note_verify 第二跳退役（AI 审→自动修订→复检全链删除）；claim 表保留旧行不迁移、不再写入，无新 writer 是终态而非 stub。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "协调线决定彻底 DROP note_verification_claim 表时随 migration 删除",
+      "expected_by": "2027-02-28"
+    }
+  },
+  "memory_reconciliation_log.user_id": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.new_memory_id": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.old_memory_id": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.action": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.reason": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.llm_raw": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.planned_at": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.applied_at": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.prev_text": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "memory_reconciliation_log.prev_metadata": {
+    "reason": "The memory reconcile writer was removed; the table stays read-only for history and backup during the Context migration.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1776 C3 retires the old memory layer and drops this table",
+      "expected_by": "2027-03-31"
+    }
   }
 }

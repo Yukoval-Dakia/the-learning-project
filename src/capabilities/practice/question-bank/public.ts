@@ -1,3 +1,4 @@
+export { readAdmissionWaits } from './server/admission/stages';
 // 题库与准入 owner 的稳定业务操作。practice 内其它 owner 只经本文件引用本 owner
 // （`pnpm audit:practice-subowners`）；根 `public.ts` 按名字转出。
 // 根 barrel 的静态加载链经过这里（迁移 bundle 不得引入 SDK）：静态导出只放不带 provider
@@ -5,6 +6,15 @@
 
 export { embedQuestionTextForIngest, questionEmbedStamp } from './jobs/embed_backfill';
 export { runQuestionAdmissionChecks } from './server/admission/checks';
+export { isPendingAdmission } from './server/admission/enqueue';
+// Server-only: reveals the solution path. The practice root barrel does not re-export it,
+// and audit:practice-subowners rejects it from tools, api and ui paths inside practice.
+export {
+  type NearestMethodQuestion,
+  type StoredSolutionPrior,
+  nearestQuestionsByMethod,
+  readSolutionPriorForServer,
+} from './server/admission/solution-prior';
 export { readPracticeDraftList } from './server/draft-list-read';
 export { enablePracticeDraft, forceEnablePracticeDraft } from './server/draft-promotion-operations';
 export { readDraftReviewDetail } from './server/draft-review';
@@ -60,7 +70,7 @@ export {
 } from './server/quiz/content-fingerprint';
 export { type Demand, demandToSupplyTarget } from './server/quiz/matcher';
 export { poolFetch } from './server/quiz/pool-fetch';
-export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
+export { SOLVE_LANE_TASK_KINDS, resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
 export { runPracticeServingAction } from './server/serving-action-operation';
 export { recoverHeldServingRechecks, runSystemServingRecheck } from './server/serving-actions';
 export {
@@ -78,18 +88,9 @@ export {
   verifyBankGapEvidenceMac,
 } from './tools/bank-search';
 
-export const acceptCauseCategoryProposal: typeof import('./server/proposal-appliers').acceptCauseCategoryProposal =
-  async (...args) =>
-    (await import('./server/proposal-appliers')).acceptCauseCategoryProposal(...args);
-
 export const materializeGeneratedQuestionParts: typeof import('./server/question-parts').materializeGeneratedQuestionParts =
   async (...args) =>
     (await import('./server/question-parts')).materializeGeneratedQuestionParts(...args);
-
-/** The learning-content validator the root host binds behind the kernel tool port. */
-export async function loadLearningContentValidator() {
-  return (await import('./server/learning-content-validation')).validateLearningContent;
-}
 
 export async function installInterventionAuthorStages(): Promise<void> {
   const [{ installInterventionAuthorStages: install }, { interventionAuthorStages }] =
@@ -99,3 +100,5 @@ export async function installInterventionAuthorStages(): Promise<void> {
     ]);
   install(interventionAuthorStages);
 }
+
+export { checkSourceConsistency, checkStructureCompleteness } from './jobs/source_verify_prechecks';

@@ -1,22 +1,26 @@
-import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { getCurrentFailureAttemptsForDerivation } from '@/kernel/read-models/failure-attempts';
 
 // Knowledge graph read tools. Traversal stays server-side so callers get bounded,
 // named context instead of raw rows.
 
 import { and, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
-// Share the rubric's evidence window so readers and validation cannot drift.
-import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
 import type { Db } from '@/db/client';
-import { knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema';
-import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
+import { knowledge, knowledge_edge } from '@/db/schema';
+import {
+  abilityReadingsByIdOrFail,
+  readLearnerJudgments,
+} from '@/kernel/read-models/learner-judgment';
 import { KNOWLEDGE_EXCERPT_MAX, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from './types';
 
 const TEXT_SNIPPET_MAX = KNOWLEDGE_EXCERPT_MAX;
 const MAX_NODES = 60;
 const QUERY_FAILURE_LIMIT = 10;
-export const RECENT_FAILURE_WINDOW_MS = RUBRIC_EVIDENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+// Window behind the recent_failure_count_30d stat, owned solely by this reader:
+// the stat name fixes it at 30 days and no other consumer derives from it, so
+// keeping the literal inline cannot drift against a shared definition.
+export const RECENT_FAILURE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 type KnowledgeRow = {
   id: string;
@@ -25,6 +29,9 @@ type KnowledgeRow = {
   parent_id: string | null;
   // Optimistic-concurrency version, needed for every structural mutation proposal.
   version: number;
+  // Fallback for the any-event clock on never-touched nodes; preserves the
+  // retired view's COALESCE(last_active_at, created_at) shape.
+  created_at: Date;
 };
 
 type EdgeRow = {
@@ -49,6 +56,7 @@ async function loadKnowledgeRows(db: Db, subjectId?: string): Promise<KnowledgeR
       domain: knowledge.domain,
       parent_id: knowledge.parent_id,
       version: knowledge.version,
+      created_at: knowledge.created_at,
     })
     .from(knowledge)
     .where(isNull(knowledge.archived_at));
@@ -122,30 +130,35 @@ function recentFailureCutoff(now = new Date()): Date {
   return new Date(now.getTime() - RECENT_FAILURE_WINDOW_MS);
 }
 
-async function loadMasteryMap(
-  db: Db,
-  ids: string[],
-): Promise<Map<string, { mastery: number | null; last_active_at: string | null }>> {
-  if (ids.length === 0) return new Map();
-  // Mastery comes from the source-of-truth projection; last_active_at is a separate
-  // any-event timeline and still reads the view.
-  const [projection, activityRows] = await Promise.all([
-    getMasteryProjection(db, ids),
-    db
-      .select({
-        knowledge_id: knowledge_mastery.knowledge_id,
-        last_active_at: knowledge_mastery.last_active_at,
-      })
-      .from(knowledge_mastery)
-      .where(inArray(knowledge_mastery.knowledge_id, ids)),
-  ]);
-  const lastActiveById = new Map(activityRows.map((row) => [row.knowledge_id, row.last_active_at]));
-  const out = new Map<string, { mastery: number | null; last_active_at: string | null }>();
-  for (const id of ids) {
-    const proj = projection.get(id);
-    out.set(id, {
+/** Mastery band plus the contract's unified evidence clocks. */
+type MasteryMapEntry = {
+  mastery: number | null;
+  // Practice clock: the mastery_state settlement time, same field the
+  // knowledge page and question detail render.
+  last_evidence_at: string | null;
+  // Any-event clock: latest touching event from the event spine, falling back
+  // to the node's created_at like the retired view's COALESCE did.
+  last_active_at: string | null;
+};
+
+async function loadMasteryMap(db: Db, rows: KnowledgeRow[]): Promise<Map<string, MasteryMapEntry>> {
+  if (rows.length === 0) return new Map();
+  // One judgment-contract read owns mastery and both evidence clocks.
+  const batch = await readLearnerJudgments(db, {
+    knowledge_ids: rows.map((row) => row.id),
+    context: 'any',
+    as_of: new Date(),
+  });
+  const readings = abilityReadingsByIdOrFail(batch);
+  const timingById = new Map(batch.items.map((item) => [item.knowledge_id, item.evidence_timing]));
+  const out = new Map<string, MasteryMapEntry>();
+  for (const row of rows) {
+    const proj = readings.get(row.id);
+    const timing = timingById.get(row.id);
+    out.set(row.id, {
       mastery: proj ? proj.mastery : null,
-      last_active_at: lastActiveById.get(id)?.toISOString() ?? null,
+      last_evidence_at: timing?.last_outcome_at?.toISOString() ?? null,
+      last_active_at: timing?.last_activity_at?.toISOString() ?? row.created_at.toISOString(),
     });
   }
   return out;
@@ -165,7 +178,7 @@ async function loadRecentFailures(
   }>
 > {
   if (ids.length === 0) return [];
-  const rows = (await getCurrentFailureAttempts(db))
+  const rows = (await getCurrentFailureAttemptsForDerivation(db))
     .filter((row) => row.referenced_knowledge_ids.some((id) => ids.includes(id)))
     .slice(0, limit);
   return rows.map((row) => ({
@@ -186,7 +199,7 @@ async function loadRecentFailureCounts(
   const counts = new Map(uniqueIds.map((id) => [id, 0]));
   if (uniqueIds.length === 0) return counts;
 
-  const rows = await getCurrentFailureAttempts(db, { since });
+  const rows = await getCurrentFailureAttemptsForDerivation(db, { since });
 
   const idSet = new Set(uniqueIds);
   for (const row of rows) {
@@ -254,7 +267,7 @@ async function executeOverview(ctx: ToolContext, raw: OverviewInput): Promise<Ov
   const rows = await loadKnowledgeRows(ctx.db, input.subjectId);
   const ids = rows.map((row) => row.id);
   const edges = await loadEdges(ctx.db, ids);
-  const mastery = input.includeWeaknessSummary ? await loadMasteryMap(ctx.db, ids) : new Map();
+  const mastery = input.includeWeaknessSummary ? await loadMasteryMap(ctx.db, rows) : new Map();
   const recentFailureCounts = input.includeWeaknessSummary
     ? await loadRecentFailureCounts(ctx.db, ids, recentFailureCutoff())
     : new Map<string, number>();
@@ -346,17 +359,8 @@ const QueryKnowledgeOutputSchema = z.object({
     recent_failures_time_scope: z.literal('all_recorded_attempts'),
     recent_failures_limit: z.literal(QUERY_FAILURE_LIMIT),
   }),
-  claim_boundaries: z.object({
-    supports_global_node_absence_claim: z.literal(false),
-    supports_never_existed_claim: z.literal(false),
-    supports_archived_node_absence_claim: z.literal(false),
-    edge_scope: z.literal('between_returned_active_nodes_for_requested_relation_types'),
-    supports_global_edge_absence_claim: z.literal(false),
-    supports_unrequested_relation_absence_claim: z.literal(false),
-    supports_complete_expansion_claim: z.boolean(),
-    optional_observation_scope: z.literal('returned_active_nodes_only'),
-    supports_recent_failure_absence_claim: z.boolean(),
-  }),
+  // One honest scope sentence: what this result covers and what was not checked.
+  claim_boundaries: z.string(),
   nodes: z.array(
     z.object({
       id: z.string(),
@@ -370,6 +374,9 @@ const QueryKnowledgeOutputSchema = z.object({
         .object({
           recent_failure_count_30d: z.number().int(),
           last_touched_at: z.string().nullable(),
+          // unified practice clock, the same evidence_timing field the
+          // knowledge page and question detail render.
+          last_evidence_at: z.string().nullable(),
           mastery_estimate: z.number().nullable(),
         })
         .optional(),
@@ -471,7 +478,7 @@ async function executeQueryKnowledge(
 
   const matches = [...selected.values()].slice(0, limit);
   const ids = matches.map((row) => row.id);
-  const mastery = included.includes('stats') ? await loadMasteryMap(ctx.db, ids) : new Map();
+  const mastery = included.includes('stats') ? await loadMasteryMap(ctx.db, matches) : new Map();
   const failureCounts = included.includes('stats')
     ? await loadRecentFailureCounts(ctx.db, ids, recentFailureCutoff())
     : new Map<string, number>();
@@ -520,17 +527,13 @@ async function executeQueryKnowledge(
       recent_failures_time_scope: 'all_recorded_attempts',
       recent_failures_limit: QUERY_FAILURE_LIMIT,
     },
-    claim_boundaries: {
-      supports_global_node_absence_claim: false,
-      supports_never_existed_claim: false,
-      supports_archived_node_absence_claim: false,
-      edge_scope: 'between_returned_active_nodes_for_requested_relation_types',
-      supports_global_edge_absence_claim: false,
-      supports_unrequested_relation_absence_claim: false,
-      supports_complete_expansion_claim: expansionComplete,
-      optional_observation_scope: 'returned_active_nodes_only',
-      supports_recent_failure_absence_claim: ids.length > 0 && failures?.length === 0,
-    },
+    claim_boundaries:
+      `Returned ${matches.length} active node(s) in domain '${input.subjectId}'` +
+      `${expansionComplete ? ' with complete expansion' : ' with expansion truncated by the limit'}; ` +
+      'edges cover only the returned nodes' +
+      `${relationTypes ? ` and relation types ${relationTypes.join(', ')}` : ''}; ` +
+      'stats and recent_failures cover only requested, returned nodes; ' +
+      'absence of nodes, edges, or failures outside this result was not checked.',
     nodes: matches.map((row) => {
       const m = mastery.get(row.id);
       return {
@@ -545,7 +548,10 @@ async function executeQueryKnowledge(
           ? {
               stats: {
                 recent_failure_count_30d: failureCounts.get(row.id) ?? 0,
+                // Any-event clock (最近学习时间), derived from the event spine.
                 last_touched_at: m?.last_active_at ?? null,
+                // Practice clock (最近证据时间), the unified reading.
+                last_evidence_at: m?.last_evidence_at ?? null,
                 mastery_estimate: m?.mastery ?? null,
               },
             }
@@ -689,7 +695,10 @@ async function executeExpand(ctx: ToolContext, raw: ExpandInput): Promise<Expand
     ? await loadRecentFailures(ctx.db, selectedIds, 10)
     : [];
   const mastery = included.includes('mastery')
-    ? await loadMasteryMap(ctx.db, selectedIds)
+    ? await loadMasteryMap(
+        ctx.db,
+        selectedIds.map((id) => byId.get(id) as KnowledgeRow),
+      )
     : new Map();
 
   return ExpandOutputSchema.parse({

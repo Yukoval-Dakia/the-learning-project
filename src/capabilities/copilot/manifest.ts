@@ -44,6 +44,7 @@ export const copilotCapability = defineCapability({
       'experimental:confirmation_command',
       'experimental:confirmation_command_result',
       'experimental:help_explanation_replay',
+      'experimental:help_explanation_receipt',
       'experimental:subagent_run_started',
       'experimental:subagent_run_settled',
       'accept_suggestion',
@@ -199,6 +200,13 @@ export const copilotCapability = defineCapability({
       {
         name: 'copilot_run',
         queue: 'agent',
+        // Inserts on this queue wake the worker's LISTEN/NOTIFY listener at
+        // commit, so an accepted run starts immediately instead of waiting out
+        // the 2s poll (polling stays as the fallback).
+        notify: true,
+        // Two per-node workers; the session queue guarantees at most one
+        // physical job per session, so concurrency only spans sessions.
+        localConcurrency: 2,
         // The generic agent expiry is 2h. A 30s heartbeat lets pg-boss turn a
         // crashed active delivery into retry/failed evidence promptly; the
         // Copilot reconciler still never guesses from heartbeat timestamps.
@@ -250,9 +258,8 @@ export const copilotCapability = defineCapability({
       },
     ],
   },
-  // copilot 自有工具（事件流读 + 记忆面读）。
-  // artifact 工具的归属声明在 notes manifest；Copilot 只保留 allowlist 授权，
-  // 不再是 implementation owner。
+  // M5-T3 (YUK-321) — copilot 自有工具（事件流读 + 记忆面读）。
+  // YUK-1769：学习伙伴的 Markdown 笔记写入走 notes 拥有的 write_note。
   copilotTools: {
     tools: [
       {
@@ -261,18 +268,15 @@ export const copilotCapability = defineCapability({
           import('./server/tools/present-primary-view').then((m) => m.presentPrimaryViewTool),
       },
       {
+        name: 'compose_block',
+        load: () => import('./server/tools/compose-block').then((m) => m.composeBlockTool),
+      },
+      {
         name: 'query_events',
         load: () => import('./server/tools/query-events').then((m) => m.queryEventsTool),
       },
-      {
-        name: 'query_memory_brief',
-        load: () => import('./server/tools/memory-brief').then((m) => m.queryMemoryBriefTool),
-      },
-      {
-        name: 'search_memory_facts',
-        load: () =>
-          import('./server/tools/search-memory-facts').then((m) => m.searchMemoryFactsTool),
-      },
+      // Context 暖层读归 agency 的 query_context（YUK-1794 B1）；今日摘要的
+      // brief 读走 kernel read-models/memory-brief 端口（executeMemoryBrief 适配）。
     ],
   },
 });

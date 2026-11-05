@@ -23,6 +23,7 @@
 import type { MutableModels as PiMutableModels } from '@earendil-works/pi-ai';
 import { eq, inArray, sql } from 'drizzle-orm';
 import type { TaskDefinition } from '@/ai/task-spec';
+import { SOLVE_LANE_TASK_KINDS } from '@/capabilities/practice/public';
 import type { TaskKind } from '@/capabilities/task-registry';
 import { tasks } from '@/capabilities/task-registry';
 import type { ConfigMutation, ConfigMutationResult } from '@/core/config/mutations';
@@ -38,11 +39,13 @@ import { PROVIDER_ATTEMPT_ADMISSION_LANES } from '@/server/ai/provider-attempt-a
 import {
   ANTHROPIC_SUB_DEFAULT_MODEL,
   type Provider,
+  type TaskReasoningConfig,
   isProviderImplemented,
   isProviderImplementedForTask,
   providerRequiresExplicitModel,
   readProviderId,
   resolveGlobalProviderSwitch,
+  resolveTaskReasoning,
 } from '@/server/ai/providers';
 import { VISION_JUDGE_TASK_KINDS } from '@/server/ai/vision-judge-config';
 import { hydrateConfigFromDb } from './hydrate';
@@ -243,10 +246,11 @@ interface PairScope {
 }
 
 /** 一个被写/被清的 key 属于哪对 provider/model 组；非对键 → null。
- * `task.<kind>.override_global_pin`（YUK-1547）挂在同一组上：flag 写/清
- * 都要重算该 task 的 pair 终态，免得逐字段变更绕过 pair 校验。 */
+ * `task.<kind>.override_global_pin`（YUK-1547）与 `task.<kind>.reasoning`
+ * （YUK-1808）挂在同一组上：flag/level 写清都要重算该 task 的 pair 终态——
+ * flag 免得逐字段变更绕过 pair 校验，level 必须按终态 provider+model 校验。 */
 function pairScopeFor(key: string): PairScope | null {
-  const t = /^task\.([^.]+)\.(provider|model|override_global_pin)$/.exec(key);
+  const t = /^task\.([^.]+)\.(provider|model|override_global_pin|reasoning)$/.exec(key);
   if (t) {
     const scope = t[1];
     return {
@@ -280,6 +284,32 @@ function valueAsNonEmptyString(v: unknown): string | undefined {
 
 /** YUK-1658 — prebuilt outside the write tx so the epoch row lock never waits on registry assembly. */
 type ConfigPairModels = Pick<PiMutableModels, 'getModel'>;
+
+/**
+ * YUK-1808 — a stored task.<kind>.reasoning row resolves against the FINAL
+ * effective pair (the same input resolveTaskReasoning sees at run time), so a
+ * level the effective model cannot honor fails the write instead of the next
+ * paid call. Valid unlisted levels pass — the resolver rounds them up. A row
+ * getTaskOverride would not surface (non-object) is skipped the same way.
+ */
+function validateTaskReasoning(
+  label: string,
+  kind: TaskKind,
+  provider: Provider,
+  model: string,
+  stored: unknown,
+): void {
+  if (typeof stored !== 'object' || stored === null) return;
+  try {
+    resolveTaskReasoning(kind, provider, model, stored as TaskReasoningConfig);
+  } catch (error) {
+    throw new ApiError(
+      'invalid_config_value',
+      `${label}: ${error instanceof Error ? error.message : 'reasoning level is not servable'}`,
+      422,
+    );
+  }
+}
 
 /**
  * 终态校验：写面触碰到的每个 provider/model 对，按 tx 内 DB 终态行（刚写的值也在
@@ -337,7 +367,7 @@ async function validateFinalProviderPairs(
       }
     }
   }
-  const solveTasks = ['SolutionGenerateTask', 'SolutionGenerateVisionTask'] as const;
+  const solveTasks = SOLVE_LANE_TASK_KINDS;
   const visionTasks = VISION_JUDGE_TASK_KINDS;
   if (
     scopes.has('lane.global.provider') ||
@@ -353,7 +383,12 @@ async function validateFinalProviderPairs(
       [...scopes.values()].flatMap((s) => {
         const taskScope = /^task\.([^.]+)\.provider$/.exec(s.providerKey);
         return taskScope
-          ? [s.providerKey, s.modelKey, `task.${taskScope[1]}.override_global_pin`]
+          ? [
+              s.providerKey,
+              s.modelKey,
+              `task.${taskScope[1]}.override_global_pin`,
+              `task.${taskScope[1]}.reasoning`,
+            ]
           : [s.providerKey, s.modelKey];
       }),
     ),
@@ -363,9 +398,10 @@ async function validateFinalProviderPairs(
       `task.${kind}.provider`,
       `task.${kind}.model`,
       `task.${kind}.override_global_pin`,
+      `task.${kind}.reasoning`,
     ]),
     ...([...scopes.values()].some((scope) => scope.providerKey === 'lane.global.provider')
-      ? Object.keys(tasks).map((kind) => `task.${kind}.model`)
+      ? Object.keys(tasks).flatMap((kind) => [`task.${kind}.model`, `task.${kind}.reasoning`])
       : []),
   ].sort();
   const rows = await tx
@@ -374,11 +410,33 @@ async function validateFinalProviderPairs(
     .where(inArray(system_config.key, keys))
     .for('update');
   const rowByKey = new Map(rows.map((r) => [r.key, r.value]));
+  const env = process.env;
+
+  // Lane-only kinds (vision judges: every call path threads the override) —
+  // their stored reasoning level must validate against the LANE pair, not the
+  // task's standard-chain pair. Shared kinds (solve legs: some callers run
+  // them without the override) keep the standard-pair validation AND get the
+  // lane-pair check in the scoped branch below. Model-only counts for
+  // verify_solve (same-provider model swap), while vision_judge needs a
+  // provider to activate.
+  const scopedServedKinds = new Set<TaskKind>();
+  {
+    const configuredLaneValue = (key: string): string | undefined => {
+      const def = resolveKeyDef(key);
+      const envValue = def?.envName !== undefined ? env[def.envName] : undefined;
+      const dbValue = valueAsNonEmptyString(rowByKey.get(key));
+      return (def?.envMode ?? 'fallback') === 'priority'
+        ? (valueAsNonEmptyString(envValue) ?? dbValue)
+        : (dbValue ?? valueAsNonEmptyString(envValue));
+    };
+    if (configuredLaneValue('lane.vision_judge.provider') !== undefined) {
+      for (const kind of visionTasks) scopedServedKinds.add(kind);
+    }
+  }
 
   for (const scope of scopes.values()) {
     const providerDef = resolveKeyDef(scope.providerKey);
     const modelDef = resolveKeyDef(scope.modelKey);
-    const env = process.env;
 
     const envProvider = providerDef?.envName !== undefined ? env[providerDef.envName] : undefined;
     const envModel = modelDef?.envName !== undefined ? env[modelDef.envName] : undefined;
@@ -443,6 +501,15 @@ async function validateFinalProviderPairs(
           );
         }
         validateNativeModel(scope.label, provider, model, kind);
+        // YUK-1808 — the task rides this lane as a call override, so its stored
+        // level resolves against the lane pair the run will actually use.
+        validateTaskReasoning(
+          scope.label,
+          kind,
+          provider,
+          model,
+          rowByKey.get(`task.${kind}.reasoning`),
+        );
       }
       continue;
     }
@@ -481,6 +548,17 @@ async function validateFinalProviderPairs(
         );
       }
       validateNativeModel(scope.label, provider, model, taskKind);
+      // The opted-out task runs its own pair; its stored level resolves against
+      // it — unless a scoped lane drives this kind (a call override outranks
+      // the opted pair at run time; the lane scope validates that pair).
+      if (!scopedServedKinds.has(taskKind))
+        validateTaskReasoning(
+          scope.label,
+          taskKind,
+          provider,
+          model,
+          rowByKey.get(`task.${taskKind}.reasoning`),
+        );
       continue;
     }
     const globalSwitch =
@@ -522,6 +600,17 @@ async function validateFinalProviderPairs(
             : undefined);
       if (model && isProviderImplemented(provider))
         validateNativeModel(scope.label, provider, model, taskKind);
+      // A task scope's stored level resolves against this same final pair —
+      // unless a scoped lane drives the kind (the lane scope validates the
+      // level against the lane pair the run will actually use).
+      if (taskKind && model && isProviderImplemented(provider) && !scopedServedKinds.has(taskKind))
+        validateTaskReasoning(
+          scope.label,
+          taskKind,
+          provider,
+          model,
+          rowByKey.get(`task.${taskKind}.reasoning`),
+        );
       if (model && scope.providerKey === 'lane.vision_judge.provider') {
         validateNativeModel(scope.label, provider, model, 'StepsJudgeTask');
         validateNativeModel(scope.label, provider, model, 'MultimodalDirectJudgeTask');
@@ -539,6 +628,17 @@ async function validateFinalProviderPairs(
             valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) ??
             (provider === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : definition.defaultModel);
           validateNativeModel(scope.label, provider, effectiveModel, kind as TaskKind);
+          // The pin becomes this task's effective pair; its stored level must
+          // survive it — unless a scoped lane drives the kind (the lane
+          // overrides the pin for it, and the lane scope validates that pair).
+          if (!scopedServedKinds.has(kind as TaskKind))
+            validateTaskReasoning(
+              scope.label,
+              kind as TaskKind,
+              provider,
+              effectiveModel,
+              rowByKey.get(`task.${kind}.reasoning`),
+            );
         }
       }
     }

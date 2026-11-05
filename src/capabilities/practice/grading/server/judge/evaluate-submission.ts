@@ -20,6 +20,14 @@ import { observeJudgeProcess } from '../judge-process-observer';
 // 调用 —— typed transport 归 src/server/ai/ 后续 lane。
 
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import {
+  type ActivateEvaluationRequestT,
+  type SettlementObservers,
+  activateEvaluation,
+  learningSettlement,
+  snapshotAssessmentLearningScope,
+  withdrawCapturedOccurrence,
+} from '@/capabilities/practice/settlement/public';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
 import {
   evaluationMemberFromRows,
@@ -59,14 +67,6 @@ import {
   lockAssessmentEvaluationGroup,
 } from '@/kernel/locks/assessment-evaluation-group-lock';
 import { checkRateLimit } from '@/kernel/request-rate-limit';
-import {
-  type ActivateEvaluationRequestT,
-  type SettlementObservers,
-  activateEvaluation,
-  learningSettlement,
-  snapshotAssessmentLearningScope,
-  withdrawCapturedOccurrence,
-} from '@/server/assessment/runtime';
 import { authorizeConfirmationCorrection } from '../../../settlement/public';
 import { bindAppealExecution, reservedEvaluationAttempt } from '../assessment/appeal-execution';
 import { createJevModelExecutor } from '../jev-model-executor';
@@ -239,9 +239,6 @@ export function createFormalModelExecutor(
   );
   return async (request, signal) => {
     const sliceId = request.executor.admitted_slice_id;
-    // 只有登记处钉了 pin 的 task kind（细则 / Jev）才在付费前复核切片。
-    // AssessmentRuleJudgeTask 不在这张 pin 表里；它的切片 id 是历史占位，
-    // 拦下来会让规则判分在 claim 之前直接扣留。
     if (sliceId !== null && currentModelPins().has(request.executor.task_kind)) {
       const decision = await gradingSliceMatchesLivePin(db, sliceId, request.executor.task_kind);
       if (!decision.ok) {
@@ -268,6 +265,9 @@ export function createAdmissionRunExecutor(
   deadlineAt: number,
   maxCostUsdMicros: number,
 ): ModelUnitExecutorPort | undefined {
+  if (taskKind === 'AssessmentRuleJudgeTask') {
+    return createPiModelExecutor({ db, deadlineAt, maxCostUsdMicros, judgeRetryPolicy: 'none' });
+  }
   if (taskKind === 'AssessmentRubricJudgeTask') {
     return createRubricModelExecutor({
       db,
@@ -828,7 +828,7 @@ export { EvaluationContractError };
 
 /** Activation and the entry's immutable receipt share one transaction. */
 export async function activateSubmissionCandidate(
-  database: Db,
+  database: Db | Tx,
   intent: ActivateEvaluationRequestT,
   options: {
     actorRef: string;

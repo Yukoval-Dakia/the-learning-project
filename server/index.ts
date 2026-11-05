@@ -8,6 +8,7 @@ import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
 import { assertProposalKindsOwned } from '@/kernel/manifest';
 import { warnFlipOrder } from '@/kernel/projection-writer-policy';
+import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
 import { resolveApiPort } from '@/server/config/env';
 import { buildHonoApp } from './app';
@@ -113,10 +114,15 @@ async function installPracticeOperationsBeforeServe(): Promise<void> {
   );
   await installPracticeHostOperations();
   await installModelAdmissionPins();
+  const { installAgencyHostOperations } = await import('@/capabilities/agency/public');
+  await installAgencyHostOperations();
 }
 
-async function installSchedulingCandidateRebuildBeforeServe(): Promise<void> {
-  const { installSchedulingCandidateRebuild } = await import('@/server/assessment/settle');
+async function installSettlementPortsBeforeServe(): Promise<void> {
+  const { installSchedulingCandidateRebuild } = await import('@/capabilities/practice/public');
+  // Dynamic: its import chain reads DB_POOL_MAX, which loadApiEnv has to set first.
+  const { orchestrateCascadeRevert } = await import('@/server/revert/cascade-revert');
+  installSettlementCascadeRevert(orchestrateCascadeRevert);
   installSchedulingCandidateRebuild();
 }
 
@@ -188,6 +194,14 @@ async function startInProcessWorker(): Promise<void> {
 // subjects hydrate + 完整 DomainTool manifest 注册都必须先于 serve；否则首个 AI
 // 请求可能观测到半空 registry。RW_WORKER 同样只在注册完成后启动。
 // 工具声明/load 错误 fail-fast，不暴露缺工具的残缺 API 面。
+async function reportConfigCompletenessBeforeServe(): Promise<void> {
+  const [{ db }, { reportConfigCompleteness }] = await Promise.all([
+    import('@/db/client'),
+    import('@/kernel/config-completeness'),
+  ]);
+  await reportConfigCompleteness(db, 'api');
+}
+
 void (async () => {
   await initializeLaminarTracing();
   await hydrateSubjectsBeforeServe();
@@ -195,11 +209,12 @@ void (async () => {
   await hydrateModelCatalogBeforeServe();
   await registerToolsBeforeServe();
   await installPracticeOperationsBeforeServe();
-  await installSchedulingCandidateRebuildBeforeServe();
+  await installSettlementPortsBeforeServe();
   await recoverToolOperationsBeforeServe();
   await injectAdminConfigFactsBeforeServe();
   await injectAdminConfigWriterBeforeServe();
   await injectBackupConfigHydratorBeforeServe();
+  await reportConfigCompletenessBeforeServe();
   const { startListenLoop, stopListenLoop } = await import('@/server/events/listen_loop');
   await startListenLoop();
   // Start owns the Web front door when RW_FRONTDOOR=1 (needs the dist/start build).

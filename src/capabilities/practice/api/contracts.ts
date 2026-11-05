@@ -4,6 +4,7 @@ import { ActivateEvaluationIntent } from '@/core/schema/assessment';
 import {
   ActivityRef,
   FsrsRating,
+  GradingProvenanceEntry,
   JudgeResultV2,
   PartialUnknownJudgeResult,
 } from '@/kernel/capability-contract-schemas';
@@ -112,6 +113,7 @@ const LegacyAttemptJudgeResponseSchema = z
     suggested_rating: FsrsRating.nullable(),
     auto_rated: z.boolean(),
     judge_event_id: z.string().nullable(),
+    grading_provenance: z.array(GradingProvenanceEntry).optional(),
     telemetry: z.unknown().optional(),
   })
   .passthrough();
@@ -161,24 +163,6 @@ export const AttemptResponseSchema = z.union([
   FormalAttemptResponseSchema,
   LegacyAttemptResponseSchema,
 ]);
-
-export const CreateAppealBodySchema = z.union([
-  z
-    .object({
-      evaluation_id: z.string().min(1),
-      reason_md: z.string().max(2000).optional(),
-      idempotency_key: z.string().min(1).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      judge_event_id: z.string().min(1),
-      reason_md: z.string().max(2000).optional(),
-    })
-    .strict(),
-]);
-
-export const AppealResponseSchema = z.object({ appeal_event_id: z.string() });
 
 export const CreateReviewSessionBody = z
   .object({

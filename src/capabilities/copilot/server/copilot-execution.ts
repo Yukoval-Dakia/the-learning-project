@@ -4,6 +4,7 @@ import {
   EXA_SCOPED_TOOL_NAMES,
   buildExaMcpServer,
 } from '@/ai/exa-mcp';
+import { NO_PROGRESS_BUDGET_LANDING_MARGIN_MS, createNoProgressLoop } from '@/ai/no-progress-loop';
 import {
   type BuildMcpServerOptions,
   type RemoteMcpHttpConfig,
@@ -16,6 +17,7 @@ import type { RunTaskResult } from '@/ai/task-result';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { PiAfterToolCall } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
+import { recordAiTaskReplyUnsealed } from '@/kernel/records/ai-attempt-facts';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   resolveDomainToolNames,
@@ -24,8 +26,6 @@ import {
 import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { ANSWER_ONLY_TOOL_NAMES, derivationToolDenial } from '@/kernel/tools/derivation-policy';
-import { validateLearningContent as validatePreparedLearningContent } from '@/kernel/tools/learning-content-validation';
-import type { ValidateLearningContentFn } from '@/kernel/tools/types';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
 import { shouldEmitToolUseForCaller } from '@/server/ai/tools/tool-mirror-policy';
@@ -45,11 +45,9 @@ import {
   compileCopilotSessionContext,
 } from './live-turn-context';
 import {
-  NO_PROGRESS_BUDGET_LANDING_MARGIN_MS,
   type SealedCorrectionFiling,
   assistantProse,
   chooseVerifiedFallback,
-  createNoProgressLoop,
   mergeNoProgressReply,
   renderNoProgressClosure,
 } from './no-progress-loop';
@@ -57,7 +55,6 @@ import { resolveLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import { createCopilotProseStream } from './prose-stream';
 import {
-  COPILOT_REPLY_CHAR_LIMIT,
   type CopilotReplyFinalizationResult,
   createCopilotReplyFinalizer,
   piToolErrorText,
@@ -73,6 +70,7 @@ import {
   createCopilotSubtaskProjector,
   isCopilotSubagentEnabled,
 } from './subagents';
+import { learnerToolResult } from './tool-result-language';
 
 /**
  * Durable Copilot runs carry NO quantity ceilings — owner directive removes all
@@ -102,6 +100,8 @@ export function isRemoteMcpToolCall(name: string): boolean {
 
 export type CopilotExecutionActivity =
   | { kind: 'prose_delta'; text: string }
+  /** YUK-1765 — the model started reasoning. Carries no reasoning text. */
+  | { kind: 'model_thinking' }
   | { kind: 'subtask'; event: CopilotSubtaskEvent }
   | {
       kind: 'tool_started';
@@ -117,7 +117,20 @@ export type CopilotExecutionActivity =
       errorReason?: string;
       toolUseId?: string;
     }
-  | { kind: 'spawn_budget'; observation: SpawnBudgetObservation };
+  | { kind: 'spawn_budget'; observation: SpawnBudgetObservation }
+  | {
+      kind: 'block_draft';
+      toolUseId: string;
+      receivedBytes: number;
+      blockKind?: string;
+      title?: string;
+    }
+  | {
+      kind: 'block_ready';
+      toolUseId: string;
+      ref: string;
+      block: unknown;
+    };
 
 export interface CopilotExecutionTurn {
   input: CopilotRunInput;
@@ -153,6 +166,17 @@ export interface CopilotExecutionResult {
   sdkSessionId?: string;
   contextDigest: string;
   correctionFiling?: SealedCorrectionFiling;
+}
+
+/** Tolerant scan of the streamed compose_block args prefix (never the payload). */
+function scanBlockArgsPrefix(prefix: string): { blockKind?: string; title?: string } {
+  const kind = prefix.match(/"kind"\s*:\s*"([a-z_]{1,24})"/)?.[1];
+  const rawTitle = prefix.match(/"(?:alt|title)"\s*:\s*"((?:[^"\\]|\\.){0,80})/)?.[1];
+  const title = rawTitle?.slice(0, 60);
+  return {
+    ...(kind ? { blockKind: kind } : {}),
+    ...(title ? { title } : {}),
+  };
 }
 
 export type ExecuteCopilotTurn = (
@@ -257,44 +281,6 @@ export function createCopilotExecutionOwner(
         ? { reply: correctionResolution.reply, correction: 'clarify' as const }
         : undefined;
 
-    const validationTaskContext = (
-      callCtx: Parameters<Parameters<typeof validatePreparedLearningContent>[1]['runTaskFn']>[2],
-    ) => ({
-      ...callCtx,
-      db,
-      signal: validationSignal,
-      lifecycleAbortController,
-      parentTaskRunId: turn.taskRunId,
-      ...(deadlineAt !== undefined ? { providerSessionDeadlineAt: deadlineAt } : {}),
-    });
-    const validationRunner: Parameters<typeof validatePreparedLearningContent>[1]['runTaskFn'] =
-      async (kind, taskInput, callCtx) => {
-        await policy.cancellation.probe();
-        validationSignal.throwIfAborted();
-        const ctx = validationTaskContext(callCtx);
-        switch (kind) {
-          case 'QuizVerifyTask':
-            return adapters.runAgentTaskFn('QuizVerifyTask', taskInput, ctx) as ReturnType<
-              Parameters<typeof validatePreparedLearningContent>[1]['runTaskFn']
-            >;
-          case 'SolutionGenerateTask':
-            return adapters.runAgentTaskFn('SolutionGenerateTask', taskInput, ctx) as ReturnType<
-              Parameters<typeof validatePreparedLearningContent>[1]['runTaskFn']
-            >;
-          case 'SemanticJudgeTask':
-            return adapters.runAgentTaskFn('SemanticJudgeTask', taskInput, ctx) as ReturnType<
-              Parameters<typeof validatePreparedLearningContent>[1]['runTaskFn']
-            >;
-          case 'TeachingQualityTask':
-            return adapters.runAgentTaskFn('TeachingQualityTask', taskInput, ctx) as ReturnType<
-              Parameters<typeof validatePreparedLearningContent>[1]['runTaskFn']
-            >;
-          default:
-            throw new Error(`unsupported learning-content validation task: ${kind}`);
-        }
-      };
-    const validateLearningContent: ValidateLearningContentFn = (content) =>
-      validatePreparedLearningContent(content, { db, runTaskFn: validationRunner });
     const finalizer = createCopilotReplyFinalizer({
       rootTaskRunId: turn.taskRunId,
       correctionContract: input.correction_contract,
@@ -321,11 +307,11 @@ export function createCopilotExecutionOwner(
         ...(deadlineAt !== undefined ? { providerSessionDeadlineAt: deadlineAt } : {}),
         callerActor,
         ...(turn.sourceEventId ? { causedByEventId: turn.sourceEventId } : {}),
-        validateLearningContent,
       },
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
       toolNames: answerOnly ? [...ANSWER_ONLY_TOOL_NAMES] : resolveDomainToolNames(surface),
       taskKind: 'CopilotTask',
+      presentResult: (envelope) => learnerToolResult(db, envelope),
       cancellationSignals,
       beforeExecute: async (tool) =>
         derivationToolDenial(derivationPolicy, tool) ??
@@ -342,6 +328,46 @@ export function createCopilotExecutionOwner(
       onResult: (result) => {
         proposalFlowGate.observe(result);
         finalizer.observeDomainTool(result);
+        // YUK-1548 §5 — compose_block is mirrorEvent:'never', so its public
+        // frames come from this explicit projection, not the generic mirror.
+        if (result.name === 'compose_block' && result.tool_use_id) {
+          const output = result.output as
+            | {
+                status?: string;
+                ref?: string;
+                kind?: string;
+                block?: unknown;
+                issues?: { code: string }[];
+              }
+            | undefined;
+          if (result.error_reason === null && output?.status === 'ready' && output.ref) {
+            void Promise.resolve(
+              emitActivity(policy, {
+                kind: 'block_ready',
+                toolUseId: result.tool_use_id,
+                ref: output.ref,
+                block: output.block,
+              }),
+            ).catch(() => undefined);
+          } else {
+            const codes = (output?.issues ?? []).map((issue) => issue.code).join(',');
+            const status = output?.status ?? 'invalid';
+            // Large args (svg/html source) stay out of job_events: emit a
+            // digest-sized card, not the raw input.
+            const inputBytes = new TextEncoder().encode(
+              JSON.stringify(result.input ?? {}),
+            ).byteLength;
+            void Promise.resolve(
+              emitActivity(policy, {
+                kind: 'tool_finished',
+                toolName: 'compose_block',
+                input: { block: output?.kind ?? 'block', args_bytes: inputBytes },
+                summary: `${status}${codes ? ` (${codes})` : ''}`,
+                toolUseId: result.tool_use_id,
+              }),
+            ).catch(() => undefined);
+          }
+        }
       },
       onToolComplete: (result) => {
         void Promise.resolve(emitActivity(policy, { kind: 'tool_finished', ...result })).catch(
@@ -462,8 +488,9 @@ export function createCopilotExecutionOwner(
     });
     // No-progress runs before the finalizer so a blocked repeat never enters the trace.
     const piHooks = {
-      beforeToolCall: [noProgress.beforeToolCall, ...(assembledHooks.beforeToolCall ?? [])],
-      afterToolCall: [...(assembledHooks.afterToolCall ?? []), noProgress.afterToolCall],
+      progress: noProgress,
+      beforeToolCall: assembledHooks.beforeToolCall,
+      afterToolCall: assembledHooks.afterToolCall,
     };
     const piSkillDocs = answerOnly ? undefined : await adapters.resolveCopilotSkillDocsFn();
     const contextDigest = copilotSessionContextDigest(input);
@@ -490,6 +517,8 @@ export function createCopilotExecutionOwner(
         observedSdkSessionId = sessionId;
       },
     };
+    // One signal per stretch of reasoning; reset by anything else the model sends.
+    let thinkingAnnounced = false;
     const runnerContext: Parameters<typeof streamTaskCollecting>[2] = {
       db,
       taskRunId: turn.taskRunId,
@@ -524,7 +553,15 @@ export function createCopilotExecutionOwner(
       },
       sdkSession,
       nativeCompaction: { sessionContext: compileCopilotSessionContext(input) },
+      onThinking: () => {
+        if (thinkingAnnounced) return;
+        thinkingAnnounced = true;
+        void Promise.resolve(emitActivity(policy, { kind: 'model_thinking' })).catch(
+          () => undefined,
+        );
+      },
       onToolUse: (call) => {
+        thinkingAnnounced = false;
         if (!shouldEmitToolUseForCaller(call.toolName, DOMAIN_TOOL_MCP_SERVER_NAME, callerActor)) {
           return;
         }
@@ -532,9 +569,25 @@ export function createCopilotExecutionOwner(
           () => undefined,
         );
       },
+      onToolArgsDelta: (delta) => {
+        thinkingAnnounced = false;
+        if (delta.toolName !== `mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__compose_block`) return;
+        const draft = scanBlockArgsPrefix(delta.argsPrefix);
+        void Promise.resolve(
+          emitActivity(policy, {
+            kind: 'block_draft',
+            toolUseId: delta.toolUseId,
+            receivedBytes: delta.receivedBytes,
+            ...(draft.blockKind ? { blockKind: draft.blockKind } : {}),
+            ...(draft.title ? { title: draft.title } : {}),
+          }),
+        ).catch(() => undefined);
+      },
     };
+    let streamedProse = '';
     const prose = createCopilotProseStream((text) => {
       if (policy.cancellation.signal.aborted || lifecycleAbortController.signal.aborted) return;
+      streamedProse += text;
       void emitActivity(policy, { kind: 'prose_delta', text });
     });
     let retainSdkSession = false;
@@ -572,6 +625,7 @@ export function createCopilotExecutionOwner(
         input,
         runnerContext,
         (text) => {
+          thinkingAnnounced = false;
           prose.push(text);
         },
       );
@@ -605,7 +659,6 @@ export function createCopilotExecutionOwner(
           ? mergeNoProgressReply(
               assistantProse(result.text, terminalText),
               renderNoProgressClosure(sealedClosure, planned.fallback),
-              COPILOT_REPLY_CHAR_LIMIT,
             )
           : undefined;
       const partial = closureText !== undefined ? false : result.partial === true;
@@ -617,14 +670,39 @@ export function createCopilotExecutionOwner(
         { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: result.task_run_id },
         async (reportOutcome) => {
           const finalized = await finalizer.finalizeTerminal(
-            closureText ?? (partial ? '' : terminalText),
+            closureText ?? (partial ? result.text : terminalText),
             closureText === undefined && partial ? result.providerFailure : undefined,
+            {
+              streamedText: streamedProse,
+              retainedTail:
+                sealedClosure && planned
+                  ? renderNoProgressClosure(sealedClosure, planned.fallback)
+                  : undefined,
+            },
           );
-          reportOutcome(finalized.accepted ? 'accepted' : 'rejected');
+          if (finalized.receipt.assurance === 'unsealed') {
+            try {
+              await recordAiTaskReplyUnsealed(
+                db,
+                result.task_run_id,
+                finalized.receipt.unsealed_reason ?? 'finalization_error',
+              );
+            } catch {
+              console.error('[copilot] unsealed reply alert could not be recorded', {
+                task_run_id: result.task_run_id,
+              });
+            }
+          }
+          reportOutcome('accepted');
           return finalized;
         },
       );
-      retainSdkSession = !answerOnly && !partial && finalization.accepted && nativeChildrenComplete;
+      retainSdkSession =
+        !answerOnly &&
+        !partial &&
+        finalization.receipt.assurance !== 'unsealed' &&
+        finalization.accepted &&
+        nativeChildrenComplete;
       return {
         taskRunId: result.task_run_id,
         finishReason,

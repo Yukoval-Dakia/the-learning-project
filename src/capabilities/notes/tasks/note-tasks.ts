@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { materializeGeneratedBodyBlocks } from '@/capabilities/notes/server/generated-body-blocks';
-import { ArtifactBodyBlocks, NoteVerificationResult } from '@/core/schema/business';
+import { ArtifactBodyBlocks } from '@/core/schema/business';
 import { bodyBlocksToNoteSections } from '@/kernel/read-models/note-sections';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
@@ -19,20 +19,6 @@ export const NOTE_GENERATE_TIMEOUT_MS = 30 * 60 * 1000;
 export const NoteGenerateOutputSchema = z.object({
   body_blocks: ArtifactBodyBlocks,
 });
-
-function parseJsonObject(text: string, parserName: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error(`${parserName}: no JSON object found in text`);
-  }
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`${parserName}: JSON.parse failed: ${message}`);
-  }
-}
 
 export interface ParsedNoteGenerateOutput {
   body_blocks: z.infer<typeof ArtifactBodyBlocks>;
@@ -66,18 +52,6 @@ export function parseNoteGenerateOutput(
   };
 }
 
-export function parseNoteVerificationOutput(text: string): z.infer<typeof NoteVerificationResult> {
-  const parsed = NoteVerificationResult.safeParse(parseJsonObject(text, 'parseVerificationOutput'));
-  if (!parsed.success) {
-    throw new Error(
-      `parseVerificationOutput: schema invalid: ${parsed.error.issues
-        .map((issue) => issue.message)
-        .join('; ')}`,
-    );
-  }
-  return parsed.data;
-}
-
 function methodologySection(profile: SubjectProfile): string {
   const methodology = profile.promptFragments.methodology?.trim();
   return methodology ? `\n科目方法论：${methodology}` : '';
@@ -94,7 +68,7 @@ function noteTemplateTable(profile: SubjectProfile): string {
 }
 
 function buildNoteGeneratePrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}学习笔记作者。输入 { artifact_id, artifact_type, title, atomic_title, one_line_intent, knowledge_node: { id, name, domain }, knowledge_nodes: [...], parent_hub: { title, summary_md }, related_knowledge_ids: [...], reference_artifacts: [...] }。${methodologySection(profile)}
+  return `你是${profile.displayName}学习笔记作者。输入 { artifact_id, artifact_type, title, atomic_title, today, one_line_intent, knowledge_node: { id, name, domain }, knowledge_nodes: [...], parent_hub: { title, summary_md }, related_knowledge_ids: [...], reference_artifacts: [...] }。today 是学习者本地（Asia/Shanghai）日期与星期（YYYY-MM-DD（周X）），提到「今天/明天/下周」等相对日期时以它为锚。${methodologySection(profile)}
 artifact_type 只能是 note_atomic / note_long / note_hub。
 输入若带 revision_context（上一版正文 body_blocks 与检查发现的问题 issues），本次是修订任务：逐条修正所列问题，尤其数学与事实性陈述错误，保留其余正确内容、结构与链接纪律，仍按 NOTE v1 全文输出。
 
@@ -130,17 +104,6 @@ ${noteTemplateTable(profile)}
 - 禁止：套话、营销话语、emoji / 颜文字`;
 }
 
-function buildNoteVerifyPrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}学习笔记质检员。输入 { artifact_id, artifact_type, title, knowledge_node, body_blocks, block_summaries, sections }，其中 body_blocks 是 NoteGenerateTask 产出的 TipTap / ProseMirror JSON；sections 仅为旧兼容摘要。
-科目上下文：${profile.displayName}。${profile.languageStyle}
-证据要求：${profile.grounding.requirement}
-输出严格 JSON（不带 markdown 代码块包裹），shape 名称为 NoteVerificationResult：
-{"verdict":"pass"|"needs_review","summary_md":"...","issues":[{"block_id":"b1"|null,"severity":"info"|"warn"|"error","category":"factuality"|"coverage"|"clarity"|"subject_fit"|"format"|"safety","message":"...","suggested_fix_md":"..."}],"confidence":0.0-1.0}
-四维检查（fallback；详细规范见 note skill）：factuality（自洽不编造，${profile.grounding.uncertaintyPolicy}）/ coverage（atomic 须覆盖 definition/mechanism/example/pitfall/check 五种；long 综合完整；hub 路线+cross-link）/ clarity（按 block_summaries 可读，不空泛）/ subject_fit（符合 ${profile.displayName} 表达与例子风格）。format：block_id 引用 attrs.id；找不到用 null。
-判定（fallback）：无 error 且 warn≤2 → pass；任一 error 或 warn>2 或 confidence<0.6 → needs_review。issues≤10 条，message 可执行，suggested_fix_md 有明确改法时填。
-禁止：重写整篇 note、markdown 代码块、JSON 之外的文字。`;
-}
-
 function artifactTypeFromGenerateInput(input: unknown): string | undefined {
   if (!input || typeof input !== 'object' || !('artifact_type' in input)) return undefined;
   const value = (input as { artifact_type?: unknown }).artifact_type;
@@ -159,26 +122,11 @@ export const noteGenerateTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: { view: 'none', reason: '笔记任务只加工本条笔记内容，不读学习者历史上下文' },
+
     prompt: { kind: 'profile', build: buildNoteGeneratePrompt },
   },
   outputSchema: NoteGenerateOutputSchema,
   parseText: (text, context) =>
     parseNoteGenerateOutput(text, artifactTypeFromGenerateInput(context.input)),
 } satisfies TaskSpec<unknown, ParsedNoteGenerateOutput>;
-
-export const noteVerifyTaskSpec = {
-  ownership: 'owned',
-  definition: {
-    kind: 'NoteVerifyTask',
-    description: 'Product Track 1 — second-pass verification for generated atomic note sections',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
-    needsToolCall: false,
-    isMultimodal: false,
-    allowedTools: [],
-    prompt: { kind: 'profile', build: buildNoteVerifyPrompt },
-  },
-  outputSchema: NoteVerificationResult,
-  parseText: parseNoteVerificationOutput,
-} satisfies TaskSpec<unknown, z.infer<typeof NoteVerificationResult>>;

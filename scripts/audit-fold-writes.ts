@@ -233,27 +233,6 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/notes/server/note-long-check.ts',
-    marker: '.update(artifact)',
-    role: 'event-native-by-caller',
-    note: 'Long-check marker attrs updates are version-guarded and paired with set_attrs lifecycle events at the update timestamp; the revision body goes through artifact-body-commit.',
-  },
-  {
-    table: 'artifact',
-    file: 'src/capabilities/notes/jobs/note_verify.ts',
-    marker: '.update(artifact)',
-    role: 'event-native-by-caller',
-    note: 'Result persistence runs inside claim-result finalization after artifact/claim locks and epoch/status revalidation; lifecycle shares the update timestamp.',
-  },
-  {
-    table: 'artifact',
-    file: 'src/capabilities/notes/server/note-verification-claim-reservation.ts',
-    marker: '.update(artifact)',
-    role: 'event-native-by-caller',
-    note: 'Epoch/status-guarded exhaustion update and lifecycle event are atomic with the claim transition.',
-  },
-  {
-    table: 'artifact',
     file: 'src/capabilities/notes/jobs/note_generate.ts',
     marker: '.update(artifact)',
     role: 'event-native-by-caller',
@@ -279,13 +258,6 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     marker: '.insert(artifact)',
     role: 'event-native-by-caller',
     note: 'Tx-only quiz writer emits artifact_create from the full RETURNING row with the same timestamp; write_quiz owns the enclosing transaction.',
-  },
-  {
-    table: 'artifact',
-    file: 'src/capabilities/notes/server/tools/author-artifact.ts',
-    marker: '.insert(artifact)',
-    role: 'event-native-by-caller',
-    note: 'Tx-owned create snapshot and version-CAS attrs/lifecycle update; invalid event rolls back the paired row mutation.',
   },
   {
     table: 'artifact',
@@ -362,7 +334,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'item_calibration',
-    file: 'src/server/mastery/recalibration.ts',
+    file: 'src/capabilities/practice/settlement/server/recalibration.ts',
     marker: '.update(item_calibration)',
     role: 'off-path-writer',
     note: 'recalibrateQuestion b_calib firm-up UPDATE (OFF-path sole writer — post-anchor writes surface as audit drift, the documented 方案 A boundary).',

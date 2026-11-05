@@ -2,12 +2,13 @@
 // processing steps and background helpers. State changes in place (进行中 → 完成 / 没完成); a row
 // with a summary opens it beneath itself. Internal error text never renders.
 
-import { Check, CircleAlert, CircleSlash, LoaderCircle } from 'lucide-react';
-import { memo, useId, useState } from 'react';
+import { Check, ChevronDown, CircleAlert, CircleSlash, LoaderCircle } from 'lucide-react';
+import { memo, useId, useState, useSyncExternalStore } from 'react';
 import { Expand } from '@/ui-next/public';
 import type { ChatMessage } from '../message-projection';
 import type { ReplaySubagentRun, ReplayToolOperation } from '../replay';
-import { toolLabel } from './tool-labels';
+import type { CopilotModelStage } from '../subtask-events';
+import { toolActivity, toolLabel } from './tool-labels';
 
 type StepStatus = 'running' | 'done' | 'failed' | 'cancelled';
 
@@ -17,6 +18,8 @@ export interface StepView {
   status: StepStatus;
   /** One plain line; done → what came back, failed → what to do. */
   detail?: string;
+  /** YUK-1664 — what this step is doing, said while it runs (「正在查你最近的错题」). */
+  activity: string;
 }
 
 const STATUS_COPY: Record<StepStatus, string> = {
@@ -39,6 +42,13 @@ function lifecycleDetail(status: StepStatus, lost: boolean): string | undefined 
   return status === 'failed' ? '这一步没完成，稍后再试。' : undefined;
 }
 
+// The server's generic names for a helper run. A specific label reads fine as it is.
+const SUBTASK_WORDS: Readonly<Record<string, string>> = {
+  正在深入核对证据: '仔细核对',
+  子任务已完成: '仔细核对',
+  子任务未完成: '仔细核对',
+};
+
 /** Flatten a reply's tool calls, steps, operations and helper runs into display rows. */
 export function stepsOf(message: ChatMessage): StepView[] {
   const steps: StepView[] = [];
@@ -47,21 +57,21 @@ export function stepsOf(message: ChatMessage): StepView[] {
     steps.push({
       key: `call-${call.toolUseId ?? `${call.toolName}-${index}`}`,
       label,
+      activity: toolActivity(call.toolName),
       status: call.status,
-      detail:
-        call.status === 'failed'
-          ? `${label}暂时没完成，稍后再试。`
-          : call.status === 'done'
-            ? call.summary
-            : undefined,
+      // YUK-1664 — a tool's own summary is a diagnostic line (counts, flags, English keys), not
+      // learner text; only the failure gets a plain line.
+      detail: call.status === 'failed' ? `${label}暂时没完成，稍后再试。` : undefined,
     });
   });
   for (const subtask of message.subtasks ?? []) {
     const status: StepStatus =
       subtask.status === 'completed' ? 'done' : subtask.status === 'failed' ? 'failed' : 'running';
+    const label = SUBTASK_WORDS[subtask.label] ?? subtask.label;
     steps.push({
       key: `subtask-${subtask.id}`,
-      label: subtask.label,
+      label,
+      activity: `在${label}`,
       status,
       detail:
         status === 'failed'
@@ -74,6 +84,7 @@ export function stepsOf(message: ChatMessage): StepView[] {
     steps.push({
       key: `op-${op.id}`,
       label: toolLabel(op.tool_name),
+      activity: toolActivity(op.tool_name),
       status,
       detail: lifecycleDetail(status, op.status === 'lost'),
     });
@@ -83,6 +94,7 @@ export function stepsOf(message: ChatMessage): StepView[] {
     steps.push({
       key: `helper-${run.id}`,
       label: '分头查资料',
+      activity: '在分头查资料',
       status,
       detail: lifecycleDetail(status, run.status === 'lost'),
     });
@@ -146,5 +158,122 @@ export function StepList({ steps }: { steps: StepView[] }) {
         <ToolRow key={step.key} step={step} />
       ))}
     </ul>
+  );
+}
+
+const STAGE_WORDS: Record<CopilotModelStage, string> = {
+  waiting: '想一下',
+  thinking: '思考中',
+  writing: '在写',
+};
+
+// One shared clock while any live line is on screen; seconds on the line are the only thing it drives.
+let clockNow = Date.now();
+let clockTimer: ReturnType<typeof setInterval> | undefined;
+const clockListeners = new Set<() => void>();
+function subscribeClock(listener: () => void) {
+  clockListeners.add(listener);
+  clockTimer ??= setInterval(() => {
+    clockNow = Date.now();
+    for (const notify of clockListeners) notify();
+  }, 1000);
+  return () => {
+    clockListeners.delete(listener);
+    if (clockListeners.size === 0 && clockTimer) {
+      clearInterval(clockTimer);
+      clockTimer = undefined;
+    }
+  };
+}
+const readClock = () => clockNow;
+
+/** Whole seconds since `key` last changed. */
+function useSecondsSince(key: string): number {
+  const [mark, setMark] = useState({ key, at: Date.now() });
+  if (mark.key !== key) setMark({ key, at: Date.now() });
+  const now = useSyncExternalStore(subscribeClock, readClock, readClock);
+  return mark.key === key ? Math.max(0, Math.floor((now - mark.at) / 1000)) : 0;
+}
+
+/**
+ * While a reply is being generated, says what the companion is really doing, as a person would, and
+ * how long nothing new has come: a running step, or its stage from the run's frames. Never invented
+ * progress, and never a word about models or sending.
+ * Writing moves on its own, so its seconds only appear once the words have stopped for a moment.
+ */
+function LiveActivity({
+  steps,
+  stage,
+  textLength,
+}: {
+  steps: StepView[];
+  stage?: CopilotModelStage;
+  textLength: number;
+}) {
+  const running = steps.findLast((step) => step.status === 'running');
+  const current = stage ?? (textLength > 0 ? 'writing' : 'waiting');
+  const text = running?.activity ?? STAGE_WORDS[current];
+  const seconds = useSecondsSince(`${text}|${steps.length}|${textLength}`);
+  const showSeconds = seconds >= (current === 'writing' && !running ? 2 : 1);
+  return (
+    // Not a live region: RunFooter already announces the run's stage politely; announcing every
+    // step or second here too would flood a screen reader.
+    <p className="un-cp-activity" aria-live="off">
+      <span className="un-cp-step-glyph" aria-hidden="true">
+        <LoaderCircle size={14} className="un-cp-spin" />
+      </span>
+      <span className="un-cp-activity-text">{text}</span>
+      {showSeconds && <span className="un-cp-activity-seconds">{seconds} 秒</span>}
+      {steps.length > 0 && <span className="un-cp-activity-count">第 {steps.length} 步</span>}
+    </p>
+  );
+}
+
+/**
+ * YUK-1664 — the steps of one reply as the learner should see them. While the reply is being
+ * generated (`live`), one status line under the text says what the companion is doing right now and
+ * updates in place; earlier steps are not listed. Once the reply settles it folds into one summary
+ * line above the text that opens the full step list. The only motion is the running spinner and
+ * the chevron turning on open.
+ */
+export function StepActivity({
+  steps,
+  live,
+  stage,
+  textLength = 0,
+}: {
+  steps: StepView[];
+  live: boolean;
+  /** Live only: what the model is doing right now. */
+  stage?: CopilotModelStage;
+  /** Live only: how much reply text is on screen. */
+  textLength?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const listId = useId();
+  if (live) return <LiveActivity steps={steps} stage={stage} textLength={textLength} />;
+  if (steps.length === 0) return null;
+  const failed = steps.filter((step) => step.status === 'failed').length;
+  const summary =
+    failed > 0 ? `用了 ${steps.length} 步，其中 ${failed} 步没完成` : `用了 ${steps.length} 步`;
+  return (
+    <div className="un-cp-activity-done" data-failed={failed > 0 ? '' : undefined}>
+      <button
+        type="button"
+        className="un-cp-step-line un-hit"
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="un-cp-step-glyph" aria-hidden="true">
+          {failed > 0 ? <CircleAlert size={14} /> : <Check size={14} />}
+        </span>
+        <span className="un-cp-step-label">{summary}</span>
+        <ChevronDown size={14} aria-hidden="true" className="un-cp-activity-chev" />
+      </button>
+      <Expand open={open} id={listId}>
+        <StepList steps={steps} />
+      </Expand>
+    </div>
   );
 }
