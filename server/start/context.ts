@@ -58,7 +58,6 @@ import type {
   readPlacementSession,
   readPracticeDraftList,
   readPracticeQuestionList,
-  readQuestionDetail,
   readWorksheetExport,
   recomposePracticeStream,
   releaseHeldPlacement,
@@ -220,12 +219,6 @@ export type FrontdoorContext = {
     id: string;
     query: string;
   }) => Promise<Awaited<ReturnType<typeof archivePracticeQuestion>>>;
-  readLibraryQuestionDetail: (
-    id: string,
-  ) => Promise<Awaited<ReturnType<typeof readQuestionDetail>>>;
-  readPracticeQuestionDetail: (
-    id: string,
-  ) => Promise<Awaited<ReturnType<typeof readQuestionDetail>>>;
   getPracticeStream: (
     knowledgeId?: string,
   ) => Promise<Awaited<ReturnType<typeof getPracticeStream>>>;

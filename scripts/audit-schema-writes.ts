@@ -2,18 +2,21 @@
  * Schema write-path drift lint.
  *
  * Every business field in `src/db/schema.ts` must have an INSERT or UPDATE write path.
- * Exceptions are declared in scripts/audit-schema-allowlist.json with a reason and exit condition.
+ * A field with no write path (stub) fails unless the same field was already a stub at
+ * the comparison base (`--base` / `CAPABILITY_BASE_SHA` / `TEST_POLICY_BASE`, else
+ * merge-base with origin/main) — base measurement is the only grandfathering, there
+ * is no allowlist file.
  * The scan also checks the fixed seed-initialization contract for the 0117/0118 registration.
  *
  * Scans .ts/.tsx under src/ and app/.
  */
 
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { listTreeFiles, readBlobs, resolveAuditBaseSha } from './lib/git-base-scan';
 import {
   CONTINUATION_COLUMNS,
   RETIRED_SUBAGENT_COLUMNS,
@@ -26,43 +29,10 @@ import { extractDatabaseGeneratedWrites, extractExecutedSqlWrites } from './sche
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const SCHEMA_PATH = resolve(REPO_ROOT, 'src/db/schema.ts');
-const ALLOWLIST_PATH = resolve(__dirname, 'audit-schema-allowlist.json');
 const SEARCH_DIRS = ['src', 'app'];
 const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.git']);
 
 type Field = { table: string; field: string; type: string };
-type ResolveKind = 'pr' | 'phase' | 'manual';
-type ResolvesWhen = {
-  kind: ResolveKind;
-  ref: string;
-  expected_by: string;
-};
-type AllowlistEntry = { reason: string; resolves_when: ResolvesWhen };
-type Allowlist = Record<string, AllowlistEntry>;
-type AllowlistHygieneIssueCode =
-  | 'invalid_entry'
-  | 'missing_reason'
-  | 'invalid_resolves_when'
-  | 'invalid_kind'
-  | 'invalid_ref'
-  | 'invalid_expected_by'
-  | 'expired_expected_by'
-  | 'merged_pr'
-  | 'shipped_phase';
-export type AllowlistHygieneIssue = {
-  key: string;
-  code: AllowlistHygieneIssueCode;
-  message: string;
-};
-type AllowlistHygieneOptions = {
-  today: string;
-  mergedPrRefs: Set<string>;
-  statusText: string;
-};
-type AllowlistHygieneResult = {
-  allowlist: Allowlist;
-  issues: AllowlistHygieneIssue[];
-};
 type WriteHit = {
   table: string;
   field: string;
@@ -659,248 +629,9 @@ export function formatHistoricalRetention(retention: HistoricalRetention): strin
 }
 
 const TRIVIAL_FIELDS = new Set(['id', 'created_at', 'updated_at', 'version', 'archived_at']);
-const RESOLVE_KINDS = new Set<ResolveKind>(['pr', 'phase', 'manual']);
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function pad2(value: number): string {
-  return String(value).padStart(2, '0');
-}
-
-export function todayIso(now = new Date()): string {
-  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
-}
-
-function parseIsoDateStrict(value: string): Date | null {
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(year, month - 1, day);
-  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
-    return null;
-  }
-  return date;
-}
-
-function addMonthsIso(value: string, months: number): string {
-  const date = parseIsoDateStrict(value);
-  if (!date) return value;
-  date.setMonth(date.getMonth() + months);
-  return todayIso(date);
-}
-
-function normalizePrRef(ref: string): string | null {
-  const trimmed = ref.trim();
-  const match =
-    trimmed.match(/^#?(\d+)$/) ??
-    trimmed.match(/^PR\s+#?(\d+)$/i) ??
-    trimmed.match(/^pull\/(\d+)$/i) ??
-    trimmed.match(/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/(\d+)(?:[/?#].*)?$/i);
-  return match?.[1] ?? null;
-}
-
-function normalizePhaseText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^\p{Letter}\p{Number}]+/gu, ' ')
-    .trim();
-}
-
-function isShippedStatusLine(line: string): boolean {
-  return /^✅\s+(?:Phase\s+)?[\p{Letter}\p{Number}]/u.test(line);
-}
-
-function shippedPhaseStatusLines(statusText: string): string[] {
-  const lines = statusText.split('\n');
-  const out: string[] = [];
-  let inPhaseSection = false;
-  let inFence = false;
-
-  for (const line of lines) {
-    if (/^##\s+/.test(line)) {
-      inPhaseSection = /Phase\s*路线图|Phase\s+roadmap/i.test(line);
-      inFence = false;
-      continue;
-    }
-    if (!inPhaseSection) continue;
-    if (line.trim().startsWith('```')) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence && isShippedStatusLine(line)) {
-      out.push(line);
-    }
-  }
-
-  return out;
-}
-
-function isPhaseShipped(ref: string, statusText: string): boolean {
-  const normalizedRef = normalizePhaseText(ref);
-  if (!normalizedRef) return false;
-  return shippedPhaseStatusLines(statusText).some((line) => {
-    const normalizedLine = normalizePhaseText(line);
-    return ` ${normalizedLine} `.includes(` ${normalizedRef} `);
-  });
-}
-
-export function extractMergedPrRefsFromGitLog(log: string): Set<string> {
-  const refs = new Set<string>();
-  for (const match of log.matchAll(/\(#(\d+)\)|Merge pull request #(\d+)/gi)) {
-    const ref = match[1] ?? match[2];
-    if (ref) refs.add(ref);
-  }
-  return refs;
-}
-
-function readMergedPrRefs(): Set<string> {
-  try {
-    const log = execFileSync(
-      'git',
-      ['log', '--oneline', '--first-parent', '--decorate=short', '-n', '2000'],
-      { cwd: REPO_ROOT, encoding: 'utf8' },
-    );
-    return extractMergedPrRefsFromGitLog(log);
-  } catch {
-    return new Set();
-  }
-}
-
-function readStatusText(): string {
-  const statusPath = resolve(REPO_ROOT, 'docs/superpowers/status.md');
-  if (!existsSync(statusPath)) return '';
-  return readFileSync(statusPath, 'utf8');
-}
-
-function issue(
-  key: string,
-  code: AllowlistHygieneIssueCode,
-  message: string,
-): AllowlistHygieneIssue {
-  return { key, code, message };
-}
-
-export function validateAllowlistHygiene(
-  raw: unknown,
-  options: AllowlistHygieneOptions,
-): AllowlistHygieneResult {
-  const allowlist: Allowlist = {};
-  const issues: AllowlistHygieneIssue[] = [];
-
-  if (!isRecord(raw)) {
-    return {
-      allowlist,
-      issues: [issue('<root>', 'invalid_entry', 'allowlist root must be a JSON object')],
-    };
-  }
-
-  for (const [key, value] of Object.entries(raw)) {
-    if (key.startsWith('_')) continue;
-
-    if (!isRecord(value)) {
-      issues.push(issue(key, 'invalid_entry', 'allowlist entry must be an object'));
-      continue;
-    }
-
-    const reason = value.reason;
-    if (typeof reason !== 'string' || reason.trim().length === 0) {
-      issues.push(issue(key, 'missing_reason', 'allowlist entry requires non-empty reason'));
-      continue;
-    }
-
-    const resolvesWhen = value.resolves_when;
-    if (!isRecord(resolvesWhen)) {
-      issues.push(
-        issue(
-          key,
-          'invalid_resolves_when',
-          'resolves_when must be { kind, ref, expected_by }, not a legacy string',
-        ),
-      );
-      continue;
-    }
-
-    const kind = resolvesWhen.kind;
-    const ref = resolvesWhen.ref;
-    const expectedBy = resolvesWhen.expected_by;
-
-    if (typeof kind !== 'string' || !RESOLVE_KINDS.has(kind as ResolveKind)) {
-      issues.push(
-        issue(key, 'invalid_kind', "resolves_when.kind must be 'pr', 'phase', or 'manual'"),
-      );
-      continue;
-    }
-    if (typeof ref !== 'string' || ref.trim().length === 0) {
-      issues.push(issue(key, 'invalid_ref', 'resolves_when.ref must be a non-empty string'));
-      continue;
-    }
-    if (typeof expectedBy !== 'string' || !ISO_DATE_RE.test(expectedBy)) {
-      issues.push(
-        issue(key, 'invalid_expected_by', 'resolves_when.expected_by must be YYYY-MM-DD'),
-      );
-      continue;
-    }
-    if (!parseIsoDateStrict(expectedBy)) {
-      issues.push(
-        issue(key, 'invalid_expected_by', 'resolves_when.expected_by must be a valid date'),
-      );
-      continue;
-    }
-    if (expectedBy < options.today) {
-      issues.push(
-        issue(
-          key,
-          'expired_expected_by',
-          `resolves_when.expected_by ${expectedBy} is before ${options.today}`,
-        ),
-      );
-      continue;
-    }
-    const maxExpectedBy = addMonthsIso(options.today, 12);
-    if (expectedBy > maxExpectedBy) {
-      issues.push(
-        issue(
-          key,
-          'invalid_expected_by',
-          `resolves_when.expected_by ${expectedBy} is more than 12 months after ${options.today}`,
-        ),
-      );
-      continue;
-    }
-
-    if (kind === 'pr') {
-      const prRef = normalizePrRef(ref);
-      if (!prRef) {
-        issues.push(issue(key, 'invalid_ref', 'pr resolves_when.ref must contain a PR number'));
-        continue;
-      }
-      if (options.mergedPrRefs.has(prRef)) {
-        issues.push(issue(key, 'merged_pr', `resolves_when PR #${prRef} is already merged`));
-        continue;
-      }
-    }
-
-    if (kind === 'phase' && isPhaseShipped(ref, options.statusText)) {
-      issues.push(issue(key, 'shipped_phase', `resolves_when phase "${ref}" is already shipped`));
-      continue;
-    }
-
-    allowlist[key] = {
-      reason,
-      resolves_when: {
-        kind: kind as ResolveKind,
-        ref,
-        expected_by: expectedBy,
-      },
-    };
-  }
-
-  return { allowlist, issues };
 }
 
 // Drizzle column constructors recognised by parseSchema. The first group are native
@@ -962,11 +693,6 @@ export function parseSchema(src: string): Field[] {
     }
   }
   return fields;
-}
-
-function loadAllowlist(): unknown {
-  if (!existsSync(ALLOWLIST_PATH)) return {};
-  return JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf8'));
 }
 
 function walkFiles(dir: string, out: string[] = []): string[] {
@@ -1257,6 +983,47 @@ export function audit(repoRoot = REPO_ROOT) {
   );
 }
 
+/** Same audit measured on the committed tree at `ref` (blobs, not the worktree). */
+export function auditAtRef(repoRoot: string, ref: string) {
+  const entries = listTreeFiles(repoRoot, ref, SEARCH_DIRS).filter(
+    (entry) => /\.tsx?$/.test(entry.path) && !entry.path.endsWith('.d.ts'),
+  );
+  const sources = readBlobs(
+    repoRoot,
+    ref,
+    entries.map((entry) => entry.path),
+  );
+  if (sources.size !== entries.length) {
+    throw new Error(`cannot read every source blob at ${ref}`);
+  }
+
+  const schemaPaths = [
+    'src/db/schema.ts',
+    ...listTreeFiles(repoRoot, ref, ['src/db/schema'])
+      .map((entry) => entry.path)
+      .filter((path) => path.endsWith('.ts'))
+      .sort(),
+  ];
+  const schemaBlobs = readBlobs(repoRoot, ref, schemaPaths);
+  const schema = schemaPaths.map((path) => schemaBlobs.get(path) ?? '').join('\n');
+  if (!schemaBlobs.get('src/db/schema.ts')) {
+    throw new Error(`cannot read src/db/schema.ts at ${ref}`);
+  }
+
+  const initPaths = [MIGRATION_JOURNAL, SESSION_ORPHAN_MIGRATION, JUDGE_CONTROL_MIGRATION];
+  const initBlobs = readBlobs(repoRoot, ref, initPaths);
+  return auditSchemaWrites(
+    schema,
+    sources,
+    new Map(
+      initPaths.flatMap((path) => {
+        const blob = initBlobs.get(path);
+        return blob === undefined ? [] : [[path, blob] as const];
+      }),
+    ),
+  );
+}
+
 /**
  * The drizzle schema is split across the src/db/schema.ts entry and the
  * domain modules under src/db/schema/; the audit needs every table
@@ -1273,22 +1040,33 @@ export function readSchemaAggregate(repoRoot = REPO_ROOT): string {
   return parts.join('\n');
 }
 
+const stubKey = (r: WriteHit) => `${r.table}.${r.field}`;
+
 function main() {
   const args = process.argv.slice(2);
   const asJson = args.includes('--json');
   const listOnly = args.includes('--list');
+  const baseIndex = args.indexOf('--base');
+  if (baseIndex !== -1 && !args[baseIndex + 1]) throw new Error('--base requires a commit SHA.');
+  const baseSha = resolveAuditBaseSha(
+    REPO_ROOT,
+    baseIndex === -1
+      ? (process.env.CAPABILITY_BASE_SHA ?? process.env.TEST_POLICY_BASE)
+      : args[baseIndex + 1],
+  );
 
   const { results, retainedSchemas, judgeInitializationIssues } = audit();
   const retentionIssues = retainedSchemas.flatMap((retention) => retention.issues);
-  const hygiene = validateAllowlistHygiene(loadAllowlist(), {
-    today: todayIso(),
-    mergedPrRefs: readMergedPrRefs(),
-    statusText: readStatusText(),
-  });
-  const allowlist = hygiene.allowlist;
+  const baseStubs = new Set(
+    auditAtRef(REPO_ROOT, baseSha)
+      .results.filter((r) => r.status === 'stub')
+      .map(stubKey),
+  );
   const stubs = results.filter((r) => r.status === 'stub');
-  const unallowedStubs = stubs.filter((s) => !allowlist[`${s.table}.${s.field}`]);
-  const allowedStubs = stubs.filter((s) => allowlist[`${s.table}.${s.field}`]);
+  // The measured base is the only exemption: a field already stub at base stays
+  // grandfathered; any head stub absent there is new debt and fails.
+  const newStubs = stubs.filter((s) => !baseStubs.has(stubKey(s)));
+  const grandfatheredStubs = stubs.filter((s) => baseStubs.has(stubKey(s)));
 
   if (asJson) {
     console.log(
@@ -1297,9 +1075,9 @@ function main() {
           results,
           historicalRetention: retainedSchemas[0],
           retainedSchemas,
-          unallowedStubs,
-          allowedStubs,
-          allowlistIssues: hygiene.issues,
+          newStubs,
+          grandfatheredStubs,
+          baseSha,
           judgeInitializationIssues,
         },
         null,
@@ -1309,10 +1087,7 @@ function main() {
     process.exit(
       listOnly
         ? 0
-        : unallowedStubs.length > 0 ||
-            hygiene.issues.length > 0 ||
-            retentionIssues.length > 0 ||
-            judgeInitializationIssues.length > 0
+        : newStubs.length > 0 || retentionIssues.length > 0 || judgeInitializationIssues.length > 0
           ? 1
           : 0,
     );
@@ -1323,9 +1098,9 @@ function main() {
   console.log('|---|---|---|---|---|---|');
   for (const r of results) {
     if (r.status === 'live') continue;
-    const allowed = allowlist[`${r.table}.${r.field}`] ? ' (allowed)' : '';
+    const grandfathered = r.status === 'stub' && baseStubs.has(stubKey(r)) ? ' (base)' : '';
     console.log(
-      `| ${r.table}.${r.field} | ${r.type} | ${r.insert_files} | ${r.update_files} | ${r.status}${allowed} | ${r.initialization?.migration ?? ''} |`,
+      `| ${r.table}.${r.field} | ${r.type} | ${r.insert_files} | ${r.update_files} | ${r.status}${grandfathered} | ${r.initialization?.migration ?? ''} |`,
     );
   }
 
@@ -1337,10 +1112,10 @@ function main() {
   console.log(`  live: ${results.filter((r) => r.status === 'live').length}`);
   console.log(`  init-only: ${results.filter((r) => r.status === 'init-only').length}`);
   console.log(`  update-only: ${results.filter((r) => r.status === 'update-only').length}`);
-  console.log(`  stub (allowed): ${allowedStubs.length}`);
   console.log(
-    `  stub (unallowed): ${unallowedStubs.length}${unallowedStubs.length > 0 ? ' ⚠️' : ''}`,
+    `  stub (grandfathered at base ${baseSha.slice(0, 12)}): ${grandfatheredStubs.length}`,
   );
+  console.log(`  stub (new vs base): ${newStubs.length}${newStubs.length > 0 ? ' ⚠️' : ''}`);
 
   if (judgeInitializationIssues.length > 0) {
     console.log('\nJudge initialization contract violations:');
@@ -1350,24 +1125,13 @@ function main() {
   }
   if (retentionIssues.length > 0 && !listOnly) process.exit(1);
 
-  if (hygiene.issues.length > 0 && !listOnly) {
-    console.log('\n⚠️  Allowlist hygiene issues found:\n');
-    for (const item of hygiene.issues) {
-      console.log(`  - ${item.key}: ${item.code} — ${item.message}`);
-    }
-    console.log(
-      "\nUse resolves_when: { kind: 'pr' | 'phase' | 'manual', ref: string, expected_by: 'YYYY-MM-DD' }.",
-    );
-    process.exit(1);
-  }
-
-  if (unallowedStubs.length > 0 && !listOnly) {
-    console.log('\n⚠️  Unallowed stubs found:\n');
-    for (const s of unallowedStubs) {
+  if (newStubs.length > 0 && !listOnly) {
+    console.log('\n⚠️  New stub fields (no write path at head, not stub at base):\n');
+    for (const s of newStubs) {
       console.log(`  - ${s.table}.${s.field} (${s.type})`);
     }
     console.log(
-      '\n如该字段确实计划留 stub，加入 scripts/audit-schema-allowlist.json 并附 reason + resolves_when。\n如不要保留，删 schema 定义。',
+      '\n新字段必须自带 write path；无台账可登记。已存量的 stub 只按 base 实测放行，\n新增债无路可走——实现 write path 或删除该 schema 字段。',
     );
     process.exit(1);
   }
