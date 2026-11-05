@@ -8,7 +8,7 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
-import { CONTEXT_CHANGE } from '../context/topic-contract';
+import { CONTEXT_CHANGE, ChangeResult, LEARNER_EDIT_RULES } from '../context/topic-contract';
 import { changeTopics, readTopics, topicBoard } from '../context/topics';
 import { ContextActionRequest, ContextEditRequest, ContextEditResponse } from '../context/wire';
 
@@ -18,8 +18,18 @@ export async function GET() {
     return Response.json({
       ...board,
       changes: board.changes.map((c) => {
-        const p = c.payload as { before: { topics: unknown[] }; after: { topics: unknown[] } };
-        return { id: c.id, at: c.at.toISOString(), before: p.before.topics, after: p.after.topics };
+        const p = c.payload as {
+          before: { topics: unknown[] };
+          after: { topics: unknown[] };
+          undo_of?: string | null;
+        };
+        return {
+          id: c.id,
+          at: c.at.toISOString(),
+          before: p.before.topics,
+          after: p.after.topics,
+          undo_of: p.undo_of ?? null,
+        };
       }),
     });
   } catch (err) {
@@ -52,9 +62,19 @@ export async function EDIT(req: Request) {
     const input = ContextEditRequest.parse(await req.json());
     const crisis = classifyCrisisExpression(input.instruction);
     if (crisis !== 'none')
-      return Response.json({ reply: crisisTemplateForClass(crisis).text_md, changes: [] });
+      return Response.json({
+        status: 'unchanged',
+        reply: crisisTemplateForClass(crisis).text_md,
+        changes: [],
+        remaining_changes: [],
+      });
     if (input.derivation_policy !== 'allow')
-      return Response.json({ reply: '这句话不会存入长期记忆。', changes: [] });
+      return Response.json({
+        status: 'unchanged',
+        reply: '这句话不会存入长期记忆。',
+        changes: [],
+        remaining_changes: [],
+      });
     const current = await readTopics(db);
     if (input.expected_version !== current.version)
       return Response.json({ error: 'context_version_conflict' }, { status: 409 });
@@ -71,50 +91,75 @@ export async function EDIT(req: Request) {
       ingest_at: new Date(),
     });
     let writeFailure = false;
-    const result = await runAgentTask(
-      'DreamingTask',
-      {
-        ...current,
-        instruction: input.instruction,
-        topic_key: input.topic_key,
-        mode: 'learner_correction',
-        contract: '立即执行学习者修改，写 correction；不要只回复建议。修改后停止，回复改了什么。',
-      },
-      {
-        db,
-        taskRunId: id,
-        allowedTools: [piToolWireName(DOMAIN_TOOL_MCP_SERVER_NAME, 'curate_context')],
-        piToolMounts: [
-          piDomainMount({
-            serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-            taskKind: 'DreamingTask',
-            toolNames: ['curate_context'],
-            beforeExecute: () =>
-              writeFailure ? 'Previous write failed; finish without further writes.' : undefined,
-            onResult: (observation) => {
-              if (
-                observation.error_reason ||
-                !observation.executed ||
-                (observation.output &&
-                  typeof observation.output === 'object' &&
-                  'status' in observation.output &&
-                  observation.output.status === 'issue')
-              )
-                writeFailure = true;
-            },
-            ctx: {
-              db,
-              taskRunId: id,
-              providerAttemptCaller: 'api',
-              providerSessionDeadlineAt: Date.now() + 120_000,
-              callerActor: { kind: 'agent', ref: 'dreaming' },
-              causedByEventId: id,
-              derivationPolicy: 'allow',
-            },
-          }),
-        ],
-      },
-    );
+    let writeCommitted = false;
+    let scopeRejections = 0;
+    let repairAttempts = 0;
+    let remainingChanges: string[] = [];
+    try {
+      await runAgentTask(
+        'DreamingTask',
+        {
+          ...current,
+          instruction: input.instruction,
+          topic_key: input.topic_key,
+          mode: 'learner_correction',
+          contract: `立即执行学习者修改，写 correction；不要只回复建议。${LEARNER_EDIT_RULES}回复只说改了什么。`,
+        },
+        {
+          db,
+          taskRunId: id,
+          allowedTools: [piToolWireName(DOMAIN_TOOL_MCP_SERVER_NAME, 'curate_context')],
+          piToolMounts: [
+            piDomainMount({
+              serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+              taskKind: 'DreamingTask',
+              toolNames: ['curate_context'],
+              beforeExecute: () =>
+                writeFailure || writeCommitted
+                  ? 'Finish this turn without further writes.'
+                  : undefined,
+              onResult: (observation) => {
+                const change = ChangeResult.safeParse(observation.output);
+                if (observation.error_reason || !observation.executed || !change.success) {
+                  writeFailure = true;
+                  return;
+                }
+                if (change.data.status === 'changed') {
+                  writeCommitted = true;
+                  remainingChanges = change.data.remaining_changes;
+                } else {
+                  if (change.data.issues.some((i) => i.kind === 'edit_scope_exceeded'))
+                    scopeRejections++;
+                  if (
+                    change.data.status === 'issue' &&
+                    change.data.issues.every(
+                      (i) => i.kind === 'edit_scope_exceeded' || i.kind === 'unmergeable',
+                    ) &&
+                    repairAttempts++ === 0
+                  ) {
+                    // Rejected batches are atomic; allow one corrected proposal, never a second commit.
+                    return;
+                  }
+                  writeFailure = true;
+                }
+              },
+              ctx: {
+                db,
+                taskRunId: id,
+                providerAttemptCaller: 'api',
+                providerSessionDeadlineAt: Date.now() + 120_000,
+                callerActor: { kind: 'agent', ref: 'dreaming' },
+                causedByEventId: id,
+                derivationPolicy: 'allow',
+              },
+            }),
+          ],
+        },
+      );
+    } catch {
+      // A provider/report failure cannot erase a tool commit. The ledger decides the response.
+      writeFailure = true;
+    }
     const rows = await db
       .select()
       .from(event)
@@ -132,17 +177,21 @@ export async function EDIT(req: Request) {
           before: { topics: unknown[] };
           after: { topics: unknown[] };
           version: number;
+          remaining_changes?: string[];
+          request_complete?: boolean;
         };
-        return {
+        return ChangeResult.parse({
           status: 'changed',
           change_id: r.id,
           version: p.version,
           before: p.before.topics,
           after: p.after.topics,
           issues: [],
-        };
+          remaining_changes: p.remaining_changes ?? [],
+          request_complete: p.request_complete ?? false,
+        });
       });
-    if (writeFailure || !changes.length)
+    if (!changes.length && !scopeRejections)
       throw new ApiError(
         'context_edit_not_committed',
         '更正未完成，请重新读取当前画像后再试。',
@@ -150,7 +199,43 @@ export async function EDIT(req: Request) {
         undefined,
         { version: (await readTopics(db)).version, changes },
       );
-    return Response.json(ContextEditResponse.parse({ reply: result.text, changes }));
+    remainingChanges = [
+      ...new Set([...remainingChanges, ...changes.flatMap((c) => c.remaining_changes)]),
+    ];
+    const partial =
+      writeFailure ||
+      scopeRejections > 0 ||
+      remainingChanges.length > 0 ||
+      !changes.length ||
+      !changes.every((change) => change.request_complete);
+    const applied = changes.flatMap((change) =>
+      change.after.flatMap((topic) => {
+        const before = change.before.find((old) => old.key === topic.key);
+        return topic.facts
+          .filter(
+            (fact) => !before?.facts.some((old) => old.id === fact.id && old.body === fact.body),
+          )
+          .map((fact) => `${topic.name}：${fact.body}`);
+      }),
+    );
+    const reply = [
+      !changes.length
+        ? '这次没有保存更正。'
+        : partial
+          ? '这次仅保存了以下更正：'
+          : '已保存以下更正：',
+      ...applied,
+      ...(partial ? ['其余要求尚未保存或未确认，请对照改动记录。'] : []),
+      ...remainingChanges.map((item) => `尚未保存：${item}`),
+    ].join('\n');
+    return Response.json(
+      ContextEditResponse.parse({
+        status: partial ? 'partial' : 'changed',
+        reply,
+        changes,
+        remaining_changes: remainingChanges,
+      }),
+    );
   } catch (err) {
     return errorResponse(err);
   }
