@@ -16,7 +16,7 @@ import './load-env';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { listActiveSubjectsSinceRefresh } from '@/capabilities/agency/server/memory/active-subjects';
 import type { RubricGate } from '@/capabilities/knowledge/public';
-import { scheduleReview } from '@/capabilities/practice/public';
+import { scheduleReview } from '@/capabilities/practice/scheduling/public';
 import { CauseSchema } from '@/core/schema/cause';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { AiProposalPayloadInputT } from '@/core/schema/proposal';

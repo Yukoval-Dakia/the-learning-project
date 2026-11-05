@@ -8,7 +8,7 @@ import type { FrontdoorContext } from './context';
 export const readStartWorksheetExport: FrontdoorContext['readWorksheetExport'] = (token) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
-      const { readWorksheetExport } = await import('@/capabilities/practice/public');
+      const { readWorksheetExport } = await import('@/capabilities/practice/session/public');
       const { db } = await import('@/db/client');
       const state = await readWorksheetExport(db, token);
       if (!state) {

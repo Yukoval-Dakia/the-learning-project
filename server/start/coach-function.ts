@@ -1,6 +1,6 @@
 import { createServerFn } from '@tanstack/react-start';
 import { getRequest } from '@tanstack/react-start/server';
-import type { WeeklyReportQuery } from '@/capabilities/practice/public';
+import type { WeeklyReportQuery } from '@/capabilities/practice/scheduling/public';
 import {
   readStartCoachCalibration,
   readStartCoachEffectiveness,

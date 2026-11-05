@@ -11,7 +11,7 @@ import type { FrontdoorContext } from './context';
 export const createStartPlacement: FrontdoorContext['startPlacement'] = (body) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
-      const { startPlacementProbe } = await import('@/capabilities/practice/public');
+      const { startPlacementProbe } = await import('@/capabilities/practice/placement/public');
       return await startPlacementProbe(async () => JSON.parse(body));
     } catch (error) {
       throw errorResponse(error);

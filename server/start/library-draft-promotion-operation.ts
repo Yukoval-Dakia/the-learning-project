@@ -8,7 +8,7 @@ import type { FrontdoorContext } from './context';
 export const enableStartLibraryDraft: FrontdoorContext['enableLibraryDraft'] = (id) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
-      const { enablePracticeDraft } = await import('@/capabilities/practice/public');
+      const { enablePracticeDraft } = await import('@/capabilities/practice/question-bank/public');
       const { db } = await import('@/db/client');
       return await enablePracticeDraft(db, { id });
     } catch (error) {
@@ -22,7 +22,9 @@ export const forceEnableStartLibraryDraft: FrontdoorContext['forceEnableLibraryD
 }) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
-      const { forceEnablePracticeDraft } = await import('@/capabilities/practice/public');
+      const { forceEnablePracticeDraft } = await import(
+        '@/capabilities/practice/question-bank/public'
+      );
       const { db } = await import('@/db/client');
       return await forceEnablePracticeDraft(db, { id }, async () => JSON.parse(body));
     } catch (error) {
