@@ -7,11 +7,11 @@
 // 动作类别与 outcome 词，不回放学习者自由文本；answer_only / crisis 回合的
 // 发言也因此不计入「发言 N 次」。
 
-import { and, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { event, knowledge, question, source_document } from '@/db/schema';
+import { event, knowledge } from '@/db/schema';
 import { COPILOT_USER_ASK_ACTION } from '@/kernel/events/copilot-actions';
-import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
+import { allowedEventIds } from '@/kernel/events/derivation-policy';
 import { excerpt } from '@/kernel/read-models/extraction-summary';
 import {
   LEARNER_ANSWER_ACTIONS,
@@ -21,18 +21,13 @@ import {
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
 import { executeGetReviewDue } from '@/kernel/read-models/review-due';
-import { readDocumentDerivationPolicy } from '@/kernel/read-models/usage-policy';
+import { allowedQuestionIds } from '@/kernel/read-models/usage-policy';
 import type { ToolContext } from '@/kernel/tools/types';
 import type { DeltaSection, DueItemLine } from './types';
 
 type DbLike = Db | Tx;
 
-const DELTA_SCAN_LIMIT = 200;
-const NON_MATERIAL_QUESTION_SOURCES: ReadonlySet<string> = new Set([
-  'manual',
-  'web_sourced',
-  'quiz_gen',
-]);
+export const DELTA_SCAN_LIMIT = 200;
 const NATIVE_ATTEMPT_ACTION = 'experimental:assessment_attempt';
 const RECORD_CAPTURE_ACTION = 'experimental:record_capture';
 const REVIEW_ACTION = 'review';
@@ -108,9 +103,6 @@ function lineFor(row: {
 
 function deltaEventPredicate(asOf: Date) {
   return and(
-    // Restricted-purpose events (crisis disclosures, consent-scoped
-    // derivations) are excluded here, before any template sees them.
-    eventAllowsDerivationSql(),
     or(
       and(
         eq(event.actor_kind, 'user'),
@@ -133,8 +125,8 @@ function deltaEventPredicate(asOf: Date) {
 
 /**
  * Read the delta segment: events after `asOf` (the consolidation high-water),
- * counted exactly by a grouped aggregate — the DELTA_SCAN_LIMIT rows only feed
- * the "最近 3 条" lines, never the numbers.
+ * limited to the newest DELTA_SCAN_LIMIT candidate events before purpose checks.
+ * The rendered window label makes capped counts explicit.
  */
 export async function readDeltaSection(
   db: DbLike,
@@ -146,9 +138,10 @@ export async function readDeltaSection(
     callerActor: { kind: 'system', ref: 'learner-context' },
   };
   const predicate = deltaEventPredicate(opts.asOf);
-  const [rows, countRows, due, streak, lastActivityAt] = await Promise.all([
+  const [candidates, due, streak, lastActivityAt] = await Promise.all([
     db
       .select({
+        id: event.id,
         action: event.action,
         subject_kind: event.subject_kind,
         outcome: event.outcome,
@@ -158,71 +151,24 @@ export async function readDeltaSection(
       .from(event)
       .where(predicate)
       .orderBy(desc(event.created_at), desc(event.id))
-      .limit(DELTA_SCAN_LIMIT),
-    db
-      .select({
-        action: event.action,
-        subject_kind: event.subject_kind,
-        n: sql<number>`count(*)::int`,
-      })
-      .from(event)
-      .where(predicate)
-      .groupBy(event.action, event.subject_kind),
+      .limit(DELTA_SCAN_LIMIT + 1),
     executeGetReviewDue(toolCtx, { limit: REVIEW_DUE_DISPLAY_CAP }),
     loadLongestFailureStreak(db),
     loadLastLearnerEventAt(db),
   ]);
 
-  // 到期明细的来源同意闸：题的每个来源文档（ingestion 捕获的
-  // metadata.source_document_id、quiz_gen 物料的
-  // metadata.quiz_gen.material_source_document_id）逐一查用途策略——任一非
-  // 'allow'（answer_only/crisis/解析不出）或文档行缺失，该题不进启动段
-  // （题干和知识点名都不放）。没有来源键的题只放行已知不来自学习者材料的
-  // source：变式题等派生题不记来源却可能由受限文档生成。只影响启动段明细；
-  // review-due wire 与到期计数不变。
-  const dueQuestionIds = due.rows.map((row) => row.question_id);
-  const questionMetaRows =
-    dueQuestionIds.length > 0
-      ? await db
-          .select({ id: question.id, source: question.source, metadata: question.metadata })
-          .from(question)
-          .where(inArray(question.id, dueQuestionIds))
-      : [];
-  const docIdSet = new Set<string>();
-  const docIdsByQuestion = new Map<string, string[]>();
-  const sourceByQuestion = new Map<string, string>();
-  for (const row of questionMetaRows) {
-    sourceByQuestion.set(row.id, row.source);
-    const meta =
-      row.metadata && typeof row.metadata === 'object'
-        ? (row.metadata as Record<string, unknown>)
-        : {};
-    const ids = [
-      meta.source_document_id,
-      (meta.quiz_gen as Record<string, unknown> | undefined)?.material_source_document_id,
-    ].filter((id): id is string => typeof id === 'string' && id.length > 0);
-    docIdsByQuestion.set(row.id, ids);
-    for (const id of ids) docIdSet.add(id);
-  }
-  const allowedDocIds = new Set<string>();
-  if (docIdSet.size > 0) {
-    const docRows = await db
-      .select({ id: source_document.id, provenance: source_document.provenance })
-      .from(source_document)
-      .where(inArray(source_document.id, [...docIdSet]));
-    // 行缺失 = 查不清 → 不在 allowed 集合；readDocumentDerivationPolicy 对
-    // 解析不出的 provenance 本身 fail-closed（返回 'answer_only'）。
-    for (const row of docRows) {
-      if (readDocumentDerivationPolicy(row.provenance) === 'allow') allowedDocIds.add(row.id);
-    }
-  }
-  const sourceAllowed = (questionId: string): boolean => {
-    const ids = docIdsByQuestion.get(questionId);
-    if (!ids) return false; // 到期行指向的 question 行读不到 = 查不清，当不允许
-    if (ids.length === 0)
-      return NON_MATERIAL_QUESTION_SOURCES.has(sourceByQuestion.get(questionId) ?? '');
-    return ids.every((id) => allowedDocIds.has(id));
-  };
+  const window = candidates.slice(0, DELTA_SCAN_LIMIT);
+  const allowed = await allowedEventIds(
+    db,
+    window.map((row) => row.id),
+  );
+  const rows = window.filter((row) => allowed.has(row.id));
+  const countRows = rows.map((row) => ({ ...row, n: 1 }));
+  const purposeAllowed = await allowedQuestionIds(
+    db,
+    due.rows.map((row) => row.question_id),
+  );
+  const sourceAllowed = (questionId: string) => purposeAllowed.has(questionId);
 
   // 到期队列前几条明细：题干摘要 + 知识点显示名（学习者可见 id、非 seed 结构锚、未归档节点）。
   const dueItemRows = due.rows
@@ -272,6 +218,7 @@ export async function readDeltaSection(
     asOf: opts.asOf,
     asOfBasis: opts.asOfBasis,
     counts,
+    countsWindowLimited: candidates.length > DELTA_SCAN_LIMIT,
     recent: rows.slice(0, 3).map((row) => ({ at: row.created_at, label: lineFor(row) })),
     reviewDueCount: due.queue_summary.total_returned,
     reviewDueOverCap: due.queue_summary.total_returned >= REVIEW_DUE_DISPLAY_CAP,

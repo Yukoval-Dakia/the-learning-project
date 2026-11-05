@@ -93,10 +93,13 @@ function loadMathPlugins(): Promise<MathPlugins> {
   // before it lands shows every formula twice (YUK-1379). Its fonts are bundled same-origin.
   // The root `katex` dependency exists only for this stylesheet and must stay on the version
   // rehype-katex renders with: 0.19 renamed .inner/.fix, so \neq drew as "/ =" (YUK-1446).
+  // mhchem (`$\ce{…}$`, `$\pu{…}$`, YUK-1548 §3.3) registers its macros into the katex module it
+  // imports; that is the same katex@0.16.47 rehype-katex renders with, so it rides in the same load.
   mathPluginsPromise ??= Promise.all([
     import('remark-math'),
     import('rehype-katex'),
     import('katex/dist/katex.min.css'),
+    import('katex/contrib/mhchem'),
   ])
     .then(([remarkMath, rehypeKatex]) => {
       const plugins = cacheMathPlugins(remarkMath.default, rehypeKatex.default);
@@ -133,6 +136,7 @@ if (import.meta.env.SSR) {
   const [remarkMath, rehypeKatex] = await Promise.all([
     import('remark-math'),
     import('rehype-katex'),
+    import('katex/contrib/mhchem'),
   ]);
   cacheMathPlugins(remarkMath.default, rehypeKatex.default);
 }

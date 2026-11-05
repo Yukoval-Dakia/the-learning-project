@@ -19,10 +19,10 @@ import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 // loopback DATABASE_URL wins; @/db/client then targets loom_demo.
 import './load-env';
 
+import { runCurator } from '@/capabilities/agency/context/curator';
 // YUK-1064 dev-only exception: this sandbox demo explicitly orchestrates jobs.
 // Keep these three concrete runners out of agency/public; production dispatch uses manifests.
 import { runCoach } from '@/capabilities/agency/jobs/coach_daily';
-import { runDreamingNightly } from '@/capabilities/agency/jobs/dreaming_nightly';
 import { runGoalScopeProposeNightly } from '@/capabilities/agency/jobs/goal_scope_propose_nightly';
 import { installAgencyHostOperations } from '@/capabilities/agency/public';
 import { loadSubjectBriefEvents } from '@/capabilities/agency/server/memory/active-subjects';
@@ -126,8 +126,8 @@ async function main() {
   });
 
   // 6) Dreaming (real LLM, manual) — goal-aware proposals
-  await step('6. dreaming → runDreamingNightly (real agent loop, goal-aware)', async () => {
-    const r = await runDreamingNightly(db);
+  await step('6. Curator → consolidate context (real agent loop)', async () => {
+    const r = await runCurator(db, 'nightly');
     show('result', r);
     return r;
   });

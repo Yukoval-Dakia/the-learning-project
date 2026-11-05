@@ -359,8 +359,7 @@
 [data-ui-next] .un-st-support .un-cp-reply-status {
   margin: 12px 0 0;
   padding: 12px 14px;
-  border-inline-start: 3px solid var(--st-outline);
-  border-radius: 0 12px 12px 0;
+  border-radius: 12px;
   background: var(--st-raised);
   color: var(--st-ink);
   font-size: 13px;

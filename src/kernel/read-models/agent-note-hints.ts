@@ -10,6 +10,7 @@
 import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 
 type DbLike = Db | Tx;
 
@@ -103,6 +104,7 @@ export async function readAgentNotes(db: DbLike, opts: ReadAgentNotesOpts): Prom
 
   const conditions = [
     eq(event.action, 'experimental:agent_note'),
+    eventAllowsDerivationSql(),
     eq(event.subject_kind, 'query'),
     // target_agents array contains for_agent (jsonb containment).
     sql`${event.payload}->'target_agents' @> ${JSON.stringify([opts.for_agent])}::jsonb`,

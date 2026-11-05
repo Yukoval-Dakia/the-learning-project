@@ -7,7 +7,7 @@ import type { Db, Tx } from '@/db/client';
 import type { LearnerContextResult } from '@/kernel/read-models/learner-context';
 import { trimUnitsToBudget } from './budget';
 import { readContractSection } from './contract';
-import { readDeltaSection, shanghaiLabel } from './delta';
+import { DELTA_SCAN_LIMIT, readDeltaSection, shanghaiLabel } from './delta';
 import { DELTA_FALLBACK_LOOKBACK_MS, readSteadySection } from './steady';
 import type { DeltaSection, DueItemLine } from './types';
 
@@ -20,6 +20,8 @@ const LOOKBACK_DAYS = Math.round(DELTA_FALLBACK_LOOKBACK_MS / (24 * 60 * 60 * 10
 function renderDelta(delta: DeltaSection): string {
   const lines: string[] = [];
   const c = delta.counts;
+  const windowLabel = delta.countsWindowLimited ? `（最近${DELTA_SCAN_LIMIT}条候选活动内）` : '';
+
   const parts = [
     c.answers > 0 ? `新作答 ${c.answers} 次` : '',
     c.reviews > 0 ? `复习 ${c.reviews} 次` : '',
@@ -32,7 +34,11 @@ function renderDelta(delta: DeltaSection): string {
     delta.asOfBasis === 'dreaming'
       ? `自 ${shanghaiLabel(delta.asOf)} 固化以来`
       : `近 ${LOOKBACK_DAYS} 天`;
-  lines.push(parts.length > 0 ? `${scope}：${parts.join('，')}` : `${scope}暂无新学习动态`);
+  lines.push(
+    parts.length > 0
+      ? `${scope}${windowLabel}：${parts.join('，')}`
+      : `${scope}暂无新学习动态${windowLabel}`,
+  );
   for (const line of delta.recent) lines.push(`· ${shanghaiLabel(line.at)} ${line.label}`);
   const tail = [
     `今日待复习 ${delta.reviewDueOverCap ? `${delta.reviewDueCount}+` : delta.reviewDueCount} 项`,
@@ -67,7 +73,7 @@ function renderDueItems(items: DueItemLine[]): string | null {
  */
 export async function assembleCompanionContext(
   db: DbLike,
-  opts: { now: Date },
+  opts: { now: Date; budget?: number },
 ): Promise<LearnerContextResult> {
   const steady = await readSteadySection(db, { now: opts.now });
   const [delta, contract] = await Promise.all([
@@ -79,18 +85,27 @@ export async function assembleCompanionContext(
   const portraitMd = steady.portraitMd ? `画像：${steady.portraitMd}` : null;
   const signalsMd =
     contract.signalsMd.length > 0 ? `判读备注：${contract.signalsMd.join('')}` : null;
-  const overnightMd = contract.overnightMd ? `昨夜交班：${contract.overnightMd}` : null;
+  const overnightMd = steady.overnightMd ? `昨夜交班：${steady.overnightMd}` : null;
 
-  const trimmed = trimUnitsToBudget([
-    { rank: 0, name: 'steering', markdown: contract.steeringMd },
-    { rank: 1, name: 'delta', markdown: renderDelta(delta) },
-    { rank: 2, name: 'due_details', markdown: renderDueItems(delta.dueItems), dropRank: 8 },
-    { rank: 3, name: 'mastery_causes', markdown: masteryMd },
-    { rank: 4, name: 'failure_details', markdown: contract.failureDetailsMd, dropRank: 9 },
-    { rank: 5, name: 'portrait', markdown: portraitMd },
-    { rank: 6, name: 'signals', markdown: signalsMd },
-    { rank: 7, name: 'overnight', markdown: overnightMd },
-  ]);
+  const trimmed = trimUnitsToBudget(
+    [
+      { rank: 0, name: 'steering', markdown: contract.steeringMd },
+      {
+        rank: 0.5,
+        name: 'communication',
+        markdown: steady.communicationMd ? `怎么和我说话：${steady.communicationMd}` : null,
+        protected: true,
+      },
+      { rank: 1, name: 'delta', markdown: renderDelta(delta) },
+      { rank: 2, name: 'due_details', markdown: renderDueItems(delta.dueItems), dropRank: 8 },
+      { rank: 3, name: 'mastery_causes', markdown: masteryMd },
+      { rank: 4, name: 'failure_details', markdown: contract.failureDetailsMd, dropRank: 9 },
+      { rank: 5, name: 'portrait', markdown: portraitMd },
+      { rank: 6, name: 'signals', markdown: signalsMd },
+      { rank: 7, name: 'overnight', markdown: overnightMd },
+    ],
+    { maxEstimatedTokens: opts.budget ?? 1000, maxChars: 2400 },
+  );
 
   return {
     view: 'companion',

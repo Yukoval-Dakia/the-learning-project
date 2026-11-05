@@ -7,6 +7,8 @@ export type { ContextViewName };
 
 /** 稳态段读数：memory brief 的 global scope（B1 读现成的，不生成）。 */
 export interface SteadySection {
+  communicationMd: string | null;
+  overnightMd: string | null;
   /** global brief 的 recent_week_md，原文不改写；行不存在或非现行用途时为 null。 */
   portraitMd: string | null;
   /** Δ 段高水位：最近一次成功 Dreaming 固化时间；无固化记录时为固定回看窗下界。 */
@@ -38,6 +40,7 @@ export interface DeltaSection {
     steering: number;
     messages: number;
   };
+  countsWindowLimited?: boolean;
   recent: DeltaEventLine[];
   /** 到期读数（上限 REVIEW_DUE_DISPLAY_CAP）；达到上限时 reviewDueOverCap=true，渲染「50+」。 */
   reviewDueCount: number;

@@ -360,13 +360,9 @@
     overflow-wrap: anywhere;
   }
 
-  /* Runs: the picked row sits on a tint with a primary edge. */
+  /* Runs: the picked row sits on a tint. */
   & .adm-table tr[data-selected] td {
     background: color-mix(in srgb, var(--un-md-sys-color-secondary-container) 55%, transparent);
-  }
-
-  & .adm-table tr[data-selected] td:first-child {
-    box-shadow: inset 3px 0 0 var(--un-md-sys-color-primary);
   }
 
   & .adm-run-pick {
