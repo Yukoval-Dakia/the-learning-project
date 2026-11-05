@@ -92,7 +92,6 @@ export {
   validateJudgeEngineInventory,
   withdrawCapturedOccurrence,
 } from './grading/public';
-export type { QuizGenJobData } from './jobs/quiz_gen';
 export {
   DEFAULT_MAX_PER_RUN,
   type EnqueueVariantVerifyFn,
@@ -216,7 +215,6 @@ export async function installPracticeHostOperations(): Promise<void> {
   });
 }
 
-export { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
 export type { PlacementVerificationAuthority, SupplyTraceV1T } from '@/kernel/supply-contracts';
 export { withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
 // public ports repointed from central deep imports.
@@ -228,29 +226,23 @@ export {
   JYEOO_BACKFILL_PER_QUESTION_MS,
   PLACEMENT_GENERATION_RESERVATION_MICRO_USD,
   PLACEMENT_PAID_CALL_RESERVATION_MICRO_USD,
-  PLACEMENT_QUEUE_EXPIRY_MS,
   PlacementStarterBudgetExhaustedError,
   PlacementStarterUnknownCostError,
   SUPPLY_DISPATCH_COOLDOWN_DAYS,
   acquirePlacementAttempt,
   addAuthorizedCostComponent,
   addPlacementStarterCostComponent,
-  dispatchPlacementStarterClaim,
   dispatchSupplyTarget as dispatchPracticeSupplyTarget,
   dispatchSupplyTargets as dispatchPracticeSupplyTargets,
   findSubjectRootKnowledgeId,
   inFlightSupplyCount,
-  isPlacementStarterJobLive,
   jyeooBackfillSpawnTimeoutMs,
-  markPlacementStarterClaimTerminal,
   matchJyeooKnowledgeHints,
   releaseAuthorizedPaidCall,
   reserveAuthorizedPaidCall,
   reservePlacementGenerationCall,
-  resolvePlacementStarterGoalAuthority,
   runJyeooFetchCandidates,
   settleAuthorizedPaidCall,
-  terminalizeLostPlacementDelivery,
   terminalizePlacementUnknownCost,
 } from './supply/public';
 

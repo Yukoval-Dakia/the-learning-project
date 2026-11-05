@@ -4,6 +4,7 @@ import {
   ActivityRef,
   CauseCategory,
   FsrsRating,
+  GradingProvenanceEntry,
   PartialUnknownJudgeResult,
   ScoreMeaning,
 } from '@/kernel/capability-contract-schemas';
@@ -60,6 +61,7 @@ export const ReviewAdviceBodySchema = z.object({
   // Present = the caller hands over this attempt's commit capture, so an automatic verdict is
   // recorded and settled in this request. Absent = preview only; the caller commits separately.
   commit: CreateAttemptCaptureSchema.optional(),
+  accept_pending: z.boolean().optional(),
 });
 
 const LegacyReviewAdviceJudgeSchema = z.object({
@@ -74,6 +76,7 @@ const LegacyReviewAdviceJudgeSchema = z.object({
     id: z.string().min(1),
     version: z.string().min(1),
   }),
+  grading_provenance: z.array(GradingProvenanceEntry).optional(),
   suggested_rating: FsrsRating.nullable(),
   telemetry: z.unknown().optional(),
   // advice.ts returns these so the client can echo them back on submit

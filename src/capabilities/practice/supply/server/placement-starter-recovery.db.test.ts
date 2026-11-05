@@ -19,16 +19,14 @@ import {
   placement_starter_claim,
   question,
 } from '@/db/schema';
-import {
-  resolvePlacementStarterGoalAuthority,
-  terminalizeLostPlacementDelivery,
-} from '@/kernel/placement';
 import { resetDb } from '../../../../../tests/helpers/db';
+import { terminalizeLostPlacementDelivery } from './placement-starter-attempts';
 import {
   PLACEMENT_STARTER_RECOVERY_BACKOFF_MS,
   PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS,
   sweepStalePlacementStarterClaims,
 } from './placement-starter-recovery';
+import { resolvePlacementStarterGoalAuthority } from './placement-starter-store';
 
 const NOW = new Date('2026-07-25T06:00:00Z');
 const CREATED = new Date('2026-07-20T00:00:00Z');

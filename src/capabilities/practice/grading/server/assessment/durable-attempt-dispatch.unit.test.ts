@@ -65,6 +65,9 @@ vi.mock('@/kernel/events', () => ({
 vi.mock('@/kernel/locks/grading', () => ({
   lockJudgeRun: vi.fn(async () => {}),
 }));
+vi.mock('@/kernel/locks/assessment-evaluation-group-lock', () => ({
+  lockAssessmentEvaluationGroup: vi.fn(async () => {}),
+}));
 vi.mock('../judge-operational', () => ({
   readJudgeControl: vi.fn(async () => ({ phase: 'pg-boss' })),
   reserveInitialJudgeDelivery: vi.fn(() => {

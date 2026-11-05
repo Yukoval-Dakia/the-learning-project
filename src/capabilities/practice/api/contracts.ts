@@ -65,6 +65,7 @@ export const CreateAttemptCaptureSchema = CreateAttemptBodyBaseSchema.pick({
   session_id: true,
   stream_item_id: true,
   reasoning_trace: true,
+  self_confidence: true,
   latency_ms: true,
   referenced_knowledge_ids: true,
 });

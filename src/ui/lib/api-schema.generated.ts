@@ -19325,7 +19325,7 @@ export interface operations {
                                     confidence?: number;
                                     evidence_json?: unknown;
                                     feedback_md?: string;
-                                    final_rating?: string;
+                                    final_rating?: string | null;
                                     grading_provenance?: {
                                         /** @enum {string} */
                                         calibration: "uncalibrated";
@@ -19334,6 +19334,8 @@ export interface operations {
                                         source: "ai";
                                     }[];
                                     judge_event_id?: string | null;
+                                    /** @enum {string} */
+                                    judge_lane?: "durable" | "sync";
                                     late_arrival?: boolean;
                                     model?: string;
                                     outcome?: string;
@@ -20055,7 +20057,7 @@ export interface operations {
                             confidence?: number;
                             evidence_json?: unknown;
                             feedback_md?: string;
-                            final_rating?: string;
+                            final_rating?: string | null;
                             grading_provenance?: {
                                 /** @enum {string} */
                                 calibration: "uncalibrated";
@@ -20064,6 +20066,8 @@ export interface operations {
                                 source: "ai";
                             }[];
                             judge_event_id?: string | null;
+                            /** @enum {string} */
+                            judge_lane?: "durable" | "sync";
                             late_arrival?: boolean;
                             model?: string;
                             outcome?: string;
@@ -25228,7 +25232,7 @@ export interface operations {
                                                 confidence?: number;
                                                 evidence_json?: unknown;
                                                 feedback_md?: string;
-                                                final_rating?: string;
+                                                final_rating?: string | null;
                                                 grading_provenance?: {
                                                     /** @enum {string} */
                                                     calibration: "uncalibrated";
@@ -25237,6 +25241,8 @@ export interface operations {
                                                     source: "ai";
                                                 }[];
                                                 judge_event_id?: string | null;
+                                                /** @enum {string} */
+                                                judge_lane?: "durable" | "sync";
                                                 late_arrival?: boolean;
                                                 model?: string;
                                                 outcome?: string;
@@ -26946,7 +26952,7 @@ export interface operations {
                                                     confidence?: number;
                                                     evidence_json?: unknown;
                                                     feedback_md?: string;
-                                                    final_rating?: string;
+                                                    final_rating?: string | null;
                                                     grading_provenance?: {
                                                         /** @enum {string} */
                                                         calibration: "uncalibrated";
@@ -26955,6 +26961,8 @@ export interface operations {
                                                         source: "ai";
                                                     }[];
                                                     judge_event_id?: string | null;
+                                                    /** @enum {string} */
+                                                    judge_lane?: "durable" | "sync";
                                                     late_arrival?: boolean;
                                                     model?: string;
                                                     outcome?: string;
@@ -28173,7 +28181,7 @@ export interface operations {
                                                 confidence?: number;
                                                 evidence_json?: unknown;
                                                 feedback_md?: string;
-                                                final_rating?: string;
+                                                final_rating?: string | null;
                                                 grading_provenance?: {
                                                     /** @enum {string} */
                                                     calibration: "uncalibrated";
@@ -28182,6 +28190,8 @@ export interface operations {
                                                     source: "ai";
                                                 }[];
                                                 judge_event_id?: string | null;
+                                                /** @enum {string} */
+                                                judge_lane?: "durable" | "sync";
                                                 late_arrival?: boolean;
                                                 model?: string;
                                                 outcome?: string;
@@ -34258,6 +34268,13 @@ export interface operations {
                                 confidence: number;
                                 evaluation_id?: string;
                                 feedback_md: string;
+                                grading_provenance?: {
+                                    /** @enum {string} */
+                                    calibration: "uncalibrated";
+                                    scoring_unit_id: string;
+                                    /** @enum {string} */
+                                    source: "ai";
+                                }[];
                                 judge_event_id: string | null;
                                 /** @enum {string} */
                                 route: "multimodal_direct" | "evaluate_submission";
@@ -36489,6 +36506,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    accept_pending?: boolean;
                     activity_ref?: {
                         id: string;
                         /** @enum {string} */
@@ -36624,6 +36642,7 @@ export interface operations {
                         reasoning_trace?: string | null;
                         /** @default [] */
                         referenced_knowledge_ids?: string[];
+                        self_confidence?: number | null;
                         session_id?: string | null;
                         stream_item_id?: string | null;
                     };
@@ -36755,6 +36774,13 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                             feedback_md: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             provenance_token?: string;
                             route: string;
                             score: number | null;
@@ -36776,6 +36802,13 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                             feedback_md: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             partial_units: {
                                 correct_count: number;
                                 scoring_unit_id: string;
@@ -36794,6 +36827,25 @@ export interface operations {
                         };
                         question_id: string;
                         submission_id: string;
+                    };
+                };
+            };
+            /** @description Successful response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        backfill: {
+                            /** @enum {string} */
+                            channel: "sse";
+                            poll_url: string;
+                            url: string;
+                        };
+                        run_id: string;
+                        /** @enum {string} */
+                        verdict: "pending";
                     };
                 };
             };
