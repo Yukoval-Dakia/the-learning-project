@@ -486,19 +486,11 @@ export async function readQuestionServing(
 
     let nextAction: QuestionServing['next_action'] = null;
     if (!servable && pendingAction == null) {
-      // reverify stays system-only: the auto ledger retries it under the same
-      // may_reverify gate (an applied verdict for the current digest is terminal
-      // and never re-paid). recheck_source IS also an operator action again —
-      // the system's single auto attempt may be spent on a still-broken lane,
-      // and after a repair the operator needs a real re-run, not a hold release.
-      // release_verify_hold stays the verify_hold button; retraction_hold never
-      // clears.
+      // reverify/recheck_source stay system-owned: their ledgers rerun the
+      // underlying verifier once the lane admits another attempt. Only
+      // release_verify_hold is an operator action; retraction_hold never clears.
       const command: ServingActionCommand | null =
-        holdReason === 'verify_hold'
-          ? 'release_verify_hold'
-          : holdReason === 'source_check_failed'
-            ? 'recheck_source'
-            : null;
+        holdReason === 'verify_hold' ? 'release_verify_hold' : null;
       if (command != null) {
         nextAction = { command, method: 'POST', path: servingActionPath(groupId, command) };
       }

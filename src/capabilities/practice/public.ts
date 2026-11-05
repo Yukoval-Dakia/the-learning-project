@@ -53,6 +53,7 @@ export {
   type NativeAttemptDispatchPort,
   type ReviewAnswerContext,
   type ReviewAnswerResult,
+  assertSourceGroundingLaneConfigured,
   buildLegacyJudgeHandler,
   calibrationSampleDispatchSchema,
   commitFormalAttempt,
@@ -87,6 +88,7 @@ export {
   saveResponseDraft,
   saveSubmission,
   sealJudgeEngineInventory,
+  sourceGroundingLaneFingerprint,
   validateJudgeEngineInventory,
   withdrawCapturedOccurrence,
 } from './grading/public';

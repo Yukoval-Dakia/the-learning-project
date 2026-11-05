@@ -78,11 +78,9 @@ export const QuestionServingCountsSchema = z.object({
 });
 export const QuestionServingActionParamsSchema = z.object({
   id: z.string().trim().min(1),
-  // release_verify_hold clears a verify_hold; recheck_source re-runs real
-  // grounding on a source_check_failed hold (the command itself re-gates on
-  // hold_reason). reverify stays system-only — the auto ledger owns it; an
-  // old-client POST of it fails this schema (400).
-  command: z.enum(['release_verify_hold', 'recheck_source']),
+  // release_verify_hold is the only operator command. System rechecks stay on
+  // the internal ledger; an old-client POST of one fails this schema (400).
+  command: z.enum(['release_verify_hold']),
 });
 export const QuestionServingActionHeadersSchema = z.object({
   'Idempotency-Key': z.string().min(1).max(200),

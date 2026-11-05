@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { type AnyColumn, and, eq, inArray, isNull, notExists, sql } from 'drizzle-orm';
+import { type AnyColumn, and, eq, exists, inArray, isNull, notExists, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
@@ -31,6 +31,10 @@ const verifyDispatchIntentPayloadSchema = z.object({
       fencing_token: z.string().uuid(),
     })
     .optional(),
+  /** Source-verify config-error event id that this recovery intent answers. */
+  recovery_epoch: z.string().min(1).optional(),
+  /** Non-secret lane identity recorded by that config-error event. */
+  lane_fingerprint: z.string().min(1).optional(),
 });
 
 type VerifyDispatchIntentPayload = z.infer<typeof verifyDispatchIntentPayloadSchema>;
@@ -96,9 +100,12 @@ function stableEventId(
   questionId: string,
   verifier: VerifyKind,
   authority?: PlacementVerificationAuthority,
+  recoveryEpoch?: string,
 ) {
   const digest = createHash('sha256')
-    .update(`${verifier}\0${questionId}${placementAuthorityIdentity(authority)}`)
+    .update(
+      `${verifier}\0${questionId}${placementAuthorityIdentity(authority)}\0${recoveryEpoch ?? ''}`,
+    )
     .digest('hex');
   return `verify-dispatch-${kind}-v${VERIFY_DISPATCH_VERSION_TAG}-${digest}`;
 }
@@ -107,16 +114,18 @@ function intentEventId(
   questionId: string,
   verifier: VerifyKind,
   authority?: PlacementVerificationAuthority,
+  recoveryEpoch?: string,
 ) {
-  return stableEventId('intent', questionId, verifier, authority);
+  return stableEventId('intent', questionId, verifier, authority, recoveryEpoch);
 }
 
 function completeEventId(
   questionId: string,
   verifier: VerifyKind,
   authority?: PlacementVerificationAuthority,
+  recoveryEpoch?: string,
 ) {
-  return stableEventId('complete', questionId, verifier, authority);
+  return stableEventId('complete', questionId, verifier, authority, recoveryEpoch);
 }
 
 function metadataIsArchived(metadata: unknown): boolean {
@@ -146,6 +155,8 @@ export async function writeVerifyDispatchIntent(
     verifier: VerifyKind;
     supplyTrace?: unknown;
     placementAuthority?: PlacementVerificationAuthority;
+    recoveryEpoch?: string;
+    laneFingerprint?: string;
     createdAt?: Date;
   },
 ): Promise<string> {
@@ -155,8 +166,15 @@ export async function writeVerifyDispatchIntent(
     question_id: input.questionId,
     ...(input.supplyTrace ? { supply_trace: input.supplyTrace } : {}),
     ...(input.placementAuthority ? { placement_authority: input.placementAuthority } : {}),
+    ...(input.recoveryEpoch ? { recovery_epoch: input.recoveryEpoch } : {}),
+    ...(input.laneFingerprint ? { lane_fingerprint: input.laneFingerprint } : {}),
   });
-  const id = intentEventId(input.questionId, input.verifier, input.placementAuthority);
+  const id = intentEventId(
+    input.questionId,
+    input.verifier,
+    input.placementAuthority,
+    input.recoveryEpoch,
+  );
   if (input.placementAuthority) {
     const [existing] = await db
       .select({ payload: event.payload })
@@ -193,7 +211,12 @@ function dispatchCompletionEvent(
   input: { recovery: boolean; disposition: 'enqueued' | 'terminal_skip'; now: Date },
 ): WriteEventInput {
   return {
-    id: completeEventId(intent.question_id, intent.verifier_kind, intent.placement_authority),
+    id: completeEventId(
+      intent.question_id,
+      intent.verifier_kind,
+      intent.placement_authority,
+      intent.recovery_epoch,
+    ),
     actor_kind: 'system',
     actor_ref: 'verify_dispatch_outbox',
     action: VERIFY_DISPATCH_COMPLETE_ACTION,
@@ -209,6 +232,8 @@ function dispatchCompletionEvent(
       disposition: input.disposition,
       ...(intent.supply_trace ? { supply_trace: intent.supply_trace } : {}),
       ...(intent.placement_authority ? { placement_authority: intent.placement_authority } : {}),
+      ...(intent.recovery_epoch ? { recovery_epoch: intent.recovery_epoch } : {}),
+      ...(intent.lane_fingerprint ? { lane_fingerprint: intent.lane_fingerprint } : {}),
     },
     created_at: input.now,
     ingest_at: input.now,
@@ -285,6 +310,7 @@ export async function dispatchPendingVerifyIntents(
                 eq(completion.subject_id, event.subject_id),
                 sql`${completion.payload}->>'verifier_kind' = ${event.payload}->>'verifier_kind'`,
                 sql`COALESCE(${completion.payload}->'placement_authority', 'null'::jsonb) = COALESCE(${event.payload}->'placement_authority', 'null'::jsonb)`,
+                sql`COALESCE(${completion.payload}->>'recovery_epoch', '') = COALESCE(${event.payload}->>'recovery_epoch', '')`,
               ),
             ),
         ),
@@ -346,8 +372,7 @@ export async function dispatchPendingVerifyIntents(
       for (const intent of pending) {
         const row = questions.get(intent.question_id);
         if (
-          !row ||
-          row.draftStatus !== 'draft' ||
+          row?.draftStatus !== 'draft' ||
           metadataIsArchived(row.metadata) ||
           // A part has no verify of its own. The parent's cascade owns it. Drain a stray intent instead of enqueueing a job that can only skip.
           row.parentQuestionId != null ||
@@ -417,12 +442,21 @@ export async function dispatchPendingVerifyIntents(
  */
 export async function recoverOrphanVerifyDispatches(
   db: Db,
-  input: { enqueue: EnqueueVerifyFn; batchSize?: number; now?: Date },
+  input: {
+    enqueue: EnqueueVerifyFn;
+    batchSize?: number;
+    now?: Date;
+    /** Non-secret source-grounding lane identity used to detect a real repair. */
+    sourceVerifyLaneFingerprint?: () => string;
+    /** Zero-send check that the source-grounding lane executes as configured. */
+    sourceVerifyRecoveryPreflight?: () => Promise<void>;
+  },
 ): Promise<VerifyDispatchResult> {
   const now = input.now ?? new Date();
-  const synthesizedIds = await db.transaction(async (tx) => {
+  const synthesis = await db.transaction(async (tx) => {
     const existingIntent = alias(event, 'verify_dispatch_existing_intent');
     const terminalVerify = alias(event, 'verify_dispatch_terminal_verify');
+    const configError = alias(event, 'verify_dispatch_config_error');
     const drafts = await tx
       .select({ id: question.id, source: question.source, metadata: question.metadata })
       .from(question)
@@ -433,20 +467,37 @@ export async function recoverOrphanVerifyDispatches(
           sql`${question.metadata}->>'archived_at' IS NULL`,
           // A part is promoted with its parent. An intent here can only skip.
           isNull(question.parent_question_id),
-          // Filter owned and terminal rows before LIMIT, or a stuck first page hides later drafts.
-          // An incomplete intent is not owned. Counting it would block the valid replacement.
-          notExists(
-            tx
-              .select({ id: existingIntent.id })
-              .from(existingIntent)
-              .where(
-                and(
-                  eq(existingIntent.action, VERIFY_DISPATCH_INTENT_ACTION),
-                  eq(existingIntent.subject_id, question.id),
-                  isStructurallyDispatchableIntent(existingIntent.payload),
-                  sql`${existingIntent.payload}->>'verifier_kind' = CASE WHEN ${question.source} = 'web_sourced' THEN 'source_verify' ELSE 'quiz_verify' END`,
+          or(
+            notExists(
+              tx
+                .select({ id: existingIntent.id })
+                .from(existingIntent)
+                .where(
+                  and(
+                    eq(existingIntent.action, VERIFY_DISPATCH_INTENT_ACTION),
+                    eq(existingIntent.subject_id, question.id),
+                    isStructurallyDispatchableIntent(existingIntent.payload),
+                    sql`${existingIntent.payload}->>'verifier_kind' = CASE WHEN ${question.source} = 'web_sourced' THEN 'source_verify' ELSE 'quiz_verify' END`,
+                  ),
                 ),
+            ),
+            and(
+              eq(question.source, 'web_sourced'),
+              exists(
+                tx
+                  .select({ id: configError.id })
+                  .from(configError)
+                  .where(
+                    and(
+                      eq(configError.action, 'experimental:source_verify'),
+                      eq(configError.subject_id, question.id),
+                      eq(configError.outcome, 'error'),
+                      sql`${configError.payload}->>'config_error' = 'true'`,
+                      sql`${configError.payload}->>'lane_fingerprint' IS NOT NULL`,
+                    ),
+                  ),
               ),
+            ),
           ),
           notExists(
             tx
@@ -466,43 +517,285 @@ export async function recoverOrphanVerifyDispatches(
       .limit(input.batchSize ?? 500)
       .for('update', { skipLocked: true });
     const liveDrafts = drafts.filter((row) => !metadataIsArchived(row.metadata));
-    if (liveDrafts.length === 0) return [];
+    if (liveDrafts.length === 0) return { synthesized: [] as string[], recoveryCandidates: [] };
     const ids = liveDrafts.map((row) => row.id);
     const relatedEvents = await tx
       .select({
+        id: event.id,
         subjectId: event.subject_id,
         action: event.action,
         outcome: event.outcome,
         payload: event.payload,
+        createdAt: event.created_at,
       })
       .from(event)
       .where(inArray(event.subject_id, ids));
-    const intentKeys = new Set(
-      relatedEvents
-        .filter((row) => row.action === VERIFY_DISPATCH_INTENT_ACTION)
-        .map((row) => verifyDispatchIntentPayloadSchema.safeParse(row.payload))
-        .filter((result) => result.success)
-        .map((result) => `${result.data.question_id}\0${result.data.verifier_kind}`),
-    );
+    const intentsByQuestion = new Map<
+      string,
+      { payload: VerifyDispatchIntentPayload; createdAt: Date }[]
+    >();
+    const completionKeys = new Set<string>();
+    const intentKey = (payload: VerifyDispatchIntentPayload) =>
+      `${payload.question_id}\0${payload.verifier_kind}${placementAuthorityIdentity(
+        payload.placement_authority,
+      )}\0${payload.recovery_epoch ?? ''}`;
+    for (const row of relatedEvents) {
+      if (
+        row.action !== VERIFY_DISPATCH_INTENT_ACTION &&
+        row.action !== VERIFY_DISPATCH_COMPLETE_ACTION
+      )
+        continue;
+      const parsed = verifyDispatchIntentPayloadSchema.safeParse(row.payload);
+      if (!parsed.success) continue;
+      if (row.action === VERIFY_DISPATCH_INTENT_ACTION) {
+        const bucket = intentsByQuestion.get(parsed.data.question_id);
+        if (bucket) bucket.push({ payload: parsed.data, createdAt: row.createdAt });
+        else
+          intentsByQuestion.set(parsed.data.question_id, [
+            { payload: parsed.data, createdAt: row.createdAt },
+          ]);
+      } else {
+        completionKeys.add(intentKey(parsed.data));
+      }
+    }
     const terminalKeys = new Set(
       relatedEvents
         .filter(isTerminalVerifyEvent)
         .map((row) => terminalVerifyKey(row.subjectId, row.action)),
     );
+    const latestErrorByQuestion = new Map<
+      string,
+      { id: string; createdAt: Date; laneFingerprint?: string }
+    >();
+    for (const row of relatedEvents) {
+      if (row.action !== 'experimental:source_verify' || row.outcome !== 'error') continue;
+      const existing = latestErrorByQuestion.get(row.subjectId);
+      if (
+        existing &&
+        (row.createdAt < existing.createdAt ||
+          (row.createdAt.getTime() === existing.createdAt.getTime() && row.id <= existing.id))
+      )
+        continue;
+      const payload = row.payload as Record<string, unknown> | null;
+      latestErrorByQuestion.set(row.subjectId, {
+        id: row.id,
+        createdAt: row.createdAt,
+        ...(typeof payload?.lane_fingerprint === 'string'
+          ? { laneFingerprint: payload.lane_fingerprint }
+          : {}),
+      });
+    }
+    const configErrorIds = new Set(
+      relatedEvents
+        .filter(
+          (row) =>
+            row.action === 'experimental:source_verify' &&
+            row.outcome === 'error' &&
+            (row.payload as Record<string, unknown> | null)?.config_error === true,
+        )
+        .map((row) => row.id),
+    );
     const synthesized: string[] = [];
+    const recoveryCandidates: {
+      questionId: string;
+      verifier: VerifyKind;
+      recoveryEpoch: string;
+      laneFingerprint: string;
+      placementAuthority?: PlacementVerificationAuthority;
+      supplyTrace?: unknown;
+    }[] = [];
     for (const row of liveDrafts) {
       const verifier = row.source === 'web_sourced' ? 'source_verify' : 'quiz_verify';
       const key = `${row.id}\0${verifier}`;
-      if (intentKeys.has(key) || terminalKeys.has(key)) continue;
-      await writeVerifyDispatchIntent(tx, {
+      if (terminalKeys.has(key)) continue;
+      const intents = intentsByQuestion.get(row.id) ?? [];
+      const scoped = intents
+        .map((entry) => entry.payload)
+        .filter((intent) => intent.verifier_kind === verifier);
+      const incomplete = scoped.some((intent) => !completionKeys.has(intentKey(intent)));
+      if (incomplete) continue;
+      if (scoped.length === 0) {
+        await writeVerifyDispatchIntent(tx, {
+          questionId: row.id,
+          verifier,
+          createdAt: now,
+        });
+        synthesized.push(row.id);
+        continue;
+      }
+      const latestConfigError = latestErrorByQuestion.get(row.id);
+      if (
+        verifier !== 'source_verify' ||
+        latestConfigError == null ||
+        latestConfigError.laneFingerprint == null ||
+        !configErrorIds.has(latestConfigError.id)
+      )
+        continue;
+      if (scoped.some((intent) => intent.recovery_epoch === latestConfigError.id)) continue;
+      const prior = intents
+        .filter((entry) => entry.payload.verifier_kind === verifier)
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]?.payload;
+      recoveryCandidates.push({
         questionId: row.id,
         verifier,
-        createdAt: now,
+        recoveryEpoch: latestConfigError.id,
+        laneFingerprint: latestConfigError.laneFingerprint,
+        ...(prior?.placement_authority ? { placementAuthority: prior.placement_authority } : {}),
+        ...(prior?.supply_trace ? { supplyTrace: prior.supply_trace } : {}),
       });
-      synthesized.push(row.id);
     }
-    return synthesized;
+    return { synthesized, recoveryCandidates };
   });
+
+  if (synthesis.recoveryCandidates.length > 0) {
+    if (input.sourceVerifyLaneFingerprint == null || input.sourceVerifyRecoveryPreflight == null) {
+      synthesis.recoveryCandidates.length = 0;
+    } else {
+      let currentLaneFingerprint: string | undefined;
+      try {
+        currentLaneFingerprint = input.sourceVerifyLaneFingerprint();
+      } catch (error) {
+        console.warn('[verify-dispatch-outbox] source_verify lane fingerprint unavailable:', error);
+      }
+      if (!currentLaneFingerprint) {
+        synthesis.recoveryCandidates.length = 0;
+      } else {
+        synthesis.recoveryCandidates = synthesis.recoveryCandidates.filter(
+          (candidate) => candidate.laneFingerprint !== currentLaneFingerprint,
+        );
+        if (synthesis.recoveryCandidates.length > 0) {
+          try {
+            await input.sourceVerifyRecoveryPreflight();
+          } catch (error) {
+            console.warn(
+              '[verify-dispatch-outbox] source_verify recovery lane still broken:',
+              error,
+            );
+            synthesis.recoveryCandidates.length = 0;
+          }
+        }
+      }
+    }
+  }
+
+  if (synthesis.recoveryCandidates.length > 0) {
+    await db.transaction(async (tx) => {
+      const ids = synthesis.recoveryCandidates.map((candidate) => candidate.questionId);
+      const lockedDrafts = new Map(
+        (
+          await tx
+            .select({
+              id: question.id,
+              draftStatus: question.draft_status,
+              metadata: question.metadata,
+            })
+            .from(question)
+            .where(inArray(question.id, ids))
+            .for('update', { skipLocked: true })
+        ).map((row) => [row.id, row]),
+      );
+      const relatedEvents = await tx
+        .select({
+          id: event.id,
+          subjectId: event.subject_id,
+          action: event.action,
+          outcome: event.outcome,
+          payload: event.payload,
+          createdAt: event.created_at,
+        })
+        .from(event)
+        .where(inArray(event.subject_id, ids));
+      const intentKey = (payload: VerifyDispatchIntentPayload) =>
+        `${payload.question_id}\0${payload.verifier_kind}${placementAuthorityIdentity(
+          payload.placement_authority,
+        )}\0${payload.recovery_epoch ?? ''}`;
+      const intentKeys = new Set<string>();
+      const completionKeys = new Set<string>();
+      const currentLaneFingerprint = (() => {
+        try {
+          return input.sourceVerifyLaneFingerprint?.();
+        } catch {
+          return undefined;
+        }
+      })();
+      if (!currentLaneFingerprint) return;
+      for (const row of relatedEvents) {
+        if (
+          row.action !== VERIFY_DISPATCH_INTENT_ACTION &&
+          row.action !== VERIFY_DISPATCH_COMPLETE_ACTION
+        )
+          continue;
+        const parsed = verifyDispatchIntentPayloadSchema.safeParse(row.payload);
+        if (!parsed.success) continue;
+        (row.action === VERIFY_DISPATCH_INTENT_ACTION ? intentKeys : completionKeys).add(
+          intentKey(parsed.data),
+        );
+      }
+      for (const candidate of synthesis.recoveryCandidates) {
+        const locked = lockedDrafts.get(candidate.questionId);
+        if (locked?.draftStatus !== 'draft' || metadataIsArchived(locked.metadata)) continue;
+        if (
+          relatedEvents.some(
+            (row) =>
+              row.subjectId === candidate.questionId &&
+              row.action === 'experimental:source_verify' &&
+              row.outcome !== 'error',
+          )
+        )
+          continue;
+        const latestError = relatedEvents
+          .filter(
+            (row) =>
+              row.subjectId === candidate.questionId &&
+              row.action === 'experimental:source_verify' &&
+              row.outcome === 'error',
+          )
+          .sort(
+            (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id),
+          )[0];
+        const latestErrorPayload = latestError?.payload as Record<string, unknown> | null;
+        if (
+          latestError?.id !== candidate.recoveryEpoch ||
+          latestErrorPayload?.config_error !== true ||
+          latestErrorPayload?.lane_fingerprint !== candidate.laneFingerprint ||
+          candidate.laneFingerprint === currentLaneFingerprint
+        )
+          continue;
+        const hasIncompleteIntent = relatedEvents
+          .filter(
+            (row) =>
+              row.subjectId === candidate.questionId &&
+              row.action === VERIFY_DISPATCH_INTENT_ACTION,
+          )
+          .map((row) => verifyDispatchIntentPayloadSchema.safeParse(row.payload))
+          .filter((result) => result.success)
+          .map((result) => result.data)
+          .filter((payload) => payload.verifier_kind === candidate.verifier)
+          .some((payload) => !completionKeys.has(intentKey(payload)));
+        if (hasIncompleteIntent) continue;
+        if (
+          intentKeys.has(
+            `${candidate.questionId}\0${candidate.verifier}${placementAuthorityIdentity(
+              candidate.placementAuthority,
+            )}\0${candidate.recoveryEpoch}`,
+          )
+        )
+          continue;
+        await writeVerifyDispatchIntent(tx, {
+          questionId: candidate.questionId,
+          verifier: candidate.verifier,
+          ...(candidate.supplyTrace ? { supplyTrace: candidate.supplyTrace } : {}),
+          ...(candidate.placementAuthority
+            ? { placementAuthority: candidate.placementAuthority }
+            : {}),
+          recoveryEpoch: candidate.recoveryEpoch,
+          laneFingerprint: candidate.laneFingerprint,
+          createdAt: now,
+        });
+        synthesis.synthesized.push(candidate.questionId);
+      }
+    });
+  }
 
   const dispatched = await dispatchPendingVerifyIntents(db, {
     enqueue: input.enqueue,
@@ -510,5 +803,5 @@ export async function recoverOrphanVerifyDispatches(
     batchSize: input.batchSize ?? 500,
     now,
   });
-  return { ...dispatched, synthesized: synthesizedIds.length };
+  return { ...dispatched, synthesized: synthesis.synthesized.length };
 }

@@ -5,13 +5,12 @@
 //                        dimension-only path; never touches retraction_hold,
 //                        never mints a revision
 //
-//   recheck_source  — re-dispatch source_verify on a source_check_failed hold
-//                        (command event + deterministic job + paid-effect claim;
-//                        re-gates on hold_reason inside the command)
+//   recheck_source  — system-only source_verify recovery after lane repair
+//                        (outbox recovery_epoch owns re-dispatch; no operator POST)
 //
 // reverify stays a system duty driven by result events and the recovery pass
-// (auto:<group>:<digest>:<command>:<n> ledger keys); old clients posting it get
-// the params-schema 400.
+// (auto:<group>:<digest>:<command>:<n> ledger keys); old clients posting either
+// system command get the params-schema 400.
 //
 // Every command requires an Idempotency-Key header and returns
 // {accepted, serving} where serving is the same projection the list/detail

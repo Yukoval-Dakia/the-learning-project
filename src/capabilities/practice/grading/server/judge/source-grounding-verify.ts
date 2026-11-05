@@ -9,17 +9,34 @@
 // Returns a discriminated result so the caller (source_verify.ts) can distinguish:
 // - grounded / not_grounded : a real content verdict (not_grounded → demote to draft)
 // - transient_error : image fetch / LLM call / output parse failed — NOT a
-// content verdict. The caller fails closed (demote) AND
-// retries (既有 verify 错误惯例). Kept OUT of the grounded
-// vs not_grounded axis so a flaky VLM never reads as a
-// confident「题面不在图里」.
+// content verdict. The caller parks the draft and writes a retriable error.
+// - config_error    : lane resolution/auth cannot execute — same non-verdict
+// hold, with an error marker the verify outbox can recover after repair.
 
+import { existsSync, readFileSync } from 'node:fs';
+import { isProviderAuthConfigError } from '@/ai/agent-run-error';
+import { tasks } from '@/capabilities/task-registry';
+import { customProviderDefinition } from '@/core/config/custom-providers';
+import { getLaneOverride, getTaskOverride, resolveConfigValue } from '@/core/config/store';
 import {
   SourceGroundingVerifyOutput,
   type SourceGroundingVerifyOutputT,
 } from '@/core/schema/source-grounding';
 import type { Db } from '@/db/client';
-import { TaskConfigError } from '@/server/ai/providers';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import { executablePiModel } from '@/server/ai/pi-provider-catalog';
+import {
+  credentialFingerprint,
+  providerCredentialFingerprint,
+} from '@/server/ai/provider-models-check';
+import {
+  TaskConfigError,
+  providerAuthFileEnvName,
+  providerCredentialEnvName,
+  readProviderId,
+  resolveTaskBinding,
+  resolveTaskReasoning,
+} from '@/server/ai/providers';
 import { applicableVisionJudgeOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
@@ -56,6 +73,159 @@ export interface RunSourceGroundingVerifyParams {
   subjectProfile: SubjectProfile;
   runTaskFn?: SourceGroundingRunTaskFn;
   imageFetchFn?: SourceGroundingImageFetchFn;
+}
+
+/**
+ * Run the runner's own lane resolution + adapter startup for this task without
+ * submitting a prompt. source_verify calls this before solve_check so a broken
+ * grounding lane is proven before the paid-effect send boundary.
+ */
+export async function assertSourceGroundingLaneConfigured(input: {
+  db: Db;
+  subjectProfile: SubjectProfile;
+}): Promise<void> {
+  try {
+    const { preflightTaskExecution } = await import('@/server/ai/runner');
+    await preflightTaskExecution(
+      'SourceGroundingVerifyTask',
+      { text: '{}', images: [] },
+      {
+        db: input.db,
+        subjectProfile: input.subjectProfile,
+        override: applicableVisionJudgeOverride(),
+      },
+    );
+  } catch (error) {
+    if (error instanceof TaskConfigError) throw error;
+    if (isProviderAuthConfigError(error)) {
+      throw new TaskConfigError(error.message, { cause: error });
+    }
+    throw error;
+  }
+}
+
+/**
+ * Non-secret identity of the lane's configuration surface. A config_error event
+ * records this value; the recovery sweep only re-arms that error epoch after the
+ * identity changes. Credential material contributes only a SHA-256 prefix.
+ */
+export function sourceGroundingLaneFingerprint(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const kind = 'SourceGroundingVerifyTask' as const;
+  const definition = tasks[kind];
+  const globalLane = getLaneOverride('global', env);
+  const visionLane = getLaneOverride('vision_judge', env);
+  const taskOverride = getTaskOverride(kind);
+  const scopedOverride = applicableVisionJudgeOverride(env, { checkCredentials: false });
+  const bindingResult = (() => {
+    try {
+      const binding = resolveTaskBinding(kind, scopedOverride);
+      const reasoning = (() => {
+        try {
+          return {
+            resolved: resolveTaskReasoning(
+              kind,
+              binding.provider,
+              binding.model,
+              binding.reasoning,
+            ),
+          };
+        } catch (error) {
+          return { error: error instanceof Error ? error.name : String(error) };
+        }
+      })();
+      const executable = (() => {
+        try {
+          return { facts: executablePiModel(binding.provider, binding.model, env) ?? null };
+        } catch (error) {
+          return { error: error instanceof Error ? error.name : String(error) };
+        }
+      })();
+      return { binding, reasoning, executable };
+    } catch (error) {
+      return {
+        error:
+          error instanceof Error
+            ? { name: error.name, message: error.message }
+            : { name: 'unknown', message: String(error) },
+      };
+    }
+  })();
+  const providerCandidates = [
+    env.AI_PROVIDER_OVERRIDE,
+    scopedOverride?.provider,
+    visionLane?.provider,
+    globalLane?.provider,
+    taskOverride?.provider,
+    definition.defaultProvider,
+    'binding' in bindingResult && bindingResult.binding !== undefined
+      ? bindingResult.binding.provider
+      : undefined,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .sort();
+  const credentials = [...new Set(providerCandidates)].map((configuredAs) => {
+    const provider = readProviderId(configuredAs);
+    const authFileEnv = provider ? providerAuthFileEnvName(provider) : undefined;
+    const authFilePath = authFileEnv ? env[authFileEnv] : undefined;
+    const authFile = authFileEnv
+      ? {
+          env_name: authFileEnv,
+          configured: authFilePath !== undefined,
+          path_fingerprint: authFilePath !== undefined ? credentialFingerprint(authFilePath) : null,
+          content_fingerprint: (() => {
+            if (authFilePath === undefined || !existsSync(authFilePath)) return null;
+            try {
+              return credentialFingerprint(readFileSync(authFilePath, 'utf8'));
+            } catch {
+              return null;
+            }
+          })(),
+        }
+      : null;
+    const definition = provider ? customProviderDefinition(provider) : undefined;
+    return {
+      configured_as: configuredAs,
+      provider: provider ?? null,
+      credential_env_name: provider ? (providerCredentialEnvName(provider) ?? null) : null,
+      credential_fingerprint: provider ? providerCredentialFingerprint(provider, env) : null,
+      auth_file: authFile,
+      custom_provider: definition
+        ? {
+            id: definition.id,
+            base_url: definition.baseUrl,
+            api_key_env: definition.apiKeyEnv,
+            protocol: definition.protocol,
+            display_name: definition.displayName,
+          }
+        : null,
+    };
+  });
+  return sha256CanonicalJson({
+    version: 1,
+    kind,
+    env: {
+      AI_PROVIDER_OVERRIDE: env.AI_PROVIDER_OVERRIDE ?? null,
+      AI_PROVIDER_MODEL: env.AI_PROVIDER_MODEL ?? null,
+      VISION_JUDGE_PROVIDER: env.VISION_JUDGE_PROVIDER ?? null,
+      VISION_JUDGE_MODEL: env.VISION_JUDGE_MODEL ?? null,
+    },
+    lane: {
+      global: globalLane ?? null,
+      vision_judge: visionLane ?? null,
+      global_reasoning: resolveConfigValue('lane.global.reasoning', env).value ?? null,
+    },
+    task: {
+      default_provider: definition.defaultProvider,
+      default_model: definition.defaultModel,
+      ignore_global_pin: definition.ignoreGlobalPin === true,
+      override: taskOverride,
+      scoped_override: scopedOverride ?? null,
+    },
+    binding: bindingResult,
+    credentials,
+  });
 }
 
 export type SourceGroundingVerifyResult =
@@ -131,12 +301,9 @@ export async function runSourceGroundingVerify(
       },
     );
   } catch (err) {
-    // A misconfigured vision lane is a configuration defect, not a transient
-    // failure — surface it under its own status so source_verify can fail closed
-    // TERMINALLY (demote + terminal verify event, job completes). Folding it
-    // into transient_error would put the draft back on pg-boss redelivery and
-    // the nightly orphan re-dispatch loop while the lane stays broken.
-    if (err instanceof TaskConfigError) {
+    // A misconfigured or unauthenticated lane is a recoverable configuration
+    // defect, not a content verdict or ordinary transient failure.
+    if (err instanceof TaskConfigError || isProviderAuthConfigError(err)) {
       return { status: 'config_error', message: err.message };
     }
     return {

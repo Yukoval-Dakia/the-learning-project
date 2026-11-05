@@ -139,3 +139,12 @@ export function isTransientAgentFailure(err: unknown): boolean {
   }
   return false; // error_during_execution / error_max_* / anything else
 }
+
+/** A bound provider 401/403 proves the configured lane cannot authenticate. */
+export function isProviderAuthConfigError(err: unknown): err is AgentRunError {
+  return (
+    err instanceof AgentRunError &&
+    err.subtype === 'api_error_result' &&
+    (err.apiErrorStatus === 401 || err.apiErrorStatus === 403)
+  );
+}

@@ -90,7 +90,9 @@ export { assertGeneratedQuestionHasJudgeContract } from './server/judge/question
 export {
   type RunSourceGroundingVerifyParams,
   type SourceGroundingVerifyResult,
+  assertSourceGroundingLaneConfigured,
   runSourceGroundingVerify,
+  sourceGroundingLaneFingerprint,
 } from './server/judge/source-grounding-verify';
 export { judgeFallbackProvider } from './server/judge-durable-config';
 // Judge engine identity and census belong to grading; the shared DBOS host consumes them.
