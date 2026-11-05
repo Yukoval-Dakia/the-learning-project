@@ -16,7 +16,7 @@ import type { SubjectProfile } from '@/subjects/profile';
 // hallucinated id cannot persist. seed_mode='material' carries the pasted material
 // verbatim; the task cannot fetch URLs, so material_url is provenance-only.
 function buildQuestionAuthorPrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}出题作者，一次只写**恰好一道**原创题。输入 { seed_mode: 'knowledge'|'material', knowledge_context: [{ id, name }], requested_kind?, objective_only?: boolean, kind_required?: boolean, requested_difficulty?, material?: { body_md, title? } } —— knowledge_context 是这道题要考查的知识点（id 是你**唯一**能写进 knowledge_ids 的 id）；seed_mode='material' 时 material.body_md 是用户给的命题素材原文，题目必须**据这份素材**出。requested_kind 一旦出现就**是硬约束**：kind 在 plan 阶段已定死，你输出的 kind 必须与 requested_kind 完全一致，不得因素材更适合别的结构而偏离（objective_only=true 时同时要求客观题型，kind_required=true 时同时锁定结构）。requested_kind 缺省时才自行判断答案类型与题面结构。
+  return `你是${profile.displayName}出题作者，一次只写**恰好一道**原创题。输入 { seed_mode: 'knowledge'|'material', knowledge_context: [{ id, name }], requested_kind?, requested_kind_hint?, objective_only?: boolean, kind_required?: boolean, requested_difficulty?, material?: { body_md, title? } } —— knowledge_context 是这道题要考查的知识点（id 是你**唯一**能写进 knowledge_ids 的 id）；seed_mode='material' 时 material.body_md 是用户给的命题素材原文，题目必须**据这份素材**出。requested_kind 一旦出现就**是硬约束**：kind 在 plan 阶段已定死，你输出的 kind 必须与 requested_kind 完全一致，不得因素材更适合别的结构而偏离（objective_only=true 时同时要求客观题型，kind_required=true 时同时锁定结构）。requested_kind_hint 是调用方对想要题型的**自由描述**（自然语言，不一定是标准题型名）：只作参考——按它表达的意图自行选择最贴切的实际结构 kind 与相配的判分方式，输出的 kind 必须是题面结构标签，不得照抄 requested_kind_hint 原文。requested_kind 与 requested_kind_hint 都缺省时才自行判断答案类型与题面结构。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}${rubricGuidanceSection(profile)}
@@ -30,7 +30,7 @@ structured 树形（StructuredQuestion，二选一）：
 {"kind":"题面展示标签，优先取惯用标签 ${CANONICAL_QUESTION_KINDS}（按答案类型与题面结构选择）","difficulty":1-5 的整数,"knowledge_ids":["<knowledge_context 里的 id>"],"structured":{"id":"占位","role":"stem"|"standalone","prompt_text":"...","options":[{"label":"A","text":"..."}]|省略,"answers":["..."],"analysis":"...","sub_questions":[{"id":"占位","role":"sub","question_no":"1","prompt_text":"...","answers":["..."],"analysis":"..."}]|省略},"choices_md":["选项 A 原文", ...]|null,"judge_kind_override":"exact"|"keyword"|"semantic"|null,"rubric_json":{"criteria":[{"name":"correctness","weight":1,"descriptor":"..."}],"keywords":[...],"required_points":[...]}|null}
 
 题目要求：
-- 恰好一道题；requested_kind 若出现，输出的 kind **必须**等于它（plan 阶段已定，不得偏离）；requested_kind 缺省时按实际题面结构选择 kind，优先用惯用标签 ${CANONICAL_QUESTION_KINDS}。无论如何都要遵循输出的 kind 对应的格式规则。
+- 恰好一道题；requested_kind 若出现，输出的 kind **必须**等于它（plan 阶段已定，不得偏离）；requested_kind_hint 若出现，只把它当题型意图参考，据此选实际结构 kind，不得把原文写进 kind；两者都缺省时按实际题面结构选择 kind，优先用惯用标签 ${CANONICAL_QUESTION_KINDS}。无论如何都要遵循输出的 kind 对应的格式规则。
 - requested_difficulty 出现时 difficulty 必须等于它；缺省自定。
 - 每个叶节点（standalone 根 / 每个 sub）**必须**有非空 answers 和/或 analysis——缺答案的题会被整道拒收。
 - choice / true_false：judge_kind_override="exact"，options 给 3–4 个选项，choices_md 同步给选项原文，answers 第一条是正确选项原文。
