@@ -10,6 +10,7 @@
 // text-JSON drift these tasks were admitted under, and absent evidence of breakage
 // the runner must not weaken every lane's wire guarantee.
 
+import { createHash } from 'node:crypto';
 import type { AgentTurnContext } from '@earendil-works/pi-agent-core';
 import type { ZodTypeAny } from 'zod';
 import { createNoProgressLoop } from '@/ai/no-progress-loop';
@@ -87,11 +88,12 @@ export function classifySubmitTurn(
     : 'needs_reminder';
 }
 
-/** Only schema-declared field names and issue codes cross back into model context.
- * Unknown property names, received values, messages and enum/literal values never do. */
+/** Only schema field names, types and JSON offsets cross back into model context.
+ * Unknown names, field values, exception messages and enum/literal values never do. */
 export function structuredSubmitShapeErrors(
   parameters: unknown,
   issues: readonly unknown[],
+  candidate?: unknown,
 ): string[] {
   const fields = new Set<string>();
   const collect = (node: unknown): void => {
@@ -116,6 +118,7 @@ export function structuredSubmitShapeErrors(
       path?: unknown[];
       expected?: unknown;
       errors?: unknown[][];
+      keys?: unknown[];
     };
     if (item.code === 'invalid_union' && item.errors) {
       item.errors.flat().forEach(visit);
@@ -144,10 +147,74 @@ export function structuredSubmitShapeErrors(
       ['array', 'object', 'string', 'number', 'boolean'].includes(item.expected)
         ? `; expected ${item.expected}`
         : '';
-    errors.add(`${path || '(root)'}: ${code}${expected}`);
+    let detail = '';
+    if (candidate !== undefined) {
+      const value = (item.path ?? []).reduce<unknown>((node, part) => {
+        if (!node || typeof node !== 'object') return undefined;
+        return Object.getOwnPropertyDescriptor(node, String(part))?.value;
+      }, candidate);
+      if (code === 'invalid_type') {
+        detail = `; you supplied ${jsonType(value)}`;
+        if (item.expected === 'array') detail += '; use an actual JSON array, not a quoted string';
+        if (typeof value === 'string' && ['array', 'object'].includes(String(item.expected)))
+          detail += jsonSyntaxLocation(value);
+      } else if (code === 'unrecognized_keys') {
+        const extra = (item.keys ?? []).map((key) =>
+          typeof key === 'string' && fields.has(key) ? key : '[field]',
+        );
+        detail = `; remove fields not declared at this object level: ${[...new Set(extra)].sort().join(', ')}`;
+      }
+    }
+    errors.add(`${path || '(root)'}: ${code}${expected}${detail}`);
   };
   issues.forEach(visit);
   return [...errors].sort();
+}
+
+function jsonType(value: unknown): string {
+  return value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+}
+
+function jsonSyntaxLocation(raw: string): string {
+  try {
+    JSON.parse(raw);
+    return '';
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    const offset = /\bposition (\d+)\b/.exec(message)?.[1];
+    const position =
+      offset === undefined
+        ? /end of JSON/i.test(message)
+          ? raw.length
+          : undefined
+        : Number(offset);
+    // Never forward the native parser message: it can contain answer fragments.
+    return position === undefined ? '' : `; JSON is invalid at character ${position + 1}`;
+  }
+}
+
+function canonicalOutput(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalOutput).join(',')}]`;
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  const object = value as Record<string, unknown>;
+  return `{${Object.keys(object)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalOutput(object[key])}`)
+    .join(',')}}`;
+}
+
+function outputHash(rawArguments: readonly (string | undefined)[], fallback: unknown): string {
+  const output = rawArguments.length
+    ? rawArguments.map((raw) => {
+        if (raw === undefined) return { missing: true, output: fallback };
+        try {
+          return { json: JSON.parse(raw) as unknown };
+        } catch {
+          return { raw };
+        }
+      })
+    : fallback;
+  return createHash('sha256').update(canonicalOutput(output)).digest('hex');
 }
 
 /** Owns submission acceptance, safe correction context and no-progress closure for one run. */
@@ -161,6 +228,7 @@ export function createStructuredSubmitLoop(input: {
   correctionDeadline: number;
 }) {
   const submitProgress = createNoProgressLoop();
+  const errorOccurrences = new Map<string, number>();
   let submitAccepted = false;
   let submitFailure: string | undefined;
   let submitFeedback: string | undefined;
@@ -180,6 +248,7 @@ export function createStructuredSubmitLoop(input: {
       { message, toolResults }: Pick<AgentTurnContext, 'message' | 'toolResults'>,
       invalidStructuredArguments: boolean,
       repairedArguments: unknown,
+      rawArguments: readonly (string | undefined)[],
     ) {
       const calls = message.content.filter((block) => block.type === 'toolCall');
       const verdict = classifySubmitTurn(
@@ -193,12 +262,15 @@ export function createStructuredSubmitLoop(input: {
 
       const errors = invalidStructuredArguments
         ? [
-            'Arguments must be one complete strictly valid JSON object; resubmit without truncation or trailing commas.',
+            `Arguments must be one complete strictly valid JSON object${rawArguments
+              .filter((raw): raw is string => raw !== undefined)
+              .map(jsonSyntaxLocation)
+              .join('')}; resubmit without truncation or trailing commas.`,
           ]
         : verdict !== 'landed'
           ? [STRUCTURED_SUBMIT_REMINDER]
           : !parsed.success
-            ? structuredSubmitShapeErrors(input.parameters, parsed.error.issues)
+            ? structuredSubmitShapeErrors(input.parameters, parsed.error.issues, candidate)
             : [...(input.validate?.(parsed.data, input.taskInput) ?? [])];
       if (errors.length === 0 && toolResults.length === 1 && !toolResults[0]?.isError) {
         submitAccepted = true;
@@ -212,17 +284,45 @@ export function createStructuredSubmitLoop(input: {
         result.isError = true;
         result.content = [{ type: 'text', text: feedback }];
       }
+      const errorKey =
+        !invalidStructuredArguments && verdict === 'landed' && !parsed.success
+          ? structuredSubmitShapeErrors(input.parameters, parsed.error.issues).join('\n')
+          : feedback.replace(/character \d+/g, 'character [position]');
+      const hash = outputHash(
+        rawArguments,
+        calls.length
+          ? calls.map((call) => call.arguments)
+          : message.content.filter((block) => block.type === 'text').map((block) => block.text),
+      );
+      const occurrences = (errorOccurrences.get(errorKey) ?? 0) + 1;
+      errorOccurrences.set(errorKey, occurrences);
+      const observation = JSON.stringify({
+        status: 'invalid',
+        error: errorKey,
+        issues: { output_hash: hash },
+      });
       await submitProgress.afterToolCall({
         call: { id: `submit-${message.timestamp}`, name: STRUCTURED_OUTPUT_SUBMIT_TOOL },
         args: {},
         effect: 'read',
         isError: true,
-        output: feedback,
-        error: feedback,
+        output: observation,
+        error: observation,
       });
-      submitFailure = submitProgress.closure()?.reason;
+      submitFailure =
+        submitProgress.closure()?.reason ?? (occurrences >= 3 ? 'no_progress' : undefined);
       if (!submitFailure && Date.now() >= input.correctionDeadline)
         submitFailure = 'budget_landing';
+      console.info(
+        '[structured_submit_validation]',
+        JSON.stringify({
+          task_run_id: input.runId,
+          output_hash: hash,
+          error_occurrences: occurrences,
+          closure: submitFailure ?? null,
+          diagnostics: feedback,
+        }),
+      );
       if (submitFailure) return { action: 'end' as const };
       console.info(
         '[structured_submit_correction]',

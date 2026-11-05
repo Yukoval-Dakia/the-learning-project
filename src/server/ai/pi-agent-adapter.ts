@@ -1040,6 +1040,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
                 { message, toolResults },
                 invalidStructuredArguments,
                 this.repairedToolArgs.get(STRUCTURED_OUTPUT_TOOL),
+                message.content
+                  .filter((block) => block.type === 'toolCall')
+                  .map((call) => streamedArgsByCallId.get(call.id)),
               );
             }) satisfies FinishTurn,
             prepareNextTurn: () => {
