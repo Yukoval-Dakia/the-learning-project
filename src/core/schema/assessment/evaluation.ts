@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeNumericAnswer } from '../answer-normalization';
 import {
   ConjectureProbeSignatureMatch,
   classifyConjectureProbeResponseFromJudgeMatch,
@@ -11,7 +12,12 @@ import {
   type ModelExecutorT,
   validateExecutionPlan,
 } from './execution';
-import { gradeBlankExactUnit, gradeSelectUnit, normalizeBlankText } from './grade';
+import {
+  gradeBlankExactUnit,
+  gradeSelectUnit,
+  normalizeBlankText,
+  parseBlankNumericText,
+} from './grade';
 import { type EvaluationInputMember, combineEvaluationMembers } from './group-input';
 import {
   type AggregateOutcomeT,
@@ -266,10 +272,10 @@ function unitInScope(unit: ScoringUnitT, slotById: Map<string, ResponseSlotT>): 
   );
 }
 
-/** 归一化文本（text_key.normalization 四档）。 */
+/** 归一化文本（text_key.normalization 的冻结版本）。 */
 function normalizeText(
   value: string,
-  mode: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head',
+  mode: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head' | 'answer_head@2',
 ): string {
   switch (mode) {
     case 'exact':
@@ -278,6 +284,8 @@ function normalizeText(
       return value.trim();
     case 'trim_casefold_nfc':
       return value.normalize('NFKC').trim().toLowerCase();
+    case 'answer_head@2':
+      return extractAnswerHead(value, mode).trim().toLowerCase();
     case 'answer_head':
       // 与 legacy exact 判分同语义：先抽答案头（"答：B"→"B"、答案+解析→答案），
       // 再 NFKC + trim + lowercase。
@@ -348,7 +356,10 @@ async function runDeterministicComparator(
       // YUK-1407 — 整段比较 miss 后，对过程作答再确定性抽一次【明示终态答案】：
       // "推导…S5=11" 的 head 是整段（无解析 tail），与 "11" 不等 ⇒ 旧路径判 0。
       // 提取规则见 judge-routing.ts：只认答/答案/所以/故/即/∴ 声明或末行等式。
-      const finalAnswer = extractFinalAnswer(textValue);
+      const finalAnswer = extractFinalAnswer(
+        textValue,
+        normalization === 'answer_head@2' ? normalization : undefined,
+      );
       const extractionEvidence =
         finalAnswer.kind === 'found'
           ? { value: finalAnswer.values[0] ?? '', marker: finalAnswer.marker }
@@ -426,7 +437,23 @@ async function runDeterministicComparator(
         );
       }
       const { expected, tolerance, expected_unit } = unit.criterion;
-      const raw = entry.raw_input?.trim();
+      if (
+        unit.criterion.normalization_version === 'numeric-norm@2' &&
+        normalizeNumericAnswer(entry.raw_input ?? '', true) == null
+      ) {
+        return withUnit(
+          pending({
+            reason: 'unparseable_response',
+            slot_id: entry.slot_id,
+            detail: 'numeric answer contains unsupported compatibility symbols',
+          }),
+          unit.scoring_unit_id,
+        );
+      }
+      const raw =
+        unit.criterion.normalization_version === 'numeric-norm@2'
+          ? normalizeNumericAnswer(entry.raw_input ?? '', true)
+          : entry.raw_input?.trim();
       if (!raw) return unjudgeableMismatch(unit, 'unit conversion requires original raw input');
       const { unit: parseUnit } = await import('mathjs');
       let referenceUnit: import('mathjs').Unit;
@@ -471,7 +498,21 @@ async function runDeterministicComparator(
       if (entry.kind !== 'numeric' || unit.criterion.kind !== 'numeric_key') {
         return unjudgeableMismatch(unit, 'slot/entry kind mismatch for numeric_key');
       }
-      const value = entry.value ?? Number.NaN;
+      const value =
+        unit.criterion.normalization_version === 'numeric-norm@2'
+          ? (parseBlankNumericText(entry.raw_input ?? '', unit.criterion.normalization_version) ??
+            Number.NaN)
+          : (entry.value ?? Number.NaN);
+      if (unit.criterion.normalization_version === 'numeric-norm@2' && !Number.isFinite(value)) {
+        return withUnit(
+          pending({
+            reason: 'unparseable_response',
+            slot_id: entry.slot_id,
+            detail: 'numeric answer requires a supported original raw input',
+          }),
+          unit.scoring_unit_id,
+        );
+      }
       const { expected, tolerance, expected_unit } = unit.criterion;
       const diff = Math.abs(value - expected);
       const inTolerance =
@@ -645,7 +686,10 @@ async function runDeterministicComparator(
       ) {
         const norm = (value: string) => normalizeBlankText(value, key.normalization);
         if (!key.accepted.map(norm).includes(norm(entry.text))) {
-          const finalAnswer = extractFinalAnswer(entry.text);
+          const finalAnswer = extractFinalAnswer(
+            entry.text,
+            key.normalization.version === 'blank-norm@2' ? 'answer_head@2' : undefined,
+          );
           if (finalAnswer.kind === 'found') {
             const finalHit = finalAnswer.values.some((candidate) =>
               key.accepted.map(norm).includes(norm(candidate)),
@@ -1243,7 +1287,7 @@ export async function evaluateSubmissionCore(
       input.policy?.low_confidence_threshold != null &&
       outcome.confidence != null &&
       outcome.confidence < input.policy.low_confidence_threshold;
-    if (lowConfidence && plan.escalation.on_low_confidence === 'human_review') {
+    if (lowConfidence && plan.escalation.on_low_confidence !== 'accept') {
       unitResults.push(
         withUnit(
           pending({

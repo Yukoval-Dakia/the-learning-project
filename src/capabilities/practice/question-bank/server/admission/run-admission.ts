@@ -1,15 +1,11 @@
-// (Stage 1 / G1+G2) — runQuestionAdmission.
-// The single admission call site B1's `submit_question` wires; today the live
-// consumer is the `question_admission_run` worker job. Given a frozen draft
-// definition (four contract layers + per-unit scoring intent):
-// 1. dual blind solve mints typed keys (no reference text parsing);
-// 2. printed source answers are cross-checked, never parsed into keys;
-// 3. every resolvable unit gets a frozen probe set executed through the same
-// evaluateSubmissionCore real submissions use;
-// 4. any disagreeing solve / crosscheck conflict-or-unknown / failing probe
-// non-deterministic unit blocks admission — fail closed, never mint.
-// Evidence returns with the result; persistence (question_admission_verification
-// append + lifecycle admission flip) is the caller's publish seam.
+import { createHash } from 'node:crypto';
+import { resolveTaskBudget } from '@/capabilities/task-registry';
+import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
+import { createAssessmentAssetLoader } from '../../../grading/public';
+import { AdmissionAttemptExhausted } from './attempt';
+
+// One admission operation: structural checks, blind solves, semantic adjudication,
+// then deterministic probes or the system-admitted AI grader. Publication is append-only.
 
 import { canonicalHash } from '@/core/migration/canonical';
 import {
@@ -30,9 +26,12 @@ import { validateScoringBasis } from '@/core/schema/assessment/scoring';
 import type { ScoringRuleT } from '@/core/schema/assessment/scoring-rule';
 import { validateStructure } from '@/core/schema/assessment/structure';
 import type { Db } from '@/db/client';
+import { resolveModelAdmissionContext } from '@/kernel/read-models/model-admission';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { type BoundRunTaskTextFn, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
+import type { AdmissionRepairT } from '../../tasks/question-admission-adjudicate';
+import { adjudicateAdmission } from './adjudicate';
 import {
   type AdmissionProbe,
   type ProbeOutcome,
@@ -42,17 +41,18 @@ import {
   runCalibrationProbes,
 } from './calibrate';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
+import { prepareAdmissionQuestionText } from './question-text';
 import type { KnowledgeCandidate, SolutionPriorRecordT } from './solution-prior';
 import {
+  type AdmissionImage,
   type AdmissionKey,
   type AdmissionSolveReceipt,
   type Provider,
   type SolutionPriorPassResult,
-  type SourceCrosscheckResult,
   type UnitSolveVerdict,
+  keyFromAnswer,
   runDualSolve,
   runSolutionPriorPass,
-  runSourceCrosscheck,
 } from './solve';
 
 export { QUESTION_ADMISSION_POLICY_ID } from '@/core/question-admission-policy';
@@ -62,10 +62,11 @@ export function resolveQuestionAdmissionPolicyId(): string {
   const configured = process.env.QUESTION_ADMISSION_POLICY_ID;
   if (
     configured === LEGACY_QUESTION_ADMISSION_POLICY_ID ||
-    configured === PREVIOUS_QUESTION_ADMISSION_POLICY_ID
+    configured === PREVIOUS_QUESTION_ADMISSION_POLICY_ID ||
+    configured === 'question_admission@3'
   ) {
     throw new Error(
-      `QUESTION_ADMISSION_POLICY_ID=${configured} is obsolete; unset it for the @3 solve contract`,
+      `QUESTION_ADMISSION_POLICY_ID=${configured} is obsolete; unset it for the current admission contract`,
     );
   }
   return configured ?? QUESTION_ADMISSION_POLICY_ID;
@@ -83,6 +84,7 @@ export interface QuestionAdmissionOptions {
   solver2?: { provider?: Provider; model?: string } | null;
   /** Live knowledge points offered to the solution prior (YUK-1771). */
   knowledgeCandidates?: readonly KnowledgeCandidate[];
+  priorRevisionDigest?: string;
   policyId?: string;
   now?: Date;
 }
@@ -92,6 +94,8 @@ export interface UnitAdmissionResult {
   unit_kind: AdmissionUnitSpec['unit_kind'];
   status: 'admitted' | 'withheld' | 'pending';
   reason?: string;
+  repair?: AdmissionRepairT;
+  evidence_errors?: { which: 'source_answer' | 'printed_rule' | 'author_key'; note: string }[];
   solve?: { verdict: UnitSolveVerdict['status']; detail?: string };
   crosscheck?: 'consistent' | 'conflict' | 'unknown' | 'not_run';
   calibration?: {
@@ -113,7 +117,8 @@ export interface ResolvedAdmissionContract {
 }
 
 export interface QuestionAdmissionResult {
-  status: 'admitted' | 'withheld' | 'pending';
+  status: 'admitted' | 'withheld';
+  decision: 'pass' | 'return_for_repair';
   reason?: string;
   per_unit: UnitAdmissionResult[];
   /** resolved 契约（resolved 单元已升级判据+规则+确定性执行器；
@@ -182,7 +187,7 @@ function criterionFromKey(key: AdmissionKey, unit: AdmissionUnitSpec): ScoringUn
         kind: 'text',
         accepted: key.accepted,
         normalization: unit.blank_normalization ?? {
-          version: 'blank-norm@1',
+          version: 'blank-norm@2',
           nfkc: true,
           trim_outer: true,
           casefold: false,
@@ -197,6 +202,7 @@ function criterionFromKey(key: AdmissionKey, unit: AdmissionUnitSpec): ScoringUn
     kind: 'blank_key',
     key: {
       kind: 'numeric',
+      normalization_version: 'numeric-norm@2',
       expected: key.expected,
       tolerance: key.tolerance,
       ...(key.expected_unit != null ? { expected_unit: key.expected_unit } : {}),
@@ -240,6 +246,94 @@ export async function runQuestionAdmission(
     });
   };
 
+  const structuralIssues = [
+    ...validateStructure(definition.structure),
+    ...validateResponseSpec(definition.response_spec),
+  ];
+  const emptyParts = definition.structure.parts.filter(
+    (part) => part.prompt_md.trim().length === 0,
+  );
+  if (structuralIssues.length || emptyParts.length) {
+    const reason = [
+      ...structuralIssues.map((i) => i.detail),
+      ...emptyParts.map((p) => `Empty prompt: ${p.part_id}`),
+    ].join('; ');
+    for (const unit of definition.units) mark(unit, { status: 'withheld', reason });
+    return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, solverContext, {
+      status: 'withheld',
+      reason,
+    });
+  }
+
+  const questionText = prepareAdmissionQuestionText(
+    definition,
+    options.subjectProfile?.renderConfig.notation === 'katex',
+  );
+  if (questionText.repairs.length > 0) {
+    for (const unit of definition.units) {
+      const defect = questionText.repairs.find((repair) => repair.part_id === unit.part_id);
+      mark(unit, {
+        status: 'withheld',
+        reason: defect?.repair.defect ?? 'question_text_invalid',
+        ...(defect ? { repair: defect.repair } : {}),
+      });
+    }
+    const returned = finalize(
+      definition,
+      policyId,
+      now,
+      per_unit,
+      evidenceTaskRuns,
+      null,
+      solverContext,
+      {
+        status: 'withheld',
+        reason: 'question_text_invalid',
+      },
+    );
+    returned.verification.evidence.question_text = {
+      markings: questionText.markings,
+      changes: questionText.changes,
+      repairs: questionText.repairs,
+    };
+    return returned;
+  }
+  definition = questionText.definition;
+
+  const figureMaterials = definition.structure.materials.filter(
+    (m) => isPublicSharedMaterial(m) && m.kind === 'figure',
+  );
+  const images: AdmissionImage[] = [];
+  const assetLoader = createAssessmentAssetLoader(options.db);
+  for (const material of figureMaterials) {
+    const loaded = await assetLoader(material.asset, AbortSignal.timeout(15_000));
+    if (
+      !loaded ||
+      !/^image\/(png|jpeg|gif|webp)$/.test(loaded.mime_type) ||
+      `sha256:${createHash('sha256').update(loaded.bytes).digest('hex')}` !== material.asset.digest
+    ) {
+      for (const unit of definition.units)
+        mark(unit, {
+          status: 'withheld',
+          reason: 'unreadable_figure',
+          repair: {
+            repair_target: 'figure',
+            broken_part: 'figure',
+            defect: 'missing_figure',
+            fix_hint_md: `Supply a readable frozen image for ${material.material_id}.`,
+          },
+        });
+      return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, solverContext, {
+        status: 'withheld',
+        reason: 'unreadable_figure',
+      });
+    }
+    images.push({
+      data: Buffer.from(loaded.bytes).toString('base64'),
+      mediaType: loaded.mime_type,
+    });
+  }
+
   // ---- 双盲 solve ----
   // （第 2 片）：声明 answer_shape 但未被共享比较器支持的 blank
   // 单元在付费 solve 之前扣留（enqueue/maySend 闸之外的第二层 —— 覆盖
@@ -272,9 +366,7 @@ export async function runQuestionAdmission(
     }
   }
   const solvableUnits = definition.units.filter(
-    (unit) =>
-      (unit.unit_kind === 'select' || unit.unit_kind === 'blank') &&
-      !declaredUnsupported.has(unit.scoring_unit_id),
+    (unit) => unit.unit_kind !== 'unsupported' && !declaredUnsupported.has(unit.scoring_unit_id),
   );
   for (const unit of definition.units) {
     if (unit.unit_kind === 'unsupported') {
@@ -282,12 +374,6 @@ export async function runQuestionAdmission(
         status: 'withheld',
         reason: 'unsupported_slot_shape',
         solve: { verdict: 'not_applicable', detail: 'slot kind has no deterministic upgrade' },
-      });
-    } else if (unit.unit_kind === 'free') {
-      mark(unit, {
-        status: 'withheld',
-        reason: 'no_admitted_executor',
-        solve: { verdict: 'not_applicable', detail: 'free unit needs an admitted model executor' },
       });
     }
   }
@@ -301,15 +387,15 @@ export async function runQuestionAdmission(
   {
     const outcome = await runDualSolve(options.db, definition, {
       runTask,
+      images,
       subjectProfile: options.subjectProfile,
       solver2: options.solver2 ?? null,
     });
     if (!outcome.ok) {
-      // infra / receipt 密封失败 —— 如实 pending，不伪判、不铸键；已付费的
-      // solve 收据照样进证据包。
+      // Known exhausted calls return repair; their paid receipts remain in the evidence.
       evidenceTaskRuns.push(...outcome.receipts);
       return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, solverContext, {
-        status: 'pending',
+        status: 'withheld',
         reason: `dual solve failed before a verdict: ${outcome.error}`,
         transient: true,
       });
@@ -337,60 +423,115 @@ export async function runQuestionAdmission(
     });
   }
 
-  // ---- source crosscheck（仅 evidence；conflict/unknown 阻断） ----
-  let crosscheck: SourceCrosscheckResult | null = null;
-  const agreedKeys = new Map<string, AdmissionKey>();
-  for (const unit of solvableUnits) {
-    const verdict = solve.verdicts.get(unit.scoring_unit_id);
-    if (verdict?.status === 'agreed') agreedKeys.set(unit.scoring_unit_id, verdict.key);
-  }
-  if (agreedKeys.size > 0 && definition.source_answers.length > 0) {
+  // Missing-figure references are detected before the model and force adjudication;
+  // text sufficiency is a semantic decision, never guessed by a keyword allowlist.
+  const publicMaterials = definition.structure.materials.filter(isPublicSharedMaterial);
+  const hasFigure = publicMaterials.some((m) => m.kind === 'figure');
+  const referencesFigure = definition.structure.parts.some((p) =>
+    /如图|图示|见图|下图|上图|shown in (?:the )?(?:figure|diagram)/iu.test(p.prompt_md),
+  );
+  const figureState = hasFigure
+    ? 'available'
+    : referencesFigure
+      ? 'missing_referenced'
+      : 'none_referenced';
+  let adjudicationEvidence: Awaited<ReturnType<typeof adjudicateAdmission>>['output'] | null = null;
+  const freeRubrics = new Map<string, string>();
+  const modelSlices = new Map<string, string>();
+  const crosscheck: null = null;
+  if (
+    figureState !== 'none_referenced' ||
+    questionText.markings.length > 0 ||
+    solvableUnits.some(
+      (u) =>
+        solve.verdicts.get(u.scoring_unit_id)?.status !== 'agreed' || u.printed_rule_md != null,
+    )
+  ) {
+    let adjudication: Awaited<ReturnType<typeof adjudicateAdmission>>;
     try {
-      const xc = await runSourceCrosscheck(options.db, definition, agreedKeys, {
+      adjudication = await adjudicateAdmission(
+        options.db,
+        definition,
+        solve,
+        figureState,
         runTask,
-        subjectProfile: options.subjectProfile,
-      });
-      crosscheck = xc;
-      if (xc == null) {
-        for (const unit of solvableUnits) {
-          if (agreedKeys.has(unit.scoring_unit_id)) mark(unit, { crosscheck: 'not_run' });
-        }
-      } else {
-        evidenceTaskRuns.push(xc.receipt);
-        for (const unit of solvableUnits) {
-          const entry = xc.per_unit.get(unit.scoring_unit_id);
-          if (entry == null) {
-            mark(unit, {
-              crosscheck: 'unknown',
-              status: 'withheld',
-              reason: 'crosscheck_missing_unit',
-            });
-            continue;
-          }
-          mark(unit, { crosscheck: entry.status });
-          if (entry.status !== 'consistent') {
-            mark(unit, {
-              status: 'withheld',
-              reason: `source_crosscheck_${entry.status}${entry.reason_md ? `: ${entry.reason_md}` : ''}`,
-            });
-          }
-        }
-      }
+        options.subjectProfile,
+        images,
+        questionText.markings,
+      );
     } catch (error) {
-      return finalize(
+      if (!(error instanceof AdmissionAttemptExhausted)) throw error;
+      for (const unit of solvableUnits) mark(unit, { status: 'withheld', reason: error.message });
+      const returned = finalize(
         definition,
         policyId,
         now,
         per_unit,
         evidenceTaskRuns,
-        crosscheck,
+        null,
         solverContext,
-        {
-          status: 'pending',
-          reason: `source crosscheck failed before a verdict: ${error instanceof Error ? error.message : String(error)}`,
-          transient: true,
-        },
+        { status: 'withheld', reason: 'adjudication_attempts_exhausted' },
       );
+      returned.verification.evidence.attempt_run_ids = [
+        ...solve.attempt_run_ids,
+        ...error.taskRunIds,
+      ];
+      return returned;
+    }
+    adjudicationEvidence = adjudication.output;
+    solve.attempt_run_ids.push(...adjudication.attempt_run_ids);
+    evidenceTaskRuns.push(adjudication.receipt);
+    for (const verdict of adjudication.output.per_unit) {
+      const unit = definition.units.find((u) => u.scoring_unit_id === verdict.scoring_unit_id);
+      if (!unit) throw new Error('Adjudication returned an unknown unit');
+      mark(unit, { evidence_errors: verdict.evidence_errors });
+      if (verdict.verdict === 'return_for_repair') {
+        solve.verdicts.set(unit.scoring_unit_id, { status: 'conflict', detail: verdict.reason_md });
+        mark(unit, { status: 'withheld', reason: verdict.reason_md, repair: verdict.repair });
+      } else if (verdict.decided_key.kind === 'free') {
+        freeRubrics.set(unit.scoring_unit_id, verdict.decided_key.rubric_md);
+        mark(unit, { status: 'pending', reason: undefined });
+      } else {
+        const key = keyFromAnswer(verdict.decided_key);
+        if (key == null) throw new Error('Adjudication emitted no grading key');
+        const reviewed = adjudication.form_reviews.find(
+          (review) => review.scoring_unit_id === unit.scoring_unit_id,
+        );
+        // Only the adjudicator can validate an input alias; blind overlap is not proof.
+        if (reviewed) {
+          if (key.kind === 'blank_text')
+            key.accepted = [...new Set([...key.accepted, ...reviewed.correct])];
+          const candidates = solve.probe_candidates.get(unit.scoring_unit_id) ?? {
+            equivalent_forms: [],
+            typical_wrong: [],
+          };
+          candidates.equivalent_forms.push(...reviewed.correct.map((text) => ({ text })));
+          candidates.typical_wrong.push(...reviewed.incorrect);
+          solve.probe_candidates.set(unit.scoring_unit_id, candidates);
+        }
+        solve.verdicts.set(unit.scoring_unit_id, { status: 'agreed', key });
+        mark(unit, { status: 'pending', reason: undefined });
+      }
+    }
+  }
+  if (freeRubrics.size > 0) {
+    const admission = await resolveModelAdmissionContext(options.db);
+    const pin = admission.current_models?.get('AssessmentRuleJudgeTask');
+    const slice = [...admission.slices.values()].find(
+      (s) =>
+        s.task_kind === 'AssessmentRuleJudgeTask' &&
+        s.response_class === 'free' &&
+        s.subject === options.subjectProfile?.id &&
+        s.model === pin?.model &&
+        s.model_version === pin?.model_version,
+    );
+    for (const unitId of freeRubrics.keys()) {
+      if (slice) modelSlices.set(unitId, slice.slice_id);
+      else {
+        const unit = definition.units.find((u) => u.scoring_unit_id === unitId);
+        if (!unit) throw new Error('Missing free grading unit');
+        mark(unit, { status: 'withheld', reason: 'system_grading_slice_unadmitted' });
+      }
     }
   }
 
@@ -400,7 +541,9 @@ export async function runQuestionAdmission(
   const candidateIds = new Set(
     solvableUnits
       .filter(
-        (unit) => unitResult(unit).status === 'pending' && verdictFor(unit)?.status === 'agreed',
+        (unit) =>
+          unitResult(unit).status === 'pending' &&
+          (verdictFor(unit)?.status === 'agreed' || modelSlices.has(unit.scoring_unit_id)),
       )
       .map((unit) => unit.scoring_unit_id),
   );
@@ -431,16 +574,29 @@ export async function runQuestionAdmission(
     const byUnitId = new Map<string, ScoringUnitT>();
     for (const unit of definition.units) {
       const verdict = verdictFor(unit);
-      if (resolvedIds.has(unit.scoring_unit_id) && verdict?.status === 'agreed') {
+      if (
+        resolvedIds.has(unit.scoring_unit_id) &&
+        (verdict?.status === 'agreed' || modelSlices.has(unit.scoring_unit_id))
+      ) {
         byUnitId.set(unit.scoring_unit_id, {
           scoring_unit_id: unit.scoring_unit_id,
           slot_refs: unit.slot_refs,
           material_refs: unit.material_refs,
           evidence_slot_refs: unit.evidence_slot_refs,
           requires_group_evidence: unit.requires_group_evidence,
-          criterion: unit.seeded_criterion ?? criterionFromKey(verdict.key, unit),
+          criterion:
+            verdict?.status === 'agreed'
+              ? criterionFromKey(verdict.key, unit)
+              : {
+                  kind: 'rule_reference',
+                  rule_id: `${unit.scoring_unit_id}::adjudicated`,
+                  statement_md: freeRubrics.get(unit.scoring_unit_id) ?? '',
+                  source: 'system_proposed',
+                },
           points: unit.points,
-          rule: unit.seeded_rule ?? defaultRuleFor(unit, spec),
+          ...(unit.unit_kind === 'free'
+            ? {}
+            : { rule: unit.seeded_rule ?? defaultRuleFor(unit, spec) }),
         });
       }
     }
@@ -477,12 +633,26 @@ export async function runQuestionAdmission(
       assignments: definition.units.map((unit) => ({
         scoring_unit_ids: [unit.scoring_unit_id],
         executor: byUnitId.has(unit.scoring_unit_id)
-          ? executorFor(unit)
+          ? modelSlices.has(unit.scoring_unit_id)
+            ? {
+                kind: 'model_executor' as const,
+                task_kind: 'AssessmentRuleJudgeTask',
+                admitted_slice_id: modelSlices.get(unit.scoring_unit_id) ?? null,
+                max_cost_usd_micros: Math.floor(
+                  resolveTaskBudget('AssessmentRuleJudgeTask').maxCost * 1_000_000,
+                ),
+              }
+            : executorFor(unit)
           : (definition.original_plan?.assignments.find((a) =>
               a.scoring_unit_ids.includes(unit.scoring_unit_id),
-            )?.executor ?? ({ kind: 'human_review' } as const)),
+            )?.executor ??
+            ({
+              kind: 'model_executor',
+              task_kind: 'AssessmentRuleJudgeTask',
+              admitted_slice_id: null,
+            } as const)),
       })),
-      escalation: { on_unadmitted_model: 'withhold', on_low_confidence: 'human_review' },
+      escalation: { on_unadmitted_model: 'withhold', on_low_confidence: 'pending' },
     };
     return { spec, basis, plan, byUnitId };
   };
@@ -587,7 +757,7 @@ export async function runQuestionAdmission(
     [...candidateIds].filter((id) => {
       const unit = definition.units.find((u) => u.scoring_unit_id === id);
       if (unit == null || unitResult(unit).status !== 'pending') return false;
-      if (!(byUnit.get(id)?.length ?? 0)) {
+      if (!modelSlices.has(id) && !(byUnit.get(id)?.length ?? 0)) {
         mark(unit, { status: 'withheld', reason: 'no_probes_executed' });
         return false;
       }
@@ -595,15 +765,37 @@ export async function runQuestionAdmission(
     }),
   );
   const finalAssembled = assemble(finalIds);
+  // Corrected private scoring evidence lives in the new criteria. Retain the
+  // original evidence in the paid input/old revision, never feed it to the new grader.
+  const resolvedMaterials =
+    finalIds.size === definition.units.length
+      ? definition.structure.materials.filter(isPublicSharedMaterial)
+      : definition.structure.materials;
+  const retainedMaterials = new Set(resolvedMaterials.map((material) => material.material_id));
+  const resolvedStructure = {
+    ...definition.structure,
+    materials: resolvedMaterials,
+    parts: definition.structure.parts.map((part) => ({
+      ...part,
+      material_ids: part.material_ids.filter((id) => retainedMaterials.has(id)),
+    })),
+  };
+  const resolvedBasis = {
+    ...finalAssembled.basis,
+    units: finalAssembled.basis.units.map((unit) => ({
+      ...unit,
+      material_refs: unit.material_refs.filter((id) => retainedMaterials.has(id)),
+    })),
+  };
   const resolvedContract: ResolvedAdmissionContract = {
-    structure: definition.structure,
+    structure: resolvedStructure,
     response_spec: finalAssembled.spec,
-    scoring_basis: finalAssembled.basis,
+    scoring_basis: resolvedBasis,
     execution_plan: finalAssembled.plan,
     integrity_digest: contractIntegrityDigest({
-      structure: definition.structure,
+      structure: resolvedStructure,
       response_spec: finalAssembled.spec,
-      scoring_basis: finalAssembled.basis,
+      scoring_basis: resolvedBasis,
       execution_plan: finalAssembled.plan,
     }),
   };
@@ -627,7 +819,9 @@ export async function runQuestionAdmission(
   // No settled key means the solvers could not agree on the answer, so a description of
   // the solution (and a write-once difficulty anchor from it) would be speculation.
   const prior: SolutionPriorPassResult =
-    settledKeys.size === 0
+    (settledKeys.size === 0 && freeRubrics.size === 0) ||
+    options.priorRevisionDigest === resolvedContract.integrity_digest ||
+    !definition.units.every((unit) => unitResult(unit).status === 'admitted')
       ? {
           record: null,
           receipt: null,
@@ -635,6 +829,8 @@ export async function runQuestionAdmission(
         }
       : await runSolutionPriorPass(options.db, definition, settledKeys, {
           runTask,
+          freeRubrics,
+          images,
           ...(options.subjectProfile != null ? { subjectProfile: options.subjectProfile } : {}),
           ...(options.knowledgeCandidates != null
             ? { knowledgeCandidates: options.knowledgeCandidates }
@@ -656,6 +852,14 @@ export async function runQuestionAdmission(
       resolved: resolvedContract,
     },
   );
+  result.verification.evidence.figure_state = figureState;
+  result.verification.evidence.question_text = {
+    markings: questionText.markings,
+    changes: questionText.changes,
+  };
+  result.verification.evidence.adjudication = adjudicationEvidence;
+  result.verification.evidence.blind_solves = solve.outputs;
+  result.verification.evidence.attempt_run_ids = solve.attempt_run_ids;
   result.verification.evidence.solution_prior_pass = prior.outcome;
   return prior.record != null ? { ...result, solution_prior: prior.record } : result;
 }
@@ -666,18 +870,27 @@ function finalize(
   now: Date,
   per_unit: Map<string, UnitAdmissionResult>,
   evidenceTaskRuns: AdmissionSolveReceipt[],
-  crosscheck: SourceCrosscheckResult | null,
+  _crosscheck: null,
   solverContext: string,
   tail: {
-    status: 'admitted' | 'withheld' | 'pending';
+    status: 'admitted' | 'withheld';
     reason?: string;
     resolved?: ResolvedAdmissionContract;
     transient?: boolean;
   },
 ): QuestionAdmissionResult {
-  const units = [...per_unit.values()];
-  const outcome =
-    tail.status === 'admitted' ? 'passed' : tail.status === 'pending' ? 'suspended' : 'failed';
+  const units = definition.units.map((unit) => {
+    const result = per_unit.get(unit.scoring_unit_id) ?? {
+      scoring_unit_id: unit.scoring_unit_id,
+      unit_kind: unit.unit_kind,
+      status: 'withheld' as const,
+      reason: tail.reason ?? 'unresolved',
+    };
+    if (tail.status !== 'admitted' && result.status === 'pending') result.status = 'withheld';
+
+    return result;
+  });
+  const outcome = tail.status === 'admitted' ? 'passed' : 'failed';
   const evidence: Record<string, unknown> = {
     pack: 'question_admission',
     pack_version: 1,
@@ -697,7 +910,7 @@ function finalize(
     base_contract_digest: definition.base_contract_digest,
     /** 如实记录 solver 拓扑：未配置 solver2 = 同模型独立上下文（非异源）。 */
     solver_context: solverContext,
-    /** 本次 admission 实际发生的全部 task runs（solve×2 + crosscheck?）。 */
+    /** Successful task receipts; attempt_run_ids also includes failed paid attempts. */
     task_runs: evidenceTaskRuns.map((receipt) => ({
       task_run_id: receipt.task_run_id,
       provider: receipt.provider,
@@ -706,22 +919,14 @@ function finalize(
       output_digest: receipt.output_digest,
       cost_usd: receipt.cost_usd,
     })),
-    crosscheck:
-      crosscheck == null
-        ? { ran: false }
-        : {
-            ran: true,
-            task_run_id: crosscheck.receipt.task_run_id,
-            per_unit: Object.fromEntries(
-              [...crosscheck.per_unit.entries()].map(([k, v]) => [k, v.status]),
-            ),
-          },
+    crosscheck: { ran: false, replaced_by: 'adjudication' },
     per_unit: units,
     ...(tail.transient === true ? { transient: true } : {}),
     recorded_at: now.toISOString(),
   };
   return {
     status: tail.status,
+    decision: tail.status === 'admitted' ? 'pass' : 'return_for_repair',
     ...(tail.reason != null ? { reason: tail.reason } : {}),
     per_unit: units,
     ...(tail.resolved != null ? { resolved: tail.resolved } : {}),
@@ -729,7 +934,6 @@ function finalize(
     evidence_refs: {
       task_run_ids: evidenceTaskRuns.map((r) => r.task_run_id),
       solve_receipts: evidenceTaskRuns,
-      ...(crosscheck != null ? { crosscheck_receipt: crosscheck.receipt } : {}),
     },
   };
 }

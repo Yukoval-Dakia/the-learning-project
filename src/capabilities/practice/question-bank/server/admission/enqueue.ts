@@ -24,7 +24,9 @@ import { getStartedBoss } from '@/server/boss/client';
 export const ADMISSION_FAMILY = 'question_admission_run';
 export const AdmissionJobData = z.object({
   /** Absent on old queued deliveries: they may reconcile old units but never initiate @3. */
-  admission_version: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  admission_version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
+  recovery_confirmed: z.boolean().optional(),
+  login_probe_route: z.object({ provider: z.string().min(1), model: z.string().min(1) }).optional(),
   question_id: z.string().min(1).optional(),
   revision_id: z.string().min(1).optional(),
   expected_revision_digest: z.string().min(1).optional(),
@@ -148,8 +150,30 @@ export async function readAdmissionPurpose(
       publication.payload.integrity_digest !== expected.revision_digest)
   )
     return { state: 'unknown' as const, sourceId: null };
+  // A default policy result is not provenance. Check every bound source before
+  // considering either learner lineage or a proven pipeline-only publication.
+  const sourceIds = [
+    ...new Set(
+      [binding.source_event_id, binding.usage_source_event_id].filter(
+        (id): id is string => id != null,
+      ),
+    ),
+  ].sort();
+  let restricted = false;
+  for (const id of sourceIds) {
+    await lockEventDerivationSources(tx, id);
+    if ((await readEventDerivationPolicy(tx, id)) !== 'allow') restricted = true;
+  }
+  if (restricted) return { state: 'restricted' as const, sourceId: binding.usage_source_event_id };
+  const pipelineProven = await admissionTranscriptAllowed(tx, {
+    groupId: expected.group_id,
+    purposeState: 'allow',
+  });
   const sourceId = binding.usage_source_event_id;
-  if (!sourceId) return { state: 'unknown' as const, sourceId: null };
+  if (!sourceId)
+    return pipelineProven
+      ? { state: 'allow' as const, sourceId: publication.id }
+      : { state: 'unknown' as const, sourceId: null };
   const [source] = await tx.select().from(event).where(eq(event.id, sourceId));
   if (!source || row.caused_by_event_id !== sourceId)
     return { state: 'unknown' as const, sourceId: null };
@@ -177,7 +201,7 @@ export async function readAdmissionPurpose(
       WHERE (s.id IS NOT NULL AND (s.type <> 'ingestion' OR s.source_document_id IS NOT NULL))
         OR (b.action = 'experimental:ingestion_usage_binding'
         AND b.actor_kind = 'system' AND b.actor_ref = 'ingestion-usage')) AS known`);
-  if (!proven?.known) return { state: 'unknown' as const, sourceId };
+  if (!proven?.known && !pipelineProven) return { state: 'unknown' as const, sourceId };
   await lockEventDerivationSources(tx, sourceId);
   const allowed =
     (await readEventDerivationPolicy(tx, sourceId)) === 'allow' &&

@@ -450,6 +450,35 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   get costTruth(): AttemptCostTruth {
+    const usage = this.terminal ?? this.observedUsage;
+    const transport = this.transportEvidence.isArmed
+      ? this.transportEvidence.snapshot()
+      : undefined;
+    // Never erase usage from an earlier successful turn or an unobserved send.
+    const unbilledTransport =
+      transport?.send_state === 'not_sent' ||
+      (transport != null &&
+        transport.requests_seen > 0 &&
+        transport.requests_dropped === 0 &&
+        transport.requests.length === transport.requests_seen &&
+        transport.requests.every(
+          (request) =>
+            request.loop === 'root' &&
+            request.send_state === 'response_received' &&
+            request.http_status != null &&
+            request.http_status >= 400,
+        ));
+    const noModelUsage =
+      !usage ||
+      (usage.tokenCounts.outputTokens === 0 &&
+        (usage.priceOrigin != null ||
+          (usage.tokenCounts.inputTokens === 0 && (usage.costUsd ?? 0) === 0)));
+    if (unbilledTransport && noModelUsage)
+      return {
+        basis: 'estimated',
+        amountUsd: 0,
+        ref: `unbilled-provider-rejection:${this.resolved.provider}/${this.resolved.model}#${this.taskRunId}`,
+      };
     if (!this.costTruthCache) {
       const evidence = this.terminal ?? this.observedUsage;
       this.costTruthCache = evidence

@@ -71,6 +71,9 @@ export interface CopilotRunJobFrame {
   payload: Record<string, unknown>;
 }
 
+/** What the model is doing right now, from run frames only: nothing sent yet, reasoning, writing. */
+export type CopilotModelStage = 'waiting' | 'thinking' | 'writing';
+
 export type CopilotRunPhase = 'queued' | 'running' | 'cancel_requested' | 'completed' | 'failed';
 
 export interface CopilotRunView {
@@ -86,6 +89,7 @@ export interface CopilotRunView {
   toolCalls?: CopilotToolCallRecord[];
   /** Pictures being drawn in this run, in stream order (YUK-1548). */
   blocks?: CopilotRunBlock[];
+  modelStage?: CopilotModelStage;
   /** Internal replay inventory. Kept immutable so out-of-order arrivals can be re-folded. */
   frames: CopilotRunJobFrame[];
 }
@@ -394,6 +398,7 @@ export function foldCopilotRunFrames(
   const subtasks = new Map<string, MutableSubtask>();
   let toolCalls: CopilotToolCallRecord[] = [];
   let blocks: CopilotRunBlock[] = [];
+  let modelStage: CopilotModelStage = 'waiting';
 
   for (const item of frames) {
     const terminalRun = TERMINAL_RUN_PHASES.has(phase);
@@ -407,6 +412,12 @@ export function foldCopilotRunFrames(
       case COPILOT_RUN_STEP_EVENT: {
         if (terminalRun) break;
         phase = 'running';
+        if (item.payload.step_kind === 'model_thinking') {
+          modelStage = 'thinking';
+          break;
+        }
+        // Any other step: once it ends, the next thing to come is the model's next response.
+        modelStage = 'waiting';
         const event = parseSubtaskPayload(item.payload);
         if (event) {
           const current = subtasks.get(event.subtask_id);
@@ -469,6 +480,7 @@ export function foldCopilotRunFrames(
         phase = 'running';
         const text = typeof item.payload.text === 'string' ? item.payload.text : '';
         if (text) {
+          modelStage = 'writing';
           replyText += text;
           if (!publicProse || publicProse.status === 'streaming') {
             publicDeltas.set(item.event_id, text);
@@ -536,6 +548,7 @@ export function foldCopilotRunFrames(
     phase,
     lastEventId: frames.at(-1)?.event_id ?? 0,
     replyText,
+    modelStage,
     ...(publicProse ? { publicProse } : {}),
     ...(replyPayload ? { replyPayload } : {}),
     ...(failureReason ? { failureReason } : {}),

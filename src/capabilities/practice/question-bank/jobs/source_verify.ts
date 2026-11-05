@@ -326,12 +326,13 @@ export async function runSourceVerify(
     }
     try {
       // 先验证库存 digest 确实封存这份冻结内容（兼容合法旧键序 seal），
-      // 再按 canonical 内容比较；既不把旧 seal 恒判漂移，也不接受坏 seal。
+      // 再以冻结版本重建并比较完整内容；新版默认不得令旧草稿恒判漂移。
       const frozenSeal = publishedContractSeal(frozenRevision);
       legacyRowMatchesRevision =
         publishedSealAccepts(frozenSeal, frozenRevision.integrity_digest) &&
-        publishedContractSeal(normalizeQuestionRowToContract({ ...row, figureDigests }))
-          .canonical === frozenSeal.canonical &&
+        publishedContractSeal(
+          normalizeQuestionRowToContract({ ...row, figureDigests }, frozenRevision.scoring_basis),
+        ).canonical === frozenSeal.canonical &&
         // structured normalizer 可优先用叶答案/选项，忽略 flat 列。
         // 复用 flat verifier 前，额外证明它实际读取的答案/选项也已封存。
         (row.structured == null ||
