@@ -31,11 +31,19 @@ import {
 const SOURCE_RE = /\.[cm]?[jt]sx?$/;
 const TEST_RE = /\.(?:unit|db|migration|integration|e2e)?\.?(?:test|spec)\.[cm]?[jt]sx?$/;
 const PUBLIC_ENTRYPOINTS = new Set(['public', 'ui-public']);
-// A sub-owner's `public.ts`/`ui-public.ts` is the same kind of declared port as the
-// root barrels — consumers reach it directly rather than through the root forward.
-const isPublicEntrypoint = (entrypoint: string) =>
-  PUBLIC_ENTRYPOINTS.has(entrypoint) ||
-  PUBLIC_ENTRYPOINTS.has(entrypoint.slice(entrypoint.lastIndexOf('/') + 1));
+// server/ front door reaches first-level practice sub-owner public.ts directly (target-module
+// design); all other consumers stay on the root barrel — deeper paths and other capabilities'
+// subpaths are not ports. List kept in sync with SUBOWNER_DIRS in audit-practice-subowners.ts.
+const PRACTICE_SUBOWNER_PUBLIC_PORTS = new Set([
+  'grading/public',
+  'settlement/public',
+  'question-bank/public',
+  'failure-learning/public',
+  'session/public',
+  'scheduling/public',
+  'supply/public',
+  'placement/public',
+]);
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
 const EDGE_UNIT = 'distinct-source-file-to-resolved-module' as const;
 const BASELINE_PATH = 'scripts/capability-boundary-baseline.json';
@@ -697,7 +705,7 @@ function summarizeDependencies(dependencies: SemanticDependency[]): {
       );
     } else if (source.layer === 'server' && target?.layer === 'capability') {
       const pair = `${source.module} -> ${target.owner}`;
-      if (isPublicEntrypoint(target.entrypoint)) increment(serverToCapabilityPublic, pair);
+      if (PUBLIC_ENTRYPOINTS.has(target.entrypoint)) increment(serverToCapabilityPublic, pair);
       else increment(serverToCapabilityDeep, pair);
     } else if (
       source.layer === 'capability' &&
@@ -920,7 +928,7 @@ function collectSeamViolations(projectRoot: string): Violation[] {
         }
         continue;
       }
-      if (!isPublicEntrypoint(targetLocation.entrypoint)) {
+      if (!PUBLIC_ENTRYPOINTS.has(targetLocation.entrypoint)) {
         violations.push({
           file: relative(projectRoot, file),
           source: reference.source,
@@ -1047,7 +1055,11 @@ function auditServerEntryEdges(input: {
   let newTypeEdges = 0;
   for (const edge of added) {
     const target = locateModulePath(edge.module);
-    if (target?.layer === 'capability' && isPublicEntrypoint(target.entrypoint)) {
+    if (
+      target?.layer === 'capability' &&
+      (PUBLIC_ENTRYPOINTS.has(target.entrypoint) ||
+        (target.owner === 'practice' && PRACTICE_SUBOWNER_PUBLIC_PORTS.has(target.entrypoint)))
+    ) {
       newPublicEdges += 1;
       continue;
     }
