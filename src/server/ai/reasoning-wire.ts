@@ -25,14 +25,36 @@ export function reasoningWireFields(
   api?: string,
 ): Record<string, unknown> {
   if (reasoning.applied === 'on') {
-    // Toggle: the carrier level reaches pi's reasoningEffort slot, so formats
-    // with an effort field emit it — while every live deepseek lane declares
-    // no compat.supportsReasoningEffort and emits the switch alone.
-    return thinkingFormat === 'deepseek'
-      ? { thinking: { type: 'enabled' } }
-      : reasoning.level === undefined
-        ? {}
-        : { reasoning_effort: reasoning.level };
+    // Toggle: the carrier level reaches pi's reasoningEffort slot, so the wire
+    // is pi's effort-set shape for the lane's format (openai-completions.js
+    // thinking-format branches / anthropic driver). Predictions assume
+    // undeclared compat — pi's detected defaults, which live lanes use.
+    if (reasoning.level === undefined) return {};
+    if (api === 'anthropic-messages') return { thinking: { type: 'enabled' } };
+    switch (thinkingFormat) {
+      case 'deepseek':
+        return { reasoning_effort: reasoning.level, thinking: { type: 'enabled' } };
+      case 'zai':
+        return { thinking: { type: 'enabled', clear_thinking: false } };
+      case 'qwen':
+        return { enable_thinking: true, reasoning_effort: reasoning.level };
+      case 'qwen-chat-template':
+        return { chat_template_kwargs: { enable_thinking: true, preserve_thinking: true } };
+      case 'openrouter':
+        return { reasoning: { effort: reasoning.level } };
+      case 'together':
+        return { reasoning: { enabled: true } };
+      case 'string-thinking':
+        return { thinking: reasoning.level };
+      case 'ant-ling':
+        // pi sends reasoning:{effort} only when the model's thinkingLevelMap
+        // maps the level — invisible here, predicted as mapped-through.
+        return { reasoning: { effort: reasoning.level } };
+      default:
+        // 'openai'/unset and remaining formats take pi's generic effort field;
+        // baseten/chat-template also emit template args this helper can't see.
+        return { reasoning_effort: reasoning.level };
+    }
   }
   if (reasoning.applied === 'none') return {};
   if (reasoning.applied === 'off') {
@@ -44,7 +66,7 @@ export function reasoningWireFields(
   }
   if (reasoning.level === undefined) return {};
   return thinkingFormat === 'deepseek'
-    ? { thinking: { type: 'enabled' } }
+    ? { reasoning_effort: reasoning.applied, thinking: { type: 'enabled' } }
     : { reasoning_effort: reasoning.applied };
 }
 
