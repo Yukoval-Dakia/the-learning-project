@@ -22,7 +22,7 @@
 
 ## CONVENTIONS
 - 子 owner 依赖自下而上：grading → settlement / question-bank → failure-learning → session → scheduling → supply → placement → 练习面（`docs/design/2026-11-03-practice-split.md` §0）。目录外只经 `<owner>/public.ts` 引用子 owner，根 `manifest.ts` 另可引用 `manifest-part.ts`，根 `tasks/index.ts` 另可引用 `<owner>/tasks/*`；owner 之间的 import 边只减不增，由 `pnpm audit:practice-subowners` 强制。
-- 外部消费方只 import 根 `public.ts` / `ui-public.ts`，不直接引用子 owner 目录。
+- 外部消费方只 import 根 `public.ts` / `ui-public.ts`，不直接引用子 owner 目录。例外：server 前门（`server/start/`）可直达一层子 owner 的 `public.ts`（`audit:capability-boundaries` 按白名单放边）。
 - 根 `public.ts` 按名字转出子 owner 的稳定符号，不用 `export *`：pass-through 台账只能给具名符号分类。
 - AI 调用与队列直接用平台：`@/server/ai/runner-fn`（`makeRunTaskFn` / `makeRunTaskTextFn` / `BoundRunTaskTextFn`）、`@/server/boss/client` 的 `getStartedBoss`、`@/db/pg-boss-drizzle` 的 `fromPgBossDrizzleTx`；practice 内不设本地 runtime 包装。跨 owner 共用的纯件在 kernel：TaskSpec 输出解析 `@/kernel/parse-task-output`、出题 prompt 词表 `@/kernel/generation-prompt-support`、目标定位范围与种子根 `@/kernel/read-models/placement-scope`。
 - 判分走 `JudgeResultV2`：coarse_outcome × score_meaning，历史判分不可变（rejudge = 新 event）。

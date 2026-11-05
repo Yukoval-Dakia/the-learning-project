@@ -370,6 +370,9 @@ export function PracticePresentation(props: PracticePresentationProps) {
     } else if (phase === 'feedback' && feedback) {
       const outcome = feedback.coarse_outcome;
       const unsupported = outcome === 'unsupported';
+      // Only committed results carry it; a live preview has no such field yet.
+      const aiGraded =
+        'grading_provenance' in feedback && Boolean(feedback.grading_provenance?.length);
       submission.grading = { kind: unsupported ? 'manual' : 'settled' };
       if (submit.autoCommitted || submit.committedPreview) submission.recording = { kind: 'saved' };
       revelation = {
@@ -382,7 +385,9 @@ export function PracticePresentation(props: PracticePresentationProps) {
               ? `部分正确（${(feedback.partial_units ?? []).map((unit) => `${unit.correct_count}/${unit.total_count}`).join('、')}），分数未知`
               : isObjectiveQuestion(feedback.route)
                 ? '自动核对只比较了答案本身，还没有判断原因。'
-                : '这是 AI 的判断，觉得不对可以申诉。',
+                : aiGraded
+                  ? '觉得不对可以申诉。'
+                  : '这是 AI 的判断，觉得不对可以申诉。',
           parts: [],
           reference: q.reference_md
             ? { kind: 'ready', content: markdown('reference', '参考答案', q.reference_md) }
@@ -392,6 +397,7 @@ export function PracticePresentation(props: PracticePresentationProps) {
               ? [markdown('feedback', '判分反馈', feedback.feedback_md)]
               : [],
           uncertainty: unknownScore ? '对了几处是确定的；分数还算不出来，不按 0 分记。' : undefined,
+          aiGraded,
         },
       };
       if (!submit.autoCommitted && !unknownScore)

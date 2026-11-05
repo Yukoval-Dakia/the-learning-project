@@ -16,7 +16,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | --- | --- | --- | --- |
 | `DATABASE_URL` | app、worker、脚本 | 必填；缺失时 `src/db/client.ts` 启动即抛错 | `src/server/config/env.ts`；`src/db/client.ts` |
 | `API_PORT` | app | `8787`；非正整数抛错 | `src/server/config/env.ts` |
-| `DEV_PORT` | `pnpm dev:local` | 未设时自动探测 8788 起首个空闲的 127.0.0.1 端口；作为 `API_PORT` 传给 dev 的 API 进程，并把 dev worker 的 `WORKSHEET_RENDER_APP_ORIGIN` 指到同一端口。避开 TEST app 容器占用的 :8787 | `scripts/dev-local.ts` |
+| `DEV_PORT` | `pnpm dev:local` | 未设时自动探测 8788 起首个空闲的 127.0.0.1 端口；作为 `API_PORT` 传给 dev 的 API 进程，并把 dev worker 的 `WORKSHEET_RENDER_APP_ORIGIN` 指到同一端口。避开 TEST 占用的 :8787（本机由 NAS 中继监听） | `scripts/dev-local.ts` |
 | `DEV_DB_NAME` | `pnpm dev:local`、`pnpm dev:reset` | 未设时按 worktree 根路径派生 `loom_dev_<name>_<sha1(path)前8>`；覆盖后 dev:local 用该库名，dev:reset 仍只接受 `loom_dev_*` | `scripts/dev-worktree-db.ts` |
 | `RW_WORKER` | app | `1` 时同进程启动 pg-boss worker | `server/index.ts` |
 | `RW_FRONTDOOR` | app | `1` 时启用 Start 前门（需要 `dist/start`）；`dev` 仅 `dev:local` 使用，经 API 进程内的 Vite dev server 提供同一前门（HMR，不需要 `dist/start`）；未设时 app 只服务 Hono API | `server/index.ts`；`server/dev-frontdoor.ts` |

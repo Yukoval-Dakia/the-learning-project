@@ -145,7 +145,7 @@ export function compareSccsAgainstBase(
   );
   if (grown.length > 0) {
     violations.push({
-      file: 'scripts/capability-boundary-baseline.json',
+      file: 'scripts/audit-capability-boundaries.ts',
       source: 'crossCapabilityValue.nontrivialSccs',
       reason: `nontrivial SCC(s) introduce members outside any base component${
         previous.length === 0 ? ' — a cycle may not reappear once the base has none' : ''
@@ -156,7 +156,7 @@ export function compareSccsAgainstBase(
   const previousMembers = new Set(previous.flat()).size;
   if (currentMembers > previousMembers) {
     violations.push({
-      file: 'scripts/capability-boundary-baseline.json',
+      file: 'scripts/audit-capability-boundaries.ts',
       source: 'crossCapabilityValue.nontrivialSccs',
       reason: `members participating in nontrivial SCCs grew ${previousMembers} -> ${currentMembers}`,
     });
@@ -165,7 +165,7 @@ export function compareSccsAgainstBase(
   const previousMax = Math.max(0, ...previous.map((c) => c.length));
   if (currentMax > previousMax) {
     violations.push({
-      file: 'scripts/capability-boundary-baseline.json',
+      file: 'scripts/audit-capability-boundaries.ts',
       source: 'crossCapabilityValue.nontrivialSccs',
       reason: `largest nontrivial SCC grew ${previousMax} -> ${currentMax} members`,
     });
