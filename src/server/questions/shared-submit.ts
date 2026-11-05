@@ -466,15 +466,46 @@ export async function submitDraftQuestionInTx(
     if (lineage != null) {
       const trusted = lineage.payload as DraftSourceLineage;
       doc.source = trusted.source;
-      // Edits change content identity, never the original extract or fetch binding.
+      // A former single-part root becomes a child when another part is added.
+      // Unpublished groups can choose a separate root; removed parts lose their map.
+      const partIds = new Set(doc.parts.map((part) => part.part_id));
+      const savedRoot = trusted.producer?.newGroupId;
+      const producer =
+        trusted.producer == null
+          ? undefined
+          : {
+              ...trusted.producer,
+              newGroupId:
+                doc.parts.length === 1
+                  ? doc.parts[0].part_id
+                  : savedRoot != null && !partIds.has(savedRoot)
+                    ? savedRoot
+                    : createId(),
+            };
+      const declaredIdMap =
+        trusted.declaredIdMap == null
+          ? undefined
+          : {
+              part: Object.fromEntries(
+                Object.entries(trusted.declaredIdMap.part ?? {}).filter(([, boundId]) =>
+                  partIds.has(boundId),
+                ),
+              ),
+            };
+      // Only part aliases are consumed by projection. Other saved identity domains
+      // describe the original candidate, not the edited document.
+      const metadata = { ...trusted.sourced.metadata };
+      delete metadata.vector_near_dup;
+      // Edits change content identity and dedup decisions, never original source evidence.
       input = {
         ...input,
         sourced: {
           ...trusted.sourced,
+          metadata,
           canonical_content_hash: canonicalQuestionContentHash(draftCanonicalIdentity(doc)),
         },
       };
-      opts = { ...opts, producer: trusted.producer, declaredIdMap: trusted.declaredIdMap };
+      opts = { ...opts, producer, declaredIdMap };
     }
   }
   if (input.knowledge_ids != null) doc.knowledge_ids = input.knowledge_ids;
