@@ -193,18 +193,53 @@ async function latestRequired(db: Db, demandId: string) {
 
 export type PlacementWebDemandOutcome = 'unknown' | 'config_error' | 'known';
 
+const PLACEMENT_KNOWN_BLOCK_REASONS: ReadonlySet<string> = new Set([
+  'candidate_not_servable',
+  'text_evidence_unavailable',
+  'anchor_not_found',
+  'web_search_unavailable',
+  'llm',
+  'parse',
+  'kind_gate',
+  'knowledge_unresolvable',
+  'request_id_reused',
+  'deadline_exhausted',
+  'budget_exhausted',
+  'placement_attempt_required',
+]);
+
+/**
+ * One placement round's durable paid outcome. 'unknown' is the default for any
+ * shape that cannot prove what happened on the wire; new failure vocabulary must
+ * be admitted to PLACEMENT_KNOWN_BLOCK_REASONS before it can authorize re-pay.
+ */
+function placementWebDemandStateOutcome(state: WebSupplyState): PlacementWebDemandOutcome {
+  if (
+    state.phase === 'acquiring' ||
+    state.activeRequestId != null ||
+    state.reason === 'acquisition_outcome_unknown' ||
+    state.reason === 'producer_identity_missing' ||
+    state.submissions.some((submission) => !submission.receipt)
+  )
+    return 'unknown';
+  if (state.reason === 'config_error') return 'config_error';
+  if (state.phase === 'fulfilled' || state.phase === 'verifying') return 'known';
+  return state.phase === 'blocked' && PLACEMENT_KNOWN_BLOCK_REASONS.has(state.reason ?? '')
+    ? 'known'
+    : 'unknown';
+}
+
 /**
  * The durable paid-outcome class of a placement item demand after a failed delivery,
  * read from the demand's own events — the thrown class cannot say whether a provider
  * request went out.
  *
  * 'unknown': the state cannot prove what a paid round did — a thrown acquisition, an
- * in-flight send, a missing producer identity, or a submission without its receipt.
- * That state never authorizes another paid round for the claim, ever.
+ * in-flight send, a missing producer identity, a submission without its receipt, or
+ * an unlisted terminal reason. That state never authorizes another paid round.
  * 'config_error': the round provably spent nothing and cannot succeed until the lane
  * is repaired — non-retryable, but known.
- * 'known': every other recorded outcome — the delivery may hand the claim to a fresh
- * paid attempt.
+ * 'known': a listed terminal outcome or a settled verification state.
  * A round id with no durable state never started: nothing was sent, so nothing is owed.
  */
 export async function placementWebDemandOutcome(
@@ -219,15 +254,9 @@ export async function placementWebDemandOutcome(
   ]) {
     const state = await latest(db, roundId);
     if (!state) continue;
-    if (
-      state.phase === 'acquiring' ||
-      state.activeRequestId != null ||
-      state.reason === 'acquisition_outcome_unknown' ||
-      state.reason === 'producer_identity_missing' ||
-      state.submissions.some((submission) => !submission.receipt)
-    )
-      return 'unknown';
-    if (state.reason === 'config_error') configError = true;
+    const outcome = placementWebDemandStateOutcome(state);
+    if (outcome === 'unknown') return 'unknown';
+    if (outcome === 'config_error') configError = true;
   }
   return configError ? 'config_error' : 'known';
 }
@@ -274,7 +303,6 @@ const PLACEMENT_REDRIVE_BLOCK_REASONS: ReadonlySet<string> = new Set([
   'parse',
   'kind_gate',
   'knowledge_unresolvable',
-  'config_error',
 ]);
 
 /** Routes of the persisted plan not yet tried for this demand (deduped, in order). */
@@ -813,13 +841,7 @@ export async function runWebSupply(params: WebSupplyParams): Promise<WebSupplySt
     const prior = await latest(params.db, roundId);
     const count = prior?.item.count ?? Math.max(1, params.item.count - previousCount);
     state = await runWebSupplyRound({ ...params, item: { ...params.item, count } }, roundId);
-    const unprovenPaidEffect =
-      state.phase === 'acquiring' ||
-      state.activeRequestId !== null ||
-      state.reason === 'acquisition_outcome_unknown' ||
-      state.reason === 'producer_identity_missing' ||
-      state.submissions.some((submission) => !submission.receipt);
-    if (unprovenPaidEffect) return state;
+    if (placementWebDemandStateOutcome(state) !== 'known') return state;
     if (state.phase === 'blocked') {
       const settledCandidateRefill = [
         'candidate_not_servable',

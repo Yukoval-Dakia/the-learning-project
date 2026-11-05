@@ -1,4 +1,7 @@
-export { countPlacementInventory } from './server/placement-inventory';
+export {
+  countPlacementInventory,
+  placementUsableQuestionPredicate,
+} from './server/placement-inventory';
 
 import { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
 import { assertPlacementAuthority } from './server/placement-starter-attempts';
