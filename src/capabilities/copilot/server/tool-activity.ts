@@ -54,6 +54,8 @@ export function projectCopilotActivity(
     case 'prose_delta':
     case 'spawn_budget':
       return null;
+    case 'model_thinking':
+      return { step_kind: 'model_thinking' };
     case 'block_draft':
       return {
         step_kind: 'block_draft',

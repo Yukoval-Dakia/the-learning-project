@@ -17,12 +17,20 @@
     gap: var(--un-sp-1);
     margin: 0;
     padding: var(--un-sp-3) var(--un-sp-4);
-    border-radius: 0 var(--un-r-1) var(--un-r-1) 0;
+    border-radius: var(--un-r-1);
     background: var(--un-bg-sunk);
-    box-shadow: inset 2px 0 0 var(--un-line-strong);
     color: var(--un-text-2);
     font-size: var(--un-fs-1);
     list-style: none;
+  }
+  & .rc-gaps li {
+    display: flex;
+    gap: var(--un-sp-2);
+  }
+  & .rc-gaps svg {
+    flex: none;
+    margin-top: 0.2em;
+    color: var(--un-text-3);
   }
 
   & .rc-prior {

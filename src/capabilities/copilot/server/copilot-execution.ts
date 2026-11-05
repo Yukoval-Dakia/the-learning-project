@@ -100,6 +100,8 @@ export function isRemoteMcpToolCall(name: string): boolean {
 
 export type CopilotExecutionActivity =
   | { kind: 'prose_delta'; text: string }
+  /** YUK-1765 — the model started reasoning. Carries no reasoning text. */
+  | { kind: 'model_thinking' }
   | { kind: 'subtask'; event: CopilotSubtaskEvent }
   | {
       kind: 'tool_started';
@@ -514,6 +516,8 @@ export function createCopilotExecutionOwner(
         observedSdkSessionId = sessionId;
       },
     };
+    // One signal per stretch of reasoning; reset by anything else the model sends.
+    let thinkingAnnounced = false;
     const runnerContext: Parameters<typeof streamTaskCollecting>[2] = {
       db,
       taskRunId: turn.taskRunId,
@@ -548,7 +552,15 @@ export function createCopilotExecutionOwner(
       },
       sdkSession,
       nativeCompaction: { sessionContext: compileCopilotSessionContext(input) },
+      onThinking: () => {
+        if (thinkingAnnounced) return;
+        thinkingAnnounced = true;
+        void Promise.resolve(emitActivity(policy, { kind: 'model_thinking' })).catch(
+          () => undefined,
+        );
+      },
       onToolUse: (call) => {
+        thinkingAnnounced = false;
         if (!shouldEmitToolUseForCaller(call.toolName, DOMAIN_TOOL_MCP_SERVER_NAME, callerActor)) {
           return;
         }
@@ -557,6 +569,7 @@ export function createCopilotExecutionOwner(
         );
       },
       onToolArgsDelta: (delta) => {
+        thinkingAnnounced = false;
         if (delta.toolName !== `mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__compose_block`) return;
         const draft = scanBlockArgsPrefix(delta.argsPrefix);
         void Promise.resolve(
@@ -611,6 +624,7 @@ export function createCopilotExecutionOwner(
         input,
         runnerContext,
         (text) => {
+          thinkingAnnounced = false;
           prose.push(text);
         },
       );

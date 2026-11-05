@@ -3,21 +3,20 @@
 import type { Job, PgBoss } from 'pg-boss';
 import {
   type GenerateBrief,
-  MEMORY_BRIEF_SWEEP_QUEUE,
   MEMORY_EVENT_INGEST_QUEUE,
   MEMORY_INFRA_SCHEDULES,
   MEMORY_INGEST_OUTBOX_POLL_QUEUE,
   MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
   buildBriefGenerator,
-  buildMemoryBriefRegenHandler,
-  buildMemoryBriefSweepHandler,
+  buildContextPurposeRepairHandler,
   buildMemoryEventIngestHandler,
   buildMemoryIngestOutboxPollHandler,
   buildMemoryIngestOutboxRecoverHandler,
 } from '@/capabilities/agency/public';
 import type { Db } from '@/db/client';
-import { MEMORY_BRIEF_REGEN_QUEUE } from '@/kernel/memory-brief-regen';
-import { MEMORY_BRIEF_SWEEP_JOB, eligibilityFor } from '@/kernel/nightly-eligibility';
+
+const CONTEXT_PURPOSE_REPAIR_QUEUE = 'context_purpose_repair';
+
 import type { MemoryClient } from '@/server/ai/mem0/client';
 import {
   EXPIRE_LLM,
@@ -26,27 +25,6 @@ import {
   createOrUpdateQueue,
 } from '@/server/boss/queue-config';
 import { fenceAwareJobHandler } from '@/server/migration/contract-epoch/boss-fence';
-import { loadNightlyContext, noteEligibilitySkip } from '@/server/orchestration/nightly-signals';
-
-async function reflectionBriefsOff(db: Db, now: Date): Promise<boolean> {
-  try {
-    const signals = (await loadNightlyContext(db, now, [MEMORY_BRIEF_SWEEP_JOB])).forJob(
-      MEMORY_BRIEF_SWEEP_JOB,
-    );
-    const decision = eligibilityFor('reflection', signals);
-    if (!decision.run) {
-      noteEligibilitySkip(MEMORY_BRIEF_SWEEP_JOB, decision);
-      return true;
-    }
-    return false;
-  } catch (err) {
-    console.error(
-      '[eligibility] memory brief signal load failed; skipping global/meta this sweep',
-      err,
-    );
-    return true;
-  }
-}
 
 export async function registerMemoryHandlers(
   boss: PgBoss,
@@ -56,6 +34,7 @@ export async function registerMemoryHandlers(
     generateBrief?: GenerateBrief;
   } = {},
 ): Promise<void> {
+  await boss.unschedule('memory_brief_sweep');
   const generateBrief = deps.generateBrief ?? buildBriefGenerator({ db });
 
   // Ingest runs mem0's extraction + embedding, so give it the shared LLM expiry
@@ -72,26 +51,32 @@ export async function registerMemoryHandlers(
     ),
   );
 
-  await createJobQueue(boss, MEMORY_BRIEF_REGEN_QUEUE, EXPIRE_LLM);
+  await createJobQueue(boss, CONTEXT_PURPOSE_REPAIR_QUEUE, EXPIRE_LLM);
   await boss.work(
-    MEMORY_BRIEF_REGEN_QUEUE,
+    CONTEXT_PURPOSE_REPAIR_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1 },
     fenceAwareJobHandler(
       db,
-      MEMORY_BRIEF_REGEN_QUEUE,
-      buildMemoryBriefRegenHandler(db, { memoryClient: deps.memoryClient, generateBrief }),
+      CONTEXT_PURPOSE_REPAIR_QUEUE,
+      buildContextPurposeRepairHandler(db, { memoryClient: deps.memoryClient, generateBrief }),
     ),
   );
 
-  await createOrUpdateQueue(boss, MEMORY_BRIEF_SWEEP_QUEUE, FAST_QUEUE_OPTS);
-  await boss.work(
-    MEMORY_BRIEF_SWEEP_QUEUE,
-    fenceAwareJobHandler(
-      db,
-      MEMORY_BRIEF_SWEEP_QUEUE,
-      buildMemoryBriefSweepHandler(db, boss, reflectionBriefsOff),
-    ),
+  // Upgrade drain only: ordinary legacy regeneration commands are discarded.
+  // Bound purpose commands retain their original job id and once-only reservation.
+  await createJobQueue(boss, 'memory_brief_regen', EXPIRE_LLM);
+  const legacyPurposeHandler = buildContextPurposeRepairHandler(db, {
+    memoryClient: deps.memoryClient,
+    generateBrief,
+  });
+  await boss.work<{ scope_key: string; purpose_operation_id?: string }>(
+    'memory_brief_regen',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    fenceAwareJobHandler(db, 'memory_brief_regen', async (jobs) => {
+      await legacyPurposeHandler(jobs.filter((job) => Boolean(job.data.purpose_operation_id)));
+    }),
   );
+
   await createOrUpdateQueue(boss, MEMORY_INGEST_OUTBOX_POLL_QUEUE, FAST_QUEUE_OPTS);
   await boss.work(
     MEMORY_INGEST_OUTBOX_POLL_QUEUE,

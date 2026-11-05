@@ -531,8 +531,18 @@
   margin: 0 0 6px;
 }
 [data-ui-next] .un-st-notice[data-tone="error"] {
-  border-inline-start: 3px solid var(--un-md-sys-color-on-error-container);
-  padding-inline-start: 16px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--un-critical-soft);
+}
+[data-ui-next] .un-st-notice-title {
+  display: flex;
+  gap: 6px;
+}
+[data-ui-next] .un-st-notice-title svg {
+  flex: none;
+  margin-top: 0.2em;
+  color: var(--un-critical);
 }
 [data-ui-next] .un-st-page-state {
   padding-top: 48px;

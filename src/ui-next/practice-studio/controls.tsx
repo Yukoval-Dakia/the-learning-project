@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Lightbulb, Quote } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CircleAlert, Lightbulb, Quote } from 'lucide-react';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import type { Action, Notice, PracticeIntents } from './contracts';
 
@@ -60,7 +60,12 @@ export function NoticeBlock({
 }) {
   return (
     <div className="un-st-notice" data-tone={tone} role={tone === 'error' ? 'alert' : 'status'}>
-      {notice.title && <p>{notice.title}</p>}
+      {notice.title && (
+        <p className="un-st-notice-title">
+          {tone === 'error' && <CircleAlert size={15} aria-hidden="true" />}
+          {notice.title}
+        </p>
+      )}
       {notice.detail && <p className="un-st-secondary">{notice.detail}</p>}
       {!!notice.actions?.length && (
         <div className="un-st-actions">
