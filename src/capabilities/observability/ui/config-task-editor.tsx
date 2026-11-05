@@ -172,7 +172,9 @@ export function ConfigTaskEditor({
         ) : null}
         {globalWins ? (
           <p className="adm-note">
-            全局默认现在优先（{global?.provider} / {global?.model}），上面选的模型先存着，不会生效。
+            {global?.model
+              ? `全局默认现在优先（${global.provider} / ${global.model}），上面选的模型先存着，不会生效。`
+              : `全局默认只定了 provider（${global?.provider}），上面选的模型会生效，provider 仍跟全局。`}
           </p>
         ) : null}
         <div className="adm-acts">
