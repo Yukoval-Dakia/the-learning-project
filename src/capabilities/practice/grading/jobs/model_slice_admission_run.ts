@@ -24,6 +24,7 @@ import { writeEvent } from '@/kernel/events';
 import { withModelSliceAdmissionLock } from '@/kernel/locks/grading';
 import { lookupGroupSubjects } from '@/kernel/read-models/model-admission';
 import { resolveTaskBinding } from '@/server/ai/providers';
+import { currentTaskSpendScope } from '@/server/ai/task-spend-scope';
 import { createAdmissionRunExecutor } from '../server/judge/evaluate-submission';
 import {
   assertModelAdmissionSliceRegistrable,
@@ -628,6 +629,10 @@ export async function runModelSliceAdmission(
     const results: ModelSliceAdmissionItemResult[] = [];
     let knownCostMicros = 0;
     for (const item of data.items) {
+      if (currentTaskSpendScope()?.remainingUsd() === 0) {
+        failures.push('shared task allowance exhausted or unpriced; no further calls permitted');
+        break;
+      }
       const livePin = currentModelPins().get(data.slice.task_kind);
       if (
         livePin?.model !== data.slice.model ||
@@ -705,16 +710,29 @@ export async function runModelSliceAdmission(
         ),
       );
       const lastResult = results.at(-1);
-      if (lastResult) lastResult.actual_runs = actualRuns;
-      knownCostMicros = holdoutRunTally(results).known_cost_usd_micros;
-      if (failures.length > 0) break;
-      if (
-        outcome.cost_usd_micros === undefined ||
-        actualRuns.some((run) => run.cost_basis === 'unknown')
-      ) {
-        failures.push('unknown cost; no further paid calls permitted');
-        break;
+      const actualCostKnown = actualRuns.every(
+        (run) =>
+          (run.cost_basis === 'reported' || run.cost_basis === 'estimated') &&
+          run.cost_usd !== null &&
+          Number.isFinite(run.cost_usd) &&
+          run.cost_usd >= 0,
+      );
+      if (lastResult) {
+        lastResult.actual_runs = actualRuns;
+        // An executor's fallback cap reserves spend; only settled attempt prices measure it.
+        if (outcome.run_refs.length > 0) {
+          if (actualCostKnown && actualRuns.length === outcome.run_refs.length) {
+            lastResult.cost_usd_micros = Math.ceil(
+              actualRuns.reduce((sum, run) => sum + (run.cost_usd ?? 0), 0) * 1_000_000,
+            );
+          } else delete lastResult.cost_usd_micros;
+        }
       }
+      knownCostMicros = holdoutRunTally(results).known_cost_usd_micros;
+      if (lastResult?.cost_usd_micros === undefined || !actualCostKnown) {
+        failures.push('unknown cost; no further paid calls permitted');
+      }
+      if (failures.length > 0) break;
     }
 
     const tally = holdoutRunTally(results);
