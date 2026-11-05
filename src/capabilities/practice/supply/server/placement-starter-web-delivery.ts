@@ -154,8 +154,8 @@ export async function runPlacementWebDelivery(input: {
       .limit(1);
     if (!bound) {
       // Nothing reached a durable submit receipt under this delivery (no evidence, blocked
-      // source, or a send whose receipt is still unknown). There is nothing to verify; the next
-      // delivery only resumes the same demand, it never acquires again.
+      // source, or a send whose receipt is still unknown). There is nothing to verify; the
+      // outcome read below decides whether the next delivery may open a refill round.
       await finishPlacementAttempt(db, attempt, 'underfilled');
       throw new PlacementStarterUnderfillError('placement web delivery bound no questions');
     }
@@ -236,11 +236,12 @@ export async function runPlacementWebDelivery(input: {
           console.error('[supply_execute] config-error park failed for', claimId, parkErr);
         }
       } else {
-        // A real known failure hands the claim to a fresh demand — the same-job retry
-        // can only re-read this job's terminal 'blocked' demand and underfill without
-        // ever fetching again. But the fresh job replaces that dead retry, so it keeps
-        // the retry's backoff cadence (attempt 2 ≈30s, attempt 3 ≈60s via the existing
-        // retryDelay/retryBackoff curve) instead of re-paying inside milliseconds.
+        // A real known failure hands the claim to a fresh delivery. The same job can
+        // only re-read this delivery's terminal 'blocked' round, so the next job keeps
+        // the claim's demand provenance but opens the next refill identity. The fresh
+        // job replaces the dead same-job retry, so it keeps that retry's backoff
+        // cadence (attempt 2 ≈30s, attempt 3 ≈60s via the existing retryDelay/
+        // retryBackoff curve) instead of re-paying inside milliseconds.
         const [attemptRows] = await db
           .select({ n: count() })
           .from(placement_starter_attempt)

@@ -262,6 +262,21 @@ const FALLBACKABLE_BLOCK_REASONS: ReadonlySet<string> = new Set([
 /** Routes the executor can actually dispatch ('sourcing_web' is always tried). */
 const EXECUTABLE_FALLBACK_ROUTES: ReadonlySet<string> = new Set(['jyeoo_fetch', 'quiz_gen']);
 
+/** Blocked reasons a NEW placement delivery may turn into the next refill round.
+ * Unknown outcomes are still excluded below before this list is consulted; the
+ * list is only for outcomes durable enough to authorize another paid round. */
+const PLACEMENT_REDRIVE_BLOCK_REASONS: ReadonlySet<string> = new Set([
+  'candidate_not_servable',
+  'text_evidence_unavailable',
+  'anchor_not_found',
+  'web_search_unavailable',
+  'llm',
+  'parse',
+  'kind_gate',
+  'knowledge_unresolvable',
+  'config_error',
+]);
+
 /** Routes of the persisted plan not yet tried for this demand (deduped, in order). */
 function remainingRoutePlan(state: WebSupplyState): string[] {
   const tried = new Set(['sourcing_web', ...state.routesTried]);
@@ -782,8 +797,9 @@ interface WebSupplyParams {
   routesExecuted?: string[];
 }
 
-/** Placement alone may replace settled unusable candidates. Round identities survive
- * retries; unknown acquisition/submit outcomes never authorize another paid round. */
+/** Placement alone may replace settled unusable candidates and a fresh delivery may
+ * resume a durably known-failed round into the next refill identity. Round identities
+ * survive retries; unknown acquisition/submit outcomes never authorize another paid round. */
 export async function runWebSupply(params: WebSupplyParams): Promise<WebSupplyState> {
   const delivery = params.placement;
   if (!delivery) return runWebSupplyRound(params);
@@ -797,16 +813,33 @@ export async function runWebSupply(params: WebSupplyParams): Promise<WebSupplySt
     const prior = await latest(params.db, roundId);
     const count = prior?.item.count ?? Math.max(1, params.item.count - previousCount);
     state = await runWebSupplyRound({ ...params, item: { ...params.item, count } }, roundId);
-    if (
+    const unprovenPaidEffect =
       state.phase === 'acquiring' ||
       state.activeRequestId !== null ||
       state.reason === 'acquisition_outcome_unknown' ||
       state.reason === 'producer_identity_missing' ||
-      (state.phase === 'blocked' &&
-        !['candidate_not_servable', 'text_evidence_unavailable'].includes(state.reason ?? '')) ||
-      state.submissions.some((submission) => !submission.receipt)
-    )
-      return state;
+      state.submissions.some((submission) => !submission.receipt);
+    if (unprovenPaidEffect) return state;
+    if (state.phase === 'blocked') {
+      const settledCandidateRefill = [
+        'candidate_not_servable',
+        'text_evidence_unavailable',
+      ].includes(state.reason ?? '');
+      // A prior round that already terminalized as a durable known failure may
+      // yield to the next refill only inside a NEW delivery. A just-run round
+      // stops here, so one delivery never spends the claim's remaining attempts.
+      const nextDeliveryRedrive =
+        prior != null && PLACEMENT_REDRIVE_BLOCK_REASONS.has(state.reason ?? '');
+      if (nextDeliveryRedrive) {
+        previousCount = await countEligiblePlacementQuestions(
+          params.db,
+          delivery.attempt.claimId,
+          delivery.attempt.attemptId,
+        );
+        continue;
+      }
+      if (!settledCandidateRefill) return state;
+    }
     for (;;) {
       const ids = state.submissions.flatMap((submission) =>
         submission.receipt?.question_id ? [submission.receipt.question_id] : [],

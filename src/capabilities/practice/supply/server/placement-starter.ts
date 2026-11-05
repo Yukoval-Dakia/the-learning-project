@@ -148,7 +148,7 @@ export async function dispatchPlacementStarterClaimTx(
     .from(placement_starter_claim)
     .where(eq(placement_starter_claim.id, claimId))
     .for('update');
-  if (!claim || claim.status !== 'pending_dispatch') return claim?.pg_boss_job_id ?? null;
+  if (claim?.status !== 'pending_dispatch') return claim?.pg_boss_job_id ?? null;
   if (!(await admit(tx, claim))) return null;
 
   const now = new Date();
@@ -251,10 +251,10 @@ export async function dispatchPlacementStarterClaim(
 /**
  * Hand a claim whose paid delivery just failed back into dispatch. The same-job pg-boss
  * retry cannot produce another sourcing run — the web demand is durable-'blocked' under
- * the demand id baked into the failed job's payload, so a same-job redelivery tallies
- * 'skipped' and underfills without ever fetching again. Only a fresh job (a fresh
- * demand id per send) performs the next real find-question — and `startAfter` makes it
- * a SCHEDULED fresh job: the handoff replaces the dead same-job retry, so it must keep
+ * the claim's demand id baked into supply_trace, so a same-job redelivery resumes that
+ * round without fetching again. Only a fresh job opens the next refill identity under
+ * that same claim demand — and `startAfter` makes it a SCHEDULED fresh job: the handoff
+ * replaces the dead same-job retry, so it must keep
  * that retry's backoff cadence instead of re-paying in milliseconds. The
  * retry_scheduled → pending_dispatch CAS re-arms the one legitimate dispatch CAS in
  * dispatchPlacementStarterClaimTx (pending_dispatch → queued), keeping this handoff,
