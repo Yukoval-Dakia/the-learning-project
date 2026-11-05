@@ -100,8 +100,6 @@
   margin-top: 24px;
 }
 [data-ui-next] .rc-purpose-committed {
-  border-inline-start: 3px solid var(--un-accent);
-  padding-inline-start: 12px;
   font-weight: 500;
 }
 [data-ui-next] .rc-purpose-retry {
