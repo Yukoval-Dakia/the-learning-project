@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { CircleDashed, Trash2, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { showToast } from '@/ui-next/feedback/toast-store';
@@ -50,7 +51,10 @@ function DraftNotice({ id }: { id: string }) {
 
   return (
     <section className="qd-notice" data-tone="accent" aria-label="待审核">
-      <p className="qd-notice-title">这道题还没启用</p>
+      <p className="qd-notice-title">
+        <CircleDashed size={15} aria-hidden="true" />
+        这道题还没启用
+      </p>
       <p className="qd-notice-text">
         {words ? `${words.word}。` : ''}
         {check.data?.verify_reason
@@ -105,7 +109,10 @@ function DeletedNotice({ id }: { id: string }) {
   const restore = useRestore(id);
   return (
     <section className="qd-notice" data-tone="critical" aria-label="已删除">
-      <p className="qd-notice-title">这道题已删除</p>
+      <p className="qd-notice-title">
+        <Trash2 size={15} aria-hidden="true" />
+        这道题已删除
+      </p>
       <p className="qd-notice-text">它不会再出给你。作答和错题记录都还在；恢复后回到待审核。</p>
       <div className="qd-notice-actions">
         <Button
@@ -129,7 +136,10 @@ export function QuestionNotice({ detail }: { detail: QuestionFullDetail }) {
   const words = holdWords(detail.serving.hold_reason);
   return (
     <section className="qd-notice" data-tone="caution" aria-label="暂不出题">
-      <p className="qd-notice-title">暂不出题 · {words.title}</p>
+      <p className="qd-notice-title">
+        <TriangleAlert size={15} aria-hidden="true" />
+        暂不出题 · {words.title}
+      </p>
       <p className="qd-notice-text">{words.why}</p>
       <div className="qd-notice-actions">
         <ServingButton serving={detail.serving} variant="primary" />

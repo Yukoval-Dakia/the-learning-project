@@ -100,7 +100,14 @@
   margin-top: 24px;
 }
 [data-ui-next] .rc-purpose-committed {
+  display: flex;
+  gap: 6px;
   font-weight: 500;
+}
+[data-ui-next] .rc-purpose-committed svg {
+  flex: none;
+  margin-top: 0.2em;
+  color: var(--un-positive);
 }
 [data-ui-next] .rc-purpose-retry {
   margin-block: 16px;
