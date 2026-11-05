@@ -48,6 +48,7 @@ import type { Db } from '@/db/client';
 import { knowledge, learning_item } from '@/db/schema';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
+import type { QuizGenJobData, QuizGenTrigger } from '@/kernel/quiz-gen-contract';
 import {
   type PlacementVerificationAuthority,
   SupplyTraceV1,
@@ -105,48 +106,6 @@ import {
   checkPlanPins,
   parsePlanOutput,
 } from './quiz_gen_plan';
-
-// §3 / §4 — the trigger surface. 'manual' carries a free-form ref_id (we still
-// try to resolve it as a knowledge node for the subject profile, but never skip
-// the run on a manual trigger). 'knowledge' / 'learning_item' resolve a real row.
-export const QUIZ_GEN_TRIGGERS = ['knowledge', 'learning_item', 'manual'] as const;
-export type QuizGenTrigger = (typeof QUIZ_GEN_TRIGGERS)[number];
-
-export interface QuizGenJobData {
-  trigger: QuizGenTrigger;
-  ref_id: string;
-  count?: number;
-  exact_count?: number;
-  placement_starter_claim_id?: string;
-  semantic_goal_revision_id?: string;
-  // YUK-226 S2-5b F1 — the §3.2 找题次序 pins which tier it asked for (step 3
-  // material_grounded vs step 4 closed_book). Absent on a bare manual quiz_gen
-  // trigger, in which case the agent free-chooses the method as before.
-  generation_method?: 'material_grounded' | 'closed_book';
-  // YUK-226 S2-5b F3 — the knowledge node a manual/free-form trigger should attribute
-  // produced questions to (the next 找题次序 round keys off this node's pool).
-  knowledge_id?: string;
-  // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for (additive). Threaded
-  // into the QuizGenTask input so the agent can target the题型.
-  kind?: string;
-  objective_only?: boolean;
-  kind_required?: boolean;
-  // YUK-287 — the supply target's difficulty band (below|near|above|stretch, relative
-  // to learner θ̂). Forwarded as requested_difficulty_band into plan/generate inputs so
-  // a band-gap target produces band-aimed questions instead of generic difficulty.
-  difficulty_band?: DifficultyBand;
-  // YUK-287 forwarded this 篇 (composite parent) pin phase-deferred; YUK-1011
-  // consumes it: the run produces composite questions (stem+sub_questions
-  // structured tree persisted on the parent + question_part child rows).
-  composite_parent_only?: boolean;
-  // YUK-533 — the full KC set a multi-KC supply target carries (the confusable A↔B pair).
-  // knowledge_id stays the PRIMARY attribution anchor (knowledgeIds[0]); knowledge_ids
-  // carries the whole pair so a contrast/discrimination item can probe the A-vs-B boundary.
-  // The dispatcher forwards it for any multi-KC target that routes to quiz_gen; the handler
-  // does not yet read it (contrast-aware generation is not built).
-  knowledge_ids?: string[];
-  supply_trace?: SupplyTraceV1T;
-}
 
 // §4 — default question count when the trigger doesn't specify one.
 // YUK-554 (spec docs/design/2026-07-03-verify-check-spec.md §Q7) originally noted the
