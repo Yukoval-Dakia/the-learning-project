@@ -82,12 +82,25 @@ const ID_KEYS: Record<string, EvidenceKind> = {
   to_knowledge_id: 'knowledge',
 };
 
-const MUTATION_NAME =
-  /^(propose_|write_|author_|edit_|update_|submit_|file_|archive_|restore_|dismiss_)/;
-
-function classifyRootCall(tool: string, isError: boolean): SettledRootCall {
-  if (MUTATION_NAME.test(tool)) return { kind: 'mutation', applied: !isError };
-  return { kind: 'read' };
+function classifyRootCall(
+  observation: Parameters<PiAfterToolCall>[0],
+  payload: unknown,
+): SettledRootCall {
+  if (observation.effect === 'read' || observation.effect === undefined) return { kind: 'read' };
+  const body = isRecord(payload) && 'output' in payload ? payload.output : payload;
+  const failed =
+    isRecord(body) &&
+    (body.status === 'skipped' ||
+      body.status === 'pending' ||
+      body.status === 'failed' ||
+      body.status === 'error' ||
+      body.applied === false ||
+      body.skipped === true ||
+      body.ok === false ||
+      body.success === false ||
+      body.replayed === true ||
+      body.error !== undefined);
+  return { kind: 'mutation', applied: !observation.isError && isRecord(body) && !failed };
 }
 
 function domainToolName(name: string): string {
@@ -130,12 +143,22 @@ function parseText(text: string): unknown {
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    return { summary: text.slice(0, 180) };
+    return { summary: text.split('\n\nReceived arguments:')[0] };
   }
 }
 
 function fingerprintOf(payload: unknown): string {
   const body = isRecord(payload) && 'output' in payload ? payload.output : payload;
+  if (
+    isRecord(body) &&
+    (body.status === 'skipped' ||
+      body.status === 'failed' ||
+      body.status === 'error' ||
+      body.error !== undefined)
+  ) {
+    const { status, error, code, reason, issues, next_action } = body;
+    return sha256(stable({ status, error, code, reason, issues, next_action }));
+  }
   return sha256(stable(body));
 }
 
@@ -254,6 +277,7 @@ export function createNoProgressLoop(policy?: {
   let budget: BudgetLanding = { window: 'open', anchor: 'waiting' };
   const settledAtGeneration = new Map<string, number>();
   const seenFingerprints = new Set<string>();
+  const pendingFingerprints = new Set<string>();
   const known = new Set<string>();
   const evidence: EvidenceFact[] = [];
 
@@ -293,7 +317,6 @@ export function createNoProgressLoop(policy?: {
   }
 
   const beforeToolCall: PiBeforeToolCall = (call, args) => {
-    if (call.agentType !== undefined) return undefined;
     if (phase.status === 'closed') return deny(phase.reason);
     const signature = signatureOf(call.name, args);
     if (settledAtGeneration.get(signature) === generation) {
@@ -308,7 +331,7 @@ export function createNoProgressLoop(policy?: {
   };
 
   const afterToolCall: PiAfterToolCall = (observation) => {
-    if (observation.call.agentType !== undefined || observation.interrupted) return undefined;
+    if (observation.interrupted) return undefined;
     const tool = domainToolName(observation.call.name);
     const payload = parsePayload(observation.isError ? observation.error : observation.output);
     const fingerprint = fingerprintOf(policy?.normalize ? policy.normalize(payload) : payload);
@@ -316,7 +339,14 @@ export function createNoProgressLoop(policy?: {
     const substantive = incoming.filter((fact) => fact.kind !== 'tool_summary');
     const novel = substantive.filter((fact) => !known.has(factKey(fact)));
     const fingerprintKey = `${tool}\n${fingerprint}`;
-    const settled = classifyRootCall(tool, observation.isError);
+    const body = isRecord(payload) && 'output' in payload ? payload.output : payload;
+    // Waiting is owned by the durable operation, never by a model polling loop.
+    if (!policy?.progressed && isRecord(body) && body.status === 'pending') {
+      if (pendingFingerprints.has(fingerprintKey)) return { terminate: true };
+      pendingFingerprints.add(fingerprintKey);
+      return undefined;
+    }
+    const settled = classifyRootCall(observation, payload);
     const progressed = policy?.progressed
       ? policy.progressed(observation, payload)
       : settled.kind === 'mutation' && settled.applied;

@@ -486,8 +486,9 @@ export function createCopilotExecutionOwner(
     });
     // No-progress runs before the finalizer so a blocked repeat never enters the trace.
     const piHooks = {
-      beforeToolCall: [noProgress.beforeToolCall, ...(assembledHooks.beforeToolCall ?? [])],
-      afterToolCall: [...(assembledHooks.afterToolCall ?? []), noProgress.afterToolCall],
+      progress: noProgress,
+      beforeToolCall: assembledHooks.beforeToolCall,
+      afterToolCall: assembledHooks.afterToolCall,
     };
     const piSkillDocs = answerOnly ? undefined : await adapters.resolveCopilotSkillDocsFn();
     const contextDigest = copilotSessionContextDigest(input);

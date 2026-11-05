@@ -176,37 +176,56 @@ function expectedCompositeKinds(
   return out;
 }
 
-/**
- * Whether a string can satisfy this node at all. Repairing a field that
- * legitimately accepts strings would rewrite valid arguments.
- */
-function acceptsString(node: SchemaNode, defs: Definitions, seen = new Set<SchemaNode>()): boolean {
+/** Intersections must permit the structural kind, not merely mention it in a union. */
+function permitsCompositeKind(
+  node: SchemaNode,
+  kind: 'array' | 'object',
+  defs: Definitions,
+  seen = new Set<SchemaNode>(),
+): boolean {
   node = resolveNode(node, defs);
-  if (node === true) return true;
-  if (node === false) return false;
+  if (node === false || seen.has(node)) return false;
   if (!isNode(node)) return true;
-  if (seen.has(node)) return false;
   seen.add(node);
-  if (node.const !== undefined) return typeof node.const === 'string';
-  if (Array.isArray(node.enum)) return node.enum.some((v) => typeof v === 'string');
   const types = typeSet(node);
-  if (types.has('string')) return true;
+  if (types.size > 0 && !types.has(kind)) return false;
+  if (node.const !== undefined && !structuralMatch(kind, node.const)) return false;
+  if (Array.isArray(node.enum) && !node.enum.some((value) => structuralMatch(kind, value)))
+    return false;
   const unions = unionBranches(node);
-  const allof = branchList(node, 'allOf');
-  if (unions.length === 0 && allof.length === 0) {
-    // No combinators: an unconstrained node (no type, no properties/items)
-    // accepts anything; a typed/structural node does not.
-    return (
-      types.size === 0 &&
-      node.properties === undefined &&
-      node.items === undefined &&
-      node.prefixItems === undefined
-    );
-  }
-  // A string satisfies a union if ANY member accepts it; it satisfies an
-  // allOf only when EVERY member does (each member constrains it).
-  if (unions.some((branch) => acceptsString(branch, defs, new Set(seen)))) return true;
-  return allof.length > 0 && allof.every((branch) => acceptsString(branch, defs, new Set(seen)));
+  return (
+    (unions.length === 0 ||
+      unions.some((branch) => permitsCompositeKind(branch, kind, defs, new Set(seen)))) &&
+    branchList(node, 'allOf').every((branch) =>
+      permitsCompositeKind(branch, kind, defs, new Set(seen)),
+    )
+  );
+}
+
+function matchesLiterals(
+  node: SchemaNode,
+  value: unknown,
+  defs: Definitions,
+  seen = new Set<SchemaNode>(),
+): boolean {
+  node = resolveNode(node, defs);
+  if (!isNode(node)) return node !== false;
+  if (seen.has(node)) return true;
+  seen.add(node);
+  if (node.const !== undefined && typeof node.const !== 'object' && node.const !== value)
+    return false;
+  if (
+    Array.isArray(node.enum) &&
+    node.enum.every((item) => typeof item !== 'object') &&
+    !node.enum.includes(value)
+  )
+    return false;
+  const unions = unionBranches(node);
+  return (
+    (unions.length === 0 ||
+      unions.some((branch) => matchesLiterals(branch, value, defs, new Set(seen)))) &&
+    branchList(node, 'allOf').every((branch) => matchesLiterals(branch, value, defs, new Set(seen)))
+  );
 }
 
 function structuralMatch(kind: 'array' | 'object', value: unknown): boolean {
@@ -370,7 +389,12 @@ function repairObjectFields(
     const candidates: SchemaNode[] = [];
     collectPropertySchemas(position, key, ctx.definitions, candidates, new Set());
     if (candidates.length === 0) continue;
-    const repaired = repairValue(value[key], candidates, path === '' ? key : `${path}.${key}`, ctx);
+    const repaired = repairValue(
+      value[key],
+      [{ allOf: candidates }],
+      path === '' ? key : `${path}.${key}`,
+      ctx,
+    );
     if (repaired !== value[key]) {
       next[key] = repaired;
       changed = true;
@@ -393,7 +417,7 @@ function repairArrayElements(
     if (candidates.length === 0) return element;
     const repaired = repairValue(
       element,
-      candidates,
+      [{ allOf: candidates }],
       `${path === '' ? '(root)' : path}.${index}`,
       ctx,
     );
@@ -435,7 +459,10 @@ function repairValue(
     let parsed: { ok: true; value: unknown } | { ok: false } | undefined;
     for (const position of positions) {
       const kinds = expectedCompositeKinds(position, ctx.definitions);
-      if (kinds.size === 0 || acceptsString(position, ctx.definitions)) continue;
+      for (const kind of kinds) {
+        if (!permitsCompositeKind(position, kind, ctx.definitions)) kinds.delete(kind);
+      }
+      if (kinds.size === 0) continue;
       required ??= kinds;
       if (parsed === undefined) parsed = parseOnce(value);
       if (!parsed.ok) continue;
@@ -455,6 +482,12 @@ function repairValue(
     let firstError: ToolParamContractError | undefined;
     for (const position of positions) {
       if (!isNode(position)) continue;
+      const mismatchedLiteral = Object.entries(value).some(([key, field]) => {
+        const constraints: SchemaNode[] = [];
+        collectPropertySchemas(position, key, ctx.definitions, constraints, new Set());
+        return constraints.some((schema) => !matchesLiterals(schema, field, ctx.definitions));
+      });
+      if (mismatchedLiteral) continue;
       const mark = ctx.coercions.length;
       let next: Record<string, unknown>;
       try {
