@@ -31,7 +31,6 @@ const GROUP_BY_KIND: Readonly<Record<string, string>> = {
   TeachingTurnVisionTask: 'companion',
   // 学习教练 — plans, goals, interventions and session/quality reviews.
   CoachTask: 'coach',
-  TodayPlan: 'coach',
   GoalScopeTask: 'coach',
   LearningIntentOutlineTask: 'coach',
   InterventionRecommendationTask: 'coach',
@@ -50,7 +49,6 @@ const GROUP_BY_KIND: Readonly<Record<string, string>> = {
   VariantGenTask: 'question-prep',
   ItemPriorTask: 'question-prep',
   ItemPriorLlasaTask: 'question-prep',
-  JyeooFetch: 'question-prep',
   BankRequirementInterpretTask: 'question-prep',
   BankConditionVerifyTask: 'question-prep',
   SolutionGenerateTask: 'question-prep',

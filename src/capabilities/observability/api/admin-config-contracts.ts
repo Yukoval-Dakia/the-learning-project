@@ -56,8 +56,8 @@ export const AdminConfigTaskOverrideSchema = z.object({
 /**
  * YUK-1808 — the layer that produced the effective binding; same vocabulary as
  * the run record's selection_rule (providers.ts TaskSelectionRule).
- * `call_override` never appears on this read face (no per-call argument) but
- * stays in the enum so the value always matches run receipts.
+ * `call_override` appears when a scoped lane (vision_judge / verify_solve)
+ * serves the task — the same rule the run record writes.
  */
 export const AdminConfigTaskSelectionRuleSchema = z.enum([
   'env_pin',
@@ -75,6 +75,18 @@ export const AdminConfigTaskEffectiveReasoningSchema = z.object({
   error: z.string().nullable(),
 });
 
+/**
+ * The binding's credential lane from this process's view. verified_in_process=false
+ * = the env/file lives outside this process (e.g. worker-only mount) — a fact,
+ * never an error; credential file paths are never serialized. 'conflict' mirrors
+ * the provider row's auth_mode: key + auth-file envs both set is a hard run-time
+ * error, not a lane.
+ */
+export const AdminConfigTaskCredentialSchema = z.object({
+  lane: z.enum(['key', 'oauth', 'oauth-file', 'conflict']),
+  verified_in_process: z.boolean(),
+});
+
 /** Effective binding as the runtime resolver produces it; shared by the read face and the write receipt. */
 export const AdminConfigTaskEffectiveBindingSchema = z.object({
   provider: z.string().nullable(),
@@ -82,13 +94,17 @@ export const AdminConfigTaskEffectiveBindingSchema = z.object({
   error: z.string().nullable(),
   selection_rule: AdminConfigTaskSelectionRuleSchema.nullable(),
   reasoning: AdminConfigTaskEffectiveReasoningSchema.nullable(),
+  credential: AdminConfigTaskCredentialSchema.nullable().optional(),
 });
 
 /** YUK-1808 — the effective global switch and the layer that produced it ('env' pin vs 'db' default). */
 export const AdminConfigGlobalEffectiveSchema = z.object({
   provider: z.string().nullable(),
   model: z.string().nullable(),
+  /** The provider field's producing layer. */
   source: z.enum(['env', 'db']).nullable(),
+  /** The model field's own layer — the pair can be mixed-source (env AI_PROVIDER_MODEL + DB provider). */
+  model_source: z.enum(['env', 'db']).nullable().optional(),
   error: z.string().nullable(),
 });
 
@@ -179,8 +195,8 @@ export const AdminConfigProviderAuthSchema = z.object({
 /** providers[] 行：credential 派生事实只有 key_present 与 auth 状态（绝无 secret）。 */
 export const AdminConfigProviderRowSchema = z.object({
   name: z.string(),
-  /** ACTIVE credential lane; 'oauth-file' = auth-file lane (e.g. ChatGPT login) despite a declared 'key' mode (YUK-1833). */
-  auth_mode: z.enum(['key', 'oauth', 'oauth-file']),
+  /** ACTIVE credential lane; 'oauth-file' = auth-file lane (e.g. ChatGPT login) despite a declared 'key' mode (YUK-1833); 'conflict' = key+file envs both set — a hard error at run time. */
+  auth_mode: z.enum(['key', 'oauth', 'oauth-file', 'conflict']),
   /** credential env 变量**名字**（operator 自查用）；值永不序列化。 */
   credential_env: z.string(),
   key_present: z.boolean(),

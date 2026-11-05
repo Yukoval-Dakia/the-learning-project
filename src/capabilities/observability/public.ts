@@ -38,6 +38,7 @@ export type {
   AdminConfigRuntimeFactsSource,
   AdminConfigRuntimeSection,
   AdminConfigScheduleRow,
+  AdminConfigTaskCredential,
   AdminConfigTaskEffectiveBinding,
   AdminConfigTaskEffectiveReasoning,
   AdminConfigTaskFacts,

@@ -2698,6 +2698,8 @@ export interface operations {
                         global: {
                             error: string | null;
                             model: string | null;
+                            /** @enum {string|null} */
+                            model_source?: "env" | "db" | null;
                             provider: string | null;
                             /** @enum {string|null} */
                             source: "env" | "db" | null;
@@ -2738,7 +2740,7 @@ export interface operations {
                                 status: "unconfigured" | "configured" | "auth_failed" | "login_lane";
                             };
                             /** @enum {string} */
-                            auth_mode: "key" | "oauth" | "oauth-file";
+                            auth_mode: "key" | "oauth" | "oauth-file" | "conflict";
                             credential_env: string;
                             implemented: boolean;
                             implemented_for?: {
@@ -2836,6 +2838,11 @@ export interface operations {
                             default_provider: string;
                             description: string;
                             effective_binding: {
+                                credential?: {
+                                    /** @enum {string} */
+                                    lane: "key" | "oauth" | "oauth-file" | "conflict";
+                                    verified_in_process: boolean;
+                                } | null;
                                 error: string | null;
                                 model: string | null;
                                 provider: string | null;
@@ -3028,12 +3035,19 @@ export interface operations {
                             global: {
                                 error: string | null;
                                 model: string | null;
+                                /** @enum {string|null} */
+                                model_source?: "env" | "db" | null;
                                 provider: string | null;
                                 /** @enum {string|null} */
                                 source: "env" | "db" | null;
                             } | null;
                             tasks: {
                                 [key: string]: {
+                                    credential?: {
+                                        /** @enum {string} */
+                                        lane: "key" | "oauth" | "oauth-file" | "conflict";
+                                        verified_in_process: boolean;
+                                    } | null;
                                     error: string | null;
                                     model: string | null;
                                     provider: string | null;
@@ -3202,12 +3216,19 @@ export interface operations {
                             global: {
                                 error: string | null;
                                 model: string | null;
+                                /** @enum {string|null} */
+                                model_source?: "env" | "db" | null;
                                 provider: string | null;
                                 /** @enum {string|null} */
                                 source: "env" | "db" | null;
                             } | null;
                             tasks: {
                                 [key: string]: {
+                                    credential?: {
+                                        /** @enum {string} */
+                                        lane: "key" | "oauth" | "oauth-file" | "conflict";
+                                        verified_in_process: boolean;
+                                    } | null;
                                     error: string | null;
                                     model: string | null;
                                     provider: string | null;

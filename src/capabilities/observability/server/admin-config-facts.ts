@@ -54,8 +54,10 @@ export interface AdminConfigProviderAuth {
  * authMode; 'oauth-file' means the credential resolved to the provider's auth
  * file lane (e.g. openai ChatGPT-login) — the declared authMode stays 'key'
  * there, but reporting 'key' would mislabel the live lane (YUK-1833).
+ * 'conflict' means the key and auth-file envs are both set — a state the
+ * resolver refuses at run time, so no lane is active at all.
  */
-export type AdminConfigProviderAuthMode = 'key' | 'oauth' | 'oauth-file';
+export type AdminConfigProviderAuthMode = 'key' | 'oauth' | 'oauth-file' | 'conflict';
 
 /** One provider row; the only credential facts are key_present and the auth status. */
 export interface AdminConfigProviderRow {
@@ -118,9 +120,9 @@ export interface AdminConfigRuntimeSection {
 
 /**
  * YUK-1808 — the layer that produced a task's effective binding, frozen by the
- * resolver (providers.ts TaskSelectionRule). `call_override` cannot appear on
- * this read face (no per-call argument), but stays in the vocabulary so the
- * value always matches the run record's selection_rule.
+ * resolver (providers.ts TaskSelectionRule). `call_override` appears when a
+ * scoped lane (vision_judge / verify_solve) serves the task — the same rule
+ * the run record writes for those invocations.
  */
 export type AdminConfigTaskSelectionRule =
   | 'env_pin'
@@ -143,6 +145,19 @@ export interface AdminConfigTaskEffectiveReasoning {
   readonly error: string | null;
 }
 
+/**
+ * The binding's credential lane as this process sees it. `verified_in_process`
+ * is false when the credential can't be checked from here — the env var or
+ * auth-file mount may live only in the worker — so an unverifiable credential
+ * stays a fact about the projection, never a task-level error (and its file
+ * path is never serialized). 'conflict' mirrors the provider row's auth_mode:
+ * key + auth-file envs both set is a hard run-time error, not a lane.
+ */
+export interface AdminConfigTaskCredential {
+  readonly lane: 'key' | 'oauth' | 'oauth-file' | 'conflict';
+  readonly verified_in_process: boolean;
+}
+
 /** One task's effective binding projection — shared by the read face and the write receipt. */
 export interface AdminConfigTaskEffectiveBinding {
   readonly provider: string | null;
@@ -150,6 +165,8 @@ export interface AdminConfigTaskEffectiveBinding {
   readonly error: string | null;
   readonly selection_rule: AdminConfigTaskSelectionRule | null;
   readonly reasoning: AdminConfigTaskEffectiveReasoning | null;
+  /** Absent on typed tasks and when the binding itself failed to resolve. */
+  readonly credential?: AdminConfigTaskCredential | null;
 }
 
 /**
@@ -192,7 +209,14 @@ export interface AdminConfigTaskFacts {
 export interface AdminConfigGlobalEffective {
   readonly provider: string | null;
   readonly model: string | null;
+  /** The provider field's producing layer ('env' emergency pin vs 'db' panel default). */
   readonly source: 'env' | 'db' | null;
+  /**
+   * The model field's own producing layer — the pair can be mixed-source:
+   * an env AI_PROVIDER_MODEL rides next to a DB provider, while an env pin
+   * suppresses the DB model entirely (model then null).
+   */
+  readonly model_source?: 'env' | 'db' | null;
   readonly error: string | null;
 }
 
