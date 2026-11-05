@@ -240,6 +240,7 @@
 
   & .mm-diff-state {
     color: var(--un-text-3);
+    font-size: var(--un-fs-1);
     font-weight: var(--un-fw-regular, 400);
   }
 
