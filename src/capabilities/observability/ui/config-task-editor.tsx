@@ -34,7 +34,9 @@ function modelSummary(task: ConfigTask, draft: ModelDraft): string {
     );
   }
   if (draft.ownModel !== initial.ownModel) {
-    parts.push(draft.ownModel ? '不跟全局默认' : '跟全局默认');
+    parts.push(
+      draft.ownModel ? `不跟全局默认，用 ${draft.provider} / ${draft.model}` : '跟全局默认',
+    );
   }
   return parts.join('；');
 }

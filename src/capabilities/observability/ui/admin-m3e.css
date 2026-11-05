@@ -1248,7 +1248,8 @@
     gap: var(--un-sp-1);
   }
 
-  & .adm-binding {
+  & .adm-binding,
+  & .adm-task-binding {
     display: grid;
     gap: var(--un-sp-1);
     min-width: 0;

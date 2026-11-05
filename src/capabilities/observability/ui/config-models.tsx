@@ -33,7 +33,11 @@ function BindingFacts({ binding }: { binding: ConfigBinding | null }) {
           <Chip tone={binding.selection_rule === 'env_pin' ? 'caution' : 'neutral'}>
             {ruleWord(binding.selection_rule)}
           </Chip>
-          {thinking ? <span className="adm-cell-sub">{thinking}</span> : null}
+          {thinking ? (
+            <span className={binding.reasoning?.error ? 'adm-cell-caution' : 'adm-cell-sub'}>
+              {thinking}
+            </span>
+          ) : null}
         </p>
       ) : null}
       {binding?.also_on_lanes?.length ? (
@@ -200,12 +204,26 @@ function TaskRow({
   onEdit: (open: boolean) => void;
 }) {
   const [receipt, setReceipt] = useState<ConfigReceipt | null>(null);
-  const after = receipt?.effective?.tasks?.[task.kind];
+  // Only until the next config snapshot: after that the row above is the truth, and a later write
+  // anywhere could have changed this task.
+  const fresh = receipt !== null && data.snapshot.epoch <= receipt.committed_epoch;
+  const after = fresh ? receipt.effective?.tasks?.[task.kind] : undefined;
+  const dormant =
+    task.override?.provider &&
+    (task.effective_binding?.provider !== task.override.provider ||
+      task.effective_binding?.model !== task.override.model);
   return (
     <li className="adm-task" data-open={editing ? '' : undefined}>
       <div className="adm-task-main">
         <p className="adm-mono adm-break">{task.kind}</p>
-        <BindingFacts binding={task.effective_binding} />
+        <div className="adm-task-binding">
+          <BindingFacts binding={task.effective_binding} />
+          {dormant ? (
+            <p className="adm-cell-sub">
+              自己设了 {task.override?.provider} / {task.override?.model}，现在不生效。
+            </p>
+          ) : null}
+        </div>
         {taskEditable(task) ? (
           <Button
             variant="secondary"

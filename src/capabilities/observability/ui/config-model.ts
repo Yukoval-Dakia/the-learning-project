@@ -113,7 +113,13 @@ export function modelChanges(task: ConfigTask, draft: ModelDraft): ConfigWrite['
   const initial = initialModelDraft(task);
   const key = (field: string) => `task.${task.kind}.${field}`;
   const changes: ConfigWrite['changes'] = [];
-  if (draft.provider !== initial.provider || draft.model !== initial.model) {
+  // A task that keeps its own model needs a stored pair: the server refuses the flag alone.
+  const pairMissing = !task.override?.provider || !task.override?.model;
+  if (
+    draft.provider !== initial.provider ||
+    draft.model !== initial.model ||
+    (draft.ownModel && pairMissing)
+  ) {
     changes.push(
       { action: 'set', key: key('provider'), value: draft.provider },
       { action: 'set', key: key('model'), value: draft.model },
