@@ -462,6 +462,16 @@
   color: var(--st-muted);
   margin: 6px 0 0;
 }
+[data-ui-next] .un-st-ai-graded {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 6px;
+}
+[data-ui-next] .un-st-verdict .un-st-ai-graded svg {
+  flex: none;
+  margin-top: 4px;
+}
 [data-ui-next] .un-st-feedback-evidence {
   margin-top: 20px;
 }

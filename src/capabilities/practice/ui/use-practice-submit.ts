@@ -29,13 +29,17 @@ import { useCustomBlocksReady } from './blocks/CustomBlock';
 import { customBlocksOf, summarizeAnswers } from './blocks/custom-sandbox';
 import { boundSlots, entriesForSubmit } from './blocks/envelope';
 import { type EntriesUpdate, parsePresentation } from './blocks/PresentationBlocks';
+import {
+  type JudgeFeedback,
+  feedbackFromCommittedAttempt,
+  feedbackFromCommittedDiagnosticAttempt,
+  provenanceOf,
+} from './judge-feedback';
 import type { PfToast } from './PracticeFacePage';
 import {
   type AdviceCommit,
   type JudgePreview,
-  type QuestionFullDetail,
   type StreamItem,
-  type SubmitResult,
   type SubmitReviewInput,
   isSubmitPending,
 } from './practice-api';
@@ -45,12 +49,9 @@ import { verdictNeedsLearnerRating } from './submit-recovery';
 export type Rating = 'again' | 'hard' | 'good';
 type IssuanceMode = 'auto_score' | 'manual';
 type IssuanceState = Awaited<ReturnType<PracticeClient['getIssuanceState']>>;
-export type JudgeFeedback = Pick<
-  JudgePreview,
-  'route' | 'coarse_outcome' | 'confidence' | 'feedback_md' | 'suggested_rating'
-> & {
-  partial_units?: Extract<JudgePreview, { coarse_outcome: 'partial_unknown' }>['partial_units'];
-};
+
+export type { JudgeFeedback };
+export { feedbackFromCommittedAttempt, feedbackFromCommittedDiagnosticAttempt };
 
 const PartialUnknownFeedback = PartialUnknownJudgeResult.pick({
   coarse_outcome: true,
@@ -63,40 +64,6 @@ const JUDGE_FAILURE_MESSAGE = '判题失败，请稍后重试';
 
 export function isInterventionDiagnosticSource(source: string): boolean {
   return source === INTERVENTION_DIAGNOSTIC_SOURCE;
-}
-
-export function feedbackFromCommittedAttempt(result: SubmitResult): JudgeFeedback {
-  if (!result.judge) {
-    throw new Error('诊断提交没有返回服务端判分');
-  }
-  return {
-    route: result.judge.route,
-    coarse_outcome: result.judge.coarse_outcome,
-    ...(result.judge.coarse_outcome === 'partial_unknown'
-      ? { partial_units: result.judge.partial_units }
-      : {}),
-    confidence: result.judge.confidence,
-    feedback_md: result.judge.feedback_md,
-    // auto_rate 的正常回执恒带 suggested_rating；旧/滚动部署响应若漏掉，
-    // review_event.rating 仍是服务端最终实际采用的评级，不能在 UI 侧猜。
-    suggested_rating:
-      result.judge.coarse_outcome === 'partial_unknown'
-        ? null
-        : (result.judge.suggested_rating ??
-          ('rating' in result.review_event ? result.review_event.rating : null)),
-  };
-}
-
-export function feedbackFromCommittedDiagnosticAttempt(
-  result: NonNullable<QuestionFullDetail['committed_attempt']>,
-): JudgeFeedback {
-  return {
-    route: result.judge.route,
-    coarse_outcome: result.judge.coarse_outcome,
-    confidence: result.judge.confidence,
-    feedback_md: result.judge.feedback_md,
-    suggested_rating: result.judge.suggested_rating,
-  };
 }
 
 export const VERDICT_OF: Record<JudgePreview['coarse_outcome'], { label: string; tone: Rating }> = {
@@ -554,6 +521,7 @@ export function usePracticeSubmit({
         setCommittedPreview({
           route: typeof r?.route === 'string' && r.route ? r.route : 'durable',
           coarse_outcome: outcome,
+          ...provenanceOf(r),
           ...(partial?.success ? { partial_units: partial.data.partial_units } : {}),
           confidence: typeof r?.confidence === 'number' ? r.confidence : 0,
           feedback_md: typeof r?.feedback_md === 'string' ? r.feedback_md : '',
