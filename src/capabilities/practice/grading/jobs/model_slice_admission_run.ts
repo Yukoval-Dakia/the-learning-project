@@ -744,7 +744,9 @@ export async function runModelSliceAdmission(
       const errors = members
         .filter((item) => {
           const result = results.find((result) => result.item_id === item.item_id);
-          if (answerClass === 'partial') return result?.agreed !== true;
+          // Pending has no correctness verdict; completeness is checked separately.
+          if (result?.status !== 'scored' || result.awarded_points === null) return false;
+          if (answerClass === 'partial') return !result.agreed;
           if (answerClass === 'wrong') {
             return (
               result?.status === 'scored' &&
@@ -752,7 +754,7 @@ export async function runModelSliceAdmission(
               samePoints(result.awarded_points, item.unit.points ?? Number.NaN)
             );
           }
-          return result?.agreed !== true;
+          return !result.agreed;
         })
         .map((item) => item.item_id);
       const unresolved = members
