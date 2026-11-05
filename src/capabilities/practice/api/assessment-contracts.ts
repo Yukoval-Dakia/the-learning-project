@@ -143,7 +143,7 @@ export const JudgeRunTerminalResultSchema = z
       .optional(),
     judge_event_id: z.string().nullable().optional(),
     outcome: z.string().optional(),
-    final_rating: z.string().optional(),
+    final_rating: z.string().nullable().optional(),
     route: z.string().nullable().optional(),
     coarse_outcome: z.string().optional(),
     score: z.number().nullable().optional(),

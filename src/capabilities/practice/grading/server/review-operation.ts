@@ -8,6 +8,7 @@ import type { Db, Tx } from '@/db/client';
 import {
   assessment_issuance,
   assessment_submission,
+  event,
   learning_session,
   question,
   question_group_lifecycle,
@@ -17,16 +18,18 @@ import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { ApiError } from '@/kernel/http';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from '../../api/contracts';
 import { validatePlacementSubmission } from '../../placement/public';
-import { normalizeReviewSubmitActivityRef } from './activity-ref';
-import { commitFormalAttempt } from './assessment/attempt';
+import { type ReviewSubmitIdentityInput, normalizeReviewSubmitActivityRef } from './activity-ref';
+import { type FormalAttemptCapture, commitFormalAttempt } from './assessment/attempt';
 import type { NativeAttemptDispatchPort } from './assessment/native-attempt-dispatch-port';
 import { judgeDurableEnabled } from './judge-durable-config';
-import { projectReviewAnswerResponse } from './review-answer-response';
+import { readJudgeRunPermanent } from './judge-run-observation';
+import { nativeJudgeRunId } from './judge-run-status';
+import { projectJudgeRunPending, projectReviewAnswerResponse } from './review-answer-response';
 
 type QuestionRow = typeof question.$inferSelect;
 
 interface ValidatedSubmit {
-  body: CreateAttemptBody;
+  body: ReviewAnswerHandover;
   now: Date;
   questionId: string;
   q: QuestionRow;
@@ -34,7 +37,7 @@ interface ValidatedSubmit {
 
 async function validateSubmit(
   database: Db,
-  body: CreateAttemptBody,
+  body: ReviewAnswerHandover,
   now: Date,
 ): Promise<ValidatedSubmit> {
   const identity = normalizeReviewSubmitActivityRef(body);
@@ -219,6 +222,70 @@ export async function sessionAdmitsDurableDivert(
  */
 const DURABLE_DIVERT_SESSION_TYPES: ReadonlySet<string> = new Set(['review']);
 
+/** An original whose caller hands automatic grading and settlement to the worker. */
+export type ReviewAnswerHandover = ReviewSubmitIdentityInput &
+  FormalAttemptCapture & { assessment?: CreateAttemptBody['assessment'] };
+
+export async function divertReviewAnswer(database: Db, handover: ReviewAnswerHandover) {
+  if (!handover.assessment) return null;
+  const enabled =
+    judgeDurableEnabled() &&
+    shouldEnqueueBackgroundJobs() &&
+    (await sessionAdmitsDurableDivert(database, handover.session_id ?? null));
+  if (!enabled) {
+    const [saved] = await database
+      .select({ id: assessment_submission.submission_id })
+      .from(assessment_submission)
+      .where(
+        and(
+          eq(assessment_submission.issuance_id, handover.assessment.issuance_id),
+          eq(assessment_submission.evaluation_group_id, handover.assessment.evaluation_group_id),
+          eq(assessment_submission.idempotency_key, handover.assessment.idempotency_key),
+        ),
+      );
+    if (!saved) return null;
+    const [pending] = await database
+      .select({ id: event.id })
+      .from(event)
+      .where(eq(event.id, `evt_pending_${nativeJudgeRunId(saved.id)}`));
+    if (!pending) return null;
+  }
+  const validated = await validateSubmit(database, handover, new Date());
+  if (validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE)
+    throw new ApiError('conflict', 'diagnostic requires its one-shot submission', 409);
+  if (!handover.assessment)
+    throw new ApiError('historical_unknown', 'advice requires its issued original', 409);
+  const [issued] = await database
+    .select({ container: assessment_issuance.container_occurrence_ref })
+    .from(assessment_issuance)
+    .where(eq(assessment_issuance.issuance_id, handover.assessment.issuance_id));
+  if (issued?.container?.startsWith('conversation-confirmation:'))
+    throw new ApiError('confirmation_unbound', 'confirmation requires conversation authority', 409);
+  const { dispatchNativeAttempt } = await import('./assessment/durable-attempt');
+  const runId = await dispatchNativeAttempt(
+    database,
+    validated.questionId,
+    { ...handover.assessment, now: validated.now },
+    {
+      enabled,
+      capture: handover,
+    },
+  );
+  if (runId === null) return null;
+  const state = await readJudgeRunPermanent(database, runId);
+  if (state.kind === 'resolved')
+    return { kind: 'terminal' as const, candidateId: state.result.assessment?.candidate_id };
+  if (state.kind === 'manual')
+    return {
+      kind: 'terminal' as const,
+      hold: {
+        reason: 'unjudgeable' as const,
+        detail: '自动判分已停止，原作答已保存，可以自己评一下。',
+      },
+    };
+  return projectJudgeRunPending(runId);
+}
+
 export interface ReviewAnswerContext {
   /** Set only by the server-owned conversation confirmation operation. */
   confirmationOccurrenceId?: string;
@@ -282,7 +349,34 @@ export async function submitReviewAnswer(
     }
     context.signal?.throwIfAborted();
     // Accepted work retains its durable owner after admissions are switched off.
-    if (!body.self_report) {
+    const [saved] = body.activation_intent
+      ? await database
+          .select({ id: assessment_submission.submission_id })
+          .from(assessment_submission)
+          .where(
+            and(
+              eq(assessment_submission.issuance_id, assessment.issuance_id),
+              eq(assessment_submission.evaluation_group_id, assessment.evaluation_group_id),
+              eq(assessment_submission.idempotency_key, assessment.idempotency_key),
+            ),
+          )
+      : [];
+    const [resolution] = saved
+      ? await database
+          .select({ payload: event.payload })
+          .from(event)
+          .where(eq(event.id, nativeJudgeRunId(saved.id)))
+      : [];
+    const terminal =
+      saved && body.activation_intent
+        ? await readJudgeRunPermanent(database, nativeJudgeRunId(saved.id))
+        : null;
+    const resumeRating =
+      terminal?.kind === 'manual' ||
+      (resolution?.payload.status === 'review_required' &&
+        (resolution.payload.assessment as { candidate_id?: string } | undefined)?.candidate_id ===
+          body.activation_intent?.evaluation_id);
+    if (!body.self_report && !resumeRating) {
       const dispatch =
         context.dispatchNativeAttempt ??
         (await import('./assessment/durable-attempt')).dispatchNativeAttempt;
@@ -325,8 +419,9 @@ export async function submitReviewAnswer(
       validated.questionId,
       { ...assessment, now: validated.now },
       {
-        activationIntent: body.activation_intent,
-        selfReport: body.self_report,
+        activationIntent: resumeRating ? undefined : body.activation_intent,
+        expectedHead: resumeRating ? body.activation_intent : undefined,
+        selfReport: body.self_report || resumeRating,
         userRating: body.auto_rate ? undefined : body.rating,
         capture: body,
         signal: context.signal,

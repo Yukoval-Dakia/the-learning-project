@@ -61,6 +61,7 @@ export const ReviewAdviceBodySchema = z.object({
   // Present = the caller hands over this attempt's commit capture, so an automatic verdict is
   // recorded and settled in this request. Absent = preview only; the caller commits separately.
   commit: CreateAttemptCaptureSchema.optional(),
+  accept_pending: z.boolean().optional(),
 });
 
 const LegacyReviewAdviceJudgeSchema = z.object({

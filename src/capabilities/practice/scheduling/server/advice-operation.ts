@@ -12,6 +12,7 @@
 import { eq } from 'drizzle-orm';
 import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/failure-learning/public';
 import {
+  divertReviewAnswer,
   normalizeReviewSubmitActivityRef,
   previewFormalAttempt,
   questionKnowledgeIdsForJudge,
@@ -49,6 +50,20 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
     );
   }
 
+  let replay:
+    | { candidateId?: string; hold?: { reason: 'unjudgeable'; detail: string } }
+    | undefined;
+  if (body.commit && body.accept_pending) {
+    const pending = await divertReviewAnswer(db, {
+      ...body.commit,
+      question_id: questionId,
+      assessment: body.assessment,
+      response_md: body.response_md,
+    });
+    if (pending && 'verdict' in pending) return pending;
+    if (pending?.kind === 'terminal') replay = pending;
+  }
+
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(
     db,
     questionKnowledgeIdsForJudge(q),
@@ -58,7 +73,7 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
     submission,
     activation_intent,
     automatic_commit,
-  } = await previewFormalAttempt(db, 'advice_preview', questionId, body.assessment, signal);
+  } = await previewFormalAttempt(db, 'advice_preview', questionId, body.assessment, signal, replay);
   const suggestedRating = ratingFromCoarseOutcome(invoked.result.coarse_outcome);
 
   // Resolve effective cause via the shared `resolveAdviceCauseForQuestion`

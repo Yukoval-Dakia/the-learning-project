@@ -5,7 +5,10 @@ import { previewReviewAdvice } from '../server/advice-operation';
 export async function POST(req: Request): Promise<Response> {
   try {
     const raw = await req.json().catch(() => null);
-    return Response.json(await previewReviewAdvice(db, raw, req.signal));
+    const result = await previewReviewAdvice(db, raw, req.signal);
+    if ('verdict' in result && result.verdict === 'pending')
+      return Response.json(result, { status: 202, headers: { Location: result.backfill.url } });
+    return Response.json(result);
   } catch (err) {
     return errorResponse(err);
   }
