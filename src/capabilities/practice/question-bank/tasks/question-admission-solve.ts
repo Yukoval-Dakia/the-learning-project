@@ -449,6 +449,10 @@ export const questionAdmissionSolveTaskSpec = {
     allowedTools: ['mcp__structured_output__submit'],
     structuredOutputMode: 'tool',
     validateStructuredSubmit: validateAdmissionSolveSubmit,
+    structuredSubmitSchema: (input: unknown) =>
+      admissionSubmitInput(input)?.mode === 'prior'
+        ? QuestionAdmissionPriorOutput
+        : QuestionAdmissionSolveOutput,
     structuredOutputSchema: z.union([QuestionAdmissionSolveOutput, QuestionAdmissionPriorOutput]),
     context: {
       view: 'none',

@@ -10,6 +10,9 @@
 // text-JSON drift these tasks were admitted under, and absent evidence of breakage
 // the runner must not weaken every lane's wire guarantee.
 
+import type { AgentTurnContext } from '@earendil-works/pi-agent-core';
+import type { ZodTypeAny } from 'zod';
+import { createNoProgressLoop } from '@/ai/no-progress-loop';
 import type { Provider } from '@/capabilities/task-registry';
 import { type ModelCapabilityTriState, resolveModelProfile } from './model-profiles';
 
@@ -145,4 +148,88 @@ export function structuredSubmitShapeErrors(
   };
   issues.forEach(visit);
   return [...errors].sort();
+}
+
+/** Owns submission acceptance, safe correction context and no-progress closure for one run. */
+export function createStructuredSubmitLoop(input: {
+  schema: ZodTypeAny | undefined;
+  parameters: unknown;
+  taskInput: unknown;
+  validate?: (output: unknown, taskInput: unknown) => readonly string[];
+  forced: boolean;
+  runId: string;
+  correctionDeadline: number;
+}) {
+  const submitProgress = createNoProgressLoop();
+  let submitAccepted = false;
+  let submitFailure: string | undefined;
+  let submitFeedback: string | undefined;
+  return {
+    get accepted() {
+      return submitAccepted;
+    },
+    get failure() {
+      return submitFailure;
+    },
+    takeFeedback() {
+      const feedback = submitFeedback;
+      submitFeedback = undefined;
+      return feedback;
+    },
+    async finishTurn(
+      { message, toolResults }: Pick<AgentTurnContext, 'message' | 'toolResults'>,
+      invalidStructuredArguments: boolean,
+      repairedArguments: unknown,
+    ) {
+      const calls = message.content.filter((block) => block.type === 'toolCall');
+      const verdict = classifySubmitTurn(
+        { stopReason: message.stopReason, toolCallNames: calls.map((call) => call.name) },
+        { forced: input.forced },
+      );
+      const schema = input.schema;
+      if (!schema) throw new Error('Structured submit schema unavailable');
+      const candidate = repairedArguments ?? calls[0]?.arguments;
+      const parsed = schema.safeParse(candidate);
+
+      const errors = invalidStructuredArguments
+        ? [
+            'Arguments must be one complete strictly valid JSON object; resubmit without truncation or trailing commas.',
+          ]
+        : verdict !== 'landed'
+          ? [STRUCTURED_SUBMIT_REMINDER]
+          : !parsed.success
+            ? structuredSubmitShapeErrors(input.parameters, parsed.error.issues)
+            : [...(input.validate?.(parsed.data, input.taskInput) ?? [])];
+      if (errors.length === 0 && toolResults.length === 1 && !toolResults[0]?.isError) {
+        submitAccepted = true;
+        return { action: 'end' as const };
+      }
+      // Replace native pi/Ajv diagnostics, which may echo received values.
+      const feedback = errors.length
+        ? errors.sort().join('\n')
+        : 'Submit arguments failed shape validation; use the declared fields and types.';
+      for (const result of toolResults) {
+        result.isError = true;
+        result.content = [{ type: 'text', text: feedback }];
+      }
+      await submitProgress.afterToolCall({
+        call: { id: `submit-${message.timestamp}`, name: STRUCTURED_OUTPUT_SUBMIT_TOOL },
+        args: {},
+        effect: 'read',
+        isError: true,
+        output: feedback,
+        error: feedback,
+      });
+      submitFailure = submitProgress.closure()?.reason;
+      if (!submitFailure && Date.now() >= input.correctionDeadline)
+        submitFailure = 'budget_landing';
+      if (submitFailure) return { action: 'end' as const };
+      console.info(
+        '[structured_submit_correction]',
+        JSON.stringify({ task_run_id: input.runId, diagnostics: feedback }),
+      );
+      submitFeedback = feedback;
+      return { action: 'continue' as const };
+    },
+  };
 }

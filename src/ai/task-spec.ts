@@ -105,6 +105,8 @@ export interface TaskDefinition {
   /** Submit schema-constrained tool arguments, correcting failures within one run. */
   readonly structuredOutputMode?: 'tool';
   /** Shape/coverage only. Return authored field diagnostics, never values or judgments. */
+  /** Input mode may narrow the wire schema; it must not depend on answer evidence. */
+  readonly structuredSubmitSchema?: (input: unknown) => ZodTypeAny;
   readonly validateStructuredSubmit?: (output: unknown, input: unknown) => readonly string[];
 }
 

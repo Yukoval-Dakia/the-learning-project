@@ -29,7 +29,7 @@ import type {
   MutableModels as PiMutableModels,
 } from '@earendil-works/pi-ai';
 import { helpFaultForRootStatus, rootBoundProviderStatus } from '@/ai/help-provider-fault';
-import { NO_PROGRESS_BUDGET_LANDING_MARGIN_MS, createNoProgressLoop } from '@/ai/no-progress-loop';
+import { NO_PROGRESS_BUDGET_LANDING_MARGIN_MS } from '@/ai/no-progress-loop';
 import { type PiToolMount, piCustomTool } from '@/ai/pi-tool-mount';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
@@ -86,10 +86,8 @@ import { createRunMonitor } from './run-monitor';
 import type { SDKUserMessage } from './sdk-types';
 import {
   STRUCTURED_OUTPUT_SUBMIT_TOOL,
-  STRUCTURED_SUBMIT_REMINDER,
-  classifySubmitTurn,
+  createStructuredSubmitLoop,
   resolveStructuredSubmitPolicy,
-  structuredSubmitShapeErrors,
   structuredSubmitSystemSuffix,
   structuredSubmitWireFields,
 } from './structured-submit';
@@ -119,9 +117,11 @@ export interface PiAdapterDeps {
 const OPENCODE_SESSION_HEADER = 'x-opencode-session';
 const STRUCTURED_OUTPUT_TOOL = STRUCTURED_OUTPUT_SUBMIT_TOOL;
 
-function toolOutputSchema(kind: ExecutionAdapterStartupArgs['kind']) {
+function toolOutputSchema(kind: ExecutionAdapterStartupArgs['kind'], input?: unknown) {
   const definition: TaskDefinition = tasks[kind];
-  return definition.structuredOutputMode === 'tool' ? definition.structuredOutputSchema : undefined;
+  return definition.structuredOutputMode === 'tool'
+    ? (definition.structuredSubmitSchema?.(input) ?? definition.structuredOutputSchema)
+    : undefined;
 }
 
 /**
@@ -946,14 +946,22 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     }
     const structuredOutput = toolOutputSchema(this.args.kind) !== undefined;
     const submitPolicy = structuredOutput ? this.structuredSubmitPolicy(this.model) : undefined;
-    const submitProgress = createNoProgressLoop();
-    let submitAccepted = false;
-    let submitFailure: string | undefined;
-    let submitFeedback: string | undefined;
-    const correctionDeadline =
-      Date.now() +
-      (this.args.executionWindowMs ?? Number.POSITIVE_INFINITY) -
-      NO_PROGRESS_BUDGET_LANDING_MARGIN_MS;
+    const definition: TaskDefinition = tasks[this.args.kind];
+    const submitLoop = structuredOutput
+      ? createStructuredSubmitLoop({
+          schema: toolOutputSchema(this.args.kind, this.args.structuredSubmitInput),
+          parameters: this.allTools.find((tool) => tool.name === STRUCTURED_OUTPUT_TOOL)
+            ?.parameters,
+          taskInput: this.args.structuredSubmitInput,
+          validate: definition.validateStructuredSubmit,
+          forced: submitPolicy?.forced ?? true,
+          runId: this.args.runId,
+          correctionDeadline:
+            Date.now() +
+            (this.args.executionWindowMs ?? Number.POSITIVE_INFINITY) -
+            NO_PROGRESS_BUDGET_LANDING_MARGIN_MS,
+        })
+      : undefined;
     if (structuredOutput) {
       systemPrompt += structuredSubmitSystemSuffix(submitPolicy?.forced ?? true);
     }
@@ -973,8 +981,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // unconditional counter every maxTurns=1 task failed after its first turn.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
     let cappedByMaxTurns = false;
-    // Structured submit runs already end after a bounded landing turn; the ceiling is
-    // for open agentic loops.
+    // Structured submission closes by validation, progress and budget, not turn count.
     const costCeiling =
       typeof options.maxBudgetUsd === 'number'
         ? createPiCostCeiling({
@@ -991,8 +998,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             cappedByMaxTurns = true;
           })
         : undefined;
-    // Per-turn streamed arguments, bound to call ids at message_end; the
-    // strict-JSON flag also gates the parameter-contract correction.
+    // Strict raw JSON is checked independently of pi's best-effort argument parser.
     const rawToolArguments = new Map<number, string>();
     const streamedArgsByCallId = new Map<string, string>();
     let invalidStructuredArguments = false;
@@ -1030,69 +1036,14 @@ class PiPreparedQuery implements PreparedExecutionQuery {
                 message.stopReason === 'aborted'
               )
                 return { action: 'end' as const };
-              const calls = message.content.filter((block) => block.type === 'toolCall');
-              const verdict = classifySubmitTurn(
-                { stopReason: message.stopReason, toolCallNames: calls.map((call) => call.name) },
-                { forced: submitPolicy?.forced ?? true },
+              return submitLoop?.finishTurn(
+                { message, toolResults },
+                invalidStructuredArguments,
+                this.repairedToolArgs.get(STRUCTURED_OUTPUT_TOOL),
               );
-              const schema = toolOutputSchema(this.args.kind);
-              if (!schema) throw new Error('Structured submit schema unavailable');
-              const candidate =
-                this.repairedToolArgs.get(STRUCTURED_OUTPUT_TOOL) ?? calls[0]?.arguments;
-              const parsed = schema.safeParse(candidate);
-              const definition: TaskDefinition = tasks[this.args.kind];
-              const errors = invalidStructuredArguments
-                ? [
-                    'Arguments must be one complete strictly valid JSON object; resubmit without truncation or trailing commas.',
-                  ]
-                : verdict !== 'landed'
-                  ? [STRUCTURED_SUBMIT_REMINDER]
-                  : !parsed.success
-                    ? structuredSubmitShapeErrors(
-                        this.allTools.find((tool) => tool.name === STRUCTURED_OUTPUT_TOOL)
-                          ?.parameters,
-                        parsed.error.issues,
-                      )
-                    : [
-                        ...(definition.validateStructuredSubmit?.(
-                          parsed.data,
-                          this.args.structuredSubmitInput,
-                        ) ?? []),
-                      ];
-              if (errors.length === 0 && toolResults.length === 1 && !toolResults[0]?.isError) {
-                submitAccepted = true;
-                return { action: 'end' as const };
-              }
-              // Replace native pi/Ajv diagnostics, which may echo received values.
-              const feedback = errors.length
-                ? errors.sort().join('\n')
-                : 'Submit arguments failed shape validation; use the declared fields and types.';
-              for (const result of toolResults) {
-                result.isError = true;
-                result.content = [{ type: 'text', text: feedback }];
-              }
-              await submitProgress.afterToolCall({
-                call: { id: `submit-${message.timestamp}`, name: STRUCTURED_OUTPUT_TOOL },
-                args: {},
-                effect: 'read',
-                isError: true,
-                output: feedback,
-                error: feedback,
-              });
-              submitFailure = submitProgress.closure()?.reason;
-              if (!submitFailure && Date.now() >= correctionDeadline)
-                submitFailure = 'budget_landing';
-              if (submitFailure) return { action: 'end' as const };
-              console.info(
-                '[structured_submit_correction]',
-                JSON.stringify({ task_run_id: this.args.runId, diagnostics: feedback }),
-              );
-              submitFeedback = feedback;
-              return { action: 'continue' as const };
             }) satisfies FinishTurn,
             prepareNextTurn: () => {
-              const feedback = submitFeedback;
-              submitFeedback = undefined;
+              const feedback = submitLoop?.takeFeedback();
               return feedback ? { messages: [piUserMessage(feedback)] } : undefined;
             },
           }
@@ -1321,11 +1272,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       cappedByMaxTurns,
       structuredOutputTool: structuredOutput,
       invalidStructuredArguments,
-      // The consumed landing consumer is named in the terminal error evidence, so
-      // a structured-parse failure stays diagnosable without the payload.
+      // Known incomplete submissions use the existing sealed failure receipt.
       structuredSubmitFailure:
-        structuredOutput && !submitAccepted
-          ? (submitFailure ?? (costCeiling?.closed ? 'max_budget_usd' : 'validation_failed'))
+        structuredOutput && !submitLoop?.accepted
+          ? (submitLoop?.failure ?? (costCeiling?.closed ? 'max_budget_usd' : 'validation_failed'))
           : undefined,
       // What validation/execute actually saw after the shared repair — the
       // capability receives this, not the still-stringified raw fields.
@@ -1427,7 +1377,7 @@ export class PiAgentAdapter implements ExecutionAdapter {
       : undefined;
     const tools: AgentTool[] = [];
     const remoteHandles: PiRemoteMcpMountHandle[] = [];
-    const outputSchema = toolOutputSchema(args.kind);
+    const outputSchema = toolOutputSchema(args.kind, args.structuredSubmitInput);
     if (outputSchema) {
       tools.push(
         piCustomTool(
