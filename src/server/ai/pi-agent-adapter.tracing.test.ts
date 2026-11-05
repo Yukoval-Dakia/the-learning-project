@@ -115,6 +115,8 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+// @invariant security: credentials, prompts and tool payloads stay out of trace metadata.
+// @fails-if an execution or rejected-attempt span copies the sentinel payload into metadata.
 it.each(['success', 'throw', 'isError', 'blocked'])(
   'traces one tool execution or a pre-execute attempt: %s',
   async (outcome) => {
