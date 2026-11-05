@@ -95,6 +95,8 @@ export const AdminConfigTaskEffectiveBindingSchema = z.object({
   selection_rule: AdminConfigTaskSelectionRuleSchema.nullable(),
   reasoning: AdminConfigTaskEffectiveReasoningSchema.nullable(),
   credential: AdminConfigTaskCredentialSchema.nullable().optional(),
+  /** Scoped lanes that also serve this shared kind on other call paths (empty/omitted = none). */
+  also_on_lanes: z.array(z.enum(['vision_judge', 'verify_solve'])).optional(),
 });
 
 /** YUK-1808 — the effective global switch and the layer that produced it ('env' pin vs 'db' default). */

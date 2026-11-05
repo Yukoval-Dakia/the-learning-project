@@ -2886,6 +2886,7 @@ export interface operations {
                             default_provider: string;
                             description: string;
                             effective_binding: {
+                                also_on_lanes?: ("vision_judge" | "verify_solve")[];
                                 credential?: {
                                     /** @enum {string} */
                                     lane: "key" | "oauth" | "oauth-file" | "conflict";
@@ -3091,6 +3092,7 @@ export interface operations {
                             } | null;
                             tasks: {
                                 [key: string]: {
+                                    also_on_lanes?: ("vision_judge" | "verify_solve")[];
                                     credential?: {
                                         /** @enum {string} */
                                         lane: "key" | "oauth" | "oauth-file" | "conflict";
@@ -3272,6 +3274,7 @@ export interface operations {
                             } | null;
                             tasks: {
                                 [key: string]: {
+                                    also_on_lanes?: ("vision_judge" | "verify_solve")[];
                                     credential?: {
                                         /** @enum {string} */
                                         lane: "key" | "oauth" | "oauth-file" | "conflict";

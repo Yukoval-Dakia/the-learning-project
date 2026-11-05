@@ -167,6 +167,15 @@ export interface AdminConfigTaskEffectiveBinding {
   readonly reasoning: AdminConfigTaskEffectiveReasoning | null;
   /** Absent on typed tasks and when the binding itself failed to resolve. */
   readonly credential?: AdminConfigTaskCredential | null;
+  /**
+   * Scoped lanes (`lane.<name>.*`) that also serve this kind through real call
+   * paths — reported only when the kind's effective_binding stays on the
+   * standard chain because some callers run it without an override (the solve
+   * legs: quiz_verify's solve_check threads verify_solve; reference-solution /
+   * source_verify / intervention paths don't). Lane-only kinds report
+   * `call_override` in selection_rule instead; absent when no lane is live.
+   */
+  readonly also_on_lanes?: ('vision_judge' | 'verify_solve')[];
 }
 
 /**

@@ -283,11 +283,14 @@ function providerAuthFacts(provider: ProviderAuthSurfaceRow['name']): AdminConfi
 
 /**
  * Scoped-lane readers the runners use — the SAME functions, not a second
- * mapping: vision judges take `visionJudgeProviderOverride()` (DB
- * lane.vision_judge.* > env, with its own degrade rules), the solve_check
- * solver legs take `resolveSolveOverrideFromEnv()` (fail-open pre-flight;
- * empty result = no override → standard chain). The run passes these as the
- * per-call `override` arg → selection_rule 'call_override'.
+ * mapping. Only kinds whose EVERY call path threads the lane override project
+ * `call_override` here: StepsJudge/MultimodalDirect go through
+ * runTaskWithLaneFallback, SourceGroundingVerify passes the override inline.
+ * The solve_check solver legs (SOLVE_LANE_TASK_KINDS) are shared kinds —
+ * quiz_verify threads verify_solve while reference-solution / source_verify /
+ * intervention callers run the same kind on the standard chain — so their
+ * binding stays on the standard chain and the lane reach surfaces via
+ * `sharedScopedLanes` → also_on_lanes.
  */
 function scopedLaneCallOverride(
   kind: TaskKind,
@@ -305,12 +308,17 @@ function scopedLaneCallOverride(
     // wins inside the binding for non-opted tasks.
     return visionJudgeProviderOverride(process.env, { checkCredentials: false });
   }
+  return undefined;
+}
+
+/** Scoped lanes a shared kind also rides on other call paths, when the lane is live. */
+function sharedScopedLanes(kind: TaskKind): ('vision_judge' | 'verify_solve')[] | undefined {
   if ((SOLVE_LANE_TASK_KINDS as readonly string[]).includes(kind)) {
-    // A silent warn collector: the lane.* effective rows already carry the
+    // A silent warn collector: the lane.* stored rows already carry the
     // degrade reason; per-request console noise adds nothing. checkCredentials:
     // the worker pre-flights its own lane; this process only projects it.
     const solve = resolveSolveOverrideFromEnv(() => {}, { checkCredentials: false });
-    return solve.provider !== undefined || solve.model !== undefined ? solve : undefined;
+    if (solve.provider !== undefined || solve.model !== undefined) return ['verify_solve'];
   }
   return undefined;
 }
@@ -372,6 +380,7 @@ export function resolveAdminTaskEffective(kind: TaskKind): AdminConfigTaskEffect
       selection_rule: 'registry_default',
       reasoning: null,
       credential: null,
+      also_on_lanes: sharedScopedLanes(kind),
     };
   }
   // The binding is the config truth (provider/model/selection_rule); the
@@ -442,6 +451,7 @@ export function resolveAdminTaskEffective(kind: TaskKind): AdminConfigTaskEffect
     selection_rule: binding?.selectionRule ?? null,
     reasoning,
     credential,
+    also_on_lanes: sharedScopedLanes(kind),
   };
 }
 
