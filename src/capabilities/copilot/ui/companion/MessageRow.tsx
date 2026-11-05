@@ -10,7 +10,7 @@ import type { ConfirmationAction } from './turn-sender';
 
 import { memo } from 'react';
 import { Chip } from '@/ui-next/public';
-import type { ChatMessage } from '../message-projection';
+import { type ChatMessage, composeStreamingReply } from '../message-projection';
 import { publicProseFailureBadge, publicProseStatusText } from '../public-prose';
 import { ConversationMarkdown } from './ConversationMarkdown';
 import { HeroBlock } from './HeroBlock';
@@ -66,6 +66,9 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   // A sealed help exit completes with its exit copy as the body; the badge says why it exited.
   const failureBadge = publicProse ? publicProseFailureBadge(publicProse) : undefined;
   const generating = m.streaming || publicProse?.status === 'streaming';
+  // YUK-1548 §5 — while streaming, pictures being drawn stand in the text at their stream position;
+  // once settled the reply's own fences are the only source, so a reload renders the same thing.
+  const shown = generating ? composeStreamingReply(body, m.stream_blocks) : body;
   const steps = stepsOf(m);
   const settled = !generating;
   const turnId = m.reply_event_id;
@@ -75,7 +78,7 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
     <div className="un-cp-row un-cp-row-ai" data-streaming={generating ? '' : undefined}>
       {/* YUK-1664 — settled: the reply's steps fold into one summary line above the text. */}
       {settled ? <StepActivity steps={steps} live={false} /> : null}
-      <ConversationMarkdown className="un-cp-md un-cp-reply">{body}</ConversationMarkdown>
+      <ConversationMarkdown className="un-cp-md un-cp-reply">{shown}</ConversationMarkdown>
       {failureBadge ? (
         <p className="un-cp-reply-badge">
           <Chip tone="caution">{failureBadge}</Chip>

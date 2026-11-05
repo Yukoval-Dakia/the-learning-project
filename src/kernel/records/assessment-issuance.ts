@@ -1,3 +1,9 @@
+import {
+  allowedQuestionIds,
+  lockDerivationSources,
+  sourceAllowsDerivation,
+  sourceAllowsDerivationSql,
+} from '@/kernel/read-models/usage-policy';
 // 发题编排：组根锁 → 生命周期校验 → 绑定推导 → 不可变 issuance（+ 可选 claim）。
 // 不评分、不写学习状态、不创建 submission。
 //
@@ -149,20 +155,40 @@ export async function readAutomaticallyServableQuestionIds(
       ),
     );
   const admitted = new Set<string>();
-  // Model-slice admission is read once; the serving decision stays pure.
-  const admission = await resolveModelAdmissionContext(db);
-  const subjects = await lookupGroupSubjects(
+  const purposeAllowed = await allowedQuestionIds(
     db,
-    rows.map((row) => row.parentId ?? row.id),
+    rows.map((row) => row.id),
   );
+  const modelCandidates = [];
   for (const row of rows) {
+    if (!purposeAllowed.has(row.id)) continue;
     const parsed = PublishedQuestionRevision.safeParse(revisionRowToContract(row.revision));
     if (!parsed.success) continue;
     const revision = parsed.data;
     const partIds = row.parentId ? [row.id] : revision.structure.parts.map((part) => part.part_id);
-    const questionSubject = subjectIdFromLookup(subjects.get(row.parentId ?? row.id));
-    if (decideAutomaticServing(revision, partIds, admission, questionSubject).kind === 'admitted')
-      admitted.add(row.id);
+    // Deterministic contracts have no model/subject dependency. Preserve the
+    // bank-only read boundary instead of consulting learner tables to describe them.
+    const decision = decideAutomaticServing(
+      revision,
+      partIds,
+      { slices: new Map(), current_models: new Map() },
+      null,
+    );
+    if (decision.kind === 'admitted') admitted.add(row.id);
+    else if (decision.reason === 'model_admission_unavailable')
+      modelCandidates.push({ row, revision, partIds });
+  }
+  if (modelCandidates.length) {
+    const admission = await resolveModelAdmissionContext(db);
+    const subjects = await lookupGroupSubjects(
+      db,
+      modelCandidates.map(({ row }) => row.parentId ?? row.id),
+    );
+    for (const { row, revision, partIds } of modelCandidates) {
+      const questionSubject = subjectIdFromLookup(subjects.get(row.parentId ?? row.id));
+      if (decideAutomaticServing(revision, partIds, admission, questionSubject).kind === 'admitted')
+        admitted.add(row.id);
+    }
   }
   return admitted;
 }
@@ -173,6 +199,12 @@ export async function readAutomaticServingDecision(
   revision: PublishedQuestionRevisionT,
   partIds: readonly string[],
 ): Promise<AutomaticServingDecision> {
+  if (!(await sourceAllowsDerivation(db, { kind: 'question', id: revision.group_id })))
+    return {
+      kind: 'unavailable',
+      reason: 'source_purpose_restricted_or_unknown',
+      detail: 'source_purpose_restricted_or_unknown',
+    };
   const admission = await resolveModelAdmissionContext(db);
   const subjects = await lookupGroupSubjects(db, [revision.group_id]);
   return decideAutomaticServing(
@@ -190,7 +222,14 @@ export async function readAutomaticIssuanceServingDecisions(
 ): Promise<Map<string, AutomaticServingDecision>> {
   if (issuanceIds.length === 0) return new Map();
   const rows = await db
-    .select({ issuance: assessment_issuance, revision: question_revision })
+    .select({
+      issuance: assessment_issuance,
+      revision: question_revision,
+      purposeAllowed: sourceAllowsDerivationSql({
+        kind: 'question',
+        id: question_revision.group_id,
+      }),
+    })
     .from(assessment_issuance)
     .innerJoin(
       question_revision,
@@ -203,23 +242,29 @@ export async function readAutomaticIssuanceServingDecisions(
     rows.map(({ revision: row }) => row.group_id),
   );
   return new Map(
-    rows.map(({ issuance, revision: row }) => {
+    rows.map(({ issuance, revision: row, purposeAllowed }) => {
       const parsed = PublishedQuestionRevision.safeParse(revisionRowToContract(row));
       const questionSubject = subjectIdFromLookup(subjects.get(row.group_id));
-      const decision: AutomaticServingDecision = parsed.success
-        ? decideAutomaticServing(parsed.data, issuance.part_ids, admission, questionSubject)
-        : row.presentation != null && !Presentation.safeParse(row.presentation).success
-          ? {
-              // Bad presentation gets its own typed reason, matching the shape gate.
-              kind: 'unavailable',
-              reason: 'invalid_presentation',
-              detail: 'malformed frozen presentation',
-            }
-          : {
-              kind: 'unavailable',
-              reason: 'invalid_scoring_contract',
-              detail: 'invalid frozen revision',
-            };
+      const decision: AutomaticServingDecision = !purposeAllowed
+        ? {
+            kind: 'unavailable',
+            reason: 'source_purpose_restricted_or_unknown',
+            detail: 'source_purpose_restricted_or_unknown',
+          }
+        : parsed.success
+          ? decideAutomaticServing(parsed.data, issuance.part_ids, admission, questionSubject)
+          : row.presentation != null && !Presentation.safeParse(row.presentation).success
+            ? {
+                // Bad presentation gets its own typed reason, matching the shape gate.
+                kind: 'unavailable',
+                reason: 'invalid_presentation',
+                detail: 'malformed frozen presentation',
+              }
+            : {
+                kind: 'unavailable',
+                reason: 'invalid_scoring_contract',
+                detail: 'invalid frozen revision',
+              };
       return [issuance.issuance_id, decision];
     }),
   );
@@ -451,6 +496,11 @@ async function issueAssessmentInternal(
       if (mode !== 'auto_score') return { status: 'not_admitted' };
       if (request.container_occurrence_ref !== probeContainerRef(root.id))
         return { status: 'container_ref_required' };
+    }
+    if (!capture) {
+      await lockDerivationSources(tx, { kind: 'question', id: request.group_id });
+      if (!(await sourceAllowsDerivation(tx, { kind: 'question', id: request.group_id })))
+        return { status: 'not_admitted', issues: ['source_purpose_restricted_or_unknown'] };
     }
     if (!capture && lifecycle?.scoring_admission_state !== 'admitted') {
       return { status: 'not_admitted' };

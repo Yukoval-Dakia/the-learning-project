@@ -811,8 +811,7 @@
     gap: var(--un-sp-1);
     padding: var(--un-sp-3) var(--un-sp-4);
     border-radius: var(--un-r-2);
-    background: var(--un-bg-sunk);
-    box-shadow: inset 3px 0 0 var(--un-caution);
+    background: var(--un-caution-soft);
     color: var(--un-text-2);
     font-size: var(--un-fs-1);
   }

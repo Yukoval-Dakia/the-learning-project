@@ -40,6 +40,7 @@ export interface DeltaSection {
     steering: number;
     messages: number;
   };
+  countsWindowLimited?: boolean;
   recent: DeltaEventLine[];
   /** 到期读数（上限 REVIEW_DUE_DISPLAY_CAP）；达到上限时 reviewDueOverCap=true，渲染「50+」。 */
   reviewDueCount: number;

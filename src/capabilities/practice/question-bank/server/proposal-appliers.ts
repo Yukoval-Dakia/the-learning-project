@@ -1,3 +1,8 @@
+import {
+  lockDerivationSources,
+  readSourceUsageEpochs,
+  sourceAllowsDerivation,
+} from '@/kernel/read-models/usage-policy';
 // T4 — practice 包的提议 accept-applier 真身，从 dispatch 壳
 // （actions.ts @ src/server/proposals）等价平移（搬迁不改逻辑）。壳退化为
 // 纯 dispatch，按 kind 一行委托到这里。
@@ -227,6 +232,14 @@ export async function acceptVariantQuestionProposal(
     ): Promise<ProposalAcceptEffectOutcome<VariantQuestionAcceptResult>> => {
       const now = new Date();
       const newQuestionId = createId();
+      for (const source of [
+        { kind: 'question' as const, id: proposedChange.source_question_id as string },
+        { kind: 'event' as const, id: proposedChange.source_attempt_event_id ?? '' },
+      ]) {
+        await lockDerivationSources(tx, source);
+        if (!(await sourceAllowsDerivation(tx, source)))
+          throw new ApiError('conflict', 'source_purpose_restricted_or_unknown', 409);
+      }
       await lockPlacementSupplyScopes(tx, proposedChange.knowledge_ids ?? []);
       // lock the draft mistake_variant row FOR UPDATE before the new
       // question + rate event + ROW write. projectMistakeVariantGuarded has no version-CAS (the table
@@ -248,10 +261,17 @@ export async function acceptVariantQuestionProposal(
           knowledge_ids: proposedChange.knowledge_ids ?? [],
           difficulty: proposedChange.difficulty as number,
           source: 'mistake_variant',
+          metadata: {
+            source_attempt_event_id: proposedChange.source_attempt_event_id,
+            source_usage_epochs: await readSourceUsageEpochs(tx, {
+              kind: 'event',
+              id: proposedChange.source_attempt_event_id ?? '',
+            }),
+          },
           draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
           variant_depth: proposedChange.variant_depth ?? 1,
           root_question_id: proposedChange.root_question_id ?? null,
-          parent_variant_id: proposedChange.parent_variant_id ?? null,
+          parent_variant_id: proposedChange.source_question_id,
           created_by: {
             by: 'ai',
             task_kind: 'VariantGenTask',

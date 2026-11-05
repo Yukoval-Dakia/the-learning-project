@@ -7,7 +7,7 @@ import type { Db, Tx } from '@/db/client';
 import type { LearnerContextResult } from '@/kernel/read-models/learner-context';
 import { trimUnitsToBudget } from './budget';
 import { readContractSection } from './contract';
-import { readDeltaSection, shanghaiLabel } from './delta';
+import { DELTA_SCAN_LIMIT, readDeltaSection, shanghaiLabel } from './delta';
 import { DELTA_FALLBACK_LOOKBACK_MS, readSteadySection } from './steady';
 import type { DeltaSection, DueItemLine } from './types';
 
@@ -20,6 +20,8 @@ const LOOKBACK_DAYS = Math.round(DELTA_FALLBACK_LOOKBACK_MS / (24 * 60 * 60 * 10
 function renderDelta(delta: DeltaSection): string {
   const lines: string[] = [];
   const c = delta.counts;
+  const windowLabel = delta.countsWindowLimited ? `（最近${DELTA_SCAN_LIMIT}条候选活动内）` : '';
+
   const parts = [
     c.answers > 0 ? `新作答 ${c.answers} 次` : '',
     c.reviews > 0 ? `复习 ${c.reviews} 次` : '',
@@ -32,7 +34,11 @@ function renderDelta(delta: DeltaSection): string {
     delta.asOfBasis === 'dreaming'
       ? `自 ${shanghaiLabel(delta.asOf)} 固化以来`
       : `近 ${LOOKBACK_DAYS} 天`;
-  lines.push(parts.length > 0 ? `${scope}：${parts.join('，')}` : `${scope}暂无新学习动态`);
+  lines.push(
+    parts.length > 0
+      ? `${scope}${windowLabel}：${parts.join('，')}`
+      : `${scope}暂无新学习动态${windowLabel}`,
+  );
   for (const line of delta.recent) lines.push(`· ${shanghaiLabel(line.at)} ${line.label}`);
   const tail = [
     `今日待复习 ${delta.reviewDueOverCap ? `${delta.reviewDueCount}+` : delta.reviewDueCount} 项`,
