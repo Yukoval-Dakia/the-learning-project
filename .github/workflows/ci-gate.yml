@@ -50,6 +50,16 @@ jobs:
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
+      - name: Resolve Circle audit comparison base
+        id: circle_base
+        if: steps.filter.outputs.static_changed != 'false'
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+          BUILD_HEAD: ${{ github.sha }}
+          BUILD_REF: ${{ github.ref }}
+          BUILD_EVENT: ${{ github.event_name }}
+          PROVIDED_BEFORE: ${{ github.event.before }}
+        run: node scripts/ci/resolve-circle-audit-base.mjs
       - name: Install dependencies
         if: steps.filter.outputs.static_changed != 'false'
         run: pnpm install --frozen-lockfile
@@ -67,12 +77,12 @@ jobs:
       - name: Typecheck
         if: steps.filter.outputs.static_changed != 'false'
         run: pnpm typecheck
-      # Warning/info totals may not exceed the lower of the baseline file and the base
-      # commit's measured count; a shortfall passes, so parallel PRs need not rewrite the file.
+      # Warning/info totals may not exceed the count measured on the comparison base;
+      # a shortfall passes, so parallel PRs need not rewrite a shared ledger.
       - name: Lint and warning ratchet
         if: steps.filter.outputs.static_changed != 'false'
         env:
-          LINT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          LINT_BASE_SHA: ${{ steps.circle_base.outputs.base || inputs.test_policy_base || github.event.pull_request.base.sha || github.event.before }}
         run: node scripts/ci/lint-ratchet.mjs
   # YUK-1612: CircleCI GHA matrix instances share result filenames, and include-only
   # audit matrices do not fan out there. Static IDs keep every result distinct.
