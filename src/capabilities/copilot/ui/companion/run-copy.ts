@@ -5,9 +5,9 @@ import { type CopilotRunView, DurablePickupStalledError } from '../subtask-event
 import type { ProgressStage } from './companion-state';
 
 export const PROGRESS_LABELS: Record<ProgressStage, string> = {
-  dispatch: '准备中…',
-  generation: '生成中…',
-  'evidence-review': '核对证据中…',
+  dispatch: '马上来',
+  generation: '在回答',
+  'evidence-review': '在核对',
 };
 
 export function isTerminal(view: CopilotRunView): boolean {

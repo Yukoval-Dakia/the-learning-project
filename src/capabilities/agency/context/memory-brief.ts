@@ -17,12 +17,32 @@ export async function readMemoryBriefNote(
   scopeKey: string,
   now: Date = new Date(),
 ): Promise<MemoryBriefRead> {
-  const [note] = await db
+  let [note] = await db
     .select()
     .from(memory_brief_note)
     .where(eq(memory_brief_note.scope_key, scopeKey))
     .limit(1);
-  if (!note || !(await briefPurposeCurrent(db, scopeKey, note.version))) {
+  if (!note && scopeKey === 'global:digest') return readMemoryBriefNote(db, 'global', now);
+  if (note && scopeKey === 'global:digest') {
+    const { readTopics } = await import('./topics');
+    const { digest } = await readTopics(db);
+    const ids = [...new Set(digest.topics.flatMap((t) => t.facts.flatMap((f) => f.evidence_ids)))];
+    note = {
+      ...note,
+      recent_week_md: digest.topics
+        .map((t) => `${t.name}：${t.facts.map((f) => f.body).join('；')}`)
+        .join('\n'),
+      recent_months_md: '',
+      long_term_md: JSON.stringify(digest),
+      recent_week_evidence_ids: ids,
+      recent_months_evidence_ids: [],
+      long_term_evidence_ids: ids,
+    };
+  }
+  if (
+    !note ||
+    (scopeKey !== 'global:digest' && !(await briefPurposeCurrent(db, scopeKey, note.version)))
+  ) {
     // 用途已被撤回且未按新用途重生成：与无行同样如实缺省。
     return {
       note: null,

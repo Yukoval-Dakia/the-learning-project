@@ -1,3 +1,4 @@
+import { Info } from 'lucide-react';
 import { useState } from 'react';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
@@ -114,7 +115,10 @@ export function RecordingSheet({
       {rec.gaps.length > 0 && (
         <ul className="rc-gaps">
           {rec.gaps.map((g) => (
-            <li key={g}>{GAP_WORDS[g]}</li>
+            <li key={g}>
+              <Info size={14} aria-hidden="true" />
+              {GAP_WORDS[g]}
+            </li>
           ))}
         </ul>
       )}

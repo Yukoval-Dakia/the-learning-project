@@ -19,6 +19,14 @@ import {
   ProbeAnswerResponseSchema,
 } from './api/contracts';
 import { CreateGoalBody, GoalSchema } from './api/goal-contracts';
+import { CURATOR_ACTIVITY_ACTIONS } from './context/activity-contract';
+import { ChangeResult } from './context/topic-contract';
+import {
+  ContextActionRequest,
+  ContextBoardResponse,
+  ContextEditRequest,
+  ContextEditResponse,
+} from './context/wire';
 
 export const agencyCapability = defineCapability({
   name: 'agency',
@@ -27,6 +35,8 @@ export const agencyCapability = defineCapability({
     'AI 内部协调信道 agent-notes（hints not facts，用户侧只读观察窗）。',
   events: {
     actions: [
+      'experimental:context_change',
+      'experimental:context_edit_request',
       'experimental:agent_note',
       DREAMING_NOTE_REFRESH_ACTION,
       PROBE_RESULT_ACTION,
@@ -45,6 +55,12 @@ export const agencyCapability = defineCapability({
   },
   subscriptions: {
     handlers: [
+      {
+        id: 'agency.curator-activity',
+        version: 1,
+        actions: CURATOR_ACTIVITY_ACTIONS,
+        load: () => import('./context/activity').then((m) => m.buildCuratorActivitySubscriber),
+      },
       {
         id: 'agency.probe-publication-serve',
         version: 1,
@@ -119,6 +135,32 @@ export const agencyCapability = defineCapability({
     routes: [
       {
         method: 'GET',
+        path: '/api/learner-context',
+        operationId: 'getLearnerContext',
+        responses: { 200: ContextBoardResponse, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/context').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/learner-context/edit',
+        operationId: 'editLearnerContext',
+        request: { body: ContextEditRequest },
+        responses: { 200: ContextEditResponse, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/context').then((m) => m.EDIT),
+      },
+      {
+        method: 'POST',
+        path: '/api/learner-context/action',
+        operationId: 'actOnLearnerContext',
+        request: { body: ContextActionRequest },
+        responses: { 200: ChangeResult, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/context').then((m) => m.ACTION),
+      },
+      {
+        method: 'GET',
         path: '/api/agents/notes',
         operationId: 'listAgentNotes',
         request: { query: AgentNotesQuerySchema },
@@ -180,10 +222,13 @@ export const agencyCapability = defineCapability({
     // server/boss/register-capability-jobs.ts 收集挂载，此处声明是唯一归属源。
     handlers: [
       {
-        // DAG 成员：dreaming 读 proposal inbox 作去重基线，对上游 propose 生产者是软边
-        // （上游失败 dreaming 照跑，只是少看几条 pending）。cron 移除，改由 orchestrator 触发。
+        name: 'curator_activity',
+        queue: 'agent',
+        load: () => import('./context/activity').then((m) => m.buildCuratorActivityHandler),
+      },
+      {
+        // Curator runs every night, including quiet nights that only need freshness review.
         name: 'dreaming_nightly',
-        eligibility: nightlyEligibility('reflection'),
         dependsOn: [{ job: 'knowledge_maintenance_nightly', soft: true }],
         queue: 'agent',
         load: () => import('./jobs/dreaming_nightly').then((m) => m.buildDreamingNightlyHandler),
@@ -370,6 +415,14 @@ export const agencyCapability = defineCapability({
   // copilot 工具归属声明（learning_item 上下文读 1 + 生命周期提议 4）。
   copilotTools: {
     tools: [
+      {
+        name: 'remember_learner',
+        load: () => import('./context/write-tools').then((m) => m.rememberLearnerTool),
+      },
+      {
+        name: 'curate_context',
+        load: () => import('./context/write-tools').then((m) => m.curateContextTool),
+      },
       {
         name: 'get_learning_item_context',
         load: () =>

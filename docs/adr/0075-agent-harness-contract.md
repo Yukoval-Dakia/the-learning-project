@@ -256,3 +256,14 @@ owner 2026-10-18 19:48 拍板「两件都允许」。**系统可自行执行、�
 ## 来源映射（本文 → 设计稿）
 
 D0 ← §2 总原则；D1 ← §2.1 + §10.1（C1-0 统一收尾、C1-6 描述规范、C1-7 读契约、C1-8 按需暴露、C1-9 输出预算、fatal 补类、P0-a）；D2 ← §2.2 + §10.2 + §10.5（加权 token 信封、上下文管理与 auto-compact、mo94wa3t 归因更正、landing 双入口、429/配额终止）；D3 ← §2.3（C3-1…C3-3 + 删除 + guard）；D4 ← §2.4（C4-1…C4-4 + 删除 + guard）；D5 ← §6 决定 1 + §9；D6 ← §3（§3.1–§3.7）+ §9 决定 2；D7 ← §2.5 + §5.1 + §10.3（逐响应 usage、transcript blob）；D8 ← §5.2/§5.3 + §9 决定 3 + §10（P0-a 前置、信封修订、A1–A9 归 P2、Copilot 摘要列 FULL 推迟）；ADR 关系 ← §4.4；票据处置 ← §4.1–§4.3；根因与证据 ← §1；否决备选 ← §1.2/§4.2/§4.3/§10.4；未决 ← §7。**§9/§10 优先级最高**：正文与之冲突的推荐/推迟/数值（如原 P5 主席层推迟、Sourcing 8 M 输入信封、KR 挂 `MAINTENANCE_TOOLS`）已被覆盖，本文按新条文书写，不保留相互矛盾的有效门槛。
+
+## Amendment: Curator consolidation
+
+Curator owns reversible memory/topic consolidation, including direct supersede
+and merge; learning plans remain Coach-owned. It runs once nightly and once after
+30 minutes without learner activity. Delayed jobs bind the source activity and
+skip when a later activity exists; no new activity creates no further run.
+Unchanged writes and repeated identical tool results end progress. Shared task
+execution/spend policies apply; no Curator-specific spend or proposal ceiling.
+Weakness/event facts cannot merge: the write tool returns a typed issue so the
+agent can supersede individual facts. Purpose restrictions still deny all writes.

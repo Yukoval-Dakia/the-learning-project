@@ -11,6 +11,7 @@ import {
   getDurablePickupDeadlineMs,
   isDurablePickupStalled,
 } from '@/capabilities/copilot/durable-pickup';
+import { BLOCK_REF_PATTERN, BlockV1, type BlockV1T } from '@/core/schema/blocks';
 
 import { type PublicProse, mergePublicProse, parsePublicProse } from './public-prose';
 
@@ -45,11 +46,33 @@ export interface CopilotToolCallRecord {
   errorReason?: string;
 }
 
+/**
+ * YUK-1548 §5 — one picture the companion is drawing in this run, at the place it appeared in the
+ * streamed text. A refused attempt keeps its place: the retry (a new compose_block call) takes the
+ * same slot. Streaming only; the terminal reply's `reply_md` fences are what stays.
+ */
+export interface CopilotRunBlock {
+  /** The compose_block call currently standing in this slot. */
+  toolUseId: string;
+  /** Length of the streamed reply text when the block first appeared: its stream position. */
+  anchor: number;
+  status: 'drafting' | 'retrying' | 'ready';
+  kind?: string;
+  title?: string;
+  receivedBytes?: number;
+  /** `blk_<hex>` once ready; draft text may place it with `![alt](block:<ref>)`. */
+  ref?: string;
+  block?: BlockV1T;
+}
+
 export interface CopilotRunJobFrame {
   event_id: number;
   event_type: string;
   payload: Record<string, unknown>;
 }
+
+/** What the model is doing right now, from run frames only: nothing sent yet, reasoning, writing. */
+export type CopilotModelStage = 'waiting' | 'thinking' | 'writing';
 
 export type CopilotRunPhase = 'queued' | 'running' | 'cancel_requested' | 'completed' | 'failed';
 
@@ -64,6 +87,9 @@ export interface CopilotRunView {
   checkpointEventId?: string;
   subtasks: CopilotSubtaskView[];
   toolCalls?: CopilotToolCallRecord[];
+  /** Pictures being drawn in this run, in stream order (YUK-1548). */
+  blocks?: CopilotRunBlock[];
+  modelStage?: CopilotModelStage;
   /** Internal replay inventory. Kept immutable so out-of-order arrivals can be re-folded. */
   frames: CopilotRunJobFrame[];
 }
@@ -221,6 +247,85 @@ function mergeToolFinished(
   return next;
 }
 
+const COMPOSE_BLOCK_TOOL = 'compose_block';
+const MAX_BLOCK_TITLE_CHARS = 60;
+
+type BlockStep =
+  | { step: 'draft'; toolUseId: string; receivedBytes: number; kind?: string; title?: string }
+  | { step: 'ready'; toolUseId: string; ref: string; block: BlockV1T };
+
+/** Runtime-narrow block frames; a draft never carries markup, a ready frame must parse as a block. */
+function parseBlockStep(value: unknown): BlockStep | null {
+  const payload = objectRecord(value);
+  const toolUseId = boundedText(payload?.tool_use_id, 200);
+  if (!payload || !toolUseId) return null;
+  if (payload.step_kind === 'block_draft') {
+    const bytes = payload.received_bytes;
+    const kind = boundedText(payload.kind, 24);
+    const title = clampedDisplayText(payload.title, MAX_BLOCK_TITLE_CHARS);
+    return {
+      step: 'draft',
+      toolUseId,
+      receivedBytes: typeof bytes === 'number' && Number.isFinite(bytes) && bytes > 0 ? bytes : 0,
+      ...(kind ? { kind } : {}),
+      ...(title ? { title } : {}),
+    };
+  }
+  if (payload.step_kind === 'block_ready') {
+    const ref = boundedText(payload.ref, 80);
+    const block = BlockV1.safeParse(payload.block);
+    if (!ref || !BLOCK_REF_PATTERN.test(ref) || !block.success) return null;
+    return { step: 'ready', toolUseId, ref, block: block.data };
+  }
+  return null;
+}
+
+/** A refused or unavailable compose_block attempt, by its finished-step summary (wire §2). */
+function isRefusedBlockAttempt(tool: CopilotToolCallRecord): boolean {
+  return (
+    tool.toolName === COMPOSE_BLOCK_TOOL &&
+    tool.toolUseId !== undefined &&
+    /^(?:invalid|unavailable)\b/.test(tool.summary ?? '')
+  );
+}
+
+function foldBlockStep(
+  blocks: CopilotRunBlock[],
+  step: BlockStep,
+  anchor: number,
+): CopilotRunBlock[] {
+  const index = blocks.findIndex((block) => block.toolUseId === step.toolUseId);
+  const current = index === -1 ? undefined : blocks[index];
+  if (current?.status === 'ready') return blocks;
+  // A new call after a refused attempt is its retry: it takes the refused slot.
+  const slot = current ? index : blocks.findIndex((block) => block.status === 'retrying');
+  const base: CopilotRunBlock =
+    slot === -1 ? { toolUseId: step.toolUseId, anchor, status: 'drafting' } : blocks[slot];
+  const next: CopilotRunBlock =
+    step.step === 'draft'
+      ? {
+          toolUseId: step.toolUseId,
+          anchor: base.anchor,
+          status: 'drafting',
+          receivedBytes: step.receivedBytes,
+          kind: step.kind ?? base.kind,
+          title: step.title ?? base.title,
+        }
+      : {
+          toolUseId: step.toolUseId,
+          anchor: base.anchor,
+          status: 'ready',
+          kind: step.block.kind,
+          title: base.title,
+          ref: step.ref,
+          block: step.block,
+        };
+  if (slot === -1) return [...blocks, next];
+  const updated = [...blocks];
+  updated[slot] = next;
+  return updated;
+}
+
 export function parseCopilotRunJobFrame(data: string): CopilotRunJobFrame | null {
   try {
     const raw = objectRecord(JSON.parse(data));
@@ -292,6 +397,8 @@ export function foldCopilotRunFrames(
   let checkpointEventId: string | undefined;
   const subtasks = new Map<string, MutableSubtask>();
   let toolCalls: CopilotToolCallRecord[] = [];
+  let blocks: CopilotRunBlock[] = [];
+  let modelStage: CopilotModelStage = 'waiting';
 
   for (const item of frames) {
     const terminalRun = TERMINAL_RUN_PHASES.has(phase);
@@ -305,6 +412,12 @@ export function foldCopilotRunFrames(
       case COPILOT_RUN_STEP_EVENT: {
         if (terminalRun) break;
         phase = 'running';
+        if (item.payload.step_kind === 'model_thinking') {
+          modelStage = 'thinking';
+          break;
+        }
+        // Any other step: once it ends, the next thing to come is the model's next response.
+        modelStage = 'waiting';
         const event = parseSubtaskPayload(item.payload);
         if (event) {
           const current = subtasks.get(event.subtask_id);
@@ -325,12 +438,41 @@ export function foldCopilotRunFrames(
           });
           break;
         }
+        const blockStep = parseBlockStep(item.payload);
+        if (blockStep) {
+          blocks = foldBlockStep(blocks, blockStep, replyText.length);
+          // compose_block never mirrors a tool_started step; its draft/ready frames stand in for
+          // one, so the activity line says 「正在画图」 while it draws.
+          toolCalls =
+            blockStep.step === 'draft'
+              ? mergeToolStarted(toolCalls, {
+                  toolName: COMPOSE_BLOCK_TOOL,
+                  input: {},
+                  toolUseId: blockStep.toolUseId,
+                  status: 'running',
+                })
+              : mergeToolFinished(toolCalls, {
+                  toolName: COMPOSE_BLOCK_TOOL,
+                  input: {},
+                  toolUseId: blockStep.toolUseId,
+                  summary: 'ready',
+                  status: 'done',
+                });
+          break;
+        }
         const tool = parseToolStepPayload(item.payload);
         if (!tool) break;
         toolCalls =
           item.payload.step_kind === 'tool_started'
             ? mergeToolStarted(toolCalls, tool)
             : mergeToolFinished(toolCalls, tool);
+        if (isRefusedBlockAttempt(tool)) {
+          blocks = blocks.map((block) =>
+            block.toolUseId === tool.toolUseId && block.status === 'drafting'
+              ? { ...block, status: 'retrying' }
+              : block,
+          );
+        }
         break;
       }
       case 'copilot_run.delta': {
@@ -338,6 +480,7 @@ export function foldCopilotRunFrames(
         phase = 'running';
         const text = typeof item.payload.text === 'string' ? item.payload.text : '';
         if (text) {
+          modelStage = 'writing';
           replyText += text;
           if (!publicProse || publicProse.status === 'streaming') {
             publicDeltas.set(item.event_id, text);
@@ -405,6 +548,7 @@ export function foldCopilotRunFrames(
     phase,
     lastEventId: frames.at(-1)?.event_id ?? 0,
     replyText,
+    modelStage,
     ...(publicProse ? { publicProse } : {}),
     ...(replyPayload ? { replyPayload } : {}),
     ...(failureReason ? { failureReason } : {}),
@@ -413,6 +557,7 @@ export function foldCopilotRunFrames(
       .sort((a, b) => a.firstEventId - b.firstEventId)
       .map(({ firstEventId: _firstEventId, ...subtask }) => subtask),
     toolCalls,
+    ...(blocks.length > 0 ? { blocks } : {}),
     frames,
   };
 }
