@@ -176,7 +176,7 @@ function criterionFor(
     if (unit.rule == null) {
       return fallback(
         'missing_rule',
-        `unit '${unit.unit_id}' has a select key but no printed scoring rule`,
+        `unit '${unit.unit_id}' has a select key but no printed scoring rule; recover source/author evidence or abandon this candidate, do not invent a scoring policy`,
       );
     }
     return {
@@ -192,7 +192,7 @@ function criterionFor(
     if (unit.rule == null) {
       return fallback(
         'missing_rule',
-        `unit '${unit.unit_id}' has a blank key but no printed scoring rule`,
+        `unit '${unit.unit_id}' has a blank key but no printed scoring rule; recover source/author evidence or abandon this candidate, do not invent a scoring policy`,
       );
     }
     const key = unit.key.key;
@@ -236,6 +236,7 @@ function criterionFor(
         kind: 'blank_key',
         key: {
           kind: 'numeric',
+          normalization_version: key.normalization_version ?? 'numeric-norm@2',
           expected: key.value,
           tolerance: key.tolerance ?? { kind: 'absolute', value: 0 },
           ...(key.unit != null ? { expected_unit: key.unit } : {}),
@@ -425,7 +426,7 @@ export function draftDocumentToContract(
           code: 'points_not_printed',
           part_id: part.part_id,
           unit_id: unit.unit_id,
-          detail: `unit '${unit.unit_id}' has no printed points`,
+          detail: `unit '${unit.unit_id}' has no printed points; recover source/author evidence or abandon this candidate, do not invent a default score`,
         });
       }
       if (unit.response_class !== unit.response_spec.kind) {
@@ -761,6 +762,7 @@ function keyAndReferenceFor(
               }
             : {
                 kind: 'numeric',
+                normalization_version: key.normalization_version ?? 'numeric-norm@1',
                 value: key.expected,
                 ...(key.tolerance != null ? { tolerance: key.tolerance } : {}),
                 ...(key.expected_unit != null ? { unit: key.expected_unit } : {}),

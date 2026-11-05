@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  AdminConfigGlobalEffectiveSchema,
+  AdminConfigTaskEffectiveBindingSchema,
+} from './admin-config-contracts';
 
 const KeySchema = z.string().min(1).max(200);
 const ValueSchema = z.union([
@@ -48,4 +52,14 @@ export const AdminConfigWriteResponseSchema = z.object({
       cleared: z.boolean().optional(),
     }),
   ),
+  /**
+   * YUK-1808 — post-write effective projection for the touched scopes, resolved
+   * by the same resolvers the runtime uses (never the stored override rows):
+   * every touched task.<kind>.* key contributes its kind's effective binding;
+   * a touched lane.global.* contributes `global`. Untouched sections stay empty.
+   */
+  effective: z.object({
+    tasks: z.record(z.string(), AdminConfigTaskEffectiveBindingSchema),
+    global: AdminConfigGlobalEffectiveSchema.nullable(),
+  }),
 });

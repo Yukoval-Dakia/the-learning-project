@@ -24,6 +24,7 @@
 // non-blocking path — see verify-framework.ts.) The bare model-only override (no provider) is a
 // same-provider model swap and is passed through as-is.
 
+import type { TaskKind } from '@/capabilities/task-registry';
 import { getLaneOverride } from '@/core/config/store';
 import {
   type Provider,
@@ -35,6 +36,19 @@ import {
 
 export const VERIFY_SOLVE_PROVIDER_ENV = 'VERIFY_SOLVE_PROVIDER_OVERRIDE';
 export const VERIFY_SOLVE_MODEL_ENV = 'VERIFY_SOLVE_MODEL_OVERRIDE';
+
+/**
+ * The solve_check leg kinds the verify_solve lane drives (verify-framework
+ * injects the resolved override as a per-call arg → selection_rule
+ * 'call_override'). Single mapping shared by the config write validator and
+ * the admin read face — SemanticJudgeTask is deliberately absent: it serves
+ * several lanes by call-site context, so its effective binding follows the
+ * standard chain.
+ */
+export const SOLVE_LANE_TASK_KINDS = [
+  'SolutionGenerateTask',
+  'SolutionGenerateVisionTask',
+] as const satisfies readonly TaskKind[];
 
 export interface SolveOverride {
   /** Provider name — always a known + lane-ready Provider when present (pre-flighted). */
@@ -50,9 +64,13 @@ export interface SolveOverride {
  * is byte-identical (the env-unset invariant the regression tests lock).
  *
  * @param warn injectable logger (defaults to console.warn) so tests can assert the fall-back log.
+ * @param opts.checkCredentials pass false from a read-only projection whose process may not
+ *   see the worker's credential env — the lane then reports what it is configured to run,
+ *   not what this process can pre-flight (the run's own preflight still gates).
  */
 export function resolveSolveOverrideFromEnv(
   warn: (message: string) => void = (m) => console.warn(m),
+  opts?: { checkCredentials?: boolean },
 ): SolveOverride {
   // DB 层> env 层（VERIFY_SOLVE_*
   // env fallback）。getLaneOverride 每 key 已合并两层。
@@ -82,7 +100,7 @@ export function resolveSolveOverrideFromEnv(
       );
       return {};
     }
-    if (!isProviderLaneReady(known)) {
+    if (opts?.checkCredentials !== false && !isProviderLaneReady(known)) {
       // Credential env absent on this deploy (e.g. the subscription token is not wired here).
       warn(
         `[quiz_verify] solve_check 异源 lane '${known}' is not configured (credential env missing); falling back to the default lane`,

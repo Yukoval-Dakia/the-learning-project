@@ -16,7 +16,11 @@ import {
   type PaidEffectVoidAuthorization,
   computePaidEffectIdentity,
 } from '@/core/migration/paid-effect-protocol';
-import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
+import {
+  QUESTION_ADMISSION_CONTRACT_VERSION,
+  QUESTION_ADMISSION_PAID_UNIT,
+  QUESTION_ADMISSION_POLICY_IDS,
+} from '@/core/question-admission-policy';
 import type { Db, Tx } from '@/db/client';
 import { voidPaidEffectWithSuccessor } from '@/db/paid-effect-store';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
@@ -161,6 +165,10 @@ export async function evaluateAdmissionVoidGroup(
   spec: AdmissionVoidGroupSpec,
 ): Promise<AdmissionVoidEval> {
   const failures: string[] = [];
+  if (spec.successorUnit !== QUESTION_ADMISSION_PAID_UNIT)
+    failures.push(
+      `successor unit '${spec.successorUnit}' is not '${QUESTION_ADMISSION_PAID_UNIT}'`,
+    );
   const { paid_effect, question_admission_verification, question_revision } = await import(
     '@/db/schema'
   );
@@ -444,7 +452,7 @@ export async function releaseAdmissionVoidSuccessor(
   const queued = await boss.send(
     ADMISSION_FAMILY,
     {
-      admission_version: 3,
+      admission_version: QUESTION_ADMISSION_CONTRACT_VERSION,
       question_id: spec.groupId,
       revision_id: fresh.revisionId ?? undefined,
       expected_revision_digest: spec.baseDigest,

@@ -434,8 +434,7 @@
     margin-bottom: var(--un-sp-5);
     padding: var(--un-sp-4);
     border-radius: var(--un-r-2);
-    background: var(--un-bg-sunk);
-    box-shadow: inset 3px 0 0 var(--un-caution);
+    background: var(--un-caution-soft);
   }
 
   & .nt-issues-title {
@@ -623,8 +622,9 @@
   }
 
   & .nt-sem-pitfall .nt-sem-body {
-    padding-left: var(--un-sp-3);
-    border-left: 3px solid color-mix(in srgb, var(--un-critical) 55%, transparent);
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: var(--un-critical-soft);
   }
 
   & .nt-sem-example .nt-sem-body {
