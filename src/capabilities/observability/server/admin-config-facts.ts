@@ -49,10 +49,18 @@ export interface AdminConfigProviderAuth {
   readonly error_type: string | null;
 }
 
+/**
+ * The provider's ACTIVE credential lane: 'key' / 'oauth' mirror the registry
+ * authMode; 'oauth-file' means the credential resolved to the provider's auth
+ * file lane (e.g. openai ChatGPT-login) — the declared authMode stays 'key'
+ * there, but reporting 'key' would mislabel the live lane (YUK-1833).
+ */
+export type AdminConfigProviderAuthMode = 'key' | 'oauth' | 'oauth-file';
+
 /** One provider row; the only credential facts are key_present and the auth status. */
 export interface AdminConfigProviderRow {
   readonly name: string;
-  readonly auth_mode: 'key' | 'oauth';
+  readonly auth_mode: AdminConfigProviderAuthMode;
   /** Env name only; the value is never serialized. */
   readonly credential_env: string;
   readonly key_present: boolean;
@@ -109,11 +117,48 @@ export interface AdminConfigRuntimeSection {
 }
 
 /**
+ * YUK-1808 — the layer that produced a task's effective binding, frozen by the
+ * resolver (providers.ts TaskSelectionRule). `call_override` cannot appear on
+ * this read face (no per-call argument), but stays in the vocabulary so the
+ * value always matches the run record's selection_rule.
+ */
+export type AdminConfigTaskSelectionRule =
+  | 'env_pin'
+  | 'task_pair_priority'
+  | 'call_override'
+  | 'global_pin'
+  | 'task_config'
+  | 'registry_default';
+
+/**
+ * The resolver's per-task reasoning outcome (resolveTaskReasoning), projected
+ * for the read face: `requested` is the stored level name (null when nothing
+ * is configured), `applied` is what the wire will carry ('off'/'on'/a level/
+ * 'none'), `error` is the readable config error when the stored level cannot
+ * be honored at all.
+ */
+export interface AdminConfigTaskEffectiveReasoning {
+  readonly requested: string | null;
+  readonly applied: string | null;
+  readonly error: string | null;
+}
+
+/** One task's effective binding projection — shared by the read face and the write receipt. */
+export interface AdminConfigTaskEffectiveBinding {
+  readonly provider: string | null;
+  readonly model: string | null;
+  readonly error: string | null;
+  readonly selection_rule: AdminConfigTaskSelectionRule | null;
+  readonly reasoning: AdminConfigTaskEffectiveReasoning | null;
+}
+
+/**
  * One AI task's catalog defaults plus its next-invocation budget baseline, read
  * from the task registry by the composition root (the read face must not import it).
  */
 export interface AdminConfigTaskFacts {
   readonly kind: string;
+  readonly description: string;
   readonly default_provider: string;
   readonly default_model: string;
   readonly default_budget: {
@@ -138,20 +183,26 @@ export interface AdminConfigTaskFacts {
   };
 }
 
+/**
+ * YUK-1808 — the effective global provider switch for the config page: which
+ * provider/model the global pin resolves to, which layer produced it ('env'
+ * emergency pin vs 'db' panel-managed default), and the reader's error when
+ * the configured name is invalid.
+ */
+export interface AdminConfigGlobalEffective {
+  readonly provider: string | null;
+  readonly model: string | null;
+  readonly source: 'env' | 'db' | null;
+  readonly error: string | null;
+}
+
 /** Full fact bundle; recomputed per request for hot reload. */
 export interface AdminConfigRuntimeFacts {
   /** Runtime global switch, validated by its real reader. Null includes an invalid switch. */
   readonly global_pin?: { provider: string; model?: string } | null;
-  readonly task_bindings?: Readonly<
-    Record<
-      string,
-      {
-        provider: string | null;
-        model: string | null;
-        error: string | null;
-      }
-    >
-  >;
+  /** Effective global switch + its producing layer; absent for an older/uninjected source. */
+  readonly global?: AdminConfigGlobalEffective;
+  readonly task_bindings?: Readonly<Record<string, AdminConfigTaskEffectiveBinding>>;
   /** Registry order; the read face lays its task rows out in this order. */
   readonly task_catalog: readonly AdminConfigTaskFacts[];
   readonly providers: readonly AdminConfigProviderRow[];

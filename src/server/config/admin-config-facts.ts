@@ -12,10 +12,12 @@ import { knowledgeConfigEffectiveFacts } from '@/capabilities/knowledge/public';
 import { notesConfigEffectiveFacts } from '@/capabilities/notes/public';
 import type {
   AdminConfigCatalogModelRow,
+  AdminConfigGlobalEffective,
   AdminConfigProviderAuth,
   AdminConfigProviderRow,
   AdminConfigRuntimeFacts,
   AdminConfigScheduleRow,
+  AdminConfigTaskEffectiveBinding,
   AdminConfigTaskFacts,
 } from '@/capabilities/observability/public';
 import { observabilityConfigEffectiveFacts } from '@/capabilities/observability/public';
@@ -27,6 +29,7 @@ import {
   tasks,
 } from '@/capabilities/task-registry';
 import type { ConfigEffectiveFact } from '@/core/config/effective';
+import { resolveConfigValue } from '@/core/config/store';
 import { DB_POOL_MAX } from '@/db/pool';
 import { projectDagMembers } from '@/kernel/manifest';
 import { resolveConfig as resolveAiRateLimitConfig } from '@/kernel/request-rate-limit';
@@ -48,9 +51,12 @@ import { providerCredentialFingerprint } from '@/server/ai/provider-models-check
 import {
   type ProviderAuthSurfaceRow,
   isProviderLaneReady,
+  providerAuthFileEnvName,
   providerAuthSurface,
   readGlobalProviderSwitch,
+  resolveTaskBinding,
   resolveTaskProvider,
+  resolveTaskReasoning,
 } from '@/server/ai/providers';
 import { registeredTypedTaskBindings } from '@/server/ai/typed-primitive-runner';
 import {
@@ -267,11 +273,106 @@ function providerAuthFacts(provider: ProviderAuthSurfaceRow['name']): AdminConfi
   };
 }
 
+/**
+ * YUK-1808 — one task's effective binding projected through the runtime
+ * resolver chain (single source; the read face never re-derives the layering):
+ * `resolveTaskBinding` freezes provider/model + selection_rule + the stored
+ * reasoning config, `resolveTaskProvider` adds the credential gate (its error
+ * is reported honestly, never a binding with auth), and `resolveTaskReasoning`
+ * resolves the stored level against the effective model requested → applied.
+ * Typed tasks bypass the chat lane entirely, so their defaults report
+ * 'registry_default' with no reasoning surface.
+ */
+export function resolveAdminTaskEffective(kind: TaskKind): AdminConfigTaskEffectiveBinding {
+  const task = tasks[kind];
+  if ('execution' in task && task.execution === 'typed') {
+    return {
+      provider: task.defaultProvider,
+      model: task.defaultModel,
+      error: null,
+      selection_rule: 'registry_default',
+      reasoning: null,
+    };
+  }
+  // The binding is the config truth (provider/model/selection_rule); the
+  // credential+endpoint gate runs separately so a missing key reports the
+  // effective pair AND the resolver's own readable reason, not a null pair.
+  // Errors contain env/model/provider names only — never values.
+  let binding: ReturnType<typeof resolveTaskBinding> | null = null;
+  let provider: string | null = null;
+  let model: string | null = null;
+  let error: string | null = null;
+  try {
+    binding = resolveTaskBinding(kind);
+    provider = binding.provider;
+    model = binding.model;
+    resolveTaskProvider(kind);
+  } catch (e) {
+    error = e instanceof Error ? e.message : String(e);
+  }
+  let reasoning: AdminConfigTaskEffectiveBinding['reasoning'] = null;
+  if (binding !== null) {
+    const stored = binding.reasoning;
+    const requested = stored?.level ?? stored?.reasoning_effort ?? null;
+    if (requested === null) {
+      reasoning = { requested: null, applied: null, error: null };
+    } else {
+      try {
+        const resolved = resolveTaskReasoning(kind, binding.provider, binding.model, stored);
+        reasoning = {
+          requested: resolved?.requested ?? requested,
+          applied: resolved?.applied ?? null,
+          error: null,
+        };
+      } catch (e) {
+        reasoning = {
+          requested,
+          applied: null,
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
+    }
+  }
+  return {
+    provider,
+    model,
+    error,
+    selection_rule: binding?.selectionRule ?? null,
+    reasoning,
+  };
+}
+
+/**
+ * YUK-1808 — the effective global provider switch and the layer that produced
+ * it. `readGlobalProviderSwitch` is the runtime truth (env pin wins over the
+ * DB `lane.global.*` pair); `resolveConfigValue` on the provider key reports
+ * which layer is live. An invalid configured name surfaces as `error`, not a
+ * silent fall-through.
+ */
+export function resolveAdminGlobalEffective(
+  env: NodeJS.ProcessEnv = process.env,
+): AdminConfigGlobalEffective {
+  let provider: string | null = null;
+  let model: string | null = null;
+  let error: string | null = null;
+  try {
+    const sw = readGlobalProviderSwitch();
+    provider = sw?.provider ?? null;
+    model = sw?.model ?? null;
+  } catch (e) {
+    error = e instanceof Error ? e.message : String(e);
+  }
+  const providerSource = resolveConfigValue('lane.global.provider', env).source;
+  const source = providerSource === 'env' || providerSource === 'db' ? providerSource : null;
+  return { provider, model, source, error };
+}
+
 function taskCatalogFacts(): AdminConfigTaskFacts[] {
   return Object.entries(tasks).map(([kind, def]) => {
     const budget = taskBudgetFacts(kind as TaskKind);
     return {
       kind,
+      description: def.description,
       default_provider: def.defaultProvider,
       default_model: def.defaultModel,
       default_budget: def.budget,
@@ -301,7 +402,14 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
   const typedBindings = registeredTypedTaskBindings();
   const providers: AdminConfigProviderRow[] = providerAuthSurface().map((row) => ({
     name: row.name,
-    auth_mode: row.authMode,
+    // The credential env that resolved IS the active lane: when it is the
+    // provider's auth-file env, report 'oauth-file' rather than the registry's
+    // declared 'key' (YUK-1833 — the page must not mislabel the login lane).
+    auth_mode:
+      providerAuthFileEnvName(row.name) !== undefined &&
+      row.credentialEnvName === providerAuthFileEnvName(row.name)
+        ? 'oauth-file'
+        : row.authMode,
     credential_env: row.credentialEnvName,
     key_present: isProviderLaneReady(row.name),
     implemented: row.implemented,
@@ -360,35 +468,9 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
             ...(typeof globalModel === 'string' ? { model: globalModel } : {}),
           }
         : null,
+    global: resolveAdminGlobalEffective(process.env),
     task_bindings: Object.fromEntries(
-      Object.keys(tasks).map((kind) => {
-        const task = tasks[kind as TaskKind];
-        if ('execution' in task && task.execution === 'typed') {
-          return [kind, { provider: task.defaultProvider, model: task.defaultModel, error: null }];
-        }
-        try {
-          const binding = resolveTaskProvider(kind as TaskKind);
-          // Explicit allowlist: never expose the binding's auth, headers or URLs.
-          return [kind, { provider: binding.provider, model: binding.model, error: null }];
-        } catch (e) {
-          // The app process never mounts the ChatGPT-login file (by design) —
-          // when the lane is env-selected, report that truthfully instead of a
-          // generic unconfigured verdict. A missing file on the WORKER is the
-          // real failure and surfaces through ai_task_runs instead.
-          const loginLane =
-            e instanceof Error && e.message.includes('OPENAI_CHATGPT_AUTH_FILE')
-              ? 'openai 登录通道已配置——凭据文件仅 worker 进程可挂载；app 侧不可读属于预期。'
-              : null;
-          return [
-            kind,
-            {
-              provider: null,
-              model: null,
-              error: loginLane ?? '当前配置不可用，请检查模型目录与服务端凭据。',
-            },
-          ];
-        }
-      }),
+      Object.keys(tasks).map((kind) => [kind, resolveAdminTaskEffective(kind as TaskKind)]),
     ),
     task_catalog: taskCatalogFacts(),
     providers,

@@ -47,17 +47,58 @@ export const AdminConfigTaskOverrideSchema = z.object({
   provider: z.string().optional(),
   model: z.string().optional(),
   budget: z.record(z.string(), z.unknown()).optional(),
+  /** Stored task.<kind>.reasoning row verbatim ({level?, reasoning_effort?}); the wire outcome lives in effective_binding.reasoning. */
+  reasoning: z.record(z.string(), z.unknown()).optional(),
+  /** Stored opt-in flag; true = this task's pair beats the global pin (selection_rule reports 'task_pair_priority'). */
+  override_global_pin: z.boolean().optional(),
+});
+
+/**
+ * YUK-1808 — the layer that produced the effective binding; same vocabulary as
+ * the run record's selection_rule (providers.ts TaskSelectionRule).
+ * `call_override` never appears on this read face (no per-call argument) but
+ * stays in the enum so the value always matches run receipts.
+ */
+export const AdminConfigTaskSelectionRuleSchema = z.enum([
+  'env_pin',
+  'task_pair_priority',
+  'call_override',
+  'global_pin',
+  'task_config',
+  'registry_default',
+]);
+
+/** resolveTaskReasoning's outcome: stored level → what the wire will carry, or its readable error. */
+export const AdminConfigTaskEffectiveReasoningSchema = z.object({
+  requested: z.string().nullable(),
+  applied: z.string().nullable(),
+  error: z.string().nullable(),
+});
+
+/** Effective binding as the runtime resolver produces it; shared by the read face and the write receipt. */
+export const AdminConfigTaskEffectiveBindingSchema = z.object({
+  provider: z.string().nullable(),
+  model: z.string().nullable(),
+  error: z.string().nullable(),
+  selection_rule: AdminConfigTaskSelectionRuleSchema.nullable(),
+  reasoning: AdminConfigTaskEffectiveReasoningSchema.nullable(),
+});
+
+/** YUK-1808 — the effective global switch and the layer that produced it ('env' pin vs 'db' default). */
+export const AdminConfigGlobalEffectiveSchema = z.object({
+  provider: z.string().nullable(),
+  model: z.string().nullable(),
+  source: z.enum(['env', 'db']).nullable(),
+  error: z.string().nullable(),
 });
 
 export const AdminConfigTaskRowSchema = z.object({
   kind: z.string(),
-  effective_binding: z
-    .object({
-      provider: z.string().nullable(),
-      model: z.string().nullable(),
-      error: z.string().nullable(),
-    })
-    .nullable(),
+  /** Registry one-liner; the page's human-facing task label source. */
+  description: z.string(),
+  /** Human-facing group id (join with task_groups[] for label/order). */
+  group_id: z.string(),
+  effective_binding: AdminConfigTaskEffectiveBindingSchema.nullable(),
   default_provider: z.string(),
   default_model: z.string(),
   default_budget: AdminConfigTaskBudgetSchema,
@@ -138,7 +179,8 @@ export const AdminConfigProviderAuthSchema = z.object({
 /** providers[] 行：credential 派生事实只有 key_present 与 auth 状态（绝无 secret）。 */
 export const AdminConfigProviderRowSchema = z.object({
   name: z.string(),
-  auth_mode: z.enum(['key', 'oauth']),
+  /** ACTIVE credential lane; 'oauth-file' = auth-file lane (e.g. ChatGPT login) despite a declared 'key' mode (YUK-1833). */
+  auth_mode: z.enum(['key', 'oauth', 'oauth-file']),
   /** credential env 变量**名字**（operator 自查用）；值永不序列化。 */
   credential_env: z.string(),
   key_present: z.boolean(),
@@ -186,6 +228,13 @@ export const AdminConfigRuntimeSectionSchema = z.object({
   }),
 });
 
+/** task_groups[] row: ordered human-facing group → its task kinds (catalog order). */
+export const AdminConfigTaskGroupRowSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  kinds: z.array(z.string()),
+});
+
 export const AdminConfigResponseSchema = z.object({
   snapshot: z.object({
     epoch: z.number().int().nonnegative(),
@@ -194,6 +243,10 @@ export const AdminConfigResponseSchema = z.object({
   /** 运行时事实是否已由组合根注入（false = 对应分区如实置空，不伪造）。 */
   facts_injected: z.boolean(),
   keys: z.array(AdminConfigKeyRowSchema),
+  /** Effective global switch (env pin vs DB default); null = facts not injected. */
+  global: AdminConfigGlobalEffectiveSchema.nullable(),
+  /** YUK-1808 — ordered first layer in human language; '其他' appears only when non-empty. */
+  task_groups: z.array(AdminConfigTaskGroupRowSchema),
   tasks: z.array(AdminConfigTaskRowSchema),
   providers: z.array(AdminConfigProviderRowSchema),
   schedules: z.object({
