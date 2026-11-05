@@ -26,7 +26,7 @@
 
 | dev 子进程 | 端口 | 对应 compose |
 | --- | --- | --- |
-| `rw:api`（`RW_WORKER=1 tsx watch server/index.ts`，dev-local 设 `RW_FRONTDOOR=dev`） | dev-local 下自动选 8788 起首个空闲端口（`DEV_PORT` 固定，避开 TEST app 的 :8787）；单独跑时按 `API_PORT`，缺省 :8787 | `app`；页面由同进程的 Vite dev server（middleware 模式）提供，HMR 热更新；生产 `app` 仍直接提供 `dist/start`（`RW_FRONTDOOR=1`）；同进程 pg-boss 只是兜底，不替代独立 worker |
+| `rw:api`（`RW_WORKER=1 tsx watch server/index.ts`，dev-local 设 `RW_FRONTDOOR=dev`） | dev-local 下自动选 8788 起首个空闲端口（`DEV_PORT` 固定，避开 TEST 的 :8787）；单独跑时按 `API_PORT`，缺省 :8787 | `app`；页面由同进程的 Vite dev server（middleware 模式）提供，HMR 热更新；生产 `app` 仍直接提供 `dist/start`（`RW_FRONTDOOR=1`）；同进程 pg-boss 只是兜底，不替代独立 worker |
 | `worker:dev`（`tsx scripts/worker.ts`） | — | `worker` |
 
 dev 数据库与 TEST 隔离：`dev:local` 用独立的 `docker-compose.dev.yml`（项目名 `loom-dev`，服务 `postgres-dev`，profile `dev`，pgvector 同镜像，宿主端口 **5434**，用户 `loom_dev`，命名卷 `loom-dev_loom-dev-pgdata`）。同一个容器内每 worktree 一个库（`loom_dev_<name>_<path hash>`，由 worktree 根路径确定性派生，`DEV_DB_NAME` 可覆盖；旧共享库 `loom_dev` 可能仍在），多个 worktree 并行 dev 互不共享数据。TEST 的 `postgres`（:5433/:5544）与生产 compose 文件不含该服务，普通 `docker compose up` 不会启动它。使用方式只有一条：
@@ -78,14 +78,14 @@ docker compose run --rm migrate
 - **Postgres custom dump**：完整库与 schema，灾难恢复用；不含 R2 对象字节。
 - **R2 对象备份**：单独做；归档 API 的 R2 sidecar 只覆盖被引用的 key。
 
-### 日级 dump（Mac 本机）
+### 日级 dump
 
-`scripts/mac-daily-dump.sh` 由 `scripts/launchd/studio.yukoval.loom-daily-dump.plist` 每日 07:15 触发，向 runtime 目录写 `loom-daily-YYYYMMDD.dump`（custom format，供 `pg_restore`），保留最近 14 份，更老的只留每月 1 号。
+`scripts/mac-daily-dump.sh` 由 `scripts/launchd/studio.yukoval.loom-daily-dump.plist` 在 Mac 上每日 07:15 触发，经 ssh 在 NAS 的 TEST postgres 容器里 `pg_dump -Fc`（NAS sshd 禁 TCP 转发，走 exec channel），向 runtime 目录写 `loom-daily-YYYYMMDD.dump`（custom format，供 `pg_restore`），保留最近 14 份，更老的只留每月 1 号。Mac 关机时当日不跑，Mac 回来后恢复。
 
 - 脚本与 launchd 日志必须装在内置盘 `~/Library/Application Support/loom-daily-dump/`：launchd 子进程对 `/Volumes/*` 的任何 I/O 都会被 TCC 拒绝（表现为 `spawn failed` / `EX_CONFIG 78`）。对 runtime 目录的读写全部经 `docker run -v` 在容器内完成。
-- 成功写 `.loom-daily-dump-last-success`（epoch 戳）；失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 并 `exit 1`，容器/daemon 不可达时改写到安装目录。`--check` 在戳龄超过 48 小时或当天失败标记存在时 `exit 1`；标记按日命名，更早日期的标记要手动 `ls` runtime 目录和安装目录。
+- 成功写 `.loom-daily-dump-last-success`（epoch 戳）；失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 并 `exit 1`，本机 docker daemon 不可达时改写到安装目录。`--check` 在戳龄超过 48 小时或当天失败标记存在时 `exit 1`；标记按日命名，更早日期的标记要手动 `ls` runtime 目录和安装目录。
 - 日志：runtime 目录的 `loom-daily-dump.log`，安装目录的 `launchd.log`。
-- 可覆盖 `LOOM_RUNTIME_DIR`、`LOOM_PG_CONTAINER`、`LOOM_DB_USER`、`LOOM_DB_NAME`、`LOOM_KEEP_DAILY`、`LOOM_MIN_BYTES`；`LOOM_MIN_BYTES` 默认拒收小于 100KB 的 dump。
+- 可覆盖 `LOOM_RUNTIME_DIR`、`LOOM_PG_CONTAINER`（NAS 上的 postgres 容器名）、`LOOM_DB_USER`、`LOOM_DB_NAME`、`LOOM_KEEP_DAILY`、`LOOM_MIN_BYTES`；`LOOM_MIN_BYTES` 默认拒收小于 100KB 的 dump。
 
 ```bash
 mkdir -p ~/Library/Application\ Support/loom-daily-dump
@@ -155,23 +155,41 @@ import 需要 Hono 运行，所以不是“停掉所有进程”的恢复。步�
 
 - 基础 `docker-compose.yml` 不把 `app` 的 8787 暴露到宿主，`postgres` 也没有宿主端口；唯一外部路径是 `cloudflared`。
 - `docker-compose.local.yml` 给宿主开 `postgres` 的 5433（供 `pnpm db:migrate` / 本机测试），并把 `cloudflared` 放进 `production` profile，`docker compose up` 不会要求 `TUNNEL_TOKEN`。
-- `docker-compose.mac.yml` 把 `app` 绑到 `127.0.0.1:8787`，`postgres` 绑 `127.0.0.1:5433` 和 `127.0.0.1:5544`（OrbStack 偶发占住 5433 时的备用宿主端口），并通过显式列服务排除 `cloudflared`：
+- `docker-compose.mac.yml` 把 `app` 绑到 `127.0.0.1:8787`，`postgres` 绑 `127.0.0.1:5433` 和 `127.0.0.1:5544`（OrbStack 偶发占住 5433 时的备用宿主端口），并通过显式列服务排除 `cloudflared`。TEST 已不在 Mac 上跑——这份文件只保留给回滚期（Mac 容器 stopped 不删，至少 7 天并经过一个成功 release）；这些宿主端口平时由下方 relay 占用，回滚启动前先停中继：
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.mac.yml \
   up -d --build migrate app worker postgres
 ```
 
-### 容器 DNS
+### TEST on NAS
 
-Mac 宿主的 fake-IP 解析会把域名答成 `198.18.0.0/15`，容器继承后会被图片候选的 SSRF 守卫按设计拒绝。`docker-compose.mac.yml` 因此给 `app` 和 `worker` 固定公共递归 DNS `223.5.5.5`、`119.29.29.29`；私有 compose 重建后要核对：
+TEST 跑在 NAS（`bancho-nb2.local`，x86_64）的 `/volume1/docker/tlp-test/`：compose 项目 `the-learning-project` + 私有 `compose.private.json`；`app` 只绑 NAS 侧 `127.0.0.1:18787`、`postgres` 只绑 `127.0.0.1:15433`，容器带内存/CPU 限额，`restart: unless-stopped`。
+
+NAS sshd 禁 TCP 转发（`AllowTcpForwarding no`，系统配置不改），Mac 访问 TEST 靠本机两个 LaunchAgent（源文件在 `scripts/test-nas/`，运行副本装在 `~/Library/Application Support/tlp-nas-tunnel/`）：
+
+- `studio.yukoval.tlp-nas-tunnel`（`relay.py`）：监听本机 `127.0.0.1:8787`/`5433`/`5544`，每条连接开一个 ssh exec channel 在 NAS 上跑 `nc`——8787→18787、5433/5544→15433；新连接约多 0.25 s。
+- `studio.yukoval.tlp-nas-watch`（`nas-watch.sh`）：NAS 重启后拉回 memory watchdog（watchdog 在 MemAvailable < 2 GB 时停 TEST 容器）；memory stop 或 TEST 不健康时写 `ALERT` 文件并弹通知。NAS 重启与 watchdog 恢复之间只有容器内存限额兜底；Mac 关机则 watchdog 无人重启。
+
+Mac 关机：TEST 在 NAS 上继续跑，但外部不可达、Tailscale 入口断、当日日级 dump 不跑。
+
+依赖：`~/.ssh/tlp_nas_ed25519` 以 `yukoval@bancho-nb2.local` 登录（BatchMode，key 属 owner 私有）。release 构建不再在 Mac 上跑，构建方式待定。
+
+换装/重装（只装 Mac 侧，不改 NAS）：
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.mac.yml exec app getent hosts www.jyeoo.com
-docker compose -f docker-compose.yml -f docker-compose.mac.yml exec worker getent hosts www.jyeoo.com
+mkdir -p ~/Library/Application\ Support/tlp-nas-tunnel
+cp scripts/test-nas/relay.py scripts/test-nas/nas-watch.sh \
+  ~/Library/Application\ Support/tlp-nas-tunnel/
+chmod +x ~/Library/Application\ Support/tlp-nas-tunnel/nas-watch.sh
+cp scripts/test-nas/studio.yukoval.tlp-nas-*.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/studio.yukoval.tlp-nas-tunnel.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/studio.yukoval.tlp-nas-watch.plist
 ```
 
-不要放行 `198.18.0.0/15`，也不要改宿主代理来“修”它。这个探针不覆盖 jyeoo Rust 子进程和 Exa 抓取路径。
+### 容器 DNS
+
+NAS 侧容器出站解析由 mihomo 的 fake-IP（`198.18.x`）经其 TUN 设备应答，海外域名可达性取决于 owner 的代理节点。原来针对图片候选的 `198.18.0.0/15` 拒绝路径已退役（YUK-1664）；SSRF 守卫 `src/core/net/private-host.ts` 运行时只剩前端 `ProposalCard` 消费。`docker-compose.mac.yml` 给 `app`/`worker` 固定公共递归 DNS（`223.5.5.5`、`119.29.29.29`）是为回滚期 Mac 形态保留的。仍不要放行 `198.18.0.0/15`。
 
 ### 可选远程入口
 
@@ -182,5 +200,5 @@ docker compose ps cloudflared
 docker compose logs --tail 50 cloudflared
 ```
 
-- **Tailscale**：Serve 把私有 HTTPS 转发到本机 loopback；访问设备须在同一 tailnet，Mac 开机且用户会话内的 daemon 在运行。没有开启 Funnel，主机名与令牌属于本机私有配置，不写进仓库。
-- **局域网**：私有 Compose 的 `services.app.ports` 同时保留 `127.0.0.1:8787:8787` 和一条具体 LAN 地址绑定，不要用 `0.0.0.0`；具体地址见 owner 本机私有记录。保留应用登录和 `x-internal-token`，只豁免 `/api/health`、`/api/ready`；Postgres 只走 loopback，storage / worker 没有宿主绑定。改绑定要在共享部署 mkdir 锁下只重建 `app`，验证两个地址、API 401、health/ready 200，以及 `worker` / PG / storage 身份未变。同机探针不能代替 iPad 实测；普通 LAN HTTP 目前获批，需要 secure context 的功能另行决定 HTTPS。
+- **Tailscale**：Serve 把私有 HTTPS 转发到 Mac 本机 loopback（`127.0.0.1:8787` 中继进 NAS TEST）；访问设备须在同一 tailnet，Mac 开机且用户会话内的 daemon 在运行——Mac 关机该入口即断。没有开启 Funnel，主机名与令牌属于本机私有配置，不写进仓库。
+- **局域网**：TEST 在 NAS 只绑 loopback（`127.0.0.1:18787`），`app` 不直接暴露到 LAN；Mac 侧入口同样是 `127.0.0.1` 中继。保留应用登录和 `x-internal-token`，只豁免 `/api/health`、`/api/ready`；Postgres 只走 loopback，storage / worker 没有宿主绑定。具体地址见 owner 本机私有记录。
