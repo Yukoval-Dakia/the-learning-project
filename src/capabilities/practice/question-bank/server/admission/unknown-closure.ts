@@ -3,7 +3,7 @@ import { and, eq, lte, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { lockPaidEffectControlFamily } from '@/db/paid-effect-control';
 import { settleExpiredPaidEffectSends } from '@/db/paid-effect-store';
-import { paid_effect } from '@/db/schema';
+import { paid_effect, question_revision } from '@/db/schema';
 import { closePendingQuestionAdmission } from '@/kernel/records/assessment-admission-close';
 import { ADMISSION_FAMILY, isPendingAdmission, lockAdmissionGroup } from './enqueue';
 import { ADMISSION_STAGE_FAMILY } from './stages';
@@ -23,7 +23,10 @@ export async function closeExpiredUnknownAdmissions(db: Db) {
         eq(paid_effect.state, 'unknown'),
         lte(paid_effect.updated_at, new Date(now.getTime() - UNKNOWN_WAIT_MS)),
         sql`EXISTS (SELECT 1 FROM question_group_lifecycle l
+          JOIN question_revision r ON r.revision_id = l.current_revision_id
           WHERE l.group_id = ${paid_effect.entity_id}
+            AND r.group_id = l.group_id
+            AND r.integrity_digest = ${paid_effect.entity_revision}
             AND l.scoring_admission_state = 'withheld'
             AND l.scoring_admission_withheld_reason = 'unverified_rules'
             AND NOT l.withdrawn AND NOT l.suspended)`,
@@ -55,6 +58,16 @@ export async function closeExpiredUnknownAdmissions(db: Db) {
         return 0;
       const { lifecycle } = await lockAdmissionGroup(tx, current.entity_id);
       if (!isPendingAdmission(lifecycle) || !lifecycle?.current_revision_id) return 0;
+      const [revision] = await tx
+        .select({ digest: question_revision.integrity_digest })
+        .from(question_revision)
+        .where(
+          and(
+            eq(question_revision.revision_id, lifecycle.current_revision_id),
+            eq(question_revision.group_id, current.entity_id),
+          ),
+        );
+      if (revision?.digest !== current.entity_revision) return 0;
       const result = await closePendingQuestionAdmission(tx, {
         groupId: current.entity_id,
         expectedRevisionId: lifecycle.current_revision_id,
