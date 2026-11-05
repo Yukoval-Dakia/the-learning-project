@@ -415,7 +415,13 @@ export async function changeTopics(
         const patch = { ...rawPatch, replaces: [...rawPatch.replaces] };
         const withdrawal = after.withdrawals.find((w) => w.key === patch.key);
         const withheld = withdrawnTopicEvidence(after);
-        let patchSourceIds = input.sourceIds.filter((id) => !withheld.has(id));
+        if (input.sourceIds.some((id) => withheld.has(id)))
+          throw new ApiError(
+            'context_topic_withdrawn',
+            'withdrawn evidence cannot recreate a fact',
+            409,
+          );
+        let patchSourceIds = input.sourceIds;
         if (withdrawal) {
           const sources = patchSourceIds.length
             ? await tx
@@ -518,7 +524,10 @@ export async function changeTopics(
           continue;
         }
         const evidence = [
-          ...new Set([...patchSourceIds, ...replaced.flatMap((f) => f.evidence_ids)]),
+          ...new Set([
+            ...patchSourceIds,
+            ...replaced.flatMap((f) => f.evidence_ids.filter((id) => !withheld.has(id))),
+          ]),
         ];
         if (evidence.some((id) => withheld.has(id)))
           throw new ApiError(
@@ -559,6 +568,8 @@ export async function changeTopics(
       if (input.asOf && (!after.as_of || input.asOf > after.as_of)) after.as_of = input.asOf;
       if (input.overnight !== undefined) after.overnight = input.overnight;
     }
+    // Metadata alone must not shadow the legacy global while its purpose repair is pending.
+    if (version === 0 && !after.topics.length) return result([]);
     if (purposeCurrent && JSON.stringify(before) === JSON.stringify(after)) return result([]);
     return persist(tx, before, after, version, {
       ...input,
