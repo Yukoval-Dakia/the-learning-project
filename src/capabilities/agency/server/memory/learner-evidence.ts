@@ -6,6 +6,7 @@
 
 import { inArray, sql } from 'drizzle-orm';
 import { event } from '@/db/schema';
+import { LEARNER_ANSWER_ACTIONS } from '@/kernel/read-models/learner-activity';
 
 /**
  * Actions emitted by the question-bank authoring/publish pipeline. Each audits a
@@ -40,6 +41,19 @@ const NON_LEARNER_ACTIONS: ReadonlySet<string> = new Set(QUESTION_BANK_AUTHORING
 /** Does this event count as input to the learner's memory? */
 export function isLearnerEvidenceAction(action: string): boolean {
   return !NON_LEARNER_ACTIONS.has(action);
+}
+
+const LEARNER_ANSWER_SET: ReadonlySet<string> = new Set(LEARNER_ANSWER_ACTIONS);
+
+/**
+ * Does this event carry the learner's verbatim answer text? Answer events stay
+ * in the ledger and keep feeding every read face — the shared evidence SQL
+ * above included — but infer:true extraction would rewrite the text into
+ * durable "learner facts", so the memory owner alone bars them here. Kept
+ * separate from NON_LEARNER_ACTIONS, which also feeds the evidence read side.
+ */
+export function isLearnerAnswerAction(action: string): boolean {
+  return LEARNER_ANSWER_SET.has(action);
 }
 
 /**
