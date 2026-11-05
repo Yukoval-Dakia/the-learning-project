@@ -9,7 +9,7 @@ const verdicts = {
   incorrect: '再看一遍',
   unanswered: '尚未作答',
   review: '需要复核',
-  unknown: '结果尚不确定',
+  unknown: '待定',
 };
 export function PracticeFeedback({
   revelation: r,
@@ -62,7 +62,7 @@ export function PracticeFeedback({
             <VerdictIcon size={24} aria-hidden="true" />
             <div>
               <h2>{verdicts[result.verdict]}</h2>
-              <p>{result.summary}</p>
+              {result.summary && <p>{result.summary}</p>}
               {result.aiGraded && (
                 <p className="un-st-ai-graded">
                   <Sparkles size={14} aria-hidden="true" />
@@ -72,6 +72,18 @@ export function PracticeFeedback({
             </div>
           </header>
           {result.uncertainty && <p role="status">{result.uncertainty}</p>}
+        </>
+      )}
+      {r.appeal && (
+        <section className="un-st-appeal">
+          {r.appeal.field && (
+            <PracticeField field={r.appeal.field} intents={intents} renderers={renderers} />
+          )}
+          <NoticeBlock notice={r.appeal.notice} intents={intents} />
+        </section>
+      )}
+      {result && (
+        <>
           {result.parts.map((part) => (
             <section key={part.id}>
               <h3>
@@ -117,14 +129,6 @@ export function PracticeFeedback({
             <IntentButton key={action.id} action={action} intents={intents} />
           ))}
         </fieldset>
-      )}
-      {r.appeal && (
-        <section className="un-st-appeal">
-          <NoticeBlock notice={r.appeal.notice} intents={intents} />
-          {r.appeal.field && (
-            <PracticeField field={r.appeal.field} intents={intents} renderers={renderers} />
-          )}
-        </section>
       )}
     </section>
   );

@@ -23,12 +23,12 @@ function SubmissionStatus({
   };
   const grading = {
     idle: '',
-    pending: '等待判分',
-    grading: '正在判分',
-    unknown: '判分结果尚不确定',
-    failed: '判分暂时失败',
+    pending: '在看你的答案，不用重交',
+    grading: '在看你的答案',
+    unknown: '结果待定',
+    failed: '这次没判成，答案还在',
     settled: '',
-    manual: '请根据本次作答自行评价',
+    manual: '可以自己评一下，用来安排复习',
   };
   return (
     <div className="un-st-submission-status" aria-live="polite">
