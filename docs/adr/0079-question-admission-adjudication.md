@@ -29,7 +29,7 @@ return: {scoring_unit_id, verdict: return_for_repair, reason_md,
 - `defect`: `missing_figure | missing_marking | missing_condition | wrong_domain | scoring_kind_mismatch | impossible_context | ambiguity`
 - `evidence_errors.which`: `source_answer | printed_rule | author_key`
 
-文本填空的裁决不能仅返回一个可能遗漏正确写法的 `decided_key` 列表。门将两次盲解和原作者键中提供的候选文字按精确字符串去重，作为私有 `answer_forms:[{scoring_unit_id,forms:[{form_id,text}]}]` 交裁决员；不从交集推断正确，也不预先把作者或盲解变体判对。通过时须为该单元的每个 form_id 恰好返回一次 `form_verdicts:[{form_id,verdict:correct|incorrect,reason_md}]`。漏项、重项和未知 id 是已知结构契约失败，在本次有界尝试中重试，耗尽收口，不落 paid unknown。
+文本填空的裁决不能仅返回一个可能遗漏正确写法的 `decided_key` 列表。门将两次盲解和原作者键中提供的候选文字按精确字符串去重，作为私有 `answer_forms:[{scoring_unit_id,forms:[{form_id,text}]}]` 交裁决员；不从交集推断正确，也不预先把作者或盲解变体判对。通过时须为该单元的每个 form_id 恰好返回一次 `form_verdicts:[{form_id,verdict:correct|incorrect,reason_md}]`。漏项、重项和未知 id 是已知结构契约失败，在同一 task run 的提交循环中修正；只回传覆盖要求，不回传 id 值或判定。无进展或预算收口为已知失败，不落 paid unknown。
 
 铸键保留裁决原文和原始输出 digest，只将裁决明确确认正确的原写法合入文本键；不将未经裁决的盲解或作者写法直接并入。已确认正确的写法必须在真实判分核心得满分，明确排除的写法按现有错误探针纪律检查；矛盾或无法承载的判分结果不发布。未声明数学形状的 exact 规则和归一化不放宽，也不硬编码区间端点、LaTeX 或个别题。旧收据字段仍可解析；新文本裁决载荷带候选列表时才要求完整逐写法覆盖。该输出扩展在本 PR 发版前完成，不改旧已支付效果或自动重发 unknown。
 
@@ -55,7 +55,9 @@ return: {scoring_unit_id, verdict: return_for_repair, reason_md,
 
 ## 重试与恢复
 
-每个解答/裁决调用在同一个仍存活的付费 batch 内最多两次。每次调用都有独立中央 task run、实际路由与费用记录。解析失败、已知服务错误，以及有证据未发送的连接失败可运行内重试。两次盲解和裁决共用同一运行内尝试器和阶段收据协议；HTTP 5xx 最多两次，每次新建自己的中央 task run 与阶段 paid identity，耗尽即退回修复，定位换下一题，不留 pending。HTTP 4xx（额度、登录等待另述）是已知失败，不作为 unknown。额度错误不换模型，转入下述有恢复条件的等待，不做运行内忙重试。崩溃、发送后无响应、租约失效或终态不明仍保留 unknown 义务，不自动重发。收据密封或发布失败不视为模型解析失败，不能触发重付费。中央 runner 已提供的 helpProviderFault 类型标记一并消费：quota 进入等待；parse/bad_gateway 只有中央尝试已结束时才允许本次有界重试，失败阶段收据保留原标记供回放使用，不按错误文字猜类型。闭合的中央失败记录中，最终 root 请求已收到 4xx/5xx，且没有并行未决传输时，可作为绑定 HTTP 失败事实；不能从错误字符串或其他子请求猜测。中央费用层仅在传输全程有完整证据证明未发送，或全部 root 请求均被 4xx/5xx 拒绝，且没有实际模型用量/输出时，将该失败记为 estimated 0 并保留 unbilled-provider-rejection 依据；失败行仍入账，后续成功另记一笔。存在先前成功模型回合、未观察到的请求或模型用量时，不能清零。HTTP 200 流中在预算到期前没有终态仍是 unknown，不能用已有响应头假装模型已完成。既有 unknown 不因新识别逻辑自动改类或重发。
+每个解答/裁决调用的坏 JSON、缺少提交或形状校验失败，在同一个中央 task run 内注入安全诊断继续；校验通过直接完成，不加确认。只反馈 schema 声明字段、类型和 JSON 出错位置，不反馈字段值、自造键名、作者答案、判定或另一路结果。相同匿名错误且规范化输出 hash 重复立即收口；同错误而输出变化时累计第三次收口（含首次），没有 run 总调用次数低上限。墙钟落地余量与任务财务上限也结束未完成的提交；余量前已在途而失去终态的请求仍按 unknown 处理。每轮用量累加在同一 run；内部修正不改 input_digest，也不改外层下一次 attempt 的 payload。
+
+两次盲解和裁决共用原有传输尝试器和阶段收据协议；解析/结构化失败已收口时不再新购一个 run。已知 HTTP 5xx、bad_gateway 或有积极证据未发送的连接失败最多两次，每次新建自己的中央 task run 与阶段 paid identity，耗尽即退回修复，定位换下一题，不留 pending。HTTP 4xx（额度、登录等待另述）是已知失败，不作为 unknown。额度错误不换模型，转入下述有恢复条件的等待，不做运行内忙重试。崩溃、发送后无响应、租约失效或终态不明仍保留 unknown 义务，不自动重发。收据密封或发布失败不视为模型解析失败，不能触发重付费。中央 runner 已提供的 helpProviderFault 类型标记一并消费：quota 进入等待；parse 为已知终态失败，bad_gateway 只有中央尝试已结束时才允许本次有界重试，失败阶段收据保留原标记供回放使用，不按错误文字猜类型。闭合的中央失败记录中，最终 root 请求已收到 4xx/5xx，且没有并行未决传输时，可作为绑定 HTTP 失败事实；不能从错误字符串或其他子请求猜测。中央费用层仅在传输全程有完整证据证明未发送，或全部 root 请求均被 4xx/5xx 拒绝，且没有实际模型用量/输出时，将该失败记为 estimated 0 并保留 unbilled-provider-rejection 依据；失败行仍入账，后续成功另记一笔。存在先前成功模型回合、未观察到的请求或模型用量时，不能清零。HTTP 200 流中在预算到期前没有终态仍是 unknown，不能用已有响应头假装模型已完成。既有 unknown 不因新识别逻辑自动改类或重发。
 
 新门有结论时只有通过/退回；持久化生命周期继续使用既有 admitted/withheld 兼容字段。真正不明的付费效果状态不是题目质量裁决，不伪装成通过或自动重新购买。准入证据 append-only，退回原因可由备题员消费；没有作者的旧来源由系统收口，定位继续请求下一题。旧供题功能与删除时机仍归 ADR-0078，不在本文新增其功能。
 
