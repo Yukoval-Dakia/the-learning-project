@@ -42,6 +42,13 @@ function lifecycleDetail(status: StepStatus, lost: boolean): string | undefined 
   return status === 'failed' ? '这一步没完成，稍后再试。' : undefined;
 }
 
+// The server's generic names for a helper run. A specific label reads fine as it is.
+const SUBTASK_WORDS: Readonly<Record<string, string>> = {
+  正在深入核对证据: '仔细核对',
+  子任务已完成: '仔细核对',
+  子任务未完成: '仔细核对',
+};
+
 /** Flatten a reply's tool calls, steps, operations and helper runs into display rows. */
 export function stepsOf(message: ChatMessage): StepView[] {
   const steps: StepView[] = [];
@@ -60,10 +67,11 @@ export function stepsOf(message: ChatMessage): StepView[] {
   for (const subtask of message.subtasks ?? []) {
     const status: StepStatus =
       subtask.status === 'completed' ? 'done' : subtask.status === 'failed' ? 'failed' : 'running';
+    const label = SUBTASK_WORDS[subtask.label] ?? subtask.label;
     steps.push({
       key: `subtask-${subtask.id}`,
-      label: subtask.label,
-      activity: `正在处理：${subtask.label}`,
+      label,
+      activity: `在${label}`,
       status,
       detail:
         status === 'failed'
@@ -86,7 +94,7 @@ export function stepsOf(message: ChatMessage): StepView[] {
     steps.push({
       key: `helper-${run.id}`,
       label: '分头查资料',
-      activity: '正在分头查资料',
+      activity: '在分头查资料',
       status,
       detail: lifecycleDetail(status, run.status === 'lost'),
     });
@@ -154,9 +162,9 @@ export function StepList({ steps }: { steps: StepView[] }) {
 }
 
 const STAGE_WORDS: Record<CopilotModelStage, string> = {
-  waiting: '等模型回应',
-  thinking: '模型在思考',
-  writing: '正在写回答',
+  waiting: '想一下',
+  thinking: '思考中',
+  writing: '在写',
 };
 
 // One shared clock while any live line is on screen; seconds on the line are the only thing it drives.
@@ -188,8 +196,9 @@ function useSecondsSince(key: string): number {
 }
 
 /**
- * While a reply is being generated, says what is really happening and how long nothing new has
- * come: a running step, or the model's own stage from the run's frames. Never an invented progress.
+ * While a reply is being generated, says what the companion is really doing, as a person would, and
+ * how long nothing new has come: a running step, or its stage from the run's frames. Never invented
+ * progress, and never a word about models or sending.
  * Writing moves on its own, so its seconds only appear once the words have stopped for a moment.
  */
 function LiveActivity({
@@ -203,8 +212,7 @@ function LiveActivity({
 }) {
   const running = steps.findLast((step) => step.status === 'running');
   const current = stage ?? (textLength > 0 ? 'writing' : 'waiting');
-  const nothingYet = current === 'waiting' && steps.length === 0 && textLength === 0;
-  const text = running?.activity ?? (nothingYet ? '收到了，等模型回应' : STAGE_WORDS[current]);
+  const text = running?.activity ?? STAGE_WORDS[current];
   const seconds = useSecondsSince(`${text}|${steps.length}|${textLength}`);
   const showSeconds = seconds >= (current === 'writing' && !running ? 2 : 1);
   return (

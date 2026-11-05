@@ -394,7 +394,7 @@
 
   & .un-cp-activity-seconds {
     flex: none;
-    color: var(--un-text-3);
+    color: var(--un-text-4);
     font-variant-numeric: tabular-nums;
   }
 
