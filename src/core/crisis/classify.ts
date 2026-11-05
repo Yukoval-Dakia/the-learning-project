@@ -77,8 +77,36 @@ const WHY_THIRD_PARTY_RE = new RegExp(
 const PERSONAL_RE =
   /我|俺|咱|自己|本人|老子|老娘|我们|咱们|你|您|你们|包括我|像我|人家|偶|朕|吾|吾辈|本宝宝|这边|孤|寡人|在下|鄙人|小生|小女子|奴家|晚辈|老朽|老身|\b(?:i|me|my|mine|myself|we|us|our|ours|ourselves|you|your|yours|yourself|yourselves|u)\b/;
 
-function shouldReleaseHit(spaced: string, despaced: string): boolean {
-  // Path 1: the hit is fully explained by 死-compounds.
+// A release never discards the whole utterance: the released span is removed and
+// the remainder is reclassified with release disabled, so an independent hit in
+// the rest of the text stands ("想死记硬背，活着没意思" → indirect).
+const QUESTION_BOUNDARY_CHARS = '，。！？；、：…—·.,!?;:';
+
+function stripWhyQuestion(text: string): string {
+  const match = WHY_THIRD_PARTY_RE.exec(text);
+  if (!match) return text;
+  let left = 0;
+  for (let i = match.index - 1; i >= 0; i--) {
+    if (QUESTION_BOUNDARY_CHARS.includes(text[i])) {
+      left = i + 1;
+      break;
+    }
+  }
+  let right = text.length;
+  for (let i = match.index + match[0].length; i < text.length; i++) {
+    if (QUESTION_BOUNDARY_CHARS.includes(text[i])) {
+      right = i;
+      break;
+    }
+  }
+  return text.slice(0, left) + text.slice(right);
+}
+
+// Returns the remainder text when a release path applies, null when the hit
+// stands. The 死-compound precondition keeps its own death-evidence check —
+// 就去死/再自杀/去死算了 are not lexical terms, so reclassifying alone would
+// release real intent the owner requires to stay hits.
+function releaseRemainder(spaced: string, despaced: string): string | null {
   const stripped = spaced.replace(SI_COMPOUND_RE, '');
   const strippedDespaced = despaced.replace(SI_COMPOUND_RE, '');
   if (
@@ -86,12 +114,13 @@ function shouldReleaseHit(spaced: string, despaced: string): boolean {
     !DEATH_EVIDENCE_RE.test(stripped) &&
     !DEATH_EVIDENCE_RE.test(strippedDespaced)
   ) {
-    return true;
+    return stripped !== spaced ? stripped : strippedDespaced;
   }
-  // Path 2: short third-party why-question with no personal marker anywhere.
-  if (spaced.length > MAX_RELEASE_LEN) return false;
-  if (PERSONAL_RE.test(spaced) || PERSONAL_RE.test(despaced)) return false;
-  return WHY_THIRD_PARTY_RE.test(spaced) || WHY_THIRD_PARTY_RE.test(despaced);
+  if (spaced.length > MAX_RELEASE_LEN) return null;
+  if (PERSONAL_RE.test(spaced) || PERSONAL_RE.test(despaced)) return null;
+  if (WHY_THIRD_PARTY_RE.test(spaced)) return stripWhyQuestion(spaced);
+  if (WHY_THIRD_PARTY_RE.test(despaced)) return stripWhyQuestion(despaced);
+  return null;
 }
 
 /** Pure; never throws — any input failure degrades to 'none'. */
@@ -103,17 +132,29 @@ export function classifyCrisisExpression(rawText: string): CrisisDetectionClass 
     return 'none';
   }
   if (!text) return 'none';
-  const despaced = text.replace(/ /g, '');
-  const ordered: readonly [CrisisDetectionClass, readonly RegExp[]][] = [
-    ['explicit', CRISIS_GUARD_CONFIG.explicit_patterns],
-    ['indirect', CRISIS_GUARD_CONFIG.indirect_patterns],
-    ['quoted_ironic', CRISIS_GUARD_CONFIG.quoted_ironic_patterns],
-    ['distress', CRISIS_GUARD_CONFIG.distress_patterns],
-  ];
-  for (const [detectionClass, patterns] of ordered) {
+  return classifyNormalized(text, true);
+}
+
+const ORDERED: readonly [CrisisDetectionClass, readonly RegExp[]][] = [
+  ['explicit', CRISIS_GUARD_CONFIG.explicit_patterns],
+  ['indirect', CRISIS_GUARD_CONFIG.indirect_patterns],
+  ['quoted_ironic', CRISIS_GUARD_CONFIG.quoted_ironic_patterns],
+  ['distress', CRISIS_GUARD_CONFIG.distress_patterns],
+];
+
+function classifyNormalized(spaced: string, allowRelease: boolean): CrisisDetectionClass {
+  const despaced = spaced.replace(/ /g, '');
+  for (const [detectionClass, patterns] of ORDERED) {
     try {
-      if (!matchesAny(patterns, text, despaced)) continue;
-      if (detectionClass !== 'distress' && shouldReleaseHit(text, despaced)) continue;
+      if (!matchesAny(patterns, spaced, despaced)) continue;
+      if (allowRelease && detectionClass !== 'distress') {
+        const remainder = releaseRemainder(spaced, despaced);
+        if (remainder !== null) {
+          const residual = classifyNormalized(remainder, false);
+          if (residual !== 'none') return residual;
+          continue;
+        }
+      }
       return detectionClass;
     } catch {
       // One corrupt pattern group must not block the remaining classes.
