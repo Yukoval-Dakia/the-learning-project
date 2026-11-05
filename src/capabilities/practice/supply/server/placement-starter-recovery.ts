@@ -17,26 +17,30 @@
 
 import { and, asc, eq, inArray, lte } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { placementProbeEnabled } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { goal, placement_starter_attempt, placement_starter_claim } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import {
-  PLACEMENT_QUEUE_EXPIRY_MS,
-  dispatchPlacementStarterClaim,
-  isPlacementStarterJobLive,
-  lockPlacementSupplyScopes,
-  markPlacementStarterClaimTerminal,
-  placementProbeEnabled,
-  resolvePlacementStarterGoalAuthority,
-  terminalizeLostPlacementDelivery,
-} from '@/kernel/placement';
+import { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
 import {
   resolveGoalPlacementScope,
   resolveNearbyPlacementScope,
 } from '@/kernel/read-models/placement-scope';
 import { countPlacementInventory } from './placement-inventory';
-import { placementClaimJobQueue } from './placement-starter';
-import { PLACEMENT_STARTER_REQUIRED_COUNT } from './placement-starter-attempts';
+import {
+  dispatchPlacementStarterClaim,
+  isPlacementStarterJobLive,
+  placementClaimJobQueue,
+} from './placement-starter';
+import {
+  PLACEMENT_QUEUE_EXPIRY_MS,
+  PLACEMENT_STARTER_REQUIRED_COUNT,
+  terminalizeLostPlacementDelivery,
+} from './placement-starter-attempts';
+import {
+  markPlacementStarterClaimTerminal,
+  resolvePlacementStarterGoalAuthority,
+} from './placement-starter-store';
 
 /**
  * How far forward the sweeper pushes `next_reconcile_at` when it acquires a claim. This is the
