@@ -8,8 +8,15 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
 import type { Db } from '@/db/client';
-import { event, placement_starter_attempt_question, placement_starter_claim } from '@/db/schema';
-import { handOffFailedPlacementDelivery } from './placement-starter';
+import {
+  event,
+  placement_starter_attempt_question,
+  placement_starter_claim,
+} from '@/db/schema';
+import {
+  dispatchNextDuePendingPlacementClaim,
+  handOffFailedPlacementDelivery,
+} from './placement-starter';
 import {
   PLACEMENT_QUEUE_EXPIRY_MS,
   type PlacementAttemptAuthority,
@@ -23,7 +30,9 @@ import {
   placementDeliveryMetadata,
   reconcilePlacementDelivery,
   startPlacementAttemptHeartbeat,
+  terminalizePlacementUnknownCost,
 } from './placement-starter-attempts';
+import { type PlacementWebDemandOutcome, placementWebDemandOutcome } from './web-supply';
 
 /** Server-held authority for one web placement delivery; never derived from job/trace text. */
 export interface PlacementWebDelivery {
@@ -42,8 +51,29 @@ export interface PlacementWebDelivery {
 
 type DeliveryJob = Pick<
   JobWithMetadata,
-  'id' | 'retryCount' | 'retryLimit' | 'expireInSeconds' | 'startedOn' | 'signal'
+  'id' | 'retryCount' | 'retryLimit' | 'expireInSeconds' | 'startedOn' | 'signal' | 'data'
 >;
+
+/** The item demand this job was dispatched for — structural read only; the payload
+ * was already validated by the handler's claim-id parse before this ran. */
+function firstItemDemandId(data: unknown): string | null {
+  const items = (data as { items?: unknown } | null)?.items;
+  const first = Array.isArray(items) ? (items[0] as { demand_id?: unknown } | undefined) : null;
+  return typeof first?.demand_id === 'string' ? first.demand_id : null;
+}
+
+/** Dispatch the learner's next due pending claim through the existing CAS — a free
+ * send that is never a re-send of this demand — and never let it break the delivery's
+ * own error propagation. */
+async function dispatchNextDueQuietly(db: Db, excludeClaimId: string): Promise<void> {
+  try {
+    const jobId = await dispatchNextDuePendingPlacementClaim(db, excludeClaimId);
+    if (jobId != null)
+      console.log('[supply_execute] next due pending placement claim dispatched as job', jobId);
+  } catch (nextErr) {
+    console.error('[supply_execute] next pending placement dispatch failed', nextErr);
+  }
+}
 
 /**
  * Run `execute` as the claim's delivery when `job` is the claim's recorded sourcing_web job;
@@ -151,16 +181,58 @@ export async function runPlacementWebDelivery(input: {
           );
         }
       }
-      // The same-job retry only re-reads this job's durable 'blocked' web demand and
-      // underfills without fetching again — the dead time measured between a find-question
-      // failure and the next real attempt. Hand the claim back to dispatch so a fresh job
-      // mints a fresh demand and runs now. A declined or failed handoff leaves the original
-      // error to pg-boss; the sweeper's pending leg remains the backstop.
+      // The durable demand is the only honest account of what this delivery's paid
+      // rounds did — the thrown error class cannot prove whether a provider request
+      // went out, so the handoff decision is read off the demand, never inferred from
+      // the error. A malformed payload or a failed read proves nothing either: both
+      // read as 'unknown' and may never authorize another paid round.
+      let outcome: PlacementWebDemandOutcome;
       try {
-        if (await handOffFailedPlacementDelivery(db, claimId)) return;
-      } catch (handoffErr) {
-        console.error('[supply_execute] placement redispatch failed for', claimId, handoffErr);
+        const demandId = firstItemDemandId(job.data);
+        outcome = demandId == null ? 'unknown' : await placementWebDemandOutcome(db, demandId);
+      } catch (outcomeErr) {
+        console.error('[supply_execute] demand outcome read failed for', claimId, outcomeErr);
+        outcome = 'unknown';
       }
+
+      if (outcome === 'unknown') {
+        // The paid outcome cannot be proven, so the claim may never re-pay — the same
+        // invariant the demand enforces inside runWebSupply, applied to the claim.
+        // Terminalize ends the dead-on-arrival same-job retries that spent attempts
+        // without reaching the model: attempt → invariant_failed, authorized
+        // questions → exhausted, claim → exhausted/cost_unknown with known_cost still
+        // null. The learner's next due pending claim then dispatches at the failure
+        // point — a free send, never a re-send of the unknown request.
+        try {
+          await terminalizePlacementUnknownCost(db, {
+            claimId,
+            attemptId: attempt.attemptId,
+            fencingToken: attempt.fencingToken,
+          });
+          await dispatchNextDueQuietly(db, claimId);
+          return;
+        } catch (termErr) {
+          console.error('[supply_execute] unknown-cost terminalize failed for', claimId, termErr);
+        }
+      } else {
+        // A real known failure hands the claim to a fresh demand — the same-job retry
+        // can only re-read this job's terminal 'blocked' demand and underfill without
+        // ever fetching again. A declined or failed handoff leaves the original error
+        // to pg-boss; the sweeper's pending leg remains the backstop.
+        try {
+          if (await handOffFailedPlacementDelivery(db, claimId)) {
+            await dispatchNextDueQuietly(db, claimId);
+            return;
+          }
+        } catch (handoffErr) {
+          console.error('[supply_execute] placement redispatch failed for', claimId, handoffErr);
+        }
+      }
+      // Own-claim handling declined, failed, or proved nothing: the claim stays
+      // retry_scheduled for pg-boss/sweeper fallback — but the learner's next due
+      // pending claim still dispatches at the failure point, since that send is never
+      // a re-send of this demand.
+      await dispatchNextDueQuietly(db, claimId);
     }
     throw err;
   } finally {

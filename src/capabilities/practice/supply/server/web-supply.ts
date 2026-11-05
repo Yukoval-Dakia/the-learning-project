@@ -190,6 +190,43 @@ async function latestRequired(db: Db, demandId: string) {
   return state;
 }
 
+export type PlacementWebDemandOutcome = 'unknown' | 'known';
+
+/**
+ * The durable paid-outcome class of a placement item demand after a failed delivery,
+ * read from the demand's own events — the thrown class cannot say whether a provider
+ * request went out.
+ *
+ * 'unknown': the state cannot prove what a paid round did — a thrown acquisition, an
+ * in-flight send, a missing producer identity, or a submission without its receipt.
+ * That state never authorizes another paid round for the claim, ever.
+ * 'known': every other recorded outcome — the delivery may hand the claim to a fresh
+ * paid attempt.
+ * A round id with no durable state never started: nothing was sent, so nothing is owed.
+ */
+export async function placementWebDemandOutcome(
+  db: Db | Tx,
+  demandId: string,
+): Promise<PlacementWebDemandOutcome> {
+  for (const roundId of [
+    demandId,
+    `${demandId}:placement-refill:1`,
+    `${demandId}:placement-refill:2`,
+  ]) {
+    const state = await latest(db, roundId);
+    if (!state) continue;
+    if (
+      state.phase === 'acquiring' ||
+      state.activeRequestId != null ||
+      state.reason === 'acquisition_outcome_unknown' ||
+      state.reason === 'producer_identity_missing' ||
+      state.submissions.some((submission) => !submission.receipt)
+    )
+      return 'unknown';
+  }
+  return 'known';
+}
+
 // ── Route fallback (YUK-1664 S3) ─────────────────────────────────────────────
 // A failed source is the supply agent's unfinished work inside the SAME demand:
 // when a demand lands on 'blocked' for a source/acquisition failure, the next
