@@ -120,7 +120,7 @@ const blankFacts = (correct: 0 | 1): RuleFacts => ({ kind: 'single', correct });
 /**
  * 冻结一个已 resolve 单元的探针集：以 agreed key 为参照，按单元形态构造
  * reference / equivalent / typical_wrong / over_select / blank_state /
- * unknown_state 探针（key 是双解一致后的 mint 结果；slot 必须来自
+ * unknown_state 探针（key 由双解或裁决确定，确认正确的写法仍须实测满分；slot 必须来自
  * resolved spec 的 select/blank 槽；unit 是 resolved basis 的判据+规则）。
  * 与键归一化等价的 wrong 探针会被跳过（如实记录 skipped）。
  */
@@ -228,6 +228,20 @@ export async function freezeProbes(
       ruleExpectation(blankFacts(1), rule),
       'agreed key must score full marks',
     );
+    for (const text of new Set(
+      (probeCandidates?.equivalent_forms ?? []).flatMap((form) =>
+        form.text == null ? [] : [form.text],
+      ),
+    )) {
+      if (text === reference || (key.kind === 'blank_text' && key.accepted.includes(text)))
+        continue;
+      push(
+        'equivalent',
+        { slot_id: slotId, kind: 'blank', state: 'answered', text },
+        ruleExpectation(blankFacts(1), rule),
+        'adjudicator-confirmed form must score full marks',
+      );
+    }
     if (key.kind === 'blank_text') {
       for (const variant of key.accepted.slice(1)) {
         push(

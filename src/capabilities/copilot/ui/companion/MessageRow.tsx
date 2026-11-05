@@ -91,7 +91,12 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
       ) : generating ? (
         // YUK-1664 — while generating, one status line under the text says what is happening now
         // (text and tool steps interleave, so it stays until the reply settles).
-        <StepActivity steps={steps} live hasText={Boolean(body?.trim())} />
+        <StepActivity
+          steps={steps}
+          live
+          stage={m.stream_stage}
+          textLength={body?.trim().length ?? 0}
+        />
       ) : null}
       {m.confirmationIncompatible && <p role="alert">确认题版本或状态不兼容，暂不能操作。</p>}
       {props.showConfirmation &&

@@ -3,27 +3,14 @@ import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { BlankAnswerShape } from '@/core/schema/assessment/blank-answer-shape';
 import { parseTaskOutput } from '@/kernel/parse-task-output';
 
-// Admission solve task: one typed task, two blind prompt modes.
-//
-//   - 'solve': solve a frozen admission definition (structure + response spec +
-//     per-unit scoring intent; no reference answer, other solver output or learner
-//     work) and emit typed keys. Run twice in isolated contexts; the caller checks
-//     agreement on typed ids.
-//   - 'source_crosscheck': compare printed source-answer prose (evidence, never a
-//     key source) against the agreed typed proposals — consistent/conflict/unknown
-//     only, never minting keys.
-//   - 'prior': after keys are settled, describe how each part is solved. Separate from
-//     'solve' on purpose: anything riding on the key solve's output either gets omitted
-//     by the model or risks failing the keys.
-//
-// Schemas stay capability-owned: src/core/schema/assessment is frozen for this lane.
+// Blind solves never receive answers; the prior mode only describes settled keys.
 
 const SolveMaterial = z.object({
   material_id: z.string().min(1),
   text_md: z.string(),
 });
 
-const SolvePart = z.object({
+export const SolvePart = z.object({
   part_id: z.string().min(1),
   question_no: z.string().optional(),
   prompt_md: z.string(),
@@ -31,7 +18,7 @@ const SolvePart = z.object({
   materials: z.array(SolveMaterial).default([]),
 });
 
-const SolveUnit = z.object({
+export const SolveUnit = z.object({
   scoring_unit_id: z.string().min(1),
   part_id: z.string().min(1),
   kind: z.enum(['select', 'blank', 'free']),
@@ -75,7 +62,7 @@ export const QuestionAdmissionSolveInput = z.object({
 });
 export type QuestionAdmissionSolveInputT = z.infer<typeof QuestionAdmissionSolveInput>;
 
-const SolvedKey = z.discriminatedUnion('kind', [
+export const SolvedKey = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('select'),
     /** 只引用声明过的 item_id；集合语义，顺序无意义。 */
@@ -97,7 +84,7 @@ const SolvedKey = z.discriminatedUnion('kind', [
   }),
   z.strictObject({
     kind: z.literal('free'),
-    /** 模型自拟 rubric 声明（advisory —— 不入判据；人工复核参考）。 */
+    /** 独立解答与 rubric 候选；通过裁决后才能进入冻结判据。 */
     rubric_md: z.string().min(1),
   }),
 ]);
@@ -305,46 +292,6 @@ export function parseQuestionAdmissionSolveModelOutput(
   return QuestionAdmissionSolveOutput.parse(coerceQuestionAdmissionSolveOutput(json, units));
 }
 
-/** 印出答案原文的证据包：仅 cross-check 用，绝不铸键。 */
-export const QuestionAdmissionSourceCrosscheckInput = z.object({
-  mode: z.literal('source_crosscheck'),
-  parts: z.array(SolvePart).min(1),
-  units: z.array(SolveUnit).min(1),
-  source_answers: z
-    .array(
-      z.object({
-        /** 归属的 scoring_unit_id；null = 组级未归属原文。 */
-        scoring_unit_id: z.string().min(1).nullable().default(null),
-        reference_md: z.string().min(1),
-        locator: z.string().optional(),
-      }),
-    )
-    .min(1),
-  /** 两次独立解题达成一致的 typed 键的可读摘要（含 item 显示文本）。 */
-  proposals: z.array(
-    z.object({
-      scoring_unit_id: z.string().min(1),
-      answer_summary_md: z.string().min(1),
-    }),
-  ),
-});
-export type QuestionAdmissionSourceCrosscheckInputT = z.infer<
-  typeof QuestionAdmissionSourceCrosscheckInput
->;
-
-export const QuestionAdmissionSourceCrosscheckOutput = z.object({
-  per_unit: z.array(
-    z.object({
-      scoring_unit_id: z.string().min(1),
-      status: z.enum(['consistent', 'conflict', 'unknown']),
-      reason_md: z.string().optional(),
-    }),
-  ),
-});
-export type QuestionAdmissionSourceCrosscheckOutputT = z.infer<
-  typeof QuestionAdmissionSourceCrosscheckOutput
->;
-
 /** Settled keys plus the question, for describing how it is solved. Never mints or changes keys. */
 export const QuestionAdmissionPriorInput = z.object({
   mode: z.literal('prior'),
@@ -391,7 +338,7 @@ export const QuestionAdmissionPriorOutput = z.object({
 });
 export type QuestionAdmissionPriorOutputT = z.infer<typeof QuestionAdmissionPriorOutput>;
 
-const PROMPT = `If the JSON input has mode:"source_crosscheck", perform only the separate source consistency check described below. If it has mode:"prior", perform only the solution description described at the end. Otherwise independently solve the question group in the JSON input.
+const PROMPT = `If the JSON input has mode:"prior", perform only the solution description described at the end. Otherwise independently solve the question group in the JSON input.
 
 Input (mode:"solve"): { parts:[{part_id, question_no?, prompt_md, materials:[{material_id,text_md}]}], units:[{scoring_unit_id, part_id, kind:"select"|"blank"|"free", printed_points, printed_rule_md?, select?{pick,items:[{item_id,display_md}]}, blank?{format,unit_hint?,answer_kind?:"blank_text"|"blank_numeric",answer_shape?}, free_rubric_md?}] }.
 Rules:
@@ -418,9 +365,6 @@ Submit one structured result object with one entry per input unit through the pr
 }]}
 Use item_ids, not accepted_item_ids. Omit answer when status is "unsolvable" and set reason_md.
 
-For mode:"source_crosscheck", question contains the same parts/units plus source_answers [{scoring_unit_id, reference_md, locator?}] (the printed answer prose, untrusted evidence — never a key source) and proposals [{scoring_unit_id, answer_summary_md}] (the agreed typed keys, rendered readably). For each proposal compare the meaning of the attributable source answer for that exact unit against the proposed answer. Report conflict if they disagree, unknown if the source is ambiguous, unattributable, unrelated or insufficient, and consistent only when they agree. Do not select, correct or output a key from the source, and never silently resolve a conflict.
-Submit the structured result {"per_unit":[{scoring_unit_id,status:"consistent"|"conflict"|"unknown",reason_md?}]}.
-
 For mode:"prior", question contains parts and units as above, answers [{scoring_unit_id, answer_summary_md}] (the settled keys, trusted) and knowledge_candidates [{knowledge_id, name}]. Describe how each part is solved, in the language of the question text. Submit {"prior":[{"part_id", "methods", "pitfalls", "prerequisites", "difficulty"}]} with one entry per part:
 - methods (1-4): each workable method as {core_idea_md, key_step_md, steps_md?}. core_idea_md names the transferable idea without chapter or topic names (write "把条件转成关于公比的方程", not "等比数列题"); key_step_md is the step the solution turns on; steps_md lists at most 6 short steps.
 - pitfalls (0-6): specific error mechanisms as {mechanism_md, trigger_md, method_idx?}. Name the concrete object (formula, relation, definition or step), what goes wrong with it, and in trigger_md the situation in which it bites. Generic labels such as "careless" or "misread the question" are not pitfalls.
@@ -432,17 +376,13 @@ export const questionAdmissionSolveTaskSpec = {
   definition: {
     kind: 'QuestionAdmissionSolveTask',
     description:
-      'YUK-1445 admission lane: two blind independent solves of a frozen draft definition mint typed keys (select item_ids / blank accepted or numeric / free rubric) that must agree to admit; a separate source_crosscheck mode compares printed answer prose against agreed keys as evidence only.',
+      'Independent blind solutions of a frozen question; settled-key solution prior in a separate mode.',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,
     allowedTools: ['mcp__structured_output__submit'],
     structuredOutputMode: 'tool',
-    structuredOutputSchema: z.union([
-      QuestionAdmissionSolveOutput,
-      QuestionAdmissionSourceCrosscheckOutput,
-      QuestionAdmissionPriorOutput,
-    ]),
+    structuredOutputSchema: z.union([QuestionAdmissionSolveOutput, QuestionAdmissionPriorOutput]),
     context: {
       view: 'none',
       reason: '准入解题只验证题目本身可解且答案正确，不读学习者历史。',
@@ -450,23 +390,15 @@ export const questionAdmissionSolveTaskSpec = {
 
     prompt: { kind: 'inline', text: PROMPT },
   },
-  outputSchema: z.union([
-    QuestionAdmissionSolveOutput,
-    QuestionAdmissionSourceCrosscheckOutput,
-    QuestionAdmissionPriorOutput,
-  ]),
-  parseText: (text, { input }) => {
-    if (
-      typeof input === 'object' &&
-      input != null &&
-      (input as { mode?: string }).mode === 'source_crosscheck'
-    ) {
-      return parseTaskOutput(
-        text,
-        'QuestionAdmissionSolveTask',
-        QuestionAdmissionSourceCrosscheckOutput,
-      );
-    }
+  outputSchema: z.union([QuestionAdmissionSolveOutput, QuestionAdmissionPriorOutput]),
+  parseText: (text, { input: rawInput }) => {
+    const input =
+      rawInput != null &&
+      typeof rawInput === 'object' &&
+      'text' in rawInput &&
+      typeof rawInput.text === 'string'
+        ? (JSON.parse(rawInput.text) as unknown)
+        : rawInput;
     if (
       typeof input === 'object' &&
       input != null &&
@@ -480,10 +412,6 @@ export const questionAdmissionSolveTaskSpec = {
     return parseQuestionAdmissionSolveModelOutput(text, units);
   },
 } satisfies TaskSpec<
-  | QuestionAdmissionSolveInputT
-  | QuestionAdmissionSourceCrosscheckInputT
-  | QuestionAdmissionPriorInputT,
-  | QuestionAdmissionSolveOutputT
-  | QuestionAdmissionSourceCrosscheckOutputT
-  | QuestionAdmissionPriorOutputT
+  QuestionAdmissionSolveInputT | QuestionAdmissionPriorInputT,
+  QuestionAdmissionSolveOutputT | QuestionAdmissionPriorOutputT
 >;

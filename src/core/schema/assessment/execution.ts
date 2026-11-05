@@ -86,7 +86,7 @@ export type ExecutorAssignmentT = z.infer<typeof ExecutorAssignment>;
 /** 升级策略：只换执行器，不改给分规则。 */
 export const EscalationPolicy = z.object({
   on_unadmitted_model: z.enum(['human_review', 'withhold']),
-  on_low_confidence: z.enum(['human_review', 'accept']),
+  on_low_confidence: z.enum(['human_review', 'accept', 'pending']),
 });
 export type EscalationPolicyT = z.infer<typeof EscalationPolicy>;
 

@@ -24583,6 +24583,15 @@ export interface operations {
                         answeredCount: number;
                         knowledgeIds: string[];
                         no_item?: {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             /** @enum {string} */
                             next_action?: "wait_for_admission" | "continue_other_activities";
                             options: ("recheck" | "end")[];
@@ -25225,6 +25234,15 @@ export interface operations {
                         sessionId: string;
                         sourcingNeeded: boolean;
                         starterSupply?: ({
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             /** @enum {string|null} */
                             claim_id: null;
                             /** @enum {string|null} */
@@ -25250,6 +25268,15 @@ export interface operations {
                             state: "absent";
                             subject_id: string | null;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: ({
                                 /** @enum {string} */
@@ -25287,6 +25314,15 @@ export interface operations {
                             state: "pending";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             /** @enum {string|null} */
                             failure_reason: null;
@@ -25311,6 +25347,15 @@ export interface operations {
                             state: "satisfied";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: {
                                 /** @enum {string} */
@@ -25348,6 +25393,15 @@ export interface operations {
                             state: "exhausted";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string | null;
                             failure_reason: {
                                 /** @enum {string} */
@@ -25520,6 +25574,15 @@ export interface operations {
                         /** Format: date-time */
                         started_at: string;
                         starterSupply?: ({
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             /** @enum {string|null} */
                             claim_id: null;
                             /** @enum {string|null} */
@@ -25545,6 +25608,15 @@ export interface operations {
                             state: "absent";
                             subject_id: string | null;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: ({
                                 /** @enum {string} */
@@ -25582,6 +25654,15 @@ export interface operations {
                             state: "pending";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             /** @enum {string|null} */
                             failure_reason: null;
@@ -25606,6 +25687,15 @@ export interface operations {
                             state: "satisfied";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: {
                                 /** @enum {string} */
@@ -25643,6 +25733,15 @@ export interface operations {
                             state: "exhausted";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string | null;
                             failure_reason: {
                                 /** @enum {string} */
@@ -25979,6 +26078,15 @@ export interface operations {
                             /** @enum {string} */
                             reason: "cap" | "se_converged" | "supply_ended";
                             starterSupply?: ({
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 /** @enum {string|null} */
                                 claim_id: null;
                                 /** @enum {string|null} */
@@ -26004,6 +26112,15 @@ export interface operations {
                                 state: "absent";
                                 subject_id: string | null;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string;
                                 failure_reason: ({
                                     /** @enum {string} */
@@ -26041,6 +26158,15 @@ export interface operations {
                                 state: "pending";
                                 subject_id: string;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string;
                                 /** @enum {string|null} */
                                 failure_reason: null;
@@ -26065,6 +26191,15 @@ export interface operations {
                                 state: "satisfied";
                                 subject_id: string;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string;
                                 failure_reason: {
                                     /** @enum {string} */
@@ -26102,6 +26237,15 @@ export interface operations {
                                 state: "exhausted";
                                 subject_id: string;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string | null;
                                 failure_reason: {
                                     /** @enum {string} */
@@ -26150,6 +26294,15 @@ export interface operations {
                             /** @enum {boolean} */
                             done: false;
                             no_item?: {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 /** @enum {string} */
                                 next_action?: "wait_for_admission" | "continue_other_activities";
                                 options: ("recheck" | "end")[];
@@ -26791,6 +26944,15 @@ export interface operations {
                             } | null;
                             sourcingNeeded: boolean;
                             starterSupply?: ({
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 /** @enum {string|null} */
                                 claim_id: null;
                                 /** @enum {string|null} */
@@ -26816,6 +26978,15 @@ export interface operations {
                                 state: "absent";
                                 subject_id: string | null;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string;
                                 failure_reason: ({
                                     /** @enum {string} */
@@ -26853,6 +27024,15 @@ export interface operations {
                                 state: "pending";
                                 subject_id: string;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string;
                                 /** @enum {string|null} */
                                 failure_reason: null;
@@ -26877,6 +27057,15 @@ export interface operations {
                                 state: "satisfied";
                                 subject_id: string;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string;
                                 failure_reason: {
                                     /** @enum {string} */
@@ -26914,6 +27103,15 @@ export interface operations {
                                 state: "exhausted";
                                 subject_id: string;
                             } | {
+                                admission_waits?: {
+                                    question_id: string;
+                                    /** @enum {string} */
+                                    reason: "quota" | "login";
+                                    /** @enum {string} */
+                                    recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                    /** Format: date-time */
+                                    retry_at: string | null;
+                                }[];
                                 claim_id: string | null;
                                 failure_reason: {
                                     /** @enum {string} */
@@ -27100,6 +27298,15 @@ export interface operations {
                         /** @enum {string} */
                         reason: "cap" | "se_converged" | "supply_ended";
                         starterSupply?: ({
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             /** @enum {string|null} */
                             claim_id: null;
                             /** @enum {string|null} */
@@ -27125,6 +27332,15 @@ export interface operations {
                             state: "absent";
                             subject_id: string | null;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: ({
                                 /** @enum {string} */
@@ -27162,6 +27378,15 @@ export interface operations {
                             state: "pending";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             /** @enum {string|null} */
                             failure_reason: null;
@@ -27186,6 +27411,15 @@ export interface operations {
                             state: "satisfied";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: {
                                 /** @enum {string} */
@@ -27223,6 +27457,15 @@ export interface operations {
                             state: "exhausted";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string | null;
                             failure_reason: {
                                 /** @enum {string} */
@@ -27271,6 +27514,15 @@ export interface operations {
                         /** @enum {boolean} */
                         done: false;
                         no_item?: {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             /** @enum {string} */
                             next_action?: "wait_for_admission" | "continue_other_activities";
                             options: ("recheck" | "end")[];
@@ -27912,6 +28164,15 @@ export interface operations {
                         } | null;
                         sourcingNeeded: boolean;
                         starterSupply?: ({
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             /** @enum {string|null} */
                             claim_id: null;
                             /** @enum {string|null} */
@@ -27937,6 +28198,15 @@ export interface operations {
                             state: "absent";
                             subject_id: string | null;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: ({
                                 /** @enum {string} */
@@ -27974,6 +28244,15 @@ export interface operations {
                             state: "pending";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             /** @enum {string|null} */
                             failure_reason: null;
@@ -27998,6 +28277,15 @@ export interface operations {
                             state: "satisfied";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string;
                             failure_reason: {
                                 /** @enum {string} */
@@ -28035,6 +28323,15 @@ export interface operations {
                             state: "exhausted";
                             subject_id: string;
                         } | {
+                            admission_waits?: {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "quota" | "login";
+                                /** @enum {string} */
+                                recovery_action: "wait_for_retry" | "reauthenticate" | "confirm_recovery";
+                                /** Format: date-time */
+                                retry_at: string | null;
+                            }[];
                             claim_id: string | null;
                             failure_reason: {
                                 /** @enum {string} */
