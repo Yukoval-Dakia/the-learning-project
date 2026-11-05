@@ -119,26 +119,45 @@ const FAILURE_STREAK_SCAN_LIMIT = 200;
  * The knowledge point with the longest current run of failed answers. Answers with
  * no right/wrong bit (pending, self-reported, unsupported) and contested answers
  * (judge corrected, or an appeal filed) are skipped; a success or partial ends the
- * run. Only the newest FAILURE_STREAK_SCAN_LIMIT answers are read.
+ * run. Only the newest FAILURE_STREAK_SCAN_LIMIT derivation-allowed answers count.
  */
 export async function loadLongestFailureStreak(db: DbLike): Promise<KnowledgeFailureStreak | null> {
-  const candidates = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        eq(event.actor_kind, 'user'),
-        inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
-        eq(event.subject_kind, 'question'),
-      ),
-    )
-    .orderBy(desc(event.created_at), desc(event.id))
-    .limit(FAILURE_STREAK_SCAN_LIMIT);
-  const allowed = await allowedEventIds(
-    db,
-    candidates.map((row) => row.id),
-  );
-  const rows = candidates.filter((row) => allowed.has(row.id));
+  const rows: EventRow[] = [];
+  let cursor: EventRow | undefined;
+  // Page candidates until the authorized window is full; restricted answers
+  // cannot consume its slots. Keyset order stays stable for equal timestamps.
+  for (;;) {
+    const candidates: EventRow[] = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.actor_kind, 'user'),
+          inArray(event.action, [...LEARNER_ANSWER_ACTIONS]),
+          eq(event.subject_kind, 'question'),
+          cursor
+            ? or(
+                lt(event.created_at, cursor.created_at),
+                and(eq(event.created_at, cursor.created_at), lt(event.id, cursor.id)),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(desc(event.created_at), desc(event.id))
+      .limit(FAILURE_STREAK_SCAN_LIMIT);
+    if (!candidates.length) break;
+    const allowed = await allowedEventIds(
+      db,
+      candidates.map((row) => row.id),
+    );
+    rows.push(...candidates.filter((row) => allowed.has(row.id)));
+    if (rows.length >= FAILURE_STREAK_SCAN_LIMIT) {
+      rows.length = FAILURE_STREAK_SCAN_LIMIT;
+      break;
+    }
+    if (candidates.length < FAILURE_STREAK_SCAN_LIMIT) break;
+    cursor = candidates[candidates.length - 1];
+  }
   if (rows.length === 0) return null;
   const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, rows);
   const legacyOutcomes = await loadLegacyAnswerOutcomes(db, rows);
