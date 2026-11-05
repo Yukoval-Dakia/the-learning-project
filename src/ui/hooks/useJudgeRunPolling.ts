@@ -52,7 +52,7 @@ export interface JudgeRunStatusWire {
 export interface JudgeRunPollingState {
   status: JudgeRunPollStatus | null;
   result: JudgeRunTerminalResult | null;
-  /** 连续拉取失败超过上限后非 null；瞬断时保持 null（继续轮询）。 */
+  /** 最近一次拉取失败时非 null。settled=false 表示还在重试（下一次读成功即清除）；settled=true 表示已到上限停机。 */
   error: Error | null;
   /** 已完成的轮询次数（测试可断言「同一 run 在持续查询」）。 */
   polls: number;
