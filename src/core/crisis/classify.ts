@@ -26,7 +26,72 @@ function normalize(text: string): string {
  * fully despaced (Chinese input often has stray spaces). Either hit counts.
  */
 function matchesAny(patterns: readonly RegExp[], spaced: string, despaced: string): boolean {
-  return patterns.some((pattern) => pattern.test(spaced) || pattern.test(despaced));
+  return patterns.some(
+    (pattern) => pattern.test(spaced) || (despaced !== spaced && pattern.test(despaced)),
+  );
+}
+
+// ── Release rules (code, not lookarounds): a hit is released to 'none' only when
+// every applicable condition holds. Two independent release paths.
+
+// 1) 死-compound: "想死磕/记/背/缠/死死缠" is grim determination, not a death wish —
+// released only when stripping every compound occurrence leaves no death evidence
+// at all ("我想死磕完最后一题就去死" keeps its hit). 扛/撑/顶 are endurance verbs
+// and never compound; a 不 right after the char negates it instead ("想死记不住了").
+const SI_COMPOUND_RE =
+  /(?:想|想去|要去|怎么)死(?:磕|缠|磨|黏|赖|跟|盯|抱|抓|捏|攥|揪|掐|拽|捂|记|背|啃|抠|命|卷|死)(?!不)/g;
+const DEATH_EVIDENCE_RE =
+  /死|自杀|跳楼|跳下去|割腕|烧炭|上吊|轻生|安乐死|了结|解脱|消失|撑不|熬不|挺不|扛不|顶不|活不下|不想活|kill|die|dying|suicide|self[- ]?harm|end it|wanna die/;
+
+// 2) Whitelist why-release: the third-party word must sit immediately next to the
+// why-word (either side; English allows one auxiliary + determiner), the whole
+// text must contain no first/second-person marker, and the text must be short —
+// long analytic context keeps its hit because a miss costs more than a false
+// positive. 60 chars ≈ two chat clauses: crisis utterances are short; anything
+// longer falls back to "keep the hit".
+const MAX_RELEASE_LEN = 60;
+const WHY_WORD_ZH = '(?:为什么|为何|为啥|怎么会|咋|因何|何故|缘何|如何|怎么)';
+const THIRD_PARTY_ZH =
+  '(?:他|她|它|牠|他们|她们|它们|牠们|某人|别人|他人|旁人|外人|陌生人|人物|角色|' +
+  '主人公|主角|配角|作者|诗人|词人|作家|名人|古人|伟人|英雄|反派|死者|逝者|当事人|' +
+  '被害人|受害人|凶手|嫌疑人|罪犯|罪人|犯人|自杀者|案例|素材|原型|传记|课文|课本|' +
+  '小说|故事|电影|剧本|文章|作品|寓言|典故|传说|神话|史料|新闻|报道|论文|例题|同学|' +
+  '同桌|室友|同事|朋友|网友|家人|亲人|亲戚|父母|爸爸|妈妈|父亲|母亲|家长|长辈|哥哥|' +
+  '姐姐|弟弟|妹妹|兄长|兄弟|姐妹|爷爷|奶奶|外公|外婆|姥爷|姥姥|叔叔|阿姨|舅舅|姑姑|' +
+  '老师|导师|医生|护士|警察|军人|邻居|老乡|领导|老板|上司|教练|队友|对手|敌人|仇人|' +
+  '恩人|爱人|恋人|对象|伴侣|配偶|丈夫|妻子|老公|老婆|男友|女友|前任|前夫|前妻|病友|' +
+  '狱友|战友|细胞|组织|器官|细菌|病毒|微生物|动物|植物|鱼|鱼儿|鸟|鸟儿|猫|狗|兔子|' +
+  '老鼠|虫子|昆虫|物体|东西|机器|设备|装置|仪器|模型|桥|塔|楼|墙|坝|堤|容器|结构|' +
+  '材料|元件|零件|部件|系统|分子|原子|电子|粒子|蛋白|细胞器)';
+const THIRD_PARTY_EN =
+  '\\b(?:he|she|they|them|him|his|their|theirs|someone|somebody|character|protagonist|' +
+  'hero|heroine|villain|author|poet|writer|narrator|victim|patient|deceased|classmate|' +
+  'roommate|friend|parent|father|mother|teacher|doctor|therapist|counselor|animal|animals|' +
+  'fish|bird|cells?|plants?|organism|creature|novel|story|essay|poem|text|passage|article|book)\\b';
+const WHY_THIRD_PARTY_RE = new RegExp(
+  `(?:${THIRD_PARTY_ZH})(?=${WHY_WORD_ZH})|(?:${WHY_WORD_ZH})(?=${THIRD_PARTY_ZH})|` +
+    `why\\s+(?:does|do|did|would|is|are|was|were|has|have|will)\\s+(?:the\\s+|a\\s+|an\\s+|this\\s+|that\\s+)?${THIRD_PARTY_EN}`,
+);
+// Any personal marker anywhere in the text blocks the why-release — pronoun lists
+// are never complete, so the adjacency rule above is the primary defense.
+const PERSONAL_RE =
+  /我|俺|咱|自己|本人|老子|老娘|我们|咱们|你|您|你们|包括我|像我|人家|偶|朕|吾|吾辈|本宝宝|这边|孤|寡人|在下|鄙人|小生|小女子|奴家|晚辈|老朽|老身|\b(?:i|me|my|mine|myself|we|us|our|ours|ourselves|you|your|yours|yourself|yourselves|u)\b/;
+
+function shouldReleaseHit(spaced: string, despaced: string): boolean {
+  // Path 1: the hit is fully explained by 死-compounds.
+  const stripped = spaced.replace(SI_COMPOUND_RE, '');
+  const strippedDespaced = despaced.replace(SI_COMPOUND_RE, '');
+  if (
+    (stripped !== spaced || strippedDespaced !== despaced) &&
+    !DEATH_EVIDENCE_RE.test(stripped) &&
+    !DEATH_EVIDENCE_RE.test(strippedDespaced)
+  ) {
+    return true;
+  }
+  // Path 2: short third-party why-question with no personal marker anywhere.
+  if (spaced.length > MAX_RELEASE_LEN) return false;
+  if (PERSONAL_RE.test(spaced) || PERSONAL_RE.test(despaced)) return false;
+  return WHY_THIRD_PARTY_RE.test(spaced) || WHY_THIRD_PARTY_RE.test(despaced);
 }
 
 /** Pure; never throws — any input failure degrades to 'none'. */
@@ -47,7 +112,9 @@ export function classifyCrisisExpression(rawText: string): CrisisDetectionClass 
   ];
   for (const [detectionClass, patterns] of ordered) {
     try {
-      if (matchesAny(patterns, text, despaced)) return detectionClass;
+      if (!matchesAny(patterns, text, despaced)) continue;
+      if (detectionClass !== 'distress' && shouldReleaseHit(text, despaced)) continue;
+      return detectionClass;
     } catch {
       // One corrupt pattern group must not block the remaining classes.
     }
