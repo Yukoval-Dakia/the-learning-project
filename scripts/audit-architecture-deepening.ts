@@ -393,7 +393,6 @@ const CENTRAL_ACTION_FILES = [
   'src/server/proposals/dismiss-action.ts',
   'src/server/proposals/retract-action.ts',
   'src/server/proposals/lifecycle-context.ts',
-  'src/server/proposals/owner-runtime.ts',
 ] as const;
 
 const PROPOSAL_KIND_CASE_RE = new RegExp(`case\\s+'(?:${aiProposalKinds.join('|')})'\\s*:`);
