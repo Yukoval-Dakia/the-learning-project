@@ -1,9 +1,15 @@
 // Bounded attempts inside one durable batch. A lost worker never resumes this loop.
 import { eq } from 'drizzle-orm';
 import { AgentRunError } from '@/ai/agent-run-error';
+import { boundTerminalHttpStatus, providerTransientVerdict } from '@/ai/provider-failure';
 import type { ProviderTransportEvidence, TaskTextResult } from '@/ai/task-result';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
+import {
+  planProviderTransientRetry,
+  providerTransientRetryPolicy,
+  sleepMs,
+} from '@/server/ai/provider-transient-retry';
 
 export class AdmissionAttemptExhausted extends Error {
   constructor(
@@ -22,28 +28,26 @@ export function admissionHttpFailureStatus(
   error: AgentRunError,
   transport?: ProviderTransportEvidence,
 ): number | null {
-  if (error.apiErrorStatus != null && error.apiErrorStatus >= 400) return error.apiErrorStatus;
-  const last = transport?.requests.at(-1);
-  if (
-    last?.loop === 'root' &&
-    last.send_state === 'response_received' &&
-    last.http_status != null &&
-    last.http_status >= 400 &&
-    transport?.totals.by_state.in_flight === 0 &&
-    transport.totals.by_state.unknown === 0 &&
-    transport.totals.by_state.sent_without_response === 0
-  )
-    return last.http_status;
-  return null;
+  return boundTerminalHttpStatus(error, transport);
 }
 
+/**
+ * Invoke the durable stage and validate its result. Provider-transient
+ * failures (bound 429/5xx, bad gateway, positive not_sent) re-issue inside one
+ * configured bound — `rate_limited` consumes the provider's retry_after and the
+ * retry count/wait ceiling; the other classes keep the ADR-0079 single extra
+ * send. `sent_without_response`, unsettled or unknown outcomes always throw
+ * through — resending them could double-bill.
+ */
 export async function runAdmissionAttempts<T>(
   db: Db,
   invoke: () => Promise<TaskTextResult>,
   validate: (result: TaskTextResult) => Promise<T>,
 ): Promise<{ value: T; taskRunIds: string[] }> {
   const ids: string[] = [];
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const policy = providerTransientRetryPolicy();
+  const retryBudget = { retries: 0, waitedMs: 0 };
+  for (;;) {
     try {
       const result = await invoke();
       if (result.task_run_id) ids.push(result.task_run_id);
@@ -66,21 +70,29 @@ export async function runAdmissionAttempts<T>(
         .select()
         .from(ai_task_runs)
         .where(eq(ai_task_runs.id, error.taskRunId));
-      const httpStatus = row?.finished_at
-        ? admissionHttpFailureStatus(error, row.usage_json.transport)
-        : null;
-      // No running/unknown attempt, timeout, cancellation, lease loss, or quota retry.
-      // Connection retry requires positive transport evidence that nothing was sent.
-      const retryable =
-        row?.finished_at != null &&
-        row.status !== 'running' &&
-        (row.usage_json.transport?.send_state === 'not_sent' ||
-          error.helpProviderFault?.kind === 'bad_gateway' ||
-          (httpStatus != null && httpStatus >= 500));
-      if (retryable && attempt === 0) continue;
+      const settled = row?.finished_at != null && row.status !== 'running';
+      const transport = settled ? row.usage_json.transport : undefined;
+      const httpStatus = settled ? admissionHttpFailureStatus(error, transport) : null;
+      // No running/unknown attempt, timeout, cancellation, or sent-without-
+      // response retry — only positively-evidenced transient classes re-issue.
+      const verdict = settled ? providerTransientVerdict({ error, transport }) : undefined;
+      if (verdict !== undefined) {
+        const plan = await planProviderTransientRetry({
+          db,
+          error,
+          policy,
+          budget: retryBudget,
+        });
+        if (plan !== undefined) {
+          retryBudget.retries += 1;
+          retryBudget.waitedMs += plan.delayMs;
+          if (plan.delayMs > 0) await sleepMs(plan.delayMs);
+          continue;
+        }
+      }
       const knownTerminal =
-        row?.finished_at != null &&
-        (retryable ||
+        settled &&
+        (verdict !== undefined ||
           httpStatus != null ||
           error.subtype === 'error_max_structured_output_retries' ||
           error.helpProviderFault?.kind === 'parse');
@@ -88,5 +100,4 @@ export async function runAdmissionAttempts<T>(
       throw error;
     }
   }
-  throw new Error('Unreachable admission attempt');
 }

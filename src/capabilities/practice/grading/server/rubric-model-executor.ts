@@ -31,6 +31,11 @@ import {
   traceMetadata,
   traceOperation,
 } from '@/server/ai/laminar-tracing';
+import {
+  planProviderTransientRetry,
+  providerTransientRetryPolicy,
+  sleepMs,
+} from '@/server/ai/provider-transient-retry';
 import type { RunTaskCtx } from '@/server/ai/runner';
 import {
   type AssessmentAssetLoader,
@@ -57,6 +62,12 @@ export interface RubricModelExecutorOptions {
   signal?: AbortSignal;
   /** Pre-call durable claim identity supplied by formal entry orchestration. */
   taskRunId?: string;
+  /**
+   * Admission-run lane: positively-evidenced provider-transient failures
+   * (bound 429/not_sent classes) re-issue inside the shared configured bound
+   * instead of ending the whole holdout on one rejection.
+   */
+  providerTransientRetry?: boolean;
   /**
    * Formal grading re-checks the live pin before any provider call. Admission
    * runs leave this off: the slice row does not exist until the holdout passes.
@@ -269,6 +280,9 @@ export function createRubricModelExecutor(
     }
     const runTask = options.runTask ?? (await import('@/server/ai/runner')).runTask;
     const loadAsset = options.loadAsset ?? createAssessmentAssetLoader(options.db);
+    const transientPolicy =
+      options.providerTransientRetry === true ? providerTransientRetryPolicy() : undefined;
+    const retryBudget = { retries: 0, waitedMs: 0 };
     let timeoutRetriesLeft = ASSESSMENT_RUBRIC_TIMEOUT_RETRIES;
     let knownSpent = 0;
     let unknownAttempts = 0;
@@ -409,6 +423,25 @@ export function createRubricModelExecutor(
             refs,
             unknownAttempts === 0 ? knownSpent : undefined,
           );
+        }
+        if (transientPolicy !== undefined) {
+          const plan = await planProviderTransientRetry({
+            db: options.db,
+            error,
+            policy: transientPolicy,
+            budget: retryBudget,
+            deadlineAt: options.deadlineAt,
+          });
+          if (plan !== undefined) {
+            retryBudget.retries += 1;
+            retryBudget.waitedMs += plan.delayMs;
+            const reported = reportedTimeoutMicros(error);
+            if (reported !== undefined) knownSpent += reported;
+            else unknownAttempts += 1;
+            priorRefs.splice(0, priorRefs.length, ...refs);
+            if (plan.delayMs > 0) await sleepMs(plan.delayMs);
+            continue;
+          }
         }
         const reported = reportedTimeoutMicros(error);
         const callCost = reported ?? (providerStarted ? cap : undefined);

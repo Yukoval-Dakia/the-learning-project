@@ -75,6 +75,14 @@ export interface TerminalResultEvidence {
   structuredOutput?: unknown;
 }
 
+/**
+ * `cost_ref` prefix marking an attempt the provider positively rejected before
+ * any billable work — every observed root request settled as a non-2xx response
+ * (or provably never reached the wire) and no model usage exists. The spend
+ * gate charges these at a known zero; writer and gate share this one prefix.
+ */
+export const UNBILLED_PROVIDER_REJECTION_REF_PREFIX = 'unbilled-provider-rejection:';
+
 export type ObservedRunUsage = Pick<
   TerminalResultEvidence,
   'usage' | 'tokenCounts' | 'numTurns' | 'tokenUsageObserved' | 'costUsd'
@@ -477,7 +485,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       return {
         basis: 'estimated',
         amountUsd: 0,
-        ref: `unbilled-provider-rejection:${this.resolved.provider}/${this.resolved.model}#${this.taskRunId}`,
+        ref: `${UNBILLED_PROVIDER_REJECTION_REF_PREFIX}${this.resolved.provider}/${this.resolved.model}#${this.taskRunId}`,
       };
     if (!this.costTruthCache) {
       const evidence = this.terminal ?? this.observedUsage;

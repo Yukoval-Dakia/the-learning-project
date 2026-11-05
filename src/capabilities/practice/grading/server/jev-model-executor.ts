@@ -19,6 +19,11 @@ import type {
 import { evaluateScoringRule } from '@/core/schema/assessment/scoring-rule';
 import type { JevSystemOneResponseT } from '@/core/schema/jev-systemone';
 import type { Db } from '@/db/client';
+import {
+  planProviderTransientRetry,
+  providerTransientRetryPolicy,
+  sleepMs,
+} from '@/server/ai/provider-transient-retry';
 import { runTypedPrimitiveTask } from '@/server/ai/typed-primitive-runner';
 import { gradingSliceMatchesLivePin } from './model-slice-registry';
 
@@ -87,6 +92,12 @@ export interface JevModelExecutorOptions {
   /** Caller cancellation forwarded to the typed runner. */
   readonly signal?: AbortSignal;
   readonly taskRunId?: string;
+  /**
+   * Admission-run lane: positively-evidenced provider-transient failures
+   * (bound 429/not_sent classes) re-issue inside the shared configured bound
+   * before the outcome falls to the advanced executor or pending.
+   */
+  readonly providerTransientRetry?: boolean;
   /**
    * Formal grading re-checks the live pin before any provider call. Admission
    * runs leave this off: the slice row does not exist until the holdout passes.
@@ -526,56 +537,93 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
       );
     }
 
+    const transientPolicy =
+      options.providerTransientRetry === true ? providerTransientRetryPolicy() : undefined;
+    const retryBudget = { retries: 0, waitedMs: 0 };
+    const priorRefs: string[] = [];
+    // Settled prior-attempt spend must ride the final receipt — unknown never
+    // silently becomes zero.
+    let knownSpentMicros = 0;
+    let unknownAttempts = 0;
     let outcome: Awaited<ReturnType<typeof runTypedPrimitiveTask<JevSystemOneResponseT>>>;
-    try {
-      outcome = await runTypedPrimitiveTask<JevSystemOneResponseT>(
-        request.executor.task_kind,
-        {
-          state: typedState(request, entries, request.group_evidence),
-          questions,
-        },
-        {
-          db: options.db,
-          retry: options.judgeRetryPolicy,
-          taskRunId: options.taskRunId,
-          deadlineAt: options.deadlineAt,
-          signal: options.signal,
-          fetchImpl: options.fetchImpl,
-          logScope: 'jevModelExecutor',
-        },
-      );
-    } catch (error) {
-      const escalated = await escalate(request);
-      if (escalated !== undefined) return escalated;
-      // Charge-layer honesty (pi-lane parity): an AgentRunError from the typed
-      // runner means a durable run existed and settled wire attempts at the
-      // reserve — the ai_task_runs ledger keeps the truth, but the charge layer
-      // must not bill possibly-paid spend as free. Charge the published per-unit
-      // reservation when one is declared; without a declared cap the plan-level
-      // pre-check is skipped too, so there is nothing to reserve against.
-      const capMicros = request.executor.max_cost_usd_micros;
-      const pendingState = {
-        reason: 'infra_failure' as const,
-        retryable: isTypedRetryable(error),
-        detail: `Jev lane failed${error instanceof Error ? `: ${error.message}` : ''}`,
-      };
-      if (error instanceof AgentRunError && capMicros != null) {
-        return {
-          kind: 'pending',
-          pending: pendingState,
-          run_refs: [],
-          cost_usd_micros: capMicros,
+    for (;;) {
+      try {
+        outcome = await runTypedPrimitiveTask<JevSystemOneResponseT>(
+          request.executor.task_kind,
+          {
+            state: typedState(request, entries, request.group_evidence),
+            questions,
+          },
+          {
+            db: options.db,
+            retry: options.judgeRetryPolicy,
+            // Only the first send may claim the caller's durable id — a retry
+            // is a fresh attempt row, never a replay of the settled claim.
+            taskRunId: priorRefs.length === 0 ? options.taskRunId : undefined,
+            deadlineAt: options.deadlineAt,
+            signal: options.signal,
+            fetchImpl: options.fetchImpl,
+            logScope: 'jevModelExecutor',
+          },
+        );
+        break;
+      } catch (error) {
+        if (transientPolicy !== undefined) {
+          const plan = await planProviderTransientRetry({
+            db: options.db,
+            error,
+            policy: transientPolicy,
+            budget: retryBudget,
+            deadlineAt: options.deadlineAt,
+          });
+          if (plan !== undefined) {
+            retryBudget.retries += 1;
+            retryBudget.waitedMs += plan.delayMs;
+            if (error instanceof AgentRunError) {
+              priorRefs.push(error.taskRunId);
+              const reported =
+                error.costUsd !== undefined && Number.isFinite(error.costUsd) && error.costUsd >= 0
+                  ? Math.ceil(error.costUsd * 1_000_000)
+                  : undefined;
+              if (reported !== undefined) knownSpentMicros += reported;
+              else unknownAttempts += 1;
+            }
+            if (plan.delayMs > 0) await sleepMs(plan.delayMs);
+            continue;
+          }
+        }
+        const escalated = await escalate(request);
+        if (escalated !== undefined) return escalated;
+        // Charge-layer honesty (pi-lane parity): an AgentRunError from the typed
+        // runner means a durable run existed and settled wire attempts at the
+        // reserve — the ai_task_runs ledger keeps the truth, but the charge layer
+        // must not bill possibly-paid spend as free. Charge the published per-unit
+        // reservation when one is declared; without a declared cap the plan-level
+        // pre-check is skipped too, so there is nothing to reserve against.
+        const capMicros = request.executor.max_cost_usd_micros;
+        const pendingState = {
+          reason: 'infra_failure' as const,
+          retryable: isTypedRetryable(error),
+          detail: `Jev lane failed${error instanceof Error ? `: ${error.message}` : ''}`,
         };
+        if (error instanceof AgentRunError && capMicros != null) {
+          return {
+            kind: 'pending',
+            pending: pendingState,
+            run_refs: [...priorRefs, error.taskRunId],
+            cost_usd_micros: capMicros,
+          };
+        }
+        return pendingOutcome(pendingState, { run_refs: priorRefs });
       }
-      return pendingOutcome(pendingState);
     }
 
     const costMicros =
-      outcome.cost_usd === undefined
+      outcome.cost_usd === undefined || unknownAttempts > 0
         ? undefined
-        : Math.max(0, Math.round(outcome.cost_usd * 1_000_000));
+        : Math.max(0, Math.round(outcome.cost_usd * 1_000_000)) + knownSpentMicros;
     const paid = {
-      run_refs: [outcome.task_run_id],
+      run_refs: [...priorRefs, outcome.task_run_id],
       ...(costMicros !== undefined ? { cost_usd_micros: costMicros } : {}),
     };
     const answer = outcome.output.answers[request.scoring_unit_id];
@@ -593,7 +641,7 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
       request,
       answer,
       options.ruleThreshold ?? Number.NaN,
-      [outcome.task_run_id],
+      [...priorRefs, outcome.task_run_id],
       costMicros,
     );
   };

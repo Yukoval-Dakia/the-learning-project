@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { AgentRunError, type AgentRunErrorFields } from '@/ai/agent-run-error';
 import { type HelpProviderFault, isHelpProviderFault } from '@/ai/help-provider-fault';
+import { providerTransientVerdict } from '@/ai/provider-failure';
 import { getTaskOverride } from '@/core/config/store';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
@@ -18,6 +19,7 @@ import {
 } from '@/db/paid-effect-store';
 import { ai_task_runs, paid_effect } from '@/db/schema';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
+import { providerTransientRetryPolicy } from '@/server/ai/provider-transient-retry';
 import type { BoundRunTaskTextFn } from '@/server/ai/runner-fn';
 import { admissionHttpFailureStatus } from './attempt';
 
@@ -68,6 +70,24 @@ export class AdmissionInterrupted extends Error {
 
 export const ADMISSION_STAGE_FAMILY = 'question_admission_stage';
 const FAMILY = ADMISSION_STAGE_FAMILY;
+
+const ProviderFailureEvidenceSchema = z.object({
+  http_status: z.number().optional(),
+  retry_after_ms: z.number().optional(),
+  stream_error: z.literal(true).optional(),
+});
+
+const StageErrorFields = z.object({
+  kind: z.string(),
+  taskRunId: z.string(),
+  subtype: z.string(),
+  apiErrorStatus: z.number().nullable().optional(),
+  errors: z.array(z.string()),
+  costUsd: z.number().optional(),
+  helpProviderFault: z.custom<HelpProviderFault>(isHelpProviderFault).optional(),
+  providerFailure: ProviderFailureEvidenceSchema.optional(),
+});
+
 const StageReceipt = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('not_sent') }),
   z.object({ kind: z.literal('interrupted'), reason: z.string().optional() }),
@@ -90,15 +110,16 @@ const StageReceipt = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('failure'),
-    fields: z.object({
-      kind: z.string(),
-      taskRunId: z.string(),
-      subtype: z.string(),
-      apiErrorStatus: z.number().nullable().optional(),
-      errors: z.array(z.string()),
-      costUsd: z.number().optional(),
-      helpProviderFault: z.custom<HelpProviderFault>(isHelpProviderFault).optional(),
-    }),
+    fields: StageErrorFields,
+  }),
+  /**
+   * A settled, positively-evidenced transient provider rejection. Unlike
+   * `failure`, replaying it re-issues the wire send as the next attempt —
+   * the caller's configured bound decides when the chain ends.
+   */
+  z.object({
+    kind: z.literal('transient'),
+    fields: StageErrorFields,
   }),
 ]);
 
@@ -170,6 +191,7 @@ export function admissionStageRunner(input: {
   taskRunIds?: Set<string>;
   receiptRefs?: AdmissionStageReceiptRef[];
 }): BoundRunTaskTextFn {
+  const transientPolicy = providerTransientRetryPolicy();
   let callIndex = 0;
   return async (kind, payload, ctx) => {
     const index = callIndex++;
@@ -247,7 +269,8 @@ export function admissionStageRunner(input: {
           receipt_digest: canonicalHash(receipt),
         });
         if (receipt.kind === 'result') input.taskRunIds?.add(receipt.result.task_run_id);
-        if (receipt.kind === 'failure') input.taskRunIds?.add(receipt.fields.taskRunId);
+        if (receipt.kind === 'failure' || receipt.kind === 'transient')
+          input.taskRunIds?.add(receipt.fields.taskRunId);
         if (previous.state === 'receipt_ready')
           await input.db.transaction((tx) =>
             recordPaidEffectApplication(
@@ -267,31 +290,45 @@ export function admissionStageRunner(input: {
         if (receipt.kind === 'interrupted') throw new AdmissionInterrupted(receipt.reason);
         if (receipt.kind === 'failure')
           throw new AgentRunError(receipt.fields as AgentRunErrorFields);
-        const routing = (value: unknown) =>
-          z
-            .object({
-              task: z
-                .object({ provider: z.string().optional(), model: z.string().optional() })
-                .nullable(),
-              override: z.unknown(),
-            })
-            .parse(value);
-        const changedConfiguration =
-          canonicalHash(routing(frozen.configuration)) !== canonicalHash(routing(configuration));
-        if (!changedConfiguration && receipt.recovery.reason === 'quota')
-          quotaFailures = receipt.quota_failures ?? frozen.attempt + 1;
-        const confirmed =
-          input.recoveryConfirmed &&
-          frozen.recovery_confirmation !== input.deliveryId &&
-          (receipt.recovery.reason !== 'login' || !loginWait || loginProbeConfirmed);
-        const due =
-          receipt.recovery.reason === 'quota' &&
-          receipt.recovery.retry_at != null &&
-          Date.parse(receipt.recovery.retry_at) <= Date.now();
-        const loginRecovered = receipt.recovery.reason === 'login' && loginWait == null;
-        if (!due && !confirmed && !changedConfiguration && !loginRecovered && !automaticLoginProbe)
-          throw new AdmissionWaiting(receipt.recovery, previous.unit, route);
-        attempt = frozen.attempt + 1;
+        if (receipt.kind === 'transient') {
+          // The transient chain stays bounded by the same policy the caller
+          // applies: beyond the retry bound the frozen failure is terminal.
+          if (frozen.attempt >= transientPolicy.maxRetries)
+            throw new AgentRunError(receipt.fields as AgentRunErrorFields);
+          attempt = frozen.attempt + 1;
+        } else {
+          const routing = (value: unknown) =>
+            z
+              .object({
+                task: z
+                  .object({ provider: z.string().optional(), model: z.string().optional() })
+                  .nullable(),
+                override: z.unknown(),
+              })
+              .parse(value);
+          const changedConfiguration =
+            canonicalHash(routing(frozen.configuration)) !== canonicalHash(routing(configuration));
+          if (!changedConfiguration && receipt.recovery.reason === 'quota')
+            quotaFailures = receipt.quota_failures ?? frozen.attempt + 1;
+          const confirmed =
+            input.recoveryConfirmed &&
+            frozen.recovery_confirmation !== input.deliveryId &&
+            (receipt.recovery.reason !== 'login' || !loginWait || loginProbeConfirmed);
+          const due =
+            receipt.recovery.reason === 'quota' &&
+            receipt.recovery.retry_at != null &&
+            Date.parse(receipt.recovery.retry_at) <= Date.now();
+          const loginRecovered = receipt.recovery.reason === 'login' && loginWait == null;
+          if (
+            !due &&
+            !confirmed &&
+            !changedConfiguration &&
+            !loginRecovered &&
+            !automaticLoginProbe
+          )
+            throw new AdmissionWaiting(receipt.recovery, previous.unit, route);
+          attempt = frozen.attempt + 1;
+        }
       }
       // Purpose/control guards and aborts retain their original identity.
       await input.beforeSend?.();
@@ -375,10 +412,20 @@ export function admissionStageRunner(input: {
             error instanceof AgentRunError && run?.finished_at != null
               ? admissionHttpFailureStatus(error, run.usage_json.transport)
               : null;
+          const verdict =
+            error instanceof AgentRunError && run?.finished_at != null
+              ? providerTransientVerdict({ error, transport: run.usage_json.transport })
+              : undefined;
           const recovery =
             kind === 'QuestionAdmissionAdjudicateTask'
               ? (input.recovery?.(error) ?? existingRecovery(error, httpStatus))
               : null;
+          // A bound 429 keeps its in-run bounded retry while attempts remain;
+          // exhaustion falls back to the scheduled quota wait unchanged.
+          const deferQuotaWait =
+            recovery?.reason === 'quota' &&
+            verdict?.class === 'rate_limited' &&
+            attempt < transientPolicy.maxRetries;
           const knownFailure =
             error instanceof AgentRunError &&
             run?.finished_at != null &&
@@ -387,7 +434,7 @@ export function admissionStageRunner(input: {
               error.subtype === 'error_max_structured_output_retries' ||
               error.helpProviderFault?.kind === 'parse' ||
               error.helpProviderFault?.kind === 'bad_gateway');
-          if (recovery && !input.interrupted?.()) {
+          if (recovery && !input.interrupted?.() && !deferQuotaWait) {
             const parsed = AdmissionRecovery.pick({ reason: true, evidence_ref: true }).parse(
               recovery,
             );
@@ -404,7 +451,23 @@ export function admissionStageRunner(input: {
                     : new Date(Date.now() + 60 * 60_000).toISOString(),
               },
             };
-          } else if (knownFailure && error instanceof AgentRunError)
+          } else if (verdict && error instanceof AgentRunError)
+            receipt = {
+              kind: 'transient',
+              fields: {
+                kind: error.kind,
+                taskRunId: error.taskRunId,
+                subtype: error.subtype,
+                ...(error.apiErrorStatus !== undefined
+                  ? { apiErrorStatus: error.apiErrorStatus }
+                  : {}),
+                errors: error.errors,
+                ...(error.costUsd != null ? { costUsd: error.costUsd } : {}),
+                ...(error.helpProviderFault ? { helpProviderFault: error.helpProviderFault } : {}),
+                ...(error.providerFailure ? { providerFailure: error.providerFailure } : {}),
+              },
+            };
+          else if (knownFailure && error instanceof AgentRunError)
             receipt = {
               kind: 'failure',
               fields: {
@@ -417,6 +480,7 @@ export function admissionStageRunner(input: {
                 errors: error.errors,
                 ...(error.costUsd != null ? { costUsd: error.costUsd } : {}),
                 ...(error.helpProviderFault ? { helpProviderFault: error.helpProviderFault } : {}),
+                ...(error.providerFailure ? { providerFailure: error.providerFailure } : {}),
               },
             };
           else if (
@@ -453,7 +517,8 @@ export function admissionStageRunner(input: {
         receipt_digest: canonicalHash(receipt),
       });
       if (receipt.kind === 'result') input.taskRunIds?.add(receipt.result.task_run_id);
-      if (receipt.kind === 'failure') input.taskRunIds?.add(receipt.fields.taskRunId);
+      if (receipt.kind === 'failure' || receipt.kind === 'transient')
+        input.taskRunIds?.add(receipt.fields.taskRunId);
       if (input.interrupted?.() || receipt.kind === 'interrupted')
         throw new AdmissionInterrupted(
           input.interruptionReason?.() ??
@@ -461,7 +526,7 @@ export function admissionStageRunner(input: {
         );
       if (receipt.kind === 'waiting') throw new AdmissionWaiting(receipt.recovery, unit, route);
       if (receipt.kind === 'not_sent') throw new AdmissionNotSent();
-      if (receipt.kind === 'failure')
+      if (receipt.kind === 'failure' || receipt.kind === 'transient')
         throw new AgentRunError(receipt.fields as AgentRunErrorFields);
       return receipt.result;
     };
