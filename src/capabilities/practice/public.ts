@@ -106,6 +106,7 @@ export {
   type ItemPriorStagedItem,
   type QuestionDraftAcceptResult,
   type QuestionEditAcceptResult,
+  SOLVE_LANE_TASK_KINDS,
   VERIFY_DISPATCH_COMPLETE_ACTION,
   VERIFY_DISPATCH_INTENT_ACTION,
   VERIFY_DISPATCH_VERSION,
