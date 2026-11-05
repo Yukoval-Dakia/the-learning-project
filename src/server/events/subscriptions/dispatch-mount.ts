@@ -2,8 +2,9 @@
 // registering capability jobs, so both the standalone worker and the in-process
 // RW_WORKER drive the cycle.
 //
-// The registry loads once at boot, then a recurring pg-boss job runs one dispatch
-// cycle per tick. Checkpoint leases serialize each subscriber across workers, so
+// The registry loads once at boot. Publication commit hints wake dispatch;
+// a recurring pg-boss job recovers missed hints. Checkpoint leases serialize
+// each subscriber across workers, so
 // the cadence is not load-bearing and a double-fire is safe. A tick drains a
 // bounded slice instead of adding a minute of delay per delivery.
 
@@ -43,6 +44,7 @@ const MAX_DISPATCH_MS = 30_000;
 // three times during a DB outage. Reuse the job-retry convention and backoff.
 const DISPATCH_QUEUE_OPTS = {
   ...FAST_QUEUE_OPTS,
+  notify: true,
   retryLimit: JOB_RETRY_LIMIT,
   retryDelay: JOB_RETRY_DELAY_SECONDS,
   retryBackoff: true,
@@ -72,9 +74,53 @@ export async function mountSubscriptionDispatch(
   const cron = options.cron ?? EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE.cron;
 
   await createOrUpdateQueue(boss, EVENT_SUBSCRIPTION_DISPATCH_QUEUE, DISPATCH_QUEUE_OPTS);
+  let wakePending = false;
+  let wakeRequested = false;
+  const wake = async () => {
+    wakeRequested = true;
+    if (wakePending) return;
+    wakePending = true;
+    try {
+      do {
+        wakeRequested = false;
+        // Keep a trailing slot when the current slot has already dispatched.
+        // Otherwise a later commit in the same second could wait for cron again.
+        await boss.send(
+          EVENT_SUBSCRIPTION_DISPATCH_QUEUE,
+          {},
+          {
+            singletonKey: 'publication-wake',
+            singletonSeconds: 1,
+            singletonNextSlot: true,
+          },
+        );
+      } while (wakeRequested);
+    } catch {
+      console.warn('[event-subscriptions] publication wake failed; cron remains active');
+    } finally {
+      wakePending = false;
+    }
+  };
+  try {
+    const listener = await db.$client.listen(
+      'assessment_publication',
+      () => {
+        void wake();
+      },
+      () => {
+        void wake();
+      },
+    );
+    boss.once('stopped', () => {
+      void listener.unlisten();
+    });
+    await wake();
+  } catch {
+    console.warn('[event-subscriptions] publication listener unavailable; cron remains active');
+  }
   await boss.work(
     EVENT_SUBSCRIPTION_DISPATCH_QUEUE,
-    { pollingIntervalSeconds: 2, batchSize: 1 },
+    { pollingIntervalSeconds: 2, notifyPollingIntervalSeconds: 2, batchSize: 1 },
     // Drain mode: delivery is idempotent, but maintenance still stops the tick.
     // Pending-item translation lives in bootstrapSubscription.
     fenceAwareJobHandler(db, EVENT_SUBSCRIPTION_DISPATCH_QUEUE, async () => {
