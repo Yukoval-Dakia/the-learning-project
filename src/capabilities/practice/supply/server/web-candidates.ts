@@ -181,18 +181,29 @@ function keepValidQuestions(output: unknown): unknown {
   if (output === null || typeof output !== 'object') return output;
   const { questions } = output as { questions?: unknown };
   if (!Array.isArray(questions)) return output;
-  const kept = questions.filter((question, index) => {
+  const clean: unknown[] = [];
+  const repaired: unknown[] = [];
+  questions.forEach((question, index) => {
     const checked = SourcedQuestion.safeParse(question);
-    if (!checked.success) {
-      console.warn(
-        `[web-candidates] dropped question ${index}: ${describeIssues(checked.error)}`.slice(
-          0,
-          500,
-        ),
-      );
+    if (checked.success) {
+      clean.push(question);
+      return;
     }
-    return checked.success;
+    const salvaged = repairUnits(question, checked.error);
+    if (salvaged !== null && SourcedQuestion.safeParse(salvaged.question).success) {
+      console.warn(
+        `[web-candidates] question ${index}: repaired units: ${salvaged.detail}`.slice(0, 700),
+      );
+      repaired.push(salvaged.question);
+      return;
+    }
+    console.warn(
+      `[web-candidates] dropped question ${index}: ${describeIssues(checked.error)}`.slice(0, 500),
+    );
   });
+  // A question that lost its rule is withheld at submit, so it must not take a slot from one that
+  // can be served when callers keep only the first `count`.
+  const kept = [...clean, ...repaired];
   return {
     query_plan: [],
     fetched_at: new Date().toISOString(),
@@ -200,6 +211,42 @@ function keepValidQuestions(output: unknown): unknown {
     ...output,
     questions: kept,
   };
+}
+
+// Two unit mistakes do not cost the paid question. A malformed rule is removed: the unit stays
+// undecided (`missing_rule`) and the draft is withheld until someone supplies a rule; none is guessed.
+// A method written as its bare kind is wrapped; the schema still checks the kind. Anything else drops
+// the question.
+function repairUnits(
+  question: unknown,
+  error: z.ZodError,
+): { question: unknown; detail: string } | null {
+  const copy = structuredClone(question) as {
+    parts?: Array<{ units?: Array<Record<string, unknown>> }>;
+  };
+  const removedRules = new Map<Record<string, unknown>, unknown>();
+  for (const issue of error.issues) {
+    const [parts, part, unitsKey, unit, field] = issue.path;
+    if (parts !== 'parts' || unitsKey !== 'units') return null;
+    const target = copy.parts?.[Number(part)]?.units?.[Number(unit)];
+    if (target === undefined) return null;
+    if (field === 'rule') {
+      if (!removedRules.has(target)) removedRules.set(target, target.rule);
+      target.rule = undefined;
+    } else if (field === 'method' && typeof target.method === 'string') {
+      target.method = { kind: target.method };
+    } else if (!(field === 'method' && isWrappedMethod(target.method))) {
+      return null;
+    }
+  }
+  return {
+    question: copy,
+    detail: `${describeIssues(error)}; removed rules=${JSON.stringify([...removedRules.values()])}`,
+  };
+}
+
+function isWrappedMethod(method: unknown): boolean {
+  return typeof method === 'object' && method !== null && 'kind' in method;
 }
 
 // parseJsonObjectLoose 的结构化替身（避免 question-supply → @/server/ai 边；工具层注入真身）。

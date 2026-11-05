@@ -41,6 +41,7 @@ const SpendRecord = z.object({
   /** Part of the hold kept for verification of the unit's questions. */
   verify_micro_usd: z.number().int().nonnegative(),
   charge_micro_usd: z.number().int().nonnegative().optional(),
+  run_charge_micro_usd: z.number().int().nonnegative().optional(),
   basis: z.enum(['actual', 'hold', 'released']).optional(),
   task_run_ids: z.array(z.string()).optional(),
 });
@@ -173,12 +174,14 @@ async function holdNewKey(
  * before the target is enqueued. A denied target is left for the next night. */
 export function holdNightlySupplyUnit(
   db: Db,
-  input: { targetId: string; questionCount: number; now?: Date },
+  input: { targetId: string; questionCount: number; runCeilingMicroUsd?: number; now?: Date },
 ): Promise<SupplySpendHold> {
   const verify = input.questionCount * VERIFY_RESERVATION_MICRO_USD;
   return holdNewKey(db, {
     key: nightlyUnitKey(input.targetId),
-    holdMicroUsd: RUN_RESERVATION_MICRO_USD + verify,
+    holdMicroUsd:
+      Math.min(input.runCeilingMicroUsd ?? RUN_RESERVATION_MICRO_USD, RUN_RESERVATION_MICRO_USD) +
+      verify,
     verifyMicroUsd: verify,
     now: input.now ?? new Date(),
   });
@@ -294,7 +297,12 @@ async function runCostMicroUsd(
  */
 export async function settleNightlySourcingRun(
   db: Db,
-  input: { targetId: string; taskRunIds: readonly string[]; submittedCount: number },
+  input: {
+    targetId: string;
+    taskRunIds: readonly string[];
+    submittedCount: number;
+    interruptedUnknown?: boolean;
+  },
 ): Promise<void> {
   const key = nightlyUnitKey(input.targetId);
   const day = await dayOfKey(db, key);
@@ -303,16 +311,37 @@ export async function settleNightlySourcingRun(
   await onDay(db, day, async (tx, records) => {
     const current = records.get(key);
     if (!current || current.kind === 'settle') return;
-    const runCharge = cost.unpriced
-      ? current.hold_micro_usd - current.verify_micro_usd
-      : cost.known;
+    const unknown = cost.unpriced || input.interruptedUnknown === true;
+    const runCharge = unknown ? current.hold_micro_usd - current.verify_micro_usd : cost.known;
     await append(tx, {
       ...current,
       seq: current.seq + 1,
       kind: 'settle',
       charge_micro_usd: runCharge + input.submittedCount * VERIFY_RESERVATION_MICRO_USD,
-      basis: cost.unpriced ? 'hold' : 'actual',
+      run_charge_micro_usd: runCharge,
+      basis: unknown ? 'hold' : 'actual',
       task_run_ids: [...input.taskRunIds],
     });
   });
+}
+
+/** The ticket's prior segments consume its allowance even after a process restart. */
+export async function priorSupplyRunCharge(db: Db, targetIds: readonly string[]): Promise<number> {
+  if (!targetIds.length) return 0;
+  const keys = targetIds.map(nightlyUnitKey);
+  const rows = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(eq(event.action, SUPPLY_SPEND_ACTION), inArray(sql`${event.payload}->>'key'`, keys)),
+    );
+  const latest = new Map<string, SpendRecordT>();
+  for (const row of rows) {
+    const record = SpendRecord.parse(row.payload);
+    if ((latest.get(record.key)?.seq ?? -1) < record.seq) latest.set(record.key, record);
+  }
+  return [...latest.values()].reduce(
+    (sum, record) => sum + Math.max(0, record.run_charge_micro_usd ?? chargeOf(record)),
+    0,
+  );
 }
