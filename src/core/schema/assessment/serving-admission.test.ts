@@ -107,8 +107,8 @@ describe('automatic serving model gate', () => {
   });
 
   // @invariant grading: a system slice serves matching model versions and response classes across subjects
-  // @fails-if bind admission to subject; the same model cannot serve another subject
-  it('serves matching system slices across subjects', () => {
+  // @fails-if bind admission to subject or ignore model/version/response drift
+  it('serves matching system slices across subjects and withholds model or response drift', () => {
     const pins = currentModelPins();
     const rubric = pins.get('AssessmentRubricJudgeTask');
     if (rubric === undefined) throw new Error('rubric pin missing');
@@ -126,6 +126,15 @@ describe('automatic serving model gate', () => {
       kind: 'admitted',
     });
     expect(decideAutomaticServing(revision, ['p1'], context, null)).toEqual({ kind: 'admitted' });
+    for (const drift of [
+      { model: 'different-model' },
+      { model_version: `${row.model_version}:changed` },
+      { response_class: 'blank' as const },
+    ]) {
+      expect(
+        decideAutomaticServing(revision, ['p1'], admission({ ...row, ...drift }, pins), 'physics'),
+      ).toMatchObject({ kind: 'unavailable', reason: 'model_admission_unavailable' });
+    }
   });
 
   // @invariant grading: a blank unit Jev cannot judge is withheld instead of issued into a permanent pending
