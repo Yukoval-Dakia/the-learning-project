@@ -1,17 +1,26 @@
-/* 记忆 (/memory; YUK-1776 §13). Same M3E bridge as the other 整理 pages; emphasis is surface tiers,
-   small icons and status chips, never a coloured side bar. */
+/* 记忆 (/memory; YUK-1776 §13). Owner chose a page to read, not a stack of cards: real sentences at
+   reading size, one tinted block for how to talk to me, controls that step back, and the box for
+   changes floating at the foot of the screen so it is not taken for search. No coloured side bars. */
 
 [data-ui-next].mm-page {
   background: var(--un-md-sys-color-surface);
   color: var(--un-md-sys-color-on-surface);
 
   & .mm-main {
+    display: flex;
+    flex-direction: column;
+    gap: var(--un-sp-6);
+    width: min(680px, 100%);
+    min-height: calc(100dvh - 72px);
+    margin: 0 auto;
+    padding: var(--un-sp-6) var(--un-sp-6) var(--un-sp-5);
+  }
+
+  & .mm-content {
     display: grid;
     align-content: start;
-    gap: var(--un-sp-5);
-    width: min(760px, 100%);
-    margin: 0 auto;
-    padding: var(--un-sp-6) var(--un-sp-6) calc(var(--un-sp-8) + var(--un-sp-7));
+    gap: 28px;
+    flex: 1;
   }
 
   & .mm-head {
@@ -20,15 +29,26 @@
   }
 
   & .mm-title {
-    font-size: var(--un-fs-5, 26px);
-    font-weight: var(--un-fw-medium);
+    font-size: 30px;
+    font-weight: var(--un-fw-semibold);
   }
 
   & .mm-lead,
   & .mm-empty {
     color: var(--un-text-2);
+    font-size: 16px;
   }
 
+  & .mm-visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* The box */
   & .mm-tell {
     display: grid;
     gap: var(--un-sp-3);
@@ -41,7 +61,7 @@
 
   & .mm-tell-label {
     color: var(--un-text-2);
-    font-size: var(--un-fs-1);
+    font-size: 14px;
   }
 
   & .mm-tell-row {
@@ -66,10 +86,46 @@
     background: transparent;
     color: var(--un-text-1);
     font: inherit;
+    font-size: 16px;
   }
 
   & .mm-tell-input::placeholder {
-    color: var(--un-text-4);
+    color: var(--un-text-3);
+  }
+
+  /* In the page's flow, so it sits after the last line instead of covering it. */
+  & .mm-tell-floating {
+    position: sticky;
+    bottom: var(--un-sp-4);
+    z-index: 2;
+    padding: var(--un-sp-2);
+    border-radius: 18px;
+  }
+
+  /* A long result scrolls inside the bar and never takes the screen. */
+  & .mm-tell-result {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--un-sp-2);
+    max-height: 40dvh;
+    overflow-y: auto;
+  }
+
+  & .mm-tell-result .mm-outcome {
+    flex: 1;
+    min-width: 0;
+  }
+
+  & .mm-tell-bar-row {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    padding: 6px 6px 6px 14px;
+    border-radius: 12px;
+  }
+
+  & .mm-tell-bar-row:focus-within {
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-accent);
   }
 
   & .mm-outcome {
@@ -91,7 +147,7 @@
 
   & .mm-outcome-text {
     color: var(--un-text-1);
-    font-size: var(--un-fs-1);
+    font-size: 14px;
     white-space: pre-wrap;
   }
 
@@ -106,25 +162,24 @@
     padding: 0;
     list-style: none;
     color: var(--un-caution);
-    font-size: var(--un-fs-1);
+    font-size: 14px;
   }
 
+  /* Topics */
   & .mm-topics {
     display: grid;
-    gap: var(--un-sp-3);
+    gap: var(--un-sp-7);
   }
 
   & .mm-topic {
     display: grid;
-    gap: var(--un-sp-3);
-    padding: var(--un-sp-4) var(--un-sp-5);
-    border: var(--un-hairline) solid var(--un-line);
-    border-radius: var(--un-r-2);
+    gap: 10px;
   }
 
   & .mm-topic[data-talk] {
-    border-color: transparent;
-    background: var(--un-bg-sunk);
+    padding: var(--un-sp-5) 26px;
+    border-radius: 16px;
+    background: var(--un-accent-soft);
   }
 
   & .mm-topic-head {
@@ -135,8 +190,6 @@
   }
 
   & .mm-topic-titles {
-    display: grid;
-    gap: 2px;
     min-width: 0;
   }
 
@@ -144,8 +197,8 @@
     display: flex;
     align-items: center;
     gap: var(--un-sp-2);
-    font-size: var(--un-fs-3, 16px);
-    font-weight: var(--un-fw-medium);
+    font-size: 18px;
+    font-weight: var(--un-fw-semibold);
   }
 
   & .mm-topic-name svg {
@@ -153,23 +206,30 @@
     color: var(--un-accent);
   }
 
-  & .mm-topic-desc,
   & .mm-topic-foot,
   & .mm-change-when {
     color: var(--un-text-3);
-    font-size: var(--un-fs-1);
+    font-size: 13px;
   }
 
   & .mm-facts {
     display: grid;
-    gap: var(--un-sp-2);
+    gap: 10px;
     margin: 0;
-    padding-left: 1.1em;
-    list-style: disc;
+    padding: 0;
+    list-style: none;
   }
 
   & .mm-fact {
     color: var(--un-text-1);
+    font-size: 17px;
+    line-height: 1.85;
+  }
+
+  & .mm-topic[data-talk] .mm-fact {
+    font-size: 19px;
+    font-weight: var(--un-fw-medium);
+    line-height: 1.75;
   }
 
   & .mm-fact .un-chip {
@@ -187,16 +247,54 @@
     margin-left: auto;
   }
 
-  & .mm-section-title {
-    font-size: var(--un-fs-2);
-    font-weight: var(--un-fw-medium);
+  /* Controls step back until the pointer is on the topic; touch screens always show them. */
+  @media (hover: hover) {
+    & .mm-topic-head button,
+    & .mm-topic-foot > button {
+      opacity: 0;
+      transition: opacity var(--un-t-feedback) var(--un-ease-glide);
+    }
+    & .mm-topic:hover .mm-topic-head button,
+    & .mm-topic:hover .mm-topic-foot > button,
+    & .mm-topic:focus-within .mm-topic-head button,
+    & .mm-topic:focus-within .mm-topic-foot > button {
+      opacity: 1;
+    }
   }
 
+  /* History, one line until asked for */
   & .mm-changes {
     display: grid;
     justify-items: start;
     gap: var(--un-sp-3);
-    margin-top: var(--un-sp-3);
+  }
+
+  & .mm-history-title {
+    width: 100%;
+    font: inherit;
+  }
+
+  & .mm-history-toggle {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+    width: 100%;
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-2);
+    font-size: 14px;
+    text-align: left;
+  }
+
+  & .mm-history-last {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    color: var(--un-positive);
+    font-size: 13px;
   }
 
   & .mm-change-list {
@@ -234,19 +332,19 @@
     align-items: center;
     gap: var(--un-sp-2);
     color: var(--un-text-1);
-    font-size: var(--un-fs-1);
+    font-size: 14px;
     font-weight: var(--un-fw-medium);
   }
 
   & .mm-diff-state {
     color: var(--un-text-3);
-    font-size: var(--un-fs-1);
-    font-weight: var(--un-fw-regular, 400);
+    font-size: 13px;
+    font-weight: var(--un-fw-regular);
   }
 
   & .mm-diff-line {
     color: var(--un-text-2);
-    font-size: var(--un-fs-1);
+    font-size: 14px;
   }
 
   & .mm-diff-line[data-kind="added"] {
@@ -262,11 +360,16 @@
     -webkit-line-clamp: 2;
   }
 
-  @media (max-width: 600px) {
+  @media (max-width: 720px) {
     & .mm-main {
+      min-height: calc(100dvh - 56px - 72px - env(safe-area-inset-bottom));
       padding-inline: var(--un-sp-4);
     }
-    & .mm-topic {
+    /* Above the phone tab bar. */
+    & .mm-tell-floating {
+      bottom: calc(72px + env(safe-area-inset-bottom) + var(--un-sp-2));
+    }
+    & .mm-topic[data-talk] {
       padding: var(--un-sp-4);
     }
   }
