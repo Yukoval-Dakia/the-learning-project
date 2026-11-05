@@ -31,6 +31,11 @@ import {
 const SOURCE_RE = /\.[cm]?[jt]sx?$/;
 const TEST_RE = /\.(?:unit|db|migration|integration|e2e)?\.?(?:test|spec)\.[cm]?[jt]sx?$/;
 const PUBLIC_ENTRYPOINTS = new Set(['public', 'ui-public']);
+// A sub-owner's `public.ts`/`ui-public.ts` is the same kind of declared port as the
+// root barrels — consumers reach it directly rather than through the root forward.
+const isPublicEntrypoint = (entrypoint: string) =>
+  PUBLIC_ENTRYPOINTS.has(entrypoint) ||
+  PUBLIC_ENTRYPOINTS.has(entrypoint.slice(entrypoint.lastIndexOf('/') + 1));
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
 const EDGE_UNIT = 'distinct-source-file-to-resolved-module' as const;
 const BASELINE_PATH = 'scripts/capability-boundary-baseline.json';
@@ -692,7 +697,7 @@ function summarizeDependencies(dependencies: SemanticDependency[]): {
       );
     } else if (source.layer === 'server' && target?.layer === 'capability') {
       const pair = `${source.module} -> ${target.owner}`;
-      if (PUBLIC_ENTRYPOINTS.has(target.entrypoint)) increment(serverToCapabilityPublic, pair);
+      if (isPublicEntrypoint(target.entrypoint)) increment(serverToCapabilityPublic, pair);
       else increment(serverToCapabilityDeep, pair);
     } else if (
       source.layer === 'capability' &&
@@ -915,7 +920,7 @@ function collectSeamViolations(projectRoot: string): Violation[] {
         }
         continue;
       }
-      if (!PUBLIC_ENTRYPOINTS.has(targetLocation.entrypoint)) {
+      if (!isPublicEntrypoint(targetLocation.entrypoint)) {
         violations.push({
           file: relative(projectRoot, file),
           source: reference.source,
@@ -1042,7 +1047,7 @@ function auditServerEntryEdges(input: {
   let newTypeEdges = 0;
   for (const edge of added) {
     const target = locateModulePath(edge.module);
-    if (target?.layer === 'capability' && PUBLIC_ENTRYPOINTS.has(target.entrypoint)) {
+    if (target?.layer === 'capability' && isPublicEntrypoint(target.entrypoint)) {
       newPublicEdges += 1;
       continue;
     }

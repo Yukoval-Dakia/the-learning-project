@@ -294,7 +294,6 @@
 {"file":"src/capabilities/practice/public.ts","kind":"site","symbol":"readPlacementSession","targetModule":"src/capabilities/practice/placement/public.ts","targetSymbol":"readPlacementSession","class":"stable_contract"}
 {"file":"src/capabilities/practice/public.ts","kind":"site","symbol":"readPracticeDraftList","targetModule":"src/capabilities/practice/question-bank/public.ts","targetSymbol":"readPracticeDraftList","class":"stable_contract"}
 {"file":"src/capabilities/practice/public.ts","kind":"site","symbol":"readPracticeQuestionList","targetModule":"src/capabilities/practice/question-bank/public.ts","targetSymbol":"readPracticeQuestionList","class":"stable_contract"}
-{"file":"src/capabilities/practice/public.ts","kind":"site","symbol":"readQuestionDetail","targetModule":"src/capabilities/practice/question-bank/public.ts","targetSymbol":"readQuestionDetail","class":"stable_contract"}
 {"file":"src/capabilities/practice/public.ts","kind":"site","symbol":"readWorksheetExport","targetModule":"src/capabilities/practice/session/public.ts","targetSymbol":"readWorksheetExport","class":"stable_contract"}
 {"file":"src/capabilities/practice/public.ts","kind":"site","symbol":"recomposePracticeStream","targetModule":"src/capabilities/practice/scheduling/public.ts","targetSymbol":"recomposePracticeStream","class":"stable_contract"}
 {"file":"src/capabilities/practice/public.ts","kind":"site","symbol":"reconcileJudgeAttempts","targetModule":"src/capabilities/practice/grading/public.ts","targetSymbol":"reconcileJudgeAttempts","class":"stable_contract"}
