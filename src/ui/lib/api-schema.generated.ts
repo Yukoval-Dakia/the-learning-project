@@ -35065,7 +35065,7 @@ export interface operations {
                 "Idempotency-Key": string;
             };
             path: {
-                command: "release_verify_hold";
+                command: "release_verify_hold" | "recheck_source";
                 id: string;
             };
             cookie?: never;

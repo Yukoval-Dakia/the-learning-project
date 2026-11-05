@@ -5,9 +5,13 @@
 //                        dimension-only path; never touches retraction_hold,
 //                        never mints a revision
 //
-// YUK-1664 — reverify and recheck_source are system duties driven by result
-// events and the recovery pass (auto:<group>:<digest>:<command>:<n> ledger keys); old
-// clients posting them get the params-schema 400.
+//   recheck_source  — re-dispatch source_verify on a source_check_failed hold
+//                        (command event + deterministic job + paid-effect claim;
+//                        re-gates on hold_reason inside the command)
+//
+// reverify stays a system duty driven by result events and the recovery pass
+// (auto:<group>:<digest>:<command>:<n> ledger keys); old clients posting it get
+// the params-schema 400.
 //
 // Every command requires an Idempotency-Key header and returns
 // {accepted, serving} where serving is the same projection the list/detail
