@@ -142,9 +142,8 @@ const LETTER_INDEX: Record<string, number> = {
 
 /**
  * 解析 legacy 字母答案头（"AC" / "A C" / "A,C"）；null 表示不可解析，走 rule_reference。
- * 导出给 placement 供给链的单 part 无损判定复用同一口径（YUK-1859）。
  */
-export function parseChoiceAnswerHead(head: string, optionCount: number): number[] | null {
+function parseChoiceAnswerHead(head: string, optionCount: number): number[] | null {
   const tokens = head.replace(/[\s,、，;；/]/g, '');
   if (tokens.length === 0) return null;
   const indices = new Set<number>();

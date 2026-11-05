@@ -67,7 +67,6 @@ import {
   questionEmbedStamp,
   writeVerifyDispatchIntent,
 } from '../../question-bank/public';
-import { placementFlatEquivalent } from './placement-flat-equivalence';
 
 export type {
   EditQuestionInputT,
@@ -576,17 +575,10 @@ async function runCandidateSubmit(
     console.error('[submit_question] vector near-dup abstained:', err);
   }
 
-  // YUK-1859 — 单 part 逐字段无损等价时剥掉声明按扁平走；剥除在局部副本上，
-  // 绝不改 input.candidate（提交指纹前后两处重算，须保持同一对象）。
-  const effectiveQuestion = placementFlatEquivalent(
-    candidate.question,
-    ctx.placementAttempt !== undefined,
-    input.request_id,
-  );
   if (
     ctx.placementAttempt &&
-    effectiveQuestion.parts != null &&
-    effectiveQuestion.parts.length > 0
+    candidate.question.parts != null &&
+    candidate.question.parts.length > 0
   ) {
     // The typed declaration chain has no placement question-authority writer; refuse rather
     // than publish a placement question that verification could never be bound to.
@@ -601,7 +593,7 @@ async function runCandidateSubmit(
   // （saveDraftEdit → submitDraftQuestion），不再 flat insert + row publish；
   // 上面的 KC 活体/host/exact/source-URL/near/vector 判重原样先跑。
   // 未声明候选照旧旧 flat 路径（insertSourcedDraft 的 live 无声明 caller）。
-  const declaredParts = effectiveQuestion.parts;
+  const declaredParts = candidate.question.parts;
   if (declaredParts != null && declaredParts.length > 0) {
     return runDeclaredCandidateSubmit(ctx, input, {
       knowledgeIds,
@@ -657,7 +649,7 @@ async function runCandidateSubmit(
       }
       const inserted = await insertSourcedDraft(tx, {
         id: questionId,
-        q: effectiveQuestion,
+        q: candidate.question,
         knowledgeIds,
         sourceRoute: input.source_route,
         createdBy: sourcedCreatedBy(input.source_route, ctx.logTaskRunId),
