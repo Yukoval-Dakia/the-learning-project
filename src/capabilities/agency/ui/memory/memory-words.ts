@@ -9,12 +9,6 @@ interface TopicLike {
   facts: ReadonlyArray<{ id: string; body: string }>;
 }
 
-export interface CommittedChange {
-  change_id?: string | null;
-  before: TopicLike[];
-  after: TopicLike[];
-}
-
 export interface TopicDiff {
   key: string;
   name: string;
@@ -72,14 +66,6 @@ const REFUSALS: Readonly<Record<string, string>> = {
   context_undo_conflict: '后面又有改动，这一步撤销不了。想改的话，直接说一句。',
   context_topic_withdrawn: '这个主题已经删掉了，要记回来需要你再说一次。',
 };
-
-/** The writes a refused correction had already committed, as the server reports them. */
-export function committedChanges(error: unknown): CommittedChange[] {
-  if (!(error instanceof ApiError) || error.code !== 'context_edit_not_committed') return [];
-  // errorResponse nests them: the client's `details` is everything beside error and message.
-  const nested = error.details.details as { changes?: unknown } | undefined;
-  return Array.isArray(nested?.changes) ? (nested.changes as CommittedChange[]) : [];
-}
 
 export function refusalText(error: unknown): string {
   const code = error instanceof ApiError ? error.code : undefined;

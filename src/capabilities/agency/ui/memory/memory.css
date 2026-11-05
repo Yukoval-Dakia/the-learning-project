@@ -99,6 +99,16 @@
     color: var(--un-caution);
   }
 
+  & .mm-remaining {
+    display: grid;
+    gap: var(--un-sp-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--un-caution);
+    font-size: var(--un-fs-1);
+  }
+
   & .mm-topics {
     display: grid;
     gap: var(--un-sp-3);

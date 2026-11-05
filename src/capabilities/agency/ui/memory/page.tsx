@@ -14,19 +14,14 @@ import {
   type MemoryActionResult,
   type MemoryBoard,
   type MemoryChange,
+  type MemoryEditResult,
   type MemoryTopic,
   editMemory,
   readMemoryBoard,
   undoMemoryChange,
   withdrawMemoryTopic,
 } from './memory-api';
-import {
-  type TopicDiff,
-  committedChanges,
-  diffTopics,
-  refusalText,
-  whenText,
-} from './memory-words';
+import { type TopicDiff, diffTopics, refusalText, whenText } from './memory-words';
 import './memory.css';
 
 const TALK_TOPIC = 'communication';
@@ -37,8 +32,31 @@ interface Outcome {
   text?: string;
   diffs?: TopicDiff[];
   changeId?: string;
+  /** What the correction asked for that is not saved. */
+  remaining?: string[];
   /** Green only when something really changed; refused is the caution tone; otherwise neutral. */
   tone?: 'changed' | 'refused';
+}
+
+/** Only what was really saved is shown as saved; anything else is said plainly. */
+function editOutcome(result: MemoryEditResult): Outcome {
+  const saved = result.changes.filter((change) => change.status === 'changed');
+  const diffs = saved.flatMap((change) => diffTopics(change.before, change.after));
+  const changeId = saved.at(-1)?.change_id ?? undefined;
+  if (result.status === 'partial') {
+    // Nothing saved: the server's own sentence says so and why.
+    if (saved.length === 0) return { text: result.reply, tone: 'refused' };
+    return {
+      text: '只改成了一部分。下面是已经保存的，可以撤销。',
+      diffs,
+      changeId,
+      remaining: result.remaining_changes,
+      tone: 'refused',
+    };
+  }
+  // A crisis reply or a sentence that is not stored changes nothing: the reply is all there is.
+  if (saved.length === 0) return { text: result.reply };
+  return { diffs, changeId, tone: 'changed' };
 }
 
 /** Undo only claims success when the server says something changed. */
@@ -49,16 +67,6 @@ function undoOutcome(result: MemoryActionResult): Outcome {
 }
 
 function refusedOutcome(error: unknown): Outcome {
-  // A failed correction can still have committed its earlier writes: say what is really there.
-  const partial = committedChanges(error);
-  if (partial.length > 0) {
-    return {
-      text: '只改成了一部分。下面是已经改了的，可以撤销，剩下的可以再说一次。',
-      diffs: partial.flatMap((change) => diffTopics(change.before, change.after)),
-      changeId: partial.at(-1)?.change_id ?? undefined,
-      tone: 'refused',
-    };
-  }
   return { text: refusalText(error), tone: 'refused' };
 }
 
@@ -120,6 +128,15 @@ function OutcomeNote({
         <MathMarkdown className="mm-outcome-text">{outcome.text}</MathMarkdown>
       ) : null}
       {outcome.diffs && outcome.diffs.length > 0 ? <DiffLines diffs={outcome.diffs} /> : null}
+      {outcome.remaining && outcome.tone === 'refused' && outcome.diffs ? (
+        <ul className="mm-remaining">
+          {outcome.remaining.length > 0 ? (
+            outcome.remaining.map((item) => <li key={item}>还没保存：{item}</li>)
+          ) : (
+            <li>其余要求还没保存或没确认。</li>
+          )}
+        </ul>
+      ) : null}
       {changeId ? (
         <Button
           variant="quiet"
@@ -173,19 +190,7 @@ function TellBox({
       {
         onSuccess: (result) => {
           setText('');
-          const changes = result.changes.filter((change) => change.status === 'changed');
-          const last = changes.at(-1);
-          // A real change shows what actually changed. With none (a crisis reply, a sentence that
-          // is not stored) the reply is all there is to say.
-          setOutcome(
-            changes.length > 0
-              ? {
-                  diffs: changes.flatMap((change) => diffTopics(change.before, change.after)),
-                  changeId: last?.change_id ?? undefined,
-                  tone: 'changed',
-                }
-              : { text: result.reply },
-          );
+          setOutcome(editOutcome(result));
         },
         // The sentence stays in the box so it can be sent again.
         onError: (error) => setOutcome(refusedOutcome(error)),
@@ -292,23 +297,27 @@ function ChangeRow({ change, version }: { change: MemoryChange; version: number 
     <li className="mm-change">
       <div className="mm-change-head">
         <span className="mm-change-when">{whenText(change.at)}</span>
-        <Button
-          variant="quiet"
-          size="sm"
-          disabled={undo.isPending}
-          onClick={() =>
-            undo.mutate(
-              { change_id: change.id, expected_version: version },
-              {
-                onSuccess: (result) => setNote(undoOutcome(result)),
-                onError: (error) => setNote(refusedOutcome(error)),
-              },
-            )
-          }
-        >
-          <RotateCcw size={14} aria-hidden="true" />
-          {undo.isPending ? '在撤销…' : '撤销'}
-        </Button>
+        {change.undo_of === null ? (
+          <Button
+            variant="quiet"
+            size="sm"
+            disabled={undo.isPending}
+            onClick={() =>
+              undo.mutate(
+                { change_id: change.id, expected_version: version },
+                {
+                  onSuccess: (result) => setNote(undoOutcome(result)),
+                  onError: (error) => setNote(refusedOutcome(error)),
+                },
+              )
+            }
+          >
+            <RotateCcw size={14} aria-hidden="true" />
+            {undo.isPending ? '在撤销…' : '撤销'}
+          </Button>
+        ) : (
+          <span className="mm-diff-state">撤销记录</span>
+        )}
       </div>
       <DiffLines diffs={diffs} />
       {note ? (
