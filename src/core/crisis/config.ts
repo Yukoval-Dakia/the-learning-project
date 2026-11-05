@@ -40,69 +40,52 @@ export interface CrisisGuardConfig {
 // separate for reuse by the ironic rule; bare 自杀/安乐死 are excluded so historical,
 // academic, or third-person mentions stay none.
 //
-// 死 + colloquial-verb compounds ("想死磕/想死扛/想死记/想死死缠" = grim determination,
-// not a death wish) are excluded. Study verbs (读/写/算/刷) and pronouns stay unlisted
-// — "我想死，题做不完" is ambiguous and a miss costs more than a false positive.
-// 宅/躺/睡/瘫/蹲 are also unlisted: "想死，宅在家不想出门" parses coherently as a
-// death wish plus withdrawal, so uncertainty resolves toward keeping the hit.
-const SI_COMPOUND_CHARS = '磕|扛|撑|顶|缠|磨|黏|赖|跟|盯|抱|抓|捏|攥|揪|掐|拽|捂|记|背|啃|抠|命|卷';
-// "死死X" compounds ("想死死缠" = clinging hard) are suppressed only when 死 is
-// followed by another verb char — "想死死不了" stays a hit.
-const SI_SI_VERB_CHARS = '缠打跟盯黏磨扛拼磕拽掐抱抓咬赖撑顶抠啃卷捂';
+// 死 + real colloquial-verb compounds ("想死磕/想死记/想死缠" = grim determination,
+// not a death wish) are excluded. Only lexicalized compounds qualify: 扛/撑/顶 are
+// the endurance verbs themselves and stay hits ("想死扛不住"), and a complement
+// 不 right after the compound char means the verb is being negated, not compounded
+// ("想死记不住了" = 想死 + 记不住了). Study verbs and pronouns stay unlisted —
+// "我想死，题做不完" is ambiguous and a miss costs more than a false positive.
+const SI_COMPOUND_CHARS = '磕|缠|磨|黏|赖|跟|盯|抱|抓|捏|攥|揪|掐|拽|捂|记|背|啃|抠|命|卷|死';
+const SI_COMPOUND_GUARD = `(?!(?:${SI_COMPOUND_CHARS})(?!不))`;
 
-// Impersonal-why gate: a why-question releases a death term only when it has an
-// explicit third-party subject or an analytic frame — "屈原为什么会想自杀" (named
-// subject), "他为什么会想死" (third person), "细胞为什么活不下去" (object noun).
-// Generic subjects ("人为什么会想死" — the asker may mean themself), subject-free
-// questions, personal/pondering anchors, and pronouns inside the gap all keep
-// matching: a miss costs more than a false positive.
+// Whitelist why-gate: a why-form releases a term only when the sentence actually
+// contains an explicit third-party word AND no first/second-person marker appears
+// anywhere in it ("他为什么会想死" / "为什么他会想死" / "细胞为什么活不下去"
+// release; "为什么别人都想死，我也是" still hits via 我). Names ("屈原", "hamlet"),
+// generic collectives ("人", "人们", "学生", "people"), subject-free questions, and
+// pondering wrappers ("到底为什么想死") all keep matching — recorded known false
+// positives, a miss costs more.
 const WHY_WORD_ZH = '(?:为什么|为何|为啥|怎么会|咋|因何|何故|缘何|如何|怎么)';
-const PRONOUN_CHAR_ZH = '[我你他她它牠谁俺咱们]';
-const PERSON_ZH =
-  '(?:我|俺|咱|你|您|自己|本人|老子|老娘|我们|咱们|你们|不知道|不知|想不通|搞不懂|弄不懂|不明白|不理解|好奇|纳闷)';
-const WHY_GAP_ZH = `(?:(?!${PRONOUN_CHAR_ZH}).){0,4}`;
-// Chars that can end a non-subject context before the why-word: personal pronouns,
-// endings of pondering/inquiry verbs (知道/想/问/讨论/分析/觉得… — "不知道为什么
-// 想死"), and function words. Any other CJK/letter char counts as an impersonal
-// subject boundary, so names and object nouns need no enumeration.
-const WHY_OK_CHAR_ZH =
-  '我你俺咱您谁' +
-  '道想问说讲解白懂论析究查学读写看谈虑奇怪闷诉及到得起出来过楚明' +
-  '证讨考思索探疑算测推断定认为猜评释叙述忆录载辩惑纳顾磨议心觉恐' +
-  '的了呢啊哪吗吧么嘛';
-// Impersonal words ending in a WHY_OK char still count as third-party subjects.
-const WHY_IMPER_ZH = '(?:某人|别人|他人|同学|同道|同行|同胞|侨胞)';
-// Generic person collectives: "人/人们/大家/有人/学生/孩子们" — the asker may be
-// included, so these stay hits. A boundary or generic prefix (有/些/众/大…) must
-// precede the root so "诗人/家人/老人" keep releasing as third-party analysis.
-const WHY_GENERIC_ROOT_ZH =
-  '(?:人|每个人|一个人|几个人|好多人|很多人|许多人|某些人|人类|人家|本人|大家|' +
-  '普通人|一般人|所有人|任何人|学生|考生|研究生|博士生|' +
-  '硕士生|本科生|专科生|留学生|实习生|毕业生|在校生|高考生|中考生|应届生|往届生|' +
-  '新生|老生|女生|男生|孩子|小孩|儿童|少年|青年|未成年人|学生党|年轻人|青少年|大伙儿)们?';
-const WHY_GENERIC_SUBJ_ZH = `(?:^|[^一-鿿A-Za-z0-9]|[有些众大小中高初新老本般通常平许多很何任每])(?:${WHY_GENERIC_ROOT_ZH})`;
-const WHY_BAD_TAIL_ZH = `(?:(?![${WHY_OK_CHAR_ZH}])[一-鿿A-Za-z0-9]|${WHY_IMPER_ZH})`;
-// A third-person slot inside the question itself also releases ("为什么他会想死"
-// / "为什么别人会想死"); generic roots like 人们/有人 are not in the list, and
-// why-fronted named subjects ("为什么屈原会想自杀") keep the b20-class residual.
-const WHY_BAD_GAP_ZH = `${WHY_WORD_ZH}(?:(?![我你他她它牠谁俺咱们]).){0,4}(?:他|她|它|牠|他们|她们|它们|牠们|某人|别人|他人|同学|同道|同行|同胞|侨胞)(?:(?![我你他她它牠谁俺咱们]).){0,4}`;
-// An analytic frame anywhere within ~40 chars after the term ("从心理学角度分析",
-// "分析……的动机") also releases — the question is being framed as study content.
-const ANALYSIS_FRAME_ZH =
-  '从.{0,10}(?:角度|层面|视角|方面|立场|理论|维度|框架|学说|流派|视野|视域|语境|背景)' +
-  '|(?:进行|展开|加以|做出|作出|做|作)了?.{0,6}(?:分析|解读|讨论|研究|探讨|阐释|剖析|考察|评论|赏析|比较)' +
-  '|(?:分析|解读|阐释|剖析|讨论|研究|探讨|考察|论述|评价|评论|赏析|梳理|比较)了?.{0,10}(?:原因|动机|心理|意义|缘由|根源|背景|形象|内涵|主题|思想|意蕴|过程|方式|成因|结局|命运)';
-const WHY_GUARD_ZH =
-  `(?!.{0,40}${ANALYSIS_FRAME_ZH})` +
-  `(?:(?<!(?:${WHY_BAD_TAIL_ZH})${WHY_WORD_ZH}${WHY_GAP_ZH}|${WHY_BAD_GAP_ZH})` +
-  `|(?<=(?:${WHY_GENERIC_SUBJ_ZH}|${PERSON_ZH}.{0,6})${WHY_WORD_ZH}${WHY_GAP_ZH}))`;
-// English equivalent: "why does hamlet want to die" releases via a non-generic
-// subject after the why; "why do people/i want to die" stays a hit.
-const GENERIC_SUBJ_EN =
-  'i|you|we|me|us|people|person|anyone|anybody|someone|somebody|everyone|everybody|nobody|' +
-  'human|humans|humanity|mankind|students?|kids?|children?|teenagers?|teens?|adolescents?|' +
-  'youth|men|women|folks|guys|adults?';
-const WHY_GUARD_EN = `(?<!why\\s+(?:\\w+\\s+){0,2}(?!(?:${GENERIC_SUBJ_EN})\\b)\\w+\\s+)`;
+const THIRD_PARTY_ZH =
+  '(?:他|她|它|牠|他们|她们|它们|牠们|某人|别人|他人|旁人|外人|陌生人|人物|角色|' +
+  '主人公|主角|配角|作者|诗人|词人|作家|名人|古人|伟人|英雄|反派|死者|逝者|当事人|' +
+  '被害人|受害人|凶手|嫌疑人|罪犯|罪人|犯人|自杀者|案例|素材|原型|传记|课文|课本|' +
+  '小说|故事|电影|剧本|文章|作品|寓言|典故|传说|神话|史料|新闻|报道|论文|例题|同学|' +
+  '同桌|室友|同事|朋友|网友|家人|亲人|亲戚|父母|爸爸|妈妈|父亲|母亲|家长|长辈|哥哥|' +
+  '姐姐|弟弟|妹妹|兄长|兄弟|姐妹|爷爷|奶奶|外公|外婆|姥爷|姥姥|叔叔|阿姨|舅舅|姑姑|' +
+  '老师|导师|医生|护士|警察|军人|邻居|老乡|领导|老板|上司|教练|队友|对手|敌人|仇人|' +
+  '恩人|爱人|恋人|对象|伴侣|配偶|丈夫|妻子|老公|老婆|男友|女友|前任|前夫|前妻|病友|' +
+  '狱友|战友|细胞|组织|器官|细菌|病毒|微生物|动物|植物|鱼|鱼儿|鸟|鸟儿|猫|狗|兔子|' +
+  '老鼠|虫子|昆虫|物体|东西|机器|设备|装置|仪器|模型|桥|塔|楼|墙|坝|堤|容器|结构|' +
+  '材料|元件|零件|部件|系统|分子|原子|电子|粒子|蛋白|细胞器)';
+const PERSONAL_ZH = '(?:我|俺|咱|自己|本人|老子|老娘|我们|咱们|你|您|你们|包括我|像我)';
+const THIRD_PARTY_PRESENT_ZH = `(?<=(?:${THIRD_PARTY_ZH}).{0,80})|(?=.{0,80}(?:${THIRD_PARTY_ZH}))`;
+const PERSONAL_PRESENT_ZH = `(?<=(?:${PERSONAL_ZH}).{0,80})|(?=.{0,80}(?:${PERSONAL_ZH}))`;
+const WHY_GUARD_ZH = `(?:(?<!${WHY_WORD_ZH}.{0,12})|(?!(?:${THIRD_PARTY_PRESENT_ZH}))|(?:${PERSONAL_PRESENT_ZH}))`;
+// English equivalent: "why does he/she/the character want to die" releases;
+// "why do i/people/hamlet want to die" stays a hit (hamlet is a name, not a listed
+// role word — same known-false-positive rule as 屈原).
+const THIRD_PARTY_EN =
+  '\\b(?:he|she|they|them|him|his|their|theirs|someone|somebody|character|protagonist|' +
+  'hero|heroine|villain|author|poet|writer|narrator|victim|patient|deceased|classmate|' +
+  'roommate|friend|parent|father|mother|teacher|doctor|therapist|counselor|animal|animals|' +
+  'fish|bird|cells?|plants?|organism|creature|novel|story|essay|poem|text|passage|article|book)\\b';
+const PERSONAL_EN =
+  '\\b(?:i|me|my|mine|myself|we|us|our|ours|ourselves|you|your|yours|yourself|yourselves|u)\\b';
+const THIRD_PARTY_PRESENT_EN = `(?<=(?:${THIRD_PARTY_EN}).{0,80})|(?=.{0,80}(?:${THIRD_PARTY_EN}))`;
+const PERSONAL_PRESENT_EN = `(?<=(?:${PERSONAL_EN}).{0,80})|(?=.{0,80}(?:${PERSONAL_EN}))`;
+const WHY_GUARD_EN = `(?:(?<!why(?:\\s+\\w+){0,4}\\s+)|(?!(?:${THIRD_PARTY_PRESENT_EN}))|(?:${PERSONAL_PRESENT_EN}))`;
 
 // For the endurance pattern: a 的 directly after a pronoun is a possessive — it stays
 // in the window only before psychosomatic/life-domain nouns or adverbial markers, so
@@ -113,17 +96,38 @@ const ENDURANCE_POSSESSIVE_OK =
   '身体|身子|体力|精力|精神|心理|神经|内心|心态|情绪|意志|心|耐心|耐性|脑|家|日子|' +
   '生活|状态|人|生意|买卖|工作|事业|学业|感情|婚姻|关系|前途|未来|梦想|理想|希望|' +
   '真|太|很|非常|实在|确|的确|好|特别|格外|分外';
+// First-person-objectless rule for the endurance capture: the pronoun anchor must
+// sit at a clause boundary (an optional discourse/vocative slot may precede it) so
+// fronted task objects ("这题我撑不下去了" / "第三圈我就撑不住了") stay out, and
+// the verb complement must end the clause so a following object ("我熬不住夜" /
+// "我扛不住这么重的书包") stays out. "我妈天天念我，我快顶不住了" still hits —
+// documented residual false positive.
+const CLAUSE_BOUNDARY_ZH = '，。！？；、：…—·.,!?;:\\s"\'“”‘’「」《》()（）';
+const ENDURANCE_PREFIX_ZH =
+  '(?:最近|这几天|这段时间|现在|其实|真的|实在|感觉|觉得|好像|突然|忽然|已经|' +
+  '一直|总是|老是|快要|也|还|又|都|很|太|可能|也许|大概|有点|有些|确实|的确|早|' +
+  '终于|反正|说实话|说真的|讲真的|老实说|不知道为什么|不知为何|总之|今晚|今天|' +
+  '昨天|明天|每天这样|每天|天天|老师|救命|救救我|帮帮我|帮帮忙|各位)?';
+const ENDURANCE_TAIL = `(?=$|[${CLAUSE_BOUNDARY_ZH}]|了|的|吗|呢|吧|啊|呀|哈|哦|唉|哎|呜|啦|咯|嘛|么)`;
+const ENDURANCE_VERB_ZH = '(?:撑|熬|挺|坚持|扛|顶)不(?:下去|住|动|了了)';
+const PERSON_ANCHOR_ZH = '(?:我|俺|咱|自己|本人|老子|老娘|我们|咱们)';
 
 const DEATH_TERMS_ZH = new RegExp(
-  `(${WHY_GUARD_ZH}(?:不想活|活不下去|想死(?!${SI_COMPOUND_CHARS}|死[${SI_SI_VERB_CHARS}])|想去死(?!${SI_COMPOUND_CHARS}|死[${SI_SI_VERB_CHARS}])|要去死(?!${SI_COMPOUND_CHARS}|死[${SI_SI_VERB_CHARS}])|去死吧|轻生|结束自己|结束生命|了结自己|了结生命|解脱了|一了百了))`,
+  `(${WHY_GUARD_ZH}(?:不想活|活不下去|想死${SI_COMPOUND_GUARD}|想去死${SI_COMPOUND_GUARD}|要去死${SI_COMPOUND_GUARD}|去死吧|轻生|结束自己|结束生命|了结自己|了结生命|解脱了|一了百了))`,
 );
+// Colloquial intensifiers ("gonna die of boredom", "end it with a quote") are only
+// counted as crisis when anchored to first person and not followed by an object or
+// cause — "i wanna die" hits, "i wanna die of boredom" does not.
+const EN_DIE_TAIL = '(?! *(?:of|from|because|laughing|bored|in this|when))';
+const EN_END_IT_TAIL = '(?! *(?:with|a|the|by|in|on|at|before|when|using|through|to))';
 const DEATH_TERMS_EN = new RegExp(
   `(${WHY_GUARD_EN}(?:kill myself|killing myself|end my life|ending my life|` +
-    'want to die|wanted to die|wanna die|gonna die|suicidal|better off dead|' +
+    'want to die|wanted to die|suicidal|better off dead|' +
     "not want to live|don't want to live|dont want to live|do not want to live|" +
     "not want to be alive|don't want to be alive|dont want to be alive|" +
-    'do not want to be alive|end it all|want to end it|wanna end it|' +
-    'going to end it|gonna end it))',
+    'do not want to be alive|end it all|' +
+    `i\\b.{0,24}?\\b(?:wanna|gonna|going to) (?:die${EN_DIE_TAIL}|end it${EN_END_IT_TAIL}|kill myself)|` +
+    `i\\b.{0,24}?\\bwant(?:ed)? to end it${EN_END_IT_TAIL}))`,
 );
 const JOKE_SIGNALS = /(😂|🤣|哈哈哈|hhhh|233|笑死|梗|烂梗)/;
 const IRONIC_DEATH_TERMS =
@@ -152,12 +156,9 @@ export const CRISIS_GUARD_CONFIG: CrisisGuardConfig = {
     /(想|好想|打算|准备|试着|尝试).{0,6}(吃很多药|吃好多药|吃一大把药|吞药)/,
     /(吞|吃)下?(一大把|一整瓶|整瓶).{0,4}(药|片|安眠药|褪黑素)/,
     /(jump off|hang myself|hurt myself|self[- ]harm|cut myself)/,
-    // Factive/academic frame gate ("海明威是怎么死的" / "他怎么自杀的" → none);
-    // bare method-shopping phrasing ("怎么死不痛苦" / "自杀方式有哪些") keeps matching.
-    new RegExp(
-      `(?<!(?:是|他|她|它|牠|谁).{0,4})(?:怎么死(?!${SI_COMPOUND_CHARS})|怎么自杀|如何自杀)` +
-        '|(?:自杀方法|自杀方式|自杀工具)',
-    ),
+    // No factive frame gate: method-shopping phrasing always hits, so academic
+    // "海明威是怎么死的" is a documented known false positive, not a released miss.
+    new RegExp(`(?:怎么死${SI_COMPOUND_GUARD}|怎么自杀|如何自杀|自杀方法|自杀方式|自杀工具)`),
     /how to (die|kill myself|commit suicide)/,
   ],
 
@@ -171,18 +172,27 @@ export const CRISIS_GUARD_CONFIG: CrisisGuardConfig = {
     new RegExp(`${WHY_GUARD_ZH}(?:消失|不见|解脱|离开).{0,8}(?:就好|算了|好了|的话)`),
     new RegExp(`${WHY_GUARD_ZH}(?:不想面对|无法面对).{0,12}(?:明天|以后|未来|一切)`),
     new RegExp(`${WHY_GUARD_ZH}(?:太累|好累|撑不住).{0,8}(?:想放弃一切|不想继续|想结束)`),
-    // Complement-negation forms the prefix-negation row cannot see ("我撑不下去了");
-    // possessive filtering per ENDURANCE_POSSESSIVE_OK above.
+    // Complement-negation forms ("我撑不下去了"), first-person objectless only: the
+    // pronoun must open a clause and the complement must end it — see above.
     new RegExp(
-      `(?:我|俺|咱|自己|本人|老子|老娘|我们|咱们)(?:(?!(?<=(?:${ENDURANCE_PRONOUNS}))的(?!(?:${ENDURANCE_POSSESSIVE_OK}))).){0,8}(?:撑|熬|挺|坚持|扛|顶)不(?:下去|住|动|了了)`,
+      `(?:^|[${CLAUSE_BOUNDARY_ZH}])${ENDURANCE_PREFIX_ZH}${PERSON_ANCHOR_ZH}` +
+        `(?:的(?:${ENDURANCE_POSSESSIVE_OK}))?` +
+        `(?:(?!(?<=(?:${ENDURANCE_PRONOUNS}))的(?!(?:${ENDURANCE_POSSESSIVE_OK}))).){0,8}` +
+        `${ENDURANCE_VERB_ZH}${ENDURANCE_TAIL}`,
     ),
-    // Subject-dropped form hits at a clause boundary ("撑不下去了", "先移项……撑不下
-    // 去了"); a noun directly before the verb ("这座桥撑不下去了") keeps it out.
-    /(?:^|[，。！？；、：…—·.,!?;:\s"'“”‘’「」《》()（）])(?:撑|熬|挺|坚持|扛|顶)不(?:下去|住|动|了了)/,
+    // Subject-dropped form at a clause boundary ("撑不下去了", "先移项……撑不下去
+    // 了"); a noun directly before the verb ("这座桥撑不下去了") or after the
+    // complement ("撑不下去这道题了") keeps it out.
+    new RegExp(`(?:^|[${CLAUSE_BOUNDARY_ZH}])${ENDURANCE_VERB_ZH}${ENDURANCE_TAIL}`),
     new RegExp(`${WHY_GUARD_ZH}(?:活着|做人).{0,6}(?:累|难|没劲)`),
-    new RegExp(`${WHY_GUARD_ZH}想不开`),
-    // English first-person endurance collapse; "hold on" keeps its object use free.
-    /i can'?t (?:keep going|hold on(?! *to)|go on (?:like this|anymore)|bear it|stand it)/,
+    new RegExp(
+      `${WHY_GUARD_ZH}(?:(?:^|[${CLAUSE_BOUNDARY_ZH}])${ENDURANCE_PREFIX_ZH}` +
+        `(?:我|俺|咱|自己|本人|老子|老娘|我们|咱们|你|您|你们).{0,6}想不开|` +
+        `(?:^|[${CLAUSE_BOUNDARY_ZH}])想不开)`,
+    ),
+    // English first-person endurance collapse; "hold on" keeps its object use free,
+    // and object-taking "bear it"/"stand it" are not endurance terms at all.
+    /i can'?t (?:keep going|hold on(?! *to)|go on (?:like this|anymore))/,
     new RegExp(
       `${WHY_GUARD_EN}(?:feel like (?:giving up|disappearing)|no reason to (?:live|go on)|can'?t (?:take|do) (?:this|it) anymore|want (?:it to end|to disappear))`,
     ),
