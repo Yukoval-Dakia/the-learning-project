@@ -1181,6 +1181,115 @@
   }
 
   /* Native disclosure: the closed body is not rendered, so it is already out of the tab order. */
+  /* AI 模型: tasks by what they are for (YUK-1808). */
+  & .adm-global-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--un-sp-3);
+  }
+
+  & .adm-group-head {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--un-sp-3);
+    width: 100%;
+    padding: var(--un-sp-3) var(--un-sp-4);
+    text-align: left;
+  }
+
+  & .adm-group-label {
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .adm-group-summary {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  & .adm-group-chev {
+    color: var(--un-text-3);
+    transition: transform var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .adm-group-head[aria-expanded="true"] .adm-group-chev {
+    transform: rotate(180deg);
+  }
+
+  & .adm-task-list {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .adm-task {
+    display: grid;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .adm-task-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+    align-items: start;
+    gap: var(--un-sp-4);
+  }
+
+  & .adm-task-saved {
+    display: grid;
+    gap: var(--un-sp-1);
+  }
+
+  & .adm-binding {
+    display: grid;
+    gap: var(--un-sp-1);
+    min-width: 0;
+  }
+
+  & .adm-binding [data-error] {
+    color: var(--un-critical);
+  }
+
+  & .adm-binding-tags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+  }
+
+  & .adm-check {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    font-size: var(--un-fs-1);
+  }
+
+  @media (max-width: 720px) {
+    & .adm-group-head {
+      grid-template-columns: auto minmax(0, 1fr) auto;
+    }
+    & .adm-group-summary {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      text-align: left;
+    }
+    & .adm-task-main {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    & .adm-task-main > button,
+    & .adm-task-main > .un-chip {
+      justify-self: start;
+    }
+  }
+
   & .adm-disclosure {
     min-width: 0;
     border-radius: var(--un-md-sys-shape-large);
