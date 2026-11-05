@@ -1,6 +1,6 @@
 // one durable admission batch per group/base digest.
 // The publisher event outbox enqueues pinned revisions. Queue retries replay a
-// complete result receipt, never paid solves. Unknown batches require reconciliation.
+// complete result receipt, never paid solves. Unknown payments stay fenced after question closure.
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -25,6 +25,7 @@ import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import {
   event,
   knowledge,
+  paid_effect,
   question,
   question_admission_verification,
   question_revision,
@@ -441,7 +442,7 @@ export async function runAdmissionForQuestion(
             reason: `source_purpose_${batch.purpose.state}`,
           })),
         };
-  if (batch.kind === 'held') return simple('pending');
+  if (batch.kind === 'held') return simple(batch.staleInput ? 'withheld' : 'pending');
 
   const checkPurpose = async (tx: Tx) =>
     batch.sourceDeliveryId
@@ -480,8 +481,10 @@ export async function runAdmissionForQuestion(
             superseded = true;
             throw new Error('Question admission input revision was superseded');
           }
-          if (lifecycle && !isPendingAdmission(lifecycle))
+          if (lifecycle && !isPendingAdmission(lifecycle)) {
+            superseded = true;
             throw new Error('Question admission lifecycle no longer permits a paid send');
+          }
           const snapshot = await readPaidEffect(tx, batch.identity);
           if (
             !(
@@ -665,16 +668,56 @@ export async function runAdmissionForQuestion(
           recordPaidEffectResult(tx, batch.identity, delivery.id, receipt, { fence: batchFence }),
         );
     } catch (error) {
-      if (superseded && batch.kind === 'receipt') {
-        await db.transaction(async (tx) => {
+      if (superseded && !deps.signal?.aborted) {
+        const stale = await db.transaction(async (tx) => {
           await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
-          if ((await readPaidEffect(tx, batch.identity))?.state === 'receipt_ready')
-            await recordPaidEffectApplication(tx, batch.identity, {
-              status: 'stale',
-              group_id: rootId,
-            });
+          const snapshot = await readPaidEffect(tx, batch.identity);
+          if (snapshot?.state === 'sending' && batch.kind === 'winner') {
+            const [unresolved] = await tx
+              .select({ unit: paid_effect.unit })
+              .from(paid_effect)
+              .where(
+                and(
+                  eq(paid_effect.family, ADMISSION_STAGE_FAMILY),
+                  eq(paid_effect.entity_id, rootId),
+                  eq(paid_effect.entity_revision, batch.identity.entityRevision),
+                  inArray(paid_effect.state, ['sending', 'unknown']),
+                ),
+              )
+              .limit(1);
+            if (unresolved) return false;
+            await recordPaidEffectResult(
+              tx,
+              batch.identity,
+              delivery.id,
+              AdmissionResultReceipt.parse({
+                version: 1,
+                recorded_at: new Date().toISOString(),
+                result: {
+                  status: 'withheld',
+                  reason: 'stale_input',
+                  per_unit: [],
+                  verification: {
+                    policy_id: batch.input.policy_id,
+                    outcome: 'suspended',
+                    evidence: {
+                      pack: 'question_admission_stale',
+                      paid_stage_receipts: stageReceiptRefs,
+                    },
+                  },
+                  evidence_refs: { task_run_ids: [...attemptedTaskRunIds] },
+                },
+              }),
+              { fence: batchFence },
+            );
+          } else if (snapshot?.state !== 'receipt_ready') return false;
+          await recordPaidEffectApplication(tx, batch.identity, {
+            status: 'stale',
+            group_id: rootId,
+          });
+          return true;
         });
-        return simple('stale');
+        if (stale) return simple('stale');
       }
       const interrupted =
         purposeStopped || controller.signal.aborted || error instanceof AdmissionInterrupted;

@@ -96,7 +96,21 @@ export function prepareAdmissionQuestionText(
     let prompt = part.prompt_md;
     if (selections.length > 0) {
       const lines = [...prompt.matchAll(OPTION_LINE)];
-      if (lines.length > 0) {
+      const matchesDeclaredOption = lines.some((line, index) => {
+        const body = compact(prompt.slice(line.index + line[0].length, lines[index + 1]?.index));
+        return selections.some((slot) =>
+          slot.items.some((item, optionIndex) => {
+            const label = String.fromCharCode(65 + optionIndex);
+            return (
+              line[1] === label &&
+              item.label_md != null &&
+              body.length > 0 &&
+              body === compact(optionBody(item.label_md, label))
+            );
+          }),
+        );
+      });
+      if (matchesDeclaredOption) {
         const slot = selections[0];
         const first = lines[0].index;
         const prefix = prompt.slice(0, first).trimEnd();
@@ -164,7 +178,14 @@ export function prepareAdmissionQuestionText(
       const dependent = [...text.matchAll(mark.reference)].length > 0;
       if (!dependent && !new RegExp(mark.name, 'u').test(text)) continue;
       const identified = textIdentifiesTarget(visible, mark.name);
+      const placeholder =
+        new RegExp(`${mark.name}(?:的)?(?:空白)?处`, 'u').test(visible) &&
+        (/[（(][\s\u3000]*[）)]/u.test(visible) ||
+          (mark.kind === 'underline' && /_{2,}|＿{2,}|﹍{2,}|﹎{2,}/u.test(visible)) ||
+          (mark.kind === 'wavy' && /[~～〜]{2,}/u.test(visible)) ||
+          ((mark.kind === 'dot' || mark.kind === 'emphasis') && /[·•﹒.]{2,}/u.test(visible)));
       const candidate =
+        placeholder ||
         mark.combining.test(visible) ||
         mark.tex.test(math) ||
         hasFigure ||

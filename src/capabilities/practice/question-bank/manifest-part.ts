@@ -314,6 +314,15 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
         load: () =>
           import('./jobs/question_admission_run').then((m) => m.buildQuestionAdmissionRunHandler),
       },
+      {
+        name: 'question_admission_unknown_close',
+        queue: 'fast',
+        schedule: { cron: '* * * * *', tz: 'UTC' },
+        load: () =>
+          import('./server/admission/unknown-closure').then(
+            (m) => m.buildAdmissionUnknownCloseHandler,
+          ),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft
