@@ -3,21 +3,26 @@
  *
  * Approved homes may hold the SQL: src/kernel/locks/ and the shared helpers
  * that already issue it for their callers. Every other production file is
- * grandfathered by exact call count in scripts/audit-advisory-locks-baseline.json.
- * After this baseline exists on the comparison base, a higher count is a failure
- * even if the JSON is edited — new calls belong in an approved home.
- * Comments are ignored. This does not validate lock families or acquisition order.
+ * grandfathered by the call count measured on the comparison base commit:
+ * a site present at base may keep (or shrink) its count; a new site or a
+ * higher count fails — new calls belong in an approved home. A rename
+ * carries its existing budget. Comments are ignored. This does not validate
+ * lock families or acquisition order.
  */
 
-import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  listTreeFiles,
+  readBlobs,
+  resolveAuditBaseSha,
+  worktreeRenameMap,
+} from './lib/git-base-scan';
 import { analyzeSource } from './lib/ts-tokenize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
-const BASELINE_PATH = join(__dirname, 'audit-advisory-locks-baseline.json');
 const SCAN_ROOTS = ['src', 'server', 'web', 'scripts'] as const;
 const REQUIRED_REGISTRY = 'src/kernel/locks/registry.ts';
 const APPROVED_PREFIXES = ['src/kernel/locks/'] as const;
@@ -34,8 +39,6 @@ const SELF_PATH = 'scripts/audit-advisory-locks.ts';
 const CALL_RE = /(?<![A-Za-z0-9_])pg_(?:try_)?advisory[A-Za-z0-9_]*/g;
 
 type Site = { path: string; count: number };
-
-type Baseline = { version: 1; sites: Site[] };
 
 type Finding = { rule: string; detail: string };
 
@@ -55,6 +58,15 @@ function isProductionSource(name: string): boolean {
   return true;
 }
 
+function isScannedPath(path: string): boolean {
+  const normalized = normalizePath(path);
+  const segments = normalized.split('/');
+  if (segments.some((segment) => EXCLUDED_DIRS.has(segment))) return false;
+  const name = segments[segments.length - 1];
+  if (!isProductionSource(name)) return false;
+  return normalized !== SELF_PATH;
+}
+
 function walk(root: string, out: string[]): void {
   if (!existsSync(root)) return;
   for (const entry of readdirSync(root, { withFileTypes: true })) {
@@ -64,9 +76,9 @@ function walk(root: string, out: string[]): void {
       walk(absolute, out);
       continue;
     }
-    if (!entry.isFile() || !isProductionSource(entry.name)) continue;
+    if (!entry.isFile()) continue;
     const path = normalizePath(relative(REPO_ROOT, absolute));
-    if (path === SELF_PATH) continue;
+    if (!isScannedPath(path)) continue;
     out.push(path);
   }
 }
@@ -82,158 +94,65 @@ export function countAdvisoryCalls(source: string): number {
   return count;
 }
 
+function sitesFrom(files: readonly string[], readText: (path: string) => string): Site[] {
+  const sites: Site[] = [];
+  for (const path of files) {
+    if (isApproved(path)) continue;
+    const count = countAdvisoryCalls(readText(path));
+    if (count > 0) sites.push({ path, count });
+  }
+  return sites;
+}
+
 function collectSites(): { scanned: number; sites: Site[] } {
   const files: string[] = [];
   for (const root of SCAN_ROOTS) walk(join(REPO_ROOT, root), files);
   files.sort();
-  const sites: Site[] = [];
-  for (const path of files) {
-    if (isApproved(path)) continue;
-    const count = countAdvisoryCalls(readFileSync(join(REPO_ROOT, path), 'utf8'));
-    if (count > 0) sites.push({ path, count });
-  }
-  return { scanned: files.length, sites };
+  return {
+    scanned: files.length,
+    sites: sitesFrom(files, (path) => readFileSync(join(REPO_ROOT, path), 'utf8')),
+  };
 }
 
-function parseBaseline(text: string, label: string): Baseline {
-  const value: unknown = JSON.parse(text);
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`${label} root must be an object`);
-  }
-  const record = value as Record<string, unknown>;
-  if (record.version !== 1) throw new Error(`${label} version must be 1`);
-  if (!Array.isArray(record.sites)) throw new Error(`${label} sites must be an array`);
-  const sites: Site[] = [];
-  for (const entry of record.sites) {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      throw new Error(`${label} site entry must be an object`);
-    }
-    const site = entry as Record<string, unknown>;
-    if (typeof site.path !== 'string' || site.path.length === 0) {
-      throw new Error(`${label} site path must be a string`);
-    }
-    if (!Number.isInteger(site.count) || (site.count as number) < 1) {
-      throw new Error(`${label} site count must be a positive integer (${site.path})`);
-    }
-    sites.push({ path: normalizePath(site.path), count: site.count as number });
-  }
-  return { version: 1, sites };
+function collectSitesAtRef(sha: string): { scanned: number; sites: Site[] } {
+  const candidates = listTreeFiles(REPO_ROOT, sha, SCAN_ROOTS)
+    .map((entry) => normalizePath(entry.path))
+    .filter(isScannedPath)
+    .sort();
+  const blobs = readBlobs(REPO_ROOT, sha, candidates);
+  return {
+    scanned: candidates.length,
+    sites: sitesFrom(candidates, (path) => blobs.get(path) ?? ''),
+  };
 }
 
-function baselineShapeFindings(baseline: Baseline): Finding[] {
-  const findings: Finding[] = [];
-  const seen = new Set<string>();
-  let previous = '';
-  for (const site of baseline.sites) {
-    if (seen.has(site.path)) {
-      findings.push({ rule: 'DUPLICATE_BASELINE', detail: site.path });
-    }
-    seen.add(site.path);
-    if (site.path < previous) {
-      findings.push({ rule: 'UNSORTED_BASELINE', detail: site.path });
-    }
-    previous = site.path;
-    if (site.path.startsWith('/') || site.path.includes('..')) {
-      findings.push({ rule: 'BAD_BASELINE_PATH', detail: site.path });
-    }
-    if (isApproved(site.path)) {
-      findings.push({ rule: 'ALLOWLIST_OVERLAP', detail: site.path });
-    }
-  }
-  return findings;
-}
-
-function resolveComparisonSha(): string | null {
-  const env = process.env.TEST_POLICY_BASE || process.env.CAPABILITY_BASE_SHA || '';
-  if (/^[0-9a-f]{40}$/.test(env)) return env;
-  try {
-    const sha = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
-    return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
-  } catch {
-    return null;
-  }
-}
-
-function readBaseBaseline(sha: string): Baseline | null {
-  try {
-    const text = execFileSync(
-      'git',
-      ['show', `${sha}:scripts/audit-advisory-locks-baseline.json`],
-      { cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-    return parseBaseline(text, `base ${sha}`);
-  } catch (error) {
-    const stderr =
-      error && typeof error === 'object' && 'stderr' in error ? String(error.stderr) : '';
-    if (stderr.includes('does not exist') || stderr.includes('not in')) return null;
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`cannot read baseline at ${sha}: ${message}`);
-  }
-}
-
-function raisedFindings(current: Baseline, base: Baseline, sha: string): Finding[] {
-  const previous = new Map(base.sites.map((site) => [site.path, site.count]));
+function baseDiffFindings(
+  current: readonly Site[],
+  base: readonly Site[],
+  renames: ReadonlyMap<string, string>,
+): Finding[] {
   // A rename carries its existing lock budget; a copy still starts at zero.
-  const status = execFileSync('git', ['diff', '--name-status', '-M', '-z', sha, '--'], {
-    cwd: REPO_ROOT,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }).split('\0');
-  for (let i = 0; i < status.length; ) {
-    if (status[i]?.startsWith('R')) {
-      const count = previous.get(status[i + 1]);
-      if (count !== undefined) {
-        previous.delete(status[i + 1]);
-        previous.set(status[i + 2], count);
-      }
-      i += 3;
-    } else i += 2;
+  const allowed = new Map<string, number>();
+  for (const site of base) {
+    allowed.set(renames.get(site.path) ?? site.path, site.count);
   }
 
   const findings: Finding[] = [];
-  for (const site of current.sites) {
-    const before = previous.get(site.path) ?? 0;
+  for (const site of current) {
+    const before = allowed.get(site.path) ?? 0;
     if (site.count > before) {
       findings.push({
-        rule: 'BASELINE_RAISED',
-        detail: `${site.path} ${before} -> ${site.count}`,
+        rule: 'NEW_OR_GROWN_SITE',
+        detail: `${site.path} base=${before} actual=${site.count}`,
       });
     }
   }
   return findings;
 }
 
-function countFindings(actual: Site[], baseline: Baseline): Finding[] {
-  const expected = new Map(baseline.sites.map((site) => [site.path, site.count]));
-  const findings: Finding[] = [];
-  const seen = new Set<string>();
-  for (const site of actual) {
-    seen.add(site.path);
-    const count = expected.get(site.path);
-    if (count === undefined) {
-      findings.push({ rule: 'UNREGISTERED_SITE', detail: `${site.path} count=${site.count}` });
-      continue;
-    }
-    if (site.count !== count) {
-      findings.push({
-        rule: 'SITE_COUNT',
-        detail: `${site.path} baseline=${count} actual=${site.count}`,
-      });
-    }
-  }
-  for (const site of baseline.sites) {
-    if (!seen.has(site.path)) {
-      findings.push({
-        rule: 'BASELINE_STALE',
-        detail: `${site.path} baseline=${site.count} actual=0`,
-      });
-    }
-  }
-  return findings;
+function baseFlag(): string | undefined {
+  const index = process.argv.indexOf('--base');
+  return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
 function main(): void {
@@ -253,30 +172,15 @@ function main(): void {
     }
   }
 
-  let baseline: Baseline;
-  try {
-    baseline = parseBaseline(readFileSync(BASELINE_PATH, 'utf8'), 'baseline');
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`advisory-lock audit failed: ${message}`);
-    process.exitCode = 1;
-    return;
-  }
-  findings.push(...baselineShapeFindings(baseline));
-  findings.push(...countFindings(sites, baseline));
-
-  const sha = resolveComparisonSha();
-  if (!sha) {
-    console.error('advisory-lock audit: no comparison base; baseline raise check skipped');
-  } else {
-    try {
-      const base = readBaseBaseline(sha);
-      if (base) findings.push(...raisedFindings(baseline, base, sha));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      findings.push({ rule: 'BASE_UNREADABLE', detail: message });
-    }
-  }
+  // TEST_POLICY_BASE is the env this audit's CI lane provides; resolveAuditBaseSha
+  // reads CAPABILITY_BASE_SHA/--base, so honor the lane env first.
+  const requested = baseFlag() || process.env.CAPABILITY_BASE_SHA;
+  const sha = process.env.TEST_POLICY_BASE
+    ? process.env.TEST_POLICY_BASE
+    : resolveAuditBaseSha(REPO_ROOT, requested);
+  const base = collectSitesAtRef(sha);
+  const renames = worktreeRenameMap(REPO_ROOT, sha, SCAN_ROOTS);
+  findings.push(...baseDiffFindings(sites, base.sites, renames));
 
   if (findings.length > 0) {
     console.error('advisory-lock audit failed:');
@@ -285,7 +189,7 @@ function main(): void {
     return;
   }
   console.log(
-    `advisory-lock audit passed (${scanned} production files, ${sites.length} grandfathered).`,
+    `advisory-lock audit passed (${scanned} production files, ${sites.length} grandfathered sites vs base ${sha.slice(0, 12)}).`,
   );
 }
 
