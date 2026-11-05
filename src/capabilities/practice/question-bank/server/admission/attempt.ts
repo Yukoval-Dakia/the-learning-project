@@ -58,7 +58,6 @@ export async function runAdmissionAttempts<T>(
           throw new Error('Unsealed admission parse failure; paid outcome unknown', {
             cause: error,
           });
-        if (attempt === 0) continue;
         throw new AdmissionAttemptExhausted(error.message, ids);
       }
       if (!(error instanceof AgentRunError)) throw error;
@@ -76,12 +75,15 @@ export async function runAdmissionAttempts<T>(
         row?.finished_at != null &&
         row.status !== 'running' &&
         (row.usage_json.transport?.send_state === 'not_sent' ||
-          error.subtype === 'error_max_structured_output_retries' ||
-          error.helpProviderFault?.kind === 'parse' ||
           error.helpProviderFault?.kind === 'bad_gateway' ||
           (httpStatus != null && httpStatus >= 500));
       if (retryable && attempt === 0) continue;
-      const knownTerminal = row?.finished_at != null && (retryable || httpStatus != null);
+      const knownTerminal =
+        row?.finished_at != null &&
+        (retryable ||
+          httpStatus != null ||
+          error.subtype === 'error_max_structured_output_retries' ||
+          error.helpProviderFault?.kind === 'parse');
       if (knownTerminal) throw new AdmissionAttemptExhausted(error.message, ids);
       throw error;
     }

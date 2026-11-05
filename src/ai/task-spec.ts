@@ -102,8 +102,10 @@ export interface TaskDefinition {
   readonly reasoningEffort?: EffortLevel;
   readonly invocation?: 'auto' | 'manual_rescue_only';
   readonly structuredOutputSchema?: ZodTypeAny;
-  /** Opt-in single model turn submitting schema-constrained tool arguments. */
+  /** Submit schema-constrained tool arguments, correcting failures within one run. */
   readonly structuredOutputMode?: 'tool';
+  /** Shape/coverage only. Return authored field diagnostics, never values or judgments. */
+  readonly validateStructuredSubmit?: (output: unknown, input: unknown) => readonly string[];
 }
 
 export const DEFAULT_TASK_BUDGET: TaskBudget = {

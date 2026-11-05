@@ -47,7 +47,7 @@ import {
 import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
 import { taskMayExportTranscript } from './laminar-transcript';
 import { logMissingToolMountsWarning } from './log';
-import { providerHttpTimeoutMs } from './provider-http-timeout';
+import { PROVIDER_HTTP_TIMEOUT_MARGIN_MS, providerHttpTimeoutMs } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission-policy';
 import type { ProviderTransportCollector } from './provider-transport';
 import type { ResolvedProvider } from './providers';
@@ -456,7 +456,9 @@ function buildQueryOptions(
     // timer derivation (provider-transport.ts).
     providerTimeoutMs: providerHttpTimeoutMs(budget.timeout),
     transportEvidence,
-    ...(declaredDef.enforceMaxCost === true || currentTaskSpendScope()
+    ...(declaredDef.enforceMaxCost === true ||
+    declaredDef.structuredOutputMode === 'tool' ||
+    currentTaskSpendScope()
       ? { maxBudgetUsd: budget.maxCost }
       : {}),
   };
@@ -507,6 +509,12 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
         resolved: lifecycle.resolved,
         runId: lifecycle.taskRunId,
         kind: lifecycle.kind,
+        structuredSubmitInput: actualInput,
+        executionWindowMs: lifecycle.providerPhaseTimeoutMs(
+          options.providerTimeoutMs === undefined
+            ? Number.POSITIVE_INFINITY
+            : options.providerTimeoutMs - PROVIDER_HTTP_TIMEOUT_MARGIN_MS,
+        ),
         piToolMounts: ctx?.piToolMounts,
         // YUK-1022 — pi-lane descriptors for hooks, replay, skills, nested agents
         // and compaction; forwarded verbatim because the adapter needs the raw

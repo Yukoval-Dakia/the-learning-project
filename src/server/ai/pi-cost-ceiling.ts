@@ -37,6 +37,7 @@ export interface PiCostCeiling {
 
 export function createPiCostCeiling(input: {
   maxBudgetUsd: number;
+  stopWithoutClosingTurn?: boolean;
   provider: Provider;
   model: string;
   authMode?: Parameters<typeof resolveAttemptCostTruth>[0]['authMode'];
@@ -82,7 +83,8 @@ export function createPiCostCeiling(input: {
     finishTurn: (inner) => async (turn, signal) => {
       const turnUsd = observe(turn.message);
       const decided = await inner?.(turn, signal);
-      if (decided) return decided;
+      if (decided?.action === 'end') return decided;
+      if (decided && !input.stopWithoutClosingTurn) return decided;
       const { message } = turn;
       if (message.stopReason === 'error' || message.stopReason === 'aborted') return undefined;
       if (phase === 'closing') return { action: 'end' };
@@ -90,6 +92,13 @@ export function createPiCostCeiling(input: {
       if (shared && (turnUsd === null || shared.remainingUsd() <= turnUsd)) {
         phase = 'closing';
         return { action: 'end' };
+      }
+      if (input.stopWithoutClosingTurn) {
+        if (turnUsd === null || spentUsd + turnUsd >= input.maxBudgetUsd) {
+          phase = 'closing';
+          return { action: 'end' };
+        }
+        return decided ?? undefined;
       }
       if (turnUsd === null) return undefined;
       if (!message.content.some((block) => block.type === 'toolCall')) return undefined;
