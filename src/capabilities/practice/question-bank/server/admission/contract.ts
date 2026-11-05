@@ -19,8 +19,7 @@ import type {
 import type { ScoringRuleT } from '@/core/schema/assessment/scoring-rule';
 import type { QuestionGroupStructureT } from '@/core/schema/assessment/structure';
 
-/** Unit kinds the admission lane can resolve. 'free' has no deterministic
- * executor yet (no admitted model slice) and always withholds. */
+/** Deterministic answer units, AI-graded free responses, and unsupported shapes. */
 export type AdmissionUnitKind = 'select' | 'blank' | 'free' | 'unsupported';
 
 export interface AdmissionUnitSpec {
@@ -49,7 +48,7 @@ export interface AdmissionUnitSpec {
   printed_rule_md?: string;
 }
 
-/** 印出答案原文（evidence only —— 只作 crosscheck，绝不铸键）。 */
+/** 印出答案原文（evidence only —— 只作裁决证据，绝不直接解析铸键）。 */
 export interface AdmissionSourceAnswer {
   /** 归属单元；absent = 组级未归属原文。 */
   unit_id?: string;

@@ -10,6 +10,7 @@ import {
   type PlacementStarterOutcome,
   readPlacementStarterFailure,
 } from '@/kernel/placement-starter-outcome';
+import { readAdmissionWaits } from '../../question-bank/public';
 import { PLACEMENT_STARTER_REQUIRED_COUNT } from './placement-starter-attempts';
 import { placementStarterIdentity } from './placement-starter-identity';
 import { readPlacementCandidateProgress } from './placement-starter-progress';
@@ -78,10 +79,18 @@ export async function readPlacementStarterOutcomes(
   const candidates = await readPlacementCandidateProgress(db, [
     ...new Set(bindings.map((row) => row.questionId)),
   ]);
+  const waits = await readAdmissionWaits(
+    db,
+    bindings.map((row) => row.questionId),
+  );
   return authority.subjectIds.map((subjectId): PlacementStarterOutcome => {
     const identity = placementStarterIdentity(authority.semanticGoalRevisionId, subjectId);
     const claim = claims.find((row) => row.subject_id === subjectId);
+    const admissionWaits = waits.filter((wait) =>
+      bindings.some((link) => link.questionId === wait.question_id && link.claimId === claim?.id),
+    );
     const binding = {
+      ...(admissionWaits.length ? { admission_waits: admissionWaits } : {}),
       session_id: sessionId,
       goal_id: goalId,
       semantic_goal_revision_id: authority.semanticGoalRevisionId,

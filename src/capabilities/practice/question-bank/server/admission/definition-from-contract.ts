@@ -1,15 +1,5 @@
-// admission definition builder.
-// Turns a NormalizedContract (row-normalized draft four layers, produced by
-// kernel assessment-normalization) into a QuestionAdmissionDefinition:
-// - legacy response slots are upgraded to the batch-A surface
-// (single/multi_choice → select, text/numeric/formula → blank,
-// open_response kept for free); non-representable kinds stay untouched and
-// their units classify as 'unsupported'.
-// - existing typed criteria become SEEDS the dual solve must reproduce —
-// never the key source themselves (G1: AI-written structured answers are
-// admitted only when a second independent solve agrees).
-// - private solution/rubric materials are collected as source_answers for
-// the cross-check lane only (never parsed into keys — 零文本解析键).
+// Converts frozen contract slots and preserves private answers as adjudication evidence.
+// Deterministic typed criteria are author evidence; independent solves may correct them.
 
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 import type { ResponseSlotT } from '@/core/schema/assessment/response';
@@ -145,7 +135,7 @@ function convertSlot(slot: ResponseSlotT): { slot: ResponseSlotT; targetKind: Ad
   }
 }
 
-/** seed 提取：已有 typed 判据 → 双解须复现的种子（仅同形可比较；异种判据
+/** seed 提取：已有 typed 判据 → 待双解和裁决核验的作者证据（仅同形可比较；异种判据
  * 不作为种子 —— solve 重新产出并报告）。 */
 function seedFor(
   unitKind: AdmissionUnitKind,
@@ -206,10 +196,34 @@ function blankNormalizationFor(seed: ScoringUnitCriterionT | null): BlankNormali
  * 已从 private 材料 + rule_reference statement 收集印刷答案原文）。
  */
 export function definitionFromContract(contract: NormalizedContract): QuestionAdmissionDefinition {
-  const converted = contract.response_spec.slots.map((slot) => ({
-    original: slot,
-    ...convertSlot(slot),
-  }));
+  const semanticSlotIds = new Set(
+    contract.scoring_basis.units
+      .filter(
+        (unit) =>
+          unit.criterion.kind === 'rule_reference' ||
+          unit.criterion.kind === 'rubric' ||
+          unit.criterion.kind === 'holistic_level',
+      )
+      .flatMap((unit) => unit.slot_refs),
+  );
+  const converted = contract.response_spec.slots.map((slot) => {
+    const converted = convertSlot(slot);
+    if (semanticSlotIds.has(slot.slot_id) && converted.targetKind === 'blank') {
+      return {
+        original: slot,
+        slot: {
+          slot_id: slot.slot_id,
+          part_id: slot.part_id,
+          placement: slot.placement,
+          kind: 'open_response' as const,
+          accepted_evidence: [],
+          evidence_required: false,
+        },
+        targetKind: 'free' as const,
+      };
+    }
+    return { original: slot, ...converted };
+  });
   const convertedById = new Map(converted.map((entry) => [entry.original.slot_id, entry] as const));
 
   const response_spec: QuestionAdmissionDefinition['response_spec'] = {

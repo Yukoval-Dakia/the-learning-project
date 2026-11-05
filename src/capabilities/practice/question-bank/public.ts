@@ -1,3 +1,4 @@
+export { readAdmissionWaits } from './server/admission/stages';
 // 题库与准入 owner 的稳定业务操作。practice 内其它 owner 只经本文件引用本 owner
 // （`pnpm audit:practice-subowners`）；根 `public.ts` 按名字转出。
 // 根 barrel 的静态加载链经过这里（迁移 bundle 不得引入 SDK）：静态导出只放不带 provider

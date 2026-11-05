@@ -6,6 +6,7 @@ const repair = z.object({
   broken_part: z.enum(['question', 'options', 'figure', 'scoring_unit', 'reference']),
   defect: z.enum([
     'missing_figure',
+    'missing_marking',
     'missing_condition',
     'wrong_domain',
     'scoring_kind_mismatch',

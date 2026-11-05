@@ -95,7 +95,14 @@ export function placementSchemaFailure(issues: z.ZodIssue[]): PlacementStarterFa
   };
 }
 
+export const PlacementAdmissionWait = z.object({
+  question_id: z.string(),
+  reason: z.enum(['quota', 'login']),
+  retry_at: z.string().datetime().nullable(),
+  recovery_action: z.enum(['wait_for_retry', 'reauthenticate', 'confirm_recovery']),
+});
 const Binding = z.object({
+  admission_waits: z.array(PlacementAdmissionWait).optional(),
   progress: z
     .object({
       stage: z.enum(['queued', 'finding_questions', 'checking_questions', 'ended']),
