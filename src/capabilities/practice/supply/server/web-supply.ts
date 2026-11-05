@@ -30,6 +30,7 @@ import { webSupplyDemandKey as key, lockWebSupplyDemand } from '@/kernel/locks/q
 import type { EventSubscriptionDelivery, EventSubscriptionOutcome } from '@/kernel/manifest';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import { SupplyTraceV1, type SupplyTraceV1T } from '@/kernel/supply-contracts';
+import { TaskConfigError } from '@/server/ai/providers';
 import { answerClassCompatible } from '@/subjects/question-kind';
 import { type EnqueueVerifyFn, dispatchPendingVerifyIntents } from '../../question-bank/public';
 import {
@@ -190,7 +191,7 @@ async function latestRequired(db: Db, demandId: string) {
   return state;
 }
 
-export type PlacementWebDemandOutcome = 'unknown' | 'known';
+export type PlacementWebDemandOutcome = 'unknown' | 'config_error' | 'known';
 
 /**
  * The durable paid-outcome class of a placement item demand after a failed delivery,
@@ -200,6 +201,8 @@ export type PlacementWebDemandOutcome = 'unknown' | 'known';
  * 'unknown': the state cannot prove what a paid round did — a thrown acquisition, an
  * in-flight send, a missing producer identity, or a submission without its receipt.
  * That state never authorizes another paid round for the claim, ever.
+ * 'config_error': the round provably spent nothing and cannot succeed until the lane
+ * is repaired — non-retryable, but known.
  * 'known': every other recorded outcome — the delivery may hand the claim to a fresh
  * paid attempt.
  * A round id with no durable state never started: nothing was sent, so nothing is owed.
@@ -208,6 +211,7 @@ export async function placementWebDemandOutcome(
   db: Db | Tx,
   demandId: string,
 ): Promise<PlacementWebDemandOutcome> {
+  let configError = false;
   for (const roundId of [
     demandId,
     `${demandId}:placement-refill:1`,
@@ -223,8 +227,9 @@ export async function placementWebDemandOutcome(
       state.submissions.some((submission) => !submission.receipt)
     )
       return 'unknown';
+    if (state.reason === 'config_error') configError = true;
   }
-  return 'known';
+  return configError ? 'config_error' : 'known';
 }
 
 // ── Route fallback (YUK-1664 S3) ─────────────────────────────────────────────
@@ -954,13 +959,17 @@ async function runWebSupplyRound(
         ...(sourcingRun ? { maxCostUsd: sourcingRun.capUsd } : {}),
       },
     });
-  } catch {
+  } catch (err) {
     // The agent may have spent before failing: its cost is unknown, never zero.
-    await recordAcquisition(null, null);
+    // TaskConfigError is the exception — config resolution fails before any provider
+    // request is sent, so the paid effect is provably zero and the round's failure is
+    // known AND non-retryable until the lane is repaired ('config_error').
+    const configError = err instanceof TaskConfigError;
+    await recordAcquisition(null, configError ? 0 : null);
     await settleSourcingRun([state.producerTaskRunId], 0);
     return advance(db, state, {
       phase: 'blocked',
-      reason: 'acquisition_outcome_unknown',
+      reason: configError ? 'config_error' : 'acquisition_outcome_unknown',
       ...blockedRouting(state, 'acquisition_outcome_unknown'),
     });
   }

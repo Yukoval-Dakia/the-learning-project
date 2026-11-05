@@ -5,17 +5,21 @@
 // (job id + delivery number + startedOn), keep its lease alive on job.signal, run the source
 // agent's web supply under that authority, then hand the bound questions to the original
 // placement completion owner. Callers never assemble paid eligibility from primitives.
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, count, desc, eq, sql } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
 import type { Db } from '@/db/client';
 import {
   event,
+  placement_starter_attempt,
   placement_starter_attempt_question,
   placement_starter_claim,
 } from '@/db/schema';
+import { JOB_RETRY_DELAY_SECONDS } from '@/kernel/placement-jobs';
 import {
+  PLACEMENT_CONFIG_ERROR_PARK_MS,
   dispatchNextDuePendingPlacementClaim,
   handOffFailedPlacementDelivery,
+  parkPlacementClaimForRepair,
 } from './placement-starter';
 import {
   PLACEMENT_QUEUE_EXPIRY_MS,
@@ -214,13 +218,41 @@ export async function runPlacementWebDelivery(input: {
         } catch (termErr) {
           console.error('[supply_execute] unknown-cost terminalize failed for', claimId, termErr);
         }
+      } else if (outcome === 'config_error') {
+        // Provably unpaid AND non-retryable until the lane is repaired: park the claim
+        // as pending_dispatch out of the paid leg's reach — a missing key may not
+        // drain the paid bound on dead attempts, and the claim survives an operator
+        // lane repair instead of exhausting for good.
+        try {
+          if (
+            await parkPlacementClaimForRepair(
+              db,
+              claimId,
+              new Date(Date.now() + PLACEMENT_CONFIG_ERROR_PARK_MS),
+            )
+          ) {
+            await dispatchNextDueQuietly(db, claimId);
+            return;
+          }
+        } catch (parkErr) {
+          console.error('[supply_execute] config-error park failed for', claimId, parkErr);
+        }
       } else {
         // A real known failure hands the claim to a fresh demand — the same-job retry
         // can only re-read this job's terminal 'blocked' demand and underfill without
-        // ever fetching again. A declined or failed handoff leaves the original error
-        // to pg-boss; the sweeper's pending leg remains the backstop.
+        // ever fetching again. But the fresh job replaces that dead retry, so it keeps
+        // the retry's backoff cadence (attempt 2 ≈30s, attempt 3 ≈60s via the existing
+        // retryDelay/retryBackoff curve) instead of re-paying inside milliseconds.
+        const [attemptRows] = await db
+          .select({ n: count() })
+          .from(placement_starter_attempt)
+          .where(eq(placement_starter_attempt.claim_id, claimId));
+        const startAfter = new Date(
+          Date.now() +
+            JOB_RETRY_DELAY_SECONDS * 1_000 * 2 ** Math.max(0, Number(attemptRows?.n ?? 1) - 1),
+        );
         try {
-          if (await handOffFailedPlacementDelivery(db, claimId)) {
+          if (await handOffFailedPlacementDelivery(db, claimId, { startAfter })) {
             await dispatchNextDueQuietly(db, claimId);
             return;
           }

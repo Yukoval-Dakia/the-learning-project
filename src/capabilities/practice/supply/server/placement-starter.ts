@@ -141,6 +141,7 @@ export async function dispatchPlacementStarterClaimTx(
   send: (queue: 'quiz_gen', data: QuizGenJobData, options: SendOptions) => Promise<string | null>,
   admit: PlacementStarterAdmission = async () => true,
   sendSupplyExecute: SendSupplyExecute = enqueuePlacementSupplyExecuteJob,
+  sendOptions?: { startAfter?: Date },
 ): Promise<string | null> {
   const [claim] = await tx
     .select()
@@ -182,6 +183,7 @@ export async function dispatchPlacementStarterClaimTx(
             retryLimit: JOB_RETRY_LIMIT,
             retryDelay: JOB_RETRY_DELAY_SECONDS,
             retryBackoff: true,
+            ...(sendOptions?.startAfter != null ? { startAfter: sendOptions.startAfter } : {}),
           }),
         // The supply_execute delivery carries the same transport contract the placement
         // consumer verifies: 3 deliveries, the original backoff, and the 120-minute expiry.
@@ -192,6 +194,7 @@ export async function dispatchPlacementStarterClaimTx(
             retryDelay: JOB_RETRY_DELAY_SECONDS,
             retryBackoff: true,
             expireInSeconds: PLACEMENT_QUEUE_EXPIRY_MS / 1_000,
+            ...(sendOptions?.startAfter != null ? { startAfter: sendOptions.startAfter } : {}),
           }),
       });
       const jobId = result.jobId;
@@ -231,9 +234,17 @@ export async function dispatchPlacementStarterClaim(
   db: Db,
   claimId: string,
   admit?: PlacementStarterAdmission,
+  sendOptions?: { startAfter?: Date },
 ): Promise<string | null> {
   return db.transaction((tx) =>
-    dispatchPlacementStarterClaimTx(tx, claimId, enqueuePlacementJob, admit),
+    dispatchPlacementStarterClaimTx(
+      tx,
+      claimId,
+      enqueuePlacementJob,
+      admit,
+      enqueuePlacementSupplyExecuteJob,
+      sendOptions,
+    ),
   );
 }
 
@@ -242,19 +253,23 @@ export async function dispatchPlacementStarterClaim(
  * retry cannot produce another sourcing run — the web demand is durable-'blocked' under
  * the demand id baked into the failed job's payload, so a same-job redelivery tallies
  * 'skipped' and underfills without ever fetching again. Only a fresh job (a fresh
- * demand id per send) performs the next real find-question. The
+ * demand id per send) performs the next real find-question — and `startAfter` makes it
+ * a SCHEDULED fresh job: the handoff replaces the dead same-job retry, so it must keep
+ * that retry's backoff cadence instead of re-paying in milliseconds. The
  * retry_scheduled → pending_dispatch CAS re-arms the one legitimate dispatch CAS in
  * dispatchPlacementStarterClaimTx (pending_dispatch → queued), keeping this handoff,
  * the sweeper, and /placement/start single-sender — a sweeper that dispatched first
- * just makes dispatch return the winner's job id. The admit re-verifies inside the
- * dispatch transaction that the goal is still active and the claim's semantic revision
- * is still authoritative; a declined admit or send leaves the claim pending_dispatch
- * with next_reconcile_at = now, where the sweeper's pending leg applies its own
- * guard ceremony on the next tick.
+ * just makes dispatch return the winner's job id, and a 'created' delayed job sits
+ * inside the inflight leg's 120-minute queue-expiry park, so a delayed handoff never
+ * races a reap. The admit re-verifies inside the dispatch transaction that the goal is
+ * still active and the claim's semantic revision is still authoritative; a declined
+ * admit or send leaves the claim pending_dispatch with next_reconcile_at = now, where
+ * the sweeper's pending leg applies its own guard ceremony on the next tick.
  */
 export async function handOffFailedPlacementDelivery(
   db: Db,
   claimId: string,
+  opts?: { startAfter?: Date },
 ): Promise<boolean> {
   const now = new Date();
   const moved = await db
@@ -273,17 +288,64 @@ export async function handOffFailedPlacementDelivery(
     )
     .returning({ id: placement_starter_claim.id });
   if (moved.length !== 1) return false;
-  const jobId = await dispatchPlacementStarterClaim(db, claimId, async (tx, claim) => {
-    const [goalRow] = await tx
-      .select({ status: goal.status })
-      .from(goal)
-      .where(eq(goal.id, claim.goal_id))
-      .limit(1);
-    if (goalRow?.status !== 'active') return false;
-    const authority = await resolvePlacementStarterGoalAuthority(tx, claim.goal_id);
-    return authority.semanticGoalRevisionId === claim.semantic_goal_revision_id;
-  });
+  const jobId = await dispatchPlacementStarterClaim(
+    db,
+    claimId,
+    async (tx, claim) => {
+      const [goalRow] = await tx
+        .select({ status: goal.status })
+        .from(goal)
+        .where(eq(goal.id, claim.goal_id))
+        .limit(1);
+      if (goalRow?.status !== 'active') return false;
+      const authority = await resolvePlacementStarterGoalAuthority(tx, claim.goal_id);
+      return authority.semanticGoalRevisionId === claim.semantic_goal_revision_id;
+    },
+    opts,
+  );
   return jobId !== null;
+}
+
+/**
+ * How long a provably-unpaid, non-retryable failure (config_error) holds its claim out
+ * of paid dispatch: one sweeper revisit window. Long enough for an operator to repair
+ * the lane the claim visibly failed on; each later sweep spends at most ONE attempt,
+ * so a never-repaired lane drains the paid bound over park windows, never instantly.
+ */
+export const PLACEMENT_CONFIG_ERROR_PARK_MS = 6 * 60 * 60_000;
+
+/**
+ * Park a retry_scheduled claim back to pending_dispatch WITHOUT dispatching — for a
+ * known non-retryable failure whose repair is operator-side (a missing key cannot
+ * heal on redelivery, so spending the remaining paid budget on it is waste, but
+ * permanently exhausting the claim throws away a delivery that never paid). The claim
+ * survives as pending at `parkUntil`; the sweeper's pending leg applies its full admit
+ * ceremony when due and either dispatches one real attempt (lane repaired) or the
+ * delivery re-parks (still broken). CAS failure means another authority owns the
+ * claim — leave it alone.
+ */
+export async function parkPlacementClaimForRepair(
+  db: Db,
+  claimId: string,
+  parkUntil: Date,
+): Promise<boolean> {
+  const now = new Date();
+  const moved = await db
+    .update(placement_starter_claim)
+    .set({
+      status: 'pending_dispatch',
+      next_reconcile_at: parkUntil,
+      updated_at: now,
+      version: sql`${placement_starter_claim.version} + 1`,
+    })
+    .where(
+      and(
+        eq(placement_starter_claim.id, claimId),
+        eq(placement_starter_claim.status, 'retry_scheduled'),
+      ),
+    )
+    .returning({ id: placement_starter_claim.id });
+  return moved.length === 1;
 }
 
 /**
