@@ -130,7 +130,7 @@ export async function deduplicateNewDraftInTx(
     }
   }
   let metadata: Record<string, unknown> = {};
-  if (input.sourced == null && params.checkDraftVector) {
+  if (params.checkDraftVector) {
     const prepared = params.draftVector;
     if (prepared == null) {
       throw new DraftSubmitVectorRequired(

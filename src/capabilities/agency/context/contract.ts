@@ -30,7 +30,6 @@ import { getFailureAttemptsForDerivation } from '@/kernel/read-models/failure-at
 import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
-import { readOvernightHandoffSentence } from '@/kernel/read-models/overnight-digest';
 import { shanghaiLabel } from './delta';
 import type { ContractSection } from './types';
 
@@ -197,10 +196,9 @@ export async function readContractSection(
   db: DbLike,
   opts: { now: Date },
 ): Promise<ContractSection> {
-  const [goals, failures, overnightMd] = await Promise.all([
+  const [goals, failures] = await Promise.all([
     listActiveGoalsWithResolvedScope(db as Db),
     getFailureAttemptsForDerivation(db, { limit: FAILURE_SCAN_LIMIT }),
-    readOvernightHandoffSentence(db),
   ]);
 
   const today = learnerLocalDay(opts.now);
@@ -272,5 +270,12 @@ export async function readContractSection(
   });
   const failureDetailsMd = failureLines.length > 0 ? failureLines.join('\n') : null;
 
-  return { steeringMd, masteryMd, causesMd, failureDetailsMd, signalsMd: signalNotes, overnightMd };
+  return {
+    steeringMd,
+    masteryMd,
+    causesMd,
+    failureDetailsMd,
+    signalsMd: signalNotes,
+    overnightMd: null,
+  };
 }

@@ -176,7 +176,7 @@ function criterionFor(
     if (unit.rule == null) {
       return fallback(
         'missing_rule',
-        `unit '${unit.unit_id}' has a select key but no printed scoring rule`,
+        `unit '${unit.unit_id}' has a select key but no printed scoring rule; recover source/author evidence or abandon this candidate, do not invent a scoring policy`,
       );
     }
     return {
@@ -192,7 +192,7 @@ function criterionFor(
     if (unit.rule == null) {
       return fallback(
         'missing_rule',
-        `unit '${unit.unit_id}' has a blank key but no printed scoring rule`,
+        `unit '${unit.unit_id}' has a blank key but no printed scoring rule; recover source/author evidence or abandon this candidate, do not invent a scoring policy`,
       );
     }
     const key = unit.key.key;
@@ -425,7 +425,7 @@ export function draftDocumentToContract(
           code: 'points_not_printed',
           part_id: part.part_id,
           unit_id: unit.unit_id,
-          detail: `unit '${unit.unit_id}' has no printed points`,
+          detail: `unit '${unit.unit_id}' has no printed points; recover source/author evidence or abandon this candidate, do not invent a default score`,
         });
       }
       if (unit.response_class !== unit.response_spec.kind) {

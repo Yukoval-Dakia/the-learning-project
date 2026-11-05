@@ -40,6 +40,7 @@ export const TOOL_LABELS: Readonly<Record<string, string>> = {
   write_agent_note: '记一条学习笔记',
   file_bank_gap: '登记题库缺口',
   present_primary_view: '整理要给你看的内容',
+  compose_block: '画图',
 };
 
 const FALLBACKS: ReadonlyArray<[RegExp, string]> = [
@@ -82,6 +83,7 @@ const ACTIVITY: Readonly<Record<string, string>> = {
   write_quiz: '正在组一份练习',
   attribute_mistake: '正在分析错因',
   present_primary_view: '正在整理要给你看的内容',
+  compose_block: '正在画图',
 };
 
 const ACTIVITY_VERBS: ReadonlyArray<[RegExp, string]> = [
