@@ -6,7 +6,8 @@
 // 两者读同一个 run_id，互不冲突。
 //
 // 轮询策略：固定起步间隔 + 温和退避（×1.5，封顶），终态/卸载/换 run 即停；
-// 连续错误超阈值（默认 5 次）停机并把 error 交给宿主（不无限打服务器）。
+// 连续错误超阈值（默认 5 次）停机并把 error 交给宿主（不无限打服务器）。未到阈值时快照也带
+// error（settled=false），宿主可如实说「暂时连不上」；下一次读成功即清除。
 //
 // YUK-1483：轮询不靠 effect。每个 run 一个就地的轮询资源（JudgeRunPoller），持有真实
 // 快照（status/result/error/polls/settled）和唯一的 timer；React 经 useSyncExternalStore
@@ -51,7 +52,7 @@ export interface JudgeRunStatusWire {
 export interface JudgeRunPollingState {
   status: JudgeRunPollStatus | null;
   result: JudgeRunTerminalResult | null;
-  /** 连续拉取失败超过上限后非 null；瞬断时保持 null（继续轮询）。 */
+  /** 最近一次拉取失败时非 null。settled=false 表示还在重试（下一次读成功即清除）；settled=true 表示已到上限停机。 */
   error: Error | null;
   /** 已完成的轮询次数（测试可断言「同一 run 在持续查询」）。 */
   polls: number;
@@ -205,6 +206,7 @@ class JudgeRunPoller {
         this.deliverSettled();
         return;
       }
+      this.publish({ ...this.snapshot, error: err as Error });
     }
     this.nextDelay = Math.min(delay * 1.5, maxIntervalMs);
     this.schedule(loop, this.nextDelay);
