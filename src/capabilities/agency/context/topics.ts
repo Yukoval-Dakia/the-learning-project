@@ -21,6 +21,8 @@ import {
   DIGEST_SCOPE,
   Digest,
   type DigestT,
+  EDIT_MAX_PATCHES,
+  EDIT_MAX_REPLACEMENTS,
   type FactT,
   TALK_TOPIC,
   type TopicPatchT,
@@ -31,6 +33,7 @@ const empty = (): DigestT => ({
   topics: [],
   as_of: null,
   overnight: null,
+  legacy_global_version: null,
   withdrawals: [],
 });
 
@@ -77,6 +80,7 @@ async function storedTopics(db: Db | Tx) {
   const { note } = await readMemoryBriefNote(db, 'global');
   const digest = empty();
   if (note) {
+    digest.legacy_global_version = note.version;
     const parts = [
       [note.recent_week_md, note.recent_week_evidence_ids],
       [note.recent_months_md, note.recent_months_evidence_ids],
@@ -161,6 +165,8 @@ async function persist(
     sourceIds: string[];
     undoOf?: string;
     legacy?: LegacyFact[];
+    remainingChanges?: string[];
+    requestComplete?: boolean;
   },
 ) {
   const now = new Date();
@@ -188,6 +194,8 @@ async function persist(
       task_run_id: input.taskRunId,
       legacy_before: input.legacy ?? [],
       undo_of: input.undoOf ?? null,
+      remaining_changes: input.remainingChanges ?? [],
+      request_complete: input.requestComplete ?? false,
       evidence_ids: allIds,
     },
     affected_scopes: [],
@@ -237,6 +245,8 @@ async function persist(
     before: (await permittedDigest(tx, before)).topics,
     after: after.topics,
     issues: [],
+    remaining_changes: input.remainingChanges ?? [],
+    request_complete: input.requestComplete ?? false,
   });
 }
 
@@ -253,6 +263,9 @@ export async function changeTopics(
     asOf?: string;
     overnight?: string | null;
     editScope?: { topicKey?: string };
+    legacyGlobalVersion?: number;
+    remainingChanges?: string[];
+    requestComplete?: boolean;
   },
 ) {
   return db.transaction(async (tx) => {
@@ -315,23 +328,35 @@ export async function changeTopics(
       });
     if (input.editScope) {
       const patches = input.patches ?? [];
-      const patch = patches[0];
-      const topic = after.topics.find((t) => t.key === patch?.key);
-      const replacedIds = new Set([
-        ...(patch?.replaces ?? []),
-        ...(patch?.key === TALK_TOPIC ? (topic?.facts.map((f) => f.id) ?? []) : []),
-      ]);
+      const replacements = patches.flatMap((patch) => {
+        const topic = after.topics.find((t) => t.key === patch.key);
+        return [
+          ...new Set([
+            ...patch.replaces,
+            ...(patch.key === TALK_TOPIC ? (topic?.facts.map((f) => f.id) ?? []) : []),
+          ]),
+        ];
+      });
       if (
-        patches.length !== 1 ||
-        (input.editScope.topicKey && patch?.key !== input.editScope.topicKey) ||
-        replacedIds.size > 1 ||
-        [...replacedIds].some((id) => !topic?.facts.some((f) => f.id === id))
+        !patches.length ||
+        patches.length > EDIT_MAX_PATCHES ||
+        replacements.length > EDIT_MAX_REPLACEMENTS ||
+        new Set(replacements).size !== replacements.length ||
+        patches.some(
+          (patch) =>
+            patch.body.length > 400 ||
+            (input.editScope?.topicKey && patch.key !== input.editScope.topicKey) ||
+            patch.replaces.some(
+              (id) =>
+                !after.topics.find((t) => t.key === patch.key)?.facts.some((f) => f.id === id),
+            ),
+        ) ||
+        patches.filter((p) => p.key === TALK_TOPIC).length > 1
       )
         return result([
           {
             kind: 'edit_scope_exceeded',
-            detail:
-              'Nothing was written. Submit one patch for the topic related to this sentence; replace at most one fact from that same topic. Do not clean up other topics.',
+            detail: `Nothing was written. Submit up to ${EDIT_MAX_PATCHES} patches, replacing at most ${EDIT_MAX_REPLACEMENTS} facts total from their own topics; each body <=400 characters. Put unsaved requests in remaining_changes. Do not clean up unrelated facts.`,
           },
         ]);
     }
@@ -436,6 +461,16 @@ export async function changeTopics(
     } else {
       for (const rawPatch of input.patches ?? []) {
         const patch = { ...rawPatch, replaces: [...rawPatch.replaces] };
+        if (patch.key === TALK_TOPIC && patch.body.length > 400)
+          return result([
+            {
+              kind: 'unmergeable',
+              detail: 'Communication must fit one complete summary of at most 400 characters.',
+            },
+          ]);
+        const bodies = Array.from({ length: Math.ceil(patch.body.length / 400) }, (_, chunk) =>
+          patch.body.slice(chunk * 400, (chunk + 1) * 400),
+        );
         const withdrawal = after.withdrawals.find((w) => w.key === patch.key);
         const withheld = withdrawnTopicEvidence(after);
         if (input.sourceIds.some((id) => withheld.has(id)))
@@ -532,7 +567,12 @@ export async function changeTopics(
             },
           ]);
         let topic = after.topics.find((t) => t.key === patch.key);
-        if (topic?.facts.some((f) => f.body === patch.body) && !replaced.length) {
+        const existingFacts = topic?.facts;
+        if (
+          topic &&
+          bodies.every((body) => existingFacts?.some((f) => f.body === body)) &&
+          !replaced.length
+        ) {
           const name = patch.key === TALK_TOPIC ? '怎么和我说话' : patch.name;
           if (
             topic.name !== name ||
@@ -575,21 +615,31 @@ export async function changeTopics(
         topic.name = patch.key === TALK_TOPIC ? '怎么和我说话' : patch.name;
         topic.description = patch.description;
         topic.updated_at = new Date().toISOString();
-        topic.facts.push({
-          id: newId(),
-          body: patch.body,
-          kind: input.actor === 'learner' ? 'correction' : 'fact',
-          memory_kind: patch.memory_kind,
-          written_by: input.actor,
-          evidence_ids: evidence,
-          as_of: new Date().toISOString(),
-          supersedes: patch.replaces,
-          knowledge_ids: patch.knowledge_ids,
-        });
+        for (const body of bodies)
+          topic.facts.push({
+            id: newId(),
+            body,
+            kind: input.actor === 'learner' ? 'correction' : 'fact',
+            memory_kind: patch.memory_kind,
+            written_by: input.actor,
+            evidence_ids: evidence,
+            as_of: new Date().toISOString(),
+            supersedes: patch.replaces,
+            knowledge_ids: patch.knowledge_ids,
+          });
       }
       after.topics = after.topics.filter((t) => t.facts.length);
       if (input.asOf && (!after.as_of || input.asOf > after.as_of)) after.as_of = input.asOf;
       if (input.overnight !== undefined) after.overnight = input.overnight;
+      if (input.legacyGlobalVersion !== undefined) {
+        const [global] = await tx
+          .select({ version: memory_brief_note.version })
+          .from(memory_brief_note)
+          .where(eq(memory_brief_note.scope_key, 'global'))
+          .limit(1);
+        if (global?.version === input.legacyGlobalVersion)
+          after.legacy_global_version = input.legacyGlobalVersion;
+      }
     }
     // Metadata alone must not shadow the legacy global while its purpose repair is pending.
     if (version === 0 && !after.topics.length) return result([]);
@@ -686,7 +736,12 @@ export async function topicBoard(db: Db, now = new Date()) {
 /** Retry only the local CAS; never repeat the provider turn after it has written. */
 export async function refreshTopicMetadata(
   db: Db,
-  input: { taskRunId: string; asOf?: string; overnight?: string | null },
+  input: {
+    taskRunId: string;
+    asOf?: string;
+    overnight?: string | null;
+    legacyGlobalVersion?: number;
+  },
 ) {
   for (let attempt = 0; attempt < 5; attempt++) {
     const { version } = await readTopics(db);

@@ -136,6 +136,7 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
       taskRunId: result.task_run_id,
       asOf: now.toISOString(),
       overnight,
+      legacyGlobalVersion: legacyScopes.find((scope) => scope.scope === 'global')?.note?.version,
     }));
   await writeEvent(db, {
     id: newId(),

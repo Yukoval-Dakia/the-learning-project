@@ -32,4 +32,9 @@ export const ContextBoardResponse = z.object({
     }),
   ),
 });
-export const ContextEditResponse = z.object({ reply: z.string(), changes: z.array(ChangeResult) });
+export const ContextEditResponse = z.object({
+  status: z.enum(['changed', 'partial', 'unchanged']),
+  reply: z.string(),
+  changes: z.array(ChangeResult),
+  remaining_changes: z.array(z.string()),
+});
