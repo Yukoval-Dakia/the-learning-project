@@ -7,23 +7,29 @@
  *   2. the provider catalog / pricing files (those files ARE the catalog);
  *   3. `codeDefault:` initializers of `*_MODEL` / `*.model` keys in the config registry.
  *
- * Everything else reads the resolved task config. Remaining exceptions need an allowlist entry with
- * reason + resolves_when.
+ * Everything else reads the resolved task config. A literal site is illegal when it was not
+ * already present on the comparison base — the base is the inventory, there is no allowlist.
  *
  * The model set is derived from the catalog snapshots, catalog declarations, task defaults, and
  * registry code defaults — this file keeps no model list of its own. A literal is flagged when it
  * contains a derived id on a non-alphanumeric boundary, so a composite cost_ref still matches while
- * `jo3i` does not match 'o3'.
+ * `jo3i` does not match 'o3'. Site identity is (file, literal text, model id) with a per-key count
+ * budget; renames carry the file's budget across.
  */
 
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import {
+  listTreeFiles,
+  readBlobs,
+  resolveAuditBaseSha,
+  worktreeRenameMap,
+} from './lib/git-base-scan';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
-const ALLOWLIST_PATH = join(REPO_ROOT, 'scripts/audit-model-source-allowlist.json');
 
 const SCAN_ROOTS = ['src', 'server', 'scripts', 'web'];
 const SOURCE_FILE = /\.(?:ts|tsx|mts|cts)$/u;
@@ -57,21 +63,10 @@ const PROVIDER_CATALOG_FILES = new Set([
 // live in DB rows).
 const CONFIG_REGISTRY_FILE = 'src/core/config/registry.ts';
 
-const RESOLVE_KINDS = ['pr', 'phase', 'manual'] as const;
-
-type ResolvesWhen = { kind: string; ref: string; expected_by: string };
-type AllowlistEntry = { literals?: string[]; reason: string; resolves_when: ResolvesWhen };
-
 type Finding = { file: string; line: number; literal: string; modelId: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isIsoDate(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const d = new Date(`${value}T00:00:00.000Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
 }
 
 function projectPath(path: string): string {
@@ -275,40 +270,6 @@ function registryModelCodeDefaults(): Set<string> {
   return ids;
 }
 
-// ── allowlist ────────────────────────────────────────────────────────────────
-
-function loadAllowlist(): { entries: Record<string, AllowlistEntry>; problems: string[] } {
-  if (!existsSync(ALLOWLIST_PATH)) return { entries: {}, problems: [] };
-  const raw = JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf-8')) as unknown;
-  const entries: Record<string, AllowlistEntry> = {};
-  const problems: string[] = [];
-  if (!isRecord(raw)) return { entries, problems: ['allowlist root is not an object'] };
-  for (const [file, value] of Object.entries(raw)) {
-    if (file.startsWith('_')) continue;
-    if (!isRecord(value)) {
-      problems.push(`${file}: entry is not an object`);
-      continue;
-    }
-    const entry = value as AllowlistEntry;
-    if (typeof entry.reason !== 'string' || entry.reason.trim().length === 0)
-      problems.push(`${file}: missing or empty reason`);
-    const rw = entry.resolves_when;
-    if (!isRecord(rw)) problems.push(`${file}: missing resolves_when object`);
-    else {
-      if (!RESOLVE_KINDS.includes(rw.kind as (typeof RESOLVE_KINDS)[number]))
-        problems.push(`${file}: resolves_when.kind must be one of ${RESOLVE_KINDS.join('|')}`);
-      if (typeof rw.ref !== 'string' || rw.ref.trim().length === 0)
-        problems.push(`${file}: resolves_when.ref must be a non-empty string`);
-      if (typeof rw.expected_by !== 'string' || !isIsoDate(rw.expected_by))
-        problems.push(`${file}: resolves_when.expected_by must be a YYYY-MM-DD date`);
-    }
-    if (entry.literals !== undefined && !entry.literals.every((l) => typeof l === 'string'))
-      problems.push(`${file}: literals must be a string array when present`);
-    entries[file] = entry;
-  }
-  return { entries, problems };
-}
-
 /**
  * Site-level legality: an allowed file does not license every literal in it. Catalog files are
  * wholly catalogs; registry.ts only allows `codeDefault:` under a *_MODEL / *.model key; tasks/**
@@ -351,6 +312,76 @@ function containsModelId(text: string, modelId: string): boolean {
   return false;
 }
 
+/** Every illegal model-id literal in one source file. Ref-agnostic: pass any ref's text. */
+function literalViolations(path: string, source: string, modelIds: ReadonlySet<string>): Finding[] {
+  const out: Finding[] = [];
+  for (const { text, line, node } of stringLiterals(source, path)) {
+    for (const modelId of modelIds) {
+      if (!containsModelId(text, modelId)) continue;
+      if (isAllowedSite(path, node)) continue;
+      out.push({ file: path, line, literal: text, modelId });
+    }
+  }
+  return out;
+}
+
+function isScannedPath(rel: string): boolean {
+  const name = rel.split('/').pop() ?? rel;
+  if (!SOURCE_FILE.test(name)) return false;
+  if (TEST_FILE.test(name) || TEST_SUPPORT_FILE.test(name)) return false;
+  if (name.endsWith('.generated.ts')) return false;
+  return !rel.split('/').some((segment) => EXCLUDED_DIRS.has(segment));
+}
+
+function keyOf(finding: Pick<Finding, 'file' | 'literal' | 'modelId'>): string {
+  return JSON.stringify([finding.file, finding.literal, finding.modelId]);
+}
+
+function budgetFrom(
+  findings: readonly Finding[],
+  renames: ReadonlyMap<string, string>,
+): Map<string, number> {
+  const budget = new Map<string, number>();
+  for (const finding of findings) {
+    const key = keyOf({ ...finding, file: renames.get(finding.file) ?? finding.file });
+    budget.set(key, (budget.get(key) ?? 0) + 1);
+  }
+  return budget;
+}
+
+/** Head findings whose key count exceeds the base budget, in scan order. */
+function newFindings(head: readonly Finding[], budget: ReadonlyMap<string, number>): Finding[] {
+  const used = new Map<string, number>();
+  const fresh: Finding[] = [];
+  for (const finding of head) {
+    const key = keyOf(finding);
+    const count = (used.get(key) ?? 0) + 1;
+    used.set(key, count);
+    if (count > (budget.get(key) ?? 0)) fresh.push(finding);
+  }
+  return fresh;
+}
+
+function collectAtRef(sha: string, modelIds: ReadonlySet<string>): Finding[] {
+  const candidates = listTreeFiles(REPO_ROOT, sha, SCAN_ROOTS)
+    .map((entry) => entry.path.split('\\').join('/'))
+    .filter(isScannedPath)
+    .sort();
+  const blobs = readBlobs(REPO_ROOT, sha, candidates);
+  const findings: Finding[] = [];
+  for (const path of candidates) {
+    const text = blobs.get(path);
+    if (text === undefined) continue;
+    findings.push(...literalViolations(path, text, modelIds));
+  }
+  return findings;
+}
+
+function baseFlag(): string | undefined {
+  const index = process.argv.indexOf('--base');
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 function main(): void {
@@ -365,64 +396,37 @@ function main(): void {
     process.exit(1);
   }
 
-  const { entries: allowlist, problems } = loadAllowlist();
-  const files = SCAN_ROOTS.flatMap((root) => sourceFiles(join(REPO_ROOT, root)));
+  const requested = baseFlag() || process.env.CAPABILITY_BASE_SHA;
+  const base = process.env.TEST_POLICY_BASE || resolveAuditBaseSha(REPO_ROOT, requested);
+  const budget = budgetFrom(
+    collectAtRef(base, modelIds),
+    worktreeRenameMap(REPO_ROOT, base, SCAN_ROOTS),
+  );
 
+  const files = SCAN_ROOTS.flatMap((root) => sourceFiles(join(REPO_ROOT, root)));
   const findings: Finding[] = [];
-  const usedAllowlist = new Set<string>();
+  let grandfathered = 0;
   for (const file of files) {
     const path = projectPath(file);
-    const entry = allowlist[path];
-    const exemptAll = entry?.literals?.includes('*') ?? false;
-    const exempt = new Set(entry?.literals ?? []);
-    for (const { text, line, node } of stringLiterals(readFileSync(file, 'utf-8'), file)) {
-      for (const modelId of modelIds) {
-        if (!containsModelId(text, modelId)) continue;
-        if (isAllowedSite(path, node)) continue;
-        const finding = { file: path, line, literal: text, modelId };
-        if (exemptAll || exempt.has(text)) {
-          usedAllowlist.add(path);
-        } else {
-          findings.push(finding);
-        }
-      }
-    }
+    const hits = literalViolations(path, readFileSync(file, 'utf-8'), modelIds);
+    const fresh = newFindings(hits, budget);
+    grandfathered += hits.length - fresh.length;
+    findings.push(...fresh);
   }
 
-  // Stale allowlist entries are findings too — they silently mask future drift.
-  const stale: string[] = [];
-  for (const file of Object.keys(allowlist)) {
-    if (!existsSync(join(REPO_ROOT, file)))
-      stale.push(`${file}: allowlisted file no longer exists`);
-    else if (!usedAllowlist.has(file)) {
-      const entry = allowlist[file];
-      const hasMatch = entry.literals?.includes('*')
-        ? false
-        : stringLiterals(readFileSync(join(REPO_ROOT, file), 'utf-8'), file).some((l) =>
-            (entry.literals ?? []).includes(l.text),
-          );
-      if (!hasMatch && !entry.literals?.includes('*')) {
-        stale.push(`${file}: allowlist entry no longer matches any literal — remove it`);
-      }
-    }
-  }
-
-  for (const problem of problems) console.error(`allowlist hygiene: ${problem}`);
-  for (const item of stale) console.error(`stale allowlist: ${item}`);
   for (const f of findings) {
     console.error(
-      `model-source violation: ${f.file}:${f.line} — literal ${JSON.stringify(f.literal)} contains model id '${f.modelId}' (resolve the task config instead, or allowlist with reason + resolves_when)`,
+      `model-source violation: ${f.file}:${f.line} — literal ${JSON.stringify(f.literal)} contains model id '${f.modelId}' (resolve the task config instead)`,
     );
   }
 
-  const total = findings.length + problems.length + stale.length;
-  if (total === 0) {
+  if (findings.length === 0) {
     console.log(
-      `OK audit:model-source — ${modelIds.size} derived model ids; no literals outside task defaults / provider catalog / system_config.`,
+      `OK audit:model-source — ${modelIds.size} derived model ids; ${grandfathered} literals grandfathered from base ${base.slice(0, 12)}, none new.`,
     );
     return;
   }
-  console.error(`FAIL audit:model-source — ${total} problem(s).`);
+  console.error(`FAIL audit:model-source — ${findings.length} new violation(s) vs base.`);
   process.exit(1);
 }
 

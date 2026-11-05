@@ -4,10 +4,14 @@
  * PostgreSQL topology triggers own hub-sync correctness: every knowledge/knowledge_edge write
  * dirties the affected hubs. That is safe only if the full set of topology writers is inventoried,
  * so this audit enforces four rules:
- *   UNINVENTORIED_TOPOLOGY_WRITER — topology write in a path not in the allowlist.
+ *   UNINVENTORIED_TOPOLOGY_WRITER — topology write site absent from the comparison base.
  *   RECONCILIATION_OWNER_BYPASS — hub_sync_reconciliation write outside its sole owner.
  *   INTERNAL_APPLY_MARKER_BYPASS — app.hub_sync_internal_apply set outside that owner.
  *   DIRECT_HUB_ACTOR_APPLY — persistNoteRefineApply called with actorRef 'hub_auto_sync'.
+ *
+ * There is no allowlist: the comparison base is the inventory. A site present at base may stay
+ * (and may be re-filed by a rename); a new site, or a new write of a table a file did not already
+ * touch at base, fails. Site identity is (rule, file, discriminator) with a per-key count budget.
  *
  * Scans tracked .ts/.tsx under src/ and scripts/, excluding tests and this audit's own source
  * (which necessarily carries the marker strings).
@@ -17,15 +21,21 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectDrizzleWrites } from './hub-sync-writer-dataflow';
+import {
+  listTreeFiles,
+  readBlobs,
+  resolveAuditBaseSha,
+  worktreeRenameMap,
+} from './lib/git-base-scan';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
-const ALLOWLIST_PATH = resolve(__dirname, 'audit-hub-sync-writers-allowlist.json');
 
 // Sole owner of the reconciliation cursor + the internal-apply marker.
 const RECONCILER_PATH = 'src/capabilities/notes/server/hub-sync-reconciliation.ts';
 const TOPOLOGY_TABLES = ['knowledge', 'knowledge_edge'] as const;
 const SCAN_DIRS = ['src', 'scripts'];
+const SELF_PATH = 'scripts/audit-hub-sync-writers.ts';
 
 export type HubSyncAuditRule =
   | 'UNINVENTORIED_TOPOLOGY_WRITER'
@@ -40,10 +50,13 @@ export interface HubSyncAuditFinding {
   excerpt: string;
 }
 
-export interface AllowlistEntry {
-  path: string;
-  tables: string[];
-  reason: string;
+/** A raw write site: the file path is the rename-carried part; the discriminator is the
+ *  table/marker that makes each site distinct inside one file. */
+interface Hit {
+  rule: HubSyncAuditRule;
+  file: string;
+  discriminator: string;
+  index: number;
 }
 
 function normalizePath(p: string): string {
@@ -231,6 +244,18 @@ function codeText(source: string): string {
   return out.join('');
 }
 
+function isScannedPath(rel: string): boolean {
+  const name = rel.split('/').pop() ?? rel;
+  if (!/\.(ts|tsx)$/.test(name)) return false;
+  if (/\.(test|db\.test|unit\.test)\.tsx?$/.test(name)) return false;
+  // Generated artifacts are type-only and can never own a hub-sync write; their mega-unions
+  // also recurse trustedType into a stack overflow.
+  if (/\.generated\.tsx?$/.test(name)) return false;
+  if (rel.split('/').some((segment) => ['node_modules', 'dist', '.git'].includes(segment)))
+    return false;
+  return rel !== SELF_PATH;
+}
+
 function listSourceFiles(root: string): string[] {
   const out: string[] = [];
   const walk = (dir: string) => {
@@ -243,13 +268,8 @@ function listSourceFiles(root: string): string[] {
         walk(abs);
         continue;
       }
-      if (!/\.(ts|tsx)$/.test(entry)) continue;
-      if (/\.(test|db\.test|unit\.test)\.tsx?$/.test(entry)) continue;
-      // Generated artifacts are type-only and can never own a hub-sync write; their mega-unions
-      // also recurse trustedType into a stack overflow.
-      if (/\.generated\.tsx?$/.test(entry)) continue;
-      // This audit's own source contains rule marker strings and synthetic patterns.
-      if (normalizePath(relative(root, abs)) === 'scripts/audit-hub-sync-writers.ts') continue;
+      const rel = normalizePath(relative(root, abs));
+      if (!isScannedPath(rel)) continue;
       out.push(abs);
     }
   };
@@ -257,95 +277,150 @@ function listSourceFiles(root: string): string[] {
   return out;
 }
 
-/** Scan `root` for hub-sync ownership violations; the allowlist inventories known writers. */
-export async function auditHubSyncWriters(input: {
-  root: string;
-  allowlist: AllowlistEntry[];
-}): Promise<HubSyncAuditFinding[]> {
-  const findings: HubSyncAuditFinding[] = [];
-  const allowByPath = new Map<string, Set<string>>();
-  for (const entry of input.allowlist) {
-    allowByPath.set(normalizePath(entry.path), new Set(entry.tables));
-  }
+/** Every hub-sync ownership hit in one source file. Ref-agnostic: pass any ref's source text. */
+function auditSource(sourceText: string, rel: string): Hit[] {
+  const hits: Hit[] = [];
+  const code = codeText(sourceText);
+  const drizzleAudit = collectDrizzleWrites(sourceText, rel);
+  const drizzleWrites = drizzleAudit.writes;
+  const seen = new Set<string>();
+  const add = (
+    rule: HubSyncAuditRule,
+    index: number,
+    discriminator: string,
+    occurrence: string,
+  ) => {
+    const key = `${rule}:${occurrence}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    hits.push({ rule, file: rel, discriminator, index });
+  };
 
-  for (const abs of listSourceFiles(input.root)) {
-    const rel = normalizePath(relative(input.root, abs));
-    const isReconciler = rel === RECONCILER_PATH;
-    const sourceText = readFileSync(abs, 'utf8');
-    const code = codeText(sourceText);
-    const drizzleAudit = collectDrizzleWrites(sourceText, rel);
-    const drizzleWrites = drizzleAudit.writes;
-    const lines = sourceText.split('\n');
-    const findingKeys = new Set<string>();
-    const addFinding = (rule: HubSyncAuditRule, index: number, occurrence = String(index)) => {
-      const line = code.slice(0, index).split('\n').length;
-      const key = `${rule}:${rel}:${occurrence}`;
-      if (findingKeys.has(key)) return;
-      findingKeys.add(key);
-      findings.push({ rule, file: rel, line, excerpt: lines[line - 1]?.trim() ?? '' });
-    };
-
-    if (!isReconciler) {
-      for (const write of drizzleWrites) {
-        if (write.table === 'hub_sync_reconciliation') {
-          addFinding(
-            'RECONCILIATION_OWNER_BYPASS',
-            write.index,
-            `${write.index}:${write.end}:${write.table}`,
-          );
-        }
-      }
-      for (const marker of drizzleAudit.internalApplyMarkers) {
-        addFinding(
-          'INTERNAL_APPLY_MARKER_BYPASS',
-          marker.index,
-          `${marker.index}:${marker.end}:internal-marker`,
+  const isReconciler = rel === RECONCILER_PATH;
+  if (!isReconciler) {
+    for (const write of drizzleWrites) {
+      if (write.table === 'hub_sync_reconciliation') {
+        add(
+          'RECONCILIATION_OWNER_BYPASS',
+          write.index,
+          write.table,
+          `${write.index}:${write.end}:${write.table}`,
         );
       }
     }
-    for (const match of code.matchAll(
-      /(?:actorRef|['"]actorRef['"])\s*:\s*['"]hub_auto_sync['"]/g,
-    )) {
-      addFinding('DIRECT_HUB_ACTOR_APPLY', match.index);
-    }
-    for (const table of TOPOLOGY_TABLES) {
-      if (allowByPath.get(rel)?.has(table)) continue;
-      for (const write of drizzleWrites) {
-        if (write.table === table)
-          addFinding(
-            'UNINVENTORIED_TOPOLOGY_WRITER',
-            write.index,
-            `${write.index}:${write.end}:${write.table}`,
-          );
-      }
+    for (const marker of drizzleAudit.internalApplyMarkers) {
+      add(
+        'INTERNAL_APPLY_MARKER_BYPASS',
+        marker.index,
+        'internal-apply-marker',
+        `${marker.index}:${marker.end}:internal-marker`,
+      );
     }
   }
-  return findings;
-}
-
-export function loadAllowlist(): AllowlistEntry[] {
-  let raw: { writers?: AllowlistEntry[] };
-  try {
-    raw = JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf8')) as { writers?: AllowlistEntry[] };
-  } catch (err) {
-    // This is a CI gate — a missing/corrupt allowlist must fail with a clear, actionable
-    // message, not a raw ENOENT/SyntaxError stack.
-    throw new Error(
-      `audit:hub-sync-writers: cannot read/parse allowlist at ${ALLOWLIST_PATH}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+  for (const match of code.matchAll(/(?:actorRef|['"]actorRef['"])\s*:\s*['"]hub_auto_sync['"]/g)) {
+    add('DIRECT_HUB_ACTOR_APPLY', match.index, 'hub_auto_sync', String(match.index));
   }
-  return raw.writers ?? [];
+  for (const write of drizzleWrites) {
+    if (TOPOLOGY_TABLES.includes(write.table as (typeof TOPOLOGY_TABLES)[number])) {
+      add(
+        'UNINVENTORIED_TOPOLOGY_WRITER',
+        write.index,
+        write.table,
+        `${write.index}:${write.end}:${write.table}`,
+      );
+    }
+  }
+  return hits;
 }
 
-async function main(): Promise<void> {
-  const findings = await auditHubSyncWriters({ root: REPO_ROOT, allowlist: loadAllowlist() });
+function keyOf(hit: Hit): string {
+  return `${hit.rule} ${hit.file} ${hit.discriminator}`;
+}
+
+function hitBudget(
+  hits: readonly Hit[],
+  renames?: ReadonlyMap<string, string>,
+): Map<string, number> {
+  const budget = new Map<string, number>();
+  for (const hit of hits) {
+    const file = renames?.get(hit.file) ?? hit.file;
+    const key = `${hit.rule} ${file} ${hit.discriminator}`;
+    budget.set(key, (budget.get(key) ?? 0) + 1);
+  }
+  return budget;
+}
+
+/** Head hits that exceed the per-key budget measured on the base, in scan order. */
+function newHits(head: readonly Hit[], budget: ReadonlyMap<string, number>): Hit[] {
+  const used = new Map<string, number>();
+  const fresh: Hit[] = [];
+  for (const hit of head) {
+    const key = keyOf(hit);
+    const count = (used.get(key) ?? 0) + 1;
+    used.set(key, count);
+    if (count > (budget.get(key) ?? 0)) fresh.push(hit);
+  }
+  return fresh;
+}
+
+function collectHitsAtRef(sha: string): Hit[] {
+  const candidates = listTreeFiles(REPO_ROOT, sha, SCAN_DIRS)
+    .map((entry) => normalizePath(entry.path))
+    .filter(isScannedPath)
+    .sort();
+  const blobs = readBlobs(REPO_ROOT, sha, candidates);
+  const hits: Hit[] = [];
+  for (const path of candidates) {
+    const text = blobs.get(path);
+    if (text === undefined) continue;
+    hits.push(...auditSource(text, path));
+  }
+  return hits;
+}
+
+function baseFlag(): string | undefined {
+  const index = process.argv.indexOf('--base');
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
+/** Scan the worktree for hub-sync ownership violations vs the comparison base. */
+export function auditHubSyncWriters(input: { root: string; base: string }): {
+  findings: HubSyncAuditFinding[];
+  grandfathered: number;
+} {
+  const baseHits = collectHitsAtRef(input.base);
+  const renames = worktreeRenameMap(input.root, input.base, SCAN_DIRS);
+  const budget = hitBudget(baseHits, renames);
+
+  const findings: HubSyncAuditFinding[] = [];
+  let grandfathered = 0;
+  for (const abs of listSourceFiles(input.root)) {
+    const rel = normalizePath(relative(input.root, abs));
+    const sourceText = readFileSync(abs, 'utf8');
+    const hits = auditSource(sourceText, rel);
+    const fresh = newHits(hits, budget);
+    grandfathered += hits.length - fresh.length;
+    const lines = sourceText.split('\n');
+    const code = codeText(sourceText);
+    for (const hit of fresh) {
+      const line = code.slice(0, hit.index).split('\n').length;
+      findings.push({ rule: hit.rule, file: rel, line, excerpt: lines[line - 1]?.trim() ?? '' });
+    }
+  }
+  return { findings, grandfathered };
+}
+
+function main(): void {
+  const requested = baseFlag() || process.env.CAPABILITY_BASE_SHA;
+  const base = process.env.TEST_POLICY_BASE || resolveAuditBaseSha(REPO_ROOT, requested);
+  const { findings, grandfathered } = auditHubSyncWriters({ root: REPO_ROOT, base });
   if (process.argv.includes('--json')) {
     console.log(JSON.stringify(findings, null, 2));
   }
   if (findings.length === 0) {
-    console.log('Hub sync writer audit passed');
+    console.log(
+      `Hub sync writer audit passed (${grandfathered} inventoried sites vs base ${base.slice(0, 12)})`,
+    );
     return;
   }
   console.error(`Hub sync writer audit found ${findings.length} violation(s):`);
@@ -357,5 +432,5 @@ async function main(): Promise<void> {
 
 // CLI-gate: only run when invoked directly (not when the test imports it).
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  void main();
+  main();
 }

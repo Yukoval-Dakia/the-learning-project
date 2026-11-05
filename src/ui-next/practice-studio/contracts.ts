@@ -120,6 +120,8 @@ export interface Result {
     | { kind: 'missing' | 'unavailable'; reason: string };
   evidence: readonly Content[];
   uncertainty?: string;
+  /** Some of this was judged by AI and has not been checked against people's marking. */
+  aiGraded?: boolean;
 }
 export interface Question {
   id: string;

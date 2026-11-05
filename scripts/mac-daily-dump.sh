@@ -1,9 +1,11 @@
 #!/bin/bash
-# YUK-992 — Mac 本地生产日级 pg_dump（YUK-1041 修复版）。
+# YUK-992 — 日级 pg_dump：launchd 在 Mac 上触发，pg_dump 经 ssh 在 NAS 的 TEST
+# postgres 容器里跑（NAS sshd 禁 TCP 转发，走 exec channel，无端口转发）。
 #
 # 背景：09-12 主机盘写满 → OrbStack VM 崩溃 → docker 存储全清（含生产 pgdata 卷），
 # 恢复只能靠 4 天前的手动 per-lane dump。本脚本由 launchd 每日 07:15
 # 触发——避开 03:00-05:00 维护 cron 带，且晚于 05:50 供给 planner 链，dump 捕捉整夜产出。
+# Mac 关机时当日不跑（ssh/本机 docker 都不可用），Mac 回来后恢复。
 #
 # YUK-1041 根因（勿回退此结构）：
 #   launchd 子进程被 macOS TCC/sandbox 拒绝对 /Volumes/*（外置盘）的任何 I/O——
@@ -14,7 +16,7 @@
 #     1. 脚本必须装在内置盘（INSTALL_DIR），launchd 才能 exec；
 #     2. 对 runtime 目录（外置盘）的一切读/写/枚举全部经 `docker run -v …:/backup`
 #        在容器内完成——OrbStack virtiofs 由 daemon 侧代理文件 I/O，不吃 TCC；
-#     3. pg_dump 先经 socket 落本地 staging，再 docker -i stdin 流进容器落盘（原子 mv）。
+#     3. pg_dump 经 ssh 落本地 staging，再 docker -i stdin 流进容器落盘（原子 mv）。
 #
 # 安装（一次性，或脚本更新后重跑）：
 #   mkdir -p ~/Library/Application\ Support/loom-daily-dump
@@ -34,17 +36,17 @@
 # 失败发现面（YUK-1056 加固）：
 #   - 成功：写 .loom-daily-dump-last-success（epoch 戳）；连续 2 日戳未更新 = 失败。
 #   - 失败（容器可达）：写 .loom-daily-dump-FAILED-YYYYMMDD 标记文件 + exit 非 0。
-#   - 失败（容器/daemon 不可达——runtime 目录连容器写都做不到）：写【本地】标记
+#   - 失败（本机 daemon 不可达——runtime 目录连容器写都做不到）：写【本地】标记
 #     INSTALL_DIR/.loom-daily-dump-FAILED-YYYYMMDD + launchd.log + exit 非 0。
 #     停滞的 success 戳是第三层兜底信号。
 #   - 脚本内日志：loom-daily-dump.log（runtime 目录，容器侧 append）；
 #     launchd stdout/stderr：INSTALL_DIR/launchd.log（内置盘）。
 #
-# 环境覆盖（YUK-1056 去硬编码；默认值 = 当前 Mac 生产）：
+# 环境覆盖（YUK-1056 去硬编码；默认值 = 当前 NAS 上的 TEST）：
 #   LOOM_RUNTIME_DIR   runtime 目录（dump 落盘点）
-#   LOOM_PG_CONTAINER  postgres 容器名
+#   LOOM_PG_CONTAINER  NAS 上的 postgres 容器名
 #   LOOM_DB_USER / LOOM_DB_NAME
-#   LOOM_KEEP_DAILY / LOOM_MIN_BYTES
+#   LOOM_KEEP_DAILY / LOOM_MIN_BYTES / LOOM_DUMP_TIMEOUT
 
 set -uo pipefail
 
@@ -59,6 +61,10 @@ KEEP_DAILY="${LOOM_KEEP_DAILY:-14}"
 MIN_BYTES="${LOOM_MIN_BYTES:-102400}" # 100KB——空库/坏 dump 防御（现体量 ~7.7MB）
 INSTALL_DIR="$HOME/Library/Application Support/loom-daily-dump"
 LOCAL_LOG="$INSTALL_DIR/launchd.log"
+NAS_SSH=(/usr/bin/ssh -F none -i "$HOME/.ssh/tlp_nas_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o LogLevel=ERROR yukoval@bancho-nb2.local)
+DUMP_TIMEOUT="${LOOM_DUMP_TIMEOUT:-1200}" # dump 总时限——ssh 假死兜底，超时 kill 走失败路径
+# 本机 pg 容器已停（回滚保留），不能 inspect 它；写外置盘固定用这个本地已存在的镜像。
+WRITE_IMAGE="pgvector/pgvector:0.8.2-pg16-bookworm"
 
 DATE="$(date +%Y%m%d)"
 DUMP_NAME="loom-daily-$DATE.dump"
@@ -71,8 +77,10 @@ IMG=""
 cleanup() { rm -rf "$STAGE_DIR"; }
 trap cleanup EXIT
 
-img() { # 解析目标容器镜像（必在本地缓存——容器正用它跑）；daemon 死则返回非零
-  [ -n "$IMG" ] || IMG="$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null)"
+img() { # 确认固定镜像在本地缓存；daemon 死或镜像缺失返回非零
+  if [ -z "$IMG" ] && docker image inspect "$WRITE_IMAGE" >/dev/null 2>&1; then
+    IMG="$WRITE_IMAGE"
+  fi
   [ -n "$IMG" ]
 }
 
@@ -132,17 +140,26 @@ if [ "${1:-}" = "--check" ]; then
   exit $((ok == 1 ? 0 : 1))
 fi
 
-# 前置：daemon 活着、目标容器在跑。
-if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER"; then
-  # 容器不在 → runtime 目录写不了（盘 I/O 只能走 docker）。YUK-1056：
-  # 不再静默 exit 0 —— 本地标记 + launchd.log + 非零退出，告警面三层齐备。
+# 前置：本机 daemon 活着——外置盘的写/标记/巡检全走容器，daemon 死了后面全是哑弹。
+if ! docker info >/dev/null 2>&1; then
   remote_mark 2>/dev/null || true
-  local_mark "container $CONTAINER not running"
+  local_mark "docker daemon not reachable"
   exit 1
 fi
 
-# pg_dump → 本地 staging（经 docker socket 导流——本地盘无 TCC 限制）。
-if ! docker exec "$CONTAINER" pg_dump -Fc -U "$DB_USER" "$DB_NAME" >"$STAGE_DUMP" 2>"$PG_ERR"; then
+# pg_dump 在 NAS 跑（exec channel 里远端 docker exec），stdout 落本地 staging。
+# 看门狗防 ssh 假死：到点立 .timeout 并 kill -9，走同一失败路径；截断的 staging 留在 mktemp，不发布。
+"${NAS_SSH[@]}" "docker exec $CONTAINER pg_dump -Fc -U $DB_USER $DB_NAME" </dev/null >"$STAGE_DUMP" 2>"$PG_ERR" &
+dump_pid=$!
+( sleep "$DUMP_TIMEOUT"; : >"$STAGE_DIR/.timeout"; kill -9 "$dump_pid" 2>/dev/null ) &
+watch_pid=$!
+wait "$dump_pid"; dump_rc=$?
+kill "$watch_pid" 2>/dev/null; wait "$watch_pid" 2>/dev/null
+if [ -e "$STAGE_DIR/.timeout" ] && [ "$dump_rc" -ne 0 ]; then
+  volsh 'cat >> /backup/loom-daily-dump.log' <"$PG_ERR" 2>/dev/null
+  fail "pg_dump exceeded ${DUMP_TIMEOUT}s — killed"
+fi
+if [ "$dump_rc" -ne 0 ]; then
   volsh 'cat >> /backup/loom-daily-dump.log' <"$PG_ERR" 2>/dev/null
   fail "pg_dump exit non-zero"
 fi
