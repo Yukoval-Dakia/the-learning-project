@@ -275,7 +275,7 @@ export async function divertReviewAnswer(database: Db, handover: ReviewAnswerHan
   const state = await readJudgeRunPermanent(database, runId);
   if (state.kind === 'resolved')
     return { kind: 'terminal' as const, candidateId: state.result.assessment?.candidate_id };
-  if (state.kind === 'manual')
+  if (state.kind === 'manual' || state.kind === 'unmapped')
     return {
       kind: 'terminal' as const,
       hold: {
