@@ -10,6 +10,7 @@ import {
   ResponseSet,
 } from '@/core/schema/assessment';
 import { SERVING_UNAVAILABLE_REASONS } from '@/core/schema/assessment/serving-admission';
+import { GradingProvenanceEntry } from '@/kernel/capability-contract-schemas';
 
 // ---------- 发题（issueAssessment） ----------
 
@@ -154,6 +155,7 @@ export const JudgeRunTerminalResultSchema = z
     confidence: z.number().optional(),
     feedback_md: z.string().optional(),
     capability_ref: z.object({ id: z.string(), version: z.string() }).optional(),
+    grading_provenance: z.array(GradingProvenanceEntry).optional(),
     telemetry: z.unknown().optional(),
     /** The override this handler REQUESTED — not necessarily the lane that executed (#Tunn0). */
     provider_override: z.string().nullable().optional(),

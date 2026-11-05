@@ -40,7 +40,6 @@ describe('runModelSliceAdmission digest', () => {
       runModelSliceAdmission({} as never, {
         run_id: 'run-digest',
         slice: {
-          subject: 'math',
           response_class: 'free',
           task_kind: 'JevScoringDecisionTask',
           model: 'not-the-current-model',

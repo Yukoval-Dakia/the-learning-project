@@ -16,6 +16,7 @@ export {
 } from '@/core/schema/business';
 export {
   CoarseOutcome,
+  GradingProvenanceEntry,
   JudgeResultV2,
   PartialUnknownJudgeResult,
   ScoreMeaning,
