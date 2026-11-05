@@ -53,6 +53,11 @@ export function providerStatus(provider: ConfigProvider): string {
       return '认证状态未知';
   }
 }
+/** A task's plain name and one line on what it does; the code name until it has one. */
+export function taskWords(task: ConfigTask): { name: string; detail: string | null } {
+  const [name, ...rest] = (task.label ?? '').split('：');
+  return name ? { name, detail: rest.join('：') || null } : { name: task.kind, detail: null };
+}
 export function taskEditable(task: ConfigTask): boolean {
   return task.override_wired.provider && task.override_wired.model;
 }

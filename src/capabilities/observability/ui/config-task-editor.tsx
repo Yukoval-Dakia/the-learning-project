@@ -15,6 +15,7 @@ import {
   modelChanges,
   resetTaskChanges,
   taskEditable,
+  taskWords,
   thinkingLevels,
   thinkingWord,
 } from './config-model';
@@ -109,7 +110,7 @@ export function ConfigTaskEditor({
   return (
     <section aria-label={`${task.kind} 配置编辑`} className="adm-editor">
       <div className="adm-editor-head">
-        <h3 className="adm-editor-title adm-mono">{task.kind}</h3>
+        <h3 className="adm-editor-title">{taskWords(task).name}</h3>
         <Button variant="ghost" size="sm" onClick={onClose} disabled={pending}>
           取消编辑
         </Button>

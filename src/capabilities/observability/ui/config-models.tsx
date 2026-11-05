@@ -16,6 +16,7 @@ import {
   matchesSearch,
   ruleWord,
   taskEditable,
+  taskWords,
 } from './config-model';
 import { ModelPicker, modelIssue } from './config-model-picker';
 import { ConfigProviderCatalog } from './config-provider-catalog';
@@ -204,6 +205,7 @@ function TaskRow({
   onEdit: (open: boolean) => void;
 }) {
   const [receipt, setReceipt] = useState<ConfigReceipt | null>(null);
+  const words = taskWords(task);
   // Only until the next config snapshot: after that the row above is the truth, and a later write
   // anywhere could have changed this task.
   const fresh = receipt !== null && data.snapshot.epoch <= receipt.committed_epoch;
@@ -215,7 +217,11 @@ function TaskRow({
   return (
     <li className="adm-task" data-open={editing ? '' : undefined}>
       <div className="adm-task-main">
-        <p className="adm-mono adm-break">{task.kind}</p>
+        <div className="adm-task-name">
+          <p>{words.name}</p>
+          {words.detail ? <p className="adm-cell-sub">{words.detail}</p> : null}
+          <p className="adm-cell-sub adm-mono adm-break">{task.kind}</p>
+        </div>
         <div className="adm-task-binding">
           <BindingFacts binding={task.effective_binding} />
           {dormant ? (
@@ -285,6 +291,7 @@ export function ConfigModels({
           matchesSearch(
             query,
             task.kind,
+            task.label,
             group.label,
             task.default_provider,
             task.default_model,

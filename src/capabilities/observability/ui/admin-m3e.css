@@ -1243,6 +1243,12 @@
     gap: var(--un-sp-4);
   }
 
+  & .adm-task-name {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
   & .adm-task-saved {
     display: grid;
     gap: var(--un-sp-1);
