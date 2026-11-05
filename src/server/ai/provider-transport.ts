@@ -1,5 +1,5 @@
 import type { Dispatcher } from 'undici';
-import { EnvHttpProxyAgent } from 'undici';
+import { EnvHttpProxyAgent, Pool } from 'undici';
 import type { TaskTimeoutSource } from '@/ai/task-budget';
 import type {
   ProviderRequestEvidence,
@@ -810,6 +810,10 @@ export function createBudgetedProviderFetch(input: {
     connectTimeout: input.httpTimeoutMs,
     headersTimeout: input.httpTimeoutMs,
     bodyTimeout: input.httpTimeoutMs,
+    // The client that talks to the proxy gets none of the above. Without this, a CONNECT
+    // nobody answers holds close(), and with it the attempt's settlement, for 300 seconds.
+    clientFactory: (origin, options) =>
+      new Pool(origin, { ...options, headersTimeout: input.httpTimeoutMs }),
   });
   const collector = input.collector;
   collector?.setSecrets(input.secrets);
