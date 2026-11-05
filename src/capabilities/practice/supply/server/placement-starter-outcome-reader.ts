@@ -1,5 +1,5 @@
 import { and, eq, inArray } from 'drizzle-orm';
-import type { Tx } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   learning_session,
   placement_starter_attempt_question,
@@ -195,5 +195,43 @@ export async function readPlacementStarterOutcomes(
         throw new Error(`unrecognized placement starter status: ${exhaustive}`);
       }
     }
+  });
+}
+
+/** Priority is a current placement fact, never an authority to spend or serve. */
+export async function isPlacementWaitingForQuestion(db: Db | Tx, questionId: string) {
+  return db.transaction(async (tx) => {
+    const sessions = await tx
+      .select({
+        sessionId: learning_session.id,
+        claimId: placement_starter_claim.id,
+      })
+      .from(placement_starter_attempt_question)
+      .innerJoin(
+        placement_starter_claim,
+        eq(placement_starter_claim.id, placement_starter_attempt_question.claim_id),
+      )
+      .innerJoin(learning_session, eq(learning_session.goal_id, placement_starter_claim.goal_id))
+      .where(
+        and(
+          eq(placement_starter_attempt_question.question_id, questionId),
+          eq(placement_starter_attempt_question.verification_status, 'authorized'),
+          eq(learning_session.type, 'placement'),
+          eq(learning_session.status, 'started'),
+        ),
+      );
+    for (const session of sessions) {
+      const outcomes = await readPlacementStarterOutcomes(tx, session.sessionId);
+      if (
+        outcomes.some(
+          (outcome) =>
+            outcome.claim_id === session.claimId &&
+            outcome.state === 'pending' &&
+            outcome.progress?.available_count === 0,
+        )
+      )
+        return true;
+    }
+    return false;
   });
 }
