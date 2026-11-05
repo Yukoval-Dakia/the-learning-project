@@ -325,9 +325,8 @@ export async function commitFormalAttempt(
     {
       ...(options.activationIntent ?? {
         evaluation_id: candidate.evaluation.record.evaluation_id,
-        expected_effective_id: null,
-        expected_generation: 0,
-        ...options.expectedHead,
+        expected_effective_id: options.expectedHead?.expected_effective_id ?? null,
+        expected_generation: options.expectedHead?.expected_generation ?? 0,
       }),
       user_rating: options.userRating,
     },
