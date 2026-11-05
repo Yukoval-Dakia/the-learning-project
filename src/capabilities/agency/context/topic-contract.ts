@@ -28,7 +28,11 @@ export const Digest = z.object({
   topics: z.array(Topic),
   as_of: z.string().nullable(),
   overnight: z.string().nullable(),
-  withdrawals: z.array(z.object({ key: z.string(), at: z.string() })).default([]),
+  withdrawals: z
+    .array(
+      z.object({ key: z.string(), at: z.string(), evidence_ids: z.array(z.string()).default([]) }),
+    )
+    .default([]),
 });
 export type DigestT = z.infer<typeof Digest>;
 export type TopicT = z.infer<typeof Topic>;

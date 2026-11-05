@@ -1,6 +1,6 @@
 // Current topics reuse the brief row; immutable before/after versions live in
 // the event ledger so C1 can migrate both without losing reversibility.
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
@@ -40,7 +40,33 @@ async function storedTopics(db: Db | Tx) {
     .from(memory_brief_note)
     .where(eq(memory_brief_note.scope_key, DIGEST_SCOPE))
     .limit(1);
-  if (row) return { digest: Digest.parse(JSON.parse(row.long_term_md)), version: row.version };
+  if (row) {
+    const digest = Digest.parse(JSON.parse(row.long_term_md));
+    for (const withdrawal of digest.withdrawals.filter((w) => !w.evidence_ids.length)) {
+      const [change] = await db
+        .select({ payload: event.payload })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, CONTEXT_CHANGE),
+            sql`${event.payload}->'after'->'withdrawals' @> ${JSON.stringify([{ key: withdrawal.key, at: withdrawal.at }])}::jsonb`,
+          ),
+        )
+        .orderBy(event.created_at)
+        .limit(1);
+      if (change) {
+        const before = z.object({ before: Digest }).parse(change.payload).before;
+        withdrawal.evidence_ids = [
+          ...new Set(
+            before.topics
+              .filter((t) => t.key === withdrawal.key)
+              .flatMap((t) => t.facts.flatMap((f) => f.evidence_ids)),
+          ),
+        ];
+      }
+    }
+    return { digest, version: row.version };
+  }
   const { note } = await readMemoryBriefNote(db, 'global');
   const digest = empty();
   if (note) {
@@ -77,15 +103,22 @@ async function storedTopics(db: Db | Tx) {
   return { digest, version: 0 };
 }
 
+export function withdrawnTopicEvidence(digest: DigestT) {
+  return new Set(digest.withdrawals.flatMap((w) => w.evidence_ids));
+}
+
 async function permittedDigest(db: Db | Tx, stored: DigestT) {
   const digest = structuredClone(stored);
   const ids = digest.topics.flatMap((t) => t.facts.flatMap((f) => f.evidence_ids));
   const allowed = await allowedEventIds(db, ids);
+  const withdrawn = withdrawnTopicEvidence(stored);
   digest.topics = digest.topics
     .map((t) => ({
       ...t,
       facts: t.facts.filter(
-        (f) => f.evidence_ids.length > 0 && f.evidence_ids.every((id) => allowed.has(id)),
+        (f) =>
+          f.evidence_ids.length > 0 &&
+          f.evidence_ids.every((id) => allowed.has(id) && !withdrawn.has(id)),
       ),
     }))
     .filter((t) => t.facts.length);
@@ -346,16 +379,31 @@ export async function changeTopics(
         if (old) after.withdrawals.push(old);
       }
     } else if (input.withdrawKey) {
+      const evidenceIds = [
+        ...new Set([
+          ...after.withdrawals
+            .filter((w) => w.key === input.withdrawKey)
+            .flatMap((w) => w.evidence_ids),
+          ...before.topics
+            .filter((t) => t.key === input.withdrawKey)
+            .flatMap((t) => t.facts.flatMap((f) => f.evidence_ids)),
+        ]),
+      ];
       after.withdrawals = after.withdrawals.filter((w) => w.key !== input.withdrawKey);
-      after.withdrawals.push({ key: input.withdrawKey, at: new Date().toISOString() });
+      after.withdrawals.push({
+        key: input.withdrawKey,
+        at: new Date().toISOString(),
+        evidence_ids: evidenceIds,
+      });
       after.topics = after.topics.filter((t) => t.key !== input.withdrawKey);
     } else {
       for (const rawPatch of input.patches ?? []) {
         const patch = { ...rawPatch, replaces: [...rawPatch.replaces] };
         const withdrawal = after.withdrawals.find((w) => w.key === patch.key);
-        let patchSourceIds = input.sourceIds;
+        const withheld = withdrawnTopicEvidence(after);
+        let patchSourceIds = input.sourceIds.filter((id) => !withheld.has(id));
         if (withdrawal) {
-          const sources = input.sourceIds.length
+          const sources = patchSourceIds.length
             ? await tx
                 .select({
                   id: event.id,
@@ -364,7 +412,7 @@ export async function changeTopics(
                   action: event.action,
                 })
                 .from(event)
-                .where(inArray(event.id, input.sourceIds))
+                .where(inArray(event.id, patchSourceIds))
             : [];
           patchSourceIds = sources
             .filter(
@@ -458,6 +506,12 @@ export async function changeTopics(
         const evidence = [
           ...new Set([...patchSourceIds, ...replaced.flatMap((f) => f.evidence_ids)]),
         ];
+        if (evidence.some((id) => withheld.has(id)))
+          throw new ApiError(
+            'context_topic_withdrawn',
+            'withdrawn evidence cannot recreate a fact',
+            409,
+          );
         if (!evidence.length) throw new Error('context write requires server-bound evidence');
         for (const t of after.topics)
           t.facts = t.facts.filter((f) => !patch.replaces.includes(f.id));

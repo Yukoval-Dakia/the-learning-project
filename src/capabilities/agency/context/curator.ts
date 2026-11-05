@@ -12,7 +12,7 @@ import { runAgentTask } from '@/server/ai/runner';
 import { readCuratorEvidence, readCuratorLegacyScopes } from './curator-evidence';
 import { loadLearnerContext } from './index';
 import { readLegacyFacts } from './legacy-facts';
-import { readTopics, refreshTopicMetadata, topicBoard } from './topics';
+import { readTopics, refreshTopicMetadata, topicBoard, withdrawnTopicEvidence } from './topics';
 
 export async function runCurator(db: Db, reason: 'nightly' | 'activity') {
   return withinSessionAdvisoryLock(
@@ -66,7 +66,9 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
         freshness: t.freshness,
         stale: t.stale,
       })),
-      legacy_facts: await readLegacyFacts(db),
+      legacy_facts: (await readLegacyFacts(db)).filter(
+        (f) => !f.evidence_ids.some((id) => withdrawnTopicEvidence(topics.digest).has(id)),
+      ),
       ...topics,
       instruction:
         '整理和压缩上下文，不决定做什么。接管 legacy_scopes 中所有 scope 的整理；即使没有新事件也检查陈旧程度，主题保留 scope_key，陈旧不等于错误。只重写内容有变化的主题；没变化就停止。weakness/event 不可合并。学习者 correction 最高优先。',

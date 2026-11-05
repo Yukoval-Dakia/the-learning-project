@@ -1,10 +1,10 @@
-import { and, asc, eq, gt, inArray, lte } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, lte, notInArray } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import { learnerEvidenceSql } from '../server/memory/learner-evidence';
 import { CURATOR_ACTIVITY_ACTIONS } from './activity-contract';
-import { readTopics } from './topics';
+import { readTopics, withdrawnTopicEvidence } from './topics';
 
 // The run anchor freezes the upper bound. Later user turns never become implicit
 // evidence for a Curator run already in flight. Synchronous edits are already
@@ -23,6 +23,9 @@ export async function readCuratorEvidence(db: Db, anchorId?: string) {
     .where(
       and(
         eventAllowsDerivationSql(),
+        digest.withdrawals.some((w) => w.evidence_ids.length)
+          ? notInArray(event.id, [...withdrawnTopicEvidence(digest)])
+          : undefined,
         learnerEvidenceSql(),
         eq(event.actor_kind, 'user'),
         inArray(event.action, [
@@ -42,12 +45,24 @@ export async function readCuratorLegacyScopes(db: Db) {
   const { memory_brief_note } = await import('@/db/schema');
   const { readMemoryBriefNote } = await import('./memory-brief');
   const rows = await db.select({ key: memory_brief_note.scope_key }).from(memory_brief_note);
+  const withheld = withdrawnTopicEvidence((await readTopics(db)).digest);
   return Promise.all(
     rows
       .filter((r) => r.key !== 'global:digest')
-      .map(async (r) => ({
-        scope: r.key,
-        ...(await readMemoryBriefNote(db, r.key)),
-      })),
+      .map(async (r) => {
+        const read = await readMemoryBriefNote(db, r.key);
+        const ids = read.note
+          ? [
+              ...read.note.recent_week_evidence_ids,
+              ...read.note.recent_months_evidence_ids,
+              ...read.note.long_term_evidence_ids,
+            ]
+          : [];
+        return {
+          scope: r.key,
+          ...read,
+          ...(ids.some((id) => withheld.has(id)) ? { note: null } : {}),
+        };
+      }),
   );
 }
