@@ -2743,6 +2743,15 @@ export interface operations {
                 content: {
                     "application/json": {
                         facts_injected: boolean;
+                        global: {
+                            error: string | null;
+                            model: string | null;
+                            /** @enum {string|null} */
+                            model_source?: "env" | "db" | null;
+                            provider: string | null;
+                            /** @enum {string|null} */
+                            source: "env" | "db" | null;
+                        } | null;
                         keys: {
                             consumer: string | null;
                             default: (boolean | number | string | unknown[] | {
@@ -2779,7 +2788,7 @@ export interface operations {
                                 status: "unconfigured" | "configured" | "auth_failed" | "login_lane";
                             };
                             /** @enum {string} */
-                            auth_mode: "key" | "oauth";
+                            auth_mode: "key" | "oauth" | "oauth-file" | "conflict";
                             credential_env: string;
                             implemented: boolean;
                             implemented_for?: {
@@ -2854,6 +2863,11 @@ export interface operations {
                             epoch: number;
                             hydrated_at: string | null;
                         };
+                        task_groups: {
+                            id: string;
+                            kinds: string[];
+                            label: string;
+                        }[];
                         tasks: {
                             budget_note: string;
                             budget_wiring: {
@@ -2870,10 +2884,24 @@ export interface operations {
                             };
                             default_model: string;
                             default_provider: string;
+                            description: string;
                             effective_binding: {
+                                also_on_lanes?: ("vision_judge" | "verify_solve")[];
+                                credential?: {
+                                    /** @enum {string} */
+                                    lane: "key" | "oauth" | "oauth-file" | "conflict";
+                                    verified_in_process: boolean;
+                                } | null;
                                 error: string | null;
                                 model: string | null;
                                 provider: string | null;
+                                reasoning: {
+                                    applied: string | null;
+                                    error: string | null;
+                                    requested: string | null;
+                                } | null;
+                                /** @enum {string|null} */
+                                selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;
                             } | null;
                             effective_budget: {
                                 maxCost: number | null;
@@ -2885,13 +2913,18 @@ export interface operations {
                                 model?: string;
                                 provider?: string;
                             } | null;
+                            group_id: string;
                             kind: string;
                             override: {
                                 budget?: {
                                     [key: string]: unknown;
                                 };
                                 model?: string;
+                                override_global_pin?: boolean;
                                 provider?: string;
+                                reasoning?: {
+                                    [key: string]: unknown;
+                                };
                             } | null;
                             override_wired: {
                                 budget: boolean;
@@ -3047,6 +3080,37 @@ export interface operations {
                             revision: number;
                         }[];
                         committed_epoch: number;
+                        effective: {
+                            global: {
+                                error: string | null;
+                                model: string | null;
+                                /** @enum {string|null} */
+                                model_source?: "env" | "db" | null;
+                                provider: string | null;
+                                /** @enum {string|null} */
+                                source: "env" | "db" | null;
+                            } | null;
+                            tasks: {
+                                [key: string]: {
+                                    also_on_lanes?: ("vision_judge" | "verify_solve")[];
+                                    credential?: {
+                                        /** @enum {string} */
+                                        lane: "key" | "oauth" | "oauth-file" | "conflict";
+                                        verified_in_process: boolean;
+                                    } | null;
+                                    error: string | null;
+                                    model: string | null;
+                                    provider: string | null;
+                                    reasoning: {
+                                        applied: string | null;
+                                        error: string | null;
+                                        requested: string | null;
+                                    } | null;
+                                    /** @enum {string|null} */
+                                    selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;
+                                };
+                            };
+                        };
                         snapshot_current: boolean;
                         snapshot_epoch: number;
                     };
@@ -3198,6 +3262,37 @@ export interface operations {
                             revision: number;
                         }[];
                         committed_epoch: number;
+                        effective: {
+                            global: {
+                                error: string | null;
+                                model: string | null;
+                                /** @enum {string|null} */
+                                model_source?: "env" | "db" | null;
+                                provider: string | null;
+                                /** @enum {string|null} */
+                                source: "env" | "db" | null;
+                            } | null;
+                            tasks: {
+                                [key: string]: {
+                                    also_on_lanes?: ("vision_judge" | "verify_solve")[];
+                                    credential?: {
+                                        /** @enum {string} */
+                                        lane: "key" | "oauth" | "oauth-file" | "conflict";
+                                        verified_in_process: boolean;
+                                    } | null;
+                                    error: string | null;
+                                    model: string | null;
+                                    provider: string | null;
+                                    reasoning: {
+                                        applied: string | null;
+                                        error: string | null;
+                                        requested: string | null;
+                                    } | null;
+                                    /** @enum {string|null} */
+                                    selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;
+                                };
+                            };
+                        };
                         snapshot_current: boolean;
                         snapshot_epoch: number;
                     };
