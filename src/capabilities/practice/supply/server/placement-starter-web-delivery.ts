@@ -14,7 +14,7 @@ import {
   placement_starter_attempt_question,
   placement_starter_claim,
 } from '@/db/schema';
-import { JOB_RETRY_DELAY_SECONDS } from '@/kernel/placement-jobs';
+import { JOB_RETRY_DELAY_SECONDS } from '@/server/boss/queue-config';
 import {
   PLACEMENT_CONFIG_ERROR_PARK_MS,
   dispatchNextDuePendingPlacementClaim,
