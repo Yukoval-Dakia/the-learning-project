@@ -668,11 +668,6 @@ export function resolveGlobalProviderSwitch(
       `lane.global.provider='${db.provider}' (DB config) is not a known provider; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
     );
   }
-  if (db.model?.startsWith('mimo-v2.5')) {
-    throw new Error(
-      `lane.global.model='${db.model}' is a removed model. Clear the stored pair or select a supported model; no automatic substitution.`,
-    );
-  }
   return { provider, model: db.model };
 }
 
