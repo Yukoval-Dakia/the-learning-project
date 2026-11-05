@@ -58,14 +58,6 @@ type DeliveryJob = Pick<
   'id' | 'retryCount' | 'retryLimit' | 'expireInSeconds' | 'startedOn' | 'signal' | 'data'
 >;
 
-/** The item demand this job was dispatched for — structural read only; the payload
- * was already validated by the handler's claim-id parse before this ran. */
-function firstItemDemandId(data: unknown): string | null {
-  const items = (data as { items?: unknown } | null)?.items;
-  const first = Array.isArray(items) ? (items[0] as { demand_id?: unknown } | undefined) : null;
-  return typeof first?.demand_id === 'string' ? first.demand_id : null;
-}
-
 /** Dispatch the learner's next due pending claim through the existing CAS — a free
  * send that is never a re-send of this demand — and never let it break the delivery's
  * own error propagation. */
@@ -187,13 +179,19 @@ export async function runPlacementWebDelivery(input: {
       }
       // The durable demand is the only honest account of what this delivery's paid
       // rounds did — the thrown error class cannot prove whether a provider request
-      // went out, so the handoff decision is read off the demand, never inferred from
-      // the error. A malformed payload or a failed read proves nothing either: both
-      // read as 'unknown' and may never authorize another paid round.
+      // went out, so the handoff decision is read off the demand (its subject id is
+      // the claim's demand_id, NOT the job item's dispatch correlation id), never
+      // inferred from the error. A missing claim or a failed read proves nothing
+      // either: both read as 'unknown' and may never authorize another paid round.
       let outcome: PlacementWebDemandOutcome;
       try {
-        const demandId = firstItemDemandId(job.data);
-        outcome = demandId == null ? 'unknown' : await placementWebDemandOutcome(db, demandId);
+        const [claimRow] = await db
+          .select({ demandId: placement_starter_claim.demand_id })
+          .from(placement_starter_claim)
+          .where(eq(placement_starter_claim.id, claimId));
+        outcome = claimRow?.demandId
+          ? await placementWebDemandOutcome(db, claimRow.demandId)
+          : 'unknown';
       } catch (outcomeErr) {
         console.error('[supply_execute] demand outcome read failed for', claimId, outcomeErr);
         outcome = 'unknown';
