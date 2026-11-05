@@ -15,7 +15,7 @@ while :; do
     miss=0; state=$(echo "$r" | sed -n 1p); up=$(echo "$r" | sed -n 2p | tr -d ' ')
     case "$state" in
       STOP) alert "memory stop fired on the NAS" ;;
-      gone) "${NAS[@]}" "cd $L; nohup setsid ./watchdog.sh >/dev/null 2>&1 < /dev/null & sleep 1" ; log "watchdog restarted, TEST healthy containers=$up" ;;
+      gone) "${NAS[@]}" "cd $L; nohup setsid ./watchdog.sh >/dev/null 2>&1 < /dev/null & sleep 1" && log "watchdog restarted, TEST healthy containers=$up" ;;
       ok) if [ "$up" = 4 ]; then [ -e "$ALERT" ] && { log "alert cleared: $(cat "$ALERT")"; rm -f "$ALERT"; }; else alert "TEST healthy containers=$up of 4"; fi ;;
     esac
   fi

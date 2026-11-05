@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # Local ports to NAS TEST. The NAS sshd forbids TCP forwarding, so each connection is an ssh exec channel running nc.
-# Ports stay bound to 127.0.0.1 on both ends. A channel can fail while multiplexing starts or at sshd's limit of 10
-# sessions per connection, so the client's bytes are read only after the remote side confirms it is up, and a failed
-# setup retries safely on another multiplexed connection.
+# Ports stay bound to 127.0.0.1 on both ends. A port that fails to bind retries alone while the others keep serving
+# (5544 exists only as the fallback for a stuck 5433, so the ports must not share one fate). A channel can fail while
+# multiplexing starts or at sshd's limit of 10 sessions per connection, so the client's bytes are read only after the
+# remote side confirms it is up, and a failed setup retries safely on another multiplexed connection.
 import asyncio, itertools, os, sys
 HOME = os.path.expanduser('~')
 MASTERS = 6
@@ -66,9 +67,19 @@ def handler(remote_port):
         await p.wait()
     return handle
 
+BIND_RETRY = 30
+
+async def bind_port(local, remote):
+    while True:
+        try:
+            await asyncio.start_server(handler(remote), '127.0.0.1', local, backlog=256)
+            return
+        except OSError as e:
+            print(f'bind 127.0.0.1:{local} failed ({e}), retry in {BIND_RETRY}s', file=sys.stderr, flush=True)
+            await asyncio.sleep(BIND_RETRY)
+
 async def main():
-    for local, remote in PORTS.items():
-        await asyncio.start_server(handler(remote), '127.0.0.1', local, backlog=256)
+    await asyncio.gather(*(bind_port(local, remote) for local, remote in PORTS.items()))
     await asyncio.Event().wait()
 
 asyncio.run(main())

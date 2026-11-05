@@ -46,7 +46,7 @@
 #   LOOM_RUNTIME_DIR   runtime 目录（dump 落盘点）
 #   LOOM_PG_CONTAINER  NAS 上的 postgres 容器名
 #   LOOM_DB_USER / LOOM_DB_NAME
-#   LOOM_KEEP_DAILY / LOOM_MIN_BYTES
+#   LOOM_KEEP_DAILY / LOOM_MIN_BYTES / LOOM_DUMP_TIMEOUT
 
 set -uo pipefail
 
@@ -61,7 +61,8 @@ KEEP_DAILY="${LOOM_KEEP_DAILY:-14}"
 MIN_BYTES="${LOOM_MIN_BYTES:-102400}" # 100KB——空库/坏 dump 防御（现体量 ~7.7MB）
 INSTALL_DIR="$HOME/Library/Application Support/loom-daily-dump"
 LOCAL_LOG="$INSTALL_DIR/launchd.log"
-NAS_SSH=(/usr/bin/ssh -F none -i "$HOME/.ssh/tlp_nas_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 -o LogLevel=ERROR yukoval@bancho-nb2.local)
+NAS_SSH=(/usr/bin/ssh -F none -i "$HOME/.ssh/tlp_nas_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o LogLevel=ERROR yukoval@bancho-nb2.local)
+DUMP_TIMEOUT="${LOOM_DUMP_TIMEOUT:-1200}" # dump 总时限——ssh 假死兜底，超时 kill 走失败路径
 # 本机 pg 容器已停（回滚保留），不能 inspect 它；写外置盘固定用这个本地已存在的镜像。
 WRITE_IMAGE="pgvector/pgvector:0.8.2-pg16-bookworm"
 
@@ -146,8 +147,19 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-# pg_dump 在 NAS 跑（exec channel 里远端 docker exec），stdout 落本地 staging——本地盘无 TCC 限制。
-if ! "${NAS_SSH[@]}" "docker exec $CONTAINER pg_dump -Fc -U $DB_USER $DB_NAME" </dev/null >"$STAGE_DUMP" 2>"$PG_ERR"; then
+# pg_dump 在 NAS 跑（exec channel 里远端 docker exec），stdout 落本地 staging。
+# 看门狗防 ssh 假死：到点立 .timeout 并 kill -9，走同一失败路径；截断的 staging 留在 mktemp，不发布。
+"${NAS_SSH[@]}" "docker exec $CONTAINER pg_dump -Fc -U $DB_USER $DB_NAME" </dev/null >"$STAGE_DUMP" 2>"$PG_ERR" &
+dump_pid=$!
+( sleep "$DUMP_TIMEOUT"; : >"$STAGE_DIR/.timeout"; kill -9 "$dump_pid" 2>/dev/null ) &
+watch_pid=$!
+wait "$dump_pid"; dump_rc=$?
+kill "$watch_pid" 2>/dev/null; wait "$watch_pid" 2>/dev/null
+if [ -e "$STAGE_DIR/.timeout" ] && [ "$dump_rc" -ne 0 ]; then
+  volsh 'cat >> /backup/loom-daily-dump.log' <"$PG_ERR" 2>/dev/null
+  fail "pg_dump exceeded ${DUMP_TIMEOUT}s — killed"
+fi
+if [ "$dump_rc" -ne 0 ]; then
   volsh 'cat >> /backup/loom-daily-dump.log' <"$PG_ERR" 2>/dev/null
   fail "pg_dump exit non-zero"
 fi
