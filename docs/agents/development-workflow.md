@@ -139,37 +139,24 @@ ratchet（capability→server、server→capability deep、cross-capability valu
 
 capability→server 不统计目标为 `src/server/ai` 与 `src/server/boss` 的边：Owner 2026-11-03
 「ai/boss 属于平台依赖，不算债」——每个 capability 都按设计调用 AI runner 与任务队列。这两类 pair
-不进台账和 ratchet，只在报告的「平台依赖（不计入 ratchet）」小节（`--json` 为
+不进 ratchet，只在报告的「平台依赖（不计入 ratchet）」小节（`--json` 为
 `dependencyReport.platformCapabilityToServer*`）照常列出数字；其余 server 模块的 pair 仍只降不升。
 `audit:architecture-deepening` 的 531 天花板是另一道独立 gate，仍按含 ai/boss 的全量比较。
 ai/boss 没有规定的对外入口（无 barrel/public 文件，AGENTS.md 与 lint 也无入口规则），所以不约束
 capability 深入它们内部文件。
 
-`scripts/capability-boundary-baseline.json` 只记当前上限：三类债务的 `total`、`byOwnerPair`
-与 `crossCapabilityValue.nontrivialSccs`，不存变更历史或批准记录（批准与理由写在 PR / Linear）。
-审计对每个 pair、每个 total 和 SCC 做两次比较，任何一项上升即失败：
+三类债务的上限由 base commit 实测给定：审计对每个 pair、每个 total 和 SCC 比较实测
+≤ base 实测，任何一项上升即失败。无台账文件——存量债务按 base 实测 grandfather，下降
+自动锁定为下一个 PR 的新上限，减债 PR 不再需要改写共享 JSON。同一 owner-pair 内一删一增
+仍由独立 review 对照真实 diff 判断；`serverToCapabilityDeep` 另由 architecture-deepening
+强制为 0。
 
-- 实测 ≤ 台账：缺失 pair 按 0 处理；
-- 实测 ≤ base commit 实测：同一 PR 的 base 上重新测量，所以单改台账不能准入新增依赖，
-  台账未及时下调留下的余量也不能被后续 PR 用掉。
-
-实测下降不失败，审计会提示运行 `pnpm audit:capability-boundaries --tighten`，把台账改写为
-实测快照（只会下降；审计有任何错误时不写文件）。建议在同一 PR 收紧；并行 PR 各自收紧不同 pair
-时只在同一个 `total` 行冲突，重跑 `--tighten` 即可解决。台账没有上调通道：
-`serverToCapabilityDeep` 另由 architecture-deepening 强制为 0，同一 owner-pair 内一删一增仍由
-独立 review 对照真实 diff 判断。
-
-`pnpm audit:architecture-deepening` 的 pass-through ratchet 要求相对 base 新增的纯转出站点
-（module / function / alias / site）在 `scripts/pass-through-classifications.jsonl` 中有一行
-精确绑定（`file`、`kind`、`symbol`、`targetModule`、`targetSymbol`）的分类，否则失败：
-
-- `stable_contract`：经裁定的单符号公开端口，`symbol`/`targetSymbol` 不能是 `*`；
-- `compat_shim`：带 `deadline` 的临时转接，`deadline` 不得晚于当天 +14 天；过期而站点仍在即失败；
-  base 中仍存活站点的 compat 行不得删除、改分类或延期，只能随站点一起删除。
-  `compat_shim` 行数只减不增：不得多于 base 版分类文件中的行数。
-
-文件每行一个 JSON 对象，按 `file|kind|symbol|targetModule|targetSymbol` 排序且唯一；
-站点消失时同一 PR 删除对应行（不匹配任何现存站点的行会失败）。
+`pnpm audit:architecture-deepening` 的 pass-through ratchet 用稳定身份
+（`file|kind|symbol|targetModule|targetSymbol`，不含 detail/scanner 指纹）比较相对 base
+新增的纯转出站点（module / function / alias / site），新增即失败——例外只有一种：
+`*/public.ts` 里的具名 `module`/`site` 转出且 `symbol`/`targetSymbol` 都不是 `*`，它本来就是
+公开入口，不算壳。手写 function/alias 转发壳、`export *` / `export * as ns` 都不豁免。
+新增非豁免壳要删壳，或经 owning capability 的 `public.ts` 具名转出。
 
 本地默认比较 `git merge-base HEAD origin/main`，也可用 `--base <commit SHA>`。
 CI 的静态 `audits_architecture` job 必须提供 `CAPABILITY_BASE_SHA`；手动 workflow 使用已有的 `test_policy_base` 输入。
@@ -179,7 +166,7 @@ CircleCI 的事件可能缺少 PR base 和 push before，因此该 job 复用
 main push 缺少 before 时，双父 merge 取第一父；单父提交只有在关联的已合并 PR 的
 `merge_commit_sha` 等于 HEAD 且 base 为 `main`（squash merge）时才取其唯一父提交。
 无法确认 base 时仍失败，不回退到移动分支或猜测父提交；GitHub 保留原有 event/input 来源。
-`pnpm audit:capability-boundaries:snapshot` 只打印实测快照，不做台账或 base 比较。
+`pnpm audit:capability-boundaries:snapshot` 只打印实测快照，不做 base 比较。
 
 ### Lint warning ratchet（YUK-909）
 

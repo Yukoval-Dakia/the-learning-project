@@ -1,9 +1,7 @@
-import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse } from '@babel/parser';
-import { z } from 'zod';
 import {
   type RatchetEdge,
   type RatchetViolation,
@@ -33,7 +31,9 @@ const TEST_RE = /\.(?:unit|db|migration|integration|e2e)?\.?(?:test|spec)\.[cm]?
 const PUBLIC_ENTRYPOINTS = new Set(['public', 'ui-public']);
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
 const EDGE_UNIT = 'distinct-source-file-to-resolved-module' as const;
-const BASELINE_PATH = 'scripts/capability-boundary-baseline.json';
+/** Violation attribution for debt-count comparisons: the gate lives here,
+ *  the fix lives in whichever import pushed the count over the base. */
+const DEBT_GATE_PATH = 'scripts/audit-capability-boundaries.ts';
 /**
  * Owner 2026-11-03: "ai/boss 属于平台依赖，不算债". Every capability reaches the AI runner and the
  * job queue by design, so these edges are reported on their own and kept out of the
@@ -53,23 +53,6 @@ const DEBT_LABELS: Record<(typeof DEBT_KINDS)[number], string> = {
   serverToCapabilityDeep: 'server -> capability deep',
   crossCapabilityValue: 'cross-capability value',
 };
-const countSchema = z.number().int().nonnegative();
-const debtSchema = z.strictObject({
-  total: countSchema,
-  byOwnerPair: z.record(z.string(), countSchema),
-});
-/** Current ceilings only. Who approved a move and why lives in the PR/Linear/git history. */
-const baselineSchema = z.strictObject({
-  schemaVersion: z.literal(1),
-  edgeUnit: z.literal(EDGE_UNIT),
-  debts: z.strictObject({
-    capabilityToServer: debtSchema,
-    serverToCapabilityDeep: debtSchema,
-    crossCapabilityValue: debtSchema.extend({ nontrivialSccs: z.array(z.array(z.string())) }),
-  }),
-});
-type DependencyBaseline = z.infer<typeof baselineSchema>;
-
 export type DependencyKind = 'type' | 'value';
 
 export interface Violation {
@@ -738,8 +721,8 @@ function summarizeDependencies(dependencies: SemanticDependency[]): {
   };
 }
 
-/** Where a ceiling came from: the checked-in ledger or the measured base commit. */
-export type CeilingSource = 'baseline' | 'base commit';
+/** Where a ceiling came from: the measured base commit (no checked-in ledger). */
+export type CeilingSource = 'base commit';
 
 function compareCounts(
   name: string,
@@ -753,14 +736,14 @@ function compareCounts(
     const expected = ceiling.byOwnerPair[pair] ?? 0;
     if (current <= expected) continue;
     violations.push({
-      file: BASELINE_PATH,
+      file: DEBT_GATE_PATH,
       source: pair,
       reason: `${name} architecture regression: ${current} > ${source} ${expected}`,
     });
   }
   if (actual.total > ceiling.total) {
     violations.push({
-      file: BASELINE_PATH,
+      file: DEBT_GATE_PATH,
       source: name,
       reason: `total is ${actual.total}, ${source} is ${ceiling.total}`,
     });
@@ -783,7 +766,7 @@ function compareSccs(actual: string[][], ceiling: string[][], source: CeilingSou
   if (grown.length === 0) return [];
   return [
     {
-      file: BASELINE_PATH,
+      file: DEBT_GATE_PATH,
       source: 'crossCapabilityValue.nontrivialSccs',
       reason: `cross-capability value SCC grew or a new cycle appeared beyond the ${source}: ${JSON.stringify(grown)}`,
     },
@@ -794,14 +777,14 @@ function compareSccs(actual: string[][], ceiling: string[][], source: CeilingSou
 export function compareDependencySnapshot(
   actual: DependencySnapshot,
   ceiling: DependencySnapshot,
-  source: CeilingSource = 'baseline',
+  source: CeilingSource = 'base commit',
 ): Violation[] {
   if (ceiling.schemaVersion !== 1 || ceiling.edgeUnit !== EDGE_UNIT) {
     return [
       {
-        file: BASELINE_PATH,
+        file: DEBT_GATE_PATH,
         source: '',
-        reason: `unsupported baseline schema; expected schemaVersion=1 and edgeUnit=${EDGE_UNIT}`,
+        reason: `unsupported ceiling snapshot schema; expected schemaVersion=1 and edgeUnit=${EDGE_UNIT}`,
       },
     ];
   }
@@ -940,13 +923,13 @@ function collectSeamViolations(projectRoot: string): Violation[] {
 
 export function auditCapabilityBoundaries(
   projectRoot: string,
-  baseline?: DependencySnapshot,
+  ceiling?: DependencySnapshot,
 ): BoundaryAuditResult {
   const { snapshot, report, dependencies } = collectDependencySnapshot(projectRoot);
   const violations = [
     ...collectSeamViolations(projectRoot),
     ...collectApiClientUsageViolations(projectRoot),
-    ...(baseline ? compareDependencySnapshot(snapshot, baseline) : []),
+    ...(ceiling ? compareDependencySnapshot(snapshot, ceiling) : []),
   ];
   return {
     ok: violations.length === 0,
@@ -960,22 +943,6 @@ export function auditCapabilityBoundaries(
 export function serializeDependencySnapshot(snapshot: DependencySnapshot): string {
   return `${JSON.stringify(snapshot, null, 2)}\n`;
 }
-
-export function parseBaseline(text: string, source: string): DependencyBaseline {
-  try {
-    return baselineSchema.parse(JSON.parse(text));
-  } catch (error) {
-    const detail =
-      error instanceof z.ZodError
-        ? error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('\n')
-        : error instanceof Error
-          ? error.message
-          : String(error);
-    throw new Error(`${source}: ${detail}`);
-  }
-}
-
-export type { DependencyBaseline };
 
 /**
  * Audited base->head edges: capability->server (value and type, platform ai/boss excluded), cross-capability
@@ -1110,9 +1077,10 @@ function printViolations(violations: Violation[]): void {
 export function main(argv = process.argv.slice(2), projectRoot = process.cwd()): void {
   const printBaseline = argv.includes('--print-dependency-baseline');
   const json = argv.includes('--json');
-  const tighten = argv.includes('--tighten');
-  if (printBaseline && tighten)
-    throw new Error('Snapshot printing cannot be combined with --tighten.');
+  if (argv.includes('--tighten'))
+    throw new Error(
+      '--tighten is gone: the ledger was removed and the base commit is the ceiling.',
+    );
   const result = auditCapabilityBoundaries(projectRoot);
 
   if (printBaseline) {
@@ -1124,10 +1092,6 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     process.stdout.write(serializeDependencySnapshot(result.dependencySnapshot));
     return;
   }
-  const baseline = parseBaseline(
-    readFileSync(resolve(projectRoot, BASELINE_PATH), 'utf8'),
-    BASELINE_PATH,
-  );
   const baseIndex = argv.indexOf('--base');
   if (baseIndex !== -1 && !argv[baseIndex + 1]) throw new Error('--base requires a commit SHA.');
   const baseSha = resolveAuditBaseSha(
@@ -1135,10 +1099,8 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     baseIndex === -1 ? process.env.CAPABILITY_BASE_SHA : argv[baseIndex + 1],
   );
   const baseDependencies = collectSemanticDependenciesAtRef(projectRoot, baseSha);
-  // The ledger is a ceiling that may lag behind a decrease; measuring the base
-  // commit as well keeps freed slack from being spent by a later change.
+  // The measured base commit is the ceiling — freed slack is spent by no one.
   result.violations.push(
-    ...compareDependencySnapshot(result.dependencySnapshot, baseline, 'baseline'),
     ...compareDependencySnapshot(
       result.dependencySnapshot,
       summarizeDependencies(baseDependencies).snapshot,
@@ -1205,21 +1167,11 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     process.exitCode = 1;
     return;
   }
-  const measured = serializeDependencySnapshot(result.dependencySnapshot);
-  const slack = measured !== serializeDependencySnapshot(baseline);
-  if (tighten && slack) {
-    const formatted = execFileSync(
-      'pnpm',
-      ['exec', 'biome', 'format', '--stdin-file-path', BASELINE_PATH],
-      { cwd: projectRoot, input: measured, encoding: 'utf8' },
-    );
-    writeFileSync(resolve(projectRoot, BASELINE_PATH), formatted);
-  }
   if (!json) {
     const debts = result.dependencySnapshot.debts;
     const regressions = result.regressions;
     console.log(
-      `Capability boundary audit passed: 0 deep cross-capability imports; debt ratchets at or below baseline and base commit (capability->server=${debts.capabilityToServer.total}, server->capability-deep=${debts.serverToCapabilityDeep.total}, cross-capability-value=${debts.crossCapabilityValue.total}); ` +
+      `Capability boundary audit passed: 0 deep cross-capability imports; debt ratchets at or below base commit (capability->server=${debts.capabilityToServer.total}, server->capability-deep=${debts.serverToCapabilityDeep.total}, cross-capability-value=${debts.crossCapabilityValue.total}); ` +
         `new dependency edges=${regressions?.newDependencyEdges ?? 0}; server-entry new edges=${regressions?.serverEntryNew.public ?? 0} approved/${regressions?.serverEntryNew.blocked ?? 0} blocked/${regressions?.serverEntryNew.type ?? 0} type-only; nontrivial SCCs=${regressions?.sccs.head ?? 0} (base ${regressions?.sccs.base ?? 0}); ` +
         `>${SIZE_METRIC.hardCeiling}-line files=${regressions?.overCeilingFiles.head ?? 0} (base ${regressions?.overCeilingFiles.base ?? 0}); ` +
         'capability *-api.ts apiJson escape hatch=0.',
@@ -1230,11 +1182,6 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     );
     for (const [pair, count] of Object.entries(platform.platformCapabilityToServerByOwnerPair)) {
       console.log(`  ${pair}: ${count}`);
-    }
-    if (slack && !tighten) {
-      console.log(
-        `Debt fell below ${BASELINE_PATH}; run pnpm audit:capability-boundaries --tighten in this change to lock the decrease.`,
-      );
     }
   }
 }

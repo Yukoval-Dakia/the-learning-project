@@ -13,10 +13,8 @@ import {
   worktreeRenameMap,
 } from './lib/git-base-scan';
 import {
-  PASS_THROUGH_CLASSIFICATIONS_PATH,
-  auditPassThroughClassifications,
+  auditPassThroughNewSites,
   diffPassThroughSites,
-  parseSiteClassifications,
   scanPassThroughSites,
 } from './lib/pass-through-sites';
 
@@ -1109,7 +1107,7 @@ export function scanDependencyCeilings(input: {
   for (const [key, label] of checks) {
     if (!(input.totals[key] < DEPENDENCY_CEILINGS[key])) {
       violations.push({
-        path: 'scripts/capability-boundary-baseline.json',
+        path: 'scripts/audit-architecture-deepening.ts',
         source: label,
         reason: `dependency total ${input.totals[key]} is not strictly below the ceiling ${DEPENDENCY_CEILINGS[key]}`,
       });
@@ -1120,7 +1118,7 @@ export function scanDependencyCeilings(input: {
   )) {
     if (count > 0) {
       violations.push({
-        path: 'scripts/capability-boundary-baseline.json',
+        path: 'scripts/audit-architecture-deepening.ts',
         source: pair,
         reason: `targeted owner bucket must be zero: server->capability-deep ${pair} = ${count}`,
       });
@@ -1145,8 +1143,6 @@ export interface ArchitectureDeepeningFacts {
   readonly dependency: {
     readonly totals: DependencyCeilings;
     readonly deepPairCounts: Readonly<Record<string, number>>;
-    /** Ledger ceiling violations from audit-capability-boundaries. */
-    readonly baselineViolations: readonly { readonly source: string; readonly reason: string }[];
   };
   /** Pass-through shell ratchet measured head-vs-base by the CLI runner. */
   readonly passThrough?: {
@@ -1251,11 +1247,6 @@ export function auditArchitectureDeepening(
     ...scanProposalLifecycle(facts.proposals),
     ...scanProviderAttemptCensus(facts.providerAttemptCensus),
     ...scanDependencyCeilings(facts.dependency),
-    ...facts.dependency.baselineViolations.map((violation) => ({
-      path: 'scripts/capability-boundary-baseline.json',
-      source: violation.source,
-      reason: violation.reason,
-    })),
     ...(facts.passThrough?.violations ?? []),
   ];
 
@@ -1307,12 +1298,9 @@ async function runCli(): Promise<void> {
   const { collectProviderWireFindings, runProviderAttemptTruthAudit } = await import(
     './audit-provider-lanes.js'
   );
-  const {
-    collectDependencySnapshot,
-    compareDependencySnapshot,
-    parseBaseline,
-    resolveImportTarget,
-  } = await import('./audit-capability-boundaries.js');
+  const { collectDependencySnapshot, resolveImportTarget } = await import(
+    './audit-capability-boundaries.js'
+  );
   const { CONTROL_TOOLS, READ_TOOLS, PROPOSE_WRITE_TOOLS } = await import(
     '../src/kernel/tools/allowlists.js'
   );
@@ -1406,16 +1394,10 @@ async function runCli(): Promise<void> {
 
   // --- dependency facts -----------------------------------------------------
   const { snapshot, report: dependencyReport } = collectDependencySnapshot(projectRoot);
-  const baselinePath = 'scripts/capability-boundary-baseline.json';
-  const baseline = parseBaseline(
-    readFileSync(resolve(projectRoot, baselinePath), 'utf8'),
-    baselinePath,
-  );
-  const baselineViolations = compareDependencySnapshot(snapshot, baseline);
 
   // --- pass-through ratchet -------------------------------------------------
-  // New pure re-export / identity-forward sites fail by default; only a
-  // compat_shim (<=14-day window) or stable_contract classification covers them.
+  // A pass-through site that did not exist at the comparison base fails; a
+  // named re-export inside public.ts is a declared entrypoint, not debt.
   const argv = process.argv.slice(2);
   const baseIndex = argv.indexOf('--base');
   if (baseIndex !== -1 && !argv[baseIndex + 1]) {
@@ -1462,27 +1444,8 @@ async function runCli(): Promise<void> {
   );
   const renames = worktreeRenameMap(projectRoot, baseSha, SCAN_ROOTS);
   const siteDiff = diffPassThroughSites(baseSites, headSites, renames);
-  const classifications = parseSiteClassifications(
-    readFileSync(resolve(projectRoot, PASS_THROUGH_CLASSIFICATIONS_PATH), 'utf8'),
-    PASS_THROUGH_CLASSIFICATIONS_PATH,
-  );
-  const baseClassificationText = readBlobs(projectRoot, baseSha, [
-    PASS_THROUGH_CLASSIFICATIONS_PATH,
-  ]).get(PASS_THROUGH_CLASSIFICATIONS_PATH);
-  const baseClassifications =
-    baseClassificationText === undefined
-      ? undefined
-      : parseSiteClassifications(
-          baseClassificationText,
-          `${baseSha}:${PASS_THROUGH_CLASSIFICATIONS_PATH}`,
-        );
-  const passThroughViolations: OwnershipViolation[] = auditPassThroughClassifications({
-    headSites,
+  const passThroughViolations: OwnershipViolation[] = auditPassThroughNewSites({
     newSites: siteDiff.added,
-    classifications,
-    baseClassifications,
-    renames,
-    today: new Date().toISOString().slice(0, 10),
   });
 
   const result = auditArchitectureDeepening(projectRoot, publicReadCycleCatalog, {
@@ -1537,10 +1500,6 @@ async function runCli(): Promise<void> {
         crossCapabilityValue: snapshot.debts.crossCapabilityValue.total,
       },
       deepPairCounts: snapshot.debts.serverToCapabilityDeep.byOwnerPair,
-      baselineViolations: baselineViolations.map((violation) => ({
-        source: violation.source,
-        reason: violation.reason,
-      })),
     },
     passThrough: {
       baseSites: baseSites.length,
