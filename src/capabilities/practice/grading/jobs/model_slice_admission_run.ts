@@ -344,12 +344,24 @@ async function referenceComparisonReady(db: Db, raw: unknown): Promise<boolean> 
       dry_run: z.literal(true),
       holdout_digest: z.literal(candidate.data.holdout_digest),
       items: z.array(
-        z.object({ item_id: z.string(), status: z.literal('scored'), agreed: z.literal(true) }),
+        z
+          .object({
+            item_id: z.string(),
+            status: z.enum(['scored', 'pending']),
+            awarded_points: z.number().nullable(),
+            agreed: z.boolean(),
+            pending_reason: z.string().min(1).optional(),
+          })
+          .refine((item) =>
+            item.status === 'pending'
+              ? item.awarded_points === null && !item.agreed && item.pending_reason !== undefined
+              : item.awarded_points !== null,
+          ),
       ),
     })
     .safeParse(reference?.payload);
   return (
-    reference?.outcome === 'passed' &&
+    // A reference records comparison; disagreement and pending are not a gold threshold.
     payload.success &&
     payload.data.items.length === candidate.data.items.length &&
     new Set(payload.data.items.map((item) => item.item_id)).size === candidate.data.items.length &&
@@ -409,7 +421,7 @@ async function finishFromStoredEvidence(
     registrationInput.response_class !== 'free' ||
     (await referenceComparisonReady(db, stored.payload));
   if (stored.outcome === 'passed' && !parsed.data.dry_run && !referenceReady) {
-    failures.push('reference comparison pending or disagrees; no slice admitted');
+    failures.push('reference comparison record incomplete or mismatched; no slice admitted');
   }
   if (stored.outcome === 'passed' && !parsed.data.dry_run && referenceReady) {
     try {
