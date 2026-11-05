@@ -1,22 +1,23 @@
 /**
- * 30-second pre-flight: verify the xiaomi/mimo Anthropic-compatible endpoint
- * supports vision input + structured JSON output.
+ * 30-second pre-flight: verify the resolved vision-judge lane actually accepts
+ * image input + structured JSON output on its own wire shape.
  *
  * Usage:
  *   pnpm preflight:vision
- *   pnpm preflight:vision -- mimo-v2.5-pro    # override model
+ *   pnpm preflight:vision -- <model-id>       # override model
  *
- * Env required:
- *   XIAOMI_API_KEY, or XIAOMI_TOKEN_PLAN_API_KEY with the Token Plan process pin
+ * Env required: whatever credential the resolved task lane declares
+ *   (e.g. OPENCODE_API_KEY for the flash default) — resolution names it.
  *
  * Optional overrides:
- *   MIMO_VISION_MODEL  (default: resolved vision-judge task config)
- *   MIMO_VISION_BASE_URL (default: selected Xiaomi lane /anthropic endpoint)
+ *   MIMO_VISION_MODEL    (default: resolved vision-judge task config)
+ *   MIMO_VISION_BASE_URL (default: resolved lane endpoint)
  *
  * Exit codes:
- *   0 — vision PASS; safe to proceed with M2 vision judge
- *   1 — vision FAIL; stop M2 plan and re-decide (text-only fallback / different provider)
- *   2 — env config missing
+ *   0 — vision PASS
+ *   1 — vision FAIL; stop and re-decide (text-only fallback / different provider)
+ *   2 — configuration missing/invalid, or the lane uses a wire/credential shape
+ *       this probe cannot exercise
  *
  * Output: pass/fail summary + raw model response saved to
  *   docs/preflight/YYYY-MM-DD-vision-preflight.json (gitignored expected; commit
@@ -26,10 +27,11 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from 'dotenv';
 import { assertModelEndpointHostAllowed } from '../src/core/config/model-endpoint-allowlist';
-import { resolveTaskBinding } from '../src/server/ai/providers';
+import { executablePiModel } from '../src/server/ai/pi-provider-catalog';
+import { type ResolvedProvider, resolveTaskProvider } from '../src/server/ai/providers';
 import { visionJudgeProviderOverride } from '../src/server/ai/vision-judge-config';
 import { xiaomiTokenPlanVisionBaseUrl } from '../src/server/ai/xiaomi-token-plan';
-import { preflightVisionOneShot } from './preflight-vision-one-shot';
+import { preflightVisionOneShot, preflightVisionOpenAiOneShot } from './preflight-vision-one-shot';
 
 config({ path: '.env' });
 
@@ -37,65 +39,87 @@ const OUT_DIR = resolve(process.cwd(), 'docs/preflight');
 const today = new Date().toISOString().slice(0, 10);
 const OUT_FILE = resolve(OUT_DIR, `${today}-vision-preflight.json`);
 
-const tokenPlan = process.env.AI_PROVIDER_OVERRIDE === 'xiaomi-token-plan';
-const credentialEnv = tokenPlan ? 'XIAOMI_TOKEN_PLAN_API_KEY' : 'XIAOMI_API_KEY';
-const apiKey = process.env[credentialEnv];
-let baseURL: string;
-try {
-  baseURL = tokenPlan
-    ? xiaomiTokenPlanVisionBaseUrl()
-    : (process.env.MIMO_VISION_BASE_URL ?? 'https://api.xiaomimimo.com/anthropic');
-  // YUK-1654 — the probe sends the lane credential: refuse a host the catalog
-  // does not declare instead of sending the key there.
-  assertModelEndpointHostAllowed(baseURL, 'MIMO_VISION_BASE_URL (vision preflight)');
-} catch (error) {
-  console.error(`FAIL: ${error instanceof Error ? error.message : String(error)}`);
+function failConfig(message: string): never {
+  console.error(`FAIL: ${message}`);
   process.exit(2);
 }
+
+// The probe mirrors what the runner would execute: env pin > lane.vision_judge
+// > DB task override > registry default, pair-checked and credentialed. A
+// broken lane (provider-only pair, removed model, missing key) exits 2 with
+// the same TaskConfigError the run path raises.
+let resolved: ResolvedProvider;
+try {
+  resolved = resolveTaskProvider('StepsJudgeTask', visionJudgeProviderOverride());
+} catch (error) {
+  failConfig(error instanceof Error ? error.message : String(error));
+}
+
 const cliArgModel = process.argv[2];
-// YUK-1559 — the default model is the resolved vision-judge task config (env
-// pin > lane.vision_judge override > DB task override > registry default), not
-// a literal. Under a provider pin without a model (e.g. xiaomi-token-plan
-// without AI_PROVIDER_MODEL) the resolution throws the same explicit config
-// error the runner would.
-let resolvedDefaultModel: string;
-try {
-  resolvedDefaultModel = resolveTaskBinding('StepsJudgeTask', visionJudgeProviderOverride()).model;
-} catch (error) {
-  console.error(
-    `FAIL: cannot resolve vision-judge task model: ${error instanceof Error ? error.message : String(error)}`,
-  );
-  process.exit(2);
-}
-const model = cliArgModel ?? process.env.MIMO_VISION_MODEL?.trim() ?? resolvedDefaultModel;
+const model = cliArgModel ?? process.env.MIMO_VISION_MODEL?.trim() ?? resolved.model;
+const api = executablePiModel(resolved.provider, model)?.api ?? 'openai-completions';
 
-if (!apiKey || apiKey.trim().length === 0) {
-  console.error(`FAIL: ${credentialEnv} not set in environment`);
-  console.error('Hint: check .env file');
-  process.exit(2);
-}
+async function main(): Promise<void> {
+  let apiKey: string;
+  let baseURL: string | undefined;
+  let openAiHeaders: Record<string, string> | undefined;
+  switch (resolved.authMode) {
+    case 'key':
+      apiKey = resolved.apiKey;
+      // Token Plan keeps its stricter key→host binding on the override knob;
+      // other lanes take the catalog endpoint + generic allowlist.
+      baseURL =
+        resolved.provider === 'xiaomi-token-plan'
+          ? xiaomiTokenPlanVisionBaseUrl()
+          : (process.env.MIMO_VISION_BASE_URL ?? resolved.baseUrl);
+      break;
+    case 'oauth':
+      apiKey = resolved.apiKey;
+      baseURL = process.env.MIMO_VISION_BASE_URL;
+      break;
+    case 'oauth-file':
+      failConfig(
+        `task lane uses provider '${resolved.provider}' whose OAuth credential lives in pi's file-backed credential store; run the probe from an environment that mounts it, or pin a key-auth lane`,
+      );
+  }
 
-async function main(apiKey: string): Promise<void> {
-  console.log(`[preflight] base=${baseURL} model=${model}`);
-  const start = Date.now();
-  let response: Awaited<ReturnType<typeof preflightVisionOneShot>> | null = null;
+  // The probe sends the lane credential — refuse a host the catalog does not
+  // declare instead of leaking the key there (YUK-1654).
+  if (baseURL) {
+    assertModelEndpointHostAllowed(baseURL, 'MIMO_VISION_BASE_URL (vision preflight)');
+  }
+
+  let text = '';
   let errorMessage: string | null = null;
-
+  const start = Date.now();
   try {
-    response = await preflightVisionOneShot({ apiKey, baseURL, model });
+    if (api === 'anthropic-messages') {
+      const response = await preflightVisionOneShot({ apiKey, baseURL, model });
+      text = response.text;
+    } else {
+      // openai-completions (+ any unknown api defaulting to it): the endpoint
+      // is the lane's own baseUrl; opencode-go additionally requires the
+      // per-run session header the adapter injects.
+      if (!baseURL) {
+        failConfig(
+          `lane '${resolved.provider}/${model}' has no endpoint URL for an OpenAI-completions probe; set MIMO_VISION_BASE_URL`,
+        );
+      }
+      if (resolved.provider === 'opencode-go') {
+        openAiHeaders = { 'x-opencode-session': `preflight-vision-${today}` };
+      }
+      const response = await preflightVisionOpenAiOneShot({
+        apiKey,
+        baseURL,
+        model,
+        headers: openAiHeaders,
+      });
+      text = response.text;
+    }
   } catch (err) {
     errorMessage = err instanceof Error ? err.message : String(err);
   }
-
   const elapsed_ms = Date.now() - start;
-
-  mkdirSync(OUT_DIR, { recursive: true });
-
-  const text =
-    response?.content
-      .filter((c) => c.type === 'text')
-      .map((c) => ('text' in c ? c.text : ''))
-      .join('') ?? '';
 
   let parsedJson: unknown = null;
   try {
@@ -111,21 +135,23 @@ async function main(apiKey: string): Promise<void> {
   const visionSupported =
     errorMessage === null &&
     parsedJson !== null &&
-    // Codex P2 review: `saw_image: false` means model explicitly said it could
-    // NOT see the image — that's a FAIL, not just "didn't crash". Require
-    // strict true.
+    // `saw_image: false` means the model explicitly said it could NOT see the
+    // image — that's a FAIL, not just "didn't crash". Require strict true.
     (parsedJson as { saw_image?: unknown }).saw_image === true;
 
   const result = {
     timestamp: new Date().toISOString(),
+    provider: resolved.provider,
+    api,
     model,
-    base_url: baseURL,
+    base_url: baseURL ?? null,
     elapsed_ms,
     error: errorMessage,
     raw_text: text,
     parsed_json: parsedJson,
     vision_supported: visionSupported,
   };
+  mkdirSync(OUT_DIR, { recursive: true });
   writeFileSync(OUT_FILE, JSON.stringify(result, null, 2));
 
   console.log(`\nPre-flight result: ${visionSupported ? 'PASS' : 'FAIL'}`);
@@ -141,7 +167,8 @@ async function main(apiKey: string): Promise<void> {
   process.exit(0);
 }
 
-main(apiKey).catch((err) => {
+console.log(`[preflight] provider=${resolved.provider} api=${api} model=${model}`);
+main().catch((err) => {
   console.error('Pre-flight crashed:', err);
   process.exit(2);
 });

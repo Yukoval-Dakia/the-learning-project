@@ -6,6 +6,7 @@ import { parseJsonObjectLoose } from '@/core/json-extract';
 import { ConjectureProbeSpecV2 } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
+import { TaskConfigError } from '@/server/ai/providers';
 import type { SubjectProfile } from '@/subjects/profile';
 import { defaultStructuredRunTaskFn } from './judge-output-parse';
 import { type LaneDegradationEvidence, runTaskWithLaneFallback } from './provider-lane-fallback';
@@ -250,6 +251,9 @@ export async function runMultimodalDirectJudge(
     taskResult = laneRun.taskResult;
     laneDegradation = laneRun.laneDegradation;
   } catch (err) {
+    // Same rule as steps-judge: a misconfigured lane surfaces as a config
+    // error through the existing failure path, never as 'unsupported'.
+    if (err instanceof TaskConfigError) throw err;
     return unsupportedResult('LLM call failed', {
       error: err instanceof Error ? err.message : String(err),
       prompt_image_refs: promptImageRefs,

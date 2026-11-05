@@ -25,7 +25,14 @@ export function reasoningWireFields(
   api?: string,
 ): Record<string, unknown> {
   if (reasoning.applied === 'on') {
-    return thinkingFormat === 'deepseek' ? { thinking: { type: 'enabled' } } : {};
+    // Toggle: the carrier level reaches pi's reasoningEffort slot, so formats
+    // with an effort field emit it — while every live deepseek lane declares
+    // no compat.supportsReasoningEffort and emits the switch alone.
+    return thinkingFormat === 'deepseek'
+      ? { thinking: { type: 'enabled' } }
+      : reasoning.level === undefined
+        ? {}
+        : { reasoning_effort: reasoning.level };
   }
   if (reasoning.applied === 'none') return {};
   if (reasoning.applied === 'off') {
@@ -37,7 +44,7 @@ export function reasoningWireFields(
   }
   if (reasoning.level === undefined) return {};
   return thinkingFormat === 'deepseek'
-    ? { reasoning_effort: reasoning.applied, thinking: { type: 'enabled' } }
+    ? { thinking: { type: 'enabled' } }
     : { reasoning_effort: reasoning.applied };
 }
 

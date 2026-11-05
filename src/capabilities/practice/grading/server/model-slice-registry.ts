@@ -30,6 +30,30 @@ const CURRENT_MODEL_VERSION_PINS: Readonly<Record<string, string>> = {
   AssessmentRubricJudgeTask: ASSESSMENT_RUBRIC_PROMPT_REVISION,
 };
 
+/** True when this kind carries a registered pin — the live gate checks these kinds only. */
+export function taskKindHasModelPin(kind: string): boolean {
+  return Object.hasOwn(CURRENT_MODEL_VERSION_PINS, kind) && tasks[kind as TaskKind] !== undefined;
+}
+
+/**
+ * Resolve ONE kind's live pin, isolating resolution failures per kind: a stale
+ * stored row (removed model, broken global pair) makes THIS kind fail readably
+ * while every other kind's slice check keeps working.
+ */
+function resolveLiveModelPin(
+  kind: string,
+): { pin: { model: string; model_version: string } } | { resolutionError: string } | undefined {
+  const version = CURRENT_MODEL_VERSION_PINS[kind];
+  if (version === undefined || tasks[kind as TaskKind] === undefined) return undefined;
+  try {
+    return {
+      pin: { model: resolveConfiguredTaskModel(kind as TaskKind), model_version: version },
+    };
+  } catch (error) {
+    return { resolutionError: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 /**
  * The slice that will run must still be this id and still active.
  * The id stored at issue time is not enough. A new task model or a retired slice
@@ -40,8 +64,13 @@ export async function gradingSliceMatchesLivePin(
   admittedSliceId: string,
   taskKind: string,
 ): Promise<{ ok: true } | { ok: false; detail: string }> {
-  const pin = currentModelPins().get(taskKind);
-  const pinLabel = pin === undefined ? 'unconfigured' : `${pin.model}@${pin.model_version}`;
+  const resolved = resolveLiveModelPin(taskKind);
+  const pinLabel =
+    resolved === undefined
+      ? 'unconfigured'
+      : 'pin' in resolved
+        ? `${resolved.pin.model}@${resolved.pin.model_version}`
+        : 'unresolvable';
   const [row] = await db
     .select()
     .from(model_admission_slice)
@@ -53,9 +82,16 @@ export async function gradingSliceMatchesLivePin(
       detail: `admitted slice '${admittedSliceId}' is not active for the model that would run (${pinLabel})`,
     };
   }
-  if (pin === undefined) {
+  if (resolved === undefined) {
     return { ok: false, detail: `no current model pin for task '${taskKind}'` };
   }
+  if ('resolutionError' in resolved) {
+    return {
+      ok: false,
+      detail: `current model pin for task '${taskKind}' cannot be resolved: ${resolved.resolutionError}`,
+    };
+  }
+  const pin = resolved.pin;
   const liveId = modelSliceIdFor({
     subject: row.subject,
     response_class: row.response_class,
@@ -72,13 +108,33 @@ export async function gradingSliceMatchesLivePin(
   return { ok: true };
 }
 
-/** The model and contract version each admissible task will actually run. */
+/**
+ * One kind's live pin for callers that must not iterate every kind. Unregistered
+ * kinds return undefined; a registered kind whose stored rows no longer resolve
+ * throws with the resolution error so the caller fails readably.
+ */
+export function currentModelPinForKind(
+  kind: string,
+): { model: string; model_version: string } | undefined {
+  const resolved = resolveLiveModelPin(kind);
+  if (resolved === undefined) return undefined;
+  if ('resolutionError' in resolved) {
+    throw new Error(
+      `current model pin for task '${kind}' cannot be resolved: ${resolved.resolutionError}`,
+    );
+  }
+  return resolved.pin;
+}
+
+/** The model and contract version each admissible task will actually run.
+ * Kinds whose stored configuration no longer resolves are omitted — one stale
+ * row must not take down the other kinds' gates or the admission read model;
+ * the per-kind gate (`gradingSliceMatchesLivePin`) still fails them readably. */
 export function currentModelPins(): ReadonlyMap<string, { model: string; model_version: string }> {
   const pins = new Map<string, { model: string; model_version: string }>();
-  for (const [kind, version] of Object.entries(CURRENT_MODEL_VERSION_PINS)) {
-    const definition = tasks[kind as TaskKind];
-    if (definition === undefined) continue;
-    pins.set(kind, { model: resolveConfiguredTaskModel(kind as TaskKind), model_version: version });
+  for (const kind of Object.keys(CURRENT_MODEL_VERSION_PINS)) {
+    const resolved = resolveLiveModelPin(kind);
+    if (resolved !== undefined && 'pin' in resolved) pins.set(kind, resolved.pin);
   }
   return pins;
 }
@@ -209,13 +265,20 @@ export async function registerModelAdmissionSlice(
   db: Db | Tx,
   input: RegisterModelAdmissionSliceInput,
 ): Promise<AdmittedModelSliceT> {
-  const pin = currentModelPins().get(input.task_kind);
-  if (pin === undefined) {
+  const resolvedPin = resolveLiveModelPin(input.task_kind);
+  if (resolvedPin === undefined) {
     throw new ModelSliceRegistrationError(
       'unknown_task_kind',
       `task kind '${input.task_kind}' has no current model pin — only registered grading tasks are admissible`,
     );
   }
+  if ('resolutionError' in resolvedPin) {
+    throw new ModelSliceRegistrationError(
+      'model_pin_mismatch',
+      `the current pin for task '${input.task_kind}' cannot be resolved: ${resolvedPin.resolutionError}`,
+    );
+  }
+  const pin = resolvedPin.pin;
   if (pin.model !== input.model || pin.model_version !== input.model_version) {
     throw new ModelSliceRegistrationError(
       'model_pin_mismatch',

@@ -19,6 +19,7 @@ import {
   type SourceGroundingVerifyOutputT,
 } from '@/core/schema/source-grounding';
 import type { Db } from '@/db/client';
+import { TaskConfigError } from '@/server/ai/providers';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
@@ -128,6 +129,9 @@ export async function runSourceGroundingVerify(
       },
     );
   } catch (err) {
+    // A misconfigured vision lane is not transient — keep it a config error
+    // instead of an endless pg-boss redelivery.
+    if (err instanceof TaskConfigError) throw err;
     return {
       status: 'transient_error',
       message: `source grounding VLM call failed: ${err instanceof Error ? err.message : String(err)}`,

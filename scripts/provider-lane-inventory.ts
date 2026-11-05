@@ -907,31 +907,41 @@ export const PROVIDER_LANES = [
     disposition: 'exempt',
     wire: {
       path: 'scripts/preflight-vision-one-shot.ts',
-      calls: ['client.messages.create'],
+      calls: ['client.messages.create', 'fetch'],
       contains: ['maxRetries: 0', 'timeout: 30_000'],
     },
-    callers: [{ path: 'scripts/preflight-vision.ts', calls: ['preflightVisionOneShot'] }],
+    callers: [
+      {
+        path: 'scripts/preflight-vision.ts',
+        calls: ['preflightVisionOneShot', 'preflightVisionOpenAiOneShot'],
+      },
+    ],
     directImporters: [],
     roles: ['operator'],
-    provider: 'Xiaomi pay-as-you-go or official Token Plan through the Messages SDK',
-    model: 'CLI or MIMO_VISION_MODEL override; Token Plan uses the product model',
-    endpointClass: 'manual Anthropic-compatible vision preflight',
+    provider:
+      'resolved StepsJudgeTask lane — product default opencode-go; wire shape follows the catalog api (anthropic-messages via Messages SDK, openai-completions via fetch)',
+    model: 'CLI or MIMO_VISION_MODEL override, else the resolved vision-judge task model',
+    endpointClass: 'manual vision preflight on the resolved lane wire shape',
     configuration: {
       endpoint: {
-        summary: 'MIMO_VISION_BASE_URL override; Token Plan derives /anthropic from its lane URL',
+        summary:
+          'resolved lane baseUrl via resolveTaskProvider; MIMO_VISION_BASE_URL overrides; Token Plan keeps its key→host binding, other lanes pass the model-endpoint allowlist',
         source: {
           path: 'scripts/preflight-vision.ts',
-          envReads: ['MIMO_VISION_BASE_URL', 'AI_PROVIDER_OVERRIDE'],
-          calls: ['xiaomiTokenPlanVisionBaseUrl'],
-          literals: ['https://api.xiaomimimo.com/anthropic'],
+          envReads: ['MIMO_VISION_BASE_URL'],
+          calls: [
+            'resolveTaskProvider',
+            'assertModelEndpointHostAllowed',
+            'xiaomiTokenPlanVisionBaseUrl',
+          ],
         },
       },
       credential: {
-        summary: 'operator pin selects XIAOMI_TOKEN_PLAN_API_KEY or legacy XIAOMI_API_KEY',
+        summary: 'resolved lane credential via resolveTaskProvider, never printed',
         source: {
           path: 'scripts/preflight-vision.ts',
-          literals: ['XIAOMI_TOKEN_PLAN_API_KEY', 'XIAOMI_API_KEY'],
-          contains: ['process.env[credentialEnv]'],
+          calls: ['resolveTaskProvider'],
+          contains: ['resolved.apiKey'],
         },
       },
       model: {
@@ -940,7 +950,7 @@ export const PROVIDER_LANES = [
         source: {
           path: 'scripts/preflight-vision.ts',
           imports: ['../src/server/ai/providers', '../src/server/ai/vision-judge-config'],
-          calls: ['resolveTaskBinding', 'visionJudgeProviderOverride'],
+          calls: ['resolveTaskProvider', 'visionJudgeProviderOverride'],
           envReads: ['MIMO_VISION_MODEL'],
         },
       },
@@ -948,11 +958,11 @@ export const PROVIDER_LANES = [
     evidence: {
       path: 'scripts/preflight-vision-one-shot.ts',
       imports: ['@anthropic-ai/sdk'],
-      calls: ['client.messages.create'],
+      calls: ['client.messages.create', 'fetch'],
       contains: ['maxRetries: 0', 'timeout: 30_000'],
     },
     attemptSemantics: {
-      admittedUnit: 'one manually invoked vision preflight Messages request',
+      admittedUnit: 'one manually invoked vision preflight request on the resolved lane API shape',
       transportRetryCount: 0,
       attemptsPerInvocation: {
         kind: 'exact',
@@ -964,12 +974,12 @@ export const PROVIDER_LANES = [
       timeout: '30 seconds per invocation',
       clientRetry: 'zero SDK retries',
       redelivery: 'none; the script is not a pg-boss consumer',
-      fanOut: 'exactly one Messages request per CLI invocation',
+      fanOut: 'exactly one provider request per CLI invocation',
       evidence: [
         {
           path: 'scripts/preflight-vision.ts',
           imports: ['./preflight-vision-one-shot'],
-          calls: ['preflightVisionOneShot'],
+          calls: ['preflightVisionOneShot', 'preflightVisionOpenAiOneShot'],
         },
       ],
     },
@@ -984,7 +994,7 @@ export const PROVIDER_LANES = [
       evidence: {
         path: 'scripts/preflight-vision-one-shot.ts',
         imports: ['@anthropic-ai/sdk'],
-        calls: ['client.messages.create'],
+        calls: ['client.messages.create', 'fetch'],
         contains: ['maxRetries: 0', 'timeout: 30_000'],
       },
     },

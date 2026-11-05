@@ -57,7 +57,12 @@ import {
   type ProviderTransportCollector,
   createProviderTransportCollector,
 } from './provider-transport';
-import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
+import {
+  type ResolvedProvider,
+  TaskConfigError,
+  hasGlobalProviderOverride,
+  resolveTaskProvider,
+} from './providers';
 import { estimateAbortedUsage } from './timeout-usage';
 
 /** Usage/cost evidence carried by either SDKResultSuccess or SDKResultError. */
@@ -239,12 +244,21 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     this.resolved = resolveTaskProvider(config.kind, explicitProviderRouting(config));
     // YUK-924 P2 — fail-closed capability gate: a task declaring needsToolCall /
     // isMultimodal may only run on a profile that CONFIRMS it ('unknown' rejects).
-    // Thrown before any admission row, attempt row or paid call.
-    assertModelProfileCapabilityFit(
-      tasks[config.kind],
-      this.resolved.provider,
-      this.resolved.model,
-    );
+    // Thrown before any admission row, attempt row or paid call. A lane whose
+    // model can't serve the task is a configuration failure, not a runtime
+    // outcome — keep the TaskConfigError identity for callers that would
+    // otherwise degrade it (e.g. the vision judges' 'unsupported' bucket).
+    try {
+      assertModelProfileCapabilityFit(
+        tasks[config.kind],
+        this.resolved.provider,
+        this.resolved.model,
+      );
+    } catch (error) {
+      throw new TaskConfigError(error instanceof Error ? error.message : String(error), {
+        cause: error,
+      });
+    }
     this.modelProfile = resolveModelProfile(this.resolved.provider, this.resolved.model);
     this.admissionPlan = resolveProviderSessionAdmissionPlan(this.resolved.provider);
     this.transportEvidence = createProviderTransportCollector({

@@ -13,7 +13,8 @@
  *   2 — env 配置缺失 / 调用失败
  *
  * Env required:
- *   XIAOMI_API_KEY  (StepsJudgeTask routes to xiaomi provider)
+ *   whatever credential the resolved StepsJudgeTask lane declares
+ *   (OPENCODE_API_KEY for the flash default) — resolution names it
  *
  * Output: JSON saved to docs/preflight/YYYY-MM-DD-vision-rejudge.json
  * (gitignored; run locally at phase exit, do not commit output).
@@ -25,6 +26,8 @@ import { config } from 'dotenv';
 // application DB initialization, including before dotenv configuration below.
 import { runStepsJudge } from '@/capabilities/practice/grading/server/judge/steps-judge';
 import type { JudgeQuestionRow } from '@/capabilities/practice/public';
+import { resolveTaskProvider } from '@/server/ai/providers';
+import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { Db } from '../src/db/client';
 import { loadMathDerivationFixtures } from '../src/subjects/math/fixtures/derivation';
 import { resolveSubjectProfile } from '../src/subjects/profile';
@@ -35,12 +38,12 @@ const OUT_DIR = resolve(process.cwd(), 'docs/preflight');
 const OUT_FILE = resolve(OUT_DIR, `${new Date().toISOString().slice(0, 10)}-vision-rejudge.json`);
 
 async function main() {
-  // StepsJudgeTask uses the 'xiaomi' provider (see src/ai/registry.ts).
-  // XIAOMI_API_KEY is the required credential; ANTHROPIC_API_KEY is for
-  // Anthropic-direct tasks only.
-  if (!process.env.XIAOMI_API_KEY) {
-    console.error('FAIL: XIAOMI_API_KEY not set in environment');
-    console.error('Hint: check .env file — StepsJudgeTask routes to xiaomi provider');
+  // Fast preflight only — the judge itself resolves the lane again; here we
+  // surface a config error (missing credential, broken pair) before three runs.
+  try {
+    resolveTaskProvider('StepsJudgeTask', visionJudgeProviderOverride());
+  } catch (error) {
+    console.error(`FAIL: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(2);
   }
 

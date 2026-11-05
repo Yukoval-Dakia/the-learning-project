@@ -82,11 +82,12 @@ Token Plan `tp-` key 与按量 `XIAOMI_API_KEY` 不互通，旧 `xiaomi` lane �
 
 生产视觉 rescue 与 vision judge 走同一 Token Plan `/v1` pi text+image 模型；
 `MIMO_VISION_*` 只供 `pnpm preflight:vision`，不改变生产 runner。
-该独立 probe 在 Token Plan env pin 下读取 Token Plan key，默认从 `/v1`
-派生 `/anthropic`，可用 `MIMO_VISION_BASE_URL` 明确指定 Anthropic-compatible
-端点（YUK-1654 起显式值只接受 `token-plan-<region>.xiaomimimo.com`，且 host 须过
-模型端点 allowlist）；`MIMO_VISION_MODEL` 优先于 product model。旧按量
-`api.xiaomimimo.com` probe/base URL 在此 lane 明确报配置错，不能混用 key。
+该独立 probe 经 `resolveTaskProvider('StepsJudgeTask', visionJudgeProviderOverride())`
+解析 lane/provider/model/凭据，按目录 api 分发 wire 形状（openai-completions
+→ `/chat/completions`，anthropic-messages → Messages SDK）；`MIMO_VISION_BASE_URL`
+可显式覆盖端点（host 须过模型端点 allowlist），`MIMO_VISION_MODEL` 优先于
+product model。配置错/凭据缺失按 TaskConfigError 退出码 2 如实失败，
+oauth-file lane 不能从脚本侧探测。
 全局 env pin 下 vision judge 不重试 registry `xiaomi` fallback。
 字符级 GLM/Tencent OCR 保留专用 credentials，不属于此 AI lane。
 Mem0 抽取与直接调和通过 `mem0/llm-config.ts` 走同一 Token Plan `/v1`

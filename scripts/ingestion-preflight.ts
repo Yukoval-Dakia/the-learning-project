@@ -2,7 +2,7 @@
  * 30-second pre-flight for REAL ingestion (Strategy D / Slice A).
  *
  * Verifies the worker-env credentials the real upload → OCR → VLM → blob path
- * needs, so you can confirm Tencent OCR + xiaomi/mimo VLM + Cloudflare R2 are
+ * needs, so you can confirm Tencent OCR + the AI lane VLM + Cloudflare R2 are
  * provisioned BEFORE uploading a real worksheet through the manual-review
  * pipeline. Canonical var docs live in `.env.example`; this only checks them.
  *
@@ -76,22 +76,22 @@ const checks: Check[] = [
     value: env.TENCENT_OCR_REGION,
     defaultNote: 'ap-shanghai',
   },
-  // VLM (xiaomi/mimo) — rescue extraction + all AI tasks (tagging/judge).
+  // AI lane (default opencode-go/flash) — rescue extraction + all AI tasks.
   {
-    group: 'VLM (xiaomi/mimo)',
-    name: 'XIAOMI_API_KEY',
+    group: 'AI lane (opencode-go/flash)',
+    name: 'OPENCODE_API_KEY',
     severity: 'required',
-    value: env.XIAOMI_API_KEY,
+    value: env.OPENCODE_API_KEY,
   },
   {
-    group: 'VLM (xiaomi/mimo)',
+    group: 'AI lane (opencode-go/flash)',
     name: 'MIMO_VISION_BASE_URL',
     severity: 'optional',
     value: env.MIMO_VISION_BASE_URL,
-    defaultNote: 'https://api.xiaomimimo.com/anthropic',
+    defaultNote: 'resolved lane endpoint (see preflight:vision)',
   },
   {
-    group: 'VLM (xiaomi/mimo)',
+    group: 'AI lane (opencode-go/flash)',
     name: 'MIMO_VISION_MODEL',
     severity: 'optional',
     value: env.MIMO_VISION_MODEL,

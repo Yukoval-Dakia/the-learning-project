@@ -40,7 +40,7 @@ import { lookupGroupSubjects } from '@/kernel/read-models/model-admission';
 import { createAdmissionRunExecutor } from '../server/judge/evaluate-submission';
 import {
   assertModelAdmissionSliceRegistrable,
-  currentModelPins,
+  currentModelPinForKind,
   modelSliceIdFor,
   registerModelAdmissionSlice,
 } from '../server/model-slice-registry';
@@ -408,7 +408,7 @@ export async function runModelSliceAdmission(
 
   // 2) 切片与当前模型 pin 必须一致：不给「准入一个现在不会执行的模型」留门
   //    （registerModelAdmissionSlice 写前再校验一次，双保险）。
-  const pin = currentModelPins().get(data.slice.task_kind);
+  const pin = currentModelPinForKind(data.slice.task_kind);
   if (pin === undefined) {
     throw new Error(
       `model_slice_admission_run: task kind '${data.slice.task_kind}' is not a registered admissible grading task`,

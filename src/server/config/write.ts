@@ -282,6 +282,20 @@ function valueAsNonEmptyString(v: unknown): string | undefined {
   return typeof v === 'string' && v !== '' ? v : undefined;
 }
 
+/** The resolver throws plain config errors on stale/invalid pins; the write
+ * API surfaces them as its usual readable 422 instead of an opaque 500. */
+function resolveGlobalSwitch422(db: { provider?: string; model?: string } | undefined) {
+  try {
+    return resolveGlobalProviderSwitch(process.env, db);
+  } catch (error) {
+    throw new ApiError(
+      'invalid_config_value',
+      error instanceof Error ? error.message : 'the global provider pin is not resolvable',
+      422,
+    );
+  }
+}
+
 /** YUK-1658 — prebuilt outside the write tx so the epoch row lock never waits on registry assembly. */
 type ConfigPairModels = Pick<PiMutableModels, 'getModel'>;
 
@@ -329,6 +343,7 @@ async function validateFinalProviderPairs(
   tx: Tx,
   touchedScopes: ReadonlyMap<string, PairScope>,
   models: ConfigPairModels,
+  mutatedKeys: ReadonlySet<string>,
 ): Promise<void> {
   const scopes = new Map(touchedScopes);
   // A global reset exposes task-level configuration previously hidden by the pin.
@@ -341,6 +356,42 @@ async function validateFinalProviderPairs(
     }
   }
   if (scopes.size === 0) return;
+
+  // A write validates only what it changes: a pair the batch never touches
+  // that cannot resolve is stale state the read side already fails closed on
+  // (TaskConfigError at binding resolution), not something this batch
+  // introduced — skipping it keeps a reasoning write + targeted clears from
+  // being held hostage by an unrelated stale row.
+  const globalPairMutated =
+    mutatedKeys.has('lane.global.provider') || mutatedKeys.has('lane.global.model');
+  const globalReasoningMutated = mutatedKeys.has('lane.global.reasoning');
+  const lanePairMutated = (providerKey: string, modelKey: string): boolean =>
+    mutatedKeys.has(providerKey) || mutatedKeys.has(modelKey) || globalPairMutated;
+  const pairChanged = (kind: TaskKind): boolean =>
+    globalPairMutated ||
+    lanePairMutated(`task.${kind}.provider`, `task.${kind}.model`) ||
+    mutatedKeys.has(`task.${kind}.override_global_pin`) ||
+    (lanePairMutated('lane.verify_solve.provider', 'lane.verify_solve.model') &&
+      (SOLVE_LANE_TASK_KINDS as readonly string[]).includes(kind)) ||
+    (lanePairMutated('lane.vision_judge.provider', 'lane.vision_judge.model') &&
+      (VISION_JUDGE_TASK_KINDS as readonly string[]).includes(kind));
+  // A stored task level outranks the global one — a global reasoning write
+  // does not change the level of kinds that carry their own row (rowByKey is
+  // populated before any of these predicates run).
+  const reasoningChanged = (kind: TaskKind): boolean =>
+    mutatedKeys.has(`task.${kind}.reasoning`) ||
+    (globalReasoningMutated && rowByKey.get(`task.${kind}.reasoning`) === undefined);
+  const pairBroken = (provider: Provider, model: string | undefined, kind?: TaskKind): boolean => {
+    if (!model || !models.getModel(piProviderId(provider), model)) return true;
+    if (kind) {
+      try {
+        assertModelProfileCapabilityFit(tasks[kind], provider, model);
+      } catch {
+        return true;
+      }
+    }
+    return false;
+  };
   function validateNativeModel(
     label: string,
     provider: Provider,
@@ -472,7 +523,7 @@ async function validateFinalProviderPairs(
         (!configuredModel || scope.providerKey === 'lane.vision_judge.provider')
       )
         continue;
-      const global = resolveGlobalProviderSwitch(env, {
+      const global = resolveGlobalSwitch422({
         provider: valueAsNonEmptyString(rowByKey.get('lane.global.provider')),
         model:
           valueAsNonEmptyString(env.AI_PROVIDER_MODEL) ??
@@ -494,6 +545,32 @@ async function validateFinalProviderPairs(
           (followsGlobal ? global?.model : undefined) ??
           valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) ??
           (provider === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : tasks[kind].defaultModel);
+        // The pair this kind rides ON the lane changed only if the lane keys
+        // (or, for verify_solve's model-only chain, its task/global fallbacks)
+        // were written — a stale vision lane pair does not follow the global
+        // pin and must not hold a global write hostage.
+        const laneChanged =
+          scope.providerKey === 'lane.verify_solve.provider'
+            ? pairChanged(kind)
+            : mutatedKeys.has(scope.providerKey) || mutatedKeys.has(scope.modelKey);
+        if (!laneChanged) {
+          // The lane pair this kind rides is unchanged — pre-existing breakage
+          // fails closed at run time; only a level the batch actually changed
+          // is checked, and only when the pair resolves.
+          if (!provider || !isProviderImplemented(provider) || pairBroken(provider, model, kind))
+            continue;
+          if (reasoningChanged(kind))
+            validateTaskReasoning(
+              scope.label,
+              kind,
+              provider,
+              model,
+              rowByKey.get(`task.${kind}.reasoning`) ??
+                rowByKey.get('lane.global.reasoning') ??
+                resolveKeyDef('lane.global.reasoning')?.codeDefault,
+            );
+          continue;
+        }
         if (!provider || !isProviderImplemented(provider)) {
           throw new ApiError(
             'invalid_config_value',
@@ -520,7 +597,13 @@ async function validateFinalProviderPairs(
       const rawProvider = configuredProvider ?? valueAsNonEmptyString(providerDef?.codeDefault);
       const provider = rawProvider ? readProviderId(rawProvider) : undefined;
       const model = configuredModel ?? valueAsNonEmptyString(modelDef?.codeDefault);
-      if (provider && model && isProviderImplemented(provider)) {
+      if (
+        provider &&
+        model &&
+        isProviderImplemented(provider) &&
+        (lanePairMutated(scope.providerKey, scope.modelKey) ||
+          !pairBroken(provider, model, 'SemanticJudgeTask'))
+      ) {
         validateNativeModel(scope.label, provider, model, 'SemanticJudgeTask');
       }
       continue;
@@ -535,6 +618,28 @@ async function validateFinalProviderPairs(
     if (taskKind && !typed && rowByKey.get(`task.${taskKind}.override_global_pin`) === true) {
       const rawProvider = configuredProvider;
       const model = configuredModel;
+      if (!pairChanged(taskKind)) {
+        // The opted pair is untouched — pre-existing breakage fails closed at
+        // binding resolution, so only a changed level needs re-checking.
+        const provider = rawProvider ? readProviderId(rawProvider) : undefined;
+        if (
+          provider &&
+          isProviderImplementedForTask(provider, taskKind) &&
+          !pairBroken(provider, model, taskKind) &&
+          reasoningChanged(taskKind) &&
+          !scopedServedKinds.has(taskKind)
+        )
+          validateTaskReasoning(
+            scope.label,
+            taskKind,
+            provider,
+            model as string,
+            rowByKey.get(`task.${taskKind}.reasoning`) ??
+              rowByKey.get('lane.global.reasoning') ??
+              resolveKeyDef('lane.global.reasoning')?.codeDefault,
+          );
+        continue;
+      }
       if (!rawProvider || !model) {
         throw new ApiError(
           'invalid_config_value',
@@ -568,7 +673,7 @@ async function validateFinalProviderPairs(
     }
     const globalSwitch =
       (taskKind && !typed) || isGlobal
-        ? resolveGlobalProviderSwitch(env, {
+        ? resolveGlobalSwitch422({
             provider: valueAsNonEmptyString(rowByKey.get('lane.global.provider')),
             model:
               valueAsNonEmptyString(env.AI_PROVIDER_MODEL) ??
@@ -585,6 +690,31 @@ async function validateFinalProviderPairs(
     if (typeof effProvider === 'string') {
       const provider = readProviderId(effProvider);
       if (!provider) continue;
+      const changed = taskKind === undefined ? globalPairMutated : pairChanged(taskKind);
+      const model =
+        effModel ??
+        (provider === 'anthropic-sub'
+          ? ANTHROPIC_SUB_DEFAULT_MODEL
+          : taskKind
+            ? tasks[taskKind].defaultModel
+            : undefined);
+      if (!changed) {
+        // The pair is pre-existing, not produced by this write — stale rows it
+        // cannot resolve already fail closed at run time, so they are skipped
+        // here rather than blocking an unrelated write or clear.
+        if (pairBroken(provider, model, taskKind)) continue;
+        if (taskKind && reasoningChanged(taskKind) && !scopedServedKinds.has(taskKind))
+          validateTaskReasoning(
+            scope.label,
+            taskKind,
+            provider,
+            model as string,
+            rowByKey.get(`task.${taskKind}.reasoning`) ??
+              rowByKey.get('lane.global.reasoning') ??
+              resolveKeyDef('lane.global.reasoning')?.codeDefault,
+          );
+        continue;
+      }
       if (
         providerRequiresExplicitModel(provider) &&
         effModel === undefined &&
@@ -596,13 +726,6 @@ async function validateFinalProviderPairs(
           422,
         );
       }
-      const model =
-        effModel ??
-        (provider === 'anthropic-sub'
-          ? ANTHROPIC_SUB_DEFAULT_MODEL
-          : taskKind
-            ? tasks[taskKind].defaultModel
-            : undefined);
       if (model && isProviderImplemented(provider))
         validateNativeModel(scope.label, provider, model, taskKind);
       // A task scope's stored level resolves against this same final pair —
@@ -634,7 +757,11 @@ async function validateFinalProviderPairs(
             effModel ??
             valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) ??
             (provider === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : definition.defaultModel);
-          validateNativeModel(scope.label, provider, effectiveModel, kind as TaskKind);
+          if (pairChanged(kind as TaskKind)) {
+            validateNativeModel(scope.label, provider, effectiveModel, kind as TaskKind);
+          } else if (pairBroken(provider, effectiveModel, kind as TaskKind)) {
+            continue;
+          }
           // The pin becomes this task's effective pair; its stored level must
           // survive it — unless a scoped lane drives the kind (the lane
           // overrides the pin for it, and the lane scope validates that pair).
@@ -806,7 +933,7 @@ export async function mutateConfigs(
         ...(action === 'clear' ? { cleared: Boolean(prevRow) } : {}),
       });
     }
-    if (models) await validateFinalProviderPairs(tx, touchedPairs, models);
+    if (models) await validateFinalProviderPairs(tx, touchedPairs, models, seen);
     return out;
   });
   // Hydration is best-effort. HTTP reports both committed and observed epochs separately.

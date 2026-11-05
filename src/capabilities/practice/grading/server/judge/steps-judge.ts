@@ -6,6 +6,7 @@ import { StepsLlmOutput, type StepsLlmOutputT } from '@/core/capability/judges/s
 import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
+import { TaskConfigError } from '@/server/ai/providers';
 import type { SubjectProfile } from '@/subjects/profile';
 import { defaultStructuredRunTaskFn, parseStructuredTaskOutput } from './judge-output-parse';
 import { type LaneDegradationEvidence, runTaskWithLaneFallback } from './provider-lane-fallback';
@@ -265,6 +266,11 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
     taskResult = laneRun.taskResult;
     laneDegradation = laneRun.laneDegradation;
   } catch (err) {
+    // A misconfigured lane (bad provider/model pair, missing credential,
+    // non-vision lane pin) is a config error, not a grading outcome — it must
+    // stay visible through the judge's existing failure path, not collapse
+    // into the anonymous 'unsupported' bucket.
+    if (err instanceof TaskConfigError) throw err;
     return unsupportedResult('LLM call failed', {
       error: err instanceof Error ? err.message : String(err),
       image_refs: studentImageRefs,
