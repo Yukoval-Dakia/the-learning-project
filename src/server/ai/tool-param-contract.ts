@@ -9,9 +9,9 @@
 // Policy (shared with the admission preflight — no second implementation): a
 // string field whose sub-schema expects array/object and rejects strings gets
 // exactly ONE strict JSON.parse, adopted only when the parsed value has the
-// expected structure and passes that sub-schema. A required repair that fails
-// rejects the call with `ToolParamContractError`, whose `[tool_param_contract]`
-// marker identifies the one correction-eligible failure.
+// expected structure and passes that sub-schema. Required failures go to the
+// validation owner: pi receives `ToolParamContractError`; bridge tools retain
+// their canonical schema feedback without reaching domain execution.
 //
 // Never: guessing, markdown extraction, primitive coercion, provider/model/task
 // special-casing, silent field deletion, re-parsing a parsed field, or schema
@@ -335,7 +335,7 @@ function rejectContract(path: string, kinds: Set<'array' | 'object'>): never {
   throw new ToolParamContractError(
     `field "${path}" must be ${kindPhrase(kinds)}, not a string. The string you sent ` +
       'is not valid JSON, parses to the wrong structural type, or does not satisfy the ' +
-      `declared schema. Re-issue the call with "${path}" as an actual ${kindPhrase(kinds)} ` +
+      `declared schema. Re-issue the call with "${path}" as ${kindPhrase(kinds)} ` +
       'value — do not quote it or re-serialize it as a JSON string.',
   );
 }
@@ -553,9 +553,14 @@ function repairValue(
 /**
  * Shared repair: one strict JSON.parse per string field whose sub-schema expects
  * array/object and rejects strings. `coercions` records path + original length
- * only, never the payload. Throws when a required repair fails.
+ * only, never the payload. Required failures throw unless the bridge owns validation;
+ * in that case the original arguments reach its actionable rejection unchanged.
  */
-export function repairToolArguments(parameters: unknown, args: unknown): ToolParamRepairOutcome {
+export function repairToolArguments(
+  parameters: unknown,
+  args: unknown,
+  validationOwner: 'pi' | 'bridge' = 'pi',
+): ToolParamRepairOutcome {
   const root: SchemaNode = isSchemaNode(parameters) ? parameters : {};
   const definitions = isNode(root)
     ? isNode(root.definitions)
@@ -565,6 +570,12 @@ export function repairToolArguments(parameters: unknown, args: unknown): ToolPar
         : undefined
     : undefined;
   const ctx: RepairContext = { definitions, coercions: [] };
-  const repaired = repairValue(args, [root], '', ctx);
-  return { args: repaired, coercions: ctx.coercions };
+  try {
+    const repaired = repairValue(args, [root], '', ctx);
+    return { args: repaired, coercions: ctx.coercions };
+  } catch (error) {
+    // The bridge owns its schema-specific remediation and sanitized rejection log.
+    if (validationOwner !== 'bridge' || !isToolParamContractError(error)) throw error;
+    return { args, coercions: [] };
+  }
 }

@@ -94,6 +94,9 @@ function classifyRootCall(
       (body.status === 'skipped' || body.status.startsWith('skipped:'))) ||
       body.status === 'pending' ||
       body.status === 'failed' ||
+      body.status === 'rejected' ||
+      body.status === 'invalid' ||
+      body.status === 'unavailable' ||
       body.status === 'error' ||
       body.applied === false ||
       body.skipped === true ||
@@ -164,6 +167,9 @@ function fingerprintOf(payload: unknown, normalizePending: boolean): string {
     ((typeof body.status === 'string' &&
       (body.status === 'skipped' || body.status.startsWith('skipped:'))) ||
       body.status === 'failed' ||
+      body.status === 'rejected' ||
+      body.status === 'invalid' ||
+      body.status === 'unavailable' ||
       body.status === 'error' ||
       body.error !== undefined)
   ) {

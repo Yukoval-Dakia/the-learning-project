@@ -1,8 +1,10 @@
 import type { AgentLoopConfig, AgentTool, FinishTurn } from '@earendil-works/pi-agent-core';
+import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { createNoProgressLoop } from '@/ai/no-progress-loop';
 import type { PiHookBridge, PiToolCallObservation } from '@/core/tool-call-contract';
 import { startTraceSpan } from './laminar-tracing';
 import { emitPiAfterToolCall } from './pi-hooks';
+import { assistantText } from './pi-runner-frames';
 
 /** Owns one loop's progress state, including pi's pre-validation immediate results. */
 export function installLoopProgress(
@@ -10,7 +12,7 @@ export function installLoopProgress(
   tools: readonly AgentTool[],
   hooks: PiHookBridge | undefined,
   scope: { agentType?: string; loopId: string },
-): void {
+): { closure(): { readonly reason: string } | undefined } {
   const progress =
     scope.agentType === undefined && hooks?.progress ? hooks.progress : createNoProgressLoop();
   const before = config.beforeToolCall;
@@ -108,6 +110,22 @@ export function installLoopProgress(
     }
     return terminate ? { action: 'end' } : (decision ?? undefined);
   };
+  return { closure: () => progress.closure?.() };
+}
+
+/** A terminated tool turn is not a completed child report, even if it has a preamble. */
+export function completedChildReport(
+  final: AssistantMessage,
+  progress: ReturnType<typeof installLoopProgress>,
+  agentType: string,
+): string {
+  const text = assistantText(final);
+  if (!text.trim() || final.content.some((block) => block.type === 'toolCall')) {
+    throw new Error(
+      `nested subagent '${agentType}' stopped without a final text report (${progress.closure()?.reason ?? final.stopReason})`,
+    );
+  }
+  return text;
 }
 
 /** End at the configured ceiling without turning a clean final answer into failure. */
