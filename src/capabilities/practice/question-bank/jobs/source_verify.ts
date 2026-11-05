@@ -77,6 +77,7 @@ import {
 import type { PlacementVerificationAuthority } from '@/kernel/supply-contracts';
 import { SupplyTraceV1 } from '@/kernel/supply-contracts';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { TaskConfigError } from '@/server/ai/providers';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import {
@@ -702,20 +703,22 @@ export async function runSourceVerify(
       } catch (err) {
         // a BARE throw from the grounding fn (a bug, or a future
         // change that stops returning the discriminated result) must NOT bypass fail-closed.
-        // Fold it into the SAME transient_error branch (demote → throw) as a returned
-        // transient_error, so an unexpected throw can never silently leave a pre-promoted row
-        // in the pool.
-        outcome = {
-          status: 'transient_error',
-          message: err instanceof Error ? err.message : String(err),
-        };
+        // Fold it into the SAME demote-first path as a returned result — a
+        // TaskConfigError keeps its own config_error status, anything else is transient.
+        outcome =
+          err instanceof TaskConfigError
+            ? { status: 'config_error' as const, message: err.message }
+            : {
+                status: 'transient_error' as const,
+                message: err instanceof Error ? err.message : String(err),
+              };
       }
-      if (outcome.status === 'transient_error') {
-        // Transient grounding is retriable, not a content verdict. Commit legacy draft
-        // and contract suspended/withheld together before throwing to retry. Root→child
-        // locks serialize with editing/publishing; re-read version and terminal success
+      if (outcome.status === 'transient_error' || outcome.status === 'config_error') {
+        // Neither outcome is a content verdict — fail closed the same way: commit
+        // legacy draft and contract suspended/withheld together. Root→child locks
+        // serialize with editing/publishing; re-read version and terminal success
         // under those locks so a stale delivery cannot undo a newer admission.
-        // A failed suspension rolls back the demotion too; catch-bottom records an error.
+        // A failed suspension rolls back the demotion too.
         try {
           await db.transaction(async (suspendTx) => {
             const groupRootId = row.parent_question_id ?? questionId;
@@ -763,7 +766,8 @@ export async function runSourceVerify(
                 outcome: 'suspended',
                 evidence: {
                   check: 'source_grounding',
-                  transient: true,
+                  transient: outcome.status === 'transient_error',
+                  ...(outcome.status === 'config_error' ? { config_error: true } : {}),
                   message: outcome.message,
                 },
               },
@@ -774,6 +778,45 @@ export async function runSourceVerify(
         } catch (suspendErr) {
           console.error('[source_verify] verify-hold write failed for', questionId, suspendErr);
         }
+      }
+      if (outcome.status === 'config_error') {
+        // A misconfigured vision lane cannot heal on redelivery — a retriable
+        // outcome='error' here would re-enter the nightly orphan-draft dispatch loop
+        // until the lane is fixed. Write the run as a TERMINAL verify event instead
+        // (same unified system_error payload, outcome='failure'), so the idempotency
+        // guard short-circuits later deliveries and this delivery completes the job.
+        await writeEvent(db, {
+          id: createId(),
+          session_id: null,
+          actor_kind: 'agent',
+          actor_ref: 'source_verify',
+          action: 'experimental:source_verify',
+          subject_kind: 'question',
+          subject_id: questionId,
+          outcome: 'failure',
+          payload: {
+            question_id: questionId,
+            ...(params.recheckCommandEventId != null
+              ? { recheck_command_event_id: params.recheckCommandEventId }
+              : {}),
+            ...toUnifiedVerifyResult({
+              source: 'system_error',
+              summary_md: `source_verify failed: ${outcome.message}`,
+              error: outcome.message,
+            }),
+            config_error: true,
+            error: outcome.message,
+            ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
+            ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
+          },
+          caused_by_event_id: null,
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: new Date(),
+        });
+        return { status: 'failed', checks };
+      }
+      if (outcome.status === 'transient_error') {
         throw new Error(
           `source_verify source grounding failed (transient) for ${questionId}: ${outcome.message}`,
         );

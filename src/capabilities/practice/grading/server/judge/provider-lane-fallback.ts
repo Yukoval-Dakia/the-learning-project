@@ -5,7 +5,7 @@ import { AgentRunError } from '@/ai/agent-run-error';
 import { type Provider, tasks } from '@/capabilities/task-registry';
 import { getLaneOverride } from '@/core/config/store';
 import type { RunTaskCtx } from '@/server/ai/runner';
-import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
+import { applicableVisionJudgeOverride } from '@/server/ai/vision-judge-config';
 
 const PROVIDER_HARD_FAILURE_KIND = 'provider_hard_failure';
 
@@ -86,9 +86,10 @@ export async function runTaskWithLaneFallback<T>({
   baseCtx: Omit<RunTaskCtx, 'override'>;
   runTaskFn: (kind: LaneFallbackTaskKind, input: unknown, ctx: RunTaskCtx) => Promise<T>;
 }): Promise<LaneFallbackRunResult<T>> {
-  // A process pin is authoritative. A registry retry would hit the same pinned
-  // model and burn another paid request, not provide a cross-lane recovery.
-  const override = process.env.AI_PROVIDER_OVERRIDE ? undefined : visionJudgeProviderOverride();
+  // A process pin is authoritative: the scoped lane is not even read (a broken
+  // stored lane must not block the pin), and a registry retry would hit the
+  // same pinned model and burn another paid request.
+  const override = applicableVisionJudgeOverride();
 
   let first: T;
   try {

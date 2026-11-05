@@ -69,6 +69,7 @@ import {
 import { registeredTypedTaskBindings } from '@/server/ai/typed-primitive-runner';
 import {
   VISION_JUDGE_TASK_KINDS,
+  applicableVisionJudgeOverride,
   visionJudgeProviderOverride,
 } from '@/server/ai/vision-judge-config';
 import { INFRA_HOUSEKEEPING_SCHEDULES } from '@/server/boss/infra-schedules';
@@ -296,18 +297,11 @@ function providerAuthFacts(provider: ProviderAuthSurfaceRow['name']): AdminConfi
 function scopedLaneCallOverride(
   kind: TaskKind,
 ): { provider?: Provider; model?: string } | undefined {
-  if (kind === 'StepsJudgeTask' || kind === 'MultimodalDirectJudgeTask') {
-    // runTaskWithLaneFallback suppresses the scoped lane under the process pin
-    // (a registry retry would burn the same pinned model) — an opted task then
-    // reports its own pair, not the lane.
-    return process.env.AI_PROVIDER_OVERRIDE
-      ? undefined
-      : visionJudgeProviderOverride(process.env, { checkCredentials: false });
-  }
   if ((VISION_JUDGE_TASK_KINDS as readonly string[]).includes(kind)) {
-    // SourceGroundingVerifyTask passes the lane unguarded; the env pin still
-    // wins inside the binding for non-opted tasks.
-    return visionJudgeProviderOverride(process.env, { checkCredentials: false });
+    // All three vision call paths resolve through applicableVisionJudgeOverride:
+    // a process pin suppresses the scoped lane everywhere, so a pinned run
+    // reports its own pair and a broken stored lane can never shadow the pin.
+    return applicableVisionJudgeOverride(process.env, { checkCredentials: false });
   }
   return undefined;
 }

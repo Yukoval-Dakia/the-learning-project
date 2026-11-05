@@ -611,11 +611,30 @@ async function validateFinalProviderPairs(
 
     const isGlobal = scope.providerKey === 'lane.global.provider';
     const typed = taskKind && (tasks[taskKind] as TaskDefinition).execution === 'typed';
+    // Typed kinds run their own wire contract — stored provider/model rows and
+    // the global pair never reach it (the binding mirrors def.default*), so a
+    // chat-pair assertion on this scope can only 422 a legitimate write — e.g.
+    // clearing a stale override_global_pin row — because the typed default is
+    // not a catalog chat model. Setting the flag on one stays a write-time
+    // error (otherwise the row would be a poison pill only raw SQL removes).
+    if (typed) {
+      if (
+        mutatedKeys.has(`task.${taskKind}.override_global_pin`) &&
+        rowByKey.get(`task.${taskKind}.override_global_pin`) === true
+      ) {
+        throw new ApiError(
+          'invalid_config_value',
+          `${scope.label}: task.${taskKind}.override_global_pin=true is meaningless on a typed-execution task — there is no chat lane to repoint`,
+          422,
+        );
+      }
+      continue;
+    }
     // YUK-1547 — explicit per-task opt-in: task.<kind>.override_global_pin=true
     // requires the task's OWN provider+model rows complete+servable — checked
     // on the tx-final rows so field-by-field writes cannot leave a half pair
     // behind (a global reset exposing it is validated the same way).
-    if (taskKind && !typed && rowByKey.get(`task.${taskKind}.override_global_pin`) === true) {
+    if (taskKind && rowByKey.get(`task.${taskKind}.override_global_pin`) === true) {
       const rawProvider = configuredProvider;
       const model = configuredModel;
       if (!pairChanged(taskKind)) {

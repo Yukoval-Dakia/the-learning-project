@@ -20,7 +20,7 @@ import {
 } from '@/core/schema/source-grounding';
 import type { Db } from '@/db/client';
 import { TaskConfigError } from '@/server/ai/providers';
-import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
+import { applicableVisionJudgeOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
   type StructuredTaskResult,
@@ -61,7 +61,8 @@ export interface RunSourceGroundingVerifyParams {
 export type SourceGroundingVerifyResult =
   | { status: 'grounded'; confidence: number; observed_md: string; reason_md: string }
   | { status: 'not_grounded'; confidence: number; observed_md: string; reason_md: string }
-  | { status: 'transient_error'; message: string };
+  | { status: 'transient_error'; message: string }
+  | { status: 'config_error'; message: string };
 
 /**
  * Three-state dispatch over the task result (mirrors the multimodal/steps judges):
@@ -117,8 +118,9 @@ export async function runSourceGroundingVerify(
       {
         db: params.db,
         subjectProfile: params.subjectProfile,
-        // Same vision provider routing as the multimodal judges.
-        override: visionJudgeProviderOverride(),
+        // Same vision provider routing as the multimodal judges; a process pin
+        // suppresses the scoped lane entirely (the lane never runs under a pin).
+        override: applicableVisionJudgeOverride(),
         // NO enableTransientRetry (single-transient-layer principle,): unlike
         // multimodal_direct / steps (called synchronously from the judge router, whose catch
         // swallows failures into 'unsupported' → pg-boss never sees a throw), this runner is
@@ -129,9 +131,14 @@ export async function runSourceGroundingVerify(
       },
     );
   } catch (err) {
-    // A misconfigured vision lane is not transient — keep it a config error
-    // instead of an endless pg-boss redelivery.
-    if (err instanceof TaskConfigError) throw err;
+    // A misconfigured vision lane is a configuration defect, not a transient
+    // failure — surface it under its own status so source_verify can fail closed
+    // TERMINALLY (demote + terminal verify event, job completes). Folding it
+    // into transient_error would put the draft back on pg-boss redelivery and
+    // the nightly orphan re-dispatch loop while the lane stays broken.
+    if (err instanceof TaskConfigError) {
+      return { status: 'config_error', message: err.message };
+    }
     return {
       status: 'transient_error',
       message: `source grounding VLM call failed: ${err instanceof Error ? err.message : String(err)}`,

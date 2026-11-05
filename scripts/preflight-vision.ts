@@ -29,7 +29,7 @@ import { config } from 'dotenv';
 import { assertModelEndpointHostAllowed } from '../src/core/config/model-endpoint-allowlist';
 import { executablePiModel } from '../src/server/ai/pi-provider-catalog';
 import { type ResolvedProvider, resolveTaskProvider } from '../src/server/ai/providers';
-import { visionJudgeProviderOverride } from '../src/server/ai/vision-judge-config';
+import { applicableVisionJudgeOverride } from '../src/server/ai/vision-judge-config';
 import { xiaomiTokenPlanVisionBaseUrl } from '../src/server/ai/xiaomi-token-plan';
 import { preflightVisionOneShot, preflightVisionOpenAiOneShot } from './preflight-vision-one-shot';
 
@@ -50,7 +50,7 @@ function failConfig(message: string): never {
 // the same TaskConfigError the run path raises.
 let resolved: ResolvedProvider;
 try {
-  resolved = resolveTaskProvider('StepsJudgeTask', visionJudgeProviderOverride());
+  resolved = resolveTaskProvider('StepsJudgeTask', applicableVisionJudgeOverride());
 } catch (error) {
   failConfig(error instanceof Error ? error.message : String(error));
 }

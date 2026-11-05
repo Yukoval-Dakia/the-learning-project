@@ -108,3 +108,20 @@ export function visionJudgeProviderOverride(
 
   return { provider: provider as Provider, model };
 }
+
+/**
+ * The vision-judge override that actually applies on a call path: an
+ * `AI_PROVIDER_OVERRIDE` process pin outranks the scoped lane inside binding,
+ * so the stored lane is not read at all — a broken lane must not block an
+ * explicit emergency pin that would never execute it. Without a pin the stored
+ * lane is authoritative and still validated strictly (credential/capability
+ * throws propagate per `opts.checkCredentials`). Single resolver shared by the
+ * run paths (provider-lane-fallback, source-grounding-verify) and the admin
+ * call-path projection so they cannot drift.
+ */
+export function applicableVisionJudgeOverride(
+  env: VisionJudgeEnv = process.env,
+  opts?: { checkCredentials?: boolean },
+): { provider: Provider; model?: string } | undefined {
+  return env.AI_PROVIDER_OVERRIDE ? undefined : visionJudgeProviderOverride(env, opts);
+}

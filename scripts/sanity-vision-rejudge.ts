@@ -27,7 +27,7 @@ import { config } from 'dotenv';
 import { runStepsJudge } from '@/capabilities/practice/grading/server/judge/steps-judge';
 import type { JudgeQuestionRow } from '@/capabilities/practice/public';
 import { resolveTaskProvider } from '@/server/ai/providers';
-import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
+import { applicableVisionJudgeOverride } from '@/server/ai/vision-judge-config';
 import type { Db } from '../src/db/client';
 import { loadMathDerivationFixtures } from '../src/subjects/math/fixtures/derivation';
 import { resolveSubjectProfile } from '../src/subjects/profile';
@@ -41,7 +41,7 @@ async function main() {
   // Fast preflight only — the judge itself resolves the lane again; here we
   // surface a config error (missing credential, broken pair) before three runs.
   try {
-    resolveTaskProvider('StepsJudgeTask', visionJudgeProviderOverride());
+    resolveTaskProvider('StepsJudgeTask', applicableVisionJudgeOverride());
   } catch (error) {
     console.error(`FAIL: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(2);

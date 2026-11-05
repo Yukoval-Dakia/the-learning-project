@@ -950,7 +950,7 @@ export const PROVIDER_LANES = [
         source: {
           path: 'scripts/preflight-vision.ts',
           imports: ['../src/server/ai/providers', '../src/server/ai/vision-judge-config'],
-          calls: ['resolveTaskProvider', 'visionJudgeProviderOverride'],
+          calls: ['resolveTaskProvider', 'applicableVisionJudgeOverride'],
           envReads: ['MIMO_VISION_MODEL'],
         },
       },

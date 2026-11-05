@@ -71,13 +71,14 @@ export const supplyManifestPart: Omit<CapabilityManifest, 'name' | 'description'
       // YUK-1664 — placement starter claim 到期清扫。原挂 question_supply_nightly 尾部：
       // dormant 档整夜不跑、DAG 上游 skipped 连带不跑。改独立高频 job 照
       // intervention_prepare_recovery 范式：按 `next_reconcile_at <= now` 的真实到期义务
-      // 轮询，与学习活跃度无关（无 eligibility 门），卡死供给几分钟内恢复。无到期 claim 时
+      // 轮询，与学习活跃度无关（无 eligibility 门）。30 秒 tick（六字段 cron，带秒位）：
+      // 找题失败后 pending_dispatch 重派不再等分钟级窗口。无到期 claim 时
       // 一次索引 LIMIT 1 读即退，不触 pg-boss / provider。queue=fast：本 job 自身零 LLM
       // （付费发生在它重派的 quiz_gen / supply_execute），无 DLQ——漏一拍下轮 cron 接上；
       // 多 worker 并发靠 claim 的条件 UPDATE CAS 领取，单飞语义不变。
       {
         name: 'placement_starter_recovery',
-        schedule: { cron: '*/5 * * * *', tz: 'Asia/Shanghai' },
+        schedule: { cron: '*/30 * * * * *', tz: 'Asia/Shanghai' },
         queue: 'fast',
         load: () =>
           import('./server/placement-starter-recovery').then(
