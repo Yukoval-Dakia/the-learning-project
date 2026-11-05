@@ -63,8 +63,6 @@ export const bankRequirementInterpretTaskSpec = {
     kind: 'BankRequirementInterpretTask',
     description:
       'YUK-1448: faithfully interpret query-only search conditions, with exact original spans and explicit ambiguities.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget,
     needsToolCall: false,
     isMultimodal: false,
@@ -92,8 +90,6 @@ export const bankConditionVerifyTaskSpec = {
     kind: 'BankConditionVerifyTask',
     description:
       'YUK-1448: same-revision per-condition and same-task joint verification from authorized complete text; no tools or issuance authority.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget,
     needsToolCall: false,
     isMultimodal: false,

@@ -1,17 +1,14 @@
 import type { Provider } from '@/ai/registry';
 import type { AttemptCostTruth } from '@/ai/task-result';
 import { looksLikeCustomProviderId } from '@/core/config/custom-providers';
-import { catalogModelCost, currentModelCatalog } from './model-catalog';
+import { catalogModelCost } from './model-catalog';
 import { catalogProviderFor } from './model-profiles';
 import {
   ANTHROPIC_SUB_CONTRACT_REF,
-  ATTEMPT_PRICEBOOK_VERSION,
   JEV_PRICEBOOK_VERSION,
   type TokenCounts,
-  hasLocalPricing,
   isJevModel,
   jevLocalCostUsd,
-  localCostUsd,
 } from './pricing';
 
 export type { AttemptCostBasis, AttemptCostTruth } from '@/ai/task-result';
@@ -167,27 +164,6 @@ export function resolveAttemptCostTruth(input: {
     (input.provider === 'anthropic' || reported > 0);
   if (hasTrustworthyReportedAmount) {
     return { basis: 'reported', amountUsd: reported, ref: 'sdk:total_cost_usd' };
-  }
-
-  const estimated = input.tokensObserved === false ? null : localCostUsd(input.model, input.tokens);
-  if (
-    input.provider === 'xiaomi' &&
-    hasLocalPricing(input.model) &&
-    estimated !== null &&
-    Number.isFinite(estimated) &&
-    estimated >= 0
-  ) {
-    const prefix =
-      input.priceOrigin === 'timeout-estimate'
-        ? 'pricebook-timeout-estimate'
-        : input.priceOrigin === 'failure-estimate'
-          ? 'pricebook-failure-estimate'
-          : 'pricebook';
-    return {
-      basis: 'estimated',
-      amountUsd: estimated,
-      ref: `${prefix}:${ATTEMPT_PRICEBOOK_VERSION}/${input.provider}/${input.model}@${currentModelCatalog().version}`,
-    };
   }
 
   return unknownAttemptCostTruth(input.provider, input.model);

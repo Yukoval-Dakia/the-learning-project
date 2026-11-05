@@ -138,6 +138,7 @@ export type AdminConfigTaskSelectionRule =
  * be honored at all.
  */
 export interface AdminConfigTaskEffectiveReasoning {
+  readonly source?: 'task' | 'global' | 'catalog';
   readonly requested: string | null;
   readonly applied: string | null;
   readonly error: string | null;

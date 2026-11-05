@@ -70,6 +70,7 @@ export const AdminConfigTaskSelectionRuleSchema = z.enum([
 
 /** resolveTaskReasoning's outcome: stored level → what the wire will carry, or its readable error. */
 export const AdminConfigTaskEffectiveReasoningSchema = z.object({
+  source: z.enum(['task', 'global', 'catalog']).optional(),
   requested: z.string().nullable(),
   applied: z.string().nullable(),
   error: z.string().nullable(),

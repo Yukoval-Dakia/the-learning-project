@@ -138,8 +138,6 @@ export const conjectureProbeAuthorTaskSpec = {
     kind: 'ConjectureProbeAuthorTask',
     description:
       'Authors one complete two-probe package from a frozen evidence-grounded DiagnosticSpec, including gold and expected target-error answers.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5',
     // Background path: measured fixed-batch runs showed valid structured output
     // occasionally arriving after the old 120s ceiling.
     budget: { ...DEFAULT_BUDGET, maxIterations: 3, timeout: 180_000 },
@@ -163,8 +161,6 @@ export const conjectureProbeReviewTaskSpec = {
     kind: 'ConjectureProbeReviewTask',
     description:
       'Independently reviews a conjecture probe pair against evidence and a frozen DiagnosticSpec. It returns pass/failure codes and never repairs the pair.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5',
     budget: { ...DEFAULT_BUDGET, maxIterations: 3, timeout: 180_000 },
     needsToolCall: false,
     isMultimodal: true,

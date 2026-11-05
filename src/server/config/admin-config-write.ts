@@ -26,9 +26,9 @@ export function createAdminConfigWriter(db: Db = defaultDb): AdminConfigWriter {
       const taskScope = /^task\.([^.]+)\./.exec(mutation.key)?.[1];
       if (taskScope !== undefined && Object.hasOwn(tasks, taskScope))
         taskKinds.add(taskScope as TaskKind);
-      if (mutation.key === 'lane.global.provider' || mutation.key === 'lane.global.model')
-        globalTouched = true;
+      if (mutation.key.startsWith('lane.global.')) globalTouched = true;
     }
+    if (globalTouched) for (const kind of Object.keys(tasks)) taskKinds.add(kind as TaskKind);
     const effectiveTasks: Record<string, AdminConfigTaskEffectiveBinding> = {};
     for (const kind of taskKinds) effectiveTasks[kind] = resolveAdminTaskEffective(kind);
     return {

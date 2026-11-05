@@ -128,7 +128,7 @@ function validateStaticSemantics(key: string, value: ConfigValue): void {
     if (providerRequiresExplicitModel(provider)) {
       throw new ApiError(
         'invalid_config_value',
-        `JUDGE_FALLBACK_PROVIDER='${value}' requires an explicit model which the fallback lane never supplies — it would resolve to the registry mimo id and 404`,
+        `JUDGE_FALLBACK_PROVIDER='${value}' requires an explicit model which the fallback lane never supplies — a provider switch cannot borrow another provider's default model`,
         422,
       );
     }
@@ -258,7 +258,7 @@ function pairScopeFor(key: string): PairScope | null {
       label: `task '${scope}'`,
     };
   }
-  const l = /^lane\.([^.]+)\.(provider|model)$/.exec(key);
+  const l = /^lane\.([^.]+)\.(provider|model|reasoning)$/.exec(key);
   if (l) {
     const scope = l[1];
     return {
@@ -321,8 +321,7 @@ function validateTaskReasoning(
  *
  * 生效层序与读面一致：priority 键 env 显式 > DB > default；fallback 键 DB > env >
  * codeDefault。rejudge 的 model codeDefault（'claude-opus-4-8'）不算「显式」——
- * providerRequiresExplicitModel 的 provider（openai/anthropic/…）上 default 是
- * mimo id，跑不了。
+ * providerRequiresExplicitModel 的 provider 必须有自己的显式 model。
  */
 async function validateFinalProviderPairs(
   tx: Tx,
@@ -393,6 +392,7 @@ async function validateFinalProviderPairs(
     ),
     'lane.global.provider',
     'lane.global.model',
+    'lane.global.reasoning',
     ...[...solveTasks, ...visionTasks].flatMap((kind) => [
       `task.${kind}.provider`,
       `task.${kind}.model`,
@@ -521,7 +521,8 @@ async function validateFinalProviderPairs(
         taskKind,
         provider,
         model,
-        rowByKey.get(`task.${taskKind}.reasoning`),
+        rowByKey.get(`task.${taskKind}.reasoning`) ??
+          rowByKey.get('lane.global.reasoning') ?? { level: 'high' },
       );
       continue;
     }
@@ -571,7 +572,8 @@ async function validateFinalProviderPairs(
           taskKind,
           provider,
           model,
-          rowByKey.get(`task.${taskKind}.reasoning`),
+          rowByKey.get(`task.${taskKind}.reasoning`) ??
+            rowByKey.get('lane.global.reasoning') ?? { level: 'high' },
         );
       if (model && scope.providerKey === 'lane.vision_judge.provider') {
         validateNativeModel(scope.label, provider, model, 'StepsJudgeTask');
@@ -596,7 +598,8 @@ async function validateFinalProviderPairs(
             kind as TaskKind,
             provider,
             effectiveModel,
-            rowByKey.get(`task.${kind}.reasoning`),
+            rowByKey.get(`task.${kind}.reasoning`) ??
+              rowByKey.get('lane.global.reasoning') ?? { level: 'high' },
           );
         }
       }

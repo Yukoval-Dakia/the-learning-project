@@ -2891,6 +2891,8 @@ export interface operations {
                                     applied: string | null;
                                     error: string | null;
                                     requested: string | null;
+                                    /** @enum {string} */
+                                    source?: "task" | "global" | "catalog";
                                 } | null;
                                 /** @enum {string|null} */
                                 selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;
@@ -3089,6 +3091,8 @@ export interface operations {
                                         applied: string | null;
                                         error: string | null;
                                         requested: string | null;
+                                        /** @enum {string} */
+                                        source?: "task" | "global" | "catalog";
                                     } | null;
                                     /** @enum {string|null} */
                                     selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;
@@ -3263,6 +3267,8 @@ export interface operations {
                                         applied: string | null;
                                         error: string | null;
                                         requested: string | null;
+                                        /** @enum {string} */
+                                        source?: "task" | "global" | "catalog";
                                     } | null;
                                     /** @enum {string|null} */
                                     selection_rule: "env_pin" | "task_pair_priority" | "call_override" | "global_pin" | "task_config" | "registry_default" | null;

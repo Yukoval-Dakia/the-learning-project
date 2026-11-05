@@ -29,7 +29,7 @@ import {
   tasks,
 } from '@/capabilities/task-registry';
 import type { ConfigEffectiveFact } from '@/core/config/effective';
-import { resolveConfigValue } from '@/core/config/store';
+import { getTaskOverride, resolveConfigValue } from '@/core/config/store';
 import { DB_POOL_MAX } from '@/db/pool';
 import { projectDagMembers } from '@/kernel/manifest';
 import { resolveConfig as resolveAiRateLimitConfig } from '@/kernel/request-rate-limit';
@@ -182,6 +182,7 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
       value: getLearnerLocale(),
       note: 'AI 输出语言：下次 system prompt 构建时读取本进程快照；跨进程轮询间隔 15s（失败保留旧快照），不改变 UI 语言或 typed task',
     },
+    'lane.global.reasoning': { value: resolveConfigValue('lane.global.reasoning').value },
     'lane.global.provider': globalPinActive
       ? { value: globalSwitch?.provider }
       : {
@@ -281,7 +282,7 @@ function providerAuthFacts(provider: ProviderAuthSurfaceRow['name']): AdminConfi
  * is reported honestly, never a binding with auth), and `resolveTaskReasoning`
  * resolves the stored level against the effective model requested → applied.
  * Typed tasks bypass the chat lane entirely, so their defaults report
- * 'registry_default' with no reasoning surface.
+ * 'registry_default'; models without reasoning options report applied none.
  */
 export function resolveAdminTaskEffective(kind: TaskKind): AdminConfigTaskEffectiveBinding {
   const task = tasks[kind];
@@ -291,7 +292,28 @@ export function resolveAdminTaskEffective(kind: TaskKind): AdminConfigTaskEffect
       model: task.defaultModel,
       error: null,
       selection_rule: 'registry_default',
-      reasoning: null,
+      reasoning: (() => {
+        try {
+          const resolved = resolveTaskReasoning(
+            kind,
+            task.defaultProvider,
+            task.defaultModel,
+            getTaskOverride(kind)?.reasoning,
+          );
+          return {
+            requested: resolved?.requested ?? null,
+            applied: resolved?.applied ?? null,
+            source: resolved?.source,
+            error: null,
+          };
+        } catch (e) {
+          return {
+            requested: null,
+            applied: null,
+            error: e instanceof Error ? e.message : String(e),
+          };
+        }
+      })(),
     };
   }
   // The binding is the config truth (provider/model/selection_rule); the
@@ -314,25 +336,19 @@ export function resolveAdminTaskEffective(kind: TaskKind): AdminConfigTaskEffect
   if (binding !== null) {
     const stored = binding.reasoning;
     const requested = stored?.level ?? stored?.reasoning_effort ?? null;
-    if (requested === null) {
-      reasoning = { requested: null, applied: null, error: null };
-    } else {
-      try {
-        const resolved = resolveTaskReasoning(kind, binding.provider, binding.model, stored);
-        reasoning = {
-          requested: resolved?.requested ?? requested,
-          applied: resolved?.applied ?? null,
-          error: null,
-        };
-      } catch (e) {
-        reasoning = {
-          requested,
-          applied: null,
-          error: e instanceof Error ? e.message : String(e),
-        };
-      }
+    try {
+      const resolved = resolveTaskReasoning(kind, binding.provider, binding.model, stored);
+      reasoning = {
+        requested: resolved?.requested ?? null,
+        applied: resolved?.applied ?? null,
+        source: resolved?.source ?? 'catalog',
+        error: null,
+      };
+    } catch (e) {
+      reasoning = { requested, applied: null, error: e instanceof Error ? e.message : String(e) };
     }
   }
+
   return {
     provider,
     model,

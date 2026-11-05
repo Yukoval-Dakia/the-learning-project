@@ -375,6 +375,15 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     const counts = this.tokenCounts;
     const base: AiTaskUsage = {
       ...this.usage,
+      ...(this.resolved.reasoning
+        ? {
+            reasoning: {
+              requested: this.resolved.reasoning.requested,
+              applied: this.resolved.reasoning.applied,
+              source: this.resolved.reasoning.source,
+            },
+          }
+        : {}),
       cacheReadTokens: counts.cacheReadTokens ?? 0,
       cacheWriteTokens: counts.cacheCreationTokens ?? 0,
       numTurns: this.terminal?.numTurns ?? this.observedUsage?.numTurns ?? 0,
@@ -673,6 +682,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         // YUK-1806 — task.<kind>.reasoning 决议（requested → applied；null = 未配置）。
         reasoning: this.resolved.reasoning
           ? {
+              source: this.resolved.reasoning.source,
               requested: this.resolved.reasoning.requested,
               applied: this.resolved.reasoning.applied,
             }

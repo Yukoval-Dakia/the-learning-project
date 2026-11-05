@@ -183,8 +183,6 @@ export const teachingTurnTaskSpec = {
     kind: 'TeachingTurnTask',
     description:
       'Phase 2C — Active Teaching turn. 输入 { learning_item, parent_hub_summary, atomic_sections, messages } → 输出 { kind, text_md, suggested_next }',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -204,7 +202,6 @@ export const teachingTurnVisionTaskSpec = {
     kind: 'TeachingTurnVisionTask',
     description:
       'Frozen solve hint with issued original images and the teaching-turn output contract.',
-    defaultModel: 'mimo-v2.5',
     isMultimodal: true,
     context: { view: 'none', reason: '不读学习者历史上下文' },
 

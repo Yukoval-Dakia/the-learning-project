@@ -439,3 +439,10 @@ docs/             # architecture, configuration, operations, modules, ADRs, plan
 ### TEST home LAN access (owner decision 2026-10-11)
 
 The current Mac TEST app keeps both `127.0.0.1:8787:8787` and a specific home-LAN address in its private Compose `services.app.ports`; never bind `0.0.0.0`. LAN addressing, Tailscale remote entry, token/health rules, and the binding-change checklist are in [docs/operations.md](docs/operations.md#网络与访问). Specific addresses and hostnames stay in owner private records, not this repo.
+
+AI tasks inherit `opencode-go/deepseek-v4.1-flash` from `DEFAULT_TASK_MODEL` with
+`lane.global.reasoning={"level":"high"}`. Set `task.<kind>.reasoning={"level":"max"}`
+for a task override. `AI_PROVIDER_OVERRIDE` / `AI_PROVIDER_MODEL` remain model-only
+emergency pins; clear both to exercise the defaults. Removed `mimo-v2.5*` stored
+models fail visibly instead of switching silently. Mem0 still follows the global
+model pin (without a pin it keeps its existing memory-specific configuration).

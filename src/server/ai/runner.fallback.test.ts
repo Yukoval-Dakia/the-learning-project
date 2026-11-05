@@ -101,7 +101,7 @@ function resetAll() {
   mockPi.queryCalls = 0;
   mockPi.messageQueues = [];
   logMock.retried.mockClear();
-  vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
+  vi.stubEnv('OPENCODE_API_KEY', 'sk-test-key');
   __setPiAdapterForTests(fakePiAdapter());
 }
 

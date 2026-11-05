@@ -268,7 +268,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     logMocks.finishedShouldThrow = false;
     logMocks.finishedFailuresRemaining = 0;
     logMocks.terminalStatuses = [];
-    process.env.XIAOMI_API_KEY = 'sk-test-key';
+    process.env.OPENCODE_API_KEY = 'sk-test-key';
   });
 
   afterEach(() => {

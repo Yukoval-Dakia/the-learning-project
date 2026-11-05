@@ -20,11 +20,12 @@ export async function piCatalogCostUsd(
   ) {
     return null;
   }
+  if (modelId.startsWith('mimo-v2.5')) return null;
   const { builtinModels } = await import('@earendil-works/pi-ai/providers/all');
   const { calculateCost } = await import('@earendil-works/pi-ai/models');
   const catalogProvider = provider === 'xiaomi-token-plan' ? 'xiaomi' : provider;
   const model = builtinModels().getModel(catalogProvider, modelId);
-  // Preserved ids (e.g. token-plan mimo-v2.5*) are absent from pi's builtin
+  // Some catalog ids are absent from pi's builtin
   // catalog — price them on the models.dev card, the same source a finished
   // run's estimate uses.
   if (!model) {

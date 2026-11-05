@@ -63,8 +63,6 @@ export const causeCategoryProposeTaskSpec = {
   definition: {
     kind: 'CauseCategoryProposeTask',
     description: '错因 catalog 扩张：other 复发样本 → 新类目提议或弃权',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 2 },
     needsToolCall: false,
     isMultimodal: false,

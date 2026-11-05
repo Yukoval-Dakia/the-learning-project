@@ -39,11 +39,6 @@ export const sourceGroundingVerifyTaskSpec = {
     description:
       'YUK-230 — Source-grounding verification for image-sourced questions. Single vision LLM call re-reads the source image and decides whether the question 题面 actually appears in / derives from it (grounded boolean), catching VLM extraction hallucination on the image_candidate path. Distinct from multimodal_direct (answer judging).',
     structuredOutputSchema: SourceGroundingVerifyOutput,
-    defaultProvider: 'xiaomi',
-    // Same vision model and 90s single-call budget as the multimodal judges, but no
-    // transientRetries: the durable source_verify job's queue redelivery is the retry
-    // layer, so an in-process retry would stack a second transient layer.
-    defaultModel: 'mimo-v2.5',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 90_000 },
     needsToolCall: false,
     isMultimodal: true,

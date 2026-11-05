@@ -64,8 +64,6 @@ export const sessionSummaryTaskSpec = {
   definition: {
     kind: 'SessionSummaryTask',
     description: '复习 session 结束后写观察与建议；可引用服务端给出的本场真实计数',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,

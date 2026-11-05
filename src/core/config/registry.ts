@@ -692,6 +692,13 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
   },
   // lane.global.* = AI_PROVIDER_OVERRIDE 的 DB 位（env pin 恒压它，见 §2.2
   // ordering：arg > env global pin > DB global/task override > registry default）。
+  'lane.global.reasoning': {
+    schema: z
+      .object({ level: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) })
+      .strict(),
+    codeDefault: { level: 'high' },
+    tier: 'B',
+  },
   'lane.global.provider': {
     schema: z.string(),
     codeDefault: undefined,

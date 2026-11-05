@@ -56,7 +56,9 @@
 
 ## Switchable AI provider lane (YUK-365, post-P4)
 
-当前产品配置目标为 `AI_PROVIDER_OVERRIDE=opencode-go` + `AI_PROVIDER_MODEL=mimo-v2.6-pro`，认证变量 `OPENCODE_API_KEY`。此 env pin 压过所有显式聊天 override/modelBinding 和 DB task/lane 配置；Jev typed 协议保留其专用绑定。未设 pin 时才回到 registry 的旧 Xiaomi 默认。Mem0 抽取与两类直接调和经 `mem0/llm-config.ts` 读取同一全局 pair，embedding 保留 DashScope。设 `AI_PROVIDER_OVERRIDE=anthropic-sub` 全局切到 **Opus 4.8 via owner's Claude Max 订阅（OAuth）** —— token 是 `claude setup-token` 生成的长效 `CLAUDE_CODE_OAUTH_TOKEN`，**绝不入库不打印**。**Token + `AI_PROVIDER_OVERRIDE` 必须对所有 AI 进程可见**（API + worker 各自在启动期跑 `loadEnv()`；`dev:local` 透传给 child；生产经 docker-compose `.env` 注入）。订阅 token 与 mimo 互斥。可选 `AI_PROVIDER_MODEL` 覆盖模型 id（lane 默认 `claude-opus-4-8`）；切到非 mimo 的其它 provider 若不设 `AI_PROVIDER_MODEL` 会 throw 明确 config 错（YUK-365 Finding 4）。Wiring 在 `providers.ts`（`authMode: 'key' | 'oauth'` + override 开关）+ `pi-models.ts`（oauth variant 把 `sk-ant-oat*` token 交给 pi anthropic-messages 驱动，自动走 Bearer 头）。
+产品默认在 `src/ai/task-spec.ts` 的 `DEFAULT_TASK_MODEL` 唯一定义为 `opencode-go/deepseek-v4.1-flash`，任务装配时补齐；有真实专用协议的任务保留显式绑定。`AI_PROVIDER_OVERRIDE` + `AI_PROVIDER_MODEL` 仍是模型应急 pin，认证变量 `OPENCODE_API_KEY`；它不改变 reasoning。Mem0 继续跟随全局模型 pin，未 pin 时保持自己的既有配置。app 与 worker 必须看到相同配置。mimo-v2.5 系列已退役：存量 task/lane 模型配置明确报错，需清除或显式选择支持的 pair，不自动替换；mimo-v2.6 仍可选。
+
+`lane.global.reasoning` 存 `{level}`，默认 `{level:'high'}`。任务 `task.<kind>.reasoning` > 全局 > 目录默认；所有模型共用 `resolveTaskReasoning` 的向上取整/toggle/none 规则，receipt 带 source 和 requested→applied。flash 目录档位 low/high/max；无 reasoning 配置位的模型记录 none。
 
 ## Xiaomi official Token Plan (YUK-1402)
 

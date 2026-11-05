@@ -433,8 +433,6 @@ export const questionAdmissionSolveTaskSpec = {
     kind: 'QuestionAdmissionSolveTask',
     description:
       'YUK-1445 admission lane: two blind independent solves of a frozen draft definition mint typed keys (select item_ids / blank accepted or numeric / free rubric) that must agree to admit; a separate source_crosscheck mode compares printed answer prose against agreed keys as evidence only.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,

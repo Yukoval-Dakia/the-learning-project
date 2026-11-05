@@ -43,8 +43,6 @@ export const visionExtractTaskSpec = {
   definition: {
     kind: 'VisionExtractTask',
     description: '错题图片 → 切块 + 题面 + 答案 + bbox（manual rescue only after Sub 0c）',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: true,
@@ -66,8 +64,6 @@ export const visionExtractTaskHeavySpec = {
   definition: {
     kind: 'VisionExtractTaskHeavy',
     description: '错题图片 → 切块（heavy / Tier 3 — registry-default multimodal manual rescue）',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 90_000 },
     needsToolCall: false,
     isMultimodal: true,

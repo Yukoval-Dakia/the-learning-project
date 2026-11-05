@@ -18,7 +18,7 @@ import {
   isProviderKeyEnvBound,
   setProviderKeyEndpointBindingsSource,
 } from '@/core/config/model-endpoint-allowlist';
-import { getLaneOverride, getTaskOverride } from '@/core/config/store';
+import { getLaneOverride, getTaskOverride, resolveConfigValue } from '@/core/config/store';
 import { catalogEndpointHostKeys } from './model-catalog';
 import {
   DASHSCOPE_EMBEDDING_ENDPOINT_KEYS,
@@ -84,16 +84,6 @@ const PROVIDERS: Record<KnownProvider, BoundProviderConfig> = {
     authMode: 'key',
     apiKeyEnv: 'XIAOMI_API_KEY',
     description: 'Native pi Xiaomi preset (OpenAI Completions)',
-    models: {
-      'mimo-v2.5-pro': {
-        execution: { localPricebook: true },
-      },
-      // YUK-924 site 5 — local USD token pricebook membership (rates remain the
-      // dated public estimate in pricing.ts, reusing the model catalog).
-      'mimo-v2.5': {
-        execution: { localPricebook: true },
-      },
-    },
   },
   'xiaomi-token-plan': {
     authMode: 'key',
@@ -420,7 +410,7 @@ const AUTH_PROBE_PIN: Partial<Record<Provider, string>> = {
   'opencode-go': 'deepseek-v4.1-flash',
   anthropic: 'claude-haiku-4-5',
   'anthropic-sub': 'claude-opus-4-8',
-  xiaomi: 'mimo-v2.5',
+  xiaomi: 'mimo-v2.6-pro',
   'xiaomi-token-plan': 'mimo-v2.6-pro',
   'zhipuai-coding-plan': 'glm-5.3-flash',
   openai: 'gpt-6-astra',
@@ -494,22 +484,10 @@ export function isProviderImplementedForTask(provider: Provider, kind: TaskKind)
   return isProviderImplemented(provider);
 }
 
-// YUK-365 / YUK-608 — providers whose registry-default model path yields a RUNNABLE model without
-// an explicit override.model: xiaomi (the mimo endpoint IS the registry default) and anthropic-sub
-// (built-in Opus 4.8 default). Every OTHER provider's registry default is a mimo id its endpoint
-// won't accept, so selecting it via override REQUIRES an explicit model.
-const PROVIDERS_WITH_RUNNABLE_DEFAULT_MODEL: ReadonlySet<Provider> = new Set([
-  'xiaomi',
-  'anthropic-sub',
-]);
+// Subscription has a provider-owned default. Other provider-only switches must
+// name a model rather than borrowing another provider's task default.
+const PROVIDERS_WITH_RUNNABLE_DEFAULT_MODEL: ReadonlySet<Provider> = new Set(['anthropic-sub']);
 
-/**
- * YUK-608 — does selecting `provider` via an explicit override REQUIRE an explicit model? True for
- * every provider EXCEPT those with a runnable built-in default (xiaomi / anthropic-sub). Without
- * this, `{ provider: 'anthropic' }` alone resolves to the registry mimo model id and 404s on the
- * Anthropic-direct endpoint. SINGLE source of truth: `resolveTaskProvider`'s global-switch guard
- * AND override pre-flights (solve-lane) both read it, so the rule lives in exactly one place.
- */
 export function providerRequiresExplicitModel(provider: Provider): boolean {
   return !PROVIDERS_WITH_RUNNABLE_DEFAULT_MODEL.has(provider);
 }
@@ -532,7 +510,7 @@ export function providerRequiresExplicitModel(provider: Provider): boolean {
  */
 export function crossoverModelForProvider(provider: Provider, kind: TaskKind): string {
   // Lanes whose builtin catalog cannot serve the task's registry-default
-  // (mimo) model id need their own crossover target — otherwise a provider-
+  // model id need their own crossover target — otherwise a provider-
   // only override resolves a pair that fails closed at adapter startup.
   if (provider === 'anthropic-sub') return ANTHROPIC_SUB_DEFAULT_MODEL;
   if (provider === 'openai') return OPENAI_ASTRA_MODEL_ID; // the lane's only bound model
@@ -564,6 +542,7 @@ export const PI_THINKING_LEVEL_ORDER: readonly PiThinkingLevelName[] = [
 
 export interface ResolvedTaskReasoning {
   /** Level name stored in task.<kind>.reasoning (legacy reasoning_effort value). */
+  readonly source: 'task' | 'global' | 'catalog';
   readonly requested: string;
   /** What actually applies: the level, 'on', 'on', 'off', or 'none'. */
   readonly applied: string;
@@ -643,21 +622,7 @@ export type ResolvedProvider =
       selectionRule?: TaskSelectionRule;
     };
 
-/**
- * YUK-365 — global provider override via env. When `AI_PROVIDER_OVERRIDE` is set
- * (e.g. `anthropic-sub`), EVERY task routes to that provider instead of its
- * registry `defaultProvider`. `AI_PROVIDER_MODEL` optionally overrides the model
- * (for `anthropic-sub` the default is `claude-opus-4-8`).
- *
- * SCOPE = GLOBAL (process-wide). This is the simplest switch that satisfies the
- * issue ("route AI tasks … to Opus via Max, default stays mimo"): the owner
- * flips the env and the whole process runs against the subscription lane.
- * For chat tasks the process env pin wins over explicit overrides, including
- * persisted model bindings. Typed non-chat protocols retain their explicit pin.
- *
- * Returns undefined when unset → callers fall through to the registry default
- * (current mimo behaviour, byte-for-byte).
- */
+/** Model-only emergency pin; typed protocols retain their dedicated binding. */
 function readEnvOverride(
   env: NodeJS.ProcessEnv,
 ): { provider: Provider; model?: string } | undefined {
@@ -701,6 +666,11 @@ export function resolveGlobalProviderSwitch(
   if (!provider) {
     throw new Error(
       `lane.global.provider='${db.provider}' (DB config) is not a known provider; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
+    );
+  }
+  if (db.model?.startsWith('mimo-v2.5')) {
+    throw new Error(
+      `lane.global.model='${db.model}' is a removed model. Clear the stored pair or select a supported model; no automatic substitution.`,
     );
   }
   return { provider, model: db.model };
@@ -802,16 +772,8 @@ export function resolveTaskBinding(
             ? 'task_config'
             : 'registry_default';
 
-  // Codex review P2 (Finding 4) — the global-switch model guard, now covering
-  // BOTH the env pin and DB lane.global pin (identical semantics: the switch is
-  // global, so a provider whose endpoint won't accept the registry's mimo
-  // default would silently break EVERY task). A per-call `override.model`, the
-  // switch's own model, or the DB task-level model satisfies the guard.
-  //   - `anthropic-sub` is exempt: it has a built-in Opus 4.8 default (below).
-  //   - `xiaomi` is exempt: it IS the mimo endpoint, so the registry default fits.
-  // The exempt set lives in `providerRequiresExplicitModel` (single source of
-  // truth, also read by override pre-flights + config write validation) so it
-  // can't drift from a second hard-coded copy.
+  // A provider switch cannot borrow a model from another provider's defaults.
+  // Subscription has its own default; every other global switch names a model.
   const cameFromGlobalSwitch =
     envPin !== undefined || (!override?.provider && globalSwitch?.provider !== undefined);
   if (
@@ -825,7 +787,7 @@ export function resolveTaskBinding(
       ? 'AI_PROVIDER_OVERRIDE'
       : 'DB lane.global.provider';
     throw new Error(
-      `${source}='${providerName}' selects a non-mimo provider, but no model is set; the task registry default model ('${def.defaultModel}') is a mimo id that '${providerName}' won't accept. Set AI_PROVIDER_MODEL or DB lane.global.model to a model the '${providerName}' endpoint serves, or use 'anthropic-sub' (defaults to ${ANTHROPIC_SUB_DEFAULT_MODEL}).`,
+      `${source}='${providerName}' selects a provider without an explicit model. Choose a model for '${providerName}'. Set AI_PROVIDER_MODEL or DB lane.global.model to a model the '${providerName}' endpoint serves, or use 'anthropic-sub' (defaults to ${ANTHROPIC_SUB_DEFAULT_MODEL}).`,
     );
   }
 
@@ -835,6 +797,11 @@ export function resolveTaskBinding(
     providerName === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : def.defaultModel;
   const modelId =
     override?.model ?? globalSwitch?.model ?? dbTaskOverride?.model ?? subDefaultModel;
+  if (modelId.startsWith('mimo-v2.5')) {
+    throw new Error(
+      `Removed model '${providerName}/${modelId}' in task.${kind}.model or lane configuration. Choose a supported provider/model pair or clear the stored override to use the product default; no automatic model substitution is performed.`,
+    );
+  }
   return {
     provider: providerName,
     model: modelId,
@@ -902,8 +869,13 @@ export function resolveTaskReasoning(
   model: string,
   params: TaskReasoningConfig | undefined,
 ): ResolvedTaskReasoning | undefined {
-  const rawRequested = params?.level ?? params?.reasoning_effort;
+  const taskLevel = params?.level ?? params?.reasoning_effort;
+  const globalLevel = resolveConfigValue('lane.global.reasoning').value as
+    | TaskReasoningConfig
+    | undefined;
+  const rawRequested = taskLevel ?? globalLevel?.level ?? globalLevel?.reasoning_effort;
   if (rawRequested === undefined) return undefined;
+  const source = taskLevel !== undefined ? ('task' as const) : ('global' as const);
   // Legacy catalog wrote reasoning_options 'none' (hy3/hy4-preview lanes) —
   // it maps to the same disable intent as 'off' and follows the off rule.
   // The receipt still records the stored 'none' as requested.
@@ -930,10 +902,10 @@ export function resolveTaskReasoning(
       (facts.overrideDeclaredThinkingFormat !== undefined ||
         facts.api === 'anthropic-messages' ||
         (facts.thinkingFormat !== undefined && (map === undefined || typeof map.off === 'string')));
-    return { requested: rawRequested, applied: canExpressOff ? 'off' : 'none' };
+    return { source, requested: rawRequested, applied: canExpressOff ? 'off' : 'none' };
   }
   if (profile.mode === 'toggle') {
-    return { requested: rawRequested, applied: 'on', level: 'high' };
+    return { source, requested: rawRequested, applied: 'on', level: 'high' };
   }
   if (profile.mode === 'effort' || profile.mode === 'budget_tokens') {
     const supported =
@@ -958,9 +930,14 @@ export function resolveTaskReasoning(
       PI_THINKING_LEVEL_ORDER.indexOf(rounded) > PI_THINKING_LEVEL_ORDER.indexOf('high')
         ? 'high'
         : rounded;
-    return { requested: rawRequested, applied, level: applied === 'off' ? undefined : applied };
+    return {
+      source,
+      requested: rawRequested,
+      applied,
+      level: applied === 'off' ? undefined : applied,
+    };
   }
-  return { requested, applied: 'none' };
+  return { source, requested, applied: 'none' };
 }
 
 /**
