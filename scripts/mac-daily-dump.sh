@@ -1,6 +1,16 @@
 #!/bin/bash
-# YUK-992 — 日级 pg_dump：launchd 在 Mac 上触发，pg_dump 经 ssh 在 NAS 的 TEST
-# postgres 容器里跑（NAS sshd 禁 TCP 转发，走 exec channel，无端口转发）。
+# YUK-992 — 日级备份：launchd 在 Mac 上触发，经 ssh 在 NAS 的 TEST 容器里跑三段：
+#   1. pg_dump（postgres 容器，custom format）；
+#   2. mem0 history.db（worker 容器，SQLite backup API 一致性快照——worker 可能正在写，
+#      裸 cp 会撕裂页；源文件不存在=全新库正常态，记 0 字节）；
+#   3. storage 对象存储 /data（tar 活拷贝——append-mostly 存储，中途被追加的对象可能
+#      内部不一致，接受为日级快照粒度；tar stderr 确认为 GNU file-changed 告警时
+#      放行 rc 1，其余非零判失败）。
+# NAS sshd 禁 TCP 转发，走 exec channel，无端口转发。
+#
+# 三段都是学习者私有数据：日志只记文件名/大小/sha256；dump 与 daily-private 内文件
+# 落盘 chmod 600，daily-private/<date>/ 目录 700。外置盘挂 noowners，权限位不是
+# 真正的访问边界——边界是 runtime 目录本身的 700（见 docs/operations.md）。
 #
 # 背景：09-12 主机盘写满 → OrbStack VM 崩溃 → docker 存储全清（含生产 pgdata 卷），
 # 恢复只能靠 4 天前的手动 per-lane dump。本脚本由 launchd 每日 07:15
@@ -16,7 +26,7 @@
 #     1. 脚本必须装在内置盘（INSTALL_DIR），launchd 才能 exec；
 #     2. 对 runtime 目录（外置盘）的一切读/写/枚举全部经 `docker run -v …:/backup`
 #        在容器内完成——OrbStack virtiofs 由 daemon 侧代理文件 I/O，不吃 TCC；
-#     3. pg_dump 经 ssh 落本地 staging，再 docker -i stdin 流进容器落盘（原子 mv）。
+#     3. 三段数据经 ssh 落本地 staging，再 docker -i stdin 流进容器落盘（原子 mv）。
 #
 # 安装（一次性，或脚本更新后重跑）：
 #   mkdir -p ~/Library/Application\ Support/loom-daily-dump
@@ -31,10 +41,12 @@
 #   launchctl print gui/$(id -u)/studio.yukoval.loom-daily-dump | grep -E 'last exit|runs'
 #   ~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh   # 手动补一份（幂等，同日覆盖）
 #   ~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh --check
-#     # 巡检汇总：fresh 信息（最新 dump/戳龄/FAILED 标记），exit 0=fresh 1=stale
+#     # 巡检汇总：fresh 信息（最新 dump/戳龄/FAILED 标记/daily-private 覆盖），exit 0=fresh 1=stale
 #
 # 失败发现面（YUK-1056 加固）：
-#   - 成功：写 .loom-daily-dump-last-success（epoch 戳）；连续 2 日戳未更新 = 失败。
+#   - 成功：三段全部发布后才写 .loom-daily-dump-last-success（epoch 戳）；
+#     连续 2 日戳未更新 = 失败。任一段失败 → FAILED 标记 + 非零退出、戳不写——
+#     dump 已发布的留盘，戳滞后本身就表示「今天不完整」。
 #   - 失败（容器可达）：写 .loom-daily-dump-FAILED-YYYYMMDD 标记文件 + exit 非 0。
 #   - 失败（本机 daemon 不可达——runtime 目录连容器写都做不到）：写【本地】标记
 #     INSTALL_DIR/.loom-daily-dump-FAILED-YYYYMMDD + launchd.log + exit 非 0。
@@ -46,6 +58,7 @@
 #   LOOM_RUNTIME_DIR   runtime 目录（dump 落盘点）
 #   LOOM_PG_CONTAINER  NAS 上的 postgres 容器名
 #   LOOM_DB_USER / LOOM_DB_NAME
+#   LOOM_WORKER_CONTAINER / LOOM_STORAGE_CONTAINER  history.db 与 /data 所在容器
 #   LOOM_KEEP_DAILY / LOOM_MIN_BYTES / LOOM_DUMP_TIMEOUT
 
 set -uo pipefail
@@ -57,21 +70,31 @@ RUNTIME_DIR="${LOOM_RUNTIME_DIR:-/Volumes/YukovalSBak/yukoval-projects/tlp-local
 CONTAINER="${LOOM_PG_CONTAINER:-the-learning-project-postgres-1}"
 DB_USER="${LOOM_DB_USER:-loom}"
 DB_NAME="${LOOM_DB_NAME:-loom}"
+WORKER_CONTAINER="${LOOM_WORKER_CONTAINER:-the-learning-project-worker-1}"
+STORAGE_CONTAINER="${LOOM_STORAGE_CONTAINER:-the-learning-project-test-storage-1}"
 KEEP_DAILY="${LOOM_KEEP_DAILY:-14}"
-MIN_BYTES="${LOOM_MIN_BYTES:-102400}" # 100KB——空库/坏 dump 防御（现体量 ~7.7MB）
+# 低字节地板只挡「根本不是 dump」的垃圾（0 字节/ssh 报错文本）；有效性由
+# pg_restore -l 的 TOC 判定（实测全新 schema 空库 ~335KB，远过地板）。
+MIN_BYTES="${LOOM_MIN_BYTES:-4096}"
 INSTALL_DIR="$HOME/Library/Application Support/loom-daily-dump"
 LOCAL_LOG="$INSTALL_DIR/launchd.log"
 NAS_SSH=(/usr/bin/ssh -F none -i "$HOME/.ssh/tlp_nas_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o LogLevel=ERROR yukoval@bancho-nb2.local)
-DUMP_TIMEOUT="${LOOM_DUMP_TIMEOUT:-1200}" # dump 总时限——ssh 假死兜底，超时 kill 走失败路径
+DUMP_TIMEOUT="${LOOM_DUMP_TIMEOUT:-1200}" # 每段时限——ssh 假死兜底，超时 kill 走失败路径
 # 本机 pg 容器已停（回滚保留），不能 inspect 它；写外置盘固定用这个本地已存在的镜像。
 WRITE_IMAGE="pgvector/pgvector:0.8.2-pg16-bookworm"
 
 DATE="$(date +%Y%m%d)"
 DUMP_NAME="loom-daily-$DATE.dump"
+PRIV_DIR="daily-private/$DATE"
 FAILED_MARK=".loom-daily-dump-FAILED-$DATE"
 STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/loom-daily-dump.XXXXXX")"
 STAGE_DUMP="$STAGE_DIR/$DUMP_NAME"
+STAGE_HIST="$STAGE_DIR/history.db"
+STAGE_TAR="$STAGE_DIR/storage.tar"
+STAGE_SUMS="$STAGE_DIR/SHA256SUMS"
 PG_ERR="$STAGE_DIR/pgdump.err"
+HIST_ERR="$STAGE_DIR/hist.err"
+STOR_ERR="$STAGE_DIR/storage.err"
 IMG=""
 
 cleanup() { rm -rf "$STAGE_DIR"; }
@@ -88,7 +111,8 @@ volsh() { # 在一次性容器内对 runtime 目录执行 sh -c 脚本（stdin �
   img && docker run --rm -i \
     -e "TS=${TS:-}" -e "MSG=${MSG:-}" -e "FAILED_MARK=${FAILED_MARK:-}" \
     -e "DUMP_NAME=${DUMP_NAME:-}" -e "KEEP=${KEEP:-}" -e "STAMP=${STAMP:-}" \
-    -e "RUNTIME_DIR=${RUNTIME_DIR:-}" -e "SIZE=${SIZE:-}" \
+    -e "RUNTIME_DIR=${RUNTIME_DIR:-}" -e "SIZE=${SIZE:-}" -e "SHA=${SHA:-}" \
+    -e "PRIV_DIR=${PRIV_DIR:-}" -e "DEST=${DEST:-}" \
     -v "$RUNTIME_DIR:/backup" "$IMG" sh -c "$1"
 }
 
@@ -114,6 +138,37 @@ fail() { # YUK-1056：失败必须 exit 非 0（launchd 'last exit code' 即告�
   exit 1
 }
 
+# run_remote <tag> <远端 stderr 捕获文件> <ssh argv…>：调用方接 stdin/stdout。
+# 与 pg_dump 原看门狗同一实现——到点立 .timeout-<tag> 并 kill -9；
+# 远端非零退出把 stderr 落 backup 日志后走统一 fail。
+# <&0 / </dev/null 必须显式写：函数内 & 后台命令的 stdin 缺省会被 bash 换成
+# /dev/null，不显式转接 history 段的远端脚本就喂不进去。
+run_remote() {
+  local tag="$1" errf="$2"; shift 2
+  "$@" <&0 2>"$errf" &
+  local pid=$!
+  ( sleep "$DUMP_TIMEOUT"; : >"$STAGE_DIR/.timeout-$tag"; kill -9 "$pid" 2>/dev/null ) </dev/null &
+  local wpid=$!
+  wait "$pid"; local rc=$?
+  kill "$wpid" 2>/dev/null; wait "$wpid" 2>/dev/null
+  if [ "$rc" -ne 0 ]; then
+    volsh 'cat >> /backup/loom-daily-dump.log' <"$errf" 2>/dev/null
+    if [ -e "$STAGE_DIR/.timeout-$tag" ]; then
+      fail "$tag exceeded ${DUMP_TIMEOUT}s — killed"
+    fi
+    fail "$tag exit non-zero ($rc)"
+  fi
+}
+
+# publish_file <stage 文件> <runtime 目录内相对路径>：.tmp→chmod 600→mv 原子发布。
+publish_file() {
+  DEST="$2" volsh '
+cat > "/backup/$DEST.tmp" &&
+chmod 600 "/backup/$DEST.tmp" &&
+mv "/backup/$DEST.tmp" "/backup/$DEST"
+' <"$1" || fail "publish $2 failed"
+}
+
 # --check：只读巡检。fresh = 最近 24h 内有新 dump 且无 FAILED 标记；exit 1 = stale。
 if [ "${1:-}" = "--check" ]; then
   ok=1
@@ -136,6 +191,22 @@ if [ "${1:-}" = "--check" ]; then
     echo "[daily-dump --check] FAILED marker present locally ($INSTALL_DIR/$FAILED_MARK)"
     ok=0
   fi
+  # daily-private 覆盖汇报（只读；缺条目本身不判 stale——当天若部分发布，
+  # 失败路径的 FAILED 标记/停滞戳已经是告警面）。
+  volsh '
+d="$(ls -d /backup/daily-private/*/ 2>/dev/null | sed "s:/\$::;s:.*/::" | sort | tail -n1)"
+if [ -z "$d" ]; then
+  echo "daily-private: none yet"
+elif [ ! -f "/backup/daily-private/$d/SHA256SUMS" ]; then
+  echo "daily-private latest: $d — SHA256SUMS MISSING"
+else
+  s="/backup/daily-private/$d/SHA256SUMS"; n=0; miss=""
+  grep -qE "[[:space:]]history\.db\$" "$s" && n=$((n+1)) || miss="$miss history.db"
+  grep -qE "[[:space:]]storage\.tar\$" "$s" && n=$((n+1)) || miss="$miss storage.tar"
+  grep -q "loom-daily-$d\.dump" "$s" && n=$((n+1)) || miss="$miss loom-daily-$d.dump"
+  echo "daily-private latest: $d — SHA256SUMS covers $n/3${miss:+ (missing:$miss)}"
+fi
+' 2>/dev/null || echo "[daily-dump --check] daily-private unreadable (container/daemon down?)"
   if [ "$ok" -eq 1 ]; then echo "[daily-dump --check] fresh"; else echo "[daily-dump --check] stale"; fi
   exit $((ok == 1 ? 0 : 1))
 fi
@@ -147,38 +218,120 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-# pg_dump 在 NAS 跑（exec channel 里远端 docker exec），stdout 落本地 staging。
-# 看门狗防 ssh 假死：到点立 .timeout 并 kill -9，走同一失败路径；截断的 staging 留在 mktemp，不发布。
-"${NAS_SSH[@]}" "docker exec $CONTAINER pg_dump -Fc -U $DB_USER $DB_NAME" </dev/null >"$STAGE_DUMP" 2>"$PG_ERR" &
-dump_pid=$!
-( sleep "$DUMP_TIMEOUT"; : >"$STAGE_DIR/.timeout"; kill -9 "$dump_pid" 2>/dev/null ) &
-watch_pid=$!
-wait "$dump_pid"; dump_rc=$?
-kill "$watch_pid" 2>/dev/null; wait "$watch_pid" 2>/dev/null
-if [ -e "$STAGE_DIR/.timeout" ] && [ "$dump_rc" -ne 0 ]; then
-  volsh 'cat >> /backup/loom-daily-dump.log' <"$PG_ERR" 2>/dev/null
-  fail "pg_dump exceeded ${DUMP_TIMEOUT}s — killed"
-fi
-if [ "$dump_rc" -ne 0 ]; then
-  volsh 'cat >> /backup/loom-daily-dump.log' <"$PG_ERR" 2>/dev/null
-  fail "pg_dump exit non-zero"
-fi
+# ── 段 1：pg_dump 在 NAS 跑（exec channel 里远端 docker exec），stdout 落本地 staging。
+run_remote pg_dump "$PG_ERR" \
+  "${NAS_SSH[@]}" "docker exec $CONTAINER pg_dump -Fc -U $DB_USER $DB_NAME" \
+  </dev/null >"$STAGE_DUMP"
 
 SIZE="$(stat -f%z "$STAGE_DUMP")"
 if [ "$SIZE" -lt "$MIN_BYTES" ]; then
   fail "dump too small ($SIZE bytes < $MIN_BYTES) — refusing to keep"
 fi
+# 字节地板之上换真校验：pg_restore -l 读 custom-format 归档 TOC，截断/损坏直接
+# 非零；输出必须带归档头与至少一条 TOC 条目，否则不算可恢复的 dump。
+if ! docker run --rm -i "$WRITE_IMAGE" pg_restore -l <"$STAGE_DUMP" >"$STAGE_DIR/toc" 2>/dev/null; then
+  fail "pg_restore -l rejected dump — not a valid archive"
+fi
+if ! grep -q 'TOC Entries:' "$STAGE_DIR/toc" ||
+   ! grep -qE '^[0-9]+; [0-9]+ [0-9]+' "$STAGE_DIR/toc"; then
+  fail "dump TOC has no entries — refusing to keep"
+fi
+DUMP_SHA="$(shasum -a 256 "$STAGE_DUMP" | cut -d' ' -f1)"
 
-# 发布 + 成功戳 + 清理失败标记 + 保留策略：全部塞进一个容器调用，stdin 是 dump。
-# 先落 .tmp 再 mv 保证原子；保留：最近 KEEP_DAILY 份全留，更老的只留每月 1 号。
-DUMP_NAME="$DUMP_NAME" FAILED_MARK="$FAILED_MARK" KEEP="$KEEP_DAILY" \
-TS="$(date '+%F %T')" STAMP="$(date +%s)" SIZE="$SIZE" \
+# dump 先发布：后两段任一再坏，今天的库备份也已落盘（FAILED 标记照立、戳不写）。
+DUMP_NAME="$DUMP_NAME" SIZE="$SIZE" SHA="$DUMP_SHA" TS="$(date '+%F %T')" \
 volsh '
 cat > "/backup/$DUMP_NAME.tmp" &&
+chmod 600 "/backup/$DUMP_NAME.tmp" &&
 mv "/backup/$DUMP_NAME.tmp" "/backup/$DUMP_NAME" &&
+printf "%s OK: %s/%s (%s bytes, sha256 %s)\n" "$TS" "$RUNTIME_DIR" "$DUMP_NAME" "$SIZE" "$SHA" >> /backup/loom-daily-dump.log
+' <"$STAGE_DUMP" || fail "publish dump to runtime dir failed (docker run write)"
+
+# ── 段 2：mem0 history.db。源文件不存在=mem0 还没写过（全新库正常态），远端往
+# stderr 打哨兵行、仍 0 退出；本侧按哨兵记 0 字节 history.db（0 字节本身是合法
+# 空 SQLite 库），与「真失败=远端非零退出走 fail」区分开。
+cat >"$STAGE_DIR/hist-remote.sh" <<'EOS'
+set -u
+T=/tmp/.loom-hist-backup
+rm -rf "$T"
+mkdir -p "$T"
+cat >"$T/backup.cjs" <<'JS'
+const fs = require('fs');
+const SRC = '/var/lib/mem0/history.db';
+if (!fs.existsSync(SRC)) {
+  process.stderr.write('LOOM_HISTORY_ABSENT\n');
+  process.exit(0);
+}
+const Database = require('/app/node_modules/better-sqlite3');
+const db = new Database(SRC, { readonly: true, fileMustExist: true });
+db.backup(process.env.LOOM_BK_OUT)
+  .then(() => { db.close(); })
+  .catch((e) => {
+    try { db.close(); } catch (_) {}
+    process.stderr.write(String((e && e.message) || e) + '\n');
+    process.exit(1);
+  });
+JS
+if LOOM_BK_OUT="$T/history.db" node "$T/backup.cjs"; then
+  cat "$T/history.db" 2>/dev/null
+  rc=0
+else
+  rc=1
+fi
+rm -f "$T/backup.cjs" "$T/history.db"
+rmdir "$T" 2>/dev/null
+exit "$rc"
+EOS
+
+run_remote history_db "$HIST_ERR" \
+  "${NAS_SSH[@]}" "docker exec -i $WORKER_CONTAINER sh -s" \
+  <"$STAGE_DIR/hist-remote.sh" >"$STAGE_HIST"
+if grep -q 'LOOM_HISTORY_ABSENT' "$HIST_ERR"; then
+  : >"$STAGE_HIST"
+  vlog "mem0 history.db absent on worker (fresh db) — recorded as empty file" 2>/dev/null
+elif [ ! -s "$STAGE_HIST" ]; then
+  vlog "mem0 history.db present but empty — recorded as empty file" 2>/dev/null
+fi
+
+# ── 段 3：storage /data 活拷贝 tar（append-mostly；GNU tar 的「file changed as we
+# read it」告警给 rc 1——append-mostly 存储常态，仅当 stderr 确实是该告警时放行；
+# busybox tar 的一切错误也报 rc 1，不能笼统放过 rc≤1）。
+run_remote storage_tar "$STOR_ERR" \
+  "${NAS_SSH[@]}" "docker exec $STORAGE_CONTAINER sh -c 'tar -C /data -cf - . 2>/tmp/.loom-tar.err; rc=\$?; if [ \$rc -eq 1 ] && grep -q \"changed as we read\" /tmp/.loom-tar.err; then rc=0; fi; cat /tmp/.loom-tar.err >&2; rm -f /tmp/.loom-tar.err; exit \$rc'" \
+  </dev/null >"$STAGE_TAR"
+
+# ── 发布 daily-private/<date>/：目录 700、文件 600；SHA256SUMS 盖当天三件，
+# dump 条目用相对路径指向上两级（校验：cd daily-private/<d> && shasum -c SHA256SUMS）。
+HIST_SIZE="$(stat -f%z "$STAGE_HIST")"
+HIST_SHA="$(shasum -a 256 "$STAGE_HIST" | cut -d' ' -f1)"
+STOR_SIZE="$(stat -f%z "$STAGE_TAR")"
+STOR_SHA="$(shasum -a 256 "$STAGE_TAR" | cut -d' ' -f1)"
+{
+  printf '%s  history.db\n' "$HIST_SHA"
+  printf '%s  storage.tar\n' "$STOR_SHA"
+  printf '%s  ../../%s\n' "$DUMP_SHA" "$DUMP_NAME"
+} >"$STAGE_SUMS"
+
+PRIV_DIR="$PRIV_DIR" volsh '
+mkdir -p "/backup/$PRIV_DIR" &&
+chmod 700 "/backup/$PRIV_DIR" &&
+chmod 700 "$(dirname "/backup/$PRIV_DIR")"
+' || fail "prepare daily-private dir failed"
+
+publish_file "$STAGE_HIST" "$PRIV_DIR/history.db"
+publish_file "$STAGE_TAR" "$PRIV_DIR/storage.tar"
+publish_file "$STAGE_SUMS" "$PRIV_DIR/SHA256SUMS"
+vlog "OK: $PRIV_DIR history.db ($HIST_SIZE bytes, sha256 $HIST_SHA) storage.tar ($STOR_SIZE bytes, sha256 $STOR_SHA)" \
+  2>/dev/null
+
+# 成功戳 + 清 FAILED 标记 + 保留策略：三段全发布完才盖戳，戳滞后=今天不完整。
+# 保留：最近 KEEP_DAILY 份全留，更老的只留每月 1 号；daily-private 目录同名策略
+# （目录名即日期，名序即新旧序），整目录为单位删。
+FAILED_MARK="$FAILED_MARK" KEEP="$KEEP_DAILY" \
+TS="$(date '+%F %T')" STAMP="$(date +%s)" \
+volsh '
 rm -f "/backup/$FAILED_MARK" &&
 printf "%s" "$STAMP" > /backup/.loom-daily-dump-last-success &&
-printf "%s OK: %s/%s (%s bytes)\n" "$TS" "$RUNTIME_DIR" "$DUMP_NAME" "$SIZE" >> /backup/loom-daily-dump.log &&
 cd /backup &&
 count=0 &&
 ls -t loom-daily-*.dump 2>/dev/null | while read -r f; do
@@ -189,4 +342,15 @@ ls -t loom-daily-*.dump 2>/dev/null | while read -r f; do
   rm -f "$f"
   printf "%s pruned: %s\n" "$TS" "$f" >> /backup/loom-daily-dump.log
 done
-' <"$STAGE_DUMP" || fail "publish to runtime dir failed (docker run write)"
+if [ -d /backup/daily-private ]; then
+  count=0
+  ls -d /backup/daily-private/*/ 2>/dev/null | sed "s:/\$::;s:.*/::" | sort -r | while read -r d; do
+    count=$((count + 1))
+    [ "$count" -le "$KEEP" ] && continue
+    dom="$(echo "$d" | cut -c7-8)" # YYYYMMDD → DD
+    [ "$dom" = "01" ] && continue
+    rm -rf "/backup/daily-private/$d"
+    printf "%s pruned: daily-private/%s\n" "$TS" "$d" >> /backup/loom-daily-dump.log
+  done
+fi
+' || fail "finalize (stamp/retention) failed"

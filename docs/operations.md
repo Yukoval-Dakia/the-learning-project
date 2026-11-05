@@ -75,17 +75,46 @@ docker compose run --rm migrate
 三层备份互不替代：
 
 - **应用归档 API**：`GET /api/_/export` / `POST /api/_/import?confirm=wipe-and-reload`，只含 `src/capabilities/observability/server/backup/archive.ts` 登记的表，可选内联 R2 对象；需要 Hono 在运行。
-- **Postgres custom dump**：完整库与 schema，灾难恢复用；不含 R2 对象字节。
-- **R2 对象备份**：单独做；归档 API 的 R2 sidecar 只覆盖被引用的 key。
+- **Postgres custom dump**：完整库与 schema，灾难恢复用；不含对象存储字节。
+- **对象存储**：TEST 的对象字节在 NAS 的 `the-learning-project-test-storage-1` 容器 `/data` 下，随下方日级备份出 `storage.tar`；归档 API 的 sidecar 只覆盖被引用的 key。
 
-### 日级 dump
+密钥/令牌（`INTERNAL_TOKEN`、`BANK_GAP_EVIDENCE_SECRET`、provider OAuth/API key、ssh key）刻意不进任何备份——恢复后按部署记录重新配置。
 
-`scripts/mac-daily-dump.sh` 由 `scripts/launchd/studio.yukoval.loom-daily-dump.plist` 在 Mac 上每日 07:15 触发，经 ssh 在 NAS 的 TEST postgres 容器里 `pg_dump -Fc`（NAS sshd 禁 TCP 转发，走 exec channel），向 runtime 目录写 `loom-daily-YYYYMMDD.dump`（custom format，供 `pg_restore`），保留最近 14 份，更老的只留每月 1 号。Mac 关机时当日不跑，Mac 回来后恢复。
+### 日级备份
+
+`scripts/mac-daily-dump.sh` 由 `scripts/launchd/studio.yukoval.loom-daily-dump.plist` 在 Mac 上每日 07:15 触发，经 ssh 在 NAS 的 TEST 容器里依次取三段（NAS sshd 禁 TCP 转发，走 exec channel）：
+
+1. `loom-daily-YYYYMMDD.dump`：postgres 容器 `pg_dump -Fc`（custom format，供 `pg_restore`），写 runtime 目录顶层，落盘前 `chmod 600`。
+2. `daily-private/YYYYMMDD/history.db`：worker 容器 `/var/lib/mem0/history.db` 的一致性快照——worker 可能正在写，脚本在容器内用 `better-sqlite3` 的 `.backup()`（SQLite online backup API）取快照再流出，不裸 cp。源文件不存在是全新库的正常态：当日 `history.db` 记为 0 字节（0 字节本身是合法空 SQLite 库），日志注明，不算失败。
+3. `daily-private/YYYYMMDD/storage.tar`：storage 容器 `/data` 的活拷贝 tar（`tar -C /data -cf - .`）。对象存储是 append-mostly，活拷贝中途被追加的对象可能内部不一致，接受为日级快照粒度；tar 非零退出时仅当 stderr 确实是 GNU「file changed as we read it」告警才放行（append-mostly 下常见），其余错误判失败。
+
+`daily-private/YYYYMMDD/SHA256SUMS` 盖当天三件：`history.db`、`storage.tar` 与 `../../loom-daily-YYYYMMDD.dump`（校验：`cd daily-private/<date> && shasum -a 256 -c SHA256SUMS`）。目录 700、文件 600，全部经 `.tmp`+`mv` 原子发布。
+
+**这三件都是私有数据**（dump 的多张表、mem0 history、对象字节里都可能有学习者文本）：日志只记文件名/大小/sha256，内容不进日志、不进 git。文件落盘 600、目录 700 只是纵深——外置卷挂 `noowners`，文件权限本身不是真正的访问边界；真正的边界是 runtime 目录本身的 700。
+
+保留策略对 dump 与 `daily-private/` 目录相同：最近 14 份全留，更老的只留每月 1 号，`daily-private` 整个日期目录为单位删。三段任一失败 → 当日 `FAILED` 标记 + `exit 1`、成功戳不写（已发布的 dump 仍留盘，戳滞后表示当天不完整）；三段全发布成功才盖 `.loom-daily-dump-last-success`。Mac 关机当日不跑（ssh 与本机 docker 都不可用）——**那天就是没有任何一份备份**，Mac 回来后恢复。
 
 - 脚本与 launchd 日志必须装在内置盘 `~/Library/Application Support/loom-daily-dump/`：launchd 子进程对 `/Volumes/*` 的任何 I/O 都会被 TCC 拒绝（表现为 `spawn failed` / `EX_CONFIG 78`）。对 runtime 目录的读写全部经 `docker run -v` 在容器内完成。
-- 成功写 `.loom-daily-dump-last-success`（epoch 戳）；失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 并 `exit 1`，本机 docker daemon 不可达时改写到安装目录。`--check` 在戳龄超过 48 小时或当天失败标记存在时 `exit 1`；标记按日命名，更早日期的标记要手动 `ls` runtime 目录和安装目录。
+- 失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 并 `exit 1`，本机 docker daemon 不可达时改写到安装目录。`--check` 在戳龄超过 48 小时或当天失败标记存在时 `exit 1`，另汇报最新 `daily-private/` 目录及其 SHA256SUMS 是否列齐三件；标记按日命名，更早日期的标记要手动 `ls` runtime 目录和安装目录。
 - 日志：runtime 目录的 `loom-daily-dump.log`，安装目录的 `launchd.log`。
-- 可覆盖 `LOOM_RUNTIME_DIR`、`LOOM_PG_CONTAINER`（NAS 上的 postgres 容器名）、`LOOM_DB_USER`、`LOOM_DB_NAME`、`LOOM_KEEP_DAILY`、`LOOM_MIN_BYTES`；`LOOM_MIN_BYTES` 默认拒收小于 100KB 的 dump。
+- dump 有效性用 `pg_restore -l`（本地 `pgvector` 镜像容器里跑，读 staging 文件）验 TOC 判，不再单看大小；`LOOM_MIN_BYTES` 只是挡 0 字节/ssh 报错文本的低地板（默认 4KB，全新 schema 空库的 dump ~335KB，不会被误杀）。
+- 可覆盖 `LOOM_RUNTIME_DIR`、`LOOM_PG_CONTAINER`、`LOOM_WORKER_CONTAINER`、`LOOM_STORAGE_CONTAINER`（均在 NAS 上）、`LOOM_DB_USER`、`LOOM_DB_NAME`、`LOOM_KEEP_DAILY`、`LOOM_MIN_BYTES`、`LOOM_DUMP_TIMEOUT`。
+
+恢复后两件（都在 NAS 侧操作，先停对应容器再放字节）：
+
+```bash
+# history.db → mem0data 卷（0 字节文件 = 空库，直接放也行；mem0 会照常续写）
+docker run --rm -i -v the-learning-project_mem0data:/var/lib/mem0 \
+  -v <backup-dir>:/backup pgvector/pgvector:0.8.2-pg16-bookworm \
+  sh -c 'cp /backup/daily-private/<date>/history.db /var/lib/mem0/history.db &&
+         chown node:node /var/lib/mem0/history.db'
+docker compose start worker   # 或 up -d worker
+
+# storage.tar → storage 容器 /data（先清空再解包才是完整恢复；增量恢复只解包）
+docker exec -i the-learning-project-test-storage-1 sh -c 'tar -C /data -xf -' \
+  < daily-private/<date>/storage.tar
+docker restart the-learning-project-test-storage-1
+```
 
 ```bash
 mkdir -p ~/Library/Application\ Support/loom-daily-dump
