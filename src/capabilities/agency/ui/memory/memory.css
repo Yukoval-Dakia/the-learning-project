@@ -11,7 +11,7 @@
     flex-direction: column;
     gap: var(--un-sp-6);
     width: min(680px, 100%);
-    min-height: calc(100dvh - 72px);
+    min-height: calc(100dvh - 64px);
     margin: 0 auto;
     padding: var(--un-sp-6) var(--un-sp-6) var(--un-sp-5);
   }
@@ -362,15 +362,20 @@
 
   @media (max-width: 720px) {
     & .mm-main {
-      min-height: calc(100dvh - 56px - 72px - env(safe-area-inset-bottom));
       padding-inline: var(--un-sp-4);
-    }
-    /* Above the phone tab bar. */
-    & .mm-tell-floating {
-      bottom: calc(72px + env(safe-area-inset-bottom) + var(--un-sp-2));
     }
     & .mm-topic[data-talk] {
       padding: var(--un-sp-4);
+    }
+  }
+
+  /* The phone tab bar only exists up to the shell's 599px. */
+  @media (max-width: 599px) {
+    & .mm-main {
+      min-height: calc(100dvh - 60px - 72px - env(safe-area-inset-bottom));
+    }
+    & .mm-tell-floating {
+      bottom: calc(72px + env(safe-area-inset-bottom) + var(--un-sp-2));
     }
   }
 }

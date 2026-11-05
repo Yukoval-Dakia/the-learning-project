@@ -206,7 +206,11 @@ function TellBox({
       {floating && outcome ? (
         <div className="mm-tell-result">
           <OutcomeNote outcome={outcome} version={version} onUndone={setOutcome} />
-          <IconButton label="收起" icon={<X size={15} />} onClick={() => setOutcome(null)} />
+          {/* A reply with no change to review (a crisis reply among them) stays until the next
+              sentence, so it can be read again. */}
+          {outcome.tone ? (
+            <IconButton label="收起" icon={<X size={15} />} onClick={() => setOutcome(null)} />
+          ) : null}
         </div>
       ) : null}
       <form className="mm-tell-form" onSubmit={submit}>
