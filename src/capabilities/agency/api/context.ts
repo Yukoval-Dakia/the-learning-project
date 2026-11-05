@@ -93,6 +93,7 @@ export async function EDIT(req: Request) {
     let writeFailure = false;
     let writeCommitted = false;
     let scopeRejections = 0;
+    let repairAttempts = 0;
     let remainingChanges: string[] = [];
     try {
       await runAgentTask(
@@ -126,14 +127,21 @@ export async function EDIT(req: Request) {
                 if (change.data.status === 'changed') {
                   writeCommitted = true;
                   remainingChanges = change.data.remaining_changes;
-                } else if (
-                  change.data.status === 'issue' &&
-                  change.data.issues.every((i) => i.kind === 'edit_scope_exceeded') &&
-                  scopeRejections++ === 0
-                ) {
-                  // A rejected batch is atomic; allow one narrower proposal, never a second commit.
-                  return;
-                } else writeFailure = true;
+                } else {
+                  if (change.data.issues.some((i) => i.kind === 'edit_scope_exceeded'))
+                    scopeRejections++;
+                  if (
+                    change.data.status === 'issue' &&
+                    change.data.issues.every(
+                      (i) => i.kind === 'edit_scope_exceeded' || i.kind === 'unmergeable',
+                    ) &&
+                    repairAttempts++ === 0
+                  ) {
+                    // Rejected batches are atomic; allow one corrected proposal, never a second commit.
+                    return;
+                  }
+                  writeFailure = true;
+                }
               },
               ctx: {
                 db,
