@@ -96,6 +96,8 @@ describe('admin configuration writes over real Hono + Postgres', () => {
     ).toEqual([1, 2, 3]);
   });
 
+  // @invariant concurrency: clearing a global pin and its hidden stale task model commits atomically
+  // @fails-if a partial reset commits or a grouped reset cannot restore the runnable task default
   it('can atomically reset a global pin and the incompatible model it was hiding', async () => {
     expect(
       (

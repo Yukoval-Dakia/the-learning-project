@@ -156,6 +156,8 @@ afterEach(() => {
 });
 
 describe('frozen solve image task payload', () => {
+  // @invariant security: the vision runner receives only original issued image bytes
+  // @fails-if private or unissued media reaches the provider or the vision route loses its image blocks
   it('sends base64 image blocks through the real task runner and logs the vision route offline', async () => {
     const s = await seed();
     const messages: unknown[] = [];

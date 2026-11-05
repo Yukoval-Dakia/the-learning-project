@@ -121,6 +121,8 @@ describe('native pi routing config migration', () => {
     expect(await testDb().select().from(system_config_journal)).toHaveLength(0);
   });
 
+  // @invariant concurrency: an incompatible global model write preserves the prior pair and journal
+  // @fails-if a text-only model commits for image tasks or a rejected write leaves partial config state
   it('global writes reject a text-only pin before breaking image tasks and preserve the previous pair', async () => {
     await setConfigs(
       [
