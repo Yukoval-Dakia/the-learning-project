@@ -24,7 +24,9 @@ import {
 // question_edit proposal（用户 accept 后 accept applier 走同一 ops → submit
 // 管线）；其它 surface 直写授权草稿。validate/probe 对 Copilot 直出（无写）。
 
-const inputSchema = EditQuestionInput;
+const inputSchema = EditQuestionInput.extend({
+  document: z.record(z.string(), z.json()).optional(),
+});
 
 // 输出按 status 分派；receipt 字段随状态裁剪（zod 边界防 drift，不含敏感字段）。
 const issueSchema = z.object({
@@ -203,7 +205,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
 export const editQuestionTool: DomainTool<Input, Output> = {
   name: 'edit_question',
   description:
-    '统一题目编辑面（schema_version-2 草稿文档）。action="save"：document 创建新草稿，或 ops 对 draft_ref/question_id 做局部编辑（set/clear/add/remove/replace_all/replace_text/set_metadata/unset_metadata/move；按稳定 id 寻址）。expected_draft_version + expected_revision 做 CAS；request_id 幂等重放。action="validate"：纯本地契约校验不写。action="probe"：合成作答走统一判分入口（确定性方法出实判，模型方法未准入如实未决）。返回 draft_ref/draft_version、changed fields、publishable+issues 与失效域。保存的是不完整但诚实的草稿；发布走 submit_question。',
+    '创建或修复题目时调用。save 用 JSON 对象 document 创建 v2 草稿，或用 ops 按稳定 part/unit/slot/material ID 编辑 draft_ref/question_id；request_id 幂等，expected_draft_version/expected_revision 做 CAS。validate 只检查，probe 走真实判分并如实返回未决。返回草稿身份和 typed issues；发布另调 submit_question。来源中的加点等视觉标记用题干内的强调保留，选项只放在选项中。',
   effect: 'write',
   inputSchema,
   outputSchema,

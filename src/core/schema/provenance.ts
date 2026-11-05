@@ -36,6 +36,11 @@ export const WebSourcedProvenance = z.object({
 });
 export type WebSourcedProvenanceT = z.infer<typeof WebSourcedProvenance>;
 
+/** Shared source projection for deterministic preflight and the persisted row. */
+export function webSourcedMetadata(provenance: WebSourcedProvenanceT) {
+  return { source_ref_kind: 'url' as const, web_sourced: provenance };
+}
+
 // ---------- material_grounded (tier 3) ----------
 //
 // Material provenance reuses the quiz_gen metadata namespace (no source_document_id
