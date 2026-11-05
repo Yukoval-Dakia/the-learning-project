@@ -129,7 +129,7 @@ function validateStaticSemantics(key: string, value: ConfigValue): void {
     if (providerRequiresExplicitModel(provider)) {
       throw new ApiError(
         'invalid_config_value',
-        `JUDGE_FALLBACK_PROVIDER='${value}' requires an explicit model which the fallback lane never supplies — it would resolve to the registry mimo id and 404`,
+        `JUDGE_FALLBACK_PROVIDER='${value}' requires an explicit model which the fallback lane never supplies — it would borrow the task's registry model and fail`,
         422,
       );
     }

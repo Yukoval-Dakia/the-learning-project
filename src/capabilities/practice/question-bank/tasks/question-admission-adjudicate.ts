@@ -1,13 +1,7 @@
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { parseTaskOutput } from '@/kernel/parse-task-output';
-import {
-  SolvePart,
-  SolveUnit,
-  SolvedKey,
-  admissionSubmitInput,
-  questionAdmissionSolveTaskSpec,
-} from './question-admission-solve';
+import { SolvePart, SolveUnit, SolvedKey, admissionSubmitInput } from './question-admission-solve';
 
 export const AdmissionRepair = z.object({
   repair_target: z.enum(['question_text', 'scoring_structure', 'reference_answer', 'figure']),
@@ -144,9 +138,11 @@ export const questionAdmissionAdjudicateTaskSpec = {
   definition: {
     kind: 'QuestionAdmissionAdjudicateTask',
     description: 'Resolve independent admission solves into a grading key or an actionable repair.',
-    // Execution requires an explicit task pair; these registry fields are never a selection fallback.
+    // Dedicated Sol adjudication lane; the per-call/task pair override still applies, but an
+    // emergency global pin must not move adjudication off the declared solver model.
     defaultProvider: 'openai',
     defaultModel: 'gpt-6.1-sol',
+    ignoreGlobalPin: true,
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,

@@ -97,6 +97,8 @@ export interface TaskDefinition {
   /** Explicit caller effort conflicts with configured reasoning: one wire writer. */
   readonly reasoningEffort?: EffortLevel;
   readonly invocation?: 'auto' | 'manual_rescue_only';
+  /** Dedicated route: env/DB global pins must not repoint this task. */
+  readonly ignoreGlobalPin?: boolean;
   readonly structuredOutputSchema?: ZodTypeAny;
   /** Submit schema-constrained tool arguments, correcting failures within one run. */
   readonly structuredOutputMode?: 'tool';

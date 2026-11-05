@@ -753,7 +753,8 @@ export function resolveTaskBinding(
   // never a silent paid fallback to the pinned/default model. Tasks without
   // the flag keep the old layering byte-for-byte.
   const taskPairBeatsGlobalPin = dbTaskOverride?.overrideGlobalPin === true && !typed;
-  if (dbTaskOverride?.overrideGlobalPin === true && typed) {
+  const ignoresGlobalPin = def.ignoreGlobalPin === true;
+  if ((dbTaskOverride?.overrideGlobalPin === true || ignoresGlobalPin) && typed) {
     throw new TaskConfigError(
       `task.${kind}.override_global_pin=true is meaningless on a typed-execution task — there is no chat lane to repoint. Clear the flag.`,
     );
@@ -776,10 +777,11 @@ export function resolveTaskBinding(
   }
   if (taskPairBeatsGlobalPin) assertOptedTaskPair(kind, dbTaskOverride);
   // Product-wide incident pin must also cover explicit caller/modelBinding routes.
-  // Typed primitives have a separate wire contract, not a chat model API.
-  const envPin = taskPairBeatsGlobalPin ? undefined : readEnvOverride(process.env);
+  // Typed primitives and explicitly dedicated lanes have their own wire contract.
+  const skipsGlobalPin = taskPairBeatsGlobalPin || ignoresGlobalPin;
+  const envPin = skipsGlobalPin ? undefined : readEnvOverride(process.env);
   if (envPin) override = envPin;
-  const globalSwitch = taskPairBeatsGlobalPin ? undefined : readGlobalProviderSwitch();
+  const globalSwitch = skipsGlobalPin ? undefined : readGlobalProviderSwitch();
 
   // Chat env pin > explicit arg > DB global > DB per-task > registry —
   // with the opt-in: explicit arg > task pair > registry (global pin skipped).
