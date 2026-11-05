@@ -413,12 +413,13 @@ async function validateFinalProviderPairs(
   const rowByKey = new Map(rows.map((r) => [r.key, r.value]));
   const env = process.env;
 
-  // A scoped lane (verify_solve / vision_judge) serves its task kinds as a
-  // per-call override — the task's stored reasoning level must validate
-  // against the LANE pair, not the task's standard-chain pair. Compute which
-  // kinds a configured lane serves on the tx-final rows (same layering as
-  // the scope loop below); model-only counts for verify_solve (same-provider
-  // model swap), while vision_judge needs a provider to activate.
+  // Lane-only kinds (vision judges: every call path threads the override) —
+  // their stored reasoning level must validate against the LANE pair, not the
+  // task's standard-chain pair. Shared kinds (solve legs: some callers run
+  // them without the override) keep the standard-pair validation AND get the
+  // lane-pair check in the scoped branch below. Model-only counts for
+  // verify_solve (same-provider model swap), while vision_judge needs a
+  // provider to activate.
   const scopedServedKinds = new Set<TaskKind>();
   {
     const configuredLaneValue = (key: string): string | undefined => {
@@ -429,12 +430,6 @@ async function validateFinalProviderPairs(
         ? (valueAsNonEmptyString(envValue) ?? dbValue)
         : (dbValue ?? valueAsNonEmptyString(envValue));
     };
-    if (
-      configuredLaneValue('lane.verify_solve.provider') !== undefined ||
-      configuredLaneValue('lane.verify_solve.model') !== undefined
-    ) {
-      for (const kind of solveTasks) scopedServedKinds.add(kind);
-    }
     if (configuredLaneValue('lane.vision_judge.provider') !== undefined) {
       for (const kind of visionTasks) scopedServedKinds.add(kind);
     }
