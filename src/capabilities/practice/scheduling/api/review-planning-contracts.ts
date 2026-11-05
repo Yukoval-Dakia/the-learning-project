@@ -4,6 +4,7 @@ import {
   ActivityRef,
   CauseCategory,
   FsrsRating,
+  GradingProvenanceEntry,
   PartialUnknownJudgeResult,
   ScoreMeaning,
 } from '@/kernel/capability-contract-schemas';
@@ -74,6 +75,7 @@ const LegacyReviewAdviceJudgeSchema = z.object({
     id: z.string().min(1),
     version: z.string().min(1),
   }),
+  grading_provenance: z.array(GradingProvenanceEntry).optional(),
   suggested_rating: FsrsRating.nullable(),
   telemetry: z.unknown().optional(),
   // advice.ts returns these so the client can echo them back on submit

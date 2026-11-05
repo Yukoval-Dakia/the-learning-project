@@ -36744,6 +36744,13 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                             feedback_md: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             provenance_token?: string;
                             route: string;
                             score: number | null;
@@ -36765,6 +36772,13 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                             feedback_md: string;
+                            grading_provenance?: {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                scoring_unit_id: string;
+                                /** @enum {string} */
+                                source: "ai";
+                            }[];
                             partial_units: {
                                 correct_count: number;
                                 scoring_unit_id: string;

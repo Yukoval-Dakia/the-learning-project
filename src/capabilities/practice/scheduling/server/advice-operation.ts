@@ -119,6 +119,9 @@ export async function previewReviewAdvice(db: Db, raw: unknown, signal: AbortSig
       feedback_md: invoked.result.feedback_md,
       evidence_json: invoked.result.evidence_json,
       capability_ref: invoked.result.capability_ref,
+      ...(invoked.result.grading_provenance
+        ? { grading_provenance: invoked.result.grading_provenance }
+        : {}),
       suggested_rating: suggestedRating,
     },
     advice,
