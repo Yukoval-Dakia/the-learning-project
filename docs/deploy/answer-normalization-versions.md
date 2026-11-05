@@ -7,7 +7,7 @@
 - 新文本 blank 使用 `blank-norm@2`；新行级 text_key 使用 `answer_head@2`，铸键与判分均只折叠全角 ASCII/全角空格，保留其他兼容符号的区别。答案头与最终结论提取使用同一个版本。
 - 新 numeric blank 与 numeric_key 显式携带 `normalization_version: numeric-norm@2`。草稿编辑往返保留旧版本；缺字段的冻结 revision 与显式 `numeric-norm@1` 维持旧行为。可选字段不设 schema 默认，不给旧对象补字段；新版本属于 scoring_basis，参与 digest/seal。
 - 旧 `answer_head`、旧 blank normalization 字符串、缺 numeric 版本的 revision 均不会被部署自动升级。旧碰撞仍可能满分，存量修复须另行授权并产生新 revision，历史判分重放继续使用原 revision。
-- 新 numeric 中 `5²` 等不支持的兼容字符保留为不可解析（pending），不会因 NFKC 变为 `52`；legacy numeric 新键依原始 raw_input 判分，不信任已经有损转换的 value。缺原文同样不可解析。显式数学等价仍属其他声明契约，本次不提供通用数学等价或别名推断。
+- 新 numeric 中数值前缀的 `5²` 等兼容字符保留为不可解析（pending），不会因 NFKC 变为 `52`；legacy numeric 新键依原始 raw_input 判分，不信任已经有损转换的 value。缺原文同样不可解析。数值前缀 `5²`、`5² m` 不会丢失平方后给分；单位后缀保持既有 mathjs 兼容写法，`10 m²`、`10 cm³` 可按对应单位给分。显式数学等价仍属其他声明契约，本次不提供通用数学等价或别名推断。
 
 ## 回滚前必须知情
 
@@ -22,3 +22,13 @@
 - numeric 单元：4 个。
 
 以上 4 组文本存量在另行授权的存量重跑时换新版本。协调线已说明 TEST 没有真实学习者，该已发题不单独撤回；这些事项属于 Owner 真实开始使用前的存量清单。本次没有重跑存量，也没有把这些计数作为当前数据库重新查询结果。
+
+## 旧草稿 source_verify 的兼容重建
+
+source_verify 比较行级投影与冻结 revision 时，按稳定 scoring_unit_id 读取该 revision 的 text_key normalization 或 numeric_key normalization_version。缺 numeric 版本仍保持缺失，不补 @1 或 @2。只重用版本政策，答案、分值、结构、单位等仍从当前行重新构造，并且必须通过原 seal 和完整 canonical 比较；改坏行内容仍不匹配。未提供冻结 basis 的新发布路径继续使用新版本默认。
+
+这避免旧普通文本草稿（即使没有兼容字符）和旧 numeric 草稿仅因新版本上线而落入有损冻结投影、触发 unmapped_slot_kind/structure_completeness 失败。此修复不自动重发题、不推进核验、不重跑存量，也不保证其他形状问题通过。
+
+验证在独立临时 Postgres 的真实 question/question_revision 表完成，旧契约由修复前固定源码 `b55162968^` 生成：普通旧 text_key、含上标旧 text_key、旧 numeric_key 三条均 legacyRowMatchesRevision=true；新默认重建均不匹配，改动答案/数值后仍不匹配。未执行 provider 核验。
+
+2026-11-05 对本机 TEST（loom，端口 5433）的 BEGIN READ ONLY 计数：当前 web_sourced + draft + withheld + 旧 text/numeric 版本共有 16 组，全部已有非 error 的 source_verify 终态事件；真正没有终态事件的旧版本草稿为 0。其他版本 draft/withheld 且无终态事件为 2 组。全状态 web_sourced 旧版本为 20 组，其中 active/admitted 3、active/withheld 1、draft/withheld 16；该快照无旧 numeric_key。终态事件按当前 source_verify 的幂等条件定义，不等于“核验成功”。因此当前无自动首次核验旧版本积压；显式存量 recheck 若选中这 16 组，仍需要本修复的旧版本重建。未把这份实时计数臆测成历史 40 题重跑名单的交集或完成比例。

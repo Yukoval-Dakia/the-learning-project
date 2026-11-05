@@ -171,7 +171,8 @@ it('preserves frozen grading semantics and rejects compatibility collisions in n
     string,
     string[],
     string,
-    0 | 1 | 'unparseable_response',
+    0 | 1 | 'unparseable_response' | 'needs_review',
+    string?,
   ][] = [
     ['text', 'answer_head', ['x²'], 'x2', 1],
     ['blank', 'blank-norm@1', ['x²'], 'x2', 1],
@@ -193,10 +194,20 @@ it('preserves frozen grading semantics and rejects compatibility collisions in n
     ['text', 'answer_head@2', ['x²', 'x^2'], 'x^2', 1],
     ['blank', 'blank-norm@2', ['x²', 'x^2'], 'x²', 1],
     ['blank', 'blank-norm@2', ['x²', 'x^2'], 'x^2', 1],
+    ['blank', 'blank-norm@1', ['52'], '先展开 5²，所以 5²', 1],
+    ['blank', 'blank-norm@2', ['52'], '先展开 5²，所以 5²', 'needs_review'],
+    ['blank', 'blank-norm@2', ['2tanα/(1-tan²α)'], '所以 2tanα/(1-tan²α)', 1],
+    ['numeric', 'numeric-norm@2', [], '5² m', 'unparseable_response', 'm'],
+    ['numeric', 'numeric-norm@2', [], '10 m²', 1, 'm^2'],
+    ['numeric', 'numeric-norm@2', [], '10 cm³', 1, 'cm3'],
+    ['legacy-numeric', 'numeric-norm@2', [], '5² m', 'unparseable_response', 'm'],
+    ['legacy-numeric', 'numeric-norm@2', [], '10 m²', 1, 'm^2'],
+    ['legacy-numeric', 'numeric-norm@2', [], '10 cm³', 1, 'cm3'],
   ];
-  for (const [kind, version, accepted, given, expected] of rows) {
+  for (const [kind, version, accepted, given, expected, expectedUnit] of rows) {
     const numeric = {
-      expected: 52,
+      expected: expectedUnit == null ? 52 : 10,
+      ...(expectedUnit != null ? { expected_unit: expectedUnit } : {}),
       tolerance: { kind: 'absolute', value: 0 },
       ...(version === 'numeric-norm@2' ? { normalization_version: version } : {}),
     };
@@ -243,7 +254,9 @@ it('preserves frozen grading semantics and rejects compatibility collisions in n
               kind === 'text'
                 ? 'exact_text'
                 : kind === 'legacy-numeric'
-                  ? 'numeric_tolerance'
+                  ? expectedUnit == null
+                    ? 'numeric_tolerance'
+                    : 'numeric_unit_conversion'
                   : 'blank_exact',
           },
         },

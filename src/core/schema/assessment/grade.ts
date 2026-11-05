@@ -1,4 +1,4 @@
-import { normalizeAnswerWidth } from '../answer-normalization';
+import { normalizeAnswerWidth, normalizeNumericAnswer } from '../answer-normalization';
 import { compareDeclaredBlank } from './blank-answer-compare';
 import type { BlankAnswerShapeT } from './blank-answer-shape';
 import type { ScoringUnitResultT } from './judgment';
@@ -152,9 +152,9 @@ export function parseBlankNumericText(
   version?: 'numeric-norm@1' | 'numeric-norm@2',
 ): number | null {
   const text = (
-    version === 'numeric-norm@2' ? normalizeAnswerWidth(raw) : raw.normalize('NFKC')
-  ).trim();
-  if (!PLAIN_NUMBER.test(text)) return null;
+    version === 'numeric-norm@2' ? normalizeNumericAnswer(raw, false) : raw.normalize('NFKC')
+  )?.trim();
+  if (text == null || !PLAIN_NUMBER.test(text)) return null;
   const value = Number(text);
   return Number.isFinite(value) ? value : null;
 }
@@ -179,9 +179,10 @@ async function numericCorrect(
 ): Promise<0 | 1 | null> {
   const text = (
     key.normalization_version === 'numeric-norm@2'
-      ? normalizeAnswerWidth(raw)
+      ? normalizeNumericAnswer(raw, key.expected_unit != null)
       : raw.normalize('NFKC')
-  ).trim();
+  )?.trim();
+  if (text == null) return null;
   if (key.expected_unit == null) {
     const value = parseBlankNumericText(raw, key.normalization_version);
     if (value == null) return null;
@@ -229,7 +230,7 @@ export async function gradeBlankExactUnit(
   if (
     key.kind === 'numeric' &&
     key.normalization_version === 'numeric-norm@2' &&
-    normalizeAnswerWidth(entry.text) !== entry.text.normalize('NFKC')
+    normalizeNumericAnswer(entry.text, key.expected_unit != null) == null
   ) {
     return unreadable(
       unit,

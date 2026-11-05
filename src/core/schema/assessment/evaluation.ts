@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { normalizeAnswerWidth } from '../answer-normalization';
+import { normalizeNumericAnswer } from '../answer-normalization';
 import {
   ConjectureProbeSignatureMatch,
   classifyConjectureProbeResponseFromJudgeMatch,
@@ -439,7 +439,7 @@ async function runDeterministicComparator(
       const { expected, tolerance, expected_unit } = unit.criterion;
       if (
         unit.criterion.normalization_version === 'numeric-norm@2' &&
-        normalizeAnswerWidth(entry.raw_input ?? '') !== (entry.raw_input ?? '').normalize('NFKC')
+        normalizeNumericAnswer(entry.raw_input ?? '', true) == null
       ) {
         return withUnit(
           pending({
@@ -452,7 +452,7 @@ async function runDeterministicComparator(
       }
       const raw =
         unit.criterion.normalization_version === 'numeric-norm@2'
-          ? normalizeAnswerWidth(entry.raw_input ?? '').trim()
+          ? normalizeNumericAnswer(entry.raw_input ?? '', true)
           : entry.raw_input?.trim();
       if (!raw) return unjudgeableMismatch(unit, 'unit conversion requires original raw input');
       const { unit: parseUnit } = await import('mathjs');
@@ -686,7 +686,10 @@ async function runDeterministicComparator(
       ) {
         const norm = (value: string) => normalizeBlankText(value, key.normalization);
         if (!key.accepted.map(norm).includes(norm(entry.text))) {
-          const finalAnswer = extractFinalAnswer(entry.text);
+          const finalAnswer = extractFinalAnswer(
+            entry.text,
+            key.normalization.version === 'blank-norm@2' ? 'answer_head@2' : undefined,
+          );
           if (finalAnswer.kind === 'found') {
             const finalHit = finalAnswer.values.some((candidate) =>
               key.accepted.map(norm).includes(norm(candidate)),
