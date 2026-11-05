@@ -47,6 +47,7 @@ import {
   DEFAULT_EVIDENCE_DEADLINE_DAYS,
   DEFAULT_MAX_ATTEMPTS,
   DEFAULT_MAX_BUDGET_MICRO_USD,
+  type DifficultyBand,
   type SupplyTargetContextV1T,
   buildCoverageEvidenceDemand,
   evidenceDemandToTargetContext,
@@ -69,7 +70,7 @@ export type SupplyRoute =
   // tool 链（jyeoo_fetch_candidates / store_sourced_question）承载。
   | 'jyeoo_fetch';
 
-export type DifficultyBand = 'below' | 'near' | 'above' | 'stretch';
+export type { DifficultyBand };
 
 /**
  * 一个供给目标 = 多维池里的一个待补的格子（不是「写一道题」，是「这个 KC×题型×难度档×
