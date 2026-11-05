@@ -1,4 +1,4 @@
-import type { QuizGenJobData } from './quiz_gen';
+import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 
 const validQuizGenJob = {
   trigger: 'knowledge',

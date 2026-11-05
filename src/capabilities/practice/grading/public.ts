@@ -93,6 +93,8 @@ export {
   runSourceGroundingVerify,
 } from './server/judge/source-grounding-verify';
 export { judgeFallbackProvider } from './server/judge-durable-config';
+export const divertReviewAnswer: typeof import('./server/review-operation').divertReviewAnswer =
+  async (...args) => (await import('./server/review-operation')).divertReviewAnswer(...args);
 // Judge engine identity and census belong to grading; the shared DBOS host consumes them.
 export {
   JUDGE_DBOS_QUEUE,
@@ -106,7 +108,11 @@ export {
 } from './server/judge-engine-client';
 export { ratingFromCoarseOutcome } from './server/judge-rating';
 export { readJudgeRunPermanent } from './server/judge-run-observation';
-export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
+export {
+  JUDGE_RUN_EVENTS,
+  JUDGE_RUN_TABLE,
+  JudgeDurablePendingResponseSchema,
+} from './server/judge-run-status';
 export { installModelAdmissionPins } from './server/model-admission-pins';
 export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-operation';
 
