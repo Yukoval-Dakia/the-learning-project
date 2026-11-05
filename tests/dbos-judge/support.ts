@@ -18,7 +18,7 @@ export async function resetJudgeControl(database: Db, phase = 'pg-boss') {
     sql`update judge_run_control set phase=${phase},epoch=0,incarnation=gen_random_uuid(),transition_event_id=null,phase_changed_at=clock_timestamp()`,
   );
 }
-export async function frozenJudge(database: Db, now = new Date()) {
+export async function frozenJudge(database: Db, now = new Date(), sliceId = 'frozen-speed-slice') {
   const id = createId(),
     text = 'v+c=18，v-c=12；两式相加2v=30，故v=15 km/h，水速c=3 km/h。\n';
   await database.insert(question).values({
@@ -56,7 +56,7 @@ export async function frozenJudge(database: Db, now = new Date()) {
       executor: {
         kind: 'model_executor',
         task_kind: 'AssessmentRuleJudgeTask',
-        admitted_slice_id: 'frozen-speed-slice',
+        admitted_slice_id: sliceId,
         max_cost_usd_micros: 1000,
       },
     },
@@ -76,7 +76,7 @@ export async function frozenJudge(database: Db, now = new Date()) {
         marking_provenance: 'official',
         verification: { structural_check_passed: true, independent_verification: null },
         model_slice: {
-          slice_id: 'frozen-speed-slice',
+          slice_id: sliceId,
           holdout_cases: 35,
           severe_errors_observed: 0,
           per_criterion_agreement: 1,
@@ -86,11 +86,8 @@ export async function frozenJudge(database: Db, now = new Date()) {
     },
   });
   if (published.status !== 'published') throw new Error(published.status);
-  // YUK-1445 — the frozen contract deliberately keeps a model_executor, which the
-  // serving gate rightly refuses for NEW issuance (no authoritative model admission
-  // registry exists). These suites recover ALREADY-issued work, so seed the exact
-  // rows issueAssessment persists (binding, claim columns, receipt event) through
-  // the historical fixture — never a fresh serving grant, never a gate bypass.
+  // Historical recovery binds the original issuance; suites exercising the real
+  // provider separately supply an admitted slice for their controlled route.
   const issued = await seedHistoricalAssessmentIssuance(database, { group_id: id, now });
   const slot = contract.response_spec.slots[0];
   if (!slot) throw new Error('Frozen response slot missing');
@@ -118,8 +115,9 @@ export async function dispatchFrozenJudge(
   database: Db,
   deps: JudgeRunEnqueueDeps,
   now = new Date(),
+  sliceId = 'frozen-speed-slice',
 ) {
-  const fixture = await frozenJudge(database, now);
+  const fixture = await frozenJudge(database, now, sliceId);
   const runId = await dispatchNativeAttempt(
     database,
     fixture.id,

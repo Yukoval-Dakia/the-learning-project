@@ -44,6 +44,7 @@ export function projectReviewAnswerResponse(body: CreateAttemptBody, result: Rev
             feedback_md: judged.feedback_md,
             evidence_json: judged.evidence_json,
             capability_ref: judged.capability_ref,
+            ...(judged.grading_provenance ? { grading_provenance: judged.grading_provenance } : {}),
             suggested_rating: ratingFromCoarseOutcome(judged.coarse_outcome),
             auto_rated: body.auto_rate,
             judge_event_id: null,
