@@ -67,7 +67,7 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
   });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
+  const [saved, setSaved] = useState<{ text: string; epoch: number } | null>(null);
   const issue = modelIssue(data.providers, pick.provider, pick.model);
   const run = async (changes: Parameters<SaveConfig>[0]) => {
     setPending(true);
@@ -75,9 +75,10 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
     try {
       const receipt = await save(changes);
       const after = receipt.effective?.global ?? null;
-      setSaved(
-        after?.provider ? `现在生效：${after.provider} / ${after.model}` : '已清除全局默认。',
-      );
+      setSaved({
+        text: after?.provider ? `现在生效：${after.provider} / ${after.model}` : '已清除全局默认。',
+        epoch: receipt.committed_epoch,
+      });
       setEditing(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -128,9 +129,9 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
             : ''}
         </p>
       ) : null}
-      {saved ? (
+      {saved && data.snapshot.epoch <= saved.epoch ? (
         <p role="status" className="adm-saved">
-          {saved}
+          {saved.text}
         </p>
       ) : null}
       {editing ? (
@@ -210,10 +211,15 @@ function TaskRow({
   // anywhere could have changed this task.
   const fresh = receipt !== null && data.snapshot.epoch <= receipt.committed_epoch;
   const after = fresh ? receipt.effective?.tasks?.[task.kind] : undefined;
+  // Provider and model resolve separately, so only say it when the task's own model really lost.
+  const binding = task.effective_binding;
   const dormant =
+    binding !== null &&
     task.override?.provider &&
-    (task.effective_binding?.provider !== task.override.provider ||
-      task.effective_binding?.model !== task.override.model);
+    task.override.model &&
+    binding.selection_rule !== 'task_config' &&
+    binding.selection_rule !== 'task_pair_priority' &&
+    binding.model !== task.override.model;
   return (
     <li className="adm-task" data-open={editing ? '' : undefined}>
       <div className="adm-task-main">
