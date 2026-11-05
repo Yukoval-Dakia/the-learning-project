@@ -218,6 +218,11 @@ export interface RunTaskCtx {
     argsPrefix: string;
   }) => void;
   /**
+   * YUK-1765 — the model is sending reasoning. A signal only: the reasoning text never leaves
+   * the runner, so nothing can show or persist it.
+   */
+  onThinking?: () => void;
+  /**
    * YUK-575 (N5/MF-A) — per-call budget override for durable copilot runs. The
    * registry default must stay untouched (YUK-458: raising it only turned
    * error_max_turns into an inline-request abort). Snapshotted before
@@ -561,6 +566,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
     received_bytes: number;
     args_prefix: string;
   }) => void;
+  onThinking?: () => void;
   onSuccess?: (msg: SDKSuccessResultMessage) => Promise<void> | void;
   onApiError?: (msg: SDKSuccessResultMessage) => void;
   apiErrorMessages?: (msg: SDKSuccessResultMessage) => string[];
@@ -596,6 +602,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
         if (msg.type === 'text_delta' && !args.lifecycle.abortController.signal.aborted) {
           await args.onTextDelta?.(msg.text);
         }
+        if (msg.type === 'thinking_delta' && msg.text) args.onThinking?.();
         continue;
       }
       if (args.notifySessionId && msg.type === 'system' && msg.subtype === 'init') {
@@ -1375,6 +1382,7 @@ async function streamTaskCollectingImpl(
                 });
               }
             : undefined,
+          onThinking: ctx.onThinking,
           onApiError: (msg) => {
             console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
               event: 'task_run_success_with_error_flag',
