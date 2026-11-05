@@ -353,18 +353,37 @@ function collectConjunctive(
   seen: Set<SchemaNode>,
 ): void {
   node = resolveNode(node, defs);
-  if (!isNode(node) || seen.has(node)) return;
-  seen.add(node);
-  const unions = unionBranches(node);
-  if (unions.length === 0) {
+  if (!isNode(node) || seen.has(node)) {
     out.push(node);
     return;
   }
-  const { anyOf: _anyOf, oneOf: _oneOf, ...rest } = node;
-  const mergedAllOf = branchList(node, 'allOf');
-  for (const branch of unions) {
-    collectConjunctive({ ...rest, allOf: [...mergedAllOf, branch] }, defs, out, new Set(seen));
+  seen.add(node);
+  const anyOf = branchList(node, 'anyOf');
+  const oneOf = branchList(node, 'oneOf');
+  const allOf = branchList(node, 'allOf');
+  if (anyOf.length === 0 && oneOf.length === 0 && allOf.length === 0) {
+    out.push(node);
+    return;
   }
+  const { anyOf: _anyOf, oneOf: _oneOf, allOf: _allOf, ...rest } = node;
+  let positions: SchemaNode[][] = [[rest]];
+  // Distribute intersections over alternatives before inspecting literals. A
+  // nested union under allOf must contribute one branch, never all branches.
+  const groups = [
+    ...allOf.map((branch) => [branch]),
+    ...(anyOf.length > 0 ? [anyOf] : []),
+    ...(oneOf.length > 0 ? [oneOf] : []),
+  ];
+  for (const group of groups) {
+    const alternatives: SchemaNode[] = [];
+    for (const branch of group) {
+      collectConjunctive(branch, defs, alternatives, new Set(seen));
+    }
+    positions = positions.flatMap((position) =>
+      alternatives.map((alternative) => [...position, alternative]),
+    );
+  }
+  for (const position of positions) out.push({ allOf: position });
 }
 
 /** Exactly one strict JSON.parse for a field, reused across candidates. */
