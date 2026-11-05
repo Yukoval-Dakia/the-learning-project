@@ -43,7 +43,7 @@ import {
 import { defaultPresentation } from '@/core/schema/assessment/presentation';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
   admitPaidEffectIntent,
@@ -713,113 +713,130 @@ export async function runSourceVerify(
                 message: err instanceof Error ? err.message : String(err),
               };
       }
-      if (outcome.status === 'transient_error' || outcome.status === 'config_error') {
-        // Neither outcome is a content verdict — fail closed the same way: commit
-        // legacy draft and contract suspended/withheld together. Root→child locks
-        // serialize with editing/publishing; re-read version and terminal success
-        // under those locks so a stale delivery cannot undo a newer admission.
-        // A failed suspension rolls back the demotion too.
+      // Neither outcome is a content verdict — fail closed the same way: commit
+      // legacy draft and contract suspended/withheld together. Root→child locks
+      // serialize with editing/publishing; re-read version and terminal success
+      // under those locks so a stale delivery cannot undo a newer admission.
+      // A failed suspension rolls back the demotion too. Returns false under the
+      // locks when a newer version or a terminal success already exists — the
+      // caller must then write nothing for this delivery.
+      const suspendVerifyContract = async (
+        suspendTx: Tx,
+        outcomeMessage: string,
+      ): Promise<boolean> => {
+        const groupRootId = row.parent_question_id ?? questionId;
+        await suspendTx
+          .select({ id: question.id })
+          .from(question)
+          .where(eq(question.id, groupRootId))
+          .for('update')
+          .limit(1);
+        const [post] = await suspendTx
+          .select({
+            version: question.version,
+            promotedElsewhere: sql<boolean>`EXISTS (
+              SELECT 1 FROM ${event}
+              WHERE ${event.action} = 'experimental:source_verify'
+                AND ${event.subject_kind} = 'question'
+                AND ${event.subject_id} = ${questionId}
+                AND ${event.outcome} = 'success'
+            )`,
+          })
+          .from(question)
+          .where(eq(question.id, questionId))
+          .for('update')
+          .limit(1);
+        const maySuspendContract =
+          post != null && post.version === row.version && !post.promotedElsewhere;
+        if (!maySuspendContract) return false;
+        await suspendTx
+          .update(question)
+          .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: new Date() })
+          .where(eq(question.id, questionId));
+        // 已声明 revision 走冻结契约的 typed lifecycle 更新，
+        // 未声明组照旧行归一（helper 内部分派，fail-closed 不变）。
+        await publishVerifyLifecycleUpdate(suspendTx, {
+          rootId: groupRootId,
+          expectedRevision: verifiedIdentity.revisionId,
+          expectedGeneration: verifiedIdentity.admissionGeneration,
+          admission: {
+            state: SCORING_ADMISSION_STATE.WITHHELD,
+            reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
+          },
+          suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
+          verification: {
+            policy_id: 'source_verify@1',
+            outcome: 'suspended',
+            evidence: {
+              check: 'source_grounding',
+              transient: outcome.status === 'transient_error',
+              ...(outcome.status === 'config_error' ? { config_error: true } : {}),
+              message: outcomeMessage,
+            },
+          },
+          actorRef: 'source_verify:suspend',
+          now: new Date(),
+        });
+        return true;
+      };
+      if (outcome.status === 'transient_error') {
         try {
           await db.transaction(async (suspendTx) => {
-            const groupRootId = row.parent_question_id ?? questionId;
-            await suspendTx
-              .select({ id: question.id })
-              .from(question)
-              .where(eq(question.id, groupRootId))
-              .for('update')
-              .limit(1);
-            const [post] = await suspendTx
-              .select({
-                version: question.version,
-                promotedElsewhere: sql<boolean>`EXISTS (
-                  SELECT 1 FROM ${event}
-                  WHERE ${event.action} = 'experimental:source_verify'
-                    AND ${event.subject_kind} = 'question'
-                    AND ${event.subject_id} = ${questionId}
-                    AND ${event.outcome} = 'success'
-                )`,
-              })
-              .from(question)
-              .where(eq(question.id, questionId))
-              .for('update')
-              .limit(1);
-            const maySuspendContract =
-              post != null && post.version === row.version && !post.promotedElsewhere;
-            if (!maySuspendContract) return;
-            await suspendTx
-              .update(question)
-              .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: new Date() })
-              .where(eq(question.id, questionId));
-            // 已声明 revision 走冻结契约的 typed lifecycle 更新，
-            // 未声明组照旧行归一（helper 内部分派，fail-closed 不变）。
-            await publishVerifyLifecycleUpdate(suspendTx, {
-              rootId: groupRootId,
-              expectedRevision: verifiedIdentity.revisionId,
-              expectedGeneration: verifiedIdentity.admissionGeneration,
-              admission: {
-                state: SCORING_ADMISSION_STATE.WITHHELD,
-                reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
-              },
-              suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
-              verification: {
-                policy_id: 'source_verify@1',
-                outcome: 'suspended',
-                evidence: {
-                  check: 'source_grounding',
-                  transient: outcome.status === 'transient_error',
-                  ...(outcome.status === 'config_error' ? { config_error: true } : {}),
-                  message: outcome.message,
-                },
-              },
-              actorRef: 'source_verify:suspend',
-              now: new Date(),
-            });
+            await suspendVerifyContract(suspendTx, outcome.message);
           });
         } catch (suspendErr) {
           console.error('[source_verify] verify-hold write failed for', questionId, suspendErr);
         }
+        throw new Error(
+          `source_verify source grounding failed (transient) for ${questionId}: ${outcome.message}`,
+        );
       }
       if (outcome.status === 'config_error') {
         // A misconfigured vision lane cannot heal on redelivery — a retriable
         // outcome='error' here would re-enter the nightly orphan-draft dispatch loop
-        // until the lane is fixed. Write the run as a TERMINAL verify event instead
-        // (same unified system_error payload, outcome='failure'), so the idempotency
-        // guard short-circuits later deliveries and this delivery completes the job.
-        await writeEvent(db, {
-          id: createId(),
-          session_id: null,
-          actor_kind: 'agent',
-          actor_ref: 'source_verify',
-          action: 'experimental:source_verify',
-          subject_kind: 'question',
-          subject_id: questionId,
-          outcome: 'failure',
-          payload: {
-            question_id: questionId,
-            ...(params.recheckCommandEventId != null
-              ? { recheck_command_event_id: params.recheckCommandEventId }
-              : {}),
-            ...toUnifiedVerifyResult({
-              source: 'system_error',
-              summary_md: `source_verify failed: ${outcome.message}`,
+        // until the lane is fixed, while a terminal event committed WITHOUT its hold
+        // would leave the question active yet unvisitable (the idempotency guard
+        // skips every delivery after a terminal outcome). So the hold and the
+        // terminal failure event commit in ONE transaction: if it fails (deadlock,
+        // lock conflict, publication race) this throws and the delivery stays
+        // retriable with no terminal event written.
+        // A stale delivery — newer row version or a terminal success already under
+        // the locks — writes NOTHING: no failure may land over a newer admission.
+        // The intent stays non-terminal then, so the orphan sweep can still
+        // re-drive a fresh verification against the current state.
+        await db.transaction(async (suspendTx) => {
+          if (!(await suspendVerifyContract(suspendTx, outcome.message))) return;
+          await writeEvent(suspendTx, {
+            id: createId(),
+            session_id: null,
+            actor_kind: 'agent',
+            actor_ref: 'source_verify',
+            action: 'experimental:source_verify',
+            subject_kind: 'question',
+            subject_id: questionId,
+            outcome: 'failure',
+            payload: {
+              question_id: questionId,
+              ...(params.recheckCommandEventId != null
+                ? { recheck_command_event_id: params.recheckCommandEventId }
+                : {}),
+              ...toUnifiedVerifyResult({
+                source: 'system_error',
+                summary_md: `source_verify failed: ${outcome.message}`,
+                error: outcome.message,
+              }),
+              config_error: true,
               error: outcome.message,
-            }),
-            config_error: true,
-            error: outcome.message,
-            ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
-            ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
-          },
-          caused_by_event_id: null,
-          task_run_id: null,
-          cost_micro_usd: null,
-          created_at: new Date(),
+              ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
+              ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
+            },
+            caused_by_event_id: null,
+            task_run_id: null,
+            cost_micro_usd: null,
+            created_at: new Date(),
+          });
         });
         return { status: 'failed', checks };
-      }
-      if (outcome.status === 'transient_error') {
-        throw new Error(
-          `source_verify source grounding failed (transient) for ${questionId}: ${outcome.message}`,
-        );
       }
       groundingRan = true;
       groundingConfidence = outcome.confidence;
