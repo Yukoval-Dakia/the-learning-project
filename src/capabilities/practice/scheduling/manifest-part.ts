@@ -55,7 +55,7 @@ export const schedulingManifestPart: Omit<CapabilityManifest, 'name' | 'descript
           202: JudgeDurablePendingResponseSchema,
           ...API_ERROR_RESPONSES,
         },
-        successStatus: 200,
+        successStatus: [200, 202],
         load: () => import('./api/advice').then((m) => m.POST),
       },
       {

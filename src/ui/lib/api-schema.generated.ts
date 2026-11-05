@@ -36809,7 +36809,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description HTTP 202 response */
+            /** @description Successful response */
             202: {
                 headers: {
                     [name: string]: unknown;
