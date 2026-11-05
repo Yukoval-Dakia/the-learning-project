@@ -35,17 +35,16 @@
     padding: var(--un-sp-4) var(--un-sp-5);
     border-radius: var(--un-r-2);
     background: var(--un-bg-sunk);
-    box-shadow: inset 3px 0 0 var(--un-text-4);
   }
 
   & .qd-notice[data-tone="accent"] {
-    box-shadow: inset 3px 0 0 var(--un-accent);
+    background: var(--un-accent-soft);
   }
   & .qd-notice[data-tone="caution"] {
-    box-shadow: inset 3px 0 0 var(--un-caution);
+    background: var(--un-caution-soft);
   }
   & .qd-notice[data-tone="critical"] {
-    box-shadow: inset 3px 0 0 var(--un-critical);
+    background: var(--un-critical-soft);
   }
 
   & .qd-notice-title {
