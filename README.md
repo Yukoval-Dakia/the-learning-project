@@ -442,8 +442,8 @@ TEST runs on the NAS (`bancho-nb2.local`) at `/volume1/docker/tlp-test/` — pro
 
 AI tasks inherit `opencode-go/deepseek-v4.1-flash` from `DEFAULT_TASK_MODEL` with
 `lane.global.reasoning={"level":"high"}`. Set `task.<kind>.reasoning={"level":"max"}`
-for a task override. `AI_PROVIDER_OVERRIDE` / `AI_PROVIDER_MODEL` remain model-only
-emergency pins; clear both to exercise the defaults. Removed `mimo-v2.5*` stored
+for a task override. `AI_PROVIDER_OVERRIDE` / `AI_PROVIDER_MODEL` remain process-wide
+provider/model emergency pins; clear both to exercise the defaults. Removed `mimo-v2.5*` stored
 models fail visibly instead of switching silently. Mem0 still follows the global
 model pair; without a pair it inherits the product default unless explicit
 `MEM0_LLM_MODEL` / `MEM0_LLM_BASE_URL` selects the legacy memory configuration.

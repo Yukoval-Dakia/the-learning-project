@@ -69,7 +69,7 @@ function normalize(value: string): string {
  * multimodal-direct-judge.ts parseMultimodalDirectResult). Exported for the unit
  * test. structured_output present → Zod-parse it (constraint enforcement kept,
  * not just JSON shape); absent/null → the char-scan text path (byte-identical to
- * pre-migration on the default mimo lane). `.parse` (throwing) preserves the
+ * pre-migration). `.parse` (throwing) preserves the
  * pre-migration thrown-message contract the caller records into evidence_json.
  */
 export function parseStepsResult(result: {
@@ -222,7 +222,7 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
   try {
     // Lane C ③: route the vision judge to a configured provider (e.g.
     // Opus 4.8 via anthropic-sub) when VISION_JUDGE_PROVIDER is set; default
-    // unset → undefined → registry mimo default (byte-identical to today). The
+    // unset → undefined → the task's resolved registry lane. The
     // override is merged into ctx at the call site, so an injected test
     // runTaskFn still receives it and can assert on ctx.override.
     // enableTransientRetry: true. This judge is a synchronous-route
@@ -235,7 +235,7 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
     // ctx.override set), the runner's override gate turns retry off.
     // structured extraction stays app-level: the result text is Zod-
     // parsed against the registry-declared StepsLlmOutput; lanes without a
-    // transport contract (mimo) fall back to the char-scan text parse
+    // structured-output transport contract fall back to the char-scan text parse
     // (zero-loss on the default lane).
     // the lane call goes through runTaskWithLaneFallback: a provider
     // HARD failure (HTTP 403/5xx/auth/quota) on a configured lane retries once

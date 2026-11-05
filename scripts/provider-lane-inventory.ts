@@ -919,7 +919,7 @@ export const PROVIDER_LANES = [
     directImporters: [],
     roles: ['operator'],
     provider:
-      'resolved StepsJudgeTask lane — product default opencode-go; wire shape follows the catalog api (anthropic-messages via Messages SDK, openai-completions via fetch)',
+      'resolved StepsJudgeTask lane — provider/model come from resolveTaskProvider; wire shape follows the catalog api (anthropic-messages via Messages SDK, openai-completions via fetch)',
     model: 'CLI or MIMO_VISION_MODEL override, else the resolved vision-judge task model',
     endpointClass: 'manual vision preflight on the resolved lane wire shape',
     configuration: {

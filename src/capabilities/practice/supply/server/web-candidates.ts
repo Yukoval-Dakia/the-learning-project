@@ -13,6 +13,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
+import type { Provider } from '@/ai/task-spec';
 import type {
   SourcedQuestionT,
   SourcingImageCandidateT,
@@ -105,7 +106,7 @@ export type RunWebSourcingAgentFn = (params: {
     /** Run money cap in USD; the runner takes the lower of it and the task's maxCost. */
     maxCostUsd?: number;
     modelBinding?: {
-      provider?: 'xiaomi' | 'anthropic-sub' | 'anthropic' | 'zhipuai-coding-plan' | 'opencode-go';
+      provider?: Provider;
       model?: string;
       adapter?: 'pi';
       effort?: 'low' | 'medium' | 'high';

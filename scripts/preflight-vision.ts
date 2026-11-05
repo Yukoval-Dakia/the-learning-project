@@ -7,7 +7,7 @@
  *   pnpm preflight:vision -- <model-id>       # override model
  *
  * Env required: whatever credential the resolved task lane declares
- *   (e.g. OPENCODE_API_KEY for the flash default) — resolution names it.
+ *   (the env name comes from the resolved provider) — resolution names it.
  *
  * Optional overrides:
  *   MIMO_VISION_MODEL    (default: resolved vision-judge task config)

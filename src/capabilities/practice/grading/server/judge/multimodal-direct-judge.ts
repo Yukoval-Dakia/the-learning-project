@@ -213,7 +213,7 @@ export async function runMultimodalDirectJudge(
   try {
     // Lane C ③: route the vision judge to a configured provider (e.g.
     // Opus 4.8 via anthropic-sub) when VISION_JUDGE_PROVIDER is set; default
-    // unset → undefined → registry mimo default (byte-identical to today). The
+    // unset → undefined → the task's resolved registry lane. The
     // override is merged into ctx at the call site, so an injected test
     // runTaskFn still receives it and can assert on ctx.override.
     // enableTransientRetry: true, same rationale + boundaries as
@@ -221,7 +221,7 @@ export async function runMultimodalDirectJudge(
     // call site covers all callers; operator-pinned routing turns retry off).
     // structured extraction stays app-level: the result text is Zod-
     // parsed against the registry-declared MultimodalDirectLlmOutput. Lanes
-    // without a transport contract (mimo) fall back to the char-scan text
+    // without a structured-output transport contract fall back to the char-scan text
     // parse (zero-loss).
     // the lane call goes through runTaskWithLaneFallback: a provider
     // HARD failure (HTTP 403/5xx/auth/quota) on a configured lane retries once

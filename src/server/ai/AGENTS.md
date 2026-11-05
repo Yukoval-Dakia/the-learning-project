@@ -88,7 +88,7 @@ Token Plan `tp-` key 与按量 `XIAOMI_API_KEY` 不互通，旧 `xiaomi` lane �
 可显式覆盖端点（host 须过模型端点 allowlist），`MIMO_VISION_MODEL` 优先于
 product model。配置错/凭据缺失按 TaskConfigError 退出码 2 如实失败，
 oauth-file lane 不能从脚本侧探测。
-全局 env pin 下 vision judge 不重试 registry `xiaomi` fallback。
+全局 env pin 下 vision judge 不重试 registry-default fallback。
 字符级 GLM/Tencent OCR 保留专用 credentials，不属于此 AI lane。
 Mem0 抽取与直接调和通过 `mem0/llm-config.ts` 走同一 Token Plan `/v1`
 模型/credential/region/base URL，缺配置明确失败，无按量 fallback；pin 端点与任务

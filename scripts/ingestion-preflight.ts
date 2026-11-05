@@ -23,6 +23,7 @@
  */
 import { HeadBucketCommand, S3Client } from '@aws-sdk/client-s3';
 import { config } from 'dotenv';
+import { providerCredentialEnvName, resolveTaskBinding } from '@/server/ai/providers';
 
 config({ path: '.env', override: false });
 
@@ -51,6 +52,22 @@ const liveR2 = process.argv.includes('--live-r2');
 const ocrEngine = (env.EXTRACT_OCR_ENGINE ?? 'glm').trim().toLowerCase();
 const glmOcrActive = ocrEngine !== 'tencent';
 
+const resolvedVisionLane = (() => {
+  try {
+    return resolveTaskBinding('VisionExtractTask');
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+})();
+const aiLaneLabel =
+  'provider' in resolvedVisionLane
+    ? `${resolvedVisionLane.provider}/${resolvedVisionLane.model}`
+    : 'unresolved';
+const aiCredentialEnv =
+  'provider' in resolvedVisionLane
+    ? providerCredentialEnvName(resolvedVisionLane.provider)
+    : undefined;
+
 // `<...>` markers come straight from .env.example placeholders; a value that
 // still contains one was copied but never substituted → treat as misconfigured.
 const hasPlaceholder = (v: string | undefined): boolean => !!v && /<[^>]+>/.test(v);
@@ -76,22 +93,29 @@ const checks: Check[] = [
     value: env.TENCENT_OCR_REGION,
     defaultNote: 'ap-shanghai',
   },
-  // AI lane (default opencode-go/flash) — rescue extraction + all AI tasks.
+  // AI lane follows the resolved VisionExtractTask route; the credential env
+  // name comes from providerCredentialEnvName so a route switch stays one place.
   {
-    group: 'AI lane (opencode-go/flash)',
-    name: 'OPENCODE_API_KEY',
+    group: `AI lane (${aiLaneLabel})`,
+    name: aiCredentialEnv ?? 'AI lane credential',
     severity: 'required',
-    value: env.OPENCODE_API_KEY,
+    value: aiCredentialEnv ? env[aiCredentialEnv] : undefined,
+    invalidReason:
+      'error' in resolvedVisionLane
+        ? `cannot resolve VisionExtractTask: ${resolvedVisionLane.error}`
+        : aiCredentialEnv === undefined
+          ? 'resolved provider has no credential env name'
+          : undefined,
   },
   {
-    group: 'AI lane (opencode-go/flash)',
+    group: `AI lane (${aiLaneLabel})`,
     name: 'MIMO_VISION_BASE_URL',
     severity: 'optional',
     value: env.MIMO_VISION_BASE_URL,
     defaultNote: 'resolved lane endpoint (see preflight:vision)',
   },
   {
-    group: 'AI lane (opencode-go/flash)',
+    group: `AI lane (${aiLaneLabel})`,
     name: 'MIMO_VISION_MODEL',
     severity: 'optional',
     value: env.MIMO_VISION_MODEL,
