@@ -8,9 +8,9 @@
 #      放行 rc 1，其余非零判失败）。
 # NAS sshd 禁 TCP 转发，走 exec channel，无端口转发。
 #
-# 三段都是学习者私有数据：日志只记文件名/大小/sha256；dump 与 daily-private 内文件
-# 落盘 chmod 600，daily-private/<date>/ 目录 700。外置盘挂 noowners，权限位不是
-# 真正的访问边界——边界是 runtime 目录本身的 700（见 docs/operations.md）。
+# 三段都是学习者私有数据：日志只记文件名/大小/sha256；dump 与 daily-private 内
+# 一切文件/目录落盘 chmod go-rwx（owner-only，尊重 umask 不硬编码权限位）。外置盘
+# 挂 noowners，权限位不是真正的访问边界——边界是 runtime 目录本身（见 docs/operations.md）。
 #
 # 背景：09-12 主机盘写满 → OrbStack VM 崩溃 → docker 存储全清（含生产 pgdata 卷），
 # 恢复只能靠 4 天前的手动 per-lane dump。本脚本由 launchd 每日 07:15
@@ -160,11 +160,11 @@ run_remote() {
   fi
 }
 
-# publish_file <stage 文件> <runtime 目录内相对路径>：.tmp→chmod 600→mv 原子发布。
+# publish_file <stage 文件> <runtime 目录内相对路径>：.tmp→chmod go-rwx→mv 原子发布。
 publish_file() {
   DEST="$2" volsh '
 cat > "/backup/$DEST.tmp" &&
-chmod 600 "/backup/$DEST.tmp" &&
+chmod go-rwx "/backup/$DEST.tmp" &&
 mv "/backup/$DEST.tmp" "/backup/$DEST"
 ' <"$1" || fail "publish $2 failed"
 }
@@ -242,19 +242,19 @@ DUMP_SHA="$(shasum -a 256 "$STAGE_DUMP" | cut -d' ' -f1)"
 DUMP_NAME="$DUMP_NAME" SIZE="$SIZE" SHA="$DUMP_SHA" TS="$(date '+%F %T')" \
 volsh '
 cat > "/backup/$DUMP_NAME.tmp" &&
-chmod 600 "/backup/$DUMP_NAME.tmp" &&
+chmod go-rwx "/backup/$DUMP_NAME.tmp" &&
 mv "/backup/$DUMP_NAME.tmp" "/backup/$DUMP_NAME" &&
 printf "%s OK: %s/%s (%s bytes, sha256 %s)\n" "$TS" "$RUNTIME_DIR" "$DUMP_NAME" "$SIZE" "$SHA" >> /backup/loom-daily-dump.log
 ' <"$STAGE_DUMP" || fail "publish dump to runtime dir failed (docker run write)"
 
 # ── 段 2：mem0 history.db。源文件不存在=mem0 还没写过（全新库正常态），远端往
 # stderr 打哨兵行、仍 0 退出；本侧按哨兵记 0 字节 history.db（0 字节本身是合法
-# 空 SQLite 库），与「真失败=远端非零退出走 fail」区分开。
+# 空 SQLite 库），与「真失败=远端非零退出走 fail」区分开。源文件存在时本侧还要
+# 求产物非空且带 SQLite 头——空文件/坏流出不算成功（重叠运行的互删也靠
+# mktemp 唯一临时目录挡掉，不用固定路径）。
 cat >"$STAGE_DIR/hist-remote.sh" <<'EOS'
 set -u
-T=/tmp/.loom-hist-backup
-rm -rf "$T"
-mkdir -p "$T"
+T="$(mktemp -d /tmp/loom-hist-backup.XXXXXX)" || exit 1
 cat >"$T/backup.cjs" <<'JS'
 const fs = require('fs');
 const SRC = '/var/lib/mem0/history.db';
@@ -273,13 +273,16 @@ db.backup(process.env.LOOM_BK_OUT)
   });
 JS
 if LOOM_BK_OUT="$T/history.db" node "$T/backup.cjs"; then
-  cat "$T/history.db" 2>/dev/null
-  rc=0
+  if [ -f "$T/history.db" ]; then
+    cat "$T/history.db"
+    rc=$?
+  else
+    rc=0
+  fi
 else
   rc=1
 fi
-rm -f "$T/backup.cjs" "$T/history.db"
-rmdir "$T" 2>/dev/null
+rm -rf "$T"
 exit "$rc"
 EOS
 
@@ -289,19 +292,28 @@ run_remote history_db "$HIST_ERR" \
 if grep -q 'LOOM_HISTORY_ABSENT' "$HIST_ERR"; then
   : >"$STAGE_HIST"
   vlog "mem0 history.db absent on worker (fresh db) — recorded as empty file" 2>/dev/null
-elif [ ! -s "$STAGE_HIST" ]; then
-  vlog "mem0 history.db present but empty — recorded as empty file" 2>/dev/null
+elif ! head -c 15 "$STAGE_HIST" | grep -q 'SQLite format 3'; then
+  fail "mem0 history.db capture produced empty/non-SQLite output"
 fi
 
 # ── 段 3：storage /data 活拷贝 tar（append-mostly；GNU tar 的「file changed as we
 # read it」告警给 rc 1——append-mostly 存储常态，仅当 stderr 确实是该告警时放行；
 # busybox tar 的一切错误也报 rc 1，不能笼统放过 rc≤1）。
 run_remote storage_tar "$STOR_ERR" \
-  "${NAS_SSH[@]}" "docker exec $STORAGE_CONTAINER sh -c 'tar -C /data -cf - . 2>/tmp/.loom-tar.err; rc=\$?; if [ \$rc -eq 1 ] && grep -q \"changed as we read\" /tmp/.loom-tar.err; then rc=0; fi; cat /tmp/.loom-tar.err >&2; rm -f /tmp/.loom-tar.err; exit \$rc'" \
+  "${NAS_SSH[@]}" "docker exec $STORAGE_CONTAINER sh -c 'E=\$(mktemp /tmp/loom-tar-err.XXXXXX) || exit 1; tar -C /data -cf - . 2>\"\$E\"; rc=\$?; if [ \$rc -eq 1 ] && grep -q \"changed as we read\" \"\$E\"; then rc=0; fi; cat \"\$E\" >&2; rm -f \"\$E\"; exit \$rc'" \
   </dev/null >"$STAGE_TAR"
 
-# ── 发布 daily-private/<date>/：目录 700、文件 600；SHA256SUMS 盖当天三件，
-# dump 条目用相对路径指向上两级（校验：cd daily-private/<d> && shasum -c SHA256SUMS）。
+# tar 里零文件条目（只含目录项）= /data 空或挂错——不看字节数，看条目数；失败留痕走 fail。
+if ! tar -tf "$STAGE_TAR" >"$STAGE_DIR/tar.list" 2>/dev/null; then
+  fail "storage tar unreadable (tar -tf failed)"
+fi
+if ! grep -q '[^/]$' "$STAGE_DIR/tar.list"; then
+  fail "storage tar lists zero files — /data empty or wrong mount"
+fi
+
+# ── 发布 daily-private/<date>/：目录与文件一律 owner-only（chmod go-rwx）；
+# SHA256SUMS 盖当天三件，dump 条目用相对路径指向上两级
+# （校验：cd daily-private/<d> && shasum -c SHA256SUMS）。
 HIST_SIZE="$(stat -f%z "$STAGE_HIST")"
 HIST_SHA="$(shasum -a 256 "$STAGE_HIST" | cut -d' ' -f1)"
 STOR_SIZE="$(stat -f%z "$STAGE_TAR")"
@@ -314,8 +326,8 @@ STOR_SHA="$(shasum -a 256 "$STAGE_TAR" | cut -d' ' -f1)"
 
 PRIV_DIR="$PRIV_DIR" volsh '
 mkdir -p "/backup/$PRIV_DIR" &&
-chmod 700 "/backup/$PRIV_DIR" &&
-chmod 700 "$(dirname "/backup/$PRIV_DIR")"
+chmod go-rwx "/backup/$PRIV_DIR" &&
+chmod go-rwx "$(dirname "/backup/$PRIV_DIR")"
 ' || fail "prepare daily-private dir failed"
 
 publish_file "$STAGE_HIST" "$PRIV_DIR/history.db"
@@ -325,32 +337,35 @@ vlog "OK: $PRIV_DIR history.db ($HIST_SIZE bytes, sha256 $HIST_SHA) storage.tar 
   2>/dev/null
 
 # 成功戳 + 清 FAILED 标记 + 保留策略：三段全发布完才盖戳，戳滞后=今天不完整。
-# 保留：最近 KEEP_DAILY 份全留，更老的只留每月 1 号；daily-private 目录同名策略
-# （目录名即日期，名序即新旧序），整目录为单位删。
+# 保留窗口对 dump 与 daily-private 相同（最新 KEEP_DAILY 份 + 每月 1 号），但两条
+# 链不能各数各的：先清目录，再清 dump，且「同日 daily-private 目录还在」的 dump
+# 一律不删——目录在则 SHA256SUMS 可校验；失败日只有 dump 没有目录，照窗口清理。
 FAILED_MARK="$FAILED_MARK" KEEP="$KEEP_DAILY" \
 TS="$(date '+%F %T')" STAMP="$(date +%s)" \
 volsh '
 rm -f "/backup/$FAILED_MARK" &&
 printf "%s" "$STAMP" > /backup/.loom-daily-dump-last-success &&
 cd /backup &&
+if [ -d daily-private ]; then
+  count=0
+  ls -d daily-private/*/ 2>/dev/null | sed "s:/\$::;s:.*/::" | sort -r | while read -r d; do
+    count=$((count + 1))
+    [ "$count" -le "$KEEP" ] && continue
+    dom="$(echo "$d" | cut -c7-8)" # YYYYMMDD → DD
+    [ "$dom" = "01" ] && continue
+    rm -rf "daily-private/$d"
+    printf "%s pruned: daily-private/%s\n" "$TS" "$d" >> /backup/loom-daily-dump.log
+  done
+fi
 count=0 &&
 ls -t loom-daily-*.dump 2>/dev/null | while read -r f; do
   count=$((count + 1))
   [ "$count" -le "$KEEP" ] && continue
   dom="$(echo "$f" | cut -c18-19)" # loom-daily-YYYYMMDD.dump → DD
   [ "$dom" = "01" ] && continue
+  d="${f#loom-daily-}"; d="${d%.dump}"
+  [ -d "daily-private/$d" ] && continue
   rm -f "$f"
   printf "%s pruned: %s\n" "$TS" "$f" >> /backup/loom-daily-dump.log
 done
-if [ -d /backup/daily-private ]; then
-  count=0
-  ls -d /backup/daily-private/*/ 2>/dev/null | sed "s:/\$::;s:.*/::" | sort -r | while read -r d; do
-    count=$((count + 1))
-    [ "$count" -le "$KEEP" ] && continue
-    dom="$(echo "$d" | cut -c7-8)" # YYYYMMDD → DD
-    [ "$dom" = "01" ] && continue
-    rm -rf "/backup/daily-private/$d"
-    printf "%s pruned: daily-private/%s\n" "$TS" "$d" >> /backup/loom-daily-dump.log
-  done
-fi
 ' || fail "finalize (stamp/retention) failed"
