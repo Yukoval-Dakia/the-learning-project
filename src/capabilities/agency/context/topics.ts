@@ -101,8 +101,8 @@ async function storedTopics(db: Db | Tx) {
       digest.topics.push({
         key: 'legacy-global',
         scope_key: 'global',
-        name: '已有画像',
-        description: '升级前保存的学习者摘要',
+        name: '学习近况',
+        description: '最近的学习经历与习惯',
         facts,
         updated_at: note.refreshed_at?.toISOString() ?? '',
       });
@@ -252,6 +252,7 @@ export async function changeTopics(
     undoId?: string;
     asOf?: string;
     overnight?: string | null;
+    editScope?: { topicKey?: string };
   },
 ) {
   return db.transaction(async (tx) => {
@@ -312,6 +313,28 @@ export async function changeTopics(
         after: after.topics,
         issues,
       });
+    if (input.editScope) {
+      const patches = input.patches ?? [];
+      const patch = patches[0];
+      const topic = after.topics.find((t) => t.key === patch?.key);
+      const replacedIds = new Set([
+        ...(patch?.replaces ?? []),
+        ...(patch?.key === TALK_TOPIC ? (topic?.facts.map((f) => f.id) ?? []) : []),
+      ]);
+      if (
+        patches.length !== 1 ||
+        (input.editScope.topicKey && patch?.key !== input.editScope.topicKey) ||
+        replacedIds.size > 1 ||
+        [...replacedIds].some((id) => !topic?.facts.some((f) => f.id === id))
+      )
+        return result([
+          {
+            kind: 'edit_scope_exceeded',
+            detail:
+              'Nothing was written. Submit one patch for the topic related to this sentence; replace at most one fact from that same topic. Do not clean up other topics.',
+          },
+        ]);
+    }
     if (input.undoId) {
       const [row] = await tx
         .select()

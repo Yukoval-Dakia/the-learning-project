@@ -2,6 +2,10 @@ import { z } from 'zod';
 export const DIGEST_SCOPE = 'global:digest';
 export const CONTEXT_CHANGE = 'experimental:context_change';
 export const TALK_TOPIC = 'communication';
+export const FACT_PRESENTATION_RULES =
+  '主题名、说明和事实正文都直接给学习者看，只写具体事实，用自然白话。不要写“学习者本轮自述”“优先级最高”“纠正信息”“以上均为”等来源、优先级或执行说明。不要写模型、工具或内部链路术语；涉及系统使用经历时，忠实转成学习者能懂的经历描述，不删掉成功、失败、先后或不确定性等事实。';
+export const LEARNER_EDIT_RULES =
+  'learner_correction 模式只落实本句相关的一处更正，由你判断相关主题；指定 topic_key 时只能改该主题。每次只提交一条 patch，最多替换该主题一条事实；新建主题不能替换旧事实。不清理、压缩或改写其他主题，不顺手删除推测或建议，这些留给定时整理。沟通摘要仍须完整保留本句没改的偏好。收到 edit_scope_exceeded 时缩小到本句相关的一条修改重试一次；成功后立即停止写入。';
 export const COMMUNICATION_RULES =
   '称呼、语气、偏好、persona 放在常驻主题 communication（怎么和我说话），只保存学习者表达的事实和偏好，不替学习者决定学习安排。该主题每次写入完整的沟通摘要（不超过四百字），合并既有仍有效的偏好与本轮新原话，不丢旧偏好；服务端以新版本替换旧摘要。';
 const Fact = z.object({
@@ -60,6 +64,9 @@ export const ChangeResult = z.object({
   before: z.array(Topic),
   after: z.array(Topic),
   issues: z.array(
-    z.object({ kind: z.enum(['unmergeable', 'correction_protected']), detail: z.string() }),
+    z.object({
+      kind: z.enum(['unmergeable', 'correction_protected', 'edit_scope_exceeded']),
+      detail: z.string(),
+    }),
   ),
 });

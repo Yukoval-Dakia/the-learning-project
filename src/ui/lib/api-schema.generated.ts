@@ -21675,6 +21675,7 @@ export interface operations {
                                 updated_at: string;
                             }[];
                             id: string;
+                            undo_of: string | null;
                         }[];
                         topics: {
                             description: string;
@@ -21883,7 +21884,7 @@ export interface operations {
                         issues: {
                             detail: string;
                             /** @enum {string} */
-                            kind: "unmergeable" | "correction_protected";
+                            kind: "unmergeable" | "correction_protected" | "edit_scope_exceeded";
                         }[];
                         /** @enum {string} */
                         status: "changed" | "unchanged" | "issue";
@@ -22071,7 +22072,7 @@ export interface operations {
                             issues: {
                                 detail: string;
                                 /** @enum {string} */
-                                kind: "unmergeable" | "correction_protected";
+                                kind: "unmergeable" | "correction_protected" | "edit_scope_exceeded";
                             }[];
                             /** @enum {string} */
                             status: "changed" | "unchanged" | "issue";

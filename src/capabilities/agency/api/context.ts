@@ -8,7 +8,7 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
-import { CONTEXT_CHANGE } from '../context/topic-contract';
+import { CONTEXT_CHANGE, ChangeResult, LEARNER_EDIT_RULES } from '../context/topic-contract';
 import { changeTopics, readTopics, topicBoard } from '../context/topics';
 import { ContextActionRequest, ContextEditRequest, ContextEditResponse } from '../context/wire';
 
@@ -18,8 +18,18 @@ export async function GET() {
     return Response.json({
       ...board,
       changes: board.changes.map((c) => {
-        const p = c.payload as { before: { topics: unknown[] }; after: { topics: unknown[] } };
-        return { id: c.id, at: c.at.toISOString(), before: p.before.topics, after: p.after.topics };
+        const p = c.payload as {
+          before: { topics: unknown[] };
+          after: { topics: unknown[] };
+          undo_of?: string | null;
+        };
+        return {
+          id: c.id,
+          at: c.at.toISOString(),
+          before: p.before.topics,
+          after: p.after.topics,
+          undo_of: p.undo_of ?? null,
+        };
       }),
     });
   } catch (err) {
@@ -71,6 +81,8 @@ export async function EDIT(req: Request) {
       ingest_at: new Date(),
     });
     let writeFailure = false;
+    let writeCommitted = false;
+    let scopeRejections = 0;
     const result = await runAgentTask(
       'DreamingTask',
       {
@@ -78,7 +90,7 @@ export async function EDIT(req: Request) {
         instruction: input.instruction,
         topic_key: input.topic_key,
         mode: 'learner_correction',
-        contract: '立即执行学习者修改，写 correction；不要只回复建议。修改后停止，回复改了什么。',
+        contract: `立即执行学习者修改，写 correction；不要只回复建议。${LEARNER_EDIT_RULES}回复只说改了什么。`,
       },
       {
         db,
@@ -90,17 +102,24 @@ export async function EDIT(req: Request) {
             taskKind: 'DreamingTask',
             toolNames: ['curate_context'],
             beforeExecute: () =>
-              writeFailure ? 'Previous write failed; finish without further writes.' : undefined,
+              writeFailure || writeCommitted
+                ? 'Finish this turn without further writes.'
+                : undefined,
             onResult: (observation) => {
-              if (
-                observation.error_reason ||
-                !observation.executed ||
-                (observation.output &&
-                  typeof observation.output === 'object' &&
-                  'status' in observation.output &&
-                  observation.output.status === 'issue')
-              )
+              const change = ChangeResult.safeParse(observation.output);
+              if (observation.error_reason || !observation.executed || !change.success) {
                 writeFailure = true;
+                return;
+              }
+              if (change.data.status === 'changed') writeCommitted = true;
+              else if (
+                change.data.status === 'issue' &&
+                change.data.issues.every((i) => i.kind === 'edit_scope_exceeded') &&
+                scopeRejections++ === 0
+              ) {
+                // A rejected batch is atomic; allow one narrower proposal, never a second commit.
+                return;
+              } else writeFailure = true;
             },
             ctx: {
               db,
