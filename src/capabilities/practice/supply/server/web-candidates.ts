@@ -82,6 +82,8 @@ export interface WebSourcingAgentInput {
   kinds?: string[];
   objective_only?: boolean;
   kind_required?: boolean;
+  /** placement 交付专用：本批只收不带 parts 的扁平单题；多小问跳过不压平。 */
+  flat_only?: boolean;
 }
 
 /**
@@ -123,6 +125,8 @@ export interface RunWebFetchCandidatesParams {
     kind?: string;
     objectiveOnly?: boolean;
     kindRequired?: boolean;
+    /** placement 交付的水-fetch：要求模型只交不带 parts 的扁平单题。 */
+    flatOnly?: boolean;
     subjectProfile: SubjectProfile;
   };
   /** 运行归因（canary 事件的 session/task/causal 字段来源；agent 工具透传，executor 传 task 侧）。 */
@@ -364,6 +368,7 @@ async function runWebFetchCandidatesCore(
     ...(params.input.kind ? { kinds: [params.input.kind] } : {}),
     ...(params.input.objectiveOnly ? { objective_only: true } : {}),
     ...(params.input.kindRequired ? { kind_required: true } : {}),
+    ...(params.input.flatOnly ? { flat_only: true } : {}),
   };
 
   // ── 3. LLM 相位（deps；null = 检索后端不可用 → deterministic skip） ──────────────
