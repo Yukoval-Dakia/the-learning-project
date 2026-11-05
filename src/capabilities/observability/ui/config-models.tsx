@@ -45,25 +45,32 @@ const GROUP_ICON: Readonly<Record<string, LucideIcon>> = {
   'notes-knowledge': BookOpen,
 };
 
-/** True when the task simply runs on the global default: the hero says which that is. */
-function followsGlobal(binding: ConfigBinding | null): boolean {
+/**
+ * True only when the task really runs on the pair the hero names. The selection rule alone cannot
+ * say so: it reports the provider's layer, and the model resolves separately, so a provider-only pin
+ * can leave a task on a model of its own.
+ */
+function followsGlobal(binding: ConfigBinding | null, global: ConfigGlobal | null): boolean {
   return (
     binding !== null &&
     !binding.error &&
-    (binding.selection_rule === 'env_pin' || binding.selection_rule === 'global_pin')
+    (binding.selection_rule === 'env_pin' || binding.selection_rule === 'global_pin') &&
+    Boolean(global?.model) &&
+    binding.provider === global?.provider &&
+    binding.model === global?.model
   );
 }
 
 function BindingFacts({
   binding,
-  terse = false,
+  terseAgainst,
 }: {
   binding: ConfigBinding | null;
-  /** In a list under the default: say 「跟全局默认」 instead of repeating its name. */
-  terse?: boolean;
+  /** In a list under the default: say 「跟全局默认」 instead of repeating the same name. */
+  terseAgainst?: ConfigGlobal | null;
 }) {
   const thinking = bindingThinking(binding);
-  const follows = terse && followsGlobal(binding);
+  const follows = terseAgainst !== undefined && followsGlobal(binding, terseAgainst);
   return (
     <div className="adm-binding">
       {follows ? (
@@ -157,8 +164,10 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
       </div>
       {current?.provider ? (
         <p className="adm-global-model">
-          {current.model}
-          <span className="adm-global-provider">{current.provider}</span>
+          {current.model ?? current.provider}
+          <span className="adm-global-provider">
+            {current.model ? current.provider : '只定了 provider，模型由各任务决定'}
+          </span>
         </p>
       ) : (
         <p className="adm-note">没有全局默认，各任务用自己的模型。</p>
@@ -170,8 +179,8 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
       ) : null}
       {pinned ? (
         <p className="adm-warn-line">
-          紧急开关开着（部署环境变量），它压过这里和所有任务的设置，这里改不了。
-          {current?.source !== current?.model_source
+          紧急开关开着（部署环境变量），它压过这里的设置，这里改不了。勾了「不跟全局默认」的任务不受影响。
+          {current?.model && current.source !== current.model_source
             ? ` Provider 来自${current?.source === 'env' ? '环境变量' : '这里的设置'}，模型来自${current?.model_source === 'env' ? '环境变量' : '这里的设置'}。`
             : ''}
         </p>
@@ -232,17 +241,26 @@ function GlobalDefault({ data, save }: { data: ConfigData; save: SaveConfig }) {
 }
 
 /** What a whole group runs on: only a difference from the default gets a tag. */
-function GroupSummary({ tasks }: { tasks: readonly ConfigTask[] }) {
+function GroupSummary({
+  tasks,
+  global,
+}: {
+  tasks: readonly ConfigTask[];
+  global: ConfigGlobal | null;
+}) {
   const bindings = tasks.map((task) => task.effective_binding);
   const broken = bindings.filter((binding) => binding === null || binding.error).length;
   if (broken > 0) {
     return <span className="adm-tag-caution">{broken} 个任务读不出模型</span>;
   }
-  if (bindings.every(followsGlobal)) return <span className="adm-follows">跟全局默认</span>;
-  const models = new Set(bindings.map((binding) => binding?.model));
+  if (bindings.every((binding) => followsGlobal(binding, global))) {
+    return <span className="adm-follows">跟全局默认</span>;
+  }
+  // The same model id from two providers is two different things: compare the whole pair.
+  const pairs = new Set(bindings.map(bindingLine));
   return (
     <span className="adm-tag-differs">
-      {models.size === 1 ? [...models][0] : `${models.size} 种模型`}
+      {pairs.size === 1 ? [...pairs][0] : `${pairs.size} 种模型`}
     </span>
   );
 }
@@ -285,7 +303,7 @@ function TaskRow({
           {words.detail ? <p className="adm-task-detail">{words.detail}</p> : null}
         </div>
         <div className="adm-task-binding">
-          <BindingFacts binding={task.effective_binding} terse />
+          <BindingFacts binding={task.effective_binding} terseAgainst={data.global} />
           {dormant ? (
             <p className="adm-cell-sub">
               自己设了 {task.override?.provider} / {task.override?.model}，现在不生效。
@@ -404,7 +422,7 @@ export function ConfigModels({
                   </span>
                   <span className="adm-group-count">{group.tasks.length} 个任务</span>
                   <span className="adm-group-summary">
-                    <GroupSummary tasks={group.tasks} />
+                    <GroupSummary tasks={group.tasks} global={data.global} />
                   </span>
                   <ChevronDown size={16} aria-hidden="true" className="adm-group-chev" />
                 </button>
