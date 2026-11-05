@@ -31,4 +31,10 @@ source_verify 比较行级投影与冻结 revision 时，按稳定 scoring_unit_
 
 验证在独立临时 Postgres 的真实 question/question_revision 表完成，旧契约由修复前固定源码 `b55162968^` 生成：普通旧 text_key、含上标旧 text_key、旧 numeric_key 三条均 legacyRowMatchesRevision=true；新默认重建均不匹配，改动答案/数值后仍不匹配。未执行 provider 核验。
 
-2026-11-05 对本机 TEST（loom，端口 5433）的 BEGIN READ ONLY 计数：当前 web_sourced + draft + withheld + 旧 text/numeric 版本共有 16 组，全部已有非 error 的 source_verify 终态事件；真正没有终态事件的旧版本草稿为 0。其他版本 draft/withheld 且无终态事件为 2 组。全状态 web_sourced 旧版本为 20 组，其中 active/admitted 3、active/withheld 1、draft/withheld 16；该快照无旧 numeric_key。终态事件按当前 source_verify 的幂等条件定义，不等于“核验成功”。因此当前无自动首次核验旧版本积压；显式存量 recheck 若选中这 16 组，仍需要本修复的旧版本重建。未把这份实时计数臆测成历史 40 题重跑名单的交集或完成比例。
+2026-11-05 的一次越界只读查询（协调线之外，经容器内 `psql` 执行 BEGIN READ ONLY）留下的历史计数：当前 web_sourced + draft + withheld + 旧 text/numeric 版本共有 16 组，全部已有非 error 的 source_verify 终态事件；真正没有终态事件的旧版本草稿为 0。其他版本 draft/withheld 且无终态事件为 2 组。全状态 web_sourced 旧版本为 20 组，其中 active/admitted 3、active/withheld 1、draft/withheld 16；该快照无旧 numeric_key。终态事件按当前 source_verify 的幂等条件定义，不等于“核验成功”。因此当前无自动首次核验旧版本积压；显式存量 recheck 若选中这 16 组，仍需要本修复的旧版本重建。这不是协调线认可的最新库存，以存量重跑前迁移线的重查结果为准。未把这份历史计数臆测成历史 40 题重跑名单的交集或完成比例。写手不得连接或以任何方式读取 TEST 容器或数据库，需要数字时向 Owner 提出。
+
+## 新门合入后的版本接线
+
+新准入从冻结契约建立 definition 时，克隆作者 seed 并将文本配置版本设为 blank-norm@2、numeric 版本设为 numeric-norm@2；保留原答案、容差、单位及显式归一化开关，不改冻结原件。旧 text_key（含 answer_head）映射到新版本 blank 配置；行级新发布继续铸 answer_head@2。exact/trim 仍保留 nfkc:false 等设置，仅使用统一的新版本标记。
+
+新门的 authorKeyAccepts 使用该克隆 seed 调用同一判分器；快路径 keysAgree 使用同一 unit.blank_normalization，跨 text/numeric 纯数字比较使用 numeric-norm@2。盲解快路径和裁决决定都汇入 criterionFromKey，再经同一判分核心执行探针；旧原件仅在 unresolved 分支保留，不能当作已准入新键。历史 submission 依旧按其冻结 revision 判分。

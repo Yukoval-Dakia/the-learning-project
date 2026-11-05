@@ -31,7 +31,6 @@ export function mapLegacyTextNormalization(
     case 'exact':
       return {
         ...DEFAULT_BLANK_NORMALIZATION,
-        version: 'exact@1',
         nfkc: false,
         trim_outer: false,
         collapse_whitespace: false,
@@ -39,7 +38,6 @@ export function mapLegacyTextNormalization(
     case 'trim':
       return {
         ...DEFAULT_BLANK_NORMALIZATION,
-        version: 'trim@1',
         nfkc: false,
         collapse_whitespace: false,
       };
@@ -153,7 +151,20 @@ function seedFor(
     return { seed: null, constraint: `criterion '${criterion.kind}' carries no select key seed` };
   }
   if (unitKind === 'blank') {
-    if (criterion.kind === 'blank_key') return { seed: criterion };
+    if (criterion.kind === 'blank_key') {
+      // Admission creates a successor; author checks and minted keys share its policy.
+      // Clone the seed so the frozen revision and historical replay stay untouched.
+      const key = criterion.key;
+      return {
+        seed: {
+          ...criterion,
+          key:
+            key.kind === 'text'
+              ? { ...key, normalization: { ...key.normalization, version: 'blank-norm@2' } }
+              : { ...key, normalization_version: 'numeric-norm@2' },
+        },
+      };
+    }
     if (criterion.kind === 'text_key') {
       return {
         seed: {
@@ -173,7 +184,7 @@ function seedFor(
           kind: 'blank_key',
           key: {
             kind: 'numeric',
-            normalization_version: criterion.normalization_version,
+            normalization_version: 'numeric-norm@2',
             expected: criterion.expected,
             tolerance: criterion.tolerance,
             expected_unit: criterion.expected_unit,
