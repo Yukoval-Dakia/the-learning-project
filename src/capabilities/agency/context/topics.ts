@@ -668,14 +668,14 @@ export async function refreshTopicMetadata(
   for (let attempt = 0; attempt < 5; attempt++) {
     const { version } = await readTopics(db);
     try {
-      await changeTopics(db, {
+      const change = await changeTopics(db, {
         expectedVersion: version,
         actor: 'curator',
         sourceIds: [],
         patches: [],
         ...input,
       });
-      return true;
+      return change.version > 0;
     } catch (error) {
       if (!(error instanceof ApiError) || error.code !== 'context_version_conflict') throw error;
     }
