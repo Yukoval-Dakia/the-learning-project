@@ -114,7 +114,6 @@
     white-space: nowrap;
   }
 
-
   /* Could not be shown: what it was, a plain note, the source as text. */
   & .un-blk-canvas-failed {
     gap: var(--un-sp-1);
