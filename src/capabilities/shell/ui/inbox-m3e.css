@@ -817,8 +817,15 @@
   }
 
   & .ib-prop-blocked b {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-1);
     color: var(--un-text-1);
     font-weight: var(--un-fw-medium);
+  }
+  & .ib-prop-blocked svg {
+    flex: none;
+    color: var(--un-caution);
   }
 
   & .ib-confirm {

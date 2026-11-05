@@ -23,6 +23,15 @@
     font-size: var(--un-fs-1);
     list-style: none;
   }
+  & .rc-gaps li {
+    display: flex;
+    gap: var(--un-sp-2);
+  }
+  & .rc-gaps svg {
+    flex: none;
+    margin-top: 0.2em;
+    color: var(--un-text-3);
+  }
 
   & .rc-prior {
     border-top: var(--un-hairline) solid var(--un-line);

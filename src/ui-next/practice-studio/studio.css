@@ -535,6 +535,15 @@
   border-radius: 12px;
   background: var(--un-critical-soft);
 }
+[data-ui-next] .un-st-notice-title {
+  display: flex;
+  gap: 6px;
+}
+[data-ui-next] .un-st-notice-title svg {
+  flex: none;
+  margin-top: 0.2em;
+  color: var(--un-critical);
+}
 [data-ui-next] .un-st-page-state {
   padding-top: 48px;
 }
