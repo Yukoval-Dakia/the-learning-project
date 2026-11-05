@@ -46,9 +46,9 @@ type Phase =
   | { readonly status: 'collecting' }
   | { readonly status: 'closed'; readonly reason: NoProgressCloseReason };
 
-/** Closing is the last minute before the hard timeout. Ready means a
- *  non-mutating root call has already settled. Success and error are the
- *  same anchor; a mutation never sets it. */
+/** Closing is the last minute before the hard timeout. Read and pending
+ *  receipts anchor landing, including failed reads; an applied mutation
+ *  never sets the anchor. */
 type BudgetLanding = {
   readonly window: 'open' | 'closing';
   readonly anchor: 'waiting' | 'ready';
@@ -90,7 +90,8 @@ function classifyRootCall(
   const body = isRecord(payload) && 'output' in payload ? payload.output : payload;
   const failed =
     isRecord(body) &&
-    (body.status === 'skipped' ||
+    ((typeof body.status === 'string' &&
+      (body.status === 'skipped' || body.status.startsWith('skipped:'))) ||
       body.status === 'pending' ||
       body.status === 'failed' ||
       body.status === 'error' ||
@@ -147,11 +148,21 @@ function parseText(text: string): unknown {
   }
 }
 
-function fingerprintOf(payload: unknown): string {
+function fingerprintOf(payload: unknown, normalizePending: boolean): string {
   const body = isRecord(payload) && 'output' in payload ? payload.output : payload;
+  if (normalizePending && isRecord(body) && body.status === 'pending') {
+    const {
+      elapsed: _elapsed,
+      elapsed_ms: _elapsedMs,
+      elapsed_seconds: _elapsedSeconds,
+      ...receipt
+    } = body;
+    return sha256(stable(receipt));
+  }
   if (
     isRecord(body) &&
-    (body.status === 'skipped' ||
+    ((typeof body.status === 'string' &&
+      (body.status === 'skipped' || body.status.startsWith('skipped:'))) ||
       body.status === 'failed' ||
       body.status === 'error' ||
       body.error !== undefined)
@@ -257,7 +268,7 @@ function disputeReasonOf(record: Record<string, unknown>): string | undefined {
  * returning the identical result. Once closed, root tool calls are denied —
  * the model sees the denial and answers from collected evidence — and only
  * escalate to a hard stop after SOFT_DENIAL_LIMIT denials; help faults
- * terminate immediately since the provider cannot answer anyway. A mutation
+ * terminate immediately since the provider cannot answer anyway. An applied mutation
  * bumps the generation so one following read of the same args may observe
  * the write. Inside the closing window, the next root tool is denied once
  * any non-mutating call has settled, including a call that only failed.
@@ -277,7 +288,8 @@ export function createNoProgressLoop(policy?: {
   let budget: BudgetLanding = { window: 'open', anchor: 'waiting' };
   const settledAtGeneration = new Map<string, number>();
   const seenFingerprints = new Set<string>();
-  const pendingFingerprints = new Set<string>();
+  const pendingSignatures = new Set<string>();
+  let pendingOnly = false;
   const known = new Set<string>();
   const evidence: EvidenceFact[] = [];
 
@@ -303,6 +315,8 @@ export function createNoProgressLoop(policy?: {
   function denyReasonFor(reason: NoProgressCloseReason): string {
     if (reason === 'budget_landing') return BUDGET_BLOCK_REASON;
     if (reason.startsWith('help_')) return HELP_FAULT_BLOCK_REASON;
+    if (pendingOnly)
+      return 'The operation is still pending. Stop polling and give a status update from the evidence collected; unfinished work can resume later.';
     return BLOCK_REASON;
   }
 
@@ -319,7 +333,10 @@ export function createNoProgressLoop(policy?: {
   const beforeToolCall: PiBeforeToolCall = (call, args) => {
     if (phase.status === 'closed') return deny(phase.reason);
     const signature = signatureOf(call.name, args);
-    if (settledAtGeneration.get(signature) === generation) {
+    if (
+      settledAtGeneration.get(signature) === generation &&
+      (!pendingSignatures.has(signature) || pendingOnly)
+    ) {
       close('no_progress');
       return deny('no_progress');
     }
@@ -334,18 +351,19 @@ export function createNoProgressLoop(policy?: {
     if (observation.interrupted) return undefined;
     const tool = domainToolName(observation.call.name);
     const payload = parsePayload(observation.isError ? observation.error : observation.output);
-    const fingerprint = fingerprintOf(policy?.normalize ? policy.normalize(payload) : payload);
+    const fingerprint = fingerprintOf(
+      policy?.normalize ? policy.normalize(payload) : payload,
+      !policy?.progressed,
+    );
     const incoming = collectFacts(payload, tool);
     const substantive = incoming.filter((fact) => fact.kind !== 'tool_summary');
     const novel = substantive.filter((fact) => !known.has(factKey(fact)));
     const fingerprintKey = `${tool}\n${fingerprint}`;
     const body = isRecord(payload) && 'output' in payload ? payload.output : payload;
-    // Waiting is owned by the durable operation, never by a model polling loop.
-    if (!policy?.progressed && isRecord(body) && body.status === 'pending') {
-      if (pendingFingerprints.has(fingerprintKey)) return { terminate: true };
-      pendingFingerprints.add(fingerprintKey);
-      return undefined;
-    }
+    // New evidence permits another poll; consecutive unchanged waits use the
+    // ordinary soft-denial closure, leaving the model room to wrap up.
+    const pending = !policy?.progressed && isRecord(body) && body.status === 'pending';
+    const pollingOnly = pendingOnly;
     const settled = classifyRootCall(observation, payload);
     const progressed = policy?.progressed
       ? policy.progressed(observation, payload)
@@ -356,9 +374,18 @@ export function createNoProgressLoop(policy?: {
     }
     const repeatedFingerprint =
       !(policy?.progressed && progressed) && seenFingerprints.has(fingerprintKey);
-    settledAtGeneration.set(signatureOf(observation.call.name, observation.args), generation);
+    const signature = signatureOf(observation.call.name, observation.args);
+    settledAtGeneration.set(signature, generation);
+    if (pending) pendingSignatures.add(signature);
+    else pendingSignatures.delete(signature);
+    if (pending) pendingOnly = true;
+    else if (
+      progressed ||
+      (!observation.isError && settled.kind === 'read' && !repeatedFingerprint)
+    )
+      pendingOnly = false;
     seenFingerprints.add(fingerprintKey);
-    if (settled.kind === 'read') armBudgetAnchor();
+    if (settled.kind === 'read' || pending) armBudgetAnchor();
     remember(novel.length > 0 ? incoming : incoming.filter((fact) => fact.kind === 'tool_summary'));
     if (incoming.length === 0) {
       remember([
@@ -383,7 +410,7 @@ export function createNoProgressLoop(policy?: {
     // The tool just paid for a call that returned exactly what an earlier
     // call of the same tool already produced. Close the loop; the denial on
     // the next root call tells the model to answer from what it has.
-    if (repeatedFingerprint) close('no_progress');
+    if (repeatedFingerprint && (!pending || pollingOnly)) close('no_progress');
     return undefined;
   };
 

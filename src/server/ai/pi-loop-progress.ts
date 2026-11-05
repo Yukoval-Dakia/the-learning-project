@@ -59,13 +59,14 @@ export function installLoopProgress(
     let terminate = false;
     const denials = new Map<string, string>();
     for (const result of turn.toolResults) {
+      const wasGated = gated.delete(result.toolCallId);
       if (!observed.delete(result.toolCallId)) {
         const toolCall = turn.message.content.find(
           (block) => block.type === 'toolCall' && block.id === result.toolCallId,
         );
         if (toolCall?.type !== 'toolCall') continue;
         const call = callFor(result.toolCallId, result.toolName);
-        if (!gated.has(result.toolCallId)) {
+        if (!wasGated) {
           const denial = await progress.beforeToolCall(call, toolCall.arguments, signal);
           if (denial?.block) {
             denials.set(
@@ -90,7 +91,6 @@ export function installLoopProgress(
         if (override?.isError !== undefined) result.isError = override.isError;
         terminate ||= override?.terminate === true || verdict?.terminate === true;
       }
-      gated.delete(result.toolCallId);
     }
     // Preserve structured-submit, correction, cost and caller-owned terminal policies.
     const closure = progress.closure?.();
