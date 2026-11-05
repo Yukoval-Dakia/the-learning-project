@@ -19,6 +19,7 @@ import {
   SlotResponse,
   modelResponseClassForUnit,
 } from '@/core/schema/assessment';
+import { sha256Canonical } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { ai_task_runs, event, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -249,8 +250,10 @@ export interface ModelSliceAdmissionItemResult {
   /** 完整未决态（detail / retryable / trigger 等）；pending_reason 只是它的索引。 */
   pending?: PendingStateT;
   /**
-   * 定夺 attempt（run_refs 末位）的 canonical 输入/输出 digest；
-   * 无 run 或该 run 未产出结果时为 null —— null 本身是证据，不补造。
+   * 定夺 attempt（run_refs 末位）的 canonical 输入 digest（ai_task_runs.input_hash）
+   * 与定夺 outcome 的 canonical digest。ai_task_runs.result_digest 只有 typed
+   * seal 消费方写，本 lane 恒 null —— 输出绑定由本 job 实算 outcome 承载。
+   * 无 run（预算门在付费前拒）时 input_digest 为 null；null 本身是证据，不补造。
    */
   input_digest?: string | null;
   output_digest?: string | null;
@@ -753,7 +756,9 @@ export async function runModelSliceAdmission(
             ? actualRuns.find((run) => run.id === outcome.run_refs.at(-1))
             : undefined;
         lastResult.input_digest = decidingRun?.input_hash ?? null;
-        lastResult.output_digest = decidingRun?.result_digest ?? null;
+        // outcome 即定夺输出（分数/matched/pending 细节 + run_refs）；逐条封存其
+        // canonical digest，与 invoker 写 result_digest 同一哈希约定。
+        lastResult.output_digest = sha256Canonical(outcome);
         // An executor's fallback cap reserves spend; only settled attempt prices measure it.
         if (outcome.run_refs.length > 0) {
           if (actualCostKnown && actualRuns.length === outcome.run_refs.length) {
