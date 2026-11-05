@@ -48,12 +48,15 @@ export async function GET() {
 }
 export async function ACTION(req: Request) {
   try {
-    const input = ContextActionRequest.parse(await req.json());
+    const parsed = ContextActionRequest.safeParse(await req.json());
+    if (!parsed.success)
+      throw new ApiError('context_action_invalid', 'invalid action request', 400);
+    const input = parsed.data;
     if (
       (input.op === 'undo' && !input.change_id) ||
       (input.op === 'withdraw_topic' && !input.topic_key)
     )
-      throw new Error('action target missing');
+      throw new ApiError('context_action_invalid', 'action target missing', 400);
     return Response.json(
       await changeTopics(db, {
         expectedVersion: input.expected_version,
