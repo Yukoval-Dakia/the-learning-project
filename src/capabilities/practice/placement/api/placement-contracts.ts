@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { PlacementStarterOutcomeSchema } from '@/kernel/placement-starter-outcome';
+import {
+  PlacementAdmissionWait,
+  PlacementStarterOutcomeSchema,
+} from '@/kernel/placement-starter-outcome';
 import { IssuanceStateSchema } from '../../api/assessment-contracts';
 
 export const PlacementSessionParamsSchema = z.object({ id: z.string().min(1) });
@@ -38,6 +41,7 @@ export type PlacementUnresolvedItem = z.infer<typeof PlacementUnresolvedItemSche
  *  starterSupply carries the per-subject supply detail; this object says the
  *  probe itself has nothing to serve and what the learner can do next. */
 export const PlacementNoItemSchema = z.object({
+  admission_waits: z.array(PlacementAdmissionWait).optional(),
   reason: z.literal('no_servable_item'),
   /** subject ids with a live (pending) starter-supply claim — what is being prepared. */
   preparing_subjects: z.array(z.string()),

@@ -6,9 +6,9 @@ import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const RAW =
   '{"id":"q","kind":"choice","prompt_md":"哪项是受控变量？","reference_md":"B","rubric_json":null,"choices_md":["坡度","水量","流速"],"judge_kind_override":null,"structured":null,"source":"web_sourced"}';
-// @invariant data: append once, grade a match, stale after a layer change
+// @invariant data: append once, recognize a matching digest, stale after a layer change
 // @fails-if a rerun appends, a match is stale, or a changed layer is graded
-it('appends once, grades a matching digest, and marks a changed layer stale', async () => {
+it('appends once, recognizes a matching digest, and marks a changed layer stale', async () => {
   await resetDb();
   const db = testDb();
   const c = norm.normalizeQuestionRowToContract(JSON.parse(RAW) as norm.NormalizableQuestionRow);
@@ -23,7 +23,7 @@ it('appends once, grades a matching digest, and marks a changed layer stale', as
   const job = { question_id: 'q', revision_id: id, expected_revision_digest: canonical };
   const stop = async () => Promise.reject(new Error('stop'));
   expect([first.appended, (await reseal(db, { apply: true })).appended]).toEqual([1, 0]);
-  expect((await run(db, job, { id: 'd1' }, { runTask: stop })).status).toBe('pending');
+  expect((await run(db, job, { id: 'd1' }, { runTask: stop })).status).toBe('withheld');
   await db.$client.unsafe(
     `delete from paid_effect; do $$ begin alter table question_revision disable trigger question_revision_immutable; update question_revision set structure = jsonb_set(structure, '{parts,0,prompt_md}', '"改"') where revision_id = '${id}'; alter table question_revision enable trigger question_revision_immutable; exception when others then alter table question_revision enable trigger question_revision_immutable; raise; end $$`,
   );

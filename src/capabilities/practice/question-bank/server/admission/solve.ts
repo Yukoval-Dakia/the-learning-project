@@ -1,14 +1,4 @@
-// (Stage 1 / G1) — dual independent solve + source cross-check.
-// 两次解题互相隔离：各自经 runTask 起全新任务（不复用 session/replay，
-// 第二次看不到第一次输出，也看不到参考答案/学习者作答/印出判分规则文本 ——
-// solve 输入里根本不携带这些面：rule_reference.statement_md 等印出文本
-// 只进独立的 source_crosscheck lane）。第二解的模型/提供方可由 caller 覆盖
-// （异源与否是 owner 决策，配置面在 job 层；缺省同一 registry 模型、独立
-// 上下文）。
-// 已有作者键时，模型的最终答案交给这道题的生产判分器决定是否接受。
-// 没有作者键时，两次求解仍只比 typed 键来铸键。印出答案原文只在独立的
-// source_crosscheck mode 里作交叉核验 —— conflict/unknown 都阻断准入。
-
+// Two isolated blind solves produce candidate keys; disagreements go to adjudication.
 import { eq } from 'drizzle-orm';
 import type { TaskTextResult } from '@/ai/task-result';
 import { canonicalHash } from '@/core/migration/canonical';
@@ -47,14 +37,12 @@ import {
   type QuestionAdmissionSolveOutputT,
   type QuestionAdmissionSolveUnitOutputT,
   type QuestionAdmissionSolveUnitT,
-  QuestionAdmissionSourceCrosscheckInput,
-  QuestionAdmissionSourceCrosscheckOutput,
-  type QuestionAdmissionSourceCrosscheckOutputT,
   parseQuestionAdmissionSolveModelOutput,
 } from '../../tasks/question-admission-solve';
 // Provider 经 verify-framework 取；TaskTextResult 直接取共享结果契约。
 // 输入 hash 直接使用 core 的完整规范化算法。
 import type { Provider } from '../quiz/verify-framework';
+import { AdmissionAttemptExhausted, AdmissionParseFailure, runAdmissionAttempts } from './attempt';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
 import {
   type KnowledgeCandidate,
@@ -63,6 +51,14 @@ import {
 } from './solution-prior';
 
 export type { Provider } from '../quiz/verify-framework';
+
+export type AdmissionImage = { data: string; mediaType: string };
+export function admissionWireInput(
+  payload: unknown,
+  images: readonly AdmissionImage[] = [],
+): unknown {
+  return images.length ? { text: JSON.stringify(payload), images } : payload;
+}
 
 export const QUESTION_ADMISSION_TASK_KIND = 'QuestionAdmissionSolveTask';
 
@@ -96,9 +92,11 @@ export type UnitSolveVerdict =
 
 export interface DualSolveResult {
   verdicts: Map<string, UnitSolveVerdict>;
+  attempt_run_ids: string[];
+  outputs: [QuestionAdmissionSolveOutputT, QuestionAdmissionSolveOutputT];
   solve_a: AdmissionSolveReceipt;
   solve_b: AdmissionSolveReceipt;
-  /** probe candidates emitted by solve A（等价形态 + 典型错答）。 */
+  /** Blind wrong-answer candidates and explicitly adjudicated correct/incorrect forms. */
   probe_candidates: Map<
     string,
     {
@@ -112,16 +110,6 @@ export interface DualSolveResult {
 export type DualSolveOutcome =
   | { ok: true; result: DualSolveResult }
   | { ok: false; error: string; receipts: AdmissionSolveReceipt[] };
-
-/** Parse failed after the provider returned. The receipt is the paid task run when it can be sealed. */
-class UnparsedSolveError extends Error {
-  readonly receipt?: AdmissionSolveReceipt;
-  constructor(message: string, receipt?: AdmissionSolveReceipt) {
-    super(message);
-    this.name = 'UnparsedSolveError';
-    this.receipt = receipt;
-  }
-}
 
 const SUBMIT_TOOL_NAME = 'mcp__structured_output__submit';
 
@@ -164,11 +152,12 @@ async function recordSubmitFailureEvidence(
 }
 
 /** task_run 收据密封：必须存在、成功、kind 匹配、input hash 精确绑定本次请求体。 */
-async function sealTaskRun(
+export async function sealTaskRun(
   db: Db,
   payload: unknown,
   result: TaskTextResult,
   output: unknown,
+  taskKind = QUESTION_ADMISSION_TASK_KIND,
 ): Promise<AdmissionSolveReceipt> {
   if (result.task_run_id == null) {
     throw new Error('question admission solve has no durable task run receipt');
@@ -180,7 +169,7 @@ async function sealTaskRun(
     .limit(1);
   if (
     receipt?.status !== 'success' ||
-    receipt.task_kind !== QUESTION_ADMISSION_TASK_KIND ||
+    receipt.task_kind !== taskKind ||
     receipt.input_hash !== taskInputHash(payload)
   ) {
     throw new Error(
@@ -199,7 +188,7 @@ async function sealTaskRun(
 
 // ---------- solve input 构造（公共材料才进题面；私有 solution/rubric 绝不发给 solver） ----------
 
-function solverUnits(
+export function solverUnits(
   definition: QuestionAdmissionDefinition,
   variant: number,
   opts: { exposePrinted: boolean },
@@ -259,9 +248,12 @@ function solverUnits(
     });
 }
 
-function solverParts(
+export function solverParts(
   definition: QuestionAdmissionDefinition,
 ): QuestionAdmissionSolveInputT['parts'] {
+  const figures = definition.structure.materials.filter(
+    (m) => isPublicSharedMaterial(m) && m.kind === 'figure',
+  );
   const materialById = new Map(
     definition.structure.materials.map((m) => [m.material_id, m] as const),
   );
@@ -273,9 +265,15 @@ function solverParts(
       .map((id) => materialById.get(id))
       .filter(
         (m): m is NonNullable<typeof m> =>
-          m != null && isPublicSharedMaterial(m) && m.content_md != null,
+          m != null && isPublicSharedMaterial(m) && (m.content_md != null || m.kind === 'figure'),
       )
-      .map((m) => ({ material_id: m.material_id, text_md: m.content_md ?? '' })),
+      .map((m) => ({
+        material_id: m.material_id,
+        text_md:
+          m.kind === 'figure'
+            ? `Figure image ${figures.findIndex((f) => f.material_id === m.material_id) + 1}: ${m.alt_text ?? m.caption ?? ''}`
+            : (m.content_md ?? ''),
+      })),
   }));
 }
 
@@ -532,7 +530,7 @@ export function keysAgree(
     };
     const na = [...new Set(a.accepted.map((t) => normalizeBlankText(t, norm)))].sort();
     const nb = [...new Set(b.accepted.map((t) => normalizeBlankText(t, norm)))].sort();
-    // 双方 accepted 的归一化并集一致 = 等价（各自多余变体必须是对方已接受的）。
+    // Partial overlap cannot prove that omitted aliases are wrong.
     const allA = na.every((t) => nb.includes(t));
     const allB = nb.every((t) => na.includes(t));
     if (allA && allB) return { agree: true, key: a };
@@ -581,7 +579,7 @@ export function keysAgree(
   };
 }
 
-function keyFromAnswer(
+export function keyFromAnswer(
   answer: NonNullable<QuestionAdmissionSolveUnitOutputT['answer']>,
 ): AdmissionKey | null {
   switch (answer.kind) {
@@ -677,9 +675,8 @@ function authorKeyAcceptsGrade(result: ScoringUnitResultT, points: number | null
 
 /**
  * 作者键是否接受模型的最终答案：走这道题自己的判分器，不另定相等。
- * 第 2 片：已声明槽位不只检查模型 accepted[0] —— 模型键与作者键
- * 的【全部】别名都必须被实际 grade 接受（作者键自身别名的编译完整性在
- * runDualSolve 的 seed 分支单独校验）。
+ * Every solver alias must pass the frozen grader, including shape-free text.
+ * The minted key remains the author's full key after independent agreement.
  */
 async function authorKeyAccepts(
   unit: AdmissionUnitSpec,
@@ -701,7 +698,7 @@ async function authorKeyAccepts(
     );
   }
   if (scoring.criterion.kind !== 'blank_key') return false;
-  if (shape != null && key.kind === 'blank_text') {
+  if (key.kind === 'blank_text') {
     for (const alias of key.accepted) {
       const graded = await gradeBlankExactUnit(
         scoring,
@@ -724,52 +721,35 @@ async function authorKeyAccepts(
   );
 }
 
-async function runSolvePass(
+async function validateSolvePass(
   db: Db,
-  runTask: BoundRunTaskTextFn,
-  subjectProfile: SubjectProfile | undefined,
+  result: TaskTextResult,
   payload: QuestionAdmissionSolveInputT,
   repairBudget: { remaining: number },
-  override?: { provider?: Provider; model?: string },
+  images?: readonly AdmissionImage[],
 ): Promise<{ output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt }> {
-  const result = await runTask(QUESTION_ADMISSION_TASK_KIND, payload, {
-    judgeRetryPolicy: 'none',
-    budgetOverride: { maxIterations: 1 },
-    ...(subjectProfile != null ? { subjectProfile } : {}),
-    ...(override != null ? { override } : {}),
-  });
+  const wire = admissionWireInput(payload, images);
   const raw = result.structured_output != null ? result.structured_output : result.text;
+  let output: QuestionAdmissionSolveOutputT;
   try {
     if (result.structured_output == null)
       throw new Error('missing structured solve output; no text fallback');
-    const output = parseQuestionAdmissionSolveModelOutput(raw, payload.units, repairBudget);
-    return { output, receipt: await sealTaskRun(db, payload, result, output) };
+    output = parseQuestionAdmissionSolveModelOutput(raw, payload.units, repairBudget);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     const taskRunId = result.task_run_id;
     const rawArgsDigest = await recordSubmitFailureEvidence(db, taskRunId, raw);
-    let receipt: AdmissionSolveReceipt | undefined;
-    if (taskRunId != null) {
-      try {
-        receipt = await sealTaskRun(db, payload, result, raw);
-      } catch {
-        receipt = undefined;
-      }
-    }
     const marked = `${
       taskRunId != null && !detail.includes(`task_run_id=${taskRunId}`)
         ? `${detail};task_run_id=${taskRunId}`
         : detail
     };raw_args_sha256=${rawArgsDigest}`;
-    throw new UnparsedSolveError(marked, receipt);
+    throw new AdmissionParseFailure(marked);
   }
+  return { output, receipt: await sealTaskRun(db, wire, result, output) };
 }
 
-/**
- * 双盲独立解题 + （可选）印出答案 crosscheck。
- * 任一求解失败/收据无法密封 ⇒ ok:false + 已付费收据（调用方按 pending/infra
- * 处理，证据不丢）。
- */
+/** Known exhausted attempts return repair; unknown paid outcomes escape to the durable batch fence. */
 export async function runDualSolve(
   db: Db,
   definition: QuestionAdmissionDefinition,
@@ -778,6 +758,7 @@ export async function runDualSolve(
     subjectProfile?: SubjectProfile;
     /** OPEN owner decision：异源与否由配置决定（默认同一配置模型、独立上下文）。 */
     solver2?: { provider?: Provider; model?: string } | null;
+    images?: readonly AdmissionImage[];
   },
 ): Promise<DualSolveOutcome> {
   const parts = solverParts(definition);
@@ -793,35 +774,52 @@ export async function runDualSolve(
   });
 
   const repairBudget = { remaining: 1 };
+  const attemptIds: string[] = [];
   const receipts: AdmissionSolveReceipt[] = [];
   let first: { output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt };
   try {
-    first = await runSolvePass(db, deps.runTask, deps.subjectProfile, payloadA, repairBudget);
+    const pass = await runAdmissionAttempts(
+      db,
+      () =>
+        deps.runTask(QUESTION_ADMISSION_TASK_KIND, admissionWireInput(payloadA, deps.images), {
+          judgeRetryPolicy: 'none',
+          budgetOverride: { maxIterations: 1 },
+          ...(deps.subjectProfile ? { subjectProfile: deps.subjectProfile } : {}),
+        }),
+      async (result) => validateSolvePass(db, result, payloadA, repairBudget, deps.images),
+    );
+    first = pass.value;
+    attemptIds.push(...pass.taskRunIds);
   } catch (error) {
-    const receipt = error instanceof UnparsedSolveError ? error.receipt : undefined;
+    if (!(error instanceof AdmissionAttemptExhausted)) throw error;
     return {
       ok: false,
       error: `solve_a failed: ${error instanceof Error ? error.message : String(error)}`,
-      receipts: receipt != null ? [...receipts, receipt] : receipts,
+      receipts,
     };
   }
   receipts.push(first.receipt);
   let second: { output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt };
   try {
-    second = await runSolvePass(
+    const pass = await runAdmissionAttempts(
       db,
-      deps.runTask,
-      deps.subjectProfile,
-      payloadB,
-      repairBudget,
-      deps.solver2 ?? undefined,
+      () =>
+        deps.runTask(QUESTION_ADMISSION_TASK_KIND, admissionWireInput(payloadB, deps.images), {
+          judgeRetryPolicy: 'none',
+          budgetOverride: { maxIterations: 1 },
+          ...(deps.subjectProfile ? { subjectProfile: deps.subjectProfile } : {}),
+          ...(deps.solver2 ? { override: deps.solver2 } : {}),
+        }),
+      async (result) => validateSolvePass(db, result, payloadB, repairBudget, deps.images),
     );
+    second = pass.value;
+    attemptIds.push(...pass.taskRunIds);
   } catch (error) {
-    const receipt = error instanceof UnparsedSolveError ? error.receipt : undefined;
+    if (!(error instanceof AdmissionAttemptExhausted)) throw error;
     return {
       ok: false,
       error: `solve_b failed: ${error instanceof Error ? error.message : String(error)}`,
-      receipts: receipt != null ? [...receipts, receipt] : receipts,
+      receipts,
     };
   }
   receipts.push(second.receipt);
@@ -844,7 +842,7 @@ export async function runDualSolve(
         status: 'not_applicable',
         detail:
           unit.unit_kind === 'free'
-            ? 'free units carry no deterministic key (admitted model executor lane is out of scope)'
+            ? 'free units require semantic adjudication and a system-admitted model grader'
             : `slot kinds cannot be upgraded to a deterministic unit`,
       });
       continue;
@@ -930,7 +928,13 @@ export async function runDualSolve(
         });
         continue;
       }
-      verdicts.set(unit.scoring_unit_id, { status: 'agreed', key: authorKey });
+      const agreement = keysAgree(keyA, keyB, unit.blank_normalization, declaredShape);
+      verdicts.set(
+        unit.scoring_unit_id,
+        agreement.agree && agreement.key != null
+          ? { status: 'agreed', key: authorKey }
+          : { status: 'conflict', detail: agreement.detail ?? 'independent solves disagree' },
+      );
     } else {
       const agree = keysAgree(keyA, keyB, unit.blank_normalization, declaredShape);
       if (!agree.agree || agree.key == null) {
@@ -955,18 +959,13 @@ export async function runDualSolve(
     ok: true,
     result: {
       verdicts,
+      attempt_run_ids: attemptIds,
+      outputs: [first.output, second.output],
       solve_a: first.receipt,
       solve_b: second.receipt,
       probe_candidates: probeCandidates,
     },
   };
-}
-
-// ---------- 印出答案 crosscheck（evidence only，不铸键） ----------
-
-export interface SourceCrosscheckResult {
-  receipt: AdmissionSolveReceipt;
-  per_unit: Map<string, { status: 'consistent' | 'conflict' | 'unknown'; reason_md?: string }>;
 }
 
 function describeKey(
@@ -995,66 +994,7 @@ function describeKey(
   }
 }
 
-/** 印出答案原文仅作 crosscheck —— conflict/unknown 阻断准入（绝不解析铸键）。 */
-export async function runSourceCrosscheck(
-  db: Db,
-  definition: QuestionAdmissionDefinition,
-  keys: Map<string, AdmissionKey>,
-  deps: { runTask: BoundRunTaskTextFn; subjectProfile?: SubjectProfile },
-): Promise<SourceCrosscheckResult | null> {
-  if (definition.source_answers.length === 0 || keys.size === 0) return null;
-  const payload = QuestionAdmissionSourceCrosscheckInput.parse({
-    mode: 'source_crosscheck',
-    parts: solverParts(definition),
-    // crosscheck lane：印出文本经显式 source_answers 给，不再经 unit 字段重复。
-    units: solverUnits(definition, 0, { exposePrinted: false }),
-    source_answers: definition.source_answers.map((s) => ({
-      scoring_unit_id: s.unit_id ?? null,
-      reference_md: s.reference_md,
-      ...(s.locator != null ? { locator: s.locator } : {}),
-    })),
-    proposals: [...keys.entries()].map(([unitId, key]) => ({
-      scoring_unit_id: unitId,
-      answer_summary_md: describeKey(key, definition, unitId),
-    })),
-  });
-  const result = await deps.runTask(QUESTION_ADMISSION_TASK_KIND, payload, {
-    judgeRetryPolicy: 'none',
-    budgetOverride: { maxIterations: 1 },
-    ...(deps.subjectProfile != null ? { subjectProfile: deps.subjectProfile } : {}),
-  });
-  let output: QuestionAdmissionSourceCrosscheckOutputT;
-  try {
-    if (result.structured_output == null)
-      throw new Error('missing structured crosscheck output; no text fallback');
-    output = QuestionAdmissionSourceCrosscheckOutput.parse(result.structured_output);
-  } catch (error) {
-    const digest = await recordSubmitFailureEvidence(
-      db,
-      result.task_run_id,
-      result.structured_output,
-    );
-    throw new Error(
-      `${error instanceof Error ? error.message : String(error)};raw_args_sha256=${digest}`,
-    );
-  }
-  const receipt = await sealTaskRun(db, payload, result, output);
-  const per_unit = new Map(
-    output.per_unit.map(
-      (entry) =>
-        [
-          entry.scoring_unit_id,
-          {
-            status: entry.status,
-            ...(entry.reason_md != null ? { reason_md: entry.reason_md } : {}),
-          },
-        ] as const,
-    ),
-  );
-  return { receipt, per_unit };
-}
-
-/** The keys a published revision froze, for describing it without solving it again. */
+/** Frozen revision keys for a metadata-only prior backfill; never admits content. */
 export function settledKeysFromDefinition(
   definition: QuestionAdmissionDefinition,
 ): Map<string, AdmissionKey> {
@@ -1089,6 +1029,8 @@ export async function runSolutionPriorPass(
     runTask: BoundRunTaskTextFn;
     subjectProfile?: SubjectProfile;
     knowledgeCandidates?: readonly KnowledgeCandidate[];
+    freeRubrics?: ReadonlyMap<string, string>;
+    images?: readonly AdmissionImage[];
   },
 ): Promise<SolutionPriorPassResult> {
   const parts = solverParts(definition);
@@ -1099,19 +1041,26 @@ export async function runSolutionPriorPass(
       mode: 'prior',
       parts,
       units: solverUnits(definition, 0, { exposePrinted: false }),
-      answers: [...keys.entries()].map(([unitId, key]) => ({
-        scoring_unit_id: unitId,
-        answer_summary_md: describeKey(key, definition, unitId),
-      })),
+      answers: [
+        ...[...keys.entries()].map(([unitId, key]) => ({
+          scoring_unit_id: unitId,
+          answer_summary_md: describeKey(key, definition, unitId),
+        })),
+        ...[...(deps.freeRubrics ?? [])].map(([unitId, rubric]) => ({
+          scoring_unit_id: unitId,
+          answer_summary_md: rubric,
+        })),
+      ],
       knowledge_candidates: candidates,
     });
-    const result = await deps.runTask(QUESTION_ADMISSION_TASK_KIND, payload, {
+    const wire = admissionWireInput(payload, deps.images);
+    const result = await deps.runTask(QUESTION_ADMISSION_TASK_KIND, wire, {
       judgeRetryPolicy: 'none',
       budgetOverride: { maxIterations: 1 },
       ...(deps.subjectProfile != null ? { subjectProfile: deps.subjectProfile } : {}),
     });
     taskRunId = result.task_run_id ?? null;
-    const receipt = await sealTaskRun(db, payload, result, result.structured_output);
+    const receipt = await sealTaskRun(db, wire, result, result.structured_output);
     const raw = (result.structured_output as { prior?: unknown } | null | undefined)?.prior;
     const record = buildSolutionPriorRecord({
       raw,
