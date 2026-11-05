@@ -31,10 +31,6 @@ import {
   runSourceGroundingVerify,
   sourceGroundingLaneFingerprint,
 } from '@/capabilities/practice/grading/public';
-import {
-  type PaidEffectIdentity,
-  computePaidEffectIdentity,
-} from '@/core/migration/paid-effect-protocol';
 import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import {
   LEGACY_DRAFT_STATUS,
@@ -45,12 +41,9 @@ import {
 } from '@/core/schema/assessment/lifecycle';
 import { defaultPresentation } from '@/core/schema/assessment/presentation';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
-import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db, Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
-  admitPaidEffectIntent,
-  claimPaidEffectSend,
   markPaidEffectUnknown,
   recordPaidEffectApplication,
   recordPaidEffectResult,
@@ -58,7 +51,6 @@ import {
 import {
   event,
   knowledge,
-  paid_effect,
   question,
   question_admission_verification,
   question_group_lifecycle,
@@ -102,6 +94,12 @@ import {
 } from '../server/quiz/verify-framework';
 import { checkDedup } from './source_verify_dedup';
 import { publishVerifyLifecycleUpdate } from './source_verify_lifecycle';
+import {
+  type SourceVerifyRecheckClaim,
+  claimSourceVerifyRecheck,
+  suspendSourceVerifyContract,
+  writeSourceVerifyErrorEvent,
+} from './source_verify_nonverdict';
 import {
   type CheckOutcome,
   checkSourceConsistency,
@@ -525,80 +523,16 @@ export async function runSourceVerify(
   // commit — the claim can: 'sending'/'unknown' is never re-paid, the job ends
   // honestly (hold stays, pending_action clears), and 'receipt_ready'/'applied'
   // means the run already completed.
-  let recheckClaim: { identity: PaidEffectIdentity; fence: number; deliveryId: string } | null =
-    null;
+  let recheckClaim: SourceVerifyRecheckClaim | null = null;
   let recheckSettled = false;
   if (params.recheckCommandEventId != null) {
     const commandEventId = params.recheckCommandEventId;
     const deliveryId = params.recheckDeliveryId ?? `manual:${commandEventId}`;
-    const claimOutcome = await db.transaction(async (tx) => {
-      const priorRows = await tx
-        .select({
-          state: paid_effect.state,
-          input_json: paid_effect.input_json,
-          result_json: paid_effect.result_json,
-        })
-        .from(paid_effect)
-        .where(
-          and(
-            eq(paid_effect.family, 'source_verify'),
-            eq(paid_effect.entity_id, questionId),
-            eq(paid_effect.entity_revision, commandEventId),
-            eq(paid_effect.unit, 'source_verify@1'),
-          ),
-        );
-      const pending = priorRows.find((row) => row.state === 'pending');
-      if (priorRows.some((row) => ['sending', 'unknown', 'receipt_ready'].includes(row.state))) {
-        return { kind: 'held' as const, state: 'sending' };
-      }
-      if (
-        priorRows.some(
-          (row) =>
-            row.state === 'applied' &&
-            (row.result_json == null ||
-              typeof row.result_json !== 'object' ||
-              (row.result_json as Record<string, unknown>).status !== 'not_sent'),
-        )
-      ) {
-        return { kind: 'held' as const, state: 'applied' };
-      }
-      const attempt =
-        pending != null
-          ? (((pending.input_json as Record<string, unknown> | null)?.attempt as
-              | number
-              | undefined) ?? 1)
-          : Math.max(
-              0,
-              ...priorRows.map((row) => {
-                const value = (row.input_json as Record<string, unknown> | null)?.attempt;
-                return typeof value === 'number' && Number.isInteger(value) ? value : 1;
-              }),
-            ) + 1;
-      const recheckEffect = {
-        family: 'source_verify' as const,
-        entityId: questionId,
-        entityRevision: commandEventId,
-        unit: 'source_verify@1' as const,
-        input: pending?.input_json ?? {
-          question_id: questionId,
-          command_event_id: commandEventId,
-          attempt,
-        },
-      };
-      const admitted = await admitPaidEffectIntent(tx, recheckEffect);
-      if (admitted.kind === 'existing' && admitted.state !== 'pending') {
-        return { kind: 'held' as const, state: admitted.state };
-      }
-      const identity = computePaidEffectIdentity(recheckEffect);
-      const send = await claimPaidEffectSend(tx, identity, {
-        backend: 'pg-boss',
-        deliveryId,
-        leaseExpiresAt: new Date(Date.now() + 60 * 60_000),
-      });
-      if (send.kind !== 'claimed') {
-        return { kind: 'held' as const, state: send.kind === 'refused' ? send.state : 'pending' };
-      }
-      return { kind: 'claimed' as const, identity, fence: send.fence };
+    const claimOutcome = await claimSourceVerifyRecheck({
+      db,
+      questionId,
+      commandEventId,
+      deliveryId,
     });
     if (claimOutcome.kind !== 'claimed') {
       // 'sending'/'unknown' — a prior delivery reached the paid call and its
@@ -645,51 +579,21 @@ export async function runSourceVerify(
   let sourceGroundingConfigErrorCandidate = false;
   let sourceGroundingConfigError = false;
   let nonVerdictErrorEventWritten = false;
-  const writeSourceVerifyErrorEvent = async (
+  const writeErrorEvent = async (
     target: Db | Tx,
     error: unknown,
     configError: boolean,
     laneFingerprint?: string,
   ): Promise<void> => {
-    await writeEvent(target, {
-      id: createId(),
-      session_id: null,
-      actor_kind: 'agent',
-      actor_ref: 'source_verify',
-      action: 'experimental:source_verify',
-      subject_kind: 'question',
-      subject_id: questionId,
-      outcome: 'error',
-      payload: {
-        question_id: questionId,
-        ...(params.recheckCommandEventId != null
-          ? { recheck_command_event_id: params.recheckCommandEventId }
-          : {}),
-        // unified verify contract shape via the system_error
-        // projection: { axes:[], overall:'error', failure_class:'system_error',
-        // summary_md, confidence:0 }. failure_class is byte-identical to the prior
-        // inline; overall/axes/summary_md/confidence are additive.
-        ...toUnifiedVerifyResult({
-          source: 'system_error',
-          summary_md: `source_verify failed: ${String((error as Error).message ?? error)}`,
-          error: String((error as Error).message ?? error),
-        }),
-        ...(configError
-          ? {
-              config_error: true,
-              lane_fingerprint: laneFingerprint ?? sourceGroundingLaneFingerprint(),
-            }
-          : {}),
-        error: String((error as Error).message ?? error),
-        ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
-        ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
-      },
-      caused_by_event_id: null,
-      // solve_check owns its own AI run inside runSolveCheck; this handler holds no
-      // single TaskTextResult, so the transient-error event carries no run id/cost.
-      task_run_id: null,
-      cost_micro_usd: null,
-      created_at: new Date(),
+    await writeSourceVerifyErrorEvent({
+      target,
+      questionId,
+      recheckCommandEventId: params.recheckCommandEventId,
+      error,
+      configError,
+      laneFingerprint,
+      difficultyEvidence,
+      supplyTrace,
     });
   };
   const settleRecheckNotSent = async (tx: Tx, message: string): Promise<boolean> => {
@@ -717,64 +621,6 @@ export async function runSourceVerify(
     let unresolvedAnchoredExactMismatch = false;
     let imageInputUnavailable = false;
 
-    const suspendVerifyContract = async (
-      suspendTx: Tx,
-      outcome: Extract<SourceGroundingVerifyResult, { status: 'transient_error' | 'config_error' }>,
-    ): Promise<boolean> => {
-      const groupRootId = row.parent_question_id ?? questionId;
-      await suspendTx
-        .select({ id: question.id })
-        .from(question)
-        .where(eq(question.id, groupRootId))
-        .for('update')
-        .limit(1);
-      const [post] = await suspendTx
-        .select({
-          version: question.version,
-          promotedElsewhere: sql<boolean>`EXISTS (
-            SELECT 1 FROM ${event}
-            WHERE ${event.action} = 'experimental:source_verify'
-              AND ${event.subject_kind} = 'question'
-              AND ${event.subject_id} = ${questionId}
-              AND ${event.outcome} = 'success'
-          )`,
-        })
-        .from(question)
-        .where(eq(question.id, questionId))
-        .for('update')
-        .limit(1);
-      const maySuspendContract =
-        post != null && post.version === row.version && !post.promotedElsewhere;
-      if (!maySuspendContract) return false;
-      await suspendTx
-        .update(question)
-        .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: new Date() })
-        .where(eq(question.id, questionId));
-      await publishVerifyLifecycleUpdate(suspendTx, {
-        rootId: groupRootId,
-        expectedRevision: verifiedIdentity.revisionId,
-        expectedGeneration: verifiedIdentity.admissionGeneration,
-        admission: {
-          state: SCORING_ADMISSION_STATE.WITHHELD,
-          reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
-        },
-        suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
-        verification: {
-          policy_id: 'source_verify@1',
-          outcome: 'suspended',
-          evidence: {
-            check: 'source_grounding',
-            transient: outcome.status === 'transient_error',
-            ...(outcome.status === 'config_error' ? { config_error: true } : {}),
-            message: outcome.message,
-          },
-        },
-        actorRef: 'source_verify:suspend',
-        now: new Date(),
-      });
-      return true;
-    };
-
     const holdForNonVerdictOutcome = async (
       outcome: Extract<SourceGroundingVerifyResult, { status: 'transient_error' | 'config_error' }>,
     ): Promise<void> => {
@@ -782,8 +628,15 @@ export async function runSourceVerify(
       const laneFingerprint =
         outcome.status === 'config_error' ? sourceGroundingLaneFingerprint() : undefined;
       const settled = await db.transaction(async (suspendTx) => {
-        await suspendVerifyContract(suspendTx, outcome);
-        await writeSourceVerifyErrorEvent(
+        await suspendSourceVerifyContract({
+          tx: suspendTx,
+          questionId,
+          groupRootId: row.parent_question_id ?? questionId,
+          rowVersion: row.version,
+          verifiedIdentity,
+          outcome,
+        });
+        await writeErrorEvent(
           suspendTx,
           outcome.message,
           outcome.status === 'config_error',
@@ -1504,7 +1357,7 @@ export async function runSourceVerify(
       if (!nonVerdictErrorEventWritten) {
         // Only the grounding lane may arm source_verify recovery. A solve_check
         // TaskConfigError stays an ordinary error event and a pg-boss retry.
-        await writeSourceVerifyErrorEvent(db, err, false);
+        await writeErrorEvent(db, err, false);
       }
     } catch (cleanupErr) {
       console.error('[source_verify] catch-block cleanup failed for', questionId, cleanupErr);

@@ -13,6 +13,7 @@
 // - config_error    : lane resolution/auth cannot execute — same non-verdict
 // hold, with an error marker the verify outbox can recover after repair.
 
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { isProviderAuthConfigError } from '@/ai/agent-run-error';
 import { tasks } from '@/capabilities/task-registry';
@@ -25,10 +26,6 @@ import {
 import type { Db } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { executablePiModel } from '@/server/ai/pi-provider-catalog';
-import {
-  credentialFingerprint,
-  providerCredentialFingerprint,
-} from '@/server/ai/provider-models-check';
 import {
   TaskConfigError,
   providerAuthFileEnvName,
@@ -75,6 +72,21 @@ export interface RunSourceGroundingVerifyParams {
   imageFetchFn?: SourceGroundingImageFetchFn;
 }
 
+function secretFingerprint(secret: string): string {
+  return createHash('sha256').update(secret).digest('hex').slice(0, 16);
+}
+
+function envCredentialFingerprint(
+  provider: Exclude<ReturnType<typeof readProviderId>, undefined>,
+  env: Record<string, string | undefined>,
+): string | null {
+  const envName = providerCredentialEnvName(provider);
+  const authFileEnvName = providerAuthFileEnvName(provider);
+  if (envName === undefined || envName === authFileEnvName) return null;
+  const secret = env[envName]?.trim();
+  return secret && secret.length > 0 ? secretFingerprint(secret) : null;
+}
+
 /**
  * Run the runner's own lane resolution + adapter startup for this task without
  * submitting a prompt. source_verify calls this before solve_check so a broken
@@ -85,7 +97,7 @@ export async function assertSourceGroundingLaneConfigured(input: {
   subjectProfile: SubjectProfile;
 }): Promise<void> {
   try {
-    const { preflightTaskExecution } = await import('@/server/ai/runner');
+    const { preflightTaskExecution } = await import('@/server/ai/runner-preflight');
     await preflightTaskExecution(
       'SourceGroundingVerifyTask',
       { text: '{}', images: [] },
@@ -173,11 +185,11 @@ export function sourceGroundingLaneFingerprint(
       ? {
           env_name: authFileEnv,
           configured: authFilePath !== undefined,
-          path_fingerprint: authFilePath !== undefined ? credentialFingerprint(authFilePath) : null,
+          path_fingerprint: authFilePath !== undefined ? secretFingerprint(authFilePath) : null,
           content_fingerprint: (() => {
             if (authFilePath === undefined || !existsSync(authFilePath)) return null;
             try {
-              return credentialFingerprint(readFileSync(authFilePath, 'utf8'));
+              return secretFingerprint(readFileSync(authFilePath, 'utf8'));
             } catch {
               return null;
             }
@@ -189,7 +201,7 @@ export function sourceGroundingLaneFingerprint(
       configured_as: configuredAs,
       provider: provider ?? null,
       credential_env_name: provider ? (providerCredentialEnvName(provider) ?? null) : null,
-      credential_fingerprint: provider ? providerCredentialFingerprint(provider, env) : null,
+      credential_fingerprint: provider ? envCredentialFingerprint(provider, env) : null,
       auth_file: authFile,
       custom_provider: definition
         ? {
