@@ -761,12 +761,22 @@ export async function runSourceVerify(
           expectedGeneration: verifiedIdentity.admissionGeneration,
           admission: {
             state: SCORING_ADMISSION_STATE.WITHHELD,
-            reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
+            reason:
+              outcome.status === 'config_error'
+                ? SCORING_ADMISSION_WITHHELD_REASON.VERIFICATION_FAILED
+                : SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
           },
           suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
           verification: {
             policy_id: 'source_verify@1',
-            outcome: 'suspended',
+            // 'failed' (not 'suspended') for a config error: it is a terminal check
+            // verdict, and the serving read model then reports the hold as
+            // source_check_failed — the state the existing recheck_source command
+            // admits. Once the lane is repaired the normal operator recheck reruns
+            // real grounding; grounding itself is never bypassed. The system's own
+            // auto-recheck is bounded by its one-shot per-(group,digest,command)
+            // ledger, so a still-broken lane cannot loop.
+            outcome: outcome.status === 'config_error' ? 'failed' : 'suspended',
             evidence: {
               check: 'source_grounding',
               transient: outcome.status === 'transient_error',
@@ -800,6 +810,12 @@ export async function runSourceVerify(
         // terminal failure event commit in ONE transaction: if it fails (deadlock,
         // lock conflict, publication race) this throws and the delivery stays
         // retriable with no terminal event written.
+        // Recovery: the hold records verification outcome='failed' (not merely
+        // 'suspended'), so the serving projection reports source_check_failed and the
+        // operator's recheck_source command admits it — after a lane repair that
+        // command reruns the real grounding verification, passing or failing on the
+        // merits. The system's own auto-recheck spends its single per-(group,digest)
+        // attempt and stops, so a still-broken lane never loops.
         // A stale delivery — newer row version or a terminal success already under
         // the locks — writes NOTHING: no failure may land over a newer admission.
         // The intent stays non-terminal then, so the orphan sweep can still
