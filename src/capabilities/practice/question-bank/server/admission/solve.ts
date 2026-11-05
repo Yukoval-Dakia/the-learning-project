@@ -96,7 +96,7 @@ export interface DualSolveResult {
   outputs: [QuestionAdmissionSolveOutputT, QuestionAdmissionSolveOutputT];
   solve_a: AdmissionSolveReceipt;
   solve_b: AdmissionSolveReceipt;
-  /** probe candidates emitted by solve A（等价形态 + 典型错答）。 */
+  /** Blind wrong-answer candidates and explicitly adjudicated correct/incorrect forms. */
   probe_candidates: Map<
     string,
     {

@@ -493,6 +493,21 @@ export async function runQuestionAdmission(
       } else {
         const key = keyFromAnswer(verdict.decided_key);
         if (key == null) throw new Error('Adjudication emitted no grading key');
+        const reviewed = adjudication.form_reviews.find(
+          (review) => review.scoring_unit_id === unit.scoring_unit_id,
+        );
+        // Only the adjudicator can validate an input alias; blind overlap is not proof.
+        if (reviewed) {
+          if (key.kind === 'blank_text')
+            key.accepted = [...new Set([...key.accepted, ...reviewed.correct])];
+          const candidates = solve.probe_candidates.get(unit.scoring_unit_id) ?? {
+            equivalent_forms: [],
+            typical_wrong: [],
+          };
+          candidates.equivalent_forms.push(...reviewed.correct.map((text) => ({ text })));
+          candidates.typical_wrong.push(...reviewed.incorrect);
+          solve.probe_candidates.set(unit.scoring_unit_id, candidates);
+        }
         solve.verdicts.set(unit.scoring_unit_id, { status: 'agreed', key });
         mark(unit, { status: 'pending', reason: undefined });
       }
