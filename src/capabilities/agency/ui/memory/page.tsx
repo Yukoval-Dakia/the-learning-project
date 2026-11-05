@@ -293,6 +293,16 @@ function ChangeRow({ change, version }: { change: MemoryChange; version: number 
   const { undo } = useMemoryActions();
   const [note, setNote] = useState<Outcome | null>(null);
   const diffs = diffTopics(change.before, change.after);
+  if (change.removed) {
+    return (
+      <li className="mm-change">
+        <div className="mm-change-head">
+          <span className="mm-change-when">{whenText(change.at)}</span>
+          <span className="mm-diff-state">已移除</span>
+        </div>
+      </li>
+    );
+  }
   return (
     <li className="mm-change">
       <div className="mm-change-head">
@@ -340,7 +350,7 @@ export default function MemoryPage() {
   const [allChanges, setAllChanges] = useState(false);
   // Housekeeping rows change nothing a learner can read, and have nothing to undo.
   const changes = (board?.changes ?? []).filter(
-    (change) => diffTopics(change.before, change.after).length > 0,
+    (change) => change.removed || diffTopics(change.before, change.after).length > 0,
   );
   const shownChanges = allChanges ? changes : changes.slice(0, CHANGES_SHOWN);
   return (

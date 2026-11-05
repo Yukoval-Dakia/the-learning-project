@@ -22,6 +22,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { allowedEventIds } from '@/kernel/events/derivation-policy';
 import {
   nativeAttemptOutcome,
   resolveVerdictsForAttempts,
@@ -244,7 +245,14 @@ export async function runSessionSummary(
     primary_cause: topCauses[0]?.category_label?.trim() || null,
   });
 
+  // Model-facing text only: restricted answers still count in numeric_facts
+  // (the learner's own session stats), but their response_md never leaves.
+  const derivableIds = await allowedEventIds(
+    db,
+    answerEvents.map((r) => r.id),
+  );
   const notable = answerEvents
+    .filter((r) => derivableIds.has(r.id))
     .filter((r) => {
       if (r.action === NATIVE_ATTEMPT_ACTION) {
         const outcome = outcomeFor(r);

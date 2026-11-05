@@ -23,9 +23,19 @@ export async function GET() {
           after: { topics: unknown[] };
           undo_of?: string | null;
         };
+        if (c.restricted)
+          return {
+            id: c.id,
+            at: c.at.toISOString(),
+            removed: true,
+            before: [],
+            after: [],
+            undo_of: null,
+          };
         return {
           id: c.id,
           at: c.at.toISOString(),
+          removed: false,
           before: p.before.topics,
           after: p.after.topics,
           undo_of: p.undo_of ?? null,

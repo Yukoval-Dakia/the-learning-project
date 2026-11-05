@@ -680,7 +680,9 @@ export async function topicBoard(db: Db, now = new Date()) {
       ),
     ];
     const allowed = await allowedEventIds(db, refs);
-    if (refs.every((id) => allowed.has(id))) visibleChanges.push(change);
+    // The ledger row stays readable; only its before/after content is withheld
+    // once the evidence it cites is restricted. The caller renders "已移除".
+    visibleChanges.push({ ...change, restricted: refs.some((id) => !allowed.has(id)) });
   }
   const ids = [...new Set(digest.topics.flatMap((t) => t.facts.flatMap((f) => f.evidence_ids)))];
   const evidence = ids.length
