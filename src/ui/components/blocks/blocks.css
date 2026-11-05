@@ -114,11 +114,6 @@
     white-space: nowrap;
   }
 
-  & .un-blk-draft-meta {
-    color: var(--un-text-4);
-    font-size: var(--un-fs-1);
-    font-variant-numeric: tabular-nums;
-  }
 
   /* Could not be shown: what it was, a plain note, the source as text. */
   & .un-blk-canvas-failed {
