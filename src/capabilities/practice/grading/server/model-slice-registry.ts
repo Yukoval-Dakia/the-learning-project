@@ -15,19 +15,20 @@ import type { Db, Tx } from '@/db/client';
 import { model_admission_slice } from '@/db/schema';
 import { admittedSliceFromRow } from '@/kernel/read-models/model-admission';
 import { JEV_CANONICAL_MODEL } from '@/server/ai/pricing';
-import { resolveConfiguredTaskModel } from '@/server/ai/providers';
+import { resolveConfiguredTaskModel, resolveTaskBinding } from '@/server/ai/providers';
 
 type SliceRow = typeof model_admission_slice.$inferSelect;
 
 /**
  * Contract-version pin per task kind. The model id is whatever
- * resolveConfiguredTaskModel will run. This table does not hard-code it.
+ * resolveTaskBinding will run. This table does not hard-code it.
  */
 const CURRENT_MODEL_VERSION_PINS: Readonly<Record<string, string>> = {
   // Typed lane: the canonical response model is the version. Wire drift breaks the contract.
   JevScoringDecisionTask: JEV_CANONICAL_MODEL,
   // Chat lane: the rubric prompt and output contract revision.
   AssessmentRubricJudgeTask: ASSESSMENT_RUBRIC_PROMPT_REVISION,
+  AssessmentRuleJudgeTask: 'assessment-rule-v1',
 };
 
 /** True when this kind carries a registered pin — the live gate checks these kinds only. */
@@ -44,10 +45,18 @@ function resolveLiveModelPin(
   kind: string,
 ): { pin: { model: string; model_version: string } } | { resolutionError: string } | undefined {
   const version = CURRENT_MODEL_VERSION_PINS[kind];
-  if (version === undefined || tasks[kind as TaskKind] === undefined) return undefined;
+  const definition = tasks[kind as TaskKind];
+  if (version === undefined || definition === undefined) return undefined;
   try {
+    const binding = resolveTaskBinding(kind as TaskKind);
+    // Provider routes have no verified revision parity; a route change requires a new run.
     return {
-      pin: { model: resolveConfiguredTaskModel(kind as TaskKind), model_version: version },
+      pin: {
+        // resolveConfiguredTaskModel asserts the resolved pair is executable —
+        // a stored-but-unservable pair fails THIS kind readably, not silently.
+        model: resolveConfiguredTaskModel(kind as TaskKind),
+        model_version: `${version}:${binding.provider}:${canonicalHash(definition.prompt)}`,
+      },
     };
   } catch (error) {
     return { resolutionError: error instanceof Error ? error.message : String(error) };
@@ -93,7 +102,6 @@ export async function gradingSliceMatchesLivePin(
   }
   const pin = resolved.pin;
   const liveId = modelSliceIdFor({
-    subject: row.subject,
     response_class: row.response_class,
     task_kind: taskKind,
     model: pin.model,
@@ -140,19 +148,17 @@ export function currentModelPins(): ReadonlyMap<string, { model: string; model_v
 }
 
 /**
- * Identity is the hash of the five natural-key fields.
+ * Identity is the hash of the four natural-key fields.
  * Evidence, actor, and time stay out. Including them would make the stored id
  * differ from the job report, and a question citing that report would be withheld.
  */
 export function modelSliceIdFor(input: {
-  subject: string;
   response_class: ModelResponseClass;
   task_kind: string;
   model: string;
   model_version: string;
 }): string {
   const identity = {
-    subject: input.subject,
     response_class: input.response_class,
     task_kind: input.task_kind,
     model: input.model,
@@ -177,7 +183,6 @@ function isUniqueViolation(err: unknown): boolean {
 async function findSliceByIdentity(
   db: Db | Tx,
   input: {
-    subject: string;
     response_class: ModelResponseClass;
     task_kind: string;
     model: string;
@@ -192,7 +197,6 @@ async function findSliceByIdentity(
       or(
         eq(model_admission_slice.slice_id, sliceId),
         and(
-          eq(model_admission_slice.subject, input.subject),
           eq(model_admission_slice.response_class, input.response_class),
           eq(model_admission_slice.task_kind, input.task_kind),
           eq(model_admission_slice.model, input.model),
@@ -219,7 +223,6 @@ export class ModelSliceRegistrationError extends Error {
 }
 
 export interface RegisterModelAdmissionSliceInput {
-  readonly subject: string;
   readonly response_class: ModelResponseClass;
   readonly task_kind: string;
   readonly model: string;
@@ -306,7 +309,6 @@ export async function registerModelAdmissionSlice(
   try {
     await db.insert(model_admission_slice).values({
       slice_id: sliceId,
-      subject: input.subject,
       response_class: input.response_class,
       task_kind: input.task_kind,
       model: input.model,
@@ -327,7 +329,6 @@ export async function registerModelAdmissionSlice(
   }
   return admittedSliceFromRow({
     slice_id: sliceId,
-    subject: input.subject,
     response_class: input.response_class,
     task_kind: input.task_kind,
     model: input.model,

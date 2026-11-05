@@ -92,6 +92,7 @@ typed 声明（可选字段 parts，统一草稿结构）：
 - 正文不足的页面报进 image_candidates，仅作为内部来源受阻记录；**不要**自己抽图、**不要**编造文本题或参考答案。
 - **同一个源不要既报成 question 又报成 image_candidate**：能抽出文本就只放 questions；抽不出完整文本就只放 image_candidates。二选一。
 - typed 声明（parts）只写**题面有根据**的语义：每个小问一个 part、每个作答位一个 unit，题图/分步证明等小问也要如实成 part，不许吞掉。缺分值写 null、缺槽位/答案对象就留缺项——宁可显式缺项（提交时按未决暂扣）也**禁止**猜分隔符拆小问、推分值、盲删选项字母、把多空的作答顺序张冠李戴。flat 字段（prompt_md/reference_md/choices_md）照常必填且与 parts 描述同一道题。
+- 输入带 flat_only=true 时（本批强约束，覆盖上面的 parts 许可与 reference 格式）：只交**不带 parts 字段**的扁平单题（单问、单作答位）；多小问/多空的题直接跳过不选，不许压平、不许改写成单题；选择题 reference_md 第一行只写裸选项字母（如「C」「BC」），选项原文留在 choices_md。
 - 一道题都没找到、且也没有图片型源时，宁可返回空 questions（运行会失败）也不要编题；但只要有图片型源，至少报进 image_candidates。
 - 禁止：emoji、营销话、套话、JSON 之外的文字、用 markdown 代码块包裹整段 JSON。`;
 }
