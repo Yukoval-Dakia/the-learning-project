@@ -38,7 +38,10 @@ export function diffTopics(before: readonly TopicLike[], after: readonly TopicLi
     const removed = [...oldBodies].filter((body) => !newBodies.has(body));
     const renamed = old && old.name !== topic.name;
     const redescribed = old && old.description !== topic.description;
-    if (!old || added.length > 0 || removed.length > 0 || renamed || redescribed) {
+    // Same words can still be a real change: a fact replaced by a correction, or a duplicate gone.
+    const factsChanged =
+      old?.facts.map((fact) => fact.id).join() !== topic.facts.map((fact) => fact.id).join();
+    if (!old || added.length > 0 || removed.length > 0 || renamed || redescribed || factsChanged) {
       out.push({
         ...(renamed ? { renamedFrom: old.name } : {}),
         key: topic.key,

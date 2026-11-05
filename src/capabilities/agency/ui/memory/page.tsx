@@ -84,6 +84,9 @@ function DiffLines({ diffs }: { diffs: readonly TopicDiff[] }) {
               <span className="mm-diff-state">原来叫「{diff.renamedFrom}」</span>
             ) : null}
           </p>
+          {diff.added.length === 0 && diff.removed.length === 0 && !diff.renamedFrom ? (
+            <p className="mm-diff-line">文字没变，记录更新了。</p>
+          ) : null}
           {diff.added.map((body) => (
             <p key={`+${body}`} className="mm-diff-line" data-kind="added">
               {body}
