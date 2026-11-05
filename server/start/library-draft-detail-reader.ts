@@ -8,7 +8,9 @@ import type { FrontdoorContext } from './context';
 export const readStartLibraryDraftDetail: FrontdoorContext['readLibraryDraftDetail'] = (id) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
-      const { readDraftReviewDetail } = await import('@/capabilities/practice/public');
+      const { readDraftReviewDetail } = await import(
+        '@/capabilities/practice/question-bank/public'
+      );
       const { db } = await import('@/db/client');
       return await readDraftReviewDetail(db, id);
     } catch (error) {

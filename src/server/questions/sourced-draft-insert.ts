@@ -4,11 +4,7 @@
 // target KCs merge into the winner, or a terminal-rejected draft is released and retried.
 
 import { sql } from 'drizzle-orm';
-import {
-  type SupplyTraceV1T,
-  mergeExactQuestionDuplicateKnowledgeIds,
-  withSupplyTraceDifficultyEvidence,
-} from '@/capabilities/practice/public';
+import { mergeExactQuestionDuplicateKnowledgeIds } from '@/capabilities/practice/public';
 import {
   DifficultyEvidence,
   type DifficultyEvidenceT,
@@ -21,6 +17,7 @@ import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
+import { type SupplyTraceV1T, withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
 import { sanitizeSourcedMarkup } from '@/server/questions/sourced-markup';
 
 // Single-sourced from the schema so both producers type created_by identically.

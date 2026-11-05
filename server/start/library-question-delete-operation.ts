@@ -11,7 +11,9 @@ export const archiveStartLibraryQuestion: FrontdoorContext['archiveLibraryQuesti
 }) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
-      const { archivePracticeQuestion } = await import('@/capabilities/practice/public');
+      const { archivePracticeQuestion } = await import(
+        '@/capabilities/practice/question-bank/public'
+      );
       const { db } = await import('@/db/client');
       return await archivePracticeQuestion(db, { id }, () => new URLSearchParams(query));
     } catch (error) {

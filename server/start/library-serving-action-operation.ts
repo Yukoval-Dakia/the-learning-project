@@ -35,7 +35,9 @@ export const runStartLibraryServingAction: FrontdoorContext['runLibraryServingAc
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
       const params = servingActionParams(path);
-      const { runPracticeServingAction } = await import('@/capabilities/practice/public');
+      const { runPracticeServingAction } = await import(
+        '@/capabilities/practice/question-bank/public'
+      );
       const { db } = await import('@/db/client');
       return await runPracticeServingAction(db, params, idempotencyKey);
     } catch (error) {

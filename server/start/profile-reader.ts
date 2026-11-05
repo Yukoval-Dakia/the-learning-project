@@ -8,7 +8,7 @@ export const readStartPlacementProfile: FrontdoorContext['readPlacementProfile']
 ) => {
   try {
     const { db } = await import('@/db/client');
-    const { readPlacementProfile } = await import('@/capabilities/practice/public');
+    const { readPlacementProfile } = await import('@/capabilities/practice/placement/public');
     return await readPlacementProfile(db, goalId);
   } catch (error) {
     // Convert domain errors before crossing from the host into the Start bundle.
