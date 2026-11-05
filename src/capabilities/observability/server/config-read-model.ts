@@ -39,6 +39,7 @@ import {
   ADMIN_CONFIG_OTHER_TASK_GROUP,
   ADMIN_CONFIG_TASK_GROUPS,
   adminConfigTaskGroupId,
+  adminConfigTaskLabel,
 } from './admin-config-task-groups';
 
 /** 读面值的 JSON 形状（ConfigValue 去 undefined；非有限数在装配层归 null）。 */
@@ -155,6 +156,7 @@ export interface AdminConfigKeyRow {
 export interface AdminConfigTaskRow {
   readonly kind: string;
   readonly description: string;
+  readonly label: string | null;
   readonly group_id: string;
   readonly effective_binding: AdminConfigTaskEffectiveBinding | null;
   readonly default_provider: string;
@@ -289,6 +291,7 @@ export function buildAdminConfigReadModel(
     return {
       kind,
       description: task.description,
+      label: adminConfigTaskLabel(kind),
       group_id: adminConfigTaskGroupId(kind),
       effective_binding: facts?.task_bindings?.[kind] ?? null,
       default_provider: task.default_provider,

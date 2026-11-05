@@ -11,6 +11,7 @@ import { and, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 import type { QuestionAuthorIntentSchema } from '@/ai/task-intents';
 import { aiAgentRef } from '@/ai/task-result';
+import { answerClassForKindLabel } from '@/core/schema/answer-class';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import {
   type QuestionAuthorDraftT,
@@ -32,6 +33,7 @@ import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { assertGeneratedQuestionHasJudgeContract } from '../../grading/public';
 import { parseQuestionAuthorOutput } from '../../tasks/question-author';
 import {
+  type PrepareQuestionGenerationInput,
   bindGeneratedQuestion,
   canonicalSourceContentHash,
   markQuestionGenerationFailed,
@@ -48,6 +50,8 @@ const DEFAULT_MATERIAL_QUESTION_KIND = 'short_answer';
 export interface QuestionAuthorSeed {
   seed_mode: 'knowledge' | 'material';
   knowledge_ids: string[];
+  /** Free-text type request: recognized kind labels constrain the author
+   *  verbatim; anything else reaches it as a descriptive hint only. */
   requested_kind?: string;
   difficulty?: number;
   /** REQUIRED for seed_mode='material' (the task has no fetch tool — critic #5). */
@@ -114,29 +118,39 @@ async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) 
   } catch {
     effectiveDomain = null;
   }
-  // ONE effective kind label, computed at plan-creation time and threaded to
-  // BOTH the generation prompt and (on the material path) the persisted plan, so
-  // the verifier compares like-for-like. kind is a
-  // free-form display label — a KNOWN/profile-vocab value folds to canonical;
-  // any other non-empty label passes through verbatim (it is the caller's
-  // declared face; the verifier compares answer classes, not label identity).
-  // The material path persists a plan whose requested_kind is veto-compared, so
-  // an omitted kind still defaults to the canonical material default.
-  // Knowledge seeds persist no plan, so an omitted kind stays an open prompt hint.
+  // requested_kind splits two ways at plan-creation time. A label the kind
+  // vocabulary recognizes (canonical or profile/skill, folded to canonical)
+  // stays a HARD constraint — it reaches the prompt as requested_kind and, on
+  // the material path, the persisted plan, so the verifier compares
+  // like-for-like. Any other non-empty label is the caller's free-text wording
+  // (「计算题」, a whole sentence): it reaches the author as requested_kind_hint
+  // only — an input to judgement, not a gate — and the author resolves a real
+  // structural kind plus a compatible judge route itself. Passing free text as
+  // requested_kind made the sub-model echo it verbatim as kind and pick an
+  // exact route, which the judge contract rejects (unknown kinds classify
+  // semantic), killing solvable drafts.
   const requestedLabel = seed.requested_kind?.trim() ?? '';
-  const normalizedRequestedKind = requestedLabel
-    ? (normalizeToCanonicalKind(requestedLabel) ?? requestedLabel)
-    : null;
+  const canonicalRequestedKind = requestedLabel ? normalizeToCanonicalKind(requestedLabel) : null;
+  const requestedKindHint =
+    canonicalRequestedKind === null && requestedLabel.length > 0 ? requestedLabel : null;
+  // The material path persists a plan whose requested_kind is veto-compared by
+  // implied answer class, so an omitted kind still defaults to the canonical
+  // material default. A free-text hint pins nothing: the prompt gets no
+  // requested_kind and the plan records the resolved kind instead (below) —
+  // persisting the raw label would veto valid exact/steps-class results.
   const effectiveKind =
     seed.seed_mode === 'material'
-      ? (normalizedRequestedKind ?? DEFAULT_MATERIAL_QUESTION_KIND)
-      : normalizedRequestedKind;
+      ? requestedKindHint
+        ? null
+        : (canonicalRequestedKind ?? DEFAULT_MATERIAL_QUESTION_KIND)
+      : canonicalRequestedKind;
 
   return {
     input: {
       seed_mode: seed.seed_mode,
       knowledge_context: nodes.map((node) => ({ id: node.id, name: node.name })),
       ...(effectiveKind ? { requested_kind: effectiveKind } : {}),
+      ...(requestedKindHint ? { requested_kind_hint: requestedKindHint } : {}),
       ...(seed.difficulty !== undefined ? { requested_difficulty: seed.difficulty } : {}),
       ...(seed.material_body_md
         ? {
@@ -151,6 +165,7 @@ async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) 
     validIds,
     validIdSet,
     effectiveKind,
+    requestedKindHint,
   };
 }
 
@@ -180,7 +195,7 @@ export async function runQuestionAuthor(
 
   const prepared = await buildQuestionAuthorPreparation(db, seed);
   if (!prepared) return { status: 'skipped:knowledge_not_found' };
-  const { input, ctx: runCtx, validIds, validIdSet, effectiveKind } = prepared;
+  const { input, ctx: runCtx, validIds, validIdSet, effectiveKind, requestedKindHint } = prepared;
 
   let preparedGrounding:
     | Awaited<ReturnType<typeof prepareQuestionGeneration<QuestionAuthorDraftT>>>
@@ -193,7 +208,10 @@ export async function runQuestionAuthor(
     const authoritativeBytes = new TextEncoder().encode(seed.material_body_md);
     const sourceHash = canonicalSourceContentHash(authoritativeBytes);
     let generationResult: Awaited<ReturnType<QuestionAuthorDeps['runTaskFn']>> | undefined;
-    preparedGrounding = await prepareQuestionGeneration(db, {
+    const planCore: Omit<
+      PrepareQuestionGenerationInput<QuestionAuthorDraftT>,
+      'requestedKind' | 'requestedAnswerClass' | 'constraints' | 'generate'
+    > = {
       source: {
         artifact_kind: 'inline_material',
         artifact_id: sourceHash,
@@ -208,18 +226,41 @@ export async function runQuestionAuthor(
       anchorProvenance: { kind: 'human_curated', task_run_id: deps.taskRunId },
       demand: { kind: 'knowledge', ref_id: validIds[0] },
       knowledgeIds: validIds,
-      // Same kind label used for the prompt : the verifier compares
-      // the generated label's implied answer class against this persisted value
-      // (— label identity is no longer vetoed).
-      requestedKind: effectiveKind ?? DEFAULT_MATERIAL_QUESTION_KIND,
-      requestedAnswerClass: 'exact',
-      constraints: { seed_mode: 'material' },
       planProvenance: { kind: 'human_planned', task_run_id: deps.taskRunId },
-      generate: async () => {
-        generationResult = await deps.runTaskFn('QuestionAuthorTask', input, runCtx);
-        return parseQuestionAuthorOutput(generationResult.text);
-      },
-    });
+    };
+    if (requestedKindHint !== null) {
+      // Free-text hint: nothing about the kind was formally constrained, so the
+      // plan's requested_kind — veto-compared by implied answer class — records
+      // the kind the request RESOLVED to, with the original wording kept in
+      // constraints. Persisting the raw label would veto valid
+      // exact/steps-class results; persisting the resolved kind also keeps the
+      // requested_answer_class record truthful. The author runs first only in
+      // this branch: a recognized constraint keeps plan-first order so a
+      // disobedient output is still caught by the veto.
+      generationResult = await deps.runTaskFn('QuestionAuthorTask', input, runCtx);
+      const generated = parseQuestionAuthorOutput(generationResult.text);
+      preparedGrounding = await prepareQuestionGeneration(db, {
+        ...planCore,
+        requestedKind: generated.kind,
+        requestedAnswerClass: answerClassForKindLabel(generated.kind),
+        constraints: { seed_mode: 'material', requested_kind_hint: requestedKindHint },
+        generate: async () => generated,
+      });
+    } else {
+      preparedGrounding = await prepareQuestionGeneration(db, {
+        ...planCore,
+        // Same kind label used for the prompt : the verifier compares
+        // the generated label's implied answer class against this persisted value
+        // (— label identity is no longer vetoed).
+        requestedKind: effectiveKind ?? DEFAULT_MATERIAL_QUESTION_KIND,
+        requestedAnswerClass: 'exact',
+        constraints: { seed_mode: 'material' },
+        generate: async () => {
+          generationResult = await deps.runTaskFn('QuestionAuthorTask', input, runCtx);
+          return parseQuestionAuthorOutput(generationResult.text);
+        },
+      });
+    }
     if (!generationResult) throw new Error('QuestionAuthorTask completed without a task result');
     draft = preparedGrounding.generated;
     result = generationResult;

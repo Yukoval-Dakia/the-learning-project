@@ -18,6 +18,7 @@ type SpanName =
   | 'llm.call'
   | 'tool.execute'
   | 'tool.attempt'
+  | 'loop.progress'
   | 'agent.child'
   | 'job.run'
   | 'assessment.execute'
@@ -26,6 +27,8 @@ type SpanName =
   | 'copilot.finalize';
 
 export interface TraceMetadata {
+  loop_id?: string;
+  end_reason?: string;
   task_kind?: string;
   task_run_id?: string;
   parent_task_run_id?: string;
@@ -57,6 +60,8 @@ export interface TraceMetadata {
 }
 
 const metadataKeys = [
+  'loop_id',
+  'end_reason',
   'task_kind',
   'task_run_id',
   'parent_task_run_id',
