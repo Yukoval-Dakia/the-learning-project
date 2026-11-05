@@ -186,7 +186,7 @@ main push 缺少 before 时，双父 merge 取第一父；单父提交只有在�
 `pnpm lint:ratchet` 对 `biome check .` 的 warning/info 总数只拦增长：每项不得高于比较基
 实测数，低于不失败，无基线文件可改。CI static lane 传入比较基（`LINT_BASE_SHA`），脚本取
 它与 HEAD 的分叉点，在该提交的临时 worktree 上用 head 的 Biome 实测一次，上限就是分叉点
-的真实计数；本地不传比较基时回退到与 `origin/main` 的分叉点，拿不到 base 才跳过上限检查。
+的真实计数；本地不传比较基时回退到与 `origin/main` 的分叉点，拿不到 base 即失败（fail-closed，不再静默跳过上限检查）。
 信息诊断单独计数；Biome 并发扫描的诊断顺序不稳定，计数前按 rule 排序。
 
 Before a PR, run:
