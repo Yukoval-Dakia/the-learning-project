@@ -3,20 +3,17 @@
  *
  * - owner 归属：已迁入 `practice/<owner>/` 的文件按目录；仍在根目录的文件按 OWNER_RULES
  *   映射到迁移目标，未命中的归练习面 face（根目录的最终形态）。
- * - 边集合只减不增：非测试、非组合文件发出的跨 owner import 记为 owner 对。出现基线之外的
- *   对即失败；基线里已消失的对只提示，不要求同 PR 删除——并行切片不必争改同一个基线文件，
- *   `--write-baseline` 只收紧（删除消失的对）。
- * - 第二道上限是不可变的比较基（`--base <sha>` / `CAPABILITY_BASE_SHA`，否则与 origin/main 的
- *   merge-base）：同一套映射在基提交的树上重算 owner 对，HEAD 出现基上没有的对即失败，
- *   手改基线也放不进新边。
+ * - 边集合只减不增：非测试、非组合文件发出的跨 owner import 记为 owner 对。上限是不可变的
+ *   比较基（`--base <sha>` / `CAPABILITY_BASE_SHA`，否则与 origin/main 的 merge-base）：
+ *   同一套映射在基提交的树上重算 owner 对，HEAD 出现基上没有的对即失败。存量对只按
+ *   base 实测 grandfather，无台账。
  * - 已建子 owner 目录只能经 `<owner>/public.ts` 被目录外引用；根 `manifest.ts` 另可引用
  *   `<owner>/manifest-part.ts`，根 `tasks/index.ts` 另可引用 `<owner>/tasks/*`（任务目录组合
  *   不得加载应用 public，见 `task-public.ts`）。
  */
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { posix, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { z } from 'zod';
 import { importedReferences, resolveImportTarget } from './audit-capability-boundaries';
 import {
   listTreeFiles,
@@ -26,7 +23,6 @@ import {
 } from './lib/git-base-scan';
 
 const PRACTICE = 'src/capabilities/practice/';
-const BASELINE_PATH = 'scripts/practice-subowner-baseline.json';
 const SOURCE_RE = /\.(?:ts|tsx)$/;
 const TEST_RE = /\.(?:unit|db|migration|integration|e2e)?\.?(?:test|spec)\.tsx?$/;
 
@@ -200,12 +196,6 @@ export function scanPracticeSubownersAtRef(projectRoot: string, ref: string): Pr
   );
 }
 
-const baselineSchema = z.strictObject({
-  schemaVersion: z.literal(1),
-  edgeUnit: z.literal('owner-pair'),
-  edges: z.array(z.string().regex(/^[a-z-]+ -> [a-z-]+$/)),
-});
-
 function rank(pair: string): [number, number] {
   const [from, to] = pair.split(' -> ') as [Owner, Owner];
   return [OWNER_ORDER.indexOf(from), OWNER_ORDER.indexOf(to)];
@@ -241,12 +231,7 @@ export function scanSolutionPriorExposure(projectRoot: string): string[] {
 
 export function main(argv = process.argv.slice(2), projectRoot = process.cwd()): void {
   const { edges, publicOnlyViolations } = scanPracticeSubowners(projectRoot);
-  const baselineFile = resolve(projectRoot, BASELINE_PATH);
-  const baseline = existsSync(baselineFile)
-    ? baselineSchema.parse(JSON.parse(readFileSync(baselineFile, 'utf8'))).edges
-    : undefined;
   const current = sortPairs(edges.keys());
-  const added = baseline ? current.filter((pair) => !baseline.includes(pair)) : [];
   const baseIndex = argv.indexOf('--base');
   if (baseIndex !== -1 && !argv[baseIndex + 1]) throw new Error('--base requires a commit SHA.');
   const baseSha = resolveAuditBaseSha(
@@ -255,24 +240,8 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
   );
   const baseEdges = scanPracticeSubownersAtRef(projectRoot, baseSha).edges;
   const addedSinceBase = current.filter((pair) => !baseEdges.has(pair));
-  const stale = baseline ? baseline.filter((pair) => !edges.has(pair)) : [];
-
-  if (argv.includes('--write-baseline')) {
-    const widened = [...new Set([...added, ...addedSinceBase])];
-    if (widened.length > 0) {
-      throw new Error(`--write-baseline only tightens; new owner pairs: ${widened.join(', ')}`);
-    }
-    const body = { schemaVersion: 1, edgeUnit: 'owner-pair', edges: current };
-    writeFileSync(baselineFile, `${JSON.stringify(body, null, 2)}\n`);
-    console.log(`wrote ${BASELINE_PATH}: ${current.length} owner pairs`);
-    return;
-  }
-  if (!baseline) throw new Error(`${BASELINE_PATH} is missing; run with --write-baseline`);
 
   const failures: string[] = [];
-  for (const pair of added) {
-    failures.push(`new owner edge ${pair}:\n    ${(edges.get(pair) ?? []).join('\n    ')}`);
-  }
   for (const pair of addedSinceBase) {
     failures.push(
       `owner edge ${pair} is absent at base ${baseSha.slice(0, 12)}:\n    ${(edges.get(pair) ?? []).join('\n    ')}`,
@@ -289,18 +258,13 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     const [from, to] = rank(pair);
     return to > from;
   }).length;
-  if (stale.length > 0) {
-    console.log(
-      `note: ${stale.length} baseline pair(s) no longer occur (tighten with --write-baseline): ${stale.join(', ')}`,
-    );
-  }
   if (failures.length > 0) {
     console.error(`audit:practice-subowners FAILED\n  ${failures.join('\n  ')}`);
     process.exitCode = 1;
     return;
   }
   console.log(
-    `audit:practice-subowners OK — ${current.length} owner pairs (${upward} against the design order, ${fileEdges} file edges) within the ${baseline.length}-pair baseline and the ${baseEdges.size} pairs at base ${baseSha.slice(0, 12)}; sub-owner directories entered only through public.ts.`,
+    `audit:practice-subowners OK — ${current.length} owner pairs (${upward} against the design order, ${fileEdges} file edges) within the ${baseEdges.size} pairs at base ${baseSha.slice(0, 12)}; sub-owner directories entered only through public.ts.`,
   );
   if (argv.includes('--list')) {
     for (const pair of current) console.log(`  ${pair}  ${edges.get(pair)?.length ?? 0}`);

@@ -130,7 +130,6 @@ export {
   readItemPriorPgBossDelivery,
   readPracticeDraftList,
   readPracticeQuestionList,
-  readQuestionDetail,
   recoverOrphanVerifyDispatches,
   resolveItemPriorKnowledgeNames,
   resolveSolveOverrideFromEnv,
