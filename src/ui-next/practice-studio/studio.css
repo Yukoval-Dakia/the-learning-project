@@ -472,6 +472,9 @@
   flex: none;
   margin-top: 4px;
 }
+[data-ui-next] .un-st-appeal {
+  margin-top: 12px;
+}
 [data-ui-next] .un-st-feedback-evidence {
   margin-top: 20px;
 }
@@ -964,4 +967,10 @@
 }
 [data-ui-next] .un-st-heading-companion .un-mascot {
   background: none;
+}
+[data-ui-next] .un-st-appeal .un-st-notice {
+  padding: 0;
+}
+[data-ui-next] .un-st-appeal .un-st-actions .un-st-button:first-child {
+  border-color: var(--st-line);
 }

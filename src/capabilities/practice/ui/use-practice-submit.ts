@@ -438,6 +438,7 @@ export function usePracticeSubmit({
   const [rating, setRating] = useState<Rating | null>(null);
   const [appealOpen, setAppealOpen] = useState(false);
   const [appealText, setAppealText] = useState('');
+  const [appealFiled, setAppealFiled] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [returning, setReturning] = useState(false);
   const returningRef = useRef(false);
@@ -1050,6 +1051,8 @@ export function usePracticeSubmit({
     runId: pendingRun?.runId ?? null,
     pollUrl: pendingRun?.pollUrl ?? null,
     readStatus: readJudgeRunStatus,
+    // About four minutes at the backoff cap: a dropped connection recovers on its own.
+    maxConsecutiveErrors: 40,
     onSettled: onPolledSettled,
   });
 
@@ -1127,7 +1130,7 @@ export function usePracticeSubmit({
           : null;
         if (anchor) {
           await fileAppeal(anchor, appealText.trim(), 'assessment' in res ? 'evaluation' : 'judge');
-          addToast('已提交重判，在后台进行，结果回来会提醒你。', 'info', 'clock');
+          addToast('已提交重判，在后台进行。判不准的话，原结果不变。', 'info', 'clock');
         } else {
           addToast('这次判定没有可以申诉的记录。', 'info', 'alert');
         }
@@ -1171,10 +1174,16 @@ export function usePracticeSubmit({
     setCommitting(true);
     try {
       await fileAppeal(autoCommitJudgeEventId, appealText.trim(), committedAppealKind.current);
-      addToast('已提交重判，在后台进行，结果回来会提醒你。', 'info', 'clock');
+      setAppealFiled(true);
       setAppealOpen(false);
-    } catch {
-      addToast('提交重判没有成功，稍后再试一次。', 'info', 'alert');
+    } catch (e) {
+      addToast(
+        e instanceof ApiError && e.code === 'stale_head'
+          ? '这个结果已经更新过了，刷新页面看最新结果。'
+          : '提交重判没有成功，稍后再试一次。',
+        'info',
+        'alert',
+      );
     } finally {
       setCommitting(false);
     }
@@ -1449,6 +1458,7 @@ export function usePracticeSubmit({
     },
     appeal: {
       open: appealOpen,
+      filed: appealFiled,
       setOpen: setAppealOpen,
       text: appealText,
       setText: setAppealText,
