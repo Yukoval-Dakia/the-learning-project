@@ -2915,6 +2915,7 @@ export interface operations {
                             } | null;
                             group_id: string;
                             kind: string;
+                            label: string | null;
                             override: {
                                 budget?: {
                                     [key: string]: unknown;
