@@ -47,8 +47,12 @@ export const MODEL_SLICE_ADMISSION_THRESHOLDS = {
 /**
  * Free-response holdout 允许的显式 pending 上限：每 120 项 3 条，更大留出集按
  * 比例 floor。pending 不算对也不算错，但超出上限说明候选没有给出可对照的完整
- * 有分输出，不登记。与三条硬线同为常量，调用方不可放宽；其余未决（未尝试、
- * 缺项、scored 无分）不受此线保护，仍按完整性一律拦。
+ * 有分输出，不登记。与三条硬线同为常量，调用方不可放宽。
+ *
+ * 只有模型调用真实完成、收到回应、费用已结算的 pending 才计入此线 ——
+ * 以定夺 attempt（run_refs 末位）落账 `status='success'` 且全部引用 run
+ * 费用 resolved 为准；超时、取消、provider 失败、无账可对的 pending 与
+ * 未尝试/缺项/scored 无分不受此线保护，仍按完整性一律拦。
  */
 const FREE_HOLDOUT_MAX_PENDING_PER_120 = 3;
 
@@ -258,6 +262,12 @@ export interface ModelSliceAdmissionItemResult {
   /** 完整未决态（detail / retryable / trigger 等）；pending_reason 只是它的索引。 */
   pending?: PendingStateT;
   /**
+   * pending 是否计入 FREE_HOLDOUT_MAX_PENDING_PER_120：定夺 attempt
+   * （run_refs 末位）落账 success 且全部引用 run 费用 resolved 才为 true；
+   * 超时/取消/provider 失败/无账可对的 pending 为 false，按完整性一律拦。
+   */
+  model_call_completed?: boolean;
+  /**
    * 定夺 attempt（run_refs 末位）的 canonical 输入 digest（ai_task_runs.input_hash）
    * 与定夺 outcome 的 canonical digest。ai_task_runs.result_digest 只有 typed
    * seal 消费方写，本 lane 恒 null —— 输出绑定由本 job 实算 outcome 承载。
@@ -269,6 +279,7 @@ export interface ModelSliceAdmissionItemResult {
     id: string;
     provider: string;
     model: string;
+    status: string;
     cost_basis: string | null;
     cost_usd: number | null;
     input_hash: string;
@@ -722,6 +733,7 @@ export async function runModelSliceAdmission(
                 id: ai_task_runs.id,
                 provider: ai_task_runs.provider,
                 model: ai_task_runs.model,
+                status: ai_task_runs.status,
                 cost_basis: ai_task_runs.cost_basis,
                 cost_usd: ai_task_runs.cost_usd,
                 input_hash: ai_task_runs.input_hash,
@@ -749,13 +761,18 @@ export async function runModelSliceAdmission(
         ),
       );
       const lastResult = results.at(-1);
-      const actualCostKnown = actualRuns.every(
-        (run) =>
-          (run.cost_basis === 'reported' || run.cost_basis === 'estimated') &&
-          run.cost_usd !== null &&
-          Number.isFinite(run.cost_usd) &&
-          run.cost_usd >= 0,
-      );
+      // 费用已知 = 每条引用 run 都解析到账且按实际用量结算（reported/estimated）。
+      // 空 run_refs 或缺行：执行器回报的数字（含 cap 预留）没有账本佐证，按 unknown。
+      const actualCostKnown =
+        outcome.run_refs.length > 0 &&
+        actualRuns.length === outcome.run_refs.length &&
+        actualRuns.every(
+          (run) =>
+            (run.cost_basis === 'reported' || run.cost_basis === 'estimated') &&
+            run.cost_usd !== null &&
+            Number.isFinite(run.cost_usd) &&
+            run.cost_usd >= 0,
+        );
       if (lastResult) {
         lastResult.actual_runs = actualRuns;
         // run_refs 末位是定夺 attempt；同题重投共享同一 task input，input digest 恒定。
@@ -767,6 +784,11 @@ export async function runModelSliceAdmission(
         // outcome 即定夺输出（分数/matched/pending 细节 + run_refs）；逐条封存其
         // canonical digest，与 invoker 写 result_digest 同一哈希约定。
         lastResult.output_digest = sha256Canonical(outcome);
+        // 计入 pending 上限的资格：定夺 attempt 真实完成（success）且费用有账。
+        // 超时/取消/provider 失败落 failure 或无 run_refs，一律不算完成。
+        if (lastResult.status === 'pending') {
+          lastResult.model_call_completed = decidingRun?.status === 'success' && actualCostKnown;
+        }
         // An executor's fallback cap reserves spend; only settled attempt prices measure it.
         if (outcome.run_refs.length > 0) {
           if (actualCostKnown && actualRuns.length === outcome.run_refs.length) {
@@ -814,10 +836,13 @@ export async function runModelSliceAdmission(
       return { answer_class: answerClass, items: members.length, errors, unresolved };
     });
     if (data.slice.response_class === 'free') {
-      // 未决分两类：显式 pending 有原因、按 FREE_HOLDOUT_MAX_PENDING_PER_120
-      // 比例上限拦；未尝试/缺项/scored 无分仍属完整性失败，一律拦。
+      // 未决分两类：模型调用真实完成且费用已结算的显式 pending 按
+      // FREE_HOLDOUT_MAX_PENDING_PER_120 比例上限拦；其余未决（超时/取消/
+      // provider 失败/无账可对的 pending、未尝试、缺项、scored 无分）一律拦。
       const pendingItemIds = new Set(
-        results.filter((result) => result.status === 'pending').map((result) => result.item_id),
+        results
+          .filter((result) => result.status === 'pending' && result.model_call_completed === true)
+          .map((result) => result.item_id),
       );
       const hardUnresolved = classResults
         .flatMap((group) => group.unresolved)
