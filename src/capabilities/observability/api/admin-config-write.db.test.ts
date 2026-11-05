@@ -103,7 +103,7 @@ describe('admin configuration writes over real Hono + Postgres', () => {
           changes: [
             { action: 'set', key: 'lane.global.provider', value: 'openai' },
             { action: 'set', key: 'lane.global.model', value: 'gpt-6-astra' },
-            { action: 'set', key: 'task.QuizGenTask.model', value: 'gpt-6-astra' },
+            { action: 'set', key: 'task.QuizGenTask.model', value: 'mimo-v2.5-pro' },
           ],
         })
       ).status,
@@ -119,14 +119,14 @@ describe('admin configuration writes over real Hono + Postgres', () => {
           changes: [
             { action: 'clear', key: 'lane.global.provider' },
             { action: 'clear', key: 'lane.global.model' },
-            { action: 'set', key: 'task.QuizGenTask.model', value: 'mimo-v2.5-pro' },
+            { action: 'clear', key: 'task.QuizGenTask.model' },
           ],
         })
       ).status,
     ).toBe(200);
     expect(resolveTaskProvider('QuizGenTask')).toMatchObject({
-      provider: 'xiaomi',
-      model: 'mimo-v2.5-pro',
+      provider: tasks.QuizGenTask.defaultProvider,
+      model: tasks.QuizGenTask.defaultModel,
     });
   });
 });

@@ -124,8 +124,8 @@ describe('native pi routing config migration', () => {
   it('global writes reject a text-only pin before breaking image tasks and preserve the previous pair', async () => {
     await setConfigs(
       [
-        { key: 'lane.global.provider', value: 'xiaomi' },
-        { key: 'lane.global.model', value: 'mimo-v2.5' },
+        { key: 'lane.global.provider', value: 'opencode-go' },
+        { key: 'lane.global.model', value: 'deepseek-v4.1-flash' },
       ],
       { actor: 'owner' },
       testDb(),
@@ -133,7 +133,7 @@ describe('native pi routing config migration', () => {
     const before = await testDb().select().from(system_config_journal);
     await expect(
       setConfigs(
-        [{ key: 'lane.global.model', value: 'mimo-v2.5-pro' }],
+        [{ key: 'lane.global.model', value: 'deepseek-v4-flash' }],
         { actor: 'owner' },
         testDb(),
       ),
@@ -142,7 +142,7 @@ describe('native pi routing config migration', () => {
       .select()
       .from(system_config)
       .where(eq(system_config.key, 'lane.global.model'));
-    expect(row.value).toBe('mimo-v2.5');
+    expect(row.value).toBe('deepseek-v4.1-flash');
     expect(await testDb().select().from(system_config_journal)).toEqual(before);
   });
 

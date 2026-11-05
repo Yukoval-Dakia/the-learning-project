@@ -445,4 +445,5 @@ AI tasks inherit `opencode-go/deepseek-v4.1-flash` from `DEFAULT_TASK_MODEL` wit
 for a task override. `AI_PROVIDER_OVERRIDE` / `AI_PROVIDER_MODEL` remain model-only
 emergency pins; clear both to exercise the defaults. Removed `mimo-v2.5*` stored
 models fail visibly instead of switching silently. Mem0 still follows the global
-model pin (without a pin it keeps its existing memory-specific configuration).
+model pair; without a pair it inherits the product default unless explicit
+`MEM0_LLM_MODEL` / `MEM0_LLM_BASE_URL` selects the legacy memory configuration.
