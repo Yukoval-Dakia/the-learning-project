@@ -11,6 +11,7 @@ import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button, Chip, IconButton, UiNextRoot } from '@/ui-next/public';
 import {
   MEMORY_KEY,
+  type MemoryActionResult,
   type MemoryBoard,
   type MemoryChange,
   type MemoryTopic,
@@ -19,7 +20,13 @@ import {
   undoMemoryChange,
   withdrawMemoryTopic,
 } from './memory-api';
-import { type TopicDiff, diffTopics, refusalText, whenText } from './memory-words';
+import {
+  type TopicDiff,
+  committedChanges,
+  diffTopics,
+  refusalText,
+  whenText,
+} from './memory-words';
 import './memory.css';
 
 const TALK_TOPIC = 'communication';
@@ -30,7 +37,29 @@ interface Outcome {
   text?: string;
   diffs?: TopicDiff[];
   changeId?: string;
-  refused?: boolean;
+  /** Green only when something really changed; refused is the caution tone; otherwise neutral. */
+  tone?: 'changed' | 'refused';
+}
+
+/** Undo only claims success when the server says something changed. */
+function undoOutcome(result: MemoryActionResult): Outcome {
+  return result.status === 'changed'
+    ? { text: '已撤销。', tone: 'changed' }
+    : { text: '这一步没有内容变化，不用撤销。' };
+}
+
+function refusedOutcome(error: unknown): Outcome {
+  // A failed correction can still have committed its earlier writes: say what is really there.
+  const partial = committedChanges(error);
+  if (partial.length > 0) {
+    return {
+      text: '只改成了一部分。下面是已经改了的，可以撤销，剩下的可以再说一次。',
+      diffs: partial.flatMap((change) => diffTopics(change.before, change.after)),
+      changeId: partial.at(-1)?.change_id ?? undefined,
+      tone: 'refused',
+    };
+  }
+  return { text: refusalText(error), tone: 'refused' };
 }
 
 function useMemoryActions() {
@@ -51,6 +80,9 @@ function DiffLines({ diffs }: { diffs: readonly TopicDiff[] }) {
             {diff.name}
             {diff.kind === 'added' && <span className="mm-diff-state">新主题</span>}
             {diff.kind === 'removed' && <span className="mm-diff-state">已删除</span>}
+            {diff.renamedFrom ? (
+              <span className="mm-diff-state">原来叫「{diff.renamedFrom}」</span>
+            ) : null}
           </p>
           {diff.added.map((body) => (
             <p key={`+${body}`} className="mm-diff-line" data-kind="added">
@@ -80,7 +112,7 @@ function OutcomeNote({
   const { undo } = useMemoryActions();
   const changeId = outcome.changeId;
   return (
-    <div className="mm-outcome" data-refused={outcome.refused ? '' : undefined} role="status">
+    <div className="mm-outcome" data-tone={outcome.tone} role="status">
       {outcome.text ? (
         <MathMarkdown className="mm-outcome-text">{outcome.text}</MathMarkdown>
       ) : null}
@@ -94,8 +126,8 @@ function OutcomeNote({
             undo.mutate(
               { change_id: changeId, expected_version: version },
               {
-                onSuccess: () => onUndone({ text: '已撤销。' }),
-                onError: (error) => onUndone({ text: refusalText(error), refused: true }),
+                onSuccess: (result) => onUndone(undoOutcome(result)),
+                onError: (error) => onUndone(refusedOutcome(error)),
               },
             )
           }
@@ -147,12 +179,13 @@ function TellBox({
               ? {
                   diffs: changes.flatMap((change) => diffTopics(change.before, change.after)),
                   changeId: last?.change_id ?? undefined,
+                  tone: 'changed',
                 }
               : { text: result.reply },
           );
         },
         // The sentence stays in the box so it can be sent again.
-        onError: (error) => setOutcome({ text: refusalText(error), refused: true }),
+        onError: (error) => setOutcome(refusedOutcome(error)),
       },
     );
   };
@@ -198,7 +231,7 @@ function TopicCard({ topic, version }: { topic: MemoryTopic; version: number }) 
             setOutcome({ text: '这个主题没有变化。' });
           }
         },
-        onError: (error) => setOutcome({ text: refusalText(error), refused: true }),
+        onError: (error) => setOutcome(refusedOutcome(error)),
       },
     );
   return (
@@ -264,8 +297,8 @@ function ChangeRow({ change, version }: { change: MemoryChange; version: number 
             undo.mutate(
               { change_id: change.id, expected_version: version },
               {
-                onSuccess: () => setNote({ text: '已撤销。' }),
-                onError: (error) => setNote({ text: refusalText(error), refused: true }),
+                onSuccess: (result) => setNote(undoOutcome(result)),
+                onError: (error) => setNote(refusedOutcome(error)),
               },
             )
           }
@@ -274,13 +307,9 @@ function ChangeRow({ change, version }: { change: MemoryChange; version: number 
           {undo.isPending ? '在撤销…' : '撤销'}
         </Button>
       </div>
-      {diffs.length > 0 ? (
-        <DiffLines diffs={diffs} />
-      ) : (
-        <p className="mm-diff-line">没有内容变化</p>
-      )}
+      <DiffLines diffs={diffs} />
       {note ? (
-        <p className="mm-outcome-text" data-refused={note.refused ? '' : undefined} role="status">
+        <p className="mm-outcome-text" data-tone={note.tone} role="status">
           {note.text}
         </p>
       ) : null}
@@ -297,7 +326,10 @@ export default function MemoryPage() {
   const query = useQuery({ queryKey: MEMORY_KEY, queryFn: readMemoryBoard });
   const board = query.data;
   const [allChanges, setAllChanges] = useState(false);
-  const changes = board?.changes ?? [];
+  // Housekeeping rows change nothing a learner can read, and have nothing to undo.
+  const changes = (board?.changes ?? []).filter(
+    (change) => diffTopics(change.before, change.after).length > 0,
+  );
   const shownChanges = allChanges ? changes : changes.slice(0, CHANGES_SHOWN);
   return (
     <UiNextRoot className="mm-page">
@@ -328,7 +360,7 @@ export default function MemoryPage() {
                 ))}
               </section>
             )}
-            {board.changes.length > 0 ? (
+            {changes.length > 0 ? (
               <section className="mm-changes" aria-labelledby="mm-changes-title">
                 <h2 id="mm-changes-title" className="mm-section-title">
                   最近的改动

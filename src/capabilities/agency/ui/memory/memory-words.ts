@@ -5,7 +5,14 @@ import { ApiError } from '@/ui/lib/api';
 interface TopicLike {
   key: string;
   name: string;
+  description?: string;
   facts: ReadonlyArray<{ id: string; body: string }>;
+}
+
+export interface CommittedChange {
+  change_id?: string | null;
+  before: TopicLike[];
+  after: TopicLike[];
 }
 
 export interface TopicDiff {
@@ -14,6 +21,7 @@ export interface TopicDiff {
   kind: 'added' | 'removed' | 'changed';
   added: string[];
   removed: string[];
+  renamedFrom?: string;
 }
 
 /** What changed between two versions, topic by topic, by fact. */
@@ -25,10 +33,14 @@ export function diffTopics(before: readonly TopicLike[], after: readonly TopicLi
     const old = beforeByKey.get(topic.key);
     const oldBodies = new Set(old?.facts.map((fact) => fact.body));
     const newBodies = new Set(topic.facts.map((fact) => fact.body));
-    const added = topic.facts.map((fact) => fact.body).filter((body) => !oldBodies.has(body));
-    const removed = (old?.facts ?? []).map((fact) => fact.body).filter((b) => !newBodies.has(b));
-    if (!old || added.length > 0 || removed.length > 0) {
+    // Two facts with the same words read as one line.
+    const added = [...newBodies].filter((body) => !oldBodies.has(body));
+    const removed = [...oldBodies].filter((body) => !newBodies.has(body));
+    const renamed = old && old.name !== topic.name;
+    const redescribed = old && old.description !== topic.description;
+    if (!old || added.length > 0 || removed.length > 0 || renamed || redescribed) {
       out.push({
+        ...(renamed ? { renamedFrom: old.name } : {}),
         key: topic.key,
         name: topic.name,
         kind: old ? 'changed' : 'added',
@@ -44,7 +56,7 @@ export function diffTopics(before: readonly TopicLike[], after: readonly TopicLi
       name: topic.name,
       kind: 'removed',
       added: [],
-      removed: topic.facts.map((fact) => fact.body),
+      removed: [...new Set(topic.facts.map((fact) => fact.body))],
     });
   }
   return out;
@@ -57,6 +69,14 @@ const REFUSALS: Readonly<Record<string, string>> = {
   context_undo_conflict: '后面又有改动，这一步撤销不了。想改的话，直接说一句。',
   context_topic_withdrawn: '这个主题已经删掉了，要记回来需要你再说一次。',
 };
+
+/** The writes a refused correction had already committed, as the server reports them. */
+export function committedChanges(error: unknown): CommittedChange[] {
+  if (!(error instanceof ApiError) || error.code !== 'context_edit_not_committed') return [];
+  // errorResponse nests them: the client's `details` is everything beside error and message.
+  const nested = error.details.details as { changes?: unknown } | undefined;
+  return Array.isArray(nested?.changes) ? (nested.changes as CommittedChange[]) : [];
+}
 
 export function refusalText(error: unknown): string {
   const code = error instanceof ApiError ? error.code : undefined;

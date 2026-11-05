@@ -78,10 +78,14 @@
     gap: var(--un-sp-2);
     padding: var(--un-sp-3) var(--un-sp-4);
     border-radius: var(--un-r-2);
+    background: var(--un-bg-sunk);
+  }
+
+  & .mm-outcome[data-tone="changed"] {
     background: var(--un-positive-soft);
   }
 
-  & .mm-outcome[data-refused] {
+  & .mm-outcome[data-tone="refused"] {
     background: var(--un-caution-soft);
   }
 
@@ -91,7 +95,7 @@
     white-space: pre-wrap;
   }
 
-  & .mm-outcome-text[data-refused] {
+  & .mm-outcome-text[data-tone="refused"] {
     color: var(--un-caution);
   }
 
