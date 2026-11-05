@@ -113,7 +113,16 @@ export function gradeSelectUnit(unit: ScoringUnitT, entry: SelectEntry): Scoring
 /** 单空 exact 的版本化归一化；作答与参考走同一函数。 */
 export function normalizeBlankText(text: string, normalization: BlankNormalizationT): string {
   let value = text;
-  if (normalization.nfkc) value = value.normalize('NFKC');
+  if (normalization.nfkc) {
+    // New contracts fold width only: compatibility symbols can encode exponents,
+    // indices or distinct variables. Other versions retain frozen replay semantics.
+    value =
+      normalization.version === 'blank-norm@2'
+        ? value
+            .replace(/[\u3000\uFF01-\uFF5E]+/gu, (width) => width.normalize('NFKC'))
+            .normalize('NFC')
+        : value.normalize('NFKC');
+  }
   for (const [from, to] of normalization.character_variants) value = value.split(from).join(to);
   if (normalization.casefold) value = value.toLowerCase();
   if (normalization.ignore_punctuation) value = value.replace(/\p{P}/gu, '');

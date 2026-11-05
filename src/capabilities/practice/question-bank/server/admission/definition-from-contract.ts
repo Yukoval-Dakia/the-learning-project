@@ -23,7 +23,7 @@ import type {
 } from './contract';
 
 export const DEFAULT_BLANK_NORMALIZATION: BlankNormalizationT = {
-  version: 'blank-norm@1',
+  version: 'blank-norm@2',
   nfkc: true,
   trim_outer: true,
   casefold: false,
@@ -54,9 +54,9 @@ export function mapLegacyTextNormalization(
         collapse_whitespace: false,
       };
     case 'trim_casefold_nfc':
-      return { ...DEFAULT_BLANK_NORMALIZATION, version: 'trim_casefold@1', casefold: true };
+      return { ...DEFAULT_BLANK_NORMALIZATION, version: 'blank-norm@2', casefold: true };
     case 'answer_head':
-      return { ...DEFAULT_BLANK_NORMALIZATION, version: 'answer_head@1', casefold: true };
+      return { ...DEFAULT_BLANK_NORMALIZATION, version: 'blank-norm@2', casefold: true };
   }
 }
 
