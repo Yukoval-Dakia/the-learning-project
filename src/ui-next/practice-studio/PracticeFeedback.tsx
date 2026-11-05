@@ -1,4 +1,4 @@
-import { Check, CircleHelp, RotateCcw, X } from 'lucide-react';
+import { Check, CircleHelp, RotateCcw, Sparkles, X } from 'lucide-react';
 import type { PracticeIntents, PracticeRenderers, Revelation } from './contracts';
 import { IntentButton, NoticeBlock } from './controls';
 import { PracticeField } from './PracticeFields';
@@ -63,6 +63,12 @@ export function PracticeFeedback({
             <div>
               <h2>{verdicts[result.verdict]}</h2>
               <p>{result.summary}</p>
+              {result.aiGraded && (
+                <p className="un-st-ai-graded">
+                  <Sparkles size={14} aria-hidden="true" />
+                  这次有 AI 判的部分，还没和人工核对过，仅供参考。
+                </p>
+              )}
             </div>
           </header>
           {result.uncertainty && <p role="status">{result.uncertainty}</p>}

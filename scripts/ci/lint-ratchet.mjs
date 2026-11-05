@@ -1,24 +1,18 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // YUK-909 — deterministic lint warning ratchet over `biome check .`.
 //
-// The baseline file (scripts/lint-baseline.json) records Biome 2 warning/info totals plus
-// per-rule counts. Growth fails; a shortfall passes, so parallel PRs that each remove a
-// warning do not have to rewrite the same file. With a comparison base (`--base <sha>` or
-// LINT_BASE_SHA, set by CI), the ceiling per severity is the lower of the file and the
-// count measured on the base commit, so the effective baseline is main's real count
-// without committing it back; a head file whose totals exceed the base file fails.
-// Diagnostic emission order from Biome's parallel scanner is not stable, so counting
-// sorts by rule before any comparison or serialization. Info diagnostics are counted.
-//
-// Lowering the file is optional housekeeping: pnpm lint:ratchet:update
-// (refuses to write a document that raises any severity total).
-
-const BASELINE_RELATIVE_PATH = 'scripts/lint-baseline.json';
+// The ceiling is the base commit's measured diagnostics (`--base <sha>` or LINT_BASE_SHA, set
+// by CI; otherwise the fork point with origin/main). Growth in any severity fails; a shortfall
+// passes, so parallel PRs that each remove warnings never collide on a shared ledger file.
+// There is no checked-in baseline: the base comparison is the only gate. The base is counted
+// on a detached worktree with the head's Biome binary, so a Biome bump counts the same rules
+// on both sides. Diagnostic emission order from Biome's parallel scanner is not stable, so
+// counting sorts by rule before any comparison. Info diagnostics are counted.
 
 const SEVERITIES = ['error', 'warning', 'info'];
 
@@ -53,8 +47,8 @@ function ratchetKind(regressions, staleBy) {
   return 'match';
 }
 
-// Growth over the ceiling is the only failure; a shortfall (`stale`) passes and is
-// reported so the file can be lowered later.
+// Growth over the ceiling is the only failure; a shortfall (`stale`) passes and is reported.
+// `baseline` carries the base commit's measured counts in { totals, byRule } shape.
 export function evaluateRatchet(current, baseline) {
   const regressions = [];
   const staleBy = {};
@@ -98,28 +92,6 @@ export function ruleDeltas(current, baseline) {
       a.category.localeCompare(b.category) ||
       a.severity.localeCompare(b.severity),
   );
-}
-
-export function buildBaselineDocument(summary) {
-  const byRule = {};
-  for (const category of Object.keys(summary.byRule).sort((a, b) => a.localeCompare(b))) {
-    const counts = summary.byRule[category];
-    byRule[category] = Object.fromEntries(
-      SEVERITIES.filter((severity) => counts[severity] !== undefined).map((severity) => [
-        severity,
-        counts[severity],
-      ]),
-    );
-  }
-  return {
-    schemaVersion: 1,
-    channel:
-      'biome check . --reporter=json --max-diagnostics=none (summary totals + per-diagnostic category)',
-    infoPolicy:
-      'info diagnostics are counted: separate infos ratchet total and per-rule rows; no severity total may exceed the ceiling',
-    totals: { errors: summary.errors, warnings: summary.warnings, infos: summary.infos },
-    byRule,
-  };
 }
 
 function runBiomeJson(repoRoot, checkRoot = repoRoot) {
@@ -191,33 +163,6 @@ function collectCurrent(repoRoot, checkRoot = repoRoot) {
   return current;
 }
 
-function readBaselineOrNull(repoRoot) {
-  const file = path.join(repoRoot, BASELINE_RELATIVE_PATH);
-  let raw;
-  try {
-    raw = readFileSync(file, 'utf8');
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
-    throw new Error(
-      `[lint-ratchet] cannot read baseline ${BASELINE_RELATIVE_PATH}: ${error instanceof Error ? error.message : error}`,
-    );
-  }
-  let baseline;
-  try {
-    baseline = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(
-      `[lint-ratchet] baseline ${BASELINE_RELATIVE_PATH} is not valid JSON: ${error instanceof Error ? error.message : error}`,
-    );
-  }
-  if (baseline?.schemaVersion !== 1) {
-    throw new Error(
-      `[lint-ratchet] baseline ${BASELINE_RELATIVE_PATH} has unsupported schemaVersion`,
-    );
-  }
-  return baseline;
-}
-
 function git(repoRoot, args) {
   return execFileSync('git', args, {
     cwd: repoRoot,
@@ -226,31 +171,42 @@ function git(repoRoot, args) {
   });
 }
 
-// `pull_request.base.sha` is the base branch tip, not where the PR forked; comparing
-// against the fork point keeps a later baseline cut on main from failing older PRs.
+// `pull_request.base.sha` is the base branch tip, not where the PR forked; comparing against
+// the fork point keeps a later main from failing older PRs. The base comparison is the only
+// gate, so it fails closed: CI must pin a base, and a local run without a resolvable merge-base
+// is an error, not a pass.
 function comparisonBase(repoRoot, args) {
   const flag = args.indexOf('--base');
   if (flag >= 0 && !args[flag + 1]) throw new Error('[lint-ratchet] --base needs a commit SHA');
   const value = flag >= 0 ? args[flag + 1] : process.env.LINT_BASE_SHA;
-  // A branch-creating push reports an all-zero `before`; there is no base to compare.
-  if (!value || /^0+$/.test(value)) return null;
+  // A branch-creating push reports an all-zero `before`; there is no explicit base then.
+  if (!value || /^0+$/.test(value)) {
+    if (process.env.CI) {
+      throw new Error('[lint-ratchet] CI requires LINT_BASE_SHA or --base <commit>.');
+    }
+    try {
+      return git(repoRoot, ['merge-base', 'origin/main', 'HEAD']).trim();
+    } catch {
+      throw new Error(
+        '[lint-ratchet] could not merge-base against origin/main; fetch it or pass --base <sha>.',
+      );
+    }
+  }
   if (!/^[a-f0-9]{40}$/.test(value)) {
     throw new Error(`[lint-ratchet] comparison base must be a full, nonzero commit SHA: ${value}`);
   }
-  return git(repoRoot, ['merge-base', value, 'HEAD']).trim();
-}
-
-function baselineAtBase(repoRoot, base) {
   try {
-    return JSON.parse(git(repoRoot, ['show', `${base}:${BASELINE_RELATIVE_PATH}`]));
+    return git(repoRoot, ['merge-base', value, 'HEAD']).trim();
   } catch {
-    return null;
+    throw new Error(
+      `[lint-ratchet] could not merge-base against ${value}; fetch the base commit first.`,
+    );
   }
 }
 
-// Measured on a detached worktree of the base commit with the head's Biome binary, so a
-// Biome bump counts the same rules on both sides. A base Biome cannot read (config drift
-// across a Biome upgrade) falls back to the file ceiling instead of blocking the change.
+// Measured on a detached worktree of the base commit with the head's Biome binary, so a Biome
+// bump counts the same rules on both sides. There is no file ceiling to fall back to; a base
+// that cannot be measured fails the run rather than disabling the gate.
 function countAtBase(repoRoot, base) {
   const dir = mkdtempSync(path.join(tmpdir(), 'lint-ratchet-base-'));
   try {
@@ -266,7 +222,7 @@ function countAtBase(repoRoot, base) {
     }
   } catch (error) {
     console.warn(
-      `[lint-ratchet] could not count diagnostics at base ${base.slice(0, 12)} (${error instanceof Error ? error.message : error}); using the baseline file as the ceiling.`,
+      `[lint-ratchet] could not count diagnostics at base ${base.slice(0, 12)}: ${error instanceof Error ? error.message : error}`,
     );
     return null;
   } finally {
@@ -274,27 +230,11 @@ function countAtBase(repoRoot, base) {
   }
 }
 
-function ceilingDocument(baseline, baseCount) {
-  if (!baseCount) return baseline;
-  const totals = { ...baseline.totals };
-  for (const severity of SEVERITIES) {
-    const plural = severityPlural(severity);
-    totals[plural] = Math.min(totals[plural] ?? 0, baseCount[plural] ?? 0);
-  }
-  return { ...baseline, totals };
-}
-
-function raisedTotals(headBaseline, baseBaseline) {
-  return SEVERITIES.map(severityPlural).filter(
-    (plural) => (headBaseline.totals?.[plural] ?? 0) > (baseBaseline.totals?.[plural] ?? 0),
-  );
-}
-
 function renderStale(staleBy) {
   const detail = Object.entries(staleBy)
     .map(([plural, by]) => `${by} fewer ${plural}`)
     .join(', ');
-  return `[lint-ratchet] below the ceiling (${detail}); the file can be lowered any time with: pnpm lint:ratchet:update`;
+  return `[lint-ratchet] below the base count (${detail}); the ceiling follows main automatically.`;
 }
 
 function renderRegression(regression, deltas) {
@@ -310,21 +250,15 @@ function renderRegression(regression, deltas) {
           `  ${row.delta > 0 ? '+' : ''}${String(row.delta).padStart(4)}  ${row.severity.padEnd(9)}  ${row.category} (${row.baseline} -> ${row.current})`,
       ),
     );
-  } else {
-    lines.push(
-      'No single rule accounts for the delta — the baseline totals do not match its per-rule counts. Regenerate with: pnpm lint:ratchet:update',
-    );
   }
   lines.push(
-    'Fix the new diagnostics, or land a warning-fixing batch and lower the baseline with: pnpm lint:ratchet:update',
-    'The baseline may only decrease — raising it is not supported.',
+    'Fix the new diagnostics — the ceiling is the count measured on the merge-base commit.',
   );
   return lines.join('\n');
 }
 
 function main() {
   const args = process.argv.slice(2);
-  const update = args.includes('--update');
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const current = collectCurrent(repoRoot);
 
@@ -336,51 +270,27 @@ function main() {
     return;
   }
 
-  if (update) {
-    const existing = readBaselineOrNull(repoRoot);
-    if (existing) {
-      const verdict = evaluateRatchet(current, existing);
-      if (verdict.kind === 'regression') {
-        for (const regression of verdict.regressions) {
-          console.error(renderRegression(regression, ruleDeltas(current, existing)));
-        }
-        console.error('[lint-ratchet] refusing to raise the baseline — it may only decrease.');
-        process.exitCode = 1;
-        return;
-      }
-    }
-    const file = path.join(repoRoot, BASELINE_RELATIVE_PATH);
-    writeFileSync(file, `${JSON.stringify(buildBaselineDocument(current), null, 2)}\n`);
-    console.log(
-      `[lint-ratchet] baseline written at ${BASELINE_RELATIVE_PATH}: ${current.warnings} warnings / ${current.infos} infos.`,
-    );
-    return;
-  }
-
-  const loaded = readBaselineOrNull(repoRoot);
-  if (!loaded) {
+  const base = comparisonBase(repoRoot, args);
+  const baseCount = countAtBase(repoRoot, base);
+  if (!baseCount) {
     console.error(
-      `[lint-ratchet] baseline ${BASELINE_RELATIVE_PATH} is missing. Generate it with: pnpm lint:ratchet:update`,
+      `[lint-ratchet] FAIL: diagnostics at base ${base.slice(0, 12)} could not be measured; the base comparison is the only gate.`,
     );
     process.exitCode = 1;
     return;
   }
-  const base = comparisonBase(repoRoot, args);
-  if (base) {
-    const baseBaseline = baselineAtBase(repoRoot, base);
-    const raised = baseBaseline ? raisedTotals(loaded, baseBaseline) : [];
-    if (raised.length > 0) {
-      console.error(
-        `[lint-ratchet] FAIL: ${BASELINE_RELATIVE_PATH} raises ${raised.join(', ')} above base ${base.slice(0, 12)}. The baseline may only decrease.`,
-      );
-      process.exitCode = 1;
-      return;
-    }
-  }
-  const baseline = ceilingDocument(loaded, base ? countAtBase(repoRoot, base) : null);
+
+  const baseline = {
+    totals: {
+      errors: baseCount.errors,
+      warnings: baseCount.warnings,
+      infos: baseCount.infos,
+    },
+    byRule: baseCount.byRule,
+  };
   const verdict = evaluateRatchet(current, baseline);
   if (verdict.kind === 'regression') {
-    const deltas = ruleDeltas(current, loaded);
+    const deltas = ruleDeltas(current, baseline);
     for (const regression of verdict.regressions) {
       console.error(renderRegression(regression, deltas));
     }
@@ -389,7 +299,7 @@ function main() {
   }
   if (verdict.kind === 'stale') console.log(renderStale(verdict.staleBy));
   console.log(
-    `[lint-ratchet] OK: ${current.warnings} warnings / ${current.infos} infos within ceiling ${baseline.totals.warnings} / ${baseline.totals.infos}${base ? ` (file and base ${base.slice(0, 12)})` : ' (file)'}.`,
+    `[lint-ratchet] OK: ${current.warnings} warnings / ${current.infos} infos within base ${base.slice(0, 12)} count ${baseline.totals.warnings} / ${baseline.totals.infos}.`,
   );
 }
 
