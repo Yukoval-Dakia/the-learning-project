@@ -77,6 +77,11 @@ export const questionAuthorTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '出题按题目需求与科目 rubric 装配；学习者上下文入口随 B3 轻量 view 接入。',
+    },
+
     prompt: { kind: 'profile', build: buildQuestionAuthorPrompt },
   },
   outputSchema: QuestionAuthorDraft,

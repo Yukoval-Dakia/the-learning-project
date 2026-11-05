@@ -1,13 +1,12 @@
-import remarkMath from 'remark-math';
-import remarkParse from 'remark-parse';
-import { unified } from 'unified';
 import { z } from 'zod';
+
+const UNREADABLE_REASON = '这条提议暂无可读的依据说明，请核实后再决定是否采纳。';
+
+const MASKED_CREDENTIAL = '[已遮蔽凭据]';
 
 const RecentFailureEvidence = z
   .object({ recent_failure_count_30d: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) })
   .strict();
-
-const UNREADABLE_REASON = '这条提议暂无可读的依据说明，请核实后再决定是否采纳。';
 
 function knownEvidence(value: unknown): string | null {
   const parsed = RecentFailureEvidence.safeParse(value);
@@ -16,103 +15,72 @@ function knownEvidence(value: unknown): string | null {
     : null;
 }
 
-/** Only a complete known fact is translated. A mixed dump is never interpreted. */
+// Credential and private-key material is a security boundary, so it is masked in
+// place. Everything else (email, URL queries, assignment-shaped text, model dump
+// syntax) is the learner's own data and passes through unchanged.
+const CREDENTIAL_KEY =
+  /(?:[A-Za-z0-9]+[-_])*(?:api[-_ ]?key|access[-_]?key|secret[-_]?key|private[-_]?key|client[-_]?secret|password|passwd|pwd|passphrase|authorization|token|secret)(?:[-_][A-Za-z0-9]+)*/
+    .source;
+// A quoted value is masked to its closing quote, so a space or an escaped quote
+// cannot leak a tail. An unclosed quote masks through the end of the text.
+const QUOTED_VALUE = /\\"(?:(?!\\").)*(?:\\"|$)|"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)/
+  .source;
+const BARE_VALUE = /[^\s;,"'`]+/.source;
+const ASSIGNED_CREDENTIAL = new RegExp(
+  `(\\b${CREDENTIAL_KEY}\\b(?:\\\\?["'])?\\s*[:=]\\s*(?:(?:Bearer|Basic)\\s+)?)(${QUOTED_VALUE}|${BARE_VALUE})`,
+  'gis',
+);
+const AUTH_SCHEME_CREDENTIAL = new RegExp(
+  `\\b(?:Bearer|Basic)\\s+(?:${QUOTED_VALUE}|${BARE_VALUE})`,
+  'gis',
+);
+
+function maskValue(value: string): string {
+  const quote = /^(?:\\"|"|')/.exec(value)?.[0];
+  return quote ? `${quote}${MASKED_CREDENTIAL}${quote}` : MASKED_CREDENTIAL;
+}
+
+function maskCredentials(text: string): string {
+  return text
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, `$1${MASKED_CREDENTIAL}@`)
+    .replace(
+      ASSIGNED_CREDENTIAL,
+      (_match, prefix: string, value: string) => `${prefix}${maskValue(value)}`,
+    )
+    .replace(
+      // A BEGIN block without a matching END masks through the end of the
+      // text; a truncated key body must never reach the learner.
+      /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g,
+      MASKED_CREDENTIAL,
+    )
+    .replace(AUTH_SCHEME_CREDENTIAL, MASKED_CREDENTIAL)
+    .replace(
+      /\b(?:sk-(?:ant-|proj-|or-)?[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AKIA[A-Z0-9]{16}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g,
+      MASKED_CREDENTIAL,
+    );
+}
+
+// Model-internal reasoning tags never reach the learner: only the tagged span
+// is removed, the rest of the reason survives. An unclosed tag masks to the end.
+const THINK_BLOCK =
+  /<(?:think|thinking|analysis|reasoning)\b[^>]*>[\s\S]*?<\/(?:think|thinking|analysis|reasoning)\s*>/gi;
+const THINK_UNCLOSED = /<(?:think|thinking|analysis|reasoning)\b[^>]*>[\s\S]*$/gi;
+const THINK_STRAY_CLOSE = /<\/(?:think|thinking|analysis|reasoning)\s*>/gi;
+
+/**
+ * Reasons pass through as written; credential material is masked in place and
+ * model-internal reasoning tags are stripped. Non-string payloads never render:
+ * only the strict known evidence shape translates, anything else falls back to
+ * the fixed unreadable sentence.
+ */
 export function proposalReasonPlainText(value: unknown): string {
   if (typeof value !== 'string') return knownEvidence(value) ?? UNREADABLE_REASON;
-  const text = value.trim();
-  if (!text) return UNREADABLE_REASON;
-
-  const legacyCount = /^recent_failure_count_30d\s*=\s*(0|[1-9][0-9]*)$/.exec(text);
-  if (legacyCount) {
-    return knownEvidence({ recent_failure_count_30d: Number(legacyCount[1]) }) ?? UNREADABLE_REASON;
-  }
-  if (text.startsWith('{') || text.startsWith('[')) {
-    try {
-      return knownEvidence(JSON.parse(text)) ?? UNREADABLE_REASON;
-    } catch {
-      return UNREADABLE_REASON;
-    }
-  }
-
-  // These recognize dump/secret syntax, not the meaning of educational prose.
-  if (
-    text.includes('recent_failure_count_30d') ||
-    /```|~~~|<(?:think|thinking|analysis|reasoning)\b/i.test(text) ||
-    technicalAssignmentOutsideMath(text) ||
-    /\b(?:api[-_]?key|password|secret|authorization|access[-_]?token|refresh[-_]?token)\b\s*[=:]/i.test(
-      text,
-    ) ||
-    /-----BEGIN [^-]*PRIVATE KEY-----|\b(?:Bearer|Basic)\s+\S+/i.test(text) ||
-    /\b(?:sk-(?:ant-|proj-|or-)?[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AKIA[A-Z0-9]{16}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/.test(
-      text,
-    ) ||
-    /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(text) ||
-    /(?:\b(?:phone|email|address)\b|电话|邮箱|住址)\s*[=:：]/i.test(text) ||
-    unsafeUrlIn(text)
-  ) {
-    return UNREADABLE_REASON;
-  }
-  // No slicing, token substitution, or math-delimiter rewriting.
-  return value;
-}
-
-interface ReasonMathNode {
-  type: string;
-  position?:
-    | { start: { offset?: number | undefined }; end: { offset?: number | undefined } }
-    | undefined;
-  children?: ReasonMathNode[] | undefined;
-}
-
-const reasonMathParser = unified().use(remarkParse).use(remarkMath);
-
-function technicalAssignmentOutsideMath(text: string): boolean {
-  const assignments = [...text.matchAll(/\b[a-z][a-z0-9]*_[a-z][a-z0-9_]+["']?\s*[=:]/gi)];
-  if (assignments.length === 0) return false;
-  const mathSpans: Array<[number, number]> = [];
-  const collect = (node: ReasonMathNode): void => {
-    const start = node.position?.start.offset;
-    const end = node.position?.end.offset;
-    if (
-      (node.type === 'inlineMath' || node.type === 'math') &&
-      start !== undefined &&
-      end !== undefined
-    ) {
-      mathSpans.push([start, end]);
-    }
-    for (const child of node.children ?? []) collect(child);
-  };
-  try {
-    collect(reasonMathParser.parse(text));
-  } catch {
-    return true;
-  }
-  // The renderer's explicit legacy delimiter grammar, in original source coordinates.
-  const legacy =
-    /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|(?<!\\)\\\[((?:(?!\n\s*\n)[^`])+?)\\\]|(?<!\\)\\\(((?:(?!\n\s*\n)[^`])+?)\\\)/g;
-  for (const match of text.matchAll(legacy)) {
-    if (match[2] !== undefined || match[3] !== undefined) {
-      mathSpans.push([match.index, match.index + match[0].length]);
-    }
-  }
-  return assignments.some(
-    (match) =>
-      !mathSpans.some(
-        ([start, end]) => start <= match.index && match.index + match[0].length <= end,
-      ),
-  );
-}
-
-function unsafeUrlIn(text: string): boolean {
-  for (const match of text.matchAll(/https?:\/\/[^\s<>"'；]+/gi)) {
-    try {
-      const url = new URL(match[0]);
-      if (url.username || url.password || url.search) return true;
-    } catch {
-      return true;
-    }
-  }
-  return false;
+  const text = value
+    .replace(THINK_BLOCK, '')
+    .replace(THINK_UNCLOSED, '')
+    .replace(THINK_STRAY_CLOSE, '');
+  if (!text.trim()) return UNREADABLE_REASON;
+  return maskCredentials(text);
 }
 
 /** Raw reason copies in legacy payloads must not bypass the public read mapping. */

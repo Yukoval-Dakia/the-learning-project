@@ -71,8 +71,6 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   COPILOT_NUDGE_EXPIRES_HOURS: 'src/capabilities/copilot/server/nudge-config.ts',
   SELECTION_POLICY: 'src/capabilities/practice/scheduling/server/stream-store.ts',
   HUB_SYNC_MODE: 'src/capabilities/notes/server/hub-sync-reconciliation.ts',
-  MEMORY_RECONCILE_HANDOFF_MODE:
-    'src/capabilities/agency/server/memory/memory-reconcile-handoff.ts',
   PROJECTION_IS_WRITER_ITEM_CALIBRATION: 'src/kernel/projection-writer-policy.ts',
   PLACEMENT_PROBE_ENABLED:
     'src/capabilities/practice/placement/server/placement-session-lifecycle.ts',
@@ -92,6 +90,7 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   JYEOO_SPAWN_MAX_STDOUT_BYTES: 'src/capabilities/practice/supply/server/jyeoo-supply-config.ts',
   JYEOO_SPAWN_MAX_STDERR_BYTES: 'src/capabilities/practice/supply/server/jyeoo-supply-config.ts',
   JYEOO_DAILY_FETCH_BUDGET: 'src/capabilities/practice/supply/server/jyeoo-budget.ts',
+  SUPPLY_NIGHTLY_SPEND_CAP_USD: 'src/capabilities/practice/supply/server/spend-gate.ts',
   EXTRACT_OCR_ENGINE: 'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts',
   DOCX_CONVERT_ENGINE: 'src/capabilities/ingestion/server/docx/convert.ts',
   KC_DEDUP_DISTANCE_MAX: 'src/capabilities/knowledge/server/dedup-flags.ts',

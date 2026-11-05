@@ -34,7 +34,26 @@ import type { CopilotPrimaryView } from './turns';
 export const COPILOT_REPLY_TRACE_MAX_CALLS = Number.MAX_SAFE_INTEGER;
 
 export const COPILOT_REPLY_CHAR_LIMIT = 64_000;
-const FINALIZATION_FAILURE_REPLY = '这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。';
+const FINALIZATION_FAILURE_REPLY = '这次回复未能完成，已有内容已保留。';
+
+export function truncateCopilotReply(
+  text: string,
+  limit = COPILOT_REPLY_CHAR_LIMIT,
+  retainedTail = '',
+): string {
+  if (text.length <= limit) return text;
+  const disclosure =
+    text.match(
+      /<!--copilot-proposal-disclosure:start-->[\s\S]*?<!--copilot-proposal-disclosure:end-->\s*$/,
+    )?.[0] ?? '';
+  let body = disclosure ? text.slice(0, text.length - disclosure.length).trimEnd() : text;
+  const tail = retainedTail.trim();
+  if (tail && body.endsWith(tail)) body = body.slice(0, -tail.length).trimEnd();
+  const suffix = [`> 回答过长，已截断于 ${limit} 字。`, tail, disclosure]
+    .filter(Boolean)
+    .join('\n\n');
+  return `${body.slice(0, Math.max(0, limit - suffix.length - 2))}\n\n${suffix}`;
+}
 
 export const EPHEMERAL_PRESENTATION_STORAGE_NOTICE =
   '\n\n> 保存说明（系统，以此为准）：这张卡片会随对话保存，重新打开仍可恢复；关闭面板不会删除。它不会另存为独立资料。当前不支持仅临时查看且完全不保存；正文中的其他保存描述不代表实际状态。';
@@ -68,7 +87,17 @@ export function sealCommittedPresentationReply(
 export const CopilotReplyFinalizationReceiptSchema = z
   .object({
     protocol_version: z.literal(2),
-    assurance: z.literal('execution_trace_bound'),
+    assurance: z.enum(['execution_trace_bound', 'unsealed']),
+    unsealed_reason: z
+      .enum([
+        'reply_truncated',
+        'incomplete_tool_trace',
+        'trace_changed',
+        'finalization_error',
+        'provider_failure',
+        'missing_terminal',
+      ])
+      .optional(),
     root_task_run_id: z.string().min(1),
     candidate_sha256: z.string().length(64),
     reply_sha256: z.string().length(64),
@@ -84,6 +113,7 @@ export const CopilotReplyFinalizationReceiptSchema = z
         placed: z.number().int().min(0),
         appended: z.number().int().min(0),
         dropped: z.number().int().min(0),
+        unplaced: z.number().int().min(0),
       })
       .strict()
       .optional(),
@@ -160,25 +190,10 @@ export function piToolErrorText(error: unknown): string {
 function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
   const proposals = trace.filter((entry) => entry.proposal_effect_contract !== undefined);
   if (proposals.length === 0) return undefined;
-  const rows = proposals.map((entry) => {
-    const output = isRecord(entry.domain_output) ? entry.domain_output : undefined;
-    const status = typeof output?.status === 'string' ? output.status : undefined;
-    const proposalId = typeof output?.proposal_id === 'string' ? output.proposal_id : undefined;
-    const succeeded =
-      entry.status === 'succeeded' &&
-      status !== undefined &&
-      status !== 'failed' &&
-      !status.startsWith('skipped:');
-    const retained = entry.proposal_effect_contract?.retained_draft;
-    return [
-      `- \`${entry.tool_name}\`${status ? `: status=${status}` : ''}${proposalId ? `, proposal_id=${proposalId}` : ''}`,
-      ...(retained
-        ? [`  retained draft=${retained.kind}; written before accept; retained after dismiss.`]
-        : []),
-      ...(succeeded ? [] : ['  未产生可供 owner 接受的 proposal。']),
-    ].join('\n');
-  });
-  const hasPending = proposals.some((entry) => {
+  const retainedDrafts = proposals.filter(
+    (entry) => entry.proposal_effect_contract?.retained_draft,
+  ).length;
+  const pending = proposals.filter((entry) => {
     const output = isRecord(entry.domain_output) ? entry.domain_output : undefined;
     const status = typeof output?.status === 'string' ? output.status : undefined;
     return (
@@ -190,37 +205,25 @@ function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
   });
   return [
     '<!--copilot-proposal-disclosure:start-->',
-    '本轮 proposal 结果由服务端契约裁定：',
-    ...rows,
-    '- owner gate: FULL',
-    '- direct target write: false',
-    '- pre-accept rollback: dismiss_before_accept',
-    hasPending
-      ? '目标变更尚未直接写入；只有 owner 接受对应 proposal 后才会应用。'
-      : '本轮没有可接受的 proposal，未执行任何目标变更。',
+    pending.length > 0
+      ? '本轮建议已提交，等待你确认后才会应用到目标。'
+      : '本轮没有产生可供确认的建议，未执行目标变更。',
+    // The companion reads these hidden rows to retain its inbox notice.
+    ...(pending.length > 0
+      ? ['<!--', ...pending.map(() => '- `建议`: status=pending'), '-->']
+      : []),
+    ...(retainedDrafts > 0 ? ['生成的草稿已经保存；暂不采纳建议也不会删除草稿。'] : []),
     '<!--copilot-proposal-disclosure:end-->',
   ].join('\n');
 }
 
 function applyProposalDisclosure(text: string, disclosure?: string): string {
-  let stripped = text
+  const stripped = text
     .replace(
       /\n*<!--copilot-proposal-disclosure:start-->[\s\S]*?<!--copilot-proposal-disclosure:end-->\s*$/,
       '',
     )
     .trimEnd();
-  if (disclosure) {
-    stripped = stripped
-      .replace(/\bLIGHT\b/g, 'FULL')
-      .replace(
-        /(?:已|已经)(?:直接)?(?:归档|删除|写入|修改|更新|应用|执行)(?:完成)?/g,
-        '目标变更尚未直接写入',
-      )
-      .replace(
-        /(?:无需|不需要)\s*(?:FULL|owner)[^\n。]{0,20}(?:确认|接受|gate)/gi,
-        '仍需 owner 通过 FULL gate 接受 proposal',
-      );
-  }
   return disclosure ? `${stripped}\n\n${disclosure}` : stripped;
 }
 
@@ -307,7 +310,10 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       ...(Array.isArray(observation.output)
         ? (observation.output as NonNullable<AfterToolCallResult['content']>)
         : []),
-      { type: 'text', text: `tool_use_id=${observation.call.id}` },
+      {
+        type: 'text',
+        text: `Internal follow-up reference, not for display: tool_use_id=${observation.call.id}`,
+      },
     ];
     return { content };
   };
@@ -323,18 +329,24 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
   async function finalizeTerminal(
     terminalText: string,
     failure?: ProviderFailureInfo,
+    context: { streamedText?: string; retainedTail?: string } = {},
   ): Promise<CopilotReplyFinalizationResult> {
     if (failure !== undefined) {
-      return failClosed(publicProseFailureMessage(providerFailureToPublicFailure(failure)));
+      return publishUnsealed(
+        terminalText ||
+          context.streamedText ||
+          publicProseFailureMessage(providerFailureToPublicFailure(failure)),
+        'provider_failure',
+        context,
+      );
     }
     const startVersion = traceVersion;
     const startTraceSha = digestTrace(trace);
     try {
-      if (terminalText.length > COPILOT_REPLY_CHAR_LIMIT || terminalText.trim().length === 0) {
-        throw new Error('terminal Markdown must be non-empty and within the reply limit');
-      }
+      if (terminalText.trim().length === 0)
+        return publishUnsealed(terminalText, 'missing_terminal', context);
       if (trace.some((entry) => entry.status === 'in_flight' || entry.output_sha256 === null)) {
-        throw new Error('cannot seal an incomplete tool trace');
+        return publishUnsealed(terminalText, 'incomplete_tool_trace', context);
       }
       const candidateSha = sha256Text(terminalText);
       const presentedText = options.authoritativeReply?.reply ?? terminalText;
@@ -365,66 +377,26 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         options.correctionContract,
         stripCopilotInternalComments,
       );
+      if (correction.reply.trim().length === 0) {
+        return publishUnsealed('', 'missing_terminal', context);
+      }
       const disclosure = proposalDisclosure(trace);
-      // YUK-1548 — only compose_block may mint tlp-block fences. Neutralise
-      // hand-written ones before substitution (render as inert code).
-      const withDisclosure = applyProposalDisclosure(correction.reply, disclosure).replace(
-        /^([^\S\n]*(?:`{3,}|~{3,})[^\S\n]*)tlp-block\b[^\n]*$/gim,
-        '$1text',
-      );
-      // YUK-1548 §5 — resolve `![alt](block:<ref>)` placements against the
-      // successful root compose_block calls bound to this trace, substitute
-      // canonical tlp-block fences, and append never-placed blocks in order.
-      const readyBlocks = trace
-        .filter(
-          (entry) =>
-            entry.root_call &&
-            entry.status === 'succeeded' &&
-            entry.domain_executed === true &&
-            domainToolName(entry.tool_name) === 'compose_block',
-        )
-        .flatMap((entry) => {
-          const output = entry.domain_output as
-            | { status?: string; ref?: string; block?: unknown }
-            | undefined;
-          return output?.status === 'ready' && typeof output.ref === 'string'
-            ? [{ ref: output.ref, block: output.block }]
-            : [];
-        });
-      const blocksByRef = new Map(readyBlocks.map((b) => [b.ref, b.block]));
-      const placedRefs = new Set<string>();
-      let dropped = 0;
-      const withPlaced = withDisclosure.replace(
-        BLOCK_PLACE_PATTERN,
-        (_match, _alt, ref: string) => {
-          if (!blocksByRef.has(ref)) {
-            dropped += 1;
-            return '';
-          }
-          placedRefs.add(ref);
-          return `\n\n${serializeBlockFence(blocksByRef.get(ref) as never)}\n\n`;
-        },
-      );
-      const appended = readyBlocks.filter((b) => !placedRefs.has(b.ref));
-      const appendedFences = appended
-        .map((b) => serializeBlockFence(b.block as never))
-        .join('\n\n');
-      const fixed = appendedFences ? `${withPlaced.trimEnd()}\n\n${appendedFences}` : withPlaced;
-      const blocksReceipt =
-        readyBlocks.length > 0 || dropped > 0
-          ? { placed: placedRefs.size, appended: appended.length, dropped }
-          : undefined;
+      const { text: composed, blocksReceipt } = prepareReplyText(correction.reply);
+      const disclosed = applyProposalDisclosure(composed, disclosure);
+      const fixed = truncateCopilotReply(disclosed, COPILOT_REPLY_CHAR_LIMIT, context.retainedTail);
+      const truncated = fixed !== disclosed;
       if (
         traceVersion !== startVersion ||
         digestTrace(trace) !== startTraceSha ||
         trace.some((entry) => entry.status === 'in_flight')
       ) {
-        throw new Error('tool trace changed while reply finalization was in progress');
+        return publishUnsealed(terminalText, 'trace_changed', context);
       }
       const primaryView = presented.primaryView;
       const receipt: CopilotReplyFinalizationReceipt = {
         protocol_version: 2,
-        assurance: 'execution_trace_bound',
+        assurance: truncated ? 'unsealed' : 'execution_trace_bound',
+        ...(truncated ? { unsealed_reason: 'reply_truncated' as const } : {}),
         root_task_run_id: options.rootTaskRunId,
         candidate_sha256: candidateSha,
         reply_sha256: sha256Text(fixed),
@@ -444,7 +416,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         accepted: true,
       };
     } catch {
-      return failClosed();
+      return publishUnsealed(terminalText, 'finalization_error', context);
     }
   }
 
@@ -465,19 +437,102 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     traceVersion += 1;
   }
 
-  function failClosed(copy = FINALIZATION_FAILURE_REPLY): CopilotReplyFinalizationResult {
+  function prepareReplyText(text: string) {
+    // YUK-1548 — only compose_block may mint tlp-block fences. Neutralise
+    // hand-written ones before substitution (render as inert code).
+    const withDisclosure = text.replace(
+      /^([^\S\n]*(?:`{3,}|~{3,})[^\S\n]*)tlp-block\b[^\n]*$/gim,
+      '$1text',
+    );
+    // YUK-1548 §5 — resolve `![alt](block:<ref>)` placements against the
+    // successful root compose_block calls bound to this trace, substitute
+    // canonical tlp-block fences, and append never-placed blocks in order.
+    const readyBlocks = trace
+      .filter(
+        (entry) =>
+          entry.root_call &&
+          entry.status === 'succeeded' &&
+          entry.domain_executed === true &&
+          domainToolName(entry.tool_name) === 'compose_block',
+      )
+      .flatMap((entry) => {
+        const output = entry.domain_output as
+          | { status?: string; ref?: string; block?: unknown }
+          | undefined;
+        return output?.status === 'ready' && typeof output.ref === 'string'
+          ? [{ ref: output.ref, block: output.block }]
+          : [];
+      });
+    const blocksByRef = new Map(readyBlocks.map((b) => [b.ref, b.block]));
+    const placedRefs = new Set<string>();
+    let dropped = 0;
+    const withPlaced = withDisclosure.replace(BLOCK_PLACE_PATTERN, (_match, _alt, ref: string) => {
+      if (!blocksByRef.has(ref)) {
+        dropped += 1;
+        return '';
+      }
+      placedRefs.add(ref);
+      return `\n\n${serializeBlockFence(blocksByRef.get(ref) as never)}\n\n`;
+    });
+    // Superseded compose drafts never reach the learner: once the reply
+    // places at least one block, every other ready block is dropped; with no
+    // placement at all, only the last ready block per kind is appended. The
+    // rest are recorded as `unplaced` in the receipt.
+    const unplacedBlocks = readyBlocks.filter((b) => !placedRefs.has(b.ref));
+    let appended: typeof unplacedBlocks;
+    let unplaced: number;
+    if (placedRefs.size > 0) {
+      appended = [];
+      unplaced = unplacedBlocks.length;
+    } else {
+      const lastIndexByKind = new Map<string, number>();
+      unplacedBlocks.forEach((b, index) => {
+        const kind = (b.block as { kind?: unknown } | undefined)?.kind;
+        lastIndexByKind.set(typeof kind === 'string' ? kind : '', index);
+      });
+      const kept = new Set(lastIndexByKind.values());
+      appended = unplacedBlocks.filter((_, index) => kept.has(index));
+      unplaced = unplacedBlocks.length - appended.length;
+    }
+    const appendedFences = appended.map((b) => serializeBlockFence(b.block as never)).join('\n\n');
+    const composed = appendedFences ? `${withPlaced.trimEnd()}\n\n${appendedFences}` : withPlaced;
+    const blocksReceipt =
+      readyBlocks.length > 0 || dropped > 0
+        ? { placed: placedRefs.size, appended: appended.length, dropped, unplaced }
+        : undefined;
+    return { text: composed, blocksReceipt };
+  }
+
+  function publishUnsealed(
+    candidate: string,
+    reason: NonNullable<CopilotReplyFinalizationReceipt['unsealed_reason']>,
+    context: { streamedText?: string; retainedTail?: string },
+  ): CopilotReplyFinalizationResult {
     const disclosure = proposalDisclosure(trace);
-    const replyText = applyProposalDisclosure(copy, disclosure);
+    const candidateBody = stripCopilotInternalComments(candidate);
+    const streamedBody = stripCopilotInternalComments(context.streamedText ?? '');
+    const body = candidateBody.trim()
+      ? candidateBody
+      : streamedBody.trim()
+        ? streamedBody
+        : FINALIZATION_FAILURE_REPLY;
+    const prepared = prepareReplyText(body);
+    const replyText = truncateCopilotReply(
+      applyProposalDisclosure(prepared.text, disclosure),
+      COPILOT_REPLY_CHAR_LIMIT,
+      context.retainedTail,
+    );
     const traceSha = digestTrace(trace);
     return {
       replyText,
       preparedReply: { text: replyText },
-      accepted: false,
+      accepted: true,
       receipt: {
         protocol_version: 2,
-        assurance: 'execution_trace_bound',
+        assurance: 'unsealed',
+        unsealed_reason: reason,
         root_task_run_id: options.rootTaskRunId,
-        candidate_sha256: sha256Text(''),
+        candidate_sha256: sha256Text(candidate),
         reply_sha256: sha256Text(replyText),
         trace_sha256: traceSha,
         trace_call_count: trace.length,
@@ -485,6 +540,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         correction: 'normal',
         proposal_disclosure: disclosure ? 'server_composed' : 'none',
         primary_view: 'absent',
+        ...(prepared.blocksReceipt ? { blocks: prepared.blocksReceipt } : {}),
       },
     };
   }

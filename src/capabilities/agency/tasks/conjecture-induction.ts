@@ -87,6 +87,11 @@ export const mindModelInductionTaskSpec = {
     needsToolCall: false,
     isMultimodal: true,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '猜想归纳按既有证据集装配，不读学习者画像 view。',
+    },
+
     prompt: { kind: 'profile', build: buildMindModelInductionPrompt },
   },
   outputSchema: MindModelInductionOutputSchema,
@@ -110,6 +115,11 @@ export const conjectureGroupingTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '猜想归纳按既有证据集装配，不读学习者画像 view。',
+    },
+
     prompt: {
       kind: 'inline',
       text: '将 hypotheses 按语义等价分组。只有 claim_md、target_error_rule、trigger_conditions、scope_boundary、expected_wrong_answer_signature 和 causal_direction_required 都描述同一个且边界相同的错误模式，才属于同一组。causal_direction_required 不同的 hypothesis 绝不能合并；仅 claim 相似但触发条件、范围边界、错误答案签名或因果方向审查要求不同，必须分组。\n\n输入：{"hypotheses":[{"claim_md":"...","diagnostic_spec":{...}},...]}。\n只输出 JSON：{"groups":[[i,j,...],...]}\n每个下标0..N-1必须恰好出现一次。',

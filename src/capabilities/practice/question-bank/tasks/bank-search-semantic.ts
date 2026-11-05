@@ -70,6 +70,11 @@ export const bankRequirementInterpretTaskSpec = {
     isMultimodal: false,
     allowedTools: [],
     structuredOutputSchema: BankInterpretationSchema,
+    context: {
+      view: 'none',
+      reason: '题库检索按需求语义匹配候选题，不读学习者上下文。',
+    },
+
     prompt: {
       kind: 'inline',
       text: `${untrusted}
@@ -94,6 +99,11 @@ export const bankConditionVerifyTaskSpec = {
     isMultimodal: false,
     allowedTools: [],
     structuredOutputSchema: BankVerificationSchema,
+    context: {
+      view: 'none',
+      reason: '题库检索按需求语义匹配候选题，不读学习者上下文。',
+    },
+
     prompt: {
       kind: 'inline',
       text: `${untrusted}

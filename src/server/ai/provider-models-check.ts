@@ -14,6 +14,7 @@ import { ANTHROPIC_SUB_CONTRACT_REF } from './pricing';
 import {
   implementedProviderIds,
   isKnownProvider,
+  providerAuthFileEnvName,
   providerAuthProbeModel,
   providerCredentialEnvName,
   providerModelsRoot,
@@ -42,6 +43,7 @@ const SENT_CODES = new Set([
 /** Whether GET /models could be read. Independent of the inference probe. */
 export type ModelListAccess =
   | { status: 'unconfigured' }
+  | { status: 'login_lane' }
   | { status: 'readable' }
   | { status: 'auth_failed'; httpStatus: number; errorType: string }
   | { status: 'unreachable'; detail: string };
@@ -92,6 +94,7 @@ export interface ProbePrice {
 
 type ModelsListResult =
   | { status: 'unconfigured' }
+  | { status: 'login_lane' }
   | { status: 'ok'; ids: readonly string[] }
   | { status: 'auth_failed'; httpStatus: number; errorType: string }
   | { status: 'unsupported' }
@@ -172,6 +175,9 @@ function credentialFor(
   env: Record<string, string | undefined>,
 ): string | undefined {
   const name = providerCredentialEnvName(provider);
+  // An auth-file env holds a PATH, never an HTTP credential — the lane's
+  // login presence is recorded separately; nothing may send it as a bearer.
+  if (name !== undefined && name === providerAuthFileEnvName(provider)) return undefined;
   const value = name ? env[name]?.trim() : undefined;
   return value && value.length > 0 ? value : undefined;
 }
@@ -308,7 +314,11 @@ async function listOne(
   env: Record<string, string | undefined>,
 ): Promise<ModelsListResult> {
   const credential = credentialFor(provider, env);
-  if (!credential) return { status: 'unconfigured' };
+  if (!credential) {
+    const authFile = providerAuthFileEnvName(provider);
+    if (authFile && env[authFile]) return { status: 'login_lane' };
+    return { status: 'unconfigured' };
+  }
   const root = providerModelsRoot(provider, env);
   if (!root) return { status: 'unreachable', detail: 'base_url' };
   const headers = authHeaders(provider, credential);
@@ -511,6 +521,7 @@ function blocksProbe(
 
 function listAccess(list: ModelsListResult): ModelListAccess {
   if (list.status === 'unconfigured') return { status: 'unconfigured' };
+  if (list.status === 'login_lane') return { status: 'login_lane' };
   if (list.status === 'ok') return { status: 'readable' };
   if (list.status === 'auth_failed') {
     return { status: 'auth_failed', httpStatus: list.httpStatus, errorType: list.errorType };
@@ -561,6 +572,7 @@ function shouldProbe(
 ): boolean {
   if (fingerprint === null) return false;
   if (list.status === 'unconfigured' || list.status === 'auth_failed') return false;
+  if (list.status === 'login_lane') return false;
   if (list.status === 'unreachable') return false;
   if (blocksProbe(previous, fingerprint, now)) return false;
   return true;
@@ -736,6 +748,7 @@ function parseListAccess(value: unknown): ModelListAccess | undefined {
   const row = asJson(value);
   if (!row || typeof row.status !== 'string') return undefined;
   if (row.status === 'unconfigured') return { status: 'unconfigured' };
+  if (row.status === 'login_lane') return { status: 'login_lane' };
   if (row.status === 'readable') return { status: 'readable' };
   if (row.status === 'auth_failed') {
     const failed = readAuthFailed(row);
@@ -886,6 +899,7 @@ export function parseProviderChecks(payload: unknown): ProviderModelsCheck[] {
 }
 
 export function providerAuthLabel(check: ProviderModelsCheck): string {
+  if (check.list.status === 'login_lane') return 'login_lane';
   if (check.list.status === 'unconfigured' || check.inference.status === 'unconfigured') {
     return 'unconfigured';
   }
@@ -1046,6 +1060,23 @@ export function finalizeProviderModelsChecks(input: {
     const fingerprint = input.fingerprints.get(provider) ?? null;
     const previous = previousByProvider.get(provider);
     const catalogProvider = catalogProviderFor(provider) ?? null;
+    if (list.status === 'login_lane') {
+      // The lane's credential is a login file, not a key — presence is real,
+      // nothing was probed. Persist the lane marker, not 'unconfigured'.
+      checks.push(
+        canonicalProviderCheck({
+          provider,
+          catalogProvider,
+          list: { status: 'login_lane' },
+          inference: { status: 'unprobed' },
+          listed: [],
+          catalogOnly: [],
+          providerOnly: [],
+          credentialFingerprint: null,
+        }),
+      );
+      continue;
+    }
     if (fingerprint === null || list.status === 'unconfigured') {
       checks.push(
         canonicalProviderCheck({

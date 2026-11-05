@@ -20,6 +20,14 @@ import { observeJudgeProcess } from '../judge-process-observer';
 // 调用 —— typed transport 归 src/server/ai/ 后续 lane。
 
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import {
+  type ActivateEvaluationRequestT,
+  type SettlementObservers,
+  activateEvaluation,
+  learningSettlement,
+  snapshotAssessmentLearningScope,
+  withdrawCapturedOccurrence,
+} from '@/capabilities/practice/settlement/public';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
 import {
   evaluationMemberFromRows,
@@ -59,14 +67,6 @@ import {
   lockAssessmentEvaluationGroup,
 } from '@/kernel/locks/assessment-evaluation-group-lock';
 import { checkRateLimit } from '@/kernel/request-rate-limit';
-import {
-  type ActivateEvaluationRequestT,
-  type SettlementObservers,
-  activateEvaluation,
-  learningSettlement,
-  snapshotAssessmentLearningScope,
-  withdrawCapturedOccurrence,
-} from '@/server/assessment/runtime';
 import { authorizeConfirmationCorrection } from '../../../settlement/public';
 import { bindAppealExecution, reservedEvaluationAttempt } from '../assessment/appeal-execution';
 import { createJevModelExecutor } from '../jev-model-executor';

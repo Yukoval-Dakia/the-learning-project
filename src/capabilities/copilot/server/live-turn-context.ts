@@ -2,10 +2,13 @@ import type { CopilotRunInput } from './copilot-run-input';
 
 export const COPILOT_TURN_CONTEXT_OPEN = '<turn_context>';
 export const COPILOT_TURN_CONTEXT_CLOSE = '</turn_context>';
-export const COPILOT_TURN_CONTEXT_CODEC_VERSION = 'copilot-live-turn-v2';
+export const COPILOT_TURN_CONTEXT_CODEC_VERSION = 'copilot-live-turn-v4';
 
 type TurnContext = {
   readonly v: 1;
+  /** YUK-1770 — learner-local today, refreshed EVERY turn so a session resumed
+   *  across days never anchors 「下周五」 to a stale date. */
+  readonly today: string;
   readonly learner_state?: string;
   readonly proposal_feedback?: CopilotRunInput['proposal_feedback'];
   readonly review_answer?: CopilotRunInput['review_answer'];
@@ -60,6 +63,7 @@ function compileTurnContext(input: CopilotRunInput, includeProposalFeedback: boo
   const correction = modelCorrectionContract(input);
   const context: TurnContext = {
     v: 1,
+    today: input.today,
     ...(input.review_answer ? { review_answer: input.review_answer } : {}),
     ...(input.learner_state_header ? { learner_state: input.learner_state_header } : {}),
     ...(includeProposalFeedback && input.proposal_feedback.length > 0
@@ -74,14 +78,15 @@ function compileTurnContext(input: CopilotRunInput, includeProposalFeedback: boo
           },
         }
       : {}),
-    ...(correction.target_prior_turn_id
+    ...(correction.target_prior_turn_id || correction.available_prior_turn_ids.length > 0
       ? {
           correction_contract: correction,
         }
       : {}),
   };
 
-  if (Object.keys(context).length === 1) return '';
+  // `today` always rides: the relative-date anchor must never go stale on a
+  // resumed session, so the context is never empty anymore.
   return `${COPILOT_TURN_CONTEXT_OPEN}${JSON.stringify(context)}${COPILOT_TURN_CONTEXT_CLOSE}`;
 }
 

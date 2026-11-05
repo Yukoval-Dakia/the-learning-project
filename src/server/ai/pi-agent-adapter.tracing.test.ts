@@ -2,7 +2,6 @@ import { type AgentTool, agentLoop } from '@earendil-works/pi-agent-core';
 import {
   type AssistantMessage,
   type Model,
-  Type,
   createAssistantMessageEventStream,
   createModels,
 } from '@earendil-works/pi-ai';
@@ -102,7 +101,11 @@ function tool(execute: AgentTool['execute']): AgentTool {
     name: 'mcp__loom__fixture',
     label: 'Fixture',
     description: 'Fixture',
-    parameters: Type.Object({ query: Type.String() }),
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string' } },
+      required: ['query'],
+    },
     execute,
   };
 }

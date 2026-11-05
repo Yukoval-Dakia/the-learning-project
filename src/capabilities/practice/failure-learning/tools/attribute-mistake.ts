@@ -3,7 +3,7 @@ import type { Db } from '@/db/client';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 import {
   type FailureAttemptJudge,
-  getFailureAttemptWithReasoningTraceById,
+  getFailureAttemptWithReasoningTraceForDerivationById,
 } from '@/kernel/read-models/failure-attempts';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -68,7 +68,7 @@ async function questionNotFoundOutput(
   db: Db,
   attemptEventId: string,
 ): Promise<AttributeMistakeOutput> {
-  const loaded = await getFailureAttemptWithReasoningTraceById(db, attemptEventId);
+  const loaded = await getFailureAttemptWithReasoningTraceForDerivationById(db, attemptEventId);
   return {
     status: 'failed',
     reason: loaded ? `question not found: ${loaded.failure.question_id}` : 'question not found',

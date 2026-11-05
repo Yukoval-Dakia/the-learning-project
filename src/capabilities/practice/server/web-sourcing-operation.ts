@@ -86,6 +86,7 @@ export const runWebSourcingOperation: RunWebSourcingAgentFn = async (params) => 
     db,
     taskRunId: producerTaskRunId,
     ...(ctx.deadlineAt !== undefined ? { providerSessionDeadlineAt: ctx.deadlineAt } : {}),
+    ...(ctx.maxCostUsd !== undefined ? { budgetOverride: { maxCost: ctx.maxCostUsd } } : {}),
     piToolMounts,
     allowedTools,
     subjectProfile,

@@ -11,7 +11,7 @@ import { authorQuestion } from '@/capabilities/practice/question-bank/tools/prop
 //
 // DB-config test: imports Failure Learning / writeAiProposal / acceptAiProposal /
 // @/db, seeds a real Postgres testcontainer.
-import { learning_record, question } from '@/db/schema';
+import { learning_record, question, source_document } from '@/db/schema';
 import { acceptAiProposal } from '@/server/proposals/actions';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
@@ -29,28 +29,38 @@ function deps() {
 }
 
 async function seedRecord(id: string): Promise<void> {
-  await testDb().insert(learning_record).values({
-    id,
-    kind: 'open_question',
-    title: '之到底是什么',
-    content_md: '总是把之误判成代词。',
-    source: 'manual',
-    capture_mode: 'text',
-    activity_kind: 'ask',
-    processing_status: 'raw',
-    origin_event_id: null,
-    subject_id: 'yuwen',
-    knowledge_ids: [],
-    question_id: null,
-    attempt_event_id: null,
-    learning_item_id: null,
-    artifact_id: null,
-    source_document_id: null,
-    asset_refs: [],
-    payload: {},
-    created_at: BASE,
-    updated_at: BASE,
-  });
+  await testDb()
+    .insert(source_document)
+    .values({
+      id: `document:${id}`,
+      provenance: { usage_policy: { derivation_policy: 'allow' } },
+      created_at: BASE,
+      updated_at: BASE,
+    });
+  await testDb()
+    .insert(learning_record)
+    .values({
+      id,
+      kind: 'open_question',
+      title: '之到底是什么',
+      content_md: '总是把之误判成代词。',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'ask',
+      processing_status: 'raw',
+      origin_event_id: null,
+      subject_id: 'yuwen',
+      knowledge_ids: [],
+      question_id: null,
+      attempt_event_id: null,
+      learning_item_id: null,
+      artifact_id: null,
+      source_document_id: `document:${id}`,
+      asset_refs: [],
+      payload: {},
+      created_at: BASE,
+      updated_at: BASE,
+    });
 }
 
 describe('author_question — record seed (record → question via record_promotion)', () => {

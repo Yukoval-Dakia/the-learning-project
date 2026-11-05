@@ -9,8 +9,7 @@ export const ANSWER_ONLY_TOOL_NAMES = [
   'get_question_context',
   'search_bank',
   'read_bank',
-  'query_memory_brief',
-  'search_memory_facts',
+  'query_context',
   // Must stay mounted in the answer-only run; an unregistered name fails typecheck.
 ] as const satisfies readonly ReadDomainToolName[];
 const answerOnlyTools: ReadonlySet<string> = new Set(ANSWER_ONLY_TOOL_NAMES);

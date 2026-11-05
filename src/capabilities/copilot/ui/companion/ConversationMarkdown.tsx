@@ -48,7 +48,40 @@ function Table({ children, node: _node, ...props }: ComponentProps<'table'> & { 
 }
 
 const baseComponents: MarkdownRendererProps['components'] = { pre: CodeBlock, table: Table };
-const extensions = [remarkGfm];
+
+// YUK-1367 — a model sometimes writes the tool's `/practice/x` as `//practice/x`. The browser reads
+// that as host `practice`, so the click leaves the app. A first part that could not be a real host
+// (no dot, no port) is the in-app path with an extra slash; anything else names another host and
+// stays plain text: a link that looks internal must not go elsewhere.
+const PROTOCOL_RELATIVE = /^\/{2,}/;
+function chatLinkHref(href: string | undefined): string | null {
+  if (!href || !PROTOCOL_RELATIVE.test(href)) return href ?? null;
+  const rest = href.replace(PROTOCOL_RELATIVE, '');
+  const first = rest.split(/[/?#]/, 1)[0] ?? '';
+  return first !== '' && !/[.:@]/.test(first) ? `/${rest}` : null;
+}
+
+// YUK-1812 — a model sometimes writes a page path with image syntax, `![去练习](/practice/x)`. That
+// draws a broken image and no way in. In this app only `/api/assets/…` serves images from a site
+// path, so any other one is a link the model meant to write.
+type MarkdownNode = { type: string; url?: string; alt?: string | null; children?: MarkdownNode[] };
+function pageImagesToLinks(node: MarkdownNode) {
+  for (const [index, child] of (node.children ?? []).entries()) {
+    if (child.type === 'image' && child.url?.startsWith('/') && !child.url.startsWith('/api/')) {
+      const text = child.alt || '打开';
+      node.children?.splice(index, 1, {
+        type: 'link',
+        url: child.url,
+        children: [{ type: 'text', value: text } as MarkdownNode],
+      });
+    } else {
+      pageImagesToLinks(child);
+    }
+  }
+}
+const remarkPageImagesAsLinks = () => pageImagesToLinks;
+
+const extensions = [remarkGfm, remarkPageImagesAsLinks];
 
 /** Conversation content supports math explicitly, independent of the page's current subject. */
 export function ConversationMarkdown({
@@ -65,14 +98,19 @@ export function ConversationMarkdown({
       h2: ({ node: _node, id, ...props }) => (
         <h2 {...props} id={id === 'footnote-label' ? `message-${instance}-footnote-label` : id} />
       ),
-      a: ({ node: _node, 'aria-describedby': description, ...props }) => (
-        <a
-          {...props}
-          aria-describedby={
-            description === 'footnote-label' ? `message-${instance}-footnote-label` : description
-          }
-        />
-      ),
+      a: ({ node: _node, 'aria-describedby': description, href, ...props }) => {
+        const safeHref = chatLinkHref(href);
+        if (href && safeHref === null) return <span>{props.children}</span>;
+        return (
+          <a
+            {...props}
+            href={safeHref ?? undefined}
+            aria-describedby={
+              description === 'footnote-label' ? `message-${instance}-footnote-label` : description
+            }
+          />
+        );
+      },
     }),
     [instance],
   );

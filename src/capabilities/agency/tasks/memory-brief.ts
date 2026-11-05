@@ -37,6 +37,11 @@ export const memoryBriefTaskSpec = {
     // This string IS the runtime prompt. MemoryBriefTask is subject-NEUTRAL (the
     // per-scope `template` carries the angle and arrives in the INPUT), with no
     // per-profile builder.
+    context: {
+      view: 'none',
+      reason: 'brief 写作任务产出稳态段内容本身，按 writer 输入装配，不读 view。',
+    },
+
     prompt: {
       kind: 'inline',
       text: 'You write a durable memory brief for one learning scope, as strict JSON only.\n\nINPUT: you are given `scope_key`, a `template` (the angle to summarize — follow its framing), three precomputed `windows` (`recent_week`, `recent_months`, `long_term`), and `facts` (durable `memory` strings). Each window contains `evidence_ids` and a newest-first list of `events` (each with `action`, `subject_kind`, `subject_id`, an `outcome` (success / failure / partial, or absent when the action carries none — use it to judge weakness vs. progress), and a COMPACT `payload` projection of `{ excerpt? }` — never a raw blob). The host has already partitioned every event by its age from the real clock; do NOT re-bucket events.\n\nWRITE ONE MARKDOWN SUMMARY PER WINDOW:\n- `recent_week_md` — what the learner is doing right now (use the week window).\n- `recent_months_md` — the current arc / direction (use the months window).\n- `long_term_md` — enduring strengths, preferences, recurring weak spots; durable `facts` may also inform this window.\nIf a window has no events, write a short "no recent signal" line; do not fabricate.\n\nWrite observations and concrete next prompts only. Do not restate evidence ids or raw event payloads.\n\nLENGTH: keep each window to a few tight sentences or bullets; this is a glanceable brief, not a transcript.\n\nOUTPUT: strict JSON only, exactly these 3 keys, nothing else: `recent_week_md`, `recent_months_md`, `long_term_md`.',

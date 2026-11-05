@@ -53,18 +53,6 @@
     }
   },
   "xiaomi": {
-    "mimo-v2.5": {
-      "api": "openai-completions",
-      "thinkingFormat": "deepseek"
-    },
-    "mimo-v2.5-pro": {
-      "api": "openai-completions",
-      "thinkingFormat": "deepseek"
-    },
-    "mimo-v2.5-pro-ultraspeed": {
-      "api": "openai-completions",
-      "thinkingFormat": "deepseek"
-    },
     "mimo-v2.6-flash": {
       "api": "openai-completions",
       "thinkingFormat": "deepseek"
@@ -112,13 +100,11 @@
     "qwen3.8-max": {
       "api": "anthropic-messages"
     },
-    "deepseek-v4-flash": {
-      "api": "openai-completions",
-      "thinkingFormat": "deepseek"
+    "gemini-4-argon": {
+      "api": "google-generative-ai"
     },
-    "deepseek-v4-flash-vision-exp": {
-      "api": "openai-completions",
-      "thinkingFormat": "deepseek"
+    "beam-free": {
+      "api": "openai-completions"
     },
     "deepseek-v4-pro": {
       "api": "openai-completions",
@@ -143,16 +129,19 @@
     "hy4-preview": {
       "api": "openai-completions"
     },
+    "iceman-contributor-free": {
+      "api": "openai-completions"
+    },
     "kimi-k2.7-code": {
       "api": "openai-completions"
     },
     "kimi-k3": {
       "api": "openai-completions"
     },
-    "longcat-2.0": {
+    "kimi-k3.1-pro": {
       "api": "openai-completions"
     },
-    "longcat-2.5-preview-free": {
+    "longcat-2.0": {
       "api": "openai-completions"
     },
     "mimo-v2.5": {
@@ -167,19 +156,16 @@
     "mimo-v2.6-pro": {
       "api": "openai-completions"
     },
-    "minimax-m2.7": {
+    "minimax-m3.1-flash": {
       "api": "openai-completions"
     },
-    "space-bunny": {
+    "step-5-preview": {
       "api": "openai-completions"
     },
     "gpt-5.6-luna": {
       "api": "openai-responses"
     },
     "gpt-6-luna": {
-      "api": "openai-responses"
-    },
-    "grok-4.6": {
       "api": "openai-responses"
     },
     "grok-4.7": {
@@ -193,6 +179,9 @@
     }
   },
   "openai": {
+    "chat-latest": {
+      "api": "openai-responses"
+    },
     "gpt-4": {
       "api": "openai-responses"
     },
@@ -244,13 +233,7 @@
     "gpt-5.2": {
       "api": "openai-responses"
     },
-    "gpt-5.2-chat-latest": {
-      "api": "openai-responses"
-    },
     "gpt-5.2-pro": {
-      "api": "openai-responses"
-    },
-    "gpt-5.3-chat-latest": {
       "api": "openai-responses"
     },
     "gpt-5.3-codex": {
@@ -277,6 +260,9 @@
     "gpt-5.5-pro": {
       "api": "openai-responses"
     },
+    "gpt-5.6-cyber": {
+      "api": "openai-responses"
+    },
     "gpt-5.6-luna": {
       "api": "openai-responses"
     },
@@ -298,13 +284,13 @@
     "gpt-6.1-sol": {
       "api": "openai-responses"
     },
+    "gpt-6.1-terra": {
+      "api": "openai-responses"
+    },
     "gpt-daybreak-blue-latest": {
       "api": "openai-responses"
     },
     "gpt-daybreak-red-latest": {
-      "api": "openai-responses"
-    },
-    "gpt-realtime-2.1": {
       "api": "openai-responses"
     },
     "o1": {
@@ -327,6 +313,18 @@
     }
   },
   "openrouter": {
+    "~anthropic/claude-fable-latest": {
+      "api": "anthropic-messages"
+    },
+    "~anthropic/claude-haiku-latest": {
+      "api": "anthropic-messages"
+    },
+    "~anthropic/claude-opus-latest": {
+      "api": "anthropic-messages"
+    },
+    "~anthropic/claude-sonnet-latest": {
+      "api": "anthropic-messages"
+    },
     "anthropic/claude-fable-5": {
       "api": "anthropic-messages"
     },
@@ -360,9 +358,6 @@
     "anthropic/claude-opus-5.5": {
       "api": "anthropic-messages"
     },
-    "anthropic/claude-sonnet-4": {
-      "api": "anthropic-messages"
-    },
     "anthropic/claude-sonnet-4.5": {
       "api": "anthropic-messages"
     },
@@ -374,22 +369,6 @@
     },
     "anthropic/claude-sonnet-5.5": {
       "api": "anthropic-messages"
-    },
-    "~anthropic/claude-fable-latest": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "~anthropic/claude-haiku-latest": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "~anthropic/claude-opus-latest": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "~anthropic/claude-sonnet-latest": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
     },
     "~deepseek/deepseek-flash-latest": {
       "api": "openai-completions",
@@ -432,6 +411,10 @@
       "thinkingFormat": "openrouter"
     },
     "~openai/gpt-terra-latest": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "~unbiased/pareto-latest": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -547,14 +530,6 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "apodex/apodex-1.1-mini:free": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "arcee-ai/trinity-large-thinking": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "auto": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
@@ -611,10 +586,6 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "deepseek/deepseek-r1": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "deepseek/deepseek-r1-0528": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
@@ -655,11 +626,19 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
+    "deepseek/deepseek-v4.1-flash-1017": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
     "deepseek/deepseek-v4.1-flash:batch": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
     "dots-studio/dots-3-note-preview:free": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "elorian/glimpse": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -675,23 +654,11 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "google/gemini-2.5-flash-lite:batch": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "google/gemini-2.5-flash:batch": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "google/gemini-2.5-pro": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
     "google/gemini-2.5-pro-preview": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "google/gemini-2.5-pro:batch": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -771,6 +738,14 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
+    "google/gemini-4-argon": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "google/gemini-4-argon:batch": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
     "google/gemini-nano-banana-2.1": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
@@ -811,15 +786,11 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
+    "inception/mercury-3": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
     "inclusionai/ling-3.0-flash": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "inclusionai/ling-3.0-flash-fin": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "inclusionai/ling-3.0-flash-sante:free": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -831,7 +802,15 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
+    "liquid/lfm-2.5-2.6b": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
     "liquid/lfm-2.5-2.6b:free": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "liquid/lfm-2.5-24b-a2b": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -883,6 +862,14 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
+    "meta/muse-spark-open": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "meta/muse-wonder": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
     "minimax/minimax-m1": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
@@ -907,11 +894,11 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "mistralai/codestral-2508": {
+    "minimax/minimax-m3.1-flash": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "mistralai/codestral-2508:batch": {
+    "mistralai/codestral-2508": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -931,10 +918,6 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "mistralai/ministral-8b-2512:batch": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "mistralai/mistral-large": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
@@ -944,10 +927,6 @@
       "thinkingFormat": "openrouter"
     },
     "mistralai/mistral-large-2512": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "mistralai/mistral-large-2512:batch": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -971,10 +950,6 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "mistralai/mistral-medium-3.1:batch": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "mistralai/mistral-nemo": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
@@ -984,10 +959,6 @@
       "thinkingFormat": "openrouter"
     },
     "mistralai/mistral-small-2603": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "mistralai/mistral-small-2603:batch": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -1039,6 +1010,10 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
+    "moonshotai/kimi-k3.1-pro": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
     "nex-agi/nex-n2.5-pro": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
@@ -1052,10 +1027,6 @@
       "thinkingFormat": "openrouter"
     },
     "nvidia/nemotron-3-super-120b-a12b": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "nvidia/nemotron-3-super-120b-a12b:free": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -1075,7 +1046,11 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "openai/gpt-3.5-turbo": {
+    "nvidia/nemotron-3.5-super-vl": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "nvidia/nemotron-3.5-super-vl:free": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -1087,15 +1062,7 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "openai/gpt-3.5-turbo:batch": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "openai/gpt-4": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "openai/gpt-4-turbo": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -1391,6 +1358,30 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
+    "openai/gpt-6.1-sol-pro:batch": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "openai/gpt-6.1-sol:batch": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "openai/gpt-6.1-terra": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "openai/gpt-6.1-terra-pro": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "openai/gpt-6.1-terra-pro:batch": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "openai/gpt-6.1-terra:batch": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
     "openai/gpt-audio": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
@@ -1423,19 +1414,7 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "openai/o1": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "openai/o3": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "openai/o3-mini": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "openai/o3-mini-high": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -1448,14 +1427,6 @@
       "thinkingFormat": "openrouter"
     },
     "openai/o3:batch": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "openai/o4-mini": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "openai/o4-mini-high": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -1479,27 +1450,23 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
+    "openrouter/pareto-code": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "particle-ai/particle-1": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
     "perceptron/perceptron-mk1.5": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "poolside/laguna-s-2.1": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "poolside/laguna-s-2.1:free": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "poolside/laguna-xs-2.1": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "poolside/laguna-xs-2.1:free": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "prism-ml/ternary-bonsai-2-27b": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "prism-ml/ternary-bonsai-2-9b": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -1515,15 +1482,7 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "qwen/qwen-plus-2025-07-28": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "qwen/qwen3-14b": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "qwen/qwen3-235b-a22b": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -1543,15 +1502,7 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "qwen/qwen3-30b-a3b-thinking-2507": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "qwen/qwen3-32b": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "qwen/qwen3-8b": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -1571,31 +1522,11 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "qwen/qwen3-coder-plus": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "qwen/qwen3-max": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "qwen/qwen3-max-thinking": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "qwen/qwen3-next-80b-a3b-instruct": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "qwen/qwen3-next-80b-a3b-thinking": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "qwen/qwen3-vl-235b-a22b-instruct": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "qwen/qwen3-vl-235b-a22b-thinking": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -1607,15 +1538,7 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "qwen/qwen3-vl-32b-instruct": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "qwen/qwen3-vl-8b-instruct": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "qwen/qwen3-vl-8b-thinking": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -1663,10 +1586,6 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "qwen/qwen3.6-max-preview": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "qwen/qwen3.6-plus": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
@@ -1680,6 +1599,10 @@
       "thinkingFormat": "openrouter"
     },
     "qwen/qwen3.7-plus": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "qwen/qwen3.7-plus:batch": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -1707,6 +1630,14 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
+    "recursive/flint-v1.0:free": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "reflection/beam-1.0-501b-a23b": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
     "rekaai/reka-edge": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
@@ -1731,15 +1662,15 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "sao10k/l3.1-euryale-70b": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
     "stepfun/step-3.5-flash": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
     "stepfun/step-3.7-flash": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "stepfun/step-5-preview": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -1775,19 +1706,15 @@
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "unbiased/pareto": {
+    "unbiased/pareto-26.10": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
-    "unbiased/pareto-26.10-preview": {
+    "unbiased/pareto-26.9": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
     "upstage/solar-mini4": {
-      "api": "openai-completions",
-      "thinkingFormat": "openrouter"
-    },
-    "upstage/solar-pro-3": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },
@@ -1840,6 +1767,10 @@
       "thinkingFormat": "openrouter"
     },
     "xiaomi/mimo-v2.6-pro-ultraspeed": {
+      "api": "openai-completions",
+      "thinkingFormat": "openrouter"
+    },
+    "xingchen-agi/xing4.0-29b-a4b:free": {
       "api": "openai-completions",
       "thinkingFormat": "openrouter"
     },

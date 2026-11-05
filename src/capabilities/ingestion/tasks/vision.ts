@@ -50,6 +50,8 @@ export const visionExtractTaskSpec = {
     isMultimodal: true,
     allowedTools: [],
     invocation: 'manual_rescue_only',
+    context: { view: 'none', reason: '录入 agent 只处理当次源材料，不读学习者历史上下文' },
+
     prompt: {
       kind: 'inline',
       text: '你是错题录入助手。给定一张题目图片（试卷/手写/教材截图），输出严格 JSON（不带 markdown 代码块包裹）：\n{"blocks":[{"extracted_prompt_md":"...","reference_md":"...|null","wrong_answer_md":"...|null","page_index":0,"bbox":{"x":0.1,"y":0.2,"width":0.6,"height":0.3},"role":"prompt|answer_area|continuation","visual_complexity":"low|medium|high","extraction_confidence":0.0-1.0,"knowledge_hint":"...|null"}]}\n约束：bbox 坐标 0-1 归一化（不是像素）；一图可输出 1+ 个 block（一页多题）；page_index 由调用方覆盖；wrong_answer_md 仅当图上有用户错答 / 批改痕迹时填；knowledge_hint 是软提示。',
@@ -71,6 +73,8 @@ export const visionExtractTaskHeavySpec = {
     isMultimodal: true,
     allowedTools: [],
     invocation: 'manual_rescue_only',
+    context: { view: 'none', reason: '录入 agent 只处理当次源材料，不读学习者历史上下文' },
+
     prompt: {
       kind: 'inline',
       text: '你是错题录入助手（heavy 模式，前两层 OCR / haiku 都失败）。给定一张题目图片（可能含手写 / 复杂版式 / 公式），输出严格 JSON（不带 markdown 代码块包裹）：\n{"blocks":[{"extracted_prompt_md":"...","reference_md":"...|null","wrong_answer_md":"...|null","page_index":0,"bbox":{"x":0.1,"y":0.2,"width":0.6,"height":0.3},"role":"prompt|answer_area|continuation","visual_complexity":"low|medium|high","extraction_confidence":0.0-1.0,"knowledge_hint":"...|null"}]}\n约束：bbox 坐标 0-1 归一化（不是像素）；page_index 由调用方覆盖；wrong_answer_md 仅当图上有用户错答 / 批改痕迹时填。',

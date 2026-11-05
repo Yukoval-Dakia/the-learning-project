@@ -1,3 +1,5 @@
+import { installSettlementCascadeRevert } from '@/kernel/settlement-cascade-revert';
+import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 // DEV demo driver — drive the full Layer-8 flywheel on the synthetic seed, with
 // REAL LLM (XIAOMI), against a loopback sandbox DB. A manual smoke to SEE the
 // flywheel turn end-to-end (added 2026-06-01; it surfaced YUK-189). Dev-only:
@@ -22,14 +24,15 @@ import './load-env';
 import { runCoach } from '@/capabilities/agency/jobs/coach_daily';
 import { runDreamingNightly } from '@/capabilities/agency/jobs/dreaming_nightly';
 import { runGoalScopeProposeNightly } from '@/capabilities/agency/jobs/goal_scope_propose_nightly';
+import { installAgencyHostOperations } from '@/capabilities/agency/public';
 import { loadSubjectBriefEvents } from '@/capabilities/agency/server/memory/active-subjects';
 import { regenerateMemoryBrief } from '@/capabilities/agency/server/memory/brief';
 import { buildBriefGenerator } from '@/capabilities/agency/server/memory/brief-writer';
 import { executeMemoryBrief } from '@/capabilities/copilot/public';
+import { installSchedulingCandidateRebuild } from '@/capabilities/practice/settlement/public';
 import { db } from '@/db/client';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { listActiveGoals } from '@/kernel/read-models/active-goal-scope';
-import { installSchedulingCandidateRebuild } from '@/server/assessment/settle';
 import { acceptAiProposal } from '@/server/proposals/actions';
 
 const NOW = new Date();
@@ -66,7 +69,9 @@ async function step<T>(name: string, fn: () => Promise<T>): Promise<T | null> {
 }
 
 async function main() {
+  installSettlementCascadeRevert(orchestrateCascadeRevert);
   installSchedulingCandidateRebuild();
+  await installAgencyHostOperations();
   console.log(`\n#### Layer-8 flywheel demo — loom_demo, real LLM, ${NOW.toISOString()} ####`);
 
   const gen = buildBriefGenerator({ db });
@@ -88,7 +93,7 @@ async function main() {
       generate: gen,
     });
   });
-  await step('2. read query_memory_brief(global) — what the orchestrator sees', async () => {
+  await step('2. read memory brief(global) — what the orchestrator sees', async () => {
     const out = await executeMemoryBrief(toolCtx, { scopeKey: 'global', includeEvidence: true });
     show('recent_week_md', out.note?.recent_week_md);
     show('long_term_md', out.note?.long_term_md);

@@ -109,7 +109,7 @@ describe('actual SDK failure through Memory ingestion owner', () => {
     const handler = buildMemoryEventIngestHandler(
       testDb(),
       { send, getJobById: vi.fn(async () => null) },
-      { memoryClient: client, handoffMode: 'recover' },
+      { memoryClient: client },
     );
     const job: Job<{ event_id: string }> = {
       id: randomUUID(),

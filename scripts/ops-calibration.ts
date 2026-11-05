@@ -90,8 +90,8 @@ async function loadAttempts(): Promise<LoadResult> {
   const { db } = await import('@/db/client');
   const { event, item_calibration, question } = await import('@/db/schema');
   const { difficultyToLogitB } = await import('@/core/theta');
-  const { effectiveB } = await import('@/server/mastery/recalibration');
-  const { effectiveFamilyB } = await import('@/server/mastery/personalized-difficulty');
+  const { effectiveB } = await import('@/capabilities/practice/settlement/public');
+  const { effectiveFamilyB } = await import('@/capabilities/practice/settlement/public');
   const { batchResolveFamilyKeys } = await import('@/kernel/read-models/question-difficulty');
   const { getEffectiveDomain } = await import('@/kernel/read-models/knowledge-tree');
   const { item_family_calibration } = await import('@/db/schema');
@@ -263,7 +263,7 @@ async function loadAttempts(): Promise<LoadResult> {
   );
   const familyCalByKey = new Map<
     string,
-    import('@/server/mastery/personalized-difficulty').FamilyCalibrationRow
+    import('@/capabilities/practice/settlement/public').FamilyCalibrationRow
   >();
   if (distinctFamilyKeys.length > 0) {
     const famRows = await db

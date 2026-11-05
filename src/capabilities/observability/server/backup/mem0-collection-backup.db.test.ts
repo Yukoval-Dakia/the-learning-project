@@ -9,7 +9,7 @@
 // dump/restore branch in archive.ts against a real Postgres+pgvector, including the
 // pgvector `vector::text` dump / `::vector` re-insert and the soft-supersede payload.
 //
-// We mimic reconcile-store.db.test.ts: create the mem0 collection manually (it is
+// Create the mem0 collection manually (it is
 // not in any migration) under a test-specific collection name driven through
 // MEM0_PGVECTOR_COLLECTION, which both buildBackupArchive and restoreFromArchive
 // resolve via mem0CollectionTable().

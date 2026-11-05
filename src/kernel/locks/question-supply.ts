@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import type { Tx } from '@/db/client';
+import { advisoryLockRegistry, deriveHashtextExtendedLockKey } from '@/kernel/locks/registry';
 
 export function webSupplyDemandKey(demandId: string): string {
   return `web_supply_${createHash('sha256').update(demandId).digest('hex')}`;
@@ -19,4 +20,10 @@ export async function lockQuestionSubmitRequest(tx: Tx, requestId: string): Prom
 
 export async function lockIngestSource(tx: Tx, source: string): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`ingest-source:${source}`}))`);
+}
+
+/** One learner day's supply spend ledger. Taken first in its own short transaction, never nested. */
+export async function lockSupplySpendDay(tx: Tx, day: string): Promise<void> {
+  const key = deriveHashtextExtendedLockKey(advisoryLockRegistry.supplySpendDay, { day });
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 }

@@ -261,13 +261,6 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/notes/server/tools/author-artifact.ts',
-    marker: '.insert(artifact)',
-    role: 'event-native-by-caller',
-    note: 'Tx-owned create snapshot and version-CAS attrs/lifecycle update; invalid event rolls back the paired row mutation.',
-  },
-  {
-    table: 'artifact',
     file: 'src/kernel/records/learning-intent-note-birth.ts',
     marker: '.insert(artifact)',
     role: 'event-native-by-caller',
@@ -341,7 +334,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'item_calibration',
-    file: 'src/server/mastery/recalibration.ts',
+    file: 'src/capabilities/practice/settlement/server/recalibration.ts',
     marker: '.update(item_calibration)',
     role: 'off-path-writer',
     note: 'recalibrateQuestion b_calib firm-up UPDATE (OFF-path sole writer — post-anchor writes surface as audit drift, the documented 方案 A boundary).',

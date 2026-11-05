@@ -26,6 +26,7 @@ export {
 export type { ConjectureAcceptResult } from './server/conjecture-accept';
 export type { GoalScopeAcceptResult } from './server/goals/accept';
 export { createGoal } from './server/goals/create';
+export { installAgencyHostOperations } from './server/host-operations';
 export { retireInterventionPreparationJobs } from './server/intervention/retire-jobs';
 export type {
   AcceptLearningIntentParams,
@@ -39,28 +40,22 @@ export {
   parseLearningIntentOutline,
   planLearningIntent,
 } from './server/learning-intent';
-// The platform boss layer mounts the memory pipeline queues; admin config reads its crons and mode.
+// The platform boss layer mounts the memory pipeline queues; admin config reads its crons.
 export type { GenerateBrief } from './server/memory/brief';
 export { buildBriefGenerator } from './server/memory/brief-writer';
 // Backup restore reopens outbox rows whose pg-boss job was lost with the queue.
 export { reopenUnstartedMemoryIngests } from './server/memory/memory-ingest-recovery-store';
-export {
-  MEMORY_RECONCILE_QUEUE,
-  memoryReconcileHandoffMode,
-} from './server/memory/memory-reconcile-handoff';
 export {
   MEMORY_BRIEF_SWEEP_QUEUE,
   MEMORY_EVENT_INGEST_QUEUE,
   MEMORY_INFRA_SCHEDULES,
   MEMORY_INGEST_OUTBOX_POLL_QUEUE,
   MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
-  type ReconcileMemInput,
   buildMemoryBriefRegenHandler,
   buildMemoryBriefSweepHandler,
   buildMemoryEventIngestHandler,
   buildMemoryIngestOutboxPollHandler,
   buildMemoryIngestOutboxRecoverHandler,
-  buildMemoryReconcileHandler,
 } from './server/memory/triggers';
 export { misconceptionHardConfirmEnabled } from './server/misconception-promote';
 export {

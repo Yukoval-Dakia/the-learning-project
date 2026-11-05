@@ -189,6 +189,8 @@ export const teachingTurnTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: { view: 'none', reason: '不读学习者历史上下文' },
+
     prompt: { kind: 'profile', build: buildTeachingTurnPrompt },
   },
   outputSchema: TeachingTurnOutput,
@@ -204,6 +206,8 @@ export const teachingTurnVisionTaskSpec = {
       'Frozen solve hint with issued original images and the teaching-turn output contract.',
     defaultModel: 'mimo-v2.5',
     isMultimodal: true,
+    context: { view: 'none', reason: '不读学习者历史上下文' },
+
     prompt: {
       kind: 'profile',
       build: (profile: SubjectProfile) => `${buildTeachingTurnPrompt(profile)}

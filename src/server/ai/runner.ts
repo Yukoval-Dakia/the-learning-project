@@ -45,6 +45,7 @@ import {
   resolveExecutionAdapter,
 } from './execution-adapter';
 import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
+import { taskMayExportTranscript } from './laminar-transcript';
 import { logMissingToolMountsWarning } from './log';
 import { providerHttpTimeoutMs } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission-policy';
@@ -68,6 +69,7 @@ import type {
   SDKTaskUpdatedMessage,
   SDKUserMessage,
 } from './sdk-types';
+import { currentTaskSpendScope, withinTaskSpendFrame } from './task-spend-scope';
 import { addStreamText, emptyStreamTextStats } from './timeout-usage';
 
 // The runner is loaded before capability execution. Keep the shared observation
@@ -139,6 +141,11 @@ export interface RunTaskCtx {
   db: Db;
   /** Per-run capability-owned sanitized content; omitted runs export metadata only. */
   laminarContent?: TraceContent<RunTaskResult>;
+  /**
+   * The caller has judged that this run's content holds no learner material. Only takes
+   * effect for tasks on the transcript whitelist.
+   */
+  laminarTranscript?: boolean;
   /** Caller-owned cancellation propagated into the provider run lifecycle. */
   signal?: AbortSignal;
   /**
@@ -444,6 +451,9 @@ function buildQueryOptions(
     // timer derivation (provider-transport.ts).
     providerTimeoutMs: providerHttpTimeoutMs(budget.timeout),
     transportEvidence,
+    ...(declaredDef.enforceMaxCost === true || currentTaskSpendScope()
+      ? { maxBudgetUsd: budget.maxCost }
+      : {}),
   };
   // YUK-923 — per-run modelBinding effort wins over the task-kind declaration.
   const reasoningEffort = ctx.modelBinding?.effort ?? declaredDef.reasoningEffort;
@@ -506,12 +516,18 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
     },
     async run() {
       if (!prepared) throw new Error('adapter startup completed without a prepared query handle');
+      await currentTaskSpendScope()?.beforeQuery(lifecycle.taskRunId);
       await beforeProviderQuery?.({
         taskRunId: lifecycle.taskRunId,
         provider: lifecycle.resolved.provider,
         model: lifecycle.resolved.model,
       });
-      return consume(prepared.query(prompt));
+      try {
+        return await consume(prepared.query(prompt));
+      } catch (error) {
+        currentTaskSpendScope()?.charge(null);
+        throw error;
+      }
     },
     async close() {
       const p = prepared;
@@ -858,15 +874,31 @@ export async function runTask(
   return traceOperation('task.run', { task_kind: kind }, () => runTaskImpl(kind, input, ctx), {
     signal: ctx.signal,
     content: ctx.laminarContent,
+    allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
   });
 }
 
-async function runTaskImpl(kind: string, input: unknown, ctx: RunTaskCtx): Promise<RunTaskResult> {
+async function runTaskImpl(
+  kind: string,
+  input: unknown,
+  ctx: RunTaskCtx,
+  enteredSpendFrame = false,
+): Promise<RunTaskResult> {
+  if (currentTaskSpendScope() && !enteredSpendFrame)
+    return withinTaskSpendFrame(() => runTaskImpl(kind, input, ctx, true));
   if (!isKnownTask(kind)) {
     throw new Error(`Unknown task kind: ${kind}`);
   }
   assertChatExecutionKind(kind);
-  const budget = resolveTaskBudget(kind, ctx.budgetOverride);
+  const scopedAllowance = currentTaskSpendScope()?.remainingUsd();
+  const budget = resolveTaskBudget(kind, {
+    ...ctx.budgetOverride,
+    ...(scopedAllowance === undefined
+      ? {}
+      : {
+          maxCost: Math.min(resolveTaskBudget(kind, ctx.budgetOverride).maxCost, scopedAllowance),
+        }),
+  });
   const def = tasks[kind];
 
   // beforeRun runs exactly once, OUTSIDE the attempt loop — every attempt sees
@@ -1012,7 +1044,15 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
     throw new Error(`Unknown task kind: ${kind}`);
   }
   assertChatExecutionKind(kind);
-  const budget = resolveTaskBudget(kind, ctx.budgetOverride);
+  const scopedAllowance = currentTaskSpendScope()?.remainingUsd();
+  const budget = resolveTaskBudget(kind, {
+    ...ctx.budgetOverride,
+    ...(scopedAllowance === undefined
+      ? {}
+      : {
+          maxCost: Math.min(resolveTaskBudget(kind, ctx.budgetOverride).maxCost, scopedAllowance),
+        }),
+  });
   const modelBinding = ctx.modelBinding;
   const lifecycle = createRunLifecycle<RunTaskResult>({
     db: ctx.db,
@@ -1151,6 +1191,7 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
         {
           signal: lifecycle.abortController.signal,
           outcome: (result) => (result ? 'success' : 'error'),
+          allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
           content: ctx.laminarContent
             ? {
                 input: ctx.laminarContent.input,
@@ -1221,6 +1262,7 @@ export async function streamTaskCollecting(
       signal: ctx.signal,
       content: ctx.laminarContent,
       outcome: (result) => (result.partial ? 'error' : 'success'),
+      allowTranscript: taskMayExportTranscript(kind, ctx.laminarTranscript),
     },
   );
 }
@@ -1235,7 +1277,15 @@ async function streamTaskCollectingImpl(
     throw new Error(`Unknown task kind: ${kind}`);
   }
   assertChatExecutionKind(kind);
-  const budget = resolveTaskBudget(kind, ctx.budgetOverride);
+  const scopedAllowance = currentTaskSpendScope()?.remainingUsd();
+  const budget = resolveTaskBudget(kind, {
+    ...ctx.budgetOverride,
+    ...(scopedAllowance === undefined
+      ? {}
+      : {
+          maxCost: Math.min(resolveTaskBudget(kind, ctx.budgetOverride).maxCost, scopedAllowance),
+        }),
+  });
   const modelBinding = ctx.modelBinding;
   const lifecycle = createRunLifecycle<StreamCollectResult>({
     db: ctx.db,

@@ -185,6 +185,7 @@ const budgetOverrideSchema = z
  */
 const taskReasoningSchema = z
   .object({
+    level: z.string().min(1).optional(),
     reasoning_effort: z.string().min(1).optional(),
   })
   .strict();
@@ -356,15 +357,6 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     // 'off' 不是完整 kill switch（触发器照常记账）——面板文案必须带这句。
     note: "P2: 'off' is not a complete kill switch (trigger bookkeeping continues)",
   },
-  MEMORY_RECONCILE_HANDOFF_MODE: {
-    schema: z.enum(['observe', 'write', 'recover', 'drain']),
-    codeDefault: 'observe',
-    envName: 'MEMORY_RECONCILE_HANDOFF_MODE',
-    // env 非法值 fail-fast throw（不是 fallback 地板）：原文直通，throw 留在
-    // memoryReconcileHandoffMode 的 switch 里。
-    envParse: stringEnv,
-    tier: 'A',
-  },
   PROJECTION_IS_WRITER_ITEM_CALIBRATION: {
     schema: z.boolean(),
     codeDefault: false,
@@ -487,6 +479,17 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     codeDefault: 40,
     envName: 'JYEOO_DAILY_FETCH_BUDGET',
     envParse: nonNegIntEnv,
+    tier: 'A',
+  },
+  SUPPLY_NIGHTLY_SPEND_CAP_USD: {
+    // 夜扫供题链（找题 + 换路 + 核验）每个学习日（Asia/Shanghai）合计 USD 上限；
+    // 0 = 定位之外不再派新的付费供题（kill switch，含 supply_planner、手动 quiz-gen 和
+    // file_bank_gap）；已入队的 job 仍会跑完。
+    // 判定点 supply/server/spend-gate.ts。
+    schema: z.number().min(0),
+    codeDefault: 1,
+    envName: 'SUPPLY_NIGHTLY_SPEND_CAP_USD',
+    envParse: numberEnv,
     tier: 'A',
   },
   // ── 引擎/资源上限 ─────────────────────────────────────────────────────────

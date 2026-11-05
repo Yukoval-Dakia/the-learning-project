@@ -69,6 +69,11 @@ export const causeCategoryProposeTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '错因类别提议只聚类既有错因标注，不读学习者画像。',
+    },
+
     prompt: { kind: 'profile', build: buildCauseCategoryProposePrompt },
   },
   outputSchema: CauseCategoryProposeOutputSchema,

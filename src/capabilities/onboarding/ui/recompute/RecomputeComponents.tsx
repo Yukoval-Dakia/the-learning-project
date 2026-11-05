@@ -305,7 +305,7 @@ export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
               <span className="mono">{total}</span> 个知识点的显示结果一致
               <span className="rc-cal-figs">
                 <span className="rc-cal-fig">
-                  <b className="mono">判断较可信 {dFirm}</b>
+                  <b className="mono">区间已收窄 {dFirm}</b>
                   <Check size={11} aria-hidden="true" />
                 </span>
               </span>
@@ -322,7 +322,7 @@ export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
             <div className="rc-cal-sub">
               {!firmMatch && (
                 <span>
-                  较可信知识点：当前概览 <b className="mono">{summary.sFirm}</b> · 重新核对{' '}
+                  区间已收窄的知识点：当前概览 <b className="mono">{summary.sFirm}</b> · 重新核对{' '}
                   <b className="mono">{summary.dFirm}</b>
                 </span>
               )}

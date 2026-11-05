@@ -1,8 +1,9 @@
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import { applyKnowledgeMergeToIds } from '@/core/projections/learning_item';
 import type { DeclaredStageT } from '@/core/schema/business';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
+import type { SteeringGoalDataT } from '@/core/schema/steering';
 import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
 import { nextProjectionEventTime, writeEvent } from '@/kernel/events';
@@ -30,6 +31,11 @@ export interface InsertGoalInput {
   // Learner-declared curriculum stage (学段). NULL/absent = undeclared. Curriculum
   // constraint only — never an ability/θ̂ input.
   declared_stage?: DeclaredStageT | null;
+  // YUK-1770 steering — learner-local (Asia/Shanghai) window days + payload;
+  // only set for source='learner_said' goals.
+  effective_from?: string | null;
+  effective_until?: string | null;
+  steering?: SteeringGoalDataT | null;
   status?: GoalStatus;
   source: string;
   source_ref?: string | null;
@@ -42,10 +48,25 @@ type GoalScopePatch = {
   sequence_hint?: number;
   /** declared_stage correction; explicit null clears the declaration. */
   declared_stage?: DeclaredStageT | null;
+  /** YUK-1770 steering window/payload revision; explicit null clears. */
+  effective_from?: string | null;
+  effective_until?: string | null;
+  steering?: SteeringGoalDataT | null;
 };
 type GoalMutation =
   | { kind: 'retract'; now: Date }
-  | { kind: 'status'; status: GoalStatus; actorRef: string; now: Date }
+  | {
+      kind: 'status';
+      status: GoalStatus;
+      actorRef: string;
+      now: Date;
+      /** YUK-1770 — withdrawal provenance (reason + verbatim learner words). */
+      statusExtras?: {
+        reason_md?: string;
+        learner_words?: string;
+        ended_by?: 'learner' | 'expiry';
+      };
+    }
   | (GoalScopePatch & {
       kind: 'scope';
       placement_starter_augmentation?: boolean;
@@ -63,6 +84,9 @@ function goalSnapshot(input: InsertGoalInput): GoalRowSnapshotT {
     scope_mode: input.scope_mode ?? 'explicit',
     sequence_hint: input.sequence_hint,
     declared_stage: input.declared_stage ?? null,
+    effective_from: input.effective_from ?? null,
+    effective_until: input.effective_until ?? null,
+    steering: input.steering ?? null,
     status: input.status ?? 'active',
     source: input.source,
     source_ref: input.source_ref ?? null,
@@ -96,6 +120,46 @@ export async function createManualGoal(
       id: genesisEventId,
       actor_kind: 'system',
       actor_ref: 'goal-create',
+      action: 'experimental:genesis',
+      subject_kind: 'goal',
+      subject_id: id,
+      outcome: 'success',
+      payload: { row: snapshot },
+      created_at: snapshot.created_at,
+      ingest_at: snapshot.created_at,
+    });
+    await upsertMaterializedIdIndex(tx, {
+      materialized_id: id,
+      anchor_event_id: genesisEventId,
+      subject_kind: 'goal',
+    });
+    await materializeCreatedGoal(tx, snapshot);
+    return id;
+  });
+}
+
+/**
+ * YUK-1770 — record one learner-said steering instruction as a goal. Same
+ * atomic genesis/materialization shape as createManualGoal, but the provenance
+ * is the copilot turn: source='learner_said', source_ref the user-ask event id,
+ * and the steering window/payload ride the row. The tool layer (record_steering)
+ * owns the verbatim-quote check and scope validation; this boundary only writes.
+ */
+export async function createLearnerSteering(
+  db: GoalDb,
+  input: Omit<InsertGoalInput, 'id' | 'source'> & { source_ref: string },
+): Promise<string> {
+  return db.transaction(async (tx) => {
+    const id = newId();
+    const snapshot = goalSnapshot({ ...input, id, source: 'learner_said' });
+    const genesisEventId = newId();
+    await writeEvent(tx, {
+      id: genesisEventId,
+      // GenesisExperimental pins actor_kind to 'system' (the seed is a projection
+      // row, not a user action); the learner provenance rides steering.learner_words
+      // + source_ref (the copilot turn event id).
+      actor_kind: 'system',
+      actor_ref: 'steering-record',
       action: 'experimental:genesis',
       subject_kind: 'goal',
       subject_id: id,
@@ -177,6 +241,11 @@ export async function mutateGoal(db: GoalDb, goalId: string, input: GoalMutation
               : {}),
             ...(input.sequence_hint !== undefined ? { sequence_hint: input.sequence_hint } : {}),
             ...(input.declared_stage !== undefined ? { declared_stage: input.declared_stage } : {}),
+            ...(input.effective_from !== undefined ? { effective_from: input.effective_from } : {}),
+            ...(input.effective_until !== undefined
+              ? { effective_until: input.effective_until }
+              : {}),
+            ...(input.steering !== undefined ? { steering: input.steering } : {}),
           };
     if (input.kind !== 'retract')
       await writeEvent(tx, {
@@ -192,6 +261,19 @@ export async function mutateGoal(db: GoalDb, goalId: string, input: GoalMutation
         outcome: 'success',
         payload: {
           ...rowPatch,
+          ...(input.kind === 'status' && input.statusExtras
+            ? {
+                ...(input.statusExtras.reason_md !== undefined
+                  ? { reason_md: input.statusExtras.reason_md }
+                  : {}),
+                ...(input.statusExtras.learner_words !== undefined
+                  ? { learner_words: input.statusExtras.learner_words }
+                  : {}),
+                ...(input.statusExtras.ended_by !== undefined
+                  ? { ended_by: input.statusExtras.ended_by }
+                  : {}),
+              }
+            : {}),
           ...(input.kind === 'scope' && input.placement_starter_augmentation
             ? { placement_starter_augmentation: true as const }
             : {}),
@@ -204,15 +286,18 @@ export async function mutateGoal(db: GoalDb, goalId: string, input: GoalMutation
 
 /**
  * Transition a goal's status. Status is qualitative (active / dormant / done) — never a
- * progress percentage.
+ * progress percentage. YUK-1770: `extras` carries steering-withdrawal provenance onto
+ * the event (audit trail only; the row keeps just the status).
  */
 export async function updateGoalStatus(
   db: GoalDb,
   goalId: string,
   status: GoalStatus,
   now: Date = new Date(),
+  extras?: { reason_md?: string; learner_words?: string; ended_by?: 'learner' | 'expiry' },
+  actorRef = 'goal-status-update',
 ): Promise<void> {
-  await mutateGoal(db, goalId, { kind: 'status', status, actorRef: 'goal-status-update', now });
+  await mutateGoal(db, goalId, { kind: 'status', status, actorRef, now, statusExtras: extras });
 }
 
 /**
@@ -231,6 +316,9 @@ export async function updateGoalScope(
     sequence_hint?: number;
     declared_stage?: DeclaredStageT | null;
     placement_starter_augmentation?: boolean;
+    effective_from?: string | null;
+    effective_until?: string | null;
+    steering?: SteeringGoalDataT | null;
   },
   now: Date = new Date(),
   actorRef = 'goal-scope-update',
@@ -239,6 +327,55 @@ export async function updateGoalScope(
   // Reading `existing` before this boundary permits a concurrent owner update to be overwritten
   // by a stale replacement patch after the row lock is eventually acquired.
   await mutateGoal(db, goalId, { kind: 'scope', ...patch, actorRef, now });
+}
+
+/**
+ * YUK-1770 — lazy-but-nightly steering expiry: every active steering goal whose
+ * effective_until precedes `today` (learner-local) flips to done with
+ * ended_by='expiry'. Called from the nightly supply-planner cron (never on a
+ * read path); the goal_status_update event it writes re-triggers the
+ * steering-changed subscription, so plans/supply revert the same way a
+ * learner withdrawal does. Returns the goal ids it flipped.
+ */
+export async function expireDueSteeringGoals(
+  db: GoalDb,
+  today: string,
+  now: Date = new Date(),
+): Promise<string[]> {
+  const rows = await db
+    .select({ id: goal.id, effective_until: goal.effective_until })
+    .from(goal)
+    .where(and(eq(goal.status, 'active'), isNotNull(goal.steering)));
+  const candidates = rows
+    .filter((row) => row.effective_until !== null && row.effective_until < today)
+    .map((row) => row.id);
+  const expired: string[] = [];
+  for (const goalId of candidates) {
+    // Recheck under the row lock (mutateGoal opens the transaction with
+    // SELECT … FOR UPDATE): a learner revising the deadline between the unlocked
+    // candidate read and this write must not find a just-extended instruction
+    // flipped to done. When the locked row no longer reads expired, skip.
+    const [locked] = await db
+      .select({
+        status: goal.status,
+        effective_until: goal.effective_until,
+        steering: goal.steering,
+      })
+      .from(goal)
+      .where(eq(goal.id, goalId))
+      .for('update');
+    if (
+      locked?.status !== 'active' ||
+      locked.steering === null ||
+      locked.effective_until === null ||
+      locked.effective_until >= today
+    ) {
+      continue; // revised/deactivated under the lock — no longer expiry-eligible
+    }
+    await updateGoalStatus(db, goalId, 'done', now, { ended_by: 'expiry' }, 'steering-expiry');
+    expired.push(goalId);
+  }
+  return expired;
 }
 
 export async function rewriteGoalScopeOnMerge(

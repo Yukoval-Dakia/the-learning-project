@@ -146,6 +146,11 @@ export const conjectureProbeAuthorTaskSpec = {
     needsToolCall: false,
     isMultimodal: true,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '探针出题与判别只按当次猜想与作答，不读学习者画像。',
+    },
+
     prompt: { kind: 'profile', build: buildConjectureProbeAuthorPrompt },
   },
   outputSchema: ConjectureProbeAuthorOutputSchema,
@@ -164,6 +169,11 @@ export const conjectureProbeReviewTaskSpec = {
     needsToolCall: false,
     isMultimodal: true,
     allowedTools: [],
+    context: {
+      view: 'none',
+      reason: '探针出题与判别只按当次猜想与作答，不读学习者画像。',
+    },
+
     prompt: { kind: 'profile', build: buildConjectureProbeReviewPrompt },
   },
   outputSchema: ConjectureProbeReviewOutputSchema,

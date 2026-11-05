@@ -1,3 +1,4 @@
+import { sourceAllowsDerivation } from '@/kernel/read-models/usage-policy';
 // Practice-owned Failure Learning — variant proposal stage.
 // Triggered after a failure attempt has an effective cause. If the active
 // SubjectProfile marks the cause's primary_category as targetable, generate
@@ -27,7 +28,7 @@ import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluat
 import { hasProposalWithCooldownKey } from '@/kernel/proposals/inbox';
 import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
-import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import { getFailureAttemptForDerivationById } from '@/kernel/read-models/failure-attempts';
 import { getMisconceptionsByIds } from '@/kernel/read-models/failure-learning-context';
 // Runtime creation records its complete base, including cause_category, before
 // index and projection. Genesis remains the legacy backfill event, not runtime creation.
@@ -56,6 +57,7 @@ export interface RunVariantGenParams {
 export interface RunVariantGenResult {
   status:
     | 'proposed'
+    | 'skipped:source_purpose_restricted_or_unknown'
     | 'skipped:attempt_not_found'
     | 'skipped:not_a_failure_attempt'
     | 'skipped:attempt_not_active'
@@ -98,7 +100,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     return { status: 'skipped:not_a_failure_attempt' };
   }
 
-  const failure = await getFailureAttemptById(db, attemptEventId);
+  const failure = await getFailureAttemptForDerivationById(db, attemptEventId);
   if (!failure) return { status: 'skipped:attempt_not_active' };
   const native = failure.assessment ? await loadNativeFailureContext(db, attemptEventId) : null;
   if (failure.assessment && !native) return { status: 'skipped:question_not_found' };
@@ -252,6 +254,9 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     depth: parent.variant_depth,
   };
 
+  if (!(await sourceAllowsDerivation(db, { kind: 'event', id: attemptEventId })))
+    return { status: 'skipped:source_purpose_restricted_or_unknown' };
+
   const result = await runTaskFn('VariantGenTask', input, {
     subjectProfile,
   });
@@ -279,7 +284,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
       await acquireLearningStateWriteLock(tx);
       await lockAssessmentEvaluationGroup(tx, native.evaluationGroupId);
       const current = await loadNativeFailureContext(tx, attemptEventId);
-      const currentFailure = await getFailureAttemptById(tx, attemptEventId);
+      const currentFailure = await getFailureAttemptForDerivationById(tx, attemptEventId);
       if (
         !current ||
         current.evaluationId !== native.evaluationId ||
