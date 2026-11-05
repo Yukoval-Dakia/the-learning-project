@@ -163,7 +163,7 @@ export function prepareAdmissionQuestionText(
     ].join('\n\n');
     // Raw HTML is not rendered by MathMarkdown. Code and image alt text cannot prove a visible mark.
     const visible = text.replace(
-      /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`|<[^>]*>|!\[[^\]]*\]\([^)]*\)/gu,
+      /^ {0,3}```[^\n]*\n[\s\S]*?^ {0,3}```[ \t]*$|^ {0,3}~~~[^\n]*\n[\s\S]*?^ {0,3}~~~[ \t]*$|`[^`\n]*`|<[^>]*>|!\[[^\]]*\]\([^)]*\)/gmu,
       '',
     );
     const math = mathRendered
