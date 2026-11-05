@@ -62,7 +62,7 @@ export async function resolveModelAdmissionContext(db: Db | Tx): Promise<ModelAd
 
 /** Same bridge as the holdout job: first knowledge id, then effective domain, then subject. */
 export type GroupSubjectLookup =
-  | { readonly kind: 'subject'; readonly subject: string }
+  | { readonly kind: 'subject'; readonly subject: string; readonly domain?: string }
   | { readonly kind: 'missing_group' }
   | { readonly kind: 'unlabeled' }
   | { readonly kind: 'no_domain'; readonly knowledge_id: string };
@@ -97,7 +97,7 @@ export async function lookupGroupSubjects(
       out.set(groupId, { kind: 'no_domain', knowledge_id: knowledgeId });
       continue;
     }
-    out.set(groupId, { kind: 'subject', subject: resolveSubjectProfile(domain).id });
+    out.set(groupId, { kind: 'subject', subject: resolveSubjectProfile(domain).id, domain });
   }
   return out;
 }

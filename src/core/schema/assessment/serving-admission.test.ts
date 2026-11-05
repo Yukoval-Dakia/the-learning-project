@@ -114,7 +114,6 @@ describe('automatic serving model gate', () => {
     if (rubric === undefined) throw new Error('rubric pin missing');
     const row = slice({
       slice_id: 'slice_math',
-
       response_class: 'free',
       task_kind: 'AssessmentRubricJudgeTask',
       model: rubric.model,
@@ -137,7 +136,6 @@ describe('automatic serving model gate', () => {
     if (jev === undefined) throw new Error('Jev pin missing');
     const row = slice({
       slice_id: 'slice_blank',
-
       response_class: 'blank',
       task_kind: 'JevScoringDecisionTask',
       model: jev.model,
@@ -198,7 +196,6 @@ describe('automatic serving model gate', () => {
     if (before === undefined) throw new Error('rubric pin missing');
     const row = slice({
       slice_id: 'slice_rubric',
-
       response_class: 'free',
       task_kind: 'AssessmentRubricJudgeTask',
       model: before.model,
