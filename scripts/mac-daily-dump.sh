@@ -127,8 +127,13 @@ local_mark() { # 内置盘本地标记（容器/daemon 不可达时的 failure m
   printf '%s FAIL(local): %s\n' "$(date '+%F %T')" "$1" >>"$LOCAL_LOG" 2>/dev/null || true
 }
 
-remote_mark() { # runtime 目录的 FAILED 标记（容器可用时主告警面）
-  FAILED_MARK="$FAILED_MARK" volsh 'printf "" > "/backup/$FAILED_MARK"' 2>/dev/null
+remote_mark() { # runtime 目录的 FAILED 标记（容器可用时主告警面）；顺手清重跑
+                # 残留的 .rtmp 临时名——它们不算备份件（不入 glob/manifest）
+  FAILED_MARK="$FAILED_MARK" volsh '
+printf "" > "/backup/$FAILED_MARK"
+rm -f "/backup/$DUMP_NAME.rtmp" "/backup/$PRIV_DIR/history.db.rtmp" \
+      "/backup/$PRIV_DIR/storage.tar.rtmp" "/backup/$PRIV_DIR/SHA256SUMS.rtmp"
+' 2>/dev/null
 }
 
 fail() { # YUK-1056：失败必须 exit 非 0（launchd 'last exit code' 即告警面）
@@ -218,6 +223,17 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
+# 当日重跑判定：manifest 在 = 完整集已存在 → dump 不早发，改走「三段全 stage 并
+# 校验后，四件先写 .rtmp 临时名、再一次 rename 提交」路径——重跑任一步失败，
+# 既有完整集原样、SHA256SUMS 仍可校验。同时清掉上次重跑残留的临时名。
+RETRY=0
+if volsh 'test -f "/backup/$PRIV_DIR/SHA256SUMS"'; then
+  RETRY=1
+  volsh 'rm -f "/backup/$DUMP_NAME.rtmp" "/backup/$PRIV_DIR/history.db.rtmp" \
+  "/backup/$PRIV_DIR/storage.tar.rtmp" "/backup/$PRIV_DIR/SHA256SUMS.rtmp"' \
+    2>/dev/null || true
+fi
+
 # ── 段 1：pg_dump 在 NAS 跑（exec channel 里远端 docker exec），stdout 落本地 staging。
 run_remote pg_dump "$PG_ERR" \
   "${NAS_SSH[@]}" "docker exec $CONTAINER pg_dump -Fc -U $DB_USER $DB_NAME" \
@@ -238,14 +254,19 @@ if ! grep -q 'TOC Entries:' "$STAGE_DIR/toc" ||
 fi
 DUMP_SHA="$(shasum -a 256 "$STAGE_DUMP" | cut -d' ' -f1)"
 
-# dump 先发布：后两段任一再坏，今天的库备份也已落盘（FAILED 标记照立、戳不写）。
-DUMP_NAME="$DUMP_NAME" SIZE="$SIZE" SHA="$DUMP_SHA" TS="$(date '+%F %T')" \
-volsh '
+# dump 早发只在当日首次：重跑（RETRY=1）按住到三段全过才提交，否则一次失败的
+# 重跑会把完整集里 manifest 引用的 dump 覆盖掉，整套作废。
+if [ "$RETRY" = 0 ]; then
+  DUMP_NAME="$DUMP_NAME" SIZE="$SIZE" SHA="$DUMP_SHA" TS="$(date '+%F %T')" \
+  volsh '
 cat > "/backup/$DUMP_NAME.tmp" &&
 chmod go-rwx "/backup/$DUMP_NAME.tmp" &&
 mv "/backup/$DUMP_NAME.tmp" "/backup/$DUMP_NAME" &&
 printf "%s OK: %s/%s (%s bytes, sha256 %s)\n" "$TS" "$RUNTIME_DIR" "$DUMP_NAME" "$SIZE" "$SHA" >> /backup/loom-daily-dump.log
 ' <"$STAGE_DUMP" || fail "publish dump to runtime dir failed (docker run write)"
+else
+  vlog "complete set for today exists — holding dump until all parts staged" 2>/dev/null
+fi
 
 # ── 段 2：mem0 history.db。源文件不存在=mem0 还没写过（全新库正常态），远端往
 # stderr 打哨兵行、仍 0 退出；本侧按哨兵记 0 字节 history.db（0 字节本身是合法
@@ -324,15 +345,39 @@ STOR_SHA="$(shasum -a 256 "$STAGE_TAR" | cut -d' ' -f1)"
   printf '%s  ../../%s\n' "$DUMP_SHA" "$DUMP_NAME"
 } >"$STAGE_SUMS"
 
-PRIV_DIR="$PRIV_DIR" volsh '
+if [ "$RETRY" = 0 ]; then
+  PRIV_DIR="$PRIV_DIR" volsh '
 mkdir -p "/backup/$PRIV_DIR" &&
 chmod go-rwx "/backup/$PRIV_DIR" &&
 chmod go-rwx "$(dirname "/backup/$PRIV_DIR")"
 ' || fail "prepare daily-private dir failed"
 
-publish_file "$STAGE_HIST" "$PRIV_DIR/history.db"
-publish_file "$STAGE_TAR" "$PRIV_DIR/storage.tar"
-publish_file "$STAGE_SUMS" "$PRIV_DIR/SHA256SUMS"
+  publish_file "$STAGE_HIST" "$PRIV_DIR/history.db"
+  publish_file "$STAGE_TAR" "$PRIV_DIR/storage.tar"
+  publish_file "$STAGE_SUMS" "$PRIV_DIR/SHA256SUMS"
+else
+  # 重跑提交：四件各自流到 .rtmp 临时名（慢、可失败的部分分段做），再一次 volsh
+  # 统一 rename、manifest 最后落——rename 批之前的任何失败都动不到既有完整集。
+  stage_rtmp() {
+    DEST="$2" volsh '
+cat > "/backup/$DEST" && chmod go-rwx "/backup/$DEST"
+' <"$1" || fail "retry stage $2 to volume failed"
+  }
+  stage_rtmp "$STAGE_DUMP" "$DUMP_NAME.rtmp"
+  stage_rtmp "$STAGE_HIST" "$PRIV_DIR/history.db.rtmp"
+  stage_rtmp "$STAGE_TAR" "$PRIV_DIR/storage.tar.rtmp"
+  stage_rtmp "$STAGE_SUMS" "$PRIV_DIR/SHA256SUMS.rtmp"
+
+  DUMP_NAME="$DUMP_NAME" PRIV_DIR="$PRIV_DIR" SIZE="$SIZE" SHA="$DUMP_SHA" \
+  TS="$(date '+%F %T')" \
+  volsh '
+mv "/backup/$DUMP_NAME.rtmp" "/backup/$DUMP_NAME" &&
+mv "/backup/$PRIV_DIR/history.db.rtmp" "/backup/$PRIV_DIR/history.db" &&
+mv "/backup/$PRIV_DIR/storage.tar.rtmp" "/backup/$PRIV_DIR/storage.tar" &&
+mv "/backup/$PRIV_DIR/SHA256SUMS.rtmp" "/backup/$PRIV_DIR/SHA256SUMS" &&
+printf "%s OK: %s/%s (%s bytes, sha256 %s)\n" "$TS" "$RUNTIME_DIR" "$DUMP_NAME" "$SIZE" "$SHA" >> /backup/loom-daily-dump.log
+' || fail "retry commit (rename) failed"
+fi
 vlog "OK: $PRIV_DIR history.db ($HIST_SIZE bytes, sha256 $HIST_SHA) storage.tar ($STOR_SIZE bytes, sha256 $STOR_SHA)" \
   2>/dev/null
 

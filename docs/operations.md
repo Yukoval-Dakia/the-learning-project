@@ -94,6 +94,8 @@ docker compose run --rm migrate
 
 保留窗口对 dump 与 `daily-private/` 目录相同（最新 14 份 + 每月 1 号，`daily-private` 整个日期目录为单位删），但两条链不各数各的：先按窗口清目录，再清 dump——**dump 只在超窗、非每月 1 号、且同日 `daily-private/` 目录已不存在时才删**。目录在则同日 dump 必在，`SHA256SUMS` 始终可校验；段 2/3 失败的日子只有 dump 没有目录，超窗后照常清理。三段任一失败 → 当日 `FAILED` 标记 + `exit 1`、成功戳不写（已发布的 dump 仍留盘，戳滞后表示当天不完整）；三段全发布成功才盖 `.loom-daily-dump-last-success`。Mac 关机当日不跑（ssh 与本机 docker 都不可用）——**那天就是没有任何一份备份**，Mac 回来后恢复。
 
+**当日重跑**（手动补跑撞上已成功的那次之后）：检测到当日 `SHA256SUMS` 已存在 → dump 不再早发——三段全部 staging 并校验后，四件先各写 `.rtmp` 临时名，再一次 rename 统一提交，manifest 同批最后落。重跑任一步失败，**既有完整集原样、`shasum -c` 仍可校验**（FAILED 标记与退出码照旧）；`.rtmp` 残留不算备份件（不入保留窗、不入 manifest），失败路径与下次运行都会清。当日首次运行维持 dump 早发——段 2/3 失败也保住当天的库备份。
+
 - 脚本与 launchd 日志必须装在内置盘 `~/Library/Application Support/loom-daily-dump/`：launchd 子进程对 `/Volumes/*` 的任何 I/O 都会被 TCC 拒绝（表现为 `spawn failed` / `EX_CONFIG 78`）。对 runtime 目录的读写全部经 `docker run -v` 在容器内完成。
 - 失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 并 `exit 1`，本机 docker daemon 不可达时改写到安装目录。`--check` 在戳龄超过 48 小时或当天失败标记存在时 `exit 1`，另汇报最新 `daily-private/` 目录及其 SHA256SUMS 是否列齐三件；标记按日命名，更早日期的标记要手动 `ls` runtime 目录和安装目录。
 - 日志：runtime 目录的 `loom-daily-dump.log`，安装目录的 `launchd.log`。
@@ -103,30 +105,34 @@ docker compose run --rm migrate
 恢复后两件。备份字节在 Mac 外置盘，经与备份同一条 ssh exec channel 流向 NAS；写 bind mount 一律用 `docker run --rm` 短命容器，绝不 `docker exec` 进在跑的服务；先停容器、写完再启动。
 
 ```bash
-SSH='ssh -i ~/.ssh/tlp_nas_ed25519 -o BatchMode=yes yukoval@bancho-nb2.local'
+# 用函数包 ssh：zsh（Mac 默认 shell）不对未加引号的变量做词分割，
+# SSH='ssh …' + $SSH 的写法在 zsh 下会整条当成一个命令名报错。
+nas() { ssh -i ~/.ssh/tlp_nas_ed25519 -o BatchMode=yes yukoval@bancho-nb2.local "$@"; }
 
 # history.db → worker 的 bind mount /volume1/docker/tlp-test/mem0data（容器内 /var/lib/mem0）
 # 先删残留 -wal/-shm：旧 WAL 会在下次打开时回放到新文件上；属主用数字 1000:1000——
 # worker 以 UID 1000 跑，pgvector 镜像里没有 node 用户。0 字节文件 = 空库，照常放。
-$SSH 'docker stop the-learning-project-worker-1'
-$SSH 'docker run --rm -i -v /volume1/docker/tlp-test/mem0data:/var/lib/mem0 \
+nas 'docker stop the-learning-project-worker-1'
+nas 'docker run --rm -i -v /volume1/docker/tlp-test/mem0data:/var/lib/mem0 \
   pgvector/pgvector:0.8.2-pg16-bookworm \
   sh -c "rm -f /var/lib/mem0/history.db-wal /var/lib/mem0/history.db-shm &&
          cat > /var/lib/mem0/history.db &&
          chown 1000:1000 /var/lib/mem0/history.db"' \
   < daily-private/<date>/history.db
-$SSH 'docker start the-learning-project-worker-1'
+nas 'docker start the-learning-project-worker-1'
 
 # storage.tar → storage 的 bind mount /volume1/docker/tlp-test/storage（容器内 /data）。
-# 完整恢复 = 先清空目标目录再放字节——破坏性步骤：执行前先 tar -tf 核对 tar 内容、
-# 确认目标挂载点没写错再动手。恢复用 storage 自己的镜像（busybox tar，与产出端一致）。
-tar -tf daily-private/<date>/storage.tar | head -20   # 先核对再动手
-$SSH 'docker stop the-learning-project-test-storage-1'
-$SSH 'docker run --rm -i --entrypoint sh -v /volume1/docker/tlp-test/storage:/data \
+# 完整恢复 = 先清空目标目录再放字节——破坏性步骤：先校验备份三件（shasum -c 必须
+# 全 OK，不过即停，别拿坏档去清空线上数据），再 tar -tf 核对内容、确认目标挂载点
+# 没写错才动手。恢复用 storage 自己的镜像（busybox tar，与产出端一致）。
+(cd daily-private/<date> && shasum -a 256 -c SHA256SUMS)   # 必须三件全 OK；不过即停
+tar -tf daily-private/<date>/storage.tar | head -20        # 再核对要还原的内容
+nas 'docker stop the-learning-project-test-storage-1'
+nas 'docker run --rm -i --entrypoint sh -v /volume1/docker/tlp-test/storage:/data \
   ghcr.io/chrislusf/seaweedfs:4.48 \
   -c "find /data -mindepth 1 -delete && tar -C /data -xf -"' \
   < daily-private/<date>/storage.tar
-$SSH 'docker start the-learning-project-test-storage-1'
+nas 'docker start the-learning-project-test-storage-1'
 # 只想回灌个别对象（非完整恢复）：去掉 find 行只做解包，属增量覆盖、不清空。
 ```
 
