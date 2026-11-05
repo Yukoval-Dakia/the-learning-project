@@ -34247,6 +34247,13 @@ export interface operations {
                                 confidence: number;
                                 evaluation_id?: string;
                                 feedback_md: string;
+                                grading_provenance?: {
+                                    /** @enum {string} */
+                                    calibration: "uncalibrated";
+                                    scoring_unit_id: string;
+                                    /** @enum {string} */
+                                    source: "ai";
+                                }[];
                                 judge_event_id: string | null;
                                 /** @enum {string} */
                                 route: "multimodal_direct" | "evaluate_submission";
