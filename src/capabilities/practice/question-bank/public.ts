@@ -6,6 +6,7 @@ export { readAdmissionWaits } from './server/admission/stages';
 
 export { embedQuestionTextForIngest, questionEmbedStamp } from './jobs/embed_backfill';
 export { runQuestionAdmissionChecks } from './server/admission/checks';
+export { isPendingAdmission } from './server/admission/enqueue';
 // Server-only: reveals the solution path. The practice root barrel does not re-export it,
 // and audit:practice-subowners rejects it from tools, api and ui paths inside practice.
 export {
@@ -99,3 +100,5 @@ export async function installInterventionAuthorStages(): Promise<void> {
     ]);
   install(interventionAuthorStages);
 }
+
+export { checkSourceConsistency, checkStructureCompleteness } from './jobs/source_verify_prechecks';

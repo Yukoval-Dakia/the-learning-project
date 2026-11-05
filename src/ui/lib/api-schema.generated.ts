@@ -19183,7 +19183,7 @@ export interface operations {
                             submitted_at: string;
                         }[];
                         /** @enum {string|null} */
-                        unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                        unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown" | null;
                     };
                 };
             };
@@ -23717,7 +23717,7 @@ export interface operations {
                             part_ref: string | null;
                             question_id: string;
                             /** @enum {string} */
-                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation";
+                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown";
                         }[];
                     };
                 };
@@ -24489,7 +24489,7 @@ export interface operations {
                                         submitted_at: string;
                                     }[];
                                     /** @enum {string|null} */
-                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown" | null;
                                 };
                                 submission_id: string;
                             };
@@ -26200,7 +26200,7 @@ export interface operations {
                                             submitted_at: string;
                                         }[];
                                         /** @enum {string|null} */
-                                        unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                                        unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown" | null;
                                     };
                                     submission_id: string;
                                 };
@@ -27420,7 +27420,7 @@ export interface operations {
                                         submitted_at: string;
                                     }[];
                                     /** @enum {string|null} */
-                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown" | null;
                                 };
                                 submission_id: string;
                             };
@@ -28442,7 +28442,7 @@ export interface operations {
                             part_ref: string | null;
                             question_id: string;
                             /** @enum {string} */
-                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation";
+                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown";
                         }[];
                     };
                 };
@@ -39193,7 +39193,7 @@ export interface operations {
                             group_id: string;
                             issues: string[];
                             /** @enum {string|null} */
-                            serving_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                            serving_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown" | null;
                             status: string;
                         }[];
                         short_code: string;
@@ -39539,7 +39539,7 @@ export interface operations {
                             group_id: string;
                             issues: string[];
                             /** @enum {string|null} */
-                            serving_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                            serving_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown" | null;
                             status: string;
                         }[];
                         short_code: string;
@@ -39996,7 +39996,7 @@ export interface operations {
                             group_id: string;
                             issues: string[];
                             /** @enum {string|null} */
-                            serving_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                            serving_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | "source_purpose_restricted_or_unknown" | null;
                             status: string;
                         }[];
                         short_code: string;

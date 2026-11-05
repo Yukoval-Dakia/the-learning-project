@@ -26,6 +26,7 @@ export const READ_TOOLS = [
   // ADR-0072 LIGHT — 题库 agent 三工具（search/read/check）随各自竖切接入。
   // 授予 copilot surfaces；备题员面（ADR-0069 第一刀）落地时再扩。其余
   // surface 均不授权（同款 containment —— 扩面归 coordinator）。
+  'scan_coverage_gaps',
   'search_bank',
   'read_bank',
   'check_bank',
@@ -39,12 +40,10 @@ export const READ_TOOLS = [
   // nor writes a proposal; author_question remains the distinct retained path.
   'generate_goal_outline',
   'generate_question_candidate',
-  // YUK-986 (Supply-Agent/1) — jyeoo grade-route candidate fetch. E1: registry
-  // only, NO surface grant (E3/YUK-988 grants the supply-executor surface).
+  // Candidate-fetch registration alone grants no surface access; question_preparer
+  // grants below follow ADR-0078 and the cutover plan §1.2.
   'jyeoo_fetch_candidates',
-  // YUK-988 (Supply-Agent/3) — web-route candidate fetch (Tavily search +
-  // SourcingTask extraction). E3: registry only, NO surface grant (same
-  // containment as jyeoo_fetch_candidates).
+  // Web-route candidate fetch; surface access is granted separately below.
   'web_fetch_candidates',
   // YUK-293 — expiring AI-to-AI hints. Granted only to copilot / dreaming /
   // coach below; evaluator and operator surfaces filter it out.
@@ -147,6 +146,7 @@ export type DomainToolName =
   | ControlDomainToolName;
 
 export type DomainToolSurface =
+  | 'question_preparer'
   | 'knowledge_review'
   | 'copilot'
   | 'copilot_user_suggested_mistake_action'
@@ -371,7 +371,26 @@ const INGESTION_TOOLS = [
   'ask_learner',
 ] as const satisfies readonly DomainToolName[];
 
+export const QUESTION_PREPARER_TOOLS = [
+  'search_bank',
+  'read_bank',
+  'check_bank',
+  'query_knowledge',
+  'get_subject_graph_overview',
+  'expand_knowledge_subgraph',
+  'find_knowledge_paths',
+  'query_mistakes',
+  'scan_coverage_gaps',
+  'web_fetch_candidates',
+  'jyeoo_fetch_candidates',
+  'edit_question',
+  'compose_presentation',
+  'compose_block',
+  'submit_question',
+] as const satisfies readonly DomainToolName[];
+
 export const DOMAIN_TOOL_ALLOWLISTS = {
+  question_preparer: QUESTION_PREPARER_TOOLS,
   knowledge_review: KNOWLEDGE_REVIEW_TOOLS,
   copilot: COPILOT_TOOLS,
   copilot_user_suggested_mistake_action: [...COPILOT_TOOLS, 'attribute_mistake', 'propose_variant'],

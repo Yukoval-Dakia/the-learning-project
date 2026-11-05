@@ -104,6 +104,8 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   question_supply_nightly: 'translate',
   // 卡死 placement starter claim 的到期清扫：重驱的 quiz_gen / supply_execute 投递绑定旧题合同。
   placement_starter_recovery: 'translate',
+  question_preparer_run: 'translate',
+  question_preparer_recovery: 'translate',
   learner_return_wake: 'translate',
   supply_planner: 'translate',
   jyeoo_staged_asset_reap: 'drain', // 资产回收只删 staged 文件/行，合同无关。

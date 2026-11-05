@@ -25,6 +25,7 @@ const PROVIDERS = new Set<string>([
   'gateway',
   'openai',
   'anthropic-sub',
+  'opencode-go',
 ]);
 
 function assertPositiveFinite(value: unknown, field: string): void {

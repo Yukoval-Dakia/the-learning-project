@@ -988,6 +988,13 @@
       "when": 1793799751735,
       "tag": "0141_yuk1770_goal_steering",
       "breakpoints": true
+    },
+    {
+      "idx": 142,
+      "version": "7",
+      "when": 1793820000000,
+      "tag": "0142_yuk1834_purpose_authorization",
+      "breakpoints": true
     }
   ]
 }

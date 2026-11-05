@@ -15,7 +15,7 @@ import {
   buildProducerDifficultyEvidence,
 } from '@/core/schema/difficulty-evidence';
 import { defaultJudgeKindForQuestion, isExactCapableReference } from '@/core/schema/judge-routing';
-import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
+import { type WebSourcedProvenanceT, webSourcedMetadata } from '@/core/schema/provenance';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
@@ -161,8 +161,7 @@ export async function insertSourcedDraft(
     source_ref: q.source_url,
     created_by: createdBy,
     metadata: {
-      web_sourced: webSourced,
-      source_ref_kind: 'url',
+      ...webSourcedMetadata(webSourced),
       difficulty_evidence: difficultyEvidence,
       ...(judgeKindDemotion ? { judge_kind_override_demoted: judgeKindDemotion } : {}),
       ...(markupSanitized ? { sourced_markup_sanitized: true } : {}),
