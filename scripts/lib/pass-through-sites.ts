@@ -22,7 +22,6 @@
  */
 import { createHash } from 'node:crypto';
 import { parse } from '@babel/parser';
-import { z } from 'zod';
 import { analyzeSource } from './ts-tokenize';
 
 export const PASS_THROUGH_SCANNER_VERSION = 2;
@@ -687,9 +686,10 @@ export function scanPassThroughSites(
 }
 
 function siteKey(site: PassThroughSite): string {
-  // targetSymbol is identity: `export { a as b }` retargeted to `{ c as b }`
-  // is a NEW site, never a continuation the old ruling/stock may cover.
-  return `${site.file}|${site.kind}|${site.symbol}|${site.targetModule}|${site.targetSymbol ?? ''}|${site.detail}`;
+  // Identity excludes `detail` (scanner fingerprint/version): a scanner bump or
+  // a reformatted body must not launder an existing site into "new". targetSymbol
+  // stays identity: `export { a as b }` retargeted to `{ c as b }` is a NEW site.
+  return identityKey(site);
 }
 
 /**
@@ -717,50 +717,11 @@ export function diffPassThroughSites(
 }
 
 // ---------------------------------------------------------------------------
-// Site classifications: a new site fails unless a current-state entry binds it
-// exactly. compat_shim is a temporary hand-off that must retire within 14 days;
-// stable_contract is a deliberate per-symbol public port. Who approved it and
-// why lives in the PR, not here. One entry per line, sorted, so parallel
-// changes only collide when they touch neighbouring sites.
+// New-site gate: a pass-through shell that did not exist at the comparison
+// base fails. There is no classification ledger — the only exemption is a
+// named re-export inside `public.ts`, which is a declared public entrypoint
+// by path and export form, not debt.
 // ---------------------------------------------------------------------------
-
-export const PASS_THROUGH_CLASSIFICATIONS_PATH = 'scripts/pass-through-classifications.jsonl';
-const MAX_SHIM_DAYS = 14;
-
-const siteIdentityFields = {
-  file: z.string().trim().min(1),
-  kind: z.enum(['module', 'function', 'alias', 'site']),
-  symbol: z.string().trim().min(1),
-  targetModule: z.string().trim().min(1),
-  targetSymbol: z.string().trim().min(1),
-};
-
-export const siteClassificationSchema = z.discriminatedUnion('class', [
-  z.strictObject({ ...siteIdentityFields, class: z.literal('stable_contract') }),
-  z.strictObject({
-    ...siteIdentityFields,
-    class: z.literal('compat_shim'),
-    deadline: z.iso.date(),
-  }),
-]);
-export type SiteClassification = z.infer<typeof siteClassificationSchema>;
-
-export function parseSiteClassifications(text: string, source: string): SiteClassification[] {
-  return text.split('\n').flatMap((line, index) => {
-    if (line.trim() === '') return [];
-    try {
-      return [siteClassificationSchema.parse(JSON.parse(line))];
-    } catch (error) {
-      const detail =
-        error instanceof z.ZodError
-          ? error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')
-          : error instanceof Error
-            ? error.message
-            : String(error);
-      throw new Error(`${source}:${index + 1}: ${detail}`);
-    }
-  });
-}
 
 function identityKey(entry: {
   file: string;
@@ -776,107 +737,43 @@ export function describeSite(site: PassThroughSite): string {
   return `${site.kind} ${site.symbol} -> ${site.targetModule} (${site.detail})`;
 }
 
-function daysBetween(from: string, to: string): number {
-  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
-}
-
-export interface ShimViolation {
+export interface PassThroughViolation {
   path: string;
   source: string;
   reason: string;
 }
 
-export function auditPassThroughClassifications(input: {
-  headSites: readonly PassThroughSite[];
+/** A named re-export inside a capability `public.ts` is the file's declared
+ *  job, not a pass-through shell. `export *`/`export * as ns` forwards an open
+ *  namespace and is never an entrypoint; hand-written function/alias forwards
+ *  are debt wherever they live, and so is `var-export` — the two-step
+ *  `const b = a; export { b }` spelling of the same alias shell. Only a
+ *  `public.ts` under `src/capabilities/` declares capability entrypoints; a
+ *  `public.ts` anywhere else is just a filename. */
+function isPublicEntrypointSite(site: PassThroughSite): boolean {
+  return (
+    site.file.startsWith('src/capabilities/') &&
+    site.file.endsWith('/public.ts') &&
+    (site.kind === 'module' || site.kind === 'site') &&
+    !site.detail.startsWith('var-export:') &&
+    site.symbol !== '*' &&
+    site.targetSymbol !== '*'
+  );
+}
+
+export function auditPassThroughNewSites(input: {
   newSites: readonly PassThroughSite[];
-  classifications: readonly SiteClassification[];
-  /** Entries at the audit base; undefined when the base predates the classification file. */
-  baseClassifications: readonly SiteClassification[] | undefined;
-  renames: ReadonlyMap<string, string>;
-  today: string;
-}): ShimViolation[] {
-  const violations: ShimViolation[] = [];
-  const fail = (path: string, source: string, reason: string) =>
-    violations.push({ path, source, reason });
-
-  const keys = input.classifications.map(identityKey);
-  keys.forEach((key, i) => {
-    if (i > 0 && !(keys[i - 1] < key)) {
-      fail(
-        PASS_THROUGH_CLASSIFICATIONS_PATH,
-        key,
-        'entries must be unique and sorted by file|kind|symbol|targetModule|targetSymbol',
-      );
-    }
-  });
-  const classified = new Set(keys);
-  const headKeys = new Set(input.headSites.map(identityKey));
-  const byKey = new Map(input.classifications.map((entry, i) => [keys[i], entry]));
-
-  // Shims only drain: a new temporary hand-off must retire an old one first.
-  const compatCount = (entries: readonly SiteClassification[]) =>
-    entries.filter((entry) => entry.class === 'compat_shim').length;
-  const headCompat = compatCount(input.classifications);
-  const baseCompat = input.baseClassifications && compatCount(input.baseClassifications);
-  if (baseCompat !== undefined && headCompat > baseCompat) {
-    fail(
-      PASS_THROUGH_CLASSIFICATIONS_PATH,
-      'compat_shim',
-      `compat_shim entries grew: ${headCompat} at head > ${baseCompat} at base — retire a shim instead of adding one`,
-    );
-  }
-
-  for (const base of input.baseClassifications ?? []) {
-    if (base.class !== 'compat_shim') continue;
-    const key = identityKey({ ...base, file: input.renames.get(base.file) ?? base.file });
-    if (!headKeys.has(key)) continue;
-    const head = byKey.get(key);
-    if (head?.class !== 'compat_shim' || head.deadline !== base.deadline) {
-      fail(
-        base.file,
-        'compat_shim',
-        `${base.symbol}: a live compat shim's entry cannot be dropped, reclassified or extended (deadline ${base.deadline}) — retire the site`,
-      );
-    }
-  }
-
+}): PassThroughViolation[] {
+  const violations: PassThroughViolation[] = [];
   for (const site of input.newSites) {
-    if (!classified.has(identityKey(site))) {
-      fail(
-        site.file,
-        describeSite(site),
-        `new pass-through shell — remove it, or classify it in ${PASS_THROUGH_CLASSIFICATIONS_PATH} as compat_shim (deadline <= today+${MAX_SHIM_DAYS}d) or stable_contract`,
-      );
-    }
+    if (isPublicEntrypointSite(site)) continue;
+    violations.push({
+      path: site.file,
+      source: describeSite(site),
+      reason:
+        'new pass-through shell — remove it, or forward a named symbol through ' +
+        'the owning capability public.ts (public entrypoints are not debt)',
+    });
   }
-
-  input.classifications.forEach((entry, i) => {
-    if (!headKeys.has(keys[i])) {
-      fail(
-        entry.file,
-        entry.class,
-        `${entry.symbol} -> ${entry.targetModule}#${entry.targetSymbol} matches no current pass-through site — delete the entry with the site`,
-      );
-    }
-    if (entry.class === 'stable_contract') {
-      if (entry.symbol === '*' || entry.targetSymbol === '*') {
-        fail(entry.file, entry.class, 'stable_contract binds one named symbol, not a namespace');
-      }
-      return;
-    }
-    if (daysBetween(input.today, entry.deadline) < 0) {
-      fail(
-        entry.file,
-        entry.class,
-        `${entry.symbol}: compat shim window expired at ${entry.deadline} while the site still exists — retire it`,
-      );
-    } else if (daysBetween(input.today, entry.deadline) > MAX_SHIM_DAYS) {
-      fail(
-        entry.file,
-        entry.class,
-        `${entry.symbol}: deadline ${entry.deadline} exceeds the ${MAX_SHIM_DAYS}-day compat window`,
-      );
-    }
-  });
   return violations;
 }
