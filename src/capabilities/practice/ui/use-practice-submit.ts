@@ -50,9 +50,6 @@ export type Rating = 'again' | 'hard' | 'good';
 type IssuanceMode = 'auto_score' | 'manual';
 type IssuanceState = Awaited<ReturnType<PracticeClient['getIssuanceState']>>;
 
-export type { JudgeFeedback };
-export { feedbackFromCommittedAttempt, feedbackFromCommittedDiagnosticAttempt };
-
 const PartialUnknownFeedback = PartialUnknownJudgeResult.pick({
   coarse_outcome: true,
   score: true,

@@ -12,8 +12,6 @@ export type JudgeFeedback = Pick<
   grading_provenance?: GradingProvenanceEntryT[];
 };
 
-const ProvenanceOnly = z.object({ grading_provenance: z.array(GradingProvenanceEntry) });
-
 const WithProvenance = z.object({ grading_provenance: z.array(GradingProvenanceEntry) });
 
 /** The AI label from a durable run's terminal result, when it has one. */
