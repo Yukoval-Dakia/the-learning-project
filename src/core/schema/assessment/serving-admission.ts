@@ -31,6 +31,7 @@ export const SERVING_UNAVAILABLE_REASONS = [
   'missing_referenced_figure',
   'no_input_renderer',
   'invalid_presentation',
+  'source_purpose_restricted_or_unknown',
 ] as const;
 export type ServingUnavailableReason = (typeof SERVING_UNAVAILABLE_REASONS)[number];
 

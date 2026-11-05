@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { event } from '@/db/schema';
+import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { MemoryClient, MemoryEventInput } from '@/server/ai/mem0/client';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -46,6 +46,14 @@ describe('memory ingest concurrency', () => {
   it('allows only one generic handler through the provider boundary after concurrent lookup misses', async () => {
     const db = testDb();
     const sourceId = 'generic-concurrent';
+    await db.insert(question).values({
+      id: 'question-1',
+      kind: 'choice',
+      prompt_md: 'fixture',
+      source: 'manual',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
     await writeEvent(db, {
       ...sourceEvent(sourceId),
       actor_ref: 'self',
