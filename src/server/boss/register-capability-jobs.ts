@@ -86,11 +86,24 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
     {
       pollingIntervalSeconds: decl.pollingIntervalSeconds ?? 2,
       batchSize: decl.batchSize ?? 1,
+      ...(decl.reservedPriority !== undefined ? { maxPriority: decl.reservedPriority - 1 } : {}),
       ...(decl.includeMetadata !== undefined ? { includeMetadata: decl.includeMetadata } : {}),
       ...(decl.localConcurrency !== undefined ? { localConcurrency: decl.localConcurrency } : {}),
     },
     fenceAwareJobHandler(db, decl.name, handler),
   );
+
+  if (decl.reservedPriority !== undefined) {
+    await boss.work(
+      decl.name,
+      {
+        pollingIntervalSeconds: decl.pollingIntervalSeconds ?? 2,
+        batchSize: 1,
+        minPriority: decl.reservedPriority,
+      },
+      fenceAwareJobHandler(db, decl.name, handler),
+    );
+  }
 
   if (decl.schedule) {
     if (

@@ -311,6 +311,8 @@ export const questionBankManifestPart: Omit<CapabilityManifest, 'name' | 'descri
       {
         name: 'question_admission_run',
         queue: 'llm',
+        reservedPriority: 1,
+        notify: true,
         load: () =>
           import('./jobs/question_admission_run').then((m) => m.buildQuestionAdmissionRunHandler),
       },

@@ -21,6 +21,8 @@ import { writeEvent } from '@/kernel/events/index';
 import type { EventSubscriptionDelivery, EventSubscriptionOutcome } from '@/kernel/manifest';
 import { getStartedBoss } from '@/server/boss/client';
 
+import { placementAuthority } from '../../../supply/public';
+
 export const ADMISSION_FAMILY = 'question_admission_run';
 export const AdmissionJobData = z.object({
   /** Absent on old queued deliveries: they may reconcile old units but never initiate @3. */
@@ -356,7 +358,11 @@ export async function enqueuePublishedQuestionAdmission(
         source_event_id: source.id,
         ...(usageSourceId ? { usage_source_event_id: usageSourceId } : {}),
       } satisfies AdmissionJobData,
-      { id, db: fromPgBossDrizzleTx(tx) },
+      {
+        id,
+        db: fromPgBossDrizzleTx(tx),
+        priority: (await placementAuthority.isPlacementWaitingForQuestion(tx, root.id)) ? 1 : 0,
+      },
     );
     if (enqueued === null)
       return { status: 'skipped', reason: `admission job already exists: ${id}` };
