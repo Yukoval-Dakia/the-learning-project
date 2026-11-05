@@ -468,9 +468,18 @@ export async function changeTopics(
               detail: 'Communication must fit one complete summary of at most 400 characters.',
             },
           ]);
-        const bodies = Array.from({ length: Math.ceil(patch.body.length / 400) }, (_, chunk) =>
-          patch.body.slice(chunk * 400, (chunk + 1) * 400),
-        );
+        const bodies: string[] = [];
+        let remaining = patch.body;
+        while (remaining.length > 400) {
+          const prefix = remaining.slice(0, 400);
+          const boundary =
+            Math.max(prefix.lastIndexOf('。'), prefix.lastIndexOf('；'), prefix.lastIndexOf('\n')) +
+            1;
+          const size = boundary >= 200 ? boundary : 400;
+          bodies.push(remaining.slice(0, size));
+          remaining = remaining.slice(size);
+        }
+        if (remaining) bodies.push(remaining);
         const withdrawal = after.withdrawals.find((w) => w.key === patch.key);
         const withheld = withdrawnTopicEvidence(after);
         if (input.sourceIds.some((id) => withheld.has(id)))
