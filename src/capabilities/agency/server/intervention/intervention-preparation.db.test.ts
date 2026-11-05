@@ -16,10 +16,10 @@ import { freezeQuestionForJudge } from '@/capabilities/practice/grading/server/j
 import {
   JUDGE_RUN_EVENTS,
   JUDGE_RUN_TABLE,
-  authorInterventionPackage,
-  handleReviewDue,
   installInterventionDiagnosticLeaves,
 } from '@/capabilities/practice/public';
+import { authorInterventionPackage } from '@/capabilities/practice/question-bank/public';
+import { handleReviewDue } from '@/capabilities/practice/scheduling/public';
 
 import { resetTestConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';

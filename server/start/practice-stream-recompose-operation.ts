@@ -8,7 +8,7 @@ import type { FrontdoorContext } from './context';
 export const recomposeStartPracticeStream: FrontdoorContext['recomposePracticeStream'] = () =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
-      const { recomposePracticeStream } = await import('@/capabilities/practice/public');
+      const { recomposePracticeStream } = await import('@/capabilities/practice/scheduling/public');
       const { db } = await import('@/db/client');
       // The live client sends no body; the retained HTTP adapter resolves it to {}.
       return await recomposePracticeStream(db, {});

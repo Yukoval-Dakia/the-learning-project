@@ -2,20 +2,7 @@
 
 import { loadReviewDueReader } from './scheduling/public';
 
-// Compatibility export; shared read models consume their owner, kernel/events,
-// directly so initialization does not re-enter the practice runtime barrel.
-export type { EffectiveTruth } from '@/kernel/events';
-// The seed-root anchor regex is owned by the kernel placement-scope read model.
-export { SYNTHETIC_SUBJECT_ROOT_RE } from '@/kernel/read-models/placement-scope';
-// Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
-// bundle on the @kernel + @db chain with no SDK import.
-export { issueAssessment } from '@/kernel/records/assessment-issuance';
-export {
-  type FailureLearningBossSend,
-  type ProposeFailureVariantInput,
-  type VariantProposalResult,
-  proposeFailureVariant,
-} from './failure-learning/public';
+export { type VariantProposalResult, proposeFailureVariant } from './failure-learning/public';
 export {
   type AnswerInput,
   type CalibrationSampleDispatch,
@@ -93,68 +80,19 @@ export {
   withdrawCapturedOccurrence,
 } from './grading/public';
 export {
-  DEFAULT_MAX_PER_RUN,
-  type EnqueueVariantVerifyFn,
   type EnqueueVerifyFn,
-  type ItemPriorCandidateFrozen,
-  type ItemPriorDispatch,
-  type ItemPriorDispatchedRequest,
-  type ItemPriorExecutionParams,
-  ItemPriorMemberIdentityError,
-  type ItemPriorMemberRequest,
-  ItemPriorPaidEffectAdapter,
-  type ItemPriorPreparedWork,
-  type ItemPriorStagedItem,
-  type QuestionDraftAcceptResult,
-  type QuestionEditAcceptResult,
   SOLVE_LANE_TASK_KINDS,
-  VERIFY_DISPATCH_COMPLETE_ACTION,
-  VERIFY_DISPATCH_INTENT_ACTION,
-  VERIFY_DISPATCH_VERSION,
-  type VariantQuestionAcceptResult,
-  archivePracticeQuestion,
-  authorInterventionPackage,
   canonicalQuestionContentHash,
   dispatchPendingVerifyIntents,
   embedQuestionTextForIngest,
-  enablePracticeDraft,
-  forceEnablePracticeDraft,
   installInterventionAuthorStages,
-  itemPriorDispatchSchema,
-  itemPriorDispatchedRequestSchema,
-  itemPriorMemberRequestSchema,
   mergeExactQuestionDuplicateKnowledgeIds,
-  normalizeMethod,
-  normalizeReps,
-  prepareItemPriorWork,
-  readDraftReviewDetail,
-  readItemPriorPgBossDelivery,
-  readPracticeDraftList,
-  readPracticeQuestionList,
   recoverOrphanVerifyDispatches,
-  resolveItemPriorKnowledgeNames,
   resolveSolveOverrideFromEnv,
-  restorePracticeQuestion,
-  reviewInterventionPackageCandidate,
-  runItemPriorItemRepStages,
-  runPracticeServingAction,
   runQuestionAdmissionChecks,
-  selectItemPriorCandidates,
-  updatePracticeQuestion,
   writeVerifyDispatchIntent,
 } from './question-bank/public';
-export {
-  type WeeklyReportQuery,
-  getPracticeStream,
-  handleReviewDue,
-  installDailyReviewPlanFacts,
-  loadWeeklyReview,
-  previewReviewAdvice,
-  queryReviewDue,
-  recomposePracticeStream,
-  scheduleReview,
-  updatePracticeStreamItem,
-} from './scheduling/public';
+export { installDailyReviewPlanFacts } from './scheduling/public';
 
 /**
  * YUK-1770 — installs practice's today-recompose operation behind the kernel
@@ -177,7 +115,6 @@ export async function installTodayPracticeRecompose(): Promise<void> {
 // practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
-export { writeAttemptSnapshotBrackets } from './settlement/public';
 export {
   DEDUP_OVERLAP_THRESHOLD,
   claimHttpSourceDuplicate,
@@ -215,55 +152,13 @@ export async function installPracticeHostOperations(): Promise<void> {
   });
 }
 
-export type { PlacementVerificationAuthority, SupplyTraceV1T } from '@/kernel/supply-contracts';
-export { withSupplyTraceDifficultyEvidence } from '@/kernel/supply-contracts';
-// public ports repointed from central deep imports.
-export type { DispatchResult, PlacementCostComponentKind } from './supply/public';
-// Jyeoo agent-tool public surface: candidate fetch shared with the CLI and deterministic
-// hint matching. DomainTool registration loads deep paths from the manifest; the CLI calls
-// execute directly.
-export {
-  JYEOO_BACKFILL_PER_QUESTION_MS,
-  PLACEMENT_GENERATION_RESERVATION_MICRO_USD,
-  PLACEMENT_PAID_CALL_RESERVATION_MICRO_USD,
-  PlacementStarterBudgetExhaustedError,
-  PlacementStarterUnknownCostError,
-  SUPPLY_DISPATCH_COOLDOWN_DAYS,
-  acquirePlacementAttempt,
-  addAuthorizedCostComponent,
-  addPlacementStarterCostComponent,
-  dispatchSupplyTarget as dispatchPracticeSupplyTarget,
-  dispatchSupplyTargets as dispatchPracticeSupplyTargets,
-  findSubjectRootKnowledgeId,
-  inFlightSupplyCount,
-  jyeooBackfillSpawnTimeoutMs,
-  matchJyeooKnowledgeHints,
-  releaseAuthorizedPaidCall,
-  reserveAuthorizedPaidCall,
-  reservePlacementGenerationCall,
-  runJyeooFetchCandidates,
-  settleAuthorizedPaidCall,
-  terminalizePlacementUnknownCost,
-} from './supply/public';
-
 // Keep executeSupplyPlan/buildSupplyExecutorDeps out of this barrel: that chain
 // (plan-executor → web-candidates → SourcingTask → pi agent runtime) pulls the SDK into the
 // migrate cjs bundle, whose top-level createRequire(import.meta.url) fails at startup.
 // server/worker mark it external, so only migrate is affected. scripts/supply-execute.ts
 // imports the deep path directly.
 
-export {
-  MEM0_PRIOR_BLOCK_CHAR_CAP,
-  MEM0_PRIOR_CAP,
-  MEM0_PRIOR_ITEM_CHAR_CAP,
-  SELECTION_ORCHESTRATOR_CANDIDATE_CAP,
-} from './server/selection-constants';
 export type { CoverageLatticeRead } from './supply/public';
-export { loadCoverageLattice, submitQuestionTool } from './supply/public';
-// store_sourced_question is folded into submit_question (the old tool is no longer
-// registered or granted); the function-level compat export remains.
-
-export { createPracticeAppeal } from './settlement/public';
 export const recoverWebSupplies: typeof import('./supply/public').recoverWebSupplies = async (
   ...args
 ) => (await import('./supply/public')).recoverWebSupplies(...args);
@@ -278,29 +173,14 @@ export const recoverHeldServingRechecks: typeof import('./question-bank/public')
   async (...args) => (await import('./question-bank/public')).recoverHeldServingRechecks(...args);
 export {
   PlacementOrphanStateError,
-  type PlacementProfileResponse,
-  UpdatePlacementSessionBodySchema,
   abandonOrphanPlacementTx,
   placementProbeEnabled,
-  readPlacementProfile,
-  readPlacementSession,
-  releaseHeldPlacement,
-  selectNextPlacementQuestion,
   selectOrphanPlacementCandidates,
-  startPlacementProbe,
-  transitionPlacementSession,
 } from './placement/public';
 export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';
 export {
   abandonOrphanReviewSession,
-  createPracticePaperSubmission,
-  createReviewSession,
-  getPaperDetail,
-  readPaperList,
-  readWorksheetExport,
   selectOrphanReviewCandidates,
-  submitPaperSlot,
-  transitionReviewSession,
 } from './session/public';
 
 export { installSchedulingCandidateRebuild } from './settlement/public';

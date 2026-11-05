@@ -1,10 +1,10 @@
-import type { WeeklyReportQuery } from '@/capabilities/practice/public';
+import type { WeeklyReportQuery } from '@/capabilities/practice/scheduling/public';
 import { errorResponse } from '@/kernel/http';
 
 export async function readStartCoachWeekly(input: WeeklyReportQuery) {
   try {
     const { db } = await import('@/db/client');
-    const { loadWeeklyReview } = await import('@/capabilities/practice/public');
+    const { loadWeeklyReview } = await import('@/capabilities/practice/scheduling/public');
     return await loadWeeklyReview(db, input);
   } catch (error) {
     throw errorResponse(error);
