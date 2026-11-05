@@ -58,7 +58,8 @@ export async function executeMemoryBrief(
   now: () => Date = () => new Date(),
 ): Promise<MemoryBriefOutput> {
   const input = MemoryBriefInputSchema.parse(raw);
-  const read = await readMemoryBrief(ctx.db, input.scopeKey ?? 'global', now());
+  const scope = input.scopeKey ?? 'global';
+  const read = await readMemoryBrief(ctx.db, scope === 'global' ? 'global:digest' : scope, now());
   return MemoryBriefOutputSchema.parse({
     note: read.note
       ? {

@@ -46,13 +46,12 @@ export { buildBriefGenerator } from './server/memory/brief-writer';
 // Backup restore reopens outbox rows whose pg-boss job was lost with the queue.
 export { reopenUnstartedMemoryIngests } from './server/memory/memory-ingest-recovery-store';
 export {
-  MEMORY_BRIEF_SWEEP_QUEUE,
   MEMORY_EVENT_INGEST_QUEUE,
   MEMORY_INFRA_SCHEDULES,
   MEMORY_INGEST_OUTBOX_POLL_QUEUE,
   MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
-  buildMemoryBriefRegenHandler,
-  buildMemoryBriefSweepHandler,
+  type ReconcileMemInput,
+  buildContextPurposeRepairHandler,
   buildMemoryEventIngestHandler,
   buildMemoryIngestOutboxPollHandler,
   buildMemoryIngestOutboxRecoverHandler,
