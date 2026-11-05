@@ -284,7 +284,7 @@ export function projectQuestionDeleteResponse(
 }
 
 type ReviewAdviceWire = ApiOperationJsonResponse<'previewReviewAdvice'>;
-export type JudgePreview = ReviewAdviceWire['judge'];
+export type JudgePreview = Exclude<ReviewAdviceWire, { verdict: 'pending' }>['judge'];
 // YUK-1729 — the learner capture an automatic verdict commits with in the same advice request.
 export type AdviceCommit = NonNullable<ApiOperationRequestBody<'previewReviewAdvice'>['commit']>;
 
@@ -298,7 +298,7 @@ export async function getAdvice(
   // YUK-1729 — sent when the answer may be committed here: an automatic, rated verdict is then
   // recorded and settled in this same request (`committed` in the response). Absent → preview only.
   commit?: AdviceCommit,
-): Promise<Omit<ReviewAdviceWire, 'judge'> & { judge: JudgePreview }> {
+): Promise<ReviewAdviceWire> {
   const response = await apiOperationJson('previewReviewAdvice', {
     url: '/api/review/advice',
     method: 'POST',
@@ -306,6 +306,7 @@ export async function getAdvice(
       assessment,
       question_id: questionId,
       response_md: responseMd,
+      accept_pending: true,
       ...(imageRefs.length > 0 ? { answer_image_refs: [...imageRefs] } : {}),
       ...(commit ? { commit } : {}),
     },
@@ -327,7 +328,9 @@ export type SubmitReviewInput = Extract<
 export type SubmitPending = PendingAttemptWire;
 export type SubmitOutcome = SubmitResult | SubmitPending;
 
-export function isSubmitPending(outcome: SubmitOutcome): outcome is SubmitPending {
+export function isSubmitPending(
+  outcome: SubmitOutcome | ReviewAdviceWire,
+): outcome is SubmitPending {
   return 'verdict' in outcome && outcome.verdict === 'pending';
 }
 

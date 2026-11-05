@@ -272,9 +272,9 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('native durable assessment', () => {
-  // @invariant data: the native resolution receipt is committed atomically with activation and settlement in one transaction, retains the user rating, and stays byte-identical across redelivery
+  // @invariant data: the native resolution receipt is committed atomically with activation and settlement in one transaction, uses the model-derived rating, and stays byte-identical across redelivery
   // @fails-if write the receipt outside the activation transaction or let a redelivery rewrite it; the other-connection zero-visibility, resolutionWrites-1 and toEqual(receipts)/nativeEffects assertions fail
-  it('writes the immutable resolution in the activation transaction and retains the user rating', async () => {
+  it('writes the immutable resolution in the activation transaction and uses the model-derived rating', async () => {
     const f = await fixture();
     const run = await dispatchNativeAttempt(
       f.db,
@@ -315,7 +315,7 @@ describe('native durable assessment', () => {
     const payload = NativeJudgeResolutionPayload.parse(receipts[0].payload);
     expect(payload).toMatchObject({
       status: 'effective',
-      final_rating: 'hard',
+      final_rating: 'good',
       score: 1,
       coarse_outcome: 'correct',
       assessment: { activation_intent: { expected_effective_id: null, expected_generation: 0 } },
@@ -424,7 +424,7 @@ describe('native durable assessment', () => {
     expect(receipts).toHaveLength(1);
     expect(NativeJudgeResolutionPayload.parse(receipts[0].payload)).toMatchObject({
       status: 'effective',
-      final_rating: 'hard',
+      final_rating: 'good',
       assessment: {
         candidate_id: committed.candidate.evaluation.record.evaluation_id,
         activation_intent: { expected_effective_id: null, expected_generation: 0 },

@@ -129,6 +129,8 @@ export const JudgeRunTerminalResultSchema = z
   .object({
     attempt_event_id: z.string(),
     status: z.enum(['effective', 'review_required']).optional(),
+    // Absent on legacy runs; a durable review_required result still owns its submission.
+    judge_lane: z.enum(['durable', 'sync']).optional(),
     assessment: z
       .object({
         submission_id: z.string(),
@@ -141,7 +143,7 @@ export const JudgeRunTerminalResultSchema = z
       .optional(),
     judge_event_id: z.string().nullable().optional(),
     outcome: z.string().optional(),
-    final_rating: z.string().optional(),
+    final_rating: z.string().nullable().optional(),
     route: z.string().nullable().optional(),
     coarse_outcome: z.string().optional(),
     score: z.number().nullable().optional(),

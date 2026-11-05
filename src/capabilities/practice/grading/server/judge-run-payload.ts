@@ -221,6 +221,7 @@ export async function reconstructDoneFromDomainEvents(
     return {
       ...attempt.payload,
       ...projected.verdict,
+      judge_lane: 'durable',
       ...(assessment && typeof assessment === 'object'
         ? {
             assessment: {
@@ -360,8 +361,27 @@ async function projectNativeAttemptVerdict(db: Db | Tx, anchor: EventRow | undef
           .limit(1)
       : [];
   const explicitRating = activation?.payload.user_rating;
-  const currentRating =
-    explicitRating === 'again' || explicitRating === 'hard' || explicitRating === 'good'
+  const [settlement] =
+    resolved && effective
+      ? await db
+          .select({ payload: event.payload })
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'experimental:assessment_settlement'),
+              eq(event.subject_id, resolved.evaluation_group_id),
+              sql`${event.payload}->>'evaluation_id' = ${effective.evaluation_id}`,
+            ),
+          )
+          .orderBy(desc(event.created_at), desc(event.id))
+          .limit(1)
+      : [];
+  const recordedRating = settlement?.payload.rating;
+  const currentRating = settlement
+    ? recordedRating === 'again' || recordedRating === 'hard' || recordedRating === 'good'
+      ? recordedRating
+      : null
+    : explicitRating === 'again' || explicitRating === 'hard' || explicitRating === 'good'
       ? explicitRating
       : effective
         ? ratingFromCoarseOutcome(effective.verdict.verdict)
@@ -374,10 +394,15 @@ async function projectNativeAttemptVerdict(db: Db | Tx, anchor: EventRow | undef
             EvaluationRecord.parse(effective.row),
             effective.scoring_basis,
           ),
-          status: 'effective' as const,
-          final_rating: currentRating ?? undefined,
+          status: currentRating === null ? ('review_required' as const) : ('effective' as const),
+          final_rating: currentRating,
         }
-      : { status: 'review_required' as const, coarse_outcome: 'unsupported', score: null },
+      : {
+          status: 'review_required' as const,
+          coarse_outcome: 'unsupported',
+          score: null,
+          final_rating: null,
+        },
     original_evaluation_id: resolved?.original_evaluation_id ?? null,
     effective_evaluation_id: effective?.evaluation_id ?? null,
   };
@@ -402,6 +427,7 @@ export async function reconstructDoneFromSyncAttempt(database: Db | Tx, submissi
     attempt_event_id: anchor.id,
     judge_event_id: null,
     ...projected.verdict,
+    judge_lane: 'sync',
     assessment: {
       submission_id: submissionId,
       evaluation_group_id: resolved.evaluation_group_id,
@@ -428,6 +454,7 @@ export async function reconstructDoneFromNativeCompletion(
     attempt_event_id: anchor.id,
     judge_event_id: null,
     status: 'effective',
+    judge_lane: 'durable',
     ...projectEvaluationToJudgeResult(
       EvaluationRecord.parse(resolved.effective.row),
       resolved.effective.scoring_basis,
