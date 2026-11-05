@@ -172,25 +172,35 @@ function git(repoRoot, args) {
 }
 
 // `pull_request.base.sha` is the base branch tip, not where the PR forked; comparing against
-// the fork point keeps a later main from failing older PRs. With no explicit base, fall back
-// to the fork point with origin/main so local runs still gate.
+// the fork point keeps a later main from failing older PRs. The base comparison is the only
+// gate, so it fails closed: CI must pin a base, and a local run without a resolvable merge-base
+// is an error, not a pass.
 function comparisonBase(repoRoot, args) {
   const flag = args.indexOf('--base');
   if (flag >= 0 && !args[flag + 1]) throw new Error('[lint-ratchet] --base needs a commit SHA');
   const value = flag >= 0 ? args[flag + 1] : process.env.LINT_BASE_SHA;
   // A branch-creating push reports an all-zero `before`; there is no explicit base then.
-  if (value && !/^0+$/.test(value)) {
-    if (!/^[a-f0-9]{40}$/.test(value)) {
+  if (!value || /^0+$/.test(value)) {
+    if (process.env.CI) {
+      throw new Error('[lint-ratchet] CI requires LINT_BASE_SHA or --base <commit>.');
+    }
+    try {
+      return git(repoRoot, ['merge-base', 'origin/main', 'HEAD']).trim();
+    } catch {
       throw new Error(
-        `[lint-ratchet] comparison base must be a full, nonzero commit SHA: ${value}`,
+        '[lint-ratchet] could not merge-base against origin/main; fetch it or pass --base <sha>.',
       );
     }
-    return git(repoRoot, ['merge-base', value, 'HEAD']).trim();
+  }
+  if (!/^[a-f0-9]{40}$/.test(value)) {
+    throw new Error(`[lint-ratchet] comparison base must be a full, nonzero commit SHA: ${value}`);
   }
   try {
-    return git(repoRoot, ['merge-base', 'origin/main', 'HEAD']).trim();
+    return git(repoRoot, ['merge-base', value, 'HEAD']).trim();
   } catch {
-    return null;
+    throw new Error(
+      `[lint-ratchet] could not merge-base against ${value}; fetch the base commit first.`,
+    );
   }
 }
 
@@ -261,13 +271,6 @@ function main() {
   }
 
   const base = comparisonBase(repoRoot, args);
-  if (!base) {
-    console.log(
-      `[lint-ratchet] counted ${current.warnings} warnings / ${current.infos} infos; no comparison base available (set --base or LINT_BASE_SHA, or fetch origin/main).`,
-    );
-    return;
-  }
-
   const baseCount = countAtBase(repoRoot, base);
   if (!baseCount) {
     console.error(
