@@ -9,6 +9,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { event, placement_starter_attempt_question, placement_starter_claim } from '@/db/schema';
+import { handOffFailedPlacementDelivery } from './placement-starter';
 import {
   PLACEMENT_QUEUE_EXPIRY_MS,
   type PlacementAttemptAuthority,
@@ -47,7 +48,10 @@ type DeliveryJob = Pick<
 /**
  * Run `execute` as the claim's delivery when `job` is the claim's recorded sourcing_web job;
  * otherwise run it without placement authority, which the web owner refuses for placement
- * demands. Errors propagate so pg-boss stays the only redelivery driver (3 deliveries total).
+ * demands. A failed delivery first tries to hand the claim straight back to dispatch —
+ * the same-job pg-boss retry can only re-read this job's terminal web demand, never fetch
+ * again — and this job completes quietly when the handoff lands. Failures that cannot be
+ * handed off still propagate so pg-boss redelivery and the sweeper stay the fallback drivers.
  */
 export async function runPlacementWebDelivery(input: {
   db: Db;
@@ -146,6 +150,16 @@ export async function runPlacementWebDelivery(input: {
             finalizeErr,
           );
         }
+      }
+      // The same-job retry only re-reads this job's durable 'blocked' web demand and
+      // underfills without fetching again — the dead time measured between a find-question
+      // failure and the next real attempt. Hand the claim back to dispatch so a fresh job
+      // mints a fresh demand and runs now. A declined or failed handoff leaves the original
+      // error to pg-boss; the sweeper's pending leg remains the backstop.
+      try {
+        if (await handOffFailedPlacementDelivery(db, claimId)) return;
+      } catch (handoffErr) {
+        console.error('[supply_execute] placement redispatch failed for', claimId, handoffErr);
       }
     }
     throw err;

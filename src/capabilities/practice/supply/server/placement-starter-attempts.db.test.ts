@@ -109,6 +109,18 @@ describe('placement attempt authority', () => {
   it('atomically seals schema failure with terminal claim status and retains the immutable paid receipt', async () => {
     const now = new Date('2026-10-10T00:00:00.000Z');
     await seedClaim(now);
+    // Exhaustion counts attempt rows claim-wide, so spend the first two deliveries
+    // before measuring the third (final allowed) one.
+    for (const delivery of [1, 2]) {
+      const prior = await acquirePlacementAttempt(testDb(), {
+        claimId: CLAIM_ID,
+        pgBossJobId: JOB_ID,
+        deliveryNo: delivery,
+        startedOn: now,
+        now,
+      });
+      await finishPlacementAttempt(testDb(), prior, 'interrupted', now);
+    }
     const attempt = await acquirePlacementAttempt(testDb(), {
       claimId: CLAIM_ID,
       pgBossJobId: JOB_ID,
@@ -132,7 +144,10 @@ describe('placement attempt authority', () => {
     ]);
     await finishPlacementAttempt(testDb(), attempt, 'interrupted', now, reason);
     const [claim] = await testDb().select().from(placement_starter_claim);
-    const [finished] = await testDb().select().from(placement_starter_attempt);
+    const [finished] = await testDb()
+      .select()
+      .from(placement_starter_attempt)
+      .where(eq(placement_starter_attempt.id, attempt.attemptId));
     const receipts = await testDb().select().from(placement_starter_cost_component);
     expect(claim).toMatchObject({
       status: 'exhausted',
@@ -154,7 +169,12 @@ describe('placement attempt authority', () => {
       PlacementStarterStaleAuthorityError,
     );
     expect(await testDb().select().from(placement_starter_claim)).toEqual([claim]);
-    expect(await testDb().select().from(placement_starter_attempt)).toEqual([finished]);
+    expect(
+      await testDb()
+        .select()
+        .from(placement_starter_attempt)
+        .where(eq(placement_starter_attempt.id, attempt.attemptId)),
+    ).toEqual([finished]);
     expect(await testDb().select().from(placement_starter_cost_component)).toEqual(receipts);
   });
 

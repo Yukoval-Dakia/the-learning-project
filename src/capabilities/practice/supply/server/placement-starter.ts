@@ -1,7 +1,7 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import type { SendOptions } from 'pg-boss';
 import type { Db, Tx } from '@/db/client';
-import { learning_session, placement_starter_claim } from '@/db/schema';
+import { goal, learning_session, placement_starter_claim } from '@/db/schema';
 import {
   JOB_RETRY_DELAY_SECONDS,
   JOB_RETRY_LIMIT,
@@ -15,6 +15,7 @@ import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { EvidenceDemandV1, evidenceDemandToTargetContext } from '@/kernel/supply-contracts';
 import { dispatchSupplyTarget } from './dispatcher';
 import { PLACEMENT_QUEUE_EXPIRY_MS } from './placement-starter-attempts';
+import { resolvePlacementStarterGoalAuthority } from './placement-starter-store';
 import type { QuestionSupplyTarget } from './target-discovery';
 
 const PLACEMENT_STARTER_COUNT = 8;
@@ -215,6 +216,52 @@ export async function dispatchPlacementStarterClaim(
   return db.transaction((tx) =>
     dispatchPlacementStarterClaimTx(tx, claimId, enqueuePlacementJob, admit),
   );
+}
+
+/**
+ * Hand a claim whose paid delivery just failed back into dispatch. The same-job pg-boss
+ * retry cannot produce another sourcing run — the web demand is durable-'blocked' under
+ * the demand id baked into the failed job's payload, so a same-job redelivery tallies
+ * 'skipped' and underfills without ever fetching again. Only a fresh job (a fresh
+ * demand id per send) performs the next real find-question. The
+ * retry_scheduled → pending_dispatch CAS re-arms the one legitimate dispatch CAS in
+ * dispatchPlacementStarterClaimTx (pending_dispatch → queued), keeping this handoff,
+ * the sweeper, and /placement/start single-sender — a sweeper that dispatched first
+ * just makes dispatch return the winner's job id. The admit re-verifies inside the
+ * dispatch transaction that the goal is still active and the claim's semantic revision
+ * is still authoritative; a declined admit or send leaves the claim pending_dispatch
+ * with next_reconcile_at = now, where the sweeper's pending leg applies its own
+ * guard ceremony on the next tick.
+ */
+export async function handOffFailedPlacementDelivery(db: Db, claimId: string): Promise<boolean> {
+  const now = new Date();
+  const moved = await db
+    .update(placement_starter_claim)
+    .set({
+      status: 'pending_dispatch',
+      next_reconcile_at: now,
+      updated_at: now,
+      version: sql`${placement_starter_claim.version} + 1`,
+    })
+    .where(
+      and(
+        eq(placement_starter_claim.id, claimId),
+        eq(placement_starter_claim.status, 'retry_scheduled'),
+      ),
+    )
+    .returning({ id: placement_starter_claim.id });
+  if (moved.length !== 1) return false;
+  const jobId = await dispatchPlacementStarterClaim(db, claimId, async (tx, claim) => {
+    const [goalRow] = await tx
+      .select({ status: goal.status })
+      .from(goal)
+      .where(eq(goal.id, claim.goal_id))
+      .limit(1);
+    if (goalRow?.status !== 'active') return false;
+    const authority = await resolvePlacementStarterGoalAuthority(tx, claim.goal_id);
+    return authority.semanticGoalRevisionId === claim.semantic_goal_revision_id;
+  });
+  return jobId !== null;
 }
 
 // pg-boss job states from which a further delivery may STILL arrive. 'created' and 'retry' are
