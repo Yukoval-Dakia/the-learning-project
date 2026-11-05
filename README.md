@@ -168,7 +168,7 @@ reuses the same database and only applies new migrations. Docker/OrbStack must b
   nothing needs it, drop it by hand:
   `docker compose -f docker-compose.dev.yml exec postgres-dev psql -U loom_dev -d postgres -c 'drop database if exists loom_dev with (force)'`.
 
-`pnpm dev:local`（= `tsx scripts/dev-local.ts`）spawn **两进程**，启动后打印要打开的地址（自动探测 8788 起首个空闲的 127.0.0.1 端口，可用 `DEV_PORT` 固定；8787 留给 TEST 的 app 容器，避免抢端口或误开到 TEST）：
+`pnpm dev:local`（= `tsx scripts/dev-local.ts`）spawn **两进程**，启动后打印要打开的地址（自动探测 8788 起首个空闲的 127.0.0.1 端口，可用 `DEV_PORT` 固定；8787 留给 TEST——本机由 NAS 中继监听，避免抢端口或误开到 TEST）：
 
 | 进程 | 端口 | 命令 | 角色 |
 | --- | --- | --- | --- |
@@ -262,13 +262,13 @@ pnpm build            # TanStack Start + 三 esbuild 产物（dist/server.cjs / 
 `pnpm test` 的 db / migration 分区用 `@testcontainers/postgresql` 启动真实 Postgres，
 运行前需要 Docker Desktop 或 OrbStack。
 
-## 当前部署目标：Mac 上的 Agent 开发测试环境
+## 当前部署目标：NAS 上的 Agent 开发测试环境
 
-Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[授权记录](docs/planning/2026-10-07-autonomous-delivery-charter.md)。本机入口 <http://localhost:8787> 只供 Agent 开发测试，沿用独立 app、worker 和 PostgreSQL；只有 owner 之后明确要求“为我日常使用的部署”才切换日用。完整行为设计见[连续学习系统](docs/design/2026-10-06-continuous-learning-system-behavior.md)，设计基线不等于当前实现。当前附件存储与重置证据见[测试存储记录](docs/planning/2026-10-07-agent-test-storage.md)与[Agent 测试环境记录](docs/planning/2026-10-07-agent-test-environment-reset.md)，后续任务与进度见 [Linear](docs/agents/issue-tracker.md)；`PLAN.md` 仅为各工作树的本地记录。
+Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[授权记录](docs/planning/2026-10-07-autonomous-delivery-charter.md)。TEST 跑在 NAS（`bancho-nb2.local`，`/volume1/docker/tlp-test/`），Mac 入口 <http://localhost:8787> 经 LaunchAgent `studio.yukoval.tlp-nas-tunnel` 中继到达，只供 Agent 开发测试，沿用独立 app、worker 和 PostgreSQL；只有 owner 之后明确要求“为我日常使用的部署”才切换日用。回滚期 Mac 容器 stopped 不删。完整行为设计见[连续学习系统](docs/design/2026-10-06-continuous-learning-system-behavior.md)，设计基线不等于当前实现。当前附件存储与重置证据见[测试存储记录](docs/planning/2026-10-07-agent-test-storage.md)与[Agent 测试环境记录](docs/planning/2026-10-07-agent-test-environment-reset.md)，后续任务与进度见 [Linear](docs/agents/issue-tracker.md)；`PLAN.md` 仅为各工作树的本地记录。
 
 compose 服务、发布与恢复顺序、备份、容器 DNS，以及 Tailscale / 局域网等访问约束统一见[运维](docs/operations.md)。远程入口是可选的 Tailscale Serve（同一 tailnet、Mac 开机且用户会话内 daemon 运行，未开 Funnel）；主机名和局域网地址属于本机私有配置。
 
-下面的 NAS / Cloudflare Tunnel 指南保留为可选方式，不是当前 Mac 的默认操作入口。
+下面的 NAS / Cloudflare Tunnel 指南是通用自托管参考；当前 TEST 的 NAS 部署用的是 owner 私有的 `compose.private.json`，不以下面这份为准。
 
 ## Self-host on NAS
 
@@ -384,7 +384,7 @@ curl https://loom.<your-domain>/api/health
 
 ### Backup
 
-**日级 dump（Mac 本机）**：launchd 每日 07:15 跑 `scripts/mac-daily-dump.sh`，写 `loom-daily-YYYYMMDD.dump`（custom format），保留最近 14 份 + 每月 1 号归档。安装、TCC 约束、失败标记与巡检命令见[运维：备份与恢复](docs/operations.md#备份与恢复)。
+**日级 dump**：Mac 上 launchd 每日 07:15 跑 `scripts/mac-daily-dump.sh`，经 ssh 在 NAS 的 TEST postgres 容器里 `pg_dump`，写 `loom-daily-YYYYMMDD.dump`（custom format），保留最近 14 份 + 每月 1 号归档；Mac 关机时当日不跑。安装、TCC 约束、失败标记与巡检命令见[运维：备份与恢复](docs/operations.md#备份与恢复)。
 
 **手动 dump / restore**：
 
@@ -436,6 +436,6 @@ docs/             # architecture, configuration, operations, modules, ADRs, plan
 是后端真相源——新增路由/jobs/tools 都通过 manifest 贡献制登记进组合根 `server/app.ts`。当前已从语文（首个科目，当前内容为文言文）扩展到 math / physics pressure subjects，新增科目应优先新增 profile 与能力声明，不 fork framework 路径。
 
 
-### TEST home LAN access (owner decision 2026-10-11)
+### TEST on the NAS, reached through a Mac-local relay
 
-The current Mac TEST app keeps both `127.0.0.1:8787:8787` and a specific home-LAN address in its private Compose `services.app.ports`; never bind `0.0.0.0`. LAN addressing, Tailscale remote entry, token/health rules, and the binding-change checklist are in [docs/operations.md](docs/operations.md#网络与访问). Specific addresses and hostnames stay in owner private records, not this repo.
+TEST runs on the NAS (`bancho-nb2.local`) at `/volume1/docker/tlp-test/` — project `the-learning-project` with a private `compose.private.json`, memory/CPU-limited containers, restart `unless-stopped`; `app` and Postgres bind `127.0.0.1:18787` / `127.0.0.1:15433` on the NAS only, never `0.0.0.0`. The NAS sshd forbids TCP forwarding, so the Mac reaches TEST through LaunchAgent `studio.yukoval.tlp-nas-tunnel`: a relay on `127.0.0.1:8787` / `5433` / `5544` where each connection is an ssh exec channel running `nc` on the NAS (~0.25 s extra per new connection). `studio.yukoval.tlp-nas-watch` restarts the NAS memory watchdog after NAS reboots and alerts on a memory stop or unhealthy TEST. With the Mac off, TEST keeps running but is unreachable from outside, the Tailscale entry is down, and that day's backup does not run. Relay/watch reinstall steps and token/health rules are in [docs/operations.md](docs/operations.md#网络与访问). Specific private addresses stay in owner private records, not this repo.

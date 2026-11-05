@@ -1,0 +1,273 @@
+/* 记忆 (/memory; YUK-1776 §13). Same M3E bridge as the other 整理 pages; emphasis is surface tiers,
+   small icons and status chips, never a coloured side bar. */
+
+[data-ui-next].mm-page {
+  background: var(--un-md-sys-color-surface);
+  color: var(--un-md-sys-color-on-surface);
+
+  & .mm-main {
+    display: grid;
+    align-content: start;
+    gap: var(--un-sp-5);
+    width: min(760px, 100%);
+    margin: 0 auto;
+    padding: var(--un-sp-6) var(--un-sp-6) calc(var(--un-sp-8) + var(--un-sp-7));
+  }
+
+  & .mm-head {
+    display: grid;
+    gap: var(--un-sp-1);
+  }
+
+  & .mm-title {
+    font-size: var(--un-fs-5, 26px);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .mm-lead,
+  & .mm-empty {
+    color: var(--un-text-2);
+  }
+
+  & .mm-tell {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+
+  & .mm-tell-form {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .mm-tell-label {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .mm-tell-row {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-2) var(--un-sp-2) var(--un-sp-2) var(--un-sp-3);
+    border: var(--un-hairline) solid var(--un-line-strong);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+  }
+
+  & .mm-tell-row:focus-within {
+    border-color: var(--un-accent);
+  }
+
+  & .mm-tell-input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--un-text-1);
+    font: inherit;
+  }
+
+  & .mm-tell-input::placeholder {
+    color: var(--un-text-4);
+  }
+
+  & .mm-outcome {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-sunk);
+  }
+
+  & .mm-outcome[data-tone="changed"] {
+    background: var(--un-positive-soft);
+  }
+
+  & .mm-outcome[data-tone="refused"] {
+    background: var(--un-caution-soft);
+  }
+
+  & .mm-outcome-text {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-1);
+    white-space: pre-wrap;
+  }
+
+  & .mm-outcome-text[data-tone="refused"] {
+    color: var(--un-caution);
+  }
+
+  & .mm-remaining {
+    display: grid;
+    gap: var(--un-sp-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--un-caution);
+    font-size: var(--un-fs-1);
+  }
+
+  & .mm-topics {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+
+  & .mm-topic {
+    display: grid;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-4) var(--un-sp-5);
+    border: var(--un-hairline) solid var(--un-line);
+    border-radius: var(--un-r-2);
+  }
+
+  & .mm-topic[data-talk] {
+    border-color: transparent;
+    background: var(--un-bg-sunk);
+  }
+
+  & .mm-topic-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--un-sp-3);
+  }
+
+  & .mm-topic-titles {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  & .mm-topic-name {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    font-size: var(--un-fs-3, 16px);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .mm-topic-name svg {
+    flex: none;
+    color: var(--un-accent);
+  }
+
+  & .mm-topic-desc,
+  & .mm-topic-foot,
+  & .mm-change-when {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .mm-facts {
+    display: grid;
+    gap: var(--un-sp-2);
+    margin: 0;
+    padding-left: 1.1em;
+    list-style: disc;
+  }
+
+  & .mm-fact {
+    color: var(--un-text-1);
+  }
+
+  & .mm-fact .un-chip {
+    margin-left: var(--un-sp-2);
+  }
+
+  & .mm-topic-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+  }
+
+  & .mm-topic-foot > button {
+    margin-left: auto;
+  }
+
+  & .mm-section-title {
+    font-size: var(--un-fs-2);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .mm-changes {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-3);
+    margin-top: var(--un-sp-3);
+  }
+
+  & .mm-change-list {
+    display: grid;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .mm-change {
+    display: grid;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-3) 0;
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .mm-change-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-3);
+  }
+
+  & .mm-diff {
+    display: grid;
+    gap: var(--un-sp-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .mm-diff-topic {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    color: var(--un-text-1);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .mm-diff-state {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-regular, 400);
+  }
+
+  & .mm-diff-line {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .mm-diff-line[data-kind="added"] {
+    color: var(--un-positive);
+  }
+
+  & .mm-diff-line[data-kind="removed"] {
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--un-text-3);
+    text-decoration: line-through;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  @media (max-width: 600px) {
+    & .mm-main {
+      padding-inline: var(--un-sp-4);
+    }
+    & .mm-topic {
+      padding: var(--un-sp-4);
+    }
+  }
+}
