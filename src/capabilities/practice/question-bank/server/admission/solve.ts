@@ -474,13 +474,16 @@ export function keysAgree(
     // blank_text vs blank_numeric may still describe ONE key: every
     // accepted text form must read as a plain number under the SAME
     // deterministic parse the minted numeric key later applies in grading
-    // (parseBlankNumericText; NFKC + trim + plain number, no units/separators),
+    // (parseBlankNumericText @2; width fold + trim + plain number, no units/separators),
     // and each value must land inside the numeric tolerance. A numeric key
     // carrying expected_unit can never agree — plain-number forms have no unit.
     const numeric = a.kind === 'blank_numeric' ? a : b.kind === 'blank_numeric' ? b : null;
     const text = a.kind === 'blank_text' ? a : b.kind === 'blank_text' ? b : null;
     if (numeric != null && text != null && numeric.expected_unit == null) {
-      const parsed = text.accepted.map((form) => ({ form, value: parseBlankNumericText(form) }));
+      const parsed = text.accepted.map((form) => ({
+        form,
+        value: parseBlankNumericText(form, 'numeric-norm@2'),
+      }));
       if (
         parsed.length > 0 &&
         parsed.every(

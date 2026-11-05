@@ -49,11 +49,11 @@ import {
 } from './pi-context-policy';
 import { MAX_BUDGET_STOP_REASON, createPiCostCeiling } from './pi-cost-ceiling';
 import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
+import { completedChildReport, installLoopProgress, turnLimiter } from './pi-loop-progress';
 import { type LoomPiModel, createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
 import {
   type PiToolResultMessage,
-  assistantText,
   collectPromptMessages,
   emptyPiChildUsage,
   lastAssistantMessage,
@@ -144,20 +144,6 @@ function piSessionIdFor(optionsResume: string | undefined): string {
   return optionsResume?.startsWith(PI_SESSION_ID_PREFIX)
     ? optionsResume
     : `${PI_SESSION_ID_PREFIX}${randomUUID()}`;
-}
-
-/** End at the configured ceiling without turning a clean final answer into failure. */
-function turnLimiter(maxTurns: number, onToolLimit: () => void): FinishTurn {
-  let completed = 0;
-  return ({ message }) => {
-    completed += 1;
-    // Pi calls finishTurn on failures too. Preserve the provider error/abort truth.
-    if (message.stopReason === 'error' || message.stopReason === 'aborted') return;
-    if (completed < maxTurns) return;
-    if (message.content.some((block) => block.type === 'toolCall')) onToolLimit();
-    // Also suppress queue polling after a clean final turn at the ceiling.
-    return { action: 'end' };
-  };
 }
 
 /**
@@ -305,11 +291,15 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         parameters,
         // YUK-1547/YUK-1559 (C1) — every mounted tool gets the parameter-contract
         // repair ahead of pi's validateToolArguments (prepareArguments is the only
-        // seam that runs first). A failed repair throws → isError result, so
-        // execute is never reached and side effects stay exactly-once.
+        // seam that runs first). Unrepaired inputs go to their validation owner;
+        // neither pi nor the bridge reaches domain execution with invalid input.
         prepareArguments: (rawArgs: unknown) => {
           const prepared = tool.prepareArguments ? tool.prepareArguments(rawArgs) : rawArgs;
-          const repaired = repairToolArguments(parameters, prepared);
+          const repaired = repairToolArguments(
+            tool.parameters,
+            prepared,
+            bridgeValidates ? 'bridge' : 'pi',
+          );
           if (repaired.coercions.length > 0) {
             this.repairedToolArgs.set(tool.name, repaired.args);
             const queue = this.pendingCoercions.get(tool.name) ?? [];
@@ -790,6 +780,11 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             afterToolCall: this.makeAfterToolCall(subagentType),
           };
 
+          const childProgress = installLoopProgress(childConfig, childTools, this.args.piHooks, {
+            agentType: subagentType,
+            loopId: taskId,
+          });
+
           const accumulate = (message: PiAssistantMessage) => {
             const usage = message.usage;
             if (!usage) return;
@@ -881,7 +876,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
                   `nested subagent '${subagentType}' ended with stopReason='${final.stopReason}'`,
               );
             }
-            const text = assistantText(final);
+            const text = completedChildReport(final, childProgress, subagentType);
             this.emitFrame(
               piTaskUpdatedFrame({
                 sessionId: this.sessionId,
@@ -889,7 +884,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
                 status: 'completed',
               }),
             );
-            return text.length > 0 ? text : '(subagent ended without a text report)';
+            return text;
           } catch (error) {
             // An aborted child may either end its stream quietly (handled above)
             // or throw the abort — both must still close the durable task_* row.
@@ -1208,6 +1203,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         .catch(() => {});
       return responseStream;
     };
+    installLoopProgress(config, this.allTools, this.args.piHooks, { loopId: this.sessionId });
     const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, rootStreamFn);
     let textStreamed = false;
     for await (const event of stream) {

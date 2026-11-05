@@ -27,12 +27,20 @@ import {
 } from '@/core/config/store';
 
 import type {
+  AdminConfigGlobalEffective,
   AdminConfigProviderRow,
   AdminConfigRuntimeFacts,
   AdminConfigRuntimeSection,
   AdminConfigScheduleRow,
+  AdminConfigTaskEffectiveBinding,
   AdminConfigTaskFacts,
 } from './admin-config-facts';
+import {
+  ADMIN_CONFIG_OTHER_TASK_GROUP,
+  ADMIN_CONFIG_TASK_GROUPS,
+  adminConfigTaskGroupId,
+  adminConfigTaskLabel,
+} from './admin-config-task-groups';
 
 /** 读面值的 JSON 形状（ConfigValue 去 undefined；非有限数在装配层归 null）。 */
 export type AdminConfigValue = ConfigValue | null;
@@ -147,18 +155,23 @@ export interface AdminConfigKeyRow {
 
 export interface AdminConfigTaskRow {
   readonly kind: string;
-  readonly effective_binding: {
-    provider: string | null;
-    model: string | null;
-    error: string | null;
-  } | null;
+  readonly description: string;
+  readonly label: string | null;
+  readonly group_id: string;
+  readonly effective_binding: AdminConfigTaskEffectiveBinding | null;
   readonly default_provider: string;
   readonly default_model: string;
   readonly default_budget: AdminConfigTaskFacts['default_budget'];
   readonly budget_wiring: AdminConfigTaskFacts['budget_wiring'];
   readonly effective_budget: AdminConfigTaskFacts['effective_budget'];
   readonly budget_note: string;
-  readonly override: { provider?: string; model?: string; budget?: Record<string, unknown> } | null;
+  readonly override: {
+    provider?: string;
+    model?: string;
+    budget?: Record<string, unknown>;
+    reasoning?: Record<string, unknown>;
+    override_global_pin?: boolean;
+  } | null;
   readonly override_wired: {
     readonly provider: boolean;
     readonly model: boolean;
@@ -176,6 +189,10 @@ export interface AdminConfigReadModel {
    * 注入；false 时对应分区如实置空，不伪造。 */
   readonly facts_injected: boolean;
   readonly keys: readonly AdminConfigKeyRow[];
+  /** Effective global switch (env pin vs DB default); null = facts not injected. */
+  readonly global: AdminConfigGlobalEffective | null;
+  /** Ordered human-facing groups → their task kinds; '其他' only when non-empty. */
+  readonly task_groups: readonly { id: string; label: string; kinds: readonly string[] }[];
   readonly tasks: readonly AdminConfigTaskRow[];
   readonly providers: readonly AdminConfigProviderRow[];
   readonly schedules: {
@@ -273,6 +290,9 @@ export function buildAdminConfigReadModel(
     const override = getTaskOverride(kind);
     return {
       kind,
+      description: task.description,
+      label: adminConfigTaskLabel(kind),
+      group_id: adminConfigTaskGroupId(kind),
       effective_binding: facts?.task_bindings?.[kind] ?? null,
       default_provider: task.default_provider,
       default_model: task.default_model,
@@ -288,6 +308,12 @@ export function buildAdminConfigReadModel(
             ...(override.budget !== undefined
               ? { budget: override.budget as Record<string, unknown> }
               : {}),
+            ...(override.reasoning !== undefined
+              ? { reasoning: override.reasoning as Record<string, unknown> }
+              : {}),
+            ...(override.overrideGlobalPin !== undefined
+              ? { override_global_pin: override.overrideGlobalPin }
+              : {}),
           }
         : null,
       override_wired: typed
@@ -297,12 +323,28 @@ export function buildAdminConfigReadModel(
     };
   });
 
+  const groupKinds = new Map<string, string[]>();
+  for (const row of taskRows) {
+    const kinds = groupKinds.get(row.group_id);
+    if (kinds) kinds.push(row.kind);
+    else groupKinds.set(row.group_id, [row.kind]);
+  }
+  const taskGroups = [...ADMIN_CONFIG_TASK_GROUPS, ADMIN_CONFIG_OTHER_TASK_GROUP]
+    .map((group) => ({
+      id: group.id,
+      label: group.label,
+      kinds: groupKinds.get(group.id) ?? [],
+    }))
+    .filter((group) => group.kinds.length > 0);
+
   const byName = (left: AdminConfigScheduleRow, right: AdminConfigScheduleRow) =>
     left.name.localeCompare(right.name);
   return {
     snapshot: { epoch: snap.epoch, hydrated_at: snap.hydratedAt === '' ? null : snap.hydratedAt },
     facts_injected: facts !== null,
     keys: keyRows,
+    global: facts?.global ?? null,
+    task_groups: taskGroups,
     tasks: taskRows,
     providers: [...(facts?.providers ?? [])].sort((left, right) =>
       left.name.localeCompare(right.name),

@@ -891,8 +891,12 @@ function assertOptedTaskPair(
  *   - toggle mode        → any non-off level → 'on' (carrier 'high').
  *   - empty/unknown opts → 'none': no parameter, model default (recorded).
  *   - unknown level name → config error (only this errors).
+ *
+ * YUK-1808 — exported: the admin config read face and the config write
+ * validator project the SAME requested → applied outcome this resolver
+ * produces at run time; never recompute the mapping in either surface.
  */
-function resolveTaskReasoning(
+export function resolveTaskReasoning(
   kind: TaskKind,
   provider: Provider,
   model: string,
