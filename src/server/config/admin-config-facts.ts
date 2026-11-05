@@ -361,7 +361,7 @@ function credentialLaneFor(provider: Provider): AdminConfigTaskCredential['lane'
  * endpoint allowlist, mutual key+file exclusion, capability fit) surface
  * with paths scrubbed.
  * Typed tasks bypass the chat lane entirely, so their defaults report
- * 'registry_default' with no reasoning surface.
+ * 'registry_default'; a model without reasoning options reports applied none.
  */
 export function resolveAdminTaskEffective(kind: TaskKind): AdminConfigTaskEffectiveBinding {
   const task = tasks[kind];

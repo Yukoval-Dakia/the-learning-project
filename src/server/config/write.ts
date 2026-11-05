@@ -515,7 +515,8 @@ async function validateFinalProviderPairs(
           provider,
           model,
           rowByKey.get(`task.${kind}.reasoning`) ??
-            rowByKey.get('lane.global.reasoning') ?? { level: 'high' },
+            rowByKey.get('lane.global.reasoning') ??
+            resolveKeyDef('lane.global.reasoning')?.codeDefault,
         );
       }
       continue;
@@ -565,7 +566,8 @@ async function validateFinalProviderPairs(
           provider,
           model,
           rowByKey.get(`task.${taskKind}.reasoning`) ??
-            rowByKey.get('lane.global.reasoning') ?? { level: 'high' },
+            rowByKey.get('lane.global.reasoning') ??
+            resolveKeyDef('lane.global.reasoning')?.codeDefault,
         );
       continue;
     }
@@ -618,7 +620,8 @@ async function validateFinalProviderPairs(
           provider,
           model,
           rowByKey.get(`task.${taskKind}.reasoning`) ??
-            rowByKey.get('lane.global.reasoning') ?? { level: 'high' },
+            rowByKey.get('lane.global.reasoning') ??
+            resolveKeyDef('lane.global.reasoning')?.codeDefault,
         );
       if (model && scope.providerKey === 'lane.vision_judge.provider') {
         validateNativeModel(scope.label, provider, model, 'StepsJudgeTask');
@@ -647,7 +650,8 @@ async function validateFinalProviderPairs(
               provider,
               effectiveModel,
               rowByKey.get(`task.${kind}.reasoning`) ??
-                rowByKey.get('lane.global.reasoning') ?? { level: 'high' },
+                rowByKey.get('lane.global.reasoning') ??
+                resolveKeyDef('lane.global.reasoning')?.codeDefault,
             );
         }
       }
