@@ -1,11 +1,12 @@
 export { countPlacementInventory } from './server/placement-inventory';
 
+import { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
+import { assertPlacementAuthority } from './server/placement-starter-attempts';
 // 供题与备题员 owner 的稳定业务操作。practice 内其它 owner 只经本文件引用本 owner
 // （`pnpm audit:practice-subowners`）；practice 外部调用方经根 `public.ts` 的具名转出。
 // 契约（EvidenceDemandV1 / SupplyTraceV1 / PlacementVerificationAuthority）在
 // `@/kernel/supply-contracts`；供题范围锁在 `@/kernel/locks/placement-supply`。
-import { lockPlacementSupplyScopes } from '@/kernel/locks/placement-supply';
-import { assertPlacementAuthority } from './server/placement-starter-attempts';
+import { isPlacementWaitingForQuestion } from './server/placement-starter-outcome-reader';
 import {
   assertPlacementPaidEffectAuthority,
   buildPlacementQuestionPaidCalls,
@@ -19,6 +20,7 @@ import {
  * `@/kernel/locks/placement-supply`，非 verify/admission 调用方也可直接引用该 kernel 锁。
  */
 export const placementAuthority = {
+  isPlacementWaitingForQuestion,
   assertPlacementAuthority,
   readPlacementQuestionAuthority,
   assertPlacementPaidEffectAuthority,

@@ -70,12 +70,24 @@ export const CoarseOutcome = z.enum([
 ]);
 export type CoarseOutcomeT = z.infer<typeof CoarseOutcome>;
 
+/**
+ * 评分单元的执行真相标签：哪个 unit 由 AI 判出及其校准状态。只声明实际
+ * 执行路径（judged_by 盖章），不声称结果已校准；无盖章的历史行不补造。
+ */
+export const GradingProvenanceEntry = z.object({
+  scoring_unit_id: z.string().min(1),
+  source: z.literal('ai'),
+  calibration: z.literal('uncalibrated'),
+});
+export type GradingProvenanceEntryT = z.infer<typeof GradingProvenanceEntry>;
+
 const JudgeResultV2Base = z.object({
   score_meaning: ScoreMeaning,
   confidence: z.number().min(0).max(1),
   capability_ref: CapabilityRef,
   feedback_md: z.string(),
   evidence_json: z.record(z.string(), z.unknown()),
+  grading_provenance: z.array(GradingProvenanceEntry).optional(),
 });
 
 export const PartialUnknownJudgeResult = JudgeResultV2Base.extend({

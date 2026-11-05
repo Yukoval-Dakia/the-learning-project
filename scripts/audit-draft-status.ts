@@ -1,22 +1,20 @@
 /**
  * Draft-status gate — both sides of `question.draft_status` (NULL≡active).
  *
- * Writes: every `.insert(question).values({...})` site must set the key or be listed under
- * `writes` in the allowlist. A missing key is NULL, and the practice pool treats NULL as active,
- * so an embedded/teaching question would silently enter the general pool.
+ * Writes: every `.insert(question).values({...})` site must set the key unless the file already
+ * carried that many missing-key sites on the comparison base — the base is the exemption, there
+ * is no allowlist. A missing key is NULL, and the practice pool treats NULL as active, so an
+ * embedded/teaching question would silently enter the general pool.
  *
  * Reads: pool-visibility checks must go through `notDraftPredicate` / `isPoolVisible`. Engine A
  * flags the three hand-rolled family-1 dialects (Drizzle `or(isNull, ne)`, raw `IS NULL OR <>
  * 'draft'`, raw `IS DISTINCT FROM 'draft'`) and any other `draft_status` token inside a sql``
- * template (UNKNOWN-SHAPE). UNKNOWN is file-allowlistable under `reads`, so a benign non-predicate
- * read has an escape hatch, but a new one fails closed until it is migrated or listed. A novel
- * Drizzle combinator that does not match the Drizzle dialect escapes this shape check. Engine B
- * (a closed-world ledger of JS twins) is deferred; live `isPoolVisible(...)` calls are reported
- * and do not fail the gate.
+ * template (UNKNOWN-SHAPE). A hit or unknown already counted at base is grandfathered; a new one
+ * fails closed until it is migrated. A novel Drizzle combinator that does not match the Drizzle
+ * dialect escapes this shape check. Engine B (a closed-world ledger of JS twins) is deferred;
+ * live `isPoolVisible(...)` calls are reported and do not fail the gate.
  *
- * `writes` and `reads` are separate maps. A NULL≡active insert exemption does not excuse a
- * hand-rolled read in the same file, and a read exemption does not excuse a missing insert key.
- * Helper-definition sentinel failures are not allowlistable.
+ * Helper-definition sentinel failures are never grandfathered.
  *
  * Write-side blind spots:
  *   1. Only inline object literals are scanned. `.values(rows)` and `.values([...])` escape; bulk
@@ -30,132 +28,19 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  listTreeFiles,
+  readBlobs,
+  resolveAuditBaseSha,
+  worktreeRenameMap,
+} from './lib/git-base-scan';
 import { analyzeSource, extractObjectBlock, lineOf } from './lib/ts-tokenize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const SRC_ROOT = join(REPO_ROOT, 'src');
-const ALLOWLIST_PATH = join(__dirname, 'audit-draft-status-allowlist.json');
 
 const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.git', '.claude', 'drizzle']);
-
-// ---------- allowlist contract (same shape as audit-schema-allowlist.json) ----------
-
-const RESOLVE_KINDS = ['pr', 'phase', 'manual'] as const;
-type ResolveKind = (typeof RESOLVE_KINDS)[number];
-type ResolvesWhen = { kind: ResolveKind; ref: string; expected_by: string };
-export type AllowlistEntry = { reason: string; resolves_when: ResolvesWhen };
-
-export type HygieneIssue = { file: string; problem: string };
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isIsoDate(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const d = new Date(`${value}T00:00:00.000Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
-}
-
-/**
- * Validate the allowlist file shape: each entry needs a non-empty reason and a resolves_when with
- * kind in {pr,phase,manual}, a non-empty ref, and an ISO date. Pure.
- */
-export function validateAllowlistHygiene(raw: unknown): HygieneIssue[] {
-  const issues: HygieneIssue[] = [];
-  if (!isRecord(raw)) {
-    return [{ file: '<allowlist>', problem: 'allowlist root is not an object' }];
-  }
-  for (const [key, value] of Object.entries(raw)) {
-    if (key.startsWith('_')) continue; // _comment etc.
-    if (!isRecord(value)) {
-      issues.push({ file: key, problem: 'entry is not an object' });
-      continue;
-    }
-    if (typeof value.reason !== 'string' || value.reason.trim().length === 0) {
-      issues.push({ file: key, problem: 'missing or empty reason' });
-    }
-    const rw = value.resolves_when;
-    if (!isRecord(rw)) {
-      issues.push({ file: key, problem: 'missing resolves_when object' });
-      continue;
-    }
-    if (typeof rw.kind !== 'string' || !RESOLVE_KINDS.includes(rw.kind as ResolveKind)) {
-      issues.push({
-        file: key,
-        problem: `resolves_when.kind must be one of ${RESOLVE_KINDS.join('|')}`,
-      });
-    }
-    if (typeof rw.ref !== 'string' || rw.ref.trim().length === 0) {
-      issues.push({ file: key, problem: 'resolves_when.ref must be a non-empty string' });
-    }
-    if (typeof rw.expected_by !== 'string' || !isIsoDate(rw.expected_by)) {
-      issues.push({ file: key, problem: 'resolves_when.expected_by must be a YYYY-MM-DD date' });
-    }
-  }
-  return issues;
-}
-
-const ALLOWLIST_SIDES = ['writes', 'reads'] as const;
-
-function entriesFromRaw(raw: unknown): Record<string, AllowlistEntry> {
-  const entries: Record<string, AllowlistEntry> = {};
-  if (!isRecord(raw)) return entries;
-  for (const [k, v] of Object.entries(raw)) {
-    if (k.startsWith('_')) continue;
-    entries[k] = v as AllowlistEntry;
-  }
-  return entries;
-}
-
-export type SectionedAllowlist = {
-  writes: Record<string, AllowlistEntry>;
-  reads: Record<string, AllowlistEntry>;
-  rawWrites: unknown;
-  rawReads: unknown;
-  shapeIssues: HygieneIssue[];
-};
-
-/**
- * Split the allowlist into write and read maps. A top-level file path is rejected: it would
- * otherwise apply to neither side and look like an exemption that the gate ignores.
- */
-export function parseSectionedAllowlist(raw: unknown): SectionedAllowlist {
-  if (!isRecord(raw)) {
-    return {
-      writes: {},
-      reads: {},
-      rawWrites: undefined,
-      rawReads: undefined,
-      shapeIssues: [{ file: '<allowlist>', problem: 'allowlist root is not an object' }],
-    };
-  }
-  const sides = new Set<string>(ALLOWLIST_SIDES);
-  const shapeIssues: HygieneIssue[] = [];
-  for (const key of Object.keys(raw)) {
-    if (key.startsWith('_') || sides.has(key)) continue;
-    shapeIssues.push({
-      file: key,
-      problem: 'unknown top-level key; put the entry under writes or reads',
-    });
-  }
-  const rawWrites = raw.writes;
-  const rawReads = raw.reads;
-  if (!isRecord(rawWrites)) {
-    shapeIssues.push({ file: 'writes', problem: 'writes section must be an object' });
-  }
-  if (!isRecord(rawReads)) {
-    shapeIssues.push({ file: 'reads', problem: 'reads section must be an object' });
-  }
-  return {
-    writes: entriesFromRaw(rawWrites),
-    reads: entriesFromRaw(rawReads),
-    rawWrites,
-    rawReads,
-    shapeIssues,
-  };
-}
 
 // ---------- source walk ----------
 
@@ -225,38 +110,30 @@ export function scanQuestionInserts(file: string, src: string): InsertSite[] {
 export type DraftGateResult = {
   ok: boolean;
   flagged: InsertSite[];
-  allowlistedHits: string[];
-  hygieneIssues: HygieneIssue[];
+  /** missing-key sites the file already carried at the comparison base. */
+  grandfathered: InsertSite[];
 };
 
 /**
- * Every question-insert site must set draft_status or live in an allowlisted file. An allowlisted
- * site that also sets it passes silently: after migration those entries are redundant, not errors.
- * Pure.
+ * A question-insert site missing draft_status is grandfathered while the file's missing-site
+ * count stays within its base budget (`baseMissing` maps file → count, rename-mapped); the
+ * (budget+1)-th missing site in one file fails. Pure.
  */
 export function validateDraftGate(
   sites: InsertSite[],
-  allowlist: Record<string, AllowlistEntry>,
-  rawAllowlist: unknown,
+  baseMissing: ReadonlyMap<string, number>,
 ): DraftGateResult {
-  const hygieneIssues = validateAllowlistHygiene(rawAllowlist);
-  const allowed = new Set(Object.keys(allowlist));
+  const used = new Map<string, number>();
   const flagged: InsertSite[] = [];
-  const allowlistedHits: string[] = [];
+  const grandfathered: InsertSite[] = [];
   for (const site of sites) {
     if (site.hasDraftStatus) continue;
-    if (allowed.has(site.file)) {
-      allowlistedHits.push(site.file);
-      continue;
-    }
-    flagged.push(site);
+    const count = (used.get(site.file) ?? 0) + 1;
+    used.set(site.file, count);
+    if (count <= (baseMissing.get(site.file) ?? 0)) grandfathered.push(site);
+    else flagged.push(site);
   }
-  return {
-    ok: flagged.length === 0 && hygieneIssues.length === 0,
-    flagged,
-    allowlistedHits,
-    hygieneIssues,
-  };
+  return { ok: flagged.length === 0, flagged, grandfathered };
 }
 
 // The one legitimate inline predicate lives here (permanent, not allowlisted). Exclude it by path
@@ -386,51 +263,47 @@ export function checkHelperSentinels(readFile: (relPath: string) => string | nul
 export type ReadAuditResult = {
   ok: boolean;
   hits: ReadHit[];
-  allowlisted: ReadHit[];
+  grandfatheredHits: ReadHit[];
   unknown: UnknownHit[];
-  allowlistedUnknown: UnknownHit[];
-  hygieneIssues: HygieneIssue[];
+  grandfatheredUnknown: UnknownHit[];
   helperDefIssues: string[];
 };
 
 /**
- * A hand-rolled F1 hit or UNKNOWN-SHAPE token fails unless its file is on the reads allowlist.
- * UNKNOWN is allowlistable so a benign non-predicate read has an escape hatch, while a new one
- * still fails closed. Allowlist hygiene and helper sentinel issues always fail. Pure.
+ * A hand-rolled F1 hit or UNKNOWN-SHAPE token fails once its file's count exceeds the base
+ * budget (each side budgeted separately, rename-mapped). Helper sentinel issues always fail.
+ * Pure.
  */
 export function validateReadGate(
   hits: ReadHit[],
   unknown: UnknownHit[],
-  allowlist: Record<string, AllowlistEntry>,
-  rawAllowlist: unknown,
+  baseHits: ReadonlyMap<string, number>,
+  baseUnknown: ReadonlyMap<string, number>,
   helperDefIssues: string[],
 ): ReadAuditResult {
-  const hygieneIssues = validateAllowlistHygiene(rawAllowlist);
-  const allowed = new Set(Object.keys(allowlist));
-  const flagged: ReadHit[] = [];
-  const allowlisted: ReadHit[] = [];
-  for (const hit of hits) {
-    if (allowed.has(hit.file)) allowlisted.push(hit);
-    else flagged.push(hit);
-  }
-  const flaggedUnknown: UnknownHit[] = [];
-  const allowlistedUnknown: UnknownHit[] = [];
-  for (const u of unknown) {
-    if (allowed.has(u.file)) allowlistedUnknown.push(u);
-    else flaggedUnknown.push(u);
-  }
-  const ok =
-    flagged.length === 0 &&
-    flaggedUnknown.length === 0 &&
-    hygieneIssues.length === 0 &&
-    helperDefIssues.length === 0;
+  const partition = <T extends { file: string }>(
+    items: readonly T[],
+    budget: ReadonlyMap<string, number>,
+  ): [T[], T[]] => {
+    const used = new Map<string, number>();
+    const flagged: T[] = [];
+    const grandfathered: T[] = [];
+    for (const item of items) {
+      const count = (used.get(item.file) ?? 0) + 1;
+      used.set(item.file, count);
+      if (count <= (budget.get(item.file) ?? 0)) grandfathered.push(item);
+      else flagged.push(item);
+    }
+    return [flagged, grandfathered];
+  };
+  const [flagged, grandfatheredHits] = partition(hits, baseHits);
+  const [flaggedUnknown, grandfatheredUnknown] = partition(unknown, baseUnknown);
   return {
-    ok,
+    ok: flagged.length === 0 && flaggedUnknown.length === 0 && helperDefIssues.length === 0,
     hits: flagged,
-    allowlisted,
+    grandfatheredHits,
     unknown: flaggedUnknown,
-    allowlistedUnknown,
-    hygieneIssues,
+    grandfatheredUnknown,
     helperDefIssues,
   };
 }
@@ -448,25 +321,18 @@ function printWriteReport(sites: InsertSite[], result: DraftGateResult): void {
   console.log('draft-status gate audit\n');
   console.log(`  question-insert sites scanned:  ${sites.length}`);
   console.log(`  with draft_status:              ${sites.filter((s) => s.hasDraftStatus).length}`);
-  console.log(`  allowlisted (NULL≡active):       ${result.allowlistedHits.length}\n`);
-
-  if (result.hygieneIssues.length > 0) {
-    console.log(`ALLOWLIST HYGIENE ERROR:  ${result.hygieneIssues.length}`);
-    for (const h of result.hygieneIssues) console.log(`  - ${h.file}: ${h.problem}`);
-    console.log('');
-  }
+  console.log(`  grandfathered (NULL≡active):     ${result.grandfathered.length}\n`);
 
   if (result.flagged.length === 0) {
-    console.log('MISSING draft_status (not allowlisted):  (none)');
+    console.log('MISSING draft_status (new since base):  (none)');
   } else {
-    console.log(`MISSING draft_status (not allowlisted):  ${result.flagged.length}`);
+    console.log(`MISSING draft_status (new since base):  ${result.flagged.length}`);
     for (const s of result.flagged) {
       console.log(`  - ${s.file}:${s.line}  question insert has no draft_status key`);
     }
     console.log(
-      '\nFix: set draft_status on the insert, or add the file under writes in ' +
-        'scripts/audit-draft-status-allowlist.json with reason + resolves_when ' +
-        "(NULL≡active is the writer's legal semantics).",
+      "\nFix: set draft_status on the insert (NULL≡active is the writer's legal semantics, " +
+        'but only for sites that already existed at the comparison base).',
     );
   }
 }
@@ -475,34 +341,28 @@ function printReadReport(scanned: number, result: ReadAuditResult, jsTwins: JsTw
   console.log('draft-status READ-side pool-visibility audit (YUK-569)\n');
   console.log(`  source files scanned:            ${scanned}`);
   console.log(`  hand-rolled F1 inline (flagged): ${result.hits.length}`);
-  console.log(`  allowlisted F1 inline:           ${result.allowlisted.length}`);
+  console.log(`  grandfathered F1 inline:         ${result.grandfatheredHits.length}`);
   console.log(`  UNKNOWN-SHAPE (flagged):         ${result.unknown.length}`);
-  console.log(`  allowlisted UNKNOWN-SHAPE:       ${result.allowlistedUnknown.length}\n`);
+  console.log(`  grandfathered UNKNOWN-SHAPE:     ${result.grandfatheredUnknown.length}\n`);
 
   if (result.helperDefIssues.length > 0) {
     console.log(`HELPER-DEF / SENTINEL ISSUE:  ${result.helperDefIssues.length}`);
     for (const p of result.helperDefIssues) console.log(`  - ${p}`);
     console.log('');
   }
-  if (result.hygieneIssues.length > 0) {
-    console.log(`ALLOWLIST HYGIENE ERROR:  ${result.hygieneIssues.length}`);
-    for (const h of result.hygieneIssues) console.log(`  - ${h.file}: ${h.problem}`);
-    console.log('');
-  }
 
   if (result.hits.length === 0) {
-    console.log('hand-rolled F1 inline predicates (not helper, not allowlisted):  (none)');
+    console.log('hand-rolled F1 inline predicates (not helper, new since base):  (none)');
   } else {
     console.log(
-      `hand-rolled F1 inline predicates (not helper, not allowlisted):  ${result.hits.length}`,
+      `hand-rolled F1 inline predicates (not helper, new since base):  ${result.hits.length}`,
     );
     for (const h of result.hits) {
       console.log(`  - ${h.file}:${h.line}  [${h.dialect}]  ${h.snippet}`);
     }
     console.log(
       '\nFix: route this pool-visibility read through notDraftPredicate / isPoolVisible ' +
-        '(src/db/predicates.ts), or add the file under reads in ' +
-        'scripts/audit-draft-status-allowlist.json with reason + resolves_when.',
+        '(src/db/predicates.ts).',
     );
   }
   console.log('');
@@ -515,7 +375,7 @@ function printReadReport(scanned: number, result: ReadAuditResult, jsTwins: JsTw
     console.log(
       '\nTriage: a novel raw-SQL dialect touching draft_status. If it is a pool-visibility ' +
         'predicate, route it through notDraftPredicate; if it is a legitimate non-predicate ' +
-        'read, refine this audit or allowlist it.',
+        'read, refine this audit.',
     );
     console.log('');
   }
@@ -526,6 +386,71 @@ function printReadReport(scanned: number, result: ReadAuditResult, jsTwins: JsTw
   );
   for (const t of jsTwins) console.log(`  · ${t.file}:${t.line}`);
   console.log('');
+}
+
+// ---------- comparison base ----------
+
+function isScannedPath(rel: string): boolean {
+  const name = rel.split('/').pop() ?? rel;
+  if (!name.endsWith('.ts') && !name.endsWith('.tsx')) return false;
+  if (name.endsWith('.test.ts') || name.endsWith('.test.tsx') || name.endsWith('.d.ts'))
+    return false;
+  return !rel.split('/').some((segment) => EXCLUDE_DIRS.has(segment));
+}
+
+type BaseBudgets = {
+  missingInserts: Map<string, number>;
+  readHits: Map<string, number>;
+  unknownReads: Map<string, number>;
+};
+
+/** Measure this gate's three finding classes on the comparison base, per file. */
+function collectAtRef(sha: string): BaseBudgets {
+  const candidates = listTreeFiles(REPO_ROOT, sha, ['src'])
+    .map((entry) => entry.path.split('\\').join('/'))
+    .filter(isScannedPath)
+    .sort();
+  const blobs = readBlobs(REPO_ROOT, sha, candidates);
+  const bump = (map: Map<string, number>, file: string, by = 1) =>
+    map.set(file, (map.get(file) ?? 0) + by);
+  const budgets: BaseBudgets = {
+    missingInserts: new Map(),
+    readHits: new Map(),
+    unknownReads: new Map(),
+  };
+  for (const path of candidates) {
+    const src = blobs.get(path);
+    if (src === undefined) continue;
+    if (src.includes('.insert(')) {
+      for (const site of scanQuestionInserts(path, src)) {
+        if (!site.hasDraftStatus) bump(budgets.missingInserts, path);
+      }
+    }
+    if (src.includes('draft_status')) {
+      const scanned = scanReads(path, src);
+      bump(budgets.readHits, path, scanned.hits.length);
+      bump(budgets.unknownReads, path, scanned.unknown.length);
+    }
+  }
+  return budgets;
+}
+
+/** Re-home a per-file count map across renames (base path → worktree path). */
+function rehomeCounts(
+  counts: ReadonlyMap<string, number>,
+  renames: ReadonlyMap<string, string>,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [file, count] of counts) {
+    const target = renames.get(file) ?? file;
+    out.set(target, (out.get(target) ?? 0) + count);
+  }
+  return out;
+}
+
+function baseFlag(): string | undefined {
+  const index = process.argv.indexOf('--base');
+  return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
 function main(): void {
@@ -545,27 +470,27 @@ function main(): void {
     if (src.includes('isPoolVisible(')) jsTwins.push(...findJsTwins(file, src));
   }
 
-  const sections = parseSectionedAllowlist(JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf-8')));
-  const writeResult = validateDraftGate(
-    sites,
-    sections.writes,
-    isRecord(sections.rawWrites) ? sections.rawWrites : {},
-  );
+  const requested = baseFlag() || process.env.CAPABILITY_BASE_SHA;
+  const base = process.env.TEST_POLICY_BASE || resolveAuditBaseSha(REPO_ROOT, requested);
+  const baseBudgets = collectAtRef(base);
+  const renames = worktreeRenameMap(REPO_ROOT, base, ['src']);
+
+  const writeResult = validateDraftGate(sites, rehomeCounts(baseBudgets.missingInserts, renames));
   const readResult = validateReadGate(
     hits,
     unknown,
-    sections.reads,
-    isRecord(sections.rawReads) ? sections.rawReads : {},
+    rehomeCounts(baseBudgets.readHits, renames),
+    rehomeCounts(baseBudgets.unknownReads, renames),
     checkHelperSentinels(readFileOrNull),
   );
-  const ok = sections.shapeIssues.length === 0 && writeResult.ok && readResult.ok;
+  const ok = writeResult.ok && readResult.ok;
 
   if (process.argv.includes('--json')) {
     console.log(
       JSON.stringify(
         {
           ok,
-          shapeIssues: sections.shapeIssues,
+          base,
           writes: { siteCount: sites.length, ...writeResult },
           reads: { scanned: files.length, ...readResult, jsTwins },
         },
@@ -574,11 +499,7 @@ function main(): void {
       ),
     );
   } else {
-    if (sections.shapeIssues.length > 0) {
-      console.log(`ALLOWLIST SHAPE ERROR:  ${sections.shapeIssues.length}`);
-      for (const h of sections.shapeIssues) console.log(`  - ${h.file}: ${h.problem}`);
-      console.log('');
-    }
+    console.log(`(comparison base ${base.slice(0, 12)})`);
     printWriteReport(sites, writeResult);
     console.log('');
     printReadReport(files.length, readResult, jsTwins);
