@@ -77,7 +77,9 @@ return: {scoring_unit_id, verdict: return_for_repair, reason_md,
 
 裁决任务由新门在 worker 进程内串行，排队后重新核验来源/paid fence，再申请本次阶段发送。快路径不进入该队列。provider store 的进程内文件读写串行与任务串行是两件事；新门不实现凭据文件锁、刷新或登录。进程崩溃后只对已有已知等待按持久化投递恢复；sending/unknown 不自动重发。
 
-TEST 部署当前的假设是只有单个 worker 进程持有凭据；裁决任务在该进程内串行由新门实现。部署依赖是 Owner 在 TEST/NAS 主机通过浏览器回调交互登录一次；不能假设无头登录可行。凭据位置经 `OPENAI_CHATGPT_AUTH_FILE` 配置，专用文件只由 worker 读写，不从 Mac 复制凭据，不写死内容格式。容器必须挂载凭据所在目录，不能 bind mount 单文件：原子 rename 在单文件挂载下会报 EBUSY，刷新成功后可能无法写回。API 和其他进程不设置该变量、不读写该目录。#2480 负责文件读写串行、原子写回与 modify 的 60 秒上限；多处登录是否互相作废和刷新令牌是否可隔离仍须功能线核实。若假设不成立，回协调线改方向。Sol 真实验收须在已确认支持目标路由的固定产品版本上运行，并经 Owner 确认凭据可独占；依赖未正式合入时只在本地验收分支整合，不带入产品 PR，正式合入后再同步 main。真实并发、请求档位和用量必须实测；发版时 TEST 尚未登录才允许操作员显式配置 flash 过渡并记录，产品不提供自动 fallback。
+TEST 切换按 YUK-1833 的 Owner 决定由迁移线将 Mac 上的凭据复制到 TEST，不要求 Owner 在 TEST 主机另行交互登录。同一份凭据实行单主机单进程：同一时间只允许一台主机上的一个 worker 进程使用；切换后 Mac 不再使用这份凭据，不能与 TEST 同时刷新。裁决任务在该 worker 内串行。凭据位置经 `OPENAI_CHATGPT_AUTH_FILE` 配置，不写死内容格式；API 和其他进程不设置该变量、不读写凭据目录。容器必须挂载凭据所在目录，不能 bind mount 单文件：原子 rename 在单文件挂载下会报 EBUSY，刷新成功后可能无法写回。
+
+#2480 的 store 互斥、待写回与 modify 的 60 秒上限仅在单进程内有效，不保护跨主机或跨进程使用。同一个 refresh token 在两处使用可能互相失效，这是未验证的风险；切换由协调线通知并落实使用权交接，不能以 lsof 暂时空闲代替跨主机独占确认。登录失效仍提示 Owner 重新登录，沿原每小时一路由一道探测恢复，不改等待逻辑。若部署假设不成立，回协调线改方向。Sol 真实验收须在已确认支持目标路由的固定产品版本上运行，并经 Owner 确认凭据可独占；真实并发、请求档位和用量必须实测。发版时 TEST 凭据尚未准备可用，才允许操作员显式配置 flash 过渡并记录，产品不提供自动 fallback。
 
 恢复得到最终裁决后不覆盖原等待收据：最终验证追加到原发布 seam，记录各阶段 paid identity/digest；发布绑定仍指向原 coordinator 收据的真实 digest，另记 derived_result_digest。任何阶段 sending/unknown 都阻止新发送，租约到期只分类 unknown。阶段收据回放不重新记费用；中央 task run/cost ledger 是单次费用真相。beforeSend 的用途/控制闸和中止不转成 not_sent。beforeProviderQuery 同一路径中已证明未查询的中止保存 interrupted 事实；若已有中央失败收据则保留真实失败与费用，随后中断，不作题目退回。用途撤回沿原 pending 路径，停机不落题目终态；已发送且结果不明仍受原 unknown fence 约束。只有既非用途/控制撤回也非中止的查询前阻断保存 not_sent，协调收据按系统原因收口；不伪造题目缺陷，也不把没有 task run 的调用记成未知费用。尚未发送的调用没有 unknown，已知额度/登录拒绝存已知等待收据；发送后结果不明仍 unknown，绝不把它当额度等待自动重试。
 
