@@ -71,7 +71,7 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
       ),
       ...topics,
       instruction:
-        '整理和压缩上下文，不决定做什么。接管 legacy_scopes 中所有 scope 的整理；即使没有新事件也检查陈旧程度，主题保留 scope_key，陈旧不等于错误。只重写内容有变化的主题；没变化就停止。weakness/event 不可合并。学习者 correction 最高优先。',
+        '整理和压缩上下文，不决定做什么。接管 legacy_scopes 中所有 scope 的整理；即使没有新事件也检查陈旧程度，主题保留 scope_key，陈旧不等于错误。legacy-global 是旧摘要原文：第一次整理时把主题名、说明和正文改成学习者能懂的白话，不提迁移、升级或内部系统名；逐条保留所有经历事实及成功/失败、先后和不确定性，不能以清理建议为由丢掉事实。逐条 supersede 原事实，不合并 event/weakness；原文仍保留在旧 scope 和版本日志。只重写内容有变化的主题；没变化就停止。学习者 correction 最高优先。',
     },
     {
       db,
@@ -136,6 +136,7 @@ async function runCuratorTurn(db: Db, reason: 'nightly' | 'activity') {
       taskRunId: result.task_run_id,
       asOf: now.toISOString(),
       overnight,
+      legacyGlobalVersion: legacyScopes.find((scope) => scope.scope === 'global')?.note?.version,
     }));
   await writeEvent(db, {
     id: newId(),

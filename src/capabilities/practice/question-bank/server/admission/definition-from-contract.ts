@@ -13,7 +13,7 @@ import type {
 } from './contract';
 
 export const DEFAULT_BLANK_NORMALIZATION: BlankNormalizationT = {
-  version: 'blank-norm@1',
+  version: 'blank-norm@2',
   nfkc: true,
   trim_outer: true,
   casefold: false,
@@ -25,13 +25,12 @@ export const DEFAULT_BLANK_NORMALIZATION: BlankNormalizationT = {
 /** text_key 的 legacy 归一化档位 → 版本化 BlankNormalization（answer_head 的
  * 抽头步骤只对 reference 做过；作答侧同语义 = nfkc+trim+casefold）。 */
 export function mapLegacyTextNormalization(
-  normalization: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head',
+  normalization: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head' | 'answer_head@2',
 ): BlankNormalizationT {
   switch (normalization) {
     case 'exact':
       return {
         ...DEFAULT_BLANK_NORMALIZATION,
-        version: 'exact@1',
         nfkc: false,
         trim_outer: false,
         collapse_whitespace: false,
@@ -39,14 +38,14 @@ export function mapLegacyTextNormalization(
     case 'trim':
       return {
         ...DEFAULT_BLANK_NORMALIZATION,
-        version: 'trim@1',
         nfkc: false,
         collapse_whitespace: false,
       };
     case 'trim_casefold_nfc':
-      return { ...DEFAULT_BLANK_NORMALIZATION, version: 'trim_casefold@1', casefold: true };
+      return { ...DEFAULT_BLANK_NORMALIZATION, version: 'blank-norm@2', casefold: true };
     case 'answer_head':
-      return { ...DEFAULT_BLANK_NORMALIZATION, version: 'answer_head@1', casefold: true };
+    case 'answer_head@2':
+      return { ...DEFAULT_BLANK_NORMALIZATION, version: 'blank-norm@2', casefold: true };
   }
 }
 
@@ -152,7 +151,20 @@ function seedFor(
     return { seed: null, constraint: `criterion '${criterion.kind}' carries no select key seed` };
   }
   if (unitKind === 'blank') {
-    if (criterion.kind === 'blank_key') return { seed: criterion };
+    if (criterion.kind === 'blank_key') {
+      // Admission creates a successor; author checks and minted keys share its policy.
+      // Clone the seed so the frozen revision and historical replay stay untouched.
+      const key = criterion.key;
+      return {
+        seed: {
+          ...criterion,
+          key:
+            key.kind === 'text'
+              ? { ...key, normalization: { ...key.normalization, version: 'blank-norm@2' } }
+              : { ...key, normalization_version: 'numeric-norm@2' },
+        },
+      };
+    }
     if (criterion.kind === 'text_key') {
       return {
         seed: {
@@ -172,6 +184,7 @@ function seedFor(
           kind: 'blank_key',
           key: {
             kind: 'numeric',
+            normalization_version: 'numeric-norm@2',
             expected: criterion.expected,
             tolerance: criterion.tolerance,
             expected_unit: criterion.expected_unit,

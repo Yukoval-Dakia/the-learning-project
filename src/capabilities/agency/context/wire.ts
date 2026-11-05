@@ -23,7 +23,18 @@ export const ContextBoardResponse = z.object({
     }),
   ),
   changes: z.array(
-    z.object({ id: z.string(), at: z.string(), before: z.array(Topic), after: z.array(Topic) }),
+    z.object({
+      id: z.string(),
+      at: z.string(),
+      before: z.array(Topic),
+      after: z.array(Topic),
+      undo_of: z.string().nullable(),
+    }),
   ),
 });
-export const ContextEditResponse = z.object({ reply: z.string(), changes: z.array(ChangeResult) });
+export const ContextEditResponse = z.object({
+  status: z.enum(['changed', 'partial', 'unchanged']),
+  reply: z.string(),
+  changes: z.array(ChangeResult),
+  remaining_changes: z.array(z.string()),
+});

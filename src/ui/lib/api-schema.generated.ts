@@ -21791,6 +21791,7 @@ export interface operations {
                                 updated_at: string;
                             }[];
                             id: string;
+                            undo_of: string | null;
                         }[];
                         topics: {
                             description: string;
@@ -21999,8 +22000,12 @@ export interface operations {
                         issues: {
                             detail: string;
                             /** @enum {string} */
-                            kind: "unmergeable" | "correction_protected";
+                            kind: "unmergeable" | "correction_protected" | "edit_scope_exceeded";
                         }[];
+                        /** @default [] */
+                        remaining_changes: string[];
+                        /** @default false */
+                        request_complete: boolean;
                         /** @enum {string} */
                         status: "changed" | "unchanged" | "issue";
                         version: number;
@@ -22187,13 +22192,20 @@ export interface operations {
                             issues: {
                                 detail: string;
                                 /** @enum {string} */
-                                kind: "unmergeable" | "correction_protected";
+                                kind: "unmergeable" | "correction_protected" | "edit_scope_exceeded";
                             }[];
+                            /** @default [] */
+                            remaining_changes: string[];
+                            /** @default false */
+                            request_complete: boolean;
                             /** @enum {string} */
                             status: "changed" | "unchanged" | "issue";
                             version: number;
                         }[];
+                        remaining_changes: string[];
                         reply: string;
+                        /** @enum {string} */
+                        status: "changed" | "partial" | "unchanged";
                     };
                 };
             };

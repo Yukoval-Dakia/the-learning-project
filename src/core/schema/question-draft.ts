@@ -205,6 +205,7 @@ export type DraftBlankTextKeyT = z.infer<typeof DraftBlankTextKey>;
 
 export const DraftBlankNumericKey = z.object({
   kind: z.literal('numeric'),
+  normalization_version: z.enum(['numeric-norm@1', 'numeric-norm@2']).optional(),
   value: z.number(),
   /** 与契约 NumericKeyCriterion.tolerance 同构的判别 union。 */
   tolerance: z

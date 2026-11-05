@@ -34,11 +34,13 @@ export type OptionSetKeyCriterionT = z.infer<typeof OptionSetKeyCriterion>;
 
 /** 文本答案键：接受文本 + 归一化档位；更细语义走 rule_reference。
  * `answer_head`（YUK-1047）：先抽答案头（“答：B”→“B”、答案+解析→答案）再
- * NFKC+trim+lowercase —— 与 legacy exact 判分同语义（judge-routing.ts）。 */
+ * NFKC+trim+lowercase；answer_head@2 只折叠宽度，二者随 revision 冻结。 */
 export const TextKeyCriterion = z.object({
   kind: z.literal('text_key'),
   accepted_texts: z.array(z.string().min(1)).min(1),
-  normalization: z.enum(['exact', 'trim', 'trim_casefold_nfc', 'answer_head']).default('trim'),
+  normalization: z
+    .enum(['exact', 'trim', 'trim_casefold_nfc', 'answer_head', 'answer_head@2'])
+    .default('trim'),
 });
 export type TextKeyCriterionT = z.infer<typeof TextKeyCriterion>;
 
@@ -51,6 +53,7 @@ export const NumericKeyCriterion = z.object({
     z.object({ kind: z.literal('relative'), ratio: z.number().min(0) }),
   ]),
   expected_unit: z.string().min(1).optional(),
+  normalization_version: z.enum(['numeric-norm@1', 'numeric-norm@2']).optional(),
 });
 export type NumericKeyCriterionT = z.infer<typeof NumericKeyCriterion>;
 
@@ -196,6 +199,7 @@ export const BlankKeyCriterion = z.object({
       expected: z.number(),
       tolerance: NumericKeyCriterion.shape.tolerance,
       expected_unit: z.string().min(1).optional(),
+      normalization_version: z.enum(['numeric-norm@1', 'numeric-norm@2']).optional(),
     }),
   ]),
 });
