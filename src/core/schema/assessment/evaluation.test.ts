@@ -9,6 +9,8 @@ import type {
   ScoringBasisT,
   SubmissionRecordT,
 } from './index';
+import { ResponseSpec } from './response';
+import { BlankNormalization, ScoringUnit } from './scoring';
 
 // ---------- fixtures ----------
 
@@ -159,4 +161,105 @@ describe('evaluateSubmissionCore — pending taxonomy (no fake zeros)', () => {
       reason: 'pending_units',
     });
   });
+});
+
+// @invariant grading: frozen revisions retain their scores while new versions reject compatibility collisions without losing width folding or explicit aliases
+// @fails-if text production grading or numeric parsing folds semantic symbols in new revisions, changes old replay scores, or rejects declared aliases and width variants
+it('preserves frozen grading semantics and rejects compatibility collisions in new revisions', async () => {
+  const rows: [
+    'text' | 'blank' | 'numeric' | 'legacy-numeric',
+    string,
+    string[],
+    string,
+    0 | 1 | 'unparseable_response',
+  ][] = [
+    ['text', 'answer_head', ['x²'], 'x2', 1],
+    ['blank', 'blank-norm@1', ['x²'], 'x2', 1],
+    ['numeric', '', [], '5²', 1],
+    ['legacy-numeric', '', [], '5²', 1],
+    ['text', 'answer_head@2', ['x²'], 'x2', 0],
+    ['blank', 'blank-norm@2', ['x²'], 'x2', 0],
+    ['text', 'answer_head@2', ['2tanα/(1-tan²α)'], '2tanα/(1-tan2α)', 0],
+    ['blank', 'blank-norm@2', ['2tanα/(1-tan²α)'], '2tanα/(1-tan2α)', 0],
+    ['numeric', 'numeric-norm@2', [], '5²', 'unparseable_response'],
+    ['numeric', 'numeric-norm@2', [], '52', 1],
+    ['numeric', 'numeric-norm@2', [], '５２', 1],
+    ['legacy-numeric', 'numeric-norm@2', [], '5²', 'unparseable_response'],
+    ['legacy-numeric', 'numeric-norm@2', [], '52', 1],
+    ['legacy-numeric', 'numeric-norm@2', [], '５２', 1],
+    ['text', 'answer_head@2', ['A(52)'], 'Ａ（５２）', 1],
+    ['blank', 'blank-norm@2', ['A(52)'], 'Ａ（５２）', 1],
+    ['text', 'answer_head@2', ['x²', 'x^2'], 'x²', 1],
+    ['text', 'answer_head@2', ['x²', 'x^2'], 'x^2', 1],
+    ['blank', 'blank-norm@2', ['x²', 'x^2'], 'x²', 1],
+    ['blank', 'blank-norm@2', ['x²', 'x^2'], 'x^2', 1],
+  ];
+  for (const [kind, version, accepted, given, expected] of rows) {
+    const numeric = {
+      expected: 52,
+      tolerance: { kind: 'absolute', value: 0 },
+      ...(version === 'numeric-norm@2' ? { normalization_version: version } : {}),
+    };
+    const criterion =
+      kind === 'text'
+        ? { kind: 'text_key', accepted_texts: accepted, normalization: version }
+        : kind === 'legacy-numeric'
+          ? { kind: 'numeric_key', ...numeric }
+          : {
+              kind: 'blank_key',
+              key:
+                kind === 'numeric'
+                  ? { kind: 'numeric', ...numeric }
+                  : {
+                      kind: 'text',
+                      accepted,
+                      normalization: BlankNormalization.parse({ version, nfkc: true }),
+                    },
+            };
+    const slotKind = kind === 'text' ? 'text' : kind === 'legacy-numeric' ? 'numeric' : 'blank';
+    const unit = ScoringUnit.parse({
+      ...revisionFor({}).scoring_basis.units[0],
+      criterion,
+      points: 1,
+      rule:
+        slotKind === 'blank'
+          ? {
+              version: 1,
+              cases: [{ when: { correct: { eq: 1 } }, award: { points: 1 } }],
+              otherwise: { points: 0 },
+            }
+          : undefined,
+    });
+    const revision = revisionFor({
+      slots: ResponseSpec.parse({ slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: slotKind }] })
+        .slots,
+      units: [unit],
+      assignments: [
+        {
+          scoring_unit_ids: ['p1::u'],
+          executor: {
+            kind: 'deterministic',
+            comparator:
+              kind === 'text'
+                ? 'exact_text'
+                : kind === 'legacy-numeric'
+                  ? 'numeric_tolerance'
+                  : 'blank_exact',
+          },
+        },
+      ],
+    });
+    const entry: SubmissionRecordT['response_set']['entries'][number] =
+      kind === 'text'
+        ? { slot_id: 'p1::r', kind: 'text', text_md: given }
+        : kind === 'legacy-numeric'
+          ? { slot_id: 'p1::r', kind: 'numeric', value: 52, raw_input: given }
+          : { slot_id: 'p1::r', kind: 'blank', state: 'answered', text: given };
+    const result = await evaluateSubmissionCore(inputFor(submissionFor([entry]), revision));
+    const scored = result.record.unit_results[0];
+    expect(
+      scored?.status === 'scored' ? scored.points_awarded : scored?.pending.reason,
+      JSON.stringify({ kind, version, accepted, given, scored }),
+    ).toBe(expected);
+  }
 });
