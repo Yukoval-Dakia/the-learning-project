@@ -216,3 +216,9 @@ app 与 worker 启动时各 hydrate 一次，之后每 `15_000` ms 刷新；刷�
 写面是 `PATCH /api/admin/config` 与 `POST /api/admin/config/reset`，页面为 `/admin/config`；同一事务内 upsert/删除行、追加 journal、bump epoch，提交后本进程立即 hydrate，响应分别报告提交 epoch 与本进程快照 epoch（`src/capabilities/observability/manifest.ts`；`src/server/config/write.ts`；`src/server/config/admin-config-write.ts`；`src/kernel/ui-surfaces.ts`）。
 
 生效优先级按 key 的 `envMode`：默认 `fallback` = DB > env > code default；`priority` = env 显式 > DB > code default；`pinned` = 只看 env（DB 写入 409）。目前没有 key 使用 `pinned`（`src/core/config/store.ts`；`registry`）。
+
+### 学习伙伴的思考层级
+
+任务键 `task.CopilotTask.reasoning` 使用 `{"level":"high"}`；旧值 `{"reasoning_effort":"high"}` 兼容读取。层级的实际应用取决于所选 provider/model 的目录能力，运行回执记录 `requested` 与 `applied`，不能只凭配置值认定生效（`src/server/ai/providers.ts`）。
+
+当前学习伙伴采用 `opencode-go/deepseek-v4.1-flash`，配置 `high` 时，Pi 的 OpenAI-compatible 请求实际携带 `reasoning_effort:"high"` 与 `thinking:{"type":"enabled"}`，端点为 `https://opencode.ai/inference/go/openai/v1/chat/completions`。此路由未配置任务层级时，不发送上述两个字段，由服务端默认行为决定，不能把未配置等同于关闭思考。上述字段由 Pi 传输层生成，应用不自行拼接（`src/server/ai/pi-agent-adapter.ts`、`src/server/ai/reasoning-wire.ts`、`src/server/ai/pi-models.ts`）。这描述的是该路由的请求事实，不代表其他同名模型路由，也不证明服务端实际计算的思考 token 数。

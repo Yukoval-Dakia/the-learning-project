@@ -13,6 +13,7 @@
 // generation twin of resolveQuestionJudgeRoute; keep the two behavior-synced.
 import type { z } from 'zod';
 import { deriveAnswerClass } from './answer-class';
+import { normalizeAnswerWidth } from './answer-normalization';
 import type { JudgeKind, QuestionKind, Rubric } from './business';
 
 // question.kind is a free-form display label; QuestionKindT is
@@ -127,15 +128,16 @@ export function stripTrailingJunk(s: string): string {
 }
 
 /**
- * The bare-answer head of a reference/answer blob: NFKC-normalize, strip edge
+ * The bare-answer head of a reference/answer blob: normalize Unicode, strip edge
  * markdown emphasis, extract a 【答案】block when present, strip a leading
  * "答："/"解：" marker, cut the first newline-separated explanation tail
  * ("解析：…" / "【详解】…" …), then trim trailing punctuation and "(选项 D)"
  * annotations. Returns the trimmed head; falls back to the normalized input
  * when stripping would leave nothing (pure worked-solution blobs).
+ * The optional version folds width only; omitted versions preserve legacy NFKC.
  */
-export function extractAnswerHead(s: string): string {
-  const t = s.normalize('NFKC').trim();
+export function extractAnswerHead(s: string, version?: 'answer_head@2'): string {
+  const t = (version === 'answer_head@2' ? normalizeAnswerWidth(s) : s.normalize('NFKC')).trim();
   const unwrapped = t.replace(/^[*_]{1,3}\s*/, '').replace(/[*_\s]{1,3}$/, '');
   const block = unwrapped.match(ANSWER_BLOCK_RE);
   if (block?.[1]) {
@@ -194,8 +196,10 @@ const TERMINAL_RESULT_CLAUSE_RE = /(?:^|[，,；;])\s*(?:相加|可得|得到|�
 const FINAL_ASSIGNMENT_RE = /^([A-Za-zΑ-Ωα-ω][A-Za-zΑ-Ωα-ω0-9_]*)\s*=\s*(\S.*?)$/u;
 const COMPARISON_RE = /[<>≤≥≠≈∈]|!=/u;
 
-function canonicalFinal(value: string): string {
-  return value.normalize('NFKC').trim().toLowerCase();
+function canonicalFinal(value: string, version?: 'answer_head@2'): string {
+  return (version === 'answer_head@2' ? normalizeAnswerWidth(value) : value.normalize('NFKC'))
+    .trim()
+    .toLowerCase();
 }
 
 /**
@@ -207,7 +211,7 @@ function canonicalFinal(value: string): string {
  * that consumer turn an incomplete expression into an accepted fragment.
  * Unsupported relations/equality chains are unresolved, not last-`=` guesses.
  */
-function candidateValues(raw: string): string[] | null {
+function candidateValues(raw: string, version?: 'answer_head@2'): string[] | null {
   const value = raw.trim();
   if (value.length === 0) return [];
   if (COMPARISON_RE.test(value)) return null;
@@ -217,15 +221,18 @@ function candidateValues(raw: string): string[] | null {
     if (!assignment?.[2] || value.indexOf('=') !== value.lastIndexOf('=')) return null;
     values.push(assignment[2].trim());
   }
-  return values.every((candidate) => extractAnswerHead(candidate) === candidate) ? values : null;
+  return values.every((candidate) => extractAnswerHead(candidate, version) === candidate)
+    ? values
+    : null;
 }
 
-export function extractFinalAnswer(text: string): FinalAnswerExtraction {
+export function extractFinalAnswer(text: string, version?: 'answer_head@2'): FinalAnswerExtraction {
   // Chinese full stops delimit process sentences, not mathematical tokens.
   // Explicit answer declarations still own their whole line, including prose
   // or compound values. Do not split ASCII dots, `!`, operators or tuples.
-  const sentences = text
-    .normalize('NFKC')
+  const sentences = (
+    version === 'answer_head@2' ? normalizeAnswerWidth(text) : text.normalize('NFKC')
+  )
     .split(/\n+/)
     .flatMap((line) => (DECLARATION_LINE_RE.test(line) ? [line] : line.split(/。+/)))
     .map((sentence) => sentence.trim())
@@ -241,7 +248,7 @@ export function extractFinalAnswer(text: string): FinalAnswerExtraction {
     value: string,
     marker: 'answer_marker' | 'conclusion_marker' | 'trailing_equality',
   ) => {
-    if (candidateValues(value) === null) {
+    if (candidateValues(value, version) === null) {
       unsafe.push(value);
     } else {
       found.push({ value, marker });
@@ -283,7 +290,8 @@ export function extractFinalAnswer(text: string): FinalAnswerExtraction {
           sentence.match(LAST_LINE_CONCLUSION_RE)?.[1] ??
           (terminalVariable &&
           priorAssignmentVariable &&
-          canonicalFinal(priorAssignmentVariable) === canonicalFinal(terminalVariable)
+          canonicalFinal(priorAssignmentVariable, version) ===
+            canonicalFinal(terminalVariable, version)
             ? sentence
             : undefined);
         if (!priorConclusion) continue;
@@ -291,8 +299,8 @@ export function extractFinalAnswer(text: string): FinalAnswerExtraction {
         if (
           terminalVariable &&
           priorVariable &&
-          canonicalFinal(priorVariable) !== canonicalFinal(terminalVariable) &&
-          candidateValues(priorConclusion) !== null
+          canonicalFinal(priorVariable, version) !== canonicalFinal(terminalVariable, version) &&
+          candidateValues(priorConclusion, version) !== null
         ) {
           continue;
         }
@@ -318,13 +326,15 @@ export function extractFinalAnswer(text: string): FinalAnswerExtraction {
   }[] = found
     .map((entry) => ({
       marker: entry.marker,
-      values: (candidateValues(entry.value) ?? []).filter((v) => canonicalFinal(v).length > 0),
+      values: (candidateValues(entry.value, version) ?? []).filter(
+        (v) => canonicalFinal(v, version).length > 0,
+      ),
     }))
     .filter((entry) => entry.values.length > 0);
   if (entries.length === 0) return { kind: 'none' };
   let shared: Set<string> | null = null;
   for (const entry of entries) {
-    const current = new Set<string>(entry.values.map(canonicalFinal));
+    const current = new Set<string>(entry.values.map((value) => canonicalFinal(value, version)));
     shared = shared === null ? current : new Set([...shared].filter((v: string) => current.has(v)));
     if (shared.size === 0) {
       return { kind: 'ambiguous', candidates: entries.map((e) => e.values[0] as string) };

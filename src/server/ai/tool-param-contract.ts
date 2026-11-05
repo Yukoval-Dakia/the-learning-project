@@ -9,9 +9,9 @@
 // Policy (shared with the admission preflight — no second implementation): a
 // string field whose sub-schema expects array/object and rejects strings gets
 // exactly ONE strict JSON.parse, adopted only when the parsed value has the
-// expected structure and passes that sub-schema. A required repair that fails
-// rejects the call with `ToolParamContractError`, whose `[tool_param_contract]`
-// marker identifies the one correction-eligible failure.
+// expected structure and passes that sub-schema. Required failures go to the
+// validation owner: pi receives `ToolParamContractError`; bridge tools retain
+// their canonical schema feedback without reaching domain execution.
 //
 // Never: guessing, markdown extraction, primitive coercion, provider/model/task
 // special-casing, silent field deletion, re-parsing a parsed field, or schema
@@ -176,37 +176,56 @@ function expectedCompositeKinds(
   return out;
 }
 
-/**
- * Whether a string can satisfy this node at all. Repairing a field that
- * legitimately accepts strings would rewrite valid arguments.
- */
-function acceptsString(node: SchemaNode, defs: Definitions, seen = new Set<SchemaNode>()): boolean {
+/** Intersections must permit the structural kind, not merely mention it in a union. */
+function permitsCompositeKind(
+  node: SchemaNode,
+  kind: 'array' | 'object',
+  defs: Definitions,
+  seen = new Set<SchemaNode>(),
+): boolean {
   node = resolveNode(node, defs);
-  if (node === true) return true;
-  if (node === false) return false;
+  if (node === false || seen.has(node)) return false;
   if (!isNode(node)) return true;
-  if (seen.has(node)) return false;
   seen.add(node);
-  if (node.const !== undefined) return typeof node.const === 'string';
-  if (Array.isArray(node.enum)) return node.enum.some((v) => typeof v === 'string');
   const types = typeSet(node);
-  if (types.has('string')) return true;
+  if (types.size > 0 && !types.has(kind)) return false;
+  if (node.const !== undefined && !structuralMatch(kind, node.const)) return false;
+  if (Array.isArray(node.enum) && !node.enum.some((value) => structuralMatch(kind, value)))
+    return false;
   const unions = unionBranches(node);
-  const allof = branchList(node, 'allOf');
-  if (unions.length === 0 && allof.length === 0) {
-    // No combinators: an unconstrained node (no type, no properties/items)
-    // accepts anything; a typed/structural node does not.
-    return (
-      types.size === 0 &&
-      node.properties === undefined &&
-      node.items === undefined &&
-      node.prefixItems === undefined
-    );
-  }
-  // A string satisfies a union if ANY member accepts it; it satisfies an
-  // allOf only when EVERY member does (each member constrains it).
-  if (unions.some((branch) => acceptsString(branch, defs, new Set(seen)))) return true;
-  return allof.length > 0 && allof.every((branch) => acceptsString(branch, defs, new Set(seen)));
+  return (
+    (unions.length === 0 ||
+      unions.some((branch) => permitsCompositeKind(branch, kind, defs, new Set(seen)))) &&
+    branchList(node, 'allOf').every((branch) =>
+      permitsCompositeKind(branch, kind, defs, new Set(seen)),
+    )
+  );
+}
+
+function matchesLiterals(
+  node: SchemaNode,
+  value: unknown,
+  defs: Definitions,
+  seen = new Set<SchemaNode>(),
+): boolean {
+  node = resolveNode(node, defs);
+  if (!isNode(node)) return node !== false;
+  if (seen.has(node)) return true;
+  seen.add(node);
+  if (node.const !== undefined && typeof node.const !== 'object' && node.const !== value)
+    return false;
+  if (
+    Array.isArray(node.enum) &&
+    node.enum.every((item) => typeof item !== 'object') &&
+    !node.enum.includes(value)
+  )
+    return false;
+  const unions = unionBranches(node);
+  return (
+    (unions.length === 0 ||
+      unions.some((branch) => matchesLiterals(branch, value, defs, new Set(seen)))) &&
+    branchList(node, 'allOf').every((branch) => matchesLiterals(branch, value, defs, new Set(seen)))
+  );
 }
 
 function structuralMatch(kind: 'array' | 'object', value: unknown): boolean {
@@ -316,7 +335,7 @@ function rejectContract(path: string, kinds: Set<'array' | 'object'>): never {
   throw new ToolParamContractError(
     `field "${path}" must be ${kindPhrase(kinds)}, not a string. The string you sent ` +
       'is not valid JSON, parses to the wrong structural type, or does not satisfy the ' +
-      `declared schema. Re-issue the call with "${path}" as an actual ${kindPhrase(kinds)} ` +
+      `declared schema. Re-issue the call with "${path}" as ${kindPhrase(kinds)} ` +
       'value — do not quote it or re-serialize it as a JSON string.',
   );
 }
@@ -334,18 +353,37 @@ function collectConjunctive(
   seen: Set<SchemaNode>,
 ): void {
   node = resolveNode(node, defs);
-  if (!isNode(node) || seen.has(node)) return;
-  seen.add(node);
-  const unions = unionBranches(node);
-  if (unions.length === 0) {
+  if (!isNode(node) || seen.has(node)) {
     out.push(node);
     return;
   }
-  const { anyOf: _anyOf, oneOf: _oneOf, ...rest } = node;
-  const mergedAllOf = branchList(node, 'allOf');
-  for (const branch of unions) {
-    collectConjunctive({ ...rest, allOf: [...mergedAllOf, branch] }, defs, out, new Set(seen));
+  seen.add(node);
+  const anyOf = branchList(node, 'anyOf');
+  const oneOf = branchList(node, 'oneOf');
+  const allOf = branchList(node, 'allOf');
+  if (anyOf.length === 0 && oneOf.length === 0 && allOf.length === 0) {
+    out.push(node);
+    return;
   }
+  const { anyOf: _anyOf, oneOf: _oneOf, allOf: _allOf, ...rest } = node;
+  let positions: SchemaNode[][] = [[rest]];
+  // Distribute intersections over alternatives before inspecting literals. A
+  // nested union under allOf must contribute one branch, never all branches.
+  const groups = [
+    ...allOf.map((branch) => [branch]),
+    ...(anyOf.length > 0 ? [anyOf] : []),
+    ...(oneOf.length > 0 ? [oneOf] : []),
+  ];
+  for (const group of groups) {
+    const alternatives: SchemaNode[] = [];
+    for (const branch of group) {
+      collectConjunctive(branch, defs, alternatives, new Set(seen));
+    }
+    positions = positions.flatMap((position) =>
+      alternatives.map((alternative) => [...position, alternative]),
+    );
+  }
+  for (const position of positions) out.push({ allOf: position });
 }
 
 /** Exactly one strict JSON.parse for a field, reused across candidates. */
@@ -370,7 +408,12 @@ function repairObjectFields(
     const candidates: SchemaNode[] = [];
     collectPropertySchemas(position, key, ctx.definitions, candidates, new Set());
     if (candidates.length === 0) continue;
-    const repaired = repairValue(value[key], candidates, path === '' ? key : `${path}.${key}`, ctx);
+    const repaired = repairValue(
+      value[key],
+      [{ allOf: candidates }],
+      path === '' ? key : `${path}.${key}`,
+      ctx,
+    );
     if (repaired !== value[key]) {
       next[key] = repaired;
       changed = true;
@@ -393,7 +436,7 @@ function repairArrayElements(
     if (candidates.length === 0) return element;
     const repaired = repairValue(
       element,
-      candidates,
+      [{ allOf: candidates }],
       `${path === '' ? '(root)' : path}.${index}`,
       ctx,
     );
@@ -435,7 +478,10 @@ function repairValue(
     let parsed: { ok: true; value: unknown } | { ok: false } | undefined;
     for (const position of positions) {
       const kinds = expectedCompositeKinds(position, ctx.definitions);
-      if (kinds.size === 0 || acceptsString(position, ctx.definitions)) continue;
+      for (const kind of kinds) {
+        if (!permitsCompositeKind(position, kind, ctx.definitions)) kinds.delete(kind);
+      }
+      if (kinds.size === 0) continue;
       required ??= kinds;
       if (parsed === undefined) parsed = parseOnce(value);
       if (!parsed.ok) continue;
@@ -455,6 +501,12 @@ function repairValue(
     let firstError: ToolParamContractError | undefined;
     for (const position of positions) {
       if (!isNode(position)) continue;
+      const mismatchedLiteral = Object.entries(value).some(([key, field]) => {
+        const constraints: SchemaNode[] = [];
+        collectPropertySchemas(position, key, ctx.definitions, constraints, new Set());
+        return constraints.some((schema) => !matchesLiterals(schema, field, ctx.definitions));
+      });
+      if (mismatchedLiteral) continue;
       const mark = ctx.coercions.length;
       let next: Record<string, unknown>;
       try {
@@ -501,9 +553,14 @@ function repairValue(
 /**
  * Shared repair: one strict JSON.parse per string field whose sub-schema expects
  * array/object and rejects strings. `coercions` records path + original length
- * only, never the payload. Throws when a required repair fails.
+ * only, never the payload. Required failures throw unless the bridge owns validation;
+ * in that case the original arguments reach its actionable rejection unchanged.
  */
-export function repairToolArguments(parameters: unknown, args: unknown): ToolParamRepairOutcome {
+export function repairToolArguments(
+  parameters: unknown,
+  args: unknown,
+  validationOwner: 'pi' | 'bridge' = 'pi',
+): ToolParamRepairOutcome {
   const root: SchemaNode = isSchemaNode(parameters) ? parameters : {};
   const definitions = isNode(root)
     ? isNode(root.definitions)
@@ -513,6 +570,12 @@ export function repairToolArguments(parameters: unknown, args: unknown): ToolPar
         : undefined
     : undefined;
   const ctx: RepairContext = { definitions, coercions: [] };
-  const repaired = repairValue(args, [root], '', ctx);
-  return { args: repaired, coercions: ctx.coercions };
+  try {
+    const repaired = repairValue(args, [root], '', ctx);
+    return { args: repaired, coercions: ctx.coercions };
+  } catch (error) {
+    // The bridge owns its schema-specific remediation and sanitized rejection log.
+    if (validationOwner !== 'bridge' || !isToolParamContractError(error)) throw error;
+    return { args, coercions: [] };
+  }
 }

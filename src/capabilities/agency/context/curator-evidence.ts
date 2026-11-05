@@ -45,7 +45,8 @@ export async function readCuratorLegacyScopes(db: Db) {
   const { memory_brief_note } = await import('@/db/schema');
   const { readMemoryBriefNote } = await import('./memory-brief');
   const rows = await db.select({ key: memory_brief_note.scope_key }).from(memory_brief_note);
-  const withheld = withdrawnTopicEvidence((await readTopics(db)).digest);
+  const { digest, version } = await readTopics(db);
+  const withheld = withdrawnTopicEvidence(digest);
   return Promise.all(
     rows
       .filter((r) => r.key !== 'global:digest')
@@ -61,7 +62,10 @@ export async function readCuratorLegacyScopes(db: Db) {
         return {
           scope: r.key,
           ...read,
-          ...(ids.some((id) => withheld.has(id)) ? { note: null } : {}),
+          ...(ids.some((id) => withheld.has(id)) ||
+          (r.key === 'global' && version > 0 && read.note?.version === digest.legacy_global_version)
+            ? { note: null }
+            : {}),
         };
       }),
   );

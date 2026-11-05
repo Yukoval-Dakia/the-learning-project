@@ -441,12 +441,7 @@ export function toolInputFailure(dt: DomainTool<unknown, unknown>, args: unknown
     return {
       code: 'shape_invalid',
       path,
-      detail:
-        issue.code === 'custom'
-          ? sanitizeProviderErrorText(issue.message)
-          : typeof object(expected)?.description === 'string'
-            ? String(object(expected)?.description)
-            : 'Arguments must match the declared input schema.',
+      detail: sanitizeProviderErrorText(issue.message),
       ...(issue.code === 'custom'
         ? {}
         : {
