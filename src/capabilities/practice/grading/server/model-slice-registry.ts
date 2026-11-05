@@ -15,7 +15,11 @@ import type { Db, Tx } from '@/db/client';
 import { model_admission_slice } from '@/db/schema';
 import { admittedSliceFromRow } from '@/kernel/read-models/model-admission';
 import { JEV_CANONICAL_MODEL } from '@/server/ai/pricing';
-import { resolveConfiguredTaskModel, resolveTaskBinding } from '@/server/ai/providers';
+import {
+  resolveConfiguredTaskModel,
+  resolveTaskBinding,
+  resolveTaskReasoning,
+} from '@/server/ai/providers';
 
 type SliceRow = typeof model_admission_slice.$inferSelect;
 
@@ -49,13 +53,26 @@ function resolveLiveModelPin(
   if (version === undefined || definition === undefined) return undefined;
   try {
     const binding = resolveTaskBinding(kind as TaskKind);
+    const reasoning = resolveTaskReasoning(
+      kind as TaskKind,
+      binding.provider,
+      binding.model,
+      binding.reasoning,
+    );
+    // Only a reasoning value that changes the wire joins the admission identity:
+    // requested aliases that resolve to the same applied level do not invalidate a
+    // slice, and 'none' adds no marker so typed lanes keep their historical pin.
+    const wireReasoning =
+      reasoning?.applied === undefined || reasoning.applied === 'none'
+        ? ''
+        : `:reasoning-${reasoning.applied}`;
     // Provider routes have no verified revision parity; a route change requires a new run.
     return {
       pin: {
         // resolveConfiguredTaskModel asserts the resolved pair is executable —
         // a stored-but-unservable pair fails THIS kind readably, not silently.
         model: resolveConfiguredTaskModel(kind as TaskKind),
-        model_version: `${version}:${binding.provider}:${canonicalHash(definition.prompt)}`,
+        model_version: `${version}:${binding.provider}:${canonicalHash(definition.prompt)}${wireReasoning}`,
       },
     };
   } catch (error) {
