@@ -177,6 +177,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     actorRef: ctx.callerActor.ref,
     actorKind: 'agent' as const,
     taskRunId: ctx.taskRunId,
+    ticketEventId: ctx.ticketEventId ?? null,
   };
   if (input.action === 'validate') {
     return (await validateDraftEdit(ctx.db, { input, ctx: serviceCtx })) as Output;

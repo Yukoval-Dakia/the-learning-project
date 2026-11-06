@@ -12,8 +12,8 @@ import {
   explainDifficultyEvidence,
 } from '@/core/schema/difficulty-evidence';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
-import { QuestionDraftDocument, type QuestionDraftDocumentT } from '@/core/schema/question-draft';
-import { SourcedQuestion, type SourcedQuestionT } from '@/core/schema/sourcing';
+import type { QuestionDraftDocumentT } from '@/core/schema/question-draft';
+import { SourcedQuestion } from '@/core/schema/sourcing';
 import { FigureRef, StructuredQuestion } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
@@ -28,10 +28,10 @@ import {
   type SubmitResult,
   canonicalJson,
   claimSubmitRequestId,
+  declaredCandidateDocument,
   findSubmitReceipt,
   insertSourcedDraft,
   persistDeclaredQuestionGroup,
-  sanitizeSourcedMarkup,
   submitDraftQuestion,
   writeSubmitReceiptEvent,
 } from '@/server/questions/submit-question';
@@ -285,7 +285,14 @@ const COMMIT_ROUTE_CONFIG = {
 
 type CandidateSubmitContext = Pick<
   ToolContext,
-  'db' | 'sessionId' | 'taskRunId' | 'logTaskRunId' | 'causedByEventId' | 'beforeIngestionWrite'
+  | 'db'
+  | 'sessionId'
+  | 'taskRunId'
+  | 'logTaskRunId'
+  | 'causedByEventId'
+  | 'beforeIngestionWrite'
+  | 'publicationCausedByEventId'
+  | 'ticketEventId'
 > & {
   callerActor?: ToolContext['callerActor'];
   /** Server-held placement delivery authority; never accepted from agent/tool input. */
@@ -396,6 +403,19 @@ async function executeCandidateSubmit(
   });
 }
 
+/** Flat extraction hash unless the declaration's flat projection loses content (relation
+ *  axes, break-tap text); only then does the document identity decide. Keeps existing
+ *  rows deduplicating exactly as base for every other typed candidate. */
+export function declaredCandidateDedupHash(
+  document: QuestionDraftDocumentT,
+  extractionHash: string,
+): string {
+  const identity = draftCanonicalIdentity(document);
+  return identity.selectStructure != null
+    ? canonicalQuestionContentHash(identity)
+    : extractionHash.slice('sha256:'.length);
+}
+
 async function runCandidateSubmit(
   ctx: CandidateSubmitContext,
   input: ParsedInput & { candidate: NonNullable<ParsedInput['candidate']> },
@@ -431,7 +451,6 @@ async function runCandidateSubmit(
     };
   }
   const enqueueSourceVerify = deps.enqueueSourceVerify ?? defaultEnqueueSourceVerify;
-  const canonicalHash = candidate.extraction_hash.slice('sha256:'.length);
   const now = new Date();
 
   const liveRows = await db
@@ -471,6 +490,14 @@ async function runCandidateSubmit(
       };
     }
   }
+
+  const declaredDocument =
+    candidate.question.parts != null && candidate.question.parts.length > 0
+      ? declaredCandidateDocument(candidate.question, input.source_route, knowledgeIds)
+      : null;
+  const canonicalHash = declaredDocument
+    ? declaredCandidateDedupHash(declaredDocument.document, candidate.extraction_hash)
+    : candidate.extraction_hash.slice('sha256:'.length);
 
   const merged = await db.transaction(async (tx) => {
     await ctx.beforeIngestionWrite?.(tx);
@@ -576,7 +603,7 @@ async function runCandidateSubmit(
   // 上面的 KC 活体/host/exact/source-URL/near/vector 判重原样先跑。
   // 未声明候选照旧旧 flat 路径（insertSourcedDraft 的 live 无声明 caller）。
   const declaredParts = candidate.question.parts;
-  if (declaredParts != null && declaredParts.length > 0) {
+  if (declaredParts != null && declaredParts.length > 0 && declaredDocument != null) {
     return runDeclaredCandidateSubmit(ctx, input, {
       knowledgeIds,
       canonicalHash,
@@ -584,6 +611,8 @@ async function runCandidateSubmit(
       ingestVector,
       questionText,
       now,
+      document: declaredDocument.document,
+      markupSanitized: declaredDocument.markupSanitized,
     });
   }
 
@@ -854,92 +883,14 @@ async function runCandidateSubmit(
   };
 }
 
-/** 声明 → v2 草稿文档。内容文本过 ingest markup 清洗（与旧 flat 入库同口径；
- *  确定性、不改语义）；答案键（accepted/equivalent_forms）同口径清洗——旧
- *  flat 路径的 reference_md 本就经此清洗后才作判分输入。producer 声明的
- *  结构/槽位/id/answer_shape/blank_order 逐字保留，不重铸不推断。 */
-function declaredCandidateDocument(
-  q: SourcedQuestionT,
-  sourceRoute: 'jyeoo_fetch' | 'sourcing_web',
-  knowledgeIds: string[],
-): { document: QuestionDraftDocumentT; markupSanitized: boolean } {
-  let markupSanitized = false;
-  const clean = (text: string): string => {
-    const next = sanitizeSourcedMarkup(text);
-    if (next !== text) markupSanitized = true;
-    return next;
-  };
-  const parts = (q.parts ?? []).map((part) => ({
-    ...part,
-    prompt_md: clean(part.prompt_md),
-    ...(part.explanation_md != null ? { explanation_md: clean(part.explanation_md) } : {}),
-    units: part.units.map((unit) => ({
-      ...unit,
-      ...(unit.reference_md != null ? { reference_md: clean(unit.reference_md) } : {}),
-      ...(unit.key?.kind === 'blank'
-        ? {
-            key:
-              unit.key.key.kind === 'text'
-                ? {
-                    ...unit.key,
-                    key: { ...unit.key.key, accepted: unit.key.key.accepted.map(clean) },
-                  }
-                : unit.key.key.equivalent_forms != null
-                  ? {
-                      ...unit.key,
-                      key: {
-                        ...unit.key.key,
-                        equivalent_forms: unit.key.key.equivalent_forms.map(clean),
-                      },
-                    }
-                  : unit.key,
-          }
-        : {}),
-      response_spec:
-        unit.response_spec.kind === 'select'
-          ? {
-              ...unit.response_spec,
-              items: unit.response_spec.items.map((item) => ({
-                ...item,
-                ...(item.label_md != null ? { label_md: clean(item.label_md) } : {}),
-              })),
-              ...(unit.response_spec.text != null ? { text: clean(unit.response_spec.text) } : {}),
-            }
-          : unit.response_spec,
-      ...(unit.rubric != null
-        ? {
-            rubric: {
-              ...unit.rubric,
-              ...(unit.rubric.guidance_md != null
-                ? { guidance_md: clean(unit.rubric.guidance_md) }
-                : {}),
-              criteria: unit.rubric.criteria.map((criterion) => ({
-                ...criterion,
-                ...(criterion.statement_md != null
-                  ? { statement_md: clean(criterion.statement_md) }
-                  : {}),
-              })),
-            },
-          }
-        : {}),
-    })),
-  }));
-  const document = QuestionDraftDocument.parse({
-    schema_version: 2,
-    parts,
-    materials: [],
-    knowledge_ids: knowledgeIds,
-    metadata: {},
-    source: { kind: sourceRoute, ref: q.source_url, note: q.source_title },
-  });
-  return { document, markupSanitized };
-}
-
 interface DeclaredCandidateRun {
   knowledgeIds: string[];
   canonicalHash: string;
   vectorNear: { id: string; similarity: number } | null;
   ingestVector: number[] | null;
+  /** The sanitized document the submission will freeze (built once, before dedup). */
+  document: QuestionDraftDocumentT;
+  markupSanitized: boolean;
   /** 实际送 embed 的 flat 文本（向量输入身份；R1 F4：只允许它与 stored
    *  投影一致时才复用向量戳，否则保持未嵌入交给 nightly backfill）。 */
   questionText: { prompt_md: string; reference_md: string; choices_md: string[] | null };
@@ -1031,6 +982,7 @@ async function runDeclaredCandidateSubmit(
   const q = candidate.question;
   const requestId = input.request_id;
   const { knowledgeIds, canonicalHash, vectorNear, ingestVector, questionText, now } = run;
+  const { document, markupSanitized } = run;
   const routeConfig = COMMIT_ROUTE_CONFIG[input.source_route];
 
   // typed 路径本片不承载图片/figure 资产绑定（图片候选仍在旧 flat 写口）；
@@ -1077,12 +1029,6 @@ async function runDeclaredCandidateSubmit(
       ? vectorNearHoldMetadata(vectorNear)
       : null;
 
-  const { document, markupSanitized } = declaredCandidateDocument(
-    q,
-    input.source_route,
-    knowledgeIds,
-  );
-
   const committed = await persistDeclaredQuestionGroup(db, {
     document,
     idNamespace: `yuk1568-candidate:${requestId}`,
@@ -1121,6 +1067,8 @@ async function runDeclaredCandidateSubmit(
       sessionId: ctx.sessionId ?? null,
       taskRunId: ctx.taskRunId,
       causedByEventId: ctx.causedByEventId ?? null,
+      publicationCausedByEventId: ctx.publicationCausedByEventId ?? null,
+      ticketEventId: ctx.ticketEventId ?? null,
       now,
     },
     caller: {
@@ -1408,6 +1356,8 @@ async function execute(ctx: ToolContext, raw: ExecInput): Promise<Output> {
         sessionId: ctx.sessionId ?? null,
         taskRunId: ctx.taskRunId,
         causedByEventId: ctx.causedByEventId ?? null,
+        publicationCausedByEventId: ctx.publicationCausedByEventId ?? null,
+        ticketEventId: ctx.ticketEventId ?? null,
       },
     );
     return result as Output;

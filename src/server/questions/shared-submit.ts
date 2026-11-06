@@ -94,6 +94,7 @@ import {
   typedChildChoicesMd,
 } from '@/server/questions/typed-group';
 import { type DraftSubmitVector, deduplicateNewDraftInTx } from './draft-submit-dedup';
+import { ticketScopeIssue } from './ticket-scope';
 
 export const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
 
@@ -107,6 +108,10 @@ export interface SharedSubmitContext {
   sessionId?: string | null;
   taskRunId?: string;
   causedByEventId?: string | null;
+  /** Server-bound publication anchor for a run whose content provenance is its ticket. */
+  publicationCausedByEventId?: string | null;
+  /** Server-bound gap-ticket scope; gates edits of existing questions. */
+  ticketEventId?: string | null;
   now?: Date;
 }
 
@@ -521,6 +526,19 @@ export async function submitDraftQuestionInTx(
     doc.base?.question_id ?? block.imported_question_id ?? opts?.producer?.newGroupId ?? createId();
   let contract = draftDocumentToContract(doc, groupId);
   const editingExisting = doc.base?.question_id != null || block.imported_question_id != null;
+  if (editingExisting) {
+    const denied = await ticketScopeIssue(tx, ctx.ticketEventId, groupId);
+    if (denied != null) {
+      return {
+        status: 'withheld',
+        published: false,
+        detail: denied.detail,
+        issues: [denied],
+        per_unit: [],
+        request_id: requestId,
+      };
+    }
+  }
 
   // New questions fail fast on conversion issues; edits wait for the scoring plan,
   // because a verbatim copy of the stored layers may clear them.
@@ -859,6 +877,11 @@ export async function submitDraftQuestionInTx(
     admission: effectiveAdmission,
     actorRef: `submit_question:${ctx.actorRef}`,
     publishedBy: AgentRef.parse({ by: 'ai', task_kind: 'submit_question' }),
+    // Only an explicit server anchor participates: null/undefined keeps the prior
+    // revision's provenance (edits) or no anchor (ordinary submissions).
+    ...(ctx.publicationCausedByEventId != null
+      ? { causedByEventId: ctx.publicationCausedByEventId }
+      : {}),
     now,
   });
   if (publishResult.status === 'conflict') {

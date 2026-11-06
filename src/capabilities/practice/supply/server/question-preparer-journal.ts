@@ -172,6 +172,7 @@ export async function preparerFinish(
 ) {
   const terminal = preparerTerminal.parse({
     ticket: data.ticket,
+    ...(data.ticket_event_id ? { ticket_event_id: data.ticket_event_id } : {}),
     task_run_id: `question_preparer_${jobId}`,
     outcome,
     summary,

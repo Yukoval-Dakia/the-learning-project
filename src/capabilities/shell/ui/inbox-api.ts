@@ -114,6 +114,8 @@ export type ProposalInboxRow = Omit<GeneratedProposalRow, 'kind' | 'payload' | '
 export interface ProposalPageWire {
   rows: ProposalInboxRow[];
   next_cursor: string | null;
+  /** Effective proposal auto-apply switch, resolved in the API process. */
+  auto_apply_enabled: boolean;
 }
 
 const DECISION_PAGE_LIMIT = 500;
@@ -135,6 +137,7 @@ function listProposalPage(
     // only widens it into ProposalCard's optional-field display projection.
     rows: page.rows as ProposalInboxRow[],
     next_cursor: page.next_cursor,
+    auto_apply_enabled: page.auto_apply_enabled,
   }));
 }
 

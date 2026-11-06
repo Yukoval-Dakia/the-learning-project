@@ -7,7 +7,10 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
-import { proposalAutoApplyMarker } from '@/kernel/proposals/auto-apply-marker';
+import {
+  proposalAutoApplyEnabled,
+  proposalAutoApplyMarker,
+} from '@/kernel/proposals/auto-apply-marker';
 import { assertLearnerSummaryAllowed } from '@/kernel/proposals/learner-summary';
 // Cited evidence records move raw -> linked in the same scope as the propose event;
 // pass a tx to make both atomic.
@@ -113,6 +116,19 @@ function eventShapeForProposal(payload: AiProposalPayloadT): {
   }
 }
 
+/**
+ * Producers may override the raw event payload, but eligibility is the writer's
+ * decision alone: a caller-supplied `auto_apply` would otherwise survive the
+ * switch-off branch and become selectable later.
+ */
+function overridePayloadWithoutReservedFields(
+  payload: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const copy = { ...(payload ?? {}) };
+  delete copy.auto_apply;
+  return copy;
+}
+
 export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): Promise<string> {
   const payload = parseAiProposalPayload(input.payload);
   // One deterministic gate for every producer: the learner-facing line may not
@@ -125,7 +141,7 @@ export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): 
         subject_kind: input.event_override.subject_kind,
         subject_id: input.event_override.subject_id ?? proposalSubjectId(payload),
         event_payload: {
-          ...(input.event_override.payload ?? {}),
+          ...overridePayloadWithoutReservedFields(input.event_override.payload),
           ai_proposal: payload,
         },
       }
@@ -135,8 +151,12 @@ export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): 
   // this marker, so a later tier flip never retroactively applies old pending rows.
   // An explicit producer opt-out also wins over the kind strength: a proposal that
   // cannot be fully retracted stays an ordinary pending item for human review.
+  // Creation-time switch: rows written while the lane is off carry no marker, so
+  // turning it on later never applies them retroactively.
   const autoApplyMarker =
-    input.auto_apply_eligible === false ? undefined : proposalAutoApplyMarker(payload.kind);
+    input.auto_apply_eligible === false || !proposalAutoApplyEnabled()
+      ? undefined
+      : proposalAutoApplyMarker(payload.kind);
   const eventPayload = autoApplyMarker
     ? { ...eventShape.event_payload, auto_apply: autoApplyMarker }
     : eventShape.event_payload;

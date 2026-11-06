@@ -15,6 +15,19 @@
  *                    never match;
  *   - alias    (A1): `export const X = importedBinding` / `export default
  *                    importedBinding` — no call, no transform;
+ *   - object   (O1): one property of an exported object literal that holds a
+ *                    value-import binding verbatim (`{ foo }`, `{ foo: foo }`,
+ *                    `{ foo: bar }`, `{ foo: ns.bar }`) behind the wrappers a
+ *                    table is commonly written with (`as const`, `satisfies`,
+ *                    `Object.freeze(…)`, a local `const` alias chain, any
+ *                    export spelling). Counted per property: one non-forward
+ *                    sibling never hides the forwards next to it. Two written
+ *                    exclusions: an imported name ending in `Schema`/`Policy`
+ *                    (case-insensitive), and the `outputSchema` property name
+ *                    — both are configuration wiring, not forwarding. Known
+ *                    gaps: spread, computed keys, methods/getters, arrays,
+ *                    objects returned from functions, class static fields, and
+ *                    members of a locally built object;
  *   - site     (S1): a value-bearing export-from statement inside a module that
  *                    also owns runtime definitions.
  * Type-only declarations and `import type`/`export type` produce no value
@@ -24,9 +37,9 @@ import { createHash } from 'node:crypto';
 import { parse } from '@babel/parser';
 import { analyzeSource } from './ts-tokenize';
 
-export const PASS_THROUGH_SCANNER_VERSION = 2;
+export const PASS_THROUGH_SCANNER_VERSION = 4;
 
-export type PassThroughKind = 'module' | 'function' | 'alias' | 'site';
+export type PassThroughKind = 'module' | 'function' | 'alias' | 'object' | 'site';
 
 export interface PassThroughSite {
   /** Repo-relative posix path of the file owning the site. */
@@ -72,6 +85,15 @@ interface ImportBinding {
   source: string;
   imported: string;
   typeOnly: boolean;
+}
+
+/** Synthetic local name for `export default {…}`, which has no binding. */
+const INLINE_DEFAULT_OBJECT = '\u0000export-default-object';
+
+interface ObjectExportLink {
+  /** Local binding the object is read from (`default` uses INLINE_DEFAULT_OBJECT). */
+  local: string;
+  exported: string;
 }
 
 interface FunctionCandidate {
@@ -297,6 +319,135 @@ function forwardDetail(
   return { target: call.binding, member: call.member, awaited, shape };
 }
 
+/** `Object.freeze(x)` — the one call whose argument is still the literal table. */
+function objectFreezeArgument(node: unknown): unknown {
+  if (!isRecord(node) || node.type !== 'CallExpression') return undefined;
+  const callee = node.callee;
+  if (!isRecord(callee) || callee.type !== 'MemberExpression' || callee.computed === true) {
+    return undefined;
+  }
+  if (!isRecord(callee.object) || callee.object.type !== 'Identifier') return undefined;
+  if (nodeName(callee.object) !== 'Object' || nodeName(callee.property) !== 'freeze') {
+    return undefined;
+  }
+  const args = Array.isArray(node.arguments) ? node.arguments : [];
+  return args.length >= 1 ? args[0] : undefined;
+}
+
+/** Strip the value-position wrappers that do not change the binding: `as const`,
+ *  `satisfies T`, `<T>x`, `x!`, parentheses and `Object.freeze(…)`. */
+function unwrapValueExpression(node: unknown): unknown {
+  let current = node;
+  for (let depth = 0; depth < 8; depth++) {
+    if (!isRecord(current)) return current;
+    switch (current.type) {
+      case 'TSAsExpression':
+      case 'TSSatisfiesExpression':
+      case 'TSTypeAssertion':
+      case 'TSNonNullExpression':
+      case 'ParenthesizedExpression':
+        current = current.expression;
+        continue;
+      case 'CallExpression': {
+        const frozen = objectFreezeArgument(current);
+        if (frozen === undefined) return current;
+        current = frozen;
+        continue;
+      }
+      default:
+        return current;
+    }
+  }
+  return current;
+}
+
+/** Object-literal view of a const initializer after wrapper stripping. */
+function unwrapObjectExpression(node: unknown): Record<string, unknown> | null {
+  const value = unwrapValueExpression(node);
+  return isRecord(value) && value.type === 'ObjectExpression' ? value : null;
+}
+
+/** Imported names ending in these suffixes are configuration wiring (a zod
+ *  schema / a policy table), not a forwarding target. Written naming contract:
+ *  new tools must name their schema `*Schema`, policies `*Policy`. Matched
+ *  case-insensitively so an `_POLICY` constant counts as a policy too. Without
+ *  it every `outputSchema: ImportedSchema` and `ratingPolicy: …` in an exported
+ *  declaration would read as a new pass-through shell. */
+function isConfigReferenceName(name: string): boolean {
+  const lowered = name.toLowerCase();
+  return lowered.endsWith('schema') || lowered.endsWith('policy');
+}
+
+/** `outputSchema` is a contract field: a DomainTool or TaskSpec declares the
+ *  schema its output conforms to, it does not forward that schema as the
+ *  operation. Excluded by property name — a deliberate `{ outputSchema:
+ *  readFoo }` is a review problem, not a machine-detected shell. */
+const CONFIG_PROPERTY_NAMES = new Set(['outputSchema']);
+
+/** Resolve a const name to its object literal through `const x = y` chains.
+ *  Cycles and non-object consts resolve to null; depth is capped by the chain
+ *  length a real module writes, not by a global budget. */
+function resolveConstObject(
+  name: string,
+  constInits: Map<string, unknown>,
+  cache: Map<string, Record<string, unknown> | null>,
+  visiting: Set<string>,
+): Record<string, unknown> | null {
+  if (cache.has(name)) return cache.get(name) ?? null;
+  if (visiting.has(name)) return null;
+  if (!constInits.has(name)) return null;
+  visiting.add(name);
+  const init = unwrapValueExpression(constInits.get(name));
+  let resolved = unwrapObjectExpression(init);
+  if (resolved === null && isRecord(init) && init.type === 'Identifier') {
+    resolved = resolveConstObject(nodeName(init) ?? '', constInits, cache, visiting);
+  }
+  visiting.delete(name);
+  cache.set(name, resolved);
+  return resolved;
+}
+
+/** The per-property forward surface of one object literal: every own property
+ *  whose value is a value-import binding, or a member of one (`ns.foo`, which
+ *  forwards the member, not the namespace object). `null` targetSymbol is the
+ *  namespace '*' case. */
+function objectPropertyForwards(
+  node: Record<string, unknown>,
+  bindings: Map<string, ImportBinding>,
+): { key: string; binding: ImportBinding; member: string | null }[] {
+  const properties = Array.isArray(node.properties) ? node.properties : [];
+  const forwards: { key: string; binding: ImportBinding; member: string | null }[] = [];
+  for (const property of properties) {
+    if (!isRecord(property)) continue;
+    if (property.type !== 'ObjectProperty' && property.type !== 'Property') continue;
+    if (property.computed === true || property.method === true) continue;
+    if (property.kind !== undefined && property.kind !== 'init') continue;
+    const key = nodeName(property.key) ?? literalString(property.key);
+    if (!key || CONFIG_PROPERTY_NAMES.has(key)) continue;
+    const value = unwrapValueExpression(property.value);
+    if (!isRecord(value)) continue;
+    if (value.type === 'Identifier') {
+      const binding = bindings.get(nodeName(value) ?? '');
+      if (!binding || binding.typeOnly || isConfigReferenceName(binding.imported)) continue;
+      forwards.push({ key, binding, member: null });
+      continue;
+    }
+    if (value.type !== 'MemberExpression' || value.computed === true) continue;
+    if (!isRecord(value.object) || value.object.type !== 'Identifier') continue;
+    const member = nodeName(value.property) ?? literalString(value.property);
+    const binding = bindings.get(nodeName(value.object) ?? '');
+    if (!member || !binding || binding.typeOnly || isConfigReferenceName(member)) continue;
+    forwards.push({ key, binding, member });
+  }
+  return forwards;
+}
+
+/** targetSymbol for an object property: the symbol inside the target module. */
+function objectTargetSymbol(binding: ImportBinding, member: string | null): string {
+  if (member === null) return binding.imported;
+  return binding.imported === '*' ? member : `${binding.imported}.${member}`;
+}
+
 function functionCandidateFromDeclarator(
   declarator: Record<string, unknown>,
 ): FunctionCandidate | null {
@@ -373,6 +524,19 @@ export function scanPassThroughSites(
     // pass-through as an export specifier of an import binding. `let`/`var`
     // and non-identifier inits are never provable permanent bindings.
     const varAliases = new Map<string, ImportBinding>();
+    // Object forwarding tables: every `const` initializer is kept so a local
+    // alias chain (`const q = {…}; const x = q`) resolves after the whole pass;
+    // `objectExportLinks` records each exported spelling of one of those names.
+    const constInits = new Map<string, unknown>();
+    const objectExportLinks: ObjectExportLink[] = [];
+    const objectLinkKeys = new Set<string>();
+    const addObjectExportLink = (local: string, exported: string) => {
+      const key = `${local}\u0000${exported}`;
+      if (objectLinkKeys.has(key)) return;
+      objectLinkKeys.add(key);
+      objectExportLinks.push({ local, exported });
+    };
+    const objectCache = new Map<string, Record<string, unknown> | null>();
     const pendingVarExports: { local: string; exported: string }[] = [];
     let runtimeDefs = 0;
     let sawValueReexport = false;
@@ -457,6 +621,13 @@ export function scanPassThroughSites(
                   }
                 }
               }
+              // `export const x = {…}` — one link per declared name; the object
+              // shape is resolved after the pass so wrappers and alias chains
+              // cannot hide it.
+              if (name && declaration.kind === 'const') {
+                constInits.set(name, init);
+                addObjectExportLink(name, name);
+              }
             }
           }
         } else if (statement.exportKind !== 'type' && Array.isArray(statement.specifiers)) {
@@ -472,6 +643,7 @@ export function scanPassThroughSites(
             addLocalExport(local, exported);
             exportedNames.add(exported);
             pendingVarExports.push({ local, exported });
+            addObjectExportLink(local, exported);
             const binding = bindings.get(local);
             if (binding && !binding.typeOnly) {
               const target = resolve(path, binding.source);
@@ -536,36 +708,36 @@ export function scanPassThroughSites(
             end: typeof declaration.end === 'number' ? declaration.end : 0,
           });
           exportedNames.add('default');
-        } else if (
-          isRecord(declaration) &&
-          (declaration.type === 'Identifier' ||
-            (declaration.type === 'TSAsExpression' &&
-              isRecord(declaration.expression) &&
-              declaration.expression.type === 'Identifier'))
-        ) {
-          const ident = declaration.type === 'Identifier' ? declaration : declaration.expression;
-          const localName = nodeName(ident);
-          if (localName) {
-            // `export default f` / `export default f as T` — f may be a local
-            // forward candidate, so `default` is one of its exported names.
-            // (If f is an imported binding the alias site below covers it and
-            // no candidate will ever match this name.)
-            addLocalExport(localName, 'default');
-            exportedNames.add('default');
-            pendingVarExports.push({ local: localName, exported: 'default' });
-          }
-          const binding = bindings.get(localName ?? '');
-          if (binding && !binding.typeOnly) {
-            const target = resolve(path, binding.source);
-            if (target) {
-              sites.push({
-                file: path,
-                kind: 'alias',
-                symbol: 'default',
-                targetModule: target,
-                targetSymbol: binding.imported,
-                detail: `alias:${binding.imported}`,
-              });
+        } else {
+          // `export default {…}`, `export default Object.freeze({…})`,
+          // `export default ({…} satisfies T)`, or `export default localName`.
+          // The object shape is linked through a synthetic const name so every
+          // export spelling goes through one resolver.
+          const value = unwrapValueExpression(declaration);
+          if (isRecord(value) && value.type === 'ObjectExpression') {
+            constInits.set(INLINE_DEFAULT_OBJECT, value);
+            addObjectExportLink(INLINE_DEFAULT_OBJECT, 'default');
+          } else if (isRecord(value) && value.type === 'Identifier') {
+            const localName = nodeName(value);
+            if (localName) {
+              addLocalExport(localName, 'default');
+              exportedNames.add('default');
+              pendingVarExports.push({ local: localName, exported: 'default' });
+              addObjectExportLink(localName, 'default');
+            }
+            const binding = bindings.get(localName ?? '');
+            if (binding && !binding.typeOnly) {
+              const target = resolve(path, binding.source);
+              if (target) {
+                sites.push({
+                  file: path,
+                  kind: 'alias',
+                  symbol: 'default',
+                  targetModule: target,
+                  targetSymbol: binding.imported,
+                  detail: `alias:${binding.imported}`,
+                });
+              }
             }
           }
         }
@@ -591,6 +763,8 @@ export function scanPassThroughSites(
           // that identifier is a value import binding. `let`/`var`, member or
           // call expressions are never provable permanent bindings.
           if (statement.kind !== 'const') continue;
+          const objectConstName = nodeName(declarator.id);
+          if (objectConstName) constInits.set(objectConstName, declarator.init);
           const name = nodeName(declarator.id);
           let init: unknown = declarator.init;
           if (isRecord(init) && init.type === 'TSAsExpression') init = init.expression;
@@ -648,6 +822,28 @@ export function scanPassThroughSites(
       });
     }
 
+    // Object forwarding tables, one site per property: a property holding a
+    // value-import binding (or a member of one) is a forward no matter what its
+    // siblings hold — a `version: 1` or a thunk next to it cannot hide it.
+    // Resolved after the whole pass: wrappers, alias chains and every export
+    // spelling (`export const`, `export {…}`, `export default`) funnel here.
+    for (const link of objectExportLinks) {
+      const node = resolveConstObject(link.local, constInits, objectCache, new Set());
+      if (!node) continue;
+      for (const { key, binding, member } of objectPropertyForwards(node, bindings)) {
+        const target = resolve(path, binding.source);
+        if (!target) continue;
+        sites.push({
+          file: path,
+          kind: 'object',
+          symbol: `${link.exported}.${key}`,
+          targetModule: target,
+          targetSymbol: objectTargetSymbol(binding, member),
+          detail: `object:${objectTargetSymbol(binding, member)}`,
+        });
+      }
+    }
+
     const reexports = [...reexportPairs.values()].sort(
       (a, b) => a.target.localeCompare(b.target) || a.exported.localeCompare(b.exported),
     );
@@ -676,7 +872,18 @@ export function scanPassThroughSites(
     }
   }
 
-  return sites.sort(
+  // One identity, one site: `export const x = {…}` together with a redundant
+  // `export { x }` links the same object twice, and a duplicate in `head` would
+  // otherwise be reported as two new sites by the new-site gate.
+  const seen = new Set<string>();
+  const unique = sites.filter((site) => {
+    const key = identityKey(site);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return unique.sort(
     (a, b) =>
       a.file.localeCompare(b.file) ||
       a.kind.localeCompare(b.kind) ||

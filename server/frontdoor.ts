@@ -77,6 +77,7 @@ export function createFrontdoorContext(api: Hono): FrontdoorContext {
         import('./start/practice-stream-adapters').then((m) => m.practiceStreamAdapters),
       subjects: () => import('./start/subject-adapters').then((m) => m.subjectAdapters),
       noteEditing: () => import('./start/note-editing-adapters').then((m) => m.noteEditingAdapters),
+      workbench: () => import('./start/workbench-adapters').then((m) => m.workbenchAdapters),
     },
     acceptTeachingChip: acceptStartTeachingChip,
     sendCopilotChat: sendStartCopilotChat,
