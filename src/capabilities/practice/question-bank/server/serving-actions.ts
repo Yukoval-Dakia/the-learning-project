@@ -24,6 +24,7 @@ import {
   paid_effect,
   placement_starter_attempt_question,
   question,
+  question_admission_verification,
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
@@ -532,6 +533,43 @@ async function executeReleaseVerifyHold(
         now,
       });
       return { accepted: false, detail: { rejected_reason: holdReason } };
+    }
+
+    // A verify_hold whose latest source_verify@1 is 'suspended' is a NON-VERDICT
+    // hold (config_error or transient): the held revision was never verified at
+    // all, so there is no verdict an owner can override. Releasing it would drop
+    // the group into the awaiting_admission reverify path, whose paid run admits
+    // on content merit alone — an unverified web-sourced question would publish
+    // and serve without the grounding gate ever running. Merit holds keep their
+    // verdict ('failed') and stay releasable.
+    const [latestSourceVerify] = await tx
+      .select({ outcome: question_admission_verification.outcome })
+      .from(question_admission_verification)
+      .innerJoin(
+        question_revision,
+        eq(question_admission_verification.revision_id, question_revision.revision_id),
+      )
+      .where(
+        and(
+          eq(question_revision.group_id, groupId),
+          eq(question_admission_verification.policy_id, 'source_verify@1'),
+        ),
+      )
+      .orderBy(desc(question_admission_verification.recorded_at))
+      .limit(1);
+    if (latestSourceVerify?.outcome === 'suspended') {
+      await writeServingActionEvent(tx, {
+        eventId,
+        groupId,
+        command: 'release_verify_hold',
+        idempotencyKey,
+        accepted: false,
+        holdReason: 'verify_hold',
+        detail: { rejected_reason: 'unverified_source_hold' },
+        actorKind,
+        now,
+      });
+      return { accepted: false, detail: { rejected_reason: 'unverified_source_hold' } };
     }
 
     const published = await publishQuestionGroupFromRow(tx, {
