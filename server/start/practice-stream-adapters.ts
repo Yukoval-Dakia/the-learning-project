@@ -1,5 +1,11 @@
-// Re-exported through FrontdoorContext['adapters'], so the API graph evaluates these
-// modules: Start operations then share the hangar's registry, config snapshot and pool.
-export { getStartPracticeStream } from './practice-stream-operation';
-export { recomposeStartPracticeStream } from './practice-stream-recompose-operation';
-export { updateStartPracticeStreamItem } from './practice-stream-item-operation';
+import { updateStartPracticeStreamItem } from './practice-stream-item-operation';
+import { getStartPracticeStream } from './practice-stream-operation';
+import { recomposeStartPracticeStream } from './practice-stream-recompose-operation';
+
+// One family surface, constructed in the API graph when a Start operation first asks
+// for it; each adapter keeps owning its own conversion, error and deadline handling.
+export const practiceStreamAdapters = {
+  getStartPracticeStream,
+  recomposeStartPracticeStream,
+  updateStartPracticeStreamItem,
+};

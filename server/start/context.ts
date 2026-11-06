@@ -45,12 +45,14 @@ import type {
 } from '@/capabilities/practice/session/public';
 
 export type FrontdoorAdapters = {
-  library: () => Promise<typeof import('./library-adapters')>;
-  records: () => Promise<typeof import('./record-adapters')>;
-  knowledge: () => Promise<typeof import('./knowledge-adapters')>;
-  practiceStream: () => Promise<typeof import('./practice-stream-adapters')>;
-  subjects: () => Promise<typeof import('./subject-adapters')>;
-  noteEditing: () => Promise<typeof import('./note-editing-adapters')>;
+  library: () => Promise<typeof import('./library-adapters')['libraryAdapters']>;
+  records: () => Promise<typeof import('./record-adapters')['recordAdapters']>;
+  knowledge: () => Promise<typeof import('./knowledge-adapters')['knowledgeAdapters']>;
+  practiceStream: () => Promise<
+    typeof import('./practice-stream-adapters')['practiceStreamAdapters']
+  >;
+  subjects: () => Promise<typeof import('./subject-adapters')['subjectAdapters']>;
+  noteEditing: () => Promise<typeof import('./note-editing-adapters')['noteEditingAdapters']>;
 };
 
 export type FrontdoorContext = {

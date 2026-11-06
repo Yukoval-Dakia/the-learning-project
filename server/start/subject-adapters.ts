@@ -1,6 +1,13 @@
-// Re-exported through FrontdoorContext['adapters'], so the API graph evaluates these
-// modules: Start operations then share the hangar's registry, config snapshot and pool.
-export { readStartSubjects } from './subject-reader';
-export { createStartSubject } from './subject-create-operation';
-export { createStartGoal } from './goal-create-operation';
-export { createStartLearningIntent } from './learning-intent-operation';
+import { createStartGoal } from './goal-create-operation';
+import { createStartLearningIntent } from './learning-intent-operation';
+import { createStartSubject } from './subject-create-operation';
+import { readStartSubjects } from './subject-reader';
+
+// One family surface, constructed in the API graph when a Start operation first asks
+// for it; each adapter keeps owning its own conversion, error and deadline handling.
+export const subjectAdapters = {
+  readStartSubjects,
+  createStartSubject,
+  createStartGoal,
+  createStartLearningIntent,
+};

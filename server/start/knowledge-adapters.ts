@@ -1,6 +1,13 @@
-// Re-exported through FrontdoorContext['adapters'], so the API graph evaluates these
-// modules: Start operations then share the hangar's registry, config snapshot and pool.
-export { createStartKnowledgeEdge } from './knowledge-edge-create-operation';
-export { readStartKnowledgeEdges } from './knowledge-edges-reader';
-export { readStartKnowledgeMisconceptions } from './knowledge-misconceptions-reader';
-export { readStartKnowledgeNodePage } from './knowledge-node-reader';
+import { createStartKnowledgeEdge } from './knowledge-edge-create-operation';
+import { readStartKnowledgeEdges } from './knowledge-edges-reader';
+import { readStartKnowledgeMisconceptions } from './knowledge-misconceptions-reader';
+import { readStartKnowledgeNodePage } from './knowledge-node-reader';
+
+// One family surface, constructed in the API graph when a Start operation first asks
+// for it; each adapter keeps owning its own conversion, error and deadline handling.
+export const knowledgeAdapters = {
+  createStartKnowledgeEdge,
+  readStartKnowledgeEdges,
+  readStartKnowledgeMisconceptions,
+  readStartKnowledgeNodePage,
+};

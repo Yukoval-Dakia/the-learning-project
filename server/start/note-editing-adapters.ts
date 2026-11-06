@@ -1,3 +1,5 @@
-// Re-exported through FrontdoorContext['adapters'], so the API graph evaluates these
-// modules: Start operations then share the hangar's registry, config snapshot and pool.
-export { blurStartNoteEditing, heartbeatStartNoteEditing } from './note-editing-operation';
+import { blurStartNoteEditing, heartbeatStartNoteEditing } from './note-editing-operation';
+
+// One family surface, constructed in the API graph when a Start operation first asks
+// for it; each adapter keeps owning its own conversion, error and deadline handling.
+export const noteEditingAdapters = { blurStartNoteEditing, heartbeatStartNoteEditing };

@@ -1,17 +1,33 @@
-// Re-exported through FrontdoorContext['adapters'], so the API graph evaluates these
-// modules: Start operations then share the hangar's registry, config snapshot and pool.
-export { readStartLibraryQuestionDetail } from './library-question-detail-reader';
-export { readStartLibraryQuestionMistakes } from './library-question-mistakes-reader';
-export { readStartLibraryQuestions } from './library-question-list-reader';
-export { readStartLibraryMistakes } from './library-mistake-list-reader';
-export { restoreStartLibraryQuestion } from './library-question-restore-operation';
-export { updateStartLibraryQuestion } from './library-question-update-operation';
-export { runStartLibraryServingAction } from './library-serving-action-operation';
-export { archiveStartLibraryQuestion } from './library-question-delete-operation';
-export { readStartLibraryDraftDetail } from './library-draft-detail-reader';
-export { readStartLibraryDrafts } from './library-draft-list-reader';
-export {
+import { readStartLibraryDraftDetail } from './library-draft-detail-reader';
+import { readStartLibraryDrafts } from './library-draft-list-reader';
+import {
   enableStartLibraryDraft,
   forceEnableStartLibraryDraft,
 } from './library-draft-promotion-operation';
-export { readStartPracticeQuestionDetail } from './practice-question-detail-operation';
+import { readStartLibraryMistakes } from './library-mistake-list-reader';
+import { archiveStartLibraryQuestion } from './library-question-delete-operation';
+import { readStartLibraryQuestionDetail } from './library-question-detail-reader';
+import { readStartLibraryQuestions } from './library-question-list-reader';
+import { readStartLibraryQuestionMistakes } from './library-question-mistakes-reader';
+import { restoreStartLibraryQuestion } from './library-question-restore-operation';
+import { updateStartLibraryQuestion } from './library-question-update-operation';
+import { runStartLibraryServingAction } from './library-serving-action-operation';
+import { readStartPracticeQuestionDetail } from './practice-question-detail-operation';
+
+// One family surface, constructed in the API graph when a Start operation first asks
+// for it; each adapter keeps owning its own conversion, error and deadline handling.
+export const libraryAdapters = {
+  readStartLibraryQuestionDetail,
+  readStartLibraryQuestionMistakes,
+  readStartLibraryQuestions,
+  readStartLibraryMistakes,
+  restoreStartLibraryQuestion,
+  updateStartLibraryQuestion,
+  runStartLibraryServingAction,
+  archiveStartLibraryQuestion,
+  readStartLibraryDraftDetail,
+  readStartLibraryDrafts,
+  enableStartLibraryDraft,
+  forceEnableStartLibraryDraft,
+  readStartPracticeQuestionDetail,
+};
