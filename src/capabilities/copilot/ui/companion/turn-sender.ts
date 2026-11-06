@@ -169,10 +169,13 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
     // instead: recomputing would make the server reject the original key with a 409.
     const route = typeof window === 'undefined' ? '' : window.location.pathname;
     const page = readCompanionFocus();
-    // An active skill wins, then a nudge's material (one-shot), then what the page shows.
-    const focus =
-      resolveTurnAmbientFocus(skill?.ref, internals.nudgeSession) ??
-      (page ? { kind: page.kind, id: page.id } : undefined);
+    // An active skill wins, then a page question (never hidden by a nudge),
+    // then a nudge's material (one-shot), then any other page focus.
+    const focus = resolveTurnAmbientFocus(
+      skill?.ref,
+      internals.nudgeSession,
+      page ? { kind: page.kind, id: page.id } : undefined,
+    );
     return {
       session_id: sessionId,
       user_message: text,
