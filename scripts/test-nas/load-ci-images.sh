@@ -143,35 +143,41 @@ else
     rm -f "$ZIP"
   fi
   note "downloading artifact '${art}' (id ${art_id}) to ${ZIP} (16 connections)"
+  # The .aria2 control file stores the session URIs: on any give-up it must
+  # not be left behind — it would carry a (dead) signed URL onto the disk.
+  dl_fail() { rm -f "${ZIP}.aria2"; die "$*"; }
   attempt=0; MAX_ATTEMPTS=4
   while :; do
     attempt=$((attempt+1))
-    u=$(signed_url) || die "could not obtain a download URL for artifact ${art_id}"
-    [ -n "$u" ] || die "artifact zip request returned no redirect URL"
+    u=$(signed_url) || dl_fail "could not obtain a download URL for artifact ${art_id}"
+    [ -n "$u" ] || dl_fail "artifact zip request returned no redirect URL"
     # aria2 input file: the indented out= pins the local name — the server
     # sends Content-Disposition and -o alone is ignored in this input form.
     { printf '%s\n' "$u"; printf '  out=%s\n' "artifact-${RUN_ID}.zip"; } > "$URLFILE"
+    # aria2c prints the full signed URL to stderr on failure (rc=22, 403,
+    # foreign host...) — its output goes nowhere; only our own attempt/exit
+    # lines are reported.
     aria2c --console-log-level=warn --download-result=hide --summary-interval=0 \
       -x16 -s16 -k1M -c --file-allocation=none \
       --retry-wait=5 --max-tries=3 --timeout=60 --connect-timeout=30 \
       --auto-file-renaming=false --allow-overwrite=true \
-      -d "$DEST" -i "$URLFILE" \
+      -d "$DEST" -i "$URLFILE" >/dev/null 2>&1 \
       && arc=0 || arc=$?
     # Complete = exit 0 AND no .aria2 control file left. rc=22 (or any
     # non-zero with a control file) means resume with a fresh URL.
     if [ ! -f "${ZIP}.aria2" ]; then
       [ "$arc" = 0 ] && break
       [ "$attempt" -ge "$MAX_ATTEMPTS" ] \
-        && die "artifact download failed (aria2c exit ${arc})"
-      note "aria2c exited ${arc} without resume data — retrying with a fresh URL"
+        && dl_fail "artifact download failed (attempt ${attempt}/${MAX_ATTEMPTS}, aria2c exit ${arc})"
+      note "attempt ${attempt}/${MAX_ATTEMPTS}: aria2c exited ${arc} without resume data — retrying with a fresh URL"
     else
       [ "$attempt" -ge "$MAX_ATTEMPTS" ] \
-        && die "artifact download incomplete after ${MAX_ATTEMPTS} attempts"
-      note "download interrupted (aria2c exit ${arc}) — fetching a fresh URL and resuming"
+        && dl_fail "artifact download incomplete after ${attempt} attempts (aria2c exit ${arc})"
+      note "attempt ${attempt}/${MAX_ATTEMPTS}: download interrupted (aria2c exit ${arc}) — fetching a fresh URL and resuming"
     fi
   done
   unzip -tq "$ZIP" 2>/dev/null \
-    || die "downloaded zip failed integrity test — nothing reaches the NAS"
+    || dl_fail "downloaded zip failed integrity test — nothing reaches the NAS"
 fi
 
 note "extracting artifact into ${DL}"
