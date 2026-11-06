@@ -24,6 +24,9 @@ export interface ToolResultSsePayload {
 
 /** YUK-1763 — artifact-authoring args carry the answer key; never project it. */
 function redactIfNeeded(toolName: string, input: Record<string, unknown>): Record<string, unknown> {
+  if (toolName === 'compose_block' || toolName.endsWith('__compose_block')) {
+    return { args_bytes: new TextEncoder().encode(JSON.stringify(input)).byteLength };
+  }
   return INTERACTIVE_ARTIFACT_TOOL_NAMES.has(toolName)
     ? redactInteractiveArtifactToolInput(input)
     : input;

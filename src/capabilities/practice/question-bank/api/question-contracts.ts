@@ -402,7 +402,7 @@ export const QuestionCardResponseSchema = z.object({
       choices_md: z.array(z.string()).nullable(),
       notation: z.string().nullable(),
       inline_supported: z.boolean(),
-      display_response_spec: ResponseSpec,
+      display_response_spec: ResponseSpec.nullable(),
     })
     .nullable(),
   serving: QuestionServingSchema.nullable(),

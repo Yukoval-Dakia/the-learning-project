@@ -35487,7 +35487,7 @@ export interface operations {
                                     slot_id: string;
                                     unit_hint?: string;
                                 })[];
-                            };
+                            } | null;
                             group_id: string;
                             id: string;
                             inline_supported: boolean;

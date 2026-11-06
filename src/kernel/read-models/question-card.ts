@@ -130,11 +130,13 @@ export async function readQuestionCard(db: Db, id: string) {
       part_ids: partIds,
       prompt_md: row.prompt_md,
       kind: row.kind,
-      choices_md: row.choices_md,
+      choices_md: displaySlots.some((slot) => slot.kind === 'matching' || slot.kind === 'ordering')
+        ? null
+        : row.choices_md,
       notation: await resolveQuestionRenderNotation(db, row.id),
       admission_owned: row.admission_owned,
       inline_supported: inlineSupported,
-      display_response_spec: { slots: displaySlots },
+      display_response_spec: displaySlots.length > 0 ? { slots: displaySlots } : null,
     },
     serving,
     latest_attempt: latest
