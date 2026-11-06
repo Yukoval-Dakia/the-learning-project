@@ -1,11 +1,15 @@
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { createNoProgressLoop } from '@/ai/no-progress-loop';
 import { piDomainMount } from '@/ai/pi-tool-mount';
 import { getConfig } from '@/core/config/store';
 import type { Db, Tx } from '@/db/client';
-import { event, question_revision } from '@/db/schema';
+import { event } from '@/db/schema';
 import { parseTaskOutput } from '@/kernel/parse-task-output';
+import {
+  authorizeDemandRepair,
+  readTaskRunPublications,
+} from '@/kernel/records/publication-receipt';
 import { QUESTION_PREPARER_TOOLS, resolveMcpAllowedTools } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
 import { currentTaskSpendScope, withTaskSpendScope } from '@/server/ai/task-spend-scope';
@@ -20,7 +24,6 @@ import {
   preparerHistory,
   preparerRecord,
   preparerSpendKey,
-  preparerSubmittedRevisions,
   preparerUnitContent,
   recoverQuestionPreparer,
 } from './question-preparer-journal';
@@ -146,36 +149,6 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
     if ((previous.ticket_event_id ?? null) !== (data.ticket_event_id ?? null))
       throw new Error('continuation must retain the original ticket binding');
     const calls = await preparerCalls(db, previous.task_run_id);
-    const verdict = data.continuation?.verdict;
-    if (verdict) {
-      const authorRuns = history.filter(
-        (row) => row.outcome === 'finished' && row.subject_id === data.ticket.demand_id,
-      );
-      const authorRunIds = authorRuns.map(
-        (row) => preparerTerminal.parse(row.payload.terminal).task_run_id,
-      );
-      // Publication and its receipt share a transaction; tool logs do not.
-      const authorReceipts = await Promise.all(
-        authorRunIds.map((runId) => preparerSubmittedRevisions(db, runId)),
-      );
-      if (!authorReceipts.some((revisions) => revisions.has(verdict.revision_id)))
-        throw new Error('repair verdict must bind a published submission of this ticket');
-      const [revision] = await db
-        .select()
-        .from(question_revision)
-        .where(
-          and(
-            eq(question_revision.group_id, verdict.question_id),
-            eq(question_revision.revision_id, verdict.revision_id),
-          ),
-        );
-      if (
-        !revision?.scoring_basis.units.some(
-          (unit) => unit.scoring_unit_id === verdict.scoring_unit_id,
-        )
-      )
-        throw new Error('repair verdict must bind a unit in the submitted revision');
-    }
     priorContext = {
       previous,
       calls: calls.map((call) => ({
@@ -192,6 +165,23 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
     await lockQuestionPreparerSegment(tx, data);
     const records = await preparerHistory(tx, data);
     const returned = data.continuation?.verdict;
+    if (returned) {
+      // Repair authorization reads the demand's committed publication receipts in the
+      // same transaction that holds the ticket/question locks. Plain selects only: the
+      // write path commits publication and its receipt together, so this read sees a
+      // publication wholly or not at all.
+      const decision = await authorizeDemandRepair(tx, data.ticket.demand_id, {
+        question_id: returned.question_id,
+        revision_id: returned.revision_id,
+        scoring_unit_id: returned.scoring_unit_id,
+      });
+      if (decision.kind !== 'permitted')
+        throw new Error(
+          decision.reason === 'unit_not_in_revision'
+            ? 'repair verdict must bind a unit in the submitted revision'
+            : 'repair verdict must bind a published submission of this ticket',
+        );
+    }
     const content = returned
       ? await preparerUnitContent(tx, returned.question_id, returned.scoring_unit_id)
       : null;
@@ -347,41 +337,36 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
   const published = new Set<string>();
   const runIds = new Set<string>();
   const versions = new Set<string>();
-  const progressRevisions = new Set<string>();
   const defects = new Set<string>();
   let inventorySatisfied = false;
   let bankEvidenceObserved = false;
   let pendingStockObserved = false;
   let started = false;
+  /** Set by onResult when the owner read found a publication this segment had not seen;
+   *  consumed by the next afterToolCall (the submit that produced it). */
+  let justPublished = false;
   const loop = createNoProgressLoop({
     normalize: stripVolatile,
     progressed(observation, payload) {
+      // Publication progress comes from the owner read in onResult, not from the response.
+      const publishedNow = justPublished;
+      justPublished = false;
+      if (observation.isError) return false;
+      if (publishedNow) return true;
       const output = z
         .object({
           draft_ref: z.string().optional(),
           status: z.string().optional(),
-          revision_id: z.string().optional(),
-          published: z.boolean().optional(),
-          publish_status: z.string().optional(),
           replayed: z.boolean().optional(),
           issues: z.array(z.object({ code: z.string(), detail: z.string() })).optional(),
         })
         .safeParse(
           payload && typeof payload === 'object' && 'output' in payload ? payload.output : payload,
         );
-      if (!output.success || observation.isError) return false;
+      if (!output.success) return false;
       const value = output.data;
       if (value.status === 'saved' && value.draft_ref && !versions.has(value.draft_ref)) {
         versions.add(value.draft_ref);
-        return true;
-      }
-      if (
-        (value.published || value.publish_status === 'published') &&
-        !value.replayed &&
-        value.revision_id &&
-        !progressRevisions.has(value.revision_id)
-      ) {
-        progressRevisions.add(value.revision_id);
         return true;
       }
       if (value.issues?.length) {
@@ -483,14 +468,10 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                 serverName: 'loom',
                 toolNames: surface.toolNames,
                 taskKind: 'QuestionPreparerTask',
-                onResult(observation) {
+                onResult: async (observation) => {
                   const value = z
                     .object({
-                      published: z.boolean().optional(),
-                      publish_status: z.string().optional(),
-                      revision_id: z.string().optional(),
                       fulfillment: z.string().optional(),
-                      replayed: z.boolean().optional(),
                       pending_stock: z.array(z.json()).optional(),
                     })
                     .safeParse(observation.output);
@@ -503,11 +484,14 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
                     inventorySatisfied = true;
                   if (
                     observation.name === 'submit_question' &&
-                    value.data.revision_id &&
-                    !value.data.replayed &&
-                    (value.data.published || value.data.publish_status === 'published')
-                  )
-                    published.add(value.data.revision_id);
+                    observation.executed &&
+                    observation.error_reason == null
+                  ) {
+                    const before = published.size;
+                    for (const receipt of await readTaskRunPublications(db, taskRunId))
+                      published.add(receipt.revision_id);
+                    if (published.size > before) justPublished = true;
+                  }
                 },
               }),
             ],
@@ -517,7 +501,9 @@ export async function runQuestionPreparer(db: Db, jobId: string, raw: unknown, r
   } catch (error) {
     executionError = error;
   } finally {
-    for (const revision of await preparerSubmittedRevisions(db, taskRunId)) published.add(revision);
+    // The committed receipts, not the tool response, decide what this segment published.
+    for (const receipt of await readTaskRunPublications(db, taskRunId))
+      published.add(receipt.revision_id);
     await settleNightlySourcingRun(db, {
       targetId: spendKey,
       taskRunIds: [...runIds],

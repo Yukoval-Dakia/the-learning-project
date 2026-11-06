@@ -11,6 +11,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { lockQuestionSubmitRequest } from '@/kernel/locks/question-supply';
+import { readTaskRunPublications } from '@/kernel/records/publication-receipt';
 import { unknownAttemptCostTruth } from '@/server/ai/attempt-cost';
 import { writeAiTaskAttemptFinished } from '@/server/ai/log';
 import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
@@ -189,29 +190,6 @@ export async function preparerCalls(db: Db | Tx, taskRunId: string) {
     .orderBy(tool_call_log.occurred_at);
 }
 
-/** Receipts commit with publication; tool logging may lag a process death. */
-export async function preparerSubmittedRevisions(db: Db | Tx, taskRunId: string) {
-  const receipts = await db
-    .select({ payload: event.payload })
-    .from(event)
-    .where(
-      and(eq(event.action, 'experimental:question_draft_submit'), eq(event.task_run_id, taskRunId)),
-    );
-  return new Set(
-    receipts.flatMap((row) => {
-      const receipt = row.payload.receipt;
-      return receipt &&
-        typeof receipt === 'object' &&
-        'revision_id' in receipt &&
-        typeof receipt.revision_id === 'string' &&
-        (('publish_status' in receipt && receipt.publish_status === 'published') ||
-          ('published' in receipt && receipt.published === true))
-        ? [receipt.revision_id]
-        : [];
-    }),
-  );
-}
-
 /** Queue truth proves a segment dead. Unknown requests are settled, never replayed. */
 export async function recoverQuestionPreparer(db: Db, jobId: string, forceDead = false) {
   const [claim] = await db
@@ -234,7 +212,7 @@ export async function recoverQuestionPreparer(db: Db, jobId: string, forceDead =
     const runIds = [
       ...new Set([...registered, ...(started ? [`question_preparer_${jobId}`] : [])]),
     ];
-    const revisions = await preparerSubmittedRevisions(tx, `question_preparer_${jobId}`);
+    const publications = await readTaskRunPublications(tx, `question_preparer_${jobId}`);
     let interruptedUnknown = started && registered.length === 0;
     if (runIds.length) {
       const rows = await tx.select().from(ai_task_runs).where(inArray(ai_task_runs.id, runIds));
@@ -257,7 +235,7 @@ export async function recoverQuestionPreparer(db: Db, jobId: string, forceDead =
     await settleNightlySourcingRun(db, {
       targetId: preparerSpendKey(jobId),
       taskRunIds: runIds,
-      submittedCount: revisions.size,
+      submittedCount: publications.length,
       interruptedUnknown,
     });
     await preparerFinish(

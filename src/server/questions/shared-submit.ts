@@ -62,6 +62,11 @@ import { getR2 } from '@/kernel/object-storage';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishedContractSeal } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import {
+  DRAFT_SUBMIT_ACTION,
+  type PublicationReceiptT,
+  publicationReceiptFromSubmit,
+} from '@/kernel/records/publication-receipt';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 import {
   applyScoringEditPlan,
@@ -95,8 +100,6 @@ import {
 } from '@/server/questions/typed-group';
 import { type DraftSubmitVector, deduplicateNewDraftInTx } from './draft-submit-dedup';
 import { ticketScopeIssue } from './ticket-scope';
-
-export const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
 
 type BlockRow = typeof question_block.$inferSelect;
 
@@ -261,7 +264,9 @@ export async function claimSubmitRequestId(
   return { status: 'reused', existing };
 }
 
-/** Submit receipt event: draft submits target question_block, candidate submits question. */
+/** Submit receipt event: draft submits target question_block, candidate submits question.
+ * The publication block is built here, next to the receipt, so a publishing result without
+ * full identity aborts the same transaction instead of committing an unreadable publication. */
 export async function writeSubmitReceiptEvent(
   tx: Tx,
   subject: { kind: 'question_block' | 'question'; id: string },
@@ -270,7 +275,13 @@ export async function writeSubmitReceiptEvent(
   receipt: SubmitResult,
   ctx: SharedSubmitContext,
   now: Date,
-): Promise<void> {
+  publication?: { demand_id?: string | null },
+): Promise<PublicationReceiptT | null> {
+  const publicationReceipt = publicationReceiptFromSubmit(receipt, {
+    demand_id: publication?.demand_id ?? null,
+    request_id: requestId,
+    task_run_id: ctx.taskRunId ?? null,
+  });
   await writeEvent(tx, {
     id: newId(),
     session_id: ctx.sessionId ?? null,
@@ -282,10 +293,16 @@ export async function writeSubmitReceiptEvent(
     subject_kind: subject.kind,
     subject_id: subject.id,
     outcome: 'success',
-    payload: { request_id: requestId, fingerprint, receipt },
+    payload: {
+      request_id: requestId,
+      fingerprint,
+      receipt,
+      ...(publicationReceipt != null ? { publication: publicationReceipt } : {}),
+    },
     created_at: now,
     ingest_at: now,
   });
+  return publicationReceipt;
 }
 
 // Only the server candidate path writes this event, in the same transaction as
@@ -894,11 +911,19 @@ export async function submitDraftQuestionInTx(
       request_id: requestId,
     });
   }
-  const revisionId =
-    publishResult.status === 'published' || publishResult.status === 'noop'
-      ? ((publishResult as { revision_id?: string }).revision_id ??
-        (publishResult as { current_revision_id?: string }).current_revision_id)
-      : undefined;
+  let revisionId: string | undefined;
+  let publicationEventId: string | undefined;
+  if (publishResult.status === 'published') {
+    revisionId = publishResult.revision_id;
+    publicationEventId = publishResult.event_id;
+  } else if (publishResult.status === 'admission_updated') {
+    // Content unchanged, admission/availability dimension republished: the existing
+    // revision is the published one, and the dimension event is its receipt.
+    revisionId = publishResult.current_revision_id;
+    publicationEventId = publishResult.event_id;
+  } else if (publishResult.status === 'noop') {
+    revisionId = publishResult.current_revision_id;
+  }
 
   // Draft terminal state + verify outbox for fetched sources.
   await applyQuestionBlockTransition(
@@ -938,6 +963,7 @@ export async function submitDraftQuestionInTx(
     question_id: groupId,
     group_id: groupId,
     ...(revisionId != null ? { revision_id: revisionId } : {}),
+    ...(publicationEventId != null ? { publication_event_id: publicationEventId } : {}),
     ...(publishResult.status === 'published'
       ? {
           revision_ref: `qrev1:${publishResult.revision_id}:${(publishResult.revision_digest ?? '').replace('sha256:', '').slice(0, 12)}`,
@@ -957,6 +983,7 @@ export async function submitDraftQuestionInTx(
     receipt,
     ctx,
     now,
+    { demand_id: input.demand_id ?? null },
   );
   return receipt;
 }
@@ -1049,6 +1076,8 @@ export interface DeclaredGroupPersistParams {
   /** 提交的幂等 request_id（如 `${candidateRequestId}:submit`）。 */
   submitRequestId: string;
   availability?: 'general_pool' | 'container_only';
+  /** Supply demand that requested this question; recorded on the publication receipt. */
+  demandId?: string;
   /**
    * 供给链注入（原样透传进 submit）：路由 provenance / flat dedup 指纹 /
    * difficulty / 一页一题 source_claim / verify supply_trace 的权威通道。
@@ -1103,6 +1132,7 @@ export async function persistDeclaredQuestionGroupInTx(
         write.receipt,
         write.ctx ?? params.ctx,
         now,
+        { demand_id: params.demandId ?? null },
       );
     }
   };
@@ -1157,6 +1187,7 @@ export async function persistDeclaredQuestionGroupInTx(
           request_id: params.submitRequestId,
           expected_revision: null,
           availability: params.availability,
+          demand_id: params.demandId,
           sourced: params.sourced,
         },
         params.ctx,
@@ -1218,6 +1249,7 @@ export async function persistDeclaredQuestionGroupInTx(
       // revision」，CAS 与首跑/重放路径同一判定。
       expected_revision: null,
       availability: params.availability,
+      demand_id: params.demandId,
       sourced: params.sourced,
     },
     params.ctx,
