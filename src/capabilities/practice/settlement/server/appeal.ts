@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import { ActivateEvaluationIntent, EvaluationProvenance } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
@@ -18,10 +18,107 @@ import {
   evaluateAttempt,
 } from '../../grading/public';
 
+export interface NativeAppealReceipt {
+  appeal_event_id: string;
+  /**
+   * False when a terminal resolution already covers this request — either this
+   * exact appeal id was already resolved, or the same submission + reason already
+   * produced a completed `effective` rejudge the call reuses. The caller must not
+   * enqueue a rejudge (and must not spend a model call) in that case. True for a
+   * fresh appeal and for retryable unfinished/failed attempts.
+   */
+  should_rejudge: boolean;
+}
+
+async function appealResolutionExists(db: Db | Tx, appealId: string): Promise<boolean> {
+  const [resolution] = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.caused_by_event_id, appealId),
+        eq(event.action, 'experimental:assessment_appeal_resolution'),
+      ),
+    )
+    .limit(1);
+  return resolution !== undefined;
+}
+
+/**
+ * Completed-result idempotency (YUK-1880): a second appeal for the SAME submission
+ * and the SAME reason must not re-run the model once a rejudge already landed a
+ * result — including the one-click case where the effective anchor moved to a new
+ * evaluation_id and the appeal id would differ. Only `effective` dispositions
+ * (changed OR unchanged verdicts) complete the boundary; failed, 429, held and
+ * unfinished attempts stay retryable. Latest completed appeal wins. Must run
+ * under `lockAssessmentEvaluationGroup` so no sibling appeal can be mid-resolve.
+ */
+async function findCompletedAppealForSubmission(
+  tx: Tx,
+  input: { evaluation_group_id: string; submission_id: string; reason: string },
+): Promise<string | null> {
+  const appeals = await tx
+    .select({
+      id: event.id,
+      subject_id: event.subject_id,
+      reason_md: sql<string | null>`${event.payload}->>'reason_md'`,
+    })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:appeal_request'),
+        eq(event.subject_kind, 'evaluation'),
+        sql`${event.payload}->>'evaluation_group_id' = ${input.evaluation_group_id}`,
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id));
+  const matching = appeals.filter(
+    (row) => (row.reason_md ?? '') === input.reason && row.subject_id !== null,
+  );
+  if (matching.length === 0) return null;
+  const subjectEvals = await tx
+    .select({ evaluation_id: evaluation.evaluation_id, submission_id: evaluation.submission_id })
+    .from(evaluation)
+    .where(
+      inArray(
+        evaluation.evaluation_id,
+        matching.map((row) => row.subject_id as string),
+      ),
+    );
+  const sameSubmission = new Set(
+    subjectEvals
+      .filter((row) => row.submission_id === input.submission_id)
+      .map((row) => row.evaluation_id),
+  );
+  const candidates = matching.filter((row) => sameSubmission.has(row.subject_id as string));
+  if (candidates.length === 0) return null;
+  const resolutions = await tx
+    .select({
+      appeal_id: event.caused_by_event_id,
+      disposition: sql<string | null>`${event.payload}->>'disposition'`,
+    })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_appeal_resolution'),
+        inArray(
+          event.caused_by_event_id,
+          candidates.map((row) => row.id),
+        ),
+      ),
+    );
+  const resolved = new Set(
+    resolutions
+      .filter((row) => row.disposition === 'effective')
+      .map((row) => row.appeal_id as string),
+  );
+  return candidates.find((row) => resolved.has(row.id))?.id ?? null;
+}
+
 export async function createNativeAppeal(
   database: Db,
   input: { evaluation_id: string; reason_md?: string; idempotency_key?: string },
-) {
+): Promise<NativeAppealReceipt> {
   const reason = input.reason_md ?? '';
   const appealId = `evt_native_appeal_${canonicalHash({
     evaluation_id: input.evaluation_id,
@@ -33,7 +130,10 @@ export async function createNativeAppeal(
     if (existing) {
       if (existing.payload.reason_md !== reason)
         throw new ApiError('appeal_conflict', 'appeal key already has a different reason', 409);
-      return appealId;
+      return {
+        appeal_event_id: appealId,
+        should_rejudge: !(await appealResolutionExists(tx, appealId)),
+      };
     }
     const [original] = await tx
       .select()
@@ -57,6 +157,12 @@ export async function createNativeAppeal(
         409,
       );
     }
+    const reused = await findCompletedAppealForSubmission(tx, {
+      evaluation_group_id: original.evaluation_group_id,
+      submission_id: original.submission_id,
+      reason,
+    });
+    if (reused) return { appeal_event_id: reused, should_rejudge: false };
     await writeEvent(tx, {
       id: appealId,
       actor_kind: 'user',
@@ -72,7 +178,7 @@ export async function createNativeAppeal(
         expected_generation: head.generation,
       },
     });
-    return appealId;
+    return { appeal_event_id: appealId, should_rejudge: true };
   });
 }
 

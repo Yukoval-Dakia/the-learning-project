@@ -1,7 +1,12 @@
 // 结算与撤回重放 owner 的 manifest 片段，由根 `manifest.ts` 组合。
 import { API_ERROR_RESPONSES } from '@/kernel/http-contracts';
 import type { CapabilityManifest } from '@/kernel/manifest';
-import { AppealResponseSchema, CreateAppealBodySchema } from './api/contracts';
+import {
+  AppealResponseSchema,
+  AppealStatusParamsSchema,
+  AppealStatusResponseSchema,
+  CreateAppealBodySchema,
+} from './api/contracts';
 
 export const settlementManifestPart: Omit<CapabilityManifest, 'name' | 'description'> = {
   api: {
@@ -14,6 +19,17 @@ export const settlementManifestPart: Omit<CapabilityManifest, 'name' | 'descript
         responses: { 201: AppealResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 201,
         load: () => import('./api/appeal').then((m) => m.createAppealResource),
+      },
+      {
+        // Learner-safe appeal/rejudge status poll (YUK-1880): in_progress /
+        // changed / unchanged / unjudgeable / failed with before/after verdicts.
+        method: 'GET',
+        path: '/api/appeals/[id]',
+        operationId: 'getAppealStatus',
+        request: { params: AppealStatusParamsSchema },
+        responses: { 200: AppealStatusResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/appeal').then((m) => m.GET),
       },
     ],
   },

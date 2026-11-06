@@ -1,4 +1,4 @@
-import { and, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
@@ -8,7 +8,13 @@ import {
 } from '@/core/schema/event/judge-operational-events';
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import type { Db, Tx } from '@/db/client';
-import { evaluation, event, job_events, judge_run_control } from '@/db/schema';
+import {
+  assessment_submission,
+  evaluation,
+  event,
+  job_events,
+  judge_run_control,
+} from '@/db/schema';
 import { assessmentAttemptEventId } from '@/kernel/records/assessment-attempt-identity';
 import {
   type IssuanceJudgeSettledSchema,
@@ -431,10 +437,41 @@ export async function readNativeJudgeSettled(
   const durable = await readJudgeRunPermanent(database, runId);
   const state = durable.kind === 'absent' ? await readSyncJudged(database, submissionId) : durable;
   const terminal = permanentDto(runId, state);
-  if (terminal) return { kind: 'terminal', run: terminal };
+  if (terminal) {
+    return {
+      kind: 'terminal',
+      run: terminal,
+      latest_appeal_event_id: await latestAppealForSubmission(database, submissionId),
+    };
+  }
   return state.kind === 'pending'
     ? { kind: 'pending', run_id: runId, poll_url: judgeRunPollUrl(runId) }
     : undefined;
+}
+
+/** Newest appeal filed against this submission's evaluation group; refresh resumes polling it. */
+async function latestAppealForSubmission(
+  database: Db | Tx,
+  submissionId: string,
+): Promise<string | null> {
+  const [submission] = await database
+    .select({ evaluation_group_id: assessment_submission.evaluation_group_id })
+    .from(assessment_submission)
+    .where(eq(assessment_submission.submission_id, submissionId))
+    .limit(1);
+  if (!submission) return null;
+  const [appeal] = await database
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:appeal_request'),
+        sql`${event.payload}->>'evaluation_group_id' = ${submission.evaluation_group_id}`,
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(1);
+  return appeal?.id ?? null;
 }
 async function readSyncJudged(
   database: Db | Tx,
