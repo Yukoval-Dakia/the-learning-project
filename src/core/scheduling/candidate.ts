@@ -53,6 +53,8 @@ export const CandidateFactSchema = z
       z.object({
         maximum: z.number(),
         earned: z.number(),
+        /** holistic 条目的 level→分解析来源；加法条目缺省。推导分不冒充官方档点。 */
+        level_points_source: z.enum(['official', 'derived']).optional(),
         shares: z.array(z.object({ skillId: z.string(), share: z.number() })),
       }),
     ),

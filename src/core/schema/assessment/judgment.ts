@@ -10,7 +10,7 @@ import { EvidenceAttachment } from './materials';
 import { PendingState } from './pending';
 import { ResponseSet } from './response';
 import type { ScoringBasisT, ScoringUnitT } from './scoring';
-import { AggregationPolicy } from './scoring';
+import { AggregationPolicy, resolveHolisticLevelPoints } from './scoring';
 
 // ====================================================================
 // YUK-1046 — 五层模型 · 第五层：判分记录（grounding §4.3、§11、D5/D13）
@@ -108,7 +108,8 @@ export type EvidenceCitationT = z.infer<typeof EvidenceCitation>;
  * points_awarded：加法单元必填 —— 唯一例外是 partial_unknown_points
  * （ADR-0074 D3a：无印规则的部分对，typed 记正确数/总数，分数未知）；
  * holistic 单元为 null —— 执行器只报告 matched.level_id，分数由发布侧
- * level_points 映射在聚合时解析（模型不得在输出里自造等级分数）。
+ * level→分解析（level_points 或 rank 推导）在聚合时给出（模型不得在
+ * 输出里自造等级分数）。
  */
 export const ScoredUnitResult = z.object({
   status: z.literal('scored'),
@@ -195,6 +196,13 @@ export const ScoredUnitResult = z.object({
    */
   judged_by: z.string().min(1).optional(),
   probe_judgement: ConjectureProbeResponseJudgement.optional(),
+  /**
+   * YUK-1890 — holistic 单元 level→分解析来源：official = 作者声明
+   * level_points；derived = rank 序位线性推导。由 EvaluationRecord 密封点
+   * 按冻结 unit 盖印（asserted/执行器自报一律被覆盖或剥离）；加法单元与
+   * 旧行无此字段 ⇒ 未知不补造。推导分不冒充官方档点。
+   */
+  level_points_source: z.enum(['official', 'derived']).optional(),
 });
 export type ScoredUnitResultT = z.infer<typeof ScoredUnitResult>;
 
@@ -417,8 +425,9 @@ export type EvaluationRecordT = z.infer<typeof EvaluationRecord>;
  *     执行器不能自己发明分数）；
  *   - blank_scores_zero=false 时 blank_marked_zero 结果 ⇒ invalid_result
  *     （空白计零必须政策明确）；
- *   - holistic 单元：取 matched.level_id 查发布侧 level_points；缺 level_id
- *     或命中未映射档位 ⇒ no_mapping —— 不凭空制造总分；
+ *   - holistic 单元：取 matched.level_id 经发布侧 level→分解析（官方
+ *     level_points / rank 推导）；缺 level_id、命中未映射档或序位无
+ *     区分度 ⇒ no_mapping —— 不凭空制造总分；
  *   - weighted 缺权重 ⇒ invalid_result（绝不雷默当 0）；
  *   - sum / weighted_sum / capped_sum / threshold_levels：加法路径；
  *     thresholds 取满足 min_points 的最高档。
@@ -522,9 +531,9 @@ export function aggregateUnitResults(
       }
     }
     if (unit.criterion.kind === 'holistic_level') {
-      // YUK-1096：holistic 单元的分数只经发布侧 level_points 映射
-      // 解析 —— 执行器自报 points_awarded 是矛盾输入（999 分不得泄入
-      // breakdown/总分），fail-closed，不静默归一化。
+      // YUK-1096：holistic 单元的分数只经发布侧 level→分解析（官方
+      // level_points / rank 推导）—— 执行器自报 points_awarded 是矛盾输入
+      //（999 分不得泄入 breakdown/总分），fail-closed，不静默归一化。
       if (result.points_awarded !== null) {
         return {
           kind: 'invalid',
@@ -535,9 +544,16 @@ export function aggregateUnitResults(
       if (levelId == null) {
         return { kind: 'no_mapping', detail: `unit '${unitId}' reports no matched level` };
       }
-      const mapped = unit.level_points?.[levelId];
+      const resolution = resolveHolisticLevelPoints(unit.criterion, unit.level_points);
+      if (resolution.kind !== 'resolved') {
+        return {
+          kind: 'no_mapping',
+          detail: `unit '${unitId}' hit level '${levelId}' but the level scale is unresolvable: ${resolution.detail}`,
+        };
+      }
+      const mapped = resolution.pointsByLevel.get(levelId);
       if (mapped === undefined) {
-        // 档位未映射（含纯档位 rubric）—— 不凭空制造总分。
+        // 官方映射未覆盖的档位（推导映射覆盖全部声明档）—— 不凭空制造总分。
         return {
           kind: 'no_mapping',
           detail: `unit '${unitId}' hit unmapped level '${levelId}'`,

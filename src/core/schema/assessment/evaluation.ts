@@ -38,7 +38,12 @@ import { PendingState, type PendingStateT } from './pending';
 import type { ResponseSlotT, ResponseSpecT, SlotResponseT } from './response';
 import { isBlankSlotResponse, validateResponseSet } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
-import { type ScoringBasisT, type ScoringUnitT, validateScoringBasis } from './scoring';
+import {
+  type ScoringBasisT,
+  type ScoringUnitT,
+  resolveHolisticLevelPoints,
+  validateScoringBasis,
+} from './scoring';
 import { evaluateScoringRule } from './scoring-rule';
 import type { QuestionPartT } from './structure';
 
@@ -933,7 +938,7 @@ export async function evaluateSubmissionCore(
         submission_id: submission.submission_id,
         attempt: input.attempt,
         status: 'completed',
-        unit_results: unitResults,
+        unit_results: sealLevelPointsSource(unitResults, scopedBasis),
         aggregate,
         plan_digest: input.plan_digest ?? null,
         run_refs: runRefs,
@@ -1376,7 +1381,7 @@ export async function evaluateSubmissionCore(
     submission_id: submission.submission_id,
     attempt: input.attempt,
     status: hasRetryable ? 'pending' : 'completed',
-    unit_results: unitResults,
+    unit_results: sealLevelPointsSource(unitResults, scopedBasis),
     aggregate: hasRetryable ? null : aggregate,
     plan_digest: input.plan_digest ?? null,
     run_refs: runRefs,
@@ -1388,6 +1393,32 @@ export async function evaluateSubmissionCore(
     model_units_invoked: modelUnitsInvoked,
     spent_cost_usd_micros: spentCostMicros,
   };
+}
+
+/**
+ * EvaluationRecord 密封点统一盖印 level→分解析来源（YUK-1890）：holistic
+ * 单元按冻结 unit 标 official/derived —— asserted 自报值被覆盖，非 holistic
+ * 单元携带的被剥离，执行器与 asserted 路径都无从冒充官方档点。
+ */
+function sealLevelPointsSource(
+  results: readonly ScoringUnitResultT[],
+  basis: ScoringBasisT,
+): ScoringUnitResultT[] {
+  const unitById = new Map(basis.units.map((unit) => [unit.scoring_unit_id, unit] as const));
+  return results.map((result) => {
+    if (result.status !== 'scored') return result;
+    const unit = unitById.get(result.scoring_unit_id);
+    if (unit?.criterion.kind !== 'holistic_level') {
+      if (result.level_points_source === undefined) return result;
+      const rest = { ...result };
+      delete rest.level_points_source;
+      return rest;
+    }
+    const source = resolveHolisticLevelPoints(unit.criterion, unit.level_points).source;
+    return result.level_points_source === source
+      ? result
+      : { ...result, level_points_source: source };
+  });
 }
 
 /**

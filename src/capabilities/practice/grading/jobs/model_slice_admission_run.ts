@@ -18,6 +18,7 @@ import {
   SharedMaterial,
   SlotResponse,
   modelResponseClassForUnit,
+  resolveHolisticLevelPoints,
 } from '@/core/schema/assessment';
 import type { ModelOutcomeDiagnosticsT } from '@/core/schema/assessment/model-diagnostics';
 import { sha256Canonical } from '@/core/task-input-hash';
@@ -62,6 +63,28 @@ function samePoints(a: number, b: number): boolean {
   return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
 }
 
+/**
+ * 留出项的比较尺度：加法单元 = 发布 points；holistic 单元 = 与聚合同一的
+ * level→分解析（官方 level_points 最大值 / rank 推导极差）。满分不可解析
+ * ⇒ null —— 显式拒绝，不 fallback 编造。
+ */
+function holdoutUnitScale(unit: z.infer<typeof ScoringUnit>): {
+  maximum: number;
+  level_scale: ReadonlyMap<string, number> | null;
+  source: 'official' | 'derived' | null;
+} | null {
+  if (unit.criterion.kind !== 'holistic_level') {
+    return unit.points === null ? null : { maximum: unit.points, level_scale: null, source: null };
+  }
+  const resolution = resolveHolisticLevelPoints(unit.criterion, unit.level_points);
+  if (resolution.kind !== 'resolved') return null;
+  return {
+    maximum: resolution.maximum,
+    level_scale: resolution.pointsByLevel,
+    source: resolution.source,
+  };
+}
+
 /** 细则留出题的墙钟含一次超时重试；其他 task kind 仍是单次 budget.timeout。 */
 export function admissionCallWindowMs(taskKind: string, timeoutMs: number): number {
   return taskKind === 'AssessmentRubricJudgeTask'
@@ -70,7 +93,19 @@ export function admissionCallWindowMs(taskKind: string, timeoutMs: number): numb
 }
 
 export function holdoutItemFromOutcome(
-  item: { item_id: string; reference_points: number; unit_points: number | null },
+  item: {
+    item_id: string;
+    reference_points: number;
+    /**
+     * 比较用满分：加法单元 = 发布 points；holistic 单元 = level→分解析满分
+     * （官方映射最大值 / rank 推导极差）。
+     */
+    unit_points: number | null;
+    /** holistic 单元的 level→分映射（官方或推导，聚合同一解析）；加法单元缺省。 */
+    level_scale?: ReadonlyMap<string, number>;
+    /** level→分解析来源（holistic 项随结果传播，推导不冒充官方档点）。 */
+    level_points_source?: 'official' | 'derived';
+  },
   outcome: ModelUnitOutcomeT,
 ): ModelSliceAdmissionItemResult {
   if (outcome.kind !== 'scored') {
@@ -84,13 +119,23 @@ export function holdoutItemFromOutcome(
       pending_reason: outcome.pending.reason,
       pending: outcome.pending,
       ...(outcome.diagnostics !== undefined ? { diagnostics: outcome.diagnostics } : {}),
+      ...(item.level_points_source !== undefined
+        ? { level_points_source: item.level_points_source }
+        : {}),
       run_refs: outcome.run_refs,
       ...(outcome.cost_usd_micros !== undefined
         ? { cost_usd_micros: outcome.cost_usd_micros }
         : {}),
     };
   }
-  const awarded = outcome.points_awarded;
+  // holistic 项的 awarded 只经 level→分解析（matched.level_id → 分值）——
+  // 与聚合同一权威，执行器自报 points_awarded 不进入比较口径。
+  const awarded =
+    item.level_scale !== undefined
+      ? outcome.matched?.level_id !== undefined
+        ? (item.level_scale.get(outcome.matched.level_id) ?? null)
+        : null
+      : outcome.points_awarded;
   const unitMax = item.unit_points;
   const agreed = awarded !== null && samePoints(awarded, item.reference_points);
   const severe =
@@ -103,6 +148,9 @@ export function holdoutItemFromOutcome(
     item_id: item.item_id,
     status: 'scored',
     awarded_points: awarded,
+    ...(item.level_points_source !== undefined
+      ? { level_points_source: item.level_points_source }
+      : {}),
     reference_points: item.reference_points,
     agreed,
     severe_error: severe,
@@ -257,6 +305,8 @@ export interface ModelSliceAdmissionItemResult {
   item_id: string;
   status: 'scored' | 'pending';
   awarded_points: number | null;
+  /** holistic 留出项的 level→分解析来源（official / derived）；加法项缺省。 */
+  level_points_source?: 'official' | 'derived';
   reference_points: number;
   agreed: boolean;
   severe_error: boolean;
@@ -547,12 +597,10 @@ export async function runModelSliceAdmission(
     );
   }
 
-  // 3) 留出题集与切片响应类一致 + 规模阈值 + 单元可加性。
-  if (data.items.length < MODEL_SLICE_ADMISSION_THRESHOLDS.min_items) {
-    throw new Error(
-      `model_slice_admission_run: holdout set has ${data.items.length} items < ${MODEL_SLICE_ADMISSION_THRESHOLDS.min_items} (design §4 admission step 4)`,
-    );
-  }
+  // 3) 留出题集与切片响应类一致 + 规模阈值 + 单元满分可解析（加法 = 发布
+  //    points；holistic = level→分解析满分 —— 等级题由此准入，其余
+  //    points=null 形状仍一律拒）。
+  const scaleByItemId = new Map<string, NonNullable<ReturnType<typeof holdoutUnitScale>>>();
   for (const item of data.items) {
     const responseClass = modelResponseClassForUnit(item.unit, item.response_slots);
     if (responseClass !== data.slice.response_class) {
@@ -560,14 +608,26 @@ export async function runModelSliceAdmission(
         `model_slice_admission_run: item '${item.item_id}' is response class '${responseClass ?? 'non-model'}', not '${data.slice.response_class}' — the holdout set does not match the slice`,
       );
     }
-    if (item.unit.points === null) {
+    const scale = holdoutUnitScale(item.unit);
+    if (scale === null) {
       throw new Error(
-        `model_slice_admission_run: item '${item.item_id}' has null unit points — holdout items must be additive units with printed points`,
+        item.unit.criterion.kind === 'holistic_level'
+          ? `model_slice_admission_run: item '${item.item_id}' holistic unit '${item.unit.scoring_unit_id}' has no resolvable level scale — holdout items need a non-empty level_points map or levels with nonzero rank spread`
+          : `model_slice_admission_run: item '${item.item_id}' has null unit points — holdout items must be additive units with printed points`,
       );
     }
-    if (item.reference_points > item.unit.points) {
+    scaleByItemId.set(item.item_id, scale);
+    if (item.reference_points > scale.maximum) {
       throw new Error(
-        `model_slice_admission_run: item '${item.item_id}' reference ${item.reference_points} exceeds unit max ${item.unit.points}`,
+        `model_slice_admission_run: item '${item.item_id}' reference ${item.reference_points} exceeds unit max ${scale.maximum}`,
+      );
+    }
+    if (
+      scale.level_scale !== null &&
+      ![...scale.level_scale.values()].some((value) => samePoints(value, item.reference_points))
+    ) {
+      throw new Error(
+        `model_slice_admission_run: item '${item.item_id}' reference ${item.reference_points} lands on no resolvable level point of holistic unit '${item.unit.scoring_unit_id}' — a holdout reference must equal a level value so agreement is achievable`,
       );
     }
   }
@@ -639,8 +699,8 @@ export async function runModelSliceAdmission(
           );
         }
         const groupId = revisionById.get(item.revision_id)?.group_id;
-        if (!groupId || item.unit.points === null)
-          throw new Error('missing frozen question or maximum');
+        const scale = scaleByItemId.get(item.item_id);
+        if (!groupId || scale === undefined) throw new Error('missing frozen question or maximum');
         const unitIdentity = canonicalHash([item.revision_id, item.unit]);
         if (questionUnits.has(groupId) && questionUnits.get(groupId) !== unitIdentity) {
           throw new Error('all four classes must compare the same frozen scoring unit');
@@ -651,12 +711,12 @@ export async function runModelSliceAdmission(
         classes.add(item.answer_class);
         byQuestion.set(groupId, classes);
         if (
-          item.unit.points === 0 ||
+          scale.maximum === 0 ||
           ((item.answer_class === 'correct' || item.answer_class === 'equivalent') &&
-            !samePoints(item.reference_points, item.unit.points)) ||
+            !samePoints(item.reference_points, scale.maximum)) ||
           (item.answer_class === 'wrong' && item.reference_points !== 0) ||
           (item.answer_class === 'partial' &&
-            (item.reference_points <= 0 || item.reference_points >= item.unit.points))
+            (item.reference_points <= 0 || item.reference_points >= scale.maximum))
         ) {
           throw new Error(`invalid reference points for ${item.item_id}`);
         }
@@ -754,12 +814,15 @@ export async function runModelSliceAdmission(
       ) {
         failures.push(`actual route evidence missing or differs for ${item.item_id}`);
       }
+      const scale = scaleByItemId.get(item.item_id);
       results.push(
         holdoutItemFromOutcome(
           {
             item_id: item.item_id,
             reference_points: item.reference_points,
-            unit_points: item.unit.points,
+            unit_points: scale?.maximum ?? null,
+            ...(scale?.level_scale != null ? { level_scale: scale.level_scale } : {}),
+            ...(scale?.source != null ? { level_points_source: scale.source } : {}),
           },
           outcome,
         ),
@@ -825,7 +888,10 @@ export async function runModelSliceAdmission(
             return (
               result?.status === 'scored' &&
               result.awarded_points !== null &&
-              samePoints(result.awarded_points, item.unit.points ?? Number.NaN)
+              samePoints(
+                result.awarded_points,
+                scaleByItemId.get(item.item_id)?.maximum ?? Number.NaN,
+              )
             );
           }
           return !result.agreed;

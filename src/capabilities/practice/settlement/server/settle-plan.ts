@@ -20,6 +20,7 @@ import {
   localizeKcObservations,
   projectIssuedScoringBasis,
   ratingForVerdict,
+  resolveHolisticLevelPoints,
   resolveThetaDecision,
 } from '@/core/schema/assessment';
 import type { Tx } from '@/db/client';
@@ -390,16 +391,22 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
           (r) => r.scoring_unit_id === unit.scoring_unit_id,
         );
         if (result?.status !== 'scored') return [];
+        const resolution =
+          unit.criterion.kind === 'holistic_level'
+            ? resolveHolisticLevelPoints(unit.criterion, unit.level_points)
+            : null;
         const maximum =
-          unit.criterion.kind === 'holistic_level'
-            ? Math.max(0, ...Object.values(unit.level_points ?? {}))
-            : unit.points;
+          resolution === null
+            ? unit.points
+            : resolution.kind === 'resolved'
+              ? resolution.maximum
+              : null;
         const earned =
-          unit.criterion.kind === 'holistic_level'
-            ? result.matched?.level_id
-              ? unit.level_points?.[result.matched.level_id]
-              : null
-            : result.points_awarded;
+          resolution === null
+            ? result.points_awarded
+            : resolution.kind === 'resolved' && result.matched?.level_id != null
+              ? (resolution.pointsByLevel.get(result.matched.level_id) ?? null)
+              : null;
         if (maximum == null || maximum <= 0 || earned == null) return [];
         const scoreWeight =
           scope.basis.aggregation.kind === 'weighted_sum'
@@ -415,6 +422,7 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
           {
             maximum: maximum * scoreWeight,
             earned: earned * scoreWeight,
+            ...(resolution?.kind === 'resolved' ? { level_points_source: resolution.source } : {}),
             // A partial total cannot identify which of several skills earned it.
             shares:
               ids.length > 1 && earned > 0 && earned < maximum

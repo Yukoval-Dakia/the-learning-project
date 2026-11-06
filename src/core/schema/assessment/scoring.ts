@@ -17,7 +17,9 @@ import type { QuestionGroupStructureT } from './structure';
 //     points 只出现在 unit 上，criterion 描述【怎么判】，dimension 不是独立
 //     累加层（作文维度若要计分，就是各自的 scoring unit）；
 //   - 合计由发布时选定的唯一聚合 policy 决定（sum / cap / weight / threshold）；
-//   - 非加法整体等级用【显式映射】表达；未提供映射不凭空制造总分。
+//   - 非加法整体等级的分数由 level→分解析给出（resolveHolisticLevelPoints）：
+//     作者声明 level_points 为官方映射；缺省时按 rank 序位线性推导并在
+//     结果上标注 derived —— 推导分不冒充官方档点。
 //
 // 复杂规则（依赖/替代/带错续算）以 rule_reference 原文 + 获准执行器判定；
 // 模型只能报告符合哪条规则及其证据，不能在输出中新增依赖图/权重（§4.4）。
@@ -268,9 +270,9 @@ export const ScoringUnit = z.object({
   points: z.number().min(0).nullable(),
   /**
    * holistic 单元的【显式等级→分数映射】（非加法整体等级，§4.4）：
-   * key = level_id，只允许声明过的档位。可以【完全省略】—— 纯档位评分
-   * （ordinal-only rubric）合法：命中任何档位都不产生总分（no_mapping），
-   * 不凭空造分；映射也可不含某些档位 —— 命中未映射档位同样 no_mapping。
+   * key = level_id，只允许声明过的档位。可以【完全省略】—— 缺省时分数按
+   * rank 序位线性推导（resolveHolisticLevelPoints，source='derived'）；
+   * 映射也可不含某些档位 —— 命中未映射档位不产分（no_mapping）。
    * 加法单元禁止携带（validateScoringBasis 强制）。
    */
   level_points: z.record(z.string(), z.number().min(0)).optional(),
@@ -781,4 +783,67 @@ function validateK1Unit(unit: ScoringUnitT, referencedSlots: ResponseSlotT[]): S
         });
   issues.push(...ruleIssues);
   return issues;
+}
+
+// ---------- holistic level → 分值解析（YUK-1890） ----------
+
+/**
+ * level→分值的唯一解析点（纯函数，无 IO）：聚合（judgment.ts）、归一化分母
+ * （settlement.ts aggregateMaxPoints）、学习结算（settle-plan）与模型切片
+ * 准入共用此规则，任何一方不得另写推导。
+ *
+ *   - 作者声明 level_points（非空）⇒ source='official'，满分 = 映射最大值；
+ *     未覆盖的档位查无此键（命中未映射档不产分）；
+ *   - 缺省/空 ⇒ source='derived'：顶档（rank 最大）得推导满分、底档（rank
+ *     最小）得 0，中间按 rank 值线性等距；推导满分 = rank 极差；
+ *   - rank 无区分度（极差为 0，含全部同 rank）⇒ unresolvable —— 序位不携带
+ *     区分信息，推导只会虚构区分度；命中任何档都不产分。
+ *
+ * source 必须随结果传播：推导分不是官方档点，学习者只见官方等级与结算分。
+ */
+export type HolisticLevelPointsSource = 'official' | 'derived';
+
+export type HolisticLevelPointsResolution =
+  | {
+      kind: 'resolved';
+      source: HolisticLevelPointsSource;
+      /** 单元满分（官方映射最大值 / rank 极差）。 */
+      maximum: number;
+      /** level_id → 分值；official 未覆盖的档位查无此键。 */
+      pointsByLevel: ReadonlyMap<string, number>;
+    }
+  | { kind: 'unresolvable'; source: 'derived'; detail: string };
+
+export function resolveHolisticLevelPoints(
+  criterion: HolisticLevelCriterionT,
+  levelPoints: Record<string, number> | undefined,
+): HolisticLevelPointsResolution {
+  const declared = levelPoints ?? {};
+  if (Object.keys(declared).length > 0) {
+    return {
+      kind: 'resolved',
+      source: 'official',
+      maximum: Math.max(...Object.values(declared)),
+      pointsByLevel: new Map(Object.entries(declared)),
+    };
+  }
+  const ranks = criterion.levels.map((level) => level.rank);
+  const minRank = Math.min(...ranks);
+  const maxRank = Math.max(...ranks);
+  const maximum = maxRank - minRank;
+  if (maximum <= 0) {
+    return {
+      kind: 'unresolvable',
+      source: 'derived',
+      detail: `holistic levels carry no rank discrimination (${criterion.levels.length} levels all at rank ${minRank}) — derivation would fabricate a scale`,
+    };
+  }
+  return {
+    kind: 'resolved',
+    source: 'derived',
+    maximum,
+    pointsByLevel: new Map(
+      criterion.levels.map((level) => [level.level_id, level.rank - minRank] as const),
+    ),
+  };
 }

@@ -7,6 +7,7 @@ import {
   learnerLine,
 } from './kc-mastery-evidence';
 import type { ScoringBasisT, ScoringUnitT } from './scoring';
+import { resolveHolisticLevelPoints } from './scoring';
 
 // ====================================================================
 // YUK-1053 — 学习结算 · 纯决策层（grounding §8/§11；D13/D14/D15/D16）
@@ -95,14 +96,18 @@ export const VERDICT_CORRECT_THRESHOLD = 0.85 as const;
  * 归一化分母：发布侧声明的可得满分（sum/capped_sum/weighted_sum 加法域；
  * threshold_levels 取最高档阈值）。加权单元按「自身权重 × 满分」折算；
  * capped 取 cap 封顶；算不出全局上限 ⇒ null —— 归一化不可得，不硬造分母。
+ * holistic 单元按其可解析满分贡献分母（官方 max(level_points) 或 rank
+ * 推导极差，同一解析器），不可解析（无区分度序位）不造分母。
  */
 export function aggregateMaxPoints(basis: ScoringBasisT): number | null {
-  const additive = basis.units.filter(
-    (unit) => unit.criterion.kind !== 'holistic_level' && unit.points != null,
-  );
+  const denominatorOf = (unit: ScoringUnitT): number => {
+    if (unit.criterion.kind !== 'holistic_level') return unit.points ?? 0;
+    const resolution = resolveHolisticLevelPoints(unit.criterion, unit.level_points);
+    return resolution.kind === 'resolved' ? resolution.maximum : 0;
+  };
   switch (basis.aggregation.kind) {
     case 'sum':
-      return additive.reduce((sum, unit) => sum + (unit.points ?? 0), 0);
+      return basis.units.reduce((sum, unit) => sum + denominatorOf(unit), 0);
     case 'weighted_sum': {
       const weights = basis.aggregation.weights;
       const totalWeight = basis.units.reduce(
@@ -110,15 +115,15 @@ export function aggregateMaxPoints(basis: ScoringBasisT): number | null {
         0,
       );
       if (totalWeight <= 0) return null;
-      return additive.reduce(
-        (sum, unit) => sum + (unit.points ?? 0) * (weights[unit.scoring_unit_id] ?? 0),
+      return basis.units.reduce(
+        (sum, unit) => sum + denominatorOf(unit) * (weights[unit.scoring_unit_id] ?? 0),
         0,
       );
     }
     case 'capped_sum':
       return Math.min(
         basis.aggregation.cap,
-        additive.reduce((sum, unit) => sum + (unit.points ?? 0), 0),
+        basis.units.reduce((sum, unit) => sum + denominatorOf(unit), 0),
       );
     case 'threshold_levels': {
       const thresholds = basis.aggregation.thresholds;
@@ -243,10 +248,9 @@ export type UnitEvidence =
  * - additive：points=0 单元 ⇒ uninformative（零分单元没有判据可命中，
  *   full/zero 都不可归因）；points_awarded<=0 ⇒ zero；>= unit.points ⇒ full；
  *   中间 ⇒ partial（判分器已保证 ≤ 发布上限，本函数不再校验）；
- * - holistic：level_points 声明时按映射值分档（0 ⇒ zero；满档 ⇒ full；其余
- *   partial）；未映射档位 ⇒ unmapped；纯档位 rubric（无映射）按 rank 分档
- *   （maxRank ⇒ full；rank=0 ⇒ zero；中间 ⇒ partial）；缺 matched.level_id
- *   ⇒ unmapped。
+ * - holistic：level→分值与聚合同一解析（resolveHolisticLevelPoints）——
+ *   映射值 0 ⇒ zero；满分档 ⇒ full；中间 ⇒ partial；未映射档位、缺
+ *   matched.level_id 或序位无区分度 ⇒ unmapped（不凭序位虚构证据）。
  */
 export function classifyScoredUnit(unit: ScoringUnitT, result: ScoringUnitResultT): UnitEvidence {
   if (result.status === 'pending') return { kind: 'uninformative' };
@@ -254,21 +258,12 @@ export function classifyScoredUnit(unit: ScoringUnitT, result: ScoringUnitResult
   if (unit.criterion.kind === 'holistic_level') {
     const levelId = result.matched?.level_id;
     if (levelId == null) return { kind: 'unmapped' };
-    const levelPoints = unit.level_points ?? {};
-    if (Object.keys(levelPoints).length > 0) {
-      const mapped = levelPoints[levelId];
-      if (mapped === undefined) return { kind: 'unmapped' };
-      const maxMapped = Math.max(...Object.values(levelPoints));
-      if (mapped <= 0) return { kind: 'zero' };
-      if (maxMapped > 0 && mapped >= maxMapped) return { kind: 'full' };
-      return { kind: 'partial' };
-    }
-    const levels = unit.criterion.levels;
-    const matched = levels.find((level) => level.level_id === levelId);
-    if (matched === undefined) return { kind: 'unmapped' };
-    const maxRank = Math.max(...levels.map((level) => level.rank));
-    if (matched.rank <= 0) return { kind: 'zero' };
-    if (matched.rank >= maxRank) return { kind: 'full' };
+    const resolution = resolveHolisticLevelPoints(unit.criterion, unit.level_points);
+    if (resolution.kind !== 'resolved') return { kind: 'unmapped' };
+    const mapped = resolution.pointsByLevel.get(levelId);
+    if (mapped === undefined) return { kind: 'unmapped' };
+    if (mapped <= 0) return { kind: 'zero' };
+    if (resolution.maximum > 0 && mapped >= resolution.maximum) return { kind: 'full' };
     return { kind: 'partial' };
   }
   const max = unit.points ?? 0;
