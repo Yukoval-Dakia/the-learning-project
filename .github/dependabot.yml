@@ -29,6 +29,9 @@ updates:
           - "minor"
           - "patch"
     ignore:
+      # The mascot's glass patches three's shader chunks by name; a bump can break the compile and
+      # the page silently falls back to the still flower (r187 did). Upgrade by hand and look at it.
+      - dependency-name: "three"
       # drizzle-zod 0.8.x is deliberately pinned to ^0.7.1 — 0.8.3 breaks the
       # generated types (owner-verified revert; see project dep-constraints).
       # Without this, the un-mergeable drizzle-zod bump poisons the whole
