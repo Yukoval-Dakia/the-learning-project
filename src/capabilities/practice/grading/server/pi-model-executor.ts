@@ -111,18 +111,14 @@ function citableSources(
       total_chars: textEvidence.reduce((sum, item) => sum + item.text.length, 0),
     },
     { kind: 'image_evidence', count: evidenceKinds.filter((k) => k === 'image').length },
-    {
-      kind: 'other_evidence',
-      count: evidenceKinds.filter((k) => k !== 'image' && k !== 'plaintext').length,
-    },
   ];
 }
 
 /**
  * 与拒收判定同一逻辑，但逐条产出脱敏诊断：校验顺序不变（无目标 → 未知
  * slot → 未知 evidence → 引文非原文），记录每条被拒引文的 hash/长度与
- * 指向 id（真实提交的记原文，模型声称的记 sha256）。短引文不记 hash —
- * 可枚举短语的 sha256 能被字典还原。
+ * 指向 id（真实提交的记原文，模型声称的记 sha256）。短引文与短声称 id
+ * 不记 hash —— 可枚举短语/短 id 的 sha256 能被字典还原。
  */
 function citationRejections(
   request: ModelExecutorRequest,
@@ -144,10 +140,20 @@ function citationRejections(
     const evidenceKnown = evidenceId !== null && evidenceIds.has(evidenceId);
     const record = {
       ...(slotKnown ? { slot_id: slotId } : {}),
-      ...(slotId !== null && !slotKnown ? { claimed_slot_id_sha256: sha256Hex(slotId) } : {}),
+      ...(slotId !== null && !slotKnown
+        ? {
+            claimed_slot_id_length: slotId.length,
+            ...(slotId.length >= 16 ? { claimed_slot_id_sha256: sha256Hex(slotId) } : {}),
+          }
+        : {}),
       ...(evidenceKnown ? { evidence_id: evidenceId } : {}),
       ...(evidenceId !== null && !evidenceKnown
-        ? { claimed_evidence_id_sha256: sha256Hex(evidenceId) }
+        ? {
+            claimed_evidence_id_length: evidenceId.length,
+            ...(evidenceId.length >= 16
+              ? { claimed_evidence_id_sha256: sha256Hex(evidenceId) }
+              : {}),
+          }
         : {}),
       ...(citation.quote !== undefined
         ? {
@@ -202,7 +208,12 @@ function decisionDiagnostics(
           criterion_kind: criterion.kind,
           ...(criterion.kind === 'rule_reference' && decision.rule_id === criterion.rule_id
             ? { rule_id: decision.rule_id }
-            : { rule_id_sha256: sha256Hex(decision.rule_id) }),
+            : {
+                rule_id_length: decision.rule_id.length,
+                ...(decision.rule_id.length >= 16
+                  ? { rule_id_sha256: sha256Hex(decision.rule_id) }
+                  : {}),
+              }),
           points_awarded: decision.points_awarded,
           unit_points: request.unit.points,
         }
@@ -212,7 +223,12 @@ function decisionDiagnostics(
           ...(criterion.kind === 'holistic_level' &&
           criterion.levels.some((level) => level.level_id === decision.level_id)
             ? { level_id: decision.level_id }
-            : { level_id_sha256: sha256Hex(decision.level_id) }),
+            : {
+                level_id_length: decision.level_id.length,
+                ...(decision.level_id.length >= 16
+                  ? { level_id_sha256: sha256Hex(decision.level_id) }
+                  : {}),
+              }),
           unit_points: request.unit.points,
         };
   return { check: 'decision_criterion_mismatch', decision: summary };

@@ -3,7 +3,7 @@ import { z } from 'zod';
 /**
  * 模型拒收引文的脱敏摘要。目标 id 只有真实提交过才记原文；模型声称但不
  * 存在的 id 与引文明文一律只留 sha256 + 长度，绝不落学习者/模型原文。
- * 短引文（< 16 字符）不记 quote_sha256 —— 可枚举短语（含危机短语）的
+ * 短引文与短声称 id（< 16 字符）不记 sha256 —— 可枚举短语/短 id 的
  * hash 能被字典还原，只留长度。
  */
 export const ModelOutcomeRejectedCitation = z.object({
@@ -12,17 +12,19 @@ export const ModelOutcomeRejectedCitation = z.object({
   slot_id: z.string().min(1).optional(),
   evidence_id: z.string().min(1).optional(),
   claimed_slot_id_sha256: z.string().min(1).optional(),
+  claimed_slot_id_length: z.number().int().min(0).optional(),
   claimed_evidence_id_sha256: z.string().min(1).optional(),
+  claimed_evidence_id_length: z.number().int().min(0).optional(),
   quote_sha256: z.string().min(1).optional(),
   quote_length: z.number().int().min(0).optional(),
 });
 export type ModelOutcomeRejectedCitationT = z.infer<typeof ModelOutcomeRejectedCitation>;
 
-/** 执行期拒收时可引用来源：文字类记数量+总字符，非文字证据只记类型+数量。 */
+/** 执行期拒收时可引用来源：文字类记数量+总字符，image 证据只记数量。 */
 export const ModelOutcomeCitableSource = z.object({
-  kind: z.enum(['slot_text', 'text_evidence', 'image_evidence', 'other_evidence']),
+  kind: z.enum(['slot_text', 'text_evidence', 'image_evidence']),
   count: z.number().int().min(0),
-  /** 仅文字类来源有总字符；image/other 证据不记。 */
+  /** 仅文字类来源有总字符；image 证据不记。 */
   total_chars: z.number().int().min(0).optional(),
 });
 export type ModelOutcomeCitableSourceT = z.infer<typeof ModelOutcomeCitableSource>;
@@ -48,11 +50,13 @@ export const ModelOutcomeDiagnostics = z.object({
     .object({
       kind: z.enum(['rule', 'level']),
       criterion_kind: z.string().min(1),
-      /** 与冻结 rule/level 一致时记原文 id；不一致时只记 claimed id 的 hash。 */
+      /** 与冻结 rule/level 一致时记原文 id；不一致时 claimed id 只记 hash+长度（<16 只记长度）。 */
       rule_id: z.string().min(1).optional(),
       rule_id_sha256: z.string().min(1).optional(),
+      rule_id_length: z.number().int().min(0).optional(),
       level_id: z.string().min(1).optional(),
       level_id_sha256: z.string().min(1).optional(),
+      level_id_length: z.number().int().min(0).optional(),
       points_awarded: z.number().min(0).optional(),
       unit_points: z.number().min(0).nullable(),
     })

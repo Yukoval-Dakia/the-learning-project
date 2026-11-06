@@ -8,7 +8,6 @@ import { canonicalHash } from '@/core/migration/canonical';
 import {
   GroupEvidence,
   type ModelExecutorRequest,
-  type ModelOutcomeDiagnosticsT,
   type ModelUnitOutcomeT,
   type PendingStateT,
   QuestionGroupStructure,
@@ -20,6 +19,7 @@ import {
   SlotResponse,
   modelResponseClassForUnit,
 } from '@/core/schema/assessment';
+import type { ModelOutcomeDiagnosticsT } from '@/core/schema/assessment/model-diagnostics';
 import { sha256Canonical } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { ai_task_runs, event, question_revision } from '@/db/schema';
