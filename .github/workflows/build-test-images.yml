@@ -35,10 +35,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 150
     steps:
+      # The dispatch input must be a full 40-hex commit and is validated
+      # before anything consumes it, including the checkout below.
+      - name: Validate commit input
+        env:
+          COMMIT_INPUT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          case "$COMMIT_INPUT" in
+            *[!0-9a-f]* | '') echo "commit must be 40 lowercase hex, got: ${COMMIT_INPUT}" >&2; exit 1;;
+          esac
+          [ "${#COMMIT_INPUT}" -eq 40 ] \
+            || { echo "commit must be exactly 40 hex chars, got: ${COMMIT_INPUT}" >&2; exit 1; }
+
       - name: Checkout target commit
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ inputs.commit || github.sha }}
+          ref: ${{ inputs.commit }}
           persist-credentials: false
 
       - name: Record resolved commit
@@ -46,10 +59,12 @@ jobs:
         run: |
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
-          case "$sha" in *[!0-9a-f]*) echo "resolved ref is not hex: ${sha}" >&2; exit 1;; esac
-          [ "${#sha}" -eq 40 ] || { echo "resolved ref is not a full SHA: ${sha}" >&2; exit 1; }
+          [ "$sha" = "$COMMIT_INPUT" ] \
+            || { echo "checkout resolved ${sha} != requested ${COMMIT_INPUT}" >&2; exit 1; }
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
           echo "building commit ${sha}"
+        env:
+          COMMIT_INPUT: ${{ inputs.commit }}
 
       # The three images plus the buildkit cache and the save archive add up to
       # ~15 GB; drop preinstalled toolchains this job never touches.
@@ -71,7 +86,7 @@ jobs:
           docker buildx inspect --bootstrap | tail -5
 
       - name: Restore buildx layer cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/tlp-buildx-cache
           key: tlp-test-${{ steps.src.outputs.sha }}
@@ -262,7 +277,7 @@ jobs:
           import re, sys
           sha = sys.argv[1]
           basename_globs = [
-              ("dotenv-like", re.compile(r"^\.env($|\.)")),
+              ("dotenv-like", re.compile(r"^\.env")),
               ("*.private.*", re.compile(r".*\.private\..*")),
               ("compose*private*", re.compile(r"^compose.*private.*", re.I)),
               ("auth.json", re.compile(r"^auth\.json$", re.I)),

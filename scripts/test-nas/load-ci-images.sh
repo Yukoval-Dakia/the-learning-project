@@ -68,16 +68,27 @@ nas_stdin() {
 }
 
 # ---------- download ----------------------------------------------------
-# The run must be a successful run of THIS workflow on this repo's own
-# branches — artifact names are attacker-controlled on fork runs.
+# Only a successful workflow_dispatch of THIS workflow on this repository's
+# own main branch is a trusted producer. A fork-PR run can modify this same
+# workflow path and upload arbitrary images under a fork head repo, and a
+# push run on another branch is not a release build — all are refused here.
 note "checking provenance of run ${RUN_ID} in ${REPO}"
 prov=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}" \
-  --jq '[.path, .event, .conclusion, (.head_branch // "")] | @tsv') \
+  --jq '[.path, .event, .conclusion, (.head_branch // ""), (.head_repository.full_name // "")] | @tsv') \
   || die "could not read run ${RUN_ID}"
 wpath=$(printf '%s' "$prov" | cut -f1)
+wevent=$(printf '%s' "$prov" | cut -f2)
 concl=$(printf '%s' "$prov" | cut -f3)
+wbranch=$(printf '%s' "$prov" | cut -f4)
+wrepo=$(printf '%s' "$prov" | cut -f5)
 [ "$wpath" = ".github/workflows/build-test-images.yml" ] \
   || die "run ${RUN_ID} is not a build-test-images run (workflow: ${wpath})"
+[ "$wevent" = "workflow_dispatch" ] \
+  || die "run ${RUN_ID} event is '${wevent}', not workflow_dispatch — refusing its artifact"
+[ "$wrepo" = "$REPO" ] \
+  || die "run ${RUN_ID} head repository is '${wrepo}', not ${REPO} — refusing its artifact"
+[ "$wbranch" = "main" ] \
+  || die "run ${RUN_ID} head branch is '${wbranch}', not main — refusing its artifact"
 [ "$concl" = "success" ] \
   || die "run ${RUN_ID} concluded '${concl}', not success — refusing its artifact"
 
@@ -154,9 +165,9 @@ MANI_AWSHA=$(sed -n 's/^archive_sha256=//p' "$VERIFY")
   || die "manifest archive_sha256 != verified ${ARCHIVE_SHA} — refusing to load"
 
 # Every expected image must be present and tagged exactly
-# tlp-test:<commit>-<target>; anything else is not loaded.
-expect="runner worker builder"
-for t in $expect; do
+# tlp-test:<commit>-<target>; anything else is not loaded. Literal words in
+# the list — `for t in $var` does not word-split under zsh.
+for t in runner worker builder; do
   grep -q "^T|${t}|tlp-test:${WANT_COMMIT}-${t}|" "$VERIFY" \
     || die "manifest missing expected target/tag tlp-test:${WANT_COMMIT}-${t}"
 done

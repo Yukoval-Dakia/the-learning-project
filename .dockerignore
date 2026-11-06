@@ -2,8 +2,10 @@ node_modules
 .next
 .git
 .claude
-.env
-.env.*
+# Anything whose name starts with .env is private-adjacent (covers
+# ".env backup", ".env<TAB>x", ".envrc" — not only .env and .env.*).
+# The tracked example file stays via the exact-path exception.
+.env*
 !.env.example
 .vercel
 docs
