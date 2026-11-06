@@ -12,8 +12,8 @@ import {
 } from '@/db/schema';
 import { resetDb, testDb } from '../../tests/helpers/db';
 import { buildHonoApp } from '../app';
-import { runAuthenticatedStartAdmin } from './admin-read';
-import type { createStartAdminReader } from './admin-reader';
+import { createStartAdminReader } from './admin-adapters';
+import { runAuthenticatedStartAdmin } from './admin-function';
 
 // Connection ownership only. Every SQL query, canonical reader and HTTP handler is real.
 vi.mock('@/db/client', async () => {
@@ -31,7 +31,10 @@ const request = (token?: string) =>
   new Request('http://isolated.test/_serverFn/admin', {
     headers: token === undefined ? {} : { 'x-internal-token': token },
   });
-const context = () => ({ api: buildHonoApp([], { epochGate: async () => ({ runnable: true }) }) });
+const context = () => ({
+  api: buildHonoApp([], { epochGate: async () => ({ runnable: true }) }),
+  adapters: { admin: async () => ({ createStartAdminReader }) },
+});
 async function seed(database: Db | Tx) {
   await database.insert(ai_task_runs).values([
     {

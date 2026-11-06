@@ -149,6 +149,53 @@ export const ProposalDecisionInput = z
   });
 export type ProposalDecisionInputT = z.infer<typeof ProposalDecisionInput>;
 
+// One learner action may undo a batch of auto-applied proposals either by id
+// list or by apply-time window. The two forms are exclusive so the caller does
+// not have to guess which one wins; the server caps either at the same row
+// budget as the digest read model.
+export const PROPOSAL_BATCH_RETRACT_MAX_IDS = 200;
+
+export const ProposalBatchRetractInput = z
+  .object({
+    proposal_ids: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .max(PROPOSAL_BATCH_RETRACT_MAX_IDS)
+      .optional(),
+    from: z.string().datetime().optional(),
+    to: z.string().datetime().optional(),
+    reason_md: z.string().trim().min(1).max(2000).optional(),
+  })
+  .strict()
+  .superRefine((data, ctx) => {
+    const hasIds = data.proposal_ids !== undefined;
+    const hasWindow = data.from !== undefined || data.to !== undefined;
+    if (hasIds === hasWindow) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'provide either proposal_ids or a from/to window, not both',
+        path: ['proposal_ids'],
+      });
+      return;
+    }
+    if (!hasIds && data.from === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'a window requires from',
+        path: ['from'],
+      });
+      return;
+    }
+    if (data.from && data.to && Date.parse(data.from) > Date.parse(data.to)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'from must not be after to',
+        path: ['to'],
+      });
+    }
+  });
+export type ProposalBatchRetractInputT = z.infer<typeof ProposalBatchRetractInput>;
+
 // The decision resource is an explicit union, not a broadly nullable success
 // contract: every COMMITTED decision still requires its immutable event id
 // (readable through GET /api/events/:id, so the HTTP handler can return an
