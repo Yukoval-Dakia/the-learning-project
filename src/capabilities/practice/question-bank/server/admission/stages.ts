@@ -134,15 +134,19 @@ const StageReceipt = z.discriminatedUnion('kind', [
 ]);
 
 // Only bound HTTP facts qualify; provider message strings never grant a retry.
+// Route-login waits are serviced only by the adjudication probe clock — a
+// non-adjudication 401 left as 'login' would resume immediately forever.
 function existingRecovery(
   error: unknown,
-  httpStatus?: number | null,
+  httpStatus: number | null | undefined,
+  kind: string,
 ): ReturnType<AdmissionRecoveryReader> {
   if (!(error instanceof AgentRunError)) return null;
   if (error.helpProviderFault?.kind === 'quota')
     return { reason: 'quota', evidence_ref: error.taskRunId };
   if (httpStatus === 429) return { reason: 'quota', evidence_ref: error.taskRunId };
-  if (httpStatus === 401) return { reason: 'login', evidence_ref: error.taskRunId };
+  if (httpStatus === 401 && kind === 'QuestionAdmissionAdjudicateTask')
+    return { reason: 'login', evidence_ref: error.taskRunId };
   return null;
 }
 
@@ -480,7 +484,7 @@ export function admissionStageRunner(input: {
                 : undefined;
             const recovery =
               (kind === 'QuestionAdmissionAdjudicateTask' ? input.recovery?.(error) : undefined) ??
-              existingRecovery(error, httpStatus);
+              existingRecovery(error, httpStatus, kind);
             const knownFailure =
               error instanceof AgentRunError &&
               run?.finished_at != null &&

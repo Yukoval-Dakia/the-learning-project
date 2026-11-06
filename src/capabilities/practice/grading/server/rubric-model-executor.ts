@@ -439,7 +439,32 @@ export function createRubricModelExecutor(
             if (reported !== undefined) knownSpent += reported;
             else unknownAttempts += 1;
             priorRefs.splice(0, priorRefs.length, ...refs);
-            if (plan.delayMs > 0) await sleepMs(plan.delayMs, signal);
+            if (plan.delayMs > 0) {
+              // The per-attempt timeout already fired for this attempt; the
+              // backoff belongs to the invocation, so it must not be killed
+              // by a stale attempt signal.
+              try {
+                await sleepMs(
+                  plan.delayMs,
+                  AbortSignal.any([
+                    AbortSignal.timeout(Math.max(0, options.deadlineAt - Date.now())),
+                    ...[options.signal, callerSignal].filter(
+                      (value): value is AbortSignal => value !== undefined,
+                    ),
+                  ]),
+                );
+              } catch {
+                return pending(
+                  {
+                    reason: 'infra_failure',
+                    retryable: false,
+                    detail: 'native model deadline/cancellation reached',
+                  },
+                  refs,
+                  unknownAttempts === 0 ? knownSpent : undefined,
+                );
+              }
+            }
             continue;
           }
         }
