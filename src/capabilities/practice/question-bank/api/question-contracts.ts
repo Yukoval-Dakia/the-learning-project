@@ -408,6 +408,7 @@ export const QuestionCardResponseSchema = z.object({
       group_id: z.string(),
       part_ids: z.array(z.string()).optional(),
       prompt_md: z.string(),
+      blank_order: z.array(z.string().min(1)).optional(),
       admission_owned: z.boolean(),
       kind: z.string(),
       choices_md: z.array(z.string()).nullable(),

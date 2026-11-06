@@ -35249,6 +35249,7 @@ export interface operations {
                         } | null;
                         question: {
                             admission_owned: boolean;
+                            blank_order?: string[];
                             choices_md: string[] | null;
                             display_response_spec: {
                                 slots: ({

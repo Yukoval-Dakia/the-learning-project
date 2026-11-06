@@ -1,11 +1,11 @@
-import { createHash } from 'node:crypto';
 import { and, desc, eq, getTableColumns, ne, sql } from 'drizzle-orm';
 import {
   PublishedQuestionRevision,
+  deriveIssuanceBinding,
   hasOnlyDeterministicExecutors,
   projectIssuedScoringBasis,
+  projectPracticeIssuance,
 } from '@/core/schema/assessment';
-import { ResponseSpec } from '@/core/schema/assessment/response';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { notHoldoutOnlyPredicate } from '@/db/predicates';
@@ -31,9 +31,7 @@ export async function readQuestionCard(db: Db, id: string, sessionId?: string) {
     .select({
       id: question.id,
       parent_question_id: question.parent_question_id,
-      prompt_md: question.prompt_md,
       kind: question.kind,
-      choices_md: question.choices_md,
       admission_owned: declaredAdmissionOwned(),
     })
     .from(question)
@@ -65,66 +63,49 @@ export async function readQuestionCard(db: Db, id: string, sessionId?: string) {
     )
     .where(eq(question_group_lifecycle.group_id, groupId))
     .limit(1);
-  const parts = (revision?.structure as { parts?: { part_id: string }[] } | undefined)?.parts ?? [];
-  const singlePart = row.parent_question_id != null || parts.length === 1;
-  const partIds = row.parent_question_id ? [row.id] : parts.map((part) => part.part_id);
   const parsedRevision = revision
     ? PublishedQuestionRevision.safeParse(revisionRowToContract(revision))
     : null;
+  if (!parsedRevision?.success)
+    return { ...empty, state: 'unavailable' as const, question: null, serving };
+  const published = parsedRevision.data;
+  const partIds = row.parent_question_id
+    ? [row.id]
+    : published.structure.parts.map((part) => part.part_id);
+  let display: ReturnType<typeof projectPracticeIssuance>;
+  try {
+    // Previewing the public projection neither persists nor authorizes an issuance.
+    display = projectPracticeIssuance(published, {
+      issuance_id: 'question-card-preview',
+      binding: deriveIssuanceBinding(published, { part_ids: partIds }),
+      issued_at: published.published_at,
+      claim: { policy: 'unbounded', status: 'unclaimed', claimed_by_ref: null },
+    });
+  } catch {
+    return { ...empty, state: 'unavailable' as const, question: null, serving };
+  }
+  const singlePart = display.faces.length === 1;
   const inlineSupported =
     singlePart &&
-    parsedRevision?.success === true &&
-    partIds.every((id) =>
-      parsedRevision.data.structure.parts.some((part) => part.part_id === id),
-    ) &&
+    display.faces[0].material_ids.length === 0 &&
     hasOnlyDeterministicExecutors(
-      parsedRevision.data.execution_plan,
+      published.execution_plan,
       new Set(
-        projectIssuedScoringBasis(parsedRevision.data, partIds).units.map(
-          (unit) => unit.scoring_unit_id,
-        ),
+        projectIssuedScoringBasis(published, partIds).units.map((unit) => unit.scoring_unit_id),
       ),
     );
-  const spec = ResponseSpec.safeParse(revision?.response_spec);
-  const displaySlots =
-    singlePart && spec.success && revision != null
-      ? spec.data.slots
-          .filter((slot) => partIds.includes(slot.part_id))
-          .map((slot) => {
-            if (slot.kind === 'select' && slot.axes != null) {
-              return {
-                ...slot,
-                items: displayOrder(slot.items, `${revision.revision_id}:${slot.slot_id}:items`),
-                axes: Object.fromEntries(
-                  Object.entries(slot.axes).map(([axis, entries]) => [
-                    axis,
-                    axis === 'position'
-                      ? entries
-                      : displayOrder(entries, `${revision.revision_id}:${slot.slot_id}:${axis}`),
-                  ]),
-                ),
-              };
-            }
-            if (slot.kind === 'matching')
-              return {
-                ...slot,
-                left_items: displayOrder(
-                  slot.left_items,
-                  `${revision.revision_id}:${slot.slot_id}:left`,
-                ),
-                right_options: displayOrder(
-                  slot.right_options,
-                  `${revision.revision_id}:${slot.slot_id}:right`,
-                ),
-              };
-            if (slot.kind === 'ordering')
-              return {
-                ...slot,
-                items: displayOrder(slot.items, `${revision.revision_id}:${slot.slot_id}`),
-              };
-            return slot;
-          })
-      : [];
+  const displaySlots = display.response_spec.slots;
+  const choiceSlot = displaySlots.length === 1 ? displaySlots[0] : undefined;
+  const choices =
+    choiceSlot?.kind === 'single_choice' || choiceSlot?.kind === 'multi_choice'
+      ? choiceSlot.options.map((option) => option.text)
+      : choiceSlot?.kind === 'select' &&
+          choiceSlot.axes == null &&
+          choiceSlot.items.every(
+            (item) => item.coordinates == null && item.gap_after_codepoint == null,
+          )
+        ? choiceSlot.items.map((item) => item.label_md)
+        : null;
   const inlineBlockRef = blockRefForDigest(
     blockDigest({
       v: 1,
@@ -185,20 +166,16 @@ export async function readQuestionCard(db: Db, id: string, sessionId?: string) {
       id: row.id,
       group_id: groupId,
       part_ids: partIds,
-      prompt_md: row.prompt_md,
+      prompt_md: display.faces.map((face) => face.prompt_md).join('\n\n'),
+      ...(singlePart && display.faces[0].blank_order != null
+        ? { blank_order: display.faces[0].blank_order }
+        : {}),
       kind: row.kind,
-      choices_md: displaySlots.some(
-        (slot) =>
-          slot.kind === 'matching' ||
-          slot.kind === 'ordering' ||
-          (slot.kind === 'select' && slot.axes != null),
-      )
-        ? null
-        : row.choices_md,
+      choices_md: choices,
       notation: await resolveQuestionRenderNotation(db, row.id),
       admission_owned: row.admission_owned,
       inline_supported: inlineSupported,
-      display_response_spec: displaySlots.length > 0 ? { slots: displaySlots } : null,
+      display_response_spec: display.response_spec,
     },
     serving,
     latest_attempt: latest
@@ -216,20 +193,4 @@ export async function readQuestionCard(db: Db, id: string, sessionId?: string) {
         }
       : null,
   };
-}
-
-// Stable public-axis permutation, independent of all scoring keys; never expose authored axis order.
-function displayOrder<T>(items: T[], seed: string): T[] {
-  const shuffled = items
-    .map((item, index) => ({
-      item,
-      index,
-      rank: createHash('sha256')
-        .update(seed + JSON.stringify(item))
-        .digest('hex'),
-    }))
-    .sort((a, b) => a.rank.localeCompare(b.rank));
-  if (shuffled.length > 1 && shuffled.every((entry, index) => entry.index === index))
-    return [...shuffled.slice(1), shuffled[0]].map((entry) => entry.item);
-  return shuffled.map((entry) => entry.item);
 }
