@@ -1,11 +1,8 @@
-import { defaultImageFetch } from '../assets';
-
-export { defaultImageFetch } from '../assets';
-
 import { StepsLlmOutput, type StepsLlmOutputT } from '@/core/capability/judges/steps';
 import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
+import { defaultImageFetch } from '@/kernel/records/assessment-assets';
 import type { SubjectProfile } from '@/subjects/profile';
 import { defaultStructuredRunTaskFn, parseStructuredTaskOutput } from './judge-output-parse';
 import { type LaneDegradationEvidence, runTaskWithLaneFallback } from './provider-lane-fallback';

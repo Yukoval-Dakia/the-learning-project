@@ -6,12 +6,12 @@ import { parseJsonObjectLoose } from '@/core/json-extract';
 import { ConjectureProbeSpecV2 } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
+// Reuse the steps@1 R2 image fetcher verbatim — no R2 logic duplicated here.
+import { defaultImageFetch } from '@/kernel/records/assessment-assets';
 import type { SubjectProfile } from '@/subjects/profile';
 import { defaultStructuredRunTaskFn } from './judge-output-parse';
 import { type LaneDegradationEvidence, runTaskWithLaneFallback } from './provider-lane-fallback';
 import type { JudgeQuestionRow } from './question-contract';
-// Reuse the steps@1 R2 image fetcher verbatim — no R2 logic duplicated here.
-import { defaultImageFetch } from './steps-judge';
 
 const CAPABILITY_REF = { id: 'multimodal_direct', version: '1.0.0' };
 

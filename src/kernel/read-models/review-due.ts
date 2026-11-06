@@ -50,7 +50,7 @@ export async function executeGetReviewDue(
   const reader = installedHostOperation<ReviewDueReader>(READER_SLOT);
   if (!reader) {
     throw new HostOperationNotInstalledError(
-      'review-due reader is not installed; call installPracticeHostOperations at startup',
+      'review-due reader is not installed; call installPracticeHost at startup',
     );
   }
   return reader(ctx, query);

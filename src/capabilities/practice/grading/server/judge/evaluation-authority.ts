@@ -1,7 +1,15 @@
 // Student grading consumes frozen submissions. Candidates remain separate from
 // activation and learning settlement; teacher-side QA retains its own judges.
 
-import type { EvaluationRecordT, ScoringBasisT } from '@/core/schema/assessment';
+import type {
+  ContractAttemptOutcome,
+  EvaluationRecordT,
+  GradingEntryPoint,
+  ScoringBasisT,
+} from '@/core/schema/assessment';
+
+export type { ContractAttemptOutcome, GradingEntryPoint } from '@/core/schema/assessment';
+
 import { gradingProvenanceFromUnitResults } from '@/core/schema/assessment/dto';
 import {
   VERDICT_CORRECT_THRESHOLD,
@@ -9,24 +17,9 @@ import {
 } from '@/core/schema/assessment/settlement';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db, Tx } from '@/db/client';
-import {
-  type EvaluateSubmissionRequest,
-  type EvaluateSubmissionResult,
-  evaluateSubmission,
-} from './evaluate-submission';
+import { type EvaluateSubmissionRequest, evaluateSubmission } from './evaluate-submission';
 
 // ---------- 入口登记（grounding 表） ----------
-
-/** 八个权威评分入口的标识。 */
-export type GradingEntryPoint =
-  | 'solo_submit'
-  | 'durable_judge_run'
-  | 'paper_submit'
-  | 'solve_tutor'
-  | 'appeal_rejudge'
-  | 'conjecture_probe'
-  | 'ingestion_grading'
-  | 'advice_preview';
 
 export interface EntryPointDisposition {
   entry: GradingEntryPoint;
@@ -113,17 +106,6 @@ export interface ContractAttemptInput {
 export type EvaluateAttemptInput = ContractAttemptInput;
 
 // ---------- 输出 ----------
-
-export interface ContractAttemptOutcome {
-  readonly lane: 'contract';
-  readonly entry: GradingEntryPoint;
-  evaluation: EvaluateSubmissionResult;
-  /**
-   * 候选评估的消费侧投影（JudgeResultV2 兼容形态）。candidate 未生效 —
-   * 这只是【本次评估结果】的读模型，activation/settlement 不消费它。
-   */
-  result: JudgeResultV2T;
-}
 
 export type EvaluateAttemptOutcome = ContractAttemptOutcome;
 

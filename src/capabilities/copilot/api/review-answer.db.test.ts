@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createAttempt } from '@/capabilities/practice/grading/api/submit';
 import { submitReviewAnswerTool } from '@/capabilities/practice/grading/tools/submit-review-answer';
 import { practiceCapability } from '@/capabilities/practice/manifest';
-import { installPracticeHostOperations } from '@/capabilities/practice/public';
+import { installPracticeHost } from '@/capabilities/practice/public';
 import {
   assessment_submission,
   evaluation,
@@ -62,7 +62,7 @@ const input: CopilotRunInput = {
 };
 
 beforeEach(async () => {
-  await installPracticeHostOperations();
+  await installPracticeHost();
   await resetDb();
   await testDb().execute(sql`TRUNCATE job_events RESTART IDENTITY`);
   __resetRateLimitForTests();

@@ -57,11 +57,9 @@ import { lockAssessmentEvaluationGroup } from '@/kernel/locks/assessment-evaluat
 export const ASSESSMENT_ACTIVATION_ACTION = 'experimental:assessment_activation';
 export const ASSESSMENT_ACTIVATION_VERSION = 1 as const;
 
-/**
- * applied wrote learning state here. ineligible still advances the head and says so.
- * failed_pending advances the head too. The receipt stays for replay. Do not drop it.
- */
-export type ActivationEffect = 'applied' | 'ineligible' | 'failed_pending';
+export type { ActivateEvaluationResult, ActivationEffect } from '@/core/schema/assessment';
+
+import type { ActivateEvaluationResult, ActivationEffect } from '@/core/schema/assessment';
 
 export interface ActivationSettleInput {
   tx: Tx;
@@ -119,21 +117,6 @@ export const ActivateEvaluationRequest = ActivateEvaluationIntent.extend({
   admission_generation_observed: z.number().int().min(0).optional(),
 });
 export type ActivateEvaluationRequestT = z.infer<typeof ActivateEvaluationRequest>;
-
-export type ActivateEvaluationResult =
-  | { status: 'activated'; effect: ActivationEffect; generation: number }
-  | { status: 'already_effective'; effect: 'idempotent_replay'; generation: number }
-  | {
-      status:
-        | 'not_found'
-        | 'not_completed'
-        | 'occurrence_withdrawn'
-        | 'head_missing'
-        | 'coordinate_mismatch'
-        | 'stale_admission'
-        | 'rating_conflict';
-    }
-  | { status: 'cas_conflict'; conflict: 'stale_head' | 'generation_mismatch' };
 
 /**
  * Insert the first head row. This function opens no transaction.

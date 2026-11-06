@@ -54,7 +54,7 @@ function operations(): ConversationConfirmationAssessmentOperations {
     installedHostOperation<ConversationConfirmationAssessmentOperations>(OPERATIONS_SLOT);
   if (!installed) {
     throw new HostOperationNotInstalledError(
-      'conversation confirmation assessment is not installed; call installPracticeHostOperations at startup',
+      'conversation confirmation assessment is not installed; call installPracticeHost at startup',
     );
   }
   return installed;

@@ -1,14 +1,26 @@
 import { z } from 'zod';
-import { GradingProvenanceEntry, type GradingProvenanceEntryT } from '../capability';
+import {
+  GradingProvenanceEntry,
+  type GradingProvenanceEntryT,
+  type JudgeResultV2T,
+} from '../capability';
 import { projectIssuedScoringBasis } from './evaluation';
-import type { EvaluationRecordT, ScoringUnitResultT, SubmissionRecordT } from './judgment';
+import type { EvaluationGroupIdT, IssuanceIdT, RevisionIdT, SubmissionIdT } from './ids';
+import type {
+  EvaluationRecordT,
+  GroupEvidenceT,
+  ScoringUnitResultT,
+  SubmissionRecordT,
+} from './judgment';
 import { EvaluationInputSnapshot } from './judgment';
 import { SharedMaterialKind, isPublicSharedMaterial } from './materials';
 import { prunePresentation } from './presentation';
 import { LifecycleQualification, PublishDecision } from './publish';
+import type { ResponseSetT } from './response';
 import { ResponseSpec, slotsInDefaultOrder } from './response';
 import type { AssessmentIssuanceT, PublishedQuestionRevisionT } from './revision';
 import { PublishedQuestionRevision, validateIssuanceBinding } from './revision';
+import type { ScoringBasisT } from './scoring';
 
 // ====================================================================
 // YUK-1046 — 统一评估契约 · 公私 DTO 边界（grounding §7.1）
@@ -696,3 +708,100 @@ export const QuestionBankEditDto = z.object({
   publish_decision: PublishDecision,
 });
 export type QuestionBankEditDtoT = z.infer<typeof QuestionBankEditDto>;
+
+// ---------- 4. 判分操作 DTO（kernel/judge 端口合同） ----------
+//
+// 判分 host 端口（src/kernel/judge.ts）的输入/输出边界。声明归本契约，实现归
+// practice grading/settlement owner；kernel 只按接口派发已安装的实现。
+
+/** 八个权威评分入口的标识。 */
+export type GradingEntryPoint =
+  | 'solo_submit'
+  | 'durable_judge_run'
+  | 'paper_submit'
+  | 'solve_tutor'
+  | 'appeal_rejudge'
+  | 'conjecture_probe'
+  | 'ingestion_grading'
+  | 'advice_preview';
+
+export interface SaveSubmissionRequest {
+  issuance_id: IssuanceIdT;
+  evaluation_group_id: EvaluationGroupIdT;
+  /** 幂等键：同 (group, key) 重复提交 —— payload 一致 replay；不同 conflict。 */
+  idempotency_key: string;
+  response_set: ResponseSetT;
+  group_evidence?: GroupEvidenceT[];
+  /** 客户端指定 submission_id（重试幂等锚）；缺省服务端生成。 */
+  submission_id?: SubmissionIdT;
+  /** 事件 actor_ref；缺省 'assessment:submit'。 */
+  actorRef?: string;
+  now?: Date;
+}
+
+export type SaveSubmissionResult =
+  | {
+      status: 'saved' | 'replayed';
+      submission: SubmissionRecordT;
+      /** 提交绑定的不可变坐标（冻结在 issuance 行）。 */
+      revision_id: RevisionIdT;
+      issuance_id: IssuanceIdT;
+    }
+  | {
+      status:
+        | 'issuance_not_found'
+        | 'revision_not_found'
+        | 'invalid_response'
+        | 'group_conflict' // 同 submission_id 已属于另一个 group
+        | 'idempotency_conflict' // 同 key 不同 payload / 同 id 不同 key
+        | 'coordinate_conflict'; // 并发写缝余留冲突（预检后插入仍撞唯一约束）
+      issues?: string[];
+      /** conflict 时如实给出已存在行的关键坐标（供调用方定位）。 */
+      existing_submission_id?: SubmissionIdT;
+      conflict_reason?: string;
+    };
+
+export interface EvaluateSubmissionResult {
+  /** 落库（或 replay 已存在）的 candidate evaluation。 */
+  record: EvaluationRecordT;
+  /** 真实写入时间（持久化列；契约 EvaluationRecord 不含该字段）。 */
+  created_at: Date;
+  /** true = (submission, attempt) 冲突且全载荷一致 —— 幂等重放，未新写。 */
+  replayed: boolean;
+  /** 本次评估依据的【已冻结】scoring basis（revision 快照；消费侧投影用）。 */
+  scoring_basis: ScoringBasisT;
+  model_units_invoked: number;
+  spent_cost_usd_micros: number;
+}
+
+/**
+ * applied wrote learning state here. ineligible still advances the head and says so.
+ * failed_pending advances the head too. The receipt stays for replay. Do not drop it.
+ */
+export type ActivationEffect = 'applied' | 'ineligible' | 'failed_pending';
+
+export type ActivateEvaluationResult =
+  | { status: 'activated'; effect: ActivationEffect; generation: number }
+  | { status: 'already_effective'; effect: 'idempotent_replay'; generation: number }
+  | {
+      status:
+        | 'not_found'
+        | 'not_completed'
+        | 'occurrence_withdrawn'
+        | 'head_missing'
+        | 'coordinate_mismatch'
+        | 'stale_admission'
+        | 'rating_conflict';
+    }
+  | { status: 'cas_conflict'; conflict: 'stale_head' | 'generation_mismatch' };
+
+export interface ContractAttemptOutcome {
+  readonly lane: 'contract';
+  readonly entry: GradingEntryPoint;
+  evaluation: EvaluateSubmissionResult;
+  /**
+   * 候选评估的消费侧投影（JudgeResultV2 兼容形态）。candidate 未生效 —
+   * 这只是【本次评估结果】的读模型，activation/settlement 不消费它。
+   */
+  result: JudgeResultV2T;
+}

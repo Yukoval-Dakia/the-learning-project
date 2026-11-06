@@ -19,7 +19,7 @@
 // so the probe question row is genuine.
 
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   PROBE_JUDGE_STARTED_ACTION,
@@ -27,6 +27,7 @@ import {
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import * as evaluationService from '@/capabilities/practice/grading/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/grading/server/judge/recorded-model-executor';
+import { installPracticeHost } from '@/capabilities/practice/public';
 import { ConjectureProbeSpecV2, type ConjectureProbeSpecV2T } from '@/core/schema/business';
 import { ConjectureProbeSignatureMatch } from '@/core/schema/conjecture-probe-response';
 import { ConjectureProposalChange } from '@/core/schema/proposal';
@@ -231,6 +232,7 @@ async function probeLifecycleEvents(probeQuestionId: string, action: string) {
 }
 
 describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
+  beforeAll(installPracticeHost);
   beforeEach(async () => {
     await resetDb();
     await seedKnowledge();

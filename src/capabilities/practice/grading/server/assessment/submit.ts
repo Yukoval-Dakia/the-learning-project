@@ -20,7 +20,6 @@ import {
   ResponseSet,
   type ResponseSetT,
   type ResponseSpecT,
-  type RevisionIdT,
   type SubmissionIdT,
   type SubmissionRecordT,
   projectPracticeIssuance,
@@ -96,41 +95,9 @@ export type SaveResponseDraftResult =
       conflict_reason?: string;
     };
 
-export interface SaveSubmissionRequest {
-  issuance_id: IssuanceIdT;
-  evaluation_group_id: EvaluationGroupIdT;
-  /** 幂等键：同 (group, key) 重复提交 —— payload 一致 replay；不同 conflict。 */
-  idempotency_key: string;
-  response_set: ResponseSetT;
-  group_evidence?: GroupEvidenceT[];
-  /** 客户端指定 submission_id（重试幂等锚）；缺省服务端生成。 */
-  submission_id?: SubmissionIdT;
-  /** 事件 actor_ref；缺省 'assessment:submit'。 */
-  actorRef?: string;
-  now?: Date;
-}
+export type { SaveSubmissionRequest, SaveSubmissionResult } from '@/core/schema/assessment';
 
-export type SaveSubmissionResult =
-  | {
-      status: 'saved' | 'replayed';
-      submission: SubmissionRecordT;
-      /** 提交绑定的不可变坐标（冻结在 issuance 行）。 */
-      revision_id: RevisionIdT;
-      issuance_id: IssuanceIdT;
-    }
-  | {
-      status:
-        | 'issuance_not_found'
-        | 'revision_not_found'
-        | 'invalid_response'
-        | 'group_conflict' // 同 submission_id 已属于另一个 group
-        | 'idempotency_conflict' // 同 key 不同 payload / 同 id 不同 key
-        | 'coordinate_conflict'; // 并发写缝余留冲突（预检后插入仍撞唯一约束）
-      issues?: string[];
-      /** conflict 时如实给出已存在行的关键坐标（供调用方定位）。 */
-      existing_submission_id?: SubmissionIdT;
-      conflict_reason?: string;
-    };
+import type { SaveSubmissionRequest, SaveSubmissionResult } from '@/core/schema/assessment';
 
 export interface IssuanceState {
   issuance: AssessmentIssuanceT | null;

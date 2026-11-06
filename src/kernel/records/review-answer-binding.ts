@@ -38,7 +38,7 @@ function operations(): ReviewAnswerBindingOperations {
   const installed = installedHostOperation<ReviewAnswerBindingOperations>(OPERATIONS_SLOT);
   if (!installed) {
     throw new HostOperationNotInstalledError(
-      'review-answer binding operations are not installed; call installPracticeHostOperations at startup',
+      'review-answer binding operations are not installed; call installPracticeHost at startup',
     );
   }
   return installed;

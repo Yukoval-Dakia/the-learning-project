@@ -46,6 +46,7 @@ const SUBOWNER_DIRS = new Set<string>(
 
 /** 组合文件按设计连接所有 owner，只受 public-only 规则约束，发出的 import 不计边。 */
 const COMPOSITION_FILES = new Set([
+  'composition.ts',
   'manifest.ts',
   'public.ts',
   'ui-public.ts',
