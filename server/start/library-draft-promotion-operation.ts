@@ -3,9 +3,7 @@ import {
   HTTP_PROVIDER_SESSION_BUDGET_MS,
   runWithHttpProviderSessionDeadline,
 } from '@/server/http/provider-session-deadline';
-import type { FrontdoorContext } from './context';
-
-export const enableStartLibraryDraft: FrontdoorContext['enableLibraryDraft'] = (id) =>
+export const enableStartLibraryDraft = (id: string) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
       const { enablePracticeDraft } = await import('@/capabilities/practice/question-bank/public');
@@ -16,10 +14,7 @@ export const enableStartLibraryDraft: FrontdoorContext['enableLibraryDraft'] = (
     }
   });
 
-export const forceEnableStartLibraryDraft: FrontdoorContext['forceEnableLibraryDraft'] = ({
-  id,
-  body,
-}) =>
+export const forceEnableStartLibraryDraft = ({ id, body }: { id: string; body: string }) =>
   runWithHttpProviderSessionDeadline(Date.now() + HTTP_PROVIDER_SESSION_BUDGET_MS, async () => {
     try {
       const { forceEnablePracticeDraft } = await import(

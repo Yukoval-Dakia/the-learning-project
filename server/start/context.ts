@@ -24,9 +24,7 @@ import type {
   readIngestionSessionBlocks,
   readIngestionSessionDetail,
   readIngestionSessionHistory,
-  readIngestionSessions,
-  readMistakes,
-  requestIngestionOperation,
+  readIngestionSessions,  requestIngestionOperation,
   requestPurposeChange,
   requestPurposeImpact,
   revertIngestionBlock,
@@ -59,17 +57,6 @@ import type {
   createPracticeHintRequest,
   createPracticeSolveSession,
 } from '@/capabilities/practice/public';
-import type {
-  archivePracticeQuestion,
-  enablePracticeDraft,
-  forceEnablePracticeDraft,
-  readDraftReviewDetail,
-  readPracticeDraftList,
-  readPracticeQuestionList,
-  restorePracticeQuestion,
-  runPracticeServingAction,
-  updatePracticeQuestion,
-} from '@/capabilities/practice/question-bank/public';
 import type {
   getPracticeStream,
   previewReviewAdvice,
@@ -114,15 +101,6 @@ export type FrontdoorContext = {
   ) => Promise<Awaited<ReturnType<typeof markCopilotNudgeOpened>>>;
   readCopilotNudges: () => Promise<{ nudges: Awaited<ReturnType<typeof loadActiveNudges>> }>;
   readCopilotSummary: () => Promise<Awaited<ReturnType<typeof loadCopilotSummary>>>;
-  enableLibraryDraft: (id: string) => Promise<Awaited<ReturnType<typeof enablePracticeDraft>>>;
-  forceEnableLibraryDraft: (input: {
-    id: string;
-    body: string;
-  }) => Promise<Awaited<ReturnType<typeof forceEnablePracticeDraft>>>;
-  runLibraryServingAction: (input: {
-    path: string;
-    idempotencyKey: string | null;
-  }) => Promise<Awaited<ReturnType<typeof runPracticeServingAction>>>;
   adminControls: () => Promise<AdminControlClient>;
   submitConjectureProbeAnswer: (
     input: { probeId: string; body: string },
@@ -208,27 +186,6 @@ export type FrontdoorContext = {
   readPaperDetail: (
     artifactId: string,
   ) => Promise<NonNullable<Awaited<ReturnType<typeof getPaperDetail>>>>;
-  readLibraryDraftDetail: (
-    id: string,
-  ) => Promise<Awaited<ReturnType<typeof readDraftReviewDetail>>>;
-  readLibraryQuestionMistakes: (id: string) => Promise<Awaited<ReturnType<typeof readMistakes>>>;
-  readLibraryMistakes: (query: string) => Promise<Awaited<ReturnType<typeof readMistakes>>>;
-  readLibraryDrafts: (query: string) => Promise<Awaited<ReturnType<typeof readPracticeDraftList>>>;
-  readLibraryQuestions: (
-    query: string,
-  ) => Promise<Awaited<ReturnType<typeof readPracticeQuestionList>>>;
-  restoreLibraryQuestion: (input: {
-    id: string;
-    body: string;
-  }) => Promise<Awaited<ReturnType<typeof restorePracticeQuestion>>>;
-  updateLibraryQuestion: (input: {
-    id: string;
-    body: string;
-  }) => Promise<Awaited<ReturnType<typeof updatePracticeQuestion>>>;
-  archiveLibraryQuestion: (input: {
-    id: string;
-    query: string;
-  }) => Promise<Awaited<ReturnType<typeof archivePracticeQuestion>>>;
   getPracticeStream: (
     knowledgeId?: string,
   ) => Promise<Awaited<ReturnType<typeof getPracticeStream>>>;

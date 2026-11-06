@@ -27,19 +27,6 @@ import { readStartKnowledgeEdges } from './start/knowledge-edges-reader';
 import { readStartKnowledgeMisconceptions } from './start/knowledge-misconceptions-reader';
 import { readStartKnowledgeNodePage } from './start/knowledge-node-reader';
 import { createStartLearningIntent } from './start/learning-intent-operation';
-import { readStartLibraryDraftDetail } from './start/library-draft-detail-reader';
-import { readStartLibraryDrafts } from './start/library-draft-list-reader';
-import {
-  enableStartLibraryDraft,
-  forceEnableStartLibraryDraft,
-} from './start/library-draft-promotion-operation';
-import { readStartLibraryMistakes } from './start/library-mistake-list-reader';
-import { archiveStartLibraryQuestion } from './start/library-question-delete-operation';
-import { readStartLibraryQuestions } from './start/library-question-list-reader';
-import { readStartLibraryQuestionMistakes } from './start/library-question-mistakes-reader';
-import { restoreStartLibraryQuestion } from './start/library-question-restore-operation';
-import { updateStartLibraryQuestion } from './start/library-question-update-operation';
-import { runStartLibraryServingAction } from './start/library-serving-action-operation';
 import { readStartPaperDetail } from './start/paper-detail-reader';
 import { endStartPaperSession } from './start/paper-end-operation';
 import { startPaperSession } from './start/paper-start-operation';
@@ -130,17 +117,6 @@ export function createFrontdoorContext(api: Hono): FrontdoorContext {
     submitPaperSlot: submitStartPaperSlot,
     endPaperSession: endStartPaperSession,
     readPaperDetail: readStartPaperDetail,
-    readLibraryQuestions: readStartLibraryQuestions,
-    readLibraryQuestionMistakes: readStartLibraryQuestionMistakes,
-    readLibraryMistakes: readStartLibraryMistakes,
-    restoreLibraryQuestion: restoreStartLibraryQuestion,
-    updateLibraryQuestion: updateStartLibraryQuestion,
-    runLibraryServingAction: runStartLibraryServingAction,
-    archiveLibraryQuestion: archiveStartLibraryQuestion,
-    readLibraryDraftDetail: readStartLibraryDraftDetail,
-    readLibraryDrafts: readStartLibraryDrafts,
-    enableLibraryDraft: enableStartLibraryDraft,
-    forceEnableLibraryDraft: forceEnableStartLibraryDraft,
     getPracticeStream: getStartPracticeStream,
     recomposePracticeStream: recomposeStartPracticeStream,
     updatePracticeStreamItem: updateStartPracticeStreamItem,

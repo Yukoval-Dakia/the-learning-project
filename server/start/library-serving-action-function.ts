@@ -6,12 +6,13 @@ export const runStartLibraryServingActionFunction = createServerFn({ method: 'PO
   .validator((input: { path: string }) => input)
   .handler(({ context, data }) => {
     const request = getRequest();
-    return runAuthenticatedStartWorkbench(context, request, async () =>
-      JSON.stringify(
-        await context.runLibraryServingAction({
+    return runAuthenticatedStartWorkbench(context, request, async () => {
+      const { runStartLibraryServingAction } = await import('./library-serving-action-operation');
+      return JSON.stringify(
+        await runStartLibraryServingAction({
           path: data?.path,
           idempotencyKey: request.headers.get('Idempotency-Key'),
         }),
-      ),
-    );
+      );
+    });
   });
