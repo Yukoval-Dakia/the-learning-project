@@ -6,6 +6,7 @@ import { ResponseSlotField, nativeSlotFieldSpec } from '@/ui/components/response
 import type { ApiOperationJsonResponse } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Button } from '@/ui-next/public';
+import { holdWords } from '../library/library-copy';
 import {
   getAdvice,
   getIssuanceState,
@@ -116,7 +117,7 @@ export function QuestionCardBlock({
   }
   if (card.state === 'withdrawn') return <Frame gone="这道题已经撤下了。" />;
   const question = card.question;
-  if (card.state === 'unavailable' || !question) return <Frame gone="这道题现在打不开。" />;
+  if (!question) return <Frame gone="这道题现在打不开。" />;
   const open = (
     <a className="un-cp-block-open" href={`/questions/${encodeURIComponent(question.id)}`}>
       {label}
@@ -145,6 +146,15 @@ export function QuestionCardBlock({
           {face}
         </Frame>
       );
+    case 'unavailable': {
+      // Held for a reason of its own: the question still reads, with nothing to wait for.
+      const words = holdWords(card.serving?.hold_reason ?? null);
+      return (
+        <Frame status={{ word: words.title, tone: 'caution' }} note={words.why} actions={open}>
+          {face}
+        </Frame>
+      );
+    }
     case 'undecided':
       return (
         <Frame status={{ word: '这次没查出结果', tone: 'caution' }} note={reason}>

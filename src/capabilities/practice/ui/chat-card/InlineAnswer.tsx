@@ -130,7 +130,6 @@ export function InlineAnswer({
 
 function AnswerArea({
   question,
-  chatCard,
   Frame,
   open,
   face,
@@ -198,7 +197,6 @@ function AnswerArea({
 
   const assessment = {
     issuance_id: issuanceId,
-    chat_card: chatCard,
     evaluation_group_id: accepted?.evaluation_group_id ?? `group_${issuanceId}`,
     submission_id: accepted?.submission_id ?? `submission_${issuanceId}`,
     idempotency_key: accepted?.idempotency_key ?? `submit_${issuanceId}`,
