@@ -436,31 +436,38 @@ export async function dispatchPendingVerifyIntents(
       for (const verifier of verifyKindSchema.options) {
         const group = eligible.filter((intent) => intent.verifier_kind === verifier);
         if (group.length === 0) continue;
-        const placementAuthorities = group.flatMap((intent) =>
-          intent.placement_authority ? [intent.placement_authority] : [],
-        );
-        const recoveryMarks: Record<string, VerifyRecoveryMark> = {};
-        for (const intent of group) {
-          if (intent.recovery_epoch != null) {
-            recoveryMarks[intent.question_id] = {
-              epoch: intent.recovery_epoch,
-              ...(intent.recheck_command_event_id != null
-                ? { recheck_command_event_id: intent.recheck_command_event_id }
-                : {}),
-            };
-          }
-        }
-        await input.enqueue(
-          verifier,
-          group.map((intent) => intent.question_id),
-          { db: fromPgBossDrizzleTx(tx) },
-          placementAuthorities.length > 0 ? placementAuthorities : undefined,
-          Object.keys(recoveryMarks).length > 0 ? recoveryMarks : undefined,
-        );
-        for (const intent of group) {
-          completionEvents.push(
-            dispatchCompletionEvent(intent, { recovery, disposition: 'enqueued', now }),
+        // Isolate recovery failures; the handler stops a batch at its first error.
+        const batches = [
+          group.filter((intent) => intent.recovery_epoch == null),
+          ...group.filter((intent) => intent.recovery_epoch != null).map((intent) => [intent]),
+        ].filter((batch) => batch.length > 0);
+        for (const batch of batches) {
+          const placementAuthorities = batch.flatMap((intent) =>
+            intent.placement_authority ? [intent.placement_authority] : [],
           );
+          const recoveryMarks: Record<string, VerifyRecoveryMark> = {};
+          for (const intent of batch) {
+            if (intent.recovery_epoch != null) {
+              recoveryMarks[intent.question_id] = {
+                epoch: intent.recovery_epoch,
+                ...(intent.recheck_command_event_id != null
+                  ? { recheck_command_event_id: intent.recheck_command_event_id }
+                  : {}),
+              };
+            }
+          }
+          await input.enqueue(
+            verifier,
+            batch.map((intent) => intent.question_id),
+            { db: fromPgBossDrizzleTx(tx) },
+            placementAuthorities.length > 0 ? placementAuthorities : undefined,
+            Object.keys(recoveryMarks).length > 0 ? recoveryMarks : undefined,
+          );
+          for (const intent of batch) {
+            completionEvents.push(
+              dispatchCompletionEvent(intent, { recovery, disposition: 'enqueued', now }),
+            );
+          }
         }
       }
       for (const intent of terminal) {

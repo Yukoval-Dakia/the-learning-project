@@ -112,14 +112,13 @@ export async function claimSourceVerifyRecheck(input: {
 
 /** The delivery provably sent nothing (no provider query started): record the
  * not_sent receipt + application under its own delivery so the next claim
- * attempt may proceed. Returns false when the claim state no longer matches
- * (a concurrent application already landed). */
+ * attempt may proceed. Both writes must commit together to avoid a stuck receipt. */
 export async function settleRecheckNotSent(
   tx: Tx,
   claim: SourceVerifyRecheckClaim,
   questionId: string,
   commandEventId: string,
-): Promise<boolean> {
+): Promise<void> {
   try {
     await recordPaidEffectResult(
       tx,
@@ -133,8 +132,8 @@ export async function settleRecheckNotSent(
       command_event_id: commandEventId,
       status: 'not_sent',
     });
-    return true;
-  } catch {
-    return false;
+  } catch (error) {
+    console.error('[source_verify] not_sent settlement failed', questionId, error);
+    throw error;
   }
 }
