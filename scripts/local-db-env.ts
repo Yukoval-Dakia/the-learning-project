@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { createServer } from 'node:net';
 
 import { devDatabaseName } from './dev-worktree-db';
 
@@ -113,19 +114,99 @@ function encode(value: string): string {
 // containers and release hosts connect via service names (`postgres:5432`) or
 // remote addresses and must pass untouched.
 function isLoopbackHost(hostname: string): boolean {
-  const host = hostname.trim().toLowerCase().replace(/\.$/, '');
+  const host = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[/, '')
+    .replace(/\]$/, '')
+    .replace(/\.$/, '');
   return (
     host === 'localhost' ||
-    host === '[::1]' ||
+    host === '::1' ||
+    host === '::' ||
     host === '0.0.0.0' ||
-    host === '[::]' ||
     /^127(?:\.\d{1,3}){3}$/.test(host)
   );
 }
 
-function nonEmpty(value: string | null | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
+function decodeDatabase(pathname: string): string | undefined {
+  try {
+    return decodeURIComponent(pathname.replace(/^\//, ''));
+  } catch {
+    return undefined;
+  }
+}
+
+// parseInt, not Number: `5544xyz` reaches the driver as 5544.
+function parseIntPort(raw: string | undefined): number {
+  const n = Number.parseInt(String(raw ?? '').trim(), 10);
+  return Number.isInteger(n) && n > 0 ? n : Number.NaN;
+}
+
+function splitCommaList(raw: string | null | undefined): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+interface HostPortCandidate {
+  host: string;
+  port?: string;
+}
+
+// `db:5432`, `[::1]:5544`, `::1`, `/var/run/postgresql` — split a port only when
+// it is the single colon outside brackets; bare IPv6 stays a host.
+function splitHostPort(raw: string): HostPortCandidate | null {
+  const value = raw.trim();
+  if (!value) return null;
+  if (value.startsWith('[')) {
+    const end = value.indexOf(']');
+    if (end < 0) return null;
+    const host = value.slice(0, end + 1);
+    const rest = value.slice(end + 1);
+    if (rest === '') return { host };
+    if (!rest.startsWith(':')) return null;
+    return { host, port: rest.slice(1) || undefined };
+  }
+  const colons = value.split(':').length - 1;
+  if (colons === 0) return { host: value };
+  if (colons > 1) return { host: value };
+  const at = value.indexOf(':');
+  return { host: value.slice(0, at) || 'localhost', port: value.slice(at + 1) || undefined };
+}
+
+// Fallback authority extraction for URLs WHATWG rejects (comma-separated
+// multi-host). Returns the text after credentials and before path/query/hash.
+function rawAuthority(rawUrl: string): string | null {
+  const scheme = rawUrl.match(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//);
+  if (!scheme) return null;
+  const rest = rawUrl.slice(scheme[0].length);
+  const end = rest.search(/[/?#]/);
+  let authority = (end < 0 ? rest : rest.slice(0, end)).trim();
+  const at = authority.lastIndexOf('@');
+  if (at >= 0) authority = authority.slice(at + 1);
+  return authority || null;
+}
+
+function rawDatabaseName(rawUrl: string): string | undefined {
+  const scheme = rawUrl.match(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//);
+  if (!scheme) return undefined;
+  const rest = rawUrl.slice(scheme[0].length);
+  const slash = rest.indexOf('/');
+  if (slash < 0) return undefined;
+  let path = rest.slice(slash + 1);
+  const end = path.search(/[?#]/);
+  if (end >= 0) path = path.slice(0, end);
+  return path ? decodeDatabase(path) : undefined;
+}
+
+function rawQueryParams(rawUrl: string): URLSearchParams {
+  const q = rawUrl.indexOf('?');
+  if (q < 0) return new URLSearchParams();
+  const rest = rawUrl.slice(q + 1);
+  const hash = rest.indexOf('#');
+  return new URLSearchParams(hash < 0 ? rest : rest.slice(0, hash));
 }
 
 // Production is exactly the runtime that must keep binding 8787 and may point
@@ -141,59 +222,77 @@ export function isProductionRuntime(): boolean {
 // TEST-target judgment for scripts that read DATABASE_URL directly (drizzle-kit
 // db:* via drizzle.config.ts, worker:dev, and every CLI importing
 // scripts/load-env.ts). Same single owner and same TEST definition as
-// testDbRefusalReason, applied to a parsed URL instead of a resolved target.
-// Returns null (no refusal) for a missing or unparseable URL — the driver's own
-// error is the correct failure there.
+// testDbRefusalReason, applied to a DATABASE_URL instead of a resolved target.
 //
-// The driver does not necessarily connect where the URL's authority points:
-// `pg`/postgres-js let `?host=`/`?port=` query parameters override it and fall
-// back to PGHOST/PGPORT when the URL omits them. Judge the effective target with
-// that precedence (query > URL > PG* > driver default) so a URL that says
-// `postgres:5432` but carries `?host=127.0.0.1&port=5544` cannot slip through.
+// Two consumers read the same URL: postgres-js ignores `?host=`/`?port=`, pg
+// honours them, and both fall back to PGHOST/PGPORT. Rather than guess which
+// one wins, refuse when the union of every candidate host:port (URL authority,
+// comma lists, query params, PG* env) contains a loopback host with a TEST port.
+// The database name is checked for every loopback candidate too. Unparseable
+// non-empty URLs refuse instead of passing (fail closed), and production is the
+// only skip (guardDatabaseUrl).
 export function testDatabaseUrlRefusalReason(
   rawUrl: string | undefined,
   env: LocalEnvInput = process.env,
 ): string | null {
   if (env.DEV_ALLOW_TEST_DB === '1') return null;
   if (!rawUrl) return null;
-  let url: URL;
+
+  let url: URL | undefined;
   try {
     url = new URL(rawUrl);
   } catch {
-    return null;
+    url = undefined;
   }
 
-  const queryHost = nonEmpty(url.searchParams.get('host'));
-  const queryPort = nonEmpty(url.searchParams.get('port'));
-  const envHost = nonEmpty(env.PGHOST);
-  const envPort = nonEmpty(env.PGPORT);
-
-  const host = queryHost ?? nonEmpty(url.hostname) ?? envHost ?? 'localhost';
-  const portRaw = queryPort ?? nonEmpty(url.port) ?? envPort ?? '5432';
-  const port = parsedPort(portRaw);
-  if (isLoopbackHost(host) && TEST_DB_PORT_NUMBERS.includes(port)) {
-    return `loopback target ${host}:${portRaw} (parses to ${port}) is a TEST Postgres port (${TEST_DB_PORTS.join('/')})`;
+  const candidates: HostPortCandidate[] = [];
+  if (url) {
+    if (url.hostname) candidates.push({ host: url.hostname, port: url.port || undefined });
+  } else {
+    const authority = rawAuthority(rawUrl);
+    if (!authority) return 'DATABASE_URL has no parseable host';
+    for (const item of authority.split(',')) {
+      const parsed = splitHostPort(item);
+      if (!parsed) return `DATABASE_URL authority "${authority}" is not parseable`;
+      candidates.push(parsed);
+    }
   }
 
-  // Database-name refusal keeps the pre-existing scope: only when the URL's own
-  // authority is loopback. Extending it to query/env hosts is a separate ticket.
-  if (!isLoopbackHost(url.hostname)) return null;
-  let database: string;
-  try {
-    database = decodeURIComponent(url.pathname.replace(/^\//, ''));
-  } catch {
-    return null;
+  const query = rawQueryParams(rawUrl);
+  const hosts = new Set<string>();
+  for (const candidate of candidates) if (candidate.host) hosts.add(candidate.host);
+  for (const value of query.getAll('host'))
+    for (const host of splitCommaList(value)) hosts.add(host);
+  for (const host of splitCommaList(env.PGHOST)) hosts.add(host);
+
+  const portRaws = new Set<string>();
+  for (const candidate of candidates) if (candidate.port) portRaws.add(candidate.port);
+  for (const value of query.getAll('port'))
+    for (const port of splitCommaList(value)) portRaws.add(port);
+  for (const port of splitCommaList(env.PGPORT)) portRaws.add(port);
+
+  const loopbackHosts = [...hosts].filter(isLoopbackHost);
+  if (loopbackHosts.length === 0) return null;
+  for (const portRaw of portRaws) {
+    const port = parseIntPort(portRaw);
+    if (TEST_DB_PORT_NUMBERS.includes(port)) {
+      return `loopback host ${loopbackHosts[0]} with port ${portRaw} (parses to ${port}) is a TEST Postgres target (ports ${TEST_DB_PORTS.join('/')})`;
+    }
   }
+  const database = url ? decodeDatabase(url.pathname) : rawDatabaseName(rawUrl);
   if (database === TEST_DB_NAME) {
     return `loopback database "${database}" is TEST's database name`;
   }
   return null;
 }
 
-// Fail-closed entry for the raw-DATABASE_URL surface: refuses before any
-// connection when the URL is a loopback TEST target. DEV_ALLOW_TEST_DB=1 is the
-// only override (same contract as guardLocalDbTarget).
+// Fail-closed entry for the raw-DATABASE_URL surface: production skips it (the
+// same NODE_ENV switch as the port guard — an explicit escape hatch, not a
+// security boundary); otherwise it refuses before any connection when the
+// candidate union contains a loopback TEST target. DEV_ALLOW_TEST_DB=1 is the
+// only local override (same contract as guardLocalDbTarget).
 export function guardDatabaseUrl(label: string, env: LocalEnvInput = process.env): void {
+  if (isProductionRuntime()) return;
   const rawUrl = env.DATABASE_URL;
   if (env.DEV_ALLOW_TEST_DB === '1') {
     const shown = rawUrl?.replace(/:[^:@/]*@/, ':***@');
@@ -205,7 +304,7 @@ export function guardDatabaseUrl(label: string, env: LocalEnvInput = process.env
   const reason = testDatabaseUrlRefusalReason(rawUrl, env);
   if (reason) {
     console.error(
-      `[${label}] refusing: DATABASE_URL ${rawUrl?.replace(/:[^:@/]*@/, ':***@')} is TEST's — ${reason}.\n` +
+      `[${label}] refusing: DATABASE_URL ${rawUrl?.replace(/:[^:@/]*@/, ':***@')} — ${reason}.\n` +
         `[${label}] Local scripts target this worktree's dev database on the dev Postgres (:5434); ` +
         'point DATABASE_URL there, or set DEV_ALLOW_TEST_DB=1 to override.',
     );
@@ -224,6 +323,39 @@ export const TEST_APP_RELAY_PORT = 8787;
 
 export function isContainerRuntime(): boolean {
   return existsSync('/.dockerenv');
+}
+
+// A listener on either stack must make the port busy: probing only 127.0.0.1
+// missed a process on `::`/`[::1]` twice (8787, 8788). A missing IPv6 stack is
+// not a busy port; every other listen error is treated as occupied.
+function portIsFree(port: number, host: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = createServer();
+    probe.once('error', (error: NodeJS.ErrnoException) => {
+      resolve(
+        error.code === 'EAFNOSUPPORT' || error.code === 'EADDRNOTAVAIL' || error.code === 'ENOTSUP',
+      );
+    });
+    probe.once('listening', () => probe.close(() => resolve(true)));
+    probe.listen(port, host);
+  });
+}
+
+// First port free on IPv4 loopback and IPv6 (::1 and wildcard), skipping the
+// TEST app relay port. Both stacks are probed so a `*:port` or `[::1]:port`
+// listener is detected even when `127.0.0.1:port` is free.
+export async function firstFreePort(from: number): Promise<number> {
+  for (let port = from; port < from + 100; port++) {
+    if (port === TEST_APP_RELAY_PORT) continue;
+    if (
+      (await portIsFree(port, '127.0.0.1')) &&
+      (await portIsFree(port, '::1')) &&
+      (await portIsFree(port, '::'))
+    ) {
+      return port;
+    }
+  }
+  throw new Error(`[dev-local] no free IPv4/IPv6 port in ${from}–${from + 99}`);
 }
 
 export interface DevApiPortContext {
