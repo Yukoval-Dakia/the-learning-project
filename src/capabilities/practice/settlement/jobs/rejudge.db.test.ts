@@ -18,10 +18,12 @@ afterEach(() => vi.restoreAllMocks());
 const reason = '请复核原式：两式相加消去水速，30/2=15 km/h；不能以改写后的题目替代。';
 async function appeal(f: Awaited<ReturnType<typeof nativeAppealFixture>>, text = reason) {
   return {
-    appeal_event_id: await createNativeAppeal(testDb(), {
-      evaluation_id: f.original.evaluation_id,
-      reason_md: text,
-    }),
+    appeal_event_id: (
+      await createNativeAppeal(testDb(), {
+        evaluation_id: f.original.evaluation_id,
+        reason_md: text,
+      })
+    ).appeal_event_id,
   };
 }
 async function head(groupId: string) {

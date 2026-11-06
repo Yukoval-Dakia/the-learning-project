@@ -1,6 +1,11 @@
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
-import { ActivateEvaluationIntent, EvaluationProvenance } from '@/core/schema/assessment';
+import {
+  ActivateEvaluationIntent,
+  EvaluationProvenance,
+  EvaluationRecord,
+  type EvaluationRecordT,
+} from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
 import { evaluation, evaluation_effective_head, event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -18,10 +23,107 @@ import {
   evaluateAttempt,
 } from '../../grading/public';
 
+export interface NativeAppealReceipt {
+  appeal_event_id: string;
+  /**
+   * False when a terminal resolution already covers this request — either this
+   * exact appeal id was already resolved, or the same submission + reason already
+   * produced a completed `effective` rejudge the call reuses. The caller must not
+   * enqueue a rejudge (and must not spend a model call) in that case. True for a
+   * fresh appeal and for retryable unfinished/failed attempts.
+   */
+  should_rejudge: boolean;
+}
+
+async function appealResolutionExists(db: Db | Tx, appealId: string): Promise<boolean> {
+  const [resolution] = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.caused_by_event_id, appealId),
+        eq(event.action, 'experimental:assessment_appeal_resolution'),
+      ),
+    )
+    .limit(1);
+  return resolution !== undefined;
+}
+
+/**
+ * Completed-result idempotency (YUK-1880): a second appeal for the SAME submission
+ * and the SAME reason must not re-run the model once a rejudge already landed a
+ * result — including the one-click case where the effective anchor moved to a new
+ * evaluation_id and the appeal id would differ. Only `effective` dispositions
+ * (changed OR unchanged verdicts) complete the boundary; failed, 429, held and
+ * unfinished attempts stay retryable. Latest completed appeal wins. Must run
+ * under `lockAssessmentEvaluationGroup` so no sibling appeal can be mid-resolve.
+ */
+async function findCompletedAppealForSubmission(
+  tx: Tx,
+  input: { evaluation_group_id: string; submission_id: string; reason: string },
+): Promise<string | null> {
+  const appeals = await tx
+    .select({
+      id: event.id,
+      subject_id: event.subject_id,
+      reason_md: sql<string | null>`${event.payload}->>'reason_md'`,
+    })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:appeal_request'),
+        eq(event.subject_kind, 'evaluation'),
+        sql`${event.payload}->>'evaluation_group_id' = ${input.evaluation_group_id}`,
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id));
+  const matching = appeals.filter(
+    (row) => (row.reason_md ?? '') === input.reason && row.subject_id !== null,
+  );
+  if (matching.length === 0) return null;
+  const subjectEvals = await tx
+    .select({ evaluation_id: evaluation.evaluation_id, submission_id: evaluation.submission_id })
+    .from(evaluation)
+    .where(
+      inArray(
+        evaluation.evaluation_id,
+        matching.map((row) => row.subject_id as string),
+      ),
+    );
+  const sameSubmission = new Set(
+    subjectEvals
+      .filter((row) => row.submission_id === input.submission_id)
+      .map((row) => row.evaluation_id),
+  );
+  const candidates = matching.filter((row) => sameSubmission.has(row.subject_id as string));
+  if (candidates.length === 0) return null;
+  const resolutions = await tx
+    .select({
+      appeal_id: event.caused_by_event_id,
+      disposition: sql<string | null>`${event.payload}->>'disposition'`,
+    })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_appeal_resolution'),
+        inArray(
+          event.caused_by_event_id,
+          candidates.map((row) => row.id),
+        ),
+      ),
+    );
+  const resolved = new Set(
+    resolutions
+      .filter((row) => row.disposition === 'effective')
+      .map((row) => row.appeal_id as string),
+  );
+  return candidates.find((row) => resolved.has(row.id))?.id ?? null;
+}
+
 export async function createNativeAppeal(
   database: Db,
   input: { evaluation_id: string; reason_md?: string; idempotency_key?: string },
-) {
+): Promise<NativeAppealReceipt> {
   const reason = input.reason_md ?? '';
   const appealId = `evt_native_appeal_${canonicalHash({
     evaluation_id: input.evaluation_id,
@@ -33,7 +135,10 @@ export async function createNativeAppeal(
     if (existing) {
       if (existing.payload.reason_md !== reason)
         throw new ApiError('appeal_conflict', 'appeal key already has a different reason', 409);
-      return appealId;
+      return {
+        appeal_event_id: appealId,
+        should_rejudge: !(await appealResolutionExists(tx, appealId)),
+      };
     }
     const [original] = await tx
       .select()
@@ -57,6 +162,12 @@ export async function createNativeAppeal(
         409,
       );
     }
+    const reused = await findCompletedAppealForSubmission(tx, {
+      evaluation_group_id: original.evaluation_group_id,
+      submission_id: original.submission_id,
+      reason,
+    });
+    if (reused) return { appeal_event_id: reused, should_rejudge: false };
     await writeEvent(tx, {
       id: appealId,
       actor_kind: 'user',
@@ -72,7 +183,7 @@ export async function createNativeAppeal(
         expected_generation: head.generation,
       },
     });
-    return appealId;
+    return { appeal_event_id: appealId, should_rejudge: true };
   });
 }
 
@@ -180,9 +291,71 @@ function isPermanentRejudgeConflict(error: unknown): boolean {
   return false;
 }
 
+/**
+ * changed/unchanged 在写侧裁决：只有这里同时拥有 before record、after record
+ * 与激活结果（读侧拿不到 partial_unknown 计数这类 null-score 维度）。
+ * 签名只取结果承载面——分数 / 部分对计数 / 单元判定 / 聚合结果；散文段
+ * （feedback_md / evidence_citations / comparison / detail）每次重判必然
+ * 不同，不入签。数组按 id 归序，option_ids 排序。
+ */
+function appealOutcomeSignature(record: EvaluationRecordT) {
+  return {
+    status: record.status,
+    units: record.unit_results
+      .map((unit) =>
+        unit.status === 'scored'
+          ? {
+              id: unit.scoring_unit_id,
+              points: unit.points_awarded,
+              blank: unit.scored_because,
+              partial: unit.partial_unknown_points
+                ? {
+                    c: unit.partial_unknown_points.correct_count,
+                    t: unit.partial_unknown_points.total_count,
+                  }
+                : null,
+              matched: unit.matched
+                ? {
+                    rule: unit.matched.rule_id ?? null,
+                    level: unit.matched.level_id ?? null,
+                    options: [...unit.matched.option_ids].sort(),
+                  }
+                : null,
+            }
+          : { id: unit.scoring_unit_id, pending: unit.pending.reason },
+      )
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    aggregate:
+      record.aggregate == null
+        ? null
+        : record.aggregate.kind === 'points_total'
+          ? { kind: record.aggregate.kind, points: record.aggregate.points }
+          : record.aggregate.kind === 'level'
+            ? {
+                kind: record.aggregate.kind,
+                level: record.aggregate.level_id,
+                points: record.aggregate.points,
+              }
+            : record.aggregate.kind === 'partial_unknown_points'
+              ? {
+                  kind: record.aggregate.kind,
+                  known: record.aggregate.known_points,
+                  units: record.aggregate.partial_units
+                    .map((u) => ({ id: u.scoring_unit_id, c: u.correct_count, t: u.total_count }))
+                    .sort((a, b) => a.id.localeCompare(b.id)),
+                }
+              : { kind: record.aggregate.kind, reason: record.aggregate.reason },
+  };
+}
+
 export async function rejudgeNativeAppeal(database: Db, appeal: typeof event.$inferSelect) {
   const resolutionId = `evt_native_resolution_${canonicalHash(appeal.id)}`;
-  const record = async (tx: Tx, disposition: string, evaluationId?: string) => {
+  const record = async (
+    tx: Tx,
+    disposition: string,
+    evaluationId?: string,
+    verdictChange?: 'changed' | 'unchanged',
+  ) => {
     // Used with the activation transaction, or alone for an explicit held result.
     await lockNativeResolution(tx, resolutionId);
     const [existing] = await tx
@@ -199,7 +372,11 @@ export async function rejudgeNativeAppeal(database: Db, appeal: typeof event.$in
       subject_id: appeal.subject_id,
       outcome: null,
       caused_by_event_id: appeal.id,
-      payload: { disposition, ...(evaluationId ? { evaluation_id: evaluationId } : {}) },
+      payload: {
+        disposition,
+        ...(evaluationId ? { evaluation_id: evaluationId } : {}),
+        ...(verdictChange ? { verdict_change: verdictChange } : {}),
+      },
     });
   };
   const hold = async (reason: string, evaluationId?: string) => {
@@ -269,13 +446,18 @@ export async function rejudgeNativeAppeal(database: Db, appeal: typeof event.$in
     candidate.result.coarse_outcome === 'unsupported'
   )
     return hold('review_required', candidateId);
+  const verdictChange: 'changed' | 'unchanged' =
+    canonicalHash(appealOutcomeSignature(EvaluationRecord.parse(original))) ===
+    canonicalHash(appealOutcomeSignature(candidate.evaluation.record))
+      ? 'unchanged'
+      : 'changed';
   const activation = await activateSubmissionCandidate(
     database,
     { ...intent.data, evaluation_id: candidateId },
     {
       actorRef: 'assessment:appeal',
       correction: { appealEventId: appeal.id, priorEvaluationId: original.evaluation_id },
-      record: (tx) => record(tx, 'effective', candidateId),
+      record: (tx) => record(tx, 'effective', candidateId, verdictChange),
     },
   );
   if (activation.status !== 'activated' && activation.status !== 'already_effective')

@@ -212,6 +212,11 @@ export const IssuanceJudgeSettledSchema = z.discriminatedUnion('kind', [
     kind: z.literal('terminal'),
     run: JudgeRunStatusResponseSchema,
     crisis_referral: CrisisReferralWireSchema.optional(),
+    /**
+     * Newest `experimental:appeal_request` for this submission's evaluation group;
+     * null when never appealed. Lets a refresh resume `GET /api/appeals/{id}` polling.
+     */
+    latest_appeal_event_id: z.string().nullable(),
   }),
   z.object({
     kind: z.literal('pending'),

@@ -53,6 +53,9 @@ export function feedbackFromCommittedDiagnosticAttempt(
     coarse_outcome: result.judge.coarse_outcome,
     confidence: result.judge.confidence,
     feedback_md: result.judge.feedback_md,
+    ...(result.judge.grading_provenance
+      ? { grading_provenance: result.judge.grading_provenance }
+      : {}),
     suggested_rating: result.judge.suggested_rating,
   };
 }

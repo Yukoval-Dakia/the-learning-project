@@ -20,37 +20,8 @@ export function PracticeFeedback({
   intents: PracticeIntents;
   renderers: PracticeRenderers;
 }) {
-  if (r.kind === 'concealed') {
-    if (!r.confidence) return r.reason ? <p className="un-st-secondary">{r.reason}</p> : null;
-    const c = r.confidence;
-    return (
-      <section className="un-st-confidence" aria-label="作答把握">
-        <h2>看反馈前，你有多大把握？</h2>
-        <p>按这次的感觉选择，也可以跳过。</p>
-        <fieldset className="un-st-confidence-scale" aria-label="把握从低到高">
-          {([1, 2, 3, 4, 5] as const).map((value) => (
-            <button
-              type="button"
-              key={value}
-              disabled={c.availability.kind !== 'enabled'}
-              aria-pressed={c.value === value}
-              onClick={() => intents.confidence(value)}
-            >
-              <strong>{value}</strong>
-              <span className="un-st-confidence-caption">
-                {value === 1 ? '没把握' : value === 3 ? '有些把握' : value === 5 ? '很有把握' : ' '}
-              </span>
-            </button>
-          ))}
-        </fieldset>
-        {c.availability.kind !== 'enabled' && <p>{c.availability.reason}</p>}
-        <div className="un-st-actions">
-          <IntentButton action={c.skip} intents={intents} />
-          {c.continue && <IntentButton action={c.continue} intents={intents} primary />}
-        </div>
-      </section>
-    );
-  }
+  if (r.kind === 'concealed')
+    return r.reason ? <p className="un-st-secondary">{r.reason}</p> : null;
   const result = r.result;
   const VerdictIcon =
     result?.verdict === 'correct' ? Check : result?.verdict === 'incorrect' ? X : CircleHelp;

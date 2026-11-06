@@ -1,7 +1,7 @@
 import { MessageSquareQuote, Paperclip } from 'lucide-react';
 import { Mascot } from '@/ui-next/public';
 import type { ReadingProps, Submission } from './contracts';
-import { IntentButton, NoticeBlock } from './controls';
+import { ConfidenceScale, IntentButton, NoticeBlock } from './controls';
 import { PracticeFeedback } from './PracticeFeedback';
 import { PracticeField } from './PracticeFields';
 import './studio.css';
@@ -80,6 +80,9 @@ export function PracticeStudio(p: ReadingProps) {
   const afterFeedback = q.revelation.kind === 'revealed';
   const actionRow = (
     <div ref={lifecycle?.submitActionsRef} className="un-st-submit">
+      {q.submission.confidence && (
+        <ConfidenceScale confidence={q.submission.confidence} intents={intents} />
+      )}
       <div className="un-st-actions">
         {primary && <IntentButton action={primary} intents={intents} primary />}
         {q.submission.secondary.map((action) => (
@@ -110,7 +113,9 @@ export function PracticeStudio(p: ReadingProps) {
           </div>
           <Mascot
             thinking={
-              q.submission.grading.kind === 'grading' || q.submission.recording.kind === 'saving'
+              q.submission.grading.kind === 'grading' ||
+              q.submission.grading.kind === 'pending' ||
+              q.submission.recording.kind === 'saving'
             }
           />
         </div>

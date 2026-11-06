@@ -1,4 +1,4 @@
-import { and, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { buildCrisisReferral } from '@/core/crisis/referral';
 import { canonicalHash } from '@/core/migration/canonical';
@@ -446,7 +446,12 @@ export async function readNativeJudgeSettled(
       crisis_referral && terminal.status === 'done' && terminal.result
         ? { ...terminal, result: { ...terminal.result, crisis_referral } }
         : terminal;
-    return { kind: 'terminal', run, ...(crisis_referral ? { crisis_referral } : {}) };
+    return {
+      kind: 'terminal',
+      run,
+      ...(crisis_referral ? { crisis_referral } : {}),
+      latest_appeal_event_id: await latestAppealForSubmission(database, submissionId),
+    };
   }
   return state.kind === 'pending'
     ? {
@@ -456,6 +461,31 @@ export async function readNativeJudgeSettled(
         ...(crisis_referral ? { crisis_referral } : {}),
       }
     : undefined;
+}
+
+/**
+ * Newest appeal filed against THIS submission; refresh resumes polling it.
+ * Filtered by the appealed evaluation's submission — a joint group's sibling
+ * submissions share `evaluation_group_id` but must not leak their appeals.
+ */
+async function latestAppealForSubmission(
+  database: Db | Tx,
+  submissionId: string,
+): Promise<string | null> {
+  const [appeal] = await database
+    .select({ id: event.id })
+    .from(event)
+    .innerJoin(evaluation, eq(evaluation.evaluation_id, event.subject_id))
+    .where(
+      and(
+        eq(event.action, 'experimental:appeal_request'),
+        eq(event.subject_kind, 'evaluation'),
+        eq(evaluation.submission_id, submissionId),
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(1);
+  return appeal?.id ?? null;
 }
 async function readSyncJudged(
   database: Db | Tx,
